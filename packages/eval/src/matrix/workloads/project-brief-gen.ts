@@ -1,4 +1,4 @@
-import type { WorkloadEval } from '../types.js';
+import type { WorkloadEval } from "../types.js";
 
 interface Memory {
   memory_id: string;
@@ -29,7 +29,7 @@ Format your response as structured markdown. Use ## section headers to separate 
 function buildUserMessage(row: CorpusRow): string {
   const entries = row.memories
     .map((m, i) => `${i + 1}. **${m.title}** (${m.created_at.slice(0, 10)})\n${m.body}`)
-    .join('\n\n');
+    .join("\n\n");
   return `Project: ${row.project_id} | Period: ${row.window_start} to ${row.window_end}\n\nRecent memories:\n\n${entries}\n\nWrite a project brief covering the above activity.`;
 }
 
@@ -46,17 +46,17 @@ function countParagraphs(text: string): number {
 }
 
 export const projectBriefGenWorkload: WorkloadEval = {
-  name: 'project-brief-gen',
-  corpus_path: 'packages/eval/corpora/project-brief-gen/v0/test.jsonl',
-  primary_metric_name: 'mean_brief_quality',
+  name: "project-brief-gen",
+  corpus_path: "packages/eval/corpora/project-brief-gen/v0/test.jsonl",
+  primary_metric_name: "mean_brief_quality",
   maxTokens: 2048,
   temperature: 0.3,
   prompt_builder: (row) => {
     const r = row as CorpusRow;
     return {
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: buildUserMessage(r) },
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: buildUserMessage(r) },
       ],
     };
   },
@@ -89,7 +89,7 @@ export const projectBriefGenWorkload: WorkloadEval = {
         paragraph_count: paragraphs,
       },
       prediction: `tokens=${tokens} sections=${sections} paragraphs=${paragraphs}`,
-      gold: 'n/a',
+      gold: "n/a",
     };
   },
 };

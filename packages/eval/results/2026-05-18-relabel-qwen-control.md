@@ -17,9 +17,9 @@ candidates against the relabeled corpus to check whether:
 
 - Booted Qwen3.5-9B-MTP-UD-Q4_K_XL on `127.0.0.1:8191` with the same
   start args as `specs/qwen35-9b-mtp.json` (atomic-qwen fork, `--spec-type
-  nextn`).
+nextn`).
 - Ran `python3 synth_t2.py --labeler-url http://127.0.0.1:8191 --limit
-  50 > synth-qwen.jsonl` against the same `~/.penumbra/db.sqlite`.
+50 > synth-qwen.jsonl` against the same `~/.penumbra/db.sqlite`.
 - Acceptance: 50 emitted from 62 asks (80%); wall 254s.
 - Pool-draw note: `synth_t2.py` uses SQLite `ORDER BY RANDOM()` for the
   t2 sample pool, which ignores the Python `--seed`. The Qwen run drew
@@ -41,20 +41,20 @@ candidates against the relabeled corpus to check whether:
 
 ## Results — n=105 (seed + mined + synth-qwen)
 
-| Model | NDCG@5 (Qwen) | NDCG@5 (Granite) | Δ NDCG@5 | tps Q | tps G |
-|---|---:|---:|---:|---:|---:|
-| gemma4-26b-a4b-mtp | **0.8031** | 0.8079 | -0.0048 | 30.68 | 32.63 |
-| qwen3.5-9b-mtp-UDQ4KXL | 0.6431 | 0.6622 | -0.0191 | 8.51 | 8.59 |
+| Model                  | NDCG@5 (Qwen) | NDCG@5 (Granite) | Δ NDCG@5 | tps Q | tps G |
+| ---------------------- | ------------: | ---------------: | -------: | ----: | ----: |
+| gemma4-26b-a4b-mtp     |    **0.8031** |           0.8079 |  -0.0048 | 30.68 | 32.63 |
+| qwen3.5-9b-mtp-UDQ4KXL |        0.6431 |           0.6622 |  -0.0191 |  8.51 |  8.59 |
 
 Gap (gemma4 − qwen3.5): +16.00 pp on Qwen-labeled, +14.57 pp on
 Granite-labeled. Gap grew +1.43 pp under labeler swap.
 
 ## Results — n=55 (seed + synth-qwen, strong-gold)
 
-| Model | NDCG@5 (Qwen) | NDCG@5 (Granite) | Δ NDCG@5 | tps Q | tps G |
-|---|---:|---:|---:|---:|---:|
-| gemma4-26b-a4b-mtp | **0.9027** | 0.9119 | -0.0092 | 34.10 | 34.60 |
-| qwen3.5-9b-mtp-UDQ4KXL | 0.7419 | 0.7782 | -0.0363 | 9.02 | 9.15 |
+| Model                  | NDCG@5 (Qwen) | NDCG@5 (Granite) | Δ NDCG@5 | tps Q | tps G |
+| ---------------------- | ------------: | ---------------: | -------: | ----: | ----: |
+| gemma4-26b-a4b-mtp     |    **0.9027** |           0.9119 |  -0.0092 | 34.10 | 34.60 |
+| qwen3.5-9b-mtp-UDQ4KXL |        0.7419 |           0.7782 |  -0.0363 |  9.02 |  9.15 |
 
 Gap: +16.08 pp Qwen-labeled vs +13.37 pp Granite-labeled. Gap grew
 +2.71 pp under labeler swap.
@@ -63,7 +63,7 @@ Gap: +16.08 pp Qwen-labeled vs +13.37 pp Granite-labeled. Gap grew
 
 - **Rankings stable.** gemma4-26b-a4b-mtp wins both tiers under both
   labelers; the production verdict from last session holds.
-- **No labeler self-bias for Qwen.** Qwen3.5-9B-MTP scored *worse*
+- **No labeler self-bias for Qwen.** Qwen3.5-9B-MTP scored _worse_
   on its own labeler's questions (Δ -1.9 pp n=105, Δ -3.6 pp strong-gold).
   If anything the granite-labeled corpus was slightly soft on Qwen, not
   hard on it.
@@ -76,7 +76,7 @@ Gap: +16.08 pp Qwen-labeled vs +13.37 pp Granite-labeled. Gap grew
 
 ## Caveats
 
-- This is a two-model control on the *only* candidate where a labeler
+- This is a two-model control on the _only_ candidate where a labeler
   self-bias plausibly mattered (Qwen3.5 labeling its own family's
   benchmark). The fleet's other models (granite, qwen3-8b, qwen3.6-35b)
   were not re-benched on the Qwen corpus; relative rankings between

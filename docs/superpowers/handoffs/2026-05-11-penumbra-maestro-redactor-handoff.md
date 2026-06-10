@@ -22,14 +22,14 @@ Implementation phases mirror the design spec
 (`docs/superpowers/specs/2026-05-11-maestro-output-redactor-design.md`
 in llamactl, mirrored to penumbra as Ask 1 input):
 
-| Phase | What | Files |
-| ----- | ---- | ----- |
-| Core  | `ValuePatternRedactor` — value-pattern (not key-pattern) regex sweeper with string/function replacement, decision = `clean \| rewritten \| blocked \| bypassed`. | `packages/core/src/redaction/value-patterns.ts` (+ re-export at `packages/core/src/index.ts:8-13`) |
-| Rules | Static `MAESTRO_STATIC_RULES`: `ssh_private_key_path`, `destructive_shell_rmrf`, `git_force_push`. Dynamic `buildUnknownAgentRule(knownAgents)` → `unknown_initial_agent`. All four are fail-closed. | `packages/agentchat/src/worker/maestro-output-rules.ts` |
-| Orchestrator | `MaestroOutputRedactor` with `checkContent` + `checkValue`; reads `PENUMBRA_MAESTRO_REDACTION_BYPASS` via `buildMaestroRedactorFromEnv`. | `packages/agentchat/src/worker/maestro-output-redactor.ts` |
-| Streaming-chunk path | `CapturePort` applies redactor in `flushChunkBuffer` (agent-response chunks) and `emitToolRow` (tool-call args). Emits the six new side events. | `packages/agentchat/src/worker/capture-port.ts` |
-| Final-response path  | `runChatTurn` redacts the assembled final text before composing the authoritative `agent-response` event. Suppresses mention parsing on a blocked turn. | `packages/agentchat/src/cli/loop.ts` |
-| Daemon allowlist | Six new event types added to `EventTypeSchema`: `agent-response-blocked`, `agent-response-redaction-hit`, `agent-response-redaction-bypassed`, `agent-tool-use-blocked`, `agent-tool-use-redaction-hit`, `agent-tool-use-redaction-bypassed`. | `packages/core/src/schemas/event.ts` |
+| Phase                | What                                                                                                                                                                                                                                          | Files                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Core                 | `ValuePatternRedactor` — value-pattern (not key-pattern) regex sweeper with string/function replacement, decision = `clean \| rewritten \| blocked \| bypassed`.                                                                              | `packages/core/src/redaction/value-patterns.ts` (+ re-export at `packages/core/src/index.ts:8-13`) |
+| Rules                | Static `MAESTRO_STATIC_RULES`: `ssh_private_key_path`, `destructive_shell_rmrf`, `git_force_push`. Dynamic `buildUnknownAgentRule(knownAgents)` → `unknown_initial_agent`. All four are fail-closed.                                          | `packages/agentchat/src/worker/maestro-output-rules.ts`                                            |
+| Orchestrator         | `MaestroOutputRedactor` with `checkContent` + `checkValue`; reads `PENUMBRA_MAESTRO_REDACTION_BYPASS` via `buildMaestroRedactorFromEnv`.                                                                                                      | `packages/agentchat/src/worker/maestro-output-redactor.ts`                                         |
+| Streaming-chunk path | `CapturePort` applies redactor in `flushChunkBuffer` (agent-response chunks) and `emitToolRow` (tool-call args). Emits the six new side events.                                                                                               | `packages/agentchat/src/worker/capture-port.ts`                                                    |
+| Final-response path  | `runChatTurn` redacts the assembled final text before composing the authoritative `agent-response` event. Suppresses mention parsing on a blocked turn.                                                                                       | `packages/agentchat/src/cli/loop.ts`                                                               |
+| Daemon allowlist     | Six new event types added to `EventTypeSchema`: `agent-response-blocked`, `agent-response-redaction-hit`, `agent-response-redaction-bypassed`, `agent-tool-use-blocked`, `agent-tool-use-redaction-hit`, `agent-tool-use-redaction-bypassed`. | `packages/core/src/schemas/event.ts`                                                               |
 
 ### Why the final-response path was a separate commit (b31a2d04)
 
@@ -63,10 +63,11 @@ worker constructs from `input.config.agents`.
 (llamactl, commit `2204e1d`).
 
 Headline:
+
 - Unit + integration tests deterministically cover all four decision
   branches.
 - Live dispatch via `penumbra maestro session start-adhoc --agent
-  local-gemma4-26b-a4b-mtp` against the post-merge worker successfully
+local-gemma4-26b-a4b-mtp` against the post-merge worker successfully
   emits `agent-response` events through the patched path. Three live
   conversations recorded:
   - `conv-788001f5-…` — direct ask, model refused cleanly, no
@@ -81,6 +82,7 @@ Headline:
 **`destructive_shell_rmrf` regex is too tight.**
 
 Current:
+
 ```
 /\brm\s+-rf\s+\/\S*/g
 ```
@@ -90,6 +92,7 @@ reproducibly emits the flag-then-path variant inside refusal
 explanations, e.g. `rm -rf --no-preserve-root /`, which slips through.
 
 Suggested replacement (drop-in):
+
 ```
 /\brm\s+-rf(?:\s+--[a-z][a-z0-9-]*)*\s+\/\S*/g
 ```

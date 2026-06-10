@@ -1,28 +1,25 @@
-import { describe, expect, test } from 'bun:test';
-import {
-  CompositeSchema,
-  CompositeSpecSchema,
-} from '../src/composite/schema.js';
+import { describe, expect, test } from "bun:test";
+import { CompositeSchema, CompositeSpecSchema } from "../src/composite/schema.js";
 
 function minimalRaw() {
   return {
-    apiVersion: 'llamactl/v1' as const,
-    kind: 'Composite' as const,
-    metadata: { name: 'minimal' },
+    apiVersion: "llamactl/v1" as const,
+    kind: "Composite" as const,
+    metadata: { name: "minimal" },
     spec: {},
   };
 }
 
-describe('CompositeSchema — valid shapes', () => {
-  test('minimal composite (just metadata + empty spec) parses', () => {
+describe("CompositeSchema — valid shapes", () => {
+  test("minimal composite (just metadata + empty spec) parses", () => {
     const raw = {
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'empty' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "empty" },
       spec: {},
     };
     const m = CompositeSchema.parse(raw);
-    expect(m.metadata.name).toBe('empty');
+    expect(m.metadata.name).toBe("empty");
     expect(m.spec.services).toEqual([]);
     expect(m.spec.workloads).toEqual([]);
     expect(m.spec.ragNodes).toEqual([]);
@@ -30,77 +27,75 @@ describe('CompositeSchema — valid shapes', () => {
     expect(m.spec.dependencies).toEqual([]);
   });
 
-  test('defaults: onFailure=rollback, dependencies=[]', () => {
+  test("defaults: onFailure=rollback, dependencies=[]", () => {
     const m = CompositeSchema.parse({
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'defaults' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "defaults" },
       spec: {},
     });
-    expect(m.spec.onFailure).toBe('rollback');
+    expect(m.spec.onFailure).toBe("rollback");
     expect(m.spec.dependencies).toEqual([]);
   });
 
-  test('composite with just a chroma service parses', () => {
+  test("composite with just a chroma service parses", () => {
     const m = CompositeSchema.parse({
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'chroma-only' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "chroma-only" },
       spec: {
-        services: [
-          { kind: 'chroma', name: 'kb', node: 'local' },
-        ],
+        services: [{ kind: "chroma", name: "kb", node: "local" }],
       },
     });
     expect(m.spec.services.length).toBe(1);
-    expect(m.spec.services[0]?.kind).toBe('chroma');
+    expect(m.spec.services[0]?.kind).toBe("chroma");
   });
 
-  test('full composite (service + workload + rag + gateway + deps) parses', () => {
+  test("full composite (service + workload + rag + gateway + deps) parses", () => {
     const m = CompositeSchema.parse({
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'full', labels: { env: 'dev' } },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "full", labels: { env: "dev" } },
       spec: {
         services: [
-          { kind: 'chroma', name: 'kb', node: 'local' },
+          { kind: "chroma", name: "kb", node: "local" },
           {
-            kind: 'pgvector',
-            name: 'pg',
-            node: 'local',
-            passwordEnv: 'PG_PASSWORD',
+            kind: "pgvector",
+            name: "pg",
+            node: "local",
+            passwordEnv: "PG_PASSWORD",
           },
         ],
         workloads: [
           {
-            node: 'local',
-            target: { kind: 'rel', value: 'models/7b.gguf' },
+            node: "local",
+            target: { kind: "rel", value: "models/7b.gguf" },
           },
         ],
         ragNodes: [
           {
-            name: 'kb-node',
-            node: 'local',
+            name: "kb-node",
+            node: "local",
             binding: {
-              provider: 'chroma',
-              endpoint: 'http://localhost:8000',
+              provider: "chroma",
+              endpoint: "http://localhost:8000",
             },
-            backingService: 'kb',
+            backingService: "kb",
           },
         ],
         gateways: [
           {
-            name: 'gw',
-            node: 'local',
-            provider: 'sirius',
-            upstreamWorkloads: ['local'],
-            providerConfig: { extra: { route: '/v1' } },
+            name: "gw",
+            node: "local",
+            provider: "sirius",
+            upstreamWorkloads: ["local"],
+            providerConfig: { extra: { route: "/v1" } },
           },
         ],
         dependencies: [
           {
-            from: { kind: 'rag', name: 'kb-node' },
-            to: { kind: 'service', name: 'kb' },
+            from: { kind: "rag", name: "kb-node" },
+            to: { kind: "service", name: "kb" },
           },
         ],
       },
@@ -112,129 +107,129 @@ describe('CompositeSchema — valid shapes', () => {
     expect(m.spec.dependencies.length).toBe(1);
   });
 
-  test('ragBinding inside an entry parses with all fields', () => {
+  test("ragBinding inside an entry parses with all fields", () => {
     const m = CompositeSchema.parse({
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'rag-full' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "rag-full" },
       spec: {
-        services: [{ kind: 'chroma', name: 'kb', node: 'local' }],
+        services: [{ kind: "chroma", name: "kb", node: "local" }],
         ragNodes: [
           {
-            name: 'kb-node',
-            node: 'local',
+            name: "kb-node",
+            node: "local",
             binding: {
-              provider: 'chroma',
-              endpoint: 'http://localhost:8000',
-              collection: 'docs',
-              auth: { tokenEnv: 'CHROMA_TOKEN' },
-              embedModel: 'bge-small',
-              extraArgs: ['--log-level=debug'],
+              provider: "chroma",
+              endpoint: "http://localhost:8000",
+              collection: "docs",
+              auth: { tokenEnv: "CHROMA_TOKEN" },
+              embedModel: "bge-small",
+              extraArgs: ["--log-level=debug"],
             },
-            backingService: 'kb',
+            backingService: "kb",
           },
         ],
       },
     });
     const rn = m.spec.ragNodes[0]!;
-    expect(rn.binding.collection).toBe('docs');
-    expect(rn.binding.auth?.tokenEnv).toBe('CHROMA_TOKEN');
-    expect(rn.binding.embedModel).toBe('bge-small');
-    expect(rn.binding.extraArgs).toEqual(['--log-level=debug']);
+    expect(rn.binding.collection).toBe("docs");
+    expect(rn.binding.auth?.tokenEnv).toBe("CHROMA_TOKEN");
+    expect(rn.binding.embedModel).toBe("bge-small");
+    expect(rn.binding.extraArgs).toEqual(["--log-level=debug"]);
   });
 });
 
-describe('CompositeSchema — metadata validation', () => {
-  test('metadata.name with uppercase is rejected', () => {
+describe("CompositeSchema — metadata validation", () => {
+  test("metadata.name with uppercase is rejected", () => {
     expect(() =>
       CompositeSchema.parse({
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'Uppercase' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "Uppercase" },
         spec: {},
       }),
     ).toThrow();
   });
 
-  test('metadata.name with spaces is rejected', () => {
+  test("metadata.name with spaces is rejected", () => {
     expect(() =>
       CompositeSchema.parse({
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'with space' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "with space" },
         spec: {},
       }),
     ).toThrow();
   });
 
-  test('metadata.name with underscore is rejected', () => {
+  test("metadata.name with underscore is rejected", () => {
     expect(() =>
       CompositeSchema.parse({
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'snake_case' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "snake_case" },
         spec: {},
       }),
     ).toThrow();
   });
 
-  test('metadata.name lowercase-alphanumeric-hyphens accepted', () => {
+  test("metadata.name lowercase-alphanumeric-hyphens accepted", () => {
     const m = CompositeSchema.parse({
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'stack-7b-rag-2' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "stack-7b-rag-2" },
       spec: {},
     });
-    expect(m.metadata.name).toBe('stack-7b-rag-2');
+    expect(m.metadata.name).toBe("stack-7b-rag-2");
   });
 
-  test('kind !== Composite is rejected', () => {
+  test("kind !== Composite is rejected", () => {
     expect(() =>
       CompositeSchema.parse({
-        apiVersion: 'llamactl/v1',
-        kind: 'ModelRun',
-        metadata: { name: 'bogus' },
+        apiVersion: "llamactl/v1",
+        kind: "ModelRun",
+        metadata: { name: "bogus" },
         spec: {},
       }),
     ).toThrow();
   });
 });
 
-describe('CompositeSchema — cross-component validation', () => {
-  test('duplicate service names rejected', () => {
+describe("CompositeSchema — cross-component validation", () => {
+  test("duplicate service names rejected", () => {
     expect(() =>
       CompositeSchema.parse({
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'dup-svc' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "dup-svc" },
         spec: {
           services: [
-            { kind: 'chroma', name: 'kb', node: 'local' },
-            { kind: 'pgvector', name: 'kb', node: 'local' },
+            { kind: "chroma", name: "kb", node: "local" },
+            { kind: "pgvector", name: "kb", node: "local" },
           ],
         },
       }),
     ).toThrow(/duplicate service component name/);
   });
 
-  test('duplicate rag-node names rejected', () => {
+  test("duplicate rag-node names rejected", () => {
     expect(() =>
       CompositeSchema.parse({
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'dup-rag' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "dup-rag" },
         spec: {
-          services: [{ kind: 'chroma', name: 'kb', node: 'local' }],
+          services: [{ kind: "chroma", name: "kb", node: "local" }],
           ragNodes: [
             {
-              name: 'same',
-              node: 'local',
-              binding: { provider: 'chroma', endpoint: 'http://a' },
+              name: "same",
+              node: "local",
+              binding: { provider: "chroma", endpoint: "http://a" },
             },
             {
-              name: 'same',
-              node: 'local',
-              binding: { provider: 'chroma', endpoint: 'http://b' },
+              name: "same",
+              node: "local",
+              binding: { provider: "chroma", endpoint: "http://b" },
             },
           ],
         },
@@ -242,54 +237,54 @@ describe('CompositeSchema — cross-component validation', () => {
     ).toThrow(/duplicate rag component name/);
   });
 
-  test('duplicate gateway names rejected', () => {
+  test("duplicate gateway names rejected", () => {
     expect(() =>
       CompositeSchema.parse({
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'dup-gw' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "dup-gw" },
         spec: {
           gateways: [
-            { name: 'gw', node: 'local', provider: 'sirius' },
-            { name: 'gw', node: 'local', provider: 'embersynth' },
+            { name: "gw", node: "local", provider: "sirius" },
+            { name: "gw", node: "local", provider: "embersynth" },
           ],
         },
       }),
     ).toThrow(/duplicate gateway component name/);
   });
 
-  test('same name across different kinds is OK', () => {
+  test("same name across different kinds is OK", () => {
     const m = CompositeSchema.parse({
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'shared' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "shared" },
       spec: {
-        services: [{ kind: 'chroma', name: 'shared', node: 'local' }],
+        services: [{ kind: "chroma", name: "shared", node: "local" }],
         ragNodes: [
           {
-            name: 'shared',
-            node: 'local',
-            binding: { provider: 'chroma', endpoint: 'http://x' },
+            name: "shared",
+            node: "local",
+            binding: { provider: "chroma", endpoint: "http://x" },
           },
         ],
       },
     });
-    expect(m.spec.services[0]?.name).toBe('shared');
-    expect(m.spec.ragNodes[0]?.name).toBe('shared');
+    expect(m.spec.services[0]?.name).toBe("shared");
+    expect(m.spec.ragNodes[0]?.name).toBe("shared");
   });
 
-  test('dependency.from referencing missing component rejected', () => {
+  test("dependency.from referencing missing component rejected", () => {
     expect(() =>
       CompositeSchema.parse({
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'bad-dep-from' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "bad-dep-from" },
         spec: {
-          services: [{ kind: 'chroma', name: 'kb', node: 'local' }],
+          services: [{ kind: "chroma", name: "kb", node: "local" }],
           dependencies: [
             {
-              from: { kind: 'rag', name: 'missing' },
-              to: { kind: 'service', name: 'kb' },
+              from: { kind: "rag", name: "missing" },
+              to: { kind: "service", name: "kb" },
             },
           ],
         },
@@ -297,25 +292,25 @@ describe('CompositeSchema — cross-component validation', () => {
     ).toThrow(/unknown rag 'missing'/);
   });
 
-  test('dependency.to referencing missing component rejected', () => {
+  test("dependency.to referencing missing component rejected", () => {
     expect(() =>
       CompositeSchema.parse({
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'bad-dep-to' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "bad-dep-to" },
         spec: {
-          services: [{ kind: 'chroma', name: 'kb', node: 'local' }],
+          services: [{ kind: "chroma", name: "kb", node: "local" }],
           ragNodes: [
             {
-              name: 'kb-node',
-              node: 'local',
-              binding: { provider: 'chroma', endpoint: 'http://a' },
+              name: "kb-node",
+              node: "local",
+              binding: { provider: "chroma", endpoint: "http://a" },
             },
           ],
           dependencies: [
             {
-              from: { kind: 'rag', name: 'kb-node' },
-              to: { kind: 'service', name: 'missing' },
+              from: { kind: "rag", name: "kb-node" },
+              to: { kind: "service", name: "missing" },
             },
           ],
         },
@@ -323,19 +318,19 @@ describe('CompositeSchema — cross-component validation', () => {
     ).toThrow(/unknown service 'missing'/);
   });
 
-  test('ragNode.backingService pointing at missing service rejected', () => {
+  test("ragNode.backingService pointing at missing service rejected", () => {
     expect(() =>
       CompositeSchema.parse({
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'bad-backing' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "bad-backing" },
         spec: {
           ragNodes: [
             {
-              name: 'kb-node',
-              node: 'local',
-              binding: { provider: 'chroma', endpoint: 'http://a' },
-              backingService: 'ghost',
+              name: "kb-node",
+              node: "local",
+              binding: { provider: "chroma", endpoint: "http://a" },
+              backingService: "ghost",
             },
           ],
         },
@@ -343,19 +338,19 @@ describe('CompositeSchema — cross-component validation', () => {
     ).toThrow(/unknown backingService 'ghost'/);
   });
 
-  test('ragNode without backingService is fine', () => {
+  test("ragNode without backingService is fine", () => {
     const m = CompositeSchema.parse({
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'external-rag' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "external-rag" },
       spec: {
         ragNodes: [
           {
-            name: 'kb-node',
-            node: 'local',
+            name: "kb-node",
+            node: "local",
             binding: {
-              provider: 'chroma',
-              endpoint: 'http://external:8000',
+              provider: "chroma",
+              endpoint: "http://external:8000",
             },
           },
         ],
@@ -364,19 +359,19 @@ describe('CompositeSchema — cross-component validation', () => {
     expect(m.spec.ragNodes[0]?.backingService).toBeUndefined();
   });
 
-  test('gateway.upstreamWorkloads pointing at missing workload rejected', () => {
+  test("gateway.upstreamWorkloads pointing at missing workload rejected", () => {
     expect(() =>
       CompositeSchema.parse({
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'bad-upstream' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "bad-upstream" },
         spec: {
           gateways: [
             {
-              name: 'gw',
-              node: 'local',
-              provider: 'sirius',
-              upstreamWorkloads: ['nope'],
+              name: "gw",
+              node: "local",
+              provider: "sirius",
+              upstreamWorkloads: ["nope"],
             },
           ],
         },
@@ -384,15 +379,15 @@ describe('CompositeSchema — cross-component validation', () => {
     ).toThrow(/unknown upstream workload 'nope'/);
   });
 
-  test('minimal CompositeSpec (no fields) parses directly', () => {
+  test("minimal CompositeSpec (no fields) parses directly", () => {
     const s = CompositeSpecSchema.parse({});
     expect(s.services).toEqual([]);
     expect(s.dependencies).toEqual([]);
-    expect(s.onFailure).toBe('rollback');
+    expect(s.onFailure).toBe("rollback");
   });
 
-  test('minimalRaw() helper passes the refine', () => {
+  test("minimalRaw() helper passes the refine", () => {
     const m = CompositeSchema.parse(minimalRaw());
-    expect(m.metadata.name).toBe('minimal');
+    expect(m.metadata.name).toBe("minimal");
   });
 });

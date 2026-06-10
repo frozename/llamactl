@@ -11,9 +11,9 @@
 ## Per-frontier results
 
 | promptSize | t_cold_ms | t_cold_first_byte_ms | t_warm_min_ms | t_warm_p50_ms | t_warm_p95_ms | ratio_cold_over_warm | kv_warm_hit_total | kv_cold_miss_total | kv_false_hit_total |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 256 | 1875.21 | 1874.91 | 169.33 | 169.33 | 169.41 | 11.07 | 0 | 0 | 0 |
-| 512 | 2229.26 | 2229.25 | 172.64 | 172.64 | 173.93 | 12.91 | 0 | 0 | 0 |
+| ---------- | --------- | -------------------- | ------------- | ------------- | ------------- | -------------------- | ----------------- | ------------------ | ------------------ |
+| 256        | 1875.21   | 1874.91              | 169.33        | 169.33        | 169.41        | 11.07                | 0                 | 0                  | 0                  |
+| 512        | 2229.26   | 2229.25              | 172.64        | 172.64        | 173.93        | 12.91                | 0                 | 0                  | 0                  |
 
 ## Raw CSV
 
@@ -24,6 +24,7 @@ promptSize,t_cold_ms,t_cold_first_byte_ms,t_warm_min_ms,t_warm_p50_ms,t_warm_p95
 ```
 
 ## Decision (to fill in after running)
+
 - [ ] 16k frontier cold/warm ratio ≥ 2.0 → Slice 2 ships, Phase 8 NOT needed
 - [ ] Write cost p95 ≤ 100 ms → no cadence work needed
 - [ ] False-hit rate (`kv_false_hit_total / kv_warm_hit_total`) ≤ 1% → no equivalence work needed

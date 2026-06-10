@@ -1,6 +1,6 @@
-import { unauthorizedResponse, verifyBearer } from './auth.js';
-import { appendTunnelJournal, type TunnelJournalEntry } from '../tunnel/journal.js';
-import type { TunnelServer } from '../tunnel/index.js';
+import { unauthorizedResponse, verifyBearer } from "./auth.js";
+import { appendTunnelJournal, type TunnelJournalEntry } from "../tunnel/journal.js";
+import type { TunnelServer } from "../tunnel/index.js";
 
 /**
  * HTTP bridge from the CLI to a tunneled node.
@@ -61,54 +61,45 @@ export async function handleTunnelRelay(
     // 401 — HTTP-layer rejection, not a tunnel event. See module doc.
     return unauthorizedResponse();
   }
-  if (req.method !== 'POST') {
+  if (req.method !== "POST") {
     // 405 — HTTP-layer rejection, not a tunnel event. See module doc.
-    return new Response('method not allowed', { status: 405 });
+    return new Response("method not allowed", { status: 405 });
   }
-  const nodeName = decodeURIComponent(
-    url.pathname.slice('/tunnel-relay/'.length),
-  );
+  const nodeName = decodeURIComponent(url.pathname.slice("/tunnel-relay/".length));
   // 400 branches below — HTTP-layer rejection, not a tunnel event.
-  if (!nodeName) return new Response('missing node name', { status: 400 });
+  if (!nodeName) return new Response("missing node name", { status: 400 });
 
   let body: {
     method?: string;
-    type?: 'query' | 'mutation' | 'subscription';
+    type?: "query" | "mutation" | "subscription";
     input?: unknown;
   };
   try {
     body = (await req.json()) as typeof body;
   } catch {
-    return new Response('invalid json', { status: 400 });
+    return new Response("invalid json", { status: 400 });
   }
-  if (!body.method || typeof body.method !== 'string') {
-    return new Response('missing or invalid method', { status: 400 });
+  if (!body.method || typeof body.method !== "string") {
+    return new Response("missing or invalid method", { status: 400 });
   }
 
   const method = body.method;
-  const stream = url.searchParams.get('stream') === 'true';
+  const stream = url.searchParams.get("stream") === "true";
   if (stream) {
-    return handleStream(
-      req,
-      tunnelServer,
-      nodeName,
-      method,
-      body.input,
-      journal,
-    );
+    return handleStream(req, tunnelServer, nodeName, method, body.input, journal);
   }
   const start = performance.now();
   try {
     const res = await tunnelServer.send(nodeName, {
       id: crypto.randomUUID(),
       method,
-      params: { type: body.type ?? 'query', input: body.input },
+      params: { type: body.type ?? "query", input: body.input },
     });
     const durationMs = performance.now() - start;
     // Metadata only — never log `body.input` or `res.result`. Those
     // can carry secrets (bearer headers, PEM blobs, credentials).
     journal({
-      kind: 'tunnel-relay-call',
+      kind: "tunnel-relay-call",
       ts: new Date().toISOString(),
       nodeName,
       method,
@@ -119,19 +110,19 @@ export async function handleTunnelRelay(
   } catch (err) {
     const message = (err as Error).message;
     journal({
-      kind: 'tunnel-relay-error',
+      kind: "tunnel-relay-error",
       ts: new Date().toISOString(),
       nodeName,
       method,
-      code: 'tunnel-send-failed',
+      code: "tunnel-send-failed",
       message,
     });
     return Response.json(
       {
-        type: 'res' as const,
-        id: '',
+        type: "res" as const,
+        id: "",
         error: {
-          code: 'tunnel-send-failed',
+          code: "tunnel-send-failed",
           message,
         },
       },
@@ -168,14 +159,14 @@ function handleStream(
   const onReqAbort = (): void => abort.abort();
   if (req.signal) {
     if (req.signal.aborted) abort.abort();
-    else req.signal.addEventListener('abort', onReqAbort, { once: true });
+    else req.signal.addEventListener("abort", onReqAbort, { once: true });
   }
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       const iter = tunnelServer.sendSubscribe(nodeName, {
         id: crypto.randomUUID(),
         method,
-        params: { type: 'subscription', input },
+        params: { type: "subscription", input },
       });
       let journaled = false;
       const finish = (ok: boolean, code?: string, message?: string): void => {
@@ -184,7 +175,7 @@ function handleStream(
         const durationMs = performance.now() - start;
         if (ok) {
           journal({
-            kind: 'tunnel-relay-call',
+            kind: "tunnel-relay-call",
             ts: new Date().toISOString(),
             nodeName,
             method,
@@ -193,12 +184,12 @@ function handleStream(
           });
         } else {
           journal({
-            kind: 'tunnel-relay-error',
+            kind: "tunnel-relay-error",
             ts: new Date().toISOString(),
             nodeName,
             method,
-            code: code ?? 'tunnel-send-failed',
-            message: message ?? 'unknown',
+            code: code ?? "tunnel-send-failed",
+            message: message ?? "unknown",
           });
         }
       };
@@ -209,49 +200,56 @@ function handleStream(
         // for the next event from the node.
         while (true) {
           if (abort.signal.aborted) {
-            try { await iterator.return?.(); } catch { /* ignore */ }
+            try {
+              await iterator.return?.();
+            } catch {
+              /* ignore */
+            }
             break;
           }
           const nextPromise = iterator.next();
           const abortPromise = new Promise<{ aborted: true }>((resolve) => {
             const handler = (): void => resolve({ aborted: true });
             if (abort.signal.aborted) handler();
-            else abort.signal.addEventListener('abort', handler, { once: true });
+            else abort.signal.addEventListener("abort", handler, { once: true });
           });
-          const step = await Promise.race([
-            nextPromise.then((r) => ({ step: r })),
-            abortPromise,
-          ]);
-          if ('aborted' in step) {
-            try { await iterator.return?.(); } catch { /* ignore */ }
+          const step = await Promise.race([nextPromise.then((r) => ({ step: r })), abortPromise]);
+          if ("aborted" in step) {
+            try {
+              await iterator.return?.();
+            } catch {
+              /* ignore */
+            }
             break;
           }
           const { step: result } = step;
           if (result.done) break;
           try {
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify(result.value)}\n\n`),
-            );
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(result.value)}\n\n`));
           } catch {
             // controller closed (downstream sink gone). Bail out.
-            try { await iterator.return?.(); } catch { /* ignore */ }
+            try {
+              await iterator.return?.();
+            } catch {
+              /* ignore */
+            }
             break;
           }
         }
         if (!abort.signal.aborted) {
           try {
             controller.enqueue(
-              encoder.encode(
-                `event: done\ndata: ${JSON.stringify({ ok: true })}\n\n`,
-              ),
+              encoder.encode(`event: done\ndata: ${JSON.stringify({ ok: true })}\n\n`),
             );
-          } catch { /* controller closed */ }
+          } catch {
+            /* controller closed */
+          }
         }
         finish(true);
       } catch (err) {
         const message = (err as Error).message;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const code = ((err as any).code as string | undefined) ?? 'tunnel-send-failed';
+        const code = ((err as any).code as string | undefined) ?? "tunnel-send-failed";
         try {
           controller.enqueue(
             encoder.encode(
@@ -261,11 +259,17 @@ function handleStream(
               })}\n\n`,
             ),
           );
-        } catch { /* controller closed */ }
+        } catch {
+          /* controller closed */
+        }
         finish(false, code, message);
       } finally {
-        if (req.signal) req.signal.removeEventListener('abort', onReqAbort);
-        try { controller.close(); } catch { /* ignore */ }
+        if (req.signal) req.signal.removeEventListener("abort", onReqAbort);
+        try {
+          controller.close();
+        } catch {
+          /* ignore */
+        }
       }
     },
     cancel(): void {
@@ -278,9 +282,9 @@ function handleStream(
   return new Response(body, {
     status: 200,
     headers: {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
     },
   });
 }

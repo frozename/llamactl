@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { router } from '../src/router.js';
-import { parseWorkload, saveWorkload } from '../src/workload/store.js';
-import { parseModelHost, saveModelHost } from '../src/workload/modelhost-store.js';
+import { router } from "../src/router.js";
+import { parseWorkload, saveWorkload } from "../src/workload/store.js";
+import { parseModelHost, saveModelHost } from "../src/workload/modelhost-store.js";
 
 /**
  * E.4 — `workloadList` returns a per-row summary of each declared
@@ -20,7 +20,7 @@ import { parseModelHost, saveModelHost } from '../src/workload/modelhost-store.j
  * here — when the node is unreachable the row still populates the
  * worker summary from the on-disk manifest.
  */
-let tmp = '';
+let tmp = "";
 const originalEnv = { ...process.env };
 
 const multiNodeYaml = `
@@ -73,14 +73,14 @@ spec:
 `;
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-workload-list-'));
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-workload-list-"));
   Object.assign(process.env, {
     LLAMACTL_WORKLOADS_DIR: tmp,
     // Pin the config lookup to a file that does not exist, so
     // kubecfg.loadConfig returns a fresh empty config and workloadList
     // falls through to "Unreachable" deterministically instead of
     // picking up the dev machine's real ~/.llamactl/config.
-    LLAMACTL_CONFIG: join(tmp, 'config-missing'),
+    LLAMACTL_CONFIG: join(tmp, "config-missing"),
   });
 });
 
@@ -90,8 +90,8 @@ afterEach(() => {
   Object.assign(process.env, originalEnv);
 });
 
-describe('workloadList', () => {
-  test('populates workerCount + workerNodes for multi-node workloads', async () => {
+describe("workloadList", () => {
+  test("populates workerCount + workerNodes for multi-node workloads", async () => {
     saveWorkload(parseWorkload(multiNodeYaml), tmp);
     saveWorkload(parseWorkload(singleNodeYaml), tmp);
 
@@ -100,20 +100,20 @@ describe('workloadList', () => {
 
     const byName = Object.fromEntries(rows.map((r) => [r.name, r] as const));
 
-    const multi = byName['llama-70b-split'];
+    const multi = byName["llama-70b-split"];
     expect(multi).toBeDefined();
     expect(multi!.workerCount).toBe(2);
-    expect(multi!.workerNodes).toEqual(['gpu-worker-1', 'gpu-worker-2']);
-    expect(multi!.node).toBe('coordinator');
-    expect(multi!.rel).toBe('llama-70b.gguf');
+    expect(multi!.workerNodes).toEqual(["gpu-worker-1", "gpu-worker-2"]);
+    expect(multi!.node).toBe("coordinator");
+    expect(multi!.rel).toBe("llama-70b.gguf");
 
-    const solo = byName['gemma-solo'];
+    const solo = byName["gemma-solo"];
     expect(solo).toBeDefined();
     expect(solo!.workerCount).toBe(0);
     expect(solo!.workerNodes).toEqual([]);
   });
 
-  test('includes ModelHost workloads tagged with kind', async () => {
+  test("includes ModelHost workloads tagged with kind", async () => {
     saveWorkload(parseWorkload(singleNodeYaml), tmp);
     saveModelHost(parseModelHost(modelHostYaml), tmp);
 
@@ -121,15 +121,15 @@ describe('workloadList', () => {
     const rows = await caller.workloadList();
     const byName = Object.fromEntries(rows.map((r) => [r.name, r] as const));
 
-    const host = byName['mlx-host'];
+    const host = byName["mlx-host"];
     expect(host).toBeDefined();
-    expect(host!.kind).toBe('ModelHost');
-    expect(host!.node).toBe('local');
-    expect(host!.rel).toBe('Qwen3-8B-MLX-4bit');
+    expect(host!.kind).toBe("ModelHost");
+    expect(host!.node).toBe("local");
+    expect(host!.rel).toBe("Qwen3-8B-MLX-4bit");
     // No live state file in the tempdir -> Stopped, not a crash.
-    expect(host!.phase).toBe('Stopped');
+    expect(host!.phase).toBe("Stopped");
 
     // Existing ModelRun rows gain the discriminator too.
-    expect(byName['gemma-solo']!.kind).toBe('ModelRun');
+    expect(byName["gemma-solo"]!.kind).toBe("ModelRun");
   });
 });

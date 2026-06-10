@@ -20,11 +20,11 @@ The M-track exists to test whether a Qwen3-8B LoRA adapter trained on the 470-ro
 
 ## Production metric and threshold
 
-| | Definition | Source |
-|---|---|---|
-| Primary | **Macro-F1 over 4 classes** on a held-out test set drawn from the *next 7 days* of `memory_verification_events` data | `mcp__penumbra__memory_verification_events` + labeled gold |
-| Secondary | **Minority recall** on `recall_miss` and `memory_ignored` specifically | per-class recall from the confusion matrix |
-| Tertiary | **Latency overhead** of running the adapter vs bare base on the production node | `time_to_first_token`, `tokens_per_second` deltas |
+|           | Definition                                                                                                           | Source                                                     |
+| --------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Primary   | **Macro-F1 over 4 classes** on a held-out test set drawn from the _next 7 days_ of `memory_verification_events` data | `mcp__penumbra__memory_verification_events` + labeled gold |
+| Secondary | **Minority recall** on `recall_miss` and `memory_ignored` specifically                                               | per-class recall from the confusion matrix                 |
+| Tertiary  | **Latency overhead** of running the adapter vs bare base on the production node                                      | `time_to_first_token`, `tokens_per_second` deltas          |
 
 **Bar to ship an M-adapter into production:**
 
@@ -36,7 +36,7 @@ If all three thresholds aren't met, the adapter does not ship. No partial wins.
 
 ## Bar to keep investing in the track
 
-Before *any* new M.N run (training, eval, corpus expansion):
+Before _any_ new M.N run (training, eval, corpus expansion):
 
 - The hypothesis must be stated as a quantitative claim: "we expect macro-F1(adapter) − macro-F1(base) ≥ X on dataset Y."
 - Dataset provenance: no silent reuse of training rows in test; label source pinned to a SHA + prompt or human-adjudicated.
@@ -47,18 +47,18 @@ Before *any* new M.N run (training, eval, corpus expansion):
 Retire and freeze if any of the following holds at the next checkpoint:
 
 1. Two consecutive bounded validation slices show < +1 macro-F1 point on the primary metric vs base.
-2. Larger LoRA configurations (rank=32+, num_layers=32+, iters=1000+) also fail to lift macro-F1 by ≥ +1 point on the *same* held-out set — i.e. the technique itself is exhausted, not just the small config.
+2. Larger LoRA configurations (rank=32+, num*layers=32+, iters=1000+) also fail to lift macro-F1 by ≥ +1 point on the \_same* held-out set — i.e. the technique itself is exhausted, not just the small config.
 3. Production minority-class recall is already > 80% measured on base alone (no problem to solve at this end of the curve).
 4. Cumulative human attention on the track since this contract was written exceeds 12 hours without a measured production lift.
 
 ## What we already know (M.1 through M.8 retrospective)
 
-| Run | Hparams | Test | macro-F1 (base / adapter) | Verdict |
-|---|---|---|---|---|
-| M.4 | rank=16, layers=16, iters=300, train=416 | n=60 canonical (88% majority) | 0.6868 / 0.6683 | adapter -0.0185 vs base |
-| M.6 | (eval-only on rebalanced test) | n=24 balanced (50/50) | 0.6810 / 0.6611 | adapter -0.0199, minority floor unchanged |
-| M.7 | rank=16, layers=16, iters=300, train=451 | (training only) | — | retrained on M.2-expanded corpus |
-| M.8 | (eval of M.7 adapter) | n=60 + n=24 | identical to M.4 / M.6 to 4 decimals | **byte-identical**, +35 train rows didn't shift the boundary |
+| Run | Hparams                                  | Test                          | macro-F1 (base / adapter)            | Verdict                                                      |
+| --- | ---------------------------------------- | ----------------------------- | ------------------------------------ | ------------------------------------------------------------ |
+| M.4 | rank=16, layers=16, iters=300, train=416 | n=60 canonical (88% majority) | 0.6868 / 0.6683                      | adapter -0.0185 vs base                                      |
+| M.6 | (eval-only on rebalanced test)           | n=24 balanced (50/50)         | 0.6810 / 0.6611                      | adapter -0.0199, minority floor unchanged                    |
+| M.7 | rank=16, layers=16, iters=300, train=451 | (training only)               | —                                    | retrained on M.2-expanded corpus                             |
+| M.8 | (eval of M.7 adapter)                    | n=60 + n=24                   | identical to M.4 / M.6 to 4 decimals | **byte-identical**, +35 train rows didn't shift the boundary |
 
 Three retire-criterion-1 violations (consecutive runs at < +1 F1 point) are on the books. Criterion-2 (larger config) has not been tested. The 12-hour budget under criterion-4 is partly spent; another 4-6 hours of attention is the safe ceiling before the freeze is automatic.
 
@@ -74,11 +74,11 @@ These do not block a validation slice but must be resolved before any new corpus
 
 The next M-track action is NOT another M.N run. It is a three-part validation slice, parallel to the K-track:
 
-| Part | Owner | Output |
-|---|---|---|
-| A | maestro | Pull 7-day production sample from `memory_verification_events` joined to `memory_efficacy_recent`. Compute current macro-F1 + per-class recall baseline using bare Qwen3-8B + chat-template. |
-| B | maestro | Run M.7 adapter under the same production sample. Measure all three metrics. |
-| C | maestro | One non-LoRA alternative: either (a) prompt-engineered few-shot with 3-5 exemplars per class, (b) a larger model (Gemma 4 26B-A4B or Granite 4.1 8B base) on the same prompt, (c) a two-stage classifier (binary "memory-related?" then 4-way only on positives). |
+| Part | Owner   | Output                                                                                                                                                                                                                                                            |
+| ---- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A    | maestro | Pull 7-day production sample from `memory_verification_events` joined to `memory_efficacy_recent`. Compute current macro-F1 + per-class recall baseline using bare Qwen3-8B + chat-template.                                                                      |
+| B    | maestro | Run M.7 adapter under the same production sample. Measure all three metrics.                                                                                                                                                                                      |
+| C    | maestro | One non-LoRA alternative: either (a) prompt-engineered few-shot with 3-5 exemplars per class, (b) a larger model (Gemma 4 26B-A4B or Granite 4.1 8B base) on the same prompt, (c) a two-stage classifier (binary "memory-related?" then 4-way only on positives). |
 
 Compare A vs B vs C against the bar. If C ≥ bar and B < bar, ship C and retire LoRA. If both ≥ bar, ship whichever is cheaper (latency wins). If neither ≥ bar, retire the track.
 
@@ -110,6 +110,7 @@ Before running validation slice part C, **the same failure-mode decomposition sh
 See `docs/notes/m-track-failure-analysis-2026-05-16.md`. Of the 6 minority false-negatives on M.4 base, **6 of 6 are objectively-correct labels the model failed on** — every misclassified prompt explicitly names the memory mechanism ("recalled context," "memory event," "ranker drops the only relevant memory") and the model still predicts `not_memory_related`. This is the opposite of the K-track pattern; the M-track has a systematic prior-toward-majority that few-shot prompting or two-stage framing can plausibly fix.
 
 Updated validation slice priority:
+
 - Part C is now **few-shot prompting** (3 minority exemplars in the system prompt), not grammar-constrained decoding. Estimated 1 hour. Run before any larger-config LoRA experiment.
 - If few-shot lifts minority recall ≥ +10 pp: ship the prompt; retire the LoRA half of the track.
 - If few-shot doesn't move the needle: run two-stage classifier (part C2, ~2 hours). If that also fails, then larger-config LoRA (part C3, ~3-4 hours).

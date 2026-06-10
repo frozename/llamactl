@@ -1,14 +1,7 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { homedir, platform as nodePlatform } from 'node:os';
-import { basename, dirname, join } from 'node:path';
-import { infraCurrentSymlink } from './layout.js';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, platform as nodePlatform } from "node:os";
+import { basename, dirname, join } from "node:path";
+import { infraCurrentSymlink } from "./layout.js";
 
 /**
  * Service adapter for supervised infra packages (embersynth, sirius).
@@ -29,12 +22,12 @@ import { infraCurrentSymlink } from './layout.js';
  * modules that want to be bun-test-friendly.
  */
 
-export type ServiceHost = 'darwin' | 'linux';
+export type ServiceHost = "darwin" | "linux";
 
 export function currentServiceHost(): ServiceHost | null {
   const p = nodePlatform();
-  if (p === 'darwin') return 'darwin';
-  if (p === 'linux') return 'linux';
+  if (p === "darwin") return "darwin";
+  if (p === "linux") return "linux";
   return null;
 }
 
@@ -47,8 +40,8 @@ export function defaultServicesDir(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const home = env.HOME ?? homedir();
-  if (host === 'darwin') return join(home, 'Library', 'LaunchAgents');
-  return join(home, '.config', 'systemd', 'user');
+  if (host === "darwin") return join(home, "Library", "LaunchAgents");
+  return join(home, ".config", "systemd", "user");
 }
 
 export function infraServiceUnitPath(
@@ -57,28 +50,25 @@ export function infraServiceUnitPath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const dir = defaultServicesDir(host, env);
-  if (host === 'darwin') return join(dir, `${infraServiceLabel(pkg)}.plist`);
+  if (host === "darwin") return join(dir, `${infraServiceLabel(pkg)}.plist`);
   return join(dir, `llamactl-infra-${pkg}.service`);
 }
 
 export function defaultInfraLogsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_INFRA_LOGS_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'logs');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "logs");
 }
 
 function xmlEscape(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export interface RenderServiceUnitOptions {
   pkg: string;
-  infraBase: string;        // ~/.llamactl/infra — where <pkg>/current lives
-  logDir: string;           // ~/.llamactl/logs
+  infraBase: string; // ~/.llamactl/infra — where <pkg>/current lives
+  logDir: string; // ~/.llamactl/logs
   env: Record<string, string>;
   /** argv tail after <current-bin>/<pkg>. Empty by default — most
    *  services take their config via env vars, not flags. */
@@ -91,7 +81,7 @@ export interface RenderServiceUnitOptions {
 }
 
 export function defaultBinaryPath(pkg: string, infraBase: string): string {
-  return join(infraCurrentSymlink(pkg, infraBase), 'bin', pkg);
+  return join(infraCurrentSymlink(pkg, infraBase), "bin", pkg);
 }
 
 export function renderLaunchdPlist(opts: RenderServiceUnitOptions): string {
@@ -102,7 +92,7 @@ export function renderLaunchdPlist(opts: RenderServiceUnitOptions): string {
   const args = (opts.args ?? []).map(xmlEscape);
   const envItems = Object.entries(opts.env)
     .map(([k, v]) => `      <key>${xmlEscape(k)}</key>\n      <string>${xmlEscape(v)}</string>`)
-    .join('\n');
+    .join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -111,7 +101,7 @@ export function renderLaunchdPlist(opts: RenderServiceUnitOptions): string {
     <string>${label}</string>
     <key>ProgramArguments</key>
     <array>
-      <string>${binary}</string>${args.map((a) => `\n      <string>${a}</string>`).join('')}
+      <string>${binary}</string>${args.map((a) => `\n      <string>${a}</string>`).join("")}
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -123,7 +113,7 @@ export function renderLaunchdPlist(opts: RenderServiceUnitOptions): string {
     <string>${logDir}/${pkg}.err</string>
     <key>EnvironmentVariables</key>
     <dict>
-${envItems || ''}
+${envItems || ""}
     </dict>
 </dict>
 </plist>
@@ -132,10 +122,10 @@ ${envItems || ''}
 
 export function renderSystemdUnit(opts: RenderServiceUnitOptions): string {
   const binary = opts.binaryPath ?? defaultBinaryPath(opts.pkg, opts.infraBase);
-  const exec = [binary, ...(opts.args ?? [])].join(' ');
+  const exec = [binary, ...(opts.args ?? [])].join(" ");
   const envLines = Object.entries(opts.env)
     .map(([k, v]) => `Environment=${k}=${v}`)
-    .join('\n');
+    .join("\n");
   return `[Unit]
 Description=llamactl infra service: ${opts.pkg}
 Documentation=https://github.com/frozename/llamactl
@@ -156,11 +146,8 @@ WantedBy=default.target
 `;
 }
 
-export function renderServiceUnit(
-  host: ServiceHost,
-  opts: RenderServiceUnitOptions,
-): string {
-  return host === 'darwin' ? renderLaunchdPlist(opts) : renderSystemdUnit(opts);
+export function renderServiceUnit(host: ServiceHost, opts: RenderServiceUnitOptions): string {
+  return host === "darwin" ? renderLaunchdPlist(opts) : renderSystemdUnit(opts);
 }
 
 export interface WriteServiceUnitOptions extends RenderServiceUnitOptions {
@@ -187,11 +174,11 @@ export function writeServiceUnit(opts: WriteServiceUnitOptions): WrittenServiceU
   const dir = opts.dir ?? defaultServicesDir(host, opts.env_proc);
   mkdirSync(dir, { recursive: true });
   const unitPath =
-    host === 'darwin'
+    host === "darwin"
       ? join(dir, `${infraServiceLabel(opts.pkg)}.plist`)
       : join(dir, `llamactl-infra-${opts.pkg}.service`);
   const body = renderServiceUnit(host, opts);
-  writeFileSync(unitPath, body, 'utf8');
+  writeFileSync(unitPath, body, "utf8");
   try {
     chmodSync(unitPath, 0o644);
   } catch {
@@ -206,7 +193,7 @@ export function writeServiceUnit(opts: WriteServiceUnitOptions): WrittenServiceU
 
 export function removeServiceUnit(
   pkg: string,
-  host: ServiceHost = currentServiceHost() ?? 'darwin',
+  host: ServiceHost = currentServiceHost() ?? "darwin",
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   const path = infraServiceUnitPath(pkg, host, env);
@@ -223,18 +210,18 @@ export function removeServiceUnit(
  */
 export function readServiceUnit(
   pkg: string,
-  host: ServiceHost = currentServiceHost() ?? 'darwin',
+  host: ServiceHost = currentServiceHost() ?? "darwin",
   env: NodeJS.ProcessEnv = process.env,
 ): { path: string; body: string } | null {
   const path = infraServiceUnitPath(pkg, host, env);
   if (!existsSync(path)) return null;
-  return { path, body: readFileSync(path, 'utf8') };
+  return { path, body: readFileSync(path, "utf8") };
 }
 
 export function unitBaseName(path: string): string {
   const base = basename(path);
-  if (base.endsWith('.plist')) return base.replace(/\.plist$/, '');
-  return base.replace(/\.service$/, '');
+  if (base.endsWith(".plist")) return base.replace(/\.plist$/, "");
+  return base.replace(/\.service$/, "");
 }
 
 // ---- Lifecycle subprocess wiring --------------------------------
@@ -244,7 +231,7 @@ export function unitBaseName(path: string): string {
 // a service unit", but marked async + taking an injectable runner
 // so tests can stub the subprocess.
 
-export type ServiceLifecycleAction = 'start' | 'stop' | 'reload' | 'status';
+export type ServiceLifecycleAction = "start" | "stop" | "reload" | "status";
 
 export type SubprocessRunner = (cmd: string[]) => Promise<{
   code: number;
@@ -257,7 +244,7 @@ async function defaultRunner(cmd: string[]): Promise<{
   stdout: string;
   stderr: string;
 }> {
-  const proc = Bun.spawn({ cmd, stdout: 'pipe', stderr: 'pipe' });
+  const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
   const [code, stdout, stderr] = await Promise.all([
     proc.exited,
     new Response(proc.stdout).text(),
@@ -268,19 +255,27 @@ async function defaultRunner(cmd: string[]): Promise<{
 
 function launchctlArgs(action: ServiceLifecycleAction, label: string, plistPath: string): string[] {
   switch (action) {
-    case 'start': return ['launchctl', 'load', plistPath];
-    case 'stop': return ['launchctl', 'unload', plistPath];
-    case 'reload': return ['launchctl', 'kickstart', '-k', `gui/${process.getuid?.() ?? 501}/${label}`];
-    case 'status': return ['launchctl', 'list', label];
+    case "start":
+      return ["launchctl", "load", plistPath];
+    case "stop":
+      return ["launchctl", "unload", plistPath];
+    case "reload":
+      return ["launchctl", "kickstart", "-k", `gui/${process.getuid?.() ?? 501}/${label}`];
+    case "status":
+      return ["launchctl", "list", label];
   }
 }
 
 function systemctlArgs(action: ServiceLifecycleAction, unitName: string): string[] {
   switch (action) {
-    case 'start': return ['systemctl', '--user', 'start', unitName];
-    case 'stop': return ['systemctl', '--user', 'stop', unitName];
-    case 'reload': return ['systemctl', '--user', 'restart', unitName];
-    case 'status': return ['systemctl', '--user', 'is-active', unitName];
+    case "start":
+      return ["systemctl", "--user", "start", unitName];
+    case "stop":
+      return ["systemctl", "--user", "stop", unitName];
+    case "reload":
+      return ["systemctl", "--user", "restart", unitName];
+    case "status":
+      return ["systemctl", "--user", "is-active", unitName];
   }
 }
 
@@ -321,15 +316,16 @@ export async function runServiceLifecycle(
   // Start / reload should fail loudly if the unit file is missing —
   // most likely cause is "operator ran install but forgot to wire
   // service:true in the spec".
-  if ((opts.action === 'start' || opts.action === 'reload') && !existsSync(unitPath)) {
+  if ((opts.action === "start" || opts.action === "reload") && !existsSync(unitPath)) {
     throw new Error(
       `runServiceLifecycle: no unit file at ${unitPath} — is this pkg marked service:true in its spec?`,
     );
   }
 
-  const cmd = host === 'darwin'
-    ? launchctlArgs(opts.action, label, unitPath)
-    : systemctlArgs(opts.action, `llamactl-infra-${opts.pkg}.service`);
+  const cmd =
+    host === "darwin"
+      ? launchctlArgs(opts.action, label, unitPath)
+      : systemctlArgs(opts.action, `llamactl-infra-${opts.pkg}.service`);
   const { code, stdout, stderr } = await runner(cmd);
   return { host, label, cmd, code, stdout, stderr };
 }

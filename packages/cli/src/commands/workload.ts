@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { resolve as resolvePath } from 'node:path';
-import { parse as parseYaml } from 'yaml';
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import { parse as parseYaml } from "yaml";
 import {
   config as kubecfg,
   noderunApply,
@@ -10,18 +10,18 @@ import {
   workloadGatewayHandlers,
   workloadSchema,
   workloadStore,
-} from '@llamactl/remote';
+} from "@llamactl/remote";
+import { listModelHosts, saveModelHost } from "../../../remote/src/workload/modelhost-store.js";
 import {
-  listModelHosts,
-  saveModelHost,
-} from '../../../remote/src/workload/modelhost-store.js';
-import { ModelHostManifestSchema, type ModelHostManifest } from '../../../remote/src/workload/modelhost-schema.js';
-import { readModelHostState } from '../../../core/src/engines/state.js';
-import { formatEndpoint, probeHealthEndpoint } from '../../../core/src/probe.js';
-import { resolveEnv } from '../../../core/src/env.js';
-import { workloadRuntimeDir } from '../../../core/src/workloadRuntime.js';
-import { getNodeClientByName } from '../dispatcher.js';
-import { makeSpecArtifactResolver } from './noderun-helpers.js';
+  ModelHostManifestSchema,
+  type ModelHostManifest,
+} from "../../../remote/src/workload/modelhost-schema.js";
+import { readModelHostState } from "../../../core/src/engines/state.js";
+import { formatEndpoint, probeHealthEndpoint } from "../../../core/src/probe.js";
+import { resolveEnv } from "../../../core/src/env.js";
+import { workloadRuntimeDir } from "../../../core/src/workloadRuntime.js";
+import { getNodeClientByName } from "../dispatcher.js";
+import { makeSpecArtifactResolver } from "./noderun-helpers.js";
 
 const APPLY_USAGE = `Usage: llamactl apply -f <manifest.yaml> [--evict <name>]... [--force]
 
@@ -88,30 +88,34 @@ function getWorkloadNodeClient(name: string) {
 }
 
 export function renderNodeBudget(budget: NodeBudgetView): string {
-  const pad = (s: string, w: number): string => (s.length >= w ? s : s + ' '.repeat(w - s.length));
+  const pad = (s: string, w: number): string => (s.length >= w ? s : s + " ".repeat(w - s.length));
   const out: string[] = [];
   out.push(`Budget:   ${budget.reserved.toFixed(1)} / ${budget.budget.toFixed(1)} GiB`);
   out.push(`Workloads:`);
   if (budget.workloads.length === 0) {
-    out.push('  (none)');
+    out.push("  (none)");
   } else {
     const rows = budget.workloads.map((row) => ({
       name: row.name,
-      endpoint: row.endpoint ?? '-',
+      endpoint: row.endpoint ?? "-",
       phase: row.phase.toLowerCase(),
-      memory: row.expectedMemoryGiB == null ? '-' : `${row.expectedMemoryGiB.toFixed(1)} GiB`,
+      memory: row.expectedMemoryGiB == null ? "-" : `${row.expectedMemoryGiB.toFixed(1)} GiB`,
     }));
     const nameW = Math.max(4, ...rows.map((r) => r.name.length));
     const endpointW = Math.max(8, ...rows.map((r) => r.endpoint.length));
     const phaseW = Math.max(5, ...rows.map((r) => r.phase.length));
     for (const row of rows) {
-      out.push(`  ${pad(row.name, nameW)}  ${pad(row.endpoint, endpointW)}  ${pad(row.phase, phaseW)}  ${row.memory}`);
+      out.push(
+        `  ${pad(row.name, nameW)}  ${pad(row.endpoint, endpointW)}  ${pad(row.phase, phaseW)}  ${row.memory}`,
+      );
     }
   }
   if (budget.reserved > budget.budget) {
-    out.push(`WARNING: budget exceeded (${budget.reserved.toFixed(1)} > ${budget.budget.toFixed(1)} GiB) — applies will require --force`);
+    out.push(
+      `WARNING: budget exceeded (${budget.reserved.toFixed(1)} > ${budget.budget.toFixed(1)} GiB) — applies will require --force`,
+    );
   }
-  return out.join('\n') + '\n';
+  return out.join("\n") + "\n";
 }
 
 interface ApplyFlags {
@@ -122,31 +126,31 @@ interface ApplyFlags {
 }
 
 function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
-  let file = '';
+  let file = "";
   let json = false;
   const evict: string[] = [];
   let force = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '-f' || arg === '--file') {
-      file = args[++i] ?? '';
-    } else if (arg.startsWith('--file=')) {
-      file = arg.slice('--file='.length);
-    } else if (arg === '--json') {
+    if (arg === "-f" || arg === "--file") {
+      file = args[++i] ?? "";
+    } else if (arg.startsWith("--file=")) {
+      file = arg.slice("--file=".length);
+    } else if (arg === "--json") {
       json = true;
-    } else if (arg === '--evict') {
-      const value = args[++i] ?? '';
-      if (!value) return { error: 'apply: --evict requires a value' };
+    } else if (arg === "--evict") {
+      const value = args[++i] ?? "";
+      if (!value) return { error: "apply: --evict requires a value" };
       evict.push(value);
-    } else if (arg.startsWith('--evict=')) {
-      const value = arg.slice('--evict='.length);
-      if (!value) return { error: 'apply: --evict requires a value' };
+    } else if (arg.startsWith("--evict=")) {
+      const value = arg.slice("--evict=".length);
+      if (!value) return { error: "apply: --evict requires a value" };
       evict.push(value);
-    } else if (arg === '--force') {
+    } else if (arg === "--force") {
       force = true;
-    } else if (arg === '-h' || arg === '--help') {
-      return { error: 'help' };
-    } else if (arg.startsWith('-')) {
+    } else if (arg === "-h" || arg === "--help") {
+      return { error: "help" };
+    } else if (arg.startsWith("-")) {
       return { error: `Unknown flag: ${arg}` };
     } else if (!file) {
       file = arg;
@@ -154,38 +158,38 @@ function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
       return { error: `Unexpected extra argument: ${arg}` };
     }
   }
-  if (!file) return { error: 'apply: -f <manifest.yaml> is required' };
+  if (!file) return { error: "apply: -f <manifest.yaml> is required" };
   return { file, json, evict, force };
 }
 
 export function stampApplyAnnotations(
   manifest: workloadSchema.ModelRun,
-  flags: Pick<ApplyFlags, 'evict' | 'force'>,
+  flags: Pick<ApplyFlags, "evict" | "force">,
 ): workloadSchema.ModelRun {
   if (flags.evict.length === 0 && !flags.force) return manifest;
   const annotations = manifest.metadata.annotations;
   if (flags.evict.length > 0) {
-    annotations['llamactl.io/evict'] = flags.evict.join(',');
+    annotations["llamactl.io/evict"] = flags.evict.join(",");
   }
   if (flags.force) {
-    annotations['llamactl.io/force-admit'] = 'true';
+    annotations["llamactl.io/force-admit"] = "true";
   }
   return manifest;
 }
 
 export async function runApply(args: string[]): Promise<number> {
   const parsed = parseApplyFlags(args);
-  if ('error' in parsed) {
-    const stream = parsed.error === 'help' ? process.stdout : process.stderr;
+  if ("error" in parsed) {
+    const stream = parsed.error === "help" ? process.stdout : process.stderr;
     stream.write(APPLY_USAGE);
-    return parsed.error === 'help' ? 0 : 1;
+    return parsed.error === "help" ? 0 : 1;
   }
   const manifestPath = resolvePath(parsed.file);
   if (!existsSync(manifestPath)) {
     process.stderr.write(`apply: file not found: ${manifestPath}\n`);
     return 1;
   }
-  const raw = readFileSync(manifestPath, 'utf8');
+  const raw = readFileSync(manifestPath, "utf8");
   // Peek at `kind` to route — ModelRun and NodeRun have different
   // schemas + different applier semantics but share the apply CLI.
   let kind: string | undefined;
@@ -195,10 +199,10 @@ export async function runApply(args: string[]): Promise<number> {
     process.stderr.write(`apply: manifest YAML is not parseable\n`);
     return 1;
   }
-  if (kind === 'NodeRun') {
+  if (kind === "NodeRun") {
     return applyNodeRunFromRaw(raw, parsed.json);
   }
-  if (kind === 'ModelHost') {
+  if (kind === "ModelHost") {
     return applyModelHostFromRaw(raw, parsed.json);
   }
   return applyModelRunFromRaw(raw, parsed.json, parsed);
@@ -207,7 +211,7 @@ export async function runApply(args: string[]): Promise<number> {
 async function applyModelRunFromRaw(
   raw: string,
   json: boolean,
-  flags: Pick<ApplyFlags, 'evict' | 'force'>,
+  flags: Pick<ApplyFlags, "evict" | "force">,
 ): Promise<number> {
   let manifest: workloadSchema.ModelRun;
   try {
@@ -226,9 +230,10 @@ async function applyModelRunFromRaw(
     const cfg = kubecfg.loadConfig();
     const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
     const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
-    const lookupNode = (name: string) =>
-      (cluster?.nodes ?? []).find((n) => n.name === name);
-    const gatewayDispatch = (opts: Parameters<NonNullable<Parameters<typeof workloadApply.applyOne>[3]>>[0]) =>
+    const lookupNode = (name: string) => (cluster?.nodes ?? []).find((n) => n.name === name);
+    const gatewayDispatch = (
+      opts: Parameters<NonNullable<Parameters<typeof workloadApply.applyOne>[3]>>[0],
+    ) =>
       workloadGatewayHandlers.dispatchGatewayApply({
         manifest: opts.manifest,
         getClient: opts.getClient,
@@ -266,9 +271,9 @@ async function applyModelRunFromRaw(
   // incomplete. Agent manifests that reach 'started' always produce
   // phase=Running here, so the check only fires on gateway paths.
   const phase = result.statusSection.phase;
-  const conditionMessage = result.statusSection.conditions[0]?.message ?? '';
-  const conditionReason = result.statusSection.conditions[0]?.reason ?? '';
-  const gatewayIncomplete = manifest.spec.gateway && phase !== 'Running';
+  const conditionMessage = result.statusSection.conditions[0]?.message ?? "";
+  const conditionReason = result.statusSection.conditions[0]?.reason ?? "";
+  const gatewayIncomplete = manifest.spec.gateway && phase !== "Running";
   if (json) {
     process.stdout.write(
       `${JSON.stringify({ action: result.action, path: savedPath, status: result.statusSection }, null, 2)}\n`,
@@ -325,20 +330,24 @@ async function applyNodeRunFromRaw(raw: string, json: boolean): Promise<number> 
       `${result.status.phase.toLowerCase()} noderun/${manifest.metadata.name} on node ${manifest.spec.node}\n`,
     );
     process.stdout.write(`  manifest: ${savedPath}\n`);
-    const nonSkip = result.actions.filter((a) => a.type !== 'skip');
+    const nonSkip = result.actions.filter((a) => a.type !== "skip");
     if (nonSkip.length === 0) {
       process.stdout.write(`  no changes — every infra entry already at desired version\n`);
     } else {
       process.stdout.write(`  actions:\n`);
       for (const outcome of result.outcomes) {
         const a = outcome.action;
-        const tail = outcome.ok ? '' : `  ERROR: ${outcome.error ?? '(unknown)'}`;
+        const tail = outcome.ok ? "" : `  ERROR: ${outcome.error ?? "(unknown)"}`;
         const label =
-          a.type === 'install' ? `install ${a.pkg}@${a.version} (${a.reason})`
-          : a.type === 'activate' ? `activate ${a.pkg}@${a.version}`
-          : a.type === 'uninstall-version' ? `uninstall ${a.pkg}@${a.version} (${a.reason})`
-          : a.type === 'uninstall-pkg' ? `uninstall ${a.pkg} (${a.reason})`
-          : `skip ${a.pkg}@${a.version} (${a.reason})`;
+          a.type === "install"
+            ? `install ${a.pkg}@${a.version} (${a.reason})`
+            : a.type === "activate"
+              ? `activate ${a.pkg}@${a.version}`
+              : a.type === "uninstall-version"
+                ? `uninstall ${a.pkg}@${a.version} (${a.reason})`
+                : a.type === "uninstall-pkg"
+                  ? `uninstall ${a.pkg} (${a.reason})`
+                  : `skip ${a.pkg}@${a.version} (${a.reason})`;
         process.stdout.write(`    * ${label}${tail}\n`);
       }
     }
@@ -351,7 +360,9 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
   try {
     manifest = parseYaml(raw);
   } catch (err) {
-    process.stderr.write(`apply: ModelHost manifest YAML parse failed: ${(err as Error).message}\n`);
+    process.stderr.write(
+      `apply: ModelHost manifest YAML parse failed: ${(err as Error).message}\n`,
+    );
     return 1;
   }
 
@@ -379,7 +390,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
       process.stderr.write(`apply: ${outcome.error}\n`);
       return 1;
     }
-    if (outcome.kind !== 'ModelHost') {
+    if (outcome.kind !== "ModelHost") {
       process.stderr.write(`apply: expected ModelHost outcome, got ${outcome.kind}\n`);
       return 1;
     }
@@ -388,8 +399,8 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
       process.stdout.write(
         `${JSON.stringify(
           {
-            action: 'started',
-            kind: 'ModelHost',
+            action: "started",
+            kind: "ModelHost",
             name: outcome.manifest.metadata.name,
             pid: outcome.pid,
             endpoint: outcome.endpoint,
@@ -400,7 +411,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
       );
     } else {
       process.stdout.write(
-        `modelhost/${outcome.manifest.metadata.name}: ModelHost ready at ${outcome.endpoint}${typeof outcome.pid === 'number' ? ` pid=${outcome.pid}` : ' pid=remote'}\n`,
+        `modelhost/${outcome.manifest.metadata.name}: ModelHost ready at ${outcome.endpoint}${typeof outcome.pid === "number" ? ` pid=${outcome.pid}` : " pid=remote"}\n`,
       );
     }
     return 0;
@@ -413,22 +424,20 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
 type WorkloadRow = {
   name: string;
   node: string;
-  phase: 'Running' | 'Stopped' | 'Mismatch' | 'Unreachable' | 'Pending' | 'Failed';
+  phase: "Running" | "Stopped" | "Mismatch" | "Unreachable" | "Pending" | "Failed";
   rel: string;
   endpoint: string | null;
   gateway: boolean;
 };
 
-async function inspect(
-  manifest: workloadSchema.ModelRun,
-): Promise<WorkloadRow> {
+async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> {
   // Gateway manifests never run a local server on a reachable agent
   // — their phase lives in the persisted status the handler wrote.
   // Probing serverStatus would always return Unreachable because the
   // target node is a gateway (cloud kind, no agent tRPC endpoint).
   if (manifest.spec.gateway) {
     const status = manifest.status;
-    const phase = (status?.phase ?? 'Pending') as WorkloadRow['phase'];
+    const phase = (status?.phase ?? "Pending") as WorkloadRow["phase"];
     return {
       name: manifest.metadata.name,
       node: manifest.spec.node,
@@ -443,10 +452,10 @@ async function inspect(
     const client = getNodeClientByName(manifest.spec.node);
     const status = await client.serverStatus.query({ workload: manifest.metadata.name });
     const desired = manifest.spec.target.value;
-    const running = status.state === 'up';
-    let phase: WorkloadRow['phase'] = 'Stopped';
-    if (running && status.rel === desired) phase = 'Running';
-    else if (running && status.rel !== desired) phase = 'Mismatch';
+    const running = status.state === "up";
+    let phase: WorkloadRow["phase"] = "Stopped";
+    if (running && status.rel === desired) phase = "Running";
+    else if (running && status.rel !== desired) phase = "Mismatch";
     return {
       name: manifest.metadata.name,
       node: manifest.spec.node,
@@ -459,7 +468,7 @@ async function inspect(
     return {
       name: manifest.metadata.name,
       node: manifest.spec.node,
-      phase: 'Unreachable',
+      phase: "Unreachable",
       rel: manifest.spec.target.value,
       endpoint: null,
       gateway: false,
@@ -471,8 +480,8 @@ export async function runGet(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   let json = false;
   for (const arg of rest) {
-    if (arg === '--json') json = true;
-    else if (arg === '-h' || arg === '--help') {
+    if (arg === "--json") json = true;
+    else if (arg === "-h" || arg === "--help") {
       process.stdout.write(GET_USAGE);
       return 0;
     } else {
@@ -480,10 +489,10 @@ export async function runGet(args: string[]): Promise<number> {
       return 1;
     }
   }
-  if (sub === 'noderuns' || sub === 'noderun') {
+  if (sub === "noderuns" || sub === "noderun") {
     return runGetNodeRuns(json);
   }
-  if (sub !== 'workloads' && sub !== 'workload') {
+  if (sub !== "workloads" && sub !== "workload") {
     process.stderr.write(GET_USAGE);
     return 1;
   }
@@ -493,43 +502,46 @@ export async function runGet(args: string[]): Promise<number> {
   const rows = [
     ...(await Promise.all(manifests.map(inspect))).map((row) => ({
       ...row,
-      kind: 'modelrun' as const,
+      kind: "modelrun" as const,
     })),
-    ...(await Promise.all(modelHosts.map(async (manifest) => {
-      const state = readModelHostState({ name: manifest.metadata.name });
-      const endpoint = state ? formatEndpoint(state.host, state.port) : null;
-      let phase: string = 'unknown';
-      if (state) {
-        const probe = await probeHealthEndpoint(state.host, state.port).catch(() => ({ reachable: false }));
-        phase = probe.reachable ? 'Running' : 'Unreachable';
-      }
-      return {
-        kind: 'modelhost' as const,
-        name: manifest.metadata.name,
-        node: manifest.spec.node,
-        phase,
-        rel: manifest.spec.hostedModels.map((m) => m.rel).join(', '),
-        endpoint,
-        gateway: false,
-      };
-    }))),
+    ...(await Promise.all(
+      modelHosts.map(async (manifest) => {
+        const state = readModelHostState({ name: manifest.metadata.name });
+        const endpoint = state ? formatEndpoint(state.host, state.port) : null;
+        let phase: string = "unknown";
+        if (state) {
+          const probe = await probeHealthEndpoint(state.host, state.port).catch(() => ({
+            reachable: false,
+          }));
+          phase = probe.reachable ? "Running" : "Unreachable";
+        }
+        return {
+          kind: "modelhost" as const,
+          name: manifest.metadata.name,
+          node: manifest.spec.node,
+          phase,
+          rel: manifest.spec.hostedModels.map((m) => m.rel).join(", "),
+          endpoint,
+          gateway: false,
+        };
+      }),
+    )),
   ];
   if (json) {
     process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
     return 0;
   }
   if (rows.length === 0) {
-    process.stdout.write('No workloads registered.\n');
+    process.stdout.write("No workloads registered.\n");
     return 0;
   }
-  const pad = (s: string, w: number): string =>
-    s.length >= w ? s : s + ' '.repeat(w - s.length);
+  const pad = (s: string, w: number): string => (s.length >= w ? s : s + " ".repeat(w - s.length));
   const nameW = Math.max(4, ...rows.map((r) => r.name.length));
   const nodeW = Math.max(4, ...rows.map((r) => r.node.length));
   const phaseW = Math.max(5, ...rows.map((r) => r.phase.length));
   const kindW = 9;
   process.stdout.write(
-    `${pad('NAME', nameW)}  ${pad('NODE', nodeW)}  ${pad('KIND', kindW)}  ${pad('PHASE', phaseW)}  REL\n`,
+    `${pad("NAME", nameW)}  ${pad("NODE", nodeW)}  ${pad("KIND", kindW)}  ${pad("PHASE", phaseW)}  REL\n`,
   );
   for (const r of rows) {
     process.stdout.write(
@@ -543,8 +555,8 @@ export async function runDescribe(args: string[]): Promise<number> {
   const [kind, name, ...rest] = args;
   let json = false;
   for (const arg of rest) {
-    if (arg === '--json') json = true;
-    else if (arg === '-h' || arg === '--help') {
+    if (arg === "--json") json = true;
+    else if (arg === "-h" || arg === "--help") {
       process.stdout.write(DESCRIBE_USAGE);
       return 0;
     } else {
@@ -552,13 +564,13 @@ export async function runDescribe(args: string[]): Promise<number> {
       return 1;
     }
   }
-  if ((kind === 'noderun' || kind === 'noderuns') && name) {
+  if ((kind === "noderun" || kind === "noderuns") && name) {
     return runDescribeNodeRun(name, json);
   }
-  if (kind === 'node' && name) {
+  if (kind === "node" && name) {
     return runDescribeNode(name, json);
   }
-  if (kind !== 'workload' && kind !== 'workloads') {
+  if (kind !== "workload" && kind !== "workloads") {
     process.stderr.write(DESCRIBE_USAGE);
     return 1;
   }
@@ -587,14 +599,16 @@ export async function runDescribe(args: string[]): Promise<number> {
   process.stdout.write(`Name:       ${manifest.metadata.name}\n`);
   process.stdout.write(`Node:       ${manifest.spec.node}\n`);
   process.stdout.write(`Target:     ${manifest.spec.target.kind}:${manifest.spec.target.value}\n`);
-  process.stdout.write(`ExtraArgs:  ${manifest.spec.extraArgs.join(' ') || '(none)'}\n`);
+  process.stdout.write(`ExtraArgs:  ${manifest.spec.extraArgs.join(" ") || "(none)"}\n`);
   process.stdout.write(`RestartPolicy: ${manifest.spec.restartPolicy}\n`);
   if (manifest.status) {
     process.stdout.write(
-      `Status:     phase=${manifest.status.phase} endpoint=${manifest.status.endpoint ?? 'none'} pid=${manifest.status.serverPid ?? 'none'} since=${manifest.status.lastTransitionTime}\n`,
+      `Status:     phase=${manifest.status.phase} endpoint=${manifest.status.endpoint ?? "none"} pid=${manifest.status.serverPid ?? "none"} since=${manifest.status.lastTransitionTime}\n`,
     );
   }
-  process.stdout.write(`LiveStatus: ${JSON.stringify(liveStatus, null, 2).replace(/\n/g, '\n            ')}\n`);
+  process.stdout.write(
+    `LiveStatus: ${JSON.stringify(liveStatus, null, 2).replace(/\n/g, "\n            ")}\n`,
+  );
   return 0;
 }
 
@@ -618,8 +632,8 @@ export async function runDelete(args: string[]): Promise<number> {
   const [kind, name, ...rest] = args;
   let keepRunning = false;
   for (const arg of rest) {
-    if (arg === '--keep-running') keepRunning = true;
-    else if (arg === '-h' || arg === '--help') {
+    if (arg === "--keep-running") keepRunning = true;
+    else if (arg === "-h" || arg === "--help") {
       process.stdout.write(DELETE_USAGE);
       return 0;
     } else {
@@ -627,7 +641,7 @@ export async function runDelete(args: string[]): Promise<number> {
       return 1;
     }
   }
-  if ((kind === 'noderun' || kind === 'noderuns') && name) {
+  if ((kind === "noderun" || kind === "noderuns") && name) {
     const removed = noderunStore.deleteNodeRun(name);
     if (!removed) {
       process.stderr.write(`delete: noderun ${name} not found\n`);
@@ -636,7 +650,7 @@ export async function runDelete(args: string[]): Promise<number> {
     process.stdout.write(`deleted noderun/${name}\n`);
     return 0;
   }
-  if (kind !== 'workload' && kind !== 'workloads') {
+  if (kind !== "workload" && kind !== "workloads") {
     process.stderr.write(DELETE_USAGE);
     return 1;
   }
@@ -651,7 +665,7 @@ export async function runDelete(args: string[]): Promise<number> {
     process.stderr.write(`delete: ${(err as Error).message}\n`);
     return 1;
   }
-  if (manifest.kind === 'ModelHost') {
+  if (manifest.kind === "ModelHost") {
     if (!keepRunning) {
       try {
         const client = getWorkloadNodeClient(manifest.spec.node);
@@ -664,7 +678,10 @@ export async function runDelete(args: string[]): Promise<number> {
           `warning: failed to reach node ${manifest.spec.node}: ${(err as Error).message}\n`,
         );
       }
-      rmSync(workloadRuntimeDir(resolveEnv(), { name: manifest.metadata.name }), { recursive: true, force: true });
+      rmSync(workloadRuntimeDir(resolveEnv(), { name: manifest.metadata.name }), {
+        recursive: true,
+        force: true,
+      });
     }
     const ok = workloadStore.deleteWorkload(name);
     if (!ok) {
@@ -682,12 +699,12 @@ export async function runDelete(args: string[]): Promise<number> {
       // Only stop the server if the running rel matches this workload's
       // target. If something else is running there (perhaps another
       // workload was applied on top), leave it alone.
-      if (status.state === 'up' && status.rel === manifest.spec.target.value) {
+      if (status.state === "up" && status.rel === manifest.spec.target.value) {
         await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
         process.stdout.write(`stopped server on node ${manifest.spec.node}\n`);
-      } else if (status.state === 'up') {
+      } else if (status.state === "up") {
         process.stdout.write(
-          `skipped stop: node ${manifest.spec.node} is running a different rel (${status.rel ?? 'unknown'})\n`,
+          `skipped stop: node ${manifest.spec.node} is running a different rel (${status.rel ?? "unknown"})\n`,
         );
       }
     } catch (err) {
@@ -728,22 +745,21 @@ async function runGetNodeRuns(json: boolean): Promise<number> {
     return 0;
   }
   if (manifests.length === 0) {
-    process.stdout.write('No NodeRuns registered.\n');
+    process.stdout.write("No NodeRuns registered.\n");
     return 0;
   }
-  const pad = (s: string, w: number): string =>
-    s.length >= w ? s : s + ' '.repeat(w - s.length);
+  const pad = (s: string, w: number): string => (s.length >= w ? s : s + " ".repeat(w - s.length));
   const rows = manifests.map((m) => ({
     name: m.metadata.name,
     node: m.spec.node,
-    phase: m.status?.phase ?? 'Pending',
-    infra: m.spec.infra.map((i) => `${i.pkg}@${i.version}`).join(','),
+    phase: m.status?.phase ?? "Pending",
+    infra: m.spec.infra.map((i) => `${i.pkg}@${i.version}`).join(","),
   }));
   const nameW = Math.max(4, ...rows.map((r) => r.name.length));
   const nodeW = Math.max(4, ...rows.map((r) => r.node.length));
   const phaseW = Math.max(5, ...rows.map((r) => r.phase.length));
   process.stdout.write(
-    `${pad('NAME', nameW)}  ${pad('NODE', nodeW)}  ${pad('PHASE', phaseW)}  INFRA\n`,
+    `${pad("NAME", nameW)}  ${pad("NODE", nodeW)}  ${pad("PHASE", phaseW)}  INFRA\n`,
   );
   for (const r of rows) {
     process.stdout.write(
@@ -769,9 +785,7 @@ async function runDescribeNodeRun(name: string, json: boolean): Promise<number> 
     liveInfra = { error: (err as Error).message };
   }
   if (json) {
-    process.stdout.write(
-      `${JSON.stringify({ manifest, liveInfra }, null, 2)}\n`,
-    );
+    process.stdout.write(`${JSON.stringify({ manifest, liveInfra }, null, 2)}\n`);
     return 0;
   }
   process.stdout.write(`Name:       ${manifest.metadata.name}\n`);
@@ -779,9 +793,9 @@ async function runDescribeNodeRun(name: string, json: boolean): Promise<number> 
   process.stdout.write(`Infra:\n`);
   for (const item of manifest.spec.infra) {
     const flags = [
-      item.service ? 'service' : 'binary',
-      ...(item.tarballUrl ? ['ad-hoc-artifact'] : []),
-    ].join(',');
+      item.service ? "service" : "binary",
+      ...(item.tarballUrl ? ["ad-hoc-artifact"] : []),
+    ].join(",");
     process.stdout.write(`  * ${item.pkg}@${item.version}  (${flags})\n`);
   }
   if (manifest.status) {
@@ -790,7 +804,7 @@ async function runDescribeNodeRun(name: string, json: boolean): Promise<number> 
     );
   }
   process.stdout.write(
-    `LiveInfra:  ${JSON.stringify(liveInfra, null, 2).replace(/\n/g, '\n            ')}\n`,
+    `LiveInfra:  ${JSON.stringify(liveInfra, null, 2).replace(/\n/g, "\n            ")}\n`,
   );
   return 0;
 }

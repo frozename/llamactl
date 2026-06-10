@@ -10,7 +10,22 @@
     "binary": "/Volumes/WorkSSD/src/llama.cpp/build/bin/llama-server",
     "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/Qwen3.5-4B-MoQ/MoQ-4.25.gguf",
     "extra_args": [],
-    "start_args": ["--ctx-size", "32768", "-ngl", "999", "--flash-attn", "on", "--no-warmup", "-np", "1", "--jinja", "-rea", "off", "--alias", "local"],
+    "start_args": [
+      "--ctx-size",
+      "32768",
+      "-ngl",
+      "999",
+      "--flash-attn",
+      "on",
+      "--no-warmup",
+      "-np",
+      "1",
+      "--jinja",
+      "-rea",
+      "off",
+      "--alias",
+      "local"
+    ],
     "managed": true
   },
   {
@@ -24,7 +39,22 @@
     "binary": "/Volumes/WorkSSD/src/llama.cpp/build/bin/llama-server",
     "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/Qwen3.5-9B-MoQ/MoQ-Quants-Latest/Qwen3.5-9B-MoQ-4.3.gguf",
     "extra_args": [],
-    "start_args": ["--ctx-size", "32768", "-ngl", "999", "--flash-attn", "on", "--no-warmup", "-np", "1", "--jinja", "-rea", "off", "--alias", "local"],
+    "start_args": [
+      "--ctx-size",
+      "32768",
+      "-ngl",
+      "999",
+      "--flash-attn",
+      "on",
+      "--no-warmup",
+      "-np",
+      "1",
+      "--jinja",
+      "-rea",
+      "off",
+      "--alias",
+      "local"
+    ],
     "managed": true
   },
   {
@@ -38,7 +68,22 @@
     "binary": "/Volumes/WorkSSD/src/llama.cpp/build/bin/llama-server",
     "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/Qwopus3.5-9B-Coder-MTP-MoQ/MoQ-Quants/MoQ-4.2.gguf",
     "extra_args": [],
-    "start_args": ["--ctx-size", "32768", "-ngl", "999", "--flash-attn", "on", "--no-warmup", "-np", "1", "--jinja", "-rea", "off", "--alias", "local"],
+    "start_args": [
+      "--ctx-size",
+      "32768",
+      "-ngl",
+      "999",
+      "--flash-attn",
+      "on",
+      "--no-warmup",
+      "-np",
+      "1",
+      "--jinja",
+      "-rea",
+      "off",
+      "--alias",
+      "local"
+    ],
     "managed": true
   },
   {
@@ -52,7 +97,22 @@
     "binary": "/Volumes/WorkSSD/src/llama.cpp/build/bin/llama-server",
     "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/LFM2.5-8B-A1B-MoQ/MoQ-4.25.gguf",
     "extra_args": [],
-    "start_args": ["--ctx-size", "32768", "-ngl", "999", "--flash-attn", "on", "--no-warmup", "-np", "1", "--jinja", "-rea", "off", "--alias", "local"],
+    "start_args": [
+      "--ctx-size",
+      "32768",
+      "-ngl",
+      "999",
+      "--flash-attn",
+      "on",
+      "--no-warmup",
+      "-np",
+      "1",
+      "--jinja",
+      "-rea",
+      "off",
+      "--alias",
+      "local"
+    ],
     "managed": true
   }
 ]

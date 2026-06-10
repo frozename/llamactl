@@ -1,6 +1,6 @@
 // packages/remote/src/search/knowledge.ts
-import { findTextMatches } from './text-match.js';
-import type { KnowledgeHit, MatchExcerpt } from './types.js';
+import { findTextMatches } from "./text-match.js";
+import type { KnowledgeHit, MatchExcerpt } from "./types.js";
 
 export interface KnowledgeEntity {
   id: string;
@@ -25,14 +25,14 @@ export function searchKnowledge(opts: SearchKnowledgeOpts): KnowledgeHit[] {
     let score = 0;
     const titleM = findTextMatches({ needle: opts.query, text: e.title });
     for (const m of titleM.slice(0, cap)) {
-      matches.push({ where: 'title', snippet: m.snippet, spans: m.spans });
+      matches.push({ where: "title", snippet: m.snippet, spans: m.spans });
       score = Math.max(score, m.score + TITLE_BOOST);
     }
     if (e.body && matches.length < cap) {
       const bodyM = findTextMatches({ needle: opts.query, text: e.body });
       for (const m of bodyM) {
         if (matches.length >= cap) break;
-        matches.push({ where: 'body', snippet: m.snippet, spans: m.spans });
+        matches.push({ where: "body", snippet: m.snippet, spans: m.spans });
         score = Math.max(score, m.score);
       }
     }

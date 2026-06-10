@@ -1,15 +1,8 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { join } from 'node:path';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { defaultWorkloadsDir } from './store.js';
-import { NodeRunSchema, type NodeRun } from './noderun-schema.js';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { defaultWorkloadsDir } from "./store.js";
+import { NodeRunSchema, type NodeRun } from "./noderun-schema.js";
 
 /**
  * NodeRun manifests share the ~/.llamactl/workloads/ directory with
@@ -32,14 +25,11 @@ export function nodeRunPath(name: string, dir: string = defaultNodeRunsDir()): s
 }
 
 export function loadNodeRun(path: string): NodeRun {
-  const raw = readFileSync(path, 'utf8');
+  const raw = readFileSync(path, "utf8");
   return parseNodeRun(raw);
 }
 
-export function loadNodeRunByName(
-  name: string,
-  dir: string = defaultNodeRunsDir(),
-): NodeRun {
+export function loadNodeRunByName(name: string, dir: string = defaultNodeRunsDir()): NodeRun {
   const path = nodeRunPath(name, dir);
   if (!existsSync(path)) {
     throw new Error(`NodeRun ${name} not found at ${path}`);
@@ -47,14 +37,11 @@ export function loadNodeRunByName(
   return loadNodeRun(path);
 }
 
-export function saveNodeRun(
-  manifest: NodeRun,
-  dir: string = defaultNodeRunsDir(),
-): string {
+export function saveNodeRun(manifest: NodeRun, dir: string = defaultNodeRunsDir()): string {
   NodeRunSchema.parse(manifest);
   mkdirSync(dir, { recursive: true });
   const path = nodeRunPath(manifest.metadata.name, dir);
-  writeFileSync(path, stringifyYaml(manifest), 'utf8');
+  writeFileSync(path, stringifyYaml(manifest), "utf8");
   return path;
 }
 
@@ -62,12 +49,12 @@ export function listNodeRuns(dir: string = defaultNodeRunsDir()): NodeRun[] {
   if (!existsSync(dir)) return [];
   const out: NodeRun[] = [];
   for (const entry of readdirSync(dir)) {
-    if (!entry.endsWith('.yaml')) continue;
+    if (!entry.endsWith(".yaml")) continue;
     const path = join(dir, entry);
     try {
-      const raw = readFileSync(path, 'utf8');
+      const raw = readFileSync(path, "utf8");
       const parsed = parseYaml(raw) as { kind?: string };
-      if (parsed?.kind !== 'NodeRun') continue;
+      if (parsed?.kind !== "NodeRun") continue;
       out.push(NodeRunSchema.parse(parsed));
     } catch {
       // Skip malformed / wrong-kind files silently — `apply`-time
@@ -78,10 +65,7 @@ export function listNodeRuns(dir: string = defaultNodeRunsDir()): NodeRun[] {
   return out;
 }
 
-export function deleteNodeRun(
-  name: string,
-  dir: string = defaultNodeRunsDir(),
-): boolean {
+export function deleteNodeRun(name: string, dir: string = defaultNodeRunsDir()): boolean {
   const path = nodeRunPath(name, dir);
   if (!existsSync(path)) return false;
   rmSync(path, { force: true });

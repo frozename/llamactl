@@ -1,6 +1,6 @@
-import { execSync } from 'node:child_process';
-import { statSync } from 'node:fs';
-import { resolveEnv } from './env.js';
+import { execSync } from "node:child_process";
+import { statSync } from "node:fs";
+import { resolveEnv } from "./env.js";
 
 /**
  * Compute an abbreviated build identifier for the current llama.cpp
@@ -20,10 +20,10 @@ export function resolveBuildId(resolved = resolveEnv()): string {
     const gitDir = `${LLAMA_CPP_SRC}/.git`;
     const stat = statSync(gitDir);
     if (stat.isDirectory() || stat.isFile()) {
-      const out = execSync(
-        `git -C ${JSON.stringify(LLAMA_CPP_SRC)} rev-parse --short HEAD`,
-        { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' },
-      ).trim();
+      const out = execSync(`git -C ${JSON.stringify(LLAMA_CPP_SRC)} rev-parse --short HEAD`, {
+        stdio: ["ignore", "pipe", "ignore"],
+        encoding: "utf8",
+      }).trim();
       if (out.length > 0) return out;
     }
   } catch {
@@ -41,5 +41,5 @@ export function resolveBuildId(resolved = resolveEnv()): string {
     // fall through
   }
 
-  return 'unknown';
+  return "unknown";
 }

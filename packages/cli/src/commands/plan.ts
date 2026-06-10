@@ -1,4 +1,4 @@
-import { createDefaultToolClient } from '@llamactl/agents';
+import { createDefaultToolClient } from "@llamactl/agents";
 import {
   DEFAULT_ALLOWLIST,
   createLlmExecutor,
@@ -6,8 +6,8 @@ import {
   stubPlannerExecutor,
   type PlannerExecutor,
   type Plan,
-} from '@nova/mcp';
-import { createOpenAICompatProvider } from '@nova/contracts';
+} from "@nova/mcp";
+import { createOpenAICompatProvider } from "@nova/contracts";
 
 const USAGE = `llamactl plan — LLM-backed operator planner
 
@@ -61,47 +61,61 @@ interface RunFlags {
   apiKeyEnv: string;
 }
 
-type ParseResult =
-  | { kind: 'ok'; flags: RunFlags }
-  | { kind: 'help' }
-  | { kind: 'error' };
+type ParseResult = { kind: "ok"; flags: RunFlags } | { kind: "help" } | { kind: "error" };
 
 function parseRunFlags(argv: string[]): ParseResult {
   const flags: RunFlags = {
-    goal: '',
+    goal: "",
     stub: false,
     auto: false,
     json: false,
-    context: '',
+    context: "",
     model: null,
-    baseUrl: 'https://api.openai.com/v1',
-    apiKeyEnv: 'OPENAI_API_KEY',
+    baseUrl: "https://api.openai.com/v1",
+    apiKeyEnv: "OPENAI_API_KEY",
   };
   const positional: string[] = [];
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') {
+    if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
-      return { kind: 'help' };
+      return { kind: "help" };
     }
-    if (arg === '--stub') { flags.stub = true; continue; }
-    if (arg === '--auto') { flags.auto = true; continue; }
-    if (arg === '--json') { flags.json = true; continue; }
-    if (arg.startsWith('--')) {
-      const eq = arg.indexOf('=');
+    if (arg === "--stub") {
+      flags.stub = true;
+      continue;
+    }
+    if (arg === "--auto") {
+      flags.auto = true;
+      continue;
+    }
+    if (arg === "--json") {
+      flags.json = true;
+      continue;
+    }
+    if (arg.startsWith("--")) {
+      const eq = arg.indexOf("=");
       if (eq < 0) {
         process.stderr.write(`plan run: flag ${arg} requires a value (--key=value)\n`);
-        return { kind: 'error' };
+        return { kind: "error" };
       }
       const key = arg.slice(2, eq);
       const value = arg.slice(eq + 1);
       switch (key) {
-        case 'context': flags.context = value; break;
-        case 'model': flags.model = value; break;
-        case 'base-url': flags.baseUrl = value; break;
-        case 'api-key-env': flags.apiKeyEnv = value; break;
+        case "context":
+          flags.context = value;
+          break;
+        case "model":
+          flags.model = value;
+          break;
+        case "base-url":
+          flags.baseUrl = value;
+          break;
+        case "api-key-env":
+          flags.apiKeyEnv = value;
+          break;
         default:
           process.stderr.write(`plan run: unknown flag --${key}\n\n${USAGE}`);
-          return { kind: 'error' };
+          return { kind: "error" };
       }
       continue;
     }
@@ -109,16 +123,16 @@ function parseRunFlags(argv: string[]): ParseResult {
   }
   if (positional.length === 0) {
     process.stderr.write(`plan run: goal is required\n\n${USAGE}`);
-    return { kind: 'error' };
+    return { kind: "error" };
   }
-  flags.goal = positional.join(' ');
-  return { kind: 'ok', flags };
+  flags.goal = positional.join(" ");
+  return { kind: "ok", flags };
 }
 
 function buildExecutor(flags: RunFlags): PlannerExecutor | { error: string } {
   if (flags.stub) return stubPlannerExecutor;
   if (!flags.model) {
-    return { error: 'plan run: --model is required unless --stub is set' };
+    return { error: "plan run: --model is required unless --stub is set" };
   }
   const apiKey = process.env[flags.apiKeyEnv];
   if (!apiKey) {
@@ -127,7 +141,7 @@ function buildExecutor(flags: RunFlags): PlannerExecutor | { error: string } {
     };
   }
   const provider = createOpenAICompatProvider({
-    name: 'planner-llm',
+    name: "planner-llm",
     baseUrl: flags.baseUrl,
     apiKey,
   });
@@ -139,15 +153,15 @@ async function confirm(prompt: string): Promise<boolean> {
   const line = await new Promise<string>((resolve) => {
     const chunks: string[] = [];
     const onData = (buf: Buffer | string): void => {
-      chunks.push(typeof buf === 'string' ? buf : buf.toString('utf8'));
-      const joined = chunks.join('');
-      if (joined.includes('\n')) {
-        process.stdin.off('data', onData);
+      chunks.push(typeof buf === "string" ? buf : buf.toString("utf8"));
+      const joined = chunks.join("");
+      if (joined.includes("\n")) {
+        process.stdin.off("data", onData);
         process.stdin.pause();
-        resolve(joined.split('\n')[0]!);
+        resolve(joined.split("\n")[0]!);
       }
     };
-    process.stdin.on('data', onData);
+    process.stdin.on("data", onData);
     process.stdin.resume();
   });
   return /^\s*y/i.test(line);
@@ -162,24 +176,24 @@ function renderPlan(plan: Plan, toolsAvailable: string[], executor: string): str
   lines.push(`steps (${plan.steps.length}):`);
   for (let i = 0; i < plan.steps.length; i++) {
     const s = plan.steps[i]!;
-    const dryRun = s.dryRun === true ? ' [dry-run]' : '';
+    const dryRun = s.dryRun === true ? " [dry-run]" : "";
     lines.push(`  ${i + 1}. ${s.tool}${dryRun}`);
     lines.push(`     ${s.annotation}`);
     if (s.args && Object.keys(s.args).length > 0) {
       lines.push(`     args: ${JSON.stringify(s.args)}`);
     }
   }
-  return lines.join('\n') + '\n';
+  return lines.join("\n") + "\n";
 }
 
 async function runPlanRun(argv: string[]): Promise<number> {
   const parsed = parseRunFlags(argv);
-  if (parsed.kind === 'help') return 0;
-  if (parsed.kind === 'error') return 1;
+  if (parsed.kind === "help") return 0;
+  if (parsed.kind === "error") return 1;
   const { flags } = parsed;
 
   const executor = buildExecutor(flags);
-  if ('error' in executor) {
+  if ("error" in executor) {
     process.stderr.write(`${executor.error}\n`);
     return 1;
   }
@@ -195,9 +209,7 @@ async function runPlanRun(argv: string[]): Promise<number> {
       allowlist: DEFAULT_ALLOWLIST,
     });
     if (!result.ok) {
-      process.stderr.write(
-        `plan run: ${result.reason} — ${result.message}\n`,
-      );
+      process.stderr.write(`plan run: ${result.reason} — ${result.message}\n`);
       return 1;
     }
     if (flags.json) {
@@ -210,22 +222,20 @@ async function runPlanRun(argv: string[]): Promise<number> {
           },
           null,
           2,
-        ) + '\n',
+        ) + "\n",
       );
     } else {
-      process.stderr.write(
-        renderPlan(result.plan, result.toolsAvailable, result.executor),
-      );
+      process.stderr.write(renderPlan(result.plan, result.toolsAvailable, result.executor));
     }
     if (!flags.auto && result.plan.requiresConfirmation) {
-      const approved = await confirm('Approve this plan?');
+      const approved = await confirm("Approve this plan?");
       if (!approved) {
-        process.stderr.write('plan run: declined by operator\n');
+        process.stderr.write("plan run: declined by operator\n");
         return 2;
       }
     }
     process.stderr.write(
-      'plan run: approved (execution lands in a future slice — no tools were called)\n',
+      "plan run: approved (execution lands in a future slice — no tools were called)\n",
     );
     return 0;
   } finally {
@@ -236,12 +246,12 @@ async function runPlanRun(argv: string[]): Promise<number> {
 export async function runPlan(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
-    case 'run':
+    case "run":
       return runPlanRun(rest);
     case undefined:
-    case '--help':
-    case '-h':
-    case 'help':
+    case "--help":
+    case "-h":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:

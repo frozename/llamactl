@@ -1,10 +1,10 @@
-import { existsSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
-import { defaultSessionsDir } from '../ops-chat/paths.js';
-import { readJournal } from '../ops-chat/sessions/journal.js';
-import { getSessionSummary } from '../ops-chat/sessions/list.js';
-import { findTextMatches } from './text-match.js';
-import type { SessionHit, MatchExcerpt } from './types.js';
+import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { defaultSessionsDir } from "../ops-chat/paths.js";
+import { readJournal } from "../ops-chat/sessions/journal.js";
+import { getSessionSummary } from "../ops-chat/sessions/list.js";
+import { findTextMatches } from "./text-match.js";
+import type { SessionHit, MatchExcerpt } from "./types.js";
 
 export interface SearchSessionsOpts {
   query: string;
@@ -16,14 +16,14 @@ export interface SearchSessionsOpts {
 export async function searchSessions(opts: SearchSessionsOpts): Promise<SessionHit[]> {
   const root = defaultSessionsDir();
   if (!existsSync(root)) return [];
-  if (opts.signal?.aborted) throw new Error('aborted');
+  if (opts.signal?.aborted) throw new Error("aborted");
   const ids = (await readdir(root, { withFileTypes: true }))
     .filter((d) => d.isDirectory())
     .map((d) => d.name);
   const perCap = opts.perSessionCap ?? 5;
   const hits: SessionHit[] = [];
   for (const id of ids) {
-    if (opts.signal?.aborted) throw new Error('aborted');
+    if (opts.signal?.aborted) throw new Error("aborted");
     let summary;
     try {
       summary = await getSessionSummary(id);
@@ -35,12 +35,12 @@ export async function searchSessions(opts: SearchSessionsOpts): Promise<SessionH
     let bestScore = 0;
     const goalMatches = findTextMatches({ needle: opts.query, text: summary.goal });
     for (const m of goalMatches.slice(0, perCap)) {
-      matches.push({ where: 'goal', snippet: m.snippet, spans: m.spans });
+      matches.push({ where: "goal", snippet: m.snippet, spans: m.spans });
       bestScore = Math.max(bestScore, m.score);
     }
     for (const e of events) {
       if (matches.length >= perCap) break;
-      if (e.type === 'plan_proposed') {
+      if (e.type === "plan_proposed") {
         const r = findTextMatches({ needle: opts.query, text: e.reasoning });
         for (const m of r) {
           if (matches.length >= perCap) break;

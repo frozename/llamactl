@@ -1,23 +1,23 @@
-import { Database } from 'bun:sqlite';
-import { expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { KvRegistry, openKvStorage, type KvEntry } from '../src/kvstore/index.js';
-import { runMigrations } from '../src/kvstore/storage.js';
-import { workloadRuntimeRoot } from '../src/workloadRuntime.js';
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { KvRegistry, openKvStorage, type KvEntry } from "../src/kvstore/index.js";
+import { runMigrations } from "../src/kvstore/storage.js";
+import { workloadRuntimeRoot } from "../src/workloadRuntime.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
-  const root = mkdtempSync(join(tmpdir(), 'llamactl-kvstore-'));
+  const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-"));
   return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
   return {
-    sha: 'abc123',
-    workload: 'wl-a',
+    sha: "abc123",
+    workload: "wl-a",
     model: null,
-    upstreamSlotFile: '/tmp/slot.bin',
+    upstreamSlotFile: "/tmp/slot.bin",
     quantBits: 8,
     tokens: 2048,
     ctxSize: 32768,
@@ -26,50 +26,58 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
     lastUsed: 1716576000,
     payloadBytes: 1024,
     textBytes: 512,
-    reason: 'cold',
+    reason: "cold",
     prefixByteLength: 256,
-    workloadEpoch: 'epoch-1',
+    workloadEpoch: "epoch-1",
     quarantined: 0,
-    state: 'idle',
+    state: "idle",
     firstResponseToken: null,
     extFlags: 0,
     ...overrides,
   };
 }
 
-test('schema migration creates schema_version=5 and kv_entries columns', () => {
+test("schema migration creates schema_version=5 and kv_entries columns", () => {
   const t = makeTempRoot();
   try {
     const storage = openKvStorage(t.root);
-    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    const version = storage.db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+      version: number;
+    } | null;
     expect(version?.version).toBe(5);
-    const table = storage.db.query(`
+    const table = storage.db
+      .query(
+        `
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name = 'kv_entries'
       LIMIT 1
-    `).get() as { name: string } | null;
-    expect(table?.name).toBe('kv_entries');
-    const columns = storage.db.query("PRAGMA table_info('kv_entries')").all() as Array<{ name: string }>;
+    `,
+      )
+      .get() as { name: string } | null;
+    expect(table?.name).toBe("kv_entries");
+    const columns = storage.db.query("PRAGMA table_info('kv_entries')").all() as Array<{
+      name: string;
+    }>;
     expect(columns.map((c) => c.name)).toEqual([
-      'sha',
-      'workload',
-      'upstream_slot_file',
-      'quant_bits',
-      'tokens',
-      'ctx_size',
-      'hits',
-      'created_at',
-      'last_used',
-      'payload_bytes',
-      'text_bytes',
-      'reason',
-      'prefix_byte_length',
-      'workload_epoch',
-      'quarantined',
-      'state',
-      'first_response_token',
-      'ext_flags',
-      'model',
+      "sha",
+      "workload",
+      "upstream_slot_file",
+      "quant_bits",
+      "tokens",
+      "ctx_size",
+      "hits",
+      "created_at",
+      "last_used",
+      "payload_bytes",
+      "text_bytes",
+      "reason",
+      "prefix_byte_length",
+      "workload_epoch",
+      "quarantined",
+      "state",
+      "first_response_token",
+      "ext_flags",
+      "model",
     ]);
     storage.close();
   } finally {
@@ -77,23 +85,25 @@ test('schema migration creates schema_version=5 and kv_entries columns', () => {
   }
 });
 
-test('schema is preserved across reopens with existing rows', () => {
+test("schema is preserved across reopens with existing rows", () => {
   const t = makeTempRoot();
   try {
-    const slotFile = join(t.root, 'slot.bin');
-    writeFileSync(slotFile, 'payload');
+    const slotFile = join(t.root, "slot.bin");
+    writeFileSync(slotFile, "payload");
 
     const first = openKvStorage(t.root);
     const firstRegistry = new KvRegistry(first);
-    firstRegistry.insert(baseEntry({ sha: 'keep-me', upstreamSlotFile: slotFile }));
+    firstRegistry.insert(baseEntry({ sha: "keep-me", upstreamSlotFile: slotFile }));
     first.close();
 
     const second = openKvStorage(t.root);
     const secondRegistry = new KvRegistry(second);
-    const row = secondRegistry.get('keep-me');
+    const row = secondRegistry.get("keep-me");
     expect(row).not.toBeNull();
     expect(row?.upstreamSlotFile).toBe(slotFile);
-    const version = second.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    const version = second.db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+      version: number;
+    } | null;
     expect(version?.version).toBe(5);
     second.close();
   } finally {
@@ -101,22 +111,23 @@ test('schema is preserved across reopens with existing rows', () => {
   }
 });
 
-test('migration from v3 to v4 adds ext_flags column with 0 default', () => {
+test("migration from v3 to v4 adds ext_flags column with 0 default", () => {
   const t = makeTempRoot();
   try {
-    const kvDir = join(t.root, 'kvstore');
+    const kvDir = join(t.root, "kvstore");
     mkdirSync(kvDir, { recursive: true });
-    const dbPath = join(kvDir, 'registry.db');
+    const dbPath = join(kvDir, "registry.db");
     const db = new Database(dbPath);
-    db.run('PRAGMA journal_mode = WAL');
+    db.run("PRAGMA journal_mode = WAL");
     db.run(`
       CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER NOT NULL
       )
     `);
-    db.query('INSERT INTO schema_version (version) VALUES (0)').run();
+    db.query("INSERT INTO schema_version (version) VALUES (0)").run();
     runMigrations(db, 0, 3);
-    db.query(`
+    db.query(
+      `
       INSERT INTO kv_entries (
         sha, workload, upstream_slot_file, quant_bits, tokens, ctx_size, hits,
         created_at, last_used, payload_bytes, text_bytes, reason,
@@ -125,20 +136,29 @@ test('migration from v3 to v4 adds ext_flags column with 0 default', () => {
         'legacy-sha', 'wl-a', '/tmp/legacy.slot', 8, 123, 32768, 0,
         1, 1, 10, 5, 'cold', 64, 'epoch-legacy', 0, 'idle', NULL
       )
-    `).run();
+    `,
+    ).run();
     db.close();
 
     const storage = openKvStorage(t.root);
-    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    const version = storage.db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+      version: number;
+    } | null;
     expect(version?.version).toBe(5);
-    const row = storage.db.query(`
+    const row = storage.db
+      .query(
+        `
       SELECT state, first_response_token, ext_flags
       FROM kv_entries
       WHERE sha = ?
-    `).get('legacy-sha') as
-      | { state: string; first_response_token: string | null; ext_flags: number }
-      | null;
-    expect(row?.state).toBe('idle');
+    `,
+      )
+      .get("legacy-sha") as {
+      state: string;
+      first_response_token: string | null;
+      ext_flags: number;
+    } | null;
+    expect(row?.state).toBe("idle");
     expect(row?.first_response_token).toBeNull();
     expect(row?.ext_flags).toBe(0);
     storage.close();
@@ -147,22 +167,23 @@ test('migration from v3 to v4 adds ext_flags column with 0 default', () => {
   }
 });
 
-test('migration from v4 to v5 adds model column defaulting to NULL for legacy rows', () => {
+test("migration from v4 to v5 adds model column defaulting to NULL for legacy rows", () => {
   const t = makeTempRoot();
   try {
-    const kvDir = join(t.root, 'kvstore');
+    const kvDir = join(t.root, "kvstore");
     mkdirSync(kvDir, { recursive: true });
-    const dbPath = join(kvDir, 'registry.db');
+    const dbPath = join(kvDir, "registry.db");
     const db = new Database(dbPath);
-    db.run('PRAGMA journal_mode = WAL');
+    db.run("PRAGMA journal_mode = WAL");
     db.run(`
       CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER NOT NULL
       )
     `);
-    db.query('INSERT INTO schema_version (version) VALUES (0)').run();
+    db.query("INSERT INTO schema_version (version) VALUES (0)").run();
     runMigrations(db, 0, 4);
-    db.query(`
+    db.query(
+      `
       INSERT INTO kv_entries (
         sha, workload, upstream_slot_file, quant_bits, tokens, ctx_size, hits,
         created_at, last_used, payload_bytes, text_bytes, reason,
@@ -171,15 +192,18 @@ test('migration from v4 to v5 adds model column defaulting to NULL for legacy ro
         'legacy-sha', 'wl-a', '/tmp/legacy.slot', 8, 123, 32768, 0,
         1, 1, 10, 5, 'cold', 64, 'epoch-legacy', 0, 'idle', NULL, 0
       )
-    `).run();
+    `,
+    ).run();
     db.close();
 
     const storage = openKvStorage(t.root);
-    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    const version = storage.db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+      version: number;
+    } | null;
     expect(version?.version).toBe(5);
-    const row = storage.db.query('SELECT model FROM kv_entries WHERE sha = ?').get('legacy-sha') as
-      | { model: string | null }
-      | null;
+    const row = storage.db
+      .query("SELECT model FROM kv_entries WHERE sha = ?")
+      .get("legacy-sha") as { model: string | null } | null;
     expect(row?.model ?? null).toBeNull();
     storage.close();
   } finally {
@@ -187,36 +211,40 @@ test('migration from v4 to v5 adds model column defaulting to NULL for legacy ro
   }
 });
 
-test('kvstore migrations are idempotent after a restart replays the same version', () => {
+test("kvstore migrations are idempotent after a restart replays the same version", () => {
   const t = makeTempRoot();
   try {
     const storage = openKvStorage(t.root);
     storage.close();
 
     const reopened = openKvStorage(t.root);
-    const version = reopened.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    const version = reopened.db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+      version: number;
+    } | null;
     expect(version?.version).toBe(5);
-    const columns = reopened.db.query("PRAGMA table_info('kv_entries')").all() as Array<{ name: string }>;
-    expect(columns.some((column) => column.name === 'ext_flags')).toBe(true);
+    const columns = reopened.db.query("PRAGMA table_info('kv_entries')").all() as Array<{
+      name: string;
+    }>;
+    expect(columns.some((column) => column.name === "ext_flags")).toBe(true);
     reopened.close();
   } finally {
     t.cleanup();
   }
 });
 
-test('kvstore migration recovers when schema_version lags behind already-added columns', () => {
+test("kvstore migration recovers when schema_version lags behind already-added columns", () => {
   const t = makeTempRoot();
   try {
-    const kvDir = join(t.root, 'kvstore');
+    const kvDir = join(t.root, "kvstore");
     mkdirSync(kvDir, { recursive: true });
-    const db = new Database(join(kvDir, 'registry.db'));
-    db.run('PRAGMA journal_mode = WAL');
+    const db = new Database(join(kvDir, "registry.db"));
+    db.run("PRAGMA journal_mode = WAL");
     db.run(`
       CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER NOT NULL
       )
     `);
-    db.query('INSERT INTO schema_version (version) VALUES (3)').run();
+    db.query("INSERT INTO schema_version (version) VALUES (3)").run();
     db.run(`
       CREATE TABLE kv_entries (
         sha TEXT PRIMARY KEY,
@@ -242,31 +270,35 @@ test('kvstore migration recovers when schema_version lags behind already-added c
     db.close();
 
     const storage = openKvStorage(t.root);
-    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    const version = storage.db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+      version: number;
+    } | null;
     expect(version?.version).toBe(5);
-    const columns = storage.db.query("PRAGMA table_info('kv_entries')").all() as Array<{ name: string }>;
-    expect(columns.map((column) => column.name)).toContain('state');
-    expect(columns.map((column) => column.name)).toContain('first_response_token');
-    expect(columns.map((column) => column.name)).toContain('ext_flags');
-    expect(columns.map((column) => column.name)).toContain('model');
+    const columns = storage.db.query("PRAGMA table_info('kv_entries')").all() as Array<{
+      name: string;
+    }>;
+    expect(columns.map((column) => column.name)).toContain("state");
+    expect(columns.map((column) => column.name)).toContain("first_response_token");
+    expect(columns.map((column) => column.name)).toContain("ext_flags");
+    expect(columns.map((column) => column.name)).toContain("model");
     storage.close();
   } finally {
     t.cleanup();
   }
 });
 
-test('integrity scan quarantines rows with missing upstream_slot_file on open', () => {
+test("integrity scan quarantines rows with missing upstream_slot_file on open", () => {
   const t = makeTempRoot();
   try {
-    const missingFile = join(t.root, 'does-not-exist.slot');
+    const missingFile = join(t.root, "does-not-exist.slot");
     const first = openKvStorage(t.root);
     const firstRegistry = new KvRegistry(first);
-    firstRegistry.insert(baseEntry({ sha: 'missing', upstreamSlotFile: missingFile }));
+    firstRegistry.insert(baseEntry({ sha: "missing", upstreamSlotFile: missingFile }));
     first.close();
 
     const second = openKvStorage(t.root);
     const secondRegistry = new KvRegistry(second);
-    const row = secondRegistry.get('missing');
+    const row = secondRegistry.get("missing");
     expect(row?.quarantined).toBe(1);
     expect(second.registry_integrity_errors_total).toBe(1);
     second.close();
@@ -275,22 +307,31 @@ test('integrity scan quarantines rows with missing upstream_slot_file on open', 
   }
 });
 
-test('integrity scan self-heals quarantined rows when the slot file reappears and purges stale quarantines after grace', () => {
+test("integrity scan self-heals quarantined rows when the slot file reappears and purges stale quarantines after grace", () => {
   const t = makeTempRoot();
   try {
     const storage = openKvStorage(t.root);
     const registry = new KvRegistry(storage);
-    const missing = join(t.root, 'missing.slot');
-    const healed = join(t.root, 'healed.slot');
-    writeFileSync(healed, 'payload');
-    registry.insert(baseEntry({ sha: 'missing', upstreamSlotFile: missing, quarantined: 1, lastUsed: Date.now() - 1000 * 60 * 60 * 25 }));
-    registry.insert(baseEntry({ sha: 'healed', upstreamSlotFile: healed, quarantined: 1, lastUsed: Date.now() }));
+    const missing = join(t.root, "missing.slot");
+    const healed = join(t.root, "healed.slot");
+    writeFileSync(healed, "payload");
+    registry.insert(
+      baseEntry({
+        sha: "missing",
+        upstreamSlotFile: missing,
+        quarantined: 1,
+        lastUsed: Date.now() - 1000 * 60 * 60 * 25,
+      }),
+    );
+    registry.insert(
+      baseEntry({ sha: "healed", upstreamSlotFile: healed, quarantined: 1, lastUsed: Date.now() }),
+    );
     storage.close();
 
     const reopened = openKvStorage(t.root);
-    const healedRow = new KvRegistry(reopened).get('healed');
+    const healedRow = new KvRegistry(reopened).get("healed");
     expect(healedRow?.quarantined).toBe(0);
-    const missingRow = new KvRegistry(reopened).get('missing');
+    const missingRow = new KvRegistry(reopened).get("missing");
     expect(missingRow).toBeNull();
     reopened.close();
   } finally {
@@ -298,11 +339,11 @@ test('integrity scan self-heals quarantined rows when the slot file reappears an
   }
 });
 
-test('openKvStorage sets busy_timeout to 5000', () => {
+test("openKvStorage sets busy_timeout to 5000", () => {
   const t = makeTempRoot();
   try {
     const storage = openKvStorage(t.root);
-    const row = storage.db.query('PRAGMA busy_timeout').get() as { timeout: number } | null;
+    const row = storage.db.query("PRAGMA busy_timeout").get() as { timeout: number } | null;
     expect(row?.timeout).toBe(5000);
     storage.close();
   } finally {
@@ -310,49 +351,51 @@ test('openKvStorage sets busy_timeout to 5000', () => {
   }
 });
 
-test('openKvStorage enables WAL mode', () => {
+test("openKvStorage enables WAL mode", () => {
   const t = makeTempRoot();
   try {
     const storage = openKvStorage(t.root);
-    const mode = storage.db.query('PRAGMA journal_mode').get() as { journal_mode: string } | null;
-    expect(mode?.journal_mode.toLowerCase()).toBe('wal');
+    const mode = storage.db.query("PRAGMA journal_mode").get() as { journal_mode: string } | null;
+    expect(mode?.journal_mode.toLowerCase()).toBe("wal");
     storage.close();
   } finally {
     t.cleanup();
   }
 });
 
-test('KvRegistry CRUD and bumpHit round-trip', () => {
+test("KvRegistry CRUD and bumpHit round-trip", () => {
   const t = makeTempRoot();
   try {
-    const slotFile = join(t.root, 'slot.bin');
-    writeFileSync(slotFile, 'payload');
+    const slotFile = join(t.root, "slot.bin");
+    writeFileSync(slotFile, "payload");
     const storage = openKvStorage(t.root);
     const registry = new KvRegistry(storage);
 
-    registry.insert(baseEntry({ sha: 'roundtrip', upstreamSlotFile: slotFile, hits: 2, lastUsed: 100 }));
-    const inserted = registry.get('roundtrip');
+    registry.insert(
+      baseEntry({ sha: "roundtrip", upstreamSlotFile: slotFile, hits: 2, lastUsed: 100 }),
+    );
+    const inserted = registry.get("roundtrip");
     expect(inserted?.hits).toBe(2);
     expect(inserted?.lastUsed).toBe(100);
 
-    registry.bumpHit('roundtrip', 200);
-    const bumped = registry.get('roundtrip');
+    registry.bumpHit("roundtrip", 200);
+    const bumped = registry.get("roundtrip");
     expect(bumped?.hits).toBe(3);
     expect(bumped?.lastUsed).toBe(200);
 
-    expect(registry.delete('roundtrip')).toBe(true);
-    expect(registry.get('roundtrip')).toBeNull();
-    expect(registry.delete('roundtrip')).toBe(false);
+    expect(registry.delete("roundtrip")).toBe(true);
+    expect(registry.get("roundtrip")).toBeNull();
+    expect(registry.delete("roundtrip")).toBe(false);
     storage.close();
   } finally {
     t.cleanup();
   }
 });
 
-test('openKvStorage creates <dataRoot>/kvstore directory on first open', () => {
+test("openKvStorage creates <dataRoot>/kvstore directory on first open", () => {
   const t = makeTempRoot();
   try {
-    const kvDir = join(t.root, 'kvstore');
+    const kvDir = join(t.root, "kvstore");
     expect(existsSync(kvDir)).toBe(false);
     const storage = openKvStorage(t.root);
     expect(existsSync(kvDir)).toBe(true);
@@ -362,10 +405,10 @@ test('openKvStorage creates <dataRoot>/kvstore directory on first open', () => {
   }
 });
 
-test('kv metadata writes do not change workloadRuntimeRoot mtimeNs', () => {
+test("kv metadata writes do not change workloadRuntimeRoot mtimeNs", () => {
   const t = makeTempRoot();
   try {
-    const runtimeDir = join(t.root, 'runtime');
+    const runtimeDir = join(t.root, "runtime");
     mkdirSync(runtimeDir, { recursive: true });
     const resolved = { LOCAL_AI_RUNTIME_DIR: runtimeDir } as any;
     const root = workloadRuntimeRoot(resolved);
@@ -373,11 +416,11 @@ test('kv metadata writes do not change workloadRuntimeRoot mtimeNs', () => {
 
     const before = statSync(root, { bigint: true }).mtimeNs;
 
-    const slotFile = join(t.root, 'slot.bin');
-    writeFileSync(slotFile, 'payload');
+    const slotFile = join(t.root, "slot.bin");
+    writeFileSync(slotFile, "payload");
     const storage = openKvStorage(runtimeDir);
     const registry = new KvRegistry(storage);
-    registry.insert(baseEntry({ sha: 'mtime', upstreamSlotFile: slotFile }));
+    registry.insert(baseEntry({ sha: "mtime", upstreamSlotFile: slotFile }));
     storage.close();
 
     const after = statSync(root, { bigint: true }).mtimeNs;

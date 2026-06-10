@@ -1,15 +1,8 @@
-import type { TRPCLink } from '@trpc/client';
-import {
-  httpBatchLink,
-  httpSubscriptionLink,
-  splitLink,
-} from '@trpc/client';
-import { EventSource } from 'eventsource';
-import {
-  fingerprintsEqual,
-  computeFingerprint,
-} from '../server/tls.js';
-import type { ClusterNode } from '../config/schema.js';
+import type { TRPCLink } from "@trpc/client";
+import { httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
+import { EventSource } from "eventsource";
+import { fingerprintsEqual, computeFingerprint } from "../server/tls.js";
+import type { ClusterNode } from "../config/schema.js";
 
 /**
  * Cycle-free link builder shared by `node-client.ts` (typed AppRouter
@@ -43,7 +36,7 @@ export function assertFingerprintMatch(node: ClusterNode): void {
     if (!fingerprintsEqual(actual, expectedFp)) {
       throw new Error(
         `certificate fingerprint mismatch for node '${node.name}': ` +
-        `expected ${expectedFp}, got ${actual}`,
+          `expected ${expectedFp}, got ${actual}`,
       );
     }
   }
@@ -88,7 +81,7 @@ export function buildPinnedLinks(
   const authHeader = `Bearer ${token}`;
   return [
     splitLink({
-      condition: (op) => op.type === 'subscription',
+      condition: (op) => op.type === "subscription",
       // SSE path for subscriptions. Bun has no global EventSource, so
       // we ponyfill with `eventsource@4`; tRPC's SSE link routes its
       // HTTP calls through the ponyfill's `fetch` override, which lets
@@ -102,7 +95,7 @@ export function buildPinnedLinks(
             pinnedFetch(url as string, {
               ...(init as RequestInit | undefined),
               headers: {
-                ...((init?.['headers'] as Record<string, string> | undefined) ?? {}),
+                ...((init?.["headers"] as Record<string, string> | undefined) ?? {}),
                 authorization: authHeader,
               },
             })) as unknown as EventSourceFetchLike,

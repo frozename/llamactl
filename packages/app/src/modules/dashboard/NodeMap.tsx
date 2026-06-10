@@ -1,7 +1,7 @@
-import * as React from 'react';
-import { useMemo, useState } from 'react';
-import { trpc } from '@/lib/trpc';
-import { useUIStore } from '@/stores/ui-store';
+import * as React from "react";
+import { useMemo, useState } from "react";
+import { trpc } from "@/lib/trpc";
+import { useUIStore } from "@/stores/ui-store";
 
 /**
  * Interactive cluster node map. The dashboard's centerpiece — every
@@ -27,7 +27,7 @@ import { useUIStore } from '@/stores/ui-store';
  * actually cares about reading at a glance.
  */
 
-type NodeKind = 'agent' | 'gateway' | 'provider' | 'rag' | 'cloud';
+type NodeKind = "agent" | "gateway" | "provider" | "rag" | "cloud";
 
 interface NodeListItem {
   name: string;
@@ -48,18 +48,18 @@ const NODE_RADIUS = 28;
 const PROVIDER_RADIUS = 18;
 
 function colorForKind(kind: NodeKind, isLocal: boolean): string {
-  if (isLocal) return 'var(--color-ok)';
+  if (isLocal) return "var(--color-ok)";
   switch (kind) {
-    case 'agent':
-      return 'var(--color-ok, #34d399)';
-    case 'gateway':
-      return 'var(--color-warn, #fbbf24)';
-    case 'provider':
-      return 'var(--color-text-secondary)';
-    case 'rag':
-      return 'var(--color-brand, #a78bfa)';
-    case 'cloud':
-      return '#60a5fa';
+    case "agent":
+      return "var(--color-ok, #34d399)";
+    case "gateway":
+      return "var(--color-warn, #fbbf24)";
+    case "provider":
+      return "var(--color-text-secondary)";
+    case "rag":
+      return "var(--color-brand, #a78bfa)";
+    case "cloud":
+      return "#60a5fa";
   }
 }
 
@@ -72,13 +72,11 @@ function layoutCluster(nodes: NodeListItem[]): {
   placed: PlacedNode[];
   edges: Array<{ from: string; to: string }>;
 } {
-  const local = nodes.find((n) => n.isLocal || n.name === 'local');
-  const agents = nodes.filter(
-    (n) => (n.effectiveKind ?? 'agent') === 'agent' && n !== local,
-  );
-  const gateways = nodes.filter((n) => n.effectiveKind === 'gateway');
-  const rags = nodes.filter((n) => n.effectiveKind === 'rag');
-  const providers = nodes.filter((n) => n.effectiveKind === 'provider');
+  const local = nodes.find((n) => n.isLocal || n.name === "local");
+  const agents = nodes.filter((n) => (n.effectiveKind ?? "agent") === "agent" && n !== local);
+  const gateways = nodes.filter((n) => n.effectiveKind === "gateway");
+  const rags = nodes.filter((n) => n.effectiveKind === "rag");
+  const providers = nodes.filter((n) => n.effectiveKind === "provider");
 
   const placed: PlacedNode[] = [];
   const edges: Array<{ from: string; to: string }> = [];
@@ -93,7 +91,7 @@ function layoutCluster(nodes: NodeListItem[]): {
   const orbitable = local ? agents : agents.slice(1);
   const ringRadius = 150;
   orbitable.forEach((node, i) => {
-    const angle = (-Math.PI / 2) + (i / Math.max(orbitable.length, 1)) * Math.PI * 2;
+    const angle = -Math.PI / 2 + (i / Math.max(orbitable.length, 1)) * Math.PI * 2;
     placed.push({
       ...node,
       x: CENTER.x + ringRadius * Math.cos(angle),
@@ -139,22 +137,28 @@ interface NodeBubbleProps {
   onHover: (name: string | null) => void;
 }
 
-function NodeBubble({ node, isActive, isHovered, onClick, onHover }: NodeBubbleProps): React.JSX.Element {
-  const kind = node.effectiveKind ?? 'agent';
-  const isLocal = !!node.isLocal || node.name === 'local';
+function NodeBubble({
+  node,
+  isActive,
+  isHovered,
+  onClick,
+  onHover,
+}: NodeBubbleProps): React.JSX.Element {
+  const kind = node.effectiveKind ?? "agent";
+  const isLocal = !!node.isLocal || node.name === "local";
   const fill = colorForKind(kind, isLocal);
-  const r = kind === 'provider' ? PROVIDER_RADIUS : NODE_RADIUS;
+  const r = kind === "provider" ? PROVIDER_RADIUS : NODE_RADIUS;
 
   return (
     <g
       data-testid={`node-map-bubble-${node.name}`}
       data-kind={kind}
-      data-active={isActive ? 'true' : 'false'}
+      data-active={isActive ? "true" : "false"}
       transform={`translate(${node.x}, ${node.y})`}
       onClick={onClick}
       onMouseEnter={() => onHover(node.name)}
       onMouseLeave={() => onHover(null)}
-      style={{ cursor: 'pointer' }}
+      style={{ cursor: "pointer" }}
     >
       {isActive && (
         <circle r={r + 8} fill="none" stroke="var(--color-ok)" strokeWidth={2} opacity={0.6} />
@@ -170,10 +174,10 @@ function NodeBubble({ node, isActive, isHovered, onClick, onHover }: NodeBubbleP
         textAnchor="middle"
         dominantBaseline="central"
         y={0}
-        fontSize={kind === 'provider' ? 10 : 12}
+        fontSize={kind === "provider" ? 10 : 12}
         fontFamily="var(--font-sans, system-ui)"
         fill="var(--color-text-inverse, white)"
-        style={{ pointerEvents: 'none', fontWeight: 500 }}
+        style={{ pointerEvents: "none", fontWeight: 500 }}
       >
         {abbreviate(node.name)}
       </text>
@@ -182,7 +186,7 @@ function NodeBubble({ node, isActive, isHovered, onClick, onHover }: NodeBubbleP
         y={r + 14}
         fontSize={11}
         fill="var(--color-text)"
-        style={{ pointerEvents: 'none' }}
+        style={{ pointerEvents: "none" }}
       >
         {node.name}
       </text>
@@ -193,7 +197,11 @@ function NodeBubble({ node, isActive, isHovered, onClick, onHover }: NodeBubbleP
 function abbreviate(name: string): string {
   // Pull initials from a hyphen-separated name; fall back to first 2 chars.
   const parts = name.split(/[-.]/).filter(Boolean);
-  if (parts.length >= 2) return parts.slice(0, 2).map((p) => p[0]?.toUpperCase()).join('');
+  if (parts.length >= 2)
+    return parts
+      .slice(0, 2)
+      .map((p) => p[0]?.toUpperCase())
+      .join("");
   return name.slice(0, 2).toUpperCase();
 }
 
@@ -230,9 +238,7 @@ function NodeDetail({
           close
         </button>
       </div>
-      <div className="mt-1 text-[10px] text-[color:var(--color-text-secondary)]">
-        kind={kind}
-      </div>
+      <div className="mt-1 text-[10px] text-[color:var(--color-text-secondary)]">kind={kind}</div>
       <div className="mt-2 break-all rounded bg-[var(--color-surface-2)] px-2 py-1 font-mono text-[10px] text-[color:var(--color-text-secondary)]">
         {endpoint}
       </div>
@@ -265,21 +271,21 @@ export function NodeMap(): React.JSX.Element {
   // navigation surface, not a state mutator. The default-node
   // highlight still reads from kubeconfig for a soft indicator
   // (so the operator's eye goes to the canonical host first).
-  const effective = list.data?.defaultNode ?? 'local';
+  const effective = list.data?.defaultNode ?? "local";
   const allNodes = useMemo(() => {
     const fromQuery = list.data?.nodes ?? [];
-    const local = fromQuery.find((n) => n.name === 'local');
+    const local = fromQuery.find((n) => n.name === "local");
     const enriched: NodeListItem[] = fromQuery.map((n) => ({
       name: n.name,
       endpoint: n.endpoint,
       effectiveKind: n.effectiveKind as NodeKind | undefined,
-      isLocal: n.name === 'local',
+      isLocal: n.name === "local",
     }));
     if (!local) {
       enriched.unshift({
-        name: 'local',
-        endpoint: 'inproc://local',
-        effectiveKind: 'agent',
+        name: "local",
+        endpoint: "inproc://local",
+        effectiveKind: "agent",
         isLocal: true,
       });
     }
@@ -299,7 +305,7 @@ export function NodeMap(): React.JSX.Element {
       <svg
         viewBox={`0 0 ${VIEWBOX.w} ${VIEWBOX.h}`}
         className="h-[480px] w-full"
-        style={{ display: 'block' }}
+        style={{ display: "block" }}
       >
         {/* Gateway → provider edges */}
         {edges.map((e) => {
@@ -342,7 +348,7 @@ export function NodeMap(): React.JSX.Element {
         >
           <NodeDetail
             name={focusedNode.name}
-            kind={(focusedNode.effectiveKind ?? 'agent') as NodeKind}
+            kind={(focusedNode.effectiveKind ?? "agent") as NodeKind}
             endpoint={focusedNode.endpoint}
             isActive={focusedNode.name === effective}
             onActivate={() => {
@@ -350,7 +356,7 @@ export function NodeMap(): React.JSX.Element {
               // Workloads tab so the operator sees what's running
               // on this node. For other kinds the detail card's
               // per-kind actions (future work) take over.
-              setActiveModule('workloads');
+              setActiveModule("workloads");
               setFocused(null);
             }}
             onClose={() => setFocused(null)}
@@ -371,10 +377,7 @@ export function NodeMap(): React.JSX.Element {
 function LegendDot({ color, label }: { color: string; label: string }): React.JSX.Element {
   return (
     <span className="inline-flex items-center gap-1">
-      <span
-        className="inline-block h-2 w-2 rounded-full"
-        style={{ background: color }}
-      />
+      <span className="inline-block h-2 w-2 rounded-full" style={{ background: color }} />
       {label}
     </span>
   );

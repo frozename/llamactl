@@ -1,5 +1,5 @@
-import * as React from 'react';
-import { cx } from './classes';
+import * as React from "react";
+import { cx } from "./classes";
 
 export interface TreeItemProps extends React.HTMLAttributes<HTMLDivElement> {
   label: React.ReactNode;
@@ -34,21 +34,21 @@ export function TreeItem({
       aria-selected={active}
       onClick={onClick}
       {...rest}
-      className={cx('bcn-tree-item', active && 'bcn-tree-item--active', className)}
+      className={cx("bcn-tree-item", active && "bcn-tree-item--active", className)}
       style={{
-        display: 'flex',
-        alignItems: 'center',
+        display: "flex",
+        alignItems: "center",
         gap: 8,
         paddingTop: 4,
         paddingBottom: 4,
         paddingLeft: 14 + indent * 14,
         paddingRight: 18,
         fontSize: 13,
-        color: active ? 'var(--color-text)' : 'var(--color-text-secondary)',
-        background: active ? 'var(--color-brand-ghost)' : 'transparent',
-        cursor: 'pointer',
-        userSelect: 'none',
-        position: 'relative',
+        color: active ? "var(--color-text)" : "var(--color-text-secondary)",
+        background: active ? "var(--color-brand-ghost)" : "transparent",
+        cursor: "pointer",
+        userSelect: "none",
+        position: "relative",
         lineHeight: 1.4,
         ...style,
       }}
@@ -57,12 +57,12 @@ export function TreeItem({
         <span
           aria-hidden="true"
           style={{
-            position: 'absolute',
+            position: "absolute",
             left: 0,
             top: 2,
             bottom: 2,
             width: 2,
-            background: 'var(--color-brand)',
+            background: "var(--color-brand)",
             borderRadius: 2,
           }}
         />
@@ -71,12 +71,12 @@ export function TreeItem({
         aria-hidden="true"
         style={{
           width: 10,
-          color: 'var(--color-text-ghost)',
+          color: "var(--color-text-ghost)",
           fontSize: 9,
           flexShrink: 0,
-          visibility: collapsed === undefined ? 'hidden' : 'visible',
-          transform: collapsed ? 'rotate(-90deg)' : 'none',
-          transition: 'transform 160ms',
+          visibility: collapsed === undefined ? "hidden" : "visible",
+          transform: collapsed ? "rotate(-90deg)" : "none",
+          transition: "transform 160ms",
         }}
       >
         ▾
@@ -84,12 +84,18 @@ export function TreeItem({
       {icon && (
         <span
           aria-hidden="true"
-          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14 }}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 14,
+            height: 14,
+          }}
         >
           {icon}
         </span>
       )}
-      <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {label}
       </span>
       {trailing && <span style={{ flexShrink: 0 }}>{trailing}</span>}

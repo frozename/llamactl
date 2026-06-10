@@ -6,7 +6,7 @@
 export function spawn(): never {
   throw new Error(
     "Bun.spawn is unavailable in the Electron process; " +
-      'Bun-only code paths must run in the Bun daemon',
+      "Bun-only code paths must run in the Bun daemon",
   );
 }
 

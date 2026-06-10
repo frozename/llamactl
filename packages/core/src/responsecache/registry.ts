@@ -1,11 +1,11 @@
-import type { ResponseCacheStorage } from './storage.js';
+import type { ResponseCacheStorage } from "./storage.js";
 
 export interface ResponseCacheEntry {
   sha: string;
   model: string;
   workload: string;
   workloadEpoch: string;
-  protocolVariant: 'openai' | 'anthropic';
+  protocolVariant: "openai" | "anthropic";
   contentType: string;
   statusCode: number;
   responseBody: Uint8Array;
@@ -21,7 +21,7 @@ interface ResponseCacheEntryRow {
   model: string;
   workload: string;
   workload_epoch: string;
-  protocol_variant: 'openai' | 'anthropic';
+  protocol_variant: "openai" | "anthropic";
   content_type: string;
   status_code: number;
   response_body: Uint8Array;
@@ -37,14 +37,16 @@ export interface ResponseCacheLookup {
   model: string;
   workload: string;
   workloadEpoch: string;
-  protocolVariant: 'openai' | 'anthropic';
+  protocolVariant: "openai" | "anthropic";
 }
 
 export class ResponseCacheRegistry {
   constructor(private readonly storage: ResponseCacheStorage) {}
 
   insert(entry: ResponseCacheEntry): void {
-    this.storage.db.query(`
+    this.storage.db
+      .query(
+        `
       INSERT INTO response_entries (
         sha,
         model,
@@ -83,11 +85,15 @@ export class ResponseCacheRegistry {
         created_at=excluded.created_at,
         last_used=excluded.last_used,
         hits=excluded.hits
-    `).run(toQueryParams(entry));
+    `,
+      )
+      .run(toQueryParams(entry));
   }
 
   findBySha(lookup: ResponseCacheLookup): ResponseCacheEntry | null {
-    const row = this.storage.db.query(`
+    const row = this.storage.db
+      .query(
+        `
       SELECT *
       FROM response_entries
       WHERE sha = $sha
@@ -96,12 +102,16 @@ export class ResponseCacheRegistry {
         AND workload_epoch = $workload_epoch
         AND protocol_variant = $protocol_variant
       LIMIT 1
-    `).get(toLookupParams(lookup)) as ResponseCacheEntryRow | null;
+    `,
+      )
+      .get(toLookupParams(lookup)) as ResponseCacheEntryRow | null;
     return row ? fromRow(row) : null;
   }
 
   bumpHit(lookup: ResponseCacheLookup, now: number): void {
-    this.storage.db.query(`
+    this.storage.db
+      .query(
+        `
       UPDATE response_entries
       SET hits = hits + 1,
           last_used = $last_used
@@ -110,31 +120,41 @@ export class ResponseCacheRegistry {
         AND workload = $workload
         AND workload_epoch = $workload_epoch
         AND protocol_variant = $protocol_variant
-    `).run({
-      ...toLookupParams(lookup),
-      $last_used: now,
-    });
+    `,
+      )
+      .run({
+        ...toLookupParams(lookup),
+        $last_used: now,
+      });
   }
 
   tryDelete(lookup: ResponseCacheLookup): boolean {
-    const result = this.storage.db.query(`
+    const result = this.storage.db
+      .query(
+        `
       DELETE FROM response_entries
       WHERE sha = $sha
         AND model = $model
         AND workload = $workload
         AND workload_epoch = $workload_epoch
         AND protocol_variant = $protocol_variant
-    `).run(toLookupParams(lookup)) as { changes?: number };
+    `,
+      )
+      .run(toLookupParams(lookup)) as { changes?: number };
     return (result.changes ?? 0) > 0;
   }
 
   listForModel(model: string): ResponseCacheEntry[] {
-    const rows = this.storage.db.query('SELECT * FROM response_entries WHERE model = ? ORDER BY sha ASC').all(model) as ResponseCacheEntryRow[];
+    const rows = this.storage.db
+      .query("SELECT * FROM response_entries WHERE model = ? ORDER BY sha ASC")
+      .all(model) as ResponseCacheEntryRow[];
     return rows.map(fromRow);
   }
 
   listAll(): ResponseCacheEntry[] {
-    const rows = this.storage.db.query('SELECT * FROM response_entries ORDER BY sha ASC').all() as ResponseCacheEntryRow[];
+    const rows = this.storage.db
+      .query("SELECT * FROM response_entries ORDER BY sha ASC")
+      .all() as ResponseCacheEntryRow[];
     return rows.map(fromRow);
   }
 }

@@ -21,20 +21,20 @@
  *     be translated (e.g., empty image tag).
  */
 export type RuntimeErrorCode =
-  | 'backend-unreachable'
-  | 'image-pull-failed'
-  | 'create-failed'
-  | 'start-failed'
-  | 'not-found'
-  | 'platform-mismatch'
-  | 'spec-invalid';
+  | "backend-unreachable"
+  | "image-pull-failed"
+  | "create-failed"
+  | "start-failed"
+  | "not-found"
+  | "platform-mismatch"
+  | "spec-invalid";
 
 export class RuntimeError extends Error {
   readonly code: RuntimeErrorCode;
   override readonly cause?: unknown;
   constructor(code: RuntimeErrorCode, message: string, cause?: unknown) {
     super(message);
-    this.name = 'RuntimeError';
+    this.name = "RuntimeError";
     this.code = code;
     this.cause = cause;
   }

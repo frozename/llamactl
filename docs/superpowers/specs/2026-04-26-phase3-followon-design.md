@@ -174,7 +174,7 @@ export interface SurfaceGroup {
 
 export interface NodeFailure {
   nodeName: string;
-  reason: 'timeout' | 'rejected' | 'aborted';
+  reason: "timeout" | "rejected" | "aborted";
   detail?: string;
 }
 ```
@@ -199,9 +199,7 @@ export interface FanOutResult<T> {
   failures: NodeFailure[];
 }
 
-export async function fanOutSurface<T>(
-  opts: FanOutOpts<T>,
-): Promise<FanOutResult<T>>;
+export async function fanOutSurface<T>(opts: FanOutOpts<T>): Promise<FanOutResult<T>>;
 ```
 
 ## Data flow
@@ -269,8 +267,8 @@ const ctx = currentContext(cfg);
 const cluster = cfg.clusters.find((c) => c.name === ctx.cluster)!;
 return cluster.nodes.filter((n) => {
   // exclude non-agents
-  const kind = (n as { kind?: string }).kind ?? 'agent';
-  if (kind !== 'agent') return false;
+  const kind = (n as { kind?: string }).kind ?? "agent";
+  if (kind !== "agent") return false;
   // exclude the connected node
   if (n.name === connectedNodeName) return false;
   return true;
@@ -292,16 +290,16 @@ return cluster.nodes.filter((n) => {
 
 ### Electron main / cross-node (`packages/app/test/electron/trpc/`)
 
-| Test | Coverage |
-|---|---|
-| `cross-node-fan-out.test.ts` | `listAgentNodes` filters non-agents (kind === 'gateway' / 'rag') and excludes the active node; treats nodes with no `kind` field as agents (backwards compat). `fanOutSurface` — pure function tests with a mock `perNodeFetch`: all-succeed returns merged hits, per-node timeout produces `{ reason: 'timeout' }` failure while other nodes still merge, per-node rejection produces `{ reason: 'rejected', detail }`, outer abort short-circuits in-flight fetches, empty `nodes` returns `{ hits: [], failures: [] }` instantly |
-| `dispatcher-cross-node.test.ts` (new) | `uiCrossNodeOpsSessionSearch` proc — drives the UI router via a stub `loadConfig` + a stub per-node client factory; verifies origin-tag flows onto each hit; verifies `unreachableNodes` propagates from `failures` |
+| Test                                  | Coverage                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cross-node-fan-out.test.ts`          | `listAgentNodes` filters non-agents (kind === 'gateway' / 'rag') and excludes the active node; treats nodes with no `kind` field as agents (backwards compat). `fanOutSurface` — pure function tests with a mock `perNodeFetch`: all-succeed returns merged hits, per-node timeout produces `{ reason: 'timeout' }` failure while other nodes still merge, per-node rejection produces `{ reason: 'rejected', detail }`, outer abort short-circuits in-flight fetches, empty `nodes` returns `{ hits: [], failures: [] }` instantly |
+| `dispatcher-cross-node.test.ts` (new) | `uiCrossNodeOpsSessionSearch` proc — drives the UI router via a stub `loadConfig` + a stub per-node client factory; verifies origin-tag flows onto each hit; verifies `unreachableNodes` propagates from `failures`                                                                                                                                                                                                                                                                                                                 |
 
 ### App (`packages/app/test/lib/global-search/`)
 
-| Test | Coverage |
-|---|---|
-| `orchestrator.test.ts` (extend) | `mergeServerHits` preserves `unreachableNodes` when populated; `Hit.originNode` flows through merging unchanged |
+| Test                                 | Coverage                                                                                                                                                                                                         |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `orchestrator.test.ts` (extend)      | `mergeServerHits` preserves `unreachableNodes` when populated; `Hit.originNode` flows through merging unchanged                                                                                                  |
 | `use-global-search.test.ts` (extend) | new test for the parallel-wave scheduling — local fetch and the cross-node UI proc fire from the same Tier 2 anchor (250ms); both merge into the same SurfaceGroup; remote `unreachableNodes` lands on the group |
 
 ### Server

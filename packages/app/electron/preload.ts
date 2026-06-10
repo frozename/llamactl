@@ -1,5 +1,5 @@
-import { exposeElectronTRPC } from 'electron-trpc/preload';
+import { exposeElectronTRPC } from "electron-trpc/preload";
 
-process.once('loaded', () => {
+process.once("loaded", () => {
   exposeElectronTRPC();
 });

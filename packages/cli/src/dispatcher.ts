@@ -6,12 +6,8 @@ import {
   type TunnelSendFn,
   type TunnelSubscribeFn,
   type Config,
-} from '@llamactl/remote';
-import {
-  buildTunnelSend,
-  buildTunnelSubscribe,
-  type FetchLike,
-} from './tunnel-dispatch.js';
+} from "@llamactl/remote";
+import { buildTunnelSend, buildTunnelSubscribe, type FetchLike } from "./tunnel-dispatch.js";
 
 /**
  * Optional seams for tests: lets a unit test inject a fake kubeconfig
@@ -124,8 +120,8 @@ function maybeBuildTunnelDispatch(
  */
 function isInsecureTunnelRelay(argv: readonly string[] = process.argv): boolean {
   for (const raw of argv) {
-    if (raw === '--insecure-tunnel-relay') return true;
-    if (raw === '--insecure-tunnel-relay=true') return true;
+    if (raw === "--insecure-tunnel-relay") return true;
+    if (raw === "--insecure-tunnel-relay=true") return true;
   }
   return false;
 }
@@ -176,7 +172,7 @@ export function extractGlobalFlags(argv: string[]): { globals: Globals; rest: st
   let i = 0;
   while (i < argv.length) {
     const arg = argv[i]!;
-    if (arg === '--') {
+    if (arg === "--") {
       rest.push(...argv.slice(i));
       break;
     }
@@ -184,21 +180,21 @@ export function extractGlobalFlags(argv: string[]): { globals: Globals; rest: st
     const key = split ? split[0] : arg;
     const valueInline = split ? split[1] : undefined;
 
-    if (key === '--node' || key === '-n') {
+    if (key === "--node" || key === "-n") {
       const value = valueInline ?? argv[++i];
       if (value === undefined) throw new Error(`${key} requires a value`);
       globals.nodeName = value;
       i++;
       continue;
     }
-    if (key === '--context') {
+    if (key === "--context") {
       const value = valueInline ?? argv[++i];
       if (value === undefined) throw new Error(`${key} requires a value`);
       globals.contextName = value;
       i++;
       continue;
     }
-    if (key === '--cluster-config') {
+    if (key === "--cluster-config") {
       const value = valueInline ?? argv[++i];
       if (value === undefined) throw new Error(`${key} requires a value`);
       globals.configPath = value;
@@ -214,8 +210,8 @@ export function extractGlobalFlags(argv: string[]): { globals: Globals; rest: st
 }
 
 function splitEqFlag(arg: string): [string, string] | null {
-  if (!arg.startsWith('--')) return null;
-  const eq = arg.indexOf('=');
+  if (!arg.startsWith("--")) return null;
+  const eq = arg.indexOf("=");
   if (eq < 0) return null;
   return [arg.slice(0, eq), arg.slice(eq + 1)];
 }
@@ -232,7 +228,7 @@ export function resolveEffectiveNodeName(
   const cfg = loadConfigForDispatch(globals, env);
   const ctxName = globals.contextName ?? cfg.currentContext;
   const ctx = cfg.contexts.find((c) => c.name === ctxName);
-  return ctx?.defaultNode ?? 'local';
+  return ctx?.defaultNode ?? "local";
 }
 
 /** True when the effective node is the in-process `local` sentinel. */
@@ -244,10 +240,10 @@ export function isLocalDispatch(
   const name = resolveEffectiveNodeName(globals, env);
   const ctxName = globals.contextName ?? cfg.currentContext;
   const ctx = cfg.contexts.find((c) => c.name === ctxName);
-  if (!ctx) return name === 'local';
+  if (!ctx) return name === "local";
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   const node = cluster?.nodes.find((n) => n.name === name);
-  if (!node) return name === 'local';
+  if (!node) return name === "local";
   return node.endpoint === LOCAL_NODE_ENDPOINT;
 }
 
@@ -268,12 +264,7 @@ export function getNodeClient(
   if (globals.contextName) opts.contextName = globals.contextName;
   opts.env = env;
   const effectiveName = resolveEffectiveNodeName(globals, env);
-  const tunnelDispatch = maybeBuildTunnelDispatch(
-    cfg,
-    effectiveName,
-    globals.contextName,
-    env,
-  );
+  const tunnelDispatch = maybeBuildTunnelDispatch(cfg, effectiveName, globals.contextName, env);
   if (tunnelDispatch) {
     opts.tunnelSend = tunnelDispatch.send;
     opts.tunnelSubscribe = tunnelDispatch.subscribe;
@@ -289,12 +280,7 @@ export function getNodeClientByName(
   const cfg = loadConfigForDispatch(globals, env);
   const opts: Parameters<typeof createNodeClient>[1] = { nodeName, env };
   if (globals.contextName) opts.contextName = globals.contextName;
-  const tunnelDispatch = maybeBuildTunnelDispatch(
-    cfg,
-    nodeName,
-    globals.contextName,
-    env,
-  );
+  const tunnelDispatch = maybeBuildTunnelDispatch(cfg, nodeName, globals.contextName, env);
   if (tunnelDispatch) {
     opts.tunnelSend = tunnelDispatch.send;
     opts.tunnelSubscribe = tunnelDispatch.subscribe;
@@ -305,7 +291,7 @@ export function getNodeClientByName(
 /** True when the user passed `--node all` to fan a read out over every
  *  node in the current context. Not a real kubeconfig entry. */
 export function isFanOut(globals: Globals = currentGlobals): boolean {
-  return globals.nodeName === 'all';
+  return globals.nodeName === "all";
 }
 
 export function listContextNodes(
@@ -364,7 +350,7 @@ export function subscribeRemote<Event, Done>(opts: {
         settled = true;
         cleanup();
         if (finalDone !== null) resolve(finalDone);
-        else reject(new Error('remote subscription completed without a done event'));
+        else reject(new Error("remote subscription completed without a done event"));
       },
     });
     const abort = () => {
@@ -372,14 +358,14 @@ export function subscribeRemote<Event, Done>(opts: {
       settled = true;
       sub.unsubscribe();
       cleanup();
-      reject(new Error('aborted'));
+      reject(new Error("aborted"));
     };
     const cleanup = () => {
-      process.off('SIGINT', abort);
-      process.off('SIGTERM', abort);
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
     };
-    process.on('SIGINT', abort);
-    process.on('SIGTERM', abort);
+    process.on("SIGINT", abort);
+    process.on("SIGTERM", abort);
   });
 }
 
@@ -389,7 +375,7 @@ export function subscribeRemote<Event, Done>(opts: {
  *  given type, or null otherwise. */
 export function matchDoneEvent<T>(doneType: string) {
   return (e: unknown): T | null => {
-    if (typeof e !== 'object' || e === null) return null;
+    if (typeof e !== "object" || e === null) return null;
     const type = (e as { type?: string }).type;
     if (type !== doneType) return null;
     return (e as unknown as { result: T }).result;
@@ -410,8 +396,7 @@ export async function fanOut<T>(
   );
   return names.map((name, i) => {
     const r = settled[i]!;
-    if (r.status === 'fulfilled') return { node: name, ok: true, data: r.value };
+    if (r.status === "fulfilled") return { node: name, ok: true, data: r.value };
     return { node: name, ok: false, error: (r.reason as Error).message };
   });
 }
-

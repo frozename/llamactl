@@ -1,10 +1,6 @@
-import {
-  noderunReconciler,
-  workloadLock,
-  workloadReconciler,
-} from '@llamactl/remote';
-import { getNodeClientByName } from '../dispatcher.js';
-import { makeSpecArtifactResolver } from './noderun-helpers.js';
+import { noderunReconciler, workloadLock, workloadReconciler } from "@llamactl/remote";
+import { getNodeClientByName } from "../dispatcher.js";
+import { makeSpecArtifactResolver } from "./noderun-helpers.js";
 
 const USAGE = `Usage: llamactl controller serve [--interval=<s>] [--once]
 
@@ -33,10 +29,10 @@ function parseFlags(args: string[]): ControllerFlags | { error: string } {
   let intervalMs = 10_000;
   let once = false;
   for (const arg of args) {
-    if (arg === '--once') once = true;
-    else if (arg === '-h' || arg === '--help') return { error: 'help' };
-    else if (arg.startsWith('--interval=')) {
-      const n = Number.parseFloat(arg.slice('--interval='.length));
+    if (arg === "--once") once = true;
+    else if (arg === "-h" || arg === "--help") return { error: "help" };
+    else if (arg.startsWith("--interval=")) {
+      const n = Number.parseFloat(arg.slice("--interval=".length));
       if (!Number.isFinite(n) || n <= 0) {
         return { error: `controller: invalid --interval: ${arg}` };
       }
@@ -50,27 +46,28 @@ function parseFlags(args: string[]): ControllerFlags | { error: string } {
 
 export async function runController(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
-  if (sub === undefined || sub === '-h' || sub === '--help' || sub === 'help') {
+  if (sub === undefined || sub === "-h" || sub === "--help" || sub === "help") {
     process.stdout.write(USAGE);
     return sub === undefined ? 1 : 0;
   }
-  if (sub !== 'serve') {
+  if (sub !== "serve") {
     process.stderr.write(`Unknown controller subcommand: ${sub}\n\n${USAGE}`);
     return 1;
   }
 
   const parsed = parseFlags(rest);
-  if ('error' in parsed) {
-    const stream = parsed.error === 'help' ? process.stdout : process.stderr;
+  if ("error" in parsed) {
+    const stream = parsed.error === "help" ? process.stdout : process.stderr;
     stream.write(USAGE);
-    return parsed.error === 'help' ? 0 : 1;
+    return parsed.error === "help" ? 0 : 1;
   }
 
-  const { default: path } = await import('node:path');
-  const { config: kubecfg } = await import('@llamactl/remote');
+  const { default: path } = await import("node:path");
+  const { config: kubecfg } = await import("@llamactl/remote");
   const cfgPath = process.env.LLAMACTL_CONFIG ?? kubecfg.defaultConfigPath();
-  const workloadsDir = process.env.LLAMACTL_WORKLOADS_DIR
-    ?? path.join(process.env.DEV_STORAGE ?? `${process.env.HOME}/.llamactl`, 'workloads');
+  const workloadsDir =
+    process.env.LLAMACTL_WORKLOADS_DIR ??
+    path.join(process.env.DEV_STORAGE ?? `${process.env.HOME}/.llamactl`, "workloads");
   const cfg = kubecfg.loadConfig(cfgPath);
   const resolveNodeIdentity = (n: string): string | null => {
     try {
@@ -81,7 +78,7 @@ export async function runController(args: string[]): Promise<number> {
   };
 
   const acquired = workloadLock.acquireLock(workloadsDir);
-  if ('error' in acquired) {
+  if ("error" in acquired) {
     process.stderr.write(`controller: ${acquired.error}\n`);
     return 1;
   }
@@ -97,8 +94,8 @@ export async function runController(args: string[]): Promise<number> {
     process.stdout.write(`controller: received ${sig}, exiting after current reconcile\n`);
     wake?.();
   };
-  process.on('SIGINT', onSignal);
-  process.on('SIGTERM', onSignal);
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
 
   const runOnePass = async (): Promise<void> => {
     // ModelRun pass — converges llama-server lifecycle per manifest.
@@ -115,10 +112,12 @@ export async function runController(args: string[]): Promise<number> {
       workloadsDir,
       getClient: (nodeName) => getNodeClientByName(nodeName),
       getArtifactResolver: (_node, client) =>
-        makeSpecArtifactResolver({ client: client as unknown as Parameters<typeof makeSpecArtifactResolver>[0]['client'] }),
+        makeSpecArtifactResolver({
+          client: client as unknown as Parameters<typeof makeSpecArtifactResolver>[0]["client"],
+        }),
       onReport: (r) => {
-        const tail = r.error ? ` error=${r.error}` : '';
-        const actions = r.actions > 0 ? ` actions=${r.actions}` : '';
+        const tail = r.error ? ` error=${r.error}` : "";
+        const actions = r.actions > 0 ? ` actions=${r.actions}` : "";
         process.stdout.write(
           `[${new Date().toISOString()}] noderun/${r.name} on ${r.node}: ${r.phase}${actions}${tail}\n`,
         );
@@ -131,7 +130,7 @@ export async function runController(args: string[]): Promise<number> {
       return;
     }
     for (const r of modelrunResult.reports) {
-      const tail = r.error ? ` error=${r.error}` : '';
+      const tail = r.error ? ` error=${r.error}` : "";
       process.stdout.write(
         `[${new Date().toISOString()}] modelrun/${r.name} on ${r.node}: ${r.action}${tail}\n`,
       );
@@ -160,14 +159,21 @@ export async function runController(args: string[]): Promise<number> {
       // Race the sleep against a SIGTERM-triggered `wake()` so the
       // loop exits promptly even during a long --interval.
       await new Promise<void>((r) => {
-        const timer = setTimeout(() => { wake = null; r(); }, sleepMs);
-        wake = () => { clearTimeout(timer); wake = null; r(); };
+        const timer = setTimeout(() => {
+          wake = null;
+          r();
+        }, sleepMs);
+        wake = () => {
+          clearTimeout(timer);
+          wake = null;
+          r();
+        };
       });
     }
     return 0;
   } finally {
     workloadLock.releaseLock(acquired);
-    process.off('SIGINT', onSignal);
-    process.off('SIGTERM', onSignal);
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
   }
 }

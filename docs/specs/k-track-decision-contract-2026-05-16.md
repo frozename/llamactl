@@ -11,11 +11,11 @@ The K-track exists to test whether a small LoRA adapter, trained on a hand-craft
 
 ## Production metric and threshold
 
-| | Definition | Source |
-|---|---|---|
-| Primary | **Tool-call success rate** on real penumbra dispatches in the prior 7 days | `agent_performance.outcome == 'success'` filtered to handoffs where the agent attempted at least one tool call |
-| Secondary | **Parse-error rate** (HTTP 400 / null tool_name / malformed args) | claude-agent-acp adapter logs + worker stderr |
-| Tertiary | **Latency overhead** of running with `--lora` loaded | `time_to_first_token`, `tokens_per_second` deltas vs no-adapter baseline |
+|           | Definition                                                                 | Source                                                                                                         |
+| --------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Primary   | **Tool-call success rate** on real penumbra dispatches in the prior 7 days | `agent_performance.outcome == 'success'` filtered to handoffs where the agent attempted at least one tool call |
+| Secondary | **Parse-error rate** (HTTP 400 / null tool_name / malformed args)          | claude-agent-acp adapter logs + worker stderr                                                                  |
+| Tertiary  | **Latency overhead** of running with `--lora` loaded                       | `time_to_first_token`, `tokens_per_second` deltas vs no-adapter baseline                                       |
 
 **Bar to ship a LoRA adapter into production:**
 
@@ -27,7 +27,7 @@ If all three thresholds aren't met, the adapter does not ship. No partial wins.
 
 ## Bar to keep investing in the track
 
-Before *any* new K.N run (training, eval, corpus expansion):
+Before _any_ new K.N run (training, eval, corpus expansion):
 
 - The hypothesis under test must be stated as a quantitative claim: "we expect P(success | adapter) − P(success | base) ≥ X on dataset Y."
 - The dataset must have provenance: explicit lineage from prior splits, no silent re-use of training rows in test, label-source pinned to a SHA or human-adjudicated.
@@ -50,11 +50,11 @@ Retire and freeze if any of the following holds at the next checkpoint:
 
 The next K-track action is NOT another K.N run. It is a three-part validation slice:
 
-| Part | Owner | Output |
-|---|---|---|
-| A | maestro | Pull 7-day production sample from `agent_performance` + worker logs. Compute current primary, secondary, tertiary baseline. |
-| B | maestro | Run K.5 adapter under the *real* dispatch path (penumbra worker → claude-agent-acp → llama-server --lora) on the same 7-day sample. Measure all three metrics. |
-| C | maestro | Run grammar-constrained decoding (per-tool argument GBNF from JSON schema) on the same 7-day sample. Measure all three metrics. |
+| Part | Owner   | Output                                                                                                                                                         |
+| ---- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A    | maestro | Pull 7-day production sample from `agent_performance` + worker logs. Compute current primary, secondary, tertiary baseline.                                    |
+| B    | maestro | Run K.5 adapter under the _real_ dispatch path (penumbra worker → claude-agent-acp → llama-server --lora) on the same 7-day sample. Measure all three metrics. |
+| C    | maestro | Run grammar-constrained decoding (per-tool argument GBNF from JSON schema) on the same 7-day sample. Measure all three metrics.                                |
 
 Compare A vs B vs C against the bar. If C ≥ bar and B < bar, ship C and retire LoRA. If both ≥ bar, ship whichever is cheaper (latency wins). If neither ≥ bar, retire the track.
 
@@ -62,7 +62,7 @@ The validation slice itself has a budget: **4 hours** of human attention. If A a
 
 ## Open governance items (per adversarial-review)
 
-These do not block the validation slice but must be resolved before any *new* corpus row is added or any *new* adapter is trained:
+These do not block the validation slice but must be resolved before any _new_ corpus row is added or any _new_ adapter is trained:
 
 - **Label provenance**: pin the Qwen3-8B-Instruct teacher to a HF revision SHA and a code-versioned prompt template. Dual-label disagreement check against a different model (Granite 4.1 or Gemma 4 26B-A4B). Sampled human adjudication on 10% of rows.
 - ~~**Corpus naming**~~: ✓ renamed `adversarial-v0` → `uncommon-v0` (2026-05-16, same day as contract; see `FROZEN.md`).
@@ -72,7 +72,7 @@ These do not block the validation slice but must be resolved before any *new* co
 ## What is NOT in scope for this contract
 
 - Aesthetic or maintainability cleanup of existing K-track code (deferred).
-- Grammar-constrained decoding *as a separate production initiative* (this contract scopes it as a non-LoRA control only).
+- Grammar-constrained decoding _as a separate production initiative_ (this contract scopes it as a non-LoRA control only).
 - Multi-turn / rollout-shaped training data (deferred until validation slice completes).
 - Larger-rank / more-layers LoRA configurations (deferred until validation slice completes).
 

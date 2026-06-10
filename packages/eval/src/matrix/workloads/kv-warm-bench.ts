@@ -1,16 +1,16 @@
-import { Database } from 'bun:sqlite';
-import { existsSync, mkdirSync } from 'node:fs';
-import os from 'node:os';
-import { dirname, join } from 'node:path';
-import type { WorkloadEval } from '../types.js';
+import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync } from "node:fs";
+import os from "node:os";
+import { dirname, join } from "node:path";
+import type { WorkloadEval } from "../types.js";
 
 export const KV_WARM_BENCH_FRONTIERS = [2048, 4096, 8192, 16384, 32768] as const;
-export const KV_WARM_BENCH_DEFAULT_PROXY_BASE_URL = 'http://127.0.0.1:8089';
+export const KV_WARM_BENCH_DEFAULT_PROXY_BASE_URL = "http://127.0.0.1:8089";
 export const KV_WARM_BENCH_DEFAULT_MARKDOWN_PATH =
-  'docs/benchmarks/2026-05-24-kv-warm-restore-template.md';
+  "docs/benchmarks/2026-05-24-kv-warm-restore-template.md";
 
 const KV_WARM_BENCH_CSV_HEADER =
-  'promptSize,t_cold_ms,t_cold_first_byte_ms,t_warm_min_ms,t_warm_p50_ms,t_warm_p95_ms,ratio_cold_over_warm,kv_warm_hit_total,kv_cold_miss_total,kv_false_hit_total';
+  "promptSize,t_cold_ms,t_cold_first_byte_ms,t_warm_min_ms,t_warm_p50_ms,t_warm_p95_ms,ratio_cold_over_warm,kv_warm_hit_total,kv_cold_miss_total,kv_false_hit_total";
 
 export interface KvWarmBenchArgs {
   proxyBaseUrl?: string;
@@ -76,7 +76,7 @@ function stableToken(seed: number, index: number): string {
   x ^= x << 13;
   x ^= x >>> 17;
   x ^= x << 5;
-  return `t${x.toString(36).padStart(7, '0')}`;
+  return `t${x.toString(36).padStart(7, "0")}`;
 }
 
 function buildPromptWithStableWords(seed: number, wordCount: number): string {
@@ -85,7 +85,7 @@ function buildPromptWithStableWords(seed: number, wordCount: number): string {
   for (let i = 0; i < safeWordCount; i += 1) {
     tokens.push(stableToken(seed, i));
   }
-  return `KV-WARM-BENCH-SEED=${seed}\n${tokens.join(' ')}`;
+  return `KV-WARM-BENCH-SEED=${seed}\n${tokens.join(" ")}`;
 }
 
 export function buildDeterministicPrompt(opts: { approxTokens: number; seed?: number }): string {
@@ -95,7 +95,7 @@ export function buildDeterministicPrompt(opts: { approxTokens: number; seed?: nu
 }
 
 export const KV_WARM_BENCH_TOKENIZE_FALLBACK_WARNING =
-  'kv-warm-bench: /v1/tokenize unavailable; interpreting --frontiers as approximate word counts';
+  "kv-warm-bench: /v1/tokenize unavailable; interpreting --frontiers as approximate word counts";
 
 export type KvWarmBenchTokenize = (prompt: string) => Promise<number>;
 
@@ -107,9 +107,12 @@ export async function createTokenizeClient(args: {
   const endpoint = `${args.proxyBaseUrl}/v1/tokenize`;
   const warn = args.onWarn ?? ((message: string) => console.warn(message));
   const probe = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model: args.model, prompt: buildDeterministicPrompt({ approxTokens: 16, seed: 11 }) }),
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: args.model,
+      prompt: buildDeterministicPrompt({ approxTokens: 16, seed: 11 }),
+    }),
   });
   if (!probe.ok) {
     warn(KV_WARM_BENCH_TOKENIZE_FALLBACK_WARNING);
@@ -122,25 +125,28 @@ export async function createTokenizeClient(args: {
     warn(KV_WARM_BENCH_TOKENIZE_FALLBACK_WARNING);
     return null;
   }
-  const probeTokens = typeof (parsed as { n_tokens?: unknown }).n_tokens === 'number'
-    ? Math.floor((parsed as { n_tokens: number }).n_tokens)
-    : Number.NaN;
+  const probeTokens =
+    typeof (parsed as { n_tokens?: unknown }).n_tokens === "number"
+      ? Math.floor((parsed as { n_tokens: number }).n_tokens)
+      : Number.NaN;
   if (!Number.isFinite(probeTokens) || probeTokens <= 0) {
     warn(KV_WARM_BENCH_TOKENIZE_FALLBACK_WARNING);
     return null;
   }
   return async (prompt: string) => {
     const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: args.model, prompt }),
     });
     if (!response.ok) {
-      throw new Error(`kv-warm-bench: HTTP ${response.status} from ${endpoint}: ${await response.text()}`);
+      throw new Error(
+        `kv-warm-bench: HTTP ${response.status} from ${endpoint}: ${await response.text()}`,
+      );
     }
     const payload = (await response.json()) as { n_tokens?: unknown };
     const nTokens =
-      typeof payload.n_tokens === 'number' ? Math.floor(payload.n_tokens) : Number.NaN;
+      typeof payload.n_tokens === "number" ? Math.floor(payload.n_tokens) : Number.NaN;
     if (!Number.isFinite(nTokens) || nTokens <= 0) {
       throw new Error(`kv-warm-bench: invalid /v1/tokenize payload from ${endpoint}`);
     }
@@ -179,24 +185,25 @@ export async function buildFrontierPrompt(args: {
 
 function normalizeArgs(args: KvWarmBenchArgs): NormalizedKvWarmBenchArgs {
   if (!args.model || !args.model.trim()) {
-    throw new Error('kv-warm-bench: model is required');
+    throw new Error("kv-warm-bench: model is required");
   }
   const warmRuns = args.warmRuns ?? 3;
   if (!Number.isInteger(warmRuns) || warmRuns < 1 || warmRuns > 100) {
-    throw new Error('kv-warm-bench: warmRuns must be an integer between 1 and 100');
+    throw new Error("kv-warm-bench: warmRuns must be an integer between 1 and 100");
   }
   const frontiers = (args.frontiers ?? [...KV_WARM_BENCH_FRONTIERS]).map((f) => Math.floor(f));
   if (frontiers.length === 0 || frontiers.some((f) => !Number.isInteger(f) || f < 64)) {
-    throw new Error('kv-warm-bench: frontiers must be a non-empty list of integers >= 64');
+    throw new Error("kv-warm-bench: frontiers must be a non-empty list of integers >= 64");
   }
   return {
-    proxyBaseUrl: (args.proxyBaseUrl ?? KV_WARM_BENCH_DEFAULT_PROXY_BASE_URL).replace(/\/+$/, ''),
+    proxyBaseUrl: (args.proxyBaseUrl ?? KV_WARM_BENCH_DEFAULT_PROXY_BASE_URL).replace(/\/+$/, ""),
     model: args.model,
     temperature: args.temperature ?? 0,
     maxTokens: args.maxTokens ?? 256,
     frontiers,
     warmRuns,
-    dataRoot: args.dataRoot ?? process.env.LOCAL_AI_RUNTIME_DIR ?? join(os.homedir(), '.llamactl', 'data'),
+    dataRoot:
+      args.dataRoot ?? process.env.LOCAL_AI_RUNTIME_DIR ?? join(os.homedir(), ".llamactl", "data"),
     outPath: args.outPath ?? KV_WARM_BENCH_DEFAULT_MARKDOWN_PATH,
     seed: args.seed ?? 11,
   };
@@ -225,7 +232,7 @@ export function formatKvWarmBenchCsvRow(row: KvWarmBenchRow): string {
     String(row.kvWarmHitTotal),
     String(row.kvColdMissTotal),
     String(row.kvFalseHitTotal),
-  ].join(',');
+  ].join(",");
 }
 
 function formatKvWarmBenchTableRow(row: KvWarmBenchRow): string {
@@ -233,47 +240,46 @@ function formatKvWarmBenchTableRow(row: KvWarmBenchRow): string {
 }
 
 function renderKvWarmBenchCsv(rows: KvWarmBenchRow[]): string {
-  return [KV_WARM_BENCH_CSV_HEADER, ...rows.map(formatKvWarmBenchCsvRow)].join('\n');
+  return [KV_WARM_BENCH_CSV_HEADER, ...rows.map(formatKvWarmBenchCsvRow)].join("\n");
 }
 
 export function renderKvWarmBenchMarkdown(input: KvWarmBenchMarkdownInput): string {
   const csv = renderKvWarmBenchCsv(input.rows);
   const tableHeader =
-    '| promptSize | t_cold_ms | t_cold_first_byte_ms | t_warm_min_ms | t_warm_p50_ms | t_warm_p95_ms | ratio_cold_over_warm | kv_warm_hit_total | kv_cold_miss_total | kv_false_hit_total |';
-  const tableSeparator =
-    '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |';
+    "| promptSize | t_cold_ms | t_cold_first_byte_ms | t_warm_min_ms | t_warm_p50_ms | t_warm_p95_ms | ratio_cold_over_warm | kv_warm_hit_total | kv_cold_miss_total | kv_false_hit_total |";
+  const tableSeparator = "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |";
 
   const lines: string[] = [
-    '# KV Warm-Restore Bench Template',
-    '',
+    "# KV Warm-Restore Bench Template",
+    "",
     `- Generated at: ${input.generatedAtIso}`,
     `- Model: ${input.model}`,
     `- Proxy base URL: ${input.proxyBaseUrl}`,
     `- Machine: ${input.machine}`,
     `- OS: ${input.os}`,
-    `- Frontiers: ${input.frontiers.join(', ')}`,
+    `- Frontiers: ${input.frontiers.join(", ")}`,
     `- Warm runs: ${input.warmRuns}`,
-    '',
-    '## Per-frontier results',
-    '',
+    "",
+    "## Per-frontier results",
+    "",
     tableHeader,
     tableSeparator,
     ...input.rows.map(formatKvWarmBenchTableRow),
-    '',
-    '## Raw CSV',
-    '',
-    '```csv',
+    "",
+    "## Raw CSV",
+    "",
+    "```csv",
     csv,
-    '```',
-    '',
-    '## Decision (to fill in after running)',
-    '- [ ] 16k frontier cold/warm ratio ≥ 2.0 → Slice 2 ships, Phase 8 NOT needed',
-    '- [ ] Write cost p95 ≤ 100 ms → no cadence work needed',
-    '- [ ] False-hit rate (`kv_false_hit_total / kv_warm_hit_total`) ≤ 1% → no equivalence work needed',
-    '',
+    "```",
+    "",
+    "## Decision (to fill in after running)",
+    "- [ ] 16k frontier cold/warm ratio ≥ 2.0 → Slice 2 ships, Phase 8 NOT needed",
+    "- [ ] Write cost p95 ≤ 100 ms → no cadence work needed",
+    "- [ ] False-hit rate (`kv_false_hit_total / kv_warm_hit_total`) ≤ 1% → no equivalence work needed",
+    "",
   ];
 
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 async function measureChatCompletion(args: {
@@ -285,13 +291,13 @@ async function measureChatCompletion(args: {
 }): Promise<KvWarmBenchRequestTiming> {
   const start = performance.now();
   const response = await fetch(`${args.proxyBaseUrl}/v1/chat/completions`, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'content-type': 'application/json',
+      "content-type": "application/json",
     },
     body: JSON.stringify({
       model: args.model,
-      messages: [{ role: 'user', content: args.prompt }],
+      messages: [{ role: "user", content: args.prompt }],
       temperature: args.temperature,
       max_tokens: args.maxTokens,
       stream: false,
@@ -300,7 +306,9 @@ async function measureChatCompletion(args: {
   });
 
   if (!response.ok) {
-    throw new Error(`kv-warm-bench: HTTP ${response.status} from ${args.proxyBaseUrl}/v1/chat/completions: ${await response.text()}`);
+    throw new Error(
+      `kv-warm-bench: HTTP ${response.status} from ${args.proxyBaseUrl}/v1/chat/completions: ${await response.text()}`,
+    );
   }
 
   const reader = response.body?.getReader();
@@ -322,7 +330,7 @@ async function measureChatCompletion(args: {
 }
 
 export function readKvCountersFromRegistry(dataRoot: string): KvWarmBenchCounterSnapshot {
-  const dbPath = join(dataRoot, 'kvstore', 'registry.db');
+  const dbPath = join(dataRoot, "kvstore", "registry.db");
   if (!existsSync(dbPath)) {
     return {
       kv_warm_hit_total: 0,
@@ -333,9 +341,13 @@ export function readKvCountersFromRegistry(dataRoot: string): KvWarmBenchCounter
 
   const db = new Database(dbPath, { readonly: true, create: false });
   try {
-    const warm = db.query('SELECT COALESCE(SUM(hits), 0) AS n FROM kv_entries').get() as { n: number } | null;
+    const warm = db.query("SELECT COALESCE(SUM(hits), 0) AS n FROM kv_entries").get() as {
+      n: number;
+    } | null;
     const cold = db
-      .query("SELECT COALESCE(SUM(CASE WHEN reason='cold' THEN 1 ELSE 0 END), 0) AS n FROM kv_entries")
+      .query(
+        "SELECT COALESCE(SUM(CASE WHEN reason='cold' THEN 1 ELSE 0 END), 0) AS n FROM kv_entries",
+      )
       .get() as { n: number } | null;
     return {
       kv_warm_hit_total: Number(warm?.n ?? 0),
@@ -434,7 +446,7 @@ export async function runKvWarmBench(args: KvWarmBenchArgs): Promise<{
 
 function parseCsvIntegerList(raw: string): number[] {
   return raw
-    .split(',')
+    .split(",")
     .map((part) => Number.parseInt(part.trim(), 10))
     .filter((value) => Number.isInteger(value) && value > 0);
 }
@@ -446,18 +458,20 @@ function parseArgValue(argv: string[], flag: string): string | undefined {
 }
 
 export function parseKvWarmBenchRunArgs(argv: string[]): KvWarmBenchArgs {
-  const model = parseArgValue(argv, '--model');
+  const model = parseArgValue(argv, "--model");
   if (!model) {
-    throw new Error('usage: run kv-warm-bench --model <name> [--proxy <url>] [--temperature <n>] [--max-tokens <n>] [--frontiers <csv>] [--warm-runs <n>] [--data-root <path>] [--out <path>]');
+    throw new Error(
+      "usage: run kv-warm-bench --model <name> [--proxy <url>] [--temperature <n>] [--max-tokens <n>] [--frontiers <csv>] [--warm-runs <n>] [--data-root <path>] [--out <path>]",
+    );
   }
-  const proxy = parseArgValue(argv, '--proxy');
-  const temperature = parseArgValue(argv, '--temperature');
-  const maxTokens = parseArgValue(argv, '--max-tokens');
-  const frontiers = parseArgValue(argv, '--frontiers');
-  const warmRuns = parseArgValue(argv, '--warm-runs');
-  const dataRoot = parseArgValue(argv, '--data-root');
-  const outPath = parseArgValue(argv, '--out');
-  const seed = parseArgValue(argv, '--seed');
+  const proxy = parseArgValue(argv, "--proxy");
+  const temperature = parseArgValue(argv, "--temperature");
+  const maxTokens = parseArgValue(argv, "--max-tokens");
+  const frontiers = parseArgValue(argv, "--frontiers");
+  const warmRuns = parseArgValue(argv, "--warm-runs");
+  const dataRoot = parseArgValue(argv, "--data-root");
+  const outPath = parseArgValue(argv, "--out");
+  const seed = parseArgValue(argv, "--seed");
 
   return {
     model,
@@ -473,16 +487,18 @@ export function parseKvWarmBenchRunArgs(argv: string[]): KvWarmBenchArgs {
 }
 
 export const kvWarmBenchWorkload: WorkloadEval = {
-  name: 'kv-warm-bench',
+  name: "kv-warm-bench",
   // Dedicated runner workload. This sentinel corpus path makes accidental
   // invocation through runMatrix fail fast with a clear file-not-found.
-  corpus_path: '/tmp/kv-warm-bench.use-run-subcommand',
-  primary_metric_name: 'mean_exact_match',
-  prompt_builder: () => ({ messages: [{ role: 'user', content: 'run kv-warm-bench via matrix CLI subcommand' }] }),
+  corpus_path: "/tmp/kv-warm-bench.use-run-subcommand",
+  primary_metric_name: "mean_exact_match",
+  prompt_builder: () => ({
+    messages: [{ role: "user", content: "run kv-warm-bench via matrix CLI subcommand" }],
+  }),
   scorer: () => ({
     metrics: { exact_match: 1 },
-    prediction: 'bench-only',
-    gold: 'bench-only',
+    prediction: "bench-only",
+    gold: "bench-only",
   }),
 };
 

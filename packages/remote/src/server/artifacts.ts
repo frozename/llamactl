@@ -1,6 +1,6 @@
-import { existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 /**
  * Artifact server for the Sprint I-α bootstrap flow. Serves
@@ -18,22 +18,17 @@ import { homedir } from 'node:os';
  * command (`llamactl artifacts build-agent`) lands in a follow-up.
  */
 
-const ALLOWED_PLATFORMS = new Set([
-  'darwin-arm64',
-  'darwin-x64',
-  'linux-x64',
-  'linux-arm64',
-]);
+const ALLOWED_PLATFORMS = new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"]);
 
 export function defaultArtifactsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_ARTIFACTS_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'artifacts');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "artifacts");
 }
 
 export function agentBinaryPath(platform: string, artifactsDir = defaultArtifactsDir()): string {
-  return join(artifactsDir, 'agent', platform, 'llamactl-agent');
+  return join(artifactsDir, "agent", platform, "llamactl-agent");
 }
 
 export interface ArtifactsHandlerOptions {
@@ -45,15 +40,15 @@ export function handleArtifact(
   url: URL,
   opts: ArtifactsHandlerOptions = {},
 ): Response {
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    return new Response('method not allowed', { status: 405 });
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    return new Response("method not allowed", { status: 405 });
   }
   // URL shape: /artifacts/agent/<platform>. Anything else 404s so we
   // don't accidentally reveal directory listings.
-  const parts = url.pathname.split('/').filter((s) => s.length > 0);
+  const parts = url.pathname.split("/").filter((s) => s.length > 0);
   // parts: ['artifacts', 'agent', '<platform>']
-  if (parts.length !== 3 || parts[0] !== 'artifacts' || parts[1] !== 'agent') {
-    return new Response('not found', { status: 404 });
+  if (parts.length !== 3 || parts[0] !== "artifacts" || parts[1] !== "agent") {
+    return new Response("not found", { status: 404 });
   }
   const platform = parts[2]!;
   if (!ALLOWED_PLATFORMS.has(platform)) {
@@ -67,12 +62,12 @@ export function handleArtifact(
     );
   }
   const stat = statSync(path);
-  if (req.method === 'HEAD') {
+  if (req.method === "HEAD") {
     return new Response(null, {
       status: 200,
       headers: {
-        'content-type': 'application/octet-stream',
-        'content-length': String(stat.size),
+        "content-type": "application/octet-stream",
+        "content-length": String(stat.size),
       },
     });
   }
@@ -83,10 +78,10 @@ export function handleArtifact(
   return new Response(file, {
     status: 200,
     headers: {
-      'content-type': 'application/octet-stream',
-      'content-length': String(stat.size),
-      'content-disposition': `attachment; filename="llamactl-agent-${platform}"`,
-      'cache-control': 'public, max-age=300',
+      "content-type": "application/octet-stream",
+      "content-length": String(stat.size),
+      "content-disposition": `attachment; filename="llamactl-agent-${platform}"`,
+      "cache-control": "public, max-age=300",
     },
   });
 }

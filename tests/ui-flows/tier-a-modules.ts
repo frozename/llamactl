@@ -18,13 +18,13 @@
  *     --args="<path/to/packages/app>"
  */
 
-import { spawn, type ChildProcessByStdio } from 'node:child_process';
-import { mkdir as fsMkdir } from 'node:fs/promises';
-import { createInterface } from 'node:readline';
-import type { Readable, Writable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
-import { dirname, join, resolve } from 'node:path';
-import { APP_MODULES } from '../../packages/app/src/modules/registry.ts';
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { mkdir as fsMkdir } from "node:fs/promises";
+import { createInterface } from "node:readline";
+import type { Readable, Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
+import { dirname, join, resolve } from "node:path";
+import { APP_MODULES } from "../../packages/app/src/modules/registry.ts";
 
 // ── MCP JSON-RPC client ────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ class McpClient {
   constructor(proc: ChildProcessByStdio<Writable, Readable, null>) {
     this.proc = proc;
     const rl = createInterface({ input: proc.stdout });
-    rl.on('line', (line) => {
+    rl.on("line", (line) => {
       if (!line.trim()) return;
       try {
         const frame = JSON.parse(line) as JsonRpcResponse;
@@ -68,11 +68,11 @@ class McpClient {
       });
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'tools/call',
+          method: "tools/call",
           params: { name: tool, arguments: args },
-        }) + '\n',
+        }) + "\n",
       );
     });
     if (res.error) throw new Error(`${tool} → ${res.error.message}`);
@@ -80,7 +80,7 @@ class McpClient {
       isError?: boolean;
       content?: Array<{ text?: string }>;
     };
-    const text = envelope?.content?.[0]?.text ?? '';
+    const text = envelope?.content?.[0]?.text ?? "";
     if (envelope?.isError) throw new Error(`${tool} → ${text}`);
     try {
       return JSON.parse(text);
@@ -94,15 +94,15 @@ class McpClient {
       this.pending.set(id, (r) => resolveP(r));
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'initialize',
+          method: "initialize",
           params: {
-            protocolVersion: '2024-11-05',
+            protocolVersion: "2024-11-05",
             capabilities: {},
-            clientInfo: { name: 'tier-a-modules', version: '0.0.1' },
+            clientInfo: { name: "tier-a-modules", version: "0.0.1" },
           },
-        }) + '\n',
+        }) + "\n",
       );
     });
   }
@@ -130,17 +130,18 @@ function parseArgs(argv: string[]): DriverArgs {
   const env: Record<string, string> = {};
   let userDataDir: string | undefined;
   for (const a of argv.slice(2)) {
-    if (a.startsWith('--executable=')) executable = a.slice('--executable='.length);
-    else if (a.startsWith('--args=')) execArgs = a.slice('--args='.length).split(' ').filter(Boolean);
-    else if (a.startsWith('--env=')) {
-      const kv = a.slice('--env='.length);
-      const eq = kv.indexOf('=');
+    if (a.startsWith("--executable=")) executable = a.slice("--executable=".length);
+    else if (a.startsWith("--args="))
+      execArgs = a.slice("--args=".length).split(" ").filter(Boolean);
+    else if (a.startsWith("--env=")) {
+      const kv = a.slice("--env=".length);
+      const eq = kv.indexOf("=");
       if (eq > 0) env[kv.slice(0, eq)] = kv.slice(eq + 1);
-    } else if (a.startsWith('--userDataDir=')) {
-      userDataDir = a.slice('--userDataDir='.length);
+    } else if (a.startsWith("--userDataDir=")) {
+      userDataDir = a.slice("--userDataDir=".length);
     }
   }
-  if (!executable) throw new Error('--executable required');
+  if (!executable) throw new Error("--executable required");
   const out: DriverArgs = { executable, execArgs, env };
   if (userDataDir !== undefined) out.userDataDir = userDataDir;
   return out;
@@ -149,9 +150,9 @@ function parseArgs(argv: string[]): DriverArgs {
 function resolveServerScript(here: string): string {
   const explicit = process.env.ELECTRON_MCP_DIR;
   if (explicit && explicit.length > 0) {
-    return resolve(explicit, 'dist', 'server', 'index.js');
+    return resolve(explicit, "dist", "server", "index.js");
   }
-  return resolve(here, '..', '..', '..', 'electron-mcp-server', 'dist', 'server', 'index.js');
+  return resolve(here, "..", "..", "..", "electron-mcp-server", "dist", "server", "index.js");
 }
 
 // ── Palette navigation helpers ─────────────────────────────────────
@@ -170,7 +171,7 @@ async function resetState(client: McpClient, sessionId: string): Promise<void> {
   // Escape (palette dismiss) + reset to dashboard via the test-only
   // window.useTabStore. Avoids the cost of waiting for an explorer-tree
   // leaf to render; the store mutation is synchronous and reliable.
-  await client.call('electron_evaluate_renderer', {
+  await client.call("electron_evaluate_renderer", {
     sessionId,
     expression: `(() => {
       document.dispatchEvent(new KeyboardEvent('keydown', {
@@ -199,9 +200,9 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
 
   for (const m of APP_MODULES) {
     // Mark the console baseline for this iteration.
-    await client.call('electron_evaluate_renderer', {
+    await client.call("electron_evaluate_renderer", {
       sessionId,
-      expression: '(() => { window.__smokeMarkTime = Date.now(); })()',
+      expression: "(() => { window.__smokeMarkTime = Date.now(); })()",
     });
 
     try {
@@ -211,7 +212,7 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
       //    deterministic navigation primitive so the module-loop measures
       //    what it claims to measure ("module mounts when its tab is
       //    active"), not React-controlled-input quirks.
-      await client.call('electron_evaluate_renderer', {
+      await client.call("electron_evaluate_renderer", {
         sessionId,
         expression: `(() => {
           const store = window.useTabStore;
@@ -228,15 +229,15 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
       });
 
       // 2. Wait up to 5 s for the smoke affordance.
-      await client.call('electron_wait_for_selector', {
+      await client.call("electron_wait_for_selector", {
         sessionId,
         selector: `[data-testid="${m.smokeAffordance}"]`,
-        state: 'visible',
+        state: "visible",
         timeout: 5_000,
       });
 
       // 5. Assert error boundary is NOT present.
-      const errBoundary = (await client.call('electron_evaluate_renderer', {
+      const errBoundary = (await client.call("electron_evaluate_renderer", {
         sessionId,
         expression: `!!document.querySelector('[data-testid="beacon-error-boundary"]')`,
       })) as { result: boolean };
@@ -245,7 +246,7 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
       }
 
       // 6. Sweep console for errors since iteration start.
-      const consoleCheck = (await client.call('electron_evaluate_renderer', {
+      const consoleCheck = (await client.call("electron_evaluate_renderer", {
         sessionId,
         expression: `(() => {
           const mark = window.__smokeMarkTime ?? 0;
@@ -257,7 +258,7 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
       })) as { result: { count: number; first: string | null } };
       if (consoleCheck.result.count > 0) {
         throw new Error(
-          `${consoleCheck.result.count} console error(s) since iteration start — first: ${consoleCheck.result.first ?? '?'}`,
+          `${consoleCheck.result.count} console error(s) since iteration start — first: ${consoleCheck.result.first ?? "?"}`,
         );
       }
 
@@ -265,11 +266,11 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
       passed += 1;
     } catch (err) {
       // Capture screenshot under the repo so upload-artifact picks it up.
-      const screenshotsDir = join(here, 'screenshots');
+      const screenshotsDir = join(here, "screenshots");
       await fsMkdir(screenshotsDir, { recursive: true });
-      const screenshotPath = join(screenshotsDir, `tier-a-fail-${m.id.replace(/\./g, '-')}.png`);
+      const screenshotPath = join(screenshotsDir, `tier-a-fail-${m.id.replace(/\./g, "-")}.png`);
       try {
-        await client.call('electron_screenshot', {
+        await client.call("electron_screenshot", {
           sessionId,
           path: screenshotPath,
         });
@@ -279,7 +280,7 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
       }
       // Dump captured console errors + error-boundary status + DOM snapshot.
       try {
-        const diag = await client.call('electron_evaluate_renderer', {
+        const diag = (await client.call("electron_evaluate_renderer", {
           sessionId,
           expression: `(() => ({
             errors: window.__smokeConsoleErrors ?? [],
@@ -288,7 +289,15 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
             activeKey: window.useTabStore?.getState?.()?.activeKey,
             bodyHead: document.body?.innerText?.slice(0, 800) ?? '',
           }))()`,
-        }) as { result: { errors: unknown[]; boundary: boolean; url: string; activeKey: string | null | undefined; bodyHead: string } };
+        })) as {
+          result: {
+            errors: unknown[];
+            boundary: boolean;
+            url: string;
+            activeKey: string | null | undefined;
+            bodyHead: string;
+          };
+        };
         console.error(`diagnostics: ${JSON.stringify(diag.result, null, 2)}`);
       } catch {
         /* best-effort */
@@ -314,7 +323,7 @@ async function runPalettePass(client: McpClient, sessionId: string): Promise<voi
  * build). The shim is idempotent — calling it twice is safe.
  */
 async function installConsoleCapture(client: McpClient, sessionId: string): Promise<void> {
-  await client.call('electron_evaluate_renderer', {
+  await client.call("electron_evaluate_renderer", {
     sessionId,
     expression: `(() => {
       if (window.__smokeConsolePatched) return;
@@ -339,9 +348,9 @@ async function main(): Promise<void> {
   const here = dirname(fileURLToPath(import.meta.url));
   const serverScript = resolveServerScript(here);
   const env: NodeJS.ProcessEnv = { ...process.env };
-  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? 'warn';
-  const nodeBin = process.env.MCP_NODE ?? 'node';
-  const proc = spawn(nodeBin, [serverScript], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "warn";
+  const nodeBin = process.env.MCP_NODE ?? "node";
+  const proc = spawn(nodeBin, [serverScript], { env, stdio: ["pipe", "pipe", "inherit"] });
   const client = new McpClient(proc);
 
   try {
@@ -352,17 +361,17 @@ async function main(): Promise<void> {
     };
     if (Object.keys(args.env).length > 0) launchArgMap.env = args.env;
     if (args.userDataDir !== undefined) launchArgMap.userDataDir = args.userDataDir;
-    const launch = (await client.call('electron_launch', launchArgMap, 270_000)) as {
+    const launch = (await client.call("electron_launch", launchArgMap, 270_000)) as {
       sessionId?: string;
     };
     const sessionId = launch.sessionId;
-    if (!sessionId) throw new Error('launch failed — no sessionId in response');
+    if (!sessionId) throw new Error("launch failed — no sessionId in response");
 
-    await client.call('electron_wait_for_window', { sessionId, index: 0, timeoutMs: 30_000 });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_window", { sessionId, index: 0, timeoutMs: 30_000 });
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="dashboard-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 15_000,
     });
 
@@ -375,9 +384,9 @@ async function main(): Promise<void> {
     // under the hermetic test profile in ~22 s.
     await runPalettePass(client, sessionId);
 
-    await client.call('electron_close', { sessionId });
+    await client.call("electron_close", { sessionId });
   } catch (err) {
-    console.error('harness crashed:', err);
+    console.error("harness crashed:", err);
     process.exitCode = 1;
   } finally {
     client.kill();

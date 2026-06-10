@@ -18,6 +18,7 @@ composes with that patch's `notify_stream_error` / `throw_if_stream_error` error
 repo's root.
 
 **Repo-local deliverables (llamactl only):**
+
 - `docs/upstream-patches/mlx-backpressure-per-stream-gate.patch`
 - `docs/upstream-patches/mlx-backpressure-pr-description.md`
 
@@ -69,10 +70,12 @@ Tests must not require Metal hardware — use only thread joins, timed waits, an
 synthetic harness. Do not allocate MLX arrays.
 
 **Verify:**
+
 ```bash
 cd /path/to/atomic-mlx/build
 cmake --build . -t mlx_tests && ./mlx_tests "[backpressure]"
 ```
+
 Expected: compile or link failure because `acquire_stream_slot` / `release_stream_slot`
 do not exist yet.
 
@@ -121,6 +124,7 @@ void release_stream_slot(const Stream& s);
 ```
 
 Behaviour contracts:
+
 - **Unbounded path** (`limit == INT_MAX`): increment counter, return immediately (one
   `inflight_mtx_` acquire — zero wait).
 - **Finite limit**: `while (count >= limit)` wait on `inflight_cv_`; on timeout call
@@ -130,9 +134,11 @@ Behaviour contracts:
   when the timeout handler calls `notify_stream_error`, which acquires `error_mtx_`.
 
 **Verify:**
+
 ```bash
 cmake --build . -t mlx_tests && ./mlx_tests "[backpressure]"
 ```
+
 Expected: the three unit tests from Phase 0 pass.
 
 ---
@@ -183,6 +189,7 @@ error one eval later, breaking per-request error correlation (same invariant as 
 predecessor patch).
 
 **Verify:**
+
 ```bash
 cmake --build . -t mlx_tests && ./mlx_tests "[backpressure]"
 python - <<'PY'
@@ -193,6 +200,7 @@ ts = [threading.Thread(target=work) for _ in range(4)]
 print("ok")
 PY
 ```
+
 Expected: all back-pressure tests pass; Python smoke prints `ok` (unthrottled path
 unchanged).
 
@@ -254,10 +262,12 @@ Replace the hard-coded `INT_MAX` / `30` literals at each acquire site with calls
 `read_inflight_limit()` / `read_backpressure_timeout()`.
 
 **Verify:**
+
 ```bash
 cmake --build . -t mlx_tests && ./mlx_tests "[backpressure]"
 MLX_METAL_MAX_INFLIGHT_PER_STREAM=1 ./mlx_tests "ConcurrentStreamsRespectLimit"
 ```
+
 Expected: all five back-pressure tests pass (StreamGateBlocksAtLimit,
 StreamGateFastPathThroughput, StreamGateTimeoutInjectsStreamError,
 ConcurrentStreamsRespectLimit, EnvVarSetsLimit).
@@ -287,6 +297,7 @@ risk_class: paste-ready
 ```
 
 **Failing test:**
+
 ```bash
 test -f docs/upstream-patches/mlx-backpressure-per-stream-gate.patch
 ```
@@ -302,11 +313,13 @@ git format-patch origin/main --stdout -- \
 ```
 
 **Verify:**
+
 ```bash
 # From a clean MLX main checkout
 patch --dry-run -p1 \
   < /Volumes/WorkSSD/repos/personal/llamactl/docs/upstream-patches/mlx-backpressure-per-stream-gate.patch
 ```
+
 Expected: all hunks apply cleanly with no fuzz.
 
 ---
@@ -327,6 +340,7 @@ risk_class: paste-ready
 ```
 
 **Failing test:**
+
 ```bash
 test -f docs/upstream-patches/mlx-backpressure-pr-description.md
 ```
@@ -365,6 +379,7 @@ with these sections:
 ```
 
 **Verify:**
+
 ```bash
 test -f docs/upstream-patches/mlx-backpressure-pr-description.md
 ```
@@ -376,10 +391,10 @@ Integration: commit both `3.1` and `3.2` artifacts in a single llamactl commit; 
 
 ## Design decisions
 
-| Question | Decision |
-|---|---|
-| `cv+mutex` vs semaphore | `cv + mutex` — integrates with existing `notify_stream_error` call pattern; no new OS primitive needed |
-| Gate location: `eval()` vs `mlx_lm.generate` | `eval.cpp` — must be at the Metal commit site to cover all callers uniformly |
-| Counter on stream vs on encoder | On `Scheduler` keyed by `stream.id` — consistent with where `stream_error_` lives; `CommandEncoder` is per-commit, not persistent |
-| `inflight_mtx_` separate from `error_mtx_` | Required: timeout path calls `notify_stream_error` (acquires `error_mtx_`) while holding `inflight_mtx_` — same mutex would deadlock |
-| Default unbounded | Required: single-model fast path must see zero wait; env-var opt-in preserves upstream acceptability |
+| Question                                     | Decision                                                                                                                             |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `cv+mutex` vs semaphore                      | `cv + mutex` — integrates with existing `notify_stream_error` call pattern; no new OS primitive needed                               |
+| Gate location: `eval()` vs `mlx_lm.generate` | `eval.cpp` — must be at the Metal commit site to cover all callers uniformly                                                         |
+| Counter on stream vs on encoder              | On `Scheduler` keyed by `stream.id` — consistent with where `stream_error_` lives; `CommandEncoder` is per-commit, not persistent    |
+| `inflight_mtx_` separate from `error_mtx_`   | Required: timeout path calls `notify_stream_error` (acquires `error_mtx_`) while holding `inflight_mtx_` — same mutex would deadlock |
+| Default unbounded                            | Required: single-model fast path must see zero wait; env-var opt-in preserves upstream acceptability                                 |

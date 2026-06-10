@@ -1,5 +1,5 @@
-import { evictionScore } from './evictionScore.js';
-import type { KvEntry, KvRegistry } from './registry.js';
+import { evictionScore } from "./evictionScore.js";
+import type { KvEntry, KvRegistry } from "./registry.js";
 
 export interface LookupParams {
   candidatePrefixes: Array<{
@@ -14,7 +14,9 @@ export interface LookupParams {
 }
 
 export function longestPrefixLookup(registry: KvRegistry, params: LookupParams): KvEntry | null {
-  const sortedCandidates = [...params.candidatePrefixes].sort((a, b) => b.prefixByteLength - a.prefixByteLength);
+  const sortedCandidates = [...params.candidatePrefixes].sort(
+    (a, b) => b.prefixByteLength - a.prefixByteLength,
+  );
   for (const candidate of sortedCandidates) {
     const entry = registry.findBySha(candidate.sha);
     if (!entry) continue;

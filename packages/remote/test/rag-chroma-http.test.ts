@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   CHROMA_DEFAULT_DATABASE,
   CHROMA_DEFAULT_TENANT,
@@ -7,9 +7,9 @@ import {
   HttpChromaClient,
   parseHttpChromaEndpoint,
   resolveChromaHttpToken,
-} from '../src/rag/chroma/index.js';
-import { RagError } from '../src/rag/errors.js';
-import type { RagBinding } from '../src/config/schema.js';
+} from "../src/rag/chroma/index.js";
+import { RagError } from "../src/rag/errors.js";
+import type { RagBinding } from "../src/config/schema.js";
 
 /**
  * HTTP-mode coverage of the chroma adapter (slice G1). The fixture
@@ -42,9 +42,7 @@ interface FakeChromaOptions {
   collectionId?: string;
 }
 
-async function startFakeChroma(
-  opts: FakeChromaOptions = {},
-): Promise<{
+async function startFakeChroma(opts: FakeChromaOptions = {}): Promise<{
   url: string;
   calls: RecordedRequest[];
   collections: Map<string, { id: string; name: string }>;
@@ -54,22 +52,22 @@ async function startFakeChroma(
   const collections = new Map<string, { id: string; name: string }>();
   let nextId = 0;
   const assignedUuid = () => {
-    const base = opts.collectionId ?? '11111111-1111-4111-8111-';
-    return `${base}${String(nextId++).padStart(12, '0')}`;
+    const base = opts.collectionId ?? "11111111-1111-4111-8111-";
+    return `${base}${String(nextId++).padStart(12, "0")}`;
   };
 
   const server = Bun.serve({
     port: 0,
-    hostname: '127.0.0.1',
+    hostname: "127.0.0.1",
     async fetch(req) {
       const url = new URL(req.url);
-      const body = req.method === 'GET' || req.method === 'HEAD' ? '' : await req.text();
+      const body = req.method === "GET" || req.method === "HEAD" ? "" : await req.text();
       calls.push({
         method: req.method,
         path: url.pathname,
         search: url.search,
         body,
-        auth: req.headers.get('authorization'),
+        auth: req.headers.get("authorization"),
       });
 
       // Explicit override wins.
@@ -78,23 +76,23 @@ async function startFakeChroma(
         return opts.overrides[key](body ? safeJson(body) : undefined);
       }
 
-      if (url.pathname === '/api/v2/heartbeat') {
+      if (url.pathname === "/api/v2/heartbeat") {
         const status = opts.heartbeatStatus ?? 200;
         if (status !== 200) {
           return new Response(`{"error":"down"}`, {
             status,
-            headers: { 'content-type': 'application/json' },
+            headers: { "content-type": "application/json" },
           });
         }
         return new Response('{"nanosecond heartbeat":12345}', {
           status: 200,
-          headers: { 'content-type': 'application/json' },
+          headers: { "content-type": "application/json" },
         });
       }
 
       const base = `/api/v2/tenants/${CHROMA_DEFAULT_TENANT}/databases/${CHROMA_DEFAULT_DATABASE}/collections`;
-      if (req.method === 'POST' && url.pathname === base) {
-        const parsed = body ? (safeJson(body) as { name: string }) : { name: '' };
+      if (req.method === "POST" && url.pathname === base) {
+        const parsed = body ? (safeJson(body) as { name: string }) : { name: "" };
         let existing = [...collections.values()].find((c) => c.name === parsed.name);
         if (!existing) {
           existing = { id: assignedUuid(), name: parsed.name };
@@ -113,10 +111,10 @@ async function startFakeChroma(
             log_position: 0,
             version: 0,
           }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
+          { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      if (req.method === 'GET' && url.pathname === base) {
+      if (req.method === "GET" && url.pathname === base) {
         const dim = opts.collectionDimension ?? null;
         const arr = [...collections.values()].map((c) => ({
           id: c.id,
@@ -131,35 +129,34 @@ async function startFakeChroma(
         }));
         return new Response(JSON.stringify(arr), {
           status: 200,
-          headers: { 'content-type': 'application/json' },
+          headers: { "content-type": "application/json" },
         });
       }
 
-      if (req.method === 'POST' && url.pathname.startsWith(`${base}/`)) {
+      if (req.method === "POST" && url.pathname.startsWith(`${base}/`)) {
         const rest = url.pathname.slice(base.length + 1);
-        const slash = rest.indexOf('/');
+        const slash = rest.indexOf("/");
         const id = slash >= 0 ? rest.slice(0, slash) : rest;
-        const action = slash >= 0 ? rest.slice(slash + 1) : '';
+        const action = slash >= 0 ? rest.slice(slash + 1) : "";
         if (!collections.has(id)) {
           return new Response(
             `{"error":"NotFoundError","message":"Collection [${id}] does not exist"}`,
-            { status: 404, headers: { 'content-type': 'application/json' } },
+            { status: 404, headers: { "content-type": "application/json" } },
           );
         }
-        if (action === 'upsert') {
-          return new Response('{}', {
+        if (action === "upsert") {
+          return new Response("{}", {
             status: 200,
-            headers: { 'content-type': 'application/json' },
+            headers: { "content-type": "application/json" },
           });
         }
-        if (action === 'query') {
+        if (action === "query") {
           const parsed = body ? (safeJson(body) as { n_results?: number }) : {};
           const n = parsed.n_results ?? 2;
           const ids = Array.from({ length: n }, (_, i) => `doc-${i}`);
           const docs = Array.from({ length: n }, (_, i) => `content-${i}`);
-          const metas = Array.from(
-            { length: n },
-            (_, i): Record<string, unknown> | null => (i === n - 1 ? null : { t: 'x' }),
+          const metas = Array.from({ length: n }, (_, i): Record<string, unknown> | null =>
+            i === n - 1 ? null : { t: "x" },
           );
           const distances = Array.from({ length: n }, (_, i) => Math.min(0.1 * (i + 1), 1.5));
           return new Response(
@@ -168,16 +165,16 @@ async function startFakeChroma(
               documents: [docs],
               metadatas: [metas],
               distances: [distances],
-              include: ['distances', 'documents', 'metadatas'],
+              include: ["distances", "documents", "metadatas"],
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { status: 200, headers: { "content-type": "application/json" } },
           );
         }
-        if (action === 'delete') {
+        if (action === "delete") {
           const parsed = body ? (safeJson(body) as { ids?: string[] }) : {};
           return new Response(JSON.stringify({ deleted: parsed.ids?.length ?? 0 }), {
             status: 200,
-            headers: { 'content-type': 'application/json' },
+            headers: { "content-type": "application/json" },
           });
         }
       }
@@ -185,7 +182,7 @@ async function startFakeChroma(
       const nf = opts.notFound ?? { status: 404, body: `{"error":"NotFound","message":"unknown"}` };
       return new Response(nf.body, {
         status: nf.status,
-        headers: { 'content-type': 'application/json' },
+        headers: { "content-type": "application/json" },
       });
     },
   });
@@ -210,9 +207,9 @@ function safeJson(s: string): unknown {
 
 function httpBinding(overrides: Partial<RagBinding> = {}): RagBinding {
   return {
-    provider: 'chroma',
-    endpoint: overrides.endpoint ?? 'http://127.0.0.1:0',
-    collection: overrides.collection ?? 'kb',
+    provider: "chroma",
+    endpoint: overrides.endpoint ?? "http://127.0.0.1:0",
+    collection: overrides.collection ?? "kb",
     extraArgs: [],
     ...(overrides.embedder !== undefined && { embedder: overrides.embedder }),
     ...(overrides.auth !== undefined && { auth: overrides.auth }),
@@ -221,73 +218,75 @@ function httpBinding(overrides: Partial<RagBinding> = {}): RagBinding {
 
 // ---- parseHttpChromaEndpoint + token resolution ------------------------
 
-describe('parseHttpChromaEndpoint', () => {
-  test('accepts plain host:port', () => {
-    expect(parseHttpChromaEndpoint({ endpoint: 'http://host:8000' })).toBe('http://host:8000');
+describe("parseHttpChromaEndpoint", () => {
+  test("accepts plain host:port", () => {
+    expect(parseHttpChromaEndpoint({ endpoint: "http://host:8000" })).toBe("http://host:8000");
   });
-  test('strips trailing slash', () => {
-    expect(parseHttpChromaEndpoint({ endpoint: 'http://host:8000/' })).toBe('http://host:8000');
+  test("strips trailing slash", () => {
+    expect(parseHttpChromaEndpoint({ endpoint: "http://host:8000/" })).toBe("http://host:8000");
   });
-  test('strips /api/v2 suffix', () => {
-    expect(parseHttpChromaEndpoint({ endpoint: 'http://host:8000/api/v2' })).toBe('http://host:8000');
+  test("strips /api/v2 suffix", () => {
+    expect(parseHttpChromaEndpoint({ endpoint: "http://host:8000/api/v2" })).toBe(
+      "http://host:8000",
+    );
   });
-  test('rejects empty endpoint', () => {
+  test("rejects empty endpoint", () => {
     try {
-      parseHttpChromaEndpoint({ endpoint: '   ' });
-      throw new Error('expected throw');
+      parseHttpChromaEndpoint({ endpoint: "   " });
+      throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
-      expect((err as RagError).code).toBe('connect-failed');
+      expect((err as RagError).code).toBe("connect-failed");
     }
   });
-  test('rejects non-URL garbage', () => {
+  test("rejects non-URL garbage", () => {
     try {
-      parseHttpChromaEndpoint({ endpoint: 'not a url' });
-      throw new Error('expected throw');
+      parseHttpChromaEndpoint({ endpoint: "not a url" });
+      throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
-      expect((err as RagError).code).toBe('connect-failed');
+      expect((err as RagError).code).toBe("connect-failed");
     }
   });
 });
 
-describe('resolveChromaHttpToken', () => {
-  test('returns undefined without auth block', () => {
+describe("resolveChromaHttpToken", () => {
+  test("returns undefined without auth block", () => {
     expect(resolveChromaHttpToken({} as RagBinding, {})).toBeUndefined();
   });
-  test('reads tokenEnv when set', () => {
-    const env = { CHROMA_TOKEN: 'abc123' };
+  test("reads tokenEnv when set", () => {
+    const env = { CHROMA_TOKEN: "abc123" };
     const got = resolveChromaHttpToken(
-      { auth: { tokenEnv: 'CHROMA_TOKEN' } } as RagBinding,
+      { auth: { tokenEnv: "CHROMA_TOKEN" } } as RagBinding,
       env as NodeJS.ProcessEnv,
     );
-    expect(got).toBe('abc123');
+    expect(got).toBe("abc123");
   });
-  test('reads env: scheme via tokenRef', () => {
-    const env = { CT: 'z' };
+  test("reads env: scheme via tokenRef", () => {
+    const env = { CT: "z" };
     const got = resolveChromaHttpToken(
-      { auth: { tokenRef: 'env:CT' } } as RagBinding,
+      { auth: { tokenRef: "env:CT" } } as RagBinding,
       env as NodeJS.ProcessEnv,
     );
-    expect(got).toBe('z');
+    expect(got).toBe("z");
   });
-  test('wraps tokenRef failure in RagError', () => {
+  test("wraps tokenRef failure in RagError", () => {
     try {
       resolveChromaHttpToken(
-        { auth: { tokenRef: 'env:MISSING_VAR' } } as RagBinding,
+        { auth: { tokenRef: "env:MISSING_VAR" } } as RagBinding,
         {} as NodeJS.ProcessEnv,
       );
-      throw new Error('expected throw');
+      throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
-      expect((err as RagError).code).toBe('connect-failed');
+      expect((err as RagError).code).toBe("connect-failed");
     }
   });
 });
 
 // ---- HttpChromaClient direct -------------------------------------------
 
-describe('HttpChromaClient', () => {
+describe("HttpChromaClient", () => {
   let fake: Awaited<ReturnType<typeof startFakeChroma>>;
   beforeEach(async () => {
     fake = await startFakeChroma({ collectionDimension: 768 });
@@ -296,68 +295,68 @@ describe('HttpChromaClient', () => {
     await fake.stop();
   });
 
-  test('heartbeat hits /api/v2/heartbeat and returns void on 200', async () => {
+  test("heartbeat hits /api/v2/heartbeat and returns void on 200", async () => {
     const client = new HttpChromaClient({ baseUrl: fake.url });
     await client.heartbeat();
-    expect(fake.calls.at(-1)!.path).toBe('/api/v2/heartbeat');
+    expect(fake.calls.at(-1)!.path).toBe("/api/v2/heartbeat");
   });
 
-  test('heartbeat translates 5xx into RagError connect-failed', async () => {
+  test("heartbeat translates 5xx into RagError connect-failed", async () => {
     await fake.stop();
     fake = await startFakeChroma({ heartbeatStatus: 503 });
     const client = new HttpChromaClient({ baseUrl: fake.url });
     try {
       await client.heartbeat();
-      throw new Error('expected throw');
+      throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
-      expect((err as RagError).code).toBe('connect-failed');
+      expect((err as RagError).code).toBe("connect-failed");
     }
   });
 
-  test('resolveCollectionId caches the first lookup', async () => {
+  test("resolveCollectionId caches the first lookup", async () => {
     const client = new HttpChromaClient({ baseUrl: fake.url });
-    const a = await client.resolveCollectionId('kb');
-    const b = await client.resolveCollectionId('kb');
+    const a = await client.resolveCollectionId("kb");
+    const b = await client.resolveCollectionId("kb");
     expect(a).toBe(b);
     const postCreates = fake.calls.filter(
-      (c) => c.method === 'POST' && c.path.endsWith('/collections'),
+      (c) => c.method === "POST" && c.path.endsWith("/collections"),
     );
     expect(postCreates).toHaveLength(1);
   });
 
-  test('upsert + query + delete + listCollections happy path', async () => {
+  test("upsert + query + delete + listCollections happy path", async () => {
     const client = new HttpChromaClient({ baseUrl: fake.url });
-    const id = await client.resolveCollectionId('kb');
+    const id = await client.resolveCollectionId("kb");
     await client.upsert(id, {
-      ids: ['a', 'b'],
+      ids: ["a", "b"],
       embeddings: [
         [0.1, 0.2],
         [0.3, 0.4],
       ],
-      documents: ['one', 'two'],
-      metadatas: [{ t: '1' }, null],
+      documents: ["one", "two"],
+      metadatas: [{ t: "1" }, null],
     });
     const q = await client.query(id, {
       query_embeddings: [[0.1, 0.2]],
       n_results: 2,
-      include: ['distances', 'documents', 'metadatas'],
+      include: ["distances", "documents", "metadatas"],
     });
     expect(q.ids[0]).toHaveLength(2);
     expect(q.distances![0]).toHaveLength(2);
-    const deleted = await client.deleteRecords(id, { ids: ['a'] });
+    const deleted = await client.deleteRecords(id, { ids: ["a"] });
     expect(deleted).toBe(1);
     const list = await client.listCollections();
-    expect(list.map((c) => c.name)).toContain('kb');
+    expect(list.map((c) => c.name)).toContain("kb");
   });
 
-  test('attaches bearer token when configured', async () => {
-    const client = new HttpChromaClient({ baseUrl: fake.url, token: 'bear' });
+  test("attaches bearer token when configured", async () => {
+    const client = new HttpChromaClient({ baseUrl: fake.url, token: "bear" });
     await client.heartbeat();
-    expect(fake.calls.at(-1)!.auth).toBe('Bearer bear');
+    expect(fake.calls.at(-1)!.auth).toBe("Bearer bear");
   });
 
-  test('propagates 4xx as RagError tool-error', async () => {
+  test("propagates 4xx as RagError tool-error", async () => {
     await fake.stop();
     fake = await startFakeChroma({
       overrides: {
@@ -365,22 +364,22 @@ describe('HttpChromaClient', () => {
           () =>
             new Response('{"error":"ChromaError","message":"bad name"}', {
               status: 422,
-              headers: { 'content-type': 'application/json' },
+              headers: { "content-type": "application/json" },
             }),
       },
     });
     const client = new HttpChromaClient({ baseUrl: fake.url });
     try {
-      await client.createCollection('bogus', { getOrCreate: true });
-      throw new Error('expected throw');
+      await client.createCollection("bogus", { getOrCreate: true });
+      throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
-      expect((err as RagError).code).toBe('tool-error');
-      expect((err as RagError).message).toContain('bad name');
+      expect((err as RagError).code).toBe("tool-error");
+      expect((err as RagError).message).toContain("bad name");
     }
   });
 
-  test('propagates 5xx as RagError connect-failed', async () => {
+  test("propagates 5xx as RagError connect-failed", async () => {
     await fake.stop();
     fake = await startFakeChroma({
       overrides: {
@@ -388,28 +387,28 @@ describe('HttpChromaClient', () => {
           () =>
             new Response('{"error":"InternalError","message":"boom"}', {
               status: 500,
-              headers: { 'content-type': 'application/json' },
+              headers: { "content-type": "application/json" },
             }),
       },
     });
     const client = new HttpChromaClient({ baseUrl: fake.url });
     try {
-      await client.createCollection('boom', { getOrCreate: true });
-      throw new Error('expected throw');
+      await client.createCollection("boom", { getOrCreate: true });
+      throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
-      expect((err as RagError).code).toBe('connect-failed');
+      expect((err as RagError).code).toBe("connect-failed");
     }
   });
 
-  test('deleteRecords tolerates servers that omit deleted field', async () => {
+  test("deleteRecords tolerates servers that omit deleted field", async () => {
     await fake.stop();
     fake = await startFakeChroma({
       overrides: {},
     });
     const client = new HttpChromaClient({ baseUrl: fake.url });
-    const id = await client.resolveCollectionId('kb');
-    const deleted = await client.deleteRecords(id, { ids: ['x', 'y'] });
+    const id = await client.resolveCollectionId("kb");
+    const deleted = await client.deleteRecords(id, { ids: ["x", "y"] });
     // Fake returns `{deleted: 2}` by default. Replace override with an
     // empty body shape to verify the fallback path.
     expect(deleted).toBe(2);
@@ -418,7 +417,7 @@ describe('HttpChromaClient', () => {
 
 // ---- ChromaRagAdapter HTTP-mode round-trip -----------------------------
 
-describe('ChromaRagAdapter (HTTP backend)', () => {
+describe("ChromaRagAdapter (HTTP backend)", () => {
   let fake: Awaited<ReturnType<typeof startFakeChroma>>;
   beforeEach(async () => {
     fake = await startFakeChroma({ collectionDimension: 3 });
@@ -427,36 +426,38 @@ describe('ChromaRagAdapter (HTTP backend)', () => {
     await fake.stop();
   });
 
-  test('store + search + delete round-trip with caller-supplied vectors', async () => {
-    const adapter = (await createChromaAdapter(httpBinding({ endpoint: fake.url }))) as ChromaRagAdapter;
+  test("store + search + delete round-trip with caller-supplied vectors", async () => {
+    const adapter = (await createChromaAdapter(
+      httpBinding({ endpoint: fake.url }),
+    )) as ChromaRagAdapter;
 
     const storeRes = await adapter.store({
       documents: [
-        { id: 'a', content: 'hello', vector: [0.1, 0.2, 0.3], metadata: { topic: 'x' } },
-        { id: 'b', content: 'world', vector: [0.4, 0.5, 0.6] },
+        { id: "a", content: "hello", vector: [0.1, 0.2, 0.3], metadata: { topic: "x" } },
+        { id: "b", content: "world", vector: [0.4, 0.5, 0.6] },
       ],
     });
-    expect(storeRes.ids).toEqual(['a', 'b']);
-    expect(storeRes.collection).toBe('kb');
+    expect(storeRes.ids).toEqual(["a", "b"]);
+    expect(storeRes.collection).toBe("kb");
 
     const searchRes = await adapter.search({
-      query: 'anything',
+      query: "anything",
       topK: 2,
       filter: { vector: [0.1, 0.2, 0.3] },
     });
     expect(searchRes.results).toHaveLength(2);
     // Fake server returns distances [0.1, 0.2] → scores [0.9, 0.8].
     expect(searchRes.results[0]!.score).toBeCloseTo(0.9, 5);
-    expect(searchRes.results[0]!.document.metadata).toEqual({ t: 'x' });
+    expect(searchRes.results[0]!.document.metadata).toEqual({ t: "x" });
     expect(searchRes.results[1]!.document.metadata).toBeUndefined(); // last one is null
 
-    const delRes = await adapter.delete({ ids: ['a'] });
+    const delRes = await adapter.delete({ ids: ["a"] });
     expect(delRes.deleted).toBe(1);
 
     await adapter.close();
 
     // Upsert payload confirms embeddings threaded through correctly.
-    const upsertCall = fake.calls.find((c) => c.path.endsWith('/upsert'))!;
+    const upsertCall = fake.calls.find((c) => c.path.endsWith("/upsert"))!;
     const upsertBody = JSON.parse(upsertCall.body) as {
       ids: string[];
       embeddings: number[][];
@@ -464,15 +465,15 @@ describe('ChromaRagAdapter (HTTP backend)', () => {
       metadatas: Array<Record<string, unknown> | null>;
     };
     expect(upsertCall).toBeDefined();
-    expect(upsertBody.ids).toEqual(['a', 'b']);
+    expect(upsertBody.ids).toEqual(["a", "b"]);
     expect(upsertBody.embeddings).toEqual([
       [0.1, 0.2, 0.3],
       [0.4, 0.5, 0.6],
     ]);
-    expect(upsertBody.documents).toEqual(['hello', 'world']);
-    expect(upsertBody.metadatas).toEqual([{ topic: 'x' }, null]);
+    expect(upsertBody.documents).toEqual(["hello", "world"]);
+    expect(upsertBody.metadatas).toEqual([{ topic: "x" }, null]);
     // Query payload shape.
-    const queryCall = fake.calls.find((c) => c.path.endsWith('/query'))!;
+    const queryCall = fake.calls.find((c) => c.path.endsWith("/query"))!;
     const queryBody = JSON.parse(queryCall.body) as {
       query_embeddings: number[][];
       n_results: number;
@@ -480,10 +481,10 @@ describe('ChromaRagAdapter (HTTP backend)', () => {
     };
     expect(queryBody.query_embeddings).toEqual([[0.1, 0.2, 0.3]]);
     expect(queryBody.n_results).toBe(2);
-    expect(queryBody.include).toEqual(['distances', 'documents', 'metadatas']);
+    expect(queryBody.include).toEqual(["distances", "documents", "metadatas"]);
   });
 
-  test('uses delegated embedder when docs arrive without vectors', async () => {
+  test("uses delegated embedder when docs arrive without vectors", async () => {
     let embedCalls = 0;
     const embedder = async (texts: string[]) => {
       embedCalls++;
@@ -496,77 +497,83 @@ describe('ChromaRagAdapter (HTTP backend)', () => {
 
     await adapter.store({
       documents: [
-        { id: 'a', content: 'x' },
-        { id: 'b', content: 'y' },
+        { id: "a", content: "x" },
+        { id: "b", content: "y" },
       ],
     });
     expect(embedCalls).toBe(1); // single batched call for both docs
 
-    const searchRes = await adapter.search({ query: 'find x', topK: 1 });
+    const searchRes = await adapter.search({ query: "find x", topK: 1 });
     expect(searchRes.results).toBeDefined();
     expect(embedCalls).toBe(2); // one more for the query
 
     await adapter.close();
 
-    const upsertCall = fake.calls.find((c) => c.path.endsWith('/upsert'))!;
+    const upsertCall = fake.calls.find((c) => c.path.endsWith("/upsert"))!;
     const upsertBody = JSON.parse(upsertCall.body) as { embeddings: number[][] };
     expect(upsertBody.embeddings[0]).toEqual([0.1, 0.2, 0.3]);
     expect(upsertBody.embeddings[1]).toEqual([0.2, 0.4, 0.6]);
   });
 
-  test('store without vector and without embedder surfaces invalid-request', async () => {
-    const adapter = (await createChromaAdapter(httpBinding({ endpoint: fake.url }))) as ChromaRagAdapter;
+  test("store without vector and without embedder surfaces invalid-request", async () => {
+    const adapter = (await createChromaAdapter(
+      httpBinding({ endpoint: fake.url }),
+    )) as ChromaRagAdapter;
     try {
-      await adapter.store({ documents: [{ id: 'x', content: 'c' }] });
-      throw new Error('expected throw');
+      await adapter.store({ documents: [{ id: "x", content: "c" }] });
+      throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
-      expect((err as RagError).code).toBe('invalid-request');
-      expect((err as RagError).message).toContain('no rag.embedder is configured');
+      expect((err as RagError).code).toBe("invalid-request");
+      expect((err as RagError).message).toContain("no rag.embedder is configured");
     } finally {
       await adapter.close();
     }
   });
 
-  test('search without vector + no embedder → invalid-request', async () => {
-    const adapter = (await createChromaAdapter(httpBinding({ endpoint: fake.url }))) as ChromaRagAdapter;
+  test("search without vector + no embedder → invalid-request", async () => {
+    const adapter = (await createChromaAdapter(
+      httpBinding({ endpoint: fake.url }),
+    )) as ChromaRagAdapter;
     try {
-      await adapter.search({ query: 'q', topK: 3 });
-      throw new Error('expected throw');
+      await adapter.search({ query: "q", topK: 3 });
+      throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
-      expect((err as RagError).code).toBe('invalid-request');
+      expect((err as RagError).code).toBe("invalid-request");
     } finally {
       await adapter.close();
     }
   });
 
-  test('listCollections normalizes HTTP rows into CollectionInfo[]', async () => {
-    const adapter = (await createChromaAdapter(httpBinding({ endpoint: fake.url }))) as ChromaRagAdapter;
+  test("listCollections normalizes HTTP rows into CollectionInfo[]", async () => {
+    const adapter = (await createChromaAdapter(
+      httpBinding({ endpoint: fake.url }),
+    )) as ChromaRagAdapter;
     // First trigger a create so the collection exists.
     await adapter.store({
-      documents: [{ id: 'x', content: 'c', vector: [0.1, 0.2, 0.3] }],
+      documents: [{ id: "x", content: "c", vector: [0.1, 0.2, 0.3] }],
     });
     const list = await adapter.listCollections();
     expect(list.collections.length).toBeGreaterThan(0);
-    const kb = list.collections.find((c) => c.name === 'kb');
+    const kb = list.collections.find((c) => c.name === "kb");
     expect(kb).toBeDefined();
     expect(kb!.dimensions).toBe(3);
     await adapter.close();
   });
 
-  test('unreachable backend throws connect-failed on heartbeat', async () => {
+  test("unreachable backend throws connect-failed on heartbeat", async () => {
     // Point at a port nothing is listening on.
     try {
-      await createChromaAdapter(httpBinding({ endpoint: 'http://127.0.0.1:1' }));
-      throw new Error('expected throw');
+      await createChromaAdapter(httpBinding({ endpoint: "http://127.0.0.1:1" }));
+      throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
-      expect((err as RagError).code).toBe('connect-failed');
+      expect((err as RagError).code).toBe("connect-failed");
     }
   });
 
-  test('embedder.baseUrl override flows through from the binding (G4)', async () => {
+  test("embedder.baseUrl override flows through from the binding (G4)", async () => {
     // Integration-style: the caller doesn't pre-build an embedder; the
     // adapter factory has to resolve `binding.embedder.baseUrl` through
     // `createEmbedderFromBinding` and hit the second fixture server
@@ -576,61 +583,61 @@ describe('ChromaRagAdapter (HTTP backend)', () => {
     const embedderCalls: Array<{ auth: string | null; body: string }> = [];
     const embedFixture = Bun.serve({
       port: 0,
-      hostname: '127.0.0.1',
+      hostname: "127.0.0.1",
       async fetch(req) {
         const url = new URL(req.url);
         const body = await req.text();
         embedderCalls.push({
-          auth: req.headers.get('authorization'),
+          auth: req.headers.get("authorization"),
           body,
         });
-        if (url.pathname.endsWith('/embeddings')) {
+        if (url.pathname.endsWith("/embeddings")) {
           const parsed = JSON.parse(body) as { input: string[] };
           return new Response(
             JSON.stringify({
-              object: 'list',
-              model: 'stub',
+              object: "list",
+              model: "stub",
               data: parsed.input.map((_, i) => ({
-                object: 'embedding',
+                object: "embedding",
                 index: i,
                 embedding: [i + 0.5, i + 0.6, i + 0.7],
               })),
             }),
-            { status: 200, headers: { 'content-type': 'application/json' } },
+            { status: 200, headers: { "content-type": "application/json" } },
           );
         }
-        return new Response('{}', { status: 404 });
+        return new Response("{}", { status: 404 });
       },
     });
     try {
-      const { freshConfig } = await import('../src/config/schema.js');
+      const { freshConfig } = await import("../src/config/schema.js");
       const cfg = freshConfig();
       const adapter = (await createChromaAdapter(
         httpBinding({
           endpoint: fake.url,
           embedder: {
-            node: 'external-embedder', // audit label only
-            model: 'nomic-embed-text-v1.5',
+            node: "external-embedder", // audit label only
+            model: "nomic-embed-text-v1.5",
             baseUrl: `http://127.0.0.1:${embedFixture.port}/v1`,
-            apiKeyRef: 'env:G4_TEST_TOKEN',
+            apiKeyRef: "env:G4_TEST_TOKEN",
           },
         }),
-        { config: cfg, env: { G4_TEST_TOKEN: 'g4-secret' } as NodeJS.ProcessEnv },
+        { config: cfg, env: { G4_TEST_TOKEN: "g4-secret" } as NodeJS.ProcessEnv },
       )) as ChromaRagAdapter;
 
       await adapter.store({
         documents: [
-          { id: 'a', content: 'alpha' },
-          { id: 'b', content: 'beta' },
+          { id: "a", content: "alpha" },
+          { id: "b", content: "beta" },
         ],
       });
       expect(embedderCalls).toHaveLength(1);
-      expect(embedderCalls[0]!.auth).toBe('Bearer g4-secret');
+      expect(embedderCalls[0]!.auth).toBe("Bearer g4-secret");
       const sent = JSON.parse(embedderCalls[0]!.body) as { input: string[] };
-      expect(sent.input).toEqual(['alpha', 'beta']);
+      expect(sent.input).toEqual(["alpha", "beta"]);
 
       // The chroma upsert received the embedder-produced vectors.
-      const upsertCall = fake.calls.find((c) => c.path.endsWith('/upsert'))!;
+      const upsertCall = fake.calls.find((c) => c.path.endsWith("/upsert"))!;
       const upsertBody = JSON.parse(upsertCall.body) as { embeddings: number[][] };
       expect(upsertBody.embeddings).toEqual([
         [0.5, 0.6, 0.7],
@@ -643,7 +650,7 @@ describe('ChromaRagAdapter (HTTP backend)', () => {
     }
   });
 
-  test('5xx from chroma on upsert surfaces connect-failed', async () => {
+  test("5xx from chroma on upsert surfaces connect-failed", async () => {
     await fake.stop();
     fake = await startFakeChroma({
       overrides: {
@@ -651,20 +658,22 @@ describe('ChromaRagAdapter (HTTP backend)', () => {
           () =>
             new Response('{"error":"InternalError","message":"disk full"}', {
               status: 500,
-              headers: { 'content-type': 'application/json' },
+              headers: { "content-type": "application/json" },
             }),
       },
     });
-    const adapter = (await createChromaAdapter(httpBinding({ endpoint: fake.url }))) as ChromaRagAdapter;
+    const adapter = (await createChromaAdapter(
+      httpBinding({ endpoint: fake.url }),
+    )) as ChromaRagAdapter;
     try {
       await adapter.store({
-        documents: [{ id: 'a', content: 'c', vector: [0.1, 0.2, 0.3] }],
+        documents: [{ id: "a", content: "c", vector: [0.1, 0.2, 0.3] }],
       });
-      throw new Error('expected throw');
+      throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(RagError);
-      expect((err as RagError).code).toBe('connect-failed');
-      expect((err as RagError).message).toContain('disk full');
+      expect((err as RagError).code).toBe("connect-failed");
+      expect((err as RagError).message).toContain("disk full");
     } finally {
       await adapter.close();
     }
@@ -676,10 +685,10 @@ describe('ChromaRagAdapter (HTTP backend)', () => {
 const LIVE_URL = process.env.LLAMACTL_RAG_CHROMA_HTTP_URL;
 const liveDescribe = LIVE_URL ? describe : describe.skip;
 
-liveDescribe('ChromaRagAdapter (live HTTP, opt-in)', () => {
-  test('round-trip against a real chroma container', async () => {
+liveDescribe("ChromaRagAdapter (live HTTP, opt-in)", () => {
+  test("round-trip against a real chroma container", async () => {
     const adapter = (await createChromaAdapter({
-      provider: 'chroma',
+      provider: "chroma",
       endpoint: LIVE_URL!,
       collection: `llamactl_test_${Date.now()}`,
       extraArgs: [],
@@ -687,18 +696,18 @@ liveDescribe('ChromaRagAdapter (live HTTP, opt-in)', () => {
     try {
       await adapter.store({
         documents: [
-          { id: 'live-a', content: 'alpha', vector: [0.1, 0.2, 0.3] },
-          { id: 'live-b', content: 'bravo', vector: [0.4, 0.5, 0.6] },
+          { id: "live-a", content: "alpha", vector: [0.1, 0.2, 0.3] },
+          { id: "live-b", content: "bravo", vector: [0.4, 0.5, 0.6] },
         ],
       });
       const res = await adapter.search({
-        query: 'anything',
+        query: "anything",
         topK: 2,
         filter: { vector: [0.1, 0.2, 0.3] },
       });
       expect(res.results.length).toBeGreaterThan(0);
-      expect(res.results[0]!.document.id).toBe('live-a');
-      const del = await adapter.delete({ ids: ['live-a'] });
+      expect(res.results[0]!.document.id).toBe("live-a");
+      const del = await adapter.delete({ ids: ["live-a"] });
       expect(del.deleted).toBeGreaterThanOrEqual(0);
     } finally {
       await adapter.close();

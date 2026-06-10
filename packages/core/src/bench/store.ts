@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { resolveEnv } from '../env.js';
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { resolveEnv } from "../env.js";
 import {
   BenchHistoryEntry,
   BenchProfile,
@@ -10,7 +10,7 @@ import {
   benchProfileFields,
   benchVisionFields,
   splitTsvRow,
-} from '../schemas.js';
+} from "../schemas.js";
 
 /**
  * Canonical on-disk paths for bench state. Names are `llama-*` prefixed
@@ -18,15 +18,15 @@ import {
  * writes to these paths.
  */
 export function benchProfileFile(resolved = resolveEnv()): string {
-  return join(resolved.LOCAL_AI_RUNTIME_DIR, 'llama-bench-profiles.tsv');
+  return join(resolved.LOCAL_AI_RUNTIME_DIR, "llama-bench-profiles.tsv");
 }
 
 export function benchHistoryFile(resolved = resolveEnv()): string {
-  return join(resolved.LOCAL_AI_RUNTIME_DIR, 'llama-bench-history.tsv');
+  return join(resolved.LOCAL_AI_RUNTIME_DIR, "llama-bench-history.tsv");
 }
 
 export function benchVisionFile(resolved = resolveEnv()): string {
-  return join(resolved.LOCAL_AI_RUNTIME_DIR, 'bench-vision.tsv');
+  return join(resolved.LOCAL_AI_RUNTIME_DIR, "bench-vision.tsv");
 }
 
 export interface BenchProfileRows {
@@ -52,11 +52,11 @@ export interface LegacyHistoryEntry {
 function readLines(file: string): string[] {
   let raw: string;
   try {
-    raw = readFileSync(file, 'utf8');
+    raw = readFileSync(file, "utf8");
   } catch {
     return [];
   }
-  return raw.split('\n');
+  return raw.split("\n");
 }
 
 /**
@@ -68,14 +68,14 @@ function readLines(file: string): string[] {
 export function readBenchProfiles(file: string): BenchProfileRows {
   const out: BenchProfileRows = { current: [], legacy: [] };
   for (const line of readLines(file)) {
-    if (line.trim() === '') continue;
+    if (line.trim() === "") continue;
     const cols = splitTsvRow(line);
     if (cols.length >= benchProfileFields.length) {
       const record: Record<string, string> = {};
       for (let i = 0; i < benchProfileFields.length; i += 1) {
         const field = benchProfileFields[i];
         if (field === undefined) continue;
-        record[field] = cols[i] ?? '';
+        record[field] = cols[i] ?? "";
       }
       const parsed = BenchProfile.safeParse(record);
       if (parsed.success) out.current.push(parsed.data);
@@ -127,10 +127,7 @@ export function findLatestProfile(
 }
 
 /** Find the most recent legacy bench-profile row for a rel, if any. */
-export function findLegacyProfile(
-  rows: BenchProfileRows,
-  rel: string,
-): BenchProfileLegacy | null {
+export function findLegacyProfile(rows: BenchProfileRows, rel: string): BenchProfileLegacy | null {
   let match: BenchProfileLegacy | null = null;
   for (const row of rows.legacy) {
     if (row.rel === rel) match = row;
@@ -146,14 +143,14 @@ export function findLegacyProfile(
 export function readBenchVision(file: string): BenchVision[] {
   const out: BenchVision[] = [];
   for (const line of readLines(file)) {
-    if (line.trim() === '') continue;
+    if (line.trim() === "") continue;
     const cols = splitTsvRow(line);
     if (cols.length < benchVisionFields.length) continue;
     const record: Record<string, string> = {};
     for (let i = 0; i < benchVisionFields.length; i += 1) {
       const field = benchVisionFields[i];
       if (field === undefined) continue;
-      record[field] = cols[i] ?? '';
+      record[field] = cols[i] ?? "";
     }
     const parsed = BenchVision.safeParse(record);
     if (parsed.success) out.push(parsed.data);
@@ -174,11 +171,7 @@ export function findLatestVision(
 ): BenchVision | null {
   let match: BenchVision | null = null;
   for (const row of rows) {
-    if (
-      row.machine === key.machine &&
-      row.rel === key.rel &&
-      row.build === key.build
-    ) {
+    if (row.machine === key.machine && row.rel === key.rel && row.build === key.build) {
       match = row;
     }
   }
@@ -193,14 +186,14 @@ export function findLatestVision(
 export function readBenchHistory(file: string): BenchHistoryRows {
   const out: BenchHistoryRows = { current: [], legacy: [] };
   for (const line of readLines(file)) {
-    if (line.trim() === '') continue;
+    if (line.trim() === "") continue;
     const cols = splitTsvRow(line);
     if (cols.length >= benchHistoryFields.length) {
       const record: Record<string, string> = {};
       for (let i = 0; i < benchHistoryFields.length; i += 1) {
         const field = benchHistoryFields[i];
         if (field === undefined) continue;
-        record[field] = cols[i] ?? '';
+        record[field] = cols[i] ?? "";
       }
       const parsed = BenchHistoryEntry.safeParse(record);
       if (parsed.success) out.current.push(parsed.data);
@@ -209,12 +202,12 @@ export function readBenchHistory(file: string): BenchHistoryRows {
     if (cols.length === 6) {
       const [updatedAt, rel, profile, gen, prompt, launchArgs] = cols;
       out.legacy.push({
-        updated_at: updatedAt ?? '',
-        rel: rel ?? '',
-        profile: profile ?? '',
-        gen_ts: gen ?? '',
-        prompt_ts: prompt ?? '',
-        launch_args: launchArgs ?? '',
+        updated_at: updatedAt ?? "",
+        rel: rel ?? "",
+        profile: profile ?? "",
+        gen_ts: gen ?? "",
+        prompt_ts: prompt ?? "",
+        launch_args: launchArgs ?? "",
       });
     }
   }

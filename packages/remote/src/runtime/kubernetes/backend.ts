@@ -31,7 +31,7 @@ import type {
   V1Secret,
   V1Service,
   V1StatefulSet,
-} from '@kubernetes/client-node';
+} from "@kubernetes/client-node";
 
 import type {
   ImageRef,
@@ -40,19 +40,17 @@ import type {
   ServiceFilter,
   ServiceInstance,
   ServiceRef,
-} from '../backend.js';
-import { RuntimeError } from '../errors.js';
-import { resolveSecret } from '../../config/secret.js';
+} from "../backend.js";
+import { RuntimeError } from "../errors.js";
+import { resolveSecret } from "../../config/secret.js";
 import {
   createKubernetesClient,
   type KubernetesClient,
   type KubernetesClientOptions,
-} from './client.js';
-import { K8S_ANNOTATION_KEYS, K8S_LABEL_KEYS, MANAGED_BY_VALUE } from './labels.js';
-import {
-  translateToDeployment,
-} from './translate-deployment.js';
-import { translateToStatefulSet } from './translate-statefulset.js';
+} from "./client.js";
+import { K8S_ANNOTATION_KEYS, K8S_LABEL_KEYS, MANAGED_BY_VALUE } from "./labels.js";
+import { translateToDeployment } from "./translate-deployment.js";
+import { translateToStatefulSet } from "./translate-statefulset.js";
 
 export interface KubernetesBackendOptions extends KubernetesClientOptions {
   /**
@@ -80,18 +78,16 @@ export interface KubernetesBackendOptions extends KubernetesClientOptions {
   readinessTimeoutMs?: number;
 }
 
-const DEFAULT_NAMESPACE_PREFIX = 'llamactl';
+const DEFAULT_NAMESPACE_PREFIX = "llamactl";
 const DEFAULT_READINESS_POLL_MS = 2_000;
 const DEFAULT_READINESS_TIMEOUT_MS = 60_000;
 
-export function createKubernetesBackend(
-  opts: KubernetesBackendOptions = {},
-): RuntimeBackend {
+export function createKubernetesBackend(opts: KubernetesBackendOptions = {}): RuntimeBackend {
   return new KubernetesBackend(opts);
 }
 
 export class KubernetesBackend implements RuntimeBackend {
-  readonly kind = 'kubernetes';
+  readonly kind = "kubernetes";
   private readonly client: KubernetesClient;
   readonly namespacePrefix: string;
   readonly storageClassName: string | undefined;
@@ -109,8 +105,7 @@ export class KubernetesBackend implements RuntimeBackend {
     this.namespacePrefix = opts.namespacePrefix ?? DEFAULT_NAMESPACE_PREFIX;
     this.storageClassName = opts.storageClassName;
     this.readinessPollMs = opts.readinessPollMs ?? DEFAULT_READINESS_POLL_MS;
-    this.readinessTimeoutMs =
-      opts.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
+    this.readinessTimeoutMs = opts.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS;
     this.secretResolver = (ref: string): string => resolveSecret(ref);
   }
 
@@ -124,7 +119,7 @@ export class KubernetesBackend implements RuntimeBackend {
       await this.client.core.getAPIResources();
     } catch (err) {
       throw new RuntimeError(
-        'backend-unreachable',
+        "backend-unreachable",
         `kubernetes unreachable: ${(err as Error)?.message ?? String(err)}`,
         err,
       );
@@ -134,35 +129,27 @@ export class KubernetesBackend implements RuntimeBackend {
   async ensureService(spec: ServiceDeployment): Promise<ServiceInstance> {
     if (!spec.image.tag || spec.image.tag.length === 0) {
       throw new RuntimeError(
-        'spec-invalid',
+        "spec-invalid",
         `image.tag is required (got empty for ${spec.image.repository})`,
       );
     }
     // Composite name comes in via labels so the applier's writer
     // can drive namespace routing without a second path. Tests +
     // standalone callers without a composite get a stable fallback.
-    const compositeName = spec.labels?.[K8S_LABEL_KEYS.composite] ?? 'default';
+    const compositeName = spec.labels?.[K8S_LABEL_KEYS.composite] ?? "default";
     const namespace = this.namespaceFor(compositeName);
     await this.ensureNamespace(namespace, compositeName);
 
     const resolvedSecrets = this.resolveSecrets(spec);
 
-    const kind = spec.controllerKind ?? 'deployment';
-    if (kind === 'deployment') {
-      return this.ensureDeployment(
-        spec,
-        namespace,
-        compositeName,
-        resolvedSecrets,
-      );
+    const kind = spec.controllerKind ?? "deployment";
+    if (kind === "deployment") {
+      return this.ensureDeployment(spec, namespace, compositeName, resolvedSecrets);
     }
-    if (kind === 'statefulset') {
+    if (kind === "statefulset") {
       return this.ensureStatefulSet(spec);
     }
-    throw new RuntimeError(
-      'spec-invalid',
-      `unknown controllerKind: ${kind satisfies never}`,
-    );
+    throw new RuntimeError("spec-invalid", `unknown controllerKind: ${kind satisfies never}`);
   }
 
   /**
@@ -184,7 +171,7 @@ export class KubernetesBackend implements RuntimeBackend {
    */
   async removeService(
     ref: ServiceRef,
-    opts?: import('../backend.js').RemoveServiceOptions,
+    opts?: import("../backend.js").RemoveServiceOptions,
   ): Promise<void> {
     const located = await this.locateService(ref.name);
     if (!located) return;
@@ -195,7 +182,7 @@ export class KubernetesBackend implements RuntimeBackend {
     //    drop the Service that points at them, so clients see a
     //    clean "gone" instead of a stale endpoint.
     try {
-      if (controllerKind === 'deployment') {
+      if (controllerKind === "deployment") {
         await this.client.apps.deleteNamespacedDeployment({
           name: ref.name,
           namespace,
@@ -269,7 +256,11 @@ export class KubernetesBackend implements RuntimeBackend {
           if (!n) continue;
           // Deployment case: exactly `${name}-data`.
           // StatefulSet case: `*-${name}-<ordinal>` (k8s convention).
-          if (n === `${ref.name}-data` || n.endsWith(`-${ref.name}-0`) || n.includes(`-${ref.name}-`)) {
+          if (
+            n === `${ref.name}-data` ||
+            n.endsWith(`-${ref.name}-0`) ||
+            n.includes(`-${ref.name}-`)
+          ) {
             try {
               await this.client.core.deleteNamespacedPersistentVolumeClaim({
                 name: n,
@@ -307,8 +298,7 @@ export class KubernetesBackend implements RuntimeBackend {
     // directly).
     let service: V1Service | null = null;
     try {
-      const candidateName =
-        controllerKind === 'statefulset' ? `${ref.name}-client` : ref.name;
+      const candidateName = controllerKind === "statefulset" ? `${ref.name}-client` : ref.name;
       service = await this.client.core.readNamespacedService({
         name: candidateName,
         namespace,
@@ -322,8 +312,8 @@ export class KubernetesBackend implements RuntimeBackend {
     return this.buildServiceInstance(
       {
         name: ref.name,
-        image: { repository: '', tag: '' },
-        specHash: annotationHash(controller) ?? '',
+        image: { repository: "", tag: "" },
+        specHash: annotationHash(controller) ?? "",
       },
       controller,
       service,
@@ -346,7 +336,7 @@ export class KubernetesBackend implements RuntimeBackend {
     if (filter?.composite) {
       selectorParts.push(`${K8S_LABEL_KEYS.composite}=${filter.composite}`);
     }
-    const labelSelector = selectorParts.join(',');
+    const labelSelector = selectorParts.join(",");
 
     const out: ServiceInstance[] = [];
     let deployments: V1Deployment[] = [];
@@ -357,7 +347,7 @@ export class KubernetesBackend implements RuntimeBackend {
       });
       deployments = res.items ?? [];
     } catch (err) {
-      throw wrapBackend(err, 'list Deployments');
+      throw wrapBackend(err, "list Deployments");
     }
     try {
       const res = await this.client.apps.listStatefulSetForAllNamespaces({
@@ -365,7 +355,7 @@ export class KubernetesBackend implements RuntimeBackend {
       });
       statefulSets = res.items ?? [];
     } catch (err) {
-      throw wrapBackend(err, 'list StatefulSets');
+      throw wrapBackend(err, "list StatefulSets");
     }
 
     for (const d of deployments) {
@@ -387,8 +377,8 @@ export class KubernetesBackend implements RuntimeBackend {
         this.buildServiceInstance(
           {
             name,
-            image: { repository: '', tag: '' },
-            specHash: annotationHash(d) ?? '',
+            image: { repository: "", tag: "" },
+            specHash: annotationHash(d) ?? "",
           },
           d,
           service,
@@ -416,8 +406,8 @@ export class KubernetesBackend implements RuntimeBackend {
         this.buildServiceInstance(
           {
             name,
-            image: { repository: '', tag: '' },
-            specHash: annotationHash(ss) ?? '',
+            image: { repository: "", tag: "" },
+            specHash: annotationHash(ss) ?? "",
           },
           ss,
           service,
@@ -436,7 +426,7 @@ export class KubernetesBackend implements RuntimeBackend {
    */
   private async locateService(name: string): Promise<{
     namespace: string;
-    controllerKind: 'deployment' | 'statefulset';
+    controllerKind: "deployment" | "statefulset";
     controller: V1Deployment | V1StatefulSet;
   } | null> {
     const labelSelector = `${K8S_LABEL_KEYS.managedBy}=${MANAGED_BY_VALUE},${K8S_LABEL_KEYS.component}=service`;
@@ -444,13 +434,11 @@ export class KubernetesBackend implements RuntimeBackend {
       const deployments = await this.client.apps.listDeploymentForAllNamespaces({
         labelSelector,
       });
-      const match = (deployments.items ?? []).find(
-        (d) => d.metadata?.name === name,
-      );
+      const match = (deployments.items ?? []).find((d) => d.metadata?.name === name);
       if (match?.metadata?.namespace) {
         return {
           namespace: match.metadata.namespace,
-          controllerKind: 'deployment',
+          controllerKind: "deployment",
           controller: match,
         };
       }
@@ -458,17 +446,14 @@ export class KubernetesBackend implements RuntimeBackend {
       throw wrapBackend(err, `locate '${name}' among Deployments`);
     }
     try {
-      const statefulSets =
-        await this.client.apps.listStatefulSetForAllNamespaces({
-          labelSelector,
-        });
-      const match = (statefulSets.items ?? []).find(
-        (s) => s.metadata?.name === name,
-      );
+      const statefulSets = await this.client.apps.listStatefulSetForAllNamespaces({
+        labelSelector,
+      });
+      const match = (statefulSets.items ?? []).find((s) => s.metadata?.name === name);
       if (match?.metadata?.namespace) {
         return {
           namespace: match.metadata.namespace,
-          controllerKind: 'statefulset',
+          controllerKind: "statefulset",
           controller: match,
         };
       }
@@ -490,10 +475,8 @@ export class KubernetesBackend implements RuntimeBackend {
    * references a missing headless Service on its first scheduling
    * pass.
    */
-  private async ensureStatefulSet(
-    spec: ServiceDeployment,
-  ): Promise<ServiceInstance> {
-    const compositeName = spec.labels?.[K8S_LABEL_KEYS.composite] ?? 'default';
+  private async ensureStatefulSet(spec: ServiceDeployment): Promise<ServiceInstance> {
+    const compositeName = spec.labels?.[K8S_LABEL_KEYS.composite] ?? "default";
     const namespace = this.namespaceFor(compositeName);
     const resolvedSecrets = this.resolveSecrets(spec);
 
@@ -522,11 +505,7 @@ export class KubernetesBackend implements RuntimeBackend {
       spec.specHash,
     );
 
-    const ready = await this.waitForStatefulSetReady(
-      spec.name,
-      namespace,
-      statefulSet,
-    );
+    const ready = await this.waitForStatefulSetReady(spec.name, namespace, statefulSet);
 
     return this.buildServiceInstance(spec, ready, translated.service, namespace);
   }
@@ -549,7 +528,7 @@ export class KubernetesBackend implements RuntimeBackend {
    */
   async destroyCompositeBoundary(
     compositeName: string,
-    _opts?: import('../backend.js').RemoveServiceOptions,
+    _opts?: import("../backend.js").RemoveServiceOptions,
   ): Promise<void> {
     const namespace = this.namespaceFor(compositeName);
     try {
@@ -584,16 +563,15 @@ export class KubernetesBackend implements RuntimeBackend {
   async resolveExternalServiceEndpoint(
     ref: ServiceRef,
     opts: {
-      serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer';
+      serviceType: "ClusterIP" | "NodePort" | "LoadBalancer";
     },
   ): Promise<string | null> {
-    if (opts.serviceType === 'ClusterIP') return null;
+    if (opts.serviceType === "ClusterIP") return null;
 
     const located = await this.locateService(ref.name);
     if (!located) return null;
     const { namespace, controllerKind } = located;
-    const candidateName =
-      controllerKind === 'statefulset' ? `${ref.name}-client` : ref.name;
+    const candidateName = controllerKind === "statefulset" ? `${ref.name}-client` : ref.name;
 
     const readLive = async (): Promise<V1Service | null> => {
       try {
@@ -610,7 +588,7 @@ export class KubernetesBackend implements RuntimeBackend {
     let svc = await readLive();
     if (!svc) return null;
 
-    if (opts.serviceType === 'NodePort') {
+    if (opts.serviceType === "NodePort") {
       let nodePort = svc.spec?.ports?.[0]?.nodePort;
       // k8s assigns the nodePort asynchronously on create. If it's
       // still unset on the first read, back off once and retry
@@ -621,7 +599,7 @@ export class KubernetesBackend implements RuntimeBackend {
         svc = await readLive();
         nodePort = svc?.spec?.ports?.[0]?.nodePort;
       }
-      if (typeof nodePort !== 'number') return null;
+      if (typeof nodePort !== "number") return null;
       return `http://localhost:${nodePort}`;
     }
 
@@ -630,7 +608,7 @@ export class KubernetesBackend implements RuntimeBackend {
     const ip = ingress?.ip;
     const hostname = ingress?.hostname;
     const port = svc.spec?.ports?.[0]?.port;
-    if (typeof port !== 'number') return null;
+    if (typeof port !== "number") return null;
 
     // On Docker Desktop K8s and kind, the status block often reports
     // a VM-internal address (e.g., 172.19.0.x) that's unreachable
@@ -641,14 +619,10 @@ export class KubernetesBackend implements RuntimeBackend {
     // the cluster in every local-dev scenario we support. Public
     // hostnames / IPs still win — a real cloud LoadBalancer reports
     // those and they're what operators want.
-    if (
-      typeof hostname === 'string' &&
-      hostname.length > 0 &&
-      !isLocalHostname(hostname)
-    ) {
+    if (typeof hostname === "string" && hostname.length > 0 && !isLocalHostname(hostname)) {
       return `http://${hostname}:${port}`;
     }
-    if (typeof ip === 'string' && ip.length > 0 && !isPrivateIpv4(ip)) {
+    if (typeof ip === "string" && ip.length > 0 && !isPrivateIpv4(ip)) {
       return `http://${ip}:${port}`;
     }
     return `http://localhost:${port}`;
@@ -688,7 +662,7 @@ export class KubernetesBackend implements RuntimeBackend {
         resolved[envName] = this.secretResolver(secret.ref);
       } catch (err) {
         throw new RuntimeError(
-          'spec-invalid',
+          "spec-invalid",
           `failed to resolve secret '${envName}' (ref='${secret.ref}'): ${(err as Error).message}`,
         );
       }
@@ -703,10 +677,7 @@ export class KubernetesBackend implements RuntimeBackend {
    * authored; Phase 5's destroy still scopes by the composite label
    * on the children, not the namespace).
    */
-  private async ensureNamespace(
-    namespace: string,
-    compositeName: string,
-  ): Promise<void> {
+  private async ensureNamespace(namespace: string, compositeName: string): Promise<void> {
     try {
       await this.client.core.readNamespace({ name: namespace });
       return;
@@ -718,8 +689,8 @@ export class KubernetesBackend implements RuntimeBackend {
     try {
       await this.client.core.createNamespace({
         body: {
-          apiVersion: 'v1',
-          kind: 'Namespace',
+          apiVersion: "v1",
+          kind: "Namespace",
           metadata: {
             name: namespace,
             labels: {
@@ -770,27 +741,16 @@ export class KubernetesBackend implements RuntimeBackend {
     if (translated.service) {
       await this.upsertService(translated.service, namespace, spec.specHash);
     }
-    const deployment = await this.upsertDeployment(
-      translated.deployment,
-      namespace,
-      spec.specHash,
-    );
+    const deployment = await this.upsertDeployment(translated.deployment, namespace, spec.specHash);
 
-    const ready = await this.waitForDeploymentReady(
-      spec.name,
-      namespace,
-      deployment,
-    );
+    const ready = await this.waitForDeploymentReady(spec.name, namespace, deployment);
 
     return this.buildServiceInstance(spec, ready, translated.service, namespace);
   }
 
-  private async upsertSecret(
-    desired: V1Secret,
-    namespace: string,
-  ): Promise<void> {
+  private async upsertSecret(desired: V1Secret, namespace: string): Promise<void> {
     const name = desired.metadata?.name;
-    if (!name) throw new RuntimeError('spec-invalid', 'secret missing name');
+    if (!name) throw new RuntimeError("spec-invalid", "secret missing name");
     let existing: V1Secret | null = null;
     try {
       existing = await this.client.core.readNamespacedSecret({
@@ -854,8 +814,8 @@ export class KubernetesBackend implements RuntimeBackend {
     namespace: string,
   ): Promise<void> {
     const desired: V1ConfigMap = {
-      apiVersion: 'v1',
-      kind: 'ConfigMap',
+      apiVersion: "v1",
+      kind: "ConfigMap",
       metadata: {
         name,
         namespace,
@@ -925,7 +885,7 @@ export class KubernetesBackend implements RuntimeBackend {
       [K8S_LABEL_KEYS.instance]: `${compositeName}-${spec.name}`,
       [K8S_LABEL_KEYS.partOf]: compositeName,
       [K8S_LABEL_KEYS.composite]: compositeName,
-      [K8S_LABEL_KEYS.component]: 'service',
+      [K8S_LABEL_KEYS.component]: "service",
     };
     const seen = new Set<string>();
     for (const v of spec.volumes) {
@@ -942,12 +902,9 @@ export class KubernetesBackend implements RuntimeBackend {
     }
   }
 
-  private async upsertPvc(
-    desired: V1PersistentVolumeClaim,
-    namespace: string,
-  ): Promise<void> {
+  private async upsertPvc(desired: V1PersistentVolumeClaim, namespace: string): Promise<void> {
     const name = desired.metadata?.name;
-    if (!name) throw new RuntimeError('spec-invalid', 'pvc missing name');
+    if (!name) throw new RuntimeError("spec-invalid", "pvc missing name");
     try {
       await this.client.core.readNamespacedPersistentVolumeClaim({
         name,
@@ -981,7 +938,7 @@ export class KubernetesBackend implements RuntimeBackend {
     specHash: string,
   ): Promise<void> {
     const name = desired.metadata?.name;
-    if (!name) throw new RuntimeError('spec-invalid', 'service missing name');
+    if (!name) throw new RuntimeError("spec-invalid", "service missing name");
     let existing: V1Service | null = null;
     try {
       existing = await this.client.core.readNamespacedService({
@@ -1040,7 +997,7 @@ export class KubernetesBackend implements RuntimeBackend {
     specHash: string,
   ): Promise<V1Deployment> {
     const name = desired.metadata?.name;
-    if (!name) throw new RuntimeError('spec-invalid', 'deployment missing name');
+    if (!name) throw new RuntimeError("spec-invalid", "deployment missing name");
     let existing: V1Deployment | null = null;
     try {
       existing = await this.client.apps.readNamespacedDeployment({
@@ -1076,10 +1033,7 @@ export class KubernetesBackend implements RuntimeBackend {
       // than we want. `undefined` means the field was unset at read
       // time (K8s server-side defaults to 1) — treat as matching so
       // we never trip on a stub / elided field.
-      if (
-        typeof existingReplicas === 'number' &&
-        existingReplicas < desiredReplicas
-      ) {
+      if (typeof existingReplicas === "number" && existingReplicas < desiredReplicas) {
         try {
           return await this.client.apps.replaceNamespacedDeployment({
             name,
@@ -1119,7 +1073,7 @@ export class KubernetesBackend implements RuntimeBackend {
     specHash: string,
   ): Promise<V1StatefulSet> {
     const name = desired.metadata?.name;
-    if (!name) throw new RuntimeError('spec-invalid', 'statefulset missing name');
+    if (!name) throw new RuntimeError("spec-invalid", "statefulset missing name");
     let existing: V1StatefulSet | null = null;
     try {
       existing = await this.client.apps.readNamespacedStatefulSet({
@@ -1196,7 +1150,7 @@ export class KubernetesBackend implements RuntimeBackend {
       } catch (err) {
         if (isNotFound(err)) {
           throw new RuntimeError(
-            'start-failed',
+            "start-failed",
             `statefulset '${name}' disappeared during startup poll`,
           );
         }
@@ -1207,7 +1161,7 @@ export class KubernetesBackend implements RuntimeBackend {
     const ready = latest.status?.readyReplicas ?? 0;
     const replicas = latest.status?.replicas ?? 0;
     throw new RuntimeError(
-      'start-failed',
+      "start-failed",
       `statefulset '${name}' not ready after ${this.readinessTimeoutMs}ms (ready=${ready}, replicas=${replicas})`,
     );
   }
@@ -1236,7 +1190,7 @@ export class KubernetesBackend implements RuntimeBackend {
       } catch (err) {
         if (isNotFound(err)) {
           throw new RuntimeError(
-            'start-failed',
+            "start-failed",
             `deployment '${name}' disappeared during startup poll`,
           );
         }
@@ -1247,7 +1201,7 @@ export class KubernetesBackend implements RuntimeBackend {
     const ready = latest.status?.readyReplicas ?? 0;
     const replicas = latest.status?.replicas ?? 0;
     throw new RuntimeError(
-      'start-failed',
+      "start-failed",
       `deployment '${name}' not ready after ${this.readinessTimeoutMs}ms (ready=${ready}, replicas=${replicas})`,
     );
   }
@@ -1260,19 +1214,18 @@ export class KubernetesBackend implements RuntimeBackend {
   ): ServiceInstance {
     const ready = controller.status?.readyReplicas ?? 0;
     const running = ready >= 1;
-    const health: ServiceInstance['health'] =
-      ready >= 1 ? 'healthy' : 'starting';
+    const health: ServiceInstance["health"] = ready >= 1 ? "healthy" : "starting";
     const createdAtRaw = controller.metadata?.creationTimestamp;
     const createdAt =
       createdAtRaw instanceof Date
         ? createdAtRaw.toISOString()
-        : typeof createdAtRaw === 'string'
+        : typeof createdAtRaw === "string"
           ? createdAtRaw
           : new Date(0).toISOString();
-    let endpoint: ServiceInstance['endpoint'] = null;
+    let endpoint: ServiceInstance["endpoint"] = null;
     if (service && service.metadata?.name) {
       const port = service.spec?.ports?.[0]?.port;
-      if (typeof port === 'number') {
+      if (typeof port === "number") {
         endpoint = {
           host: `${service.metadata.name}.${namespace}.svc.cluster.local`,
           port,
@@ -1301,11 +1254,11 @@ function isConflict(err: unknown): boolean {
 }
 
 function readStatus(err: unknown): number | null {
-  if (err && typeof err === 'object') {
+  if (err && typeof err === "object") {
     const rec = err as Record<string, unknown>;
-    if (typeof rec.code === 'number') return rec.code;
-    if (typeof rec.statusCode === 'number') return rec.statusCode;
-    if (typeof rec.status === 'number') return rec.status;
+    if (typeof rec.code === "number") return rec.code;
+    if (typeof rec.statusCode === "number") return rec.statusCode;
+    if (typeof rec.status === "number") return rec.status;
   }
   return null;
 }
@@ -1313,12 +1266,12 @@ function readStatus(err: unknown): number | null {
 function wrapBackend(err: unknown, context: string): RuntimeError {
   const status = readStatus(err);
   const message =
-    err && typeof err === 'object' && 'message' in err
+    err && typeof err === "object" && "message" in err
       ? String((err as { message?: unknown }).message ?? err)
       : String(err);
   return new RuntimeError(
-    'backend-unreachable',
-    `${context} failed${status !== null ? ` (${status})` : ''}: ${message}`,
+    "backend-unreachable",
+    `${context} failed${status !== null ? ` (${status})` : ""}: ${message}`,
     err,
   );
 }
@@ -1338,7 +1291,7 @@ function isPrivateIpv4(ip: string): boolean {
   // decide whether an ingress IP reported by the cluster is
   // internal-only (LOAD_BALANCER reported from Docker Desktop /
   // kind / k3s local setups) vs public (cloud LoadBalancers).
-  const parts = ip.split('.').map((n) => Number.parseInt(n, 10));
+  const parts = ip.split(".").map((n) => Number.parseInt(n, 10));
   if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n) || n < 0 || n > 255)) {
     return false;
   }
@@ -1353,11 +1306,7 @@ function isPrivateIpv4(ip: string): boolean {
 
 function isLocalHostname(host: string): boolean {
   const lower = host.toLowerCase();
-  return (
-    lower === 'localhost' ||
-    lower.endsWith('.local') ||
-    lower.endsWith('.internal')
-  );
+  return lower === "localhost" || lower.endsWith(".local") || lower.endsWith(".internal");
 }
 
 function delay(ms: number): Promise<void> {

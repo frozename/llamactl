@@ -1,7 +1,7 @@
-import * as React from 'react';
-import { useMemo, useState } from 'react';
-import { stringify as stringifyYaml } from 'yaml';
-import { trpc } from '@/lib/trpc';
+import * as React from "react";
+import { useMemo, useState } from "react";
+import { stringify as stringifyYaml } from "yaml";
+import { trpc } from "@/lib/trpc";
 
 /**
  * Pipeline wizard modal. Four-step stepper that assembles a
@@ -26,17 +26,17 @@ import { trpc } from '@/lib/trpc';
  *     resets kind-specific ones so we don't carry stale state.
  */
 
-type SourceKind = 'filesystem' | 'http' | 'git';
+type SourceKind = "filesystem" | "http" | "git";
 
 interface FilesystemSource {
-  kind: 'filesystem';
+  kind: "filesystem";
   root: string;
   glob: string;
   tag?: string;
 }
 
 interface HttpSource {
-  kind: 'http';
+  kind: "http";
   url: string;
   max_depth: number;
   same_origin: boolean;
@@ -48,7 +48,7 @@ interface HttpSource {
 }
 
 interface GitSource {
-  kind: 'git';
+  kind: "git";
   repo: string;
   ref?: string;
   subpath?: string;
@@ -72,26 +72,26 @@ interface FormState {
   sources: SourceState[];
   transform: TransformState;
   schedule: string;
-  on_duplicate: 'skip' | 'replace' | 'version';
+  on_duplicate: "skip" | "replace" | "version";
 }
 
-type Step = 'destination' | 'sources' | 'transforms' | 'review';
+type Step = "destination" | "sources" | "transforms" | "review";
 
 const STEPS: Array<{ id: Step; label: string }> = [
-  { id: 'destination', label: 'Destination' },
-  { id: 'sources', label: 'Sources' },
-  { id: 'transforms', label: 'Transforms' },
-  { id: 'review', label: 'Review' },
+  { id: "destination", label: "Destination" },
+  { id: "sources", label: "Sources" },
+  { id: "transforms", label: "Transforms" },
+  { id: "review", label: "Review" },
 ];
 
 function emptySource(kind: SourceKind): SourceState {
-  if (kind === 'filesystem') {
-    return { kind: 'filesystem', root: '', glob: '**/*.md' };
+  if (kind === "filesystem") {
+    return { kind: "filesystem", root: "", glob: "**/*.md" };
   }
-  if (kind === 'http') {
+  if (kind === "http") {
     return {
-      kind: 'http',
-      url: '',
+      kind: "http",
+      url: "",
       max_depth: 2,
       same_origin: true,
       ignore_robots: false,
@@ -99,21 +99,24 @@ function emptySource(kind: SourceKind): SourceState {
       timeout_ms: 10_000,
     };
   }
-  return { kind: 'git', repo: '', glob: '**/*.md' };
+  return { kind: "git", repo: "", glob: "**/*.md" };
 }
 
 function parseTagString(raw: string): Record<string, unknown> | undefined {
   if (!raw.trim()) return undefined;
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
     }
   } catch {
     // Fallback: k=v,k=v string form.
     const out: Record<string, string> = {};
-    for (const pair of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
-      const eq = pair.indexOf('=');
+    for (const pair of raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)) {
+      const eq = pair.indexOf("=");
       if (eq > 0) out[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
     }
     if (Object.keys(out).length > 0) return out;
@@ -130,7 +133,7 @@ function buildManifest(form: FormState): unknown {
     sources: form.sources.map((s) => buildSource(s)),
     transforms: [
       {
-        kind: 'markdown-chunk',
+        kind: "markdown-chunk",
         chunk_size: form.transform.chunk_size,
         overlap: form.transform.overlap,
         preserve_headings: form.transform.preserve_headings,
@@ -140,27 +143,27 @@ function buildManifest(form: FormState): unknown {
   };
   if (form.schedule.trim()) spec.schedule = form.schedule.trim();
   return {
-    apiVersion: 'llamactl/v1',
-    kind: 'RagPipeline',
+    apiVersion: "llamactl/v1",
+    kind: "RagPipeline",
     metadata: { name: form.name.trim() },
     spec,
   };
 }
 
 function buildSource(s: SourceState): Record<string, unknown> {
-  if (s.kind === 'filesystem') {
+  if (s.kind === "filesystem") {
     const out: Record<string, unknown> = {
-      kind: 'filesystem',
+      kind: "filesystem",
       root: s.root.trim(),
-      glob: s.glob.trim() || '**/*',
+      glob: s.glob.trim() || "**/*",
     };
     const tag = s.tag ? parseTagString(s.tag) : undefined;
     if (tag) out.tag = tag;
     return out;
   }
-  if (s.kind === 'http') {
+  if (s.kind === "http") {
     const out: Record<string, unknown> = {
-      kind: 'http',
+      kind: "http",
       url: s.url.trim(),
       max_depth: s.max_depth,
       same_origin: s.same_origin,
@@ -174,9 +177,9 @@ function buildSource(s: SourceState): Record<string, unknown> {
     return out;
   }
   const out: Record<string, unknown> = {
-    kind: 'git',
+    kind: "git",
     repo: s.repo.trim(),
-    glob: s.glob.trim() || '**/*.md',
+    glob: s.glob.trim() || "**/*.md",
   };
   if (s.ref?.trim()) out.ref = s.ref.trim();
   if (s.subpath?.trim()) out.subpath = s.subpath.trim();
@@ -188,18 +191,18 @@ function buildSource(s: SourceState): Record<string, unknown> {
 
 function validate(form: FormState): string[] {
   const errs: string[] = [];
-  if (!form.name.trim()) errs.push('name is required');
-  if (!form.ragNode.trim()) errs.push('destination.ragNode is required');
-  if (!form.collection.trim()) errs.push('destination.collection is required');
-  if (form.sources.length === 0) errs.push('at least one source is required');
+  if (!form.name.trim()) errs.push("name is required");
+  if (!form.ragNode.trim()) errs.push("destination.ragNode is required");
+  if (!form.collection.trim()) errs.push("destination.collection is required");
+  if (form.sources.length === 0) errs.push("at least one source is required");
   for (const [i, s] of form.sources.entries()) {
-    if (s.kind === 'filesystem' && !s.root.trim()) {
+    if (s.kind === "filesystem" && !s.root.trim()) {
       errs.push(`sources[${i}].root is required`);
     }
-    if (s.kind === 'http' && !s.url.trim()) {
+    if (s.kind === "http" && !s.url.trim()) {
       errs.push(`sources[${i}].url is required`);
     }
-    if (s.kind === 'git' && !s.repo.trim()) {
+    if (s.kind === "git" && !s.repo.trim()) {
       errs.push(`sources[${i}].repo is required`);
     }
   }
@@ -215,15 +218,15 @@ export function PipelineWizardModal(props: {
 }): React.JSX.Element | null {
   const { open, onClose, onApplied, availableRagNodes, defaultRagNode } = props;
   const utils = trpc.useUtils();
-  const [step, setStep] = useState<Step>('destination');
+  const [step, setStep] = useState<Step>("destination");
   const [form, setForm] = useState<FormState>(() => ({
-    name: '',
+    name: "",
     ragNode: defaultRagNode,
-    collection: '',
-    sources: [emptySource('filesystem')],
+    collection: "",
+    sources: [emptySource("filesystem")],
     transform: { chunk_size: 800, overlap: 150, preserve_headings: true },
-    schedule: '',
-    on_duplicate: 'skip',
+    schedule: "",
+    on_duplicate: "skip",
   }));
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
@@ -253,7 +256,7 @@ export function PipelineWizardModal(props: {
   if (!open) return null;
 
   const currentIdx = STEPS.findIndex((s) => s.id === step);
-  const canAdvance = errors.length === 0 || step !== 'review';
+  const canAdvance = errors.length === 0 || step !== "review";
 
   const updateSource = (idx: number, patch: Partial<SourceState>): void => {
     setForm((f) => ({
@@ -308,7 +311,7 @@ export function PipelineWizardModal(props: {
               New RAG Pipeline
             </div>
             <div className="mono text-sm text-[color:var(--color-text)]">
-              {form.name || '<unnamed>'}
+              {form.name || "<unnamed>"}
             </div>
           </div>
           <button
@@ -334,10 +337,10 @@ export function PipelineWizardModal(props: {
                 data-testid={`pipeline-wizard-step-${s.id}`}
                 className={
                   active
-                    ? 'rounded bg-[var(--color-brand)] px-2 py-1 text-xs font-medium text-[color:var(--color-surface-0)]'
+                    ? "rounded bg-[var(--color-brand)] px-2 py-1 text-xs font-medium text-[color:var(--color-surface-0)]"
                     : done
-                      ? 'rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)]'
-                      : 'rounded border border-transparent px-2 py-1 text-xs text-[color:var(--color-text-secondary)]'
+                      ? "rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)]"
+                      : "rounded border border-transparent px-2 py-1 text-xs text-[color:var(--color-text-secondary)]"
                 }
               >
                 {i + 1}. {s.label}
@@ -347,14 +350,10 @@ export function PipelineWizardModal(props: {
         </div>
 
         <div className="max-h-[60vh] overflow-auto p-4">
-          {step === 'destination' && (
-            <DestinationStep
-              form={form}
-              setForm={setForm}
-              availableRagNodes={availableRagNodes}
-            />
+          {step === "destination" && (
+            <DestinationStep form={form} setForm={setForm} availableRagNodes={availableRagNodes} />
           )}
-          {step === 'sources' && (
+          {step === "sources" && (
             <SourcesStep
               sources={form.sources}
               onUpdate={updateSource}
@@ -362,28 +361,24 @@ export function PipelineWizardModal(props: {
               onAdd={addSource}
             />
           )}
-          {step === 'transforms' && (
+          {step === "transforms" && (
             <TransformsStep
               transform={form.transform}
               onChange={(t) => setForm((f) => ({ ...f, transform: t }))}
               schedule={form.schedule}
               onScheduleChange={(v) => setForm((f) => ({ ...f, schedule: v }))}
               onDuplicate={form.on_duplicate}
-              onOnDuplicateChange={(v) =>
-                setForm((f) => ({ ...f, on_duplicate: v }))
-              }
+              onOnDuplicateChange={(v) => setForm((f) => ({ ...f, on_duplicate: v }))}
             />
           )}
-          {step === 'review' && (
-            <ReviewStep yaml={yaml} errors={errors} applyError={applyError} />
-          )}
+          {step === "review" && <ReviewStep yaml={yaml} errors={errors} applyError={applyError} />}
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] px-4 py-3">
           <div className="text-xs text-[color:var(--color-text-secondary)]">
             {errors.length > 0 && (
               <span className="text-[color:var(--color-err)]">
-                {errors.length} issue{errors.length === 1 ? '' : 's'} to fix
+                {errors.length} issue{errors.length === 1 ? "" : "s"} to fix
               </span>
             )}
           </div>
@@ -400,7 +395,7 @@ export function PipelineWizardModal(props: {
             >
               Back
             </button>
-            {step !== 'review' ? (
+            {step !== "review" ? (
               <button
                 type="button"
                 onClick={() => {
@@ -421,7 +416,7 @@ export function PipelineWizardModal(props: {
                 data-testid="pipeline-wizard-apply"
                 className="rounded bg-[var(--color-brand)] px-3 py-1 text-xs font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {applying ? 'Applying…' : 'Apply'}
+                {applying ? "Applying…" : "Apply"}
               </button>
             )}
           </div>
@@ -524,7 +519,7 @@ function SourceEditor(props: {
           Remove
         </button>
       </div>
-      {source.kind === 'filesystem' && (
+      {source.kind === "filesystem" && (
         <div className="grid grid-cols-2 gap-2">
           <label className="text-sm">
             <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
@@ -553,12 +548,10 @@ function SourceEditor(props: {
           </label>
         </div>
       )}
-      {source.kind === 'http' && (
+      {source.kind === "http" && (
         <div className="grid grid-cols-2 gap-2">
           <label className="col-span-2 text-sm">
-            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
-              URL
-            </span>
+            <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">URL</span>
             <input
               type="text"
               value={source.url}
@@ -618,7 +611,7 @@ function SourceEditor(props: {
           </label>
         </div>
       )}
-      {source.kind === 'git' && (
+      {source.kind === "git" && (
         <div className="grid grid-cols-2 gap-2">
           <label className="col-span-2 text-sm">
             <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
@@ -639,7 +632,7 @@ function SourceEditor(props: {
             </span>
             <input
               type="text"
-              value={source.ref ?? ''}
+              value={source.ref ?? ""}
               onChange={(e) => onUpdate({ ref: e.target.value })}
               placeholder="main"
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
@@ -651,7 +644,7 @@ function SourceEditor(props: {
             </span>
             <input
               type="text"
-              value={source.subpath ?? ''}
+              value={source.subpath ?? ""}
               onChange={(e) => onUpdate({ subpath: e.target.value })}
               placeholder="docs"
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
@@ -693,7 +686,7 @@ function SourcesStep(props: {
         />
       ))}
       <div className="flex gap-2">
-        {(['filesystem', 'http', 'git'] as SourceKind[]).map((k) => (
+        {(["filesystem", "http", "git"] as SourceKind[]).map((k) => (
           <button
             key={k}
             type="button"
@@ -714,10 +707,11 @@ function TransformsStep(props: {
   onChange: (t: TransformState) => void;
   schedule: string;
   onScheduleChange: (v: string) => void;
-  onDuplicate: 'skip' | 'replace' | 'version';
-  onOnDuplicateChange: (v: 'skip' | 'replace' | 'version') => void;
+  onDuplicate: "skip" | "replace" | "version";
+  onOnDuplicateChange: (v: "skip" | "replace" | "version") => void;
 }): React.JSX.Element {
-  const { transform, onChange, schedule, onScheduleChange, onDuplicate, onOnDuplicateChange } = props;
+  const { transform, onChange, schedule, onScheduleChange, onDuplicate, onOnDuplicateChange } =
+    props;
   return (
     <div className="space-y-4" data-testid="pipeline-wizard-transforms">
       <div>
@@ -791,7 +785,7 @@ function TransformsStep(props: {
             <select
               value={onDuplicate}
               onChange={(e) =>
-                onOnDuplicateChange(e.target.value as 'skip' | 'replace' | 'version')
+                onOnDuplicateChange(e.target.value as "skip" | "replace" | "version")
               }
               data-testid="pipeline-wizard-on-duplicate"
               className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"

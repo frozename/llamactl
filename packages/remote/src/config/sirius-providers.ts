@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { z } from 'zod';
-import { CompositeOwnershipSchema } from '../workload/gateway-catalog/schema.js';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { z } from "zod";
+import { CompositeOwnershipSchema } from "../workload/gateway-catalog/schema.js";
 
 /**
  * llamactl-owned storage for sirius provider configs. Users set up
@@ -30,12 +30,12 @@ import { CompositeOwnershipSchema } from '../workload/gateway-catalog/schema.js'
  */
 
 export const SiriusProviderKindSchema = z.enum([
-  'openai',
-  'anthropic',
-  'together',
-  'groq',
-  'mistral',
-  'openai-compatible',
+  "openai",
+  "anthropic",
+  "together",
+  "groq",
+  "mistral",
+  "openai-compatible",
 ]);
 export type SiriusProviderKind = z.infer<typeof SiriusProviderKindSchema>;
 
@@ -55,8 +55,8 @@ export const SiriusProviderSchema = z.object({
 export type SiriusProvider = z.infer<typeof SiriusProviderSchema>;
 
 const SiriusProviderFileSchema = z.object({
-  apiVersion: z.literal('llamactl/v1').default('llamactl/v1'),
-  kind: z.literal('SiriusProviderList').default('SiriusProviderList'),
+  apiVersion: z.literal("llamactl/v1").default("llamactl/v1"),
+  kind: z.literal("SiriusProviderList").default("SiriusProviderList"),
   providers: z.array(SiriusProviderSchema).default([]),
 });
 type SiriusProviderFile = z.infer<typeof SiriusProviderFileSchema>;
@@ -64,15 +64,13 @@ type SiriusProviderFile = z.infer<typeof SiriusProviderFileSchema>;
 export function defaultSiriusProvidersPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_SIRIUS_PROVIDERS?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'sirius-providers.yaml');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "sirius-providers.yaml");
 }
 
-export function loadSiriusProviders(
-  path: string = defaultSiriusProvidersPath(),
-): SiriusProvider[] {
+export function loadSiriusProviders(path: string = defaultSiriusProvidersPath()): SiriusProvider[] {
   if (!existsSync(path)) return [];
-  const raw = readFileSync(path, 'utf8');
+  const raw = readFileSync(path, "utf8");
   const parsed = SiriusProviderFileSchema.parse(parseYaml(raw) ?? {});
   return parsed.providers;
 }
@@ -83,11 +81,11 @@ export function saveSiriusProviders(
 ): void {
   mkdirSync(dirname(path), { recursive: true });
   const file: SiriusProviderFile = {
-    apiVersion: 'llamactl/v1',
-    kind: 'SiriusProviderList',
+    apiVersion: "llamactl/v1",
+    kind: "SiriusProviderList",
     providers: providers.map((p) => SiriusProviderSchema.parse(p)),
   };
-  writeFileSync(path, stringifyYaml(file), 'utf8');
+  writeFileSync(path, stringifyYaml(file), "utf8");
 }
 
 export function upsertSiriusProvider(
@@ -107,10 +105,10 @@ export function removeSiriusProvider(
 
 /** Default OpenAI-compat base URLs for the named provider kinds. */
 export const SIRIUS_PROVIDER_DEFAULT_BASE_URLS: Record<SiriusProviderKind, string> = {
-  openai: 'https://api.openai.com/v1',
-  anthropic: 'https://api.anthropic.com/v1',
-  together: 'https://api.together.xyz/v1',
-  groq: 'https://api.groq.com/openai/v1',
-  mistral: 'https://api.mistral.ai/v1',
-  'openai-compatible': '',
+  openai: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
+  together: "https://api.together.xyz/v1",
+  groq: "https://api.groq.com/openai/v1",
+  mistral: "https://api.mistral.ai/v1",
+  "openai-compatible": "",
 };

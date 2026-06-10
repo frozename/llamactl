@@ -84,10 +84,7 @@ export const LAUNCHD_SYSTEM_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
  * (e.g. `<` → `&lt;` → `&amp;lt;`).
  */
 export function xmlEscape(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 /**
@@ -95,9 +92,9 @@ export function xmlEscape(s: string): string {
  * joined by `\n`. Returns an empty string for an empty array. No
  * leading or trailing newline — the surrounding template owns those.
  */
-export function renderArgsArray(args: string[], indent = '    '): string {
-  if (args.length === 0) return '';
-  return args.map((a) => `${indent}<string>${xmlEscape(a)}</string>`).join('\n');
+export function renderArgsArray(args: string[], indent = "    "): string {
+  if (args.length === 0) return "";
+  return args.map((a) => `${indent}<string>${xmlEscape(a)}</string>`).join("\n");
 }
 
 /**
@@ -109,15 +106,12 @@ export function renderArgsArray(args: string[], indent = '    '): string {
  * Uses `Object.entries` so insertion order is preserved — snapshot
  * fixtures stay deterministic.
  */
-export function renderEnvDict(env: Record<string, string>, indent = '    '): string {
+export function renderEnvDict(env: Record<string, string>, indent = "    "): string {
   const entries = Object.entries(env);
-  if (entries.length === 0) return '';
+  if (entries.length === 0) return "";
   return entries
-    .map(
-      ([k, v]) =>
-        `${indent}<key>${xmlEscape(k)}</key><string>${xmlEscape(v)}</string>`,
-    )
-    .join('\n');
+    .map(([k, v]) => `${indent}<key>${xmlEscape(k)}</key><string>${xmlEscape(v)}</string>`)
+    .join("\n");
 }
 
 /**
@@ -140,16 +134,13 @@ export function renderEnvDict(env: Record<string, string>, indent = '    '): str
  * produced by {@link renderArgsArray} / {@link renderEnvDict} (both of
  * which escape individual arg/env strings internally).
  */
-export function renderPlist(
-  template: string,
-  vars: Record<string, string>,
-): string {
+export function renderPlist(template: string, vars: Record<string, string>): string {
   const out = template.replace(/\{\{(\w+)\}\}/g, (_m, k: string) => {
     if (!(k in vars)) throw new Error(`plist template missing var: ${k}`);
     return vars[k]!;
   });
   if (/\{\{\w+\}\}/.test(out)) {
-    throw new Error('plist template has unresolved placeholders');
+    throw new Error("plist template has unresolved placeholders");
   }
   return out;
 }
@@ -225,7 +216,7 @@ export function buildUserPlist(opts: BuildPlistOptions): string {
  */
 export function buildSystemPlist(opts: BuildPlistOptions): string {
   if (!opts.user || !opts.group || !opts.workingDir) {
-    throw new Error('buildSystemPlist requires user, group, and workingDir');
+    throw new Error("buildSystemPlist requires user, group, and workingDir");
   }
   const vars: PlistVarsSystem = {
     label: xmlEscape(opts.label),

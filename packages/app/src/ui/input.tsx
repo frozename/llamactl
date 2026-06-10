@@ -1,5 +1,5 @@
-import * as React from 'react';
-import { cx } from './classes';
+import * as React from "react";
+import { cx } from "./classes";
 
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   leadingSlot?: React.ReactNode;
@@ -16,35 +16,40 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(function Inp
   { leadingSlot, trailingSlot, invalid, className, style, disabled, ...rest },
   ref,
 ) {
-  const borderColor = invalid ? 'var(--color-err)' : 'var(--color-border)';
+  const borderColor = invalid ? "var(--color-err)" : "var(--color-border)";
   return (
     <label
-      className={cx('bcn-input', invalid && 'bcn-input--invalid', disabled && 'bcn-input--disabled', className)}
+      className={cx(
+        "bcn-input",
+        invalid && "bcn-input--invalid",
+        disabled && "bcn-input--disabled",
+        className,
+      )}
       style={{
-        display: 'flex',
-        alignItems: 'center',
+        display: "flex",
+        alignItems: "center",
         gap: 8,
-        width: '100%',
-        padding: '9px 12px',
+        width: "100%",
+        padding: "9px 12px",
         fontSize: 13,
-        background: 'var(--color-surface-2)',
-        color: 'var(--color-text)',
+        background: "var(--color-surface-2)",
+        color: "var(--color-text)",
         border: `1px solid ${borderColor}`,
-        borderRadius: 'var(--r-lg)',
-        transition: 'border-color 160ms, box-shadow 160ms, background 160ms',
-        cursor: disabled ? 'not-allowed' : 'text',
+        borderRadius: "var(--r-lg)",
+        transition: "border-color 160ms, box-shadow 160ms, background 160ms",
+        cursor: disabled ? "not-allowed" : "text",
         opacity: disabled ? 0.6 : 1,
         ...style,
       }}
       onFocusCapture={(e) => {
-        e.currentTarget.style.borderColor = 'var(--color-brand)';
-        e.currentTarget.style.boxShadow = '0 0 0 3px var(--color-brand-ghost)';
-        e.currentTarget.style.background = 'var(--color-surface-1)';
+        e.currentTarget.style.borderColor = "var(--color-brand)";
+        e.currentTarget.style.boxShadow = "0 0 0 3px var(--color-brand-ghost)";
+        e.currentTarget.style.background = "var(--color-surface-1)";
       }}
       onBlurCapture={(e) => {
         e.currentTarget.style.borderColor = borderColor;
-        e.currentTarget.style.boxShadow = 'none';
-        e.currentTarget.style.background = 'var(--color-surface-2)';
+        e.currentTarget.style.boxShadow = "none";
+        e.currentTarget.style.background = "var(--color-surface-2)";
       }}
     >
       {leadingSlot}
@@ -55,11 +60,11 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(function Inp
         style={{
           flex: 1,
           minWidth: 0,
-          background: 'transparent',
-          border: 'none',
-          outline: 'none',
-          color: 'inherit',
-          fontFamily: 'var(--font-sans)',
+          background: "transparent",
+          border: "none",
+          outline: "none",
+          color: "inherit",
+          fontFamily: "var(--font-sans)",
           fontSize: 13,
         }}
       />

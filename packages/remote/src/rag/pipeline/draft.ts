@@ -24,13 +24,9 @@
  * validation + warnings for free.
  */
 
-import { stringify as stringifyYaml } from 'yaml';
+import { stringify as stringifyYaml } from "yaml";
 
-import {
-  RagPipelineManifestSchema,
-  type RagPipelineManifest,
-  type SourceSpec,
-} from './schema.js';
+import { RagPipelineManifestSchema, type RagPipelineManifest, type SourceSpec } from "./schema.js";
 
 export interface DraftContext {
   /**
@@ -67,16 +63,13 @@ const SCHEDULE_ALIAS_RE = /@(hourly|daily|weekly)\b/i;
 const SCHEDULE_EVERY_RE = /\bevery\s+(\d+)\s*(minutes?|m|hours?|h|days?|d)\b/i;
 const COLLECTION_RE = /\bcollection\s+[`"']?([\w-]+)[`"']?/i;
 
-const DEFAULT_RAG_NODE = 'kb-pg';
+const DEFAULT_RAG_NODE = "kb-pg";
 
-export function draftPipeline(
-  description: string,
-  ctx: DraftContext = {},
-): DraftResult {
+export function draftPipeline(description: string, ctx: DraftContext = {}): DraftResult {
   const warnings: string[] = [];
-  const desc = (description ?? '').trim();
+  const desc = (description ?? "").trim();
   if (desc.length === 0) {
-    warnings.push('description was empty — draft is a bare skeleton');
+    warnings.push("description was empty — draft is a bare skeleton");
   }
 
   const gitUrls = uniq(matchAll(desc, GIT_URL_RE));
@@ -92,14 +85,14 @@ export function draftPipeline(
   const sources: SourceSpec[] = [];
   for (const repo of gitUrls) {
     sources.push({
-      kind: 'git',
+      kind: "git",
       repo,
-      glob: '**/*.md',
+      glob: "**/*.md",
     });
   }
   for (const url of httpUrls) {
     sources.push({
-      kind: 'http',
+      kind: "http",
       url,
       max_depth: 2,
       same_origin: true,
@@ -110,17 +103,17 @@ export function draftPipeline(
   }
   for (const root of paths) {
     sources.push({
-      kind: 'filesystem',
+      kind: "filesystem",
       root,
-      glob: '**/*.md',
+      glob: "**/*.md",
     });
   }
   if (sources.length === 0) {
     // Placeholder the operator must replace — we still emit a
     // filesystem source so the manifest parses through the schema.
-    sources.push({ kind: 'filesystem', root: '/path/to/docs', glob: '**/*.md' });
+    sources.push({ kind: "filesystem", root: "/path/to/docs", glob: "**/*.md" });
     warnings.push(
-      'no URL or filesystem path found in description — added a placeholder filesystem source',
+      "no URL or filesystem path found in description — added a placeholder filesystem source",
     );
   }
 
@@ -139,22 +132,22 @@ export function draftPipeline(
   const schedule = pickSchedule(desc);
 
   const manifest: RagPipelineManifest = {
-    apiVersion: 'llamactl/v1',
-    kind: 'RagPipeline',
-    metadata: { name: name || 'draft' },
+    apiVersion: "llamactl/v1",
+    kind: "RagPipeline",
+    metadata: { name: name || "draft" },
     spec: {
       destination: { ragNode, collection },
       sources,
       transforms: [
         {
-          kind: 'markdown-chunk',
+          kind: "markdown-chunk",
           chunk_size: 800,
           overlap: 150,
           preserve_headings: true,
         },
       ],
       concurrency: 4,
-      on_duplicate: 'skip',
+      on_duplicate: "skip",
       ...(schedule !== null ? { schedule } : {}),
     },
   };
@@ -168,11 +161,7 @@ export function draftPipeline(
   return { yaml, manifest: parsed, warnings };
 }
 
-function pickRagNode(
-  desc: string,
-  ctx: DraftContext,
-  warnings: string[],
-): string {
+function pickRagNode(desc: string, ctx: DraftContext, warnings: string[]): string {
   const available = ctx.availableRagNodes ?? [];
   for (const node of available) {
     // Word-boundary match, not substring, so "kb-pg" doesn't swallow
@@ -183,19 +172,12 @@ function pickRagNode(
   }
   const fallback = ctx.defaultRagNode ?? DEFAULT_RAG_NODE;
   if (available.length > 0) {
-    warnings.push(
-      `no rag node from availableRagNodes matched — defaulted to '${fallback}'`,
-    );
+    warnings.push(`no rag node from availableRagNodes matched — defaulted to '${fallback}'`);
   }
   return fallback;
 }
 
-function pickCollection(
-  desc: string,
-  urls: string[],
-  paths: string[],
-  warnings: string[],
-): string {
+function pickCollection(desc: string, urls: string[], paths: string[], warnings: string[]): string {
   const m = desc.match(COLLECTION_RE);
   if (m) return m[1]!;
   // Infer from the first source: host for URLs (incl. git clone
@@ -203,7 +185,7 @@ function pickCollection(
   if (urls.length > 0) {
     try {
       const url = new URL(urls[0]!);
-      return snakeCase(url.hostname.replace(/^www\./, ''));
+      return snakeCase(url.hostname.replace(/^www\./, ""));
     } catch {
       // Bare SSH git URLs (`git@host:org/repo.git`) don't parse as
       // URLs. Split on `:` to get the host, then snake_case it.
@@ -212,13 +194,13 @@ function pickCollection(
     }
   }
   if (paths.length > 0) {
-    const last = paths[0]!.split('/').filter(Boolean).pop() ?? '';
+    const last = paths[0]!.split("/").filter(Boolean).pop() ?? "";
     if (last) return snakeCase(last);
   }
   warnings.push(
     "couldn't infer a collection name — defaulted to 'docs'. Set `collection` explicitly.",
   );
-  return 'docs';
+  return "docs";
 }
 
 function pickSchedule(desc: string): string | null {
@@ -233,7 +215,7 @@ function pickSchedule(desc: string): string | null {
   if (everyMatch) {
     const n = everyMatch[1]!;
     const unit = everyMatch[2]!.toLowerCase();
-    const short = unit.startsWith('m') ? 'm' : unit.startsWith('h') ? 'h' : 'd';
+    const short = unit.startsWith("m") ? "m" : unit.startsWith("h") ? "h" : "d";
     return `@every ${n}${short}`;
   }
   return null;
@@ -245,28 +227,28 @@ function inferName(desc: string, urls: string[], paths: string[]): string {
     // Git clone URLs: pull the repo slug out of the path so
     // `https://github.com/pytorch/docs.git` becomes `pytorch-docs`
     // rather than `github-com`.
-    if (first.endsWith('.git')) {
+    if (first.endsWith(".git")) {
       const slugFromHttps = first.match(/\/([^/\s]+?)\/([^/\s]+?)\.git$/);
       if (slugFromHttps) return kebabCase(`${slugFromHttps[1]!}-${slugFromHttps[2]!}`);
       const slugFromSsh = first.match(/:([^/\s]+?)\/([^/\s]+?)\.git$/);
       if (slugFromSsh) return kebabCase(`${slugFromSsh[1]!}-${slugFromSsh[2]!}`);
     }
     try {
-      const host = new URL(first).hostname.replace(/^www\./, '');
+      const host = new URL(first).hostname.replace(/^www\./, "");
       return kebabCase(host);
     } catch {
       /* fallthrough */
     }
   }
   if (paths.length > 0) {
-    const last = paths[0]!.split('/').filter(Boolean).pop() ?? '';
+    const last = paths[0]!.split("/").filter(Boolean).pop() ?? "";
     if (last) return kebabCase(last);
   }
   // Last-ditch: if the description has a clear "noun-noun" label,
   // use it. E.g. "pytorch docs" → "pytorch-docs".
   const labelMatch = desc.match(/\b([a-z][a-z0-9]+(?:[-\s][a-z][a-z0-9]+)+)\b/i);
   if (labelMatch) return kebabCase(labelMatch[1]!);
-  return '';
+  return "";
 }
 
 function matchAll(s: string, re: RegExp): string[] {
@@ -282,13 +264,19 @@ function uniq(xs: string[]): string[] {
 }
 
 function snakeCase(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function kebabCase(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

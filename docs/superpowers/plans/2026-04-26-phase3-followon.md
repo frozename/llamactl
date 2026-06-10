@@ -55,6 +55,7 @@
 ## Task 1: Delete `knowledgeSearch` proc + `surfaces/knowledge.ts`
 
 **Files:**
+
 - Modify: `packages/remote/src/router.ts` (delete the `knowledgeSearch` proc block)
 - Delete: `packages/app/src/lib/global-search/surfaces/knowledge.ts`
 - Modify: `packages/app/src/lib/global-search/orchestrator.ts` (remove the call site)
@@ -89,6 +90,7 @@ grep -rn "surfaces/knowledge\|knowledgeSearch\|knowledge-rag" packages/app/src/l
 ```
 
 For every match in `orchestrator.ts` and `hooks/use-global-search.ts`:
+
 - Remove the import (`import { ... } from './surfaces/knowledge.js'`).
 - Remove the call site that invokes it (`trpc.knowledgeSearch.useQuery` or its `utils.fetch` equivalent).
 - Leave the `knowledge-rag` (Tier 3 / `ragSearch`) call sites untouched — only Tier 2 knowledge is being dropped.
@@ -141,6 +143,7 @@ re-introduction."
 ## Task 2: Schema additions — `Hit.originNode?` + `SurfaceGroup.unreachableNodes?`
 
 **Files:**
+
 - Modify: `packages/app/src/lib/global-search/types.ts`
 - Test: `packages/app/test/lib/global-search/types.test.ts` (create if missing — pure type-shape sanity)
 
@@ -192,6 +195,7 @@ git commit -m "feat(app/global-search): add originNode + unreachableNodes option
 ## Task 3: `cross-node-fan-out.ts` pure module
 
 **Files:**
+
 - Create: `packages/app/electron/trpc/cross-node-fan-out.ts`
 - Test: `packages/app/test/electron/trpc/cross-node-fan-out.test.ts`
 
@@ -201,111 +205,113 @@ A pure module with two functions: `listAgentNodes` (a kubeconfig filter) and `fa
 
 ```ts
 // packages/app/test/electron/trpc/cross-node-fan-out.test.ts
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from "bun:test";
 import {
   fanOutSurface,
   listAgentNodes,
   type NodeFailure,
-} from '../../../electron/trpc/cross-node-fan-out';
-import type { Config, ClusterNode } from '@llamactl/remote';
+} from "../../../electron/trpc/cross-node-fan-out";
+import type { Config, ClusterNode } from "@llamactl/remote";
 
 const cfg: Config = {
-  apiVersion: 'llamactl/v1' as const,
-  kind: 'Config' as const,
-  currentContext: 'default',
-  contexts: [{ name: 'default', cluster: 'home', user: 'me', defaultNode: 'local' }],
+  apiVersion: "llamactl/v1" as const,
+  kind: "Config" as const,
+  currentContext: "default",
+  contexts: [{ name: "default", cluster: "home", user: "me", defaultNode: "local" }],
   clusters: [
     {
-      name: 'home',
+      name: "home",
       nodes: [
-        { name: 'local', endpoint: 'https://127.0.0.1:7843' },
-        { name: 'mac-mini', endpoint: 'https://192.168.68.76:7843' },
-        { name: 'sirius-gw', endpoint: '', kind: 'gateway' as const },
-        { name: 'kb-chroma', endpoint: '', kind: 'rag' as const },
+        { name: "local", endpoint: "https://127.0.0.1:7843" },
+        { name: "mac-mini", endpoint: "https://192.168.68.76:7843" },
+        { name: "sirius-gw", endpoint: "", kind: "gateway" as const },
+        { name: "kb-chroma", endpoint: "", kind: "rag" as const },
       ] as ClusterNode[],
     },
   ],
-  users: [{ name: 'me', token: 'abc' }],
+  users: [{ name: "me", token: "abc" }],
 };
 
-describe('listAgentNodes', () => {
-  test('excludes the active node and non-agent kinds', () => {
-    const out = listAgentNodes(cfg, 'local');
-    expect(out.map((n) => n.name)).toEqual(['mac-mini']);
+describe("listAgentNodes", () => {
+  test("excludes the active node and non-agent kinds", () => {
+    const out = listAgentNodes(cfg, "local");
+    expect(out.map((n) => n.name)).toEqual(["mac-mini"]);
   });
 
-  test('treats nodes with no kind as agents (backwards compat)', () => {
-    const out = listAgentNodes(cfg, 'mac-mini');
-    expect(out.map((n) => n.name)).toEqual(['local']);
+  test("treats nodes with no kind as agents (backwards compat)", () => {
+    const out = listAgentNodes(cfg, "mac-mini");
+    expect(out.map((n) => n.name)).toEqual(["local"]);
   });
 
-  test('empty array when only the active node is an agent', () => {
+  test("empty array when only the active node is an agent", () => {
     const oneAgent: Config = {
       ...cfg,
-      clusters: [{
-        name: 'home',
-        nodes: [
-          { name: 'local', endpoint: 'https://127.0.0.1:7843' },
-          { name: 'sirius-gw', endpoint: '', kind: 'gateway' as const },
-        ] as ClusterNode[],
-      }],
+      clusters: [
+        {
+          name: "home",
+          nodes: [
+            { name: "local", endpoint: "https://127.0.0.1:7843" },
+            { name: "sirius-gw", endpoint: "", kind: "gateway" as const },
+          ] as ClusterNode[],
+        },
+      ],
     };
-    expect(listAgentNodes(oneAgent, 'local')).toEqual([]);
+    expect(listAgentNodes(oneAgent, "local")).toEqual([]);
   });
 });
 
-describe('fanOutSurface', () => {
+describe("fanOutSurface", () => {
   const nodes: ClusterNode[] = [
-    { name: 'a', endpoint: 'https://a:7843' },
-    { name: 'b', endpoint: 'https://b:7843' },
-    { name: 'c', endpoint: 'https://c:7843' },
+    { name: "a", endpoint: "https://a:7843" },
+    { name: "b", endpoint: "https://b:7843" },
+    { name: "c", endpoint: "https://c:7843" },
   ];
 
-  test('all-succeed merges hits, no failures', async () => {
+  test("all-succeed merges hits, no failures", async () => {
     const out = await fanOutSurface<{ id: string; node: string }>({
       nodes,
       perNodeFetch: async (node) => [{ id: node.name, node: node.name }],
       perNodeTimeoutMs: 100,
     });
     expect(out.failures).toEqual([]);
-    expect(out.hits.map((h) => h.id).sort()).toEqual(['a', 'b', 'c']);
+    expect(out.hits.map((h) => h.id).sort()).toEqual(["a", "b", "c"]);
   });
 
-  test('per-node timeout produces failure with reason=timeout', async () => {
+  test("per-node timeout produces failure with reason=timeout", async () => {
     const out = await fanOutSurface<{ id: string }>({
       nodes,
       perNodeFetch: async (node, signal) => {
-        if (node.name === 'b') {
+        if (node.name === "b") {
           await new Promise((r) => setTimeout(r, 200));
-          if (signal.aborted) throw new Error('aborted');
+          if (signal.aborted) throw new Error("aborted");
           return [];
         }
         return [{ id: node.name }];
       },
       perNodeTimeoutMs: 50,
     });
-    expect(out.hits.map((h) => h.id).sort()).toEqual(['a', 'c']);
+    expect(out.hits.map((h) => h.id).sort()).toEqual(["a", "c"]);
     expect(out.failures.length).toBe(1);
-    expect(out.failures[0]!.nodeName).toBe('b');
-    expect(out.failures[0]!.reason).toBe('timeout');
+    expect(out.failures[0]!.nodeName).toBe("b");
+    expect(out.failures[0]!.reason).toBe("timeout");
   });
 
-  test('per-node rejection produces failure with reason=rejected', async () => {
+  test("per-node rejection produces failure with reason=rejected", async () => {
     const out = await fanOutSurface<{ id: string }>({
       nodes,
       perNodeFetch: async (node) => {
-        if (node.name === 'a') throw new Error('TLS handshake failed');
+        if (node.name === "a") throw new Error("TLS handshake failed");
         return [{ id: node.name }];
       },
       perNodeTimeoutMs: 100,
     });
-    expect(out.hits.map((h) => h.id).sort()).toEqual(['b', 'c']);
-    const fail = out.failures.find((f) => f.nodeName === 'a')!;
-    expect(fail.reason).toBe('rejected');
-    expect(fail.detail).toContain('TLS handshake failed');
+    expect(out.hits.map((h) => h.id).sort()).toEqual(["b", "c"]);
+    const fail = out.failures.find((f) => f.nodeName === "a")!;
+    expect(fail.reason).toBe("rejected");
+    expect(fail.detail).toContain("TLS handshake failed");
   });
 
-  test('outer abort short-circuits in-flight fetches', async () => {
+  test("outer abort short-circuits in-flight fetches", async () => {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 20);
     const out = await fanOutSurface<{ id: string }>({
@@ -313,9 +319,9 @@ describe('fanOutSurface', () => {
       perNodeFetch: async (node, signal) => {
         await new Promise((resolve, reject) => {
           const t = setTimeout(resolve, 1000);
-          signal.addEventListener('abort', () => {
+          signal.addEventListener("abort", () => {
             clearTimeout(t);
-            reject(new Error('aborted'));
+            reject(new Error("aborted"));
           });
         });
         return [{ id: node.name }];
@@ -326,32 +332,32 @@ describe('fanOutSurface', () => {
     expect(out.hits).toEqual([]);
     expect(out.failures.length).toBe(3);
     for (const f of out.failures) {
-      expect(['aborted', 'rejected']).toContain(f.reason);
+      expect(["aborted", "rejected"]).toContain(f.reason);
     }
   });
 
-  test('empty nodes array returns instant empty result', async () => {
+  test("empty nodes array returns instant empty result", async () => {
     const out = await fanOutSurface<{ id: string }>({
       nodes: [],
       perNodeFetch: async () => {
-        throw new Error('should not be called');
+        throw new Error("should not be called");
       },
       perNodeTimeoutMs: 100,
     });
     expect(out).toEqual({ hits: [], failures: [] });
   });
 
-  test('failures shape carries detail strings', async () => {
+  test("failures shape carries detail strings", async () => {
     const out = await fanOutSurface<{ id: string }>({
-      nodes: [{ name: 'x', endpoint: '' }],
+      nodes: [{ name: "x", endpoint: "" }],
       perNodeFetch: async () => {
-        throw new Error('boom');
+        throw new Error("boom");
       },
       perNodeTimeoutMs: 100,
     });
     const f: NodeFailure | undefined = out.failures[0];
     expect(f).toBeDefined();
-    expect(f!.detail).toBe('boom');
+    expect(f!.detail).toBe("boom");
   });
 });
 ```
@@ -365,11 +371,11 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/app/electron/trpc/cross-node-fan-out.ts
-import type { ClusterNode, Config } from '@llamactl/remote';
+import type { ClusterNode, Config } from "@llamactl/remote";
 
 export interface NodeFailure {
   nodeName: string;
-  reason: 'timeout' | 'rejected' | 'aborted';
+  reason: "timeout" | "rejected" | "aborted";
   detail?: string;
 }
 
@@ -407,8 +413,8 @@ export function listAgentNodes(cfg: Config, activeNodeName: string): ClusterNode
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   if (!cluster) return [];
   return cluster.nodes.filter((n) => {
-    const kind = (n as { kind?: string }).kind ?? 'agent';
-    if (kind !== 'agent') return false;
+    const kind = (n as { kind?: string }).kind ?? "agent";
+    if (kind !== "agent") return false;
     if (n.name === activeNodeName) return false;
     return true;
   });
@@ -434,15 +440,17 @@ export async function fanOutSurface<T>(opts: FanOutOpts<T>): Promise<FanOutResul
     opts.nodes.map(async (node) => {
       const child = new AbortController();
       const onOuterAbort = (): void => child.abort();
-      opts.signal?.addEventListener('abort', onOuterAbort);
+      opts.signal?.addEventListener("abort", onOuterAbort);
       const timer = setTimeout(() => child.abort(), timeoutMs);
       try {
         const result = await opts.perNodeFetch(node, child.signal);
         return { node: node.name, ok: true as const, hits: result };
       } catch (err) {
         const reason = child.signal.aborted
-          ? (opts.signal?.aborted ? 'aborted' : 'timeout')
-          : 'rejected';
+          ? opts.signal?.aborted
+            ? "aborted"
+            : "timeout"
+          : "rejected";
         return {
           node: node.name,
           ok: false as const,
@@ -451,13 +459,13 @@ export async function fanOutSurface<T>(opts: FanOutOpts<T>): Promise<FanOutResul
         };
       } finally {
         clearTimeout(timer);
-        opts.signal?.removeEventListener('abort', onOuterAbort);
+        opts.signal?.removeEventListener("abort", onOuterAbort);
       }
     }),
   );
 
   for (const r of settled) {
-    if (r.status === 'rejected') continue; // shouldn't happen — inner catches
+    if (r.status === "rejected") continue; // shouldn't happen — inner catches
     const v = r.value;
     if (v.ok) {
       hits.push(...v.hits);
@@ -503,6 +511,7 @@ tRPC client."
 ## Task 4: `uiCrossNodeOpsSessionSearch` + `uiCrossNodeLogsSearch` UI procs
 
 **Files:**
+
 - Modify: `packages/app/electron/trpc/dispatcher.ts` (add procs to `uiRouter`)
 - Test: `packages/app/test/electron/trpc/dispatcher-cross-node.test.ts`
 
@@ -518,10 +527,10 @@ Note the existing factory (`buildRemoteClient`) and the cache. The new procs reu
 
 ```ts
 // packages/app/test/electron/trpc/dispatcher-cross-node.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // We test the proc by importing the uiRouter and invoking via createCaller.
 // The dispatcher's clientCache builds a real createTRPCClient per peer; in
@@ -536,17 +545,17 @@ import {
   uiRouter,
   __setPeerClientFactoryForTests,
   __resetPeerClientFactoryForTests,
-} from '../../../electron/trpc/dispatcher';
+} from "../../../electron/trpc/dispatcher";
 
-let tmp = '';
+let tmp = "";
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'dispatcher-cross-node-'));
-  mkdirSync(join(tmp, '.llamactl'), { recursive: true });
+  tmp = mkdtempSync(join(tmpdir(), "dispatcher-cross-node-"));
+  mkdirSync(join(tmp, ".llamactl"), { recursive: true });
   process.env.LLAMACTL_TEST_PROFILE = tmp;
   // minimal kubeconfig with two agent nodes
   writeFileSync(
-    join(tmp, '.llamactl', 'config'),
+    join(tmp, ".llamactl", "config"),
     `apiVersion: llamactl/v1
 kind: Config
 currentContext: default
@@ -566,7 +575,7 @@ users:
   - name: me
     token: ll_agt_test
 `,
-    'utf8',
+    "utf8",
   );
 });
 
@@ -576,93 +585,103 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-describe('uiCrossNodeOpsSessionSearch', () => {
-  test('tags hits with originNode and aggregates unreachableNodes', async () => {
-    __setPeerClientFactoryForTests((node) => ({
-      opsSessionSearch: {
-        query: async (_input: unknown, _opts?: { signal?: AbortSignal }) => ({
-          hits: [
-            {
-              sessionId: `s-${node.name}-1`,
-              goal: 'g',
-              status: 'done',
-              startedAt: '2026-04-26T00:00:00.000Z',
-              matches: [{ where: 'goal', snippet: 'g', spans: [] }],
-              score: 0.7,
-            },
-          ],
-        }),
-      },
-    } as any));
+describe("uiCrossNodeOpsSessionSearch", () => {
+  test("tags hits with originNode and aggregates unreachableNodes", async () => {
+    __setPeerClientFactoryForTests(
+      (node) =>
+        ({
+          opsSessionSearch: {
+            query: async (_input: unknown, _opts?: { signal?: AbortSignal }) => ({
+              hits: [
+                {
+                  sessionId: `s-${node.name}-1`,
+                  goal: "g",
+                  status: "done",
+                  startedAt: "2026-04-26T00:00:00.000Z",
+                  matches: [{ where: "goal", snippet: "g", spans: [] }],
+                  score: 0.7,
+                },
+              ],
+            }),
+          },
+        }) as any,
+    );
     const caller = uiRouter.createCaller({} as any);
-    const res = await caller.uiCrossNodeOpsSessionSearch({ query: 'fleet' });
+    const res = await caller.uiCrossNodeOpsSessionSearch({ query: "fleet" });
     // Active node is 'local' — only 'mac-mini' is a peer here.
     expect(res.hits.length).toBe(1);
-    expect(res.hits[0]!.originNode).toBe('mac-mini');
+    expect(res.hits[0]!.originNode).toBe("mac-mini");
     expect(res.unreachableNodes).toEqual([]);
   });
 
-  test('captures per-node failure into unreachableNodes', async () => {
-    __setPeerClientFactoryForTests((_node) => ({
-      opsSessionSearch: {
-        query: async () => {
-          throw new Error('TLS pinned-cert mismatch');
-        },
-      },
-    } as any));
+  test("captures per-node failure into unreachableNodes", async () => {
+    __setPeerClientFactoryForTests(
+      (_node) =>
+        ({
+          opsSessionSearch: {
+            query: async () => {
+              throw new Error("TLS pinned-cert mismatch");
+            },
+          },
+        }) as any,
+    );
     const caller = uiRouter.createCaller({} as any);
-    const res = await caller.uiCrossNodeOpsSessionSearch({ query: 'fleet' });
+    const res = await caller.uiCrossNodeOpsSessionSearch({ query: "fleet" });
     expect(res.hits).toEqual([]);
-    expect(res.unreachableNodes).toEqual(['mac-mini']);
+    expect(res.unreachableNodes).toEqual(["mac-mini"]);
   });
 
-  test('respects perNodeTimeoutMs override', async () => {
-    __setPeerClientFactoryForTests((_node) => ({
-      opsSessionSearch: {
-        query: async (_input: unknown, opts?: { signal?: AbortSignal }) => {
-          await new Promise((resolve, reject) => {
-            const t = setTimeout(resolve, 5000);
-            opts?.signal?.addEventListener('abort', () => {
-              clearTimeout(t);
-              reject(new Error('aborted'));
-            });
-          });
-          return { hits: [] };
-        },
-      },
-    } as any));
+  test("respects perNodeTimeoutMs override", async () => {
+    __setPeerClientFactoryForTests(
+      (_node) =>
+        ({
+          opsSessionSearch: {
+            query: async (_input: unknown, opts?: { signal?: AbortSignal }) => {
+              await new Promise((resolve, reject) => {
+                const t = setTimeout(resolve, 5000);
+                opts?.signal?.addEventListener("abort", () => {
+                  clearTimeout(t);
+                  reject(new Error("aborted"));
+                });
+              });
+              return { hits: [] };
+            },
+          },
+        }) as any,
+    );
     const caller = uiRouter.createCaller({} as any);
     const res = await caller.uiCrossNodeOpsSessionSearch({
-      query: 'fleet',
+      query: "fleet",
       perNodeTimeoutMs: 30,
     });
-    expect(res.unreachableNodes).toEqual(['mac-mini']);
+    expect(res.unreachableNodes).toEqual(["mac-mini"]);
   });
 });
 
-describe('uiCrossNodeLogsSearch', () => {
-  test('tags log hits and surfaces unreachable peers', async () => {
-    __setPeerClientFactoryForTests((node) => ({
-      logsSearch: {
-        query: async () => ({
-          hits: [
-            {
-              fileLabel: 'agent',
-              filePath: '/tmp/llamactl-agent.log',
-              matches: [
-                { lineNumber: 42, where: 'agent:42', snippet: 'error', spans: [] },
+describe("uiCrossNodeLogsSearch", () => {
+  test("tags log hits and surfaces unreachable peers", async () => {
+    __setPeerClientFactoryForTests(
+      (node) =>
+        ({
+          logsSearch: {
+            query: async () => ({
+              hits: [
+                {
+                  fileLabel: "agent",
+                  filePath: "/tmp/llamactl-agent.log",
+                  matches: [{ lineNumber: 42, where: "agent:42", snippet: "error", spans: [] }],
+                  score: 0.6,
+                },
               ],
-              score: 0.6,
-            },
-          ],
-        }),
-        // ops session client must still exist on the cached client; no-op here.
-      },
-    } as any));
+            }),
+            // ops session client must still exist on the cached client; no-op here.
+          },
+        }) as any,
+    );
     const caller = uiRouter.createCaller({} as any);
-    const res = await caller.uiCrossNodeLogsSearch({ query: 'error' });
+    const res = await caller.uiCrossNodeLogsSearch({ query: "error" });
     expect(res.hits.length).toBe(1);
-    expect(res.hits[0]!.originNode).toBe('mac-mini');
+    expect(res.hits[0]!.originNode).toBe("mac-mini");
   });
 });
 ```
@@ -693,7 +712,7 @@ function getPeerClient(node: ClusterNode, user: User): unknown {
   // resolved token. Reuses clientCache automatically.
   return buildRemoteClient(
     {
-      kind: 'remote',
+      kind: "remote",
       node: {
         name: node.name,
         endpoint: node.endpoint,
@@ -792,7 +811,7 @@ In the `uiRouter = t.router({...})` block, add two new procs alongside the exist
 Add the imports at the top of the file:
 
 ```ts
-import { fanOutSurface, listAgentNodes } from './cross-node-fan-out.js';
+import { fanOutSurface, listAgentNodes } from "./cross-node-fan-out.js";
 ```
 
 - [ ] **Step 6: Run, verify pass**
@@ -831,6 +850,7 @@ across keystrokes."
 ## Task 5: Surface mappers thread `originNode`
 
 **Files:**
+
 - Modify: `packages/app/src/lib/global-search/surfaces/sessions.ts`
 - Modify: `packages/app/src/lib/global-search/surfaces/logs.ts`
 
@@ -842,7 +862,7 @@ Open `packages/app/src/lib/global-search/surfaces/sessions.ts`. Find the functio
 
 ```ts
 return {
-  surface: 'session',
+  surface: "session",
   parentId: ev.sessionId,
   parentTitle: ev.goal || ev.sessionId,
   // ...
@@ -853,7 +873,7 @@ Add the field:
 
 ```ts
 return {
-  surface: 'session',
+  surface: "session",
   parentId: ev.sessionId,
   parentTitle: ev.goal || ev.sessionId,
   originNode: (ev as { originNode?: string }).originNode,
@@ -890,6 +910,7 @@ git commit -m "feat(app/global-search/surfaces): thread originNode through sessi
 ## Task 6: `mergeServerHits` preserves `unreachableNodes`
 
 **Files:**
+
 - Modify: `packages/app/src/lib/global-search/orchestrator.ts`
 - Modify: `packages/app/test/lib/global-search/orchestrator.test.ts`
 
@@ -900,38 +921,60 @@ The orchestrator already merges Tier 2 + Tier 3 hits into a `SurfaceGroup`. It n
 Add to `packages/app/test/lib/global-search/orchestrator.test.ts`:
 
 ```ts
-test('mergeServerHits preserves unreachableNodes from the merge call', () => {
+test("mergeServerHits preserves unreachableNodes from the merge call", () => {
   const initial: GroupedResults = [];
-  const hits: Hit[] = [{
-    surface: 'session',
-    parentId: 's1',
-    parentTitle: 'audit',
-    score: 0.7,
-    matchKind: 'exact',
-    action: { kind: 'open-tab', tab: { tabKey: 'ops-session:s1', title: 's1', kind: 'ops-session' as const, instanceId: 's1', openedAt: 0 } },
-  }];
-  const merged = mergeServerHits(initial, 'session', hits, {
+  const hits: Hit[] = [
+    {
+      surface: "session",
+      parentId: "s1",
+      parentTitle: "audit",
+      score: 0.7,
+      matchKind: "exact",
+      action: {
+        kind: "open-tab",
+        tab: {
+          tabKey: "ops-session:s1",
+          title: "s1",
+          kind: "ops-session" as const,
+          instanceId: "s1",
+          openedAt: 0,
+        },
+      },
+    },
+  ];
+  const merged = mergeServerHits(initial, "session", hits, {
     append: true,
-    unreachableNodes: ['mac-mini'],
+    unreachableNodes: ["mac-mini"],
   });
-  const sess = merged.find((g) => g.surface === 'session')!;
-  expect(sess.unreachableNodes).toEqual(['mac-mini']);
+  const sess = merged.find((g) => g.surface === "session")!;
+  expect(sess.unreachableNodes).toEqual(["mac-mini"]);
 });
 
-test('originNode flows through mergeServerHits unchanged', () => {
+test("originNode flows through mergeServerHits unchanged", () => {
   const initial: GroupedResults = [];
-  const hits: Hit[] = [{
-    surface: 'session',
-    parentId: 's1',
-    parentTitle: 'audit',
-    score: 0.7,
-    matchKind: 'exact',
-    originNode: 'mac-mini',
-    action: { kind: 'open-tab', tab: { tabKey: 'ops-session:s1', title: 's1', kind: 'ops-session' as const, instanceId: 's1', openedAt: 0 } },
-  }];
-  const merged = mergeServerHits(initial, 'session', hits, { append: true });
-  const sess = merged.find((g) => g.surface === 'session')!;
-  expect(sess.hits[0]!.originNode).toBe('mac-mini');
+  const hits: Hit[] = [
+    {
+      surface: "session",
+      parentId: "s1",
+      parentTitle: "audit",
+      score: 0.7,
+      matchKind: "exact",
+      originNode: "mac-mini",
+      action: {
+        kind: "open-tab",
+        tab: {
+          tabKey: "ops-session:s1",
+          title: "s1",
+          kind: "ops-session" as const,
+          instanceId: "s1",
+          openedAt: 0,
+        },
+      },
+    },
+  ];
+  const merged = mergeServerHits(initial, "session", hits, { append: true });
+  const sess = merged.find((g) => g.surface === "session")!;
+  expect(sess.hits[0]!.originNode).toBe("mac-mini");
 });
 ```
 
@@ -948,7 +991,7 @@ In `packages/app/src/lib/global-search/orchestrator.ts`, find the `mergeServerHi
 export interface MergeServerHitsOpts {
   append?: boolean;
   error?: string;
-  unreachableNodes?: string[];   // NEW
+  unreachableNodes?: string[]; // NEW
 }
 
 export function mergeServerHits(
@@ -984,6 +1027,7 @@ git commit -m "feat(app/global-search): mergeServerHits preserves unreachableNod
 ## Task 7: Hook integration — parallel local + remote waves
 
 **Files:**
+
 - Modify: `packages/app/src/lib/global-search/hooks/use-global-search.ts`
 - Modify: `packages/app/test/lib/global-search/use-global-search.test.ts` (extend)
 
@@ -1000,7 +1044,7 @@ The UI client is already exported alongside the agent-router `trpc` client. Impo
 Append to `packages/app/test/lib/global-search/use-global-search.test.ts`:
 
 ```ts
-test('Tier 2 fires both local and cross-node fetches under one debounce anchor', () => {
+test("Tier 2 fires both local and cross-node fetches under one debounce anchor", () => {
   // Schedule helper validates the timer plan — both waves anchor at t+250ms.
   // We're not testing real network; just the timing contract.
   const t0 = Date.now();
@@ -1023,9 +1067,11 @@ Expected: PASS — the assertion is structural; passes if the schedule fires bot
 In `packages/app/src/lib/global-search/hooks/use-global-search.ts`, find the Tier 2 setTimeout callback for sessions. The existing path looks like:
 
 ```ts
-trpc.opsSessionSearch.fetch({ query }).then((r) =>
-  setResults((cur) => mergeServerHits(cur, 'session', mapSessionHits(r.hits), { append: true })),
-);
+trpc.opsSessionSearch
+  .fetch({ query })
+  .then((r) =>
+    setResults((cur) => mergeServerHits(cur, "session", mapSessionHits(r.hits), { append: true })),
+  );
 ```
 
 Add a parallel call alongside it:
@@ -1035,8 +1081,8 @@ trpcUIClient.uiCrossNodeOpsSessionSearch.query({ query }).then((r) =>
   setResults((cur) =>
     mergeServerHits(
       cur,
-      'session',
-      mapSessionHits(r.hits),  // mapSessionHits already preserves originNode (Task 5)
+      "session",
+      mapSessionHits(r.hits), // mapSessionHits already preserves originNode (Task 5)
       { append: true, unreachableNodes: r.unreachableNodes },
     ),
   ),
@@ -1046,17 +1092,17 @@ trpcUIClient.uiCrossNodeOpsSessionSearch.query({ query }).then((r) =>
 Symmetric for logs:
 
 ```ts
-trpc.logsSearch.fetch({ query }).then((r) =>
-  setResults((cur) => mergeServerHits(cur, 'logs', mapLogHits(r.hits), { append: true })),
-);
+trpc.logsSearch
+  .fetch({ query })
+  .then((r) =>
+    setResults((cur) => mergeServerHits(cur, "logs", mapLogHits(r.hits), { append: true })),
+  );
 trpcUIClient.uiCrossNodeLogsSearch.query({ query }).then((r) =>
   setResults((cur) =>
-    mergeServerHits(
-      cur,
-      'logs',
-      mapLogHits(r.hits),
-      { append: true, unreachableNodes: r.unreachableNodes },
-    ),
+    mergeServerHits(cur, "logs", mapLogHits(r.hits), {
+      append: true,
+      unreachableNodes: r.unreachableNodes,
+    }),
   ),
 );
 ```
@@ -1091,9 +1137,11 @@ git commit -m "feat(app/global-search): hook fires local + cross-node Tier 2 wav
 ## Task 8: Renderer — origin tag + unreachable footer
 
 **Files:**
+
 - Modify: `packages/app/src/shell/beacon/search-results-tree.tsx`
 
 Two visual additions:
+
 1. Per-parent-row origin tag, shown only when `hit.originNode` is defined and differs from the connected agent name.
 2. Per-group footer showing `"⚠ N node(s) unreachable: name1, name2"` when `group.unreachableNodes` is non-empty.
 
@@ -1112,7 +1160,7 @@ The renderer needs to know which node is "connected" to elide the tag for hits f
 ```tsx
 interface SearchResultsTreeProps {
   // ...existing props...
-  connectedNode?: string;   // NEW
+  connectedNode?: string; // NEW
 }
 ```
 
@@ -1123,18 +1171,20 @@ The caller (`shell/beacon/search-view.tsx` or the palette wrapper) supplies it f
 Inside the per-parent-row JSX, append:
 
 ```tsx
-{parent.hits[0]?.originNode && parent.hits[0].originNode !== connectedNode && (
-  <span
-    style={{
-      fontFamily: 'var(--font-mono)',
-      fontSize: 11,
-      color: 'var(--color-text-tertiary)',
-      marginLeft: 8,
-    }}
-  >
-    {parent.hits[0].originNode}
-  </span>
-)}
+{
+  parent.hits[0]?.originNode && parent.hits[0].originNode !== connectedNode && (
+    <span
+      style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: 11,
+        color: "var(--color-text-tertiary)",
+        marginLeft: 8,
+      }}
+    >
+      {parent.hits[0].originNode}
+    </span>
+  );
+}
 ```
 
 (Adapt to the actual JSX layout — the tag goes in whatever flex/inline container the row uses for trailing metadata.)
@@ -1144,18 +1194,21 @@ Inside the per-parent-row JSX, append:
 After the per-parent-row map, before the group's closing tag:
 
 ```tsx
-{group.unreachableNodes && group.unreachableNodes.length > 0 && (
-  <div
-    style={{
-      padding: '6px 12px',
-      fontSize: 11,
-      color: 'var(--color-text-tertiary)',
-      borderTop: '1px solid var(--color-border-subtle)',
-    }}
-  >
-    ⚠ {group.unreachableNodes.length} node{group.unreachableNodes.length === 1 ? '' : 's'} unreachable: {group.unreachableNodes.join(', ')}
-  </div>
-)}
+{
+  group.unreachableNodes && group.unreachableNodes.length > 0 && (
+    <div
+      style={{
+        padding: "6px 12px",
+        fontSize: 11,
+        color: "var(--color-text-tertiary)",
+        borderTop: "1px solid var(--color-border-subtle)",
+      }}
+    >
+      ⚠ {group.unreachableNodes.length} node{group.unreachableNodes.length === 1 ? "" : "s"}{" "}
+      unreachable: {group.unreachableNodes.join(", ")}
+    </div>
+  );
+}
 ```
 
 - [ ] **Step 5: Wire the `connectedNode` prop from the caller**
@@ -1169,7 +1222,7 @@ const active = trpcUIClient.uiGetActiveNode.useQuery();
   results={results}
   onActivate={onActivate}
   connectedNode={active.data?.nodeName}
-/>
+/>;
 ```
 
 (`uiGetActiveNode`'s actual return shape may differ — check via `grep -n "uiGetActiveNode" packages/app/electron/trpc/dispatcher.ts` and adapt.)
@@ -1212,6 +1265,7 @@ Expected: All tests pass.
 bun test --cwd packages/core 2>&1 | tail -3
 bun test --cwd packages/cli 2>&1 | tail -3
 ```
+
 Expected: all green.
 
 - [ ] **Step 4: Real typecheck — counts equal to Task 1 baselines**
@@ -1243,6 +1297,7 @@ Open a PR titled `feat(app): cross-node search + drop dead knowledgeSearch tier-
 ## Self-review checklist
 
 **Spec coverage:**
+
 - D1 (drop knowledge tier-2 entirely) → Task 1 (delete proc + surface)
 - D2 (cross-node = sessions + logs only) → Task 4 (uiCrossNode procs only for sessions + logs; no knowledge fan-out)
 - D3 (all-parallel, partial-success, footer) → Task 3 (`fanOutSurface` Promise.allSettled + per-node timeout), Task 4 (`unreachableNodes` returned), Task 8 (footer rendered)

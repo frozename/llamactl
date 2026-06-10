@@ -1,6 +1,6 @@
-import { Bonjour, type Service } from 'bonjour-service';
+import { Bonjour, type Service } from "bonjour-service";
 
-export const LLAMACTL_SERVICE_TYPE = 'llamactl-agent';
+export const LLAMACTL_SERVICE_TYPE = "llamactl-agent";
 
 export interface PublishAgentOptions {
   port: number;
@@ -31,7 +31,7 @@ export interface PublishedAgent {
  */
 export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
   const bonjour = new Bonjour();
-  const synthHost = `${(opts.serviceName ?? opts.nodeName).replace(/[^A-Za-z0-9-]/g, '-')}-llamactl`;
+  const synthHost = `${(opts.serviceName ?? opts.nodeName).replace(/[^A-Za-z0-9-]/g, "-")}-llamactl`;
   const service = bonjour.publish({
     name: opts.serviceName ?? opts.nodeName,
     host: synthHost,
@@ -50,8 +50,10 @@ export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
   // HTTP server is already listening on its TCP port. Treat the
   // collision as best-effort: log + carry on.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const eventEmitter = service as unknown as { on?: (evt: string, cb: (err: unknown) => void) => void };
-  eventEmitter.on?.('error', (err) => {
+  const eventEmitter = service as unknown as {
+    on?: (evt: string, cb: (err: unknown) => void) => void;
+  };
+  eventEmitter.on?.("error", (err) => {
     process.stderr.write(
       `mdns: ${err instanceof Error ? err.message : String(err)} (continuing without LAN advertisement)\n`,
     );
@@ -60,7 +62,7 @@ export function publishAgentMdns(opts: PublishAgentOptions): PublishedAgent {
     host: synthHost,
     stop: async () => {
       await new Promise<void>((resolve) => {
-        if (typeof service.stop === 'function') {
+        if (typeof service.stop === "function") {
           service.stop(() => resolve());
         } else {
           resolve();
@@ -91,7 +93,7 @@ export async function discoverAgents(timeoutMs = 2500): Promise<DiscoveredAgent[
   const seen = new Map<string, DiscoveredAgent>();
   return new Promise<DiscoveredAgent[]>((resolve) => {
     const browser = bonjour.find({ type: LLAMACTL_SERVICE_TYPE }, (svc: Service) => {
-      const host = svc.host ?? (svc.referer?.address ?? '');
+      const host = svc.host ?? svc.referer?.address ?? "";
       const port = svc.port ?? 0;
       const key = `${host}:${port}`;
       if (seen.has(key)) return;

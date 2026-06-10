@@ -28,7 +28,7 @@ operator-project surface that sits on top.
 Reach for a project when you want:
 
 - **One command to bring a repo into llamactl.** `llamactl project
-  add X --path Y --rag-node kb-pg --rag-collection Y_docs` registers
+add X --path Y --rag-node kb-pg --rag-collection Y_docs` registers
   the project; `llamactl project index X` runs the auto-generated
   RAG pipeline; `llamactl project route X quick_qna` previews where
   a chat against `project:X/quick_qna` would land.
@@ -76,25 +76,25 @@ kind: Project
 metadata:
   name: novaflow
 spec:
-  path: /Users/alex/DevStorage/repos/work/novaflow   # absolute; validated as non-empty
-  purpose: "at-home diagnostic services platform"    # free-form; injected into chat system prompt
-  stack: [nestjs, nextjs, prisma, bullmq]            # informational tags
+  path: /Users/alex/DevStorage/repos/work/novaflow # absolute; validated as non-empty
+  purpose: "at-home diagnostic services platform" # free-form; injected into chat system prompt
+  stack: [nestjs, nextjs, prisma, bullmq] # informational tags
 
   rag:
-    node: kb-pg                                       # any kind: 'rag' node in kubeconfig
+    node: kb-pg # any kind: 'rag' node in kubeconfig
     collection: novaflow_docs
-    docsGlob: "**/*.md"                               # default docs/**/*.md
-    schedule: "@daily"                                # optional cadence via the pipeline scheduler
+    docsGlob: "**/*.md" # default docs/**/*.md
+    schedule: "@daily" # optional cadence via the pipeline scheduler
 
   routing:
-    quick_qna:      private-first                     # local agents via embersynth
-    code_review:    mac-mini.claude-pro               # CLI subscription lane (Phase 1)
-    deep_analysis:  sirius.anthropic                  # cloud API via sirius
-    image:          sirius.openai                     # cloud API with vision
+    quick_qna: private-first # local agents via embersynth
+    code_review: mac-mini.claude-pro # CLI subscription lane (Phase 1)
+    deep_analysis: sirius.anthropic # cloud API via sirius
+    image: sirius.openai # cloud API with vision
 
   budget:
-    usd_per_day: 2.00                                 # soft cap; over-budget flips routing
-    cli_calls_per_day:                                # per-subscription call tracking
+    usd_per_day: 2.00 # soft cap; over-budget flips routing
+    cli_calls_per_day: # per-subscription call tracking
       claude-pro: 300
       codex-plus: 200
 ```
@@ -150,8 +150,8 @@ clusters:
         endpoint: https://mac-mini.lan:7843
         kind: agent
         cli:
-          - name: claude-pro           # becomes mac-mini.claude-pro
-            preset: claude             # canned argv + stream: true
+          - name: claude-pro # becomes mac-mini.claude-pro
+            preset: claude # canned argv + stream: true
             subscription: claude-pro-alex
             advertisedModels: [claude-sonnet-4-5]
             defaultModel: claude-sonnet-4-5
@@ -238,7 +238,7 @@ Detail card (opened by clicking the row):
 - Routing-policy table: declared target + live-resolved target per
   task kind. The "Resolved (live)" column calls the
   `projectRoutePreview` tRPC procedure so operators see exactly
-  where dispatch would route *right now*, including budget
+  where dispatch would route _right now_, including budget
   overrides when they eventually land.
 - Live routing-decision feed (2s poll on `projectRoutingJournal`)
   showing recent `project:<name>/<taskKind>` chat calls: elapsed

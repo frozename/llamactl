@@ -1,6 +1,6 @@
-import { readdirSync, statSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
-import type { KvRegistry } from './registry.js';
+import { readdirSync, statSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import type { KvRegistry } from "./registry.js";
 
 export interface SweepOrphanSlotFilesOptions {
   slotDir: string;
@@ -14,7 +14,9 @@ export interface SweepOrphanSlotFilesResult {
   orphansDeleted: number;
 }
 
-export function sweepOrphanSlotFiles(opts: SweepOrphanSlotFilesOptions): SweepOrphanSlotFilesResult {
+export function sweepOrphanSlotFiles(
+  opts: SweepOrphanSlotFilesOptions,
+): SweepOrphanSlotFilesResult {
   const cutoff = opts.now - opts.ttlMs;
   let orphansFound = 0;
   let orphansDeleted = 0;
@@ -37,8 +39,8 @@ export function sweepOrphanSlotFiles(opts: SweepOrphanSlotFilesOptions): SweepOr
 }
 
 function parseShaFromSlotFile(filename: string): string | null {
-  if (!filename.endsWith('.kvslot')) return null;
-  const sha = filename.slice(0, -'.kvslot'.length);
+  if (!filename.endsWith(".kvslot")) return null;
+  const sha = filename.slice(0, -".kvslot".length);
   if (sha.length === 0) return null;
   return sha;
 }
@@ -63,5 +65,10 @@ function safeDelete(path: string): boolean {
 }
 
 function isEnoent(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'ENOENT';
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
 }

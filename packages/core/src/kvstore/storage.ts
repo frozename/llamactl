@@ -1,6 +1,6 @@
-import { Database } from 'bun:sqlite';
-import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 const SCHEMA_VERSION = 5;
 
@@ -11,16 +11,16 @@ export interface KvStorage {
   kv_false_hit_total: number;
   kv_replay_mismatch_total: number;
   kv_model_mismatch_total: number;
-  safeWrite(fn: () => void): { ok: true } | { ok: false; reason: 'enospc' | 'other'; error: Error };
+  safeWrite(fn: () => void): { ok: true } | { ok: false; reason: "enospc" | "other"; error: Error };
   close(): void;
 }
 
 export function openKvStorage(dataRoot: string): KvStorage {
-  const kvDir = join(dataRoot, 'kvstore');
+  const kvDir = join(dataRoot, "kvstore");
   mkdirSync(kvDir, { recursive: true });
-  const db = new Database(join(kvDir, 'registry.db'));
-  db.run('PRAGMA journal_mode = WAL');
-  db.run('PRAGMA busy_timeout = 5000');
+  const db = new Database(join(kvDir, "registry.db"));
+  db.run("PRAGMA journal_mode = WAL");
+  db.run("PRAGMA busy_timeout = 5000");
   migrate(db);
   const storage: KvStorage = {
     db,
@@ -39,7 +39,7 @@ export function openKvStorage(dataRoot: string): KvStorage {
 export function safeWrite(
   storage: KvStorage,
   fn: () => void,
-): { ok: true } | { ok: false; reason: 'enospc' | 'other'; error: Error } {
+): { ok: true } | { ok: false; reason: "enospc" | "other"; error: Error } {
   try {
     fn();
     return { ok: true };
@@ -47,9 +47,9 @@ export function safeWrite(
     const normalized = toError(error);
     if (isEnospcError(normalized)) {
       storage.registry_write_fail_total += 1;
-      return { ok: false, reason: 'enospc', error: normalized };
+      return { ok: false, reason: "enospc", error: normalized };
     }
-    return { ok: false, reason: 'other', error: normalized };
+    return { ok: false, reason: "other", error: normalized };
   }
 }
 
@@ -59,11 +59,15 @@ function migrate(db: Database): void {
       version INTEGER NOT NULL
     )
   `);
-  const versionRow = db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-  if (!versionRow) db.query('INSERT INTO schema_version (version) VALUES (0)').run();
+  const versionRow = db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+    version: number;
+  } | null;
+  if (!versionRow) db.query("INSERT INTO schema_version (version) VALUES (0)").run();
   const fromVersion = versionRow?.version ?? 0;
   if (fromVersion > SCHEMA_VERSION) {
-    throw new Error(`kvstore schema_version ${fromVersion} is newer than supported ${SCHEMA_VERSION}`);
+    throw new Error(
+      `kvstore schema_version ${fromVersion} is newer than supported ${SCHEMA_VERSION}`,
+    );
   }
   runMigrations(db, fromVersion, SCHEMA_VERSION);
 }
@@ -92,57 +96,59 @@ export function runMigrations(db: Database, fromVersion: number, toVersion: numb
             quarantined INTEGER NOT NULL DEFAULT 0
           )
         `);
-        db.run('CREATE INDEX IF NOT EXISTS idx_kv_workload_quant_ctx ON kv_entries (workload, quant_bits, ctx_size)');
-        db.run('CREATE INDEX IF NOT EXISTS idx_kv_last_used ON kv_entries (last_used)');
-        db.query('UPDATE schema_version SET version = 1').run();
+        db.run(
+          "CREATE INDEX IF NOT EXISTS idx_kv_workload_quant_ctx ON kv_entries (workload, quant_bits, ctx_size)",
+        );
+        db.run("CREATE INDEX IF NOT EXISTS idx_kv_last_used ON kv_entries (last_used)");
+        db.query("UPDATE schema_version SET version = 1").run();
         break;
       case 2:
         addColumnIfMissing(
           db,
-          'kv_entries',
-          'state',
+          "kv_entries",
+          "state",
           `
             ALTER TABLE kv_entries
             ADD COLUMN state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','reserved','active'))
           `,
         );
-        db.query('UPDATE schema_version SET version = 2').run();
+        db.query("UPDATE schema_version SET version = 2").run();
         break;
       case 3:
         addColumnIfMissing(
           db,
-          'kv_entries',
-          'first_response_token',
+          "kv_entries",
+          "first_response_token",
           `
             ALTER TABLE kv_entries
             ADD COLUMN first_response_token TEXT
           `,
         );
-        db.query('UPDATE schema_version SET version = 3').run();
+        db.query("UPDATE schema_version SET version = 3").run();
         break;
       case 4:
         addColumnIfMissing(
           db,
-          'kv_entries',
-          'ext_flags',
+          "kv_entries",
+          "ext_flags",
           `
             ALTER TABLE kv_entries
             ADD COLUMN ext_flags INTEGER NOT NULL DEFAULT 0
           `,
         );
-        db.query('UPDATE schema_version SET version = 4').run();
+        db.query("UPDATE schema_version SET version = 4").run();
         break;
       case 5:
         addColumnIfMissing(
           db,
-          'kv_entries',
-          'model',
+          "kv_entries",
+          "model",
           `
             ALTER TABLE kv_entries
             ADD COLUMN model TEXT
           `,
         );
-        db.query('UPDATE schema_version SET version = 5').run();
+        db.query("UPDATE schema_version SET version = 5").run();
         break;
       default:
         throw new Error(`Unsupported kvstore schema migration target ${next}`);
@@ -164,15 +170,17 @@ function runIntegrityScan(storage: KvStorage): void {
   })();
   const now = Date.now();
   storage.db.transaction(() => {
-    const rows = storage.db.query('SELECT sha, upstream_slot_file, quarantined, last_used FROM kv_entries').all() as Array<{
+    const rows = storage.db
+      .query("SELECT sha, upstream_slot_file, quarantined, last_used FROM kv_entries")
+      .all() as Array<{
       sha: string;
       upstream_slot_file: string;
       quarantined: number;
       last_used: number;
     }>;
-    const quarantine = storage.db.query('UPDATE kv_entries SET quarantined = 1 WHERE sha = ?');
-    const unquarantine = storage.db.query('UPDATE kv_entries SET quarantined = 0 WHERE sha = ?');
-    const purge = storage.db.query('DELETE FROM kv_entries WHERE sha = ?');
+    const quarantine = storage.db.query("UPDATE kv_entries SET quarantined = 1 WHERE sha = ?");
+    const unquarantine = storage.db.query("UPDATE kv_entries SET quarantined = 0 WHERE sha = ?");
+    const purge = storage.db.query("DELETE FROM kv_entries WHERE sha = ?");
     for (const row of rows) {
       const exists = existsSync(row.upstream_slot_file);
       if (exists && row.quarantined === 1) {
@@ -192,10 +200,10 @@ function runIntegrityScan(storage: KvStorage): void {
 }
 
 function isEnospcError(error: Error & { code?: unknown }): boolean {
-  return error.code === 'ENOSPC';
+  return error.code === "ENOSPC";
 }
 
 function toError(error: unknown): Error & { code?: unknown } {
   if (error instanceof Error) return error;
-  return new Error(typeof error === 'string' ? error : 'Unknown error');
+  return new Error(typeof error === "string" ? error : "Unknown error");
 }

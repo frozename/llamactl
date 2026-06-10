@@ -1,9 +1,9 @@
-import { afterEach, expect, test, spyOn } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { openaiProxy } from '../src/index.js';
-import type { PeerSnapshot } from '../src/workloadRuntime.js';
+import { afterEach, expect, test, spyOn } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openaiProxy } from "../src/index.js";
+import type { PeerSnapshot } from "../src/workloadRuntime.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 function tempEnv() {
-  const dir = mkdtempSync(join(tmpdir(), 'llamactl-openai-proxy-core-'));
+  const dir = mkdtempSync(join(tmpdir(), "llamactl-openai-proxy-core-"));
   return {
     env: { LOCAL_AI_RUNTIME_DIR: dir } as any,
     dir,
@@ -21,70 +21,71 @@ function tempEnv() {
   };
 }
 
-test('routes chat completions to a ModelHost by rel alias', async () => {
+test("routes chat completions to a ModelHost by rel alias", async () => {
   const t = tempEnv();
   try {
-    const workload = join(t.dir, 'workloads', 'mlx-host');
+    const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(join(workload, "modelhost.pid"), `${process.pid}\n`);
     writeFileSync(
-      join(workload, 'modelhost.state'),
+      join(workload, "modelhost.state"),
       JSON.stringify({
-        kind: 'ModelHost',
-        engine: 'omlx',
+        kind: "ModelHost",
+        engine: "omlx",
         pid: process.pid,
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 8123,
-        modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit', 'Qwen3-8B-MLX-4bit'],
+        modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit", "Qwen3-8B-MLX-4bit"],
         startedAt: new Date().toISOString(),
       }),
     );
 
     const calls: Array<{ url: string; body: string | null }> = [];
     globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-      calls.push({ url, body: typeof init?.body === 'string' ? init.body : null });
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push({ url, body: typeof init?.body === "string" ? init.body : null });
       return Response.json({ echoed: { url } });
     }) as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: 'mlx-community/Qwen3-8B-MLX-4bit',
-          messages: [{ role: 'user', content: 'hi' }],
+          model: "mlx-community/Qwen3-8B-MLX-4bit",
+          messages: [{ role: "user", content: "hi" }],
         }),
       }),
       t.env,
     );
     expect(res.status).toBe(200);
     // Filter to the chat forward; omlx ModelHosts also probe /v1/slots/capabilities (KV, orthogonal to routing).
-    const chatCalls = calls.filter((c) => c.url.includes('/v1/chat/completions'));
+    const chatCalls = calls.filter((c) => c.url.includes("/v1/chat/completions"));
     expect(chatCalls).toHaveLength(1);
-    expect(chatCalls[0]!.url).toBe('http://127.0.0.1:8123/v1/chat/completions');
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8123/v1/chat/completions");
     expect(chatCalls[0]!.body).toContain('"model":"mlx-community/Qwen3-8B-MLX-4bit"');
   } finally {
     t.cleanup();
   }
 });
 
-test('route cache invalidates when a workload state file is rewritten in place', async () => {
+test("route cache invalidates when a workload state file is rewritten in place", async () => {
   const t = tempEnv();
   try {
-    const workload = join(t.dir, 'workloads', 'mlx-host');
+    const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(join(workload, "modelhost.pid"), `${process.pid}\n`);
     const writeState = (port: number) =>
       writeFileSync(
-        join(workload, 'modelhost.state'),
+        join(workload, "modelhost.state"),
         JSON.stringify({
-          kind: 'ModelHost',
-          engine: 'omlx',
+          kind: "ModelHost",
+          engine: "omlx",
           pid: process.pid,
-          host: '127.0.0.1',
+          host: "127.0.0.1",
           port,
-          modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit', 'Qwen3-8B-MLX-4bit'],
+          modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit", "Qwen3-8B-MLX-4bit"],
           startedAt: new Date().toISOString(),
         }),
       );
@@ -92,19 +93,20 @@ test('route cache invalidates when a workload state file is rewritten in place',
 
     const calls: string[] = [];
     globalThis.fetch = (async (input: Request | URL | string) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       calls.push(url);
       return Response.json({ ok: true });
     }) as typeof fetch;
 
     const req = () =>
       openaiProxy.proxyOpenAI(
-        new Request('http://localhost/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
+        new Request("http://localhost/v1/chat/completions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            model: 'mlx-community/Qwen3-8B-MLX-4bit',
-            messages: [{ role: 'user', content: 'hi' }],
+            model: "mlx-community/Qwen3-8B-MLX-4bit",
+            messages: [{ role: "user", content: "hi" }],
           }),
         }),
         t.env,
@@ -124,83 +126,84 @@ test('route cache invalidates when a workload state file is rewritten in place',
     await req();
     expect(openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests()).toBe(builds1 + 1); // invalidated
     // Filter to chat forwards; omlx ModelHosts also probe /v1/slots/capabilities (KV, orthogonal to routing).
-    const chatCalls = calls.filter((u) => u.includes('/v1/chat/completions'));
-    expect(chatCalls[chatCalls.length - 1]).toBe('http://127.0.0.1:8200/v1/chat/completions');
+    const chatCalls = calls.filter((u) => u.includes("/v1/chat/completions"));
+    expect(chatCalls[chatCalls.length - 1]).toBe("http://127.0.0.1:8200/v1/chat/completions");
   } finally {
     t.cleanup();
   }
 });
 
-test('routes chat completions to a ModelHost by basename alias', async () => {
+test("routes chat completions to a ModelHost by basename alias", async () => {
   const t = tempEnv();
   try {
-    const workload = join(t.dir, 'workloads', 'mlx-host');
+    const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(join(workload, "modelhost.pid"), `${process.pid}\n`);
     writeFileSync(
-      join(workload, 'modelhost.state'),
+      join(workload, "modelhost.state"),
       JSON.stringify({
-        kind: 'ModelHost',
-        engine: 'omlx',
+        kind: "ModelHost",
+        engine: "omlx",
         pid: process.pid,
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 8124,
-        modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit', 'Qwen3-8B-MLX-4bit'],
+        modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit", "Qwen3-8B-MLX-4bit"],
         startedAt: new Date().toISOString(),
       }),
     );
 
     const calls: Array<{ url: string }> = [];
     globalThis.fetch = (async (input: Request | URL | string) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({ url });
       return Response.json({ ok: true });
     }) as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: 'Qwen3-8B-MLX-4bit',
-          messages: [{ role: 'user', content: 'hi' }],
+          model: "Qwen3-8B-MLX-4bit",
+          messages: [{ role: "user", content: "hi" }],
         }),
       }),
       t.env,
     );
     expect(res.status).toBe(200);
     // Filter to the chat forward; omlx ModelHosts also probe /v1/slots/capabilities (KV, orthogonal to routing).
-    const chatCalls = calls.filter((c) => c.url.includes('/v1/chat/completions'));
+    const chatCalls = calls.filter((c) => c.url.includes("/v1/chat/completions"));
     expect(chatCalls).toHaveLength(1);
-    expect(chatCalls[0]!.url).toBe('http://127.0.0.1:8124/v1/chat/completions');
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8124/v1/chat/completions");
   } finally {
     t.cleanup();
   }
 });
 
-test('forwards chat completions with the current request shape intact', async () => {
+test("forwards chat completions with the current request shape intact", async () => {
   const t = tempEnv();
   try {
-    const workload = join(t.dir, 'workloads', 'mlx-host');
+    const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(join(workload, "modelhost.pid"), `${process.pid}\n`);
     writeFileSync(
-      join(workload, 'modelhost.state'),
+      join(workload, "modelhost.state"),
       JSON.stringify({
-        kind: 'ModelHost',
-        engine: 'omlx',
+        kind: "ModelHost",
+        engine: "omlx",
         pid: process.pid,
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 8125,
-        modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
-        startedAt: new Date('2026-05-23T00:00:00Z').toISOString(),
+        modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit"],
+        startedAt: new Date("2026-05-23T00:00:00Z").toISOString(),
       }),
     );
 
     let observedRequest: Request | null = null;
     globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
       observedRequest =
-        typeof input === 'string'
+        typeof input === "string"
           ? new Request(input, init)
           : input instanceof URL
             ? new Request(input.toString(), init)
@@ -214,25 +217,25 @@ test('forwards chat completions with the current request shape intact', async ()
           body: await observedRequest.clone().text(),
         },
         {
-          headers: { 'x-upstream': 'llama-server' },
+          headers: { "x-upstream": "llama-server" },
         },
       );
     }) as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions?foo=bar', {
-        method: 'POST',
+      new Request("http://localhost/v1/chat/completions?foo=bar", {
+        method: "POST",
         headers: {
-          authorization: 'Bearer secret',
-          connection: 'keep-alive',
-          'content-length': '999',
-          'content-type': 'application/json',
-          host: 'localhost',
-          'x-test': 'preserved',
+          authorization: "Bearer secret",
+          connection: "keep-alive",
+          "content-length": "999",
+          "content-type": "application/json",
+          host: "localhost",
+          "x-test": "preserved",
         },
         body: JSON.stringify({
-          model: 'mlx-community/Qwen3-8B-MLX-4bit',
-          messages: [{ role: 'user', content: 'hi' }],
+          model: "mlx-community/Qwen3-8B-MLX-4bit",
+          messages: [{ role: "user", content: "hi" }],
         }),
       }),
       t.env,
@@ -257,48 +260,49 @@ test('forwards chat completions with the current request shape intact', async ()
         "url": "http://127.0.0.1:8125/v1/chat/completions?foo=bar",
       }
     `);
-    expect(res.headers.get('x-upstream')).toBe('llama-server');
+    expect(res.headers.get("x-upstream")).toBe("llama-server");
     expect(observedRequest).not.toBeNull();
-    expect(observedRequest!.headers.get('authorization')).toBeNull();
-    expect(observedRequest!.headers.get('connection')).toBeNull();
-    expect(observedRequest!.headers.get('content-length')).toBeNull();
-    expect(observedRequest!.headers.get('host')).toBeNull();
+    expect(observedRequest!.headers.get("authorization")).toBeNull();
+    expect(observedRequest!.headers.get("connection")).toBeNull();
+    expect(observedRequest!.headers.get("content-length")).toBeNull();
+    expect(observedRequest!.headers.get("host")).toBeNull();
   } finally {
     t.cleanup();
   }
 });
 
-test('/v1/messages translates into /v1/chat/completions and forwards upstream', async () => {
+test("/v1/messages translates into /v1/chat/completions and forwards upstream", async () => {
   const t = tempEnv();
   try {
     const calls: Array<{ url: string; body: string | null }> = [];
     globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-      calls.push({ url, body: typeof init?.body === 'string' ? init.body : null });
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push({ url, body: typeof init?.body === "string" ? init.body : null });
       return Response.json(
         {
-          id: 'msg_1',
-          model: 'claude-3-7-sonnet',
+          id: "msg_1",
+          model: "claude-3-7-sonnet",
           choices: [
             {
               index: 0,
-              message: { role: 'assistant', content: 'hello' },
-              finish_reason: 'stop',
+              message: { role: "assistant", content: "hello" },
+              finish_reason: "stop",
             },
           ],
           usage: { prompt_tokens: 1, completion_tokens: 2 },
         },
-        { headers: { 'content-type': 'application/json' } },
+        { headers: { "content-type": "application/json" } },
       );
     }) as unknown as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/messages?foo=bar', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/messages?foo=bar", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: 'claude-3-7-sonnet',
-          messages: [{ role: 'user', content: 'hello' }],
+          model: "claude-3-7-sonnet",
+          messages: [{ role: "user", content: "hello" }],
           max_tokens: 64,
         }),
       }),
@@ -306,21 +310,21 @@ test('/v1/messages translates into /v1/chat/completions and forwards upstream', 
     );
     expect(res.status).toBe(200);
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toContain('/v1/chat/completions?foo=bar');
+    expect(calls[0]!.url).toContain("/v1/chat/completions?foo=bar");
     expect(calls[0]!.body).toBe(
       JSON.stringify({
-        model: 'claude-3-7-sonnet',
-        messages: [{ role: 'user', content: 'hello' }],
+        model: "claude-3-7-sonnet",
+        messages: [{ role: "user", content: "hello" }],
         max_tokens: 64,
       }),
     );
     expect(await res.json()).toEqual({
-      id: 'msg_1',
-      type: 'message',
-      role: 'assistant',
-      content: [{ type: 'text', text: 'hello' }],
-      model: 'claude-3-7-sonnet',
-      stop_reason: 'end_turn',
+      id: "msg_1",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: "hello" }],
+      model: "claude-3-7-sonnet",
+      stop_reason: "end_turn",
       usage: { input_tokens: 1, output_tokens: 2 },
     });
   } finally {
@@ -328,21 +332,21 @@ test('/v1/messages translates into /v1/chat/completions and forwards upstream', 
   }
 });
 
-test('/v1/messages rejects oversized content-length before reading body', async () => {
+test("/v1/messages rejects oversized content-length before reading body", async () => {
   const t = tempEnv();
   try {
     globalThis.fetch = (async () => {
-      throw new Error('upstream should not be called');
+      throw new Error("upstream should not be called");
     }) as unknown as typeof fetch;
-    const req = new Request('http://localhost/v1/messages', {
-      method: 'POST',
+    const req = new Request("http://localhost/v1/messages", {
+      method: "POST",
       headers: {
-        'content-type': 'application/json',
-        'content-length': '999999999',
+        "content-type": "application/json",
+        "content-length": "999999999",
       },
-      body: '{}',
+      body: "{}",
     });
-    const textSpy = spyOn(req, 'text');
+    const textSpy = spyOn(req, "text");
 
     const res = await openaiProxy.proxyOpenAI(req, t.env);
     expect(res.status).toBe(413);
@@ -352,23 +356,23 @@ test('/v1/messages rejects oversized content-length before reading body', async 
   }
 });
 
-test('/v1/messages translator errors return anthropic_translation_error with status 400', async () => {
+test("/v1/messages translator errors return anthropic_translation_error with status 400", async () => {
   const t = tempEnv();
   try {
     globalThis.fetch = (async () => {
-      throw new Error('upstream should not be called');
+      throw new Error("upstream should not be called");
     }) as unknown as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: 'claude-3-7-sonnet',
+          model: "claude-3-7-sonnet",
           messages: [
             {
-              role: 'user',
-              content: [{ type: 'video', src: 'x' }],
+              role: "user",
+              content: [{ type: "video", src: "x" }],
             },
           ],
         }),
@@ -378,8 +382,8 @@ test('/v1/messages translator errors return anthropic_translation_error with sta
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toEqual({
       error: {
-        message: 'unsupported content block type: video',
-        type: 'anthropic_translation_error',
+        message: "unsupported content block type: video",
+        type: "anthropic_translation_error",
       },
     });
   } finally {
@@ -387,43 +391,43 @@ test('/v1/messages translator errors return anthropic_translation_error with sta
   }
 });
 
-test('/v1/messages response translates non-streaming JSON back to anthropic shape', async () => {
+test("/v1/messages response translates non-streaming JSON back to anthropic shape", async () => {
   const t = tempEnv();
   try {
     globalThis.fetch = (async () =>
       Response.json(
         {
-          id: 'msg_1',
-          model: 'claude-3-7-sonnet',
+          id: "msg_1",
+          model: "claude-3-7-sonnet",
           choices: [
             {
               index: 0,
               message: {
-                role: 'assistant',
-                content: 'hello',
+                role: "assistant",
+                content: "hello",
                 tool_calls: [
                   {
-                    id: 'call_1',
-                    type: 'function',
-                    function: { name: 'lookup_weather', arguments: '{"city":"Sao Paulo"}' },
+                    id: "call_1",
+                    type: "function",
+                    function: { name: "lookup_weather", arguments: '{"city":"Sao Paulo"}' },
                   },
                 ],
               },
-              finish_reason: 'tool_calls',
+              finish_reason: "tool_calls",
             },
           ],
           usage: { prompt_tokens: 10, completion_tokens: 20 },
         },
-        { headers: { 'content-type': 'application/json' } },
+        { headers: { "content-type": "application/json" } },
       )) as unknown as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: 'claude-3-7-sonnet',
-          messages: [{ role: 'user', content: 'hello' }],
+          model: "claude-3-7-sonnet",
+          messages: [{ role: "user", content: "hello" }],
         }),
       }),
       t.env,
@@ -431,20 +435,20 @@ test('/v1/messages response translates non-streaming JSON back to anthropic shap
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      id: 'msg_1',
-      type: 'message',
-      role: 'assistant',
+      id: "msg_1",
+      type: "message",
+      role: "assistant",
       content: [
-        { type: 'text', text: 'hello' },
+        { type: "text", text: "hello" },
         {
-          type: 'tool_use',
-          id: 'call_1',
-          name: 'lookup_weather',
-          input: { city: 'Sao Paulo' },
+          type: "tool_use",
+          id: "call_1",
+          name: "lookup_weather",
+          input: { city: "Sao Paulo" },
         },
       ],
-      model: 'claude-3-7-sonnet',
-      stop_reason: 'tool_use',
+      model: "claude-3-7-sonnet",
+      stop_reason: "tool_use",
       usage: { input_tokens: 10, output_tokens: 20 },
     });
   } finally {
@@ -452,7 +456,7 @@ test('/v1/messages response translates non-streaming JSON back to anthropic shap
   }
 });
 
-test('/v1/messages SSE responses translate to anthropic stream events', async () => {
+test("/v1/messages SSE responses translate to anthropic stream events", async () => {
   const t = tempEnv();
   try {
     const stream = new ReadableStream({
@@ -462,59 +466,62 @@ test('/v1/messages SSE responses translate to anthropic stream events', async ()
             'data: {"id":"msg_1","choices":[{"delta":{"content":"hello"},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
           ),
         );
-        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'));
-        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+        controller.enqueue(
+          new TextEncoder().encode('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'),
+        );
+        controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
         controller.close();
       },
     });
     globalThis.fetch = (async () =>
       new Response(stream, {
         status: 200,
-        headers: { 'content-type': 'text/event-stream' },
+        headers: { "content-type": "text/event-stream" },
       })) as unknown as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: 'claude-3-7-sonnet',
-          messages: [{ role: 'user', content: 'hello' }],
+          model: "claude-3-7-sonnet",
+          messages: [{ role: "user", content: "hello" }],
         }),
       }),
       t.env,
     );
 
-    expect(res.headers.get('content-type')).toBe('text/event-stream');
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
     const body = await res.text();
-    expect(body.startsWith('event: message_start\n')).toBe(true);
+    expect(body.startsWith("event: message_start\n")).toBe(true);
   } finally {
     t.cleanup();
   }
 });
 
-test('route map cache build count stays stable across identical requests', async () => {
+test("route map cache build count stays stable across identical requests", async () => {
   const t = tempEnv();
   try {
-    const workload = join(t.dir, 'workloads', 'mlx-host');
+    const workload = join(t.dir, "workloads", "mlx-host");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(join(workload, "modelhost.pid"), `${process.pid}\n`);
     writeFileSync(
-      join(workload, 'modelhost.state'),
+      join(workload, "modelhost.state"),
       JSON.stringify({
-        kind: 'ModelHost',
-        engine: 'omlx',
+        kind: "ModelHost",
+        engine: "omlx",
         pid: process.pid,
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 8126,
-        modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
+        modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit"],
         startedAt: new Date().toISOString(),
       }),
     );
 
     const seen: string[] = [];
     globalThis.fetch = (async (input: Request | URL | string) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       seen.push(url);
       return Response.json({ ok: true });
     }) as typeof fetch;
@@ -522,12 +529,12 @@ test('route map cache build count stays stable across identical requests', async
     const before = openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests();
     for (let i = 0; i < 5; i += 1) {
       const res = await openaiProxy.proxyOpenAI(
-        new Request('http://localhost/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
+        new Request("http://localhost/v1/chat/completions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            model: 'mlx-community/Qwen3-8B-MLX-4bit',
-            messages: [{ role: 'user', content: 'hi' }],
+            model: "mlx-community/Qwen3-8B-MLX-4bit",
+            messages: [{ role: "user", content: "hi" }],
           }),
         }),
         t.env,
@@ -535,7 +542,7 @@ test('route map cache build count stays stable across identical requests', async
       expect(res.status).toBe(200);
     }
     // Filter to chat forwards; omlx ModelHosts also probe /v1/slots/capabilities (KV, orthogonal to routing).
-    const chatCalls = seen.filter((u) => u.includes('/v1/chat/completions'));
+    const chatCalls = seen.filter((u) => u.includes("/v1/chat/completions"));
     expect(chatCalls).toHaveLength(5);
     expect(openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests()).toBe(before + 1);
   } finally {
@@ -543,18 +550,18 @@ test('route map cache build count stays stable across identical requests', async
   }
 });
 
-test('listOpenAIModels differentiates host and agent ownership', () => {
+test("listOpenAIModels differentiates host and agent ownership", () => {
   const t = tempEnv();
   try {
-    const run = join(t.dir, 'workloads', 'run');
+    const run = join(t.dir, "workloads", "run");
     mkdirSync(run, { recursive: true });
-    writeFileSync(join(run, 'llama-server.pid'), `${process.pid}\n`);
+    writeFileSync(join(run, "llama-server.pid"), `${process.pid}\n`);
     writeFileSync(
-      join(run, 'llama-server.state'),
+      join(run, "llama-server.state"),
       JSON.stringify({
-        rel: 'org/model.gguf',
+        rel: "org/model.gguf",
         extraArgs: [],
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 8111,
         pid: process.pid,
         startedAt: new Date().toISOString(),
@@ -562,73 +569,75 @@ test('listOpenAIModels differentiates host and agent ownership', () => {
       }),
     );
 
-    const host = join(t.dir, 'workloads', 'host');
+    const host = join(t.dir, "workloads", "host");
     mkdirSync(host, { recursive: true });
-    writeFileSync(join(host, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(join(host, "modelhost.pid"), `${process.pid}\n`);
     writeFileSync(
-      join(host, 'modelhost.state'),
+      join(host, "modelhost.state"),
       JSON.stringify({
-        kind: 'ModelHost',
-        engine: 'omlx',
+        kind: "ModelHost",
+        engine: "omlx",
         pid: process.pid,
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 8112,
-        modelAliases: ['mlx-community/Qwen3-8B-MLX-4bit'],
+        modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit"],
         startedAt: new Date().toISOString(),
       }),
     );
 
     const models = openaiProxy.listOpenAIModels(t.env);
     expect(models.data).toHaveLength(2);
-    expect(models.data.find((entry) => entry.id === 'org/model.gguf')?.owned_by).toBe('llamactl-agent');
-    expect(models.data.find((entry) => entry.id === 'mlx-community/Qwen3-8B-MLX-4bit')?.owned_by).toBe(
-      'llamactl-host',
+    expect(models.data.find((entry) => entry.id === "org/model.gguf")?.owned_by).toBe(
+      "llamactl-agent",
     );
+    expect(
+      models.data.find((entry) => entry.id === "mlx-community/Qwen3-8B-MLX-4bit")?.owned_by,
+    ).toBe("llamactl-host");
   } finally {
     t.cleanup();
   }
 });
 
-test('basename alias collision prefers ModelRun over ModelHost and warns', () => {
+test("basename alias collision prefers ModelRun over ModelHost and warns", () => {
   const t = tempEnv();
-  const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
   try {
-    const run = join(t.dir, 'workloads', 'run');
+    const run = join(t.dir, "workloads", "run");
     mkdirSync(run, { recursive: true });
-    writeFileSync(join(run, 'llama-server.pid'), `${process.pid}\n`);
+    writeFileSync(join(run, "llama-server.pid"), `${process.pid}\n`);
     writeFileSync(
-      join(run, 'llama-server.state'),
+      join(run, "llama-server.state"),
       JSON.stringify({
-        rel: 'Qwen3-8B-MLX-4bit',
+        rel: "Qwen3-8B-MLX-4bit",
         extraArgs: [],
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 8113,
-        binary: '/x/llama-server',
+        binary: "/x/llama-server",
         pid: process.pid,
-        startedAt: '2026-05-19T00:00:00Z',
+        startedAt: "2026-05-19T00:00:00Z",
         tunedProfile: null,
       }),
     );
 
-    const host = join(t.dir, 'workloads', 'host');
+    const host = join(t.dir, "workloads", "host");
     mkdirSync(host, { recursive: true });
-    writeFileSync(join(host, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(join(host, "modelhost.pid"), `${process.pid}\n`);
     writeFileSync(
-      join(host, 'modelhost.state'),
+      join(host, "modelhost.state"),
       JSON.stringify({
-        kind: 'ModelHost',
-        engine: 'omlx',
+        kind: "ModelHost",
+        engine: "omlx",
         pid: process.pid,
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 8114,
-        modelAliases: ['Qwen3-8B-MLX-4bit'],
-        startedAt: '2026-05-19T00:00:00Z',
+        modelAliases: ["Qwen3-8B-MLX-4bit"],
+        startedAt: "2026-05-19T00:00:00Z",
       }),
     );
 
     const models = openaiProxy.listOpenAIModels(t.env);
     expect(models.data).toHaveLength(1);
-    expect(models.data[0]?.owned_by).toBe('llamactl-agent');
+    expect(models.data[0]?.owned_by).toBe("llamactl-agent");
     expect(warnSpy).toHaveBeenCalledWith(
       "[openaiProxy] route-map collision on model='Qwen3-8B-MLX-4bit': keeping ModelRun:run, ignoring ModelHost:host",
     );
@@ -638,83 +647,84 @@ test('basename alias collision prefers ModelRun over ModelHost and warns', () =>
   }
 });
 
-test('same-kind alias collision keeps the alphabetically earlier workload', async () => {
+test("same-kind alias collision keeps the alphabetically earlier workload", async () => {
   const t = tempEnv();
-  const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
   try {
-    const alpha = join(t.dir, 'workloads', 'alpha');
+    const alpha = join(t.dir, "workloads", "alpha");
     mkdirSync(alpha, { recursive: true });
-    writeFileSync(join(alpha, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(join(alpha, "modelhost.pid"), `${process.pid}\n`);
     writeFileSync(
-      join(alpha, 'modelhost.state'),
+      join(alpha, "modelhost.state"),
       JSON.stringify({
-        kind: 'ModelHost',
-        engine: 'omlx',
+        kind: "ModelHost",
+        engine: "omlx",
         pid: process.pid,
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 8115,
-        modelAliases: ['Qwen3-8B-MLX-4bit'],
-        startedAt: '2026-05-19T00:00:00Z',
+        modelAliases: ["Qwen3-8B-MLX-4bit"],
+        startedAt: "2026-05-19T00:00:00Z",
       }),
     );
 
-    const beta = join(t.dir, 'workloads', 'beta');
+    const beta = join(t.dir, "workloads", "beta");
     mkdirSync(beta, { recursive: true });
-    writeFileSync(join(beta, 'modelhost.pid'), `${process.pid}\n`);
+    writeFileSync(join(beta, "modelhost.pid"), `${process.pid}\n`);
     writeFileSync(
-      join(beta, 'modelhost.state'),
+      join(beta, "modelhost.state"),
       JSON.stringify({
-        kind: 'ModelHost',
-        engine: 'omlx',
+        kind: "ModelHost",
+        engine: "omlx",
         pid: process.pid,
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 8116,
-        modelAliases: ['Qwen3-8B-MLX-4bit'],
-        startedAt: '2026-05-19T00:00:00Z',
+        modelAliases: ["Qwen3-8B-MLX-4bit"],
+        startedAt: "2026-05-19T00:00:00Z",
       }),
     );
 
     const calls: Array<{ url: string }> = [];
     globalThis.fetch = (async (input: Request | URL | string) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       calls.push({ url });
       return Response.json({ ok: true });
     }) as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: 'Qwen3-8B-MLX-4bit',
-          messages: [{ role: 'user', content: 'hi' }],
+          model: "Qwen3-8B-MLX-4bit",
+          messages: [{ role: "user", content: "hi" }],
         }),
       }),
       t.env,
     );
     expect(res.status).toBe(200);
     // Filter to the chat forward; omlx ModelHosts also probe /v1/slots/capabilities (KV, orthogonal to routing).
-    const chatCalls = calls.filter((c) => c.url.includes('/v1/chat/completions'));
+    const chatCalls = calls.filter((c) => c.url.includes("/v1/chat/completions"));
     expect(chatCalls).toHaveLength(1);
-    expect(chatCalls[0]!.url).toBe('http://127.0.0.1:8115/v1/chat/completions');
+    expect(chatCalls[0]!.url).toBe("http://127.0.0.1:8115/v1/chat/completions");
   } finally {
     warnSpy.mockRestore();
     t.cleanup();
   }
 });
 
-test('/v1/models includes local and peer models from peer routing config', () => {
+test("/v1/models includes local and peer models from peer routing config", () => {
   const t = tempEnv();
   try {
-    const workload = join(t.dir, 'workloads', 'local-run');
+    const workload = join(t.dir, "workloads", "local-run");
     mkdirSync(workload, { recursive: true });
-    writeFileSync(join(workload, 'llama-server.pid'), `${process.pid}\n`);
+    writeFileSync(join(workload, "llama-server.pid"), `${process.pid}\n`);
     writeFileSync(
-      join(workload, 'llama-server.state'),
+      join(workload, "llama-server.state"),
       JSON.stringify({
-        rel: 'local/model.gguf',
+        rel: "local/model.gguf",
         extraArgs: [],
-        host: '127.0.0.1',
+        host: "127.0.0.1",
         port: 8131,
         pid: process.pid,
         startedAt: new Date().toISOString(),
@@ -722,13 +732,13 @@ test('/v1/models includes local and peer models from peer routing config', () =>
       }),
     );
 
-    const peers = [{ id: 'mac-mini', endpoint: 'https://macmini.ai:7843' }];
+    const peers = [{ id: "mac-mini", endpoint: "https://macmini.ai:7843" }];
     const peerSnapshots = new Map<string, PeerSnapshot>([
       [
-        'mac-mini',
+        "mac-mini",
         {
-          workloads: [{ modelId: 'peer/model.gguf', port: 9200 }],
-          pressure: 'NORMAL',
+          workloads: [{ modelId: "peer/model.gguf", port: 9200 }],
+          pressure: "NORMAL",
           fetchedAt: Date.now(),
         },
       ],
@@ -740,30 +750,32 @@ test('/v1/models includes local and peer models from peer routing config', () =>
     });
 
     const models = openaiProxy.listOpenAIModels(t.env);
-    expect(new Set(models.data.map((entry) => entry.id))).toEqual(new Set(['local/model.gguf', 'peer/model.gguf']));
+    expect(new Set(models.data.map((entry) => entry.id))).toEqual(
+      new Set(["local/model.gguf", "peer/model.gguf"]),
+    );
   } finally {
     t.cleanup();
   }
 });
 
-test('POST /v1/chat/completions forwards peer-only model to peer endpoint', async () => {
+test("POST /v1/chat/completions forwards peer-only model to peer endpoint", async () => {
   const t = tempEnv();
   try {
-    const peerToken = 'peer-token-123';
+    const peerToken = "peer-token-123";
     const peers = [
       {
-        id: 'mac-mini',
-        endpoint: 'https://macmini.ai:7843',
-        certificate: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n',
+        id: "mac-mini",
+        endpoint: "https://macmini.ai:7843",
+        certificate: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
         token: peerToken,
       },
     ];
     const peerSnapshots = new Map<string, PeerSnapshot>([
       [
-        'mac-mini',
+        "mac-mini",
         {
-          workloads: [{ modelId: 'peer-only/model.gguf', port: 9222 }],
-          pressure: 'NORMAL',
+          workloads: [{ modelId: "peer-only/model.gguf", port: 9222 }],
+          pressure: "NORMAL",
           fetchedAt: Date.now(),
         },
       ],
@@ -773,16 +785,21 @@ test('POST /v1/chat/completions forwards peer-only model to peer endpoint', asyn
       peerSnapshots,
     });
 
-    let forwardedAuthorization = '';
-    let forwardedCa = '';
+    let forwardedAuthorization = "";
+    let forwardedCa = "";
     const calls: Array<{ url: string }> = [];
     globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (init?.headers) {
-        forwardedAuthorization = new Headers(init.headers).get('authorization') ?? '';
+        forwardedAuthorization = new Headers(init.headers).get("authorization") ?? "";
       }
       const forwardedInit = init as RequestInit & { tls?: { ca: string } };
-      if (typeof forwardedInit?.tls === 'object' && forwardedInit.tls !== undefined && 'ca' in forwardedInit.tls) {
+      if (
+        typeof forwardedInit?.tls === "object" &&
+        forwardedInit.tls !== undefined &&
+        "ca" in forwardedInit.tls
+      ) {
         forwardedCa = String(forwardedInit.tls.ca);
       }
       calls.push({ url });
@@ -790,38 +807,38 @@ test('POST /v1/chat/completions forwards peer-only model to peer endpoint', asyn
     }) as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: 'peer-only/model.gguf',
-          messages: [{ role: 'user', content: 'route me' }],
+          model: "peer-only/model.gguf",
+          messages: [{ role: "user", content: "route me" }],
         }),
       }),
       t.env,
     );
     expect(res.status).toBe(200);
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe('https://macmini.ai:7843/v1/chat/completions');
+    expect(calls[0]!.url).toBe("https://macmini.ai:7843/v1/chat/completions");
     expect(forwardedAuthorization).toBe(`Bearer ${peerToken}`);
-    expect(forwardedCa).toBe('-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n');
+    expect(forwardedCa).toBe("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n");
   } finally {
     t.cleanup();
   }
 });
 
-test('peer route + x_omlx_request_handle returns 400 with exact error message', async () => {
+test("peer route + x_omlx_request_handle returns 400 with exact error message", async () => {
   const t = tempEnv();
   try {
-    const peers = [{ id: 'mac-mini', endpoint: 'https://macmini.ai:7843' }];
+    const peers = [{ id: "mac-mini", endpoint: "https://macmini.ai:7843" }];
     openaiProxy.__setOpenAIProxyClusterRoutingForTests({
       clusterPeers: peers,
       peerSnapshots: new Map([
         [
-          'mac-mini',
+          "mac-mini",
           {
-            workloads: [{ modelId: 'peer-only/model.gguf', port: 9222 }],
-            pressure: 'NORMAL',
+            workloads: [{ modelId: "peer-only/model.gguf", port: 9222 }],
+            pressure: "NORMAL",
             fetchedAt: Date.now(),
           },
         ],
@@ -829,40 +846,40 @@ test('peer route + x_omlx_request_handle returns 400 with exact error message', 
     });
 
     globalThis.fetch = (async () => {
-      throw new Error('peer fetch should not run for slot ops');
+      throw new Error("peer fetch should not run for slot ops");
     }) as unknown as typeof fetch;
 
     const res = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: 'peer-only/model.gguf',
-          messages: [{ role: 'user', content: 'slot op' }],
-          x_omlx_request_handle: 'handle-1',
+          model: "peer-only/model.gguf",
+          messages: [{ role: "user", content: "slot op" }],
+          x_omlx_request_handle: "handle-1",
         }),
       }),
       t.env,
     );
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'cross-node slot ops not supported' });
+    expect(await res.json()).toEqual({ error: "cross-node slot ops not supported" });
   } finally {
     t.cleanup();
   }
 });
 
-test('peer 502 invalidates route cache so next request refetches routes', async () => {
+test("peer 502 invalidates route cache so next request refetches routes", async () => {
   const t = tempEnv();
   try {
-    const peers = [{ id: 'mac-mini', endpoint: 'https://macmini.ai:7843' }];
+    const peers = [{ id: "mac-mini", endpoint: "https://macmini.ai:7843" }];
     openaiProxy.__setOpenAIProxyClusterRoutingForTests({
       clusterPeers: peers,
       peerSnapshots: new Map([
         [
-          'mac-mini',
+          "mac-mini",
           {
-            workloads: [{ modelId: 'peer-only/model.gguf', port: 9222 }],
-            pressure: 'NORMAL',
+            workloads: [{ modelId: "peer-only/model.gguf", port: 9222 }],
+            pressure: "NORMAL",
             fetchedAt: Date.now(),
           },
         ],
@@ -872,17 +889,19 @@ test('peer 502 invalidates route cache so next request refetches routes', async 
     let calls = 0;
     globalThis.fetch = (async () => {
       calls += 1;
-      return calls === 1 ? new Response('bad gateway', { status: 502 }) : Response.json({ ok: true });
+      return calls === 1
+        ? new Response("bad gateway", { status: 502 })
+        : Response.json({ ok: true });
     }) as unknown as typeof fetch;
 
     const before = openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests();
     const first = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: 'peer-only/model.gguf',
-          messages: [{ role: 'user', content: 'one' }],
+          model: "peer-only/model.gguf",
+          messages: [{ role: "user", content: "one" }],
         }),
       }),
       t.env,
@@ -891,12 +910,12 @@ test('peer 502 invalidates route cache so next request refetches routes', async 
     expect(openaiProxy.__getOpenAIProxyRouteMapBuildCountForTests()).toBe(before + 1);
 
     const second = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          model: 'peer-only/model.gguf',
-          messages: [{ role: 'user', content: 'two' }],
+          model: "peer-only/model.gguf",
+          messages: [{ role: "user", content: "two" }],
         }),
       }),
       t.env,

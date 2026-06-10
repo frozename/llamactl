@@ -1,28 +1,28 @@
-import { Database } from 'bun:sqlite';
-import { expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { Database } from "bun:sqlite";
+import { expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   openResponseCacheStorage,
   ResponseCacheRegistry,
   type ResponseCacheEntry,
-} from '../../src/responsecache/index.js';
-import { runMigrations } from '../../src/responsecache/storage.js';
+} from "../../src/responsecache/index.js";
+import { runMigrations } from "../../src/responsecache/storage.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
-  const root = mkdtempSync(join(tmpdir(), 'llamactl-responsecache-'));
+  const root = mkdtempSync(join(tmpdir(), "llamactl-responsecache-"));
   return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 function baseEntry(overrides: Partial<ResponseCacheEntry> = {}): ResponseCacheEntry {
   return {
-    sha: 'sha-1',
-    model: 'Qwen',
-    workload: '',
-    workloadEpoch: '',
-    protocolVariant: 'openai',
-    contentType: 'application/json',
+    sha: "sha-1",
+    model: "Qwen",
+    workload: "",
+    workloadEpoch: "",
+    protocolVariant: "openai",
+    contentType: "application/json",
     statusCode: 200,
     responseBody: new TextEncoder().encode('{"ok":true}'),
     requestBodyBytes: 64,
@@ -34,50 +34,60 @@ function baseEntry(overrides: Partial<ResponseCacheEntry> = {}): ResponseCacheEn
   };
 }
 
-function lookupParams(overrides: Partial<{
-  sha: string;
-  model: string;
-  workload: string;
-  workloadEpoch: string;
-  protocolVariant: 'openai' | 'anthropic';
-}> = {}) {
+function lookupParams(
+  overrides: Partial<{
+    sha: string;
+    model: string;
+    workload: string;
+    workloadEpoch: string;
+    protocolVariant: "openai" | "anthropic";
+  }> = {},
+) {
   return {
-    sha: 'sha-1',
-    model: 'Qwen',
-    workload: '',
-    workloadEpoch: '',
-    protocolVariant: 'openai' as const,
+    sha: "sha-1",
+    model: "Qwen",
+    workload: "",
+    workloadEpoch: "",
+    protocolVariant: "openai" as const,
     ...overrides,
   };
 }
 
-test('schema migration creates schema_version=2 and response_entries columns', () => {
+test("schema migration creates schema_version=2 and response_entries columns", () => {
   const t = makeTempRoot();
   try {
     const storage = openResponseCacheStorage(t.root);
-    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    const version = storage.db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+      version: number;
+    } | null;
     expect(version?.version).toBe(2);
-    const table = storage.db.query(`
+    const table = storage.db
+      .query(
+        `
       SELECT name FROM sqlite_master
       WHERE type = 'table' AND name = 'response_entries'
       LIMIT 1
-    `).get() as { name: string } | null;
-    expect(table?.name).toBe('response_entries');
-    const columns = storage.db.query("PRAGMA table_info('response_entries')").all() as Array<{ name: string }>;
+    `,
+      )
+      .get() as { name: string } | null;
+    expect(table?.name).toBe("response_entries");
+    const columns = storage.db.query("PRAGMA table_info('response_entries')").all() as Array<{
+      name: string;
+    }>;
     expect(columns.map((column) => column.name)).toEqual([
-      'sha',
-      'model',
-      'workload',
-      'workload_epoch',
-      'protocol_variant',
-      'content_type',
-      'status_code',
-      'response_body',
-      'request_body_bytes',
-      'response_body_bytes',
-      'created_at',
-      'last_used',
-      'hits',
+      "sha",
+      "model",
+      "workload",
+      "workload_epoch",
+      "protocol_variant",
+      "content_type",
+      "status_code",
+      "response_body",
+      "request_body_bytes",
+      "response_body_bytes",
+      "created_at",
+      "last_used",
+      "hits",
     ]);
     storage.close();
   } finally {
@@ -85,17 +95,18 @@ test('schema migration creates schema_version=2 and response_entries columns', (
   }
 });
 
-test('migration from v0 to v1 preserves inserted rows', () => {
+test("migration from v0 to v1 preserves inserted rows", () => {
   const t = makeTempRoot();
   try {
-    const cacheDir = join(t.root, 'responsecache');
+    const cacheDir = join(t.root, "responsecache");
     mkdirSync(cacheDir, { recursive: true });
-    const db = new Database(join(cacheDir, 'responses.db'));
-    db.run('PRAGMA journal_mode = WAL');
-    db.run('CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)');
-    db.query('INSERT INTO schema_version (version) VALUES (0)').run();
+    const db = new Database(join(cacheDir, "responses.db"));
+    db.run("PRAGMA journal_mode = WAL");
+    db.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+    db.query("INSERT INTO schema_version (version) VALUES (0)").run();
     runMigrations(db, 0, 1);
-    db.query(`
+    db.query(
+      `
       INSERT INTO response_entries (
         sha, model, content_type, status_code, response_body,
         request_body_bytes, response_body_bytes, created_at, last_used, hits
@@ -103,15 +114,18 @@ test('migration from v0 to v1 preserves inserted rows', () => {
         'sha-legacy', 'Legacy', 'application/json', 200, x'7B7D',
         2, 2, 1, 1, 0
       )
-    `).run();
+    `,
+    ).run();
     db.close();
 
     const storage = openResponseCacheStorage(t.root);
     const registry = new ResponseCacheRegistry(storage);
-    const row = registry.findBySha(lookupParams({ sha: 'sha-legacy', model: 'Legacy' }));
+    const row = registry.findBySha(lookupParams({ sha: "sha-legacy", model: "Legacy" }));
     expect(row).not.toBeNull();
-    expect(row?.model).toBe('Legacy');
-    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    expect(row?.model).toBe("Legacy");
+    const version = storage.db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+      version: number;
+    } | null;
     expect(version?.version).toBe(2);
     storage.close();
   } finally {
@@ -119,15 +133,15 @@ test('migration from v0 to v1 preserves inserted rows', () => {
   }
 });
 
-test('v1 rows migrate to unknown scope defaults and do not match typed scope lookups', () => {
+test("v1 rows migrate to unknown scope defaults and do not match typed scope lookups", () => {
   const t = makeTempRoot();
   try {
-    const cacheDir = join(t.root, 'responsecache');
+    const cacheDir = join(t.root, "responsecache");
     mkdirSync(cacheDir, { recursive: true });
-    const db = new Database(join(cacheDir, 'responses.db'));
-    db.run('PRAGMA journal_mode = WAL');
-    db.run('CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)');
-    db.query('INSERT INTO schema_version (version) VALUES (1)').run();
+    const db = new Database(join(cacheDir, "responses.db"));
+    db.run("PRAGMA journal_mode = WAL");
+    db.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+    db.query("INSERT INTO schema_version (version) VALUES (1)").run();
     db.run(`
       CREATE TABLE response_entries (
         sha TEXT PRIMARY KEY,
@@ -142,7 +156,8 @@ test('v1 rows migrate to unknown scope defaults and do not match typed scope loo
         hits INTEGER NOT NULL DEFAULT 0
       )
     `);
-    db.query(`
+    db.query(
+      `
       INSERT INTO response_entries (
         sha, model, content_type, status_code, response_body,
         request_body_bytes, response_body_bytes, created_at, last_used, hits
@@ -150,53 +165,66 @@ test('v1 rows migrate to unknown scope defaults and do not match typed scope loo
         'sha-v1', 'Legacy', 'application/json', 200, x'7B7D',
         2, 2, 1, 1, 0
       )
-    `).run();
+    `,
+    ).run();
     db.close();
 
     const storage = openResponseCacheStorage(t.root);
     const registry = new ResponseCacheRegistry(storage);
-    expect(registry.findBySha(lookupParams({
-      sha: 'sha-v1',
-      model: 'Legacy',
-      workload: 'wl-a',
-      workloadEpoch: 'epoch-a',
-    }))).toBeNull();
-    expect(registry.findBySha(lookupParams({
-      sha: 'sha-v1',
-      model: 'Legacy',
-    }))).not.toBeNull();
+    expect(
+      registry.findBySha(
+        lookupParams({
+          sha: "sha-v1",
+          model: "Legacy",
+          workload: "wl-a",
+          workloadEpoch: "epoch-a",
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      registry.findBySha(
+        lookupParams({
+          sha: "sha-v1",
+          model: "Legacy",
+        }),
+      ),
+    ).not.toBeNull();
     storage.close();
   } finally {
     t.cleanup();
   }
 });
 
-test('responsecache migrations are idempotent after a restart replays the same version', () => {
+test("responsecache migrations are idempotent after a restart replays the same version", () => {
   const t = makeTempRoot();
   try {
     const storage = openResponseCacheStorage(t.root);
     storage.close();
 
     const reopened = openResponseCacheStorage(t.root);
-    const version = reopened.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    const version = reopened.db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+      version: number;
+    } | null;
     expect(version?.version).toBe(2);
-    const columns = reopened.db.query("PRAGMA table_info('response_entries')").all() as Array<{ name: string }>;
-    expect(columns.some((column) => column.name === 'hits')).toBe(true);
+    const columns = reopened.db.query("PRAGMA table_info('response_entries')").all() as Array<{
+      name: string;
+    }>;
+    expect(columns.some((column) => column.name === "hits")).toBe(true);
     reopened.close();
   } finally {
     t.cleanup();
   }
 });
 
-test('responsecache migration recovers when schema_version lags behind already-added tables', () => {
+test("responsecache migration recovers when schema_version lags behind already-added tables", () => {
   const t = makeTempRoot();
   try {
-    const cacheDir = join(t.root, 'responsecache');
+    const cacheDir = join(t.root, "responsecache");
     mkdirSync(cacheDir, { recursive: true });
-    const db = new Database(join(cacheDir, 'responses.db'));
-    db.run('PRAGMA journal_mode = WAL');
-    db.run('CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)');
-    db.query('INSERT INTO schema_version (version) VALUES (0)').run();
+    const db = new Database(join(cacheDir, "responses.db"));
+    db.run("PRAGMA journal_mode = WAL");
+    db.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+    db.query("INSERT INTO schema_version (version) VALUES (0)").run();
     db.run(`
       CREATE TABLE response_entries (
         sha TEXT PRIMARY KEY,
@@ -214,13 +242,19 @@ test('responsecache migration recovers when schema_version lags behind already-a
     db.close();
 
     const storage = openResponseCacheStorage(t.root);
-    const version = storage.db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
+    const version = storage.db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+      version: number;
+    } | null;
     expect(version?.version).toBe(2);
-    const row = storage.db.query(`
+    const row = storage.db
+      .query(
+        `
       SELECT sha, model, hits
       FROM response_entries
       LIMIT 1
-    `).get() as | { sha: string; model: string; hits: number } | null;
+    `,
+      )
+      .get() as { sha: string; model: string; hits: number } | null;
     expect(row).toBeNull();
     storage.close();
   } finally {
@@ -228,44 +262,44 @@ test('responsecache migration recovers when schema_version lags behind already-a
   }
 });
 
-test('openResponseCacheStorage enables WAL mode', () => {
+test("openResponseCacheStorage enables WAL mode", () => {
   const t = makeTempRoot();
   try {
     const storage = openResponseCacheStorage(t.root);
-    const mode = storage.db.query('PRAGMA journal_mode').get() as { journal_mode: string } | null;
-    expect(mode?.journal_mode.toLowerCase()).toBe('wal');
+    const mode = storage.db.query("PRAGMA journal_mode").get() as { journal_mode: string } | null;
+    expect(mode?.journal_mode.toLowerCase()).toBe("wal");
     storage.close();
   } finally {
     t.cleanup();
   }
 });
 
-test('ResponseCacheRegistry CRUD and bumpHit round-trip', () => {
+test("ResponseCacheRegistry CRUD and bumpHit round-trip", () => {
   const t = makeTempRoot();
   try {
     const storage = openResponseCacheStorage(t.root);
     const registry = new ResponseCacheRegistry(storage);
-    registry.insert(baseEntry({ sha: 'roundtrip', hits: 2, lastUsed: 100 }));
+    registry.insert(baseEntry({ sha: "roundtrip", hits: 2, lastUsed: 100 }));
 
-    const inserted = registry.findBySha(lookupParams({ sha: 'roundtrip' }));
+    const inserted = registry.findBySha(lookupParams({ sha: "roundtrip" }));
     expect(inserted?.hits).toBe(2);
     expect(inserted?.lastUsed).toBe(100);
 
-    registry.bumpHit(lookupParams({ sha: 'roundtrip' }), 250);
-    const bumped = registry.findBySha(lookupParams({ sha: 'roundtrip' }));
+    registry.bumpHit(lookupParams({ sha: "roundtrip" }), 250);
+    const bumped = registry.findBySha(lookupParams({ sha: "roundtrip" }));
     expect(bumped?.hits).toBe(3);
     expect(bumped?.lastUsed).toBe(250);
 
-    expect(registry.tryDelete(lookupParams({ sha: 'roundtrip' }))).toBe(true);
-    expect(registry.findBySha(lookupParams({ sha: 'roundtrip' }))).toBeNull();
-    expect(registry.tryDelete(lookupParams({ sha: 'roundtrip' }))).toBe(false);
+    expect(registry.tryDelete(lookupParams({ sha: "roundtrip" }))).toBe(true);
+    expect(registry.findBySha(lookupParams({ sha: "roundtrip" }))).toBeNull();
+    expect(registry.tryDelete(lookupParams({ sha: "roundtrip" }))).toBe(false);
     storage.close();
   } finally {
     t.cleanup();
   }
 });
 
-test('in-process counters exist and are mutable', () => {
+test("in-process counters exist and are mutable", () => {
   const t = makeTempRoot();
   try {
     const storage = openResponseCacheStorage(t.root);
@@ -284,10 +318,10 @@ test('in-process counters exist and are mutable', () => {
   }
 });
 
-test('openResponseCacheStorage creates <dataRoot>/responsecache directory on first open', () => {
+test("openResponseCacheStorage creates <dataRoot>/responsecache directory on first open", () => {
   const t = makeTempRoot();
   try {
-    const cacheDir = join(t.root, 'responsecache');
+    const cacheDir = join(t.root, "responsecache");
     expect(existsSync(cacheDir)).toBe(false);
     const storage = openResponseCacheStorage(t.root);
     expect(existsSync(cacheDir)).toBe(true);

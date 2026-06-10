@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
-import type { RunbookToolClient } from '../types.js';
-import type { PlanLike } from './severity.js';
-import type { stateTransitions } from './probe.js';
+import { createHash } from "node:crypto";
+import type { RunbookToolClient } from "../types.js";
+import type { PlanLike } from "./severity.js";
+import type { stateTransitions } from "./probe.js";
 
 /**
  * Remediation coordinator. The loop, on every new unhealthy/degraded
@@ -31,14 +31,12 @@ export type Transition = ReturnType<typeof stateTransitions>[number];
  * `context` argument (unused today; the healer feeds the goal alone).
  */
 export function buildGoal(transition: Transition): string {
-  const label = transition.kind === 'gateway' ? 'gateway' : 'provider';
+  const label = transition.kind === "gateway" ? "gateway" : "provider";
   const state = transition.to;
-  if (state === 'healthy') {
+  if (state === "healthy") {
     return `${label} '${transition.name}' recovered to healthy — confirm stable and close any outstanding remediation.`;
   }
-  return (
-    `${label} '${transition.name}' is ${state} — restore availability or drain gracefully.`
-  );
+  return `${label} '${transition.name}' is ${state} — restore availability or drain gracefully.`;
 }
 
 /** Minimal MCP tool-call envelope shape. */
@@ -51,7 +49,7 @@ function firstTextBlock(result: McpCallResult): string | undefined {
   const content = result.content;
   if (!Array.isArray(content) || content.length === 0) return undefined;
   const first = content[0];
-  if (!first || first.type !== 'text' || typeof first.text !== 'string') return undefined;
+  if (!first || first.type !== "text" || typeof first.text !== "string") return undefined;
   return first.text;
 }
 
@@ -90,28 +88,28 @@ export async function askPlanner(
   let raw: McpCallResult;
   try {
     raw = (await toolClient.callTool({
-      name: 'nova.operator.plan',
+      name: "nova.operator.plan",
       arguments: { goal },
     })) as McpCallResult;
   } catch (err) {
     return {
       ok: false,
-      reason: 'call-failed',
+      reason: "call-failed",
       message: (err as Error).message ?? String(err),
     };
   }
 
   if (raw?.isError === true) {
-    const text = firstTextBlock(raw) ?? 'nova.operator.plan returned isError';
-    return { ok: false, reason: 'call-failed', message: text.slice(0, 500) };
+    const text = firstTextBlock(raw) ?? "nova.operator.plan returned isError";
+    return { ok: false, reason: "call-failed", message: text.slice(0, 500) };
   }
 
   const text = firstTextBlock(raw);
   if (text === undefined) {
     return {
       ok: false,
-      reason: 'envelope-error',
-      message: 'nova.operator.plan: missing text content block',
+      reason: "envelope-error",
+      message: "nova.operator.plan: missing text content block",
     };
   }
   let parsed: unknown;
@@ -120,30 +118,30 @@ export async function askPlanner(
   } catch (err) {
     return {
       ok: false,
-      reason: 'envelope-error',
+      reason: "envelope-error",
       message: `nova.operator.plan: JSON parse failed — ${(err as Error).message}`,
     };
   }
-  if (!parsed || typeof parsed !== 'object') {
+  if (!parsed || typeof parsed !== "object") {
     return {
       ok: false,
-      reason: 'envelope-error',
-      message: 'nova.operator.plan: envelope is not an object',
+      reason: "envelope-error",
+      message: "nova.operator.plan: envelope is not an object",
     };
   }
   const inner = parsed as PlannerResult;
   if (inner.ok === false) {
     return {
       ok: false,
-      reason: inner.reason ?? 'planner-failed',
-      message: inner.message ?? 'planner returned ok:false with no message',
+      reason: inner.reason ?? "planner-failed",
+      message: inner.message ?? "planner returned ok:false with no message",
     };
   }
   if (!inner.plan || !Array.isArray(inner.plan.steps)) {
     return {
       ok: false,
-      reason: 'envelope-error',
-      message: 'nova.operator.plan: missing plan.steps in ok response',
+      reason: "envelope-error",
+      message: "nova.operator.plan: missing plan.steps in ok response",
     };
   }
   const result: AskPlannerResult = { ok: true, plan: inner.plan };
@@ -164,5 +162,5 @@ export function proposalId(plan: PlanLike): string {
     steps: plan.steps,
     reasoning: plan.reasoning,
   });
-  return createHash('sha256').update(canonical).digest('hex').slice(0, 12);
+  return createHash("sha256").update(canonical).digest("hex").slice(0, 12);
 }

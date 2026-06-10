@@ -1,14 +1,9 @@
-import { constants as fsConstants, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { access } from 'node:fs/promises';
-import { hostname } from 'node:os';
-import { join } from 'node:path';
-import {
-  agentConfig as agentConfigMod,
-  auth,
-  startAgentServer,
-  tls,
-} from '@llamactl/remote';
-import { runHeal } from './heal.js';
+import { constants as fsConstants, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { access } from "node:fs/promises";
+import { hostname } from "node:os";
+import { join } from "node:path";
+import { agentConfig as agentConfigMod, auth, startAgentServer, tls } from "@llamactl/remote";
+import { runHeal } from "./heal.js";
 
 const USAGE = `Usage: llamactl agent <subcommand>
 
@@ -78,40 +73,40 @@ All state lives under \$LLAMACTL_AGENT_DIR or \$DEV_STORAGE or ~/.llamactl.
 export async function runAgent(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
-    case 'init':
+    case "init":
       return runInit(rest);
-    case 'rotate-token':
+    case "rotate-token":
       return runRotateToken(rest);
-    case 'serve':
+    case "serve":
       return runServe(rest);
-    case 'status':
+    case "status":
       return runStatus(rest);
-    case 'heal':
+    case "heal":
       return runHeal(rest);
-    case 'install-launchd': {
-      const { runAgentInstallLaunchd } = await import('./agent-install/index.js');
+    case "install-launchd": {
+      const { runAgentInstallLaunchd } = await import("./agent-install/index.js");
       return runAgentInstallLaunchd(rest);
     }
-    case 'update': {
-      const { runAgentUpdate } = await import('./agent-update.js');
+    case "update": {
+      const { runAgentUpdate } = await import("./agent-update.js");
       return runAgentUpdate(rest);
     }
-    case 'rollback': {
-      const { runAgentRollback } = await import('./agent-rollback.js');
+    case "rollback": {
+      const { runAgentRollback } = await import("./agent-rollback.js");
       return runAgentRollback(rest);
     }
-    case 'rpc-doctor': {
-      const { runRpcDoctor } = await import('./agent-rpc-doctor.js');
+    case "rpc-doctor": {
+      const { runRpcDoctor } = await import("./agent-rpc-doctor.js");
       return runRpcDoctor(rest);
     }
-    case 'cli': {
-      const { runAgentCli } = await import('./cli-doctor.js');
+    case "cli": {
+      const { runAgentCli } = await import("./cli-doctor.js");
       return runAgentCli(rest);
     }
     case undefined:
-    case '--help':
-    case '-h':
-    case 'help':
+    case "--help":
+    case "-h":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:
@@ -122,36 +117,40 @@ export async function runAgent(args: string[]): Promise<number> {
 
 interface InitFlags {
   dir: string;
-  host: string;                // the hostname/IP this node advertises externally
+  host: string; // the hostname/IP this node advertises externally
   port: number;
   nodeName: string;
-  bindHost: string;            // what Bun.serve binds to
-  sans: string[];              // SANs baked into the cert
-  json: boolean;               // emit single-line JSON instead of human summary
+  bindHost: string; // what Bun.serve binds to
+  sans: string[]; // SANs baked into the cert
+  json: boolean; // emit single-line JSON instead of human summary
 }
 
 function parseInitFlags(args: string[]): InitFlags | { error: string } {
   const flags: InitFlags = {
     dir: agentConfigMod.defaultAgentDir(),
-    host: '127.0.0.1',
+    host: "127.0.0.1",
     port: 7843,
-    nodeName: hostname() || 'local',
-    bindHost: '127.0.0.1',
+    nodeName: hostname() || "local",
+    bindHost: "127.0.0.1",
     sans: [],
     json: false,
   };
   for (const arg of args) {
     // --json is a flag-only switch; everything else is --key=value.
-    if (arg === '--json') {
+    if (arg === "--json") {
       flags.json = true;
       continue;
     }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent init: flag must be --key=value: ${arg}` };
     switch (k) {
-      case '--dir': flags.dir = v; break;
-      case '--host': flags.host = v; break;
-      case '--port': {
+      case "--dir":
+        flags.dir = v;
+        break;
+      case "--host":
+        flags.host = v;
+        break;
+      case "--port": {
         const n = Number.parseInt(v, 10);
         if (!Number.isFinite(n) || n < 0 || n > 65535) {
           return { error: `agent init: invalid --port: ${v}` };
@@ -159,10 +158,20 @@ function parseInitFlags(args: string[]): InitFlags | { error: string } {
         flags.port = n;
         break;
       }
-      case '--name': flags.nodeName = v; break;
-      case '--bind': flags.bindHost = v; break;
-      case '--san': flags.sans = v.split(',').map((s) => s.trim()).filter(Boolean); break;
-      default: return { error: `agent init: unknown flag ${k}` };
+      case "--name":
+        flags.nodeName = v;
+        break;
+      case "--bind":
+        flags.bindHost = v;
+        break;
+      case "--san":
+        flags.sans = v
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        break;
+      default:
+        return { error: `agent init: unknown flag ${k}` };
     }
   }
   return flags;
@@ -170,14 +179,14 @@ function parseInitFlags(args: string[]): InitFlags | { error: string } {
 
 async function runInit(args: string[]): Promise<number> {
   const parsed = parseInitFlags(args);
-  if ('error' in parsed) {
+  if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 1;
   }
   const f = parsed;
   mkdirSync(f.dir, { recursive: true });
 
-  const configPath = join(f.dir, 'agent.yaml');
+  const configPath = join(f.dir, "agent.yaml");
   if (existsSync(configPath)) {
     process.stderr.write(
       `agent config already exists at ${configPath}. Remove it (and the cert/key) to re-init.\n`,
@@ -194,8 +203,8 @@ async function runInit(args: string[]): Promise<number> {
 
   const token = auth.generateToken();
   const config: agentConfigMod.AgentConfig = {
-    apiVersion: 'llamactl/v1',
-    kind: 'AgentConfig',
+    apiVersion: "llamactl/v1",
+    kind: "AgentConfig",
     nodeName: f.nodeName,
     bindHost: f.bindHost,
     port: f.port,
@@ -225,7 +234,7 @@ async function runInit(args: string[]): Promise<number> {
         `key    ${cert.keyPath}`,
         `bind   ${f.bindHost}:${f.port}`,
         `fp     ${cert.fingerprint}`,
-      ].join('\n') + '\n',
+      ].join("\n") + "\n",
     );
     const record = {
       configPath,
@@ -251,7 +260,7 @@ async function runInit(args: string[]): Promise<number> {
       ``,
       `  llamactl node add ${f.nodeName} --bootstrap ${bootstrap}`,
       ``,
-    ].join('\n'),
+    ].join("\n"),
   );
   return 0;
 }
@@ -265,17 +274,25 @@ interface RotateTokenFlags {
 function parseRotateTokenFlags(args: string[]): RotateTokenFlags | { error: string } {
   const flags: RotateTokenFlags = {
     dir: agentConfigMod.defaultAgentDir(),
-    host: '127.0.0.1',
+    host: "127.0.0.1",
     json: false,
   };
   for (const arg of args) {
-    if (arg === '--json') { flags.json = true; continue; }
+    if (arg === "--json") {
+      flags.json = true;
+      continue;
+    }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent rotate-token: flag must be --key=value: ${arg}` };
     switch (k) {
-      case '--dir':  flags.dir = v; break;
-      case '--host': flags.host = v; break;
-      default: return { error: `agent rotate-token: unknown flag ${k}` };
+      case "--dir":
+        flags.dir = v;
+        break;
+      case "--host":
+        flags.host = v;
+        break;
+      default:
+        return { error: `agent rotate-token: unknown flag ${k}` };
     }
   }
   return flags;
@@ -288,12 +305,12 @@ function parseRotateTokenFlags(args: string[]): RotateTokenFlags | { error: stri
  */
 export async function runRotateToken(args: string[]): Promise<number> {
   const parsed = parseRotateTokenFlags(args);
-  if ('error' in parsed) {
+  if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 1;
   }
   const f = parsed;
-  const configPath = join(f.dir, 'agent.yaml');
+  const configPath = join(f.dir, "agent.yaml");
   if (!existsSync(configPath)) {
     process.stderr.write(
       `agent rotate-token: ${configPath} not found. Run 'llamactl agent init' first.\n`,
@@ -304,7 +321,7 @@ export async function runRotateToken(args: string[]): Promise<number> {
   const existing = agentConfigMod.loadAgentConfig(configPath);
   let certPem: string;
   try {
-    certPem = readFileSync(existing.certPath, 'utf8');
+    certPem = readFileSync(existing.certPath, "utf8");
   } catch (err) {
     process.stderr.write(
       `agent rotate-token: failed to read cert at ${existing.certPath}: ${(err as Error).message}\n`,
@@ -334,7 +351,7 @@ export async function runRotateToken(args: string[]): Promise<number> {
         `cert   ${existing.certPath} (unchanged)`,
         `fp     ${existing.fingerprint} (unchanged)`,
         `bind   ${existing.bindHost}:${existing.port}`,
-      ].join('\n') + '\n',
+      ].join("\n") + "\n",
     );
     const record = {
       configPath,
@@ -360,7 +377,7 @@ export async function runRotateToken(args: string[]): Promise<number> {
       `  pkill -f 'agent serve' && llamactl agent serve &`,
       `  llamactl node add ${existing.nodeName} --bootstrap ${bootstrap} --force`,
       ``,
-    ].join('\n'),
+    ].join("\n"),
   );
   return 0;
 }
@@ -381,29 +398,48 @@ export interface ServeFlags {
 export function parseServeFlags(args: string[]): ServeFlags | { error: string } {
   const flags: ServeFlags = { dir: agentConfigMod.defaultAgentDir() };
   for (const arg of args) {
-    if (arg === '--no-auth') {
+    if (arg === "--no-auth") {
       flags.noAuth = true;
       continue;
     }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent serve: flag must be --key=value: ${arg}` };
     switch (k) {
-      case '--dir': flags.dir = v; break;
-      case '--bind': flags.bindHost = v; break;
-      case '--host': flags.bindHost = v; break;
-      case '--port': {
+      case "--dir":
+        flags.dir = v;
+        break;
+      case "--bind":
+        flags.bindHost = v;
+        break;
+      case "--host":
+        flags.bindHost = v;
+        break;
+      case "--port": {
         const n = Number.parseInt(v, 10);
         if (!Number.isFinite(n)) return { error: `agent serve: invalid --port: ${v}` };
         flags.port = n;
         break;
       }
-      case '--dial-central': flags.dialCentral = v; break;
-      case '--central-bearer': flags.centralBearer = v; break;
-      case '--tunnel-node-name': flags.tunnelNodeName = v; break;
-      case '--tunnel-central': flags.tunnelCentral = v === 'true'; break;
-      case '--tunnel-bearer': flags.tunnelBearer = v; break;
-      case '--tunnel-journal': flags.tunnelJournal = v; break;
-      default: return { error: `agent serve: unknown flag ${k}` };
+      case "--dial-central":
+        flags.dialCentral = v;
+        break;
+      case "--central-bearer":
+        flags.centralBearer = v;
+        break;
+      case "--tunnel-node-name":
+        flags.tunnelNodeName = v;
+        break;
+      case "--tunnel-central":
+        flags.tunnelCentral = v === "true";
+        break;
+      case "--tunnel-bearer":
+        flags.tunnelBearer = v;
+        break;
+      case "--tunnel-journal":
+        flags.tunnelJournal = v;
+        break;
+      default:
+        return { error: `agent serve: unknown flag ${k}` };
     }
   }
   return flags;
@@ -411,7 +447,7 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
 
 async function runServe(args: string[]): Promise<number> {
   const parsed = parseServeFlags(args);
-  if ('error' in parsed) {
+  if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 1;
   }
@@ -424,15 +460,15 @@ async function runServe(args: string[]): Promise<number> {
   if (dialUrl || parsed.centralBearer) {
     if (!dialUrl || !dialBearer) {
       process.stderr.write(
-        '--dial-central and --central-bearer must be provided together (or set LLAMACTL_TUNNEL_BEARER for the bearer)\n',
+        "--dial-central and --central-bearer must be provided together (or set LLAMACTL_TUNNEL_BEARER for the bearer)\n",
       );
       return 1;
     }
   }
 
   if (parsed.noAuth) {
-    const bindHost = parsed.bindHost ?? '127.0.0.1';
-    if (bindHost !== '127.0.0.1' && bindHost !== 'localhost') {
+    const bindHost = parsed.bindHost ?? "127.0.0.1";
+    if (bindHost !== "127.0.0.1" && bindHost !== "localhost") {
       process.stderr.write(
         `agent serve: --no-auth is restricted to 127.0.0.1 or localhost binds; got ${bindHost}\n`,
       );
@@ -446,27 +482,24 @@ async function runServe(args: string[]): Promise<number> {
   // (that env is the dial-side secret). Bearer-without-central is a
   // warning, not a failure — the bearer is harmless when unused.
   const tunnelCentralOn = parsed.tunnelCentral === true;
-  const tunnelCentralBearer =
-    parsed.tunnelBearer ?? process.env.LLAMACTL_TUNNEL_CENTRAL_BEARER;
+  const tunnelCentralBearer = parsed.tunnelBearer ?? process.env.LLAMACTL_TUNNEL_CENTRAL_BEARER;
   if (tunnelCentralOn) {
     if (!tunnelCentralBearer) {
       process.stderr.write(
-        '--tunnel-central=true requires --tunnel-bearer (or set LLAMACTL_TUNNEL_CENTRAL_BEARER)\n',
+        "--tunnel-central=true requires --tunnel-bearer (or set LLAMACTL_TUNNEL_CENTRAL_BEARER)\n",
       );
       return 1;
     }
   } else if (parsed.tunnelBearer) {
-    process.stderr.write(
-      'warning: --tunnel-bearer set without --tunnel-central=true; ignoring\n',
-    );
+    process.stderr.write("warning: --tunnel-bearer set without --tunnel-central=true; ignoring\n");
   }
 
-  const cfgPath = join(parsed.dir, 'agent.yaml');
+  const cfgPath = join(parsed.dir, "agent.yaml");
   await waitForReadable(cfgPath, 30_000);
   const cfg = agentConfigMod.loadAgentConfig(cfgPath);
   await waitForReadable(cfg.certPath, 30_000);
   await waitForReadable(cfg.keyPath, 30_000);
-  const dialNodeName = parsed.tunnelNodeName ?? cfg.nodeName ?? 'agent';
+  const dialNodeName = parsed.tunnelNodeName ?? cfg.nodeName ?? "agent";
 
   let running;
   try {
@@ -504,19 +537,23 @@ async function runServe(args: string[]): Promise<number> {
           }
         : {}),
     } as Parameters<typeof startAgentServer>[0];
-    (serverOptions as Parameters<typeof startAgentServer>[0] & { noAuth?: boolean }).noAuth = parsed.noAuth;
+    (serverOptions as Parameters<typeof startAgentServer>[0] & { noAuth?: boolean }).noAuth =
+      parsed.noAuth;
     running = startAgentServer(serverOptions);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (
-      (message.includes('EADDRINUSE') || (message.includes('port') && message.includes('in use'))) &&
-      typeof parsed.port === 'number'
+      (message.includes("EADDRINUSE") ||
+        (message.includes("port") && message.includes("in use"))) &&
+      typeof parsed.port === "number"
     ) {
-      process.stderr.write(`agent: port ${parsed.port} already in use, exiting (launchd will retry)\n`);
+      process.stderr.write(
+        `agent: port ${parsed.port} already in use, exiting (launchd will retry)\n`,
+      );
       return 1;
     }
     if (
-      (message.includes('EPERM') || message.includes('ENOENT')) &&
+      (message.includes("EPERM") || message.includes("ENOENT")) &&
       (message.includes(cfg.certPath) || message.includes(cfg.keyPath))
     ) {
       const path = message.includes(cfg.certPath) ? cfg.certPath : cfg.keyPath;
@@ -528,15 +565,15 @@ async function runServe(args: string[]): Promise<number> {
 
   process.stdout.write(
     `agent listening on ${running.url}\n` +
-    `  node: ${cfg.nodeName ?? '(unset)'}\n` +
-    `  fp:   ${running.fingerprint ?? '(none)'}\n` +
-    `press Ctrl-C to stop\n`,
+      `  node: ${cfg.nodeName ?? "(unset)"}\n` +
+      `  fp:   ${running.fingerprint ?? "(none)"}\n` +
+      `press Ctrl-C to stop\n`,
   );
 
   await new Promise<void>((resolve) => {
     const handle = (): void => resolve();
-    process.once('SIGINT', handle);
-    process.once('SIGTERM', handle);
+    process.once("SIGINT", handle);
+    process.once("SIGTERM", handle);
   });
   // running.stop() tears down the tunnel client (when present)
   // before the HTTP server stops — see startAgentServer's stop().
@@ -546,11 +583,11 @@ async function runServe(args: string[]): Promise<number> {
 
 function runStatus(args: string[]): number {
   const parsed = parseStatusFlags(args);
-  if ('error' in parsed) {
+  if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 1;
   }
-  const cfgPath = join(parsed.dir, 'agent.yaml');
+  const cfgPath = join(parsed.dir, "agent.yaml");
   if (!existsSync(cfgPath)) {
     process.stderr.write(`no agent config at ${cfgPath}\n`);
     return 1;
@@ -573,14 +610,14 @@ function parseStatusFlags(args: string[]): { dir: string } | { error: string } {
   for (const arg of args) {
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent status: flag must be --key=value: ${arg}` };
-    if (k === '--dir') dir = v;
+    if (k === "--dir") dir = v;
     else return { error: `agent status: unknown flag ${k}` };
   }
   return { dir };
 }
 
 function splitFlag(arg: string): [string, string | undefined] {
-  const eq = arg.indexOf('=');
+  const eq = arg.indexOf("=");
   if (eq < 0) return [arg, undefined];
   return [arg.slice(0, eq), arg.slice(eq + 1)];
 }

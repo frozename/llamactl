@@ -9,10 +9,10 @@
 
 ## Results
 
-| Model | NDCG@5 | tps | latency p50 / p95 | wall |
-|---|---:|---:|---:|---:|
-| gemma4-26b-a4b-mtp (atomic fork) | **0.8079** | **32.63** | 2.29 s / 2.97 s | 4 min |
-| qwen3.5-9b-mtp-UDQ4KXL (atomic-qwen fork, NextN) | 0.6622 | 8.59 | 8.03 s / 10.55 s | 14 min |
+| Model                                            |     NDCG@5 |       tps | latency p50 / p95 |   wall |
+| ------------------------------------------------ | ---------: | --------: | ----------------: | -----: |
+| gemma4-26b-a4b-mtp (atomic fork)                 | **0.8079** | **32.63** |   2.29 s / 2.97 s |  4 min |
+| qwen3.5-9b-mtp-UDQ4KXL (atomic-qwen fork, NextN) |     0.6622 |      8.59 |  8.03 s / 10.55 s | 14 min |
 
 Both runs: `n_parse_error = 0`, `errors = 0`.
 

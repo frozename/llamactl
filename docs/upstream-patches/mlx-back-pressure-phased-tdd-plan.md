@@ -49,6 +49,7 @@ Each phase uses: **fail first -> minimal fix -> verify**.
 **Goal:** Prove current behavior can exceed a safe in-flight threshold and fail deterministically in tests.
 
 **Files (upstream MLX):**
+
 - Modify: `mlx/scheduler.h`
 - Modify: `mlx/backend/metal/eval.cpp`
 - Add: `tests/metal/stream_backpressure_test.cpp` (or nearest existing Metal backend C++ test module)
@@ -89,6 +90,7 @@ Each phase uses: **fail first -> minimal fix -> verify**.
 **Goal:** Prevent over-commit per stream using an internal gate, without user-facing config yet.
 
 **Files (upstream MLX):**
+
 - Modify: `mlx/scheduler.h`
 - Modify: `mlx/backend/metal/eval.cpp`
 
@@ -130,6 +132,7 @@ Each phase uses: **fail first -> minimal fix -> verify**.
 **Goal:** Make throttling configurable for operators while keeping default hot path unchanged.
 
 **Files (upstream MLX):**
+
 - Modify: `mlx/backend/metal/eval.cpp`
 - Modify: `mlx/backend/metal/device.cpp` (or existing Metal env-config resolver)
 - Modify: `mlx/backend/metal/device.h` if config struct is introduced
@@ -180,6 +183,7 @@ Each phase uses: **fail first -> minimal fix -> verify**.
 **Goal:** Ship upstream-ready documentation and reproducible validation artifacts.
 
 **Files (upstream MLX and this repo support docs):**
+
 - Modify upstream docs (likely under `docs/src/dev/` and/or `docs/src/python/metal.rst`)
 - In this repo, update:
   - `docs/upstream-patches/back-pressure-design-prompt.md` with final accepted approach
@@ -238,4 +242,3 @@ Each phase uses: **fail first -> minimal fix -> verify**.
   - Mitigation: keep completion handler order as in #2670 follow-up (`error publish` before `notify_task_completion`).
 - `mx.synchronize()` behavior surprises:
   - Mitigation: explicit test asserting surfaced timeout/error at sync waitpoint via `throw_if_stream_error`.
-

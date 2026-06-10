@@ -1,5 +1,5 @@
-import * as React from 'react';
-import { Button } from '../../ui';
+import * as React from "react";
+import { Button } from "../../ui";
 
 interface Props {
   sessionId: string;
@@ -13,11 +13,11 @@ export function DeleteConfirm({ sessionId, onConfirm, onCancel }: Props): React.
       data-testid={`ops-sessions-delete-confirm-${sessionId}`}
       style={{
         padding: 12,
-        border: '1px solid var(--color-border-subtle)',
+        border: "1px solid var(--color-border-subtle)",
         borderRadius: 6,
-        background: 'var(--color-bg-elevated)',
-        display: 'flex',
-        alignItems: 'center',
+        background: "var(--color-bg-elevated)",
+        display: "flex",
+        alignItems: "center",
         gap: 12,
       }}
     >

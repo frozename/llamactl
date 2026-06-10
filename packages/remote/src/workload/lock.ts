@@ -7,8 +7,8 @@ import {
   unlinkSync,
   writeFileSync,
   writeSync,
-} from 'node:fs';
-import { dirname, join } from 'node:path';
+} from "node:fs";
+import { dirname, join } from "node:path";
 
 /**
  * File-based mutex using exclusive-create. The pidfile's contents are
@@ -26,28 +26,30 @@ export interface LockHandle {
 }
 
 export function lockFilePath(workloadsDir: string): string {
-  return join(workloadsDir, '.controller.lock');
+  return join(workloadsDir, ".controller.lock");
 }
 
 export function acquireLock(workloadsDir: string): LockHandle | { error: string } {
   mkdirSync(workloadsDir, { recursive: true });
   const path = lockFilePath(workloadsDir);
   if (existsSync(path)) {
-    const holder = Number.parseInt(readFileSync(path, 'utf8').trim(), 10);
+    const holder = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
     if (Number.isFinite(holder) && holder > 0 && isProcessAlive(holder)) {
       return { error: `lock held by pid=${holder} (${path})` };
     }
     // Stale lock — previous controller crashed without releasing.
-    try { unlinkSync(path); } catch {}
+    try {
+      unlinkSync(path);
+    } catch {}
   }
   mkdirSync(dirname(path), { recursive: true });
   try {
-    const fd = openSync(path, 'wx');
+    const fd = openSync(path, "wx");
     writeSync(fd, String(process.pid));
     return { path, fd, pid: process.pid };
   } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code ?? '';
-    if (code === 'EEXIST') {
+    const code = (e as NodeJS.ErrnoException).code ?? "";
+    if (code === "EEXIST") {
       return { error: `lock acquired concurrently at ${path}` };
     }
     throw e;
@@ -55,8 +57,12 @@ export function acquireLock(workloadsDir: string): LockHandle | { error: string 
 }
 
 export function releaseLock(handle: LockHandle): void {
-  try { closeSync(handle.fd); } catch {}
-  try { unlinkSync(handle.path); } catch {}
+  try {
+    closeSync(handle.fd);
+  } catch {}
+  try {
+    unlinkSync(handle.path);
+  } catch {}
 }
 
 function isProcessAlive(pid: number): boolean {

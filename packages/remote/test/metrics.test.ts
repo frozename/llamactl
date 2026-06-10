@@ -1,10 +1,10 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { generateToken } from '../src/server/auth.js';
-import { startAgentServer, type RunningAgent } from '../src/server/serve.js';
-import { generateSelfSignedCert } from '../src/server/tls.js';
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { generateToken } from "../src/server/auth.js";
+import { startAgentServer, type RunningAgent } from "../src/server/serve.js";
+import { generateSelfSignedCert } from "../src/server/tls.js";
 
 /**
  * Scrapes the agent's `/metrics` endpoint and asserts the expected
@@ -16,23 +16,23 @@ const FAKE_LLAMA_PORT = 28941;
 
 let fakeServer: ReturnType<typeof Bun.serve> | null = null;
 let agent: RunningAgent | null = null;
-let devStorage = '';
-let agentToken = '';
-let caPem = '';
+let devStorage = "";
+let agentToken = "";
+let caPem = "";
 const originalEnv = { ...process.env };
 
 beforeAll(async () => {
-  devStorage = mkdtempSync(join(tmpdir(), 'llamactl-metrics-'));
-  const runtimeDir = join(devStorage, 'ai-models', 'local-ai');
-  const workloadDir = join(runtimeDir, 'workloads', 'metrics-test');
+  devStorage = mkdtempSync(join(tmpdir(), "llamactl-metrics-"));
+  const runtimeDir = join(devStorage, "ai-models", "local-ai");
+  const workloadDir = join(runtimeDir, "workloads", "metrics-test");
   mkdirSync(workloadDir, { recursive: true });
-  writeFileSync(join(workloadDir, 'llama-server.pid'), String(process.pid));
+  writeFileSync(join(workloadDir, "llama-server.pid"), String(process.pid));
   writeFileSync(
-    join(workloadDir, 'llama-server.state'),
+    join(workloadDir, "llama-server.state"),
     JSON.stringify({
-      rel: 'metrics-test/model.gguf',
+      rel: "metrics-test/model.gguf",
       extraArgs: [],
-      host: '127.0.0.1',
+      host: "127.0.0.1",
       port: String(FAKE_LLAMA_PORT),
       pid: process.pid,
       startedAt: new Date().toISOString(),
@@ -42,37 +42,37 @@ beforeAll(async () => {
 
   fakeServer = Bun.serve({
     port: FAKE_LLAMA_PORT,
-    hostname: '127.0.0.1',
+    hostname: "127.0.0.1",
     fetch(req) {
       const url = new URL(req.url);
-      if (url.pathname === '/health') return new Response('ok', { status: 200 });
-      if (url.pathname === '/v1/chat/completions') return Response.json({ ok: true });
-      return new Response('stub', { status: 200 });
+      if (url.pathname === "/health") return new Response("ok", { status: 200 });
+      if (url.pathname === "/v1/chat/completions") return Response.json({ ok: true });
+      return new Response("stub", { status: 200 });
     },
   });
 
   process.env.DEV_STORAGE = devStorage;
   process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
-  process.env.LLAMA_CPP_HOST = '127.0.0.1';
+  process.env.LLAMA_CPP_HOST = "127.0.0.1";
   process.env.LLAMA_CPP_PORT = String(FAKE_LLAMA_PORT);
-  process.env.LLAMACTL_NODE_NAME = 'metrics-test-node';
+  process.env.LLAMACTL_NODE_NAME = "metrics-test-node";
 
   const cert = await generateSelfSignedCert({
-    dir: join(devStorage, 'agent'),
-    commonName: '127.0.0.1',
-    hostnames: ['127.0.0.1', 'localhost'],
+    dir: join(devStorage, "agent"),
+    commonName: "127.0.0.1",
+    hostnames: ["127.0.0.1", "localhost"],
   });
   caPem = cert.certPem;
 
   const token = generateToken();
   agentToken = token.token;
   agent = startAgentServer({
-    bindHost: '127.0.0.1',
+    bindHost: "127.0.0.1",
     port: 0,
     tokenHash: token.hash,
     tls: { certPath: cert.certPath, keyPath: cert.keyPath },
-    nodeName: 'metrics-test-node',
-    version: '1.2.3',
+    nodeName: "metrics-test-node",
+    version: "1.2.3",
     advertiseMdns: false,
   });
 });
@@ -96,31 +96,31 @@ function pinnedFetch(path: string, init?: RequestInit): Promise<Response> {
   } as RequestInit);
 }
 
-describe('agent /metrics endpoint', () => {
-  test('requires bearer auth', async () => {
+describe("agent /metrics endpoint", () => {
+  test("requires bearer auth", async () => {
     const res = await fetch(`${agent!.url}/metrics`, {
       ...({ tls: { ca: caPem } } as Record<string, unknown>),
     } as RequestInit);
     expect(res.status).toBe(401);
   });
 
-  test('returns Prometheus text and core llamactl_* series', async () => {
-    const res = await pinnedFetch('/metrics');
+  test("returns Prometheus text and core llamactl_* series", async () => {
+    const res = await pinnedFetch("/metrics");
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toContain('text/plain');
+    expect(res.headers.get("content-type")).toContain("text/plain");
     const text = await res.text();
     // Default Node metrics are present (proves collectDefaultMetrics
     // registered on our registry).
-    expect(text).toContain('process_cpu_user_seconds_total');
+    expect(text).toContain("process_cpu_user_seconds_total");
     // Agent-identity label carries the node_name + version. The
     // registry is module-global, so when other test files also start
     // agent servers we may see multiple agent_info series — look for
     // the one whose labels match this test's agent.
     const infoLine = text
-      .split('\n')
+      .split("\n")
       .find(
         (l) =>
-          l.startsWith('llamactl_agent_info{') &&
+          l.startsWith("llamactl_agent_info{") &&
           l.includes('node_name="metrics-test-node"') &&
           l.includes('version="1.2.3"'),
       );
@@ -128,19 +128,19 @@ describe('agent /metrics endpoint', () => {
     expect(infoLine).toMatch(/\s1\s*$/);
   });
 
-  test('OpenAI requests bump the request + duration counters', async () => {
+  test("OpenAI requests bump the request + duration counters", async () => {
     // Scrape twice — before and after — and diff the counter values.
     async function scrape(): Promise<string> {
-      const r = await pinnedFetch('/metrics');
+      const r = await pinnedFetch("/metrics");
       return r.text();
     }
 
     function countChatSeries(text: string): number {
       const line = text
-        .split('\n')
+        .split("\n")
         .find(
           (l) =>
-            l.startsWith('llamactl_openai_requests_total{') &&
+            l.startsWith("llamactl_openai_requests_total{") &&
             l.includes('path="/v1/chat/completions"') &&
             l.includes('status_class="2xx"'),
         );
@@ -150,23 +150,21 @@ describe('agent /metrics endpoint', () => {
     }
 
     const before = countChatSeries(await scrape());
-    const res = await pinnedFetch('/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'x', messages: [] }),
+    const res = await pinnedFetch("/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "x", messages: [] }),
     });
     expect(res.status).toBe(200);
     const after = countChatSeries(await scrape());
     expect(after).toBe(before + 1);
   });
 
-  test('GET /v1/models flips llama_server_up to 1', async () => {
-    await pinnedFetch('/v1/models');
-    const res = await pinnedFetch('/metrics');
+  test("GET /v1/models flips llama_server_up to 1", async () => {
+    await pinnedFetch("/v1/models");
+    const res = await pinnedFetch("/metrics");
     const text = await res.text();
-    const line = text
-      .split('\n')
-      .find((l) => l.startsWith('llamactl_llama_server_up'));
+    const line = text.split("\n").find((l) => l.startsWith("llamactl_llama_server_up"));
     expect(line).toBeTruthy();
     expect(line).toMatch(/llamactl_llama_server_up.*\s1\s*$/);
   });

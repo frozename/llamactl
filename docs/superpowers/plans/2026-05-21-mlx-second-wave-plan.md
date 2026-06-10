@@ -80,6 +80,7 @@ life better, before touching the harder Metal internals.
 review. Smallest change; doesn't depend on M3.
 
 **Failing test** (`tests/stream_tests.cpp` or equivalent):
+
 ```cpp
 TEST(StreamGeneration, ReusedIndexRaceIsClosed) {
   // Create stream s1, capture its {index, generation}.
@@ -91,12 +92,14 @@ TEST(StreamGeneration, ReusedIndexRaceIsClosed) {
 ```
 
 **Implementation:**
+
 - `mlx/stream.h`: add `uint64_t generation = 0`
 - `mlx/stream.cpp`: increment on construction or reuse
 - `mlx/backend/metal/eval.cpp`: in `notify_stream_error` /
   `throw_if_stream_error`, validate `{index, generation}` pair
 
 **Verify:**
+
 ```bash
 cd /Volumes/WorkSSD/src/mlx-fix
 cmake -S . -B build -DMLX_BUILD_TESTS=ON
@@ -111,6 +114,7 @@ cmake --build build --target tests -j8
 ### A2. M5: `MLX_METAL_MAX_OPS_PER_BUFFER` env knob
 
 **Failing test** (env-parsing unit):
+
 ```cpp
 TEST(MetalDevice, MaxOpsPerBufferEnvOverride) {
   setenv("MLX_METAL_MAX_OPS_PER_BUFFER", "20", 1);
@@ -121,6 +125,7 @@ TEST(MetalDevice, MaxOpsPerBufferEnvOverride) {
 ```
 
 **Implementation:**
+
 - `mlx/backend/metal/device.cpp` line ~445: replace compile-time
   literal with `env_or(MLX_METAL_MAX_OPS_PER_BUFFER, 40)`
 - Use the same env-parsing helper already used for other MLX knobs
@@ -136,6 +141,7 @@ Already implemented on mac-mini. This task cleans the diff and
 opens the upstream PR.
 
 **Failing test** (settings round-trip):
+
 ```python
 # tests/test_settings.py in oMLX repo
 def test_max_completion_batch_size_default():
@@ -158,6 +164,7 @@ mac-mini; just clean the diff)
 ### A4. L2: `env` field on ModelHost manifest schema
 
 **Failing test** (`packages/remote/src/workload/modelhost-schema.test.ts`):
+
 ```typescript
 it("accepts env field", () => {
   const manifest = parse({
@@ -169,12 +176,12 @@ it("accepts env field", () => {
 });
 
 it("rejects non-allowlisted env keys", () => {
-  expect(() => parse({ kind: "ModelHost", env: { SECRET: "x" } }))
-    .toThrow();
+  expect(() => parse({ kind: "ModelHost", env: { SECRET: "x" } })).toThrow();
 });
 ```
 
 **Files:**
+
 - `packages/remote/src/workload/modelhost-schema.ts`: add optional
   `env: Record<string, string>` with a Zod `.refine()` that checks
   keys against `CHILD_ENV_ALLOWLIST`
@@ -192,11 +199,13 @@ watchdog timeouts under multi-stream concurrency, defaulting to
 unthrottled so single-model performance is unaffected.
 
 **Predecessor patches assumed landed:**
+
 - `8c514a1a` (exception-safe completion handler)
 
 ### B0. Deterministic failing test for gate semantics
 
 **Failing test** (`tests/scheduler_tests.cpp`):
+
 ```cpp
 TEST(MetalBackPressure, GateBlocksWhenAtLimit) {
   // Acquire up to limit=2 slots on stream s.
@@ -220,6 +229,7 @@ TEST(MetalBackPressure, CloseWakesAllWaiters) {
 ```
 
 **Files to create/modify:**
+
 - `mlx/scheduler.h`: `StreamGate` struct (counter, mutex, cv, closed flag)
 - `mlx/scheduler.cpp`: implementation
 - `tests/scheduler_tests.cpp`: above tests
@@ -231,6 +241,7 @@ TEST(MetalBackPressure, CloseWakesAllWaiters) {
 ### B1. Wire throttle into Metal eval path
 
 **Failing test** (GPU-level, requires Metal host):
+
 ```cpp
 TEST(MetalBackPressure, ConcurrentStreamsUnderLimitCompleteWithoutError) {
   // Set MLX_METAL_MAX_INFLIGHT_PER_STREAM=1 in env.
@@ -241,6 +252,7 @@ TEST(MetalBackPressure, ConcurrentStreamsUnderLimitCompleteWithoutError) {
 ```
 
 **Files:**
+
 - `mlx/backend/metal/eval.cpp`: call `scheduler::acquire_stream_slot()`
   before `encoder.commit()`; call `release_stream_slot()` in every
   branch of the `addCompletedHandler` callback (success AND error)
@@ -249,6 +261,7 @@ TEST(MetalBackPressure, ConcurrentStreamsUnderLimitCompleteWithoutError) {
   `8c514a1a`)
 
 **Verify:**
+
 ```bash
 MLX_METAL_MAX_INFLIGHT_PER_STREAM=1 ./build/tests --test-case="*BackPressure*"
 # Also rerun exception-safety tests to confirm no conflict.
@@ -260,6 +273,7 @@ MLX_METAL_MAX_INFLIGHT_PER_STREAM=1 ./build/tests --test-case="*BackPressure*"
 ### B2. Env var config + unit tests
 
 **Failing test:**
+
 ```cpp
 TEST(MetalBackPressure, EnvVarUnsetMeansUnlimited) {
   unsetenv("MLX_METAL_MAX_INFLIGHT_PER_STREAM");
@@ -317,6 +331,7 @@ since the single-thread serialization within each stream is preserved.
 ### C0. M3: `Stream::tag` field (prerequisite for C1/C2 API ergonomics)
 
 **Failing test:**
+
 ```cpp
 TEST(Stream, TagDefaultsEmpty) {
   Stream s = gpu::new_stream(/*device=*/0);
@@ -337,6 +352,7 @@ in same struct edit).
 ### C1. M1: Per-stream `MTL::CommandQueue`
 
 **Failing test** (requires Metal host):
+
 ```cpp
 TEST(MetalDevice, IndependentStreamsDontSerializeOnCommandQueue) {
   // Create stream s1, s2. Submit identical small matmul on both simultaneously.
@@ -352,6 +368,7 @@ TEST(MetalDevice, IndependentStreamsDontSerializeOnCommandQueue) {
 ```
 
 **Files:**
+
 - `mlx/backend/metal/device.h`: replace single `queue_` member with
   `std::unordered_map<int, NS::SharedPtr<MTL::CommandQueue>> queues_`
 - `mlx/backend/metal/device.cpp`: allocate in `new_stream(s)`, release
@@ -371,6 +388,7 @@ Same shape as C1. After C1, residency sets are the remaining
 cross-stream contention point during model weight paging.
 
 **Files:**
+
 - `mlx/backend/metal/resident.h`: `ResidencySet` becomes per-stream
   rather than device-global
 - `mlx/backend/metal/device.cpp`: allocation/teardown parallels C1
@@ -395,6 +413,7 @@ failed, rebuild the remaining-sequences batch, continue.
 **Files:** `omlx/scheduler.py`, `omlx/engine/batched.py`
 
 **Failing test:**
+
 ```python
 def test_batch_partial_recovery(mock_metal_error):
     # Inject a Metal error for sequence 0 of a 4-sequence batch.
@@ -445,14 +464,14 @@ friendly.
 
 ## Open questions — decisions needed before C1/C2
 
-| # | Question | Recommended answer |
-|---|---|---|
-| Q1 | Metal driver queue limit on M4 base (10-core GPU) vs M-series Max? | Run `metal_feature_set_families` probe; cap `unordered_map` at 64 per process to be safe |
-| Q2 | Does mlx-lm need changes for M1? | No — single thread-local stream per worker still works; stream gets its own queue automatically |
-| Q3 | M1+M2 as one PR or two? | One PR, two commits (see AD-3) |
-| Q4 | O1 still needed after M1/M2? | Benchmark gate in C2 decides (see Phase C benchmark gate) |
-| Q5 | Fold back-pressure into exception-safety PR? | No — keep separate (see AD-6) |
-| Q6 | CI strategy for M1/M2 Metal tests? | Gate behind `MLX_BUILD_METAL` flag; existing pattern; no new CI infra needed |
+| #   | Question                                                           | Recommended answer                                                                              |
+| --- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| Q1  | Metal driver queue limit on M4 base (10-core GPU) vs M-series Max? | Run `metal_feature_set_families` probe; cap `unordered_map` at 64 per process to be safe        |
+| Q2  | Does mlx-lm need changes for M1?                                   | No — single thread-local stream per worker still works; stream gets its own queue automatically |
+| Q3  | M1+M2 as one PR or two?                                            | One PR, two commits (see AD-3)                                                                  |
+| Q4  | O1 still needed after M1/M2?                                       | Benchmark gate in C2 decides (see Phase C benchmark gate)                                       |
+| Q5  | Fold back-pressure into exception-safety PR?                       | No — keep separate (see AD-6)                                                                   |
+| Q6  | CI strategy for M1/M2 Metal tests?                                 | Gate behind `MLX_BUILD_METAL` flag; existing pattern; no new CI infra needed                    |
 
 ---
 

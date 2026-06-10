@@ -5,7 +5,7 @@ import {
   saveSchedules,
   updateSchedule,
   type BenchSchedule,
-} from './schedule.js';
+} from "./schedule.js";
 
 /**
  * In-process bench scheduler. Every `tickIntervalMs` it iterates the
@@ -18,12 +18,16 @@ import {
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type SubscribeCallbacks = { onData: (e: any) => void; onError: (err: any) => void; onComplete: () => void };
+type SubscribeCallbacks = {
+  onData: (e: any) => void;
+  onError: (err: any) => void;
+  onComplete: () => void;
+};
 
 export interface BenchClient {
   benchPresetRun: {
     subscribe(
-      input: { target: string; mode?: 'auto' | 'text' | 'vision' },
+      input: { target: string; mode?: "auto" | "text" | "vision" },
       callbacks: SubscribeCallbacks,
     ): { unsubscribe?: () => void };
   };
@@ -38,7 +42,14 @@ export interface BenchLoopStatus {
    *  are skipped until it returns. */
   inflight: boolean;
   /** Short log of the most recent activity (bounded to 200 entries). */
-  recent: Array<{ ts: string; id: string; rel: string; node: string; ok: boolean; message?: string }>;
+  recent: Array<{
+    ts: string;
+    id: string;
+    rel: string;
+    node: string;
+    ok: boolean;
+    message?: string;
+  }>;
 }
 
 interface LoopState {
@@ -47,7 +58,7 @@ interface LoopState {
   tickIntervalMs: number;
   inflight: boolean;
   lastTickAt: number | null;
-  recent: BenchLoopStatus['recent'];
+  recent: BenchLoopStatus["recent"];
 }
 
 const state: LoopState = {
@@ -69,17 +80,14 @@ function schedule(getClient: (nodeName: string) => BenchClient): void {
 async function runOne(schedule: BenchSchedule, client: BenchClient): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     // 15-minute hard cap so a hung bench doesn't wedge the loop.
-    const timer = setTimeout(
-      () => reject(new Error('bench run timed out after 15m')),
-      15 * 60_000,
-    );
+    const timer = setTimeout(() => reject(new Error("bench run timed out after 15m")), 15 * 60_000);
     let errored = false;
     const sub = client.benchPresetRun.subscribe(
       { target: schedule.rel, mode: schedule.mode },
       {
         onData: (evt: unknown) => {
           const e = evt as { type?: string; result?: { error?: string } };
-          if (e.type === 'done-preset' && e.result?.error) {
+          if (e.type === "done-preset" && e.result?.error) {
             errored = true;
             clearTimeout(timer);
             reject(new Error(e.result.error));

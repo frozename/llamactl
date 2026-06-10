@@ -5,39 +5,39 @@ import {
   readFileSync,
   unlinkSync,
   writeFileSync,
-} from 'node:fs';
-import { join } from 'node:path';
-import { resolveEnv } from './env.js';
-import { formatBenchTimestamp } from './bench/runner.js';
-import { endpoint, readServerPid, startServer, stopServer } from './server.js';
-import { resolveTarget } from './target.js';
-import type { ResolvedEnv } from './types.js';
-import type { WorkloadKey } from './workloadRuntime.js';
+} from "node:fs";
+import { join } from "node:path";
+import { resolveEnv } from "./env.js";
+import { formatBenchTimestamp } from "./bench/runner.js";
+import { endpoint, readServerPid, startServer, stopServer } from "./server.js";
+import { resolveTarget } from "./target.js";
+import type { ResolvedEnv } from "./types.js";
+import type { WorkloadKey } from "./workloadRuntime.js";
 
 export function keepAlivePidFile(resolved: ResolvedEnv = resolveEnv()): string {
-  return join(resolved.LOCAL_AI_RUNTIME_DIR, 'llama-keep-alive.pid');
+  return join(resolved.LOCAL_AI_RUNTIME_DIR, "llama-keep-alive.pid");
 }
 
 export function keepAliveStopFile(resolved: ResolvedEnv = resolveEnv()): string {
-  return join(resolved.LOCAL_AI_RUNTIME_DIR, 'llama-keep-alive.stop');
+  return join(resolved.LOCAL_AI_RUNTIME_DIR, "llama-keep-alive.stop");
 }
 
 export function keepAliveStateFile(resolved: ResolvedEnv = resolveEnv()): string {
-  return join(resolved.LOCAL_AI_RUNTIME_DIR, 'llama-keep-alive.state');
+  return join(resolved.LOCAL_AI_RUNTIME_DIR, "llama-keep-alive.state");
 }
 
 export function keepAliveLogFile(resolved: ResolvedEnv = resolveEnv()): string {
-  return join(resolved.LLAMA_CPP_LOGS, 'keep-alive.log');
+  return join(resolved.LLAMA_CPP_LOGS, "keep-alive.log");
 }
 
 export type KeepAliveState =
-  | 'launching'
-  | 'resolve-failed'
-  | 'starting'
-  | 'ready'
-  | 'restart-pending'
-  | 'start-failed'
-  | 'stopped';
+  | "launching"
+  | "resolve-failed"
+  | "starting"
+  | "ready"
+  | "restart-pending"
+  | "start-failed"
+  | "stopped";
 
 interface StateSnapshot {
   updated_at: string;
@@ -51,7 +51,7 @@ interface StateSnapshot {
 
 function writeState(
   resolved: ResolvedEnv,
-  snapshot: Omit<StateSnapshot, 'updated_at' | 'log'>,
+  snapshot: Omit<StateSnapshot, "updated_at" | "log">,
 ): void {
   mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });
   mkdirSync(resolved.LLAMA_CPP_LOGS, { recursive: true });
@@ -64,37 +64,37 @@ function writeState(
       `restarts=${snapshot.restarts}`,
       `backoff_seconds=${snapshot.backoff_seconds}`,
       `log=${keepAliveLogFile(resolved)}`,
-    ].join('\n') + '\n';
+    ].join("\n") + "\n";
   writeFileSync(keepAliveStateFile(resolved), body);
 }
 
 function parseState(raw: string): Partial<StateSnapshot> {
   const out: Partial<StateSnapshot> = {};
-  for (const line of raw.split('\n')) {
-    const eq = line.indexOf('=');
+  for (const line of raw.split("\n")) {
+    const eq = line.indexOf("=");
     if (eq <= 0) continue;
     const key = line.slice(0, eq);
     const value = line.slice(eq + 1);
     switch (key) {
-      case 'updated_at':
+      case "updated_at":
         out.updated_at = value;
         break;
-      case 'target':
+      case "target":
         out.target = value;
         break;
-      case 'model':
+      case "model":
         out.model = value;
         break;
-      case 'state':
+      case "state":
         out.state = value as KeepAliveState;
         break;
-      case 'restarts':
+      case "restarts":
         out.restarts = Number.parseInt(value, 10) || 0;
         break;
-      case 'backoff_seconds':
+      case "backoff_seconds":
         out.backoff_seconds = Number.parseInt(value, 10) || 0;
         break;
-      case 'log':
+      case "log":
         out.log = value;
         break;
     }
@@ -108,7 +108,7 @@ export function readKeepAliveState(
   const file = keepAliveStateFile(resolved);
   if (!existsSync(file)) return null;
   try {
-    return parseState(readFileSync(file, 'utf8'));
+    return parseState(readFileSync(file, "utf8"));
   } catch {
     return null;
   }
@@ -123,13 +123,11 @@ function isAlive(pid: number): boolean {
   }
 }
 
-export function readKeepAlivePid(
-  resolved: ResolvedEnv = resolveEnv(),
-): number | null {
+export function readKeepAlivePid(resolved: ResolvedEnv = resolveEnv()): number | null {
   const file = keepAlivePidFile(resolved);
   if (!existsSync(file)) return null;
   try {
-    const raw = readFileSync(file, 'utf8').trim();
+    const raw = readFileSync(file, "utf8").trim();
     const pid = Number.parseInt(raw, 10);
     if (!Number.isFinite(pid) || pid <= 0) return null;
     return isAlive(pid) ? pid : null;
@@ -144,9 +142,7 @@ export interface KeepAliveStatus {
   state: Partial<StateSnapshot> | null;
 }
 
-export function keepAliveStatus(
-  resolved: ResolvedEnv = resolveEnv(),
-): KeepAliveStatus {
+export function keepAliveStatus(resolved: ResolvedEnv = resolveEnv()): KeepAliveStatus {
   const pid = readKeepAlivePid(resolved);
   const state = readKeepAliveState(resolved);
   if (!pid && existsSync(keepAlivePidFile(resolved))) {
@@ -177,9 +173,7 @@ export interface StopKeepAliveResult {
  * still alive after the grace window, SIGTERM it. Always stops the
  * llama-server as a safety net in case the supervisor missed cleanup.
  */
-export async function stopKeepAlive(
-  opts: StopKeepAliveOptions,
-): Promise<StopKeepAliveResult> {
+export async function stopKeepAlive(opts: StopKeepAliveOptions): Promise<StopKeepAliveResult> {
   const resolved = opts.resolved ?? resolveEnv();
   const key = opts.key;
   const grace = Math.max(1, opts.graceSeconds ?? 10);
@@ -200,7 +194,7 @@ export async function stopKeepAlive(
 
   // Touch the stop file so the worker exits cleanly at the next tick.
   mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });
-  writeFileSync(keepAliveStopFile(resolved), '');
+  writeFileSync(keepAliveStopFile(resolved), "");
 
   let waited = 0;
   while (waited < grace && isAlive(pid)) {
@@ -210,7 +204,7 @@ export async function stopKeepAlive(
   let killed = false;
   if (isAlive(pid)) {
     try {
-      process.kill(pid, 'SIGTERM');
+      process.kill(pid, "SIGTERM");
       killed = true;
     } catch {
       // no-op
@@ -245,10 +239,7 @@ export interface RunKeepAliveWorkerOptions {
 
 function logLine(resolved: ResolvedEnv, line: string): void {
   mkdirSync(resolved.LLAMA_CPP_LOGS, { recursive: true });
-  appendFileSync(
-    keepAliveLogFile(resolved),
-    `[${formatBenchTimestamp()}] ${line}\n`,
-  );
+  appendFileSync(keepAliveLogFile(resolved), `[${formatBenchTimestamp()}] ${line}\n`);
 }
 
 /**
@@ -265,23 +256,18 @@ function logLine(resolved: ResolvedEnv, line: string): void {
  * so `keep-alive status` can show "ready / restart-pending / …"
  * without running commands itself.
  */
-export async function runKeepAliveWorker(
-  opts: RunKeepAliveWorkerOptions,
-): Promise<void> {
+export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promise<void> {
   const env = opts.env ?? process.env;
   const resolved = opts.resolved ?? resolveEnv(env);
   const key = opts.key;
   const intervalSeconds =
     opts.intervalSeconds ??
-    Math.max(
-      1,
-      Number.parseInt(env.LLAMA_CPP_KEEP_ALIVE_INTERVAL ?? '', 10) || 5,
-    );
+    Math.max(1, Number.parseInt(env.LLAMA_CPP_KEEP_ALIVE_INTERVAL ?? "", 10) || 5);
   const maxBackoff =
     opts.maxBackoff ??
     Math.max(
       intervalSeconds,
-      Number.parseInt(env.LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF ?? '', 10) || 30,
+      Number.parseInt(env.LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF ?? "", 10) || 30,
     );
 
   // Clear any prior stop file and write an initial state.
@@ -293,8 +279,8 @@ export async function runKeepAliveWorker(
   writeFileSync(keepAlivePidFile(resolved), `${process.pid}\n`);
   writeState(resolved, {
     target: opts.target,
-    model: 'pending',
-    state: 'launching',
+    model: "pending",
+    state: "launching",
     restarts: 0,
     backoff_seconds: 1,
   });
@@ -305,7 +291,7 @@ export async function runKeepAliveWorker(
     new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, s * 1000);
       opts.signal?.addEventListener(
-        'abort',
+        "abort",
         () => {
           clearTimeout(timer);
           resolve();
@@ -313,14 +299,13 @@ export async function runKeepAliveWorker(
         { once: true },
       );
     });
-  const shouldStop = () =>
-    opts.signal?.aborted === true || existsSync(keepAliveStopFile(resolved));
+  const shouldStop = () => opts.signal?.aborted === true || existsSync(keepAliveStopFile(resolved));
 
   const cleanup = async (finalState: KeepAliveState, rel: string) => {
     logLine(resolved, `supervisor exiting state=${finalState}`);
     writeState(resolved, {
       target: opts.target,
-      model: rel || 'unknown',
+      model: rel || "unknown",
       state: finalState,
       restarts,
       backoff_seconds: backoff,
@@ -338,7 +323,7 @@ export async function runKeepAliveWorker(
     }
   };
 
-  let lastRel = '';
+  let lastRel = "";
   try {
     while (!shouldStop()) {
       const rel = resolveTarget(opts.target, env);
@@ -346,8 +331,8 @@ export async function runKeepAliveWorker(
         logLine(resolved, `target=${opts.target} resolve-failed`);
         writeState(resolved, {
           target: opts.target,
-          model: 'unresolved',
-          state: 'resolve-failed',
+          model: "unresolved",
+          state: "resolve-failed",
           restarts,
           backoff_seconds: backoff,
         });
@@ -360,7 +345,7 @@ export async function runKeepAliveWorker(
       writeState(resolved, {
         target: opts.target,
         model: rel,
-        state: 'starting',
+        state: "starting",
         restarts,
         backoff_seconds: backoff,
       });
@@ -375,14 +360,11 @@ export async function runKeepAliveWorker(
       });
       if (!startRes.ok) {
         restarts += 1;
-        logLine(
-          resolved,
-          `start-failed rel=${rel} error=${startRes.error ?? 'unknown'}`,
-        );
+        logLine(resolved, `start-failed rel=${rel} error=${startRes.error ?? "unknown"}`);
         writeState(resolved, {
           target: opts.target,
           model: rel,
-          state: 'start-failed',
+          state: "start-failed",
           restarts,
           backoff_seconds: backoff,
         });
@@ -395,7 +377,7 @@ export async function runKeepAliveWorker(
       writeState(resolved, {
         target: opts.target,
         model: rel,
-        state: 'ready',
+        state: "ready",
         restarts,
         backoff_seconds: backoff,
       });
@@ -426,7 +408,7 @@ export async function runKeepAliveWorker(
       writeState(resolved, {
         target: opts.target,
         model: rel,
-        state: 'restart-pending',
+        state: "restart-pending",
         restarts,
         backoff_seconds: backoff,
       });
@@ -434,6 +416,6 @@ export async function runKeepAliveWorker(
       backoff = Math.min(backoff * 2, maxBackoff);
     }
   } finally {
-    await cleanup('stopped', lastRel);
+    await cleanup("stopped", lastRel);
   }
 }

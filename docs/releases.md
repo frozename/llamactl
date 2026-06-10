@@ -34,7 +34,7 @@ The `.github/workflows/release-agent.yml` workflow runs on any pushed
 
 1. Installs Bun + the workspace's frozen deps.
 2. Runs `bun build --compile --target=bun-<platform>
-   packages/cli/src/bin.ts` — produces a single-file binary
+packages/cli/src/bin.ts` — produces a single-file binary
    (~60 MB) that needs no runtime on the target host.
 3. Writes `<binary>.sha256` alongside.
 4. Uploads both to the workflow.
@@ -45,12 +45,12 @@ GitHub Release named after the tag.
 
 ## Supported platforms
 
-| Platform | Target flag (bun) |
-|---|---|
+| Platform               | Target flag (bun)  |
+| ---------------------- | ------------------ |
 | macOS on Apple silicon | `bun-darwin-arm64` |
-| macOS on Intel | `bun-darwin-x64` |
-| Linux on x86_64 | `bun-linux-x64` |
-| Linux on aarch64 / ARM | `bun-linux-arm64` |
+| macOS on Intel         | `bun-darwin-x64`   |
+| Linux on x86_64        | `bun-linux-x64`    |
+| Linux on aarch64 / ARM | `bun-linux-arm64`  |
 
 llamactl's agent server validates platform strings against this
 exact set (see `packages/remote/src/server/artifacts.ts`).

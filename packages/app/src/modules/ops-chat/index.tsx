@@ -1,9 +1,9 @@
-import * as React from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { trpc } from '@/lib/trpc';
-import { useTabStore } from '@/stores/tab-store';
-import { useOpsExecutorStore } from '@/stores/ops-executor-store';
-import { OpsExecutorPicker } from '@/modules/ops/ops-executor-picker';
+import * as React from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { trpc } from "@/lib/trpc";
+import { useTabStore } from "@/stores/tab-store";
+import { useOpsExecutorStore } from "@/stores/ops-executor-store";
+import { OpsExecutorPicker } from "@/modules/ops/ops-executor-picker";
 
 /**
  * N.4 — Operator Console.
@@ -33,30 +33,30 @@ type PlanStep = {
   annotation: string;
 };
 
-type ToolTier = 'read' | 'mutation-dry-run-safe' | 'mutation-destructive';
+type ToolTier = "read" | "mutation-dry-run-safe" | "mutation-destructive";
 
 interface ToolCallOutcome {
   ok: boolean;
   name: string;
-  tier: ToolTier | 'unknown';
+  tier: ToolTier | "unknown";
   durationMs: number;
   result?: unknown;
   error?: { code: string; message: string };
 }
 
 type ProposalState =
-  | 'pending'
-  | 'previewing'
-  | 'preview-ready'
-  | 'running-wet'
-  | 'done'
-  | 'failed'
-  | 'rejected';
+  | "pending"
+  | "previewing"
+  | "preview-ready"
+  | "running-wet"
+  | "done"
+  | "failed"
+  | "rejected";
 
 type TranscriptMessage =
-  | { kind: 'user'; id: number; content: string }
+  | { kind: "user"; id: number; content: string }
   | {
-      kind: 'proposal';
+      kind: "proposal";
       id: number;
       sessionId: string;
       stepId: string;
@@ -69,8 +69,8 @@ type TranscriptMessage =
       previewOutcome?: ToolCallOutcome;
       wetOutcome?: ToolCallOutcome;
     }
-  | { kind: 'refusal'; id: number; reason: string }
-  | { kind: 'done'; id: number; iterations: number };
+  | { kind: "refusal"; id: number; reason: string }
+  | { kind: "done"; id: number; iterations: number };
 
 /**
  * Canned prompts — seed examples that give operators an instant
@@ -79,60 +79,90 @@ type TranscriptMessage =
  */
 const CANNED_PROMPTS: Array<{ label: string; prompt: string }> = [
   {
-    label: 'Audit fleet health',
+    label: "Audit fleet health",
     prompt:
-      'Check every node for unhealthy providers and suggest fixes. Read-only — do not apply anything yet.',
+      "Check every node for unhealthy providers and suggest fixes. Read-only — do not apply anything yet.",
   },
   {
     label: "Today's AI spend",
-    prompt:
-      'Pull llamactl.cost.snapshot for today and summarize the top 3 spenders by provider.',
+    prompt: "Pull llamactl.cost.snapshot for today and summarize the top 3 spenders by provider.",
   },
   {
-    label: 'Promote top 3 models',
+    label: "Promote top 3 models",
     prompt:
-      'Using the bench results, promote the top 3 models by tokens/sec on macbook-pro-48g to the best/vision/balanced presets.',
+      "Using the bench results, promote the top 3 models by tokens/sec on macbook-pro-48g to the best/vision/balanced presets.",
   },
   {
-    label: 'List installed vision models',
-    prompt: 'List every vision-capable model installed on the control plane.',
+    label: "List installed vision models",
+    prompt: "List every vision-capable model installed on the control plane.",
   },
 ];
 
 const DEFAULT_CATALOG: Array<{
   name: string;
   description: string;
-  tier: 'read' | 'mutation-dry-run-safe' | 'mutation-destructive';
+  tier: "read" | "mutation-dry-run-safe" | "mutation-destructive";
 }> = [
-  { name: 'llamactl.catalog.list', description: 'List curated models on the control plane.', tier: 'read' },
-  { name: 'llamactl.node.ls', description: 'List every cluster node.', tier: 'read' },
-  { name: 'llamactl.bench.compare', description: 'Joined catalog + bench comparison table.', tier: 'read' },
-  { name: 'llamactl.bench.history', description: 'Recent bench runs.', tier: 'read' },
-  { name: 'llamactl.server.status', description: 'llama-server lifecycle status.', tier: 'read' },
-  { name: 'llamactl.workload.list', description: 'Declarative ModelRun manifests.', tier: 'read' },
-  { name: 'llamactl.promotions.list', description: 'Current preset promotions.', tier: 'read' },
-  { name: 'llamactl.env', description: 'Environment snapshot.', tier: 'read' },
-  { name: 'llamactl.cost.snapshot', description: 'Rolled-up spend for the last N days.', tier: 'read' },
-  { name: 'llamactl.catalog.promote', description: 'Promote a model to a preset on a profile.', tier: 'mutation-dry-run-safe' },
-  { name: 'llamactl.catalog.promoteDelete', description: 'Remove a preset promotion.', tier: 'mutation-destructive' },
-  { name: 'llamactl.workload.delete', description: 'Remove a ModelRun manifest.', tier: 'mutation-destructive' },
-  { name: 'llamactl.node.remove', description: 'Remove a node from the cluster.', tier: 'mutation-destructive' },
+  {
+    name: "llamactl.catalog.list",
+    description: "List curated models on the control plane.",
+    tier: "read",
+  },
+  { name: "llamactl.node.ls", description: "List every cluster node.", tier: "read" },
+  {
+    name: "llamactl.bench.compare",
+    description: "Joined catalog + bench comparison table.",
+    tier: "read",
+  },
+  { name: "llamactl.bench.history", description: "Recent bench runs.", tier: "read" },
+  { name: "llamactl.server.status", description: "llama-server lifecycle status.", tier: "read" },
+  { name: "llamactl.workload.list", description: "Declarative ModelRun manifests.", tier: "read" },
+  { name: "llamactl.promotions.list", description: "Current preset promotions.", tier: "read" },
+  { name: "llamactl.env", description: "Environment snapshot.", tier: "read" },
+  {
+    name: "llamactl.cost.snapshot",
+    description: "Rolled-up spend for the last N days.",
+    tier: "read",
+  },
+  {
+    name: "llamactl.catalog.promote",
+    description: "Promote a model to a preset on a profile.",
+    tier: "mutation-dry-run-safe",
+  },
+  {
+    name: "llamactl.catalog.promoteDelete",
+    description: "Remove a preset promotion.",
+    tier: "mutation-destructive",
+  },
+  {
+    name: "llamactl.workload.delete",
+    description: "Remove a ModelRun manifest.",
+    tier: "mutation-destructive",
+  },
+  {
+    name: "llamactl.node.remove",
+    description: "Remove a node from the cluster.",
+    tier: "mutation-destructive",
+  },
 ];
 
 function tierStyle(tier: ToolTier): React.CSSProperties {
   switch (tier) {
-    case 'mutation-destructive':
-      return { borderColor: 'var(--color-err)', color: 'var(--color-err)' };
-    case 'mutation-dry-run-safe':
-      return { borderColor: 'var(--color-warn,var(--color-ok))', color: 'var(--color-warn,var(--color-ok))' };
-    case 'read':
+    case "mutation-destructive":
+      return { borderColor: "var(--color-err)", color: "var(--color-err)" };
+    case "mutation-dry-run-safe":
+      return {
+        borderColor: "var(--color-warn,var(--color-ok))",
+        color: "var(--color-warn,var(--color-ok))",
+      };
+    case "read":
     default:
-      return { borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' };
+      return { borderColor: "var(--color-border)", color: "var(--color-text-secondary)" };
   }
 }
 
 interface ProposalBubbleProps {
-  message: Extract<TranscriptMessage, { kind: 'proposal' }>;
+  message: Extract<TranscriptMessage, { kind: "proposal" }>;
   onApprove: (dryRun: boolean) => void;
   onReject: () => void;
   onConfirmText: (v: string) => void;
@@ -144,103 +174,163 @@ function ProposalBubble({
   onReject,
   onConfirmText,
 }: ProposalBubbleProps): React.JSX.Element {
-  const { step, tier, iteration, state, confirmText, previewOutcome, wetOutcome, reasoning } = message;
-  const destructiveReady = tier === 'mutation-destructive' ? confirmText.trim() === step.tool : true;
-  const terminal = state === 'done' || state === 'failed' || state === 'rejected';
-  const running = state === 'previewing' || state === 'running-wet';
+  const { step, tier, iteration, state, confirmText, previewOutcome, wetOutcome, reasoning } =
+    message;
+  const destructiveReady =
+    tier === "mutation-destructive" ? confirmText.trim() === step.tool : true;
+  const terminal = state === "done" || state === "failed" || state === "rejected";
+  const running = state === "previewing" || state === "running-wet";
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+    <div style={{ display: "flex", justifyContent: "flex-start" }}>
       <div
-        style={{ maxWidth: '85%', borderRadius: '1rem', border: '1px solid var(--color-border)', padding: 12, display: 'flex', flexDirection: 'column', gap: 8, backgroundColor: 'var(--color-surface-1)', ...tierStyle(tier) }}
+        style={{
+          maxWidth: "85%",
+          borderRadius: "1rem",
+          border: "1px solid var(--color-border)",
+          padding: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          backgroundColor: "var(--color-surface-1)",
+          ...tierStyle(tier),
+        }}
         data-testid={`ops-chat-step-${iteration}`}
         data-tier={tier}
         data-state={state}
       >
         {reasoning.length > 0 && (
           <p
-            style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}
+            style={{ fontSize: 12, color: "var(--color-text-secondary)" }}
             data-testid={`ops-chat-step-${iteration}-reasoning`}
           >
             {reasoning}
           </p>
         )}
-        <div style={{ fontSize: 14, color: 'var(--color-text)' }}>
-          {terminal ? 'Ran:' : 'I\u2019d like to run:'}
+        <div style={{ fontSize: 14, color: "var(--color-text)" }}>
+          {terminal ? "Ran:" : "I\u2019d like to run:"}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14 }}>{step.tool}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 14 }}>{step.tool}</span>
           <span
-            style={{ borderRadius: '0.25rem', border: '1px solid var(--color-border)', paddingLeft: 4, paddingRight: 4, fontSize: 10, ...tierStyle(tier) }}
+            style={{
+              borderRadius: "0.25rem",
+              border: "1px solid var(--color-border)",
+              paddingLeft: 4,
+              paddingRight: 4,
+              fontSize: 10,
+              ...tierStyle(tier),
+            }}
             data-testid={`ops-chat-step-${iteration}-tier`}
           >
             {tier}
           </span>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{step.annotation}</div>
+        <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{step.annotation}</div>
         {step.args && Object.keys(step.args).length > 0 && (
           <pre
-            style={{ fontSize: 11, background: 'var(--color-surface-2)', borderRadius: 'var(--r-md)', padding: 4, overflow: 'auto' }}
+            style={{
+              fontSize: 11,
+              background: "var(--color-surface-2)",
+              borderRadius: "var(--r-md)",
+              padding: 4,
+              overflow: "auto",
+            }}
             data-testid={`ops-chat-step-${iteration}-args`}
           >
             {JSON.stringify(step.args, null, 2)}
           </pre>
         )}
 
-        {tier === 'mutation-destructive' && !terminal && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--color-text-secondary)' }}>
-            Type <span style={{ fontFamily: 'var(--font-mono)' }}>{step.tool}</span> to unlock:
+        {tier === "mutation-destructive" && !terminal && (
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 10,
+              color: "var(--color-text-secondary)",
+            }}
+          >
+            Type <span style={{ fontFamily: "var(--font-mono)" }}>{step.tool}</span> to unlock:
             <input
               type="text"
               value={confirmText}
               onChange={(e) => onConfirmText(e.target.value)}
               data-testid={`ops-chat-step-${iteration}-confirm`}
-              style={{ width: 192, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingTop: 2, paddingBottom: 2, fontFamily: 'var(--font-mono)', fontSize: 10 }}
+              style={{
+                width: 192,
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingTop: 2,
+                paddingBottom: 2,
+                fontFamily: "var(--font-mono)",
+                fontSize: 10,
+              }}
             />
           </label>
         )}
 
         {!terminal && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            {tier !== 'read' && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            {tier !== "read" && (
               <button
                 type="button"
                 onClick={() => onApprove(true)}
-                disabled={running || state === 'preview-ready'}
+                disabled={running || state === "preview-ready"}
                 data-testid={`ops-chat-step-${iteration}-preview`}
-                style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontSize: 10, color: 'var(--color-text-secondary)', opacity: 0.5 }}
+                style={{
+                  borderRadius: "var(--r-md)",
+                  border: "1px solid var(--color-border)",
+                  borderColor: "var(--color-border)",
+                  background: "var(--color-surface-2)",
+                  paddingLeft: 8,
+                  paddingRight: 8,
+                  paddingTop: 2,
+                  paddingBottom: 2,
+                  fontSize: 10,
+                  color: "var(--color-text-secondary)",
+                  opacity: 0.5,
+                }}
               >
-                {state === 'previewing' ? 'Running…' : 'Preview (dry)'}
+                {state === "previewing" ? "Running…" : "Preview (dry)"}
               </button>
             )}
             <button
               type="button"
               onClick={() => onApprove(false)}
-              disabled={
-                running ||
-                (tier === 'mutation-destructive' && !destructiveReady)
-              }
+              disabled={running || (tier === "mutation-destructive" && !destructiveReady)}
               data-testid={`ops-chat-step-${iteration}-run`}
               className={
-                tier === 'mutation-destructive'
-                  ? 'rounded border border-[var(--color-err)] px-2 py-0.5 text-[10px] text-[color:var(--color-err)] disabled:opacity-40'
-                  : tier === 'mutation-dry-run-safe'
-                    ? 'rounded border border-[var(--color-brand)] px-2 py-0.5 text-[10px] text-[color:var(--color-brand)] disabled:opacity-40'
-                    : 'rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-2 py-0.5 text-[10px] text-[color:var(--color-brand-contrast)] disabled:opacity-40'
+                tier === "mutation-destructive"
+                  ? "rounded border border-[var(--color-err)] px-2 py-0.5 text-[10px] text-[color:var(--color-err)] disabled:opacity-40"
+                  : tier === "mutation-dry-run-safe"
+                    ? "rounded border border-[var(--color-brand)] px-2 py-0.5 text-[10px] text-[color:var(--color-brand)] disabled:opacity-40"
+                    : "rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-2 py-0.5 text-[10px] text-[color:var(--color-brand-contrast)] disabled:opacity-40"
               }
             >
-              {state === 'running-wet'
-                ? 'Running…'
-                : tier === 'read'
-                  ? 'Run'
-                  : 'Run (wet)'}
+              {state === "running-wet" ? "Running…" : tier === "read" ? "Run" : "Run (wet)"}
             </button>
             <button
               type="button"
               onClick={onReject}
               disabled={running}
               data-testid={`ops-chat-step-${iteration}-reject`}
-              style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontSize: 10, color: 'var(--color-text-secondary)', opacity: 0.5 }}
+              style={{
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 2,
+                paddingBottom: 2,
+                fontSize: 10,
+                color: "var(--color-text-secondary)",
+                opacity: 0.5,
+              }}
             >
               Reject
             </button>
@@ -250,12 +340,10 @@ function ProposalBubble({
         {previewOutcome && (
           <OutcomePanel iteration={iteration} outcome={previewOutcome} kind="preview" />
         )}
-        {wetOutcome && (
-          <OutcomePanel iteration={iteration} outcome={wetOutcome} kind="wet" />
-        )}
-        {state === 'rejected' && (
+        {wetOutcome && <OutcomePanel iteration={iteration} outcome={wetOutcome} kind="wet" />}
+        {state === "rejected" && (
           <div
-            style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}
+            style={{ fontSize: 12, color: "var(--color-text-secondary)" }}
             data-testid={`ops-chat-step-${iteration}-rejected`}
           >
             Operator rejected \u2014 session closed.
@@ -273,24 +361,40 @@ function OutcomePanel({
 }: {
   iteration: number;
   outcome: ToolCallOutcome;
-  kind: 'preview' | 'wet';
+  kind: "preview" | "wet";
 }): React.JSX.Element {
   return (
     <div
-      style={{ marginTop: 4, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', padding: 8, fontSize: 11 }}
-      data-testid={`ops-chat-step-${iteration}-${kind === 'preview' ? 'preview-result' : 'result'}`}
-      data-ok={outcome.ok ? 'true' : 'false'}
+      style={{
+        marginTop: 4,
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-2)",
+        padding: 8,
+        fontSize: 11,
+      }}
+      data-testid={`ops-chat-step-${iteration}-${kind === "preview" ? "preview-result" : "result"}`}
+      data-ok={outcome.ok ? "true" : "false"}
     >
-      <div style={{ color: 'var(--color-text-secondary)' }}>
-        {outcome.ok ? '✓ ok' : '✗ failed'} · {outcome.durationMs}ms
-        {kind === 'preview' ? ' · dry-run' : ''}
+      <div style={{ color: "var(--color-text-secondary)" }}>
+        {outcome.ok ? "✓ ok" : "✗ failed"} · {outcome.durationMs}ms
+        {kind === "preview" ? " · dry-run" : ""}
       </div>
       {outcome.ok ? (
-        <pre style={{ marginTop: 4, maxHeight: 192, overflow: 'auto', whiteSpace: 'pre-wrap', fontFamily: 'var(--font-mono)' }}>
+        <pre
+          style={{
+            marginTop: 4,
+            maxHeight: 192,
+            overflow: "auto",
+            whiteSpace: "pre-wrap",
+            fontFamily: "var(--font-mono)",
+          }}
+        >
           {JSON.stringify(outcome.result, null, 2).slice(0, 2000)}
         </pre>
       ) : (
-        <div style={{ color: 'var(--color-err)' }}>
+        <div style={{ color: "var(--color-err)" }}>
           {outcome.error?.code}: {outcome.error?.message}
         </div>
       )}
@@ -300,12 +404,12 @@ function OutcomePanel({
 
 export default function OpsChat(): React.JSX.Element {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
-  const [draft, setDraft] = useState('');
+  const [draft, setDraft] = useState("");
   const { nodeId, model } = useOpsExecutorStore();
   const [error, setError] = useState<string | null>(null);
-  const [streamInput, setStreamInput] = useState<Parameters<
-    typeof trpc.operatorChatStream.useSubscription
-  >[0] | null>(null);
+  const [streamInput, setStreamInput] = useState<
+    Parameters<typeof trpc.operatorChatStream.useSubscription>[0] | null
+  >(null);
   const [streamKey, setStreamKey] = useState(0);
   const pinnedSessionRef = useRef<string | null>(null);
 
@@ -320,75 +424,72 @@ export default function OpsChat(): React.JSX.Element {
     { refetchInterval: 5_000, staleTime: 1_000 },
   );
 
-  trpc.operatorChatStream.useSubscription(
-    streamInput ?? { goal: '__placeholder__', tools: [] },
-    {
-      enabled: !!streamInput,
-      key: streamKey,
-      onData: (evt) => {
-        const e = evt as
-          | {
-              type: 'plan_proposed';
-              sessionId: string;
-              stepId: string;
-              iteration: number;
-              step: PlanStep;
-              tier: ToolTier;
-              reasoning: string;
-            }
-          | { type: 'refusal'; reason: string }
-          | { type: 'done'; iterations: number };
-        if (e.type === 'plan_proposed') {
-          if (pinnedSessionRef.current !== e.sessionId) {
-            pinnedSessionRef.current = e.sessionId;
-            useTabStore.getState().open({
-              tabKey: `ops-session:${e.sessionId}`,
-              title: `Session ${e.sessionId.slice(0, 8)}`,
-              kind: 'ops-session',
-              instanceId: e.sessionId,
-              openedAt: Date.now(),
-            });
+  trpc.operatorChatStream.useSubscription(streamInput ?? { goal: "__placeholder__", tools: [] }, {
+    enabled: !!streamInput,
+    key: streamKey,
+    onData: (evt) => {
+      const e = evt as
+        | {
+            type: "plan_proposed";
+            sessionId: string;
+            stepId: string;
+            iteration: number;
+            step: PlanStep;
+            tier: ToolTier;
+            reasoning: string;
           }
-          setMessages((prev) => [
-            ...prev,
-            {
-              kind: 'proposal',
-              id: nextId.current++,
-              sessionId: e.sessionId,
-              stepId: e.stepId,
-              iteration: e.iteration,
-              step: e.step,
-              tier: e.tier,
-              reasoning: e.reasoning,
-              state: 'pending',
-              confirmText: '',
-            },
-          ]);
-        } else if (e.type === 'refusal') {
-          setMessages((prev) => [
-            ...prev,
-            { kind: 'refusal', id: nextId.current++, reason: e.reason },
-          ]);
-          setStreaming(false);
-          setStreamInput(null);
-        } else if (e.type === 'done') {
-          if (e.iterations > 0) {
-            setMessages((prev) => [
-              ...prev,
-              { kind: 'done', id: nextId.current++, iterations: e.iterations },
-            ]);
-          }
-          setStreaming(false);
-          setStreamInput(null);
+        | { type: "refusal"; reason: string }
+        | { type: "done"; iterations: number };
+      if (e.type === "plan_proposed") {
+        if (pinnedSessionRef.current !== e.sessionId) {
+          pinnedSessionRef.current = e.sessionId;
+          useTabStore.getState().open({
+            tabKey: `ops-session:${e.sessionId}`,
+            title: `Session ${e.sessionId.slice(0, 8)}`,
+            kind: "ops-session",
+            instanceId: e.sessionId,
+            openedAt: Date.now(),
+          });
         }
-      },
-      onError: (err) => {
-        setError(err.message);
+        setMessages((prev) => [
+          ...prev,
+          {
+            kind: "proposal",
+            id: nextId.current++,
+            sessionId: e.sessionId,
+            stepId: e.stepId,
+            iteration: e.iteration,
+            step: e.step,
+            tier: e.tier,
+            reasoning: e.reasoning,
+            state: "pending",
+            confirmText: "",
+          },
+        ]);
+      } else if (e.type === "refusal") {
+        setMessages((prev) => [
+          ...prev,
+          { kind: "refusal", id: nextId.current++, reason: e.reason },
+        ]);
         setStreaming(false);
         setStreamInput(null);
-      },
-    } as Parameters<typeof trpc.operatorChatStream.useSubscription>[1],
-  );
+      } else if (e.type === "done") {
+        if (e.iterations > 0) {
+          setMessages((prev) => [
+            ...prev,
+            { kind: "done", id: nextId.current++, iterations: e.iterations },
+          ]);
+        }
+        setStreaming(false);
+        setStreamInput(null);
+      }
+    },
+    onError: (err) => {
+      setError(err.message);
+      setStreaming(false);
+      setStreamInput(null);
+    },
+  } as Parameters<typeof trpc.operatorChatStream.useSubscription>[1]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -398,8 +499,8 @@ export default function OpsChat(): React.JSX.Element {
   const history = useMemo(
     () =>
       messages
-        .filter((m): m is Extract<TranscriptMessage, { kind: 'user' }> => m.kind === 'user')
-        .map((m) => ({ role: 'user' as const, text: m.content })),
+        .filter((m): m is Extract<TranscriptMessage, { kind: "user" }> => m.kind === "user")
+        .map((m) => ({ role: "user" as const, text: m.content })),
     [messages],
   );
 
@@ -407,16 +508,13 @@ export default function OpsChat(): React.JSX.Element {
     const goal = draft.trim();
     if (!goal || streaming) return;
     if (!nodeId || !model) {
-      setError('pick a node + model in the header first');
+      setError("pick a node + model in the header first");
       return;
     }
     pinnedSessionRef.current = null;
     setError(null);
-    setMessages((prev) => [
-      ...prev,
-      { kind: 'user', id: nextId.current++, content: goal },
-    ]);
-    setDraft('');
+    setMessages((prev) => [...prev, { kind: "user", id: nextId.current++, content: goal }]);
+    setDraft("");
     setStreaming(true);
     setStreamKey((k) => k + 1);
     setStreamInput({
@@ -430,7 +528,7 @@ export default function OpsChat(): React.JSX.Element {
 
   const onReset = (): void => {
     setMessages([]);
-    setDraft('');
+    setDraft("");
     setError(null);
     setStreamInput(null);
     setStreaming(false);
@@ -443,18 +541,18 @@ export default function OpsChat(): React.JSX.Element {
 
   function patchProposal(
     id: number,
-    patch: Partial<Extract<TranscriptMessage, { kind: 'proposal' }>>,
+    patch: Partial<Extract<TranscriptMessage, { kind: "proposal" }>>,
   ): void {
     setMessages((prev) =>
-      prev.map((m) => (m.id === id && m.kind === 'proposal' ? { ...m, ...patch } : m)),
+      prev.map((m) => (m.id === id && m.kind === "proposal" ? { ...m, ...patch } : m)),
     );
   }
 
   async function onApprove(
-    msg: Extract<TranscriptMessage, { kind: 'proposal' }>,
+    msg: Extract<TranscriptMessage, { kind: "proposal" }>,
     dryRun: boolean,
   ): Promise<void> {
-    patchProposal(msg.id, { state: dryRun ? 'previewing' : 'running-wet' });
+    patchProposal(msg.id, { state: dryRun ? "previewing" : "running-wet" });
     try {
       const outcome = (await runTool.mutateAsync({
         name: msg.step.tool,
@@ -463,11 +561,11 @@ export default function OpsChat(): React.JSX.Element {
       })) as ToolCallOutcome;
       refreshAudit();
       if (dryRun) {
-        patchProposal(msg.id, { state: 'preview-ready', previewOutcome: outcome });
+        patchProposal(msg.id, { state: "preview-ready", previewOutcome: outcome });
         return;
       }
       patchProposal(msg.id, {
-        state: outcome.ok ? 'done' : 'failed',
+        state: outcome.ok ? "done" : "failed",
         wetOutcome: outcome,
       });
       await submitOutcome.mutateAsync({
@@ -481,11 +579,11 @@ export default function OpsChat(): React.JSX.Element {
       const outcome: ToolCallOutcome = {
         ok: false,
         name: msg.step.tool,
-        tier: 'unknown',
+        tier: "unknown",
         durationMs: 0,
-        error: { code: 'transport', message: (err as Error).message },
+        error: { code: "transport", message: (err as Error).message },
       };
-      patchProposal(msg.id, { state: 'failed', wetOutcome: outcome });
+      patchProposal(msg.id, { state: "failed", wetOutcome: outcome });
       refreshAudit();
       if (!dryRun) {
         try {
@@ -503,14 +601,14 @@ export default function OpsChat(): React.JSX.Element {
     }
   }
 
-  async function onReject(msg: Extract<TranscriptMessage, { kind: 'proposal' }>): Promise<void> {
-    patchProposal(msg.id, { state: 'rejected' });
+  async function onReject(msg: Extract<TranscriptMessage, { kind: "proposal" }>): Promise<void> {
+    patchProposal(msg.id, { state: "rejected" });
     try {
       await submitOutcome.mutateAsync({
         sessionId: msg.sessionId,
         stepId: msg.stepId,
         ok: false,
-        summary: 'operator rejected proposal',
+        summary: "operator rejected proposal",
         abort: true,
       });
     } catch {
@@ -528,36 +626,60 @@ export default function OpsChat(): React.JSX.Element {
 
   return (
     <div
-      style={{ display: 'flex', height: '100%', flexDirection: 'column' }}
+      style={{ display: "flex", height: "100%", flexDirection: "column" }}
       data-testid="ops-chat-root"
-      data-streaming={streaming ? 'true' : 'false'}
+      data-streaming={streaming ? "true" : "false"}
       data-message-count={messages.length}
     >
-      <div style={{ borderBottom: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', padding: 16, marginTop: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
+      <div
+        style={{
+          borderBottom: "1px solid var(--color-border)",
+          borderColor: "color:var(--color-border)",
+          padding: 16,
+          marginTop: 12,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 500 }}>Operator Console</h2>
-            <p style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              Natural-language goals become MCP tool calls. Reads run with one
-              click; mutations preview dry-first; destructive actions require
-              the operator to type the tool name to confirm. Every attempt \u2014
-              dry, wet, successful, failed \u2014 appends one entry to
+            <p style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+              Natural-language goals become MCP tool calls. Reads run with one click; mutations
+              preview dry-first; destructive actions require the operator to type the tool name to
+              confirm. Every attempt \u2014 dry, wet, successful, failed \u2014 appends one entry to
               {auditTail.data?.path ? (
-                <span style={{ fontFamily: 'var(--font-mono)' }}> {auditTail.data.path}</span>
+                <span style={{ fontFamily: "var(--font-mono)" }}> {auditTail.data.path}</span>
               ) : (
                 <span> the ops-chat audit journal</span>
               )}
               .
             </p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <OpsExecutorPicker />
             {messages.length > 0 && (
               <button
                 type="button"
                 onClick={onReset}
                 data-testid="ops-chat-reset"
-                style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', background: 'color:var(--color-surface-2)', paddingLeft: 12, paddingRight: 12, paddingTop: 4, paddingBottom: 4, fontSize: 12, color: 'var(--color-text-secondary)' }}
+                style={{
+                  borderRadius: "var(--r-md)",
+                  border: "1px solid var(--color-border)",
+                  borderColor: "color:var(--color-border)",
+                  background: "color:var(--color-surface-2)",
+                  paddingLeft: 12,
+                  paddingRight: 12,
+                  paddingTop: 4,
+                  paddingBottom: 4,
+                  fontSize: 12,
+                  color: "var(--color-text-secondary)",
+                }}
               >
                 New conversation
               </button>
@@ -568,57 +690,95 @@ export default function OpsChat(): React.JSX.Element {
 
       <div
         ref={scrollRef}
-        style={{ flex: 1, overflow: 'auto', padding: 16, marginTop: 12 }}
+        style={{ flex: 1, overflow: "auto", padding: 16, marginTop: 12 }}
         data-testid="ops-chat-transcript"
       >
         {messages.length === 0 && (
           <div
-            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderStyle: 'dashed', borderColor: 'color:var(--color-border)', padding: 24, fontSize: 14, color: 'var(--color-text-secondary)' }}
+            style={{
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderStyle: "dashed",
+              borderColor: "color:var(--color-border)",
+              padding: 24,
+              fontSize: 14,
+              color: "var(--color-text-secondary)",
+            }}
             data-testid="ops-chat-empty"
           >
-            <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text)' }}>
+            <h3 style={{ fontSize: 14, fontWeight: 600, color: "var(--color-text)" }}>
               Drive the fleet by describing the goal
             </h3>
             <p style={{ marginTop: 4, fontSize: 12 }}>
-              Example:{' '}
-              <span style={{ fontFamily: 'var(--font-mono)' }}>list installed vision models</span>.
-              The planner proposes tool calls one at a time, inline. Approve
-              each one; reads run with a click, mutations preview dry-first.
+              Example:{" "}
+              <span style={{ fontFamily: "var(--font-mono)" }}>list installed vision models</span>.
+              The planner proposes tool calls one at a time, inline. Approve each one; reads run
+              with a click, mutations preview dry-first.
             </p>
           </div>
         )}
         {messages.map((msg) => {
-          if (msg.kind === 'user') {
+          if (msg.kind === "user") {
             return (
-              <div key={msg.id} style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <div style={{ background: 'color:var(--color-ok)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 14, color: 'var(--color-text-inverse)', whiteSpace: 'pre-wrap' }}>
+              <div key={msg.id} style={{ display: "flex", justifyContent: "flex-end" }}>
+                <div
+                  style={{
+                    background: "color:var(--color-ok)",
+                    paddingLeft: 12,
+                    paddingRight: 12,
+                    paddingTop: 8,
+                    paddingBottom: 8,
+                    fontSize: 14,
+                    color: "var(--color-text-inverse)",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
                   {msg.content}
                 </div>
               </div>
             );
           }
-          if (msg.kind === 'refusal') {
+          if (msg.kind === "refusal") {
             return (
-              <div key={msg.id} style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <div key={msg.id} style={{ display: "flex", justifyContent: "flex-start" }}>
                 <div
-                  style={{ border: '1px solid var(--color-border)', borderColor: 'color:var(--color-warn,var(--color-ok))', padding: 12, fontSize: 14, marginTop: 4, background: 'color:var(--color-surface-1)' }}
+                  style={{
+                    border: "1px solid var(--color-border)",
+                    borderColor: "color:var(--color-warn,var(--color-ok))",
+                    padding: 12,
+                    fontSize: 14,
+                    marginTop: 4,
+                    background: "color:var(--color-surface-1)",
+                  }}
                   data-testid={`ops-chat-refusal-${msg.id}`}
                 >
                   <div style={{ fontWeight: 500 }}>Planner refused</div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{msg.reason}</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+                    {msg.reason}
+                  </div>
                 </div>
               </div>
             );
           }
-          if (msg.kind === 'done') {
+          if (msg.kind === "done") {
             return (
               <div
                 key={msg.id}
-                style={{ display: 'flex', justifyContent: 'center' }}
+                style={{ display: "flex", justifyContent: "center" }}
                 data-testid={`ops-chat-done-${msg.id}`}
               >
-                <div style={{ background: 'color:var(--color-surface-2)', paddingLeft: 12, paddingRight: 12, paddingTop: 4, paddingBottom: 4, fontSize: 10, color: 'var(--color-text-secondary)' }}>
-                  Loop closed · {msg.iterations} iteration{msg.iterations === 1 ? '' : 's'}
+                <div
+                  style={{
+                    background: "color:var(--color-surface-2)",
+                    paddingLeft: 12,
+                    paddingRight: 12,
+                    paddingTop: 4,
+                    paddingBottom: 4,
+                    fontSize: 10,
+                    color: "var(--color-text-secondary)",
+                  }}
+                >
+                  Loop closed · {msg.iterations} iteration{msg.iterations === 1 ? "" : "s"}
                 </div>
               </div>
             );
@@ -633,16 +793,37 @@ export default function OpsChat(): React.JSX.Element {
             />
           );
         })}
-        {streaming && !messages.some((m) => m.kind === 'proposal' && m.state === 'pending') && (
-          <div style={{ display: 'flex', justifyContent: 'flex-start' }} data-testid="ops-chat-pending">
-            <div style={{ background: 'color:var(--color-surface-2)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+        {streaming && !messages.some((m) => m.kind === "proposal" && m.state === "pending") && (
+          <div
+            style={{ display: "flex", justifyContent: "flex-start" }}
+            data-testid="ops-chat-pending"
+          >
+            <div
+              style={{
+                background: "color:var(--color-surface-2)",
+                paddingLeft: 12,
+                paddingRight: 12,
+                paddingTop: 8,
+                paddingBottom: 8,
+                fontSize: 12,
+                color: "var(--color-text-secondary)",
+              }}
+            >
               Planning…
             </div>
           </div>
         )}
         {error && (
           <div
-            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-err)', background: 'color:var(--color-surface-1)', padding: 8, fontSize: 12, color: 'var(--color-err)' }}
+            style={{
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "color:var(--color-err)",
+              background: "color:var(--color-surface-1)",
+              padding: 8,
+              fontSize: 12,
+              color: "var(--color-err)",
+            }}
             data-testid="ops-chat-error"
           >
             {error}
@@ -651,47 +832,68 @@ export default function OpsChat(): React.JSX.Element {
       </div>
 
       <details
-        style={{ borderTop: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', background: 'color:var(--color-surface-1)', paddingLeft: 16, paddingRight: 16, paddingTop: 8, paddingBottom: 8, fontSize: 12 }}
+        style={{
+          borderTop: "1px solid var(--color-border)",
+          borderColor: "color:var(--color-border)",
+          background: "color:var(--color-surface-1)",
+          paddingLeft: 16,
+          paddingRight: 16,
+          paddingTop: 8,
+          paddingBottom: 8,
+          fontSize: 12,
+        }}
         data-testid="ops-chat-audit-details"
       >
-        <summary style={{ cursor: 'pointer', color: 'var(--color-text-secondary)' }}>
+        <summary style={{ cursor: "pointer", color: "var(--color-text-secondary)" }}>
           Audit ({auditTail.data?.entries.length ?? 0})
         </summary>
         {auditTail.data?.entries.length ? (
           <ul
-            style={{ marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 10 }}
+            style={{ marginTop: 4, fontFamily: "var(--font-mono)", fontSize: 10 }}
             data-testid="ops-chat-audit-list"
           >
             {auditTail.data.entries.slice(0, 20).map((entry, i) => (
               <li
                 key={`${entry.ts}-${i}`}
                 data-testid={`ops-chat-audit-entry-${i}`}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-text-secondary)' }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  color: "var(--color-text-secondary)",
+                }}
               >
                 <span>{entry.ts.slice(11, 19)}</span>
                 <span
-                  style={{ ...( entry.ok ? { color: 'var(--color-ok)' } : { color: 'var(--color-err)' } ) }}
+                  style={{
+                    ...(entry.ok ? { color: "var(--color-ok)" } : { color: "var(--color-err)" }),
+                  }}
                 >
-                  {entry.ok ? '✓' : '✗'}
+                  {entry.ok ? "✓" : "✗"}
                 </span>
-                <span style={{ color: 'var(--color-text)' }}>{entry.tool}</span>
+                <span style={{ color: "var(--color-text)" }}>{entry.tool}</span>
                 {entry.dryRun && (
-                  <span style={{ borderRadius: 'var(--r-md)', background: 'color:var(--color-surface-2)' }}>
+                  <span
+                    style={{
+                      borderRadius: "var(--r-md)",
+                      background: "color:var(--color-surface-2)",
+                    }}
+                  >
                     dry
                   </span>
                 )}
-                <span >{entry.durationMs}ms</span>
+                <span>{entry.durationMs}ms</span>
                 {!entry.ok && entry.errorCode && (
-                  <span style={{ color: 'var(--color-err)' }}>{entry.errorCode}</span>
+                  <span style={{ color: "var(--color-err)" }}>{entry.errorCode}</span>
                 )}
               </li>
             ))}
           </ul>
         ) : (
-          <p style={{ marginTop: 8, color: 'var(--color-text-secondary)' }}>
-            No audit entries yet \u2014 run a step to start populating{' '}
+          <p style={{ marginTop: 8, color: "var(--color-text-secondary)" }}>
+            No audit entries yet \u2014 run a step to start populating{" "}
             {auditTail.data?.path ? (
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{auditTail.data.path}</span>
+              <span style={{ fontFamily: "var(--font-mono)" }}>{auditTail.data.path}</span>
             ) : (
               <span>the ops-chat audit journal</span>
             )}
@@ -700,9 +902,16 @@ export default function OpsChat(): React.JSX.Element {
         )}
       </details>
 
-      <div style={{ borderTop: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', padding: 12, marginTop: 8 }}>
+      <div
+        style={{
+          borderTop: "1px solid var(--color-border)",
+          borderColor: "color:var(--color-border)",
+          padding: 12,
+          marginTop: 8,
+        }}
+      >
         <div
-          style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}
+          style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 4 }}
           data-testid="ops-chat-canned-prompts"
         >
           {CANNED_PROMPTS.map((cp, i) => (
@@ -712,7 +921,19 @@ export default function OpsChat(): React.JSX.Element {
               onClick={() => setDraft(cp.prompt)}
               disabled={streaming}
               data-testid={`ops-chat-canned-${i}`}
-              style={{ borderRadius: 9999, border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontSize: 10, color: 'var(--color-text-secondary)', opacity: 0.5 }}
+              style={{
+                borderRadius: 9999,
+                border: "1px solid var(--color-border)",
+                borderColor: "color:var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 2,
+                paddingBottom: 2,
+                fontSize: 10,
+                color: "var(--color-text-secondary)",
+                opacity: 0.5,
+              }}
             >
               {cp.label}
             </button>
@@ -722,7 +943,7 @@ export default function OpsChat(): React.JSX.Element {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               e.preventDefault();
               onSubmit();
             }
@@ -730,27 +951,53 @@ export default function OpsChat(): React.JSX.Element {
           rows={2}
           placeholder={
             messages.length === 0
-              ? 'e.g. list installed vision models'
+              ? "e.g. list installed vision models"
               : streaming
-                ? 'Waiting for next proposal…'
+                ? "Waiting for next proposal…"
                 : 'Start a new conversation by clicking "New conversation"'
           }
           disabled={streaming}
-          style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', background: 'var(--color-surface-2)', padding: 8, fontSize: 14, fontFamily: 'var(--font-mono)', opacity: 0.5 }}
+          style={{
+            width: "100%",
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "color:var(--color-border)",
+            background: "var(--color-surface-2)",
+            padding: 8,
+            fontSize: 14,
+            fontFamily: "var(--font-mono)",
+            opacity: 0.5,
+          }}
           data-testid="ops-chat-goal"
         />
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <div
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}
+        >
           <button
             type="button"
             onClick={onSubmit}
             disabled={submitDisabled}
             data-testid="ops-chat-submit"
-            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'color:var(--color-border)', background: 'var(--color-brand)', color: 'var(--color-brand-contrast)', paddingLeft: 12, paddingRight: 12, paddingTop: 4, paddingBottom: 4, fontSize: 14, fontWeight: 500, cursor: 'not-allowed', opacity: 0.5 }}
+            style={{
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "color:var(--color-border)",
+              background: "var(--color-brand)",
+              color: "var(--color-brand-contrast)",
+              paddingLeft: 12,
+              paddingRight: 12,
+              paddingTop: 4,
+              paddingBottom: 4,
+              fontSize: 14,
+              fontWeight: 500,
+              cursor: "not-allowed",
+              opacity: 0.5,
+            }}
           >
-            {streaming ? 'Streaming…' : messages.length === 0 ? 'Plan' : 'Send'}
+            {streaming ? "Streaming…" : messages.length === 0 ? "Plan" : "Send"}
           </button>
-          <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
-            ⌘/Ctrl+Enter to send · {messages.length} message{messages.length === 1 ? '' : 's'}
+          <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+            ⌘/Ctrl+Enter to send · {messages.length} message{messages.length === 1 ? "" : "s"}
           </span>
         </div>
       </div>
@@ -760,7 +1007,7 @@ export default function OpsChat(): React.JSX.Element {
 
 function summarizeOutcome(outcome: ToolCallOutcome): string {
   if (!outcome.ok) {
-    return `error ${outcome.error?.code ?? 'unknown'}: ${outcome.error?.message ?? '(no message)'}`;
+    return `error ${outcome.error?.code ?? "unknown"}: ${outcome.error?.message ?? "(no message)"}`;
   }
   const json = JSON.stringify(outcome.result);
   return json.length > 500 ? `ok (${json.length} bytes): ${json.slice(0, 500)}…` : `ok: ${json}`;

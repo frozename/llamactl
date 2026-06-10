@@ -1,22 +1,28 @@
-import { probeFleet, stateTransitions, type ProbeFleetOptions, type ProbeReport, type ProbeState } from './probe.js';
-import { probeFleetViaNova } from './facade-probe.js';
+import {
+  probeFleet,
+  stateTransitions,
+  type ProbeFleetOptions,
+  type ProbeReport,
+  type ProbeState,
+} from "./probe.js";
+import { probeFleetViaNova } from "./facade-probe.js";
 import {
   appendHealerJournal,
   defaultHealerJournalPath,
   type JournalEntry,
   type JournalProposalEntry,
   type JournalTransitionSnapshot,
-} from './journal.js';
-import { askPlanner, buildGoal, proposalId, type Transition } from './remediation.js';
-import { executePlan } from './execute.js';
-import { gatePlan, type Tier, type PlanLike } from './severity.js';
+} from "./journal.js";
+import { askPlanner, buildGoal, proposalId, type Transition } from "./remediation.js";
+import { executePlan } from "./execute.js";
+import { gatePlan, type Tier, type PlanLike } from "./severity.js";
 import {
   fetchComposites,
   formatCompositeReason,
   shouldRemediateComposite,
   type CompositeSummary,
-} from './composites.js';
-import type { RunbookToolClient } from '../types.js';
+} from "./composites.js";
+import type { RunbookToolClient } from "../types.js";
 
 /**
  * Healer loop — the "observe + journal" half of autonomous ops.
@@ -27,7 +33,7 @@ import type { RunbookToolClient } from '../types.js';
  * level agent) consumes.
  */
 
-export interface HealerLoopOptions extends Omit<ProbeFleetOptions, 'fetch' | 'now'> {
+export interface HealerLoopOptions extends Omit<ProbeFleetOptions, "fetch" | "now"> {
   /** Milliseconds between ticks. Clamped to >= 1000 in the scheduler. */
   intervalMs?: number;
   /** Run one tick, emit one journal entry, return. Default false. */
@@ -60,7 +66,7 @@ export interface HealerLoopOptions extends Omit<ProbeFleetOptions, 'fetch' | 'no
    * `llamactl heal --execute <proposal-id>`. In `'auto'` the loop
    * executes the plan immediately if the severity gate allows it.
    */
-  mode?: 'propose' | 'auto';
+  mode?: "propose" | "auto";
   /** Max tier allowed for auto-execution. Default 2 (mutation-dry-run-safe). */
   severityThreshold?: Tier;
   /** Fired after a proposal entry is journaled — lets tests/CLI
@@ -79,7 +85,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
   const journalPath = opts.journalPath ?? defaultHealerJournalPath();
   const writeJournal = opts.writeJournal ?? appendHealerJournal;
   const intervalMs = Math.max(1000, opts.intervalMs ?? 30_000);
-  const mode: 'propose' | 'auto' = opts.mode ?? 'propose';
+  const mode: "propose" | "auto" = opts.mode ?? "propose";
   const severityThreshold: Tier = opts.severityThreshold ?? 2;
   let stopped = false;
   let previous: ProbeReport | null = null;
@@ -97,7 +103,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
   const done = (async (): Promise<void> => {
     do {
       let report: ProbeReport;
-      let source: 'nova' | 'direct' = opts.toolClient ? 'nova' : 'direct';
+      let source: "nova" | "direct" = opts.toolClient ? "nova" : "direct";
       try {
         if (opts.toolClient) {
           try {
@@ -107,7 +113,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
             process.stderr.write(
               `healer: facade health call failed: ${msg}; falling back to direct probe\n`,
             );
-            source = 'direct';
+            source = "direct";
             report = await runDirectProbe();
           }
         } else {
@@ -116,7 +122,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
       } catch (err) {
         writeJournal(
           {
-            kind: 'error',
+            kind: "error",
             ts: new Date((opts.now ?? Date.now)()).toISOString(),
             message: (err as Error).message,
           },
@@ -131,7 +137,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
       for (const t of transitions) {
         writeJournal(
           {
-            kind: 'transition',
+            kind: "transition",
             ts: report.ts,
             name: t.name,
             resourceKind: t.kind,
@@ -141,7 +147,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
           journalPath,
         );
       }
-      writeJournal({ kind: 'tick', ts: report.ts, report, source }, journalPath);
+      writeJournal({ kind: "tick", ts: report.ts, report, source }, journalPath);
       previous = report;
       opts.onTick?.(report, transitions);
 
@@ -207,20 +213,20 @@ function sleep(ms: number): Promise<void> {
  *  `unknown → X`; persistent unhealthy ticks are not re-proposed
  *  because `stateTransitions` only emits on actual flips. */
 function shouldRemediate(
-  from: ProbeState | 'unknown' | 'degraded',
-  to: ProbeState | 'degraded',
+  from: ProbeState | "unknown" | "degraded",
+  to: ProbeState | "degraded",
 ): boolean {
   if (from === to) return false;
-  if (to !== 'unhealthy' && to !== ('degraded' as ProbeState | 'degraded')) return false;
+  if (to !== "unhealthy" && to !== ("degraded" as ProbeState | "degraded")) return false;
   // Only propose on the flip out of healthy (or first-seen unknown).
-  return from === 'healthy' || from === 'unknown';
+  return from === "healthy" || from === "unknown";
 }
 
 interface RemediateOptions {
   toolClient: RunbookToolClient;
   transitions: ReturnType<typeof stateTransitions>;
-  source: 'nova' | 'direct';
-  mode: 'propose' | 'auto';
+  source: "nova" | "direct";
+  mode: "propose" | "auto";
   severityThreshold: Tier;
   writeJournal: (entry: JournalEntry) => void;
   onProposal?: (entry: JournalProposalEntry) => void;
@@ -240,7 +246,7 @@ async function remediate(opts: RemediateOptions): Promise<void> {
     const ts = new Date().toISOString();
     if (!ask.ok) {
       opts.writeJournal({
-        kind: 'plan-failed',
+        kind: "plan-failed",
         ts,
         transition: snapshot,
         reason: ask.reason,
@@ -251,7 +257,7 @@ async function remediate(opts: RemediateOptions): Promise<void> {
 
     const id = proposalId(ask.plan);
     const proposal: JournalProposalEntry = {
-      kind: 'proposal',
+      kind: "proposal",
       ts,
       transition: snapshot,
       plan: ask.plan,
@@ -261,15 +267,15 @@ async function remediate(opts: RemediateOptions): Promise<void> {
     opts.writeJournal(proposal);
     opts.onProposal?.(proposal);
 
-    if (opts.mode === 'propose') continue;
+    if (opts.mode === "propose") continue;
 
     // Auto mode — planner-owned confirmation flag is absolute.
     if (ask.plan.requiresConfirmation === true) {
       opts.writeJournal({
-        kind: 'refused',
+        kind: "refused",
         ts: new Date().toISOString(),
         proposalId: id,
-        reason: 'planner-requires-confirmation',
+        reason: "planner-requires-confirmation",
       });
       continue;
     }
@@ -280,12 +286,10 @@ async function remediate(opts: RemediateOptions): Promise<void> {
     const hasDestructive = gate.refusedSteps.some((s) => s.tier === 3);
     if (!gate.allowed) {
       opts.writeJournal({
-        kind: 'refused',
+        kind: "refused",
         ts: new Date().toISOString(),
         proposalId: id,
-        reason: hasDestructive
-          ? 'destructive-requires-manual-approval'
-          : 'severity-exceeded',
+        reason: hasDestructive ? "destructive-requires-manual-approval" : "severity-exceeded",
         refusedSteps: gate.refusedSteps,
       });
       continue;
@@ -296,7 +300,7 @@ async function remediate(opts: RemediateOptions): Promise<void> {
       dryRun: false,
     });
     const executed = {
-      kind: 'executed' as const,
+      kind: "executed" as const,
       ts: new Date().toISOString(),
       proposalId: id,
       steps: exec.steps,
@@ -308,8 +312,8 @@ async function remediate(opts: RemediateOptions): Promise<void> {
 
 interface RemediateCompositesOptions {
   toolClient: RunbookToolClient;
-  source: 'nova' | 'direct';
-  mode: 'propose' | 'auto';
+  source: "nova" | "direct";
+  mode: "propose" | "auto";
   severityThreshold: Tier;
   writeJournal: (entry: JournalEntry) => void;
   onProposal?: (entry: JournalProposalEntry) => void;
@@ -328,7 +332,7 @@ function buildCompositeApplyPlan(summary: CompositeSummary): PlanLike {
   return {
     steps: [
       {
-        tool: 'llamactl.composite.apply',
+        tool: "llamactl.composite.apply",
         args: {
           manifestYaml: summary.manifestYaml,
           dryRun: false,
@@ -341,9 +345,7 @@ function buildCompositeApplyPlan(summary: CompositeSummary): PlanLike {
   };
 }
 
-async function remediateComposites(
-  opts: RemediateCompositesOptions,
-): Promise<void> {
+async function remediateComposites(opts: RemediateCompositesOptions): Promise<void> {
   let composites: CompositeSummary[];
   try {
     composites = await fetchComposites(opts.toolClient);
@@ -353,15 +355,15 @@ async function remediateComposites(
     // tried + failed; then continue. Mirrors how the probe path
     // journals its own fetch failures as `error` entries.
     opts.writeJournal({
-      kind: 'plan-failed',
+      kind: "plan-failed",
       ts: new Date().toISOString(),
       transition: {
-        name: '*',
-        resourceKind: 'composite',
-        from: 'unknown',
-        to: 'unknown',
+        name: "*",
+        resourceKind: "composite",
+        from: "unknown",
+        to: "unknown",
       },
-      reason: 'composite-list-failed',
+      reason: "composite-list-failed",
       message: (err as Error).message ?? String(err),
     });
     return;
@@ -371,7 +373,7 @@ async function remediateComposites(
     if (!shouldRemediateComposite(summary)) continue;
     const snapshot: JournalTransitionSnapshot = {
       name: summary.name,
-      resourceKind: 'composite',
+      resourceKind: "composite",
       // `from` isn't tracked across ticks for composites yet — the
       // loop doesn't maintain a prev-phase cache the way it does for
       // gateway/provider probes. Using the current phase on both
@@ -384,7 +386,7 @@ async function remediateComposites(
     const plan = buildCompositeApplyPlan(summary);
     const id = proposalId(plan);
     const proposal: JournalProposalEntry = {
-      kind: 'proposal',
+      kind: "proposal",
       ts: new Date().toISOString(),
       transition: snapshot,
       plan,
@@ -394,7 +396,7 @@ async function remediateComposites(
     opts.writeJournal(proposal);
     opts.onProposal?.(proposal);
 
-    if (opts.mode === 'propose') continue;
+    if (opts.mode === "propose") continue;
 
     // Severity gate — tier-2 by construction, so the default
     // threshold (2) allows it and `--severity-threshold=1` refuses
@@ -404,10 +406,10 @@ async function remediateComposites(
     const gate = gatePlan(plan, opts.severityThreshold);
     if (!gate.allowed) {
       opts.writeJournal({
-        kind: 'refused',
+        kind: "refused",
         ts: new Date().toISOString(),
         proposalId: id,
-        reason: 'severity-exceeded',
+        reason: "severity-exceeded",
         refusedSteps: gate.refusedSteps,
       });
       continue;
@@ -418,7 +420,7 @@ async function remediateComposites(
       dryRun: false,
     });
     const executed = {
-      kind: 'executed' as const,
+      kind: "executed" as const,
       ts: new Date().toISOString(),
       proposalId: id,
       steps: exec.steps,

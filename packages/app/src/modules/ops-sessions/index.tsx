@@ -1,9 +1,9 @@
-import * as React from 'react';
-import { EditorialHero } from '../../ui';
-import { trpc } from '../../lib/trpc';
-import { useTabStore } from '../../stores/tab-store';
-import { SessionsTable } from './sessions-table';
-import { DeleteConfirm } from './delete-confirm';
+import * as React from "react";
+import { EditorialHero } from "../../ui";
+import { trpc } from "../../lib/trpc";
+import { useTabStore } from "../../stores/tab-store";
+import { SessionsTable } from "./sessions-table";
+import { DeleteConfirm } from "./delete-confirm";
 
 export default function OpsSessionsModule(): React.JSX.Element {
   const list = trpc.opsSessionList.useQuery({ limit: 100 });
@@ -16,7 +16,7 @@ export default function OpsSessionsModule(): React.JSX.Element {
     useTabStore.getState().open({
       tabKey: `ops-session:${sessionId}`,
       title: `Session ${sessionId.slice(0, 8)}`,
-      kind: 'ops-session',
+      kind: "ops-session",
       instanceId: sessionId,
       openedAt: Date.now(),
     });
@@ -25,7 +25,7 @@ export default function OpsSessionsModule(): React.JSX.Element {
   return (
     <div
       data-testid="ops-sessions-root"
-      style={{ padding: '32px 48px 48px', maxWidth: 1200, margin: '0 auto' }}
+      style={{ padding: "32px 48px 48px", maxWidth: 1200, margin: "0 auto" }}
     >
       <EditorialHero
         eyebrow="Replay archive"

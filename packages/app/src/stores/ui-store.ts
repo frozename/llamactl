@@ -1,5 +1,5 @@
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 /**
  * Renderer-level UI state shared across modules. Per-module stores live
@@ -18,13 +18,13 @@ interface UIStore {
 export const useUIStore = create<UIStore>()(
   persist(
     (set) => ({
-      activeModule: 'dashboard',
+      activeModule: "dashboard",
       setActiveModule: (id) => set({ activeModule: id }),
       commandPaletteOpen: false,
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
     }),
     {
-      name: 'llamactl-ui',
+      name: "llamactl-ui",
       partialize: (state) => ({ activeModule: state.activeModule }),
     },
   ),

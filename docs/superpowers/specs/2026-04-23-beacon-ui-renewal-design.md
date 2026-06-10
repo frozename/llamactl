@@ -64,12 +64,12 @@ Shadow `--shadow-sm` / `-md` / `-lg` for panels, elevated surfaces, and floating
 
 ### 3.4 Theme families
 
-| id         | role         | brand     | surfaces | color-scheme |
-|------------|--------------|-----------|----------|--------------|
-| `sirius`   | default, dark | #6366f1 indigo | near-black | dark |
-| `ember`    | warm dark    | #f59e0b amber  | warm near-black | dark |
-| `clinical` | light        | #2563eb blue   | off-white ramp | light |
-| `scrubs`   | teal dark    | #14b8a6 teal   | near-black with teal tint | dark |
+| id         | role          | brand          | surfaces                  | color-scheme |
+| ---------- | ------------- | -------------- | ------------------------- | ------------ |
+| `sirius`   | default, dark | #6366f1 indigo | near-black                | dark         |
+| `ember`    | warm dark     | #f59e0b amber  | warm near-black           | dark         |
+| `clinical` | light         | #2563eb blue   | off-white ramp            | light        |
+| `scrubs`   | teal dark     | #14b8a6 teal   | near-black with teal tint | dark         |
 
 Each family is a block in the token CSS that overrides the Sirius defaults. Theme switching sets `document.documentElement.dataset.theme` and persists to `localStorage` under `beacon.theme`.
 
@@ -77,11 +77,11 @@ Each family is a block in the token CSS that overrides the Sirius defaults. Them
 
 First load after the change reads the existing `llamactl-theme` (or whatever key the current store uses) and maps:
 
-| legacy | → new    | extras |
-|--------|---------|--------|
-| `glass` | `sirius` | — |
+| legacy  | → new    | extras                                                                                                |
+| ------- | -------- | ----------------------------------------------------------------------------------------------------- |
+| `glass` | `sirius` | —                                                                                                     |
 | `neon`  | `sirius` | set `beacon.scanlines = true` to preserve the terminal-green scanline overlay as an opt-in decoration |
-| `ops`   | `scrubs` | — |
+| `ops`   | `scrubs` | —                                                                                                     |
 
 The migration runs once, writes `beacon.migrated = 1`, and never runs again. Users land on the closest match without losing their preference.
 
@@ -145,6 +145,7 @@ The rail stops being a module selector. It becomes a view switcher for the left 
 Each button is 40 × 40 with 10 px radius; active state = brand-ghost background + 2 px brand indicator on the left edge. Tooltips on hover.
 
 **View semantics:**
+
 - **Explorer** — the main module tree (see §6).
 - **Search** — global search across modules, workloads, nodes, logs (initial P2 shipment just opens the command palette; full search is P3).
 - **Sessions** — recent chat and ops sessions, time-grouped (P3 feature; the rail button is stubbed in P2).
@@ -233,6 +234,7 @@ Dynamic children are populated by the same `trpc.workloadList` / `trpc.nodeList`
 ### 6.3 Dissolving the `*-tabbed` modules
 
 Today:
+
 ```
 packages/app/src/modules/
   ops-tabbed/         → bundles: Ops Chat, Planner
@@ -243,6 +245,7 @@ packages/app/src/modules/
 ```
 
 After renewal:
+
 ```
 packages/app/src/modules/
   ops/               → just the Ops Chat component (formerly a sub-tab)
@@ -265,6 +268,7 @@ Today: `⌘⇧P` opens the palette. Keep that. **Add** `⌘K` from the TitleBar 
 Each surface is classified as one or the other. The classification is a design invariant; modules declare their intent, and the primitives render accordingly.
 
 **Utilitarian surfaces:** Logs, Workloads list, Models catalog, Nodes list, Pipelines, Bench, Pulls, Cost, Ops Chat history, and most of Chat's message list.
+
 - Inter 11–13 px body, Inter 16–20 px section heads
 - Mono + tabular-nums for data
 - Tight 4–8 px row padding, 10–12 px section gutters
@@ -273,6 +277,7 @@ Each surface is classified as one or the other. The classification is a design i
 - `Card` panels are subtle: `surface-1` background, `border-subtle` edge
 
 **Editorial surfaces:** Dashboard landing hero, every module empty state, Projects new-project welcome, Settings section headers, About, onboarding/first-run.
+
 - `EditorialHero` component — Inter 300 display at 56–96 px, tight negative tracking (−0.03em)
 - Emphasis inside titles via `<em class="t-brand">` (brand color, upright — never italic)
 - `AtmosphericPanel` with gradient + two atmospheric blobs
@@ -340,23 +345,23 @@ Each phase is independently shippable and revertable. No phase depends on the ne
 - Adopt primitives across modules — replace inline Tailwind for buttons, badges, inputs, status dots with `@/ui` equivalents.
 - Retire the current `ThemePickerButton` in favor of `ThemeOrbs`. Remove the legacy migration code once it's been in prod for one release cycle.
 
-**Visible outcome:** full Beacon. No "*-tabbed" modules. Dynamic items openable as tabs. Dense views disciplined, hero surfaces editorial.
+**Visible outcome:** full Beacon. No "\*-tabbed" modules. Dynamic items openable as tabs. Dense views disciplined, hero surfaces editorial.
 
 ## 10. State & persistence
 
 New `localStorage` keys (all prefixed `beacon.`):
 
-| key                    | type                      | written in |
-|------------------------|---------------------------|------------|
-| `beacon.theme`         | `'sirius' \| 'ember' \| 'clinical' \| 'scrubs'` | P0 |
-| `beacon.scanlines`     | `'1' \| '0'`              | P0 (set only by migration for `neon` users) |
-| `beacon.migrated`      | `'1'`                     | P0 |
-| `beacon.tabs`          | JSON `TabSnapshot[]`      | P2 |
-| `beacon.tabs.active`   | string (tabKey)           | P2 |
-| `beacon.tabs.closed`   | JSON `TabSnapshot[]` (LRU 10) | P2 |
-| `beacon.explorer.collapsed` | JSON `string[]` (group ids) | P2 |
-| `beacon.rail.view`     | rail view id              | P2 |
-| `beacon.pinned`        | JSON `string[]` (tabKeys) | P2 |
+| key                         | type                                            | written in                                  |
+| --------------------------- | ----------------------------------------------- | ------------------------------------------- |
+| `beacon.theme`              | `'sirius' \| 'ember' \| 'clinical' \| 'scrubs'` | P0                                          |
+| `beacon.scanlines`          | `'1' \| '0'`                                    | P0 (set only by migration for `neon` users) |
+| `beacon.migrated`           | `'1'`                                           | P0                                          |
+| `beacon.tabs`               | JSON `TabSnapshot[]`                            | P2                                          |
+| `beacon.tabs.active`        | string (tabKey)                                 | P2                                          |
+| `beacon.tabs.closed`        | JSON `TabSnapshot[]` (LRU 10)                   | P2                                          |
+| `beacon.explorer.collapsed` | JSON `string[]` (group ids)                     | P2                                          |
+| `beacon.rail.view`          | rail view id                                    | P2                                          |
+| `beacon.pinned`             | JSON `string[]` (tabKeys)                       | P2                                          |
 
 Old keys are left untouched after migration — P3 removes them.
 
@@ -381,7 +386,7 @@ These rules apply to every surface — UI copy, doc copy, commit messages, statu
 7. **Numbers are digits.** `4 themes`, not `four themes`. Units compact: `842ms`, `1.24M`, `99.98%`.
 8. **Emphasis is brand-painted, never italic.** Inline `<em class="t-brand">` renders the emphasized word in `--color-brand` with `font-style: normal`.
 9. **Third person or imperative.** Docs instruct ("Drop this in"), specs describe ("Every primitive resolves to a token"). Avoid "we" and "you" unless the surface is explicitly conversational (chat, onboarding tip).
-10. **Present tense.** The system *is*, does, runs. Avoid "will support" / "is supported by".
+10. **Present tense.** The system _is_, does, runs. Avoid "will support" / "is supported by".
 11. **No exclamation marks.** Confidence without performance.
 12. **Visual "do not" list:** no purple-blue gradients as backgrounds; no "card with a colored left border only" pattern; no inner shadows; no frosted-glass / backdrop-blur as a default surface treatment; no photography unless explicitly justified (cool, desaturated, 15 % grain if used).
 

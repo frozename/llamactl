@@ -40,6 +40,7 @@ per-process workarounds, and that compose cleanly with our existing
 exception-safety patch.
 
 Non-goals:
+
 - Reworking mlx-lm's BatchGenerator scheduler. Out of scope; large
   refactor; mlx-lm already evolves quickly.
 - Cross-process coordination (multi-host fleets, gateway-level routing).
@@ -50,6 +51,7 @@ Non-goals:
 ### MLX core (ml-explore/mlx)
 
 #### M1. Per-stream `MTL::CommandQueue`
+
 Today `mlx::core::metal::Device` holds ONE `MTL::CommandQueue`
 (`mlx/backend/metal/device.cpp:269`) shared by every stream. Refactor
 `Device` to maintain a `unordered_map<int, NS::SharedPtr<MTL::CommandQueue>>`
@@ -76,6 +78,7 @@ Effort: ~1-2 days for the refactor + tests. Touch surface: `device.h`,
 `device.cpp`, `eval.cpp`, possibly `event.cpp`.
 
 #### M2. Per-stream `MTL::ResidencySet`
+
 Same shape as M1 but for the residency set. Currently `Device` has one
 global `ResidencySet` (`mlx/backend/metal/resident.h:29`). With per-stream
 queues, weights for different models should also wire into different
@@ -86,6 +89,7 @@ Effort: ~1-2 days. Most of the work is mechanical (find call sites,
 key by stream).
 
 #### M3. `Stream` API: optional `tag` field
+
 Add `optional<string> tag` to the `Stream` struct. Lets higher layers
 (oMLX, mlx-lm) say "this stream belongs to model X" without inventing
 their own keying. Enables M1/M2's per-stream lifecycle to be exposed
@@ -96,6 +100,7 @@ Backward compat: opt-in field with default empty.
 Effort: ~half day. Touch surface: `stream.h`, `stream.cpp`.
 
 #### M4. `Stream` generation counter (resolves round-3 HIGH finding)
+
 Closes the stream-index-reuse race in the exception-safety patch: a
 Metal completion handler captured against a destroyed-and-recreated
 stream's index could stash an error against the new incarnation.
@@ -105,6 +110,7 @@ in `notify_stream_error` / `throw_if_stream_error` closes the window.
 Effort: ~half day. Couples naturally with M3 (same struct).
 
 #### M5. GPU-watchdog awareness in command-buffer splitting
+
 `max_ops_per_buffer_=40` / `max_mb_per_buffer_=40` are already there
 (`device.cpp:445-448`) and split large fused ops into multiple buffers.
 But the limit is static, and doesn't shrink under multi-stream load.
@@ -119,6 +125,7 @@ to gather data, then add adaptive logic if the manual dial proves useful.
 ### oMLX (jundot/omlx)
 
 #### O1. `--isolate-models` flag (spawn-per-model mode)
+
 oMLX manages N child processes, one per declared model, on adjacent ports.
 The parent process becomes a thin router that fronts the children at
 `--port` and forwards by `model` field in the request JSON. Each child
@@ -141,6 +148,7 @@ Effort: ~2-3 days. Touch surface: `omlx/cli.py`, new `omlx/router.py`,
 process supervision code.
 
 #### O2. Per-model concurrency caps
+
 `SchedulerConfig.per_model_max_concurrent: dict[str, int]`. CLI flag
 `--per-model-max-concurrent qwen3-8b=4,granite-3b=8`. Lets one-process
 multi-model setups still work in regimes where the user accepts mcr=1
@@ -150,6 +158,7 @@ Effort: ~half day. Touch surface: `omlx/settings.py`,
 `omlx/scheduler.py` admission logic.
 
 #### O3. Recovery-on-Metal-error
+
 When mlx-lm/mlx surfaces a `[METAL] Command buffer execution failed`
 via our exception-safety path, oMLX currently fails the whole batch
 step. Better: mark just THAT request as failed, retry the rest of the
@@ -159,6 +168,7 @@ Effort: ~1 day. Touch surface: `omlx/scheduler.py`,
 `omlx/engine/batched.py`.
 
 #### O4. `--max-completion-batch-size` (done in this session)
+
 Already implemented + deployed on mac-mini's oMLX checkout. Still
 deserves an upstream PR to `jundot/omlx`. Patch is ~12 lines across
 `omlx/settings.py` and `omlx/cli.py`.
@@ -169,11 +179,13 @@ on the settings round-trip + open the PR.
 ### llamactl (this repo)
 
 #### L1. Per-workload isolated model dir (done in this session)
+
 Already landed in `packages/core/src/engines/omlx.ts` + tested (18
 green tests). Plus the three ModelHost manifests
 (`templates/workloads/mlx-{granite-3b,granite-8b,qwen3-8b}-iso-mac-mini.yaml`).
 
 #### L2. `env` field on ModelHost manifest schema
+
 Lets workloads declare per-process env vars without leaning on the
 agent's plist. Useful for `MLX_METAL_MAX_INFLIGHT_PER_STREAM`,
 `HF_HUB_OFFLINE`, etc.
@@ -183,6 +195,7 @@ Effort: ~half day. Touch surface:
 spawn logic to merge with `CHILD_ENV_ALLOWLIST`.
 
 #### L3. `kind: Fleet` abstraction
+
 A single Fleet spec expands to N ModelHost manifests with shared
 family/binary/env. Quality-of-life for patterns like the Fleet L
 three-model setup we just wired by hand.
@@ -196,12 +209,14 @@ Effort: ~1-2 days. Touch surface: schema, apply.ts, CLI commands.
 ## Suggested phasing
 
 **Phase A — ship the small upstream-PR-able items (low risk, fast)**
+
 - M4 (Stream generation counter; closes the known HIGH finding)
 - M5 (GPU-watchdog env knob)
 - O4 (`--max-completion-batch-size` PR cleanup + submission)
 - L2 (env field on ModelHost manifest)
 
 **Phase B — the real upstream MLX work (high impact)**
+
 - M3 (Stream tag) — prerequisite for M1/M2 API ergonomics
 - M1 (per-stream CommandQueue)
 - M2 (per-stream ResidencySet)
@@ -210,12 +225,14 @@ Effort: ~1-2 days. Touch surface: schema, apply.ts, CLI commands.
   workaround.
 
 **Phase C — oMLX architectural improvements (medium-high impact)**
+
 - O3 (recovery-on-Metal-error) — small but composes with our patches
 - O2 (per-model concurrency caps)
 - O1 (`--isolate-models`) — only if M1/M2 in Phase B don't fully
   solve the one-process case
 
 **Phase D — llamactl polish (lowest priority)**
+
 - L3 (Fleet abstraction) — defer until pattern demand justifies it
 
 ## Open design questions for the adversarial planners

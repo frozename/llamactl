@@ -1,12 +1,12 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   createTunnelClient,
   createTunnelServer,
   type TunnelReq,
   type TunnelSubscription,
-} from '../src/tunnel/index.js';
-import { hashToken } from '../src/server/auth.js';
-import { handleTunnelRelay } from '../src/server/tunnel-relay.js';
+} from "../src/tunnel/index.js";
+import { hashToken } from "../src/server/auth.js";
+import { handleTunnelRelay } from "../src/server/tunnel-relay.js";
 
 /**
  * B.4 coverage — end-to-end SSE relay. Boots a central agent with
@@ -25,23 +25,23 @@ async function readSSE(res: Response, maxFrames = 50): Promise<SSEFrame[]> {
   if (!res.body) return out;
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buf = '';
+  let buf = "";
   while (out.length < maxFrames) {
     const { value, done } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
     let idx: number;
-    while ((idx = buf.indexOf('\n\n')) !== -1) {
+    while ((idx = buf.indexOf("\n\n")) !== -1) {
       const chunk = buf.slice(0, idx);
       buf = buf.slice(idx + 2);
       if (!chunk) continue;
-      const frame: SSEFrame = { data: '' };
-      for (const line of chunk.split('\n')) {
-        if (line.startsWith('event:')) frame.event = line.slice(6).trim();
-        else if (line.startsWith('data:')) frame.data = line.slice(5).trim();
+      const frame: SSEFrame = { data: "" };
+      for (const line of chunk.split("\n")) {
+        if (line.startsWith("event:")) frame.event = line.slice(6).trim();
+        else if (line.startsWith("data:")) frame.data = line.slice(5).trim();
       }
       out.push(frame);
-      if (frame.event === 'done') return out;
+      if (frame.event === "done") return out;
     }
   }
   return out;
@@ -60,29 +60,26 @@ async function startHarness(script: {
   delayMs?: number;
   throwErr?: Error;
 }): Promise<RunningHarness> {
-  const bearer = 'relay-bearer';
-  const tunnelBearer = 'tunnel-bearer';
+  const bearer = "relay-bearer";
+  const tunnelBearer = "tunnel-bearer";
   const bearerHash = hashToken(bearer);
-  const nodeName = 'node1';
+  const nodeName = "node1";
   const receivedCancel: string[] = [];
   const tunnelSrv = createTunnelServer({
     expectedBearerHash: hashToken(tunnelBearer),
   });
   const bun = Bun.serve({
     port: 0,
-    hostname: '127.0.0.1',
+    hostname: "127.0.0.1",
     async fetch(req, server) {
       const url = new URL(req.url);
-      if (url.pathname === '/tunnel') {
-        return (
-          tunnelSrv.handleUpgrade(req, server) ??
-          new Response('no', { status: 400 })
-        );
+      if (url.pathname === "/tunnel") {
+        return tunnelSrv.handleUpgrade(req, server) ?? new Response("no", { status: 400 });
       }
-      if (url.pathname.startsWith('/tunnel-relay/')) {
+      if (url.pathname.startsWith("/tunnel-relay/")) {
         return handleTunnelRelay(req, url, tunnelSrv, bearerHash);
       }
-      return new Response('404', { status: 404 });
+      return new Response("404", { status: 404 });
     },
     websocket: tunnelSrv.websocket,
   });
@@ -138,83 +135,70 @@ async function startHarness(script: {
   };
 }
 
-describe('tunnel-relay SSE', () => {
+describe("tunnel-relay SSE", () => {
   let harness: RunningHarness;
   afterEach(async () => {
     if (harness) await harness.stop();
   });
 
-  test('relays three events + done frame over SSE', async () => {
+  test("relays three events + done frame over SSE", async () => {
     harness = await startHarness({
       events: [{ i: 0 }, { i: 1 }, { i: 2 }],
     });
-    const res = await fetch(
-      `http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`,
-      {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${harness.bearer}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ method: 'tick', type: 'subscription', input: null }),
+    const res = await fetch(`http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${harness.bearer}`,
+        "content-type": "application/json",
       },
-    );
+      body: JSON.stringify({ method: "tick", type: "subscription", input: null }),
+    });
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toContain('text/event-stream');
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
     const frames = await readSSE(res);
     const dataFrames = frames.filter((f) => !f.event);
-    const doneFrames = frames.filter((f) => f.event === 'done');
-    expect(dataFrames.map((f) => JSON.parse(f.data))).toEqual([
-      { i: 0 },
-      { i: 1 },
-      { i: 2 },
-    ]);
+    const doneFrames = frames.filter((f) => f.event === "done");
+    expect(dataFrames.map((f) => JSON.parse(f.data))).toEqual([{ i: 0 }, { i: 1 }, { i: 2 }]);
     expect(doneFrames.length).toBe(1);
     expect(JSON.parse(doneFrames[0]!.data)).toEqual({ ok: true });
   });
 
-  test('agent-side error surfaces as done with ok:false', async () => {
+  test("agent-side error surfaces as done with ok:false", async () => {
     harness = await startHarness({
       events: [{ seen: 1 }],
-      throwErr: Object.assign(new Error('kaboom'), { code: 'E42' }),
+      throwErr: Object.assign(new Error("kaboom"), { code: "E42" }),
     });
-    const res = await fetch(
-      `http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`,
-      {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${harness.bearer}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ method: 'boom', type: 'subscription', input: null }),
+    const res = await fetch(`http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${harness.bearer}`,
+        "content-type": "application/json",
       },
-    );
+      body: JSON.stringify({ method: "boom", type: "subscription", input: null }),
+    });
     const frames = await readSSE(res);
-    const done = frames.find((f) => f.event === 'done');
+    const done = frames.find((f) => f.event === "done");
     expect(done).toBeDefined();
     const parsed = JSON.parse(done!.data);
     expect(parsed.ok).toBe(false);
-    expect(parsed.error.message).toBe('kaboom');
+    expect(parsed.error.message).toBe("kaboom");
   });
 
-  test('client AbortController mid-stream triggers agent stream-cancel', async () => {
+  test("client AbortController mid-stream triggers agent stream-cancel", async () => {
     harness = await startHarness({
       events: Array.from({ length: 20 }, (_, i) => ({ i })),
       delayMs: 15,
     });
     const ac = new AbortController();
-    const res = await fetch(
-      `http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`,
-      {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${harness.bearer}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ method: 'long', type: 'subscription', input: null }),
-        signal: ac.signal,
+    const res = await fetch(`http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${harness.bearer}`,
+        "content-type": "application/json",
       },
-    );
+      body: JSON.stringify({ method: "long", type: "subscription", input: null }),
+      signal: ac.signal,
+    });
     expect(res.status).toBe(200);
     // Read one frame then abort.
     const reader = res.body!.getReader();
@@ -231,35 +215,29 @@ describe('tunnel-relay SSE', () => {
     expect(harness.receivedCancel.length).toBeGreaterThan(0);
   });
 
-  test('SSE rejects without bearer', async () => {
+  test("SSE rejects without bearer", async () => {
     harness = await startHarness({ events: [] });
-    const res = await fetch(
-      `http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ method: 'x', type: 'subscription', input: null }),
-      },
-    );
+    const res = await fetch(`http://127.0.0.1:${harness.bunPort}/tunnel-relay/node1?stream=true`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ method: "x", type: "subscription", input: null }),
+    });
     expect(res.status).toBe(401);
   });
 
-  test('SSE against disconnected node ships an error done frame', async () => {
+  test("SSE against disconnected node ships an error done frame", async () => {
     harness = await startHarness({ events: [] });
-    const res = await fetch(
-      `http://127.0.0.1:${harness.bunPort}/tunnel-relay/ghost?stream=true`,
-      {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${harness.bearer}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ method: 'x', type: 'subscription', input: null }),
+    const res = await fetch(`http://127.0.0.1:${harness.bunPort}/tunnel-relay/ghost?stream=true`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${harness.bearer}`,
+        "content-type": "application/json",
       },
-    );
+      body: JSON.stringify({ method: "x", type: "subscription", input: null }),
+    });
     expect(res.status).toBe(200);
     const frames = await readSSE(res);
-    const done = frames.find((f) => f.event === 'done');
+    const done = frames.find((f) => f.event === "done");
     expect(done).toBeDefined();
     const parsed = JSON.parse(done!.data);
     expect(parsed.ok).toBe(false);

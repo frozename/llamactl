@@ -4,6 +4,7 @@ Date: 2026-05-05
 PINNED_SHA: `17df5830e72b82841ba6d6c9570fcb31c14da327` (PR #22673 head)
 Hardware: M4 Pro 48 GB (control plane `local`), Metal backend
 Model: Qwen 3.6 27B dense, Q4_K_M
+
 - Vanilla baseline: `unsloth/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf` (16 GB)
 - MTP variant: `RDson/Qwen3.6-27B-MTP-Q4_K_M-GGUF/Qwen3.6-27B-MTP-Q4_K_M.gguf` (15 GB)
 
@@ -25,37 +26,37 @@ Model: Qwen 3.6 27B dense, Q4_K_M
 
 ## Results
 
-| Metric | Vanilla | MTP | Ratio |
-|---|---:|---:|---:|
-| Mean decode tok/s | 11.78 | 10.03 | **0.85x** |
-| Aggregate wall (s) | 142.09 | 149.68 | 1.053x |
-| Total predicted tokens | 1582 | 1421 | — |
-| Total draft tokens | 0 | 1365 | — |
-| Aggregate draft accept rate | n/a | 0.699 | — |
+| Metric                      | Vanilla |    MTP |     Ratio |
+| --------------------------- | ------: | -----: | --------: |
+| Mean decode tok/s           |   11.78 |  10.03 | **0.85x** |
+| Aggregate wall (s)          |  142.09 | 149.68 |    1.053x |
+| Total predicted tokens      |    1582 |   1421 |         — |
+| Total draft tokens          |       0 |   1365 |         — |
+| Aggregate draft accept rate |     n/a |  0.699 |         — |
 
 Per-prompt vanilla vs MTP decode tok/s:
 
-| Prompt | Vanilla tps | MTP tps | MTP/Vanilla | MTP accept rate |
-|---|---:|---:|---:|---:|
-| code_python | 11.64 | 10.77 | 0.93x | 0.76 |
-| code_cpp | 11.64 | 10.35 | 0.89x | 0.72 |
-| explain_concept | 11.64 | 9.46 | 0.81x | 0.63 |
-| summarize | 11.91 | 10.33 | 0.87x | 0.73 |
-| qa_factual | 11.85 | 10.19 | 0.86x | 0.72 |
-| translation | 11.84 | 8.97 | 0.76x | 0.54 |
-| creative_short | 11.84 | 9.00 | 0.76x | 0.59 |
-| stepwise_math | 11.85 | 10.71 | 0.90x | 0.76 |
-| long_code_review | 11.84 | 10.48 | 0.89x | 0.75 |
+| Prompt           | Vanilla tps | MTP tps | MTP/Vanilla | MTP accept rate |
+| ---------------- | ----------: | ------: | ----------: | --------------: |
+| code_python      |       11.64 |   10.77 |       0.93x |            0.76 |
+| code_cpp         |       11.64 |   10.35 |       0.89x |            0.72 |
+| explain_concept  |       11.64 |    9.46 |       0.81x |            0.63 |
+| summarize        |       11.91 |   10.33 |       0.87x |            0.73 |
+| qa_factual       |       11.85 |   10.19 |       0.86x |            0.72 |
+| translation      |       11.84 |    8.97 |       0.76x |            0.54 |
+| creative_short   |       11.84 |    9.00 |       0.76x |            0.59 |
+| stepwise_math    |       11.85 |   10.71 |       0.90x |            0.76 |
+| long_code_review |       11.84 |   10.48 |       0.89x |            0.75 |
 
 ## Gate evaluation
 
 For the single pair `local × qwen36-27b-q4m`:
 
-| Spec criterion | Threshold | Measured | Verdict |
-|---|---|---|---|
-| Short-chat decode | >= 1.4x vanilla | 0.85x vanilla | **FAIL** |
-| Long-prompt wall-clock | <= 1.1x vanilla | 1.053x vanilla | pass |
-| Peak RSS within node budget | <= 48 GB | ~16 GB model + KV | pass |
+| Spec criterion              | Threshold       | Measured          | Verdict  |
+| --------------------------- | --------------- | ----------------- | -------- |
+| Short-chat decode           | >= 1.4x vanilla | 0.85x vanilla     | **FAIL** |
+| Long-prompt wall-clock      | <= 1.1x vanilla | 1.053x vanilla    | pass     |
+| Peak RSS within node budget | <= 48 GB        | ~16 GB model + KV | pass     |
 
 **Pair decision:** drop. Decode-throughput criterion fails by a wide margin
 (MTP is ~15% slower than vanilla, not 40% faster).
@@ -127,11 +128,11 @@ which the broader agentic-eval framework now treats as the canonical Apple
 Silicon defaults. Re-ran vanilla and MTP under those flags on the same
 (model, node) pair to check whether the verdict held.
 
-| Metric | Vanilla (re-bench) | MTP (re-bench) | Ratio |
-|---|---:|---:|---:|
-| Mean decode tok/s | 11.7 | ~10.0 | **0.85x** |
-| Aggregate wall (s) | 142.65 | 150.30 | 1.054x |
-| Aggregate draft accept rate | n/a | 0.699 | — |
+| Metric                      | Vanilla (re-bench) | MTP (re-bench) |     Ratio |
+| --------------------------- | -----------------: | -------------: | --------: |
+| Mean decode tok/s           |               11.7 |          ~10.0 | **0.85x** |
+| Aggregate wall (s)          |             142.65 |         150.30 |    1.054x |
+| Aggregate draft accept rate |                n/a |          0.699 |         — |
 
 Numbers are within <1% of the original run. The verdict holds: MTP under
 PR #22673 on M4 Pro Metal at Q4_K_M is ~15% slower than vanilla, with no
@@ -144,7 +145,8 @@ Slice B stays abandoned. Re-evaluation triggers above remain the path forward.
 
 Triggered by [r/LocalLLaMA post](https://www.reddit.com/r/LocalLLaMA/comments/1t57xuu/25x_faster_inference_with_qwen_36_27b_using_mtp/)
 where `froggeric` reports **2.5×** decode on M2 Max 96 GB with Qwen 3.6 27B
-+ PR #22673. Their recipe differs from this pilot in three observable ways:
+
+- PR #22673. Their recipe differs from this pilot in three observable ways:
 
 1. PR head pinned to `5d5f1b46e4f56885801c86363d4677a5f72f83af` (2026-05-07)
    — five commits past our prior pin, including `86d9f15e` "fix double
@@ -193,11 +195,11 @@ double easily.
 
 ### Q4_K_M still slower than vanilla (the verdict held)
 
-| Metric | Vanilla | MTP (froggeric harness) | Ratio |
-|---|---:|---:|---:|
-| Aggregate decode tok/s | 11.9 | 10.0 | **0.84×** |
-| Aggregate wall (s) | 127.34 | 149.97 | 1.18× |
-| Aggregate draft accept rate | n/a | 0.701 | — |
+| Metric                      | Vanilla | MTP (froggeric harness) |     Ratio |
+| --------------------------- | ------: | ----------------------: | --------: |
+| Aggregate decode tok/s      |    11.9 |                    10.0 | **0.84×** |
+| Aggregate wall (s)          |  127.34 |                  149.97 |     1.18× |
+| Aggregate draft accept rate |     n/a |                   0.701 |         — |
 
 Same shape, same magnitude as the 2026-05-05 and 2026-05-06 re-bench:
 ~15% slower than vanilla at 70% accept rate. The `-ctk q8_0 -ctv q8_0`
@@ -214,6 +216,7 @@ in `llama-server`, no inference effect). CMake cache confirmed.
 ### Conclusion
 
 The OP's 2.5× is **M2 Max-specific**:
+
 - Apple9 GPU family, 38 cores, ~400 GB/s memory bandwidth (M2 Max)
   vs Apple10, 20 cores, ~273 GB/s (M4 Pro). The MTP overhead per
   decoded token is fixed cost; the speculative win is bandwidth-amortized.
@@ -275,8 +278,8 @@ load_tensors:  MTL0_Mapped model buffer size = 18760.13 MiB   # MTP "head", full
    sibling `llama_context`. It shows up as `unaccounted ≈ model_size`.
 
 The mapping-range comment in `llama-model.cpp:1467-1469` even
-documents the assumption — *"only the mmap region containing the
-tensors in the model is mapped to the backend buffer"* — but for the
+documents the assumption — _"only the mmap region containing the
+tensors in the model is mapped to the backend buffer"_ — but for the
 MTP arch's sparse-at-both-ends tensor selection, that region is the
 entire file.
 
@@ -300,22 +303,23 @@ single-line fixes should be discussed on the source PR — agreed and
 re-posted accordingly).
 
 ### Numbers post-fix (M4 Pro 48 GB, atomic-llama-cpp-turboquant
+
 unaffected since this fix is for PR #22673 only)
 
-| Quant | Metal MTP buf pre-fix | Metal MTP buf post-fix | Reduction |
-|---|---:|---:|---:|
-| Q5_K_M-mtp (19 GB file) | 18 760 MiB | 1 425 MiB | **13.2×** |
-| Q8_0-mtp   (29 GB file) | 28 213 MiB | 1 719 MiB | **16.4×** |
+| Quant                   | Metal MTP buf pre-fix | Metal MTP buf post-fix | Reduction |
+| ----------------------- | --------------------: | ---------------------: | --------: |
+| Q5_K_M-mtp (19 GB file) |            18 760 MiB |              1 425 MiB | **13.2×** |
+| Q8_0-mtp (29 GB file)   |            28 213 MiB |              1 719 MiB | **16.4×** |
 
 Aggregate decode tok/s with the OP's recipe
 (`--cache-type-k q8_0 --cache-type-v q8_0`, no flash-attn,
 default `ub`), 9-prompt suite, `temperature=0 seed=42 n_predict=192`:
 
-| Quant | Vanilla | MTP (post-fix) | Ratio | Accept |
-|---|---:|---:|---:|---:|
-| Q4_K_M | 11.9 | 10.0 | 0.85× | 0.701 |
-| Q5_K_M |  9.5 |  8.6 | 0.91× | 0.713 |
-| Q8_0   |  7.4 | 11.1 | **1.49×** | **0.725** |
+| Quant  | Vanilla | MTP (post-fix) |     Ratio |    Accept |
+| ------ | ------: | -------------: | --------: | --------: |
+| Q4_K_M |    11.9 |           10.0 |     0.85× |     0.701 |
+| Q5_K_M |     9.5 |            8.6 |     0.91× |     0.713 |
+| Q8_0   |     7.4 |           11.1 | **1.49×** | **0.725** |
 
 Q4_K_M unchanged from the pre-fix bench — no regression on the case
 that already fit. Q5 and Q8 are new datapoints since both OOM'd

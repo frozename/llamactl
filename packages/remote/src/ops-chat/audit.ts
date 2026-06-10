@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { appendFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
+import { dirname } from "node:path";
 
-import { defaultOpsChatAuditPath } from './paths.js';
+import { defaultOpsChatAuditPath } from "./paths.js";
 
 /**
  * Append-only JSONL audit sink for the Ops Chat module. Every
@@ -27,7 +27,10 @@ export interface OpsChatAuditEntry {
 }
 
 export function hashArguments(args: unknown): string {
-  return createHash('sha256').update(JSON.stringify(args ?? {})).digest('hex').slice(0, 16);
+  return createHash("sha256")
+    .update(JSON.stringify(args ?? {}))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 export function appendOpsChatAudit(
@@ -35,17 +38,18 @@ export function appendOpsChatAudit(
   path: string = defaultOpsChatAuditPath(),
 ): void {
   mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, JSON.stringify(entry) + '\n', 'utf8');
+  appendFileSync(path, JSON.stringify(entry) + "\n", "utf8");
 }
 
-export function readOpsChatAudit(
-  opts: { limit?: number; path?: string } = {},
-): { entries: OpsChatAuditEntry[]; path: string } {
+export function readOpsChatAudit(opts: { limit?: number; path?: string } = {}): {
+  entries: OpsChatAuditEntry[];
+  path: string;
+} {
   const path = opts.path ?? defaultOpsChatAuditPath();
   const limit = opts.limit ?? 100;
   if (!existsSync(path)) return { entries: [], path };
-  const body = readFileSync(path, 'utf8');
-  const lines = body.split('\n').filter((l) => l.trim().length > 0);
+  const body = readFileSync(path, "utf8");
+  const lines = body.split("\n").filter((l) => l.trim().length > 0);
   const tail = lines.slice(-limit).reverse();
   const entries: OpsChatAuditEntry[] = [];
   for (const l of tail) {

@@ -1,6 +1,6 @@
-import type { RagBinding } from '../../config/schema.js';
-import { resolveSecret } from '../../config/secret.js';
-import { RagError } from '../errors.js';
+import type { RagBinding } from "../../config/schema.js";
+import { resolveSecret } from "../../config/secret.js";
+import { RagError } from "../errors.js";
 
 /**
  * HTTP client for Chroma's REST v2 surface. Paired with
@@ -25,8 +25,8 @@ import { RagError } from '../errors.js';
  * the result for the lifetime of the client.
  */
 
-export const CHROMA_DEFAULT_TENANT = 'default_tenant';
-export const CHROMA_DEFAULT_DATABASE = 'default_database';
+export const CHROMA_DEFAULT_TENANT = "default_tenant";
+export const CHROMA_DEFAULT_DATABASE = "default_database";
 
 /**
  * Shape of the `POST /collections` response. Only `id` + `name` are
@@ -47,7 +47,7 @@ export interface ChromaQueryPayload {
   n_results?: number;
   where?: Record<string, unknown>;
   where_document?: Record<string, unknown>;
-  include?: Array<'distances' | 'documents' | 'embeddings' | 'metadatas' | 'uris'>;
+  include?: Array<"distances" | "documents" | "embeddings" | "metadatas" | "uris">;
 }
 
 /**
@@ -97,12 +97,12 @@ export interface HttpChromaClientOptions {
  * — anything with an `/api/v2` suffix has it stripped so callers can
  * paste either shape without the client tacking on a duplicate prefix.
  */
-export function parseHttpChromaEndpoint(binding: Pick<RagBinding, 'endpoint'>): string {
+export function parseHttpChromaEndpoint(binding: Pick<RagBinding, "endpoint">): string {
   const trimmed = binding.endpoint.trim();
   if (trimmed.length === 0) {
     throw new RagError(
-      'connect-failed',
-      'chroma RAG binding has an empty endpoint; expected http(s)://host:port',
+      "connect-failed",
+      "chroma RAG binding has an empty endpoint; expected http(s)://host:port",
     );
   }
   let url: URL;
@@ -110,17 +110,17 @@ export function parseHttpChromaEndpoint(binding: Pick<RagBinding, 'endpoint'>): 
     url = new URL(trimmed);
   } catch (cause) {
     throw new RagError(
-      'connect-failed',
+      "connect-failed",
       `chroma RAG binding endpoint is not a valid URL: ${trimmed}`,
       cause,
     );
   }
   // Strip any trailing `/` and `/api/v2` suffix so we can splice
   // `/api/v2/tenants/...` cleanly in each request builder.
-  let pathname = url.pathname.replace(/\/+$/, '');
-  if (pathname === '/api/v2') pathname = '';
+  let pathname = url.pathname.replace(/\/+$/, "");
+  if (pathname === "/api/v2") pathname = "";
   url.pathname = pathname;
-  return url.toString().replace(/\/+$/, '');
+  return url.toString().replace(/\/+$/, "");
 }
 
 /**
@@ -131,7 +131,7 @@ export function parseHttpChromaEndpoint(binding: Pick<RagBinding, 'endpoint'>): 
  * without auth by default.
  */
 export function resolveChromaHttpToken(
-  binding: Pick<RagBinding, 'auth'>,
+  binding: Pick<RagBinding, "auth">,
   env: NodeJS.ProcessEnv,
 ): string | undefined {
   const auth = binding.auth;
@@ -145,7 +145,7 @@ export function resolveChromaHttpToken(
       return resolveSecret(auth.tokenRef, env);
     } catch (cause) {
       throw new RagError(
-        'connect-failed',
+        "connect-failed",
         `chroma: unable to resolve auth.tokenRef (${auth.tokenRef})`,
         cause,
       );
@@ -162,10 +162,10 @@ export function resolveChromaHttpToken(
  * classic "renamed collection underneath us" case; we lift it to
  * `tool-missing` so callers can differentiate.
  */
-function statusToCode(status: number): 'tool-missing' | 'tool-error' | 'connect-failed' {
-  if (status === 404) return 'tool-missing';
-  if (status >= 400 && status < 500) return 'tool-error';
-  return 'connect-failed';
+function statusToCode(status: number): "tool-missing" | "tool-error" | "connect-failed" {
+  if (status === 404) return "tool-missing";
+  if (status >= 400 && status < 500) return "tool-error";
+  return "connect-failed";
 }
 
 /**
@@ -183,7 +183,7 @@ export class HttpChromaClient {
   private readonly collectionIds = new Map<string, string>();
 
   constructor(opts: HttpChromaClientOptions) {
-    this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
+    this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.tenant = opts.tenant ?? CHROMA_DEFAULT_TENANT;
     this.database = opts.database ?? CHROMA_DEFAULT_DATABASE;
     if (opts.token !== undefined) this.token = opts.token;
@@ -203,7 +203,7 @@ export class HttpChromaClient {
       res = await this.fetcher(url, { headers: this.headers() });
     } catch (cause) {
       throw new RagError(
-        'connect-failed',
+        "connect-failed",
         `chroma http: heartbeat against ${this.baseUrl} failed: ${toMessage(cause)}`,
         cause,
       );
@@ -229,13 +229,13 @@ export class HttpChromaClient {
    * `get_or_create` semantics — it ignores the provided metadata
    * when the name is already taken).
    */
-  async resolveCollectionId(
-    name: string,
-    metadata?: Record<string, unknown>,
-  ): Promise<string> {
+  async resolveCollectionId(name: string, metadata?: Record<string, unknown>): Promise<string> {
     const cached = this.collectionIds.get(name);
     if (cached) return cached;
-    const collection = await this.createCollection(name, { getOrCreate: true, ...(metadata && { metadata }) });
+    const collection = await this.createCollection(name, {
+      getOrCreate: true,
+      ...(metadata && { metadata }),
+    });
     this.collectionIds.set(name, collection.id);
     return collection.id;
   }
@@ -258,7 +258,7 @@ export class HttpChromaClient {
     if (opts.getOrCreate) body.get_or_create = true;
     if (opts.metadata) body.metadata = opts.metadata;
     if (opts.configuration) body.configuration = opts.configuration;
-    return (await this.json<ChromaCollection>('POST', path, body)) as ChromaCollection;
+    return (await this.json<ChromaCollection>("POST", path, body)) as ChromaCollection;
   }
 
   /** `GET /collections` — list collection names in the current
@@ -268,14 +268,14 @@ export class HttpChromaClient {
     opts: { limit?: number; offset?: number } = {},
   ): Promise<ChromaCollection[]> {
     const params = new URLSearchParams();
-    if (opts.limit !== undefined) params.set('limit', String(opts.limit));
-    if (opts.offset !== undefined) params.set('offset', String(opts.offset));
-    const qs = params.toString() ? `?${params.toString()}` : '';
+    if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+    if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+    const qs = params.toString() ? `?${params.toString()}` : "";
     const path = `/api/v2/tenants/${encodeURIComponent(this.tenant)}/databases/${encodeURIComponent(this.database)}/collections${qs}`;
-    const payload = await this.json<ChromaCollection[]>('GET', path);
+    const payload = await this.json<ChromaCollection[]>("GET", path);
     if (!Array.isArray(payload)) {
       throw new RagError(
-        'invalid-response',
+        "invalid-response",
         `chroma http: listCollections returned non-array payload (got ${typeof payload})`,
       );
     }
@@ -284,22 +284,26 @@ export class HttpChromaClient {
 
   async upsert(collectionId: string, payload: ChromaUpsertPayload): Promise<void> {
     const path = `/api/v2/tenants/${encodeURIComponent(this.tenant)}/databases/${encodeURIComponent(this.database)}/collections/${encodeURIComponent(collectionId)}/upsert`;
-    await this.json<unknown>('POST', path, payload);
+    await this.json<unknown>("POST", path, payload);
   }
 
   async query(collectionId: string, payload: ChromaQueryPayload): Promise<ChromaQueryResponse> {
     const path = `/api/v2/tenants/${encodeURIComponent(this.tenant)}/databases/${encodeURIComponent(this.database)}/collections/${encodeURIComponent(collectionId)}/query`;
-    return (await this.json<ChromaQueryResponse>('POST', path, payload)) as ChromaQueryResponse;
+    return (await this.json<ChromaQueryResponse>("POST", path, payload)) as ChromaQueryResponse;
   }
 
   async deleteRecords(collectionId: string, payload: ChromaDeletePayload): Promise<number> {
     const path = `/api/v2/tenants/${encodeURIComponent(this.tenant)}/databases/${encodeURIComponent(this.database)}/collections/${encodeURIComponent(collectionId)}/delete`;
-    const res = await this.json<{ deleted?: number } | Record<string, unknown>>('POST', path, payload);
+    const res = await this.json<{ deleted?: number } | Record<string, unknown>>(
+      "POST",
+      path,
+      payload,
+    );
     // Chroma returns `{deleted: N}` on success, but older 1.x builds
     // returned `{}` — tolerate both. The adapter falls back to the
     // request-side `ids.length` when `deleted` is absent.
     const d = (res as { deleted?: unknown }).deleted;
-    return typeof d === 'number' ? d : -1;
+    return typeof d === "number" ? d : -1;
   }
 
   /** No-op close — fetch doesn't hold a connection we own. Exposed
@@ -309,8 +313,8 @@ export class HttpChromaClient {
   }
 
   private headers(): Record<string, string> {
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (this.token) headers['authorization'] = `Bearer ${this.token}`;
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (this.token) headers["authorization"] = `Bearer ${this.token}`;
     return headers;
   }
 
@@ -321,7 +325,7 @@ export class HttpChromaClient {
    * failure text rather than a generic status line.
    */
   private async json<T>(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     body?: unknown,
   ): Promise<T> {
@@ -336,7 +340,7 @@ export class HttpChromaClient {
       res = await this.fetcher(url, init);
     } catch (cause) {
       throw new RagError(
-        'connect-failed',
+        "connect-failed",
         `chroma http: ${method} ${path} failed before response: ${toMessage(cause)}`,
         cause,
       );
@@ -345,7 +349,7 @@ export class HttpChromaClient {
       const snippet = await safeErrorSnippet(res);
       throw new RagError(
         statusToCode(res.status),
-        `chroma http: ${method} ${path} → ${res.status}${snippet ? `: ${snippet}` : ''}`,
+        `chroma http: ${method} ${path} → ${res.status}${snippet ? `: ${snippet}` : ""}`,
       );
     }
     // Empty 2xx (some chroma responses are `{}` — upsert, delete) are
@@ -356,7 +360,7 @@ export class HttpChromaClient {
       return JSON.parse(text) as T;
     } catch (cause) {
       throw new RagError(
-        'invalid-response',
+        "invalid-response",
         `chroma http: ${method} ${path} returned non-JSON body (${text.slice(0, 80)})`,
         cause,
       );
@@ -367,7 +371,7 @@ export class HttpChromaClient {
 async function safeErrorSnippet(res: Response): Promise<string> {
   try {
     const text = await res.text();
-    if (!text) return '';
+    if (!text) return "";
     // Chroma's error envelope: `{"error":"ChromaError","message":"..."}`.
     try {
       const obj = JSON.parse(text) as { error?: string; message?: string };
@@ -377,7 +381,7 @@ async function safeErrorSnippet(res: Response): Promise<string> {
     }
     return text.slice(0, 200);
   } catch {
-    return '';
+    return "";
   }
 }
 

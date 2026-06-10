@@ -1,8 +1,8 @@
-import { unlinkSync } from 'node:fs';
-import type { KvStorage } from './storage.js';
+import { unlinkSync } from "node:fs";
+import type { KvStorage } from "./storage.js";
 
-export type KvEntryReason = 'cold' | 'continued' | 'evict' | 'shutdown' | 'agentSession';
-export type KvEntryState = 'idle' | 'reserved' | 'active';
+export type KvEntryReason = "cold" | "continued" | "evict" | "shutdown" | "agentSession";
+export type KvEntryState = "idle" | "reserved" | "active";
 
 export interface KvEntry {
   sha: string;
@@ -39,7 +39,7 @@ interface KvEntryRow {
   last_used: number;
   payload_bytes: number;
   text_bytes: number;
-  reason: 'cold' | 'continued' | 'evict' | 'shutdown' | 'agent_session';
+  reason: "cold" | "continued" | "evict" | "shutdown" | "agent_session";
   prefix_byte_length: number;
   workload_epoch: string;
   quarantined: number;
@@ -52,7 +52,9 @@ export class KvRegistry {
   constructor(private readonly storage: KvStorage) {}
 
   insert(entry: KvEntry): void {
-    this.storage.db.query(`
+    this.storage.db
+      .query(
+        `
       INSERT INTO kv_entries (
         sha,
         workload,
@@ -113,11 +115,15 @@ export class KvRegistry {
         state=excluded.state,
         first_response_token=excluded.first_response_token,
         ext_flags=excluded.ext_flags
-    `).run(toQueryParams(entry));
+    `,
+      )
+      .run(toQueryParams(entry));
   }
 
   get(sha: string): KvEntry | null {
-    const row = this.storage.db.query('SELECT * FROM kv_entries WHERE sha = ?').get(sha) as KvEntryRow | null;
+    const row = this.storage.db
+      .query("SELECT * FROM kv_entries WHERE sha = ?")
+      .get(sha) as KvEntryRow | null;
     return row ? fromRow(row) : null;
   }
 
@@ -126,74 +132,108 @@ export class KvRegistry {
   }
 
   delete(sha: string): boolean {
-    return deleteReturning(this.storage, 'DELETE FROM kv_entries WHERE sha = ? RETURNING upstream_slot_file', sha);
+    return deleteReturning(
+      this.storage,
+      "DELETE FROM kv_entries WHERE sha = ? RETURNING upstream_slot_file",
+      sha,
+    );
   }
 
   reserve(sha: string): boolean {
-    const result = this.storage.db.query(`
+    const result = this.storage.db
+      .query(
+        `
       UPDATE kv_entries
       SET state = 'reserved'
       WHERE sha = ? AND state = 'idle'
-    `).run(sha) as { changes?: number };
+    `,
+      )
+      .run(sha) as { changes?: number };
     return (result.changes ?? 0) > 0;
   }
 
   activate(sha: string): boolean {
-    const result = this.storage.db.query(`
+    const result = this.storage.db
+      .query(
+        `
       UPDATE kv_entries
       SET state = 'active'
       WHERE sha = ? AND state = 'reserved'
-    `).run(sha) as { changes?: number };
+    `,
+      )
+      .run(sha) as { changes?: number };
     return (result.changes ?? 0) > 0;
   }
 
   release(sha: string): boolean {
-    const result = this.storage.db.query(`
+    const result = this.storage.db
+      .query(
+        `
       UPDATE kv_entries
       SET state = 'idle'
       WHERE sha = ? AND state IN ('reserved', 'active')
-    `).run(sha) as { changes?: number };
+    `,
+      )
+      .run(sha) as { changes?: number };
     return (result.changes ?? 0) > 0;
   }
 
   tryDelete(sha: string): boolean {
-    return deleteReturning(this.storage, `
+    return deleteReturning(
+      this.storage,
+      `
       DELETE FROM kv_entries
       WHERE sha = ? AND state = 'idle'
       RETURNING upstream_slot_file
-    `, sha);
+    `,
+      sha,
+    );
   }
 
   deleteEpochStale(workload: string, currentEpoch: string): boolean {
-    const rows = this.storage.db.query(`
+    const rows = this.storage.db
+      .query(
+        `
       DELETE FROM kv_entries
       WHERE workload = ? AND workload_epoch != ? AND state = 'idle'
       RETURNING upstream_slot_file
-    `).all(workload, currentEpoch) as Array<{ upstream_slot_file: string }>;
+    `,
+      )
+      .all(workload, currentEpoch) as Array<{ upstream_slot_file: string }>;
     for (const row of rows) unlinkSlotArtifacts(row.upstream_slot_file);
     return rows.length > 0;
   }
 
   listAll(): KvEntry[] {
-    const rows = this.storage.db.query('SELECT * FROM kv_entries ORDER BY sha ASC').all() as KvEntryRow[];
+    const rows = this.storage.db
+      .query("SELECT * FROM kv_entries ORDER BY sha ASC")
+      .all() as KvEntryRow[];
     return rows.map(fromRow);
   }
 
   bumpHit(sha: string, now: number): void {
-    this.storage.db.query(`
+    this.storage.db
+      .query(
+        `
       UPDATE kv_entries
       SET hits = hits + 1,
           last_used = ?
       WHERE sha = ?
-    `).run(now, sha);
+    `,
+      )
+      .run(now, sha);
   }
 
   setExtFlags(sha: string, extFlags: number): void {
-    this.storage.db.query(`
+    this.storage.db
+      .query(
+        `
       UPDATE kv_entries
       SET ext_flags = ?
       WHERE sha = ?
-    `).run(extFlags, sha);
+    `,
+      )
+      .run(extFlags, sha);
   }
 }
 
@@ -202,7 +242,13 @@ function unlinkSlotArtifacts(path: string): void {
     try {
       unlinkSync(candidate);
     } catch (error) {
-      if (typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'ENOENT') continue;
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code?: unknown }).code === "ENOENT"
+      )
+        continue;
       console.warn(`[kvstore] failed to unlink ${candidate}`);
     }
   }
@@ -238,12 +284,12 @@ function toQueryParams(entry: KvEntry): Record<string, number | string | null> {
   };
 }
 
-function toDbReason(reason: KvEntryReason): KvEntryRow['reason'] {
-  return reason === 'agentSession' ? 'agent_session' : reason;
+function toDbReason(reason: KvEntryReason): KvEntryRow["reason"] {
+  return reason === "agentSession" ? "agent_session" : reason;
 }
 
-function fromDbReason(reason: KvEntryRow['reason']): KvEntryReason {
-  return reason === 'agent_session' ? 'agentSession' : reason;
+function fromDbReason(reason: KvEntryRow["reason"]): KvEntryReason {
+  return reason === "agent_session" ? "agentSession" : reason;
 }
 
 function fromRow(row: KvEntryRow): KvEntry {

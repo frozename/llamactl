@@ -1,5 +1,5 @@
-import { readFileSync, existsSync } from 'node:fs';
-import { config as kubecfg } from '@llamactl/remote';
+import { readFileSync, existsSync } from "node:fs";
+import { config as kubecfg } from "@llamactl/remote";
 
 const USAGE = `Usage: llamactl ctx <subcommand>
 
@@ -13,18 +13,18 @@ Subcommands:
 export async function runCtx(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
-    case 'current':
+    case "current":
       return runCurrent(rest);
-    case 'use':
+    case "use":
       return runUse(rest);
-    case 'get':
+    case "get":
       return runGet(rest);
-    case 'nodes':
-      return (await import('./node.js')).runNode(['ls', ...rest]);
+    case "nodes":
+      return (await import("./node.js")).runNode(["ls", ...rest]);
     case undefined:
-    case '--help':
-    case '-h':
-    case 'help':
+    case "--help":
+    case "-h":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:
@@ -45,8 +45,8 @@ function runCurrent(args: string[]): number {
 
 function runUse(args: string[]): number {
   const [name, ...rest] = args;
-  if (!name || name.startsWith('-')) {
-    process.stderr.write('ctx use: missing <name>\n');
+  if (!name || name.startsWith("-")) {
+    process.stderr.write("ctx use: missing <name>\n");
     return 1;
   }
   if (rest.length > 0) {
@@ -80,7 +80,7 @@ function runGet(args: string[]): number {
     process.stdout.write(`${JSON.stringify(fresh, null, 2)}\n`);
     return 0;
   }
-  const raw = readFileSync(cfgPath, 'utf8');
-  process.stdout.write(raw.endsWith('\n') ? raw : `${raw}\n`);
+  const raw = readFileSync(cfgPath, "utf8");
+  process.stdout.write(raw.endsWith("\n") ? raw : `${raw}\n`);
   return 0;
 }

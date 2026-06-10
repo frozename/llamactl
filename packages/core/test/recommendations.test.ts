@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { recommendationsForProfile } from '../src/recommendations.js';
+import { describe, expect, test } from "bun:test";
+import { recommendationsForProfile } from "../src/recommendations.js";
 
 /**
  * Recommendation-ladder safety: the rels picked for each machine
@@ -23,11 +23,11 @@ import { recommendationsForProfile } from '../src/recommendations.js';
  */
 
 const MAX_MODEL_SIZE_BY_PROFILE_GB: Record<string, number> = {
-  'mac-mini-16g': 11.5,
+  "mac-mini-16g": 11.5,
   // balanced ≈ 32 GiB profile; Metal cap there is ~24 GB. Leave room for KV/buffers.
   balanced: 22,
   // macbook-pro-48g — Metal cap ~36 GB; allow up to ~32 for the rel.
-  'macbook-pro-48g': 32,
+  "macbook-pro-48g": 32,
 };
 
 /**
@@ -38,14 +38,14 @@ const MAX_MODEL_SIZE_BY_PROFILE_GB: Record<string, number> = {
  * for the families we recommend today.
  */
 function estimateRelSizeGb(rel: string): number {
-  const fname = rel.split('/').pop() ?? rel;
+  const fname = rel.split("/").pop() ?? rel;
   // Family base parameter counts (B params).
   let paramsB: number;
-  if (rel.startsWith('Qwen3.6-35B-A3B-GGUF/')) paramsB = 35;
-  else if (rel.startsWith('Qwen3.5-27B-GGUF/')) paramsB = 27;
-  else if (rel.startsWith('gemma-4-E4B-it-GGUF/')) paramsB = 7.5;
-  else if (rel.startsWith('gemma-4-26B-A4B-it-GGUF/')) paramsB = 26;
-  else if (rel.startsWith('gemma-4-31B-it-GGUF/')) paramsB = 31;
+  if (rel.startsWith("Qwen3.6-35B-A3B-GGUF/")) paramsB = 35;
+  else if (rel.startsWith("Qwen3.5-27B-GGUF/")) paramsB = 27;
+  else if (rel.startsWith("gemma-4-E4B-it-GGUF/")) paramsB = 7.5;
+  else if (rel.startsWith("gemma-4-26B-A4B-it-GGUF/")) paramsB = 26;
+  else if (rel.startsWith("gemma-4-31B-it-GGUF/")) paramsB = 31;
   else throw new Error(`unknown family for size estimate: ${rel}`);
 
   // Bits per weight by quant tag, biased high so we err toward
@@ -68,8 +68,8 @@ function estimateRelSizeGb(rel: string): number {
   return (paramsB * 1e9 * bpw) / 8 / 1e9;
 }
 
-describe('recommendationsForProfile — fit-envelope guarantees', () => {
-  for (const profile of ['mac-mini-16g', 'balanced', 'macbook-pro-48g'] as const) {
+describe("recommendationsForProfile — fit-envelope guarantees", () => {
+  for (const profile of ["mac-mini-16g", "balanced", "macbook-pro-48g"] as const) {
     test(`every rel for ${profile} fits the profile's max model size`, () => {
       const rows = recommendationsForProfile(profile);
       const ceiling = MAX_MODEL_SIZE_BY_PROFILE_GB[profile]!;
@@ -85,26 +85,28 @@ describe('recommendationsForProfile — fit-envelope guarantees', () => {
     });
   }
 
-  test('mac-mini-16g qwen slot picks IQ2_M (proven-fit on M4)', () => {
-    const rows = recommendationsForProfile('mac-mini-16g');
-    const qwen = rows.find((r) => r.target === 'qwen');
+  test("mac-mini-16g qwen slot picks IQ2_M (proven-fit on M4)", () => {
+    const rows = recommendationsForProfile("mac-mini-16g");
+    const qwen = rows.find((r) => r.target === "qwen");
     expect(qwen).toBeDefined();
-    expect(qwen!.rel).toBe('Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ2_M.gguf');
+    expect(qwen!.rel).toBe("Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ2_M.gguf");
   });
 
-  test('mac-mini-16g qwen27 slot picks the 16g-fit rel, not Q5_K_XL', () => {
-    const rows = recommendationsForProfile('mac-mini-16g');
-    const qwen27 = rows.find((r) => r.target === 'qwen27');
+  test("mac-mini-16g qwen27 slot picks the 16g-fit rel, not Q5_K_XL", () => {
+    const rows = recommendationsForProfile("mac-mini-16g");
+    const qwen27 = rows.find((r) => r.target === "qwen27");
     expect(qwen27).toBeDefined();
-    expect(qwen27!.rel).toBe('Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf');
+    expect(qwen27!.rel).toBe("Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf");
   });
 
-  test('balanced + macbook-pro-48g still get the larger qwen rels', () => {
-    const balancedQwen = recommendationsForProfile('balanced').find((r) => r.target === 'qwen');
-    expect(balancedQwen!.rel).toBe('Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf');
-    const proQwen = recommendationsForProfile('macbook-pro-48g').find((r) => r.target === 'qwen');
-    expect(proQwen!.rel).toBe('Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf');
-    const proQwen27 = recommendationsForProfile('macbook-pro-48g').find((r) => r.target === 'qwen27');
-    expect(proQwen27!.rel).toBe('Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf');
+  test("balanced + macbook-pro-48g still get the larger qwen rels", () => {
+    const balancedQwen = recommendationsForProfile("balanced").find((r) => r.target === "qwen");
+    expect(balancedQwen!.rel).toBe("Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf");
+    const proQwen = recommendationsForProfile("macbook-pro-48g").find((r) => r.target === "qwen");
+    expect(proQwen!.rel).toBe("Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf");
+    const proQwen27 = recommendationsForProfile("macbook-pro-48g").find(
+      (r) => r.target === "qwen27",
+    );
+    expect(proQwen27!.rel).toBe("Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf");
   });
 });

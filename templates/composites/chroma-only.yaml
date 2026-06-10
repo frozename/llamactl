@@ -31,12 +31,12 @@ spec:
       node: local
       binding:
         provider: chroma
-        endpoint: ''                     # resolved from backingService at apply time
+        endpoint: "" # resolved from backingService at apply time
         extraArgs: []
       backingService: chroma-main
 
   dependencies:
     - from: { kind: rag, name: kb }
-      to:   { kind: service, name: chroma-main }
+      to: { kind: service, name: chroma-main }
 
   onFailure: rollback

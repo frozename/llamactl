@@ -1,12 +1,12 @@
-import { bench, build, ctx, env as envMod, target as targetMod } from '@llamactl/core';
-import type { ModelClass } from '@llamactl/core';
+import { bench, build, ctx, env as envMod, target as targetMod } from "@llamactl/core";
+import type { ModelClass } from "@llamactl/core";
 import {
   getGlobals,
   getNodeClient,
   isLocalDispatch,
   matchDoneEvent,
   subscribeRemote,
-} from '../dispatcher.js';
+} from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl bench <subcommand>
 
@@ -62,18 +62,18 @@ function printShow(opts: {
       `prompt_tps=${prompt_ts}`,
       `updated_at=${updated_at}`,
       `launch_args=${launch_args}`,
-      '',
-    ].join('\n'),
+      "",
+    ].join("\n"),
   );
 }
 
 async function runShow(args: string[]): Promise<number> {
-  if (args.includes('-h') || args.includes('--help')) {
+  if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(USAGE);
     return 0;
   }
 
-  const target = args[0] ?? 'current';
+  const target = args[0] ?? "current";
   const rel = targetMod.resolveTarget(target);
   if (!rel) {
     process.stderr.write(`Unknown model target: ${target}\n`);
@@ -113,11 +113,11 @@ async function runShow(args: string[]): Promise<number> {
   const legacy = bench.findLegacyProfile(rows, rel);
   if (legacy) {
     printShow({
-      machine: 'legacy',
+      machine: "legacy",
       rel: legacy.rel,
-      mode: 'legacy',
-      ctx: 'legacy',
-      build: 'legacy',
+      mode: "legacy",
+      ctx: "legacy",
+      build: "legacy",
       profile: legacy.profile,
       gen_ts: legacy.gen_ts,
       prompt_ts: legacy.prompt_ts,
@@ -132,17 +132,17 @@ async function runShow(args: string[]): Promise<number> {
 }
 
 async function runHistory(args: string[]): Promise<number> {
-  if (args.includes('-h') || args.includes('--help')) {
+  if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(USAGE);
     return 0;
   }
 
-  const targetArg = args[0] ?? 'all';
+  const targetArg = args[0] ?? "all";
   const resolved = envMod.resolveEnv();
   const rows = bench.readBenchHistory(bench.benchHistoryFile(resolved));
 
   let filterRel: string | null = null;
-  if (targetArg !== 'all' && targetArg !== '') {
+  if (targetArg !== "all" && targetArg !== "") {
     const rel = targetMod.resolveTarget(targetArg);
     if (!rel) {
       process.stderr.write(`Unknown model target: ${targetArg}\n`);
@@ -175,7 +175,7 @@ async function runHistory(args: string[]): Promise<number> {
   }
 
   if (lines.length === 0 && rows.current.length === 0 && rows.legacy.length === 0) {
-    process.stdout.write('No benchmark history recorded yet\n');
+    process.stdout.write("No benchmark history recorded yet\n");
     return 1;
   }
 
@@ -186,17 +186,17 @@ async function runHistory(args: string[]): Promise<number> {
 }
 
 function padRight(value: string, width: number): string {
-  return value.length >= width ? value : value + ' '.repeat(width - value.length);
+  return value.length >= width ? value : value + " ".repeat(width - value.length);
 }
 
 async function runCompare(args: string[]): Promise<number> {
-  if (args.includes('-h') || args.includes('--help')) {
+  if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(USAGE);
     return 0;
   }
 
-  const classFilter = (args[0] ?? 'all') as BenchCompareClassFilter;
-  const scopeFilter = args[1] ?? 'all';
+  const classFilter = (args[0] ?? "all") as BenchCompareClassFilter;
+  const scopeFilter = args[1] ?? "all";
 
   const rows = bench.benchCompare({ classFilter, scopeFilter });
   if (rows.length === 0) {
@@ -207,13 +207,13 @@ async function runCompare(args: string[]): Promise<number> {
   // If no row has a tuned record at all, the shell exits 1 with a "No tuned
   // launch profiles recorded yet" message. Match that behaviour.
   if (!bench.hasAnyTunedRecord(rows)) {
-    process.stdout.write('No tuned launch profiles recorded yet\n');
+    process.stdout.write("No tuned launch profiles recorded yet\n");
     return 1;
   }
 
   process.stdout.write(`class=${classFilter} scope=${scopeFilter}\n`);
 
-  type Tuned = NonNullable<bench.BenchCompareRow['tuned']>;
+  type Tuned = NonNullable<bench.BenchCompareRow["tuned"]>;
   const sortable: Array<{ row: bench.BenchCompareRow; tuned: Tuned }> = [];
   const missing: bench.BenchCompareRow[] = [];
   for (const row of rows) {
@@ -239,12 +239,12 @@ async function runCompare(args: string[]): Promise<number> {
     const profile = padRight(tuned.profile, 12);
     const mode = padRight(row.mode, 6);
     const ctx = padRight(row.ctx, 6);
-    const installed = padRight(row.installed ? 'yes' : 'no', 3);
+    const installed = padRight(row.installed ? "yes" : "no", 3);
     process.stdout.write(
       `${label} class=${cls} scope=${scope} gen=${gen} prompt=${prompt} tuned=${profile} mode=${mode} ctx=${ctx} installed=${installed} model=${row.rel}\n`,
     );
     if (row.vision) {
-      const pad = padRight('', 24);
+      const pad = padRight("", 24);
       const loadMs = padRight(row.vision.load_ms, 7);
       const encodeMs = padRight(row.vision.image_encode_ms, 5);
       const vPrompt = padRight(row.vision.prompt_tps, 9);
@@ -256,14 +256,14 @@ async function runCompare(args: string[]): Promise<number> {
   }
 
   if (missing.length > 0) {
-    process.stdout.write('\nmissing_benchmarks:\n');
+    process.stdout.write("\nmissing_benchmarks:\n");
     for (const row of missing) {
       const label = padRight(row.label, 24);
       const cls = padRight(row.class, 11);
       const scope = padRight(row.scope, 16);
       const mode = padRight(row.mode, 6);
       const ctx = padRight(row.ctx, 6);
-      const installed = padRight(row.installed ? 'yes' : 'no', 3);
+      const installed = padRight(row.installed ? "yes" : "no", 3);
       process.stdout.write(
         `${label} class=${cls} scope=${scope} mode=${mode} ctx=${ctx} installed=${installed} model=${row.rel}\n`,
       );
@@ -273,20 +273,20 @@ async function runCompare(args: string[]): Promise<number> {
   return 0;
 }
 
-type BenchCompareClassFilter = ModelClass | 'all';
+type BenchCompareClassFilter = ModelClass | "all";
 
 function forwardBenchEvent(e: bench.BenchEvent): void {
-  if (e.type === 'stderr' || e.type === 'stdout') {
+  if (e.type === "stderr" || e.type === "stdout") {
     process.stderr.write(`${e.line}\n`);
-  } else if (e.type === 'start') {
-    process.stderr.write(`$ ${e.command} ${e.args.join(' ')}\n`);
-  } else if (e.type === 'profile-start') {
+  } else if (e.type === "start") {
+    process.stderr.write(`$ ${e.command} ${e.args.join(" ")}\n`);
+  } else if (e.type === "profile-start") {
     process.stderr.write(`-- profile=${e.profile} --\n`);
-  } else if (e.type === 'profile-done') {
+  } else if (e.type === "profile-done") {
     process.stderr.write(
       `-- profile=${e.profile} gen_ts=${e.gen_ts} prompt_ts=${e.prompt_ts} --\n`,
     );
-  } else if (e.type === 'profile-fail') {
+  } else if (e.type === "profile-fail") {
     process.stderr.write(`-- profile=${e.profile} failed (code=${e.code}) --\n`);
   }
 }
@@ -295,18 +295,18 @@ async function runPreset(args: string[]): Promise<number> {
   const positional: string[] = [];
   let json = false;
   for (const arg of args) {
-    if (arg === '--json') json = true;
-    else if (arg === '-h' || arg === '--help') {
+    if (arg === "--json") json = true;
+    else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('--')) {
+    } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
       return 1;
     } else positional.push(arg);
   }
-  const target = positional[0] ?? 'current';
-  const modeRaw = (positional[1] ?? 'auto') as 'auto' | 'text' | 'vision';
-  if (modeRaw !== 'auto' && modeRaw !== 'text' && modeRaw !== 'vision') {
+  const target = positional[0] ?? "current";
+  const modeRaw = (positional[1] ?? "auto") as "auto" | "text" | "vision";
+  if (modeRaw !== "auto" && modeRaw !== "text" && modeRaw !== "vision") {
     process.stderr.write(`Unknown bench mode: ${modeRaw}\n`);
     return 1;
   }
@@ -320,19 +320,24 @@ async function runPreset(args: string[]): Promise<number> {
     });
   } else {
     try {
-      const input: { target: string; mode?: 'auto' | 'text' | 'vision' } = { target };
-      if (modeRaw !== 'auto') input.mode = modeRaw;
-      result = await subscribeRemote<bench.BenchEvent, Awaited<ReturnType<typeof bench.benchPreset>>>({
+      const input: { target: string; mode?: "auto" | "text" | "vision" } = { target };
+      if (modeRaw !== "auto") input.mode = modeRaw;
+      result = await subscribeRemote<
+        bench.BenchEvent,
+        Awaited<ReturnType<typeof bench.benchPreset>>
+      >({
         subscribe: (handlers) => getNodeClient().benchPresetRun.subscribe(input, handlers),
         onEvent: forwardBenchEvent,
-        extractDone: matchDoneEvent<Awaited<ReturnType<typeof bench.benchPreset>>>('done-preset'),
+        extractDone: matchDoneEvent<Awaited<ReturnType<typeof bench.benchPreset>>>("done-preset"),
       });
     } catch (err) {
-      process.stderr.write(`bench preset: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `bench preset: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
-  if ('error' in result) {
+  if ("error" in result) {
     if (json) process.stdout.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
     else process.stderr.write(`${result.error}\n`);
     return 1;
@@ -355,33 +360,38 @@ async function runVision(args: string[]): Promise<number> {
   const positional: string[] = [];
   let json = false;
   for (const arg of args) {
-    if (arg === '--json') json = true;
-    else if (arg === '-h' || arg === '--help') {
+    if (arg === "--json") json = true;
+    else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('--')) {
+    } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
       return 1;
     } else positional.push(arg);
   }
-  const target = positional[0] ?? 'current';
+  const target = positional[0] ?? "current";
 
   let result: Awaited<ReturnType<typeof bench.benchVision>>;
   if (isLocalDispatch()) {
     result = await bench.benchVision({ target, onEvent: forwardBenchEvent });
   } else {
     try {
-      result = await subscribeRemote<bench.BenchEvent, Awaited<ReturnType<typeof bench.benchVision>>>({
+      result = await subscribeRemote<
+        bench.BenchEvent,
+        Awaited<ReturnType<typeof bench.benchVision>>
+      >({
         subscribe: (handlers) => getNodeClient().benchVisionRun.subscribe({ target }, handlers),
         onEvent: forwardBenchEvent,
-        extractDone: matchDoneEvent<Awaited<ReturnType<typeof bench.benchVision>>>('done-vision'),
+        extractDone: matchDoneEvent<Awaited<ReturnType<typeof bench.benchVision>>>("done-vision"),
       });
     } catch (err) {
-      process.stderr.write(`bench vision: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `bench vision: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
-  if ('error' in result) {
+  if ("error" in result) {
     if (json) process.stdout.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
     else process.stderr.write(`${result.error}\n`);
     return 1;
@@ -403,20 +413,20 @@ async function runVision(args: string[]): Promise<number> {
 export async function runBench(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
-    case 'show':
+    case "show":
       return runShow(rest);
-    case 'history':
+    case "history":
       return runHistory(rest);
-    case 'compare':
+    case "compare":
       return runCompare(rest);
-    case 'preset':
+    case "preset":
       return runPreset(rest);
-    case 'vision':
+    case "vision":
       return runVision(rest);
     case undefined:
-    case '-h':
-    case '--help':
-    case 'help':
+    case "-h":
+    case "--help":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:

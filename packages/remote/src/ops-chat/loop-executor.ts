@@ -1,20 +1,17 @@
-import { randomUUID } from 'node:crypto';
-import { appendJournalEvent } from './sessions/journal.js';
-import { sessionEventBus } from './sessions/event-bus.js';
-import { redactResult } from './sessions/redaction.js';
-import type { JournalEvent } from './sessions/journal-schema.js';
+import { randomUUID } from "node:crypto";
+import { appendJournalEvent } from "./sessions/journal.js";
+import { sessionEventBus } from "./sessions/event-bus.js";
+import { redactResult } from "./sessions/redaction.js";
+import type { JournalEvent } from "./sessions/journal-schema.js";
 import {
   runPlanner,
   type PlannerExecutor,
   type PlannerToolDescriptor,
   type AllowlistConfig,
-} from '@nova/mcp';
-import { toolTier, type ToolTier, KNOWN_OPS_CHAT_TOOLS } from './dispatch.js';
-import type {
-  OpsChatStreamEvent,
-  OpsChatStepOutcome,
-} from './loop-schema.js';
-import { checkRefusal } from './refusals.js';
+} from "@nova/mcp";
+import { toolTier, type ToolTier, KNOWN_OPS_CHAT_TOOLS } from "./dispatch.js";
+import type { OpsChatStreamEvent, OpsChatStepOutcome } from "./loop-schema.js";
+import { checkRefusal } from "./refusals.js";
 
 /**
  * N.4 Phase 1 — server-side loop executor for Ops Chat.
@@ -38,7 +35,7 @@ import { checkRefusal } from './refusals.js';
 export interface LoopExecutorOptions {
   goal: string;
   context?: string;
-  history?: Array<{ role: 'user' | 'assistant'; text: string }>;
+  history?: Array<{ role: "user" | "assistant"; text: string }>;
   tools: PlannerToolDescriptor[];
   executor: PlannerExecutor;
   allowlist?: AllowlistConfig;
@@ -102,7 +99,7 @@ export function sessionCount(): number {
 export function resetSessions(): void {
   for (const record of sessionRegistry.values()) {
     record.closed = true;
-    record.pendingOutcome?.reject(new Error('session reset'));
+    record.pendingOutcome?.reject(new Error("session reset"));
   }
   sessionRegistry.clear();
 }
@@ -111,11 +108,11 @@ function resolveTier(toolName: string): ToolTier {
   if ((KNOWN_OPS_CHAT_TOOLS as readonly string[]).includes(toolName)) {
     return toolTier(toolName as (typeof KNOWN_OPS_CHAT_TOOLS)[number]);
   }
-  return 'read';
+  return "read";
 }
 
 function buildTranscript(
-  history: LoopExecutorOptions['history'],
+  history: LoopExecutorOptions["history"],
   outcomes: Array<{ step: string; ok: boolean; summary: string }>,
 ): string {
   const lines: string[] = [];
@@ -124,12 +121,10 @@ function buildTranscript(
     if (text.length > 0) lines.push(`${turn.role}: ${text}`);
   }
   for (const outcome of outcomes) {
-    const marker = outcome.ok ? 'ok' : 'err';
-    lines.push(
-      `tool-outcome (${marker}) ${outcome.step}: ${outcome.summary.trim()}`,
-    );
+    const marker = outcome.ok ? "ok" : "err";
+    lines.push(`tool-outcome (${marker}) ${outcome.step}: ${outcome.summary.trim()}`);
   }
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
 /**
@@ -143,7 +138,7 @@ export async function* runLoopExecutor(
   const sessionId = randomUUID();
   sessionEventBus.create(sessionId);
   const startEvent: JournalEvent = {
-    type: 'session_started',
+    type: "session_started",
     ts: new Date().toISOString(),
     sessionId,
     goal: opts.goal,
@@ -167,9 +162,9 @@ export async function* runLoopExecutor(
   const seenSteps = new Set<string>();
 
   const abortHandler = () => {
-    record.pendingOutcome?.reject(new Error('aborted'));
+    record.pendingOutcome?.reject(new Error("aborted"));
   };
-  opts.signal?.addEventListener('abort', abortHandler);
+  opts.signal?.addEventListener("abort", abortHandler);
 
   try {
     // Goal-pattern refusal fires before the planner ever runs. A
@@ -177,7 +172,7 @@ export async function* runLoopExecutor(
     // never consulted, no tools are offered, no audit entries land.
     const refusal = checkRefusal(opts.goal);
     if (refusal) {
-      yield { type: 'refusal', reason: refusal.reason };
+      yield { type: "refusal", reason: refusal.reason };
       return;
     }
 
@@ -186,10 +181,8 @@ export async function* runLoopExecutor(
       if (opts.signal?.aborted) break;
 
       const transcript = buildTranscript(opts.history, outcomes);
-      const userContext = opts.context?.trim() ?? '';
-      const mergedContext = [transcript, userContext]
-        .filter((s) => s.length > 0)
-        .join('\n\n');
+      const userContext = opts.context?.trim() ?? "";
+      const mergedContext = [transcript, userContext].filter((s) => s.length > 0).join("\n\n");
 
       const result = await runPlanner({
         goal: opts.goal,
@@ -201,14 +194,14 @@ export async function* runLoopExecutor(
 
       if (!result.ok) {
         const ev: JournalEvent = {
-          type: 'refusal',
+          type: "refusal",
           ts: new Date().toISOString(),
           reason: `${result.reason}: ${result.message}`,
         };
         await appendJournalEvent(sessionId, ev);
         sessionEventBus.publish(sessionId, ev);
         yield {
-          type: 'refusal',
+          type: "refusal",
           reason: `${result.reason}: ${result.message}`,
         };
         return;
@@ -231,25 +224,25 @@ export async function* runLoopExecutor(
       record.pendingOutcome = pending;
 
       const planEvt: JournalEvent = {
-        type: 'plan_proposed',
+        type: "plan_proposed",
         ts: new Date().toISOString(),
         stepId,
         iteration,
         tier: resolveTier(step.tool),
-        reasoning: iteration === 0 ? result.plan.reasoning : '',
+        reasoning: iteration === 0 ? result.plan.reasoning : "",
         step,
       };
       await appendJournalEvent(sessionId, planEvt);
       sessionEventBus.publish(sessionId, planEvt);
 
       yield {
-        type: 'plan_proposed',
+        type: "plan_proposed",
         sessionId,
         stepId,
         iteration,
         step,
         tier: resolveTier(step.tool),
-        reasoning: iteration === 0 ? result.plan.reasoning : '',
+        reasoning: iteration === 0 ? result.plan.reasoning : "",
       };
 
       let outcome: OpsChatStepOutcome;
@@ -270,13 +263,17 @@ export async function* runLoopExecutor(
       iteration += 1;
     }
 
-    const doneEvt: JournalEvent = { type: 'done', ts: new Date().toISOString(), iterations: outcomes.length };
+    const doneEvt: JournalEvent = {
+      type: "done",
+      ts: new Date().toISOString(),
+      iterations: outcomes.length,
+    };
     await appendJournalEvent(sessionId, doneEvt);
     sessionEventBus.publish(sessionId, doneEvt);
 
-    yield { type: 'done', iterations: outcomes.length };
+    yield { type: "done", iterations: outcomes.length };
   } finally {
-    opts.signal?.removeEventListener('abort', abortHandler);
+    opts.signal?.removeEventListener("abort", abortHandler);
     record.closed = true;
     record.pendingOutcome = null;
     sessionRegistry.delete(sessionId);

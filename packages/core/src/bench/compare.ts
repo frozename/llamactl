@@ -1,10 +1,10 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { listCatalog } from '../catalog.js';
-import { resolveBuildId } from '../build.js';
-import { ctxForModel } from '../ctx.js';
-import { resolveEnv } from '../env.js';
-import { defaultModeForRel, machineLabel } from './mode.js';
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { listCatalog } from "../catalog.js";
+import { resolveBuildId } from "../build.js";
+import { ctxForModel } from "../ctx.js";
+import { resolveEnv } from "../env.js";
+import { defaultModeForRel, machineLabel } from "./mode.js";
 import {
   benchProfileFile,
   benchVisionFile,
@@ -13,13 +13,13 @@ import {
   findLatestVision,
   readBenchProfiles,
   readBenchVision,
-} from './store.js';
-import type { CuratedModel } from '../schemas.js';
-import type { ModelClass } from '../types.js';
+} from "./store.js";
+import type { CuratedModel } from "../schemas.js";
+import type { ModelClass } from "../types.js";
 
 export interface BenchCompareRow {
   label: string;
-  class: CuratedModel['class'];
+  class: CuratedModel["class"];
   scope: string;
   rel: string;
   installed: boolean;
@@ -51,7 +51,7 @@ export interface BenchCompareRow {
 
 export interface BenchCompareOptions {
   /** Filter by model class. `all` (default) matches every row. */
-  classFilter?: ModelClass | 'all';
+  classFilter?: ModelClass | "all";
   /** Filter by scope. `all` (default) matches every row. */
   scopeFilter?: string;
 }
@@ -70,13 +70,13 @@ export function benchCompare(
   const vision = readBenchVision(benchVisionFile(resolved));
   const build = resolveBuildId(resolved);
   const machine = machineLabel(resolved);
-  const classFilter = opts.classFilter ?? 'all';
-  const scopeFilter = opts.scopeFilter ?? 'all';
+  const classFilter = opts.classFilter ?? "all";
+  const scopeFilter = opts.scopeFilter ?? "all";
 
   const rows: BenchCompareRow[] = [];
-  for (const entry of listCatalog('all')) {
-    if (classFilter !== 'all' && entry.class !== classFilter) continue;
-    if (scopeFilter !== 'all' && entry.scope !== scopeFilter) continue;
+  for (const entry of listCatalog("all")) {
+    if (classFilter !== "all" && entry.class !== classFilter) continue;
+    if (scopeFilter !== "all" && entry.scope !== scopeFilter) continue;
 
     const rel = entry.rel;
     const installed = existsSync(join(resolved.LLAMA_CPP_MODELS, rel));
@@ -91,7 +91,7 @@ export function benchCompare(
       build,
     });
 
-    let tuned: BenchCompareRow['tuned'] = null;
+    let tuned: BenchCompareRow["tuned"] = null;
     let effectiveMode: string = mode;
     let effectiveCtx: string = ctx;
     let effectiveBuild: string = build;
@@ -116,9 +116,9 @@ export function benchCompare(
           updated_at: legacy.updated_at,
           legacy: true,
         };
-        effectiveMode = 'legacy';
-        effectiveCtx = 'legacy';
-        effectiveBuild = 'legacy';
+        effectiveMode = "legacy";
+        effectiveCtx = "legacy";
+        effectiveBuild = "legacy";
       }
     }
 

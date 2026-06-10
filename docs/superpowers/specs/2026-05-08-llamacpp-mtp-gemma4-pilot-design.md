@@ -49,8 +49,8 @@ On pass, wire an opt-in `decoding: mtp` workload variant for Gemma 4 on
 
 ## Hardware fit
 
-| Node | Profile | Models in scope | Sizing |
-|---|---|---|---|
+| Node    | Profile                  | Models in scope                                                                                                                      | Sizing                                                                           |
+| ------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
 | `local` | macbook-pro-48g (M4 Pro) | `gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf` (base, ~17 GB, on disk) + `AtomicChat/gemma-4-26B-A4B-it-assistant-GGUF` Q4_K_M (head, ~310 MB) | Comfortable headroom — 26B-A4B is MoE with 4B active; KV at turbo3 stays compact |
 
 26B-A4B is selected over 31B dense because the fork's published bench
@@ -59,12 +59,12 @@ for 48 GB once context + KV are accounted for.
 
 ### Quant-tier deviation from the published bench
 
-The fork's reported 1.34× datapoint is on Q4_K_M-class. The closest
+The fork's reported 1.34× datapoint is on Q4*K_M-class. The closest
 unsloth file on disk is `gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf`
 (unsloth-dynamic, slightly higher quality / ~1 GB larger than the
 equivalent UD-Q4_K_M). Decision: reuse the on-disk file and avoid a
 ~16 GB download. The MTP-vs-vanilla ratio we are gating on is invariant
-to the precise main-model quant tier within Q4_K_*, since both legs of
+to the precise main-model quant tier within Q4_K*\*, since both legs of
 the bench load the same base. The deviation will be called out in the
 results doc, and `download.sh --base` is available to pull
 `gemma-4-26B-A4B-it-UD-Q4_K_M.gguf` if a strict reproduction is needed.
@@ -110,14 +110,15 @@ decoding path.
 
 ## Two slices
 
-| Slice | Deliverable | Gate to next |
-|---|---|---|
-| A | Atomic fork build + Gemma 4 26B-A4B base + assistant head + bench vs vanilla on `local` | Decode speedup ≥ **1.4×** for short-chat AND no prefill regression worse than 0.9× |
-| B | Opt-in `decoding: mtp` workload wiring for Gemma 4 on `local` + `chat-mtp-gemma4-local` composite | — |
+| Slice | Deliverable                                                                                       | Gate to next                                                                       |
+| ----- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| A     | Atomic fork build + Gemma 4 26B-A4B base + assistant head + bench vs vanilla on `local`           | Decode speedup ≥ **1.4×** for short-chat AND no prefill regression worse than 0.9× |
+| B     | Opt-in `decoding: mtp` workload wiring for Gemma 4 on `local` + `chat-mtp-gemma4-local` composite | —                                                                                  |
 
 ### Slice A — validation and benchmark
 
 Deliverables:
+
 1. Side-by-side fork tree at `$DEV_STORAGE/src/llama.cpp-atomic` built with
    Metal, `gemma4_assistant` arch enabled.
 2. Idempotent download harness (`download.sh`) that pulls base + assistant
@@ -130,6 +131,7 @@ Deliverables:
 5. Slice-A results doc with go/no-go recommendation.
 
 Bench profiles (carry over from prior pilot):
+
 - Short-chat (decode-focused, ctx 8192, n_predict 256)
 - Long-prompt (prefill sensitivity, 4 KB prompt, n_predict 64)
 
@@ -141,6 +143,7 @@ Captured per run: decode tps, prefill tps, TTFT, RSS, draft accept rate
 Triggered only if Slice A passes.
 
 Schema and routing:
+
 - Workload gains optional `mtpHead: string` (rel under `LLAMA_CPP_MODELS`).
 - Workload keeps `decoding: mtp | vanilla` (default `vanilla`).
 - Catalog gains `gemma4-26b-a4b-q4m` with:
@@ -167,6 +170,7 @@ Composite target: `chat-mtp-gemma4-local` (M4 Pro).
 ## Reversibility
 
 Fully reversible:
+
 - Remove `LLAMA_CPP_SRC_ATOMIC` / `LLAMA_CPP_BIN_ATOMIC`.
 - Remove downloaded base + assistant GGUF directories.
 - Flip any `decoding: mtp` workloads back to `vanilla`.

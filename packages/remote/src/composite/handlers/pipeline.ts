@@ -1,9 +1,6 @@
-import { stringify as stringifyYaml } from 'yaml';
-import { entrySpecHash } from '../../workload/gateway-catalog/hash.js';
-import type {
-  CompositeStatusComponent,
-  PipelineCompositeEntry,
-} from '../schema.js';
+import { stringify as stringifyYaml } from "yaml";
+import { entrySpecHash } from "../../workload/gateway-catalog/hash.js";
+import type { CompositeStatusComponent, PipelineCompositeEntry } from "../schema.js";
 
 /**
  * Wire shape returned by `ragPipelineApply` when ownership is supplied.
@@ -19,11 +16,11 @@ type RagPipelineApplyResult =
       name: string;
       conflict:
         | {
-            kind: 'name';
+            kind: "name";
             name: string;
-            existingOwner: 'operator' | 'composite';
+            existingOwner: "operator" | "composite";
           }
-        | { kind: 'shape'; name: string; reason: string };
+        | { kind: "shape"; name: string; reason: string };
     };
 
 /**
@@ -37,7 +34,7 @@ type RagPipelineRemoveResult =
   | {
       ok: false;
       name: string;
-      conflict: { kind: 'name'; name: string; existingOwner: 'operator' };
+      conflict: { kind: "name"; name: string; existingOwner: "operator" };
     };
 
 export interface PipelineHandlerCtx {
@@ -48,15 +45,12 @@ export interface PipelineHandlerCtx {
     ragPipelineApply: (input: {
       manifestYaml: string;
       ownership?: {
-        source: 'composite';
+        source: "composite";
         compositeNames: string[];
         specHash: string;
       };
     }) => Promise<RagPipelineApplyResult>;
-    ragPipelineRun: (input: {
-      name: string;
-      dryRun?: boolean;
-    }) => Promise<unknown>;
+    ragPipelineRun: (input: { name: string; dryRun?: boolean }) => Promise<unknown>;
   };
   /** Optional logger for fire-and-forget first-run errors. Default: silent. */
   onFirstRunError?: (err: Error, name: string) => void;
@@ -82,8 +76,8 @@ export async function applyPipelineComponent(
   ctx: PipelineHandlerCtx,
 ): Promise<PipelineHandlerResult> {
   const manifest = {
-    apiVersion: 'llamactl/v1' as const,
-    kind: 'RagPipeline' as const,
+    apiVersion: "llamactl/v1" as const,
+    kind: "RagPipeline" as const,
     metadata: { name: entry.name },
     spec: entry.spec,
   };
@@ -93,7 +87,7 @@ export async function applyPipelineComponent(
   const result = await ctx.caller.ragPipelineApply({
     manifestYaml,
     ownership: {
-      source: 'composite',
+      source: "composite",
       compositeNames: [ctx.compositeName],
       specHash,
     },
@@ -101,19 +95,19 @@ export async function applyPipelineComponent(
 
   if (!result.ok) {
     const reasonMap: Record<string, string> = {
-      name: 'PipelineNameCollision',
-      shape: 'PipelineShapeMismatch',
+      name: "PipelineNameCollision",
+      shape: "PipelineShapeMismatch",
     };
-    const reason = reasonMap[result.conflict.kind] ?? 'PipelineConflict';
+    const reason = reasonMap[result.conflict.kind] ?? "PipelineConflict";
     const detail =
-      result.conflict.kind === 'name'
+      result.conflict.kind === "name"
         ? `pipeline '${result.conflict.name}' already exists as ${result.conflict.existingOwner}-managed`
         : `pipeline '${result.conflict.name}' shape disagrees with prior composite (${result.conflict.reason})`;
     return {
       changed: false,
       status: {
-        ref: { kind: 'pipeline', name: entry.name },
-        state: 'Pending',
+        ref: { kind: "pipeline", name: entry.name },
+        state: "Pending",
         message: `${reason}: ${detail}`,
       },
     };
@@ -131,8 +125,8 @@ export async function applyPipelineComponent(
   return {
     changed: result.created,
     status: {
-      ref: { kind: 'pipeline', name: entry.name },
-      state: 'Ready',
+      ref: { kind: "pipeline", name: entry.name },
+      state: "Ready",
     },
   };
 }

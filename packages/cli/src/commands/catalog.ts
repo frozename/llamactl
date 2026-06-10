@@ -7,19 +7,13 @@ import {
   profile as profileMod,
   quant,
   target as targetMod,
-} from '@llamactl/core';
-import type { ModelClass } from '@llamactl/core';
-import type { schemas } from '@llamactl/core';
+} from "@llamactl/core";
+import type { ModelClass } from "@llamactl/core";
+import type { schemas } from "@llamactl/core";
 type CuratedModel = schemas.CuratedModel;
-import {
-  fanOut,
-  getGlobals,
-  getNodeClient,
-  isFanOut,
-  isLocalDispatch,
-} from '../dispatcher.js';
+import { fanOut, getGlobals, getNodeClient, isFanOut, isLocalDispatch } from "../dispatcher.js";
 
-type Format = 'tsv' | 'json';
+type Format = "tsv" | "json";
 type Scope = catalog.CatalogScope;
 
 interface ParsedListFlags {
@@ -27,23 +21,23 @@ interface ParsedListFlags {
   format: Format;
 }
 
-const SCOPES: readonly Scope[] = ['all', 'builtin', 'custom'];
+const SCOPES: readonly Scope[] = ["all", "builtin", "custom"];
 
 function parseList(args: string[]): ParsedListFlags | { error: string } {
-  let scope: Scope = 'all';
-  let format: Format = 'tsv';
+  let scope: Scope = "all";
+  let format: Format = "tsv";
   let gotPositional = false;
 
   for (const arg of args) {
     switch (arg) {
-      case '--json':
-        format = 'json';
+      case "--json":
+        format = "json";
         break;
-      case '--tsv':
-        format = 'tsv';
+      case "--tsv":
+        format = "tsv";
         break;
       default:
-        if (arg.startsWith('--')) {
+        if (arg.startsWith("--")) {
           return { error: `Unknown flag for catalog list: ${arg}` };
         }
         if (gotPositional) {
@@ -51,7 +45,7 @@ function parseList(args: string[]): ParsedListFlags | { error: string } {
         }
         if (!(SCOPES as readonly string[]).includes(arg)) {
           return {
-            error: `Unknown scope: ${arg} (expected ${SCOPES.join(' | ')})`,
+            error: `Unknown scope: ${arg} (expected ${SCOPES.join(" | ")})`,
           };
         }
         scope = arg as Scope;
@@ -65,7 +59,7 @@ function parseList(args: string[]): ParsedListFlags | { error: string } {
 
 async function runList(args: string[]): Promise<number> {
   const parsed = parseList(args);
-  if ('error' in parsed) {
+  if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 1;
   }
@@ -73,7 +67,7 @@ async function runList(args: string[]): Promise<number> {
   // `-n all` fans out across every node in the current context.
   if (isFanOut()) {
     const results = await fanOut((client) => client.catalogList.query(parsed.scope));
-    if (parsed.format === 'json') {
+    if (parsed.format === "json") {
       process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
       return results.some((r) => !r.ok) ? 2 : 0;
     }
@@ -85,7 +79,7 @@ async function runList(args: string[]): Promise<number> {
       const rows = r.data as CuratedModel[];
       if (rows.length === 0) continue;
       // Prefix each TSV row with the node name so output stays grep-able.
-      for (const line of catalog.formatCatalogTsv(rows).split('\n')) {
+      for (const line of catalog.formatCatalogTsv(rows).split("\n")) {
         if (line) process.stdout.write(`${r.node}\t${line}\n`);
       }
     }
@@ -97,14 +91,16 @@ async function runList(args: string[]): Promise<number> {
     entries = catalog.listCatalog(parsed.scope);
   } else {
     try {
-      entries = await getNodeClient().catalogList.query(parsed.scope) as CuratedModel[];
+      entries = (await getNodeClient().catalogList.query(parsed.scope)) as CuratedModel[];
     } catch (err) {
-      process.stderr.write(`catalog list: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `catalog list: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
 
-  if (parsed.format === 'json') {
+  if (parsed.format === "json") {
     process.stdout.write(`${JSON.stringify(entries, null, 2)}\n`);
     return 0;
   }
@@ -148,7 +144,7 @@ interface StatusReport {
   installed: boolean;
   quant: string;
   catalog: {
-    hit: 'builtin' | 'custom' | 'none';
+    hit: "builtin" | "custom" | "none";
     label: string | null;
     family: string | null;
     scope: string | null;
@@ -156,7 +152,7 @@ interface StatusReport {
   };
   class: {
     value: ModelClass;
-    source: 'catalog' | 'hf' | 'pattern';
+    source: "catalog" | "hf" | "pattern";
   };
   hf: {
     enabled: boolean;
@@ -166,21 +162,30 @@ interface StatusReport {
 }
 
 function classifyFromPattern(rel: string): ModelClass {
-  if (/^gemma-4-/.test(rel) || /^Qwen3\.6-35B-A3B-GGUF\//.test(rel)) return 'multimodal';
-  if (/^Qwen3\.5-/.test(rel) || /^DeepSeek-/.test(rel) || /^deepseek-/.test(rel) || /R1/.test(rel)) {
-    return 'reasoning';
+  if (/^gemma-4-/.test(rel) || /^Qwen3\.6-35B-A3B-GGUF\//.test(rel)) return "multimodal";
+  if (
+    /^Qwen3\.5-/.test(rel) ||
+    /^DeepSeek-/.test(rel) ||
+    /^deepseek-/.test(rel) ||
+    /R1/.test(rel)
+  ) {
+    return "reasoning";
   }
-  return 'general';
+  return "general";
 }
 
-async function resolveLayeredClass(
-  rel: string,
-): Promise<{ value: ModelClass; source: StatusReport['class']['source']; repo: string | null; pipeline: string | null; hfEnabled: boolean }> {
+async function resolveLayeredClass(rel: string): Promise<{
+  value: ModelClass;
+  source: StatusReport["class"]["source"];
+  repo: string | null;
+  pipeline: string | null;
+  hfEnabled: boolean;
+}> {
   const fromCatalog = catalog.findByRel(rel);
   if (fromCatalog) {
     return {
       value: fromCatalog.class,
-      source: 'catalog',
+      source: "catalog",
       repo: fromCatalog.repo,
       pipeline: null,
       hfEnabled: hf.hfEnabled(),
@@ -190,7 +195,7 @@ async function resolveLayeredClass(
   const resolved = envMod.resolveEnv();
   const hfOn = hf.hfEnabled();
   let repo: string | null = null;
-  const slash = rel.indexOf('/');
+  const slash = rel.indexOf("/");
   if (slash > 0) {
     repo = `${resolved.LOCAL_AI_DISCOVERY_AUTHOR}/${rel.slice(0, slash)}`;
   }
@@ -200,20 +205,24 @@ async function resolveLayeredClass(
     const info = await hf.fetchModelInfo(repo);
     if (info) {
       pipeline = info.pipeline_tag ?? info.pipelineTag ?? null;
-      if (pipeline === 'image-text-to-text' || pipeline === 'visual-question-answering' || pipeline === 'image-to-text') {
-        return { value: 'multimodal', source: 'hf', repo, pipeline, hfEnabled: hfOn };
+      if (
+        pipeline === "image-text-to-text" ||
+        pipeline === "visual-question-answering" ||
+        pipeline === "image-to-text"
+      ) {
+        return { value: "multimodal", source: "hf", repo, pipeline, hfEnabled: hfOn };
       }
     }
   }
 
-  return { value: classifyFromPattern(rel), source: 'pattern', repo, pipeline, hfEnabled: hfOn };
+  return { value: classifyFromPattern(rel), source: "pattern", repo, pipeline, hfEnabled: hfOn };
 }
 
 async function runStatus(args: string[]): Promise<number> {
   const flags = new Set<string>();
-  let rel = '';
+  let rel = "";
   for (const arg of args) {
-    if (arg.startsWith('--')) flags.add(arg);
+    if (arg.startsWith("--")) flags.add(arg);
     else if (!rel) rel = arg;
     else {
       process.stderr.write(`Unexpected extra argument: ${arg}\n`);
@@ -236,18 +245,18 @@ async function runStatus(args: string[]): Promise<number> {
     quant: quant.quantFromRel(rel),
     catalog: entry
       ? {
-          hit: catalog.findByRel(rel, { scope: 'builtin' }) ? 'builtin' : 'custom',
+          hit: catalog.findByRel(rel, { scope: "builtin" }) ? "builtin" : "custom",
           label: entry.label,
           family: entry.family,
           scope: entry.scope,
           repo: entry.repo,
         }
-      : { hit: 'none', label: null, family: null, scope: null, repo: null },
+      : { hit: "none", label: null, family: null, scope: null, repo: null },
     class: { value: klass.value, source: klass.source },
     hf: { enabled: klass.hfEnabled, repo: klass.repo, pipeline_tag: klass.pipeline },
   };
 
-  if (flags.has('--json')) {
+  if (flags.has("--json")) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return 0;
   }
@@ -256,37 +265,32 @@ async function runStatus(args: string[]): Promise<number> {
   process.stdout.write(
     [
       `rel=${report.rel}`,
-      `installed=${report.installed ? 'yes' : 'no'}`,
+      `installed=${report.installed ? "yes" : "no"}`,
       `quant=${report.quant}`,
       `catalog=${c.hit}`,
-      ...(c.hit !== 'none'
-        ? [
-            `  label=${c.label}`,
-            `  family=${c.family}`,
-            `  scope=${c.scope}`,
-            `  repo=${c.repo}`,
-          ]
+      ...(c.hit !== "none"
+        ? [`  label=${c.label}`, `  family=${c.family}`, `  scope=${c.scope}`, `  repo=${c.repo}`]
         : []),
       `class=${report.class.value}`,
       `class_source=${report.class.source}`,
       `hf_enabled=${report.hf.enabled}`,
       ...(report.hf.repo ? [`hf_repo=${report.hf.repo}`] : []),
       ...(report.hf.pipeline_tag ? [`hf_pipeline=${report.hf.pipeline_tag}`] : []),
-      '',
-    ].join('\n'),
+      "",
+    ].join("\n"),
   );
   return 0;
 }
 
 async function runAdd(args: string[]): Promise<number> {
-  if (args.length < 2 || args.includes('-h') || args.includes('--help')) {
+  if (args.length < 2 || args.includes("-h") || args.includes("--help")) {
     process.stdout.write(USAGE);
     return args.length < 2 ? 1 : 0;
   }
   const [repo, fileOrRel, label, family, klass, scope] = args;
   const result = await catalogWriter.addCurated({
-    repo: repo ?? '',
-    fileOrRel: fileOrRel ?? '',
+    repo: repo ?? "",
+    fileOrRel: fileOrRel ?? "",
     label,
     family,
     class: klass,
@@ -301,16 +305,16 @@ async function runAdd(args: string[]): Promise<number> {
       `Added curated entry to ${result.file}`,
       `  id=${result.entry.id}`,
       `  model=${result.entry.rel}`,
-      '',
-    ].join('\n'),
+      "",
+    ].join("\n"),
   );
   return 0;
 }
 
 async function runPromote(args: string[]): Promise<number> {
-  if (args.length < 3 || args.includes('-h') || args.includes('--help')) {
+  if (args.length < 3 || args.includes("-h") || args.includes("--help")) {
     process.stderr.write(
-      'Usage: llamactl catalog promote <profile> <best|vision|balanced|fast> <rel-or-alias>\n',
+      "Usage: llamactl catalog promote <profile> <best|vision|balanced|fast> <rel-or-alias>\n",
     );
     return args.length < 3 ? 1 : 0;
   }
@@ -320,15 +324,13 @@ async function runPromote(args: string[]): Promise<number> {
     process.stderr.write(`Unknown profile: ${profileArg}\n`);
     return 1;
   }
-  if (preset !== 'best' && preset !== 'vision' && preset !== 'balanced' && preset !== 'fast') {
-    process.stderr.write(
-      `Unknown preset: ${preset} (expected best|vision|balanced|fast)\n`,
-    );
+  if (preset !== "best" && preset !== "vision" && preset !== "balanced" && preset !== "fast") {
+    process.stderr.write(`Unknown preset: ${preset} (expected best|vision|balanced|fast)\n`);
     return 1;
   }
 
   let rel: string;
-  if (targetArg && (targetArg.endsWith('.gguf') || targetArg.includes('/'))) {
+  if (targetArg && (targetArg.endsWith(".gguf") || targetArg.includes("/"))) {
     rel = targetArg;
   } else {
     const resolved = targetMod.resolveTarget(targetArg);
@@ -345,7 +347,9 @@ async function runPromote(args: string[]): Promise<number> {
     try {
       await getNodeClient().promote.mutate({ profile: normalized, preset, rel });
     } catch (err) {
-      process.stderr.write(`promote: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `promote: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
@@ -355,7 +359,7 @@ async function runPromote(args: string[]): Promise<number> {
 }
 
 async function runPromotions(args: string[]): Promise<number> {
-  if (args.includes('-h') || args.includes('--help')) {
+  if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(USAGE);
     return 0;
   }
@@ -365,14 +369,16 @@ async function runPromotions(args: string[]): Promise<number> {
     rows = presets.readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE);
   } else {
     try {
-      rows = await getNodeClient().promotions.query() as typeof rows;
+      rows = (await getNodeClient().promotions.query()) as typeof rows;
     } catch (err) {
-      process.stderr.write(`promotions: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `promotions: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
   if (rows.length === 0) {
-    process.stdout.write('No preset promotions recorded\n');
+    process.stdout.write("No preset promotions recorded\n");
     return 1;
   }
   process.stdout.write(`${presets.formatPromotionsList(rows)}\n`);
@@ -382,20 +388,20 @@ async function runPromotions(args: string[]): Promise<number> {
 export async function runCatalog(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
-    case 'list':
+    case "list":
       return runList(rest);
-    case 'status':
+    case "status":
       return runStatus(rest);
-    case 'add':
+    case "add":
       return runAdd(rest);
-    case 'promote':
+    case "promote":
       return runPromote(rest);
-    case 'promotions':
+    case "promotions":
       return runPromotions(rest);
     case undefined:
-    case '-h':
-    case '--help':
-    case 'help':
+    case "-h":
+    case "--help":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:

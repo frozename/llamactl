@@ -1,10 +1,5 @@
-import {
-  config as kubecfg,
-  workloadApply,
-  workloadSchema,
-  workloadStore,
-} from '@llamactl/remote';
-import { getNodeClientByName, resolveEffectiveNodeName } from '../dispatcher.js';
+import { config as kubecfg, workloadApply, workloadSchema, workloadStore } from "@llamactl/remote";
+import { getNodeClientByName, resolveEffectiveNodeName } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl expose <target> [--node <name>]
                       [--name <workload>] [--extra-args="..."]
@@ -41,15 +36,17 @@ interface ExposeFlags {
 }
 
 function slug(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 63) || 'expose';
+  return (
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 63) || "expose"
+  );
 }
 
 function parseFlags(args: string[]): ExposeFlags | { error: string } {
-  let target = '';
+  let target = "";
   let nodeFlag: string | null = null;
   let workloadName: string | null = null;
   let extraArgs: string[] = [];
@@ -58,46 +55,58 @@ function parseFlags(args: string[]): ExposeFlags | { error: string } {
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--json') { json = true; continue; }
-    if (arg === '-h' || arg === '--help') return { error: 'help' };
-    if (arg === '--node' || arg === '-n') {
-      nodeFlag = args[++i] ?? '';
-      if (!nodeFlag) return { error: 'expose: --node requires a value' };
+    if (arg === "--json") {
+      json = true;
       continue;
     }
-    if (arg.startsWith('--node=')) { nodeFlag = arg.slice('--node='.length); continue; }
-    if (arg === '--name') {
-      workloadName = args[++i] ?? '';
-      if (!workloadName) return { error: 'expose: --name requires a value' };
+    if (arg === "-h" || arg === "--help") return { error: "help" };
+    if (arg === "--node" || arg === "-n") {
+      nodeFlag = args[++i] ?? "";
+      if (!nodeFlag) return { error: "expose: --node requires a value" };
       continue;
     }
-    if (arg.startsWith('--name=')) { workloadName = arg.slice('--name='.length); continue; }
-    if (arg.startsWith('--extra-args=')) {
-      const raw = arg.slice('--extra-args='.length);
+    if (arg.startsWith("--node=")) {
+      nodeFlag = arg.slice("--node=".length);
+      continue;
+    }
+    if (arg === "--name") {
+      workloadName = args[++i] ?? "";
+      if (!workloadName) return { error: "expose: --name requires a value" };
+      continue;
+    }
+    if (arg.startsWith("--name=")) {
+      workloadName = arg.slice("--name=".length);
+      continue;
+    }
+    if (arg.startsWith("--extra-args=")) {
+      const raw = arg.slice("--extra-args=".length);
       extraArgs = raw.trim().length > 0 ? raw.trim().split(/\s+/) : [];
       continue;
     }
-    if (arg === '--extra-args') {
-      const raw = args[++i] ?? '';
+    if (arg === "--extra-args") {
+      const raw = args[++i] ?? "";
       extraArgs = raw.trim().length > 0 ? raw.trim().split(/\s+/) : [];
       continue;
     }
-    if (arg.startsWith('--timeout=')) {
-      const n = Number.parseInt(arg.slice('--timeout='.length), 10);
+    if (arg.startsWith("--timeout=")) {
+      const n = Number.parseInt(arg.slice("--timeout=".length), 10);
       if (!Number.isFinite(n) || n <= 0) {
         return { error: `expose: invalid --timeout: ${arg}` };
       }
       timeoutSeconds = n;
       continue;
     }
-    if (arg.startsWith('-')) {
+    if (arg.startsWith("-")) {
       return { error: `expose: unknown flag ${arg}` };
     }
-    if (!target) { target = arg; continue; }
+    if (!target) {
+      target = arg;
+      continue;
+    }
     return { error: `expose: unexpected positional ${arg}` };
   }
 
-  if (!target) return { error: 'expose: missing <target>' };
+  if (!target) return { error: "expose: missing <target>" };
   const node = nodeFlag ?? resolveEffectiveNodeName();
   const name = workloadName ?? slug(target);
   return { target, node, workloadName: name, extraArgs, timeoutSeconds, json };
@@ -105,22 +114,22 @@ function parseFlags(args: string[]): ExposeFlags | { error: string } {
 
 export async function runExpose(args: string[]): Promise<number> {
   const parsed = parseFlags(args);
-  if ('error' in parsed) {
-    const stream = parsed.error === 'help' ? process.stdout : process.stderr;
+  if ("error" in parsed) {
+    const stream = parsed.error === "help" ? process.stdout : process.stderr;
     stream.write(USAGE);
-    return parsed.error === 'help' ? 0 : 1;
+    return parsed.error === "help" ? 0 : 1;
   }
 
   const { target, node, workloadName, extraArgs, timeoutSeconds, json } = parsed;
 
   // A rel looks like "<repo-dir>/<file>.gguf"; anything else is treated
   // as a preset alias that the target node resolves locally.
-  const targetKind: 'rel' | 'alias' =
-    target.endsWith('.gguf') || target.includes('/') ? 'rel' : 'alias';
+  const targetKind: "rel" | "alias" =
+    target.endsWith(".gguf") || target.includes("/") ? "rel" : "alias";
 
   const manifest: workloadSchema.ModelRun = {
-    apiVersion: 'llamactl/v1',
-    kind: 'ModelRun',
+    apiVersion: "llamactl/v1",
+    kind: "ModelRun",
     metadata: { name: workloadName, labels: {}, annotations: {} },
     spec: {
       node,
@@ -128,7 +137,7 @@ export async function runExpose(args: string[]): Promise<number> {
       target: { kind: targetKind, value: target },
       extraArgs,
       workers: [],
-      restartPolicy: 'Always',
+      restartPolicy: "Always",
       timeoutSeconds,
       gateway: false,
       allowExternalBind: false,
@@ -204,7 +213,7 @@ export async function runExpose(args: string[]): Promise<number> {
   if (advertised) process.stdout.write(`  endpoint:  ${advertised}\n`);
   if (openaiUrl) {
     process.stdout.write(`  openai:    ${openaiUrl}\n`);
-    process.stdout.write('\n');
+    process.stdout.write("\n");
     process.stdout.write(
       `Point OpenAI-compatible clients (ember synth, etc.) at:\n  ${openaiUrl}\n`,
     );

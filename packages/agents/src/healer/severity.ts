@@ -1,4 +1,4 @@
-import { RUNBOOKS } from '../runbooks/index.js';
+import { RUNBOOKS } from "../runbooks/index.js";
 
 /**
  * Numeric safety tier for a tool or runbook name. Used by the healer
@@ -19,9 +19,11 @@ import { RUNBOOKS } from '../runbooks/index.js';
 export type Tier = 1 | 2 | 3;
 
 /** Map the harness's string tier onto the numeric one used here. */
-function numericFromStringTier(tier: 'read' | 'mutation-dry-run-safe' | 'mutation-destructive'): Tier {
-  if (tier === 'read') return 1;
-  if (tier === 'mutation-dry-run-safe') return 2;
+function numericFromStringTier(
+  tier: "read" | "mutation-dry-run-safe" | "mutation-destructive",
+): Tier {
+  if (tier === "read") return 1;
+  if (tier === "mutation-dry-run-safe") return 2;
   return 3;
 }
 
@@ -30,56 +32,49 @@ function numericFromStringTier(tier: 'read' | 'mutation-dry-run-safe' | 'mutatio
  *  names won't match the `.verb` suffix heuristics so we classify
  *  them explicitly. */
 const RUNBOOK_TIERS: Record<string, Tier> = {
-  'drain-node': 3,
-  'promote-fastest-vision-model': 2,
-  'onboard-new-gpu-node': 2,
-  'audit-fleet': 1,
-  'cost-snapshot': 1,
+  "drain-node": 3,
+  "promote-fastest-vision-model": 2,
+  "onboard-new-gpu-node": 2,
+  "audit-fleet": 1,
+  "cost-snapshot": 1,
 };
 
 /** Tier-1 (read-only) verb suffixes. Order matters only in that any
  *  later match falls through; these are checked first since read
  *  tools are the common case. */
 const TIER_1_SUFFIXES = [
-  '.list',
-  '.show',
-  '.inspect',
-  '.status',
-  '.history',
-  '.snapshot',
-  '.facts',
-  '.ls',
-  '.healthcheck',
-  '.overview',
-  '.env',
-  '.simulate',
-  '.tail',
-  '.search',
+  ".list",
+  ".show",
+  ".inspect",
+  ".status",
+  ".history",
+  ".snapshot",
+  ".facts",
+  ".ls",
+  ".healthcheck",
+  ".overview",
+  ".env",
+  ".simulate",
+  ".tail",
+  ".search",
 ];
 
 /** Tier-2 (mutation with dry-run path) verb suffixes. */
 const TIER_2_SUFFIXES = [
-  '.promote',
-  '.sync',
-  '.set-default-profile',
-  '.set',
-  '.reload',
-  '.add',
-  '.apply',
-  '.store',
-  '.start',
-  '.stop',
+  ".promote",
+  ".sync",
+  ".set-default-profile",
+  ".set",
+  ".reload",
+  ".add",
+  ".apply",
+  ".store",
+  ".start",
+  ".stop",
 ];
 
 /** Tier-3 (destructive) verb suffixes. */
-const TIER_3_SUFFIXES = [
-  '.remove',
-  '.delete',
-  '.drain',
-  '.deregister',
-  '.destroy',
-  '.uninstall',
-];
+const TIER_3_SUFFIXES = [".remove", ".delete", ".drain", ".deregister", ".destroy", ".uninstall"];
 
 /**
  * Classify a tool (or runbook) name into a numeric tier.
@@ -154,7 +149,7 @@ export interface GateResult {
  * and the caller should record `reason:'planner-requires-confirmation'`.
  */
 export function gatePlan(plan: PlanLike, threshold: Tier): GateResult {
-  const refusedSteps: GateResult['refusedSteps'] = [];
+  const refusedSteps: GateResult["refusedSteps"] = [];
   plan.steps.forEach((step, index) => {
     const tier = stepTier(step);
     if (tier > threshold) {
@@ -170,7 +165,7 @@ export function gatePlan(plan: PlanLike, threshold: Tier): GateResult {
  *  agree on "is this tool read-only?". Mirrors `harness.ts#inferTier`
  *  but returns the numeric form. */
 export function numericTierFromInferred(
-  inferred: 'read' | 'mutation-dry-run-safe' | 'mutation-destructive',
+  inferred: "read" | "mutation-dry-run-safe" | "mutation-destructive",
 ): Tier {
   return numericFromStringTier(inferred);
 }

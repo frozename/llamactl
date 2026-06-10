@@ -1,17 +1,17 @@
-import { createReadStream, existsSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
-import { join } from 'node:path';
-import { resolveEnv } from './env.js';
-import type { ResolvedEnv } from './types.js';
-import type { WorkloadKey } from './workloadRuntime.js';
-import { workloadRuntimeDir } from './workloadRuntime.js';
+import { createReadStream, existsSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { resolveEnv } from "./env.js";
+import type { ResolvedEnv } from "./types.js";
+import type { WorkloadKey } from "./workloadRuntime.js";
+import { workloadRuntimeDir } from "./workloadRuntime.js";
 
 /** Absolute path to the llama-server stdout/stderr capture file. */
 export function serverLogFile(resolved: ResolvedEnv = resolveEnv(), key: WorkloadKey): string {
-  return join(workloadRuntimeDir(resolved, key), 'llama-server.log');
+  return join(workloadRuntimeDir(resolved, key), "llama-server.log");
 }
 
-export type LogLineEvent = { type: 'line'; line: string };
+export type LogLineEvent = { type: "line"; line: string };
 
 export interface TailOptions {
   key: WorkloadKey;
@@ -57,22 +57,22 @@ export async function tailServerLog(opts: TailOptions): Promise<void> {
   const initial = await stat(file);
   let position = 0;
   if (maxBackfill > 0) {
-    const raw = await readFile(file, 'utf8');
-    const lines = raw.split('\n');
+    const raw = await readFile(file, "utf8");
+    const lines = raw.split("\n");
     // readFile on a file ending in '\n' leaves a trailing empty entry
     // we don't want to surface as a blank line.
-    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+    if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
     const slice = lines.length > maxBackfill ? lines.slice(-maxBackfill) : lines;
     for (const line of slice) {
       if (opts.signal?.aborted) return;
-      opts.onLine({ type: 'line', line });
+      opts.onLine({ type: "line", line });
     }
   }
   position = initial.size;
 
   if (!follow) return;
 
-  let tail = '';
+  let tail = "";
   while (!opts.signal?.aborted) {
     let current: Awaited<ReturnType<typeof stat>>;
     try {
@@ -85,21 +85,21 @@ export async function tailServerLog(opts: TailOptions): Promise<void> {
     if (current.size < position) {
       // Log was truncated or rotated; reset.
       position = 0;
-      tail = '';
+      tail = "";
     }
     if (current.size > position) {
       const stream = createReadStream(file, {
         start: position,
         end: current.size - 1,
-        encoding: 'utf8',
+        encoding: "utf8",
       });
       for await (const chunk of stream) {
         if (opts.signal?.aborted) return;
         tail += chunk;
-        const parts = tail.split('\n');
-        tail = parts.pop() ?? '';
+        const parts = tail.split("\n");
+        tail = parts.pop() ?? "";
         for (const line of parts) {
-          opts.onLine({ type: 'line', line });
+          opts.onLine({ type: "line", line });
         }
       }
       position = current.size;

@@ -1,8 +1,8 @@
-import { describe, expect, test } from 'bun:test';
-import { initTRPC } from '@trpc/server';
-import { z } from 'zod';
-import { createTunnelSubscriptionHandler } from '../src/tunnel/router-bridge.js';
-import type { TunnelReq } from '../src/tunnel/messages.js';
+import { describe, expect, test } from "bun:test";
+import { initTRPC } from "@trpc/server";
+import { z } from "zod";
+import { createTunnelSubscriptionHandler } from "../src/tunnel/router-bridge.js";
+import type { TunnelReq } from "../src/tunnel/messages.js";
 
 /**
  * B.2 coverage — `createTunnelSubscriptionHandler` must resolve
@@ -34,7 +34,7 @@ function buildFixtureRouter() {
     }),
     crashes: t.procedure.subscription(async function* () {
       yield { first: true };
-      throw new Error('boom');
+      throw new Error("boom");
     }),
     notFound: t.procedure.query(() => ({ ok: true })),
     contextEcho: t.procedure.subscription(async function* ({ ctx }) {
@@ -45,21 +45,21 @@ function buildFixtureRouter() {
 
 function makeReq(method: string, input: unknown): TunnelReq {
   return {
-    type: 'req',
+    type: "req",
     id: `test-${Math.random().toString(36).slice(2)}`,
     method,
-    params: { type: 'subscription', input },
+    params: { type: "subscription", input },
   };
 }
 
-describe('createTunnelSubscriptionHandler', () => {
-  test('emits three events then completes', async () => {
+describe("createTunnelSubscriptionHandler", () => {
+  test("emits three events then completes", async () => {
     const router = buildFixtureRouter();
     const makeSub = createTunnelSubscriptionHandler(router, () => ({}));
     const events: unknown[] = [];
     let complete = false;
     let error: Error | null = null;
-    const sub = makeSub(makeReq('counter', { n: 3 })).subscribe({
+    const sub = makeSub(makeReq("counter", { n: 3 })).subscribe({
       onEvent: (d) => events.push(d),
       onError: (e) => {
         error = e;
@@ -76,27 +76,27 @@ describe('createTunnelSubscriptionHandler', () => {
     sub.cancel(); // idempotent; no throw
   });
 
-  test('propagates ctx from createContext factory', async () => {
+  test("propagates ctx from createContext factory", async () => {
     const router = buildFixtureRouter();
     const makeSub = createTunnelSubscriptionHandler(router, () => ({
-      userId: 'alice',
+      userId: "alice",
     }));
     const events: unknown[] = [];
-    makeSub(makeReq('contextEcho', undefined)).subscribe({
+    makeSub(makeReq("contextEcho", undefined)).subscribe({
       onEvent: (d) => events.push(d),
       onError: () => {},
       onComplete: () => {},
     });
     await new Promise((r) => setTimeout(r, 20));
-    expect(events).toEqual([{ user: 'alice' }]);
+    expect(events).toEqual([{ user: "alice" }]);
   });
 
-  test('cancel() aborts the source iterable', async () => {
+  test("cancel() aborts the source iterable", async () => {
     const router = buildFixtureRouter();
     const makeSub = createTunnelSubscriptionHandler(router, () => ({}));
     const events: unknown[] = [];
     let done = false;
-    const sub = makeSub(makeReq('slow', undefined)).subscribe({
+    const sub = makeSub(makeReq("slow", undefined)).subscribe({
       onEvent: (d) => events.push(d),
       onError: () => {
         done = true;
@@ -116,12 +116,12 @@ describe('createTunnelSubscriptionHandler', () => {
     expect(events.length).toBeLessThan(100);
   });
 
-  test('cancel() immediately after subscribe still tears down', async () => {
+  test("cancel() immediately after subscribe still tears down", async () => {
     const router = buildFixtureRouter();
     const makeSub = createTunnelSubscriptionHandler(router, () => ({}));
     const events: unknown[] = [];
     let done = false;
-    const sub = makeSub(makeReq('slow', undefined)).subscribe({
+    const sub = makeSub(makeReq("slow", undefined)).subscribe({
       onEvent: (d) => events.push(d),
       onError: () => {
         done = true;
@@ -135,13 +135,13 @@ describe('createTunnelSubscriptionHandler', () => {
     expect(done).toBe(true);
   });
 
-  test('iterator-level throw surfaces as onError', async () => {
+  test("iterator-level throw surfaces as onError", async () => {
     const router = buildFixtureRouter();
     const makeSub = createTunnelSubscriptionHandler(router, () => ({}));
     const events: unknown[] = [];
     let error: Error | null = null;
     let complete = false;
-    makeSub(makeReq('crashes', undefined)).subscribe({
+    makeSub(makeReq("crashes", undefined)).subscribe({
       onEvent: (d) => events.push(d),
       onError: (e) => {
         error = e;
@@ -152,16 +152,16 @@ describe('createTunnelSubscriptionHandler', () => {
     });
     await new Promise((r) => setTimeout(r, 30));
     expect(error).not.toBeNull();
-    expect((error as unknown as Error).message).toContain('boom');
+    expect((error as unknown as Error).message).toContain("boom");
     expect(complete).toBe(false);
     expect(events).toEqual([{ first: true }]);
   });
 
-  test('missing procedure → onError', async () => {
+  test("missing procedure → onError", async () => {
     const router = buildFixtureRouter();
     const makeSub = createTunnelSubscriptionHandler(router, () => ({}));
     let error: Error | null = null;
-    makeSub(makeReq('missing.thing', undefined)).subscribe({
+    makeSub(makeReq("missing.thing", undefined)).subscribe({
       onEvent: () => {},
       onError: (e) => {
         error = e;
@@ -172,11 +172,11 @@ describe('createTunnelSubscriptionHandler', () => {
     expect(error).not.toBeNull();
   });
 
-  test('type-mismatch (query routed as subscription) → onError', async () => {
+  test("type-mismatch (query routed as subscription) → onError", async () => {
     const router = buildFixtureRouter();
     const makeSub = createTunnelSubscriptionHandler(router, () => ({}));
     let error: Error | null = null;
-    makeSub(makeReq('notFound', undefined)).subscribe({
+    makeSub(makeReq("notFound", undefined)).subscribe({
       onEvent: () => {},
       onError: (e) => {
         error = e;

@@ -7,9 +7,9 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
-} from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+} from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 
 /**
  * Versioned side-by-side layout for infra packages on an agent host.
@@ -34,8 +34,8 @@ import { basename, dirname, join } from 'node:path';
 export function defaultInfraDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_INFRA_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'infra');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "infra");
 }
 
 export function infraPackageDir(pkg: string, base: string = defaultInfraDir()): string {
@@ -50,11 +50,8 @@ export function infraVersionDir(
   return join(base, pkg, version);
 }
 
-export function infraCurrentSymlink(
-  pkg: string,
-  base: string = defaultInfraDir(),
-): string {
-  return join(base, pkg, 'current');
+export function infraCurrentSymlink(pkg: string, base: string = defaultInfraDir()): string {
+  return join(base, pkg, "current");
 }
 
 export interface InstalledInfra {
@@ -83,7 +80,7 @@ export function listInstalledInfra(base: string = defaultInfraDir()): InstalledI
     if (!stat.isDirectory()) continue;
     const versions: string[] = [];
     for (const entry of readdirSync(pkgDir)) {
-      if (entry === 'current') continue;
+      if (entry === "current") continue;
       const entryPath = join(pkgDir, entry);
       try {
         if (lstatSync(entryPath).isDirectory()) versions.push(entry);
@@ -169,10 +166,7 @@ export function removeInfraVersion(
  * Remove the whole package — every version + the current symlink +
  * the pkg directory. Returns true when the package directory existed.
  */
-export function removeInfraPackage(
-  pkg: string,
-  base: string = defaultInfraDir(),
-): boolean {
+export function removeInfraPackage(pkg: string, base: string = defaultInfraDir()): boolean {
   const dir = infraPackageDir(pkg, base);
   if (!existsSync(dir)) return false;
   rmSync(dir, { recursive: true, force: true });
@@ -205,10 +199,7 @@ export function resolveCurrentVersion(
  * Ensure `<base>/<pkg>/` exists, since tarball extraction targets
  * this path before the version dir itself is populated.
  */
-export function ensurePackageDir(
-  pkg: string,
-  base: string = defaultInfraDir(),
-): string {
+export function ensurePackageDir(pkg: string, base: string = defaultInfraDir()): string {
   const dir = infraPackageDir(pkg, base);
   mkdirSync(dir, { recursive: true });
   return dir;

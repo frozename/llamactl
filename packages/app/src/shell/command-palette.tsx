@@ -1,9 +1,9 @@
-import * as React from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { APP_MODULES, type AppModule } from '@/modules/registry';
-import { useUIStore } from '@/stores/ui-store';
-import { useTabStore } from '@/stores/tab-store';
-import { useAppCommands } from './commands';
+import * as React from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { APP_MODULES, type AppModule } from "@/modules/registry";
+import { useUIStore } from "@/stores/ui-store";
+import { useTabStore } from "@/stores/tab-store";
+import { useAppCommands } from "./commands";
 
 /**
  * VSCode-style command palette. Opens on ⌘⇧P or ⌘K (Ctrl+Shift+P /
@@ -40,20 +40,25 @@ function modulesToCommands(): Command[] {
       useTabStore.getState().open({
         tabKey: `module:${m.id}`,
         title: m.labelKey,
-        kind: 'module',
+        kind: "module",
         openedAt: Date.now(),
       });
     },
   }));
 }
 
-function groupLabel(g: AppModule['group']): string {
+function groupLabel(g: AppModule["group"]): string {
   switch (g) {
-    case 'core': return 'Core';
-    case 'models': return 'Models';
-    case 'ops': return 'Ops';
-    case 'observability': return 'Observability';
-    default: return 'Other';
+    case "core":
+      return "Core";
+    case "models":
+      return "Models";
+    case "ops":
+      return "Ops";
+    case "observability":
+      return "Observability";
+    default:
+      return "Other";
   }
 }
 
@@ -101,7 +106,7 @@ export function CommandPalette({
   onClose,
   extraCommands = [],
 }: CommandPaletteProps): React.JSX.Element | null {
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -114,7 +119,7 @@ export function CommandPalette({
     if (query.trim().length === 0) return commands;
     return commands
       .map((c) => {
-        const text = [c.label, c.group, ...(c.keywords ?? [])].join(' ');
+        const text = [c.label, c.group, ...(c.keywords ?? [])].join(" ");
         return { c, score: fuzzyScore(query, text) };
       })
       .filter((r) => r.score > 0)
@@ -124,7 +129,7 @@ export function CommandPalette({
 
   useEffect(() => {
     if (open) {
-      setQuery('');
+      setQuery("");
       setHighlight(0);
       setTimeout(() => inputRef.current?.focus(), 0);
     }
@@ -137,26 +142,26 @@ export function CommandPalette({
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'ArrowDown') {
+      if (e.key === "ArrowDown") {
         e.preventDefault();
         setHighlight((i) => Math.min(i + 1, Math.max(filtered.length - 1, 0)));
-      } else if (e.key === 'ArrowUp') {
+      } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setHighlight((i) => Math.max(i - 1, 0));
-      } else if (e.key === 'Enter') {
+      } else if (e.key === "Enter") {
         e.preventDefault();
         const cmd = filtered[highlight];
         if (cmd) {
           cmd.run();
           onClose();
         }
-      } else if (e.key === 'Escape') {
+      } else if (e.key === "Escape") {
         e.preventDefault();
         onClose();
       }
     };
-    window.addEventListener('keydown', handler, { capture: true });
-    return () => window.removeEventListener('keydown', handler, { capture: true });
+    window.addEventListener("keydown", handler, { capture: true });
+    return () => window.removeEventListener("keydown", handler, { capture: true });
   }, [open, filtered, highlight, onClose]);
 
   if (!open) return null;
@@ -166,15 +171,15 @@ export function CommandPalette({
       aria-modal="true"
       data-testid="command-palette"
       className="fixed inset-0 z-[1200] flex items-start justify-center pt-20"
-      style={{ background: 'rgba(0,0,0,0.55)' }}
+      style={{ background: "rgba(0,0,0,0.55)" }}
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         className="w-[600px] max-w-[90vw] rounded-lg border shadow-2xl"
         style={{
-          borderColor: 'var(--color-border)',
-          background: 'var(--color-surface-1)',
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-1)",
         }}
       >
         <div className="border-b border-[var(--color-border)] p-2">
@@ -188,10 +193,7 @@ export function CommandPalette({
             className="w-full bg-transparent px-2 py-1.5 text-sm text-[color:var(--color-text)] outline-none placeholder:text-[color:var(--color-text-secondary)]"
           />
         </div>
-        <div
-          className="max-h-[60vh] overflow-y-auto py-1"
-          data-testid="command-palette-results"
-        >
+        <div className="max-h-[60vh] overflow-y-auto py-1" data-testid="command-palette-results">
           {filtered.length === 0 ? (
             <div className="px-4 py-6 text-center text-xs text-[color:var(--color-text-secondary)]">
               No matches for “{query}”
@@ -209,22 +211,20 @@ export function CommandPalette({
                     onClose();
                   }}
                   data-testid={`command-palette-row-${cmd.id}`}
-                  data-highlighted={isActive ? 'true' : 'false'}
+                  data-highlighted={isActive ? "true" : "false"}
                   className="flex w-full items-center justify-between px-4 py-1.5 text-left"
                   style={{
                     background: isActive
-                      ? 'color-mix(in srgb, var(--color-ok) 14%, transparent)'
-                      : 'transparent',
-                    borderLeft: isActive
-                      ? '2px solid var(--color-ok)'
-                      : '2px solid transparent',
+                      ? "color-mix(in srgb, var(--color-ok) 14%, transparent)"
+                      : "transparent",
+                    borderLeft: isActive ? "2px solid var(--color-ok)" : "2px solid transparent",
                   }}
                 >
                   <div className="flex items-baseline gap-2">
                     <span
                       className="text-sm"
                       style={{
-                        color: isActive ? 'var(--color-text)' : 'var(--color-text-secondary)',
+                        color: isActive ? "var(--color-text)" : "var(--color-text-secondary)",
                       }}
                     >
                       {cmd.label}
@@ -245,7 +245,9 @@ export function CommandPalette({
         </div>
         <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-1.5 text-[10px] text-[color:var(--color-text-secondary)]">
           <span>↑↓ navigate · ↵ run · esc close</span>
-          <span>{filtered.length} of {commands.length}</span>
+          <span>
+            {filtered.length} of {commands.length}
+          </span>
         </div>
       </div>
     </div>
@@ -261,7 +263,7 @@ export function CommandPaletteMount(): React.JSX.Element {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && open) {
+      if (e.key === "Escape" && open) {
         setOpen(false);
         return;
       }
@@ -269,19 +271,19 @@ export function CommandPaletteMount(): React.JSX.Element {
       if (!meta) return;
       const k = e.key.toLowerCase();
       // ⌘⇧P toggles.
-      if (e.shiftKey && k === 'p') {
+      if (e.shiftKey && k === "p") {
         e.preventDefault();
         setOpen(!open);
         return;
       }
       // ⌘K toggles.
-      if (!e.shiftKey && k === 'k') {
+      if (!e.shiftKey && k === "k") {
         e.preventDefault();
         setOpen(!open);
       }
     };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, [open, setOpen]);
 
   return <CommandPalette open={open} onClose={() => setOpen(false)} extraCommands={extras} />;

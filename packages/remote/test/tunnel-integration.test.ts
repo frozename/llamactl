@@ -1,12 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   createTunnelClient,
   encodeTunnelMessage,
   parseTunnelMessage,
   type TunnelReq,
-} from '../src/tunnel/index.js';
-import { generateToken, hashToken } from '../src/server/auth.js';
-import { startAgentServer, type RunningAgent } from '../src/server/serve.js';
+} from "../src/tunnel/index.js";
+import { generateToken, hashToken } from "../src/server/auth.js";
+import { startAgentServer, type RunningAgent } from "../src/server/serve.js";
 
 /**
  * Phase I.3.1 — agent-side mounting of tunnelServer + /tunnel-relay.
@@ -30,7 +30,7 @@ function bootAgentWithTunnel(): AgentHandle {
   const { token: agentToken, hash: agentHash } = generateToken();
   const tunnelBearer = `tun_${Math.random().toString(36).slice(2)}`;
   const agent = startAgentServer({
-    bindHost: '127.0.0.1',
+    bindHost: "127.0.0.1",
     port: 0,
     tokenHash: agentHash,
     tunnelCentral: { expectedBearerHash: hashToken(tunnelBearer) },
@@ -45,11 +45,7 @@ function bootAgentWithTunnel(): AgentHandle {
   };
 }
 
-async function waitFor(
-  check: () => boolean,
-  timeoutMs = 2000,
-  intervalMs = 10,
-): Promise<void> {
+async function waitFor(check: () => boolean, timeoutMs = 2000, intervalMs = 10): Promise<void> {
   const start = Date.now();
   for (;;) {
     if (check()) return;
@@ -70,8 +66,8 @@ afterEach(async () => {
   handles = [];
 });
 
-describe('startAgentServer with tunnelCentral', () => {
-  test('accepts a /tunnel ws upgrade and registers the node', async () => {
+describe("startAgentServer with tunnelCentral", () => {
+  test("accepts a /tunnel ws upgrade and registers the node", async () => {
     const h = bootAgentWithTunnel();
     handles.push(h);
 
@@ -80,20 +76,20 @@ describe('startAgentServer with tunnelCentral', () => {
     const ws = new WebSocket(h.wsUrl);
     let ackSeen = false;
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('ack timeout')), 2000);
+      const timer = setTimeout(() => reject(new Error("ack timeout")), 2000);
       ws.onopen = () => {
         ws.send(
           encodeTunnelMessage({
-            type: 'hello',
+            type: "hello",
             bearer: h.tunnelBearer,
-            nodeName: 'gpu-alpha',
+            nodeName: "gpu-alpha",
           }),
         );
       };
       ws.onmessage = (ev: MessageEvent) => {
-        const raw = typeof ev.data === 'string' ? ev.data : String(ev.data);
+        const raw = typeof ev.data === "string" ? ev.data : String(ev.data);
         const msg = parseTunnelMessage(raw);
-        if (msg?.type === 'hello-ack') {
+        if (msg?.type === "hello-ack") {
           ackSeen = true;
           clearTimeout(timer);
           resolve();
@@ -108,11 +104,11 @@ describe('startAgentServer with tunnelCentral', () => {
     expect(h.agent.tunnelServer).toBeDefined();
     await waitFor(() => h.agent.tunnelServer!.registry().length === 1);
     const reg = h.agent.tunnelServer!.registry();
-    expect(reg.map((e) => e.nodeName)).toEqual(['gpu-alpha']);
+    expect(reg.map((e) => e.nodeName)).toEqual(["gpu-alpha"]);
     ws.close();
   });
 
-  test('/tunnel-relay/<node> dispatches to a connected tunnel', async () => {
+  test("/tunnel-relay/<node> dispatches to a connected tunnel", async () => {
     const h = bootAgentWithTunnel();
     handles.push(h);
 
@@ -120,22 +116,22 @@ describe('startAgentServer with tunnelCentral', () => {
     const tunnelClient = createTunnelClient({
       url: h.wsUrl,
       bearer: h.tunnelBearer,
-      nodeName: 'gpu-alpha',
+      nodeName: "gpu-alpha",
       handleRequest: async (req) => {
         seen.push(req);
-        return 'ok';
+        return "ok";
       },
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
     await tunnelClient.start();
 
     const resp = await fetch(`${h.baseUrl}/tunnel-relay/gpu-alpha`, {
-      method: 'POST',
+      method: "POST",
       headers: {
         authorization: `Bearer ${h.agentToken}`,
-        'content-type': 'application/json',
+        "content-type": "application/json",
       },
-      body: JSON.stringify({ method: 'test.ping', input: { n: 1 } }),
+      body: JSON.stringify({ method: "test.ping", input: { n: 1 } }),
     });
     expect(resp.status).toBe(200);
     const body = (await resp.json()) as {
@@ -144,29 +140,29 @@ describe('startAgentServer with tunnelCentral', () => {
       result?: unknown;
       error?: { code: string; message: string };
     };
-    expect(body.type).toBe('res');
-    expect(typeof body.id).toBe('string');
+    expect(body.type).toBe("res");
+    expect(typeof body.id).toBe("string");
     expect(body.id.length).toBeGreaterThan(0);
-    expect(body.result).toBe('ok');
+    expect(body.result).toBe("ok");
     expect(body.error).toBeUndefined();
 
     expect(seen).toHaveLength(1);
-    expect(seen[0]!.method).toBe('test.ping');
-    expect(seen[0]!.params).toEqual({ type: 'query', input: { n: 1 } });
+    expect(seen[0]!.method).toBe("test.ping");
+    expect(seen[0]!.params).toEqual({ type: "query", input: { n: 1 } });
     tunnelClient.stop();
   });
 
-  test('/tunnel-relay/<unknown> returns 502 with tunnel-send-failed', async () => {
+  test("/tunnel-relay/<unknown> returns 502 with tunnel-send-failed", async () => {
     const h = bootAgentWithTunnel();
     handles.push(h);
 
     const resp = await fetch(`${h.baseUrl}/tunnel-relay/ghost`, {
-      method: 'POST',
+      method: "POST",
       headers: {
         authorization: `Bearer ${h.agentToken}`,
-        'content-type': 'application/json',
+        "content-type": "application/json",
       },
-      body: JSON.stringify({ method: 'whatever' }),
+      body: JSON.stringify({ method: "whatever" }),
     });
     expect(resp.status).toBe(502);
     const body = (await resp.json()) as {
@@ -174,51 +170,51 @@ describe('startAgentServer with tunnelCentral', () => {
       id: string;
       error?: { code: string; message: string };
     };
-    expect(body.error?.code).toBe('tunnel-send-failed');
-    expect(typeof body.error?.message).toBe('string');
+    expect(body.error?.code).toBe("tunnel-send-failed");
+    expect(typeof body.error?.message).toBe("string");
   });
 
-  test('/tunnel-relay/<node> 401s without bearer', async () => {
+  test("/tunnel-relay/<node> 401s without bearer", async () => {
     const h = bootAgentWithTunnel();
     handles.push(h);
 
     const resp = await fetch(`${h.baseUrl}/tunnel-relay/anything`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ method: 'x' }),
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ method: "x" }),
     });
     expect(resp.status).toBe(401);
-    expect(resp.headers.get('www-authenticate')).toContain('Bearer');
+    expect(resp.headers.get("www-authenticate")).toContain("Bearer");
   });
 
-  test('/tunnel-relay/<node> 400s on malformed JSON body', async () => {
+  test("/tunnel-relay/<node> 400s on malformed JSON body", async () => {
     const h = bootAgentWithTunnel();
     handles.push(h);
 
     const resp = await fetch(`${h.baseUrl}/tunnel-relay/anything`, {
-      method: 'POST',
+      method: "POST",
       headers: {
         authorization: `Bearer ${h.agentToken}`,
-        'content-type': 'application/json',
+        "content-type": "application/json",
       },
-      body: '{not-json',
+      body: "{not-json",
     });
     expect(resp.status).toBe(400);
   });
 });
 
-describe('startAgentServer without tunnelCentral', () => {
-  test('/tunnel falls through to 404 and tunnelServer is undefined', async () => {
+describe("startAgentServer without tunnelCentral", () => {
+  test("/tunnel falls through to 404 and tunnelServer is undefined", async () => {
     const { token, hash } = generateToken();
     const agent = startAgentServer({
-      bindHost: '127.0.0.1',
+      bindHost: "127.0.0.1",
       port: 0,
       tokenHash: hash,
     });
     handles.push({
       agent,
       agentToken: token,
-      tunnelBearer: '',
+      tunnelBearer: "",
       baseUrl: agent.url,
       port: agent.port,
       wsUrl: `ws://127.0.0.1:${agent.port}/tunnel`,

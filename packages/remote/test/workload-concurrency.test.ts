@@ -1,28 +1,28 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { applyOne, type WorkloadClient } from '../src/workload/apply.js';
-import { reconcileOnce } from '../src/workload/reconciler.js';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { applyOne, type WorkloadClient } from "../src/workload/apply.js";
+import { reconcileOnce } from "../src/workload/reconciler.js";
 import {
   loadWorkloadByName,
   parseWorkload,
   saveWorkload,
   withWorkloadsMutex,
-} from '../src/workload/store.js';
-import type { ModelRun } from '../src/workload/schema.js';
+} from "../src/workload/store.js";
+import type { ModelRun } from "../src/workload/schema.js";
 
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'llamactl-workload-concurrency-'));
+  dir = mkdtempSync(join(tmpdir(), "llamactl-workload-concurrency-"));
 });
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function makeManifest(name: string, node = 'gpu1', port = 8181): ModelRun {
+function makeManifest(name: string, node = "gpu1", port = 8181): ModelRun {
   return parseWorkload(`
 apiVersion: llamactl/v1
 kind: ModelRun
@@ -44,24 +44,28 @@ function makeClient(): WorkloadClient {
     serverStatus: {
       async query() {
         return {
-          state: 'stopped',
+          state: "stopped",
           rel: null,
           extraArgs: [],
           pid: null,
           host: null,
           port: null,
           binary: null,
-          endpoint: '',
+          endpoint: "",
         };
       },
     },
-    serverStop: { async mutate() { return {}; } },
+    serverStop: {
+      async mutate() {
+        return {};
+      },
+    },
     serverStart: {
       subscribe(_input, callbacks) {
         queueMicrotask(() => {
           callbacks.onData({
-            type: 'done',
-            result: { ok: true, pid: 1234, endpoint: 'http://127.0.0.1:8181' },
+            type: "done",
+            result: { ok: true, pid: 1234, endpoint: "http://127.0.0.1:8181" },
           });
           callbacks.onComplete();
         });
@@ -71,27 +75,43 @@ function makeClient(): WorkloadClient {
     modelHostStart: {
       subscribe(_input, callbacks) {
         queueMicrotask(() => {
-          callbacks.onData({ type: 'done', result: { ok: true } });
+          callbacks.onData({ type: "done", result: { ok: true } });
           callbacks.onComplete();
         });
         return { unsubscribe() {} };
       },
     },
-    modelHostStop: { async mutate() { return {}; } },
-    modelHostStatus: { async query() { return { state: 'Stopped', pid: null }; } },
+    modelHostStop: {
+      async mutate() {
+        return {};
+      },
+    },
+    modelHostStatus: {
+      async query() {
+        return { state: "Stopped", pid: null };
+      },
+    },
     rpcServerStart: {
       subscribe(_input, callbacks) {
         queueMicrotask(() => {
-          callbacks.onData({ type: 'done', result: { ok: true, pid: 2222, endpoint: '' } });
+          callbacks.onData({ type: "done", result: { ok: true, pid: 2222, endpoint: "" } });
           callbacks.onComplete();
         });
         return { unsubscribe() {} };
       },
     },
-    rpcServerStop: { async mutate() { return {}; } },
+    rpcServerStop: {
+      async mutate() {
+        return {};
+      },
+    },
     rpcServerDoctor: {
       async query() {
-        return { ok: true, path: '/usr/local/bin/rpc-server', llamaCppBin: '/usr/local/bin/llama-server' };
+        return {
+          ok: true,
+          path: "/usr/local/bin/rpc-server",
+          llamaCppBin: "/usr/local/bin/llama-server",
+        };
       },
     },
   };
@@ -108,13 +128,10 @@ async function applyAndPersist(
 ) {
   return withWorkloadsMutex(workloadsDir, async () => {
     const client = makeClient();
-    const result = await applyOne(
-      manifest,
-      () => client,
-      undefined,
-      undefined,
-      { workloadsDir, ...(resolveNodeIdentity ? { resolveNodeIdentity } : {}) },
-    );
+    const result = await applyOne(manifest, () => client, undefined, undefined, {
+      workloadsDir,
+      ...(resolveNodeIdentity ? { resolveNodeIdentity } : {}),
+    });
     if (!result.error) {
       saveWorkload({ ...manifest, status: result.statusSection }, workloadsDir);
     }
@@ -122,46 +139,43 @@ async function applyAndPersist(
   });
 }
 
-describe('workload apply concurrency', () => {
-  test('two concurrent applies on the same node:port — exactly one wins', async () => {
-    const a = makeManifest('alpha');
-    const b = makeManifest('beta');
+describe("workload apply concurrency", () => {
+  test("two concurrent applies on the same node:port — exactly one wins", async () => {
+    const a = makeManifest("alpha");
+    const b = makeManifest("beta");
 
-    const [r1, r2] = await Promise.all([
-      applyAndPersist(a, dir),
-      applyAndPersist(b, dir),
-    ]);
+    const [r1, r2] = await Promise.all([applyAndPersist(a, dir), applyAndPersist(b, dir)]);
 
     const winners = [r1, r2].filter((r) => !r.error);
     const losers = [r1, r2].filter((r) => r.error);
     expect(winners).toHaveLength(1);
     expect(losers).toHaveLength(1);
-    expect(losers[0]!.error).toContain('port collision');
-    expect(losers[0]!.statusSection.phase).toBe('Failed');
-    expect(losers[0]!.statusSection.conditions[0]?.reason).toBe('PortCollision');
+    expect(losers[0]!.error).toContain("port collision");
+    expect(losers[0]!.statusSection.phase).toBe("Failed");
+    expect(losers[0]!.statusSection.conditions[0]?.reason).toBe("PortCollision");
   });
 
-  test('cross-node alias: different node names resolving to the same endpoint collide', async () => {
-    const a = makeManifest('alpha', 'local');
-    const b = makeManifest('beta', 'mac-mini');
+  test("cross-node alias: different node names resolving to the same endpoint collide", async () => {
+    const a = makeManifest("alpha", "local");
+    const b = makeManifest("beta", "mac-mini");
 
     // Both names resolve to the same physical agent.
-    const aliasResolver = (_n: string) => 'https://127.0.0.1:7843';
+    const aliasResolver = (_n: string) => "https://127.0.0.1:7843";
 
     const r1 = await applyAndPersist(a, dir, aliasResolver);
     expect(r1.error).toBeUndefined();
 
     const r2 = await applyAndPersist(b, dir, aliasResolver);
-    expect(r2.error).toContain('port collision');
-    expect(r2.statusSection.conditions[0]?.reason).toBe('PortCollision');
+    expect(r2.error).toContain("port collision");
+    expect(r2.statusSection.conditions[0]?.reason).toBe("PortCollision");
   });
 
-  test('distinct nodes resolving to distinct endpoints do not collide', async () => {
-    const a = makeManifest('alpha', 'gpu1');
-    const b = makeManifest('beta', 'gpu2');
+  test("distinct nodes resolving to distinct endpoints do not collide", async () => {
+    const a = makeManifest("alpha", "gpu1");
+    const b = makeManifest("beta", "gpu2");
 
     const resolver = (n: string) =>
-      n === 'gpu1' ? 'https://10.0.0.1:7843' : 'https://10.0.0.2:7843';
+      n === "gpu1" ? "https://10.0.0.1:7843" : "https://10.0.0.2:7843";
 
     const r1 = await applyAndPersist(a, dir, resolver);
     const r2 = await applyAndPersist(b, dir, resolver);
@@ -169,12 +183,12 @@ describe('workload apply concurrency', () => {
     expect(r2.error).toBeUndefined();
   });
 
-  test('reconcileOnce treats aliased nodes as the same physical node for port collision', async () => {
-    saveWorkload(makeManifest('alpha', 'local'), dir);
-    saveWorkload(makeManifest('beta', 'mac-mini'), dir);
+  test("reconcileOnce treats aliased nodes as the same physical node for port collision", async () => {
+    saveWorkload(makeManifest("alpha", "local"), dir);
+    saveWorkload(makeManifest("beta", "mac-mini"), dir);
 
     const resolveNodeIdentity = (n: string): string | null => {
-      if (n === 'local' || n === 'mac-mini') return 'https://127.0.0.1:7843';
+      if (n === "local" || n === "mac-mini") return "https://127.0.0.1:7843";
       return null;
     };
 
@@ -188,16 +202,16 @@ describe('workload apply concurrency', () => {
     expect(result.reports).toHaveLength(2);
     expect(result.reports.filter((r) => r.error)).toHaveLength(1);
 
-    const alpha = loadWorkloadByName('alpha', dir);
-    const beta = loadWorkloadByName('beta', dir);
-    expect(alpha.status?.phase).toBe('Failed');
-    expect(alpha.status?.conditions[0]?.reason).toBe('PortCollision');
-    expect(beta.status?.phase).not.toBe('Failed');
+    const alpha = loadWorkloadByName("alpha", dir);
+    const beta = loadWorkloadByName("beta", dir);
+    expect(alpha.status?.phase).toBe("Failed");
+    expect(alpha.status?.conditions[0]?.reason).toBe("PortCollision");
+    expect(beta.status?.phase).not.toBe("Failed");
   });
 
-  test('reconcileOnce status write does not clobber a spec edit landed during the pass', async () => {
+  test("reconcileOnce status write does not clobber a spec edit landed during the pass", async () => {
     // Workload starts enabled; serverStatus reports stopped so applyOne starts it.
-    saveWorkload(makeManifest('gamma', 'local'), dir);
+    saveWorkload(makeManifest("gamma", "local"), dir);
 
     // Simulate `llamactl disable gamma` (or a manual edit) landing mid-pass:
     // while we are inside applyOne for this workload (serverStart firing), flip
@@ -211,15 +225,12 @@ describe('workload apply concurrency', () => {
           queueMicrotask(() => {
             if (!injected) {
               injected = true;
-              const onDisk = loadWorkloadByName('gamma', dir);
-              saveWorkload(
-                { ...onDisk, spec: { ...onDisk.spec, enabled: false } },
-                dir,
-              );
+              const onDisk = loadWorkloadByName("gamma", dir);
+              saveWorkload({ ...onDisk, spec: { ...onDisk.spec, enabled: false } }, dir);
             }
             callbacks.onData({
-              type: 'done',
-              result: { ok: true, pid: 1234, endpoint: 'http://127.0.0.1:8181' },
+              type: "done",
+              result: { ok: true, pid: 1234, endpoint: "http://127.0.0.1:8181" },
             });
             callbacks.onComplete();
           });
@@ -230,7 +241,7 @@ describe('workload apply concurrency', () => {
 
     await reconcileOnce({ workloadsDir: dir, getClient: () => racingClient });
 
-    const after = loadWorkloadByName('gamma', dir);
+    const after = loadWorkloadByName("gamma", dir);
     // The concurrent disable must survive the status write...
     expect(after.spec.enabled).toBe(false);
     // ...and this pass's status is still persisted.

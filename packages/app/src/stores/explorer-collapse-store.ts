@@ -1,5 +1,5 @@
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 /**
  * Persisted per-user Explorer collapse state. Keys are free-form
@@ -19,11 +19,9 @@ export const useExplorerCollapse = create<Store>()(
     (set, get) => ({
       collapsed: {},
       isCollapsed: (key) => get().collapsed[key] === true,
-      toggle: (key) =>
-        set((s) => ({ collapsed: { ...s.collapsed, [key]: !s.collapsed[key] } })),
-      set: (key, value) =>
-        set((s) => ({ collapsed: { ...s.collapsed, [key]: value } })),
+      toggle: (key) => set((s) => ({ collapsed: { ...s.collapsed, [key]: !s.collapsed[key] } })),
+      set: (key, value) => set((s) => ({ collapsed: { ...s.collapsed, [key]: value } })),
     }),
-    { name: 'beacon-explorer-collapsed', version: 1 },
+    { name: "beacon-explorer-collapsed", version: 1 },
   ),
 );

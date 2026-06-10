@@ -1,5 +1,5 @@
-import { appendFileSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { appendFileSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 /**
  * Atomically replace a file's contents. Uses a tmp file in the SAME
@@ -26,6 +26,6 @@ export function atomicWriteFile(file: string, body: string): void {
  */
 export function appendLine(file: string, line: string): void {
   mkdirSync(dirname(file), { recursive: true });
-  const suffix = line.endsWith('\n') ? '' : '\n';
+  const suffix = line.endsWith("\n") ? "" : "\n";
   appendFileSync(file, line + suffix);
 }

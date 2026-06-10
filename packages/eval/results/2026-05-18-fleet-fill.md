@@ -17,29 +17,29 @@ the existing 6-model fleet, fleshing out the leaderboard to 8 models.
 
 ## Combined leaderboard — strong-gold (n=55)
 
-| Rank | Model | NDCG@5 | tps | source |
-|---:|---|---:|---:|---|
-| 1 | gemma4-26b-a4b-mtp | **0.9119** | 34.60 | strong-gold-fleet |
-| 2 | **gemma4-e4b-vanilla** | **0.8927** | 31.42 | this run |
-| 3 | qwen3.5-9b-mtp-UDQ4KXL | 0.7782 | 9.15 | strong-gold-fleet |
-| 4 | qwen3.6-35b-A3B-MTP-UDQ4KXL | 0.7368 | 18.50 | strong-gold-fleet |
-| 5 | qwen3.6-35b-A3B-UDQ4KXL | 0.6932 | 26.99 | strong-gold-fleet |
-| 6 | granite-8b-Q4 | 0.6839 | 26.52 | strong-gold-fleet |
-| 7 | **granite-3b-Q8** | **0.6837** | 29.99 | this run |
-| 8 | qwen3-8b-Q4 | 0.4204 | 20.04 | strong-gold-fleet |
+| Rank | Model                       |     NDCG@5 |   tps | source            |
+| ---: | --------------------------- | ---------: | ----: | ----------------- |
+|    1 | gemma4-26b-a4b-mtp          | **0.9119** | 34.60 | strong-gold-fleet |
+|    2 | **gemma4-e4b-vanilla**      | **0.8927** | 31.42 | this run          |
+|    3 | qwen3.5-9b-mtp-UDQ4KXL      |     0.7782 |  9.15 | strong-gold-fleet |
+|    4 | qwen3.6-35b-A3B-MTP-UDQ4KXL |     0.7368 | 18.50 | strong-gold-fleet |
+|    5 | qwen3.6-35b-A3B-UDQ4KXL     |     0.6932 | 26.99 | strong-gold-fleet |
+|    6 | granite-8b-Q4               |     0.6839 | 26.52 | strong-gold-fleet |
+|    7 | **granite-3b-Q8**           | **0.6837** | 29.99 | this run          |
+|    8 | qwen3-8b-Q4                 |     0.4204 | 20.04 | strong-gold-fleet |
 
 ## Combined leaderboard — n=105 full corpus
 
-| Rank | Model | NDCG@5 | tps | source |
-|---:|---|---:|---:|---|
-| 1 | gemma4-26b-a4b-mtp | **0.8079** | 32.63 | n105-fleet |
-| 2 | **gemma4-e4b-vanilla** | **0.7175** | 30.84 | this run |
-| 3 | qwen3.6-35b-A3B-MTP-UDQ4KXL | 0.7003 | 18.02 | n105-fleet |
-| 4 | qwen3.6-35b-A3B-UDQ4KXL | 0.6667 | 26.78 | n105-fleet |
-| 5 | qwen3.5-9b-mtp-UDQ4KXL | 0.6622 | 8.59 | n105-fleet |
-| 6 | **granite-3b-Q8** | **0.6250** | 30.08 | this run |
-| 7 | granite-8b-Q4 | 0.4743 | 27.31 | n105-fleet |
-| 8 | qwen3-8b-Q4 | 0.3608 | 20.06 | n105-fleet |
+| Rank | Model                       |     NDCG@5 |   tps | source     |
+| ---: | --------------------------- | ---------: | ----: | ---------- |
+|    1 | gemma4-26b-a4b-mtp          | **0.8079** | 32.63 | n105-fleet |
+|    2 | **gemma4-e4b-vanilla**      | **0.7175** | 30.84 | this run   |
+|    3 | qwen3.6-35b-A3B-MTP-UDQ4KXL |     0.7003 | 18.02 | n105-fleet |
+|    4 | qwen3.6-35b-A3B-UDQ4KXL     |     0.6667 | 26.78 | n105-fleet |
+|    5 | qwen3.5-9b-mtp-UDQ4KXL      |     0.6622 |  8.59 | n105-fleet |
+|    6 | **granite-3b-Q8**           | **0.6250** | 30.08 | this run   |
+|    7 | granite-8b-Q4               |     0.4743 | 27.31 | n105-fleet |
+|    8 | qwen3-8b-Q4                 |     0.3608 | 20.06 | n105-fleet |
 
 All cells: 0 parse errors, 0 errors.
 
@@ -72,7 +72,7 @@ beneath any reasonable noise floor. On n=105: 3b-Q8 **beats** 8b-Q4 by
 This matches the attention-thesis finding from
 `project_attention_thesis_eval_2026-05-16.md`: smart-Q8 on a small
 attention-rich model beats Q4 on a 2.6× larger model. Confirms on a
-*ranking* workload (the original was a memory-efficacy classifier).
+_ranking_ workload (the original was a memory-efficacy classifier).
 
 Note the n=105 vs strong-gold flip: granite-8b-Q4 collapses on the
 weak-gold mined-query half (BM25-top-1 identifier strings) where

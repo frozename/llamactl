@@ -17,9 +17,9 @@
  * "calls per subscription per day" — the quota proxy for flat-fee
  * subscription backends where USD tracking is meaningless.
  */
-import { appendFile, mkdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { appendFile, mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 export interface CliJournalEntry {
   ts: string;
@@ -43,8 +43,8 @@ export interface CliJournalEntry {
 export function defaultCliJournalDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_CLI_JOURNAL_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'cli-journal');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "cli-journal");
 }
 
 export function cliJournalPathFor(
@@ -69,10 +69,8 @@ export async function appendCliJournal(
   try {
     const path = cliJournalPathFor(new Date(entry.ts), env);
     await mkdir(dirname(path), { recursive: true });
-    await appendFile(path, `${JSON.stringify(entry)}\n`, 'utf8');
+    await appendFile(path, `${JSON.stringify(entry)}\n`, "utf8");
   } catch (err) {
-    process.stderr.write(
-      `cli-journal: append failed (${(err as Error).message}) — continuing\n`,
-    );
+    process.stderr.write(`cli-journal: append failed (${(err as Error).message}) — continuing\n`);
   }
 }

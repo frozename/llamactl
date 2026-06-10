@@ -1,8 +1,8 @@
-import * as React from 'react';
-import { Coins, Settings as SettingsIcon, type LucideIcon } from 'lucide-react';
-import { RAIL_VIEWS, type RailViewId } from './rail-views';
-import { useTabStore } from '@/stores/tab-store';
-import { cx } from '@/ui';
+import * as React from "react";
+import { Coins, Settings as SettingsIcon, type LucideIcon } from "lucide-react";
+import { RAIL_VIEWS, type RailViewId } from "./rail-views";
+import { useTabStore } from "@/stores/tab-store";
+import { cx } from "@/ui";
 
 interface ActivityRailProps {
   activeView: RailViewId;
@@ -10,14 +10,14 @@ interface ActivityRailProps {
 }
 
 interface TabOpener {
-  id: 'cost' | 'settings';
+  id: "cost" | "settings";
   label: string;
   icon: LucideIcon;
 }
 
 const BOTTOM_TAB_OPENERS: readonly TabOpener[] = [
-  { id: 'cost',     label: 'Cost',     icon: Coins },
-  { id: 'settings', label: 'Settings', icon: SettingsIcon },
+  { id: "cost", label: "Cost", icon: Coins },
+  { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
 
 /**
@@ -35,15 +35,15 @@ export function ActivityRail({ activeView, onChange }: ActivityRailProps): React
     <div
       role="tablist"
       aria-orientation="vertical"
-      className={cx('bcn-rail')}
+      className={cx("bcn-rail")}
       style={{
         width: 56,
-        background: 'var(--color-surface-1)',
-        borderRight: '1px solid var(--color-border-subtle)',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        padding: '12px 0',
+        background: "var(--color-surface-1)",
+        borderRight: "1px solid var(--color-border-subtle)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        padding: "12px 0",
         gap: 4,
       }}
     >
@@ -57,7 +57,7 @@ export function ActivityRail({ activeView, onChange }: ActivityRailProps): React
           opener={m}
           active={activeKey === `module:${m.id}`}
           onOpen={() =>
-            open({ tabKey: `module:${m.id}`, title: m.label, kind: 'module', openedAt: Date.now() })
+            open({ tabKey: `module:${m.id}`, title: m.label, kind: "module", openedAt: Date.now() })
           }
         />
       ))}
@@ -85,26 +85,26 @@ function TabOpenerButton({
       style={{
         width: 40,
         height: 40,
-        display: 'grid',
-        placeItems: 'center',
-        borderRadius: 'var(--r-lg)',
-        border: 'none',
-        cursor: 'pointer',
-        color: active ? 'var(--color-brand)' : 'var(--color-text-tertiary)',
-        background: active ? 'var(--color-brand-ghost)' : 'transparent',
-        position: 'relative',
-        transition: 'background 160ms, color 160ms',
+        display: "grid",
+        placeItems: "center",
+        borderRadius: "var(--r-lg)",
+        border: "none",
+        cursor: "pointer",
+        color: active ? "var(--color-brand)" : "var(--color-text-tertiary)",
+        background: active ? "var(--color-brand-ghost)" : "transparent",
+        position: "relative",
+        transition: "background 160ms, color 160ms",
       }}
       onMouseEnter={(e) => {
         if (!active) {
-          e.currentTarget.style.background = 'var(--color-surface-2)';
-          e.currentTarget.style.color = 'var(--color-text)';
+          e.currentTarget.style.background = "var(--color-surface-2)";
+          e.currentTarget.style.color = "var(--color-text)";
         }
       }}
       onMouseLeave={(e) => {
         if (!active) {
-          e.currentTarget.style.background = 'transparent';
-          e.currentTarget.style.color = 'var(--color-text-tertiary)';
+          e.currentTarget.style.background = "transparent";
+          e.currentTarget.style.color = "var(--color-text-tertiary)";
         }
       }}
     >
@@ -113,7 +113,15 @@ function TabOpenerButton({
   );
 }
 
-function RailButton({ view, active, onChange }: { view: typeof RAIL_VIEWS[number]; active: boolean; onChange: (id: RailViewId) => void }): React.JSX.Element {
+function RailButton({
+  view,
+  active,
+  onChange,
+}: {
+  view: (typeof RAIL_VIEWS)[number];
+  active: boolean;
+  onChange: (id: RailViewId) => void;
+}): React.JSX.Element {
   const Icon = view.icon;
   return (
     <button
@@ -127,26 +135,26 @@ function RailButton({ view, active, onChange }: { view: typeof RAIL_VIEWS[number
       style={{
         width: 40,
         height: 40,
-        display: 'grid',
-        placeItems: 'center',
-        borderRadius: 'var(--r-lg)',
-        border: 'none',
-        cursor: 'pointer',
-        color: active ? 'var(--color-brand)' : 'var(--color-text-tertiary)',
-        background: active ? 'var(--color-brand-ghost)' : 'transparent',
-        position: 'relative',
-        transition: 'background 160ms, color 160ms',
+        display: "grid",
+        placeItems: "center",
+        borderRadius: "var(--r-lg)",
+        border: "none",
+        cursor: "pointer",
+        color: active ? "var(--color-brand)" : "var(--color-text-tertiary)",
+        background: active ? "var(--color-brand-ghost)" : "transparent",
+        position: "relative",
+        transition: "background 160ms, color 160ms",
       }}
       onMouseEnter={(e) => {
         if (!active) {
-          e.currentTarget.style.background = 'var(--color-surface-2)';
-          e.currentTarget.style.color = 'var(--color-text)';
+          e.currentTarget.style.background = "var(--color-surface-2)";
+          e.currentTarget.style.color = "var(--color-text)";
         }
       }}
       onMouseLeave={(e) => {
         if (!active) {
-          e.currentTarget.style.background = 'transparent';
-          e.currentTarget.style.color = 'var(--color-text-tertiary)';
+          e.currentTarget.style.background = "transparent";
+          e.currentTarget.style.color = "var(--color-text-tertiary)";
         }
       }}
     >
@@ -154,12 +162,12 @@ function RailButton({ view, active, onChange }: { view: typeof RAIL_VIEWS[number
         <span
           aria-hidden="true"
           style={{
-            position: 'absolute',
+            position: "absolute",
             left: -8,
             top: 8,
             bottom: 8,
             width: 2,
-            background: 'var(--color-brand)',
+            background: "var(--color-brand)",
             borderRadius: 2,
           }}
         />

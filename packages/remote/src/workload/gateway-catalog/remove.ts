@@ -1,9 +1,9 @@
-import type { CompositeOwnership } from './schema.js';
+import type { CompositeOwnership } from "./schema.js";
 
 type AnyEntry = Record<string, unknown> & { ownership?: CompositeOwnership };
 
 export interface RemoveOpts<T> {
-  kind: 'sirius' | 'embersynth';
+  kind: "sirius" | "embersynth";
   compositeName: string;
   current: T[];
 }
@@ -14,11 +14,9 @@ export interface RemoveResult<T> {
   removedNames: string[];
 }
 
-const KEY_OF: Record<string, string> = { sirius: 'name', embersynth: 'id' };
+const KEY_OF: Record<string, string> = { sirius: "name", embersynth: "id" };
 
-export function removeCompositeEntries<T extends AnyEntry>(
-  opts: RemoveOpts<T>,
-): RemoveResult<T> {
+export function removeCompositeEntries<T extends AnyEntry>(opts: RemoveOpts<T>): RemoveResult<T> {
   const key = KEY_OF[opts.kind]!;
   const next: T[] = [];
   const removedNames: string[] = [];

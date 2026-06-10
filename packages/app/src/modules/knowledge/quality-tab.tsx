@@ -1,7 +1,7 @@
-import * as React from 'react';
-import { useMemo, useState } from 'react';
-import { stringify as stringifyYaml } from 'yaml';
-import { trpc } from '@/lib/trpc';
+import * as React from "react";
+import { useMemo, useState } from "react";
+import { stringify as stringifyYaml } from "yaml";
+import { trpc } from "@/lib/trpc";
 
 /**
  * Quality tab — the Electron-side of `llamactl rag bench`. Takes an
@@ -39,7 +39,7 @@ interface BenchReport {
     query: string;
     topK: number;
     hitRank: number | null;
-    hitKind: 'doc_id' | 'substring' | null;
+    hitKind: "doc_id" | "substring" | null;
     matchedDocId: string | null;
     error?: string;
   }>;
@@ -48,21 +48,21 @@ interface BenchReport {
 
 function starterYaml(nodeName: string, collection: string | null): string {
   const manifest = {
-    apiVersion: 'llamactl/v1',
-    kind: 'RagBench',
-    metadata: { name: `${nodeName.replace(/[^a-z0-9-]/gi, '-')}-quality` },
+    apiVersion: "llamactl/v1",
+    kind: "RagBench",
+    metadata: { name: `${nodeName.replace(/[^a-z0-9-]/gi, "-")}-quality` },
     spec: {
       node: nodeName,
       ...(collection ? { collection } : {}),
       topK: 10,
       queries: [
         {
-          query: 'replace with a question operators might ask',
-          expected_substring: 'replace with a phrase the right chunk should contain',
+          query: "replace with a question operators might ask",
+          expected_substring: "replace with a phrase the right chunk should contain",
         },
         {
-          query: 'another likely query',
-          expected_doc_id: 'replace with the doc id you expect to hit',
+          query: "another likely query",
+          expected_doc_id: "replace with the doc id you expect to hit",
         },
       ],
     },
@@ -74,26 +74,23 @@ function hitRateBadge(rate: number): { cls: string; label: string } {
   const pct = Math.round(rate * 100);
   if (rate >= 0.9) {
     return {
-      cls: 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]',
+      cls: "bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]",
       label: `${pct}%`,
     };
   }
   if (rate >= 0.6) {
     return {
-      cls: 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]',
+      cls: "bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]",
       label: `${pct}%`,
     };
   }
   return {
-    cls: 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]',
+    cls: "bg-[var(--color-err)] text-[color:var(--color-text-inverse)]",
     label: `${pct}%`,
   };
 }
 
-export function QualityTab(props: {
-  nodeName: string;
-  collection: string;
-}): React.JSX.Element {
+export function QualityTab(props: { nodeName: string; collection: string }): React.JSX.Element {
   const { nodeName, collection } = props;
   const [yaml, setYaml] = useState<string>(() =>
     starterYaml(nodeName, collection.trim() ? collection.trim() : null),
@@ -126,19 +123,15 @@ export function QualityTab(props: {
     setYaml(starterYaml(nodeName, collection.trim() ? collection.trim() : null));
   };
 
-  const rateBadge = useMemo(
-    () => (report ? hitRateBadge(report.hitRate) : null),
-    [report],
-  );
+  const rateBadge = useMemo(() => (report ? hitRateBadge(report.hitRate) : null), [report]);
 
   return (
     <div className="space-y-4" data-testid="knowledge-quality-root">
       <div className="flex flex-wrap items-baseline gap-2 text-xs text-[color:var(--color-text-secondary)]">
         <span>
-          Measure retrieval quality: paste a{' '}
-          <span className="mono text-[color:var(--color-text)]">RagBench</span>{' '}
-          manifest, click Run, and scan the hit rate + per-query
-          breakdown. No writes — purely a read-only gate against
+          Measure retrieval quality: paste a{" "}
+          <span className="mono text-[color:var(--color-text)]">RagBench</span> manifest, click Run,
+          and scan the hit rate + per-query breakdown. No writes — purely a read-only gate against
           the named rag node.
         </span>
         <button
@@ -175,13 +168,13 @@ export function QualityTab(props: {
             data-testid="knowledge-quality-run"
             className="rounded bg-[var(--color-brand)] px-3 py-2 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {running ? 'Running…' : 'Run bench'}
+            {running ? "Running…" : "Run bench"}
           </button>
           <span className="text-[10px] text-[color:var(--color-text-secondary)]">
             Targets <span className="mono">{nodeName}</span>
             {collection.trim() && (
               <>
-                {' · '}
+                {" · "}
                 <span className="mono">{collection.trim()}</span>
               </>
             )}
@@ -211,7 +204,7 @@ export function QualityTab(props: {
               hit rate {rateBadge.label}
             </span>
             <span>
-              MRR{' '}
+              MRR{" "}
               <span
                 className="mono text-[color:var(--color-text)]"
                 data-testid="knowledge-quality-mrr"
@@ -220,22 +213,19 @@ export function QualityTab(props: {
               </span>
             </span>
             <span>
-              scored{' '}
+              scored{" "}
               <span className="mono text-[color:var(--color-text)]">
                 {report.hits}/{report.totalQueries - report.errors}
               </span>
             </span>
             {report.errors > 0 && (
               <span className="text-[color:var(--color-err)]">
-                errors{' '}
-                <span className="mono">{report.errors}</span>
+                errors <span className="mono">{report.errors}</span>
               </span>
             )}
             <span>
-              elapsed{' '}
-              <span className="mono text-[color:var(--color-text)]">
-                {report.elapsed_ms}ms
-              </span>
+              elapsed{" "}
+              <span className="mono text-[color:var(--color-text)]">{report.elapsed_ms}ms</span>
             </span>
           </div>
 
@@ -258,10 +248,10 @@ export function QualityTab(props: {
                   const hit = q.hitRank !== null;
                   const err = q.error !== undefined;
                   const cls = err
-                    ? 'text-[color:var(--color-err)]'
+                    ? "text-[color:var(--color-err)]"
                     : hit
-                      ? 'text-[color:var(--color-text)]'
-                      : 'text-[color:var(--color-text-secondary)]';
+                      ? "text-[color:var(--color-text)]"
+                      : "text-[color:var(--color-text-secondary)]";
                   return (
                     <tr
                       key={`${i}-${q.query}`}
@@ -279,14 +269,10 @@ export function QualityTab(props: {
                           </span>
                         )}
                       </td>
-                      <td className="px-2 py-1 mono">
-                        {hit ? q.hitRank : err ? '—' : 'miss'}
-                      </td>
-                      <td className="px-2 py-1 mono text-[10px]">
-                        {q.hitKind ?? '—'}
-                      </td>
+                      <td className="px-2 py-1 mono">{hit ? q.hitRank : err ? "—" : "miss"}</td>
+                      <td className="px-2 py-1 mono text-[10px]">{q.hitKind ?? "—"}</td>
                       <td className="px-2 py-1 mono text-[10px] break-all">
-                        {q.matchedDocId ?? ''}
+                        {q.matchedDocId ?? ""}
                       </td>
                     </tr>
                   );

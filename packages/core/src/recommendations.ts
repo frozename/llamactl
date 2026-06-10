@@ -1,10 +1,10 @@
-import { findByRel } from './catalog.js';
-import { resolveEnv } from './env.js';
-import { summaryForRel } from './hf.js';
-import { normalizeProfile } from './profile.js';
-import { resolvePreset, type PresetOverrideSource, type PresetName } from './presets.js';
-import { quantFromRel } from './quant.js';
-import type { MachineProfile, ModelClass } from './types.js';
+import { findByRel } from "./catalog.js";
+import { resolveEnv } from "./env.js";
+import { summaryForRel } from "./hf.js";
+import { normalizeProfile } from "./profile.js";
+import { resolvePreset, type PresetOverrideSource, type PresetName } from "./presets.js";
+import { quantFromRel } from "./quant.js";
+import type { MachineProfile, ModelClass } from "./types.js";
 
 /** Recommendation row shape consumed by the CLI and (eventually) the UI. */
 export interface RecommendationRow {
@@ -17,7 +17,7 @@ export interface RecommendationRow {
   /** Model family: catalog value, or `custom` for off-catalog rels. */
   family: string;
   /** Class: catalog value, or `custom` for off-catalog rels. */
-  class: ModelClass | 'custom';
+  class: ModelClass | "custom";
   /** Catalog scope, or the target slot name for off-catalog rels. */
   scope: string;
   /** Short quant label, e.g. `q4`, `q8`, `q3s`. */
@@ -35,8 +35,8 @@ export interface RecommendationsForProfile {
   rows: RecommendationRow[];
 }
 
-const PRESET_TARGETS: readonly PresetName[] = ['best', 'vision', 'balanced', 'fast'];
-const TARGET_ORDER: readonly string[] = [...PRESET_TARGETS, 'qwen', 'qwen27'];
+const PRESET_TARGETS: readonly PresetName[] = ["best", "vision", "balanced", "fast"];
+const TARGET_ORDER: readonly string[] = [...PRESET_TARGETS, "qwen", "qwen27"];
 
 /**
  * Qwen 3.6 35B-A3B quant per machine profile.
@@ -51,12 +51,12 @@ const TARGET_ORDER: readonly string[] = [...PRESET_TARGETS, 'qwen', 'qwen27'];
  */
 function qwen36ForProfile(profile: MachineProfile): string {
   switch (profile) {
-    case 'mac-mini-16g':
-      return 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ2_M.gguf';
-    case 'balanced':
-      return 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf';
+    case "mac-mini-16g":
+      return "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ2_M.gguf";
+    case "balanced":
+      return "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf";
     default:
-      return 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf';
+      return "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf";
   }
 }
 
@@ -67,23 +67,23 @@ function qwen36ForProfile(profile: MachineProfile): string {
  */
 function qwen35ForProfile(profile: MachineProfile): string {
   switch (profile) {
-    case 'mac-mini-16g':
-      return 'Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf';
+    case "mac-mini-16g":
+      return "Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf";
     default:
-      return 'Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf';
+      return "Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf";
   }
 }
 
 const QWEN_CTX_BY_PROFILE: Record<MachineProfile, string> = {
-  'mac-mini-16g': '16384',
-  balanced: '32768',
-  'macbook-pro-48g': '65536',
+  "mac-mini-16g": "16384",
+  balanced: "32768",
+  "macbook-pro-48g": "65536",
 };
 
 const GEMMA_CTX_BY_PROFILE: Record<MachineProfile, string> = {
-  'mac-mini-16g': '16384',
-  balanced: '24576',
-  'macbook-pro-48g': '32768',
+  "mac-mini-16g": "16384",
+  balanced: "24576",
+  "macbook-pro-48g": "32768",
 };
 
 /**
@@ -93,14 +93,13 @@ const GEMMA_CTX_BY_PROFILE: Record<MachineProfile, string> = {
  * row even when the active machine differs from the profile displayed.
  */
 function ctxForRelUnderProfile(rel: string, profile: MachineProfile): string {
-  const isQwenFamily =
-    /^Qwen3\.6-35B-A3B-GGUF\//.test(rel) || /^Qwen3\.5-27B-GGUF\//.test(rel);
+  const isQwenFamily = /^Qwen3\.6-35B-A3B-GGUF\//.test(rel) || /^Qwen3\.5-27B-GGUF\//.test(rel);
   const table = isQwenFamily ? QWEN_CTX_BY_PROFILE : GEMMA_CTX_BY_PROFILE;
   return table[profile];
 }
 
 function basename(rel: string): string {
-  const last = rel.lastIndexOf('/');
+  const last = rel.lastIndexOf("/");
   return last < 0 ? rel : rel.slice(last + 1);
 }
 
@@ -120,9 +119,9 @@ export function recommendationsForProfile(
   for (const target of TARGET_ORDER) {
     let rel: string;
     let promoted: PresetOverrideSource = null;
-    if (target === 'qwen27') {
+    if (target === "qwen27") {
       rel = qwen35ForProfile(profile);
-    } else if (target === 'qwen') {
+    } else if (target === "qwen") {
       rel = qwen36ForProfile(profile);
     } else {
       const resolution = resolvePreset(profile, target as PresetName, env, resolved);
@@ -133,8 +132,8 @@ export function recommendationsForProfile(
 
     const meta = findByRel(rel);
     const label = meta?.label ?? basename(rel);
-    const family = meta?.family ?? 'custom';
-    const klass: RecommendationRow['class'] = meta?.class ?? 'custom';
+    const family = meta?.family ?? "custom";
+    const klass: RecommendationRow["class"] = meta?.class ?? "custom";
     const scope = meta?.scope ?? target;
 
     rows.push({
@@ -185,13 +184,13 @@ export function expandRequestedProfile(
   env: NodeJS.ProcessEnv = process.env,
 ): MachineProfile[] {
   const resolved = resolveEnv(env);
-  const active = normalizeProfile(resolved.LLAMA_CPP_MACHINE_PROFILE) ?? 'macbook-pro-48g';
+  const active = normalizeProfile(resolved.LLAMA_CPP_MACHINE_PROFILE) ?? "macbook-pro-48g";
   switch (requested) {
-    case 'all':
-      return ['mac-mini-16g', 'balanced', 'macbook-pro-48g'];
+    case "all":
+      return ["mac-mini-16g", "balanced", "macbook-pro-48g"];
     case undefined:
-    case '':
-    case 'current':
+    case "":
+    case "current":
       return [active];
     default: {
       const norm = normalizeProfile(requested) ?? active;

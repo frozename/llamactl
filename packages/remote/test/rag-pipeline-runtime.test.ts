@@ -1,19 +1,19 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import type { DeleteRequest, DeleteResponse, StoreRequest, StoreResponse } from '@nova/contracts';
+import type { DeleteRequest, DeleteResponse, StoreRequest, StoreResponse } from "@nova/contracts";
 
-import { runPipeline } from '../src/rag/pipeline/runtime.js';
-import { FETCHERS } from '../src/rag/pipeline/fetchers/registry.js';
-import type { RagPipelineManifest } from '../src/rag/pipeline/schema.js';
-import type { Fetcher, RawDoc } from '../src/rag/pipeline/types.js';
+import { runPipeline } from "../src/rag/pipeline/runtime.js";
+import { FETCHERS } from "../src/rag/pipeline/fetchers/registry.js";
+import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
+import type { Fetcher, RawDoc } from "../src/rag/pipeline/types.js";
 
-let tmp = '';
+let tmp = "";
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-pipeline-runtime-'));
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-pipeline-runtime-"));
 });
 
 afterEach(() => {
@@ -34,11 +34,11 @@ function installStubFetcher(opts: StubFetcherOptions): () => void {
   const original = FETCHERS.filesystem;
   let thrown = false;
   const stub: Fetcher = {
-    kind: 'filesystem',
+    kind: "filesystem",
     async *fetch() {
       if (opts.throwOnce && !thrown) {
         thrown = true;
-        throw new Error('fetcher init boom');
+        throw new Error("fetcher init boom");
       }
       for (const d of opts.docs) yield d;
     },
@@ -86,13 +86,13 @@ function makeMockAdapter(options: { withDelete?: boolean } = {}): {
           ids: req.documents.map((d) => d.id),
           count: req.documents.length,
         });
-        return { ids: req.documents.map((d) => d.id), collection: req.collection ?? 'docs' };
+        return { ids: req.documents.map((d) => d.id), collection: req.collection ?? "docs" };
       },
       ...(withDelete
         ? {
             async delete(req: DeleteRequest): Promise<DeleteResponse> {
               deletes.push({ collection: req.collection, ids: [...req.ids] });
-              return { deleted: req.ids.length, collection: req.collection ?? 'docs' };
+              return { deleted: req.ids.length, collection: req.collection ?? "docs" };
             },
           }
         : {}),
@@ -109,38 +109,38 @@ function makeMockAdapter(options: { withDelete?: boolean } = {}): {
 }
 
 function readJournalLines(path: string): Array<Record<string, unknown>> {
-  const raw = readFileSync(path, 'utf8').trim();
+  const raw = readFileSync(path, "utf8").trim();
   if (!raw) return [];
-  return raw.split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+  return raw.split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
 }
 
-function baseManifest(overrides: Partial<RagPipelineManifest['spec']> = {}): RagPipelineManifest {
+function baseManifest(overrides: Partial<RagPipelineManifest["spec"]> = {}): RagPipelineManifest {
   return {
-    apiVersion: 'llamactl/v1',
-    kind: 'RagPipeline',
-    metadata: { name: 'test' },
+    apiVersion: "llamactl/v1",
+    kind: "RagPipeline",
+    metadata: { name: "test" },
     spec: {
-      destination: { ragNode: 'kb-pg', collection: 'docs' },
-      sources: [{ kind: 'filesystem', root: '/tmp', glob: '**/*' }],
+      destination: { ragNode: "kb-pg", collection: "docs" },
+      sources: [{ kind: "filesystem", root: "/tmp", glob: "**/*" }],
       transforms: [],
       concurrency: 2,
-      on_duplicate: 'skip',
+      on_duplicate: "skip",
       ...overrides,
     },
   } as RagPipelineManifest;
 }
 
-describe('runPipeline', () => {
-  test('frames a successful run with run-started + run-complete', async () => {
+describe("runPipeline", () => {
+  test("frames a successful run with run-started + run-complete", async () => {
     const restore = installStubFetcher({
       docs: [
-        { id: 'a', content: 'alpha', metadata: {} },
-        { id: 'b', content: 'beta', metadata: {} },
+        { id: "a", content: "alpha", metadata: {} },
+        { id: "b", content: "beta", metadata: {} },
       ],
     });
     try {
       const mock = makeMockAdapter();
-      const journalPath = join(tmp, 'journal.jsonl');
+      const journalPath = join(tmp, "journal.jsonl");
       const summary = await runPipeline({
         manifest: baseManifest(),
         journalPath,
@@ -155,10 +155,10 @@ describe('runPipeline', () => {
       expect(summary.per_source[0]!.chunks).toBe(2);
 
       const lines = readJournalLines(journalPath);
-      expect(lines[0]!.kind).toBe('run-started');
-      expect(lines[lines.length - 1]!.kind).toBe('run-complete');
-      expect(lines.some((l) => l.kind === 'doc-ingested')).toBe(true);
-      expect(lines.some((l) => l.kind === 'source-complete')).toBe(true);
+      expect(lines[0]!.kind).toBe("run-started");
+      expect(lines[lines.length - 1]!.kind).toBe("run-complete");
+      expect(lines.some((l) => l.kind === "doc-ingested")).toBe(true);
+      expect(lines.some((l) => l.kind === "source-complete")).toBe(true);
       expect(mock.calls.length).toBe(2);
       expect(mock.closed).toBe(1);
     } finally {
@@ -166,12 +166,12 @@ describe('runPipeline', () => {
     }
   });
 
-  test('skipped duplicates land as doc-skipped', async () => {
+  test("skipped duplicates land as doc-skipped", async () => {
     const docs: RawDoc[] = [
-      { id: 'a', content: 'alpha', metadata: {} },
-      { id: 'b', content: 'beta', metadata: {} },
+      { id: "a", content: "alpha", metadata: {} },
+      { id: "b", content: "beta", metadata: {} },
     ];
-    const journalPath = join(tmp, 'journal.jsonl');
+    const journalPath = join(tmp, "journal.jsonl");
     const mock = makeMockAdapter();
     {
       const restore = installStubFetcher({ docs });
@@ -201,37 +201,37 @@ describe('runPipeline', () => {
       }
     }
     const lines = readJournalLines(journalPath);
-    const skipped = lines.filter((l) => l.kind === 'doc-skipped');
+    const skipped = lines.filter((l) => l.kind === "doc-skipped");
     expect(skipped).toHaveLength(2);
     // No extra store calls on the second run.
     expect(mock.calls.length).toBe(2);
   });
 
-  test('transform fan-out surfaces in doc-ingested.chunks', async () => {
+  test("transform fan-out surfaces in doc-ingested.chunks", async () => {
     const longMarkdown = [
-      '# Heading One',
-      '',
-      'Paragraph one content with enough text to help chunking.',
-      '',
-      'Paragraph two content with another batch of prose.',
-      '',
-      '## Heading Two',
-      '',
-      'Paragraph three content under the second heading.',
-      '',
-      'Paragraph four content wrapping up the document.',
-    ].join('\n');
+      "# Heading One",
+      "",
+      "Paragraph one content with enough text to help chunking.",
+      "",
+      "Paragraph two content with another batch of prose.",
+      "",
+      "## Heading Two",
+      "",
+      "Paragraph three content under the second heading.",
+      "",
+      "Paragraph four content wrapping up the document.",
+    ].join("\n");
     const restore = installStubFetcher({
-      docs: [{ id: 'long.md', content: longMarkdown, metadata: {} }],
+      docs: [{ id: "long.md", content: longMarkdown, metadata: {} }],
     });
     try {
       const mock = makeMockAdapter();
-      const journalPath = join(tmp, 'journal.jsonl');
+      const journalPath = join(tmp, "journal.jsonl");
       const summary = await runPipeline({
         manifest: baseManifest({
           transforms: [
             {
-              kind: 'markdown-chunk',
+              kind: "markdown-chunk",
               chunk_size: 80,
               overlap: 20,
               preserve_headings: true,
@@ -244,18 +244,18 @@ describe('runPipeline', () => {
       expect(summary.total_docs).toBe(1);
       expect(summary.total_chunks).toBeGreaterThan(1);
 
-      const ingested = readJournalLines(journalPath).find(
-        (l) => l.kind === 'doc-ingested',
-      ) as Record<string, unknown> | undefined;
+      const ingested = readJournalLines(journalPath).find((l) => l.kind === "doc-ingested") as
+        | Record<string, unknown>
+        | undefined;
       expect(ingested).toBeDefined();
-      expect(typeof ingested!.chunks).toBe('number');
+      expect(typeof ingested!.chunks).toBe("number");
       expect((ingested!.chunks as number) > 1).toBe(true);
     } finally {
       restore();
     }
   });
 
-  test('store batching caps at 20 docs per call', async () => {
+  test("store batching caps at 20 docs per call", async () => {
     // Generate 25 chunks via many small docs (no transforms needed).
     const docs: RawDoc[] = Array.from({ length: 25 }, (_, i) => ({
       id: `d-${i}`,
@@ -270,7 +270,7 @@ describe('runPipeline', () => {
       const mock = makeMockAdapter();
       await runPipeline({
         manifest,
-        journalPath: join(tmp, 'journal.jsonl'),
+        journalPath: join(tmp, "journal.jsonl"),
         openAdapter: mock.open,
       });
       expect(mock.calls.length).toBe(25);
@@ -283,15 +283,15 @@ describe('runPipeline', () => {
     }
   });
 
-  test('returned summary tallies match the journal', async () => {
+  test("returned summary tallies match the journal", async () => {
     const docs: RawDoc[] = [
-      { id: 'a', content: 'alpha', metadata: {} },
-      { id: 'b', content: 'beta', metadata: {} },
-      { id: 'c', content: 'gamma', metadata: {} },
+      { id: "a", content: "alpha", metadata: {} },
+      { id: "b", content: "beta", metadata: {} },
+      { id: "c", content: "gamma", metadata: {} },
     ];
     const restore = installStubFetcher({ docs });
     try {
-      const journalPath = join(tmp, 'journal.jsonl');
+      const journalPath = join(tmp, "journal.jsonl");
       const mock = makeMockAdapter();
       const summary = await runPipeline({
         manifest: baseManifest(),
@@ -299,8 +299,8 @@ describe('runPipeline', () => {
         openAdapter: mock.open,
       });
       const lines = readJournalLines(journalPath);
-      const ingested = lines.filter((l) => l.kind === 'doc-ingested').length;
-      const sourceComplete = lines.find((l) => l.kind === 'source-complete')!;
+      const ingested = lines.filter((l) => l.kind === "doc-ingested").length;
+      const sourceComplete = lines.find((l) => l.kind === "source-complete")!;
       expect(ingested).toBe(summary.total_docs);
       expect(sourceComplete.docs).toBe(summary.per_source[0]!.docs);
       expect(sourceComplete.chunks).toBe(summary.per_source[0]!.chunks);
@@ -309,15 +309,15 @@ describe('runPipeline', () => {
     }
   });
 
-  test('dryRun skips adapter.store and journals doc-would-ingest', async () => {
+  test("dryRun skips adapter.store and journals doc-would-ingest", async () => {
     const docs: RawDoc[] = [
-      { id: 'a', content: 'alpha', metadata: {} },
-      { id: 'b', content: 'beta', metadata: {} },
+      { id: "a", content: "alpha", metadata: {} },
+      { id: "b", content: "beta", metadata: {} },
     ];
     const restore = installStubFetcher({ docs });
     try {
       const mock = makeMockAdapter();
-      const journalPath = join(tmp, 'journal.jsonl');
+      const journalPath = join(tmp, "journal.jsonl");
       const summary = await runPipeline({
         manifest: baseManifest(),
         journalPath,
@@ -330,8 +330,8 @@ describe('runPipeline', () => {
       expect(mock.calls).toHaveLength(0);
       expect(mock.closed).toBe(1);
       const lines = readJournalLines(journalPath);
-      const would = lines.filter((l) => l.kind === 'doc-would-ingest');
-      const ingested = lines.filter((l) => l.kind === 'doc-ingested');
+      const would = lines.filter((l) => l.kind === "doc-would-ingest");
+      const ingested = lines.filter((l) => l.kind === "doc-ingested");
       expect(would).toHaveLength(2);
       expect(ingested).toHaveLength(0);
     } finally {
@@ -339,9 +339,9 @@ describe('runPipeline', () => {
     }
   });
 
-  test('dryRun then wet run: dry does not poison dedupe, wet still stores', async () => {
-    const docs: RawDoc[] = [{ id: 'a', content: 'alpha', metadata: {} }];
-    const journalPath = join(tmp, 'journal.jsonl');
+  test("dryRun then wet run: dry does not poison dedupe, wet still stores", async () => {
+    const docs: RawDoc[] = [{ id: "a", content: "alpha", metadata: {} }];
+    const journalPath = join(tmp, "journal.jsonl");
     const mock = makeMockAdapter();
     // Dry run first.
     {
@@ -376,20 +376,20 @@ describe('runPipeline', () => {
     expect(mock.calls).toHaveLength(1);
   });
 
-  test('on_duplicate=replace deletes prior chunks before storing new ones', async () => {
-    const journalPath = join(tmp, 'journal.jsonl');
+  test("on_duplicate=replace deletes prior chunks before storing new ones", async () => {
+    const journalPath = join(tmp, "journal.jsonl");
     const mock = makeMockAdapter();
     // First run — two docs, both stored.
     {
       const restore = installStubFetcher({
         docs: [
-          { id: 'a.md', content: 'alpha v1', metadata: {} },
-          { id: 'b.md', content: 'beta v1', metadata: {} },
+          { id: "a.md", content: "alpha v1", metadata: {} },
+          { id: "b.md", content: "beta v1", metadata: {} },
         ],
       });
       try {
         await runPipeline({
-          manifest: baseManifest({ on_duplicate: 'replace' }),
+          manifest: baseManifest({ on_duplicate: "replace" }),
           journalPath,
           openAdapter: mock.open,
         });
@@ -405,13 +405,13 @@ describe('runPipeline', () => {
     {
       const restore = installStubFetcher({
         docs: [
-          { id: 'a.md', content: 'alpha v2', metadata: {} },
-          { id: 'b.md', content: 'beta v1', metadata: {} },
+          { id: "a.md", content: "alpha v2", metadata: {} },
+          { id: "b.md", content: "beta v1", metadata: {} },
         ],
       });
       try {
         const summary = await runPipeline({
-          manifest: baseManifest({ on_duplicate: 'replace' }),
+          manifest: baseManifest({ on_duplicate: "replace" }),
           journalPath,
           openAdapter: mock.open,
         });
@@ -422,22 +422,22 @@ describe('runPipeline', () => {
       }
     }
     expect(mock.deletes).toHaveLength(1);
-    expect(mock.deletes[0]!.ids).toEqual(['a.md']);
+    expect(mock.deletes[0]!.ids).toEqual(["a.md"]);
     // Total store calls: 2 from run 1 + 1 from run 2 (only a.md).
     expect(mock.calls).toHaveLength(3);
   });
 
-  test('on_duplicate=replace with no delete binding journals an error + still stores', async () => {
-    const journalPath = join(tmp, 'journal.jsonl');
+  test("on_duplicate=replace with no delete binding journals an error + still stores", async () => {
+    const journalPath = join(tmp, "journal.jsonl");
     const mock = makeMockAdapter({ withDelete: false });
     // Seed an initial ingestion so the second run has priors.
     {
       const restore = installStubFetcher({
-        docs: [{ id: 'a.md', content: 'alpha v1', metadata: {} }],
+        docs: [{ id: "a.md", content: "alpha v1", metadata: {} }],
       });
       try {
         await runPipeline({
-          manifest: baseManifest({ on_duplicate: 'replace' }),
+          manifest: baseManifest({ on_duplicate: "replace" }),
           journalPath,
           openAdapter: mock.open,
         });
@@ -448,11 +448,11 @@ describe('runPipeline', () => {
     expect(mock.calls).toHaveLength(1);
 
     const restore = installStubFetcher({
-      docs: [{ id: 'a.md', content: 'alpha v2', metadata: {} }],
+      docs: [{ id: "a.md", content: "alpha v2", metadata: {} }],
     });
     try {
       const summary = await runPipeline({
-        manifest: baseManifest({ on_duplicate: 'replace' }),
+        manifest: baseManifest({ on_duplicate: "replace" }),
         journalPath,
         openAdapter: mock.open,
       });
@@ -462,33 +462,33 @@ describe('runPipeline', () => {
       restore();
     }
     const lines = readJournalLines(journalPath);
-    const errs = lines.filter((l) => l.kind === 'error');
-    expect(errs.some((e) => (e.message as string).includes('no delete binding'))).toBe(true);
+    const errs = lines.filter((l) => l.kind === "error");
+    expect(errs.some((e) => (e.message as string).includes("no delete binding"))).toBe(true);
     // Store still proceeded (no orphan-cleanup is worse than no ingest).
     expect(mock.calls).toHaveLength(2);
   });
 
-  test('on_duplicate=version suffixes chunk IDs so old + new coexist', async () => {
-    const journalPath = join(tmp, 'journal.jsonl');
+  test("on_duplicate=version suffixes chunk IDs so old + new coexist", async () => {
+    const journalPath = join(tmp, "journal.jsonl");
     const mock = makeMockAdapter();
     // Long markdown so the chunker emits multiple chunks.
     const v1 = [
-      '# Title',
-      '',
-      'Paragraph one. '.repeat(20),
-      '',
-      '## Section',
-      '',
-      'Paragraph two. '.repeat(20),
-    ].join('\n');
+      "# Title",
+      "",
+      "Paragraph one. ".repeat(20),
+      "",
+      "## Section",
+      "",
+      "Paragraph two. ".repeat(20),
+    ].join("\n");
     const v2 = `${v1}\n\nExtra paragraph.`;
     const manifest = (): RagPipelineManifest => ({
-      ...baseManifest({ on_duplicate: 'version' }),
+      ...baseManifest({ on_duplicate: "version" }),
       spec: {
-        ...baseManifest({ on_duplicate: 'version' }).spec,
+        ...baseManifest({ on_duplicate: "version" }).spec,
         transforms: [
           {
-            kind: 'markdown-chunk',
+            kind: "markdown-chunk",
             chunk_size: 100,
             overlap: 20,
             preserve_headings: true,
@@ -498,7 +498,7 @@ describe('runPipeline', () => {
     });
     // First run — default chunk IDs.
     {
-      const restore = installStubFetcher({ docs: [{ id: 'd.md', content: v1, metadata: {} }] });
+      const restore = installStubFetcher({ docs: [{ id: "d.md", content: v1, metadata: {} }] });
       try {
         await runPipeline({ manifest: manifest(), journalPath, openAdapter: mock.open });
       } finally {
@@ -506,12 +506,12 @@ describe('runPipeline', () => {
       }
     }
     const v1Ids = mock.calls.flatMap((c) => c.ids);
-    expect(v1Ids.every((id) => id.startsWith('d.md#'))).toBe(true);
-    expect(v1Ids.every((id) => !id.includes('@'))).toBe(true);
+    expect(v1Ids.every((id) => id.startsWith("d.md#"))).toBe(true);
+    expect(v1Ids.every((id) => !id.includes("@"))).toBe(true);
 
     // Second run — content changed. IDs should include the sha suffix.
     {
-      const restore = installStubFetcher({ docs: [{ id: 'd.md', content: v2, metadata: {} }] });
+      const restore = installStubFetcher({ docs: [{ id: "d.md", content: v2, metadata: {} }] });
       try {
         await runPipeline({ manifest: manifest(), journalPath, openAdapter: mock.open });
       } finally {
@@ -521,7 +521,7 @@ describe('runPipeline', () => {
     // No deletes — version mode is additive.
     expect(mock.deletes).toHaveLength(0);
     const allIds = mock.calls.flatMap((c) => c.ids);
-    const v2Ids = allIds.filter((id) => id.includes('@'));
+    const v2Ids = allIds.filter((id) => id.includes("@"));
     expect(v2Ids.length).toBeGreaterThan(0);
     // Versioned id shape: `d.md@<12-hex>#<n>`.
     for (const id of v2Ids) {
@@ -533,36 +533,36 @@ describe('runPipeline', () => {
     }
   });
 
-  test('spec.cost.per_chunk_usd surfaces an estimated_cost on the summary', async () => {
+  test("spec.cost.per_chunk_usd surfaces an estimated_cost on the summary", async () => {
     const docs: RawDoc[] = [
-      { id: 'a', content: 'alpha', metadata: {} },
-      { id: 'b', content: 'beta', metadata: {} },
-      { id: 'c', content: 'gamma', metadata: {} },
+      { id: "a", content: "alpha", metadata: {} },
+      { id: "b", content: "beta", metadata: {} },
+      { id: "c", content: "gamma", metadata: {} },
     ];
     const restore = installStubFetcher({ docs });
     try {
       const mock = makeMockAdapter();
       const manifest = baseManifest();
       // Wire a per-chunk rate — 3 chunks × $0.001 = $0.003
-      manifest.spec.cost = { per_chunk_usd: 0.001, currency: 'USD' };
+      manifest.spec.cost = { per_chunk_usd: 0.001, currency: "USD" };
       const summary = await runPipeline({
         manifest,
-        journalPath: join(tmp, 'journal.jsonl'),
+        journalPath: join(tmp, "journal.jsonl"),
         openAdapter: mock.open,
       });
       expect(summary.estimated_cost).toBeDefined();
       expect(summary.estimated_cost!.usd).toBeCloseTo(0.003, 6);
-      expect(summary.estimated_cost!.source).toBe('per_chunk');
-      expect(summary.estimated_cost!.currency).toBe('USD');
+      expect(summary.estimated_cost!.source).toBe("per_chunk");
+      expect(summary.estimated_cost!.currency).toBe("USD");
     } finally {
       restore();
     }
   });
 
-  test('combined per_chunk_usd + per_doc_usd sums both', async () => {
+  test("combined per_chunk_usd + per_doc_usd sums both", async () => {
     const docs: RawDoc[] = [
-      { id: 'a', content: 'alpha', metadata: {} },
-      { id: 'b', content: 'beta', metadata: {} },
+      { id: "a", content: "alpha", metadata: {} },
+      { id: "b", content: "beta", metadata: {} },
     ];
     const restore = installStubFetcher({ docs });
     try {
@@ -572,29 +572,29 @@ describe('runPipeline', () => {
       manifest.spec.cost = {
         per_chunk_usd: 0.01,
         per_doc_usd: 0.05,
-        currency: 'USD',
+        currency: "USD",
       };
       const summary = await runPipeline({
         manifest,
-        journalPath: join(tmp, 'journal.jsonl'),
+        journalPath: join(tmp, "journal.jsonl"),
         openAdapter: mock.open,
       });
       expect(summary.estimated_cost?.usd).toBeCloseTo(0.12, 6);
-      expect(summary.estimated_cost?.source).toBe('combined');
+      expect(summary.estimated_cost?.source).toBe("combined");
     } finally {
       restore();
     }
   });
 
-  test('no cost rates configured → estimated_cost is undefined', async () => {
+  test("no cost rates configured → estimated_cost is undefined", async () => {
     const restore = installStubFetcher({
-      docs: [{ id: 'a', content: 'x', metadata: {} }],
+      docs: [{ id: "a", content: "x", metadata: {} }],
     });
     try {
       const mock = makeMockAdapter();
       const summary = await runPipeline({
         manifest: baseManifest(),
-        journalPath: join(tmp, 'journal.jsonl'),
+        journalPath: join(tmp, "journal.jsonl"),
         openAdapter: mock.open,
       });
       expect(summary.estimated_cost).toBeUndefined();
@@ -603,13 +603,13 @@ describe('runPipeline', () => {
     }
   });
 
-  test('missing fetcher for a kind journals an error and continues', async () => {
+  test("missing fetcher for a kind journals an error and continues", async () => {
     // Temporarily delete the registered filesystem fetcher to prove
     // the runtime doesn't crash when the registry lookup misses.
     const original = FETCHERS.filesystem;
     delete (FETCHERS as Record<string, Fetcher>).filesystem;
     try {
-      const journalPath = join(tmp, 'journal.jsonl');
+      const journalPath = join(tmp, "journal.jsonl");
       const mock = makeMockAdapter();
       const summary = await runPipeline({
         manifest: baseManifest(),
@@ -618,7 +618,7 @@ describe('runPipeline', () => {
       });
       expect(summary.errors).toBe(1);
       const lines = readJournalLines(journalPath);
-      expect(lines.some((l) => l.kind === 'error')).toBe(true);
+      expect(lines.some((l) => l.kind === "error")).toBe(true);
     } finally {
       if (original) {
         (FETCHERS as Record<string, Fetcher>).filesystem = original;

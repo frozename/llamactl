@@ -1,20 +1,20 @@
-import { execSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import type { MachineProfile } from './types.js';
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import type { MachineProfile } from "./types.js";
 
 const OMLX_MAX_MODEL_MEMORY_GIB_BY_PROFILE: Record<MachineProfile, number> = {
-  'mac-mini-16g': 12,
+  "mac-mini-16g": 12,
   balanced: 24,
-  'macbook-pro-48g': 32,
+  "macbook-pro-48g": 32,
 };
 
 /** Total physical memory in bytes, detected per platform. */
 export function detectMemoryBytes(): number | null {
-  if (process.platform === 'darwin') {
+  if (process.platform === "darwin") {
     try {
-      const out = execSync('sysctl -n hw.memsize', {
-        stdio: ['ignore', 'pipe', 'ignore'],
-        encoding: 'utf8',
+      const out = execSync("sysctl -n hw.memsize", {
+        stdio: ["ignore", "pipe", "ignore"],
+        encoding: "utf8",
       }).trim();
       const n = Number.parseInt(out, 10);
       return Number.isFinite(n) && n > 0 ? n : null;
@@ -22,9 +22,9 @@ export function detectMemoryBytes(): number | null {
       return null;
     }
   }
-  if (process.platform === 'linux') {
+  if (process.platform === "linux") {
     try {
-      const meminfo = readFileSync('/proc/meminfo', 'utf8');
+      const meminfo = readFileSync("/proc/meminfo", "utf8");
       const m = meminfo.match(/^MemTotal:\s+(\d+)\s+kB/m);
       if (m?.[1]) {
         const kb = Number.parseInt(m[1], 10);
@@ -49,32 +49,32 @@ export function detectMemoryBytes(): number | null {
  * hardware.
  */
 export function profileFromMemory(memoryBytes: number | null): MachineProfile {
-  if (memoryBytes === null) return 'macbook-pro-48g';
-  if (memoryBytes <= 17_179_869_184) return 'mac-mini-16g';
-  if (memoryBytes <= 34_359_738_368) return 'balanced';
-  return 'macbook-pro-48g';
+  if (memoryBytes === null) return "macbook-pro-48g";
+  if (memoryBytes <= 17_179_869_184) return "mac-mini-16g";
+  if (memoryBytes <= 34_359_738_368) return "balanced";
+  return "macbook-pro-48g";
 }
 
 /** Normalise any user-facing alias onto the canonical profile name. */
 export function normalizeProfile(raw: string | undefined): MachineProfile | null {
   if (!raw) return null;
   switch (raw) {
-    case 'mac-mini-16g':
-    case 'mini':
-    case '16g':
-      return 'mac-mini-16g';
-    case 'balanced':
-    case 'mid':
-      return 'balanced';
-    case 'macbook-pro-48g':
-    case 'macbook-pro':
-    case 'mbp':
-    case 'laptop':
-    case 'desktop-48g':
-    case 'desktop':
-    case '48g':
-    case 'best':
-      return 'macbook-pro-48g';
+    case "mac-mini-16g":
+    case "mini":
+    case "16g":
+      return "mac-mini-16g";
+    case "balanced":
+    case "mid":
+      return "balanced";
+    case "macbook-pro-48g":
+    case "macbook-pro":
+    case "mbp":
+    case "laptop":
+    case "desktop-48g":
+    case "desktop":
+    case "48g":
+    case "best":
+      return "macbook-pro-48g";
     default:
       return null;
   }

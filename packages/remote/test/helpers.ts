@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   auth,
   config as kubecfg,
@@ -10,7 +10,7 @@ import {
   tls,
   type NodeClient,
   type RunningAgent,
-} from '../src/index.js';
+} from "../src/index.js";
 
 export interface ClusterNodeHandle {
   name: string;
@@ -60,16 +60,16 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
       const spec = specs[i]!;
       const name = spec.name ?? `node${i + 1}`;
       const devStorage = mkdtempSync(join(tmpdir(), `llamactl-cluster-${name}-`));
-      const runtimeDir = join(devStorage, 'ai-models', 'local-ai');
-      const agentDir = join(devStorage, 'agent');
+      const runtimeDir = join(devStorage, "ai-models", "local-ai");
+      const agentDir = join(devStorage, "agent");
       const cert = await tls.generateSelfSignedCert({
         dir: agentDir,
-        commonName: '127.0.0.1',
-        hostnames: ['127.0.0.1', 'localhost'],
+        commonName: "127.0.0.1",
+        hostnames: ["127.0.0.1", "localhost"],
       });
       const token = auth.generateToken();
       const agent = startAgentServer({
-        bindHost: '127.0.0.1',
+        bindHost: "127.0.0.1",
         port: 0,
         tokenHash: token.hash,
         tls: { certPath: cert.certPath, keyPath: cert.keyPath },
@@ -77,7 +77,7 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
         // otherwise make every test run advertise itself.
         advertiseMdns: false,
       });
-      cfg = kubecfg.upsertNode(cfg, 'home', {
+      cfg = kubecfg.upsertNode(cfg, "home", {
         name,
         endpoint: agent.url,
         certificateFingerprint: cert.fingerprint,
@@ -89,9 +89,7 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
       // this helper — yagni.
       cfg = {
         ...cfg,
-        users: cfg.users.map((u) =>
-          u.name === 'me' ? { ...u, token: token.token } : u,
-        ),
+        users: cfg.users.map((u) => (u.name === "me" ? { ...u, token: token.token } : u)),
       };
       const client = createNodeClient(cfg, { nodeName: name });
       handles.push({
@@ -115,10 +113,7 @@ export async function makeCluster(opts: MakeClusterOptions): Promise<Cluster> {
     throw err;
   }
 
-  const clusterConfigPath = join(
-    mkdtempSync(join(tmpdir(), 'llamactl-cluster-config-')),
-    'config',
-  );
+  const clusterConfigPath = join(mkdtempSync(join(tmpdir(), "llamactl-cluster-config-")), "config");
   kubecfg.saveConfig(cfg, clusterConfigPath);
 
   return {

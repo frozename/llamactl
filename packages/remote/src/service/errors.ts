@@ -14,17 +14,14 @@
  *     a docker-runtime service whose instance has no reachable
  *     endpoint (no ports mapped, inspect returned null, …).
  */
-export type ServiceErrorCode =
-  | 'unknown-kind'
-  | 'spec-invalid'
-  | 'endpoint-unresolvable';
+export type ServiceErrorCode = "unknown-kind" | "spec-invalid" | "endpoint-unresolvable";
 
 export class ServiceError extends Error {
   readonly code: ServiceErrorCode;
   override readonly cause?: unknown;
   constructor(code: ServiceErrorCode, message: string, cause?: unknown) {
     super(message);
-    this.name = 'ServiceError';
+    this.name = "ServiceError";
     this.code = code;
     this.cause = cause;
   }

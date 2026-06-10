@@ -15,14 +15,14 @@
  * latest run per (model, workload).
  */
 
-import { Database } from 'bun:sqlite';
-import { existsSync } from 'node:fs';
+import { Database } from "bun:sqlite";
+import { existsSync } from "node:fs";
 
 export interface DiffArgs {
   db: string;
   models?: string[];
   workloads?: string[];
-  format: 'md' | 'csv' | 'json';
+  format: "md" | "csv" | "json";
   allRuns: boolean;
 }
 
@@ -44,38 +44,51 @@ export function parseArgs(argv: string[]): DiffArgs {
     const index = argv.indexOf(flag);
     return index >= 0 ? argv[index + 1] : undefined;
   };
-  const db = readArg('--db') ?? 'packages/eval/results/matrix.db';
-  const modelsRaw = readArg('--models');
-  const workloadsRaw = readArg('--workloads');
-  const formatRaw = readArg('--format') ?? 'md';
-  if (formatRaw !== 'md' && formatRaw !== 'csv' && formatRaw !== 'json') {
+  const db = readArg("--db") ?? "packages/eval/results/matrix.db";
+  const modelsRaw = readArg("--models");
+  const workloadsRaw = readArg("--workloads");
+  const formatRaw = readArg("--format") ?? "md";
+  if (formatRaw !== "md" && formatRaw !== "csv" && formatRaw !== "json") {
     throw new Error(`--format must be md|csv|json, got: ${formatRaw}`);
   }
   return {
     db,
-    models: modelsRaw ? modelsRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
-    workloads: workloadsRaw ? workloadsRaw.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+    models: modelsRaw
+      ? modelsRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined,
+    workloads: workloadsRaw
+      ? workloadsRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined,
     format: formatRaw,
-    allRuns: argv.includes('--all-runs'),
+    allRuns: argv.includes("--all-runs"),
   };
 }
 
-export function loadCells(db: Database, args: Pick<DiffArgs, 'models' | 'workloads' | 'allRuns'>): Cell[] {
+export function loadCells(
+  db: Database,
+  args: Pick<DiffArgs, "models" | "workloads" | "allRuns">,
+): Cell[] {
   let sql = `SELECT run_id, model_name, workload_name, n_rows, primary_metric_name,
                     primary_metric_value, throughput_tps, latency_p50_ms, errors, started_at
              FROM matrix_runs`;
   const conditions: string[] = [];
   const params: unknown[] = [];
   if (args.models && args.models.length > 0) {
-    conditions.push(`model_name IN (${args.models.map(() => '?').join(',')})`);
+    conditions.push(`model_name IN (${args.models.map(() => "?").join(",")})`);
     params.push(...args.models);
   }
   if (args.workloads && args.workloads.length > 0) {
-    conditions.push(`workload_name IN (${args.workloads.map(() => '?').join(',')})`);
+    conditions.push(`workload_name IN (${args.workloads.map(() => "?").join(",")})`);
     params.push(...args.workloads);
   }
-  if (conditions.length > 0) sql += ' WHERE ' + conditions.join(' AND ');
-  sql += ' ORDER BY started_at DESC';
+  if (conditions.length > 0) sql += " WHERE " + conditions.join(" AND ");
+  sql += " ORDER BY started_at DESC";
   const all = db.query(sql).all(...(params as never[])) as Cell[];
 
   if (args.allRuns) return all;
@@ -98,34 +111,35 @@ function fmt(n: number, digits: number): string {
 }
 
 export function renderMd(cells: Cell[]): string {
-  const sorted = [...cells].sort((a, b) =>
-    a.workload_name.localeCompare(b.workload_name) ||
-    b.primary_metric_value - a.primary_metric_value ||
-    a.model_name.localeCompare(b.model_name),
+  const sorted = [...cells].sort(
+    (a, b) =>
+      a.workload_name.localeCompare(b.workload_name) ||
+      b.primary_metric_value - a.primary_metric_value ||
+      a.model_name.localeCompare(b.model_name),
   );
   const lines = [
-    '| Workload | Model | n | Metric | Value | tps | p50_ms | err |',
-    '|---|---|---|---|---|---|---|---|',
+    "| Workload | Model | n | Metric | Value | tps | p50_ms | err |",
+    "|---|---|---|---|---|---|---|---|",
   ];
   for (const c of sorted) {
     lines.push(
       `| ${c.workload_name} | ${c.model_name} | ${c.n_rows} | ${c.primary_metric_name} | ${fmt(c.primary_metric_value, 4)} | ${fmt(c.throughput_tps, 2)} | ${fmt(c.latency_p50_ms, 0)} | ${c.errors} |`,
     );
   }
-  return lines.join('\n') + '\n';
+  return lines.join("\n") + "\n";
 }
 
 export function renderCsv(cells: Cell[]): string {
-  const header = 'workload,model,n,metric,value,tps,p50_ms,errors,run_id,started_at';
+  const header = "workload,model,n,metric,value,tps,p50_ms,errors,run_id,started_at";
   const rows = cells.map(
     (c) =>
       `${c.workload_name},${c.model_name},${c.n_rows},${c.primary_metric_name},${fmt(c.primary_metric_value, 4)},${fmt(c.throughput_tps, 2)},${fmt(c.latency_p50_ms, 0)},${c.errors},${c.run_id},${c.started_at}`,
   );
-  return [header, ...rows].join('\n') + '\n';
+  return [header, ...rows].join("\n") + "\n";
 }
 
 export function renderJson(cells: Cell[]): string {
-  return JSON.stringify(cells, null, 2) + '\n';
+  return JSON.stringify(cells, null, 2) + "\n";
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
@@ -144,13 +158,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   try {
     const cells = loadCells(db, args);
     if (cells.length === 0) {
-      process.stderr.write('diff: no cells matched the filter\n');
+      process.stderr.write("diff: no cells matched the filter\n");
       return 2;
     }
     const out =
-      args.format === 'csv'
+      args.format === "csv"
         ? renderCsv(cells)
-        : args.format === 'json'
+        : args.format === "json"
           ? renderJson(cells)
           : renderMd(cells);
     process.stdout.write(out);

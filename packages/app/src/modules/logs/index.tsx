@@ -1,10 +1,10 @@
-import * as React from 'react';
-import { useEffect, useRef, useState } from 'react';
-import { skipToken } from '@tanstack/react-query';
-import { trpc } from '@/lib/trpc';
-import { useActiveWorkload } from '@/hooks/useActiveWorkload';
-import { Button, StatusDot } from '@/ui';
-import type { StatusDotTone } from '@/ui';
+import * as React from "react";
+import { useEffect, useRef, useState } from "react";
+import { skipToken } from "@tanstack/react-query";
+import { trpc } from "@/lib/trpc";
+import { useActiveWorkload } from "@/hooks/useActiveWorkload";
+import { Button, StatusDot } from "@/ui";
+import type { StatusDotTone } from "@/ui";
 
 /**
  * Tails the active workload's `llama-server.log` via the `serverLogs` subscription. Keeps a
@@ -15,7 +15,7 @@ import type { StatusDotTone } from '@/ui';
 
 const MAX_BUFFER_LINES = 2000;
 
-type ConnState = 'connecting' | 'live' | 'error' | 'idle';
+type ConnState = "connecting" | "live" | "error" | "idle";
 
 export default function Logs(): React.JSX.Element {
   const [lines, setLines] = useState<string[]>([]);
@@ -24,30 +24,30 @@ export default function Logs(): React.JSX.Element {
   const [subKey, setSubKey] = useState(0);
   const [autoscroll, setAutoscroll] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [conn, setConn] = useState<ConnState>('connecting');
+  const [conn, setConn] = useState<ConnState>("connecting");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const { workload, loading: workloadLoading } = useActiveWorkload();
 
   // Mirror the Server module's status poll so we can gate tailing when
   // no llama-server is reachable. Without this the subscription keeps
   // retrying a dead endpoint and the UI sits on an opaque empty state.
-  const serverStatus = trpc.serverStatus.useQuery(
-    workload ? { workload } : skipToken,
-    { refetchInterval: 5000, enabled: !!workload },
-  );
-  const serverDown = serverStatus.data?.state === 'down';
+  const serverStatus = trpc.serverStatus.useQuery(workload ? { workload } : skipToken, {
+    refetchInterval: 5000,
+    enabled: !!workload,
+  });
+  const serverDown = serverStatus.data?.state === "down";
 
   trpc.serverLogs.useSubscription(
     workload ? { workload, lines: historyLines, follow } : skipToken,
     {
       enabled: !!workload && !serverDown,
       onStarted: () => {
-        setConn(follow ? 'live' : 'idle');
+        setConn(follow ? "live" : "idle");
         setError(null);
       },
       onData: (evt) => {
         const e = evt as { type?: string; line?: string };
-        if (e.type === 'line' && typeof e.line === 'string') {
+        if (e.type === "line" && typeof e.line === "string") {
           setLines((prev) => {
             const next = [...prev, e.line as string];
             if (next.length > MAX_BUFFER_LINES) {
@@ -59,7 +59,7 @@ export default function Logs(): React.JSX.Element {
       },
       onError: (err) => {
         setError(err.message);
-        setConn('error');
+        setConn("error");
       },
       // The sub key forces the hook to tear down and recreate the
       // subscription when the user toggles follow or changes the
@@ -83,70 +83,79 @@ export default function Logs(): React.JSX.Element {
   function restart(): void {
     setLines([]);
     setError(null);
-    setConn('connecting');
+    setConn("connecting");
     setSubKey((k) => k + 1);
   }
 
   const connTone: StatusDotTone =
-    conn === 'live'
-      ? 'ok'
-      : conn === 'error'
-        ? 'err'
-        : conn === 'connecting'
-          ? 'info'
-          : 'idle';
+    conn === "live" ? "ok" : conn === "error" ? "err" : conn === "connecting" ? "info" : "idle";
   const connLabel =
-    conn === 'live'
-      ? 'streaming'
-      : conn === 'error'
-        ? 'error'
-        : conn === 'connecting'
-          ? 'connecting'
-          : 'idle';
+    conn === "live"
+      ? "streaming"
+      : conn === "error"
+        ? "error"
+        : conn === "connecting"
+          ? "connecting"
+          : "idle";
 
   return (
-    <div style={{ display: 'flex', height: '100%', flexDirection: 'column', padding: 24 }} data-testid="logs-root">
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+    <div
+      style={{ display: "flex", height: "100%", flexDirection: "column", padding: 24 }}
+      data-testid="logs-root"
+    >
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
         <div>
-          <h1 style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text)' }}>Logs</h1>
-          <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+          <h1 style={{ fontSize: 18, fontWeight: 600, color: "var(--color-text)" }}>Logs</h1>
+          <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
             {serverDown ? (
               <span>Server offline</span>
             ) : (
               <>
-                Tailing{' '}
-                <span style={{ fontFamily: 'var(--font-mono)' }}>
-                  {workload}/llama-server.log
-                </span>
+                Tailing{" "}
+                <span style={{ fontFamily: "var(--font-mono)" }}>{workload}/llama-server.log</span>
               </>
             )}
             {error && (
-              <span style={{ marginLeft: 8, color: 'var(--color-err)' }}>· error: {error}</span>
+              <span style={{ marginLeft: 8, color: "var(--color-err)" }}>· error: {error}</span>
             )}
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 12 }}>
           <StatusDot
             data-testid="logs-conn"
             data-state={conn}
             tone={connTone}
-            pulse={conn === 'live' || conn === 'connecting'}
+            pulse={conn === "live" || conn === "connecting"}
             label={connLabel}
             title={error ?? `subscription ${connLabel}`}
           />
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--color-text-secondary)' }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              color: "var(--color-text-secondary)",
+            }}
+          >
             <input
               type="checkbox"
               checked={follow}
               onChange={(e) => {
                 setFollow(e.target.checked);
-                setConn('connecting');
+                setConn("connecting");
                 setSubKey((k) => k + 1);
               }}
             />
             follow
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--color-text-secondary)' }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              color: "var(--color-text-secondary)",
+            }}
+          >
             history
             <input
               type="number"
@@ -155,10 +164,26 @@ export default function Logs(): React.JSX.Element {
               step={50}
               value={historyLines}
               onChange={(e) => setHistoryLines(Number(e.target.value) || 0)}
-              style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingTop: 2, paddingBottom: 2, textAlign: 'right', color: 'var(--color-text)' }}
+              style={{
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingTop: 2,
+                paddingBottom: 2,
+                textAlign: "right",
+                color: "var(--color-text)",
+              }}
             />
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--color-text-secondary)' }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              color: "var(--color-text-secondary)",
+            }}
+          >
             <input
               type="checkbox"
               checked={autoscroll}
@@ -176,21 +201,32 @@ export default function Logs(): React.JSX.Element {
       </div>
       <div
         ref={scrollRef}
-        style={{ flex: 1, overflow: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-0)', padding: 8, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text)' }}
+        style={{
+          flex: 1,
+          overflow: "auto",
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-0)",
+          padding: 8,
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+          color: "var(--color-text)",
+        }}
       >
-      {!workload && !workloadLoading ? (
-        <div data-testid="logs-offline" style={{ color: 'var(--color-text-secondary)' }}>
-          No active workload. Apply one to enable log streaming.
-        </div>
-      ) : serverDown ? (
-        <div data-testid="logs-offline" style={{ color: 'var(--color-text-secondary)' }}>
-          No llama-server running. Start one from the Server module first.
-        </div>
-      ) : lines.length === 0 ? (
-          <div style={{ color: 'var(--color-text-secondary)' }}>(no log lines yet)</div>
+        {!workload && !workloadLoading ? (
+          <div data-testid="logs-offline" style={{ color: "var(--color-text-secondary)" }}>
+            No active workload. Apply one to enable log streaming.
+          </div>
+        ) : serverDown ? (
+          <div data-testid="logs-offline" style={{ color: "var(--color-text-secondary)" }}>
+            No llama-server running. Start one from the Server module first.
+          </div>
+        ) : lines.length === 0 ? (
+          <div style={{ color: "var(--color-text-secondary)" }}>(no log lines yet)</div>
         ) : (
           lines.map((line, i) => (
-            <div key={i} style={{ whiteSpace: 'pre-wrap' }}>
+            <div key={i} style={{ whiteSpace: "pre-wrap" }}>
               {line}
             </div>
           ))

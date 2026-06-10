@@ -16,11 +16,8 @@
  * the handler owns domain knowledge (images, health checks, env
  * vars), and the core applier stays handler-free.
  */
-import type {
-  ServiceDeployment,
-  ServiceInstance,
-} from '../../runtime/backend.js';
-import type { ServiceSpec } from '../schema.js';
+import type { ServiceDeployment, ServiceInstance } from "../../runtime/backend.js";
+import type { ServiceSpec } from "../schema.js";
 
 export interface HandlerTranslateOptions {
   /** Composite the spec lives in — goes into labels + deterministic names. */
@@ -46,7 +43,7 @@ export interface ResolvedServiceEndpoint {
  */
 export interface ServiceHandler<S extends ServiceSpec = ServiceSpec> {
   /** Short stable identifier matching the spec's `kind` literal. */
-  readonly kind: S['kind'];
+  readonly kind: S["kind"];
 
   /** Throws `ServiceError('spec-invalid', …)` on unacceptable shape. */
   validate(spec: S): void;
@@ -65,10 +62,7 @@ export interface ServiceHandler<S extends ServiceSpec = ServiceSpec> {
    * when `spec.runtime === 'external'` — there's nothing to spawn
    * and the applier uses `resolvedEndpoint` directly.
    */
-  toDeployment(
-    spec: S,
-    opts: HandlerTranslateOptions,
-  ): ServiceDeployment | null;
+  toDeployment(spec: S, opts: HandlerTranslateOptions): ServiceDeployment | null;
 
   /**
    * Resolve the endpoint consumers use to reach this service. For
@@ -78,8 +72,5 @@ export interface ServiceHandler<S extends ServiceSpec = ServiceSpec> {
    * `ServiceError('endpoint-unresolvable', …)` when docker-runtime
    * is asked to resolve before the instance is present.
    */
-  resolvedEndpoint(
-    spec: S,
-    instance: ServiceInstance | null,
-  ): ResolvedServiceEndpoint;
+  resolvedEndpoint(spec: S, instance: ServiceInstance | null): ResolvedServiceEndpoint;
 }

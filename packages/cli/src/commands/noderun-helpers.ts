@@ -1,13 +1,13 @@
-import { infraSpec } from '@llamactl/remote';
-import type { NodeClient } from '@llamactl/remote';
+import { infraSpec } from "@llamactl/remote";
+import type { NodeClient } from "@llamactl/remote";
 
 export type InfraPlatformKind = infraSpec.InfraPlatformKind;
 
 export const ALLOWED_PLATFORMS: InfraPlatformKind[] = [
-  'darwin-arm64',
-  'darwin-x64',
-  'linux-x64',
-  'linux-arm64',
+  "darwin-arm64",
+  "darwin-x64",
+  "linux-x64",
+  "linux-arm64",
 ];
 
 export function platformFromNodeFacts(facts: {
@@ -16,10 +16,10 @@ export function platformFromNodeFacts(facts: {
 }): InfraPlatformKind | null {
   const os = facts.os;
   const arch = facts.arch;
-  if (os === 'darwin' && arch === 'arm64') return 'darwin-arm64';
-  if (os === 'darwin' && arch === 'x64') return 'darwin-x64';
-  if (os === 'linux' && arch === 'x64') return 'linux-x64';
-  if (os === 'linux' && arch === 'arm64') return 'linux-arm64';
+  if (os === "darwin" && arch === "arm64") return "darwin-arm64";
+  if (os === "darwin" && arch === "x64") return "darwin-x64";
+  if (os === "linux" && arch === "x64") return "linux-x64";
+  if (os === "linux" && arch === "arm64") return "linux-arm64";
   return null;
 }
 

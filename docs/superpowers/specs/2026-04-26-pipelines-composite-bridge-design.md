@@ -15,7 +15,7 @@ Let operators declare a RAG ingestion pipeline inside a Composite manifest so ap
 
 `docs/rag-nodes.md` and `packages/remote/src/rag/pipeline/` ship the RAG pipeline runtime: declarative ingestion specs (filesystem/http/git sources, chunk/transform stages, schedule), the `ragPipelineApply`/`ragPipelineRun`/`ragPipelineDelete` tRPC surface, and a scheduler that walks each pipeline on its declared cadence.
 
-The two systems have a clean seam: `RagPipelineSpec.destination.ragNode` references a name that *could* live in the same composite's `ragNodes:` list. Bridging them means letting a composite manifest carry inline pipeline specs, route them through the existing `ragPipelineApply` proc, and tie their lifecycle into composite apply/destroy.
+The two systems have a clean seam: `RagPipelineSpec.destination.ragNode` references a name that _could_ live in the same composite's `ragNodes:` list. Bridging them means letting a composite manifest carry inline pipeline specs, route them through the existing `ragPipelineApply` proc, and tie their lifecycle into composite apply/destroy.
 
 The user's actual operating model is one composite per concept ("vision composite", "code composite") with each carrying its own RAG ingestion. Multi-composite shared-pipeline ownership is plausible but secondary; v1 supports it via reference-counted ownership but defaults are tuned for the single-owner case.
 
@@ -138,10 +138,10 @@ router.ts                    MODIFY
 
 ### Reused primitives
 
-| Primitive | Source | Usage |
-|---|---|---|
-| `CompositeOwnershipSchema` | `packages/remote/src/workload/gateway-catalog/schema.ts` | Verbatim reuse — same marker shape across stores |
-| `entrySpecHash` | `packages/remote/src/workload/gateway-catalog/hash.ts` | Verbatim reuse — stable-stringify-+-sha256 works for any object |
+| Primitive                     | Source                                                                                                    | Usage                                                                         |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `CompositeOwnershipSchema`    | `packages/remote/src/workload/gateway-catalog/schema.ts`                                                  | Verbatim reuse — same marker shape across stores                              |
+| `entrySpecHash`               | `packages/remote/src/workload/gateway-catalog/hash.ts`                                                    | Verbatim reuse — stable-stringify-+-sha256 works for any object               |
 | `baseRouter.createCaller({})` | `packages/app/electron/trpc/dispatcher.ts:386` (existing pattern in `packages/remote/src/router.ts:2935`) | In-process caller for `ragPipelineApply`/`ragPipelineRun`/`ragPipelineDelete` |
 
 ### Schema additions
@@ -150,11 +150,11 @@ router.ts                    MODIFY
 // packages/remote/src/composite/schema.ts (additive)
 
 export const PipelineCompositeEntrySchema = z.object({
-  name: z.string().min(1).regex(
-    /^[a-z0-9][a-z0-9-]*$/,
-    'pipeline name must be lowercase-alphanumeric-hyphens',
-  ),
-  spec: RagPipelineSpecSchema,   // verbatim reuse — no composite-specific subset
+  name: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9][a-z0-9-]*$/, "pipeline name must be lowercase-alphanumeric-hyphens"),
+  spec: RagPipelineSpecSchema, // verbatim reuse — no composite-specific subset
 });
 export type PipelineCompositeEntry = z.infer<typeof PipelineCompositeEntrySchema>;
 
@@ -163,9 +163,9 @@ export const CompositeSpecSchema = z.object({
   workloads: z.array(ModelRunSpecSchema).default([]),
   ragNodes: z.array(RagNodeCompositeEntrySchema).default([]),
   gateways: z.array(GatewayCompositeEntrySchema).default([]),
-  pipelines: z.array(PipelineCompositeEntrySchema).default([]),  // NEW
+  pipelines: z.array(PipelineCompositeEntrySchema).default([]), // NEW
   dependencies: z.array(DependencyEdgeSchema).default([]),
-  onFailure: z.enum(['rollback', 'leave-partial']).default('rollback'),
+  onFailure: z.enum(["rollback", "leave-partial"]).default("rollback"),
   runtime: CompositeRuntimeSchema.optional(),
 });
 ```
@@ -173,14 +173,14 @@ export const CompositeSpecSchema = z.object({
 ```ts
 // packages/remote/src/rag/pipeline/schema.ts (additive)
 
-import { CompositeOwnershipSchema } from '../../workload/gateway-catalog/schema.js';
+import { CompositeOwnershipSchema } from "../../workload/gateway-catalog/schema.js";
 
 export const RagPipelineManifestSchema = z.object({
-  apiVersion: z.literal('llamactl/v1'),
-  kind: z.literal('RagPipeline'),
+  apiVersion: z.literal("llamactl/v1"),
+  kind: z.literal("RagPipeline"),
   metadata: z.object({ name: z.string().min(1) }),
   spec: RagPipelineSpecSchema,
-  ownership: CompositeOwnershipSchema.optional(),  // NEW
+  ownership: CompositeOwnershipSchema.optional(), // NEW
 });
 ```
 
@@ -188,12 +188,10 @@ export const RagPipelineManifestSchema = z.object({
 
 ```ts
 export type ApplyConflict =
-  | { kind: 'name'; name: string; existingOwner: 'operator' | 'composite' }
-  | { kind: 'shape'; name: string; reason: string };
+  | { kind: "name"; name: string; existingOwner: "operator" | "composite" }
+  | { kind: "shape"; name: string; reason: string };
 
-export type ApplyResult =
-  | { ok: true; changed: boolean }
-  | { ok: false; conflict: ApplyConflict };
+export type ApplyResult = { ok: true; changed: boolean } | { ok: false; conflict: ApplyConflict };
 ```
 
 ## Data flow
@@ -303,14 +301,14 @@ Re-applying the same composite spec returns `{ changed: false }` from `applyPipe
 
 ### Server (`packages/remote/test/`)
 
-| Test | Coverage |
-|---|---|
-| `pipeline-apply-ownership.test.ts` | `applyPipeline` ownership-aware merge — 9 cases: brand-new, idempotent re-apply (same composite + same shape), union compositeNames (same shape, different composite), operator-name collision, composite-claim-on-operator collision, shape mismatch between two composites, operator updating their own pipeline (no-marker path unchanged), composite + same-shape + new compositeName unions correctly, schema round-trip of ownership field |
-| `pipeline-delete-refcounted.test.ts` | `deletePipeline({ compositeName })` — single-owner removal, multi-owner ref-count, no-op when name absent, operator-owned protected from composite-driven destroy |
-| `composite-pipeline-apply.test.ts` | End-to-end via the composite applier: a composite manifest with `pipelines: [{...}]` applies; ragPipelineApply called with the right shape; first-run triggered async; idempotent re-apply produces zero changes; rollback unwinds the pipeline. Uses `LLAMACTL_TEST_PROFILE`. |
-| `composite-pipeline-destroy.test.ts` | End-to-end: `compositeDestroy` strips the composite's name from each pipeline's `ownership.compositeNames`; pipelines owned solely by the destroyed composite disappear; co-owned pipelines stay. |
-| `composite-dag-pipeline.test.ts` | DAG + topo: implicit edge from `pipeline.destination.ragNode` to inline `ragNodes[]`; explicit `dependencies:` edges with `kind: pipeline` work; cycle detection picks up cycles that include pipeline nodes. |
-| `composite-schema-pipeline.test.ts` | Schema: `pipelines:` field defaults to `[]`; pipeline-name uniqueness within a composite; pipeline-name regex; cross-component name collisions allowed across kinds (a pipeline named `docs` and a service named `docs` is fine — namespaces are per-kind). |
+| Test                                 | Coverage                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pipeline-apply-ownership.test.ts`   | `applyPipeline` ownership-aware merge — 9 cases: brand-new, idempotent re-apply (same composite + same shape), union compositeNames (same shape, different composite), operator-name collision, composite-claim-on-operator collision, shape mismatch between two composites, operator updating their own pipeline (no-marker path unchanged), composite + same-shape + new compositeName unions correctly, schema round-trip of ownership field |
+| `pipeline-delete-refcounted.test.ts` | `deletePipeline({ compositeName })` — single-owner removal, multi-owner ref-count, no-op when name absent, operator-owned protected from composite-driven destroy                                                                                                                                                                                                                                                                                |
+| `composite-pipeline-apply.test.ts`   | End-to-end via the composite applier: a composite manifest with `pipelines: [{...}]` applies; ragPipelineApply called with the right shape; first-run triggered async; idempotent re-apply produces zero changes; rollback unwinds the pipeline. Uses `LLAMACTL_TEST_PROFILE`.                                                                                                                                                                   |
+| `composite-pipeline-destroy.test.ts` | End-to-end: `compositeDestroy` strips the composite's name from each pipeline's `ownership.compositeNames`; pipelines owned solely by the destroyed composite disappear; co-owned pipelines stay.                                                                                                                                                                                                                                                |
+| `composite-dag-pipeline.test.ts`     | DAG + topo: implicit edge from `pipeline.destination.ragNode` to inline `ragNodes[]`; explicit `dependencies:` edges with `kind: pipeline` work; cycle detection picks up cycles that include pipeline nodes.                                                                                                                                                                                                                                    |
+| `composite-schema-pipeline.test.ts`  | Schema: `pipelines:` field defaults to `[]`; pipeline-name uniqueness within a composite; pipeline-name regex; cross-component name collisions allowed across kinds (a pipeline named `docs` and a service named `docs` is fine — namespaces are per-kind).                                                                                                                                                                                      |
 
 All tests run under existing hermetic `LLAMACTL_TEST_PROFILE` / `DEV_STORAGE` patterns.
 

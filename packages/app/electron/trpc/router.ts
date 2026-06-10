@@ -4,5 +4,5 @@
 // a separate typed client — see `src/lib/trpc.ts` — so we don't need
 // to merge router types here, which would force tsc to chase deep
 // `@llamactl/core` module paths and break composite declaration emit.
-export { router, type AppRouter } from '@llamactl/remote';
-export type { UIRouter } from './dispatcher';
+export { router, type AppRouter } from "@llamactl/remote";
+export type { UIRouter } from "./dispatcher";

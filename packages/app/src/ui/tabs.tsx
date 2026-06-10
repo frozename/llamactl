@@ -1,5 +1,5 @@
-import * as React from 'react';
-import { cx } from './classes';
+import * as React from "react";
+import { cx } from "./classes";
 
 export interface TabsProps extends React.HTMLAttributes<HTMLDivElement> {
   value: string;
@@ -16,18 +16,24 @@ const TabsCtx = React.createContext<{
   onValueChange: (next: string) => void;
 } | null>(null);
 
-export function Tabs({ value, onValueChange, className, children, ...rest }: TabsProps): React.JSX.Element {
+export function Tabs({
+  value,
+  onValueChange,
+  className,
+  children,
+  ...rest
+}: TabsProps): React.JSX.Element {
   return (
     <TabsCtx.Provider value={{ value, onValueChange }}>
       <div
         role="tablist"
         {...rest}
-        className={cx('bcn-tabs', className)}
+        className={cx("bcn-tabs", className)}
         style={{
-          display: 'flex',
+          display: "flex",
           gap: 2,
-          borderBottom: '1px solid var(--color-border-subtle)',
-          width: '100%',
+          borderBottom: "1px solid var(--color-border-subtle)",
+          width: "100%",
         }}
       >
         {children}
@@ -38,7 +44,7 @@ export function Tabs({ value, onValueChange, className, children, ...rest }: Tab
 
 export function Tab({ value, className, children, ...rest }: TabProps): React.JSX.Element {
   const ctx = React.useContext(TabsCtx);
-  if (!ctx) throw new Error('Tab must be rendered inside Tabs');
+  if (!ctx) throw new Error("Tab must be rendered inside Tabs");
   const active = ctx.value === value;
   return (
     <button
@@ -50,20 +56,20 @@ export function Tab({ value, className, children, ...rest }: TabProps): React.JS
         rest.onClick?.(e);
         if (!e.defaultPrevented) ctx.onValueChange(value);
       }}
-      className={cx('bcn-tab', active && 'bcn-tab--active', className)}
+      className={cx("bcn-tab", active && "bcn-tab--active", className)}
       style={{
-        padding: '8px 14px',
+        padding: "8px 14px",
         fontSize: 12,
-        color: active ? 'var(--color-text)' : 'var(--color-text-tertiary)',
-        background: 'transparent',
+        color: active ? "var(--color-text)" : "var(--color-text-tertiary)",
+        background: "transparent",
         // `border` shorthand must be cleared BEFORE the `borderBottom` longhand
         // is set — otherwise assigning the shorthand resets the longhand to
         // `none` and the active underline never paints.
-        border: 'none',
-        borderBottom: active ? '1.5px solid var(--color-brand)' : '1.5px solid transparent',
+        border: "none",
+        borderBottom: active ? "1.5px solid var(--color-brand)" : "1.5px solid transparent",
         marginBottom: -1,
-        cursor: 'pointer',
-        transition: 'color 160ms',
+        cursor: "pointer",
+        transition: "color 160ms",
       }}
     >
       {children}

@@ -1,9 +1,17 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { createHash, randomBytes } from 'node:crypto';
-import { join } from 'node:path';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { z } from 'zod';
-import { defaultAgentDir } from './agent-config.js';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { join } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { z } from "zod";
+import { defaultAgentDir } from "./agent-config.js";
 
 /**
  * Bootstrap tokens — single-use, short-lived secrets the operator
@@ -26,8 +34,8 @@ import { defaultAgentDir } from './agent-config.js';
  */
 
 export const BootstrapTokenSchema = z.object({
-  apiVersion: z.literal('llamactl/v1'),
-  kind: z.literal('BootstrapToken'),
+  apiVersion: z.literal("llamactl/v1"),
+  kind: z.literal("BootstrapToken"),
   nodeName: z.string().min(1),
   tokenHash: z.string().regex(/^[0-9a-f]{64}$/),
   centralUrl: z.string().min(1),
@@ -39,11 +47,11 @@ export const BootstrapTokenSchema = z.object({
 export type BootstrapToken = z.infer<typeof BootstrapTokenSchema>;
 
 export function defaultBootstrapTokensDir(env: NodeJS.ProcessEnv = process.env): string {
-  return join(defaultAgentDir(env), 'bootstrap-tokens');
+  return join(defaultAgentDir(env), "bootstrap-tokens");
 }
 
 function hashToken(token: string): string {
-  return createHash('sha256').update(token, 'utf8').digest('hex');
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 
 function tokenFilePath(tokenHash: string, dir: string): string {
@@ -54,7 +62,7 @@ function writeTokenRecord(record: BootstrapToken, dir: string): string {
   BootstrapTokenSchema.parse(record);
   mkdirSync(dir, { recursive: true });
   const path = tokenFilePath(record.tokenHash, dir);
-  writeFileSync(path, stringifyYaml(record), 'utf8');
+  writeFileSync(path, stringifyYaml(record), "utf8");
   try {
     chmodSync(path, 0o600);
   } catch {
@@ -85,14 +93,14 @@ export function generateBootstrapToken(opts: GenerateTokenOptions): GeneratedTok
   const dir = opts.dir ?? defaultBootstrapTokensDir();
   const now = (opts.now ?? (() => new Date()))();
   const ttlMs = opts.ttlMs ?? 15 * 60_000;
-  const token = randomBytes(32).toString('base64url');
+  const token = randomBytes(32).toString("base64url");
   const tokenHash = hashToken(token);
   const record: BootstrapToken = {
-    apiVersion: 'llamactl/v1',
-    kind: 'BootstrapToken',
+    apiVersion: "llamactl/v1",
+    kind: "BootstrapToken",
     nodeName: opts.nodeName,
     tokenHash,
-    centralUrl: opts.centralUrl.replace(/\/$/, ''),
+    centralUrl: opts.centralUrl.replace(/\/$/, ""),
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
     used: false,
@@ -105,7 +113,7 @@ export function loadBootstrapToken(path: string): BootstrapToken {
   if (!existsSync(path)) {
     throw new Error(`bootstrap token not found at ${path}`);
   }
-  const raw = readFileSync(path, 'utf8');
+  const raw = readFileSync(path, "utf8");
   return BootstrapTokenSchema.parse(parseYaml(raw));
 }
 
@@ -116,7 +124,7 @@ export function listBootstrapTokens(dir: string = defaultBootstrapTokensDir()): 
   if (!existsSync(dir)) return [];
   const out: Array<{ path: string; record: BootstrapToken }> = [];
   for (const entry of readdirSync(dir)) {
-    if (!entry.endsWith('.yaml')) continue;
+    if (!entry.endsWith(".yaml")) continue;
     const path = join(dir, entry);
     try {
       const record = loadBootstrapToken(path);
@@ -147,7 +155,7 @@ export function findBootstrapTokenByPlaintext(
 
 export type ConsumeResult =
   | { ok: true; record: BootstrapToken; path: string }
-  | { ok: false; reason: 'not-found' | 'expired' | 'already-used' };
+  | { ok: false; reason: "not-found" | "expired" | "already-used" };
 
 export interface ConsumeOptions {
   dir?: string;
@@ -163,9 +171,9 @@ export function consumeBootstrapToken(token: string, opts: ConsumeOptions = {}):
   const dir = opts.dir ?? defaultBootstrapTokensDir();
   const now = (opts.now ?? (() => new Date()))();
   const found = findBootstrapTokenByPlaintext(token, dir);
-  if (!found) return { ok: false, reason: 'not-found' };
-  if (found.record.used) return { ok: false, reason: 'already-used' };
-  if (now > new Date(found.record.expiresAt)) return { ok: false, reason: 'expired' };
+  if (!found) return { ok: false, reason: "not-found" };
+  if (found.record.used) return { ok: false, reason: "already-used" };
+  if (now > new Date(found.record.expiresAt)) return { ok: false, reason: "expired" };
   const updated: BootstrapToken = {
     ...found.record,
     used: true,

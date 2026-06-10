@@ -30,7 +30,7 @@ the number of in-flight command buffers per stream.
 So the constraint is real: the Apple M4 base GPU's Metal command-queue /
 wired-resource budget cannot serve more than ~1 in-flight command
 buffer per stream at multi-8B-model load. Larger GPUs (M-series Pro/Max)
-will tolerate more. The goal here is a *safe ceiling* rather than a
+will tolerate more. The goal here is a _safe ceiling_ rather than a
 fixed number.
 
 ## Constraints
@@ -73,6 +73,7 @@ fixed number.
 ## What I want from the plan
 
 For each planning persona, produce:
+
 - Whether the sketch is the right shape, or a different design fits
   better (e.g., should the throttle live in `gpu::eval()` callers like
   `mlx_lm.generate`, or in `mlx::core::eval` itself; should it use a

@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { initTRPC, TRPCError } from '@trpc/server';
-import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
-import { createTRPCClient, httpBatchLink, TRPCClientError } from '@trpc/client';
-import { z } from 'zod';
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { initTRPC, TRPCError } from "@trpc/server";
+import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+import { createTRPCClient, httpBatchLink, TRPCClientError } from "@trpc/client";
+import { z } from "zod";
 
 /**
  * Phase A.2 spike (Risk #1 mitigation). Validates that the Phase A
@@ -21,38 +21,36 @@ function createSpikeRouter() {
   const t = initTRPC.context<SpikeContext>().create();
 
   const authedProcedure = t.procedure.use(({ ctx, next }) => {
-    if (ctx.token !== 'good-token') {
-      throw new TRPCError({ code: 'UNAUTHORIZED', message: 'bad token' });
+    if (ctx.token !== "good-token") {
+      throw new TRPCError({ code: "UNAUTHORIZED", message: "bad token" });
     }
     return next();
   });
 
   return t.router({
-    ping: t.procedure.query(() => 'pong'),
+    ping: t.procedure.query(() => "pong"),
     echo: t.procedure
       .input(z.string().min(1))
       .mutation(({ input }) => ({ echoed: input.toUpperCase() })),
     whoami: authedProcedure.query(({ ctx }) => ({ token: ctx.token })),
-    slow: authedProcedure
-      .input(z.object({ ms: z.number() }))
-      .query(async ({ input, ctx }) => {
-        // Simulates a long-running server-side op. Resolves 'ok' unless
-        // the incoming request aborts first, in which case we want to
-        // observe that (the fetch adapter wires request.signal into
-        // createContext's signal).
-        await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => resolve(null), input.ms);
-          const abortCb = () => {
-            ctx.aborted.flag = true;
-            clearTimeout(timer);
-            reject(new Error('aborted'));
-          };
-          // createContext hands us a live AbortSignal via ctx.aborted;
-          // the caller sets ctx.aborted.flag when signal fires.
-          if (ctx.aborted.flag) abortCb();
-        });
-        return 'ok';
-      }),
+    slow: authedProcedure.input(z.object({ ms: z.number() })).query(async ({ input, ctx }) => {
+      // Simulates a long-running server-side op. Resolves 'ok' unless
+      // the incoming request aborts first, in which case we want to
+      // observe that (the fetch adapter wires request.signal into
+      // createContext's signal).
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve(null), input.ms);
+        const abortCb = () => {
+          ctx.aborted.flag = true;
+          clearTimeout(timer);
+          reject(new Error("aborted"));
+        };
+        // createContext hands us a live AbortSignal via ctx.aborted;
+        // the caller sets ctx.aborted.flag when signal fires.
+        if (ctx.aborted.flag) abortCb();
+      });
+      return "ok";
+    }),
   });
 }
 
@@ -70,24 +68,22 @@ function startSpikeServer(router: SpikeRouter): SpikeServer {
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
-      if (!url.pathname.startsWith('/trpc')) {
-        return new Response('not found', { status: 404 });
+      if (!url.pathname.startsWith("/trpc")) {
+        return new Response("not found", { status: 404 });
       }
-      const authHeader = req.headers.get('authorization');
-      const token = authHeader?.startsWith('Bearer ')
-        ? authHeader.slice('Bearer '.length)
-        : null;
+      const authHeader = req.headers.get("authorization");
+      const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null;
 
       // Reset per-request abort tracker and hand it to the router so
       // tests can observe that the server-side work saw the signal.
       lastAbort.flag = false;
-      req.signal.addEventListener('abort', () => {
+      req.signal.addEventListener("abort", () => {
         lastAbort.flag = true;
       });
 
       return fetchRequestHandler({
         req,
-        endpoint: '/trpc',
+        endpoint: "/trpc",
         router,
         createContext: (): SpikeContext => ({ token, aborted: lastAbort }),
       });
@@ -103,7 +99,7 @@ function startSpikeServer(router: SpikeRouter): SpikeServer {
   };
 }
 
-describe('tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike)', () => {
+describe("tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike)", () => {
   const router = createSpikeRouter();
   let svr: SpikeServer;
 
@@ -114,34 +110,34 @@ describe('tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike)', () => {
     await svr.stop();
   });
 
-  test('query round-trips', async () => {
+  test("query round-trips", async () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [httpBatchLink({ url: svr.url })],
     });
-    expect(await client.ping.query()).toBe('pong');
+    expect(await client.ping.query()).toBe("pong");
   });
 
-  test('mutation round-trips with input validation', async () => {
+  test("mutation round-trips with input validation", async () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [httpBatchLink({ url: svr.url })],
     });
-    const result = await client.echo.mutate('hello');
-    expect(result).toEqual({ echoed: 'HELLO' });
+    const result = await client.echo.mutate("hello");
+    expect(result).toEqual({ echoed: "HELLO" });
   });
 
-  test('bearer auth: valid token → authed procedure returns ctx', async () => {
+  test("bearer auth: valid token → authed procedure returns ctx", async () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [
         httpBatchLink({
           url: svr.url,
-          headers: { authorization: 'Bearer good-token' },
+          headers: { authorization: "Bearer good-token" },
         }),
       ],
     });
-    expect(await client.whoami.query()).toEqual({ token: 'good-token' });
+    expect(await client.whoami.query()).toEqual({ token: "good-token" });
   });
 
-  test('bearer auth: missing token → UNAUTHORIZED', async () => {
+  test("bearer auth: missing token → UNAUTHORIZED", async () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [httpBatchLink({ url: svr.url })],
     });
@@ -149,16 +145,16 @@ describe('tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike)', () => {
     try {
       await client.whoami.query();
     } catch (err) {
-      expect((err as TRPCClientError<SpikeRouter>).data?.code).toBe('UNAUTHORIZED');
+      expect((err as TRPCClientError<SpikeRouter>).data?.code).toBe("UNAUTHORIZED");
     }
   });
 
-  test('client abort propagates to server', async () => {
+  test("client abort propagates to server", async () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [
         httpBatchLink({
           url: svr.url,
-          headers: { authorization: 'Bearer good-token' },
+          headers: { authorization: "Bearer good-token" },
         }),
       ],
     });

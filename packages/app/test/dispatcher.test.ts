@@ -1,11 +1,11 @@
-import { describe, test, expect, afterAll } from 'bun:test';
+import { describe, test, expect, afterAll } from "bun:test";
 import {
   config as kubecfg,
   makePinnedFetch,
   type ClusterNode,
   type PinnedFetch,
-} from '@llamactl/remote';
-import { makeCluster, type Cluster } from '../../remote/test/helpers';
+} from "@llamactl/remote";
+import { makeCluster, type Cluster } from "../../remote/test/helpers";
 
 let cluster: Cluster | null = null;
 
@@ -28,29 +28,28 @@ afterAll(async () => {
  * outbound URL. Fetches mean forwarding happened; no fetches means the
  * local caller ran.
  */
-describe('Electron dispatcher router', () => {
+describe("Electron dispatcher router", () => {
   function spyFactory(urls: string[]) {
     return (node: ClusterNode): PinnedFetch => {
       const inner = makePinnedFetch(node);
       return async (input, init) => {
-        urls.push(typeof input === 'string' ? input : String(input));
+        urls.push(typeof input === "string" ? input : String(input));
         return inner(input, init);
       };
     };
   }
 
-  test('forwards query to remote when that node is default', async () => {
-    const c = cluster ?? (await makeCluster({ nodes: [{ name: 'remote1' }] }));
+  test("forwards query to remote when that node is default", async () => {
+    const c = cluster ?? (await makeCluster({ nodes: [{ name: "remote1" }] }));
     cluster = c;
-    process.env['LLAMACTL_CONFIG'] = c.clusterConfigPath;
+    process.env["LLAMACTL_CONFIG"] = c.clusterConfigPath;
     kubecfg.saveConfig(
-      kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), 'remote1'),
+      kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), "remote1"),
       c.clusterConfigPath,
     );
     const urls: string[] = [];
-    const { buildDispatcherRouter, __resetClientCacheForTests } = await import(
-      '../electron/trpc/dispatcher'
-    );
+    const { buildDispatcherRouter, __resetClientCacheForTests } =
+      await import("../electron/trpc/dispatcher");
     __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter(spyFactory(urls));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,26 +58,25 @@ describe('Electron dispatcher router', () => {
     expect(res).toBeTruthy();
     expect(urls.length).toBeGreaterThan(0);
     expect(urls[0]).toContain(c.nodes[0]!.url);
-    expect(urls[0]).toContain('/trpc/env');
+    expect(urls[0]).toContain("/trpc/env");
   }, 15_000);
 
-  test('falls through locally when default is local', async () => {
-    const c = cluster ?? (await makeCluster({ nodes: [{ name: 'remote1' }] }));
+  test("falls through locally when default is local", async () => {
+    const c = cluster ?? (await makeCluster({ nodes: [{ name: "remote1" }] }));
     cluster = c;
-    process.env['LLAMACTL_CONFIG'] = c.clusterConfigPath;
+    process.env["LLAMACTL_CONFIG"] = c.clusterConfigPath;
     kubecfg.saveConfig(
-      kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), 'local'),
+      kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), "local"),
       c.clusterConfigPath,
     );
     const urls: string[] = [];
-    const { buildDispatcherRouter, __resetClientCacheForTests } = await import(
-      '../electron/trpc/dispatcher'
-    );
+    const { buildDispatcherRouter, __resetClientCacheForTests } =
+      await import("../electron/trpc/dispatcher");
     __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter((node) => {
       const inner = makePinnedFetch(node);
       return async (input, init) => {
-        urls.push(typeof input === 'string' ? input : String(input));
+        urls.push(typeof input === "string" ? input : String(input));
         return inner(input, init);
       };
     });
@@ -89,18 +87,17 @@ describe('Electron dispatcher router', () => {
     expect(urls.length).toBe(0);
   }, 15_000);
 
-  test('forwards subscription events from remote', async () => {
-    const c = cluster ?? (await makeCluster({ nodes: [{ name: 'remote1' }] }));
+  test("forwards subscription events from remote", async () => {
+    const c = cluster ?? (await makeCluster({ nodes: [{ name: "remote1" }] }));
     cluster = c;
-    process.env['LLAMACTL_CONFIG'] = c.clusterConfigPath;
+    process.env["LLAMACTL_CONFIG"] = c.clusterConfigPath;
     kubecfg.saveConfig(
-      kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), 'remote1'),
+      kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), "remote1"),
       c.clusterConfigPath,
     );
     const urls: string[] = [];
-    const { buildDispatcherRouter, __resetClientCacheForTests } = await import(
-      '../electron/trpc/dispatcher'
-    );
+    const { buildDispatcherRouter, __resetClientCacheForTests } =
+      await import("../electron/trpc/dispatcher");
     __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter(spyFactory(urls));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -109,39 +106,38 @@ describe('Electron dispatcher router', () => {
     // serverLogs runs tailServerLog against the agent's empty log dir
     // and completes quickly with no lines when follow is false.
     const iterable = (await caller.serverLogs({
-      workload: 'test-workload',
+      workload: "test-workload",
       lines: 0,
       follow: false,
     })) as AsyncIterable<unknown>;
     const events: unknown[] = [];
     for await (const ev of iterable) events.push(ev);
     // Proves the forwarding path reached the agent's SSE endpoint.
-    expect(urls.some((u) => u.includes('/trpc/serverLogs'))).toBe(true);
+    expect(urls.some((u) => u.includes("/trpc/serverLogs"))).toBe(true);
     // The remote agent has no server.log, so zero events is fine — we
     // just care that the stream completed without throwing.
     expect(Array.isArray(events)).toBe(true);
   }, 15_000);
 
-  test('UI active-node override takes precedence over kubeconfig', async () => {
-    const c = cluster ?? (await makeCluster({ nodes: [{ name: 'remote1' }] }));
+  test("UI active-node override takes precedence over kubeconfig", async () => {
+    const c = cluster ?? (await makeCluster({ nodes: [{ name: "remote1" }] }));
     cluster = c;
-    process.env['LLAMACTL_CONFIG'] = c.clusterConfigPath;
+    process.env["LLAMACTL_CONFIG"] = c.clusterConfigPath;
     // Kubeconfig says LOCAL, override says REMOTE → dispatcher must
     // forward (override wins).
     kubecfg.saveConfig(
-      kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), 'local'),
+      kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), "local"),
       c.clusterConfigPath,
     );
     const urls: string[] = [];
-    const { buildDispatcherRouter, __resetClientCacheForTests } = await import(
-      '../electron/trpc/dispatcher'
-    );
+    const { buildDispatcherRouter, __resetClientCacheForTests } =
+      await import("../electron/trpc/dispatcher");
     __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter(spyFactory(urls));
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const caller = (dispatcher as any).createCaller({});
-    const mod = await import('../electron/trpc/dispatcher');
-    await caller.uiSetActiveNode({ name: 'remote1' });
+    const mod = await import("../electron/trpc/dispatcher");
+    await caller.uiSetActiveNode({ name: "remote1" });
     try {
       await caller.env();
       expect(urls.some((u) => u.includes(c.nodes[0]!.url))).toBe(true);
@@ -150,23 +146,22 @@ describe('Electron dispatcher router', () => {
     }
   }, 15_000);
 
-  test('control-plane-only procedures bypass dispatch', async () => {
-    const c = cluster ?? (await makeCluster({ nodes: [{ name: 'remote1' }] }));
+  test("control-plane-only procedures bypass dispatch", async () => {
+    const c = cluster ?? (await makeCluster({ nodes: [{ name: "remote1" }] }));
     cluster = c;
-    process.env['LLAMACTL_CONFIG'] = c.clusterConfigPath;
+    process.env["LLAMACTL_CONFIG"] = c.clusterConfigPath;
     kubecfg.saveConfig(
-      kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), 'remote1'),
+      kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), "remote1"),
       c.clusterConfigPath,
     );
     const urls: string[] = [];
-    const { buildDispatcherRouter, __resetClientCacheForTests } = await import(
-      '../electron/trpc/dispatcher'
-    );
+    const { buildDispatcherRouter, __resetClientCacheForTests } =
+      await import("../electron/trpc/dispatcher");
     __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter((node) => {
       const inner = makePinnedFetch(node);
       return async (input, init) => {
-        urls.push(typeof input === 'string' ? input : String(input));
+        urls.push(typeof input === "string" ? input : String(input));
         return inner(input, init);
       };
     });
@@ -178,8 +173,8 @@ describe('Electron dispatcher router', () => {
     // with this cluster's registered nodes.
     const list = await caller.nodeList();
     const names = list.nodes.map((n: { name: string }) => n.name);
-    expect(names).toContain('local');
-    expect(names).toContain('remote1');
+    expect(names).toContain("local");
+    expect(names).toContain("remote1");
     expect(urls.length).toBe(0);
   }, 15_000);
 });

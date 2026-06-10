@@ -1,4 +1,4 @@
-import { listRunbooks, runRunbook } from '@llamactl/agents';
+import { listRunbooks, runRunbook } from "@llamactl/agents";
 
 const USAGE = `llamactl runbook — operator runbooks that chain MCP tools
 
@@ -27,7 +27,7 @@ function parseRunArgs(argv: string[]): {
   params: Record<string, unknown>;
 } | null {
   const name = argv[0];
-  if (!name || name.startsWith('--')) {
+  if (!name || name.startsWith("--")) {
     process.stderr.write(`runbook run: name is required\n\n${USAGE}`);
     return null;
   }
@@ -35,18 +35,18 @@ function parseRunArgs(argv: string[]): {
   let params: Record<string, unknown> = {};
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--dry-run') {
+    if (arg === "--dry-run") {
       dryRun = true;
-    } else if (arg === '--params') {
+    } else if (arg === "--params") {
       const next = argv[++i];
       if (!next) {
-        process.stderr.write('--params requires a JSON value\n');
+        process.stderr.write("--params requires a JSON value\n");
         return null;
       }
       try {
         const parsed = JSON.parse(next);
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-          process.stderr.write('--params must be a JSON object\n');
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          process.stderr.write("--params must be a JSON object\n");
           return null;
         }
         params = parsed as Record<string, unknown>;
@@ -54,7 +54,7 @@ function parseRunArgs(argv: string[]): {
         process.stderr.write(`--params: invalid JSON (${(err as Error).message})\n`);
         return null;
       }
-    } else if (arg === '--help' || arg === '-h') {
+    } else if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return null;
     } else {
@@ -67,18 +67,18 @@ function parseRunArgs(argv: string[]): {
 
 export async function runRunbookCmd(argv: string[]): Promise<number> {
   const sub = argv[0];
-  if (!sub || sub === '--help' || sub === '-h' || sub === 'help') {
+  if (!sub || sub === "--help" || sub === "-h" || sub === "help") {
     process.stdout.write(USAGE);
     return 0;
   }
-  if (sub === 'list') {
+  if (sub === "list") {
     const runbooks = listRunbooks();
     for (const r of runbooks) {
       process.stdout.write(`${r.name}\t${r.description}\n`);
     }
     return 0;
   }
-  if (sub === 'run') {
+  if (sub === "run") {
     const parsed = parseRunArgs(argv.slice(1));
     if (!parsed) return 1;
     try {
@@ -86,7 +86,7 @@ export async function runRunbookCmd(argv: string[]): Promise<number> {
         dryRun: parsed.dryRun,
         log: (m) => process.stderr.write(`${m}\n`),
       });
-      process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+      process.stdout.write(JSON.stringify(result, null, 2) + "\n");
       return result.ok ? 0 : 1;
     } catch (err) {
       process.stderr.write(`runbook: ${(err as Error).message}\n`);

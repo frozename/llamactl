@@ -1,13 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { NodeClient } from '@llamactl/remote';
-import { runRag } from '../src/commands/rag.js';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { NodeClient } from "@llamactl/remote";
+import { runRag } from "../src/commands/rag.js";
 import {
   __setRagPipelineTestSeams,
   __resetRagPipelineTestSeams,
-} from '../src/commands/rag-pipeline.js';
+} from "../src/commands/rag-pipeline.js";
 
 /**
  * CLI coverage for `llamactl rag pipeline ...`. Tests run against a
@@ -15,20 +15,23 @@ import {
  * `logs` subcommand which reads the journal file directly.
  */
 
-interface Captured { out: string; err: string }
+interface Captured {
+  out: string;
+  err: string;
+}
 
 function captureStdio<T>(fn: () => Promise<T>): Promise<{ result: T; cap: Captured }> {
-  const chunks: Captured = { out: '', err: '' };
+  const chunks: Captured = { out: "", err: "" };
   const origOut = process.stdout.write.bind(process.stdout);
   const origErr = process.stderr.write.bind(process.stderr);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (process.stdout as any).write = (s: string | Uint8Array): boolean => {
-    chunks.out += typeof s === 'string' ? s : String(s);
+    chunks.out += typeof s === "string" ? s : String(s);
     return true;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (process.stderr as any).write = (s: string | Uint8Array): boolean => {
-    chunks.err += typeof s === 'string' ? s : String(s);
+    chunks.err += typeof s === "string" ? s : String(s);
     return true;
   };
   return fn()
@@ -43,7 +46,7 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{ result: T; cap: Captur
 
 function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
   const stubs: StubProcs = {
-    ragPipelineApply: async () => ({ ok: true, name: 'test', path: '/tmp/x', created: true }),
+    ragPipelineApply: async () => ({ ok: true, name: "test", path: "/tmp/x", created: true }),
     ragPipelineRun: async () => ({
       ok: true,
       dryRun: false,
@@ -53,23 +56,23 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
         skipped_docs: 0,
         errors: 0,
         elapsed_ms: 42,
-        per_source: [{ source: 'test:0:filesystem', docs: 3, chunks: 12, errors: 0 }],
+        per_source: [{ source: "test:0:filesystem", docs: 3, chunks: 12, errors: 0 }],
       },
     }),
     ragPipelineList: async () => ({
       pipelines: [
         {
-          name: 'test',
+          name: "test",
           manifest: {
-            apiVersion: 'llamactl/v1',
-            kind: 'RagPipeline',
-            metadata: { name: 'test' },
+            apiVersion: "llamactl/v1",
+            kind: "RagPipeline",
+            metadata: { name: "test" },
             spec: {
-              destination: { ragNode: 'kb-pg', collection: 'docs' },
-              sources: [{ kind: 'filesystem', root: '/tmp/x', glob: '**/*' }],
+              destination: { ragNode: "kb-pg", collection: "docs" },
+              sources: [{ kind: "filesystem", root: "/tmp/x", glob: "**/*" }],
               transforms: [],
               concurrency: 4,
-              on_duplicate: 'skip',
+              on_duplicate: "skip",
             },
           },
         },
@@ -77,35 +80,35 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
     }),
     ragPipelineGet: async () => ({
       manifest: {
-        apiVersion: 'llamactl/v1',
-        kind: 'RagPipeline',
-        metadata: { name: 'test' },
+        apiVersion: "llamactl/v1",
+        kind: "RagPipeline",
+        metadata: { name: "test" },
         spec: {
-          destination: { ragNode: 'kb-pg', collection: 'docs' },
-          sources: [{ kind: 'filesystem', root: '/tmp/x', glob: '**/*' }],
+          destination: { ragNode: "kb-pg", collection: "docs" },
+          sources: [{ kind: "filesystem", root: "/tmp/x", glob: "**/*" }],
           transforms: [],
           concurrency: 4,
-          on_duplicate: 'skip',
+          on_duplicate: "skip",
         },
       },
     }),
     ragPipelineRemove: async () => ({ ok: true, removed: true }),
     ragPipelineDraft: async (i) => ({
       ok: true,
-      yaml: `apiVersion: llamactl/v1\nkind: RagPipeline\nmetadata:\n  name: ${i.nameOverride ?? 'drafted'}\nspec: {}\n`,
+      yaml: `apiVersion: llamactl/v1\nkind: RagPipeline\nmetadata:\n  name: ${i.nameOverride ?? "drafted"}\nspec: {}\n`,
       manifest: {
-        apiVersion: 'llamactl/v1',
-        kind: 'RagPipeline',
-        metadata: { name: i.nameOverride ?? 'drafted' },
+        apiVersion: "llamactl/v1",
+        kind: "RagPipeline",
+        metadata: { name: i.nameOverride ?? "drafted" },
         spec: {
-          destination: { ragNode: i.defaultRagNode ?? 'kb-pg', collection: 'docs' },
-          sources: [{ kind: 'filesystem', root: '/tmp/x', glob: '**/*' }],
+          destination: { ragNode: i.defaultRagNode ?? "kb-pg", collection: "docs" },
+          sources: [{ kind: "filesystem", root: "/tmp/x", glob: "**/*" }],
           transforms: [],
           concurrency: 4,
-          on_duplicate: 'skip',
+          on_duplicate: "skip",
         },
       },
-      warnings: i.description === '' ? ['description was empty'] : [],
+      warnings: i.description === "" ? ["description was empty"] : [],
     }),
     ...overrides,
   };
@@ -140,10 +143,10 @@ interface StubProcs {
   }) => Promise<any>;
 }
 
-let tmp = '';
+let tmp = "";
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-rag-pipeline-'));
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-rag-pipeline-"));
   __setRagPipelineTestSeams({ nodeClient: makeStubClient() });
 });
 
@@ -152,101 +155,89 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-describe('rag pipeline — help + unknown', () => {
-  test('no subcommand prints USAGE + exit 0', async () => {
-    const { result, cap } = await captureStdio(() => runRag(['pipeline']));
+describe("rag pipeline — help + unknown", () => {
+  test("no subcommand prints USAGE + exit 0", async () => {
+    const { result, cap } = await captureStdio(() => runRag(["pipeline"]));
     expect(result).toBe(0);
-    expect(cap.out).toContain('Usage: llamactl rag pipeline');
+    expect(cap.out).toContain("Usage: llamactl rag pipeline");
   });
-  test('unknown subcommand → exit 1', async () => {
-    const { result, cap } = await captureStdio(() => runRag(['pipeline', 'bogus']));
+  test("unknown subcommand → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "bogus"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('Unknown rag pipeline subcommand');
+    expect(cap.err).toContain("Unknown rag pipeline subcommand");
   });
 });
 
-describe('rag pipeline apply', () => {
-  test('-f file missing → exit 1', async () => {
+describe("rag pipeline apply", () => {
+  test("-f file missing → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "apply"]));
+    expect(result).toBe(1);
+    expect(cap.err).toContain("-f <file.yaml> is required");
+  });
+  test("file not on disk → exit 1", async () => {
     const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'apply']),
+      runRag(["pipeline", "apply", "-f", "/nope/does-not-exist.yaml"]),
     );
     expect(result).toBe(1);
-    expect(cap.err).toContain('-f <file.yaml> is required');
+    expect(cap.err).toContain("file not found");
   });
-  test('file not on disk → exit 1', async () => {
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'apply', '-f', '/nope/does-not-exist.yaml']),
-    );
-    expect(result).toBe(1);
-    expect(cap.err).toContain('file not found');
-  });
-  test('happy path forwards raw YAML + prints applied line', async () => {
-    const p = join(tmp, 'pipe.yaml');
-    writeFileSync(p, 'apiVersion: llamactl/v1\nkind: RagPipeline\n');
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'apply', '-f', p]),
-    );
+  test("happy path forwards raw YAML + prints applied line", async () => {
+    const p = join(tmp, "pipe.yaml");
+    writeFileSync(p, "apiVersion: llamactl/v1\nkind: RagPipeline\n");
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "apply", "-f", p]));
     expect(result).toBe(0);
     expect(cap.out).toContain("applied rag pipeline 'test'");
   });
-  test('-f - reads manifest from stdin and applies', async () => {
-    const yaml = 'apiVersion: llamactl/v1\nkind: RagPipeline\nmetadata:\n  name: piped\n';
-    let sawYaml = '';
+  test("-f - reads manifest from stdin and applies", async () => {
+    const yaml = "apiVersion: llamactl/v1\nkind: RagPipeline\nmetadata:\n  name: piped\n";
+    let sawYaml = "";
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient({
         ragPipelineApply: async (i) => {
           sawYaml = i.manifestYaml;
-          return { ok: true, name: 'piped', path: '/tmp/p', created: true };
+          return { ok: true, name: "piped", path: "/tmp/p", created: true };
         },
       }),
       readStdinYaml: () => yaml,
     });
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'apply', '-f', '-']),
-    );
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "apply", "-f", "-"]));
     expect(result).toBe(0);
     expect(sawYaml).toBe(yaml);
     expect(cap.out).toContain("applied rag pipeline 'piped'");
   });
-  test('-f - with empty stdin → exit 1', async () => {
+  test("-f - with empty stdin → exit 1", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient(),
-      readStdinYaml: () => '',
+      readStdinYaml: () => "",
     });
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'apply', '-f', '-']),
-    );
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "apply", "-f", "-"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('stdin was empty');
+    expect(cap.err).toContain("stdin was empty");
   });
-  test('-f - surfacing a read error returns exit 1', async () => {
+  test("-f - surfacing a read error returns exit 1", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient(),
       readStdinYaml: () => {
-        throw new Error('EIO fake-read-failure');
+        throw new Error("EIO fake-read-failure");
       },
     });
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'apply', '-f', '-']),
-    );
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "apply", "-f", "-"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('failed reading manifest from stdin');
+    expect(cap.err).toContain("failed reading manifest from stdin");
   });
 });
 
-describe('rag pipeline run', () => {
-  test('missing <name> → exit 1', async () => {
-    const { result, cap } = await captureStdio(() => runRag(['pipeline', 'run']));
+describe("rag pipeline run", () => {
+  test("missing <name> → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "run"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('<name> is required');
+    expect(cap.err).toContain("<name> is required");
   });
-  test('plain run prints summary', async () => {
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'run', 'test']),
-    );
+  test("plain run prints summary", async () => {
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "run", "test"]));
     expect(result).toBe(0);
     expect(cap.out).toContain("ran pipeline 'test'");
-    expect(cap.out).toContain('total_docs: 3');
+    expect(cap.out).toContain("total_docs: 3");
   });
   test('--dry-run labels "dry-ran" in output', async () => {
     let sawDryRun = false;
@@ -270,107 +261,104 @@ describe('rag pipeline run', () => {
       }),
     });
     const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'run', 'test', '--dry-run']),
+      runRag(["pipeline", "run", "test", "--dry-run"]),
     );
     expect(result).toBe(0);
     expect(sawDryRun).toBe(true);
     expect(cap.out).toContain("dry-ran pipeline 'test'");
   });
-  test('--json emits a single-line JSON doc', async () => {
-    const { cap } = await captureStdio(() =>
-      runRag(['pipeline', 'run', 'test', '--json']),
-    );
+  test("--json emits a single-line JSON doc", async () => {
+    const { cap } = await captureStdio(() => runRag(["pipeline", "run", "test", "--json"]));
     const parsed = JSON.parse(cap.out.trim());
     expect(parsed.ok).toBe(true);
     expect(parsed.summary.total_chunks).toBe(12);
   });
 });
 
-describe('rag pipeline list', () => {
-  test('prints pipeline row + destination', async () => {
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'list']),
-    );
+describe("rag pipeline list", () => {
+  test("prints pipeline row + destination", async () => {
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "list"]));
     expect(result).toBe(0);
-    expect(cap.out).toContain('test');
-    expect(cap.out).toContain('kb-pg/docs');
+    expect(cap.out).toContain("test");
+    expect(cap.out).toContain("kb-pg/docs");
   });
-  test('--json emits structured doc', async () => {
-    const { cap } = await captureStdio(() => runRag(['pipeline', 'list', '--json']));
+  test("--json emits structured doc", async () => {
+    const { cap } = await captureStdio(() => runRag(["pipeline", "list", "--json"]));
     const parsed = JSON.parse(cap.out.trim());
     expect(Array.isArray(parsed.pipelines)).toBe(true);
   });
-  test('empty → informative message', async () => {
+  test("empty → informative message", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient({
         ragPipelineList: async () => ({ pipelines: [] }),
       }),
     });
-    const { cap } = await captureStdio(() => runRag(['pipeline', 'list']));
-    expect(cap.out).toContain('no rag pipelines applied');
+    const { cap } = await captureStdio(() => runRag(["pipeline", "list"]));
+    expect(cap.out).toContain("no rag pipelines applied");
   });
 });
 
-describe('rag pipeline get', () => {
-  test('prints manifest as YAML', async () => {
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'get', 'test']),
-    );
+describe("rag pipeline get", () => {
+  test("prints manifest as YAML", async () => {
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "get", "test"]));
     expect(result).toBe(0);
-    expect(cap.out).toContain('apiVersion: llamactl/v1');
-    expect(cap.out).toContain('kind: RagPipeline');
+    expect(cap.out).toContain("apiVersion: llamactl/v1");
+    expect(cap.out).toContain("kind: RagPipeline");
   });
-  test('missing <name> → exit 1', async () => {
-    const { result, cap } = await captureStdio(() => runRag(['pipeline', 'get']));
+  test("missing <name> → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "get"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('<name> is required');
+    expect(cap.err).toContain("<name> is required");
   });
 });
 
-describe('rag pipeline rm', () => {
-  test('happy path', async () => {
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'rm', 'test']),
-    );
+describe("rag pipeline rm", () => {
+  test("happy path", async () => {
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "rm", "test"]));
     expect(result).toBe(0);
     expect(cap.out).toContain("removed rag pipeline 'test'");
   });
-  test('not found → exit 1', async () => {
+  test("not found → exit 1", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient({
         ragPipelineRemove: async () => ({ ok: true, removed: false }),
       }),
     });
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'rm', 'test']),
-    );
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "rm", "test"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('not found');
+    expect(cap.err).toContain("not found");
   });
 });
 
-describe('rag pipeline logs', () => {
-  test('missing <name> → exit 1', async () => {
-    const { result, cap } = await captureStdio(() => runRag(['pipeline', 'logs']));
+describe("rag pipeline logs", () => {
+  test("missing <name> → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "logs"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('<name> is required');
+    expect(cap.err).toContain("<name> is required");
   });
-  test('tail default prints last 50 (or all when fewer)', async () => {
-    const journal = join(tmp, 'journal.jsonl');
+  test("tail default prints last 50 (or all when fewer)", async () => {
+    const journal = join(tmp, "journal.jsonl");
     mkdirSync(tmp, { recursive: true });
     const lines: string[] = [];
     for (let i = 0; i < 5; i++) {
       lines.push(
-        JSON.stringify({ kind: 'doc-ingested', ts: new Date().toISOString(), source: 's', doc_id: `d${i}`, sha: 'x', chunks: 1 }),
+        JSON.stringify({
+          kind: "doc-ingested",
+          ts: new Date().toISOString(),
+          source: "s",
+          doc_id: `d${i}`,
+          sha: "x",
+          chunks: 1,
+        }),
       );
     }
-    writeFileSync(journal, `${lines.join('\n')}\n`);
+    writeFileSync(journal, `${lines.join("\n")}\n`);
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient(),
       journalPathFor: () => journal,
     });
     const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'logs', 'test', '--tail=3']),
+      runRag(["pipeline", "logs", "test", "--tail=3"]),
     );
     expect(result).toBe(0);
     // Should only include last 3 doc_ids
@@ -379,35 +367,33 @@ describe('rag pipeline logs', () => {
     expect(cap.out).toContain('"doc_id":"d3"');
     expect(cap.out).toContain('"doc_id":"d2"');
   });
-  test('journal missing → exit 1', async () => {
+  test("journal missing → exit 1", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient(),
-      journalPathFor: () => join(tmp, 'never.jsonl'),
+      journalPathFor: () => join(tmp, "never.jsonl"),
     });
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'logs', 'test']),
-    );
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "logs", "test"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('no journal at');
+    expect(cap.err).toContain("no journal at");
   });
 });
 
-describe('rag pipeline draft', () => {
-  test('missing description → exit 1', async () => {
-    const { result, cap } = await captureStdio(() => runRag(['pipeline', 'draft']));
+describe("rag pipeline draft", () => {
+  test("missing description → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "draft"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('<description> is required');
+    expect(cap.err).toContain("<description> is required");
   });
-  test('happy path prints YAML to stdout, empty stderr when no warnings', async () => {
+  test("happy path prints YAML to stdout, empty stderr when no warnings", async () => {
     const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'draft', 'ingest', 'https://site.io']),
+      runRag(["pipeline", "draft", "ingest", "https://site.io"]),
     );
     expect(result).toBe(0);
-    expect(cap.out).toContain('apiVersion: llamactl/v1');
-    expect(cap.out).toContain('kind: RagPipeline');
-    expect(cap.err).toBe('');
+    expect(cap.out).toContain("apiVersion: llamactl/v1");
+    expect(cap.out).toContain("kind: RagPipeline");
+    expect(cap.err).toBe("");
   });
-  test('--name threads nameOverride', async () => {
+  test("--name threads nameOverride", async () => {
     let seen: unknown = null;
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient({
@@ -415,11 +401,11 @@ describe('rag pipeline draft', () => {
           seen = i;
           return {
             ok: true,
-            yaml: 'apiVersion: llamactl/v1\n',
+            yaml: "apiVersion: llamactl/v1\n",
             manifest: {
-              apiVersion: 'llamactl/v1',
-              kind: 'RagPipeline',
-              metadata: { name: 'x' },
+              apiVersion: "llamactl/v1",
+              kind: "RagPipeline",
+              metadata: { name: "x" },
               spec: {},
             },
             warnings: [],
@@ -428,37 +414,35 @@ describe('rag pipeline draft', () => {
       }),
     });
     const { result } = await captureStdio(() =>
-      runRag(['pipeline', 'draft', 'foo', '--name', 'my-pipeline']),
+      runRag(["pipeline", "draft", "foo", "--name", "my-pipeline"]),
     );
     expect(result).toBe(0);
-    expect((seen as { nameOverride?: string }).nameOverride).toBe('my-pipeline');
+    expect((seen as { nameOverride?: string }).nameOverride).toBe("my-pipeline");
   });
-  test('warnings are surfaced on stderr', async () => {
+  test("warnings are surfaced on stderr", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient({
         ragPipelineDraft: async () => ({
           ok: true,
-          yaml: 'apiVersion: llamactl/v1\n',
+          yaml: "apiVersion: llamactl/v1\n",
           manifest: {
-            apiVersion: 'llamactl/v1',
-            kind: 'RagPipeline',
-            metadata: { name: 'd' },
+            apiVersion: "llamactl/v1",
+            kind: "RagPipeline",
+            metadata: { name: "d" },
             spec: {},
           },
-          warnings: ['something ambiguous', 'also check the glob'],
+          warnings: ["something ambiguous", "also check the glob"],
         }),
       }),
     });
-    const { cap } = await captureStdio(() =>
-      runRag(['pipeline', 'draft', 'something']),
-    );
-    expect(cap.err).toContain('warning: something ambiguous');
-    expect(cap.err).toContain('warning: also check the glob');
+    const { cap } = await captureStdio(() => runRag(["pipeline", "draft", "something"]));
+    expect(cap.err).toContain("warning: something ambiguous");
+    expect(cap.err).toContain("warning: also check the glob");
   });
 });
 
-describe('rag pipeline scheduler', () => {
-  test('--once runs a single tick and exits 0', async () => {
+describe("rag pipeline scheduler", () => {
+  test("--once runs a single tick and exits 0", async () => {
     let seenOpts: unknown = null;
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient(),
@@ -467,24 +451,22 @@ describe('rag pipeline scheduler', () => {
         // Synchronously fire onTick before returning so --once
         // verification can assert against a specific report.
         opts.onTick?.({
-          ts: '2026-04-21T10:30:00.000Z',
+          ts: "2026-04-21T10:30:00.000Z",
           considered: 2,
-          fired: ['p1'],
+          fired: ["p1"],
           skippedInFlight: [],
           unparseable: [],
         });
         return { stop: () => {}, done: Promise.resolve() };
       },
     });
-    const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'scheduler', '--once']),
-    );
+    const { result, cap } = await captureStdio(() => runRag(["pipeline", "scheduler", "--once"]));
     expect(result).toBe(0);
     expect((seenOpts as { once?: boolean }).once).toBe(true);
-    expect(cap.err).toContain('fired=1');
-    expect(cap.err).toContain('fired: p1');
+    expect(cap.err).toContain("fired=1");
+    expect(cap.err).toContain("fired: p1");
   });
-  test('--interval=30 clamps and passes 30000ms to the scheduler', async () => {
+  test("--interval=30 clamps and passes 30000ms to the scheduler", async () => {
     let seenOpts: unknown = null;
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient(),
@@ -494,30 +476,30 @@ describe('rag pipeline scheduler', () => {
       },
     });
     const { result } = await captureStdio(() =>
-      runRag(['pipeline', 'scheduler', '--once', '--interval=30']),
+      runRag(["pipeline", "scheduler", "--once", "--interval=30"]),
     );
     expect(result).toBe(0);
     expect((seenOpts as { tickIntervalMs?: number }).tickIntervalMs).toBe(30_000);
   });
-  test('invalid --interval → exit 1', async () => {
+  test("invalid --interval → exit 1", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient(),
       startPipelineScheduler: () => ({ stop: () => {}, done: Promise.resolve() }),
     });
     const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'scheduler', '--interval=huh']),
+      runRag(["pipeline", "scheduler", "--interval=huh"]),
     );
     expect(result).toBe(1);
-    expect(cap.err).toContain('Invalid --interval value');
+    expect(cap.err).toContain("Invalid --interval value");
   });
-  test('--quiet suppresses tick output', async () => {
+  test("--quiet suppresses tick output", async () => {
     __setRagPipelineTestSeams({
       nodeClient: makeStubClient(),
       startPipelineScheduler: (opts) => {
         opts.onTick?.({
-          ts: '2026-04-21T10:30:00.000Z',
+          ts: "2026-04-21T10:30:00.000Z",
           considered: 1,
-          fired: ['loud'],
+          fired: ["loud"],
           skippedInFlight: [],
           unparseable: [],
         });
@@ -525,9 +507,9 @@ describe('rag pipeline scheduler', () => {
       },
     });
     const { result, cap } = await captureStdio(() =>
-      runRag(['pipeline', 'scheduler', '--once', '--quiet']),
+      runRag(["pipeline", "scheduler", "--once", "--quiet"]),
     );
     expect(result).toBe(0);
-    expect(cap.err).toBe('');
+    expect(cap.err).toBe("");
   });
 });

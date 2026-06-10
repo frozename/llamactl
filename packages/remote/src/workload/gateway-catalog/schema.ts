@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * Marker on YAML entries that llamactl writes on behalf of a composite.
@@ -7,7 +7,7 @@ import { z } from 'zod';
  * composites, the union of which lives in `compositeNames`.
  */
 export const CompositeOwnershipSchema = z.object({
-  source: z.literal('composite'),
+  source: z.literal("composite"),
   compositeNames: z.array(z.string().min(1)).min(1),
   specHash: z.string().min(1),
 });
@@ -30,7 +30,7 @@ export const ProviderConfigCommonSchema = z
 export type ProviderConfigCommon = z.infer<typeof ProviderConfigCommonSchema>;
 
 export interface ApplyConflict {
-  kind: 'name' | 'shape';
+  kind: "name" | "shape";
   name: string;
   /** When kind=='name': 'operator'. When kind=='shape': describes the differing field. */
   detail: string;

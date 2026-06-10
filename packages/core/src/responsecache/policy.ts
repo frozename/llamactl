@@ -1,5 +1,5 @@
-import type { ResponseCacheEntry } from './registry.js';
-import type { ResponseCacheRegistry } from './registry.js';
+import type { ResponseCacheEntry } from "./registry.js";
+import type { ResponseCacheRegistry } from "./registry.js";
 
 const HALF_LIFE_MS = 6 * 3600 * 1000;
 const PAYLOAD_SCALE_BYTES = 1024 * 1024;
@@ -38,7 +38,9 @@ export function runResponseCacheEvictionIfOverBudget(
     };
   }
 
-  const sorted = [...entries].sort((a, b) => responseEvictionScore(b, now) - responseEvictionScore(a, now));
+  const sorted = [...entries].sort(
+    (a, b) => responseEvictionScore(b, now) - responseEvictionScore(a, now),
+  );
   const deleted: string[] = [];
   for (const entry of sorted) {
     if (totalBytes <= budgetBytes) break;
@@ -50,7 +52,8 @@ export function runResponseCacheEvictionIfOverBudget(
         workloadEpoch: entry.workloadEpoch,
         protocolVariant: entry.protocolVariant,
       })
-    ) continue;
+    )
+      continue;
     deleted.push(entry.sha);
     totalBytes -= totalEntryBytes(entry);
   }

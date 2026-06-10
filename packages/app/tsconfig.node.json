@@ -6,8 +6,5 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": [
-    "electron.vite.config.ts",
-    "vite.config.ts"
-  ]
+  "include": ["electron.vite.config.ts", "vite.config.ts"]
 }

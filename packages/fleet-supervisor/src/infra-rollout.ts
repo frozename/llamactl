@@ -1,7 +1,7 @@
-import type { PeerNode } from '../../remote/src/config/peers.js';
-import type { FleetSnapshotEntry } from './types.js';
+import type { PeerNode } from "../../remote/src/config/peers.js";
+import type { FleetSnapshotEntry } from "./types.js";
 
-export type InfraRolloutStrategy = 'one-at-a-time' | 'all';
+export type InfraRolloutStrategy = "one-at-a-time" | "all";
 
 export interface InfraClientLike {
   install(args: {
@@ -13,7 +13,7 @@ export interface InfraClientLike {
     skipIfPresent: boolean;
   }): Promise<void>;
   activate(args: { pkg: string; version: string }): Promise<void>;
-  pollHealth(opts: { timeoutMs: number; pollIntervalMs: number }): Promise<'healthy' | 'timeout'>;
+  pollHealth(opts: { timeoutMs: number; pollIntervalMs: number }): Promise<"healthy" | "timeout">;
 }
 
 export interface RolloutPlan {
@@ -28,7 +28,7 @@ export function planRollout(
 ): PeerNode[][] {
   const ordered = peers.filter((peer) => peer.id !== localNodeId);
   const local = peers.filter((peer) => peer.id === localNodeId);
-  if (strategy === 'all') {
+  if (strategy === "all") {
     return [ordered, local].filter((group) => group.length > 0);
   }
   return [...ordered.map((peer) => [peer]), ...local.map((peer) => [peer])];
@@ -37,7 +37,7 @@ export function planRollout(
 export async function healthGate(
   fetchSnapshot: () => Promise<FleetSnapshotEntry | null>,
   opts: { timeoutMs: number; pollIntervalMs: number },
-): Promise<'healthy' | 'timeout'> {
+): Promise<"healthy" | "timeout"> {
   const deadline = Date.now() + opts.timeoutMs;
   while (Date.now() <= deadline) {
     const snapshot = await fetchSnapshot();
@@ -46,12 +46,12 @@ export async function healthGate(
       snapshot.workloads.length > 0 &&
       snapshot.workloads.every((workload) => workload.reachable)
     ) {
-      return 'healthy';
+      return "healthy";
     }
     if (Date.now() > deadline) break;
     await new Promise((resolve) => setTimeout(resolve, opts.pollIntervalMs));
   }
-  return 'timeout';
+  return "timeout";
 }
 
 async function runGroup(
@@ -95,8 +95,8 @@ async function runGroup(
       }),
     ),
   );
-  if (healths.some((health) => health === 'timeout')) {
-    return { ok: false, reason: 'health-timeout' };
+  if (healths.some((health) => health === "timeout")) {
+    return { ok: false, reason: "health-timeout" };
   }
   return { ok: true };
 }

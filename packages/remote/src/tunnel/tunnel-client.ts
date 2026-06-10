@@ -3,7 +3,7 @@ import {
   parseTunnelMessage,
   type TunnelReq,
   type TunnelRes,
-} from './messages.js';
+} from "./messages.js";
 
 /**
  * Subscription-side handler shape. Mirrors `TunnelSubscription`
@@ -45,8 +45,8 @@ export type HandleSubscriptionFn = (req: TunnelReq) => TunnelSubscriptionHandle;
  */
 
 export interface TunnelReconnectConfig {
-  minDelayMs?: number;   // default 1000
-  maxDelayMs?: number;   // default 60000
+  minDelayMs?: number; // default 1000
+  maxDelayMs?: number; // default 60000
   jitterFraction?: number; // default 0.2 (±20%)
 }
 
@@ -59,7 +59,7 @@ export interface TunnelHeartbeatConfig {
   timeoutMs?: number;
 }
 
-export type TunnelState = 'connecting' | 'ready' | 'disconnected' | 'stopped';
+export type TunnelState = "connecting" | "ready" | "disconnected" | "stopped";
 
 export interface TunnelClientOptions {
   url: string;
@@ -117,9 +117,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const WS: any = opts.WebSocketCtor ?? (globalThis as { WebSocket?: unknown }).WebSocket;
   if (!WS) {
-    throw new Error(
-      'createTunnelClient: no WebSocket available — pass WebSocketCtor explicitly',
-    );
+    throw new Error("createTunnelClient: no WebSocket available — pass WebSocketCtor explicitly");
   }
   const reconnectCfg = {
     minDelayMs: opts.reconnect?.minDelayMs ?? 1000,
@@ -133,13 +131,17 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let ws: any = null;
-  let state: TunnelState = 'disconnected';
+  let state: TunnelState = "disconnected";
   let stopped = false;
   let attempt = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   const pendingPings = new Map<string, { resolve: () => void; reject: (err: Error) => void }>();
-  const readyWaiters: Array<{ resolve: () => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> | null }> = [];
+  const readyWaiters: Array<{
+    resolve: () => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout> | null;
+  }> = [];
   let firstAttemptResolver: { resolve: () => void; reject: (err: Error) => void } | null = null;
   // Active subscription teardowns keyed by req.id. On stream-cancel
   // from central (or any disconnect path), we call cancel() and
@@ -152,7 +154,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
     if (state === next) return;
     state = next;
     opts.onStateChange?.(next);
-    if (next === 'ready') {
+    if (next === "ready") {
       for (const w of readyWaiters.splice(0)) {
         if (w.timer) clearTimeout(w.timer);
         w.resolve();
@@ -162,11 +164,31 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
 
   function cleanupSocket(): void {
     if (ws) {
-      try { ws.onmessage = null; } catch { /* ignore */ }
-      try { ws.onopen = null; } catch { /* ignore */ }
-      try { ws.onclose = null; } catch { /* ignore */ }
-      try { ws.onerror = null; } catch { /* ignore */ }
-      try { ws.close(); } catch { /* ignore */ }
+      try {
+        ws.onmessage = null;
+      } catch {
+        /* ignore */
+      }
+      try {
+        ws.onopen = null;
+      } catch {
+        /* ignore */
+      }
+      try {
+        ws.onclose = null;
+      } catch {
+        /* ignore */
+      }
+      try {
+        ws.onerror = null;
+      } catch {
+        /* ignore */
+      }
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
       ws = null;
     }
     if (heartbeatTimer) {
@@ -174,7 +196,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       heartbeatTimer = null;
     }
     for (const { reject } of pendingPings.values()) {
-      reject(new Error('tunnel-disconnected'));
+      reject(new Error("tunnel-disconnected"));
     }
     pendingPings.clear();
     // Tear down any in-flight subscriptions — the source observable
@@ -184,7 +206,11 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
     // onComplete/onError terminal still fires but the ws.send that
     // would ship stream-done silently fails (swallowed below).
     for (const { cancel } of activeSubscriptions.values()) {
-      try { cancel(); } catch { /* ignore */ }
+      try {
+        cancel();
+      } catch {
+        /* ignore */
+      }
     }
     activeSubscriptions.clear();
   }
@@ -212,20 +238,28 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
   function startHeartbeat(): void {
     if (heartbeatCfg.intervalMs <= 0) return;
     heartbeatTimer = setInterval(() => {
-      if (state !== 'ready') return;
+      if (state !== "ready") return;
       const nonce = `hb-${Math.random().toString(36).slice(2)}`;
       const timer = setTimeout(() => {
         pendingPings.delete(nonce);
         // Miss → force reconnect. Close the current socket; the
         // onclose path handles the loop.
-        try { ws?.close(4000, 'heartbeat timeout'); } catch { /* ignore */ }
+        try {
+          ws?.close(4000, "heartbeat timeout");
+        } catch {
+          /* ignore */
+        }
       }, heartbeatCfg.timeoutMs);
       pendingPings.set(nonce, {
-        resolve: () => { clearTimeout(timer); },
-        reject: () => { clearTimeout(timer); },
+        resolve: () => {
+          clearTimeout(timer);
+        },
+        reject: () => {
+          clearTimeout(timer);
+        },
       });
       try {
-        ws?.send(encodeTunnelMessage({ type: 'ping', nonce }));
+        ws?.send(encodeTunnelMessage({ type: "ping", nonce }));
       } catch {
         clearTimeout(timer);
         pendingPings.delete(nonce);
@@ -236,12 +270,12 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
   async function doHandleRequest(req: TunnelReq): Promise<TunnelRes> {
     try {
       const result = await opts.handleRequest(req);
-      return { type: 'res', id: req.id, result };
+      return { type: "res", id: req.id, result };
     } catch (err) {
       return {
-        type: 'res',
+        type: "res",
         id: req.id,
-        error: { code: 'handler-threw', message: (err as Error).message },
+        error: { code: "handler-threw", message: (err as Error).message },
       };
     }
   }
@@ -261,16 +295,18 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       try {
         ws?.send(
           encodeTunnelMessage({
-            type: 'stream-done',
+            type: "stream-done",
             id: req.id,
             ok: false,
             error: {
-              code: 'subscription-unsupported',
-              message: 'this agent does not have a subscription handler wired',
+              code: "subscription-unsupported",
+              message: "this agent does not have a subscription handler wired",
             },
           }),
         );
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       return;
     }
     let index = 0;
@@ -281,16 +317,18 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       try {
         ws?.send(
           encodeTunnelMessage({
-            type: 'stream-done',
+            type: "stream-done",
             id: req.id,
             ok: false,
             error: {
-              code: 'subscription-handler-threw',
+              code: "subscription-handler-threw",
               message: (err as Error).message,
             },
           }),
         );
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       return;
     }
     const handle = sub.subscribe({
@@ -298,42 +336,48 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         try {
           ws?.send(
             encodeTunnelMessage({
-              type: 'stream-event',
+              type: "stream-event",
               id: req.id,
               index: index++,
               data,
             }),
           );
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       },
       onError: (err) => {
         activeSubscriptions.delete(req.id);
         try {
           ws?.send(
             encodeTunnelMessage({
-              type: 'stream-done',
+              type: "stream-done",
               id: req.id,
               ok: false,
               error: {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                code: (err as any).code ?? 'subscription-error',
+                code: (err as any).code ?? "subscription-error",
                 message: err.message,
               },
             }),
           );
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       },
       onComplete: () => {
         activeSubscriptions.delete(req.id);
         try {
           ws?.send(
             encodeTunnelMessage({
-              type: 'stream-done',
+              type: "stream-done",
               id: req.id,
               ok: true,
             }),
           );
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       },
     });
     activeSubscriptions.set(req.id, handle);
@@ -342,13 +386,13 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
   function doConnect(): void {
     if (stopped) return;
     attempt++;
-    setState('connecting');
+    setState("connecting");
     const ackTimeout = opts.helloAckTimeoutMs ?? ACK_TIMEOUT_DEFAULT;
     let ackTimer: ReturnType<typeof setTimeout> | null = null;
     try {
       ws = new WS(opts.url);
     } catch (err) {
-      setState('disconnected');
+      setState("disconnected");
       scheduleReconnect();
       if (firstAttemptResolver && attempt === 1) {
         firstAttemptResolver.reject(err as Error);
@@ -357,13 +401,17 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       return;
     }
     ackTimer = setTimeout(() => {
-      try { ws?.close(); } catch { /* ignore */ }
+      try {
+        ws?.close();
+      } catch {
+        /* ignore */
+      }
     }, ackTimeout);
     ws.onopen = () => {
       try {
         ws.send(
           encodeTunnelMessage({
-            type: 'hello',
+            type: "hello",
             bearer: opts.bearer,
             nodeName: opts.nodeName,
           }),
@@ -373,14 +421,17 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       }
     };
     ws.onmessage = (ev: { data: string | Buffer }) => {
-      const raw = typeof ev.data === 'string' ? ev.data : ev.data.toString('utf8');
+      const raw = typeof ev.data === "string" ? ev.data : ev.data.toString("utf8");
       const msg = parseTunnelMessage(raw);
       if (!msg) return;
-      if (state !== 'ready') {
-        if (msg.type === 'hello-ack') {
-          if (ackTimer) { clearTimeout(ackTimer); ackTimer = null; }
+      if (state !== "ready") {
+        if (msg.type === "hello-ack") {
+          if (ackTimer) {
+            clearTimeout(ackTimer);
+            ackTimer = null;
+          }
           attempt = 0; // reset backoff on a healthy ack
-          setState('ready');
+          setState("ready");
           startHeartbeat();
           if (firstAttemptResolver) {
             firstAttemptResolver.resolve();
@@ -389,29 +440,37 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         }
         return;
       }
-      if (msg.type === 'req') {
+      if (msg.type === "req") {
         // Inspect params.type to split subscription reqs from
         // query/mutation reqs. Subscription reqs take a distinct
         // path (stream frames) and never write a `res`.
         const params = msg.params as { type?: string } | undefined;
-        if (params?.type === 'subscription') {
+        if (params?.type === "subscription") {
           doHandleSubscription(msg);
           return;
         }
         void doHandleRequest(msg).then((res) => {
-          try { ws?.send(encodeTunnelMessage(res)); } catch { /* ignore */ }
+          try {
+            ws?.send(encodeTunnelMessage(res));
+          } catch {
+            /* ignore */
+          }
         });
         return;
       }
-      if (msg.type === 'stream-cancel') {
+      if (msg.type === "stream-cancel") {
         const handle = activeSubscriptions.get(msg.id);
         if (handle) {
           activeSubscriptions.delete(msg.id);
-          try { handle.cancel(); } catch { /* ignore */ }
+          try {
+            handle.cancel();
+          } catch {
+            /* ignore */
+          }
         }
         return;
       }
-      if (msg.type === 'pong') {
+      if (msg.type === "pong") {
         const p = pendingPings.get(msg.nonce);
         if (p) {
           pendingPings.delete(msg.nonce);
@@ -421,11 +480,14 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       }
     };
     ws.onclose = (ev: { code: number; reason: string }) => {
-      if (ackTimer) { clearTimeout(ackTimer); ackTimer = null; }
+      if (ackTimer) {
+        clearTimeout(ackTimer);
+        ackTimer = null;
+      }
       const wasFirstAttempt = firstAttemptResolver !== null && attempt === 1;
       opts.onClose?.(ev.code, ev.reason);
       cleanupSocket();
-      setState(stopped ? 'stopped' : 'disconnected');
+      setState(stopped ? "stopped" : "disconnected");
       if (wasFirstAttempt && firstAttemptResolver) {
         firstAttemptResolver.reject(
           new Error(`tunnel closed before hello-ack: ${ev.code} ${ev.reason}`),
@@ -441,7 +503,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
 
   return {
     async start() {
-      if (stopped) throw new Error('tunnel client has been stopped');
+      if (stopped) throw new Error("tunnel client has been stopped");
       const initialBudget = opts.initialAttemptTimeoutMs ?? INITIAL_ATTEMPT_TIMEOUT_DEFAULT;
       if (initialBudget <= 0) {
         // Background mode — fire and forget.
@@ -451,11 +513,17 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           firstAttemptResolver = null;
-          reject(new Error('tunnel start: initial-attempt timeout'));
+          reject(new Error("tunnel start: initial-attempt timeout"));
         }, initialBudget);
         firstAttemptResolver = {
-          resolve: () => { clearTimeout(timer); resolve(); },
-          reject: (err) => { clearTimeout(timer); reject(err); },
+          resolve: () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          reject: (err) => {
+            clearTimeout(timer);
+            reject(err);
+          },
         };
         doConnect();
       });
@@ -467,33 +535,43 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
         reconnectTimer = null;
       }
       if (ws) {
-        try { ws.close(code ?? 1000, reason ?? 'client stop'); } catch { /* ignore */ }
+        try {
+          ws.close(code ?? 1000, reason ?? "client stop");
+        } catch {
+          /* ignore */
+        }
       }
       cleanupSocket();
-      setState('stopped');
+      setState("stopped");
       for (const w of readyWaiters.splice(0)) {
         if (w.timer) clearTimeout(w.timer);
-        w.reject(new Error('tunnel client stopped'));
+        w.reject(new Error("tunnel client stopped"));
       }
       if (firstAttemptResolver) {
-        firstAttemptResolver.reject(new Error('tunnel client stopped'));
+        firstAttemptResolver.reject(new Error("tunnel client stopped"));
         firstAttemptResolver = null;
       }
     },
     async ping(nonce, timeoutMs = 3000) {
-      if (state !== 'ready' || !ws) throw new Error('tunnel not ready');
+      if (state !== "ready" || !ws) throw new Error("tunnel not ready");
       const actualNonce = nonce ?? Math.random().toString(36).slice(2);
       return new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           pendingPings.delete(actualNonce);
-          reject(new Error('ping timeout'));
+          reject(new Error("ping timeout"));
         }, timeoutMs);
         pendingPings.set(actualNonce, {
-          resolve: () => { clearTimeout(timer); resolve(); },
-          reject: (err) => { clearTimeout(timer); reject(err); },
+          resolve: () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          reject: (err) => {
+            clearTimeout(timer);
+            reject(err);
+          },
         });
         try {
-          ws.send(encodeTunnelMessage({ type: 'ping', nonce: actualNonce }));
+          ws.send(encodeTunnelMessage({ type: "ping", nonce: actualNonce }));
         } catch (err) {
           pendingPings.delete(actualNonce);
           clearTimeout(timer);
@@ -502,8 +580,8 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       });
     },
     async waitUntilReady(timeoutMs = 10000) {
-      if (state === 'ready') return;
-      if (state === 'stopped') throw new Error('tunnel client stopped');
+      if (state === "ready") return;
+      if (state === "stopped") throw new Error("tunnel client stopped");
       return new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           const i = readyWaiters.findIndex((w) => w.timer === timer);
@@ -514,7 +592,7 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
       });
     },
     isReady() {
-      return state === 'ready';
+      return state === "ready";
     },
     state() {
       return state;

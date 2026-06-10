@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { z } from 'zod';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { z } from "zod";
 
 /**
  * llamactl-owned storage for project resources. Projects are a
@@ -46,8 +46,8 @@ import { z } from 'zod';
  */
 
 export const ProjectSchema = z.object({
-  apiVersion: z.literal('llamactl/v1'),
-  kind: z.literal('Project'),
+  apiVersion: z.literal("llamactl/v1"),
+  kind: z.literal("Project"),
   metadata: z.object({ name: z.string().min(1) }),
   spec: z.object({
     /** Absolute path on the operator's filesystem. String-validated
@@ -67,7 +67,7 @@ export const ProjectSchema = z.object({
         collection: z.string().min(1),
         /** Relative to `spec.path`. Matches whatever the
          *  filesystem-source RagPipeline fetcher accepts. */
-        docsGlob: z.string().default('docs/**/*.md'),
+        docsGlob: z.string().default("docs/**/*.md"),
         /** Cron-style schedule grammar shared with RagPipeline. */
         schedule: z.string().optional(),
       })
@@ -89,8 +89,8 @@ export const ProjectSchema = z.object({
 export type Project = z.infer<typeof ProjectSchema>;
 
 const ProjectFileSchema = z.object({
-  apiVersion: z.literal('llamactl/v1').default('llamactl/v1'),
-  kind: z.literal('ProjectList').default('ProjectList'),
+  apiVersion: z.literal("llamactl/v1").default("llamactl/v1"),
+  kind: z.literal("ProjectList").default("ProjectList"),
   projects: z.array(ProjectSchema).default([]),
 });
 type ProjectFile = z.infer<typeof ProjectFileSchema>;
@@ -103,15 +103,13 @@ type ProjectFile = z.infer<typeof ProjectFileSchema>;
 export function defaultProjectsPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_PROJECTS_FILE?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'projects.yaml');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "projects.yaml");
 }
 
-export function loadProjects(
-  path: string = defaultProjectsPath(),
-): Project[] {
+export function loadProjects(path: string = defaultProjectsPath()): Project[] {
   if (!existsSync(path)) return [];
-  const raw = readFileSync(path, 'utf8');
+  const raw = readFileSync(path, "utf8");
   const parsed = ProjectFileSchema.parse(parseYaml(raw) ?? {});
   return parsed.projects;
 }
@@ -122,25 +120,19 @@ export function saveProjects(
 ): void {
   mkdirSync(dirname(path), { recursive: true });
   const file: ProjectFile = {
-    apiVersion: 'llamactl/v1',
-    kind: 'ProjectList',
+    apiVersion: "llamactl/v1",
+    kind: "ProjectList",
     projects: projects.map((p) => ProjectSchema.parse(p)),
   };
-  writeFileSync(path, stringifyYaml(file), 'utf8');
+  writeFileSync(path, stringifyYaml(file), "utf8");
 }
 
-export function upsertProject(
-  projects: readonly Project[],
-  entry: Project,
-): Project[] {
+export function upsertProject(projects: readonly Project[], entry: Project): Project[] {
   const filtered = projects.filter((p) => p.metadata.name !== entry.metadata.name);
   return [...filtered, entry];
 }
 
-export function removeProject(
-  projects: readonly Project[],
-  name: string,
-): Project[] {
+export function removeProject(projects: readonly Project[], name: string): Project[] {
   return projects.filter((p) => p.metadata.name !== name);
 }
 
@@ -159,5 +151,5 @@ export function resolveProjectRouting(
 ): { target: string; matched: boolean } {
   const target = project.spec.routing[taskKind];
   if (target) return { target, matched: true };
-  return { target: 'private-first', matched: false };
+  return { target: "private-first", matched: false };
 }

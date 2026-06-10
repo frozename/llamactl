@@ -15,7 +15,8 @@ is **oMLX** ([github.com/jundot/omlx](https://github.com/jundot/omlx),
 Apache 2.0), chosen because it ships continuous batching, SSD-tiered KV
 cache persistence (TTFT 30-90s → 1-3s on stable agent prefixes),
 multi-model serving in one process, and OpenAI + Anthropic + embeddings
-+ rerank endpoints in a single binary.
+
+- rerank endpoints in a single binary.
 
 Sub A's deliverable:
 
@@ -53,7 +54,7 @@ existing functional + zod style; no class hierarchy.
 
 ```ts
 // packages/core/src/engines/types.ts
-export type EngineName = 'llamacpp' | 'omlx';
+export type EngineName = "llamacpp" | "omlx";
 
 export interface EngineAdapter {
   name: EngineName;
@@ -109,11 +110,11 @@ route shape that includes both kinds:
 
 ```ts
 interface LocalRoute {
-  model: string;       // matches what the request body's `model` field can be
+  model: string; // matches what the request body's `model` field can be
   host: string;
   port: number;
   engine: EngineName;
-  kind: 'ModelRun' | 'ModelHost';
+  kind: "ModelRun" | "ModelHost";
 }
 function listLocalWorkloads(): LocalRoute[];
 ```
@@ -133,18 +134,18 @@ metadata:
     family: mlx
     role: inference-host
 spec:
-  engine: omlx                # required; enum: 'omlx' for Sub A
-  node: local                 # same node concept as ModelRun
+  engine: omlx # required; enum: 'omlx' for Sub A
+  node: local # same node concept as ModelRun
   enabled: true
-  binary: /Volumes/WorkSSD/src/omlx/.venv/bin/omlx  # required (no PATH fallback)
+  binary: /Volumes/WorkSSD/src/omlx/.venv/bin/omlx # required (no PATH fallback)
   resources:
     expectedMemoryGiB: 12
   endpoint:
     host: 127.0.0.1
-    port: 8094               # required, no default
-  hostedModels:               # min 1, max 1 in Sub A
+    port: 8094 # required, no default
+  hostedModels: # min 1, max 1 in Sub A
     - rel: mlx-community/Qwen3-8B-MLX-4bit
-  extraArgs:                  # passed verbatim after engine-built defaults
+  extraArgs: # passed verbatim after engine-built defaults
     - --max-concurrent-requests
     - "4"
     - --paged-ssd-cache-dir

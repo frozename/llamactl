@@ -14,21 +14,23 @@ tiers contributing real signal?
 
 ## Results
 
-| Model | Tier | n | NDCG@5 | tps | p50 (ms) |
-|---|---|---:|---:|---:|---:|
-| gemma4-26b-a4b-mtp | strong | 55 | **0.9119** | 34.60 | 2212 |
-| gemma4-26b-a4b-mtp | weak | 50 | 0.6935 | 32.19 | 2243 |
-| qwen3.6-35b-A3B-UDQ4KXL | strong | 55 | 0.6932 | 26.99 | 3552 |
-| qwen3.6-35b-A3B-UDQ4KXL | weak | 50 | 0.6249 | 25.78 | 3296 |
+| Model                   | Tier   |   n |     NDCG@5 |   tps | p50 (ms) |
+| ----------------------- | ------ | --: | ---------: | ----: | -------: |
+| gemma4-26b-a4b-mtp      | strong |  55 | **0.9119** | 34.60 |     2212 |
+| gemma4-26b-a4b-mtp      | weak   |  50 |     0.6935 | 32.19 |     2243 |
+| qwen3.6-35b-A3B-UDQ4KXL | strong |  55 |     0.6932 | 26.99 |     3552 |
+| qwen3.6-35b-A3B-UDQ4KXL | weak   |  50 |     0.6249 | 25.78 |     3296 |
 
 ## Sanity check — composition arithmetic
 
 For gemma4:
+
 - weighted = (55 · 0.9119 + 50 · 0.6935) / 105 = **0.8079**
 - recorded on n=105 = **0.8079**
 - Match exact. The n=105 cell is a faithful weighted blend.
 
 For qwen3.6-35b-A3B:
+
 - weighted = (55 · 0.6932 + 50 · 0.6249) / 105 = 0.6607
 - recorded on n=105 = 0.6667
 - 0.6 pp drift — small run-to-run jitter from independent boot/serve cycles.
@@ -60,6 +62,7 @@ Gemma4 hit **0.974** on the n=5 seed-only bench last week and now scores **0.911
 ### Wider-corpus implication
 
 The strong-gold subset is where production signal lives. The mined half:
+
 - Is cheap to expand (just re-run `mine_t0.py` at higher --limit).
 - Is genuinely noisier per row.
 - Still discriminates models.

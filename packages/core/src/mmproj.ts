@@ -1,5 +1,5 @@
-import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * Locate an `mmproj*.gguf` sibling inside the given model directory.
@@ -18,8 +18,8 @@ export function findLocalMmproj(modelDir: string): string | null {
   }
   for (const name of entries) {
     const lower = name.toLowerCase();
-    if (!lower.endsWith('.gguf')) continue;
-    if (lower.startsWith('mmproj') || lower.includes('mmproj')) {
+    if (!lower.endsWith(".gguf")) continue;
+    if (lower.startsWith("mmproj") || lower.includes("mmproj")) {
       return join(modelDir, name);
     }
   }
@@ -27,11 +27,8 @@ export function findLocalMmproj(modelDir: string): string | null {
 }
 
 /** Convenience wrapper: derive the dir from a rel path. */
-export function findLocalMmprojForRel(
-  modelsRoot: string,
-  rel: string,
-): string | null {
-  const sep = rel.lastIndexOf('/');
+export function findLocalMmprojForRel(modelsRoot: string, rel: string): string | null {
+  const sep = rel.lastIndexOf("/");
   if (sep < 0) return null;
   return findLocalMmproj(join(modelsRoot, rel.slice(0, sep)));
 }

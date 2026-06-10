@@ -1,13 +1,10 @@
-import type { ClusterNode } from '../../config/schema.js';
-import type { ApplyEvent, ApplyResult, WorkloadClient } from '../apply.js';
-import type { ModelRun } from '../schema.js';
-import {
-  AGENT_GATEWAY_HANDLER_KIND,
-  agentGatewayHandler,
-} from './agent-gateway.js';
-import { embersynthHandler } from './embersynth.js';
-import { siriusHandler } from './sirius.js';
-import type { GatewayHandler } from './types.js';
+import type { ClusterNode } from "../../config/schema.js";
+import type { ApplyEvent, ApplyResult, WorkloadClient } from "../apply.js";
+import type { ModelRun } from "../schema.js";
+import { AGENT_GATEWAY_HANDLER_KIND, agentGatewayHandler } from "./agent-gateway.js";
+import { embersynthHandler } from "./embersynth.js";
+import { siriusHandler } from "./sirius.js";
+import type { GatewayHandler } from "./types.js";
 
 /**
  * Default set of handlers shipped with llamactl. Order is significant:
@@ -34,7 +31,7 @@ export interface DispatchGatewayApplyOptions {
    * is the composite applier and the gateway entry declared
    * `upstreamWorkloads` / `providerConfig`.
    */
-  composite?: import('./types.js').CompositeGatewayContext;
+  composite?: import("./types.js").CompositeGatewayContext;
 }
 
 /**
@@ -62,21 +59,21 @@ export async function dispatchGatewayApply(
       `gateway workload targets unknown node '${nodeName}'; ` +
       `add it to kubeconfig with \`llamactl node add\` before applying`;
     opts.onEvent?.({
-      type: 'gateway-pending',
+      type: "gateway-pending",
       message: `${opts.manifest.metadata.name}: ${msg}`,
     });
     return {
-      action: 'pending',
+      action: "pending",
       statusSection: {
-        phase: 'Pending',
+        phase: "Pending",
         serverPid: null,
         endpoint: null,
         lastTransitionTime: now,
         conditions: [
           {
-            type: 'Applied',
-            status: 'False',
-            reason: 'GatewayNodeUnknown',
+            type: "Applied",
+            status: "False",
+            reason: "GatewayNodeUnknown",
             message: msg,
             lastTransitionTime: now,
           },
@@ -89,23 +86,23 @@ export async function dispatchGatewayApply(
   if (!handler) {
     const msg =
       `no gateway handler matches node '${nodeName}'; ` +
-      `known kinds: ${handlers.map((h) => h.kind).join(', ')}`;
+      `known kinds: ${handlers.map((h) => h.kind).join(", ")}`;
     opts.onEvent?.({
-      type: 'gateway-pending',
+      type: "gateway-pending",
       message: `${opts.manifest.metadata.name}: ${msg}`,
     });
     return {
-      action: 'pending',
+      action: "pending",
       statusSection: {
-        phase: 'Pending',
+        phase: "Pending",
         serverPid: null,
         endpoint: null,
         lastTransitionTime: now,
         conditions: [
           {
-            type: 'Applied',
-            status: 'False',
-            reason: 'GatewayHandlerNotFound',
+            type: "Applied",
+            status: "False",
+            reason: "GatewayHandlerNotFound",
             message: msg,
             lastTransitionTime: now,
           },
@@ -116,7 +113,7 @@ export async function dispatchGatewayApply(
 
   if (handler.kind === AGENT_GATEWAY_HANDLER_KIND) {
     opts.onEvent?.({
-      type: 'gateway-pending',
+      type: "gateway-pending",
       message:
         `${opts.manifest.metadata.name}: spec.gateway:true targets agent-kind node ` +
         `'${nodeName}' — falling back to serverStart`,

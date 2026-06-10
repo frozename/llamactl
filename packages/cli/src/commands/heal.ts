@@ -11,10 +11,10 @@ import {
   type JournalProposalEntry,
   type ProbeReport,
   type Tier,
-} from '@llamactl/agents';
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+} from "@llamactl/agents";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const USAGE = `llamactl heal — observe + journal fleet health + propose/auto-remediate
 
@@ -96,14 +96,15 @@ interface HealFlags {
 }
 
 function parseFlags(argv: string[]): HealFlags | null {
-  const base = process.env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
+  const base = process.env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
   const flags: HealFlags = {
     intervalSec: 30,
     once: false,
     timeoutMs: 1500,
     journalPath: defaultHealerJournalPath(),
-    kubeconfigPath: process.env.LLAMACTL_CONFIG?.trim() || join(base, 'config'),
-    providersPath: process.env.LLAMACTL_PROVIDERS_FILE?.trim() || join(base, 'sirius-providers.yaml'),
+    kubeconfigPath: process.env.LLAMACTL_CONFIG?.trim() || join(base, "config"),
+    providersPath:
+      process.env.LLAMACTL_PROVIDERS_FILE?.trim() || join(base, "sirius-providers.yaml"),
     quiet: false,
     useFacade: true,
     auto: false,
@@ -111,63 +112,65 @@ function parseFlags(argv: string[]): HealFlags | null {
     executeProposalId: null,
   };
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') {
+    if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return null;
     }
-    if (arg === '--once') {
+    if (arg === "--once") {
       flags.once = true;
       continue;
     }
-    if (arg === '--quiet') {
+    if (arg === "--quiet") {
       flags.quiet = true;
       continue;
     }
-    if (arg === '--use-facade') {
+    if (arg === "--use-facade") {
       flags.useFacade = true;
       continue;
     }
-    if (arg === '--no-use-facade') {
+    if (arg === "--no-use-facade") {
       flags.useFacade = false;
       continue;
     }
-    if (arg === '--auto') {
+    if (arg === "--auto") {
       flags.auto = true;
       continue;
     }
-    const eq = arg.indexOf('=');
-    if (!arg.startsWith('--') || eq < 0) {
+    const eq = arg.indexOf("=");
+    if (!arg.startsWith("--") || eq < 0) {
       process.stderr.write(`unknown arg: ${arg}\n\n${USAGE}`);
       return null;
     }
     const key = arg.slice(2, eq);
     const value = arg.slice(eq + 1);
     switch (key) {
-      case 'interval':
+      case "interval":
         flags.intervalSec = Math.max(1, Number.parseInt(value, 10) || 30);
         break;
-      case 'timeout':
+      case "timeout":
         flags.timeoutMs = Math.max(100, Number.parseInt(value, 10) || 1500);
         break;
-      case 'journal':
+      case "journal":
         flags.journalPath = value;
         break;
-      case 'kubeconfig':
+      case "kubeconfig":
         flags.kubeconfigPath = value;
         break;
-      case 'providers-file':
+      case "providers-file":
         flags.providersPath = value;
         break;
-      case 'severity-threshold': {
+      case "severity-threshold": {
         const parsed = Number.parseInt(value, 10);
         if (parsed !== 1 && parsed !== 2 && parsed !== 3) {
-          process.stderr.write(`invalid --severity-threshold: ${value} (must be 1, 2, or 3)\n\n${USAGE}`);
+          process.stderr.write(
+            `invalid --severity-threshold: ${value} (must be 1, 2, or 3)\n\n${USAGE}`,
+          );
           return null;
         }
         flags.severityThreshold = parsed as Tier;
         break;
       }
-      case 'execute':
+      case "execute":
         flags.executeProposalId = value;
         break;
       default:
@@ -189,7 +192,7 @@ function readProposalFromJournal(
 ): JournalProposalEntry | null {
   let raw: string;
   try {
-    raw = readFileSync(journalPath, 'utf8');
+    raw = readFileSync(journalPath, "utf8");
   } catch (err) {
     process.stderr.write(
       `heal --execute: could not read journal ${journalPath}: ${(err as Error).message}\n`,
@@ -197,7 +200,7 @@ function readProposalFromJournal(
     return null;
   }
   let match: JournalProposalEntry | null = null;
-  for (const line of raw.split('\n')) {
+  for (const line of raw.split("\n")) {
     if (line.length === 0) continue;
     let entry: JournalEntry;
     try {
@@ -205,7 +208,7 @@ function readProposalFromJournal(
     } catch {
       continue;
     }
-    if (entry.kind === 'proposal' && entry.proposalId === proposalId) {
+    if (entry.kind === "proposal" && entry.proposalId === proposalId) {
       match = entry;
     }
   }
@@ -238,7 +241,7 @@ async function runExecuteProposal(flags: HealFlags): Promise<number> {
       dryRun: false,
     });
     const executed = {
-      kind: 'executed' as const,
+      kind: "executed" as const,
       ts: new Date().toISOString(),
       proposalId: id,
       steps: result.steps,
@@ -251,9 +254,7 @@ async function runExecuteProposal(flags: HealFlags): Promise<number> {
     try {
       await toolHandle.dispose();
     } catch (err) {
-      process.stderr.write(
-        `heal --execute: dispose failed: ${(err as Error).message}\n`,
-      );
+      process.stderr.write(`heal --execute: dispose failed: ${(err as Error).message}\n`);
     }
   }
 }
@@ -281,7 +282,7 @@ export async function runHeal(argv: string[]): Promise<number> {
     } catch (err) {
       process.stderr.write(
         `healer: failed to boot in-proc MCP client (${(err as Error).message}); ` +
-          'continuing with direct probe\n',
+          "continuing with direct probe\n",
       );
       toolHandle = null;
     }
@@ -294,7 +295,7 @@ export async function runHeal(argv: string[]): Promise<number> {
     once: flags.once,
     timeoutMs: flags.timeoutMs,
     journalPath: flags.journalPath,
-    mode: flags.auto ? 'auto' : 'propose',
+    mode: flags.auto ? "auto" : "propose",
     severityThreshold: flags.severityThreshold,
     onTick: (report: ProbeReport, transitions: ReturnType<typeof stateTransitions>): void => {
       if (flags.quiet) return;
@@ -316,10 +317,10 @@ export async function runHeal(argv: string[]): Promise<number> {
   const handle = startHealerLoop(loopOpts);
 
   // Graceful shutdown on SIGINT / SIGTERM — don't tear down mid-tick.
-  const stopSignals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
+  const stopSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
   const onSignal = (): void => {
     handle.stop();
-    process.stderr.write('healer: stop requested, finishing current tick…\n');
+    process.stderr.write("healer: stop requested, finishing current tick…\n");
   };
   for (const sig of stopSignals) process.on(sig, onSignal);
 

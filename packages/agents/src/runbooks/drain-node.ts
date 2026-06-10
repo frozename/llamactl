@@ -1,6 +1,6 @@
-import { z } from 'zod';
-import type { Runbook, RunbookStep } from '../types.js';
-import { parseToolJson } from '../types.js';
+import { z } from "zod";
+import type { Runbook, RunbookStep } from "../types.js";
+import { parseToolJson } from "../types.js";
 
 /**
  * Drain a node: delete every workload manifest targeting the named
@@ -21,7 +21,7 @@ import { parseToolJson } from '../types.js';
  */
 
 const ParamsSchema = z.object({
-  node: z.string().min(1).describe('metadata.name of the node to drain'),
+  node: z.string().min(1).describe("metadata.name of the node to drain"),
   /** When true, keep the node registered in kubeconfig after draining
    *  workloads. Useful for a "quiesce" operation that reuses the node
    *  later without going through a fresh bootstrap. */
@@ -41,7 +41,7 @@ interface WorkloadListPayload {
 }
 
 export const drainNode: Runbook<Params> = {
-  name: 'drain-node',
+  name: "drain-node",
   description:
     'Delete every ModelRun manifest targeting the named node, then (unless --params {"keepNode":true}) remove the node from kubeconfig. Does NOT stop a running llama-server on the node; chain with a manual `llamactl server stop --node X` when needed.',
   paramsSchema: ParamsSchema,
@@ -49,24 +49,24 @@ export const drainNode: Runbook<Params> = {
     const steps: RunbookStep[] = [];
 
     const workloadsRaw = await ctx.tools.callTool({
-      name: 'llamactl.workload.list',
+      name: "llamactl.workload.list",
       arguments: {},
     });
     const workloads = parseToolJson<WorkloadListPayload>(workloadsRaw);
     const matching = workloads.workloads.filter((w) => w.node === params.node);
     steps.push({
-      tool: 'llamactl.workload.list',
+      tool: "llamactl.workload.list",
       dryRun: false,
       result: { total: workloads.count, matching: matching.length },
     });
 
     for (const w of matching) {
       const delRaw = await ctx.tools.callTool({
-        name: 'llamactl.workload.delete',
+        name: "llamactl.workload.delete",
         arguments: { name: w.name, dryRun: ctx.dryRun },
       });
       steps.push({
-        tool: 'llamactl.workload.delete',
+        tool: "llamactl.workload.delete",
         dryRun: ctx.dryRun,
         result: parseToolJson(delRaw),
       });
@@ -74,11 +74,11 @@ export const drainNode: Runbook<Params> = {
 
     if (!params.keepNode) {
       const rmRaw = await ctx.tools.callTool({
-        name: 'llamactl.node.remove',
+        name: "llamactl.node.remove",
         arguments: { name: params.node, dryRun: ctx.dryRun },
       });
       steps.push({
-        tool: 'llamactl.node.remove',
+        tool: "llamactl.node.remove",
         dryRun: ctx.dryRun,
         result: parseToolJson(rmRaw),
       });
@@ -86,7 +86,7 @@ export const drainNode: Runbook<Params> = {
 
     ctx.log(
       `drain-node: removed ${matching.length} manifest(s) on ${params.node}` +
-        (params.keepNode ? ' (node kept)' : ' + node'),
+        (params.keepNode ? " (node kept)" : " + node"),
     );
 
     return {

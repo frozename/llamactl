@@ -3,8 +3,8 @@ import {
   relFromRepoAndFile,
   repoKnown,
   type CuratedStatus,
-} from './catalog.js';
-import { resolveEnv } from './env.js';
+} from "./catalog.js";
+import { resolveEnv } from "./env.js";
 import {
   fetchDiscoveryFeed,
   fetchModelInfo,
@@ -12,27 +12,27 @@ import {
   fileSizeFromTree,
   humanSize,
   mmprojFileForRepo,
-} from './hf.js';
-import { normalizeProfile } from './profile.js';
-import { quantFromRel } from './quant.js';
-import type { HFModelInfo } from './schemas.js';
-import type { MachineProfile, ModelClass } from './types.js';
+} from "./hf.js";
+import { normalizeProfile } from "./profile.js";
+import { quantFromRel } from "./quant.js";
+import type { HFModelInfo } from "./schemas.js";
+import type { MachineProfile, ModelClass } from "./types.js";
 
 export type DiscoveryFilter =
-  | 'all'
-  | 'other'
-  | 'new'
-  | 'curated'
-  | 'known'
-  | 'reasoning'
-  | 'multimodal'
-  | 'general'
-  | 'fits-16g'
-  | 'fits-32g'
-  | 'fits-48g'
+  | "all"
+  | "other"
+  | "new"
+  | "curated"
+  | "known"
+  | "reasoning"
+  | "multimodal"
+  | "general"
+  | "fits-16g"
+  | "fits-32g"
+  | "fits-48g"
   | (string & {});
 
-export type DiscoveryFit = 'excellent' | 'good' | 'fair' | 'poor' | 'unknown';
+export type DiscoveryFit = "excellent" | "good" | "fair" | "poor" | "unknown";
 
 export interface DiscoveryRow {
   fit: DiscoveryFit;
@@ -48,7 +48,7 @@ export interface DiscoveryRow {
   updated: string;
   pipeline: string;
   estimatedSize: string;
-  visionStatus: 'ready' | 'needs-mmproj' | 'text';
+  visionStatus: "ready" | "needs-mmproj" | "text";
 }
 
 export interface DiscoveryResult {
@@ -74,20 +74,18 @@ export function profileForDiscovery(
   env: NodeJS.ProcessEnv = process.env,
 ): MachineProfile {
   switch (filter) {
-    case 'fits-16g':
-      return 'mac-mini-16g';
-    case 'fits-32g':
-      return 'balanced';
-    case 'fits-48g':
-      return 'macbook-pro-48g';
+    case "fits-16g":
+      return "mac-mini-16g";
+    case "fits-32g":
+      return "balanced";
+    case "fits-48g":
+      return "macbook-pro-48g";
     default: {
       const resolved = resolveEnv(env);
-      if (!requested || requested === 'current') {
-        return (
-          normalizeProfile(resolved.LLAMA_CPP_MACHINE_PROFILE) ?? 'macbook-pro-48g'
-        );
+      if (!requested || requested === "current") {
+        return normalizeProfile(resolved.LLAMA_CPP_MACHINE_PROFILE) ?? "macbook-pro-48g";
       }
-      return normalizeProfile(requested) ?? 'macbook-pro-48g';
+      return normalizeProfile(requested) ?? "macbook-pro-48g";
     }
   }
 }
@@ -100,32 +98,28 @@ export function profileForDiscovery(
  * short-circuits to multimodal; otherwise tag substrings or repo-name
  * heuristics decide. Matching is case-insensitive everywhere.
  */
-export function classifyRepo(
-  repo: string,
-  pipeline: string,
-  tags: string,
-): ModelClass {
+export function classifyRepo(repo: string, pipeline: string, tags: string): ModelClass {
   const repoL = repo.toLowerCase();
   const pipelineL = pipeline.toLowerCase();
   const tagsL = tags.toLowerCase();
 
-  if (pipelineL === 'image-text-to-text') return 'multimodal';
+  if (pipelineL === "image-text-to-text") return "multimodal";
 
-  if (tagsL.includes('vision') || tagsL.includes('multimodal')) return 'multimodal';
-  if (repoL.includes('gemma-4-')) return 'multimodal';
+  if (tagsL.includes("vision") || tagsL.includes("multimodal")) return "multimodal";
+  if (repoL.includes("gemma-4-")) return "multimodal";
 
   if (
-    tagsL.includes('reasoning') ||
-    tagsL.includes('thinking') ||
-    repoL.includes('deepseek') ||
-    repoL.includes('qwq') ||
-    repoL.includes('qwen') ||
-    repoL.includes('r1')
+    tagsL.includes("reasoning") ||
+    tagsL.includes("thinking") ||
+    repoL.includes("deepseek") ||
+    repoL.includes("qwq") ||
+    repoL.includes("qwen") ||
+    repoL.includes("r1")
   ) {
-    return 'reasoning';
+    return "reasoning";
   }
 
-  return 'general';
+  return "general";
 }
 
 // ---- quant ladder -----------------------------------------------------
@@ -137,30 +131,30 @@ export function classifyRepo(
  * Matches `_llama_discovery_pick_file` in the shell.
  */
 const QUANT_PREFS: Record<MachineProfile, readonly string[]> = {
-  'mac-mini-16g': [
-    'UD-Q3_K_S.gguf',
-    'UD-Q3_K_M.gguf',
-    'UD-Q4_K_M.gguf',
-    'UD-Q4_K_XL.gguf',
-    'Q4_K_M.gguf',
-    'Q8_0.gguf',
-    'UD-Q5_K_XL.gguf',
+  "mac-mini-16g": [
+    "UD-Q3_K_S.gguf",
+    "UD-Q3_K_M.gguf",
+    "UD-Q4_K_M.gguf",
+    "UD-Q4_K_XL.gguf",
+    "Q4_K_M.gguf",
+    "Q8_0.gguf",
+    "UD-Q5_K_XL.gguf",
   ],
   balanced: [
-    'UD-Q4_K_M.gguf',
-    'UD-Q4_K_XL.gguf',
-    'Q4_K_M.gguf',
-    'UD-Q3_K_M.gguf',
-    'Q8_0.gguf',
-    'UD-Q5_K_XL.gguf',
+    "UD-Q4_K_M.gguf",
+    "UD-Q4_K_XL.gguf",
+    "Q4_K_M.gguf",
+    "UD-Q3_K_M.gguf",
+    "Q8_0.gguf",
+    "UD-Q5_K_XL.gguf",
   ],
-  'macbook-pro-48g': [
-    'UD-Q4_K_XL.gguf',
-    'UD-Q5_K_XL.gguf',
-    'UD-Q4_K_M.gguf',
-    'Q4_K_M.gguf',
-    'Q8_0.gguf',
-    'UD-Q6_K_XL.gguf',
+  "macbook-pro-48g": [
+    "UD-Q4_K_XL.gguf",
+    "UD-Q5_K_XL.gguf",
+    "UD-Q4_K_M.gguf",
+    "Q4_K_M.gguf",
+    "Q8_0.gguf",
+    "UD-Q6_K_XL.gguf",
   ],
 } as const;
 
@@ -170,10 +164,7 @@ const QUANT_PREFS: Record<MachineProfile, readonly string[]> = {
  * the first sibling whose name contains the current preference string.
  * Falls back to the first sibling in the list when nothing matches.
  */
-export function pickFile(
-  profile: MachineProfile,
-  siblings: readonly string[],
-): string | null {
+export function pickFile(profile: MachineProfile, siblings: readonly string[]): string | null {
   if (siblings.length === 0) return null;
   const prefs = QUANT_PREFS[profile];
   for (const pref of prefs) {
@@ -195,7 +186,7 @@ export function eligibleGgufSiblings(info: HFModelInfo): string[] {
   for (const sib of siblings) {
     const name = sib.rfilename;
     if (!/\.gguf$/i.test(name)) continue;
-    if (name.toLowerCase().includes('mmproj')) continue;
+    if (name.toLowerCase().includes("mmproj")) continue;
     if (/(^|\/)(bf16|fp16|f16)\//i.test(name)) continue;
     if (/-\d{5}-of-\d{5}\.gguf$/i.test(name)) continue;
     out.push(name);
@@ -223,7 +214,7 @@ export async function estimatedBytes(
   if (modelBytes === null) return null;
 
   let total = modelBytes;
-  if (klass === 'multimodal') {
+  if (klass === "multimodal") {
     const info = await fetchModelInfo(repo);
     if (info) {
       const mmproj = mmprojFileForRepo(info);
@@ -239,26 +230,26 @@ export async function estimatedBytes(
 const GIB = 1024 * 1024 * 1024;
 
 const SIZE_TIERS: Record<MachineProfile, { excellent: number; good: number; fair: number }> = {
-  'mac-mini-16g': { excellent: 8.5, good: 12.5, fair: 16.5 },
+  "mac-mini-16g": { excellent: 8.5, good: 12.5, fair: 16.5 },
   balanced: { excellent: 20.0, good: 28.0, fair: 36.0 },
-  'macbook-pro-48g': { excellent: 30.0, good: 42.0, fair: 52.0 },
+  "macbook-pro-48g": { excellent: 30.0, good: 42.0, fair: 52.0 },
 };
 
 function sizeFit(gib: number, profile: MachineProfile): DiscoveryFit {
   const t = SIZE_TIERS[profile];
-  if (gib <= t.excellent) return 'excellent';
-  if (gib <= t.good) return 'good';
-  if (gib <= t.fair) return 'fair';
-  return 'poor';
+  if (gib <= t.excellent) return "excellent";
+  if (gib <= t.good) return "good";
+  if (gib <= t.fair) return "fair";
+  return "poor";
 }
 
 function quantFallbackFit(file: string): DiscoveryFit {
   const f = file;
-  if (/Q2|Q3_K_S|Q3_K_M/.test(f)) return 'good';
-  if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(f)) return 'excellent';
-  if (/Q5|Q6/.test(f)) return 'good';
-  if (/Q8_0/.test(f)) return 'fair';
-  return 'fair';
+  if (/Q2|Q3_K_S|Q3_K_M/.test(f)) return "good";
+  if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(f)) return "excellent";
+  if (/Q5|Q6/.test(f)) return "good";
+  if (/Q8_0/.test(f)) return "fair";
+  return "fair";
 }
 
 /**
@@ -276,26 +267,26 @@ function applyRepoQuantOverrides(
   let fit = base;
 
   switch (profile) {
-    case 'mac-mini-16g': {
-      if (/Q2|Q3_K_S|Q3_K_M/.test(file)) fit = 'excellent';
-      else if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(file)) fit = 'good';
-      else if (/Q8_0/.test(file)) fit = 'fair';
+    case "mac-mini-16g": {
+      if (/Q2|Q3_K_S|Q3_K_M/.test(file)) fit = "excellent";
+      else if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(file)) fit = "good";
+      else if (/Q8_0/.test(file)) fit = "fair";
       if (/35b-a3b|31b|27b|26b/.test(repoL)) {
-        fit = /Q2|Q3_K_S|Q3_K_M/.test(file) ? 'good' : 'poor';
+        fit = /Q2|Q3_K_S|Q3_K_M/.test(file) ? "good" : "poor";
       } else if (/671b|405b|123b|120b|72b|70b|v3|v4/.test(repoL)) {
-        fit = 'poor';
+        fit = "poor";
       }
       break;
     }
-    case 'balanced': {
-      if (/Q2/.test(file)) fit = 'fair';
-      else if (/Q3_K_S|Q3_K_M/.test(file)) fit = 'good';
-      else if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(file)) fit = 'excellent';
-      if (/671b|405b|123b|120b|72b|70b/.test(repoL)) fit = 'poor';
+    case "balanced": {
+      if (/Q2/.test(file)) fit = "fair";
+      else if (/Q3_K_S|Q3_K_M/.test(file)) fit = "good";
+      else if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(file)) fit = "excellent";
+      if (/671b|405b|123b|120b|72b|70b/.test(repoL)) fit = "poor";
       break;
     }
     default: {
-      if (/671b|405b|123b|120b/.test(repoL)) fit = 'poor';
+      if (/671b|405b|123b|120b/.test(repoL)) fit = "poor";
     }
   }
 
@@ -314,9 +305,9 @@ export async function discoveryFit(
   klass: ModelClass,
   file: string,
 ): Promise<DiscoveryFit> {
-  if (!file) return 'unknown';
+  if (!file) return "unknown";
 
-  let fit: DiscoveryFit = 'unknown';
+  let fit: DiscoveryFit = "unknown";
   const bytes = await estimatedBytes(repo, file, klass);
   if (bytes !== null) {
     fit = sizeFit(bytes / GIB, profile);
@@ -328,10 +319,10 @@ export async function discoveryFit(
   fit = applyRepoQuantOverrides(fit, profile, repoL, file);
 
   if (
-    (klass === 'reasoning' && (/deepseek-v3/.test(repoL) || /deepseek-v4/.test(repoL))) ||
-    (klass === 'multimodal' && (/72b/.test(repoL) || /70b/.test(repoL)))
+    (klass === "reasoning" && (/deepseek-v3/.test(repoL) || /deepseek-v4/.test(repoL))) ||
+    (klass === "multimodal" && (/72b/.test(repoL) || /70b/.test(repoL)))
   ) {
-    fit = 'poor';
+    fit = "poor";
   }
 
   return fit;
@@ -339,13 +330,13 @@ export async function discoveryFit(
 
 export function fitScore(fit: DiscoveryFit): number {
   switch (fit) {
-    case 'excellent':
+    case "excellent":
       return 5;
-    case 'good':
+    case "good":
       return 4;
-    case 'fair':
+    case "fair":
       return 3;
-    case 'poor':
+    case "poor":
       return 2;
     default:
       return 1;
@@ -367,23 +358,23 @@ export function filterMatches(
   fit: DiscoveryFit,
 ): boolean {
   switch (filter) {
-    case 'all':
-    case '':
+    case "all":
+    case "":
       return true;
-    case 'other':
-    case 'new':
+    case "other":
+    case "new":
       return !repoKnown(repo);
-    case 'curated':
-    case 'known':
+    case "curated":
+    case "known":
       return repoKnown(repo);
-    case 'reasoning':
-    case 'multimodal':
-    case 'general':
+    case "reasoning":
+    case "multimodal":
+    case "general":
       return klass === filter;
-    case 'fits-16g':
-    case 'fits-32g':
-    case 'fits-48g':
-      return fit === 'excellent' || fit === 'good';
+    case "fits-16g":
+    case "fits-32g":
+    case "fits-48g":
+      return fit === "excellent" || fit === "good";
     default: {
       if (klass === filter) return true;
       // Real HF repo names are mixed-case (`unsloth/Qwen3.6-27B-GGUF`);
@@ -417,12 +408,11 @@ export async function discover(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<DiscoveryResult | null> {
   const resolved = resolveEnv(env);
-  const filter = opts.filter ?? 'other';
+  const filter = opts.filter ?? "other";
   const profile = profileForDiscovery(filter, opts.requestedProfile, env);
   const author = opts.author ?? resolved.LOCAL_AI_DISCOVERY_AUTHOR;
   const parsedLimit = Number.parseInt(resolved.LOCAL_AI_DISCOVERY_LIMIT, 10);
-  const limit =
-    opts.limit ?? (Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 24);
+  const limit = opts.limit ?? (Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 24);
   const search = opts.search ?? resolved.LOCAL_AI_DISCOVERY_SEARCH;
 
   const feed = await fetchDiscoveryFeed({ author, limit, search }, resolved, env);
@@ -435,8 +425,8 @@ export async function discover(
     const siblings = eligibleGgufSiblings(repoInfo);
     if (siblings.length === 0) continue;
 
-    const pipeline = repoInfo.pipeline_tag ?? repoInfo.pipelineTag ?? '';
-    const tags = (repoInfo.tags ?? []).join('|');
+    const pipeline = repoInfo.pipeline_tag ?? repoInfo.pipelineTag ?? "";
+    const tags = (repoInfo.tags ?? []).join("|");
     const klass = classifyRepo(repo, pipeline, tags);
     const file = pickFile(profile, siblings);
     if (!file) continue;
@@ -447,8 +437,8 @@ export async function discover(
     const bytes = await estimatedBytes(repo, file, klass);
     const info = await fetchModelInfo(repo, resolved, env);
     const mmproj = info ? mmprojFileForRepo(info) : null;
-    const visionStatus: DiscoveryRow['visionStatus'] =
-      klass === 'multimodal' ? (mmproj ? 'ready' : 'needs-mmproj') : 'text';
+    const visionStatus: DiscoveryRow["visionStatus"] =
+      klass === "multimodal" ? (mmproj ? "ready" : "needs-mmproj") : "text";
 
     rows.push({
       fit,
@@ -461,8 +451,8 @@ export async function discover(
       quant: quantFromRel(rel),
       downloads: repoInfo.downloads ?? 0,
       likes: repoInfo.likes ?? 0,
-      updated: repoInfo.lastModified ?? '',
-      pipeline: pipeline || 'n/a',
+      updated: repoInfo.lastModified ?? "",
+      pipeline: pipeline || "n/a",
       estimatedSize: humanSize(bytes),
       visionStatus,
     });

@@ -17,7 +17,7 @@ Dispatch graph: 1.1 -> 1.2
 ### Task 1.1: parseModelHost + saveModelHost + listModelHosts in modelhost-store.ts
 
 ```yaml meta
-id: '1.1'
+id: "1.1"
 files:
   - packages/remote/src/workload/modelhost-store.ts
   - packages/remote/test/workload/modelhost-store.test.ts
@@ -31,6 +31,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Create: `packages/remote/src/workload/modelhost-store.ts`
 - Create: `packages/remote/test/workload/modelhost-store.test.ts`
 
@@ -39,17 +40,17 @@ risk_class: schema-aware
 `packages/remote/test/workload/modelhost-store.test.ts`:
 
 ```ts
-import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   listModelHosts,
   parseModelHost,
   saveModelHost,
   loadModelHostByName,
   deleteModelHost,
-} from '../../src/workload/modelhost-store.js';
+} from "../../src/workload/modelhost-store.js";
 
 const manifest = parseModelHost(`
 kind: ModelHost
@@ -72,38 +73,44 @@ spec:
   timeoutSeconds: 60
 `);
 
-describe('modelhost-store', () => {
-  test('save/load round-trips a ModelHost manifest by name', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-store-'));
+describe("modelhost-store", () => {
+  test("save/load round-trips a ModelHost manifest by name", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-modelhost-store-"));
     try {
       const path = saveModelHost(manifest, dir);
-      expect(path.endsWith('mlx-host-local.yaml')).toBe(true);
-      const loaded = loadModelHostByName('mlx-host-local', dir);
-      expect(loaded.metadata.name).toBe('mlx-host-local');
-      expect(loaded.kind).toBe('ModelHost');
+      expect(path.endsWith("mlx-host-local.yaml")).toBe(true);
+      const loaded = loadModelHostByName("mlx-host-local", dir);
+      expect(loaded.metadata.name).toBe("mlx-host-local");
+      expect(loaded.kind).toBe("ModelHost");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test('listModelHosts skips ModelRun and NodeRun files', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-list-'));
+  test("listModelHosts skips ModelRun and NodeRun files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-modelhost-list-"));
     try {
-      writeFileSync(join(dir, 'run.yaml'), 'kind: ModelRun\napiVersion: llamactl.io/v1\nmetadata: {name: run}\nspec: {enabled: true, node: local, rel: x, extraArgs: []}\n');
-      writeFileSync(join(dir, 'node.yaml'), 'kind: NodeRun\napiVersion: llamactl.io/v1\nmetadata: {name: node}\nspec: {enabled: true}\n');
+      writeFileSync(
+        join(dir, "run.yaml"),
+        "kind: ModelRun\napiVersion: llamactl.io/v1\nmetadata: {name: run}\nspec: {enabled: true, node: local, rel: x, extraArgs: []}\n",
+      );
+      writeFileSync(
+        join(dir, "node.yaml"),
+        "kind: NodeRun\napiVersion: llamactl.io/v1\nmetadata: {name: node}\nspec: {enabled: true}\n",
+      );
       saveModelHost(manifest, dir);
-      expect(listModelHosts(dir).map((m) => m.metadata.name)).toEqual(['mlx-host-local']);
+      expect(listModelHosts(dir).map((m) => m.metadata.name)).toEqual(["mlx-host-local"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test('deleteModelHost removes the stored yaml file', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-delete-'));
+  test("deleteModelHost removes the stored yaml file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-modelhost-delete-"));
     try {
       saveModelHost(manifest, dir);
-      expect(deleteModelHost('mlx-host-local', dir)).toBe(true);
-      expect(deleteModelHost('mlx-host-local', dir)).toBe(false);
+      expect(deleteModelHost("mlx-host-local", dir)).toBe(true);
+      expect(deleteModelHost("mlx-host-local", dir)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -121,11 +128,11 @@ Expected: fail because `packages/remote/src/workload/modelhost-store.ts` does no
 `packages/remote/src/workload/modelhost-store.ts`:
 
 ```ts
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { defaultWorkloadsDir } from './store.js';
-import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { defaultWorkloadsDir } from "./store.js";
+import { ModelHostManifestSchema, type ModelHostManifest } from "./modelhost-schema.js";
 
 export function defaultModelHostDir(env: NodeJS.ProcessEnv = process.env): string {
   return defaultWorkloadsDir(env);
@@ -140,20 +147,26 @@ export function modelHostPath(name: string, dir: string = defaultModelHostDir())
 }
 
 export function loadModelHost(path: string): ModelHostManifest {
-  return parseModelHost(readFileSync(path, 'utf8'));
+  return parseModelHost(readFileSync(path, "utf8"));
 }
 
-export function loadModelHostByName(name: string, dir: string = defaultModelHostDir()): ModelHostManifest {
+export function loadModelHostByName(
+  name: string,
+  dir: string = defaultModelHostDir(),
+): ModelHostManifest {
   const path = modelHostPath(name, dir);
   if (!existsSync(path)) throw new Error(`ModelHost ${name} not found at ${path}`);
   return loadModelHost(path);
 }
 
-export function saveModelHost(manifest: ModelHostManifest, dir: string = defaultModelHostDir()): string {
+export function saveModelHost(
+  manifest: ModelHostManifest,
+  dir: string = defaultModelHostDir(),
+): string {
   const validated = ModelHostManifestSchema.parse(manifest);
   mkdirSync(dir, { recursive: true });
   const path = modelHostPath(validated.metadata.name, dir);
-  writeFileSync(path, stringifyYaml(validated), 'utf8');
+  writeFileSync(path, stringifyYaml(validated), "utf8");
   return path;
 }
 
@@ -161,10 +174,10 @@ export function listModelHosts(dir: string = defaultModelHostDir()): ModelHostMa
   if (!existsSync(dir)) return [];
   const out: ModelHostManifest[] = [];
   for (const entry of readdirSync(dir)) {
-    if (!entry.endsWith('.yaml')) continue;
+    if (!entry.endsWith(".yaml")) continue;
     try {
-      const parsed = parseYaml(readFileSync(join(dir, entry), 'utf8')) as { kind?: string };
-      if (parsed?.kind !== 'ModelHost') continue;
+      const parsed = parseYaml(readFileSync(join(dir, entry), "utf8")) as { kind?: string };
+      if (parsed?.kind !== "ModelHost") continue;
       out.push(ModelHostManifestSchema.parse(parsed));
     } catch {}
   }
@@ -200,14 +213,14 @@ EOF
 ### Task 1.2: kind-aware union loader (any-workload list)
 
 ```yaml meta
-id: '1.2'
+id: "1.2"
 files:
   - packages/remote/src/workload/store.ts
   - packages/remote/src/workload/modelhost-store.ts
   - packages/remote/src/workload/noderun-store.ts
   - packages/remote/test/workload/store-kind-filter.test.ts
 file_scope: extend-shared
-depends_on: ['1.1']
+depends_on: ["1.1"]
 parallel_with: []
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
@@ -216,6 +229,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/remote/src/workload/store.ts`
 - Modify: `packages/remote/src/workload/modelhost-store.ts`
 - Modify: `packages/remote/src/workload/noderun-store.ts`
@@ -226,24 +240,33 @@ risk_class: schema-aware
 `packages/remote/test/workload/store-kind-filter.test.ts`:
 
 ```ts
-import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { listWorkloads } from '../../src/workload/store.js';
-import { listModelHosts } from '../../src/workload/modelhost-store.js';
-import { listNodeRuns } from '../../src/workload/noderun-store.js';
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { listWorkloads } from "../../src/workload/store.js";
+import { listModelHosts } from "../../src/workload/modelhost-store.js";
+import { listNodeRuns } from "../../src/workload/noderun-store.js";
 
-describe('kind-aware workload listing', () => {
-  test('shared directory can mix ModelRun, ModelHost, and NodeRun files', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'llamactl-kind-filter-'));
+describe("kind-aware workload listing", () => {
+  test("shared directory can mix ModelRun, ModelHost, and NodeRun files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-kind-filter-"));
     try {
-      writeFileSync(join(dir, 'run.yaml'), 'kind: ModelRun\napiVersion: llamactl.io/v1\nmetadata: {name: run}\nspec: {enabled: true, node: local, rel: x, extraArgs: []}\n');
-      writeFileSync(join(dir, 'host.yaml'), 'kind: ModelHost\napiVersion: llamactl.io/v1\nmetadata: {name: host}\nspec: {enabled: true, node: local, engine: omlx, binary: /tmp/omlx, endpoint: {host: 127.0.0.1, port: 8094}, hostedModels: [{rel: mlx-community/Qwen3-8B-MLX-4bit}], extraArgs: [], timeoutSeconds: 60}\n');
-      writeFileSync(join(dir, 'node.yaml'), 'kind: NodeRun\napiVersion: llamactl.io/v1\nmetadata: {name: node}\nspec: {enabled: true}\n');
-      expect(listWorkloads(dir).map((m) => m.metadata.name)).toEqual(['run']);
-      expect(listModelHosts(dir).map((m) => m.metadata.name)).toEqual(['host']);
-      expect(listNodeRuns(dir).map((m) => m.metadata.name)).toEqual(['node']);
+      writeFileSync(
+        join(dir, "run.yaml"),
+        "kind: ModelRun\napiVersion: llamactl.io/v1\nmetadata: {name: run}\nspec: {enabled: true, node: local, rel: x, extraArgs: []}\n",
+      );
+      writeFileSync(
+        join(dir, "host.yaml"),
+        "kind: ModelHost\napiVersion: llamactl.io/v1\nmetadata: {name: host}\nspec: {enabled: true, node: local, engine: omlx, binary: /tmp/omlx, endpoint: {host: 127.0.0.1, port: 8094}, hostedModels: [{rel: mlx-community/Qwen3-8B-MLX-4bit}], extraArgs: [], timeoutSeconds: 60}\n",
+      );
+      writeFileSync(
+        join(dir, "node.yaml"),
+        "kind: NodeRun\napiVersion: llamactl.io/v1\nmetadata: {name: node}\nspec: {enabled: true}\n",
+      );
+      expect(listWorkloads(dir).map((m) => m.metadata.name)).toEqual(["run"]);
+      expect(listModelHosts(dir).map((m) => m.metadata.name)).toEqual(["host"]);
+      expect(listNodeRuns(dir).map((m) => m.metadata.name)).toEqual(["node"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -261,25 +284,29 @@ Expected: fail because the union loader and kind-filter helpers are still incomp
 `packages/remote/src/workload/store.ts`:
 
 ```ts
-import { ModelHostManifestSchema } from './modelhost-schema.js';
+import { ModelHostManifestSchema } from "./modelhost-schema.js";
 
 export function listWorkloads(dir: string = defaultWorkloadsDir()): ModelRun[] {
   if (!existsSync(dir)) return [];
   const out: ModelRun[] = [];
   for (const entry of readdirSync(dir)) {
-    if (!entry.endsWith('.yaml')) continue;
+    if (!entry.endsWith(".yaml")) continue;
     try {
-      const raw = readFileSync(join(dir, entry), 'utf8');
+      const raw = readFileSync(join(dir, entry), "utf8");
       const parsed = parseYaml(raw) as { kind?: string } | null;
-      if (parsed?.kind !== 'ModelRun') continue;
+      if (parsed?.kind !== "ModelRun") continue;
       out.push(ModelRunSchema.parse(parsed));
     } catch {}
   }
   return out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 }
 
-export function listAnyWorkloads(dir: string = defaultWorkloadsDir()): Array<ModelRun | import('./modelhost-schema.js').ModelHostManifest> {
-  return [...listWorkloads(dir), ...listModelHosts(dir)].sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
+export function listAnyWorkloads(
+  dir: string = defaultWorkloadsDir(),
+): Array<ModelRun | import("./modelhost-schema.js").ModelHostManifest> {
+  return [...listWorkloads(dir), ...listModelHosts(dir)].sort((a, b) =>
+    a.metadata.name.localeCompare(b.metadata.name),
+  );
 }
 ```
 
@@ -290,11 +317,11 @@ export function listNodeRuns(dir: string = defaultNodeRunsDir()): NodeRun[] {
   if (!existsSync(dir)) return [];
   const out: NodeRun[] = [];
   for (const entry of readdirSync(dir)) {
-    if (!entry.endsWith('.yaml')) continue;
+    if (!entry.endsWith(".yaml")) continue;
     try {
-      const raw = readFileSync(join(dir, entry), 'utf8');
+      const raw = readFileSync(join(dir, entry), "utf8");
       const parsed = parseYaml(raw) as { kind?: string };
-      if (parsed?.kind !== 'NodeRun') continue;
+      if (parsed?.kind !== "NodeRun") continue;
       out.push(NodeRunSchema.parse(parsed));
     } catch {}
   }
@@ -326,12 +353,12 @@ Dispatch graph: 2.1 -> 2.2
 ### Task 2.1: split ModelHost apply out of apply.ts
 
 ```yaml meta
-id: '2.1'
+id: "2.1"
 files:
   - packages/remote/src/workload/apply.ts
   - packages/remote/test/workload/modelhost-apply.test.ts
 file_scope: extend-shared
-depends_on: ['1.1', '1.2']
+depends_on: ["1.1", "1.2"]
 parallel_with: []
 preferred_agent: codex-acp-fast
 fallback_agent: codex-acp-deep
@@ -340,6 +367,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/remote/src/workload/apply.ts`
 - Modify: `packages/remote/test/workload/modelhost-apply.test.ts`
 
@@ -348,16 +376,16 @@ risk_class: schema-aware
 `packages/remote/test/workload/modelhost-apply.test.ts` should add one assertion around the current Sub A path:
 
 ```ts
-test('applyOneModelHost persists status and uses node dispatch client methods', async () => {
+test("applyOneModelHost persists status and uses node dispatch client methods", async () => {
   const client = {
     modelHostStart: { subscribe: () => ({ unsubscribe() {} }) },
-    modelHostStatus: { query: async () => ({ state: 'Running' }) },
+    modelHostStatus: { query: async () => ({ state: "Running" }) },
     modelHostStop: { mutate: async () => undefined },
   } as any;
   // existing fixture from the current file should expect a persisted status
   // section and no direct child_process.spawn for ModelHost.
   const result = await applyOne(manifest, () => client);
-  expect(result.kind).toBe('ModelHost');
+  expect(result.kind).toBe("ModelHost");
   expect(result.pid).toBeDefined();
 });
 ```
@@ -372,7 +400,7 @@ Expected: fail because `applyOne` still routes ModelHost through controller-loca
 `packages/remote/src/workload/apply.ts`:
 
 ```ts
-type ModelHostClient = Pick<WorkloadClient, 'modelHostStart' | 'modelHostStop' | 'modelHostStatus'>;
+type ModelHostClient = Pick<WorkloadClient, "modelHostStart" | "modelHostStop" | "modelHostStatus">;
 
 async function applyModelHostManifest(
   manifest: ModelHostManifest,
@@ -383,24 +411,37 @@ async function applyModelHostManifest(
   if (!validation.ok) return { ok: false, error: validation.error };
 
   const resolved = resolveEnv(opts.env);
-  const built = engine.buildBootCommand({ ...manifest.spec, engine: manifest.spec.engine }, resolved);
+  const built = engine.buildBootCommand(
+    { ...manifest.spec, engine: manifest.spec.engine },
+    resolved,
+  );
   const client = opts.getClient?.(manifest.spec.node) as ModelHostClient;
-  if (!client?.modelHostStart) return { ok: false, error: `missing modelHostStart on node ${manifest.spec.node}` };
+  if (!client?.modelHostStart)
+    return { ok: false, error: `missing modelHostStart on node ${manifest.spec.node}` };
 
   const budget = opts.getNodeBudgetGiB?.(manifest.spec.node) ?? defaultNodeBudgetGiB();
   if ((manifest.spec.resources?.expectedMemoryGiB ?? 0) > budget) {
     return { ok: false, error: `ModelHost exceeds node budget for ${manifest.spec.node}` };
   }
 
-  const outcome = await client.modelHostStart.subscribe({ workload: manifest.metadata.name, binary: built.binary, extraArgs: built.args }, {
-    onData() {},
-    onError() {},
-    onComplete() {},
-  });
+  const outcome = await client.modelHostStart.subscribe(
+    { workload: manifest.metadata.name, binary: built.binary, extraArgs: built.args },
+    {
+      onData() {},
+      onError() {},
+      onComplete() {},
+    },
+  );
   void outcome;
   const status = await client.modelHostStatus.query({ workload: manifest.metadata.name });
   const persisted = { ...manifest, status: { ...manifest.status, phase: status.state } };
-  return { ok: true, kind: 'ModelHost', manifest: persisted, pid: 1, endpoint: `http://${manifest.spec.endpoint.host}:${manifest.spec.endpoint.port}` };
+  return {
+    ok: true,
+    kind: "ModelHost",
+    manifest: persisted,
+    pid: 1,
+    endpoint: `http://${manifest.spec.endpoint.host}:${manifest.spec.endpoint.port}`,
+  };
 }
 ```
 
@@ -427,12 +468,12 @@ EOF
 ### Task 2.2: node tRPC surface for ModelHost lifecycle
 
 ```yaml meta
-id: '2.2'
+id: "2.2"
 files:
   - packages/remote/src/router.ts
   - packages/remote/test/router-workload.test.ts
 file_scope: extend-shared
-depends_on: ['2.1']
+depends_on: ["2.1"]
 parallel_with: []
 preferred_agent: codex-acp-fast
 fallback_agent: codex-acp-deep
@@ -441,6 +482,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/remote/src/router.ts`
 - Modify: `packages/remote/test/router-workload.test.ts`
 
@@ -449,11 +491,11 @@ risk_class: schema-aware
 `packages/remote/test/router-workload.test.ts`:
 
 ```ts
-test('router exposes ModelHost start stop and status procedures', async () => {
+test("router exposes ModelHost start stop and status procedures", async () => {
   const caller = router.createCaller(makeCtx());
-  expect(typeof caller.modelHostStatus.query).toBe('function');
-  expect(typeof caller.modelHostStop.mutate).toBe('function');
-  expect(typeof caller.modelHostStart.subscribe).toBe('function');
+  expect(typeof caller.modelHostStatus.query).toBe("function");
+  expect(typeof caller.modelHostStop.mutate).toBe("function");
+  expect(typeof caller.modelHostStart.subscribe).toBe("function");
 });
 ```
 
@@ -523,12 +565,12 @@ Dispatch graph: 3.1
 ### Task 3.1: reconcile ModelRun and ModelHost from one store
 
 ```yaml meta
-id: '3.1'
+id: "3.1"
 files:
   - packages/remote/src/workload/reconciler.ts
   - packages/remote/test/workload/reconciler.test.ts
 file_scope: extend-shared
-depends_on: ['1.1', '1.2', '2.1', '2.2']
+depends_on: ["1.1", "1.2", "2.1", "2.2"]
 parallel_with: []
 preferred_agent: codex-acp-fast
 fallback_agent: codex-acp-deep
@@ -537,6 +579,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/remote/src/workload/reconciler.ts`
 - Create: `packages/remote/test/workload/reconciler.test.ts`
 
@@ -545,9 +588,9 @@ risk_class: schema-aware
 `packages/remote/test/workload/reconciler.test.ts`:
 
 ```ts
-test('reconcileOnce loads and converges both ModelRun and ModelHost manifests', async () => {
+test("reconcileOnce loads and converges both ModelRun and ModelHost manifests", async () => {
   const result = await reconcileOnce({ workloadsDir: dir, getClient });
-  expect(result.reports.map((r) => r.name)).toEqual(['host', 'run']);
+  expect(result.reports.map((r) => r.name)).toEqual(["host", "run"]);
   expect(result.errors).toBe(0);
 });
 ```
@@ -615,14 +658,14 @@ Dispatch graph: 4.1 -> 4.2
 ### Task 4.1: setEnabled/disable become kind-aware
 
 ```yaml meta
-id: '4.1'
+id: "4.1"
 files:
   - packages/cli/src/commands/setEnabled.ts
   - packages/cli/src/commands/disable.ts
   - packages/cli/test/enable-disable.test.ts
 file_scope: extend-shared
-depends_on: ['1.1', '1.2', '2.1', '2.2']
-parallel_with: ['4.2']
+depends_on: ["1.1", "1.2", "2.1", "2.2"]
+parallel_with: ["4.2"]
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
 task_size: substantial
@@ -630,6 +673,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/setEnabled.ts`
 - Modify: `packages/cli/src/commands/disable.ts`
 - Modify: `packages/cli/test/enable-disable.test.ts`
@@ -639,13 +683,13 @@ risk_class: schema-aware
 `packages/cli/test/enable-disable.test.ts`:
 
 ```ts
-test('disable flips ModelHost spec.enabled false and re-applies through the ModelHost client path', async () => {
-  const result = await setWorkloadEnabledWithDeps('mlx-host-local', false, {
+test("disable flips ModelHost spec.enabled false and re-applies through the ModelHost client path", async () => {
+  const result = await setWorkloadEnabledWithDeps("mlx-host-local", false, {
     loadWorkloadByName: () => modelHost,
     saveWorkload: vi.fn(),
-    applyOne: async () => ({ action: 'started', statusSection: {} as any }),
+    applyOne: async () => ({ action: "started", statusSection: {} as any }),
   });
-  expect(result.message).toBe('disabled modelhost/mlx-host-local\n');
+  expect(result.message).toBe("disabled modelhost/mlx-host-local\n");
 });
 ```
 
@@ -660,13 +704,16 @@ Expected: fail because the command still assumes ModelRun-only persistence and m
 
 ```ts
 const kind = manifest.kind;
-if (kind === 'ModelHost') {
+if (kind === "ModelHost") {
   manifest.spec.enabled = enabled;
   saveModelHost(manifest);
   const result = await applyOne(manifest, (n) => getClient(n), undefined, undefined, {
     resolveNodeIdentity: (n) => resolveNode(cfg, n).node.endpoint || null,
   });
-  return { code: result.error ? 1 : 0, message: `${enabled ? 'enabled' : 'disabled'} modelhost/${name}\n` };
+  return {
+    code: result.error ? 1 : 0,
+    message: `${enabled ? "enabled" : "disabled"} modelhost/${name}\n`,
+  };
 }
 ```
 
@@ -692,14 +739,14 @@ EOF
 ### Task 4.2: workload list and apply persistence show ModelHost rows
 
 ```yaml meta
-id: '4.2'
+id: "4.2"
 files:
   - packages/cli/src/commands/workload.ts
   - packages/cli/test/cli-doctor.test.ts
   - packages/cli/test/init-roundtrip.test.ts
 file_scope: extend-shared
-depends_on: ['1.1', '1.2', '2.1', '2.2', '3.1']
-parallel_with: ['4.1']
+depends_on: ["1.1", "1.2", "2.1", "2.2", "3.1"]
+parallel_with: ["4.1"]
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
 task_size: substantial
@@ -707,6 +754,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/workload.ts`
 - Modify: `packages/cli/test/cli-doctor.test.ts`
 - Modify: `packages/cli/test/init-roundtrip.test.ts`
@@ -716,8 +764,8 @@ risk_class: schema-aware
 Add an assertion to the current workload list test:
 
 ```ts
-expect(stdout).toContain('modelhost/mlx-host-local');
-expect(stdout).toContain('ModelHost ready at http://127.0.0.1:8094');
+expect(stdout).toContain("modelhost/mlx-host-local");
+expect(stdout).toContain("ModelHost ready at http://127.0.0.1:8094");
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -730,10 +778,12 @@ Expected: fail because ModelHost rows are not rendered or persisted correctly in
 `packages/cli/src/commands/workload.ts`:
 
 ```ts
-if (kind === 'ModelHost') {
+if (kind === "ModelHost") {
   const persisted = { ...outcome.manifest, status: outcome.statusSection };
   workloadStore.saveModelHost(persisted);
-  process.stdout.write(`${persisted.metadata.name}: ModelHost ready at ${outcome.endpoint} pid=${outcome.pid}\n`);
+  process.stdout.write(
+    `${persisted.metadata.name}: ModelHost ready at ${outcome.endpoint} pid=${outcome.pid}\n`,
+  );
   return 0;
 }
 ```
@@ -764,7 +814,7 @@ Dispatch graph: 5.1
 ### Task 5.1: manual smoke for apply/disable/reconcile on one ModelHost
 
 ```yaml meta
-id: '5.1'
+id: "5.1"
 files:
   - packages/remote/test/workload/modelhost-apply.test.ts
   - packages/remote/test/workload/reconciler.test.ts
@@ -773,7 +823,7 @@ files:
   - packages/cli/src/commands/workload.ts
   - packages/remote/src/workload/apply.ts
 file_scope: extend-shared
-depends_on: ['2.1', '2.2', '3.1', '4.1', '4.2']
+depends_on: ["2.1", "2.2", "3.1", "4.1", "4.2"]
 parallel_with: []
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
@@ -782,6 +832,7 @@ risk_class: integration
 ```
 
 **Files:**
+
 - Modify: `packages/remote/test/workload/modelhost-apply.test.ts`
 - Modify: `packages/remote/test/workload/reconciler.test.ts`
 - Modify: `packages/cli/test/enable-disable.test.ts`
@@ -794,7 +845,7 @@ risk_class: integration
 Keep the existing smoke fixtures but add a full workflow assertion:
 
 ```ts
-test('smoke flow: apply ModelHost, list it, disable it, then reconcile after kill -9', async () => {
+test("smoke flow: apply ModelHost, list it, disable it, then reconcile after kill -9", async () => {
   // Apply manifest
   // Assert `llamactl list` shows the persisted ModelHost row
   // Disable it and verify teardown removes runtime state
@@ -839,15 +890,15 @@ EOF
 
 ## Execution scheduling
 
-| Wave | Tasks (parallel) | Bottleneck task | Gated on |
-|------|------------------|-----------------|----------|
-| 1 | 1.1 | 1.1 | nothing |
-| 2 | 1.2 | 1.2 | 1.1 |
-| 3 | 2.1 | 2.1 | 1.1, 1.2 |
-| 4 | 2.2 | 2.2 | 2.1 |
-| 5 | 3.1 | 3.1 | 2.1, 2.2 |
-| 6 | 4.1 + 4.2 | 4.2 | 3.1 |
-| 7 | 5.1 | 5.1 | 2.1, 2.2, 3.1, 4.1, 4.2 |
+| Wave | Tasks (parallel) | Bottleneck task | Gated on                |
+| ---- | ---------------- | --------------- | ----------------------- |
+| 1    | 1.1              | 1.1             | nothing                 |
+| 2    | 1.2              | 1.2             | 1.1                     |
+| 3    | 2.1              | 2.1             | 1.1, 1.2                |
+| 4    | 2.2              | 2.2             | 2.1                     |
+| 5    | 3.1              | 3.1             | 2.1, 2.2                |
+| 6    | 4.1 + 4.2        | 4.2             | 3.1                     |
+| 7    | 5.1              | 5.1             | 2.1, 2.2, 3.1, 4.1, 4.2 |
 
 Critical path: Phase 1 store helpers -> split ModelHost apply -> node tRPC surface -> mixed-kind reconcile -> CLI parity -> smoke. Cross-phase win: Phase 1 unlocks both apply and CLI work, while Phase 2 and Phase 3 can be implemented without waiting on the final smoke assertions.
 

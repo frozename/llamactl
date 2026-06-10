@@ -4,16 +4,16 @@
 
 ## Purpose
 
-Measure how well a model **re-ranks** candidate memories given a query. The existing memory-efficacy workloads ask: *did the system surface a memory at all?* This new workload asks: *given a set of candidates, did the model identify the right ones in the right order?*
+Measure how well a model **re-ranks** candidate memories given a query. The existing memory-efficacy workloads ask: _did the system surface a memory at all?_ This new workload asks: _given a set of candidates, did the model identify the right ones in the right order?_
 
 ## Decisions (locked 2026-05-18)
 
-| Question | Decision |
-|---|---|
-| Corpus source | **Hybrid: 50 mined + 50 synthetic** (target n=100) |
-| Candidate pool | **BM25 top-10 from penumbra's real search()** |
-| Model task | **Rank-order the 10 candidates** (output a permutation of IDs) |
-| Scoring metric | **NDCG@5** (Normalized Discounted Cumulative Gain) |
+| Question       | Decision                                                       |
+| -------------- | -------------------------------------------------------------- |
+| Corpus source  | **Hybrid: 50 mined + 50 synthetic** (target n=100)             |
+| Candidate pool | **BM25 top-10 from penumbra's real search()**                  |
+| Model task     | **Rank-order the 10 candidates** (output a permutation of IDs) |
+| Scoring metric | **NDCG@5** (Normalized Discounted Cumulative Gain)             |
 
 ## Corpus shape
 
@@ -67,13 +67,14 @@ Scorer parses the JSON, computes NDCG@5 against `gold_ids`:
 ### Synthetic half (n=50)
 
 1. Sample 50 memory bodies from t2 spanning multiple obs_types and projects.
-2. For each, prompt a strong LLM (granite-8b-Q4 or qwen3.6-35b-A3B) with: *"Write a query that would correctly retrieve this memory, plus three queries that would be a near-miss."*
+2. For each, prompt a strong LLM (granite-8b-Q4 or qwen3.6-35b-A3B) with: _"Write a query that would correctly retrieve this memory, plus three queries that would be a near-miss."_
 3. Use BM25 to grab top-10 candidates for each query.
 4. Hand-verify gold for a random subset; otherwise default gold = the seed memory + any BM25 hit with cosine sim > 0.7 against the seed.
 
 ## Implementation plan
 
 This session ships:
+
 - `packages/eval/src/matrix/workloads/memory-recall.ts` — workload definition + NDCG@5 scorer.
 - `packages/eval/src/matrix/runner.ts` — new `mean_ndcg5` aggregator branch.
 - `packages/eval/test/matrix-memory-recall.test.ts` — NDCG@5 unit tests.
@@ -81,6 +82,7 @@ This session ships:
 - `packages/eval/src/matrix/cli.ts` — register workload.
 
 Next session ships:
+
 - `packages/eval/corpora/memory-recall/v0/mined.jsonl` (n=50)
 - `packages/eval/corpora/memory-recall/v0/synth.jsonl` (n=50)
 - `packages/eval/corpora/memory-recall/v0/test.jsonl` (combined, shuffled)

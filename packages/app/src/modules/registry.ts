@@ -1,4 +1,4 @@
-import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
+import { lazy, type ComponentType, type LazyExoticComponent } from "react";
 import {
   Brain,
   Coins,
@@ -12,7 +12,7 @@ import {
   Settings,
   Terminal,
   type LucideIcon,
-} from 'lucide-react';
+} from "lucide-react";
 
 /**
  * Activity-bar module descriptor. To add a new module:
@@ -28,7 +28,7 @@ export interface AppModule {
   icon: LucideIcon;
   Component: LazyExoticComponent<ComponentType>;
   /** Top (default) or pinned to the bottom of the activity bar. */
-  position?: 'top' | 'bottom';
+  position?: "top" | "bottom";
   /** 1..9 keyboard shortcut when we wire the palette in later. */
   shortcut?: number;
   /**
@@ -38,24 +38,24 @@ export interface AppModule {
    * reachable via the command palette (⌘⇧P).
    */
   activityBar?: boolean;
-  group?: 'core' | 'models' | 'ops' | 'observability';
+  group?: "core" | "models" | "ops" | "observability";
   aliases?: string[];
 
   /** Beacon. Where this leaf renders in the Explorer tree. Parallel
    *  to `group`; required for every leaf the Beacon Explorer shows. */
   beaconGroup?:
-    | 'workspace'
-    | 'ops'
-    | 'models'
-    | 'knowledge'
-    | 'observability'
-    | 'settings'
-    | 'hidden';
+    | "workspace"
+    | "ops"
+    | "models"
+    | "knowledge"
+    | "observability"
+    | "settings"
+    | "hidden";
 
   /** Beacon kind — `static` leaves are 1:1 with a tab; `dynamic-group`
    *  leaves are containers whose children come from a runtime
    *  query (workloads, nodes, ops sessions). */
-  beaconKind?: 'static' | 'dynamic-group';
+  beaconKind?: "static" | "dynamic-group";
 
   /** Ordering hint inside the beaconGroup — lower values come first.
    *  Ties fall back to the order in the registry array. */
@@ -68,39 +68,39 @@ export interface AppModule {
   smokeAffordance: string;
 }
 
-const LazyDashboard = lazy(() => import('./dashboard/index'));
-const LazyNodes = lazy(() => import('./nodes/index'));
-const LazyChat = lazy(() => import('./chat/index'));
-const LazyLogs = lazy(() => import('./logs/index'));
-const LazyProjects = lazy(() => import('./projects/index'));
-const LazyCost = lazy(() => import('./cost/index'));
-const LazySettings = lazy(() => import('./settings/index'));
-const LazyUIPrimitives = lazy(() => import('./ui-primitives/index'));
+const LazyDashboard = lazy(() => import("./dashboard/index"));
+const LazyNodes = lazy(() => import("./nodes/index"));
+const LazyChat = lazy(() => import("./chat/index"));
+const LazyLogs = lazy(() => import("./logs/index"));
+const LazyProjects = lazy(() => import("./projects/index"));
+const LazyCost = lazy(() => import("./cost/index"));
+const LazySettings = lazy(() => import("./settings/index"));
+const LazyUIPrimitives = lazy(() => import("./ui-primitives/index"));
 
 // Tabbed grouped pages — each bundles several formerly-top-level
 // modules into tabs. Activity bar shows only the group; the
 // palette jumps to the group + the chosen tab is sticky per-user.
-const LazyOpsChat = lazy(() => import('./ops-chat/index'));
-const LazyOpsSessions = lazy(() => import('./ops-sessions/index'));
-const LazyPlan = lazy(() => import('./plan/index'));
+const LazyOpsChat = lazy(() => import("./ops-chat/index"));
+const LazyOpsSessions = lazy(() => import("./ops-sessions/index"));
+const LazyPlan = lazy(() => import("./plan/index"));
 
 // Flattened workloads.* leaves. The Workloads group itself renders
 // a placeholder (live instances hang under it in the Explorer).
-const LazyWorkloadsPlaceholder = lazy(() => import('./workloads/placeholder'));
-const LazyWorkloadsList = lazy(() => import('./workloads/index'));
-const LazyWorkloadsComposites = lazy(() => import('./composites/index'));
+const LazyWorkloadsPlaceholder = lazy(() => import("./workloads/placeholder"));
+const LazyWorkloadsList = lazy(() => import("./workloads/index"));
+const LazyWorkloadsComposites = lazy(() => import("./composites/index"));
 
 // Flattened knowledge.* leaves.
-const LazyKnowledgeRetrieval = lazy(() => import('./knowledge/index'));
-const LazyKnowledgePipelines = lazy(() => import('./pipelines/index'));
+const LazyKnowledgeRetrieval = lazy(() => import("./knowledge/index"));
+const LazyKnowledgePipelines = lazy(() => import("./pipelines/index"));
 
 // Flattened models.* leaves — each was a tab inside models-tabbed.
-const LazyModelsCatalog = lazy(() => import('./models/index'));
-const LazyModelsPresets = lazy(() => import('./presets/index'));
-const LazyModelsPulls = lazy(() => import('./pulls/index'));
-const LazyModelsBench = lazy(() => import('./bench/index'));
-const LazyModelsLMStudio = lazy(() => import('./lmstudio/index'));
-const LazyModelsServer = lazy(() => import('./server/index'));
+const LazyModelsCatalog = lazy(() => import("./models/index"));
+const LazyModelsPresets = lazy(() => import("./presets/index"));
+const LazyModelsPulls = lazy(() => import("./pulls/index"));
+const LazyModelsBench = lazy(() => import("./bench/index"));
+const LazyModelsLMStudio = lazy(() => import("./lmstudio/index"));
+const LazyModelsServer = lazy(() => import("./server/index"));
 
 /**
  * Registry — sharp distinction between "activity bar items" (always
@@ -120,293 +120,293 @@ const LazyModelsServer = lazy(() => import('./server/index'));
 export const APP_MODULES: AppModule[] = [
   // ── Activity bar: top ─────────────────────────────────────
   {
-    id: 'dashboard',
-    labelKey: 'Dashboard',
+    id: "dashboard",
+    labelKey: "Dashboard",
     icon: LayoutDashboard,
     Component: LazyDashboard,
     shortcut: 1,
     activityBar: true,
-    group: 'core',
-    aliases: ['home', 'overview'],
-    beaconGroup: 'workspace',
-    beaconKind: 'static',
+    group: "core",
+    aliases: ["home", "overview"],
+    beaconGroup: "workspace",
+    beaconKind: "static",
     beaconOrder: 10,
-    smokeAffordance: 'dashboard-root',
+    smokeAffordance: "dashboard-root",
   },
   {
-    id: 'chat',
-    labelKey: 'Chat',
+    id: "chat",
+    labelKey: "Chat",
     icon: MessageSquare,
     Component: LazyChat,
     shortcut: 2,
     activityBar: true,
-    group: 'core',
-    beaconGroup: 'workspace',
-    beaconKind: 'static',
+    group: "core",
+    beaconGroup: "workspace",
+    beaconKind: "static",
     beaconOrder: 20,
-    smokeAffordance: 'chat-root',
+    smokeAffordance: "chat-root",
   },
   {
-    id: 'ops-chat',
-    labelKey: 'Ops Chat',
+    id: "ops-chat",
+    labelKey: "Ops Chat",
     icon: Terminal,
     Component: LazyOpsChat,
     shortcut: 3,
     activityBar: true,
-    group: 'ops',
-    aliases: ['operator console', 'operator'],
-    beaconGroup: 'ops',
-    beaconKind: 'static',
+    group: "ops",
+    aliases: ["operator console", "operator"],
+    beaconGroup: "ops",
+    beaconKind: "static",
     beaconOrder: 10,
-    smokeAffordance: 'ops-chat-root',
+    smokeAffordance: "ops-chat-root",
   },
   {
-    id: 'ops-sessions',
-    labelKey: 'Ops Sessions',
+    id: "ops-sessions",
+    labelKey: "Ops Sessions",
     icon: ScrollText,
     Component: LazyOpsSessions,
     activityBar: true,
-    group: 'ops',
-    aliases: ['session list', 'session archive', 'sessions'],
-    beaconGroup: 'ops',
-    beaconKind: 'static',
+    group: "ops",
+    aliases: ["session list", "session archive", "sessions"],
+    beaconGroup: "ops",
+    beaconKind: "static",
     beaconOrder: 20,
-    smokeAffordance: 'ops-sessions-root',
+    smokeAffordance: "ops-sessions-root",
   },
   {
-    id: 'plan',
-    labelKey: 'Planner',
+    id: "plan",
+    labelKey: "Planner",
     icon: Terminal,
     Component: LazyPlan,
     activityBar: false,
-    group: 'ops',
-    aliases: ['plan', 'planner'],
-    beaconGroup: 'ops',
-    beaconKind: 'static',
+    group: "ops",
+    aliases: ["plan", "planner"],
+    beaconGroup: "ops",
+    beaconKind: "static",
     beaconOrder: 15,
-    smokeAffordance: 'plan-root',
+    smokeAffordance: "plan-root",
   },
   {
-    id: 'projects',
-    labelKey: 'Projects',
+    id: "projects",
+    labelKey: "Projects",
     icon: FolderKanban,
     Component: LazyProjects,
     shortcut: 4,
     activityBar: true,
-    group: 'core',
-    beaconGroup: 'workspace',
-    beaconKind: 'static',
+    group: "core",
+    beaconGroup: "workspace",
+    beaconKind: "static",
     beaconOrder: 30,
-    smokeAffordance: 'projects-root',
+    smokeAffordance: "projects-root",
   },
   {
-    id: 'knowledge.retrieval',
-    labelKey: 'Retrieval',
+    id: "knowledge.retrieval",
+    labelKey: "Retrieval",
     icon: Brain,
     Component: LazyKnowledgeRetrieval,
     shortcut: 5,
     activityBar: false,
-    group: 'core',
-    aliases: ['rag', 'retrieval', 'knowledge'],
-    beaconGroup: 'knowledge',
-    beaconKind: 'static',
+    group: "core",
+    aliases: ["rag", "retrieval", "knowledge"],
+    beaconGroup: "knowledge",
+    beaconKind: "static",
     beaconOrder: 10,
-    smokeAffordance: 'knowledge-retrieval-root',
+    smokeAffordance: "knowledge-retrieval-root",
   },
   {
-    id: 'knowledge.pipelines',
-    labelKey: 'Pipelines',
+    id: "knowledge.pipelines",
+    labelKey: "Pipelines",
     icon: Brain,
     Component: LazyKnowledgePipelines,
     activityBar: false,
-    group: 'core',
-    aliases: ['pipelines', 'ingest'],
-    beaconGroup: 'knowledge',
-    beaconKind: 'static',
+    group: "core",
+    aliases: ["pipelines", "ingest"],
+    beaconGroup: "knowledge",
+    beaconKind: "static",
     beaconOrder: 20,
-    smokeAffordance: 'knowledge-pipelines-root',
+    smokeAffordance: "knowledge-pipelines-root",
   },
   {
-    id: 'workloads',
-    labelKey: 'Workloads',
+    id: "workloads",
+    labelKey: "Workloads",
     icon: Layers,
     Component: LazyWorkloadsPlaceholder,
     shortcut: 6,
     activityBar: true,
-    group: 'ops',
-    aliases: ['workloads'],
-    beaconGroup: 'ops',
-    beaconKind: 'dynamic-group',
+    group: "ops",
+    aliases: ["workloads"],
+    beaconGroup: "ops",
+    beaconKind: "dynamic-group",
     beaconOrder: 20,
-    smokeAffordance: 'workloads-root',
+    smokeAffordance: "workloads-root",
   },
   {
-    id: 'workloads.model-runs',
-    labelKey: 'Model Runs',
+    id: "workloads.model-runs",
+    labelKey: "Model Runs",
     icon: Layers,
     Component: LazyWorkloadsList,
     activityBar: false,
-    group: 'ops',
-    aliases: ['model runs', 'modelruns', 'workload list'],
-    beaconGroup: 'ops',
-    beaconKind: 'static',
+    group: "ops",
+    aliases: ["model runs", "modelruns", "workload list"],
+    beaconGroup: "ops",
+    beaconKind: "static",
     beaconOrder: 22,
-    smokeAffordance: 'workloads-model-runs-root',
+    smokeAffordance: "workloads-model-runs-root",
   },
   {
-    id: 'workloads.composites',
-    labelKey: 'Composites',
+    id: "workloads.composites",
+    labelKey: "Composites",
     icon: Layers,
     Component: LazyWorkloadsComposites,
     activityBar: false,
-    group: 'ops',
-    aliases: ['composites'],
-    beaconGroup: 'ops',
-    beaconKind: 'static',
+    group: "ops",
+    aliases: ["composites"],
+    beaconGroup: "ops",
+    beaconKind: "static",
     beaconOrder: 24,
-    smokeAffordance: 'workloads-composites-root',
+    smokeAffordance: "workloads-composites-root",
   },
   {
-    id: 'models.catalog',
-    labelKey: 'Catalog',
+    id: "models.catalog",
+    labelKey: "Catalog",
     icon: Database,
     Component: LazyModelsCatalog,
     shortcut: 7,
     activityBar: false,
-    group: 'models',
-    aliases: ['models', 'catalog'],
-    beaconGroup: 'models',
-    beaconKind: 'static',
+    group: "models",
+    aliases: ["models", "catalog"],
+    beaconGroup: "models",
+    beaconKind: "static",
     beaconOrder: 10,
-    smokeAffordance: 'models-catalog-root',
+    smokeAffordance: "models-catalog-root",
   },
   {
-    id: 'models.presets',
-    labelKey: 'Presets',
+    id: "models.presets",
+    labelKey: "Presets",
     icon: Database,
     Component: LazyModelsPresets,
     activityBar: false,
-    group: 'models',
-    aliases: ['presets'],
-    beaconGroup: 'models',
-    beaconKind: 'static',
+    group: "models",
+    aliases: ["presets"],
+    beaconGroup: "models",
+    beaconKind: "static",
     beaconOrder: 20,
-    smokeAffordance: 'models-presets-root',
+    smokeAffordance: "models-presets-root",
   },
   {
-    id: 'models.pulls',
-    labelKey: 'Pulls',
+    id: "models.pulls",
+    labelKey: "Pulls",
     icon: Database,
     Component: LazyModelsPulls,
     activityBar: false,
-    group: 'models',
-    aliases: ['pulls', 'huggingface', 'download'],
-    beaconGroup: 'models',
-    beaconKind: 'static',
+    group: "models",
+    aliases: ["pulls", "huggingface", "download"],
+    beaconGroup: "models",
+    beaconKind: "static",
     beaconOrder: 30,
-    smokeAffordance: 'models-pulls-root',
+    smokeAffordance: "models-pulls-root",
   },
   {
-    id: 'models.bench',
-    labelKey: 'Bench',
+    id: "models.bench",
+    labelKey: "Bench",
     icon: Database,
     Component: LazyModelsBench,
     activityBar: false,
-    group: 'models',
-    aliases: ['bench', 'benchmark'],
-    beaconGroup: 'models',
-    beaconKind: 'static',
+    group: "models",
+    aliases: ["bench", "benchmark"],
+    beaconGroup: "models",
+    beaconKind: "static",
     beaconOrder: 40,
-    smokeAffordance: 'models-bench-root',
+    smokeAffordance: "models-bench-root",
   },
   {
-    id: 'models.lmstudio',
-    labelKey: 'LM Studio',
+    id: "models.lmstudio",
+    labelKey: "LM Studio",
     icon: Database,
     Component: LazyModelsLMStudio,
     activityBar: false,
-    group: 'models',
-    aliases: ['lmstudio', 'lm studio'],
-    beaconGroup: 'models',
-    beaconKind: 'static',
+    group: "models",
+    aliases: ["lmstudio", "lm studio"],
+    beaconGroup: "models",
+    beaconKind: "static",
     beaconOrder: 50,
-    smokeAffordance: 'models-lmstudio-root',
+    smokeAffordance: "models-lmstudio-root",
   },
   {
-    id: 'models.server',
-    labelKey: 'Local Server',
+    id: "models.server",
+    labelKey: "Local Server",
     icon: Database,
     Component: LazyModelsServer,
     activityBar: false,
-    group: 'models',
-    aliases: ['server', 'llama-server'],
-    beaconGroup: 'models',
-    beaconKind: 'static',
+    group: "models",
+    aliases: ["server", "llama-server"],
+    beaconGroup: "models",
+    beaconKind: "static",
     beaconOrder: 60,
-    smokeAffordance: 'models-server-root',
+    smokeAffordance: "models-server-root",
   },
   {
-    id: 'nodes',
-    labelKey: 'Nodes',
+    id: "nodes",
+    labelKey: "Nodes",
     icon: Network,
     Component: LazyNodes,
     shortcut: 8,
     activityBar: true,
-    group: 'ops',
-    aliases: ['cluster', 'fleet'],
-    beaconGroup: 'ops',
-    beaconKind: 'dynamic-group',
+    group: "ops",
+    aliases: ["cluster", "fleet"],
+    beaconGroup: "ops",
+    beaconKind: "dynamic-group",
     beaconOrder: 30,
-    smokeAffordance: 'nodes-root',
+    smokeAffordance: "nodes-root",
   },
   {
-    id: 'logs',
-    labelKey: 'Logs',
+    id: "logs",
+    labelKey: "Logs",
     icon: ScrollText,
     Component: LazyLogs,
     shortcut: 9,
     activityBar: true,
-    group: 'observability',
-    beaconGroup: 'observability',
-    beaconKind: 'static',
+    group: "observability",
+    beaconGroup: "observability",
+    beaconKind: "static",
     beaconOrder: 10,
-    smokeAffordance: 'logs-root',
+    smokeAffordance: "logs-root",
   },
   // ── Activity bar: bottom ──────────────────────────────────
   {
-    id: 'cost',
-    labelKey: 'Cost',
+    id: "cost",
+    labelKey: "Cost",
     icon: Coins,
     Component: LazyCost,
     activityBar: true,
-    position: 'bottom',
-    group: 'observability',
-    beaconGroup: 'hidden',
-    beaconKind: 'static',
-    smokeAffordance: 'cost-root',
+    position: "bottom",
+    group: "observability",
+    beaconGroup: "hidden",
+    beaconKind: "static",
+    smokeAffordance: "cost-root",
   },
   {
-    id: 'settings',
-    labelKey: 'Settings',
+    id: "settings",
+    labelKey: "Settings",
     icon: Settings,
     Component: LazySettings,
     activityBar: true,
-    position: 'bottom',
-    group: 'core',
-    beaconGroup: 'hidden',
-    beaconKind: 'static',
-    smokeAffordance: 'settings-root',
+    position: "bottom",
+    group: "core",
+    beaconGroup: "hidden",
+    beaconKind: "static",
+    smokeAffordance: "settings-root",
   },
   {
-    id: 'ui-primitives',
-    labelKey: 'UI Primitives',
+    id: "ui-primitives",
+    labelKey: "UI Primitives",
     icon: FolderKanban, // reused — P2/P3 will swap this when the registry schema changes
     Component: LazyUIPrimitives,
     activityBar: false,
-    group: 'core',
-    aliases: ['sandbox', 'components', 'primitives', 'beacon'],
-    beaconGroup: 'hidden',
-    beaconKind: 'static',
-    smokeAffordance: 'ui-primitives-root',
+    group: "core",
+    aliases: ["sandbox", "components", "primitives", "beacon"],
+    beaconGroup: "hidden",
+    beaconKind: "static",
+    smokeAffordance: "ui-primitives-root",
   },
 ];

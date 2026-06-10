@@ -1,16 +1,11 @@
-import {
-  config as kubecfg,
-  workloadApply,
-  workloadSchema,
-  workloadStore,
-} from '@llamactl/remote';
-import { applyOneModelHost } from '../../../remote/src/workload/apply.js';
-import type { ModelHostManifest } from '../../../remote/src/workload/modelhost-schema.js';
+import { config as kubecfg, workloadApply, workloadSchema, workloadStore } from "@llamactl/remote";
+import { applyOneModelHost } from "../../../remote/src/workload/apply.js";
+import type { ModelHostManifest } from "../../../remote/src/workload/modelhost-schema.js";
 import {
   loadModelHostByName,
   saveModelHost,
-} from '../../../remote/src/workload/modelhost-store.js';
-import { getNodeClientByName } from '../dispatcher.js';
+} from "../../../remote/src/workload/modelhost-store.js";
+import { getNodeClientByName } from "../dispatcher.js";
 
 export interface SetEnabledResult {
   code: number;
@@ -48,48 +43,44 @@ export async function setWorkloadEnabledWithDeps(
     try {
       manifest = (deps.loadModelHostByName ?? loadModelHostByName)(name);
     } catch {
-      return { code: 1, message: `${enabled ? 'enable' : 'disable'}: workload not found: ${name}\n` };
+      return {
+        code: 1,
+        message: `${enabled ? "enable" : "disable"}: workload not found: ${name}\n`,
+      };
     }
   }
 
   manifest.spec.enabled = enabled;
 
   let errMsg: string | null = null;
-  if (manifest.kind === 'ModelRun') {
+  if (manifest.kind === "ModelRun") {
     (deps.saveWorkload ?? saveWorkload)(manifest);
     const cfg = loadConfig();
-    const result = await applyOne(
-      manifest,
-      (n) => getClient(n),
-      undefined,
-      undefined,
-      {
-        resolveNodeIdentity: (n) => {
-          try {
-            return resolveNode(cfg, n).node.endpoint || null;
-          } catch {
-            return null;
-          }
-        },
+    const result = await applyOne(manifest, (n) => getClient(n), undefined, undefined, {
+      resolveNodeIdentity: (n) => {
+        try {
+          return resolveNode(cfg, n).node.endpoint || null;
+        } catch {
+          return null;
+        }
       },
-    );
+    });
     errMsg = result.error ?? null;
   } else {
     (deps.saveModelHost ?? saveModelHost)(manifest);
-    const outcome = await (deps.applyOneModelHost ?? applyOneModelHost)(
-      manifest,
-      (n) => getClient(n),
+    const outcome = await (deps.applyOneModelHost ?? applyOneModelHost)(manifest, (n) =>
+      getClient(n),
     );
     errMsg = outcome.ok ? null : outcome.error;
   }
 
   if (errMsg) {
-    return { code: 1, message: `${enabled ? 'enable' : 'disable'}: ${errMsg}\n` };
+    return { code: 1, message: `${enabled ? "enable" : "disable"}: ${errMsg}\n` };
   }
 
   return {
     code: 0,
-    message: `${enabled ? 'enabled' : 'disabled'} ${manifest.kind.toLowerCase()}/${name}\n`,
+    message: `${enabled ? "enabled" : "disabled"} ${manifest.kind.toLowerCase()}/${name}\n`,
   };
 }
 

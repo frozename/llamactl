@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   benchHistoryFile,
   benchProfileFile,
@@ -10,7 +10,7 @@ import {
   machineLabel,
   readBenchProfiles,
   readBenchVision,
-} from './bench/index.js';
+} from "./bench/index.js";
 import {
   benchPreset,
   benchVision,
@@ -18,24 +18,24 @@ import {
   type BenchPresetResult,
   type BenchVisionResult,
   type RunCli,
-} from './bench/runner.js';
-import { resolveBuildId } from './build.js';
-import { findByRel } from './catalog.js';
-import { ctxForModel } from './ctx.js';
-import { resolveEnv } from './env.js';
-import { findLocalMmprojForRel } from './mmproj.js';
-import type { ResolvedEnv } from './types.js';
+} from "./bench/runner.js";
+import { resolveBuildId } from "./build.js";
+import { findByRel } from "./catalog.js";
+import { ctxForModel } from "./ctx.js";
+import { resolveEnv } from "./env.js";
+import { findLocalMmprojForRel } from "./mmproj.js";
+import type { ResolvedEnv } from "./types.js";
 
 function envFlagEnabled(raw: string | undefined, defaultOn: boolean): boolean {
-  const value = raw ?? (defaultOn ? 'true' : 'false');
+  const value = raw ?? (defaultOn ? "true" : "false");
   switch (value) {
-    case '0':
-    case 'false':
-    case 'FALSE':
-    case 'no':
-    case 'NO':
-    case 'off':
-    case 'OFF':
+    case "0":
+    case "false":
+    case "FALSE":
+    case "no":
+    case "NO":
+    case "off":
+    case "OFF":
       return false;
     default:
       return true;
@@ -43,16 +43,12 @@ function envFlagEnabled(raw: string | undefined, defaultOn: boolean): boolean {
 }
 
 /** Whether auto-tune after pull is enabled (LLAMA_CPP_AUTO_TUNE_ON_PULL). */
-export function autoTuneEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
+export function autoTuneEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return envFlagEnabled(env.LLAMA_CPP_AUTO_TUNE_ON_PULL, true);
 }
 
 /** Whether auto vision bench after pull is enabled (LLAMA_CPP_AUTO_BENCH_VISION). */
-export function autoVisionBenchEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
+export function autoVisionBenchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return envFlagEnabled(env.LLAMA_CPP_AUTO_BENCH_VISION, true);
 }
 
@@ -68,33 +64,24 @@ export interface MaybeTuneAfterPullOptions {
 }
 
 export interface MaybeTuneSkipReason {
-  kind:
-    | 'not-missing'
-    | 'auto-tune-disabled'
-    | 'bench-binary-missing'
-    | 'profile-exists'
-    | 'error';
+  kind: "not-missing" | "auto-tune-disabled" | "bench-binary-missing" | "profile-exists" | "error";
   message: string;
 }
 
 export interface MaybeVisionSkipReason {
   kind:
-    | 'auto-vision-disabled'
-    | 'mtmd-binary-missing'
-    | 'not-multimodal'
-    | 'no-mmproj'
-    | 'record-exists'
-    | 'error';
+    | "auto-vision-disabled"
+    | "mtmd-binary-missing"
+    | "not-multimodal"
+    | "no-mmproj"
+    | "record-exists"
+    | "error";
   message: string;
 }
 
 export interface MaybeTuneAfterPullResult {
-  preset:
-    | { ran: true; result: BenchPresetResult }
-    | { ran: false; reason: MaybeTuneSkipReason };
-  vision:
-    | { ran: true; result: BenchVisionResult }
-    | { ran: false; reason: MaybeVisionSkipReason };
+  preset: { ran: true; result: BenchPresetResult } | { ran: false; reason: MaybeTuneSkipReason };
+  vision: { ran: true; result: BenchVisionResult } | { ran: false; reason: MaybeVisionSkipReason };
 }
 
 /**
@@ -122,8 +109,11 @@ export async function maybeTuneAfterPull(
 
   if (!opts.wasMissing) {
     return {
-      preset: { ran: false, reason: { kind: 'not-missing', message: 'Model was already on disk' } },
-      vision: { ran: false, reason: { kind: 'auto-vision-disabled', message: 'Not evaluated (preset skipped)' } },
+      preset: { ran: false, reason: { kind: "not-missing", message: "Model was already on disk" } },
+      vision: {
+        ran: false,
+        reason: { kind: "auto-vision-disabled", message: "Not evaluated (preset skipped)" },
+      },
     };
   }
 
@@ -131,23 +121,23 @@ export async function maybeTuneAfterPull(
     return {
       preset: {
         ran: false,
-        reason: { kind: 'auto-tune-disabled', message: 'LLAMA_CPP_AUTO_TUNE_ON_PULL=off' },
+        reason: { kind: "auto-tune-disabled", message: "LLAMA_CPP_AUTO_TUNE_ON_PULL=off" },
       },
-      vision: { ran: false, reason: { kind: 'auto-vision-disabled', message: 'Not evaluated' } },
+      vision: { ran: false, reason: { kind: "auto-vision-disabled", message: "Not evaluated" } },
     };
   }
 
-  const benchBin = join(resolved.LLAMA_CPP_BIN, 'llama-bench');
+  const benchBin = join(resolved.LLAMA_CPP_BIN, "llama-bench");
   if (!existsSync(benchBin)) {
     return {
       preset: {
         ran: false,
         reason: {
-          kind: 'bench-binary-missing',
+          kind: "bench-binary-missing",
           message: `llama-bench binary not found: ${benchBin}`,
         },
       },
-      vision: { ran: false, reason: { kind: 'auto-vision-disabled', message: 'Not evaluated' } },
+      vision: { ran: false, reason: { kind: "auto-vision-disabled", message: "Not evaluated" } },
     };
   }
 
@@ -169,11 +159,11 @@ export async function maybeTuneAfterPull(
       preset: {
         ran: false,
         reason: {
-          kind: 'profile-exists',
+          kind: "profile-exists",
           message: `Tuned launch profile already exists for ${opts.rel} (mode=${mode} ctx=${ctx} build=${build})`,
         },
       },
-      vision: { ran: false, reason: { kind: 'auto-vision-disabled', message: 'Not evaluated' } },
+      vision: { ran: false, reason: { kind: "auto-vision-disabled", message: "Not evaluated" } },
     };
   }
 
@@ -185,16 +175,16 @@ export async function maybeTuneAfterPull(
     resolved,
     signal: opts.signal,
   });
-  if ('error' in presetOut) {
+  if ("error" in presetOut) {
     return {
       preset: {
         ran: false,
         reason: {
-          kind: 'error',
+          kind: "error",
           message: presetOut.error,
         },
       },
-      vision: { ran: false, reason: { kind: 'auto-vision-disabled', message: 'Not evaluated' } },
+      vision: { ran: false, reason: { kind: "auto-vision-disabled", message: "Not evaluated" } },
     };
   }
 
@@ -229,30 +219,30 @@ interface MaybeVisionArgs {
 
 async function maybeVisionBenchAfterPull(
   args: MaybeVisionArgs,
-): Promise<MaybeTuneAfterPullResult['vision']> {
+): Promise<MaybeTuneAfterPullResult["vision"]> {
   if (!autoVisionBenchEnabled(args.env)) {
     return {
       ran: false,
-      reason: { kind: 'auto-vision-disabled', message: 'LLAMA_CPP_AUTO_BENCH_VISION=off' },
+      reason: { kind: "auto-vision-disabled", message: "LLAMA_CPP_AUTO_BENCH_VISION=off" },
     };
   }
-  const mtmdBin = join(args.resolved.LLAMA_CPP_BIN, 'llama-mtmd-cli');
+  const mtmdBin = join(args.resolved.LLAMA_CPP_BIN, "llama-mtmd-cli");
   if (!existsSync(mtmdBin)) {
     return {
       ran: false,
       reason: {
-        kind: 'mtmd-binary-missing',
+        kind: "mtmd-binary-missing",
         message: `llama-mtmd-cli binary not found: ${mtmdBin}`,
       },
     };
   }
   const entry = findByRel(args.rel);
-  if (entry?.class !== 'multimodal') {
+  if (entry?.class !== "multimodal") {
     return {
       ran: false,
       reason: {
-        kind: 'not-multimodal',
-        message: `Skipping vision bench: class is ${entry?.class ?? 'unknown'}`,
+        kind: "not-multimodal",
+        message: `Skipping vision bench: class is ${entry?.class ?? "unknown"}`,
       },
     };
   }
@@ -261,7 +251,7 @@ async function maybeVisionBenchAfterPull(
     return {
       ran: false,
       reason: {
-        kind: 'no-mmproj',
+        kind: "no-mmproj",
         message: `No local mmproj sibling for ${args.rel}`,
       },
     };
@@ -276,7 +266,7 @@ async function maybeVisionBenchAfterPull(
     return {
       ran: false,
       reason: {
-        kind: 'record-exists',
+        kind: "record-exists",
         message: `Vision bench record already exists for ${args.rel} (machine=${args.machine} build=${args.build})`,
       },
     };
@@ -289,8 +279,8 @@ async function maybeVisionBenchAfterPull(
     resolved: args.resolved,
     signal: args.signal,
   });
-  if ('error' in out) {
-    return { ran: false, reason: { kind: 'error', message: out.error } };
+  if ("error" in out) {
+    return { ran: false, reason: { kind: "error", message: out.error } };
   }
   return { ran: true, result: out };
 }

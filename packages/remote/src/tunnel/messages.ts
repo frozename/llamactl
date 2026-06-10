@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * Wire schema for the reverse-tunnel (I.3).
@@ -20,20 +20,20 @@ export const TUNNEL_CLOSE_BAD_HELLO = 4400;
 export const TUNNEL_CLOSE_HELLO_TIMEOUT = 4408;
 
 export const TunnelHelloSchema = z.object({
-  type: z.literal('hello'),
+  type: z.literal("hello"),
   bearer: z.string().min(1),
   nodeName: z.string().min(1),
 });
 export type TunnelHello = z.infer<typeof TunnelHelloSchema>;
 
 export const TunnelHelloAckSchema = z.object({
-  type: z.literal('hello-ack'),
+  type: z.literal("hello-ack"),
   serverTime: z.string(),
 });
 export type TunnelHelloAck = z.infer<typeof TunnelHelloAckSchema>;
 
 export const TunnelReqSchema = z.object({
-  type: z.literal('req'),
+  type: z.literal("req"),
   id: z.string().min(1),
   method: z.string().min(1),
   params: z.unknown().optional(),
@@ -41,7 +41,7 @@ export const TunnelReqSchema = z.object({
 export type TunnelReq = z.infer<typeof TunnelReqSchema>;
 
 export const TunnelResSchema = z.object({
-  type: z.literal('res'),
+  type: z.literal("res"),
   id: z.string().min(1),
   result: z.unknown().optional(),
   error: z
@@ -54,11 +54,11 @@ export const TunnelResSchema = z.object({
 export type TunnelRes = z.infer<typeof TunnelResSchema>;
 
 export const TunnelPingSchema = z.object({
-  type: z.literal('ping'),
+  type: z.literal("ping"),
   nonce: z.string().min(1),
 });
 export const TunnelPongSchema = z.object({
-  type: z.literal('pong'),
+  type: z.literal("pong"),
   nonce: z.string().min(1),
 });
 export type TunnelPing = z.infer<typeof TunnelPingSchema>;
@@ -77,7 +77,7 @@ export type TunnelPong = z.infer<typeof TunnelPongSchema>;
  * stream-event never resolves a req/res promise.
  */
 export const TunnelStreamEventSchema = z.object({
-  type: z.literal('stream-event'),
+  type: z.literal("stream-event"),
   id: z.string().min(1),
   index: z.number().int().min(0),
   data: z.unknown(),
@@ -85,7 +85,7 @@ export const TunnelStreamEventSchema = z.object({
 export type TunnelStreamEvent = z.infer<typeof TunnelStreamEventSchema>;
 
 export const TunnelStreamDoneSchema = z.object({
-  type: z.literal('stream-done'),
+  type: z.literal("stream-done"),
   id: z.string().min(1),
   ok: z.boolean(),
   error: z
@@ -98,12 +98,12 @@ export const TunnelStreamDoneSchema = z.object({
 export type TunnelStreamDone = z.infer<typeof TunnelStreamDoneSchema>;
 
 export const TunnelStreamCancelSchema = z.object({
-  type: z.literal('stream-cancel'),
+  type: z.literal("stream-cancel"),
   id: z.string().min(1),
 });
 export type TunnelStreamCancel = z.infer<typeof TunnelStreamCancelSchema>;
 
-export const TunnelMessageSchema = z.discriminatedUnion('type', [
+export const TunnelMessageSchema = z.discriminatedUnion("type", [
   TunnelHelloSchema,
   TunnelHelloAckSchema,
   TunnelReqSchema,

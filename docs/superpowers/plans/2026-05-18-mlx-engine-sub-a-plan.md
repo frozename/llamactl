@@ -17,13 +17,13 @@ Integration: both tasks add files only, no edits to existing code. After both la
 ### Task 1.1: EngineAdapter interface + registry skeleton
 
 ```yaml meta
-id: '1.1'
+id: "1.1"
 files:
   - packages/core/src/engines/types.ts
   - packages/core/src/engines/index.ts
 file_scope: new
 depends_on: []
-parallel_with: ['1.2']
+parallel_with: ["1.2"]
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
 task_size: small
@@ -31,6 +31,7 @@ risk_class: paste-ready
 ```
 
 **Files:**
+
 - Create: `packages/core/src/engines/types.ts`
 - Create: `packages/core/src/engines/index.ts`
 - Create: `packages/core/test/engines/types.test.ts`
@@ -40,28 +41,28 @@ risk_class: paste-ready
 `packages/core/test/engines/types.test.ts`:
 
 ```ts
-import { describe, expect, test } from 'bun:test';
-import { ENGINES, type EngineName } from '../../src/engines/index.js';
+import { describe, expect, test } from "bun:test";
+import { ENGINES, type EngineName } from "../../src/engines/index.js";
 
-describe('engine registry', () => {
-  test('registry contains llamacpp and omlx keys', () => {
+describe("engine registry", () => {
+  test("registry contains llamacpp and omlx keys", () => {
     const keys: EngineName[] = Object.keys(ENGINES) as EngineName[];
-    expect(keys).toContain('llamacpp');
-    expect(keys).toContain('omlx');
+    expect(keys).toContain("llamacpp");
+    expect(keys).toContain("omlx");
   });
 
-  test('every registered engine reports its own name', () => {
+  test("every registered engine reports its own name", () => {
     for (const [key, adapter] of Object.entries(ENGINES)) {
       expect(adapter.name).toBe(key);
     }
   });
 
-  test('every adapter exposes validateSpec / buildBootCommand / probeReady / teardown', () => {
+  test("every adapter exposes validateSpec / buildBootCommand / probeReady / teardown", () => {
     for (const adapter of Object.values(ENGINES)) {
-      expect(typeof adapter.validateSpec).toBe('function');
-      expect(typeof adapter.buildBootCommand).toBe('function');
-      expect(typeof adapter.probeReady).toBe('function');
-      expect(typeof adapter.teardown).toBe('function');
+      expect(typeof adapter.validateSpec).toBe("function");
+      expect(typeof adapter.buildBootCommand).toBe("function");
+      expect(typeof adapter.probeReady).toBe("function");
+      expect(typeof adapter.teardown).toBe("function");
     }
   });
 });
@@ -77,9 +78,9 @@ Expected: fail with "Cannot find module '../../src/engines/index.js'".
 `packages/core/src/engines/types.ts`:
 
 ```ts
-import type { ResolvedEnv } from '../types.js';
+import type { ResolvedEnv } from "../types.js";
 
-export type EngineName = 'llamacpp' | 'omlx';
+export type EngineName = "llamacpp" | "omlx";
 
 export interface ModelHostHostedModel {
   rel: string;
@@ -113,23 +114,30 @@ export interface EngineAdapter {
 `packages/core/src/engines/index.ts`:
 
 ```ts
-import type { EngineAdapter, EngineName } from './types.js';
+import type { EngineAdapter, EngineName } from "./types.js";
 
 // Placeholder skeletons; real implementations land in Phase 2.
 const placeholder = (name: EngineName): EngineAdapter => ({
   name,
   validateSpec: () => ({ ok: false, error: `engine ${name} not yet implemented` }),
-  buildBootCommand: () => { throw new Error(`engine ${name} not yet implemented`); },
+  buildBootCommand: () => {
+    throw new Error(`engine ${name} not yet implemented`);
+  },
   probeReady: async () => ({ ready: false, modelIds: [] }),
   teardown: async () => {},
 });
 
 export const ENGINES: Record<EngineName, EngineAdapter> = {
-  llamacpp: placeholder('llamacpp'),
-  omlx: placeholder('omlx'),
+  llamacpp: placeholder("llamacpp"),
+  omlx: placeholder("omlx"),
 };
 
-export type { EngineAdapter, EngineName, ModelHostSpecForEngine, ModelHostHostedModel } from './types.js';
+export type {
+  EngineAdapter,
+  EngineName,
+  ModelHostSpecForEngine,
+  ModelHostHostedModel,
+} from "./types.js";
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -156,13 +164,13 @@ EOF
 ### Task 1.2: oMLX from-source bootstrap
 
 ```yaml meta
-id: '1.2'
+id: "1.2"
 files:
   - tools/install-omlx-from-source.sh
   - tools/omlx.lock
 file_scope: new
 depends_on: []
-parallel_with: ['1.1']
+parallel_with: ["1.1"]
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
 task_size: small
@@ -170,6 +178,7 @@ risk_class: paste-ready
 ```
 
 **Files:**
+
 - Create: `tools/install-omlx-from-source.sh`
 - Create: `tools/omlx.lock`
 
@@ -266,14 +275,14 @@ Integration: all three tasks edit/create disjoint file sets. After all three mer
 ### Task 2.1: llama.cpp adapter (rehoused, behavior-neutral)
 
 ```yaml meta
-id: '2.1'
+id: "2.1"
 files:
   - packages/core/src/engines/llamacpp.ts
   - packages/core/src/engines/index.ts
   - packages/core/test/engines/llamacpp.test.ts
 file_scope: extend-shared
-depends_on: ['1.1']
-parallel_with: ['2.2', '2.3']
+depends_on: ["1.1"]
+parallel_with: ["2.2", "2.3"]
 preferred_agent: codex-acp-fast
 fallback_agent: codex-acp-deep
 task_size: substantial
@@ -281,6 +290,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Create: `packages/core/src/engines/llamacpp.ts`
 - Modify: `packages/core/src/engines/index.ts` (replace placeholder with real adapter)
 - Create: `packages/core/test/engines/llamacpp.test.ts`
@@ -290,60 +300,60 @@ risk_class: schema-aware
 `packages/core/test/engines/llamacpp.test.ts`:
 
 ```ts
-import { describe, expect, test } from 'bun:test';
-import { ENGINES } from '../../src/engines/index.js';
-import type { ModelHostSpecForEngine } from '../../src/engines/types.js';
+import { describe, expect, test } from "bun:test";
+import { ENGINES } from "../../src/engines/index.js";
+import type { ModelHostSpecForEngine } from "../../src/engines/types.js";
 
 const baseSpec: ModelHostSpecForEngine = {
-  engine: 'llamacpp',
-  binary: '/some/path/llama-server',
-  endpoint: { host: '127.0.0.1', port: 8090 },
-  hostedModels: [{ rel: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf' }],
+  engine: "llamacpp",
+  binary: "/some/path/llama-server",
+  endpoint: { host: "127.0.0.1", port: 8090 },
+  hostedModels: [{ rel: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf" }],
   resources: { expectedMemoryGiB: 5 },
-  extraArgs: ['--jinja'],
+  extraArgs: ["--jinja"],
   timeoutSeconds: 60,
 };
 
-describe('llamacpp engine adapter', () => {
-  test('validateSpec passes a well-formed spec', () => {
+describe("llamacpp engine adapter", () => {
+  test("validateSpec passes a well-formed spec", () => {
     const result = ENGINES.llamacpp.validateSpec(baseSpec);
     expect(result.ok).toBe(true);
   });
 
-  test('validateSpec rejects missing binary', () => {
-    const bad = { ...baseSpec, binary: '' };
+  test("validateSpec rejects missing binary", () => {
+    const bad = { ...baseSpec, binary: "" };
     const result = ENGINES.llamacpp.validateSpec(bad);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/binary/i);
   });
 
-  test('validateSpec rejects zero hosted models', () => {
+  test("validateSpec rejects zero hosted models", () => {
     const bad = { ...baseSpec, hostedModels: [] };
     const result = ENGINES.llamacpp.validateSpec(bad);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/hostedModels/);
   });
 
-  test('buildBootCommand includes --port and the hosted model rel', () => {
+  test("buildBootCommand includes --port and the hosted model rel", () => {
     const built = ENGINES.llamacpp.buildBootCommand(baseSpec, {
-      LLAMA_CPP_MODELS: '/tmp/models',
+      LLAMA_CPP_MODELS: "/tmp/models",
     } as any);
-    expect(built.binary).toBe('/some/path/llama-server');
-    expect(built.args).toContain('--port');
-    expect(built.args).toContain('8090');
+    expect(built.binary).toBe("/some/path/llama-server");
+    expect(built.args).toContain("--port");
+    expect(built.args).toContain("8090");
     // Hosted model rel should appear via -m or --model arg path
-    const joined = built.args.join(' ');
+    const joined = built.args.join(" ");
     expect(joined).toMatch(/granite-4\.1-3b/);
   });
 
-  test('buildBootCommand appends extraArgs verbatim after engine defaults', () => {
+  test("buildBootCommand appends extraArgs verbatim after engine defaults", () => {
     const built = ENGINES.llamacpp.buildBootCommand(baseSpec, {
-      LLAMA_CPP_MODELS: '/tmp/models',
+      LLAMA_CPP_MODELS: "/tmp/models",
     } as any);
-    expect(built.args).toContain('--jinja');
+    expect(built.args).toContain("--jinja");
     // --jinja should appear after the engine-built --port flag
-    const portIdx = built.args.indexOf('--port');
-    const jinjaIdx = built.args.indexOf('--jinja');
+    const portIdx = built.args.indexOf("--port");
+    const jinjaIdx = built.args.indexOf("--jinja");
     expect(jinjaIdx).toBeGreaterThan(portIdx);
   });
 });
@@ -359,32 +369,35 @@ Expected: tests fail because the placeholder adapter is still wired into `ENGINE
 `packages/core/src/engines/llamacpp.ts`:
 
 ```ts
-import type { ResolvedEnv } from '../types.js';
-import type { EngineAdapter, ModelHostSpecForEngine } from './types.js';
+import type { ResolvedEnv } from "../types.js";
+import type { EngineAdapter, ModelHostSpecForEngine } from "./types.js";
 
 export const llamacppEngine: EngineAdapter = {
-  name: 'llamacpp',
+  name: "llamacpp",
 
   validateSpec(spec) {
-    if (!spec.binary || spec.binary.trim() === '') {
-      return { ok: false, error: 'llamacpp engine requires spec.binary' };
+    if (!spec.binary || spec.binary.trim() === "") {
+      return { ok: false, error: "llamacpp engine requires spec.binary" };
     }
-    if (!spec.endpoint || typeof spec.endpoint.port !== 'number') {
-      return { ok: false, error: 'llamacpp engine requires spec.endpoint.port' };
+    if (!spec.endpoint || typeof spec.endpoint.port !== "number") {
+      return { ok: false, error: "llamacpp engine requires spec.endpoint.port" };
     }
     if (!Array.isArray(spec.hostedModels) || spec.hostedModels.length !== 1) {
-      return { ok: false, error: 'Sub A: hostedModels must have exactly one entry' };
+      return { ok: false, error: "Sub A: hostedModels must have exactly one entry" };
     }
     return { ok: true };
   },
 
   buildBootCommand(spec: ModelHostSpecForEngine, env: ResolvedEnv) {
     const modelRel = spec.hostedModels[0].rel;
-    const modelsDir = (env as Record<string, string>).LLAMA_CPP_MODELS ?? '/tmp/models';
+    const modelsDir = (env as Record<string, string>).LLAMA_CPP_MODELS ?? "/tmp/models";
     const args: string[] = [
-      '--host', spec.endpoint.host,
-      '--port', String(spec.endpoint.port),
-      '-m', `${modelsDir}/${modelRel}`,
+      "--host",
+      spec.endpoint.host,
+      "--port",
+      String(spec.endpoint.port),
+      "-m",
+      `${modelsDir}/${modelRel}`,
       ...spec.extraArgs,
     ];
     return { binary: spec.binary, args };
@@ -406,11 +419,11 @@ export const llamacppEngine: EngineAdapter = {
 
   async teardown(pid) {
     try {
-      process.kill(pid, 'SIGTERM');
+      process.kill(pid, "SIGTERM");
       await new Promise((r) => setTimeout(r, 10_000));
     } catch {}
     try {
-      process.kill(pid, 'SIGKILL');
+      process.kill(pid, "SIGKILL");
     } catch {}
   },
 };
@@ -419,23 +432,30 @@ export const llamacppEngine: EngineAdapter = {
 Then in `packages/core/src/engines/index.ts`:
 
 ```ts
-import type { EngineAdapter, EngineName } from './types.js';
-import { llamacppEngine } from './llamacpp.js';
+import type { EngineAdapter, EngineName } from "./types.js";
+import { llamacppEngine } from "./llamacpp.js";
 
 const placeholder = (name: EngineName): EngineAdapter => ({
   name,
   validateSpec: () => ({ ok: false, error: `engine ${name} not yet implemented` }),
-  buildBootCommand: () => { throw new Error(`engine ${name} not yet implemented`); },
+  buildBootCommand: () => {
+    throw new Error(`engine ${name} not yet implemented`);
+  },
   probeReady: async () => ({ ready: false, modelIds: [] }),
   teardown: async () => {},
 });
 
 export const ENGINES: Record<EngineName, EngineAdapter> = {
   llamacpp: llamacppEngine,
-  omlx: placeholder('omlx'),
+  omlx: placeholder("omlx"),
 };
 
-export type { EngineAdapter, EngineName, ModelHostSpecForEngine, ModelHostHostedModel } from './types.js';
+export type {
+  EngineAdapter,
+  EngineName,
+  ModelHostSpecForEngine,
+  ModelHostHostedModel,
+} from "./types.js";
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -463,14 +483,14 @@ EOF
 ### Task 2.2: oMLX adapter
 
 ```yaml meta
-id: '2.2'
+id: "2.2"
 files:
   - packages/core/src/engines/omlx.ts
   - packages/core/src/engines/index.ts
   - packages/core/test/engines/omlx.test.ts
 file_scope: extend-shared
-depends_on: ['1.1']
-parallel_with: ['2.1', '2.3']
+depends_on: ["1.1"]
+parallel_with: ["2.1", "2.3"]
 preferred_agent: codex-acp-fast
 fallback_agent: codex-acp-deep
 task_size: substantial
@@ -478,6 +498,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Create: `packages/core/src/engines/omlx.ts`
 - Modify: `packages/core/src/engines/index.ts` (replace omlx placeholder)
 - Create: `packages/core/test/engines/omlx.test.ts`
@@ -487,122 +508,121 @@ risk_class: schema-aware
 `packages/core/test/engines/omlx.test.ts`:
 
 ```ts
-import { describe, expect, test } from 'bun:test';
-import { ENGINES } from '../../src/engines/index.js';
-import type { ModelHostSpecForEngine } from '../../src/engines/types.js';
-import { existsSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { describe, expect, test } from "bun:test";
+import { ENGINES } from "../../src/engines/index.js";
+import type { ModelHostSpecForEngine } from "../../src/engines/types.js";
+import { existsSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 function makeFakeBinary(): string {
   const dir = join(tmpdir(), `omlx-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, 'omlx');
-  writeFileSync(path, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const path = join(dir, "omlx");
+  writeFileSync(path, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   return path;
 }
 
 const goodBinary = makeFakeBinary();
 
 const baseSpec: ModelHostSpecForEngine = {
-  engine: 'omlx',
+  engine: "omlx",
   binary: goodBinary,
-  endpoint: { host: '127.0.0.1', port: 8094 },
-  hostedModels: [{ rel: 'mlx-community/Qwen3-8B-MLX-4bit' }],
+  endpoint: { host: "127.0.0.1", port: 8094 },
+  hostedModels: [{ rel: "mlx-community/Qwen3-8B-MLX-4bit" }],
   resources: { expectedMemoryGiB: 12 },
-  extraArgs: ['--max-concurrent-requests', '4'],
+  extraArgs: ["--max-concurrent-requests", "4"],
   timeoutSeconds: 60,
 };
 
-describe('omlx engine adapter', () => {
-  test('validateSpec passes when binary exists', () => {
+describe("omlx engine adapter", () => {
+  test("validateSpec passes when binary exists", () => {
     const result = ENGINES.omlx.validateSpec(baseSpec);
     expect(result.ok).toBe(true);
   });
 
-  test('validateSpec rejects missing binary file', () => {
-    const bad = { ...baseSpec, binary: '/this/path/does/not/exist/omlx' };
+  test("validateSpec rejects missing binary file", () => {
+    const bad = { ...baseSpec, binary: "/this/path/does/not/exist/omlx" };
     const result = ENGINES.omlx.validateSpec(bad);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/binary not found/);
   });
 
-  test('validateSpec rejects empty binary string (no PATH fallback)', () => {
-    const bad = { ...baseSpec, binary: '' };
+  test("validateSpec rejects empty binary string (no PATH fallback)", () => {
+    const bad = { ...baseSpec, binary: "" };
     const result = ENGINES.omlx.validateSpec(bad);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/binary/i);
   });
 
-  test('validateSpec rejects zero hosted models', () => {
+  test("validateSpec rejects zero hosted models", () => {
     const bad = { ...baseSpec, hostedModels: [] };
     const result = ENGINES.omlx.validateSpec(bad);
     expect(result.ok).toBe(false);
   });
 
-  test('buildBootCommand uses serve subcommand + --model-dir + --port', () => {
+  test("buildBootCommand uses serve subcommand + --model-dir + --port", () => {
     const built = ENGINES.omlx.buildBootCommand(baseSpec, {
-      LLAMA_CPP_MODELS: '/Volumes/WorkSSD/ai-models/llama.cpp/models',
+      LLAMA_CPP_MODELS: "/Volumes/WorkSSD/ai-models/llama.cpp/models",
     } as any);
     expect(built.binary).toBe(goodBinary);
-    expect(built.args[0]).toBe('serve');
-    expect(built.args).toContain('--model-dir');
-    expect(built.args).toContain('/Volumes/WorkSSD/ai-models/llama.cpp/models');
-    expect(built.args).toContain('--port');
-    expect(built.args).toContain('8094');
-    expect(built.args).toContain('--host');
-    expect(built.args).toContain('127.0.0.1');
+    expect(built.args[0]).toBe("serve");
+    expect(built.args).toContain("--model-dir");
+    expect(built.args).toContain("/Volumes/WorkSSD/ai-models/llama.cpp/models");
+    expect(built.args).toContain("--port");
+    expect(built.args).toContain("8094");
+    expect(built.args).toContain("--host");
+    expect(built.args).toContain("127.0.0.1");
   });
 
-  test('buildBootCommand passes --max-model-memory when resources set', () => {
+  test("buildBootCommand passes --max-model-memory when resources set", () => {
     const built = ENGINES.omlx.buildBootCommand(baseSpec, {
-      LLAMA_CPP_MODELS: '/tmp',
+      LLAMA_CPP_MODELS: "/tmp",
     } as any);
-    expect(built.args).toContain('--max-model-memory');
-    expect(built.args).toContain('12GB');
+    expect(built.args).toContain("--max-model-memory");
+    expect(built.args).toContain("12GB");
   });
 
-  test('buildBootCommand appends extraArgs verbatim', () => {
+  test("buildBootCommand appends extraArgs verbatim", () => {
     const built = ENGINES.omlx.buildBootCommand(baseSpec, {
-      LLAMA_CPP_MODELS: '/tmp',
+      LLAMA_CPP_MODELS: "/tmp",
     } as any);
-    expect(built.args).toContain('--max-concurrent-requests');
-    expect(built.args).toContain('4');
+    expect(built.args).toContain("--max-concurrent-requests");
+    expect(built.args).toContain("4");
   });
 
-  test('probeReady returns matching modelIds when /v1/models contains the rel basename', async () => {
+  test("probeReady returns matching modelIds when /v1/models contains the rel basename", async () => {
     const server = Bun.serve({
       port: 0,
       fetch(req) {
         const url = new URL(req.url);
-        if (url.pathname === '/v1/models') {
-          return new Response(JSON.stringify({
-            object: 'list',
-            data: [{ id: 'Qwen3-8B-MLX-4bit', object: 'model' }],
-          }), { headers: { 'content-type': 'application/json' } });
+        if (url.pathname === "/v1/models") {
+          return new Response(
+            JSON.stringify({
+              object: "list",
+              data: [{ id: "Qwen3-8B-MLX-4bit", object: "model" }],
+            }),
+            { headers: { "content-type": "application/json" } },
+          );
         }
-        return new Response('not found', { status: 404 });
+        return new Response("not found", { status: 404 });
       },
     });
-    const result = await ENGINES.omlx.probeReady(
-      { host: '127.0.0.1', port: server.port },
-      3000,
-    );
+    const result = await ENGINES.omlx.probeReady({ host: "127.0.0.1", port: server.port }, 3000);
     server.stop();
     expect(result.ready).toBe(true);
-    expect(result.modelIds).toContain('Qwen3-8B-MLX-4bit');
+    expect(result.modelIds).toContain("Qwen3-8B-MLX-4bit");
   });
 
-  test('probeReady returns ready:false on timeout', async () => {
-    const result = await ENGINES.omlx.probeReady(
-      { host: '127.0.0.1', port: 1 },
-      500,
-    );
+  test("probeReady returns ready:false on timeout", async () => {
+    const result = await ENGINES.omlx.probeReady({ host: "127.0.0.1", port: 1 }, 500);
     expect(result.ready).toBe(false);
   });
 
   afterAll(() => {
-    try { rmSync(goodBinary, { force: true }); } catch {}
+    try {
+      rmSync(goodBinary, { force: true });
+    } catch {}
   });
 });
 ```
@@ -617,17 +637,17 @@ Expected: tests fail because the omlx placeholder is still wired.
 `packages/core/src/engines/omlx.ts`:
 
 ```ts
-import { existsSync } from 'node:fs';
-import { basename } from 'node:path';
-import type { ResolvedEnv } from '../types.js';
-import type { EngineAdapter, ModelHostSpecForEngine } from './types.js';
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
+import type { ResolvedEnv } from "../types.js";
+import type { EngineAdapter, ModelHostSpecForEngine } from "./types.js";
 
 export const omlxEngine: EngineAdapter = {
-  name: 'omlx',
+  name: "omlx",
 
   validateSpec(spec) {
-    if (!spec.binary || spec.binary.trim() === '') {
-      return { ok: false, error: 'omlx engine requires spec.binary (no PATH fallback)' };
+    if (!spec.binary || spec.binary.trim() === "") {
+      return { ok: false, error: "omlx engine requires spec.binary (no PATH fallback)" };
     }
     if (!existsSync(spec.binary)) {
       return {
@@ -635,25 +655,28 @@ export const omlxEngine: EngineAdapter = {
         error: `omlx binary not found at ${spec.binary}; run tools/install-omlx-from-source.sh`,
       };
     }
-    if (!spec.endpoint || typeof spec.endpoint.port !== 'number') {
-      return { ok: false, error: 'omlx engine requires spec.endpoint.port' };
+    if (!spec.endpoint || typeof spec.endpoint.port !== "number") {
+      return { ok: false, error: "omlx engine requires spec.endpoint.port" };
     }
     if (!Array.isArray(spec.hostedModels) || spec.hostedModels.length !== 1) {
-      return { ok: false, error: 'Sub A: hostedModels must have exactly one entry' };
+      return { ok: false, error: "Sub A: hostedModels must have exactly one entry" };
     }
     return { ok: true };
   },
 
   buildBootCommand(spec: ModelHostSpecForEngine, env: ResolvedEnv) {
-    const modelsDir = (env as Record<string, string>).LLAMA_CPP_MODELS ?? '/tmp/models';
+    const modelsDir = (env as Record<string, string>).LLAMA_CPP_MODELS ?? "/tmp/models";
     const args: string[] = [
-      'serve',
-      '--model-dir', modelsDir,
-      '--host', spec.endpoint.host,
-      '--port', String(spec.endpoint.port),
+      "serve",
+      "--model-dir",
+      modelsDir,
+      "--host",
+      spec.endpoint.host,
+      "--port",
+      String(spec.endpoint.port),
     ];
     if (spec.resources?.expectedMemoryGiB !== undefined) {
-      args.push('--max-model-memory', `${spec.resources.expectedMemoryGiB}GB`);
+      args.push("--max-model-memory", `${spec.resources.expectedMemoryGiB}GB`);
     }
     args.push(...spec.extraArgs);
     return { binary: spec.binary, args };
@@ -665,8 +688,8 @@ export const omlxEngine: EngineAdapter = {
       try {
         const r = await fetch(`http://${endpoint.host}:${endpoint.port}/v1/models`);
         if (r.ok) {
-          const body = await r.json() as { data?: Array<{ id?: string }> };
-          const ids = (body.data ?? []).map((m) => m.id ?? '').filter(Boolean);
+          const body = (await r.json()) as { data?: Array<{ id?: string }> };
+          const ids = (body.data ?? []).map((m) => m.id ?? "").filter(Boolean);
           if (ids.length > 0) {
             return { ready: true, modelIds: ids };
           }
@@ -679,11 +702,11 @@ export const omlxEngine: EngineAdapter = {
 
   async teardown(pid) {
     try {
-      process.kill(pid, 'SIGTERM');
+      process.kill(pid, "SIGTERM");
       await new Promise((r) => setTimeout(r, 10_000));
     } catch {}
     try {
-      process.kill(pid, 'SIGKILL');
+      process.kill(pid, "SIGKILL");
     } catch {}
   },
 };
@@ -699,17 +722,22 @@ export function matchHostedModel(rel: string, ids: string[]): boolean {
 Then in `packages/core/src/engines/index.ts`:
 
 ```ts
-import type { EngineAdapter, EngineName } from './types.js';
-import { llamacppEngine } from './llamacpp.js';
-import { omlxEngine } from './omlx.js';
+import type { EngineAdapter, EngineName } from "./types.js";
+import { llamacppEngine } from "./llamacpp.js";
+import { omlxEngine } from "./omlx.js";
 
 export const ENGINES: Record<EngineName, EngineAdapter> = {
   llamacpp: llamacppEngine,
   omlx: omlxEngine,
 };
 
-export type { EngineAdapter, EngineName, ModelHostSpecForEngine, ModelHostHostedModel } from './types.js';
-export { matchHostedModel } from './omlx.js';
+export type {
+  EngineAdapter,
+  EngineName,
+  ModelHostSpecForEngine,
+  ModelHostHostedModel,
+} from "./types.js";
+export { matchHostedModel } from "./omlx.js";
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -743,13 +771,13 @@ EOF
 ### Task 2.3: ModelHost zod schema
 
 ```yaml meta
-id: '2.3'
+id: "2.3"
 files:
   - packages/remote/src/workload/modelhost-schema.ts
   - packages/remote/test/workload/modelhost-schema.test.ts
 file_scope: new
-depends_on: ['1.1']
-parallel_with: ['2.1', '2.2']
+depends_on: ["1.1"]
+parallel_with: ["2.1", "2.2"]
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
 task_size: small
@@ -757,6 +785,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Create: `packages/remote/src/workload/modelhost-schema.ts`
 - Create: `packages/remote/test/workload/modelhost-schema.test.ts`
 
@@ -765,89 +794,86 @@ risk_class: schema-aware
 `packages/remote/test/workload/modelhost-schema.test.ts`:
 
 ```ts
-import { describe, expect, test } from 'bun:test';
-import { ModelHostManifestSchema } from '../../src/workload/modelhost-schema.js';
+import { describe, expect, test } from "bun:test";
+import { ModelHostManifestSchema } from "../../src/workload/modelhost-schema.js";
 
 const valid = {
-  apiVersion: 'llamactl/v1',
-  kind: 'ModelHost',
-  metadata: { name: 'mlx-host-local' },
+  apiVersion: "llamactl/v1",
+  kind: "ModelHost",
+  metadata: { name: "mlx-host-local" },
   spec: {
-    engine: 'omlx',
-    node: 'local',
+    engine: "omlx",
+    node: "local",
     enabled: true,
-    binary: '/Volumes/WorkSSD/src/omlx/.venv/bin/omlx',
+    binary: "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
     resources: { expectedMemoryGiB: 12 },
-    endpoint: { host: '127.0.0.1', port: 8094 },
-    hostedModels: [{ rel: 'mlx-community/Qwen3-8B-MLX-4bit' }],
-    extraArgs: ['--max-concurrent-requests', '4'],
-    restartPolicy: 'Always',
+    endpoint: { host: "127.0.0.1", port: 8094 },
+    hostedModels: [{ rel: "mlx-community/Qwen3-8B-MLX-4bit" }],
+    extraArgs: ["--max-concurrent-requests", "4"],
+    restartPolicy: "Always",
     timeoutSeconds: 60,
   },
 };
 
-describe('ModelHostManifestSchema', () => {
-  test('accepts a valid manifest', () => {
+describe("ModelHostManifestSchema", () => {
+  test("accepts a valid manifest", () => {
     const result = ModelHostManifestSchema.safeParse(valid);
     expect(result.success).toBe(true);
   });
 
-  test('rejects engine string outside the enum', () => {
-    const bad = { ...valid, spec: { ...valid.spec, engine: 'vllm-mlx' } };
+  test("rejects engine string outside the enum", () => {
+    const bad = { ...valid, spec: { ...valid.spec, engine: "vllm-mlx" } };
     const result = ModelHostManifestSchema.safeParse(bad);
     expect(result.success).toBe(false);
   });
 
-  test('rejects missing endpoint.port (no default)', () => {
-    const bad = { ...valid, spec: { ...valid.spec, endpoint: { host: '127.0.0.1' } } };
+  test("rejects missing endpoint.port (no default)", () => {
+    const bad = { ...valid, spec: { ...valid.spec, endpoint: { host: "127.0.0.1" } } };
     const result = ModelHostManifestSchema.safeParse(bad);
     expect(result.success).toBe(false);
   });
 
-  test('rejects empty hostedModels (Sub A min length 1)', () => {
+  test("rejects empty hostedModels (Sub A min length 1)", () => {
     const bad = { ...valid, spec: { ...valid.spec, hostedModels: [] } };
     const result = ModelHostManifestSchema.safeParse(bad);
     expect(result.success).toBe(false);
   });
 
-  test('rejects hostedModels length > 1 (Sub A max length 1)', () => {
+  test("rejects hostedModels length > 1 (Sub A max length 1)", () => {
     const bad = {
       ...valid,
       spec: {
         ...valid.spec,
-        hostedModels: [
-          { rel: 'mlx-community/A' },
-          { rel: 'mlx-community/B' },
-        ],
+        hostedModels: [{ rel: "mlx-community/A" }, { rel: "mlx-community/B" }],
       },
     };
     const result = ModelHostManifestSchema.safeParse(bad);
     expect(result.success).toBe(false);
   });
 
-  test('rejects manifest with stray `target` field (ModelRun-only)', () => {
+  test("rejects manifest with stray `target` field (ModelRun-only)", () => {
     const bad = {
       ...valid,
-      spec: { ...valid.spec, target: { kind: 'rel', value: 'foo' } },
+      spec: { ...valid.spec, target: { kind: "rel", value: "foo" } },
     };
     const result = ModelHostManifestSchema.safeParse(bad);
     expect(result.success).toBe(false);
   });
 
-  test('rejects manifest with stray `workers` field (ModelRun-only)', () => {
+  test("rejects manifest with stray `workers` field (ModelRun-only)", () => {
     const bad = { ...valid, spec: { ...valid.spec, workers: [] } };
     const result = ModelHostManifestSchema.safeParse(bad);
     expect(result.success).toBe(false);
   });
 
-  test('rejects empty binary string (no PATH fallback for ModelHost)', () => {
-    const bad = { ...valid, spec: { ...valid.spec, binary: '' } };
+  test("rejects empty binary string (no PATH fallback for ModelHost)", () => {
+    const bad = { ...valid, spec: { ...valid.spec, binary: "" } };
     const result = ModelHostManifestSchema.safeParse(bad);
     expect(result.success).toBe(false);
   });
 
-  test('rejects kind other than ModelHost', () => {
-    const bad = { ...valid, kind: 'ModelRun' };
+  test("rejects kind other than ModelHost", () => {
+    const bad = { ...valid, kind: "ModelRun" };
     const result = ModelHostManifestSchema.safeParse(bad);
     expect(result.success).toBe(false);
   });
@@ -864,41 +890,53 @@ Expected: fails on module-not-found.
 `packages/remote/src/workload/modelhost-schema.ts`:
 
 ```ts
-import { z } from 'zod';
+import { z } from "zod";
 
-export const ModelHostHostedModelSchema = z.object({
-  rel: z.string().min(1),
-}).strict();
+export const ModelHostHostedModelSchema = z
+  .object({
+    rel: z.string().min(1),
+  })
+  .strict();
 
-export const ModelHostEndpointSchema = z.object({
-  host: z.string().min(1),
-  port: z.number().int().min(1).max(65535),
-}).strict();
+export const ModelHostEndpointSchema = z
+  .object({
+    host: z.string().min(1),
+    port: z.number().int().min(1).max(65535),
+  })
+  .strict();
 
-export const ModelHostSpecSchema = z.object({
-  engine: z.enum(['omlx']),  // Sub A: omlx only; Sub B+ widens.
-  node: z.string().min(1),
-  enabled: z.boolean().default(true),
-  binary: z.string().min(1),  // Required; no PATH fallback on ModelHost.
-  resources: z.object({
-    expectedMemoryGiB: z.number().positive().optional(),
-  }).optional(),
-  endpoint: ModelHostEndpointSchema,
-  hostedModels: z.array(ModelHostHostedModelSchema).min(1).max(1),
-  extraArgs: z.array(z.string()).default([]),
-  restartPolicy: z.enum(['Always', 'OnFailure', 'Never']).default('Always'),
-  timeoutSeconds: z.number().int().positive().max(600).default(60),
-}).strict();
+export const ModelHostSpecSchema = z
+  .object({
+    engine: z.enum(["omlx"]), // Sub A: omlx only; Sub B+ widens.
+    node: z.string().min(1),
+    enabled: z.boolean().default(true),
+    binary: z.string().min(1), // Required; no PATH fallback on ModelHost.
+    resources: z
+      .object({
+        expectedMemoryGiB: z.number().positive().optional(),
+      })
+      .optional(),
+    endpoint: ModelHostEndpointSchema,
+    hostedModels: z.array(ModelHostHostedModelSchema).min(1).max(1),
+    extraArgs: z.array(z.string()).default([]),
+    restartPolicy: z.enum(["Always", "OnFailure", "Never"]).default("Always"),
+    timeoutSeconds: z.number().int().positive().max(600).default(60),
+  })
+  .strict();
 
-export const ModelHostManifestSchema = z.object({
-  apiVersion: z.literal('llamactl/v1'),
-  kind: z.literal('ModelHost'),
-  metadata: z.object({
-    name: z.string().min(1),
-    labels: z.record(z.string()).optional(),
-  }).strict(),
-  spec: ModelHostSpecSchema,
-}).strict();
+export const ModelHostManifestSchema = z
+  .object({
+    apiVersion: z.literal("llamactl/v1"),
+    kind: z.literal("ModelHost"),
+    metadata: z
+      .object({
+        name: z.string().min(1),
+        labels: z.record(z.string()).optional(),
+      })
+      .strict(),
+    spec: ModelHostSpecSchema,
+  })
+  .strict();
 
 export type ModelHostManifest = z.infer<typeof ModelHostManifestSchema>;
 export type ModelHostSpec = z.infer<typeof ModelHostSpecSchema>;
@@ -938,7 +976,7 @@ Integration: pull.ts depends on catalog's new format column existing. After both
 ### Task 3.1: Catalog `format` column
 
 ```yaml meta
-id: '3.1'
+id: "3.1"
 files:
   - packages/core/src/catalog.ts
   - packages/core/src/catalogWriter.ts
@@ -953,6 +991,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/core/src/catalog.ts`
 - Modify: `packages/core/src/catalogWriter.ts`
 - Modify: `packages/core/test/catalog.test.ts`
@@ -962,26 +1001,31 @@ risk_class: schema-aware
 Read the existing `packages/core/test/catalog.test.ts` first, then add these test cases (do not delete or rename existing tests):
 
 ```ts
-test('appends format=gguf for legacy rows missing the column', () => {
+test("appends format=gguf for legacy rows missing the column", () => {
   // When loading a TSV row that pre-dates the format column, the parser
   // should default format to 'gguf' (back-compat for already-pulled
   // models).
-  const legacyTsv = 'rel=foo/bar.gguf\tlabel=foo\tfamily=qwen\n';
+  const legacyTsv = "rel=foo/bar.gguf\tlabel=foo\tfamily=qwen\n";
   const rows = parseCatalogTsv(legacyTsv);
-  expect(rows[0].format).toBe('gguf');
+  expect(rows[0].format).toBe("gguf");
 });
 
-test('parses format=mlx when explicitly present', () => {
-  const tsv = 'rel=mlx-community/Qwen3-8B-MLX-4bit\tlabel=qwen3-8b-mlx\tfamily=qwen\tformat=mlx\n';
+test("parses format=mlx when explicitly present", () => {
+  const tsv = "rel=mlx-community/Qwen3-8B-MLX-4bit\tlabel=qwen3-8b-mlx\tfamily=qwen\tformat=mlx\n";
   const rows = parseCatalogTsv(tsv);
-  expect(rows[0].format).toBe('mlx');
+  expect(rows[0].format).toBe("mlx");
 });
 
-test('writes format=mlx round-trips', () => {
+test("writes format=mlx round-trips", () => {
   const written = writeCatalogTsv([
-    { rel: 'mlx-community/Qwen3-8B-MLX-4bit', label: 'qwen3-8b-mlx', family: 'qwen', format: 'mlx' },
+    {
+      rel: "mlx-community/Qwen3-8B-MLX-4bit",
+      label: "qwen3-8b-mlx",
+      family: "qwen",
+      format: "mlx",
+    },
   ]);
-  expect(written).toContain('format=mlx');
+  expect(written).toContain("format=mlx");
 });
 ```
 
@@ -1002,7 +1046,7 @@ export interface CatalogRow {
   rel: string;
   label: string;
   family: string;
-  format: 'gguf' | 'mlx';  // NEW; default 'gguf' for back-compat
+  format: "gguf" | "mlx"; // NEW; default 'gguf' for back-compat
   // ...other existing fields
 }
 
@@ -1010,8 +1054,8 @@ export interface CatalogRow {
 // 'format' key is absent, default it to 'gguf'.
 function parseCatalogRow(line: string): CatalogRow {
   const fields = Object.fromEntries(
-    line.split('\t').map((kv) => {
-      const idx = kv.indexOf('=');
+    line.split("\t").map((kv) => {
+      const idx = kv.indexOf("=");
       return [kv.slice(0, idx), kv.slice(idx + 1)] as const;
     }),
   );
@@ -1019,7 +1063,7 @@ function parseCatalogRow(line: string): CatalogRow {
     rel: fields.rel,
     label: fields.label,
     family: fields.family,
-    format: (fields.format as 'gguf' | 'mlx') ?? 'gguf',
+    format: (fields.format as "gguf" | "mlx") ?? "gguf",
     // ...other existing fields
   };
 }
@@ -1051,12 +1095,12 @@ EOF
 ### Task 3.2: pull MLX-format detection
 
 ```yaml meta
-id: '3.2'
+id: "3.2"
 files:
   - packages/core/src/pull.ts
   - packages/core/test/pull.test.ts
 file_scope: extend-shared
-depends_on: ['3.1']
+depends_on: ["3.1"]
 parallel_with: []
 preferred_agent: codex-acp-fast
 fallback_agent: codex-acp-deep
@@ -1065,6 +1109,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/core/src/pull.ts`
 - Modify: `packages/core/test/pull.test.ts`
 
@@ -1073,38 +1118,43 @@ risk_class: schema-aware
 Add to `packages/core/test/pull.test.ts`:
 
 ```ts
-import { classifyRepoFormat } from '../src/pull.js';
+import { classifyRepoFormat } from "../src/pull.js";
 
-describe('classifyRepoFormat', () => {
-  test('classifies a gguf-bearing repo as gguf', () => {
-    const files = ['Qwen3-8B-Q4_K_M.gguf', 'README.md', 'config.json'];
-    expect(classifyRepoFormat('Qwen3-8B-GGUF', files)).toEqual({ format: 'gguf' });
+describe("classifyRepoFormat", () => {
+  test("classifies a gguf-bearing repo as gguf", () => {
+    const files = ["Qwen3-8B-Q4_K_M.gguf", "README.md", "config.json"];
+    expect(classifyRepoFormat("Qwen3-8B-GGUF", files)).toEqual({ format: "gguf" });
   });
 
-  test('classifies an mlx-community repo with safetensors + config + tokenizer as mlx', () => {
-    const files = ['model.safetensors', 'config.json', 'tokenizer.json', 'README.md'];
-    expect(classifyRepoFormat('mlx-community/Qwen3-8B-MLX-4bit', files)).toEqual({ format: 'mlx' });
+  test("classifies an mlx-community repo with safetensors + config + tokenizer as mlx", () => {
+    const files = ["model.safetensors", "config.json", "tokenizer.json", "README.md"];
+    expect(classifyRepoFormat("mlx-community/Qwen3-8B-MLX-4bit", files)).toEqual({ format: "mlx" });
   });
 
-  test('classifies a sharded mlx repo (safetensors.index.json) as mlx', () => {
-    const files = ['model.safetensors.index.json', 'model-00001-of-00003.safetensors', 'config.json', 'tokenizer.model'];
-    expect(classifyRepoFormat('mlx-community/Llama-3.1-8B-MLX', files)).toEqual({ format: 'mlx' });
+  test("classifies a sharded mlx repo (safetensors.index.json) as mlx", () => {
+    const files = [
+      "model.safetensors.index.json",
+      "model-00001-of-00003.safetensors",
+      "config.json",
+      "tokenizer.model",
+    ];
+    expect(classifyRepoFormat("mlx-community/Llama-3.1-8B-MLX", files)).toEqual({ format: "mlx" });
   });
 
-  test('returns error when neither gguf nor mlx signatures present', () => {
-    const files = ['README.md'];
-    const result = classifyRepoFormat('foo/bar', files);
-    expect('error' in result).toBe(true);
+  test("returns error when neither gguf nor mlx signatures present", () => {
+    const files = ["README.md"];
+    const result = classifyRepoFormat("foo/bar", files);
+    expect("error" in result).toBe(true);
   });
 
-  test('prefers gguf when both gguf and mlx markers exist (back-compat)', () => {
-    const files = ['model.gguf', 'model.safetensors', 'config.json', 'tokenizer.json'];
-    expect(classifyRepoFormat('mixed/repo', files)).toEqual({ format: 'gguf' });
+  test("prefers gguf when both gguf and mlx markers exist (back-compat)", () => {
+    const files = ["model.gguf", "model.safetensors", "config.json", "tokenizer.json"];
+    expect(classifyRepoFormat("mixed/repo", files)).toEqual({ format: "gguf" });
   });
 
-  test('--format=mlx override picks mlx even when gguf exists', () => {
-    const files = ['model.gguf', 'model.safetensors', 'config.json', 'tokenizer.json'];
-    expect(classifyRepoFormat('mixed/repo', files, { override: 'mlx' })).toEqual({ format: 'mlx' });
+  test("--format=mlx override picks mlx even when gguf exists", () => {
+    const files = ["model.gguf", "model.safetensors", "config.json", "tokenizer.json"];
+    expect(classifyRepoFormat("mixed/repo", files, { override: "mlx" })).toEqual({ format: "mlx" });
   });
 });
 ```
@@ -1119,7 +1169,7 @@ Expected: 6 new failures (classifyRepoFormat undefined).
 In `packages/core/src/pull.ts`, export:
 
 ```ts
-export type RepoFormat = 'gguf' | 'mlx';
+export type RepoFormat = "gguf" | "mlx";
 
 export function classifyRepoFormat(
   repo: string,
@@ -1128,24 +1178,28 @@ export function classifyRepoFormat(
 ): { format: RepoFormat } | { error: string } {
   if (opts.override) return { format: opts.override };
 
-  const hasGguf = files.some((f) => f.endsWith('.gguf'));
-  if (hasGguf) return { format: 'gguf' };
+  const hasGguf = files.some((f) => f.endsWith(".gguf"));
+  if (hasGguf) return { format: "gguf" };
 
-  const hasConfig = files.includes('config.json');
-  const hasTokenizer = files.includes('tokenizer.json') || files.includes('tokenizer.model');
+  const hasConfig = files.includes("config.json");
+  const hasTokenizer = files.includes("tokenizer.json") || files.includes("tokenizer.model");
   const hasSafetensors = files.some(
-    (f) => f === 'model.safetensors' || f === 'model.safetensors.index.json' || /\.safetensors$/.test(f),
+    (f) =>
+      f === "model.safetensors" || f === "model.safetensors.index.json" || /\.safetensors$/.test(f),
   );
-  if (hasConfig && hasTokenizer && hasSafetensors) return { format: 'mlx' };
+  if (hasConfig && hasTokenizer && hasSafetensors) return { format: "mlx" };
 
-  if (repo.startsWith('mlx-community/')) {
-    return { error: `repo ${repo} looks like an MLX repo by namespace but is missing required files (need config.json + tokenizer + safetensors)` };
+  if (repo.startsWith("mlx-community/")) {
+    return {
+      error: `repo ${repo} looks like an MLX repo by namespace but is missing required files (need config.json + tokenizer + safetensors)`,
+    };
   }
   return { error: `no gguf files and no MLX format signature in ${repo}` };
 }
 ```
 
 Then in the pull pipeline (the function that actually downloads), branch on the classification:
+
 - If `format === 'gguf'`: existing quant-ladder + GGUF download path.
 - If `format === 'mlx'`: download every non-ignored file (`.gitattributes`, `README.md`, `*.png`, `*.mp4`, `*.gif` are ignored) into `$LLAMA_CPP_MODELS/<repo>/`. Record a catalog row with `format: 'mlx'`. No quant-ladder.
 
@@ -1188,12 +1242,12 @@ Integration: 4.1 enables ModelHost manifests to actually start; 4.2 and 4.3 cons
 ### Task 4.1: Reconciler kind dispatch
 
 ```yaml meta
-id: '4.1'
+id: "4.1"
 files:
   - packages/remote/src/workload/apply.ts
   - packages/remote/test/workload/modelhost-apply.test.ts
 file_scope: extend-shared
-depends_on: ['2.1', '2.2', '2.3']
+depends_on: ["2.1", "2.2", "2.3"]
 parallel_with: []
 preferred_agent: codex-acp-fast
 fallback_agent: codex-acp-deep
@@ -1202,6 +1256,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/remote/src/workload/apply.ts`
 - Create: `packages/remote/test/workload/modelhost-apply.test.ts`
 
@@ -1210,11 +1265,11 @@ risk_class: schema-aware
 `packages/remote/test/workload/modelhost-apply.test.ts`:
 
 ```ts
-import { describe, expect, test, mock } from 'bun:test';
-import { applyManifest } from '../../src/workload/apply.js';
+import { describe, expect, test, mock } from "bun:test";
+import { applyManifest } from "../../src/workload/apply.js";
 
-describe('applyManifest — ModelHost dispatch', () => {
-  test('routes kind:ModelHost manifests to the engine adapter buildBootCommand', async () => {
+describe("applyManifest — ModelHost dispatch", () => {
+  test("routes kind:ModelHost manifests to the engine adapter buildBootCommand", async () => {
     const captured: { cmd?: string; args?: string[] } = {};
     const fakeSpawn = mock((cmd: string, args: string[]) => {
       captured.cmd = cmd;
@@ -1223,17 +1278,17 @@ describe('applyManifest — ModelHost dispatch', () => {
     });
 
     const manifest = {
-      apiVersion: 'llamactl/v1',
-      kind: 'ModelHost',
-      metadata: { name: 'mlx-host-test' },
+      apiVersion: "llamactl/v1",
+      kind: "ModelHost",
+      metadata: { name: "mlx-host-test" },
       spec: {
-        engine: 'omlx',
-        node: 'local',
+        engine: "omlx",
+        node: "local",
         enabled: true,
-        binary: '/usr/bin/true',  // exists on all systems
-        endpoint: { host: '127.0.0.1', port: 18094 },
-        hostedModels: [{ rel: 'mlx-community/Test-MLX-4bit' }],
-        extraArgs: ['--max-concurrent-requests', '1'],
+        binary: "/usr/bin/true", // exists on all systems
+        endpoint: { host: "127.0.0.1", port: 18094 },
+        hostedModels: [{ rel: "mlx-community/Test-MLX-4bit" }],
+        extraArgs: ["--max-concurrent-requests", "1"],
       },
     };
 
@@ -1241,13 +1296,13 @@ describe('applyManifest — ModelHost dispatch', () => {
     // to the actual signature in apply.ts after reading the file.
     await applyManifest({ manifest, spawn: fakeSpawn });
 
-    expect(captured.cmd).toBe('/usr/bin/true');
-    expect(captured.args?.[0]).toBe('serve');
-    expect(captured.args).toContain('--port');
-    expect(captured.args).toContain('18094');
+    expect(captured.cmd).toBe("/usr/bin/true");
+    expect(captured.args?.[0]).toBe("serve");
+    expect(captured.args).toContain("--port");
+    expect(captured.args).toContain("18094");
   });
 
-  test('ModelRun manifests still take the legacy path (no engine dispatch)', async () => {
+  test("ModelRun manifests still take the legacy path (no engine dispatch)", async () => {
     // Use an existing ModelRun fixture from packages/remote/test/workload/.
     // Assert the engine adapter is NOT consulted; the existing apply
     // path runs.
@@ -1265,20 +1320,24 @@ Expected: failure (apply.ts doesn't yet handle kind: ModelHost).
 Read `packages/remote/src/workload/apply.ts` first (the existing reconciler). Add a top-level kind discriminator:
 
 ```ts
-import { ModelHostManifestSchema } from './modelhost-schema.js';
-import { ENGINES } from '@llamactl/core/engines';  // confirm import path
+import { ModelHostManifestSchema } from "./modelhost-schema.js";
+import { ENGINES } from "@llamactl/core/engines"; // confirm import path
 
-export async function applyManifest(opts: { manifest: unknown; /* ... */ }) {
+export async function applyManifest(opts: { manifest: unknown /* ... */ }) {
   // existing yaml parsing / validation
   const raw = opts.manifest as { kind?: string };
-  if (raw?.kind === 'ModelHost') {
+  if (raw?.kind === "ModelHost") {
     return applyModelHostManifest(opts);
   }
   // existing ModelRun path unchanged
   return applyModelRunManifest(opts);
 }
 
-async function applyModelHostManifest(opts: { manifest: unknown; spawn?: Function; env?: ResolvedEnv }) {
+async function applyModelHostManifest(opts: {
+  manifest: unknown;
+  spawn?: Function;
+  env?: ResolvedEnv;
+}) {
   const parsed = ModelHostManifestSchema.parse(opts.manifest);
   const engine = ENGINES[parsed.spec.engine];
   const valid = engine.validateSpec({
@@ -1294,8 +1353,8 @@ async function applyModelHostManifest(opts: { manifest: unknown; spawn?: Functio
 
   const env = opts.env ?? resolveEnv();
   const { binary, args } = engine.buildBootCommand(parsed.spec as any, env);
-  const spawn = opts.spawn ?? (await import('node:child_process')).spawn;
-  const proc = spawn(binary, args, { detached: true, stdio: 'ignore' });
+  const spawn = opts.spawn ?? (await import("node:child_process")).spawn;
+  const proc = spawn(binary, args, { detached: true, stdio: "ignore" });
   // record pid + endpoint into the noderun store the same way ModelRun does
   return { manifest: parsed, pid: proc.pid };
 }
@@ -1337,13 +1396,13 @@ EOF
 ### Task 4.2: workloadRuntime LocalRoute extension
 
 ```yaml meta
-id: '4.2'
+id: "4.2"
 files:
   - packages/core/src/workloadRuntime.ts
   - packages/core/test/workloadRuntime.test.ts
 file_scope: extend-shared
-depends_on: ['4.1']
-parallel_with: ['4.3']
+depends_on: ["4.1"]
+parallel_with: ["4.3"]
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
 task_size: small
@@ -1351,6 +1410,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/core/src/workloadRuntime.ts`
 - Modify: `packages/core/test/workloadRuntime.test.ts`
 
@@ -1359,26 +1419,26 @@ risk_class: schema-aware
 Add to `packages/core/test/workloadRuntime.test.ts`:
 
 ```ts
-test('listLocalWorkloads returns both ModelRun and ModelHost routes', () => {
+test("listLocalWorkloads returns both ModelRun and ModelHost routes", () => {
   // Seed a noderun store fixture with one running ModelRun and one
   // running ModelHost. Assert the returned array contains both, each
   // with engine + kind tags.
   // (Read existing seeding helpers in workloadRuntime.test.ts.)
   const routes = listLocalWorkloads(/* fixture */);
   const kinds = new Set(routes.map((r) => r.kind));
-  expect(kinds.has('ModelRun')).toBe(true);
-  expect(kinds.has('ModelHost')).toBe(true);
+  expect(kinds.has("ModelRun")).toBe(true);
+  expect(kinds.has("ModelHost")).toBe(true);
 });
 
-test('ModelHost route uses the basename of the hosted rel for model id alias', () => {
+test("ModelHost route uses the basename of the hosted rel for model id alias", () => {
   // After probeReady runs, the proxy should know both:
   //   - 'mlx-community/Qwen3-8B-MLX-4bit' (rel)
   //   - 'Qwen3-8B-MLX-4bit' (basename, what oMLX returns in /v1/models)
   // Both should resolve to the same host:port.
   const routes = listLocalWorkloads(/* fixture with one ModelHost */);
   const ids = new Set(routes.map((r) => r.model));
-  expect(ids.has('mlx-community/Qwen3-8B-MLX-4bit')).toBe(true);
-  expect(ids.has('Qwen3-8B-MLX-4bit')).toBe(true);
+  expect(ids.has("mlx-community/Qwen3-8B-MLX-4bit")).toBe(true);
+  expect(ids.has("Qwen3-8B-MLX-4bit")).toBe(true);
 });
 ```
 
@@ -1392,15 +1452,15 @@ Expected: failures (LocalRoute type doesn't include kind; ModelHost not enumerat
 In `packages/core/src/workloadRuntime.ts`:
 
 ```ts
-import type { EngineName } from './engines/index.js';
-import { basename } from 'node:path';
+import type { EngineName } from "./engines/index.js";
+import { basename } from "node:path";
 
 export interface LocalRoute {
   model: string;
   host: string;
   port: number;
   engine: EngineName;
-  kind: 'ModelRun' | 'ModelHost';
+  kind: "ModelRun" | "ModelHost";
 }
 
 export function listLocalWorkloads(/* existing args */): LocalRoute[] {
@@ -1417,7 +1477,7 @@ export function listLocalWorkloads(/* existing args */): LocalRoute[] {
         host: host.endpoint.host,
         port: host.endpoint.port,
         engine: host.spec.engine,
-        kind: 'ModelHost',
+        kind: "ModelHost",
       });
     }
   }
@@ -1453,14 +1513,14 @@ EOF
 ### Task 4.3: Matrix bench engine dispatch
 
 ```yaml meta
-id: '4.3'
+id: "4.3"
 files:
   - packages/eval/src/matrix/types.ts
   - packages/eval/src/matrix/lifecycle.ts
   - packages/eval/test/matrix-lifecycle.test.ts
 file_scope: extend-shared
-depends_on: ['2.1', '2.2']
-parallel_with: ['4.2']
+depends_on: ["2.1", "2.2"]
+parallel_with: ["4.2"]
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
 task_size: small
@@ -1468,6 +1528,7 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/eval/src/matrix/types.ts`
 - Modify: `packages/eval/src/matrix/lifecycle.ts`
 - Create: `packages/eval/test/matrix-lifecycle.test.ts` (or extend an existing test)
@@ -1475,49 +1536,49 @@ risk_class: schema-aware
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-import { describe, expect, test } from 'bun:test';
-import { buildBootCommandForModelSpec } from '../src/matrix/lifecycle.js';
+import { describe, expect, test } from "bun:test";
+import { buildBootCommandForModelSpec } from "../src/matrix/lifecycle.js";
 
-describe('matrix lifecycle — engine dispatch', () => {
-  test('omlx ModelSpec routes to ENGINES.omlx.buildBootCommand', () => {
+describe("matrix lifecycle — engine dispatch", () => {
+  test("omlx ModelSpec routes to ENGINES.omlx.buildBootCommand", () => {
     const spec = {
-      name: 'qwen3-8b-mlx-4bit',
-      engine: 'omlx',
-      family: 'qwen-3',
-      quant: 'MLX-4bit',
-      size_params: '8B',
-      host: '127.0.0.1',
+      name: "qwen3-8b-mlx-4bit",
+      engine: "omlx",
+      family: "qwen-3",
+      quant: "MLX-4bit",
+      size_params: "8B",
+      host: "127.0.0.1",
       port: 8094,
-      binary: '/usr/bin/true',
-      mlx_model_dir: '/tmp/mlx',
+      binary: "/usr/bin/true",
+      mlx_model_dir: "/tmp/mlx",
       managed: true,
-      extra_args: ['--max-concurrent-requests', '1'],
+      extra_args: ["--max-concurrent-requests", "1"],
       start_args: [],
     };
     const built = buildBootCommandForModelSpec(spec as any);
-    expect(built.args[0]).toBe('serve');
-    expect(built.args).toContain('--model-dir');
-    expect(built.args).toContain('/tmp/mlx');
+    expect(built.args[0]).toBe("serve");
+    expect(built.args).toContain("--model-dir");
+    expect(built.args).toContain("/tmp/mlx");
   });
 
-  test('default engine (undefined) routes to llama.cpp path (back-compat)', () => {
+  test("default engine (undefined) routes to llama.cpp path (back-compat)", () => {
     const spec = {
-      name: 'granite-3b-Q8',
-      family: 'granite',
-      quant: 'Q8_0',
-      size_params: '3B',
-      host: '127.0.0.1',
+      name: "granite-3b-Q8",
+      family: "granite",
+      quant: "Q8_0",
+      size_params: "3B",
+      host: "127.0.0.1",
       port: 8085,
-      binary: '/usr/bin/true',
-      gguf_path: '/tmp/granite-3b-Q8.gguf',
+      binary: "/usr/bin/true",
+      gguf_path: "/tmp/granite-3b-Q8.gguf",
       managed: true,
       extra_args: [],
       start_args: [],
     };
     const built = buildBootCommandForModelSpec(spec as any);
-    expect(built.binary).toBe('/usr/bin/true');
+    expect(built.binary).toBe("/usr/bin/true");
     // llama.cpp path uses --port flag style
-    expect(built.args).toContain('--port');
+    expect(built.args).toContain("--port");
   });
 });
 ```
@@ -1534,31 +1595,31 @@ Read `packages/eval/src/matrix/types.ts` and `lifecycle.ts`. Add to `ModelSpec`:
 ```ts
 export interface ModelSpec {
   // ...existing fields
-  engine?: 'llamacpp' | 'omlx';      // NEW; default 'llamacpp'
-  mlx_model_dir?: string;            // NEW; oMLX --model-dir, ignored for llama.cpp
-  gguf_path?: string;                // existing; now optional when engine='omlx'
+  engine?: "llamacpp" | "omlx"; // NEW; default 'llamacpp'
+  mlx_model_dir?: string; // NEW; oMLX --model-dir, ignored for llama.cpp
+  gguf_path?: string; // existing; now optional when engine='omlx'
 }
 ```
 
 Add to `lifecycle.ts` an exported helper `buildBootCommandForModelSpec(spec: ModelSpec): { binary: string; args: string[] }`:
 
 ```ts
-import { ENGINES } from '@llamactl/core/engines';
+import { ENGINES } from "@llamactl/core/engines";
 
 export function buildBootCommandForModelSpec(spec: ModelSpec): { binary: string; args: string[] } {
-  const engine = spec.engine ?? 'llamacpp';
-  if (engine === 'omlx') {
+  const engine = spec.engine ?? "llamacpp";
+  if (engine === "omlx") {
     return ENGINES.omlx.buildBootCommand(
       {
-        engine: 'omlx',
+        engine: "omlx",
         binary: spec.binary!,
         endpoint: { host: spec.host, port: spec.port },
-        hostedModels: [{ rel: '' /* unused for matrix boot; model auto-discovered */ }],
+        hostedModels: [{ rel: "" /* unused for matrix boot; model auto-discovered */ }],
         resources: {},
         extraArgs: spec.extra_args ?? [],
         timeoutSeconds: 60,
       },
-      { LLAMA_CPP_MODELS: spec.mlx_model_dir ?? '' } as any,
+      { LLAMA_CPP_MODELS: spec.mlx_model_dir ?? "" } as any,
     );
   }
   // existing llama.cpp path (extract the inline arg-building from the
@@ -1604,13 +1665,13 @@ Integration: 5.1 unblocks cross-engine /v1 routing live; 5.2 documents the new M
 ### Task 5.1: openaiProxy cross-engine routing
 
 ```yaml meta
-id: '5.1'
+id: "5.1"
 files:
   - packages/core/src/openaiProxy.ts
   - packages/core/test/openaiProxy.test.ts
 file_scope: extend-shared
-depends_on: ['4.2']
-parallel_with: ['5.2']
+depends_on: ["4.2"]
+parallel_with: ["5.2"]
 preferred_agent: codex-acp-fast
 fallback_agent: codex-acp-deep
 task_size: substantial
@@ -1618,33 +1679,34 @@ risk_class: schema-aware
 ```
 
 **Files:**
+
 - Modify: `packages/core/src/openaiProxy.ts`
 - Modify (or create): `packages/core/test/openaiProxy.test.ts`
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-test('routes /v1/chat/completions to a ModelHost by hosted rel', async () => {
+test("routes /v1/chat/completions to a ModelHost by hosted rel", async () => {
   // Seed: one ModelHost route with model='mlx-community/Qwen3-8B-MLX-4bit'
   // pointing at 127.0.0.1:<port-of-stub>.
   // Request body: { model: 'mlx-community/Qwen3-8B-MLX-4bit', ... }
   // Assert: proxy forwards to the stub on the ModelHost port.
 });
 
-test('routes /v1/chat/completions to a ModelHost by hosted basename alias', async () => {
+test("routes /v1/chat/completions to a ModelHost by hosted basename alias", async () => {
   // Same fixture, but request body says model='Qwen3-8B-MLX-4bit'.
   // Assert: proxy forwards to the same ModelHost port.
 });
 
-test('routes /v1/chat/completions to a ModelRun when its rel matches', async () => {
+test("routes /v1/chat/completions to a ModelRun when its rel matches", async () => {
   // Same as today's behavior, retest to confirm no regression.
 });
 
-test('falls back to LLAMA_CPP_PORT when no model matches in route table', async () => {
+test("falls back to LLAMA_CPP_PORT when no model matches in route table", async () => {
   // Body model unknown; proxy still picks the default endpoint.
 });
 
-test('listOpenAIModels includes both ModelRun and ModelHost entries', () => {
+test("listOpenAIModels includes both ModelRun and ModelHost entries", () => {
   // owned_by differs: 'llamactl-agent' for ModelRun, 'llamactl-host' for ModelHost.
 });
 ```
@@ -1688,12 +1750,12 @@ EOF
 ### Task 5.2: AGENTS.md MLX section
 
 ```yaml meta
-id: '5.2'
+id: "5.2"
 files:
   - AGENTS.md
 file_scope: extend-shared
 depends_on: []
-parallel_with: ['5.1']
+parallel_with: ["5.1"]
 preferred_agent: claude-acp-sonnet
 fallback_agent: codex-acp-fast
 task_size: small
@@ -1701,6 +1763,7 @@ risk_class: paste-ready
 ```
 
 **Files:**
+
 - Modify: `AGENTS.md`
 
 - [ ] **Step 1: Read the existing "Model selection preferences" section**
@@ -1713,22 +1776,23 @@ Insert under "Model selection preferences", after the existing MTP-first rule, b
 
 ```markdown
 1.5. **MLX engine for Apple Silicon, when workload benefits from
-   shared prefix caching.** llamactl can host MLX-format models via
-   `kind: ModelHost` + `spec.engine: omlx`. Prefer MLX when:
-   - The workload is a long-lived agent with a stable system+tools
-     prefix (oMLX's SSD-tiered KV cache turns 30-90s TTFT on cold
-     reload into 1-3s).
-   - You're closing the train -> infer loop (packages/train/ produces
-     MLX adapters; serving them via oMLX skips the GGUF roundtrip).
-   Skip MLX when:
-   - The workload is classification / rubric-in-prompt — Q8-small
-     GGUF (Granite 3B Q8_0 via llama.cpp) still wins per the
-     attention-thesis eval until directly re-benched on MLX.
-   - You need the wider set of llama.cpp arch-specific flags
-     (--mtp-head, --swa-full, --rpc, etc.) — oMLX exposes its own
-     flag set, not those.
-   Sub A ships single-model ModelHost on local only;
-   multi-model + mac-mini + train-adapter loading land in Sub B/C/D.
+shared prefix caching.** llamactl can host MLX-format models via
+`kind: ModelHost` + `spec.engine: omlx`. Prefer MLX when:
+
+- The workload is a long-lived agent with a stable system+tools
+  prefix (oMLX's SSD-tiered KV cache turns 30-90s TTFT on cold
+  reload into 1-3s).
+- You're closing the train -> infer loop (packages/train/ produces
+  MLX adapters; serving them via oMLX skips the GGUF roundtrip).
+  Skip MLX when:
+- The workload is classification / rubric-in-prompt — Q8-small
+  GGUF (Granite 3B Q8_0 via llama.cpp) still wins per the
+  attention-thesis eval until directly re-benched on MLX.
+- You need the wider set of llama.cpp arch-specific flags
+  (--mtp-head, --swa-full, --rpc, etc.) — oMLX exposes its own
+  flag set, not those.
+  Sub A ships single-model ModelHost on local only;
+  multi-model + mac-mini + train-adapter loading land in Sub B/C/D.
 ```
 
 - [ ] **Step 3: Commit**
@@ -1754,12 +1818,12 @@ Integration: 6.1/6.2/6.3 are templates + scripts; 6.4 is the manual smoke run on
 ### Task 6.1: Pilot ModelHost yaml
 
 ```yaml meta
-id: '6.1'
+id: "6.1"
 files:
   - templates/workloads/mlx-host-local.yaml
 file_scope: new
-depends_on: ['4.1']
-parallel_with: ['6.2', '6.3']
+depends_on: ["4.1"]
+parallel_with: ["6.2", "6.3"]
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
 task_size: small
@@ -1767,6 +1831,7 @@ risk_class: paste-ready
 ```
 
 **Files:**
+
 - Create: `templates/workloads/mlx-host-local.yaml`
 
 - [ ] **Step 1: Author the yaml**
@@ -1834,12 +1899,12 @@ EOF
 ### Task 6.2: Pilot matrix bench spec
 
 ```yaml meta
-id: '6.2'
+id: "6.2"
 files:
   - packages/eval/specs/mlx-pilot.json
 file_scope: new
-depends_on: ['4.3']
-parallel_with: ['6.1', '6.3']
+depends_on: ["4.3"]
+parallel_with: ["6.1", "6.3"]
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
 task_size: small
@@ -1847,6 +1912,7 @@ risk_class: paste-ready
 ```
 
 **Files:**
+
 - Create: `packages/eval/specs/mlx-pilot.json`
 
 - [ ] **Step 1: Author the spec**
@@ -1889,12 +1955,12 @@ EOF
 ### Task 6.3: Smoke script
 
 ```yaml meta
-id: '6.3'
+id: "6.3"
 files:
   - tools/smoke-modelhost-omlx.sh
 file_scope: new
 depends_on: []
-parallel_with: ['6.1', '6.2']
+parallel_with: ["6.1", "6.2"]
 preferred_agent: codex-acp-fast
 fallback_agent: oc-deepseek-v4-pro
 task_size: small
@@ -1902,6 +1968,7 @@ risk_class: paste-ready
 ```
 
 **Files:**
+
 - Create: `tools/smoke-modelhost-omlx.sh`
 
 - [ ] **Step 1: Author the script**
@@ -1992,23 +2059,25 @@ Six waves total (five dispatched + one manual). Each wave is a
 `chain_start` fan-out; the next wave triggers after the prior wave's
 tasks all reach terminal-success and any maestro-review gates pass.
 
-| Wave | Tasks (parallel) | Bottleneck task | Gated on |
-|------|------------------|-----------------|----------|
-| 1 | `1.1`, `1.2`, `3.1`, `5.2`, `6.3` | `3.1` (substantial) | nothing |
-| 2 | `2.1`, `2.2`, `2.3`, `3.2` | `2.1`/`2.2`/`3.2` (substantial) | Wave 1 ⊇ `{1.1, 3.1}` |
-| 3 | `4.1`, `4.3` | `4.1` (substantial) | Wave 2 ⊇ `{2.1, 2.2, 2.3}` |
-| 4 | `4.2`, `6.1`, `6.2` | none (all small) | Wave 3 ⊇ `{4.1, 4.3}` |
-| 5 | `5.1` | `5.1` (substantial) | Wave 4 ⊇ `{4.2}` |
-| 6 | `6.4` (manual on M4 Pro) | n/a | all prior waves green |
+| Wave | Tasks (parallel)                  | Bottleneck task                 | Gated on                   |
+| ---- | --------------------------------- | ------------------------------- | -------------------------- |
+| 1    | `1.1`, `1.2`, `3.1`, `5.2`, `6.3` | `3.1` (substantial)             | nothing                    |
+| 2    | `2.1`, `2.2`, `2.3`, `3.2`        | `2.1`/`2.2`/`3.2` (substantial) | Wave 1 ⊇ `{1.1, 3.1}`      |
+| 3    | `4.1`, `4.3`                      | `4.1` (substantial)             | Wave 2 ⊇ `{2.1, 2.2, 2.3}` |
+| 4    | `4.2`, `6.1`, `6.2`               | none (all small)                | Wave 3 ⊇ `{4.1, 4.3}`      |
+| 5    | `5.1`                             | `5.1` (substantial)             | Wave 4 ⊇ `{4.2}`           |
+| 6    | `6.4` (manual on M4 Pro)          | n/a                             | all prior waves green      |
 
 Critical path (sequential, cannot be parallelized): `1.1 → 2.1 → 4.1 → 4.2 → 5.1` — five substantial dispatches end-to-end. Everything else fits in their shadow.
 
 Cross-phase wins this schedule captures:
+
 - `3.1`/`3.2` (catalog + pull MLX) form a self-contained chain in Waves 1–2 that never blocks the engine-registry critical path.
 - `5.2` (AGENTS.md) and `6.3` (smoke script) have zero deps, so they land in Wave 1 instead of waiting for Phase 5/6 calendar time.
 - `4.3` (matrix engine dispatch) finishes one wave early (Wave 3) because it doesn't need the ModelHost schema `2.3` — only the engine adapters `2.1`/`2.2`.
 
 Driver notes for next session:
+
 - Set `use_worktree: false` and prepend `cd /Volumes/WorkSSD/repos/personal/llamactl` to every `chain_start` prompt (per `reference_penumbra_dispatch_routing`).
 - For each dispatch include the spec path (`docs/superpowers/specs/2026-05-18-mlx-engine-sub-a-design.md`) and the plan path (`docs/superpowers/plans/2026-05-18-mlx-engine-sub-a-plan.md`) so the agent can re-read context.
 - After every wave: run `bun test packages/core packages/remote packages/eval` from the integration agent branch before merging. Phase-by-phase integration notes already list the smaller verification commands.

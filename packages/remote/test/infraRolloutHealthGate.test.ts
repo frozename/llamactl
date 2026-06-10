@@ -1,8 +1,7 @@
-
 import { test, expect } from "bun:test";
 import { healthGate } from "@llamactl/fleet-supervisor";
 
-test("T1: healthGate resolves \"healthy\" when all workloads reachable=true before timeout", async () => {
+test('T1: healthGate resolves "healthy" when all workloads reachable=true before timeout', async () => {
   let calls = 0;
   const fetchSnapshot = async () => {
     calls++;
@@ -14,7 +13,7 @@ test("T1: healthGate resolves \"healthy\" when all workloads reachable=true befo
   expect(calls).toBe(3);
 });
 
-test("T2: healthGate resolves \"timeout\" after timeoutMs without full health", async () => {
+test('T2: healthGate resolves "timeout" after timeoutMs without full health', async () => {
   let calls = 0;
   const fetchSnapshot = async () => {
     calls++;

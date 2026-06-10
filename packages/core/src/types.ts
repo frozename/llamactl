@@ -3,26 +3,26 @@
  * default quant preferences, and preset mappings. Values kept in sync
  * with the historical zsh library so tuned bench records keep matching.
  */
-export type MachineProfile = 'mac-mini-16g' | 'balanced' | 'macbook-pro-48g';
+export type MachineProfile = "mac-mini-16g" | "balanced" | "macbook-pro-48g";
 
 /**
  * Which local AI provider is active. `llama.cpp` talks to a local
  * llama-server; `lmstudio` talks to LM Studio's OpenAI-compatible port.
  */
-export type Provider = 'llama.cpp' | 'lmstudio';
+export type Provider = "llama.cpp" | "lmstudio";
 
 /**
  * Coarse class used by discovery, bench compare, and preset routing.
  * Keyed by the fields stored in the curated catalog TSV.
  */
-export type ModelClass = 'multimodal' | 'reasoning' | 'general' | 'custom';
+export type ModelClass = "multimodal" | "reasoning" | "general" | "custom";
 
 /**
  * Bench mode label. `vision` is a keying label on text-throughput records
  * for vision-capable models; `vision-image` would be real mmproj-driven
  * records (currently stored in a separate file as of Phase 0).
  */
-export type BenchMode = 'text' | 'vision';
+export type BenchMode = "text" | "vision";
 
 /**
  * Resolved environment that the library operates on. Produced by
@@ -90,11 +90,11 @@ export interface ResolvedEnv {
  * Consumers call `env.ensureDirs(resolved)` when they want them created.
  */
 export const MANAGED_DIRS: readonly (keyof ResolvedEnv)[] = [
-  'HF_HOME',
-  'HUGGINGFACE_HUB_CACHE',
-  'OLLAMA_MODELS',
-  'LLAMA_CPP_MODELS',
-  'LLAMA_CPP_CACHE',
-  'LLAMA_CPP_LOGS',
-  'LOCAL_AI_RUNTIME_DIR',
+  "HF_HOME",
+  "HUGGINGFACE_HUB_CACHE",
+  "OLLAMA_MODELS",
+  "LLAMA_CPP_MODELS",
+  "LLAMA_CPP_CACHE",
+  "LLAMA_CPP_LOGS",
+  "LOCAL_AI_RUNTIME_DIR",
 ] as const;

@@ -3,11 +3,11 @@
 // package path and the relative path are distinct module instances, so a
 // relative import would publish to a productionPeerSnapshots the proxy never
 // reads (routes silently never appear).
-import { openaiProxy } from '@llamactl/core';
-import type { PeerSnapshot } from '../../../core/src/workloadRuntime.js';
-import { listPeers, type PeerNode } from '../config/peers.js';
-import { makePinnedFetch } from '../client/links.js';
-import type { ClusterNode } from '../config/schema.js';
+import { openaiProxy } from "@llamactl/core";
+import type { PeerSnapshot } from "../../../core/src/workloadRuntime.js";
+import { listPeers, type PeerNode } from "../config/peers.js";
+import { makePinnedFetch } from "../client/links.js";
+import type { ClusterNode } from "../config/schema.js";
 
 /**
  * Production peer-snapshot poller. Periodically fetches each cluster peer's
@@ -21,7 +21,12 @@ import type { ClusterNode } from '../config/schema.js';
 
 interface RawFleetSnapshot {
   node_mem?: { free_mb?: number; inactive_mb?: number };
-  workloads?: Array<{ models?: string[]; endpoint?: string; reachable?: boolean; revision?: string | null }>;
+  workloads?: Array<{
+    models?: string[];
+    endpoint?: string;
+    reachable?: boolean;
+    revision?: string | null;
+  }>;
 }
 
 // Treat a peer as HIGH pressure (routes dropped by listClusterRoutes) only when
@@ -39,10 +44,10 @@ async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSna
     certificate: peer.certificate,
     fingerprint: peer.fingerprint,
   } as ClusterNode);
-  const target = new URL('/v1/fleet/snapshot', peer.endpoint);
+  const target = new URL("/v1/fleet/snapshot", peer.endpoint);
   let res: Response;
   try {
-    res = await pinnedFetch(target, { method: 'GET', headers });
+    res = await pinnedFetch(target, { method: "GET", headers });
   } catch {
     return null; // unreachable / TLS error -> no peer routes this tick
   }
@@ -72,11 +77,11 @@ async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSna
   if (workloads.length === 0) return null;
   const nm = snap.node_mem;
   const availableMb =
-    typeof nm?.free_mb === 'number' || typeof nm?.inactive_mb === 'number'
+    typeof nm?.free_mb === "number" || typeof nm?.inactive_mb === "number"
       ? (nm?.free_mb ?? 0) + (nm?.inactive_mb ?? 0)
       : null;
-  const pressure: PeerSnapshot['pressure'] =
-    availableMb !== null && availableMb < HIGH_PRESSURE_AVAILABLE_MB ? 'HIGH' : 'NORMAL';
+  const pressure: PeerSnapshot["pressure"] =
+    availableMb !== null && availableMb < HIGH_PRESSURE_AVAILABLE_MB ? "HIGH" : "NORMAL";
   return { workloads, pressure, fetchedAt: nowMs };
 }
 
@@ -128,8 +133,14 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
         }),
       );
       if (!stopped) {
-        const before = [...lastPublished.values()].flatMap((s) => s.workloads.map((w) => w.modelId)).sort().join(',');
-        const after = [...next.values()].flatMap((s) => s.workloads.map((w) => w.modelId)).sort().join(',');
+        const before = [...lastPublished.values()]
+          .flatMap((s) => s.workloads.map((w) => w.modelId))
+          .sort()
+          .join(",");
+        const after = [...next.values()]
+          .flatMap((s) => s.workloads.map((w) => w.modelId))
+          .sort()
+          .join(",");
         lastPublished = next;
         publish(next);
         if (before !== after) {
@@ -145,7 +156,7 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
 
   void tick();
   const handle = setInterval(() => void tick(), intervalMs);
-  if (typeof (handle as { unref?: () => void }).unref === 'function') {
+  if (typeof (handle as { unref?: () => void }).unref === "function") {
     (handle as { unref: () => void }).unref();
   }
   return () => {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from "bun:test";
 import {
   buildFrontierPrompt,
   buildDeterministicPrompt,
@@ -6,39 +6,39 @@ import {
   createTokenizeClient,
   renderKvWarmBenchMarkdown,
   type KvWarmBenchRow,
-} from '../src/matrix/workloads/kv-warm-bench.js';
+} from "../src/matrix/workloads/kv-warm-bench.js";
 
-describe('buildDeterministicPrompt', () => {
-  test('is byte-identical for the same args', () => {
+describe("buildDeterministicPrompt", () => {
+  test("is byte-identical for the same args", () => {
     const a = buildDeterministicPrompt({ approxTokens: 2048, seed: 7 });
     const b = buildDeterministicPrompt({ approxTokens: 2048, seed: 7 });
     expect(a).toBe(b);
   });
 });
 
-describe('buildFrontierPrompt', () => {
-  test('matches the exact token frontier when tokenize endpoint is available', async () => {
+describe("buildFrontierPrompt", () => {
+  test("matches the exact token frontier when tokenize endpoint is available", async () => {
     const origFetch = globalThis.fetch;
     const tokenizeCalls: number[] = [];
     globalThis.fetch = (async (input: Request | string | URL, init?: RequestInit) => {
       const url = String(input);
-      if (url.endsWith('/v1/tokenize')) {
-        const body = JSON.parse(String(init?.body ?? '{}')) as { prompt?: string };
-        const payload = String(body.prompt ?? '');
-        const words = payload.split('\n')[1]?.trim().split(/\s+/).filter(Boolean).length ?? 0;
+      if (url.endsWith("/v1/tokenize")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { prompt?: string };
+        const payload = String(body.prompt ?? "");
+        const words = payload.split("\n")[1]?.trim().split(/\s+/).filter(Boolean).length ?? 0;
         tokenizeCalls.push(words);
         return new Response(JSON.stringify({ token_ids: [], n_tokens: words * 6 }), {
           status: 200,
-          headers: { 'content-type': 'application/json' },
+          headers: { "content-type": "application/json" },
         });
       }
-      return new Response('unexpected', { status: 500 });
+      return new Response("unexpected", { status: 500 });
     }) as unknown as typeof fetch;
 
     try {
       const tokenizeClient = await createTokenizeClient({
-        proxyBaseUrl: 'http://127.0.0.1:8089',
-        model: 'granite-test',
+        proxyBaseUrl: "http://127.0.0.1:8089",
+        model: "granite-test",
       });
       expect(tokenizeClient).not.toBeNull();
       if (!tokenizeClient) return;
@@ -48,7 +48,7 @@ describe('buildFrontierPrompt', () => {
         seed: 11,
         tokenize: tokenizeClient,
       });
-      const finalWords = prompt.split('\n')[1]?.trim().split(/\s+/).filter(Boolean).length ?? 0;
+      const finalWords = prompt.split("\n")[1]?.trim().split(/\s+/).filter(Boolean).length ?? 0;
       expect(finalWords * 6).toBe(120);
       expect(tokenizeCalls.length).toBeLessThanOrEqual(4);
     } finally {
@@ -57,21 +57,22 @@ describe('buildFrontierPrompt', () => {
   });
 });
 
-describe('createTokenizeClient', () => {
-  test('warns once and falls back when tokenize endpoint is unavailable', async () => {
+describe("createTokenizeClient", () => {
+  test("warns once and falls back when tokenize endpoint is unavailable", async () => {
     const origFetch = globalThis.fetch;
     const warnings: string[] = [];
-    globalThis.fetch = (async () => new Response('not found', { status: 404 })) as unknown as typeof fetch;
+    globalThis.fetch = (async () =>
+      new Response("not found", { status: 404 })) as unknown as typeof fetch;
 
     try {
       const tokenizeClient = await createTokenizeClient({
-        proxyBaseUrl: 'http://127.0.0.1:8089',
-        model: 'granite-test',
+        proxyBaseUrl: "http://127.0.0.1:8089",
+        model: "granite-test",
         onWarn: (msg) => warnings.push(msg),
       });
       expect(tokenizeClient).toBeNull();
       expect(warnings).toEqual([
-        'kv-warm-bench: /v1/tokenize unavailable; interpreting --frontiers as approximate word counts',
+        "kv-warm-bench: /v1/tokenize unavailable; interpreting --frontiers as approximate word counts",
       ]);
     } finally {
       globalThis.fetch = origFetch;
@@ -79,8 +80,8 @@ describe('createTokenizeClient', () => {
   });
 });
 
-describe('formatKvWarmBenchCsvRow', () => {
-  test('renders all columns in documented order', () => {
+describe("formatKvWarmBenchCsvRow", () => {
+  test("renders all columns in documented order", () => {
     const row: KvWarmBenchRow = {
       promptSize: 8192,
       tColdMs: 1200.23,
@@ -95,13 +96,13 @@ describe('formatKvWarmBenchCsvRow', () => {
     };
 
     expect(formatKvWarmBenchCsvRow(row)).toBe(
-      '8192,1200.23,220.11,410.20,420.30,455.40,2.86,9,3,0',
+      "8192,1200.23,220.11,410.20,420.30,455.40,2.86,9,3,0",
     );
   });
 });
 
-describe('renderKvWarmBenchMarkdown', () => {
-  test('includes table headers, raw CSV block, and decision checklist', () => {
+describe("renderKvWarmBenchMarkdown", () => {
+  test("includes table headers, raw CSV block, and decision checklist", () => {
     const rows: KvWarmBenchRow[] = [
       {
         promptSize: 2048,
@@ -118,22 +119,30 @@ describe('renderKvWarmBenchMarkdown', () => {
     ];
 
     const md = renderKvWarmBenchMarkdown({
-      generatedAtIso: '2026-05-24T12:00:00.000Z',
-      model: 'qwen-test',
-      proxyBaseUrl: 'http://127.0.0.1:8089',
-      machine: 'host-1',
-      os: 'darwin 26.0.0',
+      generatedAtIso: "2026-05-24T12:00:00.000Z",
+      model: "qwen-test",
+      proxyBaseUrl: "http://127.0.0.1:8089",
+      machine: "host-1",
+      os: "darwin 26.0.0",
       frontiers: [2048],
       warmRuns: 3,
       rows,
     });
 
-    expect(md).toContain('| promptSize | t_cold_ms | t_cold_first_byte_ms | t_warm_min_ms | t_warm_p50_ms | t_warm_p95_ms | ratio_cold_over_warm | kv_warm_hit_total | kv_cold_miss_total | kv_false_hit_total |');
-    expect(md).toContain('```csv');
-    expect(md).toContain('promptSize,t_cold_ms,t_cold_first_byte_ms,t_warm_min_ms,t_warm_p50_ms,t_warm_p95_ms,ratio_cold_over_warm,kv_warm_hit_total,kv_cold_miss_total,kv_false_hit_total');
-    expect(md).toContain('## Decision (to fill in after running)');
-    expect(md).toContain('- [ ] 16k frontier cold/warm ratio ≥ 2.0 → Slice 2 ships, Phase 8 NOT needed');
-    expect(md).toContain('- [ ] Write cost p95 ≤ 100 ms → no cadence work needed');
-    expect(md).toContain("- [ ] False-hit rate (`kv_false_hit_total / kv_warm_hit_total`) ≤ 1% → no equivalence work needed");
+    expect(md).toContain(
+      "| promptSize | t_cold_ms | t_cold_first_byte_ms | t_warm_min_ms | t_warm_p50_ms | t_warm_p95_ms | ratio_cold_over_warm | kv_warm_hit_total | kv_cold_miss_total | kv_false_hit_total |",
+    );
+    expect(md).toContain("```csv");
+    expect(md).toContain(
+      "promptSize,t_cold_ms,t_cold_first_byte_ms,t_warm_min_ms,t_warm_p50_ms,t_warm_p95_ms,ratio_cold_over_warm,kv_warm_hit_total,kv_cold_miss_total,kv_false_hit_total",
+    );
+    expect(md).toContain("## Decision (to fill in after running)");
+    expect(md).toContain(
+      "- [ ] 16k frontier cold/warm ratio ≥ 2.0 → Slice 2 ships, Phase 8 NOT needed",
+    );
+    expect(md).toContain("- [ ] Write cost p95 ≤ 100 ms → no cadence work needed");
+    expect(md).toContain(
+      "- [ ] False-hit rate (`kv_false_hit_total / kv_warm_hit_total`) ≤ 1% → no equivalence work needed",
+    );
   });
 });

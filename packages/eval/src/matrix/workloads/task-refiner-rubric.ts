@@ -1,4 +1,4 @@
-import type { WorkloadEval } from '../types.js';
+import type { WorkloadEval } from "../types.js";
 
 interface CorpusRow {
   handoff_id?: string;
@@ -31,31 +31,53 @@ Reply with JSON only, no preamble, no markdown:
 {"intent_preservation": <0-3>, "contract_clarity": <0-3>, "noise_removal": <0-3>, "comment": "<one sentence>"}`;
 
 const judgeModel = {
-  name: 'judge-granite-8b-Q4',
-  gguf_path: '/Volumes/WorkSSD/ai-models/llama.cpp/models/granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf',
-  quant: 'Q4_K_M',
-  family: 'granite-4.1',
-  size_params: '8B',
-  host: '127.0.0.1',
+  name: "judge-granite-8b-Q4",
+  gguf_path:
+    "/Volumes/WorkSSD/ai-models/llama.cpp/models/granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf",
+  quant: "Q4_K_M",
+  family: "granite-4.1",
+  size_params: "8B",
+  host: "127.0.0.1",
   port: 8094,
   extra_args: [],
-  binary: '/Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server',
-  start_args: ['--ctx-size', '16384', '-ngl', '999', '--flash-attn', 'on', '-ctk', 'q8_0', '-ctv', 'q8_0', '--no-warmup', '-np', '1', '--jinja', '--reasoning', 'off', '--alias', 'local'],
+  binary: "/Users/acordeiro/DevStorage/src/llama.cpp/build/bin/llama-server",
+  start_args: [
+    "--ctx-size",
+    "16384",
+    "-ngl",
+    "999",
+    "--flash-attn",
+    "on",
+    "-ctk",
+    "q8_0",
+    "-ctv",
+    "q8_0",
+    "--no-warmup",
+    "-np",
+    "1",
+    "--jinja",
+    "--reasoning",
+    "off",
+    "--alias",
+    "local",
+  ],
   managed: true,
 } as const;
 
-function parseJudgeJson(text: string): { intent_preservation: number; contract_clarity: number; noise_removal: number } | null {
+function parseJudgeJson(
+  text: string,
+): { intent_preservation: number; contract_clarity: number; noise_removal: number } | null {
   let s = text;
-  if (s.includes('@@metadata')) {
-    const parts = s.split('@@metadata', 2);
-    if (parts.length > 1) s = parts[1] ?? '';
-    const endParts = s.split('@@end', 1);
-    if (endParts.length > 0) s = endParts[0] ?? '';
+  if (s.includes("@@metadata")) {
+    const parts = s.split("@@metadata", 2);
+    if (parts.length > 1) s = parts[1] ?? "";
+    const endParts = s.split("@@end", 1);
+    if (endParts.length > 0) s = endParts[0] ?? "";
   }
   const fenceMatch = s.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (fenceMatch) s = fenceMatch[1] ?? '';
-  const start = s.indexOf('{');
-  const end = s.lastIndexOf('}');
+  if (fenceMatch) s = fenceMatch[1] ?? "";
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
   try {
     const obj = JSON.parse(s.slice(start, end + 1)) as Record<string, unknown>;
@@ -64,9 +86,9 @@ function parseJudgeJson(text: string): { intent_preservation: number; contract_c
       contract_clarity: 0,
       noise_removal: 0,
     };
-    for (const k of ['intent_preservation', 'contract_clarity', 'noise_removal'] as const) {
+    for (const k of ["intent_preservation", "contract_clarity", "noise_removal"] as const) {
       const v = obj[k];
-      if (typeof v !== 'number' || v < 0 || v > 3) return null;
+      if (typeof v !== "number" || v < 0 || v > 3) return null;
       out[k] = v;
     }
     return out;
@@ -76,32 +98,38 @@ function parseJudgeJson(text: string): { intent_preservation: number; contract_c
 }
 
 export const taskRefinerRubricWorkload: WorkloadEval = {
-  name: 'task-refiner-rubric',
-  corpus_path: '/tmp/phase2-refiner/inputs.jsonl',
-  primary_metric_name: 'composite',
+  name: "task-refiner-rubric",
+  corpus_path: "/tmp/phase2-refiner/inputs.jsonl",
+  primary_metric_name: "composite",
   judge_model: judgeModel,
   prompt_builder: (row) => {
     const r = row as CorpusRow;
     return {
       messages: [
-        { role: 'system', content: REFINER_SYSTEM_PROMPT },
-        { role: 'user', content: r.input },
+        { role: "system", content: REFINER_SYSTEM_PROMPT },
+        { role: "user", content: r.input },
       ],
     };
   },
   scorer: async (row, completion) => {
     const r = row as CorpusRow;
     const fail = (reason: string) => ({
-      metrics: { intent_preservation: 0, contract_clarity: 0, noise_removal: 0, composite: 0, parse_error: 1 },
+      metrics: {
+        intent_preservation: 0,
+        contract_clarity: 0,
+        noise_removal: 0,
+        composite: 0,
+        parse_error: 1,
+      },
       prediction: reason,
-      gold: 'judged',
+      gold: "judged",
     });
-    if (!completion.trim()) return fail('empty_output');
+    if (!completion.trim()) return fail("empty_output");
     const judgeReq = {
-      model: 'local',
+      model: "local",
       messages: [
-        { role: 'system', content: JUDGE_SYSTEM },
-        { role: 'user', content: `ORIGINAL:\n${r.input}\n\nCANDIDATE:\n${completion}` },
+        { role: "system", content: JUDGE_SYSTEM },
+        { role: "user", content: `ORIGINAL:\n${r.input}\n\nCANDIDATE:\n${completion}` },
       ],
       max_tokens: 300,
       temperature: 0,
@@ -110,26 +138,31 @@ export const taskRefinerRubricWorkload: WorkloadEval = {
     let judgeText: string;
     try {
       const resp = await fetch(judgeUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(judgeReq),
       });
       if (!resp.ok) return fail(`judge_http_${resp.status}`);
       const j = (await resp.json()) as any;
-      judgeText = j?.choices?.[0]?.message?.content ?? '';
+      judgeText = j?.choices?.[0]?.message?.content ?? "";
     } catch (err) {
-      return fail(`judge_fetch_${err instanceof Error ? err.message : 'unknown'}`);
+      return fail(`judge_fetch_${err instanceof Error ? err.message : "unknown"}`);
     }
     const parsed = parseJudgeJson(judgeText);
-    if (!parsed) return fail('judge_parse_error');
+    if (!parsed) return fail("judge_parse_error");
     const intent = parsed.intent_preservation;
     const contract = parsed.contract_clarity;
     const noise = parsed.noise_removal;
     const composite = (intent + contract + noise) / 9.0;
     return {
-      metrics: { intent_preservation: intent, contract_clarity: contract, noise_removal: noise, composite },
-      prediction: 'judged',
-      gold: 'judged',
+      metrics: {
+        intent_preservation: intent,
+        contract_clarity: contract,
+        noise_removal: noise,
+        composite,
+      },
+      prediction: "judged",
+      gold: "judged",
     };
   },
 };

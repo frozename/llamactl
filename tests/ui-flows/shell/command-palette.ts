@@ -14,11 +14,11 @@
  *     --args=path/to/main.js
  */
 
-import { spawn, type ChildProcessByStdio } from 'node:child_process';
-import { createInterface } from 'node:readline';
-import type { Readable, Writable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { createInterface } from "node:readline";
+import type { Readable, Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 // ── Minimal JSON-RPC / MCP client ─────────────────────────────────
 
@@ -35,7 +35,7 @@ class McpClient {
   constructor(proc: ChildProcessByStdio<Writable, Readable, null>) {
     this.proc = proc;
     const rl = createInterface({ input: proc.stdout });
-    rl.on('line', (line) => {
+    rl.on("line", (line) => {
       if (!line.trim()) return;
       try {
         const frame = JSON.parse(line) as JsonRpcResponse;
@@ -62,11 +62,11 @@ class McpClient {
       });
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'tools/call',
+          method: "tools/call",
           params: { name: tool, arguments: args },
-        }) + '\n',
+        }) + "\n",
       );
     });
     if (res.error) throw new Error(`${tool} → ${res.error.message}`);
@@ -74,7 +74,7 @@ class McpClient {
       isError?: boolean;
       content?: Array<{ text?: string }>;
     };
-    const text = envelope?.content?.[0]?.text ?? '';
+    const text = envelope?.content?.[0]?.text ?? "";
     if (envelope?.isError) throw new Error(`${tool} → ${text}`);
     try {
       return JSON.parse(text);
@@ -88,20 +88,24 @@ class McpClient {
       this.pending.set(id, (r) => resolveP(r));
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'initialize',
+          method: "initialize",
           params: {
-            protocolVersion: '2024-11-05',
+            protocolVersion: "2024-11-05",
             capabilities: {},
-            clientInfo: { name: 'command-palette', version: '0.0.1' },
+            clientInfo: { name: "command-palette", version: "0.0.1" },
           },
-        }) + '\n',
+        }) + "\n",
       );
     });
   }
   kill(): void {
-    try { this.proc.kill(); } catch { /* ignore */ }
+    try {
+      this.proc.kill();
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -120,17 +124,18 @@ function parseArgs(argv: string[]): DriverArgs {
   const env: Record<string, string> = {};
   let userDataDir: string | undefined;
   for (const a of argv.slice(2)) {
-    if (a.startsWith('--executable=')) executable = a.slice('--executable='.length);
-    else if (a.startsWith('--args=')) execArgs = a.slice('--args='.length).split(' ').filter(Boolean);
-    else if (a.startsWith('--env=')) {
-      const kv = a.slice('--env='.length);
-      const eq = kv.indexOf('=');
+    if (a.startsWith("--executable=")) executable = a.slice("--executable=".length);
+    else if (a.startsWith("--args="))
+      execArgs = a.slice("--args=".length).split(" ").filter(Boolean);
+    else if (a.startsWith("--env=")) {
+      const kv = a.slice("--env=".length);
+      const eq = kv.indexOf("=");
       if (eq > 0) env[kv.slice(0, eq)] = kv.slice(eq + 1);
-    } else if (a.startsWith('--userDataDir=')) {
-      userDataDir = a.slice('--userDataDir='.length);
+    } else if (a.startsWith("--userDataDir=")) {
+      userDataDir = a.slice("--userDataDir=".length);
     }
   }
-  if (!executable) throw new Error('--executable required');
+  if (!executable) throw new Error("--executable required");
   const out: DriverArgs = { executable, execArgs, env };
   if (userDataDir !== undefined) out.userDataDir = userDataDir;
   return out;
@@ -139,9 +144,9 @@ function parseArgs(argv: string[]): DriverArgs {
 function resolveServerScript(here: string): string {
   const explicit = process.env.ELECTRON_MCP_DIR;
   if (explicit && explicit.length > 0) {
-    return resolve(explicit, 'dist', 'server', 'index.js');
+    return resolve(explicit, "dist", "server", "index.js");
   }
-  return resolve(here, '..', '..', '..', '..', 'electron-mcp-server', 'dist', 'server', 'index.js');
+  return resolve(here, "..", "..", "..", "..", "electron-mcp-server", "dist", "server", "index.js");
 }
 
 // ── Command-palette helpers ────────────────────────────────────────
@@ -153,7 +158,7 @@ function resolveServerScript(here: string): string {
  * keypress.
  */
 async function openPalette(client: McpClient, sessionId: string): Promise<void> {
-  await client.call('electron_evaluate_renderer', {
+  await client.call("electron_evaluate_renderer", {
     sessionId,
     expression: `(() => {
       const e = new KeyboardEvent('keydown', {
@@ -167,10 +172,10 @@ async function openPalette(client: McpClient, sessionId: string): Promise<void> 
       document.dispatchEvent(e);
     })()`,
   });
-  await client.call('electron_wait_for_selector', {
+  await client.call("electron_wait_for_selector", {
     sessionId,
     selector: '[data-testid="command-palette"]',
-    state: 'visible',
+    state: "visible",
     timeout: 3_000,
   });
 }
@@ -182,7 +187,7 @@ async function paletteType(client: McpClient, sessionId: string, text: string): 
   // electron_fill sets the DOM value but doesn't reliably trigger React's
   // controlled-input onChange. Drive the input via the native value setter
   // + an explicit input event — same trick React Testing Library uses.
-  await client.call('electron_evaluate_renderer', {
+  await client.call("electron_evaluate_renderer", {
     sessionId,
     expression: `(() => {
       const el = document.querySelector('[data-testid="command-palette-input"]');
@@ -204,7 +209,7 @@ async function paletteType(client: McpClient, sessionId: string, text: string): 
  * input element is sufficient.
  */
 async function paletteConfirm(client: McpClient, sessionId: string): Promise<void> {
-  await client.call('electron_evaluate_renderer', {
+  await client.call("electron_evaluate_renderer", {
     sessionId,
     expression: `(() => {
       const e = new KeyboardEvent('keydown', {
@@ -226,7 +231,7 @@ async function paletteConfirm(client: McpClient, sessionId: string): Promise<voi
  * on document (bubbles:true) is sufficient.
  */
 async function paletteEscape(client: McpClient, sessionId: string): Promise<void> {
-  await client.call('electron_evaluate_renderer', {
+  await client.call("electron_evaluate_renderer", {
     sessionId,
     expression: `(() => {
       document.dispatchEvent(new KeyboardEvent('keydown', {
@@ -246,9 +251,9 @@ async function main(): Promise<void> {
   const serverScript = resolveServerScript(here);
 
   const env: NodeJS.ProcessEnv = { ...process.env };
-  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? 'warn';
-  const nodeBin = process.env.MCP_NODE ?? 'node';
-  const proc = spawn(nodeBin, [serverScript], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "warn";
+  const nodeBin = process.env.MCP_NODE ?? "node";
+  const proc = spawn(nodeBin, [serverScript], { env, stdio: ["pipe", "pipe", "inherit"] });
   const client = new McpClient(proc);
 
   try {
@@ -261,32 +266,32 @@ async function main(): Promise<void> {
     if (Object.keys(args.env).length > 0) launchArgMap.env = args.env;
     if (args.userDataDir !== undefined) launchArgMap.userDataDir = args.userDataDir;
 
-    const launch = (await client.call('electron_launch', launchArgMap, 270_000)) as {
+    const launch = (await client.call("electron_launch", launchArgMap, 270_000)) as {
       sessionId?: string;
     };
     const sessionId = launch.sessionId;
-    if (!sessionId) throw new Error('launch failed — no sessionId in response');
+    if (!sessionId) throw new Error("launch failed — no sessionId in response");
 
     // Wait for the renderer to be ready.
-    await client.call('electron_wait_for_window', { sessionId, index: 0, timeoutMs: 30_000 });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_window", { sessionId, index: 0, timeoutMs: 30_000 });
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="dashboard-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 15_000,
     });
 
     // ── Step 1: ⌘⇧P opens the palette ────────────────────────────
     await openPalette(client, sessionId);
-    console.log('[PASS] ⌘⇧P → command-palette visible');
+    console.log("[PASS] ⌘⇧P → command-palette visible");
 
     // ── Step 2: type "log" and assert the Logs row is visible ─────
-    await paletteType(client, sessionId, 'log');
+    await paletteType(client, sessionId, "log");
 
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="command-palette-row-go:logs"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
     console.log('[PASS] filter "log" → command-palette-row-go:logs visible');
@@ -294,42 +299,42 @@ async function main(): Promise<void> {
     // ── Step 3: Enter opens the Logs module ───────────────────────
     await paletteConfirm(client, sessionId);
 
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="logs-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    console.log('[PASS] Enter → logs-root visible');
+    console.log("[PASS] Enter → logs-root visible");
 
     // ── Step 4: reopen palette, Escape closes without opening a tab
     await openPalette(client, sessionId);
-    console.log('[PASS] reopen → command-palette visible');
+    console.log("[PASS] reopen → command-palette visible");
 
     await paletteEscape(client, sessionId);
 
     // Assert the palette is gone (hidden / detached).
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="command-palette"]',
-      state: 'hidden',
+      state: "hidden",
       timeout: 3_000,
     });
-    console.log('[PASS] Escape → command-palette hidden');
+    console.log("[PASS] Escape → command-palette hidden");
 
     // Logs tab should still be the active view (Escape must not change it).
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="logs-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    console.log('[PASS] Escape did not navigate away from logs-root');
+    console.log("[PASS] Escape did not navigate away from logs-root");
 
-    await client.call('electron_close', { sessionId });
-    console.log('command-palette: ok');
+    await client.call("electron_close", { sessionId });
+    console.log("command-palette: ok");
   } catch (err) {
-    console.error('command-palette FAILED:', (err as Error).message);
+    console.error("command-palette FAILED:", (err as Error).message);
     process.exitCode = 1;
   } finally {
     client.kill();

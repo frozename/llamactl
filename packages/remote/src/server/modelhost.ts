@@ -1,18 +1,23 @@
-import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { basename } from 'node:path';
-import { ENGINES } from '../../../core/src/engines/index.js';
-import { computeModelHostSpecHash, readModelHostState, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
-import { resolveEnv } from '../../../core/src/env.js';
+import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
+import { ENGINES } from "../../../core/src/engines/index.js";
+import {
+  computeModelHostSpecHash,
+  readModelHostState,
+  removeModelHostState,
+  writeModelHostState,
+} from "../../../core/src/engines/state.js";
+import { resolveEnv } from "../../../core/src/env.js";
 import {
   defaultReadProcessCommand,
   parseSlotSavePathFromCommand,
   resolveSlotSavePathArgs,
-} from '../../../core/src/kvstore/index.js';
-import { loadModelHostByName, saveModelHost } from '../workload/modelhost-store.js';
-import { ModelHostManifestSchema, type ModelHostManifest } from '../workload/modelhost-schema.js';
-import type { WorkloadKey } from '../../../core/src/workloadRuntime.js';
-import type { EngineBootEnv } from '../../../core/src/engines/types.js';
+} from "../../../core/src/kvstore/index.js";
+import { loadModelHostByName, saveModelHost } from "../workload/modelhost-store.js";
+import { ModelHostManifestSchema, type ModelHostManifest } from "../workload/modelhost-schema.js";
+import type { WorkloadKey } from "../../../core/src/workloadRuntime.js";
+import type { EngineBootEnv } from "../../../core/src/engines/types.js";
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -78,7 +83,7 @@ export interface StatusModelHostOptions {
 }
 
 export interface StatusModelHostResult {
-  state: 'Running' | 'Stopped';
+  state: "Running" | "Stopped";
   pid?: number | null;
   specHash?: string;
 }
@@ -88,26 +93,26 @@ function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
 }
 
 const CHILD_ENV_ALLOWLIST = [
-  'PATH',
-  'HOME',
-  'USER',
-  'LANG',
-  'LC_ALL',
-  'TMPDIR',
-  'LLAMACTL_MODELS_DIR',
-  'LLAMA_CPP_MODELS',
-  'LLAMA_CPP_BIN',
+  "PATH",
+  "HOME",
+  "USER",
+  "LANG",
+  "LC_ALL",
+  "TMPDIR",
+  "LLAMACTL_MODELS_DIR",
+  "LLAMA_CPP_MODELS",
+  "LLAMA_CPP_BIN",
   // Apple Metal GPU context-store timeout relaxation — workaround for
   // MLX issue #2670 (uncatchable abort() on Metal command-buffer errors
   // under high concurrency / multi-model load). Set to "1" in the host's
   // launchd plist to enable; harmless when unset.
-  'AGX_RELAX_CDM_CTXSTORE_TIMEOUT',
+  "AGX_RELAX_CDM_CTXSTORE_TIMEOUT",
   // MLX back-pressure gate: caps in-flight Metal command buffers per
   // stream. Set to a positive integer (e.g. "1") to enable the gate.
   // Unset means INT_MAX (gate disabled, single mutex acquisition fast
   // path). Tied to the per-stream gate added on top of issue #2670.
-  'MLX_METAL_MAX_INFLIGHT_PER_STREAM',
-  'MLX_METAL_BACKPRESSURE_TIMEOUT_SECS',
+  "MLX_METAL_MAX_INFLIGHT_PER_STREAM",
+  "MLX_METAL_BACKPRESSURE_TIMEOUT_SECS",
 ];
 
 // Merge order: parent allowlist → engineOverrides → specEnv.
@@ -161,10 +166,10 @@ const FIND_LISTENER_TIMEOUT_MS = 2000;
 // disable adoption in production. Fall back to a bare name only if neither
 // canonical location exists (e.g. an unusual Linux layout on PATH).
 function resolveLsofPath(): string {
-  for (const candidate of ['/usr/sbin/lsof', '/usr/bin/lsof']) {
+  for (const candidate of ["/usr/sbin/lsof", "/usr/bin/lsof"]) {
     if (existsSync(candidate)) return candidate;
   }
-  return 'lsof';
+  return "lsof";
 }
 
 function defaultFindListenerPid(
@@ -179,7 +184,7 @@ function defaultFindListenerPid(
       settled = true;
       clearTimeout(timer);
       try {
-        child?.kill('SIGKILL');
+        child?.kill("SIGKILL");
       } catch {}
       resolve(value);
     };
@@ -189,15 +194,15 @@ function defaultFindListenerPid(
       // different address of the same port (e.g. 0.0.0.0 / ::1) is not matched.
       child = nodeSpawn(
         resolveLsofPath(),
-        ['-nP', `-iTCP@${endpoint.host}:${endpoint.port}`, '-sTCP:LISTEN', '-t'],
-        { stdio: ['ignore', 'pipe', 'ignore'] },
+        ["-nP", `-iTCP@${endpoint.host}:${endpoint.port}`, "-sTCP:LISTEN", "-t"],
+        { stdio: ["ignore", "pipe", "ignore"] },
       );
-      let out = '';
-      child.stdout?.on('data', (chunk) => {
+      let out = "";
+      child.stdout?.on("data", (chunk) => {
         out += String(chunk);
       });
-      child.on('error', () => finish(null));
-      child.on('close', () => {
+      child.on("error", () => finish(null));
+      child.on("close", () => {
         const pid = out
           .split(/\s+/)
           .map((token) => Number.parseInt(token, 10))
@@ -209,7 +214,7 @@ function defaultFindListenerPid(
     }
     if (signal) {
       if (signal.aborted) finish(null);
-      else signal.addEventListener('abort', () => finish(null), { once: true });
+      else signal.addEventListener("abort", () => finish(null), { once: true });
     }
   });
 }
@@ -223,7 +228,7 @@ async function tryAdoptLiveHost(
   manifest: ModelHostManifest,
   opts: StartModelHostOptions,
   resolved: ReturnType<typeof resolveEnv>,
-  probeReady: NonNullable<StartModelHostOptions['probeReady']>,
+  probeReady: NonNullable<StartModelHostOptions["probeReady"]>,
   livePid: number,
 ): Promise<StartModelHostResult | null> {
   const endpoint = manifest.spec.endpoint;
@@ -249,14 +254,14 @@ async function tryAdoptLiveHost(
   const cmdline = await Promise.resolve(readProcessCommand(livePid)).catch(() => null);
   writeModelHostState(
     {
-      kind: 'ModelHost',
+      kind: "ModelHost",
       engine: manifest.spec.engine,
       pid: livePid,
       host: endpoint.host,
       port: endpoint.port,
       modelAliases: Array.from(aliases),
       startedAt: new Date().toISOString(),
-      slotSavePath: typeof cmdline === 'string' ? parseSlotSavePathFromCommand(cmdline) : null,
+      slotSavePath: typeof cmdline === "string" ? parseSlotSavePathFromCommand(cmdline) : null,
       specHash: computeModelHostSpecHash(manifest.spec),
     },
     opts.key,
@@ -278,7 +283,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
       pid: null,
       error: `modelHostStart workload mismatch: expected ${opts.key.name}, got ${manifest.metadata.name}`,
     };
-    opts.onEvent?.({ type: 'done', result });
+    opts.onEvent?.({ type: "done", result });
     return result;
   }
   if (opts.manifest) {
@@ -289,7 +294,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   const validation = engine.validateSpec(spec);
   if (!validation.ok) {
     const result = { ok: false, pid: null, error: validation.error };
-    opts.onEvent?.({ type: 'done', result });
+    opts.onEvent?.({ type: "done", result });
     return result;
   }
 
@@ -319,7 +324,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
         livePid,
       );
       if (adopted) {
-        opts.onEvent?.({ type: 'done', result: adopted });
+        opts.onEvent?.({ type: "done", result: adopted });
         return adopted;
       }
       // A live process owns the port but is not (yet) confirmable as ours
@@ -330,7 +335,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
         pid: null,
         error: `endpoint ${manifest.spec.endpoint.host}:${manifest.spec.endpoint.port} is held by live pid ${livePid} that is not yet adoptable (readiness/model unconfirmed); deferring restart`,
       };
-      opts.onEvent?.({ type: 'done', result: deferred });
+      opts.onEvent?.({ type: "done", result: deferred });
       return deferred;
     }
     // No live listener — the port is free; fall through to a normal spawn.
@@ -345,7 +350,11 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   };
 
   const spawn = opts.spawn ?? nodeSpawn;
-  const extraArgsResolved = resolveSlotSavePathArgs(manifest.spec.extraArgs, resolved.LOCAL_AI_RUNTIME_DIR, opts.key.name);
+  const extraArgsResolved = resolveSlotSavePathArgs(
+    manifest.spec.extraArgs,
+    resolved.LOCAL_AI_RUNTIME_DIR,
+    opts.key.name,
+  );
   spec.extraArgs = extraArgsResolved.args;
   let child: ChildProcess | null = null;
   try {
@@ -353,12 +362,12 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     const launch = engine.buildBootCommand(spec, bootEnv);
     child = spawn(launch.binary, launch.args, {
       detached: true,
-      stdio: 'ignore',
+      stdio: "ignore",
       env: sanitizeChildEnv(runtimeEnv, launch.envOverrides, manifest.spec.env),
     });
     const pid = child.pid ?? null;
     if (pid === null) {
-      throw new Error('failed to spawn modelhost process');
+      throw new Error("failed to spawn modelhost process");
     }
     // Detach from the parent's reference count so subscription
     // teardown / generator cleanup cannot propagate a signal back
@@ -368,9 +377,12 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     child.unref?.();
 
     const endpoint = manifest.spec.endpoint;
-    const readiness = await (opts.probeReady ?? engine.probeReady)(endpoint, (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000);
+    const readiness = await (opts.probeReady ?? engine.probeReady)(
+      endpoint,
+      (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000,
+    );
     if (!readiness.ready) {
-      throw new Error('modelhost failed readiness probe');
+      throw new Error("modelhost failed readiness probe");
     }
 
     // The readiness probe can be satisfied by a DIFFERENT process already bound
@@ -384,10 +396,12 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
       );
     }
 
-    const modelAliases = Array.from(new Set([manifest.spec.hostedModels[0]!.rel, basename(manifest.spec.hostedModels[0]!.rel)]));
+    const modelAliases = Array.from(
+      new Set([manifest.spec.hostedModels[0]!.rel, basename(manifest.spec.hostedModels[0]!.rel)]),
+    );
     writeModelHostState(
       {
-        kind: 'ModelHost',
+        kind: "ModelHost",
         engine: manifest.spec.engine,
         pid,
         host: endpoint.host,
@@ -401,16 +415,16 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
       resolved,
     );
     const result = { ok: true, pid };
-    opts.onEvent?.({ type: 'done', result });
+    opts.onEvent?.({ type: "done", result });
     return result;
   } catch (error) {
     const pid = child?.pid ?? null;
     if (pid !== null) {
       await engine.teardown(pid).catch(() => {});
     }
-    const message = error instanceof Error ? error.message : 'modelhost start failed';
+    const message = error instanceof Error ? error.message : "modelhost start failed";
     const result = { ok: false, pid: null, error: message };
-    opts.onEvent?.({ type: 'done', result });
+    opts.onEvent?.({ type: "done", result });
     return result;
   }
 }
@@ -428,12 +442,12 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
 export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostResult {
   const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
   const state = readModelHostState(opts.key, resolved);
-  if (!state) return { state: 'Stopped' };
+  if (!state) return { state: "Stopped" };
   // A sidecar whose recorded pid is no longer alive means the host died or was
   // replaced out-of-band. Report Stopped so the reconciler re-acts on it
   // (startModelHost then adopts a live listener or spawns afresh) instead of
   // trusting a stale pid forever — which the proxy route check would treat as
   // dead and silently drop.
-  if (!isProcessAlive(state.pid)) return { state: 'Stopped' };
-  return { state: 'Running', pid: state.pid, specHash: state.specHash };
+  if (!isProcessAlive(state.pid)) return { state: "Stopped" };
+  return { state: "Running", pid: state.pid, specHash: state.specHash };
 }

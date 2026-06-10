@@ -1,8 +1,8 @@
-import { describe, expect, test } from 'bun:test';
-import { composite } from '../src/score/compose.js';
+import { describe, expect, test } from "bun:test";
+import { composite } from "../src/score/compose.js";
 
-describe('composite', () => {
-  test('returns zero for all-zero inputs', () => {
+describe("composite", () => {
+  test("returns zero for all-zero inputs", () => {
     expect(
       composite({
         throughput_tps: 0,
@@ -14,7 +14,7 @@ describe('composite', () => {
     ).toBe(0);
   });
 
-  test('returns one for all-perfect inputs', () => {
+  test("returns one for all-perfect inputs", () => {
     expect(
       composite({
         throughput_tps: 30,
@@ -26,7 +26,7 @@ describe('composite', () => {
     ).toBe(1);
   });
 
-  test('caps throughput at one and lets it dominate the weighted total', () => {
+  test("caps throughput at one and lets it dominate the weighted total", () => {
     expect(
       composite({
         throughput_tps: 60,
@@ -38,7 +38,7 @@ describe('composite', () => {
     ).toBe(0.3);
   });
 
-  test('falls back to the 8k score when the 16k score is missing', () => {
+  test("falls back to the 8k score when the 16k score is missing", () => {
     const withFallback = composite({
       throughput_tps: 0,
       tool_call_score: 0,

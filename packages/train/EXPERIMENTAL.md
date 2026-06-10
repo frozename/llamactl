@@ -27,14 +27,14 @@ training rows of synthetic data.
 
 ## Status
 
-| Item | State |
-|---|---|
-| MLX-LM → llama.cpp toolchain validation | done (spike PASS) |
-| Pinned deps + reproducibility | done |
-| `kind: ModelTraining` workload type | not started |
-| Real-corpus training (memory-efficacy classifier) | blocked on this |
-| Real-corpus training (home-mgmt protocol) | blocked on this |
-| RunPod / cloud compute integration | not started |
+| Item                                              | State             |
+| ------------------------------------------------- | ----------------- |
+| MLX-LM → llama.cpp toolchain validation           | done (spike PASS) |
+| Pinned deps + reproducibility                     | done              |
+| `kind: ModelTraining` workload type               | not started       |
+| Real-corpus training (memory-efficacy classifier) | blocked on this   |
+| Real-corpus training (home-mgmt protocol)         | blocked on this   |
+| RunPod / cloud compute integration                | not started       |
 
 If you're tempted to depend on this package from another workspace, don't.
 Talk to the owner first.

@@ -1,4 +1,4 @@
-import type postgres from 'postgres';
+import type postgres from "postgres";
 import type {
   DeleteRequest,
   DeleteResponse,
@@ -9,9 +9,9 @@ import type {
   SearchResponse,
   StoreRequest,
   StoreResponse,
-} from '@nova/contracts';
-import { RagError } from '../errors.js';
-import type { Embedder } from '../embedding.js';
+} from "@nova/contracts";
+import { RagError } from "../errors.js";
+import type { Embedder } from "../embedding.js";
 
 /**
  * Native pgvector adapter. Talks directly to Postgres over SQL via the
@@ -23,7 +23,7 @@ import type { Embedder } from '../embedding.js';
  * from this implementation.
  */
 
-const DEFAULT_TABLE = 'documents';
+const DEFAULT_TABLE = "documents";
 
 /**
  * Shape of a row the adapter returns from a search query. Kept as a
@@ -73,7 +73,7 @@ interface PgvectorAdapterOptions {
 function vectorLiteral(v: readonly number[]): string {
   // pgvector accepts `'[0.1,0.2,…]'` — spaces are tolerated; leave them
   // out to keep the payload compact.
-  return `[${v.join(',')}]`;
+  return `[${v.join(",")}]`;
 }
 
 /**
@@ -88,42 +88,30 @@ function wrapDbError(err: unknown, safeLabel: string | undefined): RagError {
   // surface as Error with `.code`.
   const e = err as { code?: string; errno?: string; name?: string } | undefined;
   const code = e?.code;
-  const label = safeLabel ?? 'pgvector';
+  const label = safeLabel ?? "pgvector";
   if (
-    code === 'ECONNREFUSED' ||
-    code === 'ENOTFOUND' ||
-    code === 'ETIMEDOUT' ||
-    code === 'EAI_AGAIN' ||
-    code === '28P01' /* invalid_password */ ||
-    code === '28000' /* invalid_authorization_specification */ ||
-    code === '3D000' /* invalid_catalog_name (db missing) */
+    code === "ECONNREFUSED" ||
+    code === "ENOTFOUND" ||
+    code === "ETIMEDOUT" ||
+    code === "EAI_AGAIN" ||
+    code === "28P01" /* invalid_password */ ||
+    code === "28000" /* invalid_authorization_specification */ ||
+    code === "3D000" /* invalid_catalog_name (db missing) */
   ) {
-    return new RagError(
-      'connect-failed',
-      `pgvector: could not connect to ${label}`,
-      err,
-    );
+    return new RagError("connect-failed", `pgvector: could not connect to ${label}`, err);
   }
   if (
-    code === '42P01' /* undefined_table */ ||
-    code === '42703' /* undefined_column */ ||
-    code === '42704' /* undefined_object — vector type missing */
+    code === "42P01" /* undefined_table */ ||
+    code === "42703" /* undefined_column */ ||
+    code === "42704" /* undefined_object — vector type missing */
   ) {
-    return new RagError(
-      'tool-missing',
-      `pgvector: table or column missing at ${label}`,
-      err,
-    );
+    return new RagError("tool-missing", `pgvector: table or column missing at ${label}`, err);
   }
-  return new RagError(
-    'tool-error',
-    `pgvector: SQL error at ${label}`,
-    err,
-  );
+  return new RagError("tool-error", `pgvector: SQL error at ${label}`, err);
 }
 
 export class PgvectorRagAdapter implements RetrievalProvider {
-  readonly kind = 'pgvector';
+  readonly kind = "pgvector";
   private readonly sql: postgres.Sql;
   private readonly defaultCollection: string;
   private readonly safeLabel: string | undefined;
@@ -162,16 +150,16 @@ export class PgvectorRagAdapter implements RetrievalProvider {
       const [embedded] = await this.embedder([req.query]);
       if (!embedded) {
         throw new RagError(
-          'invalid-response',
-          'pgvector search: embedder returned no vector for the query',
+          "invalid-response",
+          "pgvector search: embedder returned no vector for the query",
         );
       }
       vector = embedded;
     }
     if (!vector) {
       throw new RagError(
-        'invalid-request',
-        'pgvector search requires a pre-computed query vector via filter.vector (number[]) or an embedder on the rag binding',
+        "invalid-request",
+        "pgvector search requires a pre-computed query vector via filter.vector (number[]) or an embedder on the rag binding",
       );
     }
     const literal = vectorLiteral(vector);
@@ -241,7 +229,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
     const firstVector = docsWithVectors[0]?.vector;
     if (!firstVector || firstVector.length === 0) {
       throw new RagError(
-        'invalid-request',
+        "invalid-request",
         `pgvector store: resolved vector has zero length for collection '${collection}'`,
       );
     }
@@ -263,7 +251,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
       // Parametrized upsert — postgres.js's helper expands the array
       // into a VALUES clause with typed placeholders.
       await this.sql`
-        INSERT INTO ${this.sql(collection)} ${this.sql(values, 'id', 'content', 'metadata', 'embedding')}
+        INSERT INTO ${this.sql(collection)} ${this.sql(values, "id", "content", "metadata", "embedding")}
         ON CONFLICT (id) DO UPDATE
         SET content = EXCLUDED.content,
             metadata = EXCLUDED.metadata,
@@ -341,18 +329,15 @@ export class PgvectorRagAdapter implements RetrievalProvider {
    * auto-migrate — reshaping an existing column is a destructive op
    * that belongs in an explicit operator workflow.
    */
-  private async ensureSchemaForStore(
-    collection: string,
-    dim: number,
-  ): Promise<void> {
+  private async ensureSchemaForStore(collection: string, dim: number): Promise<void> {
     const known = this.schemaReady.get(collection);
     if (known !== undefined) {
       if (known !== dim) {
         const label = this.embedderLabel
           ? `embedder '${this.embedderLabel}'`
-          : 'the configured embedder';
+          : "the configured embedder";
         throw new RagError(
-          'dimension-mismatch',
+          "dimension-mismatch",
           `pgvector store: collection '${collection}' was created with vector(${known}) but received a ${dim}-dim vector from ${label}. ` +
             `Rebind the rag node to an embedder whose dimension matches, or drop and recreate the collection.`,
         );
@@ -382,7 +367,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
     // where the value lands inside `vector(N)` as a raw fragment).
     if (!Number.isInteger(dim) || dim <= 0) {
       throw new RagError(
-        'invalid-request',
+        "invalid-request",
         `pgvector store: refusing to create collection '${collection}' with non-positive-integer dim ${dim}`,
       );
     }
@@ -425,7 +410,9 @@ export class PgvectorRagAdapter implements RetrievalProvider {
    */
   private async ensureDocumentVectors(
     documents: readonly Document[],
-  ): Promise<Array<{ id: string; content: string; metadata?: Record<string, unknown>; vector: number[] }>> {
+  ): Promise<
+    Array<{ id: string; content: string; metadata?: Record<string, unknown>; vector: number[] }>
+  > {
     const missingIdx: number[] = [];
     for (let i = 0; i < documents.length; i++) {
       const d = documents[i]!;
@@ -434,7 +421,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
     if (missingIdx.length > 0 && !this.embedder) {
       const firstMissing = documents[missingIdx[0]!]!;
       throw new RagError(
-        'invalid-request',
+        "invalid-request",
         `pgvector store requires doc.vector on every document (missing on id=${firstMissing.id}) — configure a rag.embedder to auto-compute`,
       );
     }
@@ -445,7 +432,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
       computed = await this.embedder(texts);
       if (computed.length !== missingIdx.length) {
         throw new RagError(
-          'invalid-response',
+          "invalid-response",
           `embedder returned ${computed.length} vectors for ${missingIdx.length} docs`,
         );
       }
@@ -459,7 +446,7 @@ export class PgvectorRagAdapter implements RetrievalProvider {
         // Unreachable — if we reach here, the earlier check should
         // have thrown. Defensive.
         throw new RagError(
-          'invalid-request',
+          "invalid-request",
           `pgvector store: no vector resolved for doc id=${d.id}`,
         );
       }
@@ -482,7 +469,7 @@ export function extractQueryVector(req: SearchRequest): number[] | null {
   if (!f) return null;
   const v = (f as { vector?: unknown }).vector;
   if (!Array.isArray(v) || v.length === 0) return null;
-  if (!v.every((n) => typeof n === 'number' && Number.isFinite(n))) return null;
+  if (!v.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
   return v as number[];
 }
 
@@ -494,8 +481,8 @@ export function extractQueryVector(req: SearchRequest): number[] | null {
  * from the broader `tool-missing` bucket wrapDbError maps it into.
  */
 function isUndefinedTable(err: unknown): boolean {
-  if (err && typeof err === 'object' && 'code' in err) {
-    return (err as { code?: string }).code === '42P01';
+  if (err && typeof err === "object" && "code" in err) {
+    return (err as { code?: string }).code === "42P01";
   }
   return false;
 }

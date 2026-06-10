@@ -4,24 +4,24 @@ let unknownEventTotal = 0;
 
 function normalizeFinishReason(
   finishReason: string | null | undefined,
-): 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence' {
+): "end_turn" | "max_tokens" | "tool_use" | "stop_sequence" {
   switch (finishReason) {
-    case 'stop':
-      return 'end_turn';
-    case 'length':
-      return 'max_tokens';
-    case 'tool_calls':
-      return 'tool_use';
-    case 'stop_sequence':
-      return 'stop_sequence';
+    case "stop":
+      return "end_turn";
+    case "length":
+      return "max_tokens";
+    case "tool_calls":
+      return "tool_use";
+    case "stop_sequence":
+      return "stop_sequence";
     default:
-      return 'end_turn';
+      return "end_turn";
   }
 }
 
 function maybeErrorClass(error: unknown): string {
   if (error instanceof Error && error.name) return error.name;
-  if (typeof error === 'object' && error !== null && 'constructor' in error) {
+  if (typeof error === "object" && error !== null && "constructor" in error) {
     const ctor = (error as { constructor?: { name?: string } }).constructor;
     if (ctor?.name) return ctor.name;
   }
@@ -29,7 +29,7 @@ function maybeErrorClass(error: unknown): string {
 }
 
 function generateMessageId(): string {
-  if ('randomUUID' in crypto && typeof crypto.randomUUID === 'function') {
+  if ("randomUUID" in crypto && typeof crypto.randomUUID === "function") {
     return `msg_${crypto.randomUUID()}`;
   }
   return `msg_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
@@ -68,11 +68,11 @@ type TranslatorContext = {
 
 type OpenBlockState =
   | {
-      kind: 'text';
+      kind: "text";
       index: number;
     }
   | {
-      kind: 'tool';
+      kind: "tool";
       index: number;
       toolIndex: number;
       toolId: string;
@@ -91,20 +91,20 @@ export function __parseAnthropicSseEventPayloadForTests(eventPayload: string): {
   data: string | null;
   unknownLineCount: number;
 } {
-  const lines = eventPayload.split('\n');
+  const lines = eventPayload.split("\n");
   const dataLines: string[] = [];
   let unknownLineCount = 0;
 
   for (const line of lines) {
-    if (line.length === 0 || line.startsWith(':')) continue;
+    if (line.length === 0 || line.startsWith(":")) continue;
 
-    if (line.startsWith('data:')) {
+    if (line.startsWith("data:")) {
       const maybeSpace = line.slice(5);
-      dataLines.push(maybeSpace.startsWith(' ') ? maybeSpace.slice(1) : maybeSpace);
+      dataLines.push(maybeSpace.startsWith(" ") ? maybeSpace.slice(1) : maybeSpace);
       continue;
     }
 
-    if (line.startsWith('event:') || line.startsWith('id:') || line.startsWith('retry:')) {
+    if (line.startsWith("event:") || line.startsWith("id:") || line.startsWith("retry:")) {
       continue;
     }
 
@@ -112,7 +112,7 @@ export function __parseAnthropicSseEventPayloadForTests(eventPayload: string): {
   }
 
   return {
-    data: dataLines.length > 0 ? dataLines.join('\n') : null,
+    data: dataLines.length > 0 ? dataLines.join("\n") : null,
     unknownLineCount,
   };
 }
@@ -127,7 +127,7 @@ export function translateOpenAIStreamToAnthropic(
     async start(controller) {
       const reader = upstream.getReader();
       const decoder = new TextDecoder();
-      let buffer = '';
+      let buffer = "";
 
       let messageStarted = false;
       let messageId = ctx.requestId ?? generateMessageId();
@@ -148,12 +148,12 @@ export function translateOpenAIStreamToAnthropic(
       const ensureMessageStart = () => {
         if (messageStarted) return;
         messageStarted = true;
-        emit('message_start', {
-          type: 'message_start',
+        emit("message_start", {
+          type: "message_start",
           message: {
             id: messageId,
-            type: 'message',
-            role: 'assistant',
+            type: "message",
+            role: "assistant",
             content: [],
             model: ctx.model,
             stop_reason: null,
@@ -168,26 +168,26 @@ export function translateOpenAIStreamToAnthropic(
 
       const closeOpenBlock = () => {
         if (!openBlock) return;
-        emit('content_block_stop', {
-          type: 'content_block_stop',
+        emit("content_block_stop", {
+          type: "content_block_stop",
           index: openBlock.index,
         });
         openBlock = null;
       };
 
       const ensureTextBlock = () => {
-        if (openBlock?.kind === 'text') return openBlock;
+        if (openBlock?.kind === "text") return openBlock;
         closeOpenBlock();
         ensureMessageStart();
         const index = textBlockCount;
         textBlockCount += 1;
-        openBlock = { kind: 'text', index };
-        emit('content_block_start', {
-          type: 'content_block_start',
+        openBlock = { kind: "text", index };
+        emit("content_block_start", {
+          type: "content_block_start",
           index,
           content_block: {
-            type: 'text',
-            text: '',
+            type: "text",
+            text: "",
           },
         });
         return openBlock;
@@ -202,13 +202,13 @@ export function translateOpenAIStreamToAnthropic(
       };
 
       const ensureToolBlock = (tool: UpstreamToolCall) => {
-        const rawToolIndex = typeof tool.index === 'number' ? tool.index : 0;
+        const rawToolIndex = typeof tool.index === "number" ? tool.index : 0;
         const index = toolBlockIndex(rawToolIndex);
         const toolId = tool.id ?? `tool_${rawToolIndex}`;
         const toolName = tool.function?.name ?? `tool_${rawToolIndex}`;
 
         if (
-          openBlock?.kind === 'tool' &&
+          openBlock?.kind === "tool" &&
           openBlock.toolIndex === rawToolIndex &&
           openBlock.index === index
         ) {
@@ -220,17 +220,17 @@ export function translateOpenAIStreamToAnthropic(
         closeOpenBlock();
         ensureMessageStart();
         openBlock = {
-          kind: 'tool',
+          kind: "tool",
           index,
           toolIndex: rawToolIndex,
           toolId,
           toolName,
         };
-        emit('content_block_start', {
-          type: 'content_block_start',
+        emit("content_block_start", {
+          type: "content_block_start",
           index,
           content_block: {
-            type: 'tool_use',
+            type: "tool_use",
             id: toolId,
             name: toolName,
             input: {},
@@ -240,18 +240,18 @@ export function translateOpenAIStreamToAnthropic(
       };
 
       const emitMessageStop = () => {
-        emit('message_stop', { type: 'message_stop' });
+        emit("message_stop", { type: "message_stop" });
       };
 
       const emitTerminalDelta = (stopReason: string | null | undefined) => {
         ensureMessageStart();
         closeOpenBlock();
         const normalized = normalizeFinishReason(stopReason);
-        emit('message_delta', {
-          type: 'message_delta',
+        emit("message_delta", {
+          type: "message_delta",
           delta: {
             stop_reason: normalized,
-            stop_sequence: normalized === 'stop_sequence' ? lastStopSequence ?? null : null,
+            stop_sequence: normalized === "stop_sequence" ? (lastStopSequence ?? null) : null,
           },
           usage: {
             output_tokens: outputTokens,
@@ -266,7 +266,7 @@ export function translateOpenAIStreamToAnthropic(
       const handleChunk = (parsed: UpstreamChunk) => {
         if (parsed.id) messageId = parsed.id;
         const usageTokens = parsed.usage?.completion_tokens;
-        if (typeof usageTokens === 'number' && Number.isFinite(usageTokens)) {
+        if (typeof usageTokens === "number" && Number.isFinite(usageTokens)) {
           sawUsageCompletionTokens = true;
           outputTokens = usageTokens;
         }
@@ -282,13 +282,13 @@ export function translateOpenAIStreamToAnthropic(
         }
 
         const content = choice.delta?.content;
-        if (typeof content === 'string' && content.length > 0) {
+        if (typeof content === "string" && content.length > 0) {
           const block = ensureTextBlock();
-          emit('content_block_delta', {
-            type: 'content_block_delta',
+          emit("content_block_delta", {
+            type: "content_block_delta",
             index: block.index,
             delta: {
-              type: 'text_delta',
+              type: "text_delta",
               text: content,
             },
           });
@@ -300,12 +300,12 @@ export function translateOpenAIStreamToAnthropic(
           for (const toolCall of toolCalls) {
             const block = ensureToolBlock(toolCall);
             const partialJson = toolCall.function?.arguments;
-            if (typeof partialJson === 'string' && partialJson.length > 0) {
-              emit('content_block_delta', {
-                type: 'content_block_delta',
+            if (typeof partialJson === "string" && partialJson.length > 0) {
+              emit("content_block_delta", {
+                type: "content_block_delta",
                 index: block.index,
                 delta: {
-                  type: 'input_json_delta',
+                  type: "input_json_delta",
                   partial_json: partialJson,
                 },
               });
@@ -315,17 +315,17 @@ export function translateOpenAIStreamToAnthropic(
         }
       };
 
-      const processEvent = (eventPayload: string): 'continue' | 'done' => {
-        if (eventPayload.trim().length === 0) return 'continue';
+      const processEvent = (eventPayload: string): "continue" | "done" => {
+        if (eventPayload.trim().length === 0) return "continue";
 
         const { data, unknownLineCount } = __parseAnthropicSseEventPayloadForTests(eventPayload);
         unknownEventTotal += unknownLineCount;
-        if (data === null) return 'continue';
-        if (data === '[DONE]') {
+        if (data === null) return "continue";
+        if (data === "[DONE]") {
           emitTerminalDelta(lastFinishReason);
           emitMessageStop();
           controller.close();
-          return 'done';
+          return "done";
         }
 
         let parsed: UpstreamChunk;
@@ -333,11 +333,11 @@ export function translateOpenAIStreamToAnthropic(
           parsed = JSON.parse(data) as UpstreamChunk;
         } catch {
           unknownEventTotal += 1;
-          return 'continue';
+          return "continue";
         }
 
         handleChunk(parsed);
-        return 'continue';
+        return "continue";
       };
 
       try {
@@ -346,14 +346,14 @@ export function translateOpenAIStreamToAnthropic(
 
         while (!done && pendingRead) {
           const readResult = await Promise.race([
-            pendingRead.then((value) => ({ kind: 'read' as const, value })),
-            new Promise<{ kind: 'ping' }>((resolve) => {
-              setTimeout(() => resolve({ kind: 'ping' }), PING_INTERVAL_MS);
+            pendingRead.then((value) => ({ kind: "read" as const, value })),
+            new Promise<{ kind: "ping" }>((resolve) => {
+              setTimeout(() => resolve({ kind: "ping" }), PING_INTERVAL_MS);
             }),
           ]);
 
-          if (readResult.kind === 'ping') {
-            emit('ping', { type: 'ping' });
+          if (readResult.kind === "ping") {
+            emit("ping", { type: "ping" });
             continue;
           }
 
@@ -365,18 +365,21 @@ export function translateOpenAIStreamToAnthropic(
           }
 
           if (value) {
-            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            buffer += decoder
+              .decode(value, { stream: true })
+              .replace(/\r\n/g, "\n")
+              .replace(/\r/g, "\n");
           }
 
           pendingRead = reader.read();
 
           while (true) {
-            const boundary = buffer.indexOf('\n\n');
+            const boundary = buffer.indexOf("\n\n");
             if (boundary === -1) break;
             const eventPayload = buffer.slice(0, boundary);
             buffer = buffer.slice(boundary + 2);
             const status = processEvent(eventPayload);
-            if (status === 'done') {
+            if (status === "done") {
               done = true;
               break;
             }
@@ -396,11 +399,11 @@ export function translateOpenAIStreamToAnthropic(
       } catch (error) {
         console.error(
           JSON.stringify({
-            event: 'anthropic_stream_upstream_error',
+            event: "anthropic_stream_upstream_error",
             error_class: maybeErrorClass(error),
           }),
         );
-        emitTerminalDelta('stop');
+        emitTerminalDelta("stop");
         emitMessageStop();
         controller.close();
       } finally {

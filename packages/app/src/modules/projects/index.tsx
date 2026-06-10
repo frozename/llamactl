@@ -3,10 +3,7 @@ import { useMemo, useState } from "react";
 import { stringify as stringifyYaml } from "yaml";
 import { trpc, trpcUIClient } from "@/lib/trpc";
 import { Badge, Button, EditorialHero } from "@/ui";
-import {
-  getProjectScanRoots,
-  useSettingsStore,
-} from "@/modules/settings/project-scan-roots";
+import { getProjectScanRoots, useSettingsStore } from "@/modules/settings/project-scan-roots";
 import type { BadgeVariant } from "@/ui";
 
 /**
@@ -94,16 +91,10 @@ function formatElapsed(iso: string, now: number = Date.now()): string {
   return `${d}d ago`;
 }
 
-function RoutingHeatmap(props: {
-  routing: Record<string, string> | undefined;
-}): React.JSX.Element {
+function RoutingHeatmap(props: { routing: Record<string, string> | undefined }): React.JSX.Element {
   const entries = Object.entries(props.routing ?? {});
   if (entries.length === 0) {
-    return (
-      <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
-        no policy
-      </span>
-    );
+    return <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>no policy</span>;
   }
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -116,10 +107,7 @@ function RoutingHeatmap(props: {
   );
 }
 
-function RoutingPreviewCard(props: {
-  project: string;
-  taskKind: string;
-}): React.JSX.Element {
+function RoutingPreviewCard(props: { project: string; taskKind: string }): React.JSX.Element {
   const { project, taskKind } = props;
   const q = trpc.projectRoutePreview.useQuery(
     { node: `project:${project}/${taskKind}` },
@@ -127,18 +115,10 @@ function RoutingPreviewCard(props: {
   );
   const data = q.data as RoutePreviewResponse | undefined;
   if (q.isLoading) {
-    return (
-      <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
-        …
-      </span>
-    );
+    return <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>…</span>;
   }
   if (q.error || !data?.decision) {
-    return (
-      <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
-        —
-      </span>
-    );
+    return <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>—</span>;
   }
   const d = data.decision;
   return (
@@ -200,9 +180,7 @@ function RoutingJournalFeed(props: { project: string }): React.JSX.Element {
         data-testid="projects-journal-empty"
       >
         No routing decisions journaled yet — trigger a chat against{" "}
-        <span style={{ fontFamily: "var(--font-mono)" }}>
-          project:{project}/&lt;taskKind&gt;
-        </span>{" "}
+        <span style={{ fontFamily: "var(--font-mono)" }}>project:{project}/&lt;taskKind&gt;</span>{" "}
         to populate this feed.
       </div>
     );
@@ -361,9 +339,7 @@ function ProjectDetail(props: {
   const onRemove = (): void => {
     // eslint-disable-next-line no-alert
     if (
-      !confirm(
-        `Remove project '${project.metadata.name}'? Indexed data stays in the rag node.`,
-      )
+      !confirm(`Remove project '${project.metadata.name}'? Indexed data stays in the rag node.`)
     ) {
       return;
     }
@@ -551,10 +527,7 @@ function ProjectDetail(props: {
                         paddingBottom: 4,
                       }}
                     >
-                      <RoutingPreviewCard
-                        project={project.metadata.name}
-                        taskKind={k}
-                      />
+                      <RoutingPreviewCard project={project.metadata.name} taskKind={k} />
                     </td>
                   </tr>
                 ))}
@@ -688,9 +661,7 @@ function ProjectRow(props: {
             {project.spec.rag!.node}/{project.spec.rag!.collection}
           </span>
         ) : (
-          <span style={{ color: "var(--color-text-secondary)" }}>
-            no rag block
-          </span>
+          <span style={{ color: "var(--color-text-secondary)" }}>no rag block</span>
         )}
       </td>
       <td
@@ -747,11 +718,7 @@ function ProjectRow(props: {
           </Button>
         </div>
         {indexError && (
-          <div
-            style={{ marginTop: 4, fontSize: 10, color: "var(--color-err)" }}
-          >
-            {indexError}
-          </div>
+          <div style={{ marginTop: 4, fontSize: 10, color: "var(--color-err)" }}>{indexError}</div>
         )}
       </td>
     </tr>
@@ -826,9 +793,7 @@ function GitRepoSuggestions({
         const prior = seen.get(r.path);
         if (!prior || prior.mtimeMs < r.mtimeMs) seen.set(r.path, r);
       }
-      const repos = Array.from(seen.values()).sort(
-        (a, b) => b.mtimeMs - a.mtimeMs,
-      );
+      const repos = Array.from(seen.values()).sort((a, b) => b.mtimeMs - a.mtimeMs);
       setState({ kind: "ready", repos, rootsShown });
     };
     void scan();
@@ -885,12 +850,7 @@ function GitRepoSuggestions({
           </Button>
         ))}
         {!expanded && state.repos.length > visible.length && (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => setExpanded(true)}
-          >
+          <Button type="button" variant="ghost" size="sm" onClick={() => setExpanded(true)}>
             +{state.repos.length - visible.length} more
           </Button>
         )}
@@ -905,9 +865,7 @@ function GitRepoSuggestions({
  * one-line "add another" at the top of the table; default mode
  * renders as a full-width wizard in the empty state.
  */
-function CreateProjectForm({
-  compact,
-}: { compact?: boolean } = {}): React.JSX.Element {
+function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.Element {
   const utils = trpc.useUtils();
   const nodesQuery = trpc.nodeList.useQuery();
   const apply = trpc.projectApply.useMutation({
@@ -925,14 +883,10 @@ function CreateProjectForm({
   const [ragNode, setRagNode] = React.useState<string>("");
   const [ragCollection, setRagCollection] = React.useState("");
   const [status, setStatus] = React.useState<
-    | { kind: "idle" }
-    | { kind: "ok"; message: string }
-    | { kind: "error"; message: string }
+    { kind: "idle" } | { kind: "ok"; message: string } | { kind: "error"; message: string }
   >({ kind: "idle" });
 
-  const ragNodes = (nodesQuery.data?.nodes ?? []).filter(
-    (n) => n.effectiveKind === "rag",
-  );
+  const ragNodes = (nodesQuery.data?.nodes ?? []).filter((n) => n.effectiveKind === "rag");
   const canSubmit = name.trim().length > 0 && path.trim().length > 0;
 
   function onSubmit(e: React.FormEvent): void {
@@ -1056,8 +1010,7 @@ function CreateProjectForm({
                 if (picked) {
                   setPath(picked);
                   if (!name.trim()) {
-                    const basename =
-                      picked.split("/").filter(Boolean).pop() ?? "";
+                    const basename = picked.split("/").filter(Boolean).pop() ?? "";
                     setName(basename);
                   }
                 }
@@ -1167,14 +1120,10 @@ function CreateProjectForm({
             {apply.isPending ? "Creating…" : compact ? "Add" : "Create project"}
           </Button>
           {status.kind === "error" && (
-            <span style={{ fontSize: 11, color: "var(--color-err)" }}>
-              {status.message}
-            </span>
+            <span style={{ fontSize: 11, color: "var(--color-err)" }}>{status.message}</span>
           )}
           {status.kind === "ok" && (
-            <span style={{ fontSize: 11, color: "var(--color-ok)" }}>
-              ✓ {status.message}
-            </span>
+            <span style={{ fontSize: 11, color: "var(--color-ok)" }}>✓ {status.message}</span>
           )}
         </div>
       </div>
@@ -1216,20 +1165,14 @@ export default function Projects(): React.JSX.Element {
   const [selected, setSelected] = useState<string | null>(null);
 
   const sorted = useMemo(
-    () =>
-      [...rows].sort((a, b) => a.metadata.name.localeCompare(b.metadata.name)),
+    () => [...rows].sort((a, b) => a.metadata.name.localeCompare(b.metadata.name)),
     [rows],
   );
   const selectedProject =
-    selected !== null
-      ? (sorted.find((p) => p.metadata.name === selected) ?? null)
-      : null;
+    selected !== null ? (sorted.find((p) => p.metadata.name === selected) ?? null) : null;
 
   return (
-    <div
-      style={{ height: "100%", overflow: "auto", padding: 24 }}
-      data-testid="projects-root"
-    >
+    <div style={{ height: "100%", overflow: "auto", padding: 24 }} data-testid="projects-root">
       <div
         style={{
           marginBottom: 4,
@@ -1258,13 +1201,11 @@ export default function Projects(): React.JSX.Element {
           color: "var(--color-text-secondary)",
         }}
       >
-        Registered project directories with per-task routing policies. Register
-        via{" "}
+        Registered project directories with per-task routing policies. Register via{" "}
         <span style={{ fontFamily: "var(--font-mono)" }}>
           llamactl project add &lt;name&gt; --path &lt;abs&gt;
         </span>
-        ; indexed docs land in the declared rag collection; routing decisions
-        for{" "}
+        ; indexed docs land in the declared rag collection; routing decisions for{" "}
         <span style={{ fontFamily: "var(--font-mono)" }}>
           project:&lt;name&gt;/&lt;taskKind&gt;
         </span>{" "}

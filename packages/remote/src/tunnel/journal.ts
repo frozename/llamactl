@@ -1,6 +1,6 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { appendFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 /**
  * Append-only JSONL journal for the reverse tunnel. One line per
@@ -19,13 +19,13 @@ import { dirname, join } from 'node:path';
  */
 
 export interface TunnelJournalConnect {
-  kind: 'tunnel-connect';
+  kind: "tunnel-connect";
   ts: string;
   nodeName: string;
 }
 
 export interface TunnelJournalDisconnect {
-  kind: 'tunnel-disconnect';
+  kind: "tunnel-disconnect";
   ts: string;
   nodeName: string;
   /** Free-form human-readable close descriptor from the ws close event. */
@@ -35,7 +35,7 @@ export interface TunnelJournalDisconnect {
 }
 
 export interface TunnelJournalRelayCall {
-  kind: 'tunnel-relay-call';
+  kind: "tunnel-relay-call";
   ts: string;
   nodeName: string;
   method: string;
@@ -46,7 +46,7 @@ export interface TunnelJournalRelayCall {
 }
 
 export interface TunnelJournalRelayError {
-  kind: 'tunnel-relay-error';
+  kind: "tunnel-relay-error";
   ts: string;
   nodeName: string;
   method?: string;
@@ -55,19 +55,15 @@ export interface TunnelJournalRelayError {
 }
 
 export interface TunnelJournalUnauthorized {
-  kind: 'tunnel-unauthorized';
+  kind: "tunnel-unauthorized";
   ts: string;
   /** May be absent if the client never sent a well-formed hello. */
   nodeName?: string;
-  reason:
-    | 'bad-bearer'
-    | 'malformed-hello'
-    | 'hello-required-first'
-    | 'hello-timeout';
+  reason: "bad-bearer" | "malformed-hello" | "hello-required-first" | "hello-timeout";
 }
 
 export interface TunnelJournalReplaced {
-  kind: 'tunnel-replaced';
+  kind: "tunnel-replaced";
   ts: string;
   nodeName: string;
 }
@@ -80,13 +76,11 @@ export type TunnelJournalEntry =
   | TunnelJournalUnauthorized
   | TunnelJournalReplaced;
 
-export function defaultTunnelJournalPath(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function defaultTunnelJournalPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_TUNNEL_JOURNAL?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'tunnel', 'journal.jsonl');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "tunnel", "journal.jsonl");
 }
 
 // Module-scoped so we stderr-log exactly once per process when the
@@ -104,14 +98,12 @@ export function appendTunnelJournal(
   // surface the misconfiguration without looping.
   try {
     mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, `${JSON.stringify(entry)}\n`, 'utf8');
+    appendFileSync(path, `${JSON.stringify(entry)}\n`, "utf8");
   } catch (err) {
     if (!warnedAboutJournalFailure) {
       warnedAboutJournalFailure = true;
       const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `tunnel-journal: ${path} not writable (${message}); entries dropped\n`,
-      );
+      process.stderr.write(`tunnel-journal: ${path} not writable (${message}); entries dropped\n`);
     }
   }
 }

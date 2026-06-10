@@ -20,28 +20,21 @@
  * connection string should resolve the env var themselves at
  * connect time.
  */
-import type {
-  ServiceDeployment,
-  ServiceInstance,
-} from '../../runtime/backend.js';
-import { LABEL_KEYS, MANAGED_BY_VALUE } from '../../runtime/labels.js';
-import { ServiceError } from '../errors.js';
-import type { PgvectorServiceSpec } from '../schema.js';
-import { sha256Hex } from './hash.js';
-import type {
-  ResolvedServiceEndpoint,
-  ServiceHandler,
-  HandlerTranslateOptions,
-} from './types.js';
+import type { ServiceDeployment, ServiceInstance } from "../../runtime/backend.js";
+import { LABEL_KEYS, MANAGED_BY_VALUE } from "../../runtime/labels.js";
+import { ServiceError } from "../errors.js";
+import type { PgvectorServiceSpec } from "../schema.js";
+import { sha256Hex } from "./hash.js";
+import type { ResolvedServiceEndpoint, ServiceHandler, HandlerTranslateOptions } from "./types.js";
 
-const DEFAULT_IMAGE_REPOSITORY = 'pgvector/pgvector';
-const DEFAULT_IMAGE_TAG = '0.8.2-pg18-trixie';
+const DEFAULT_IMAGE_REPOSITORY = "pgvector/pgvector";
+const DEFAULT_IMAGE_TAG = "0.8.2-pg18-trixie";
 // pg18+ expects the volume rooted at /var/lib/postgresql with `data/`
 // as an image-managed subpath. Mounting directly at
 // /var/lib/postgresql/data triggers a crashloop on pg18. Callers
 // pinning pg16/pg17 must pass an explicit
 // `persistence.mountPath: /var/lib/postgresql/data` override.
-const DEFAULT_MOUNT_PATH = '/var/lib/postgresql';
+const DEFAULT_MOUNT_PATH = "/var/lib/postgresql";
 const CONTAINER_PORT = 5432;
 
 function resolveImage(spec: PgvectorServiceSpec): {
@@ -96,19 +89,19 @@ function hashMaterial(spec: PgvectorServiceSpec): Record<string, unknown> {
 }
 
 export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
-  kind: 'pgvector',
+  kind: "pgvector",
 
   validate(spec) {
-    if (spec.runtime === 'external') {
+    if (spec.runtime === "external") {
       if (!spec.externalEndpoint || spec.externalEndpoint.length === 0) {
         throw new ServiceError(
-          'spec-invalid',
+          "spec-invalid",
           `pgvector service '${spec.name}': runtime='external' requires externalEndpoint`,
         );
       }
       if (spec.image) {
         throw new ServiceError(
-          'spec-invalid',
+          "spec-invalid",
           `pgvector service '${spec.name}': runtime='external' cannot set image — remove it or switch runtime to 'docker'`,
         );
       }
@@ -116,7 +109,7 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
     }
     if (spec.externalEndpoint && spec.externalEndpoint.length > 0) {
       throw new ServiceError(
-        'spec-invalid',
+        "spec-invalid",
         `pgvector service '${spec.name}': runtime='docker' cannot set externalEndpoint — remove it or switch runtime to 'external'`,
       );
     }
@@ -130,11 +123,8 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
     return sha256Hex(hashMaterial(spec));
   },
 
-  toDeployment(
-    spec,
-    opts: HandlerTranslateOptions,
-  ): ServiceDeployment | null {
-    if (spec.runtime === 'external') return null;
+  toDeployment(spec, opts: HandlerTranslateOptions): ServiceDeployment | null {
+    if (spec.runtime === "external") return null;
 
     const image = resolveImage(spec);
     const passwordRef = passwordSecretRef(spec);
@@ -151,9 +141,7 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
       name,
       image,
       env,
-      ports: [
-        { containerPort: CONTAINER_PORT, hostPort: spec.port, protocol: 'tcp' },
-      ],
+      ports: [{ containerPort: CONTAINER_PORT, hostPort: spec.port, protocol: "tcp" }],
       labels: {
         [LABEL_KEYS.managedBy]: MANAGED_BY_VALUE,
         [LABEL_KEYS.composite]: opts.compositeName,
@@ -164,18 +152,18 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
       // time. A shell form with `$POSTGRES_USER` would rely on the
       // container env being set; exec form keeps us robust.
       healthcheck: {
-        test: ['CMD', 'pg_isready', '-U', spec.user],
+        test: ["CMD", "pg_isready", "-U", spec.user],
         intervalMs: 10_000,
         timeoutMs: 3_000,
         retries: 10,
       },
-      restartPolicy: 'unless-stopped',
+      restartPolicy: "unless-stopped",
       // pgvector is stateful — the k8s backend translates to a
       // StatefulSet + headless Service + volumeClaimTemplates so
       // each pod gets sticky storage. Docker ignores the field.
-      controllerKind: 'statefulset',
+      controllerKind: "statefulset",
       specHash: hash,
-      serviceType: spec.serviceType ?? 'ClusterIP',
+      serviceType: spec.serviceType ?? "ClusterIP",
     };
 
     // Merge domain-specific password ref with operator-supplied
@@ -200,7 +188,7 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
     if (spec.persistence?.volume) {
       const v = spec.persistence.volume;
       deployment.volumes = [
-        v.startsWith('/')
+        v.startsWith("/")
           ? { hostPath: v, containerPath: mountPath }
           : { name: v, containerPath: mountPath },
       ];
@@ -209,15 +197,12 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
     return deployment;
   },
 
-  resolvedEndpoint(
-    spec,
-    instance: ServiceInstance | null,
-  ): ResolvedServiceEndpoint {
-    if (spec.runtime === 'external') {
+  resolvedEndpoint(spec, instance: ServiceInstance | null): ResolvedServiceEndpoint {
+    if (spec.runtime === "external") {
       const raw = spec.externalEndpoint;
       if (!raw) {
         throw new ServiceError(
-          'spec-invalid',
+          "spec-invalid",
           `pgvector service '${spec.name}': externalEndpoint is missing`,
         );
       }
@@ -226,7 +211,7 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
         parsed = new URL(raw);
       } catch (err) {
         throw new ServiceError(
-          'spec-invalid',
+          "spec-invalid",
           `pgvector service '${spec.name}': externalEndpoint '${raw}' is not a valid URL`,
           err,
         );
@@ -237,8 +222,8 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
 
     if (!instance || !instance.endpoint) {
       throw new ServiceError(
-        'endpoint-unresolvable',
-        `pgvector service '${spec.name}': docker runtime has no reachable endpoint yet (instance=${instance ? 'present-no-endpoint' : 'null'})`,
+        "endpoint-unresolvable",
+        `pgvector service '${spec.name}': docker runtime has no reachable endpoint yet (instance=${instance ? "present-no-endpoint" : "null"})`,
       );
     }
     const { host, port } = instance.endpoint;

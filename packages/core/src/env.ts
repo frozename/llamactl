@@ -1,20 +1,20 @@
-import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-import { resolveProfile } from './profile.js';
-import type { MachineProfile, Provider, ResolvedEnv } from './types.js';
-import { MANAGED_DIRS } from './types.js';
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { resolveProfile } from "./profile.js";
+import type { MachineProfile, Provider, ResolvedEnv } from "./types.js";
+import { MANAGED_DIRS } from "./types.js";
 
 const GEMMA_CTX_BY_PROFILE: Record<MachineProfile, string> = {
-  'mac-mini-16g': '16384',
-  balanced: '24576',
-  'macbook-pro-48g': '32768',
+  "mac-mini-16g": "16384",
+  balanced: "24576",
+  "macbook-pro-48g": "32768",
 };
 
 const QWEN_CTX_BY_PROFILE: Record<MachineProfile, string> = {
-  'mac-mini-16g': '16384',
-  balanced: '32768',
-  'macbook-pro-48g': '65536',
+  "mac-mini-16g": "16384",
+  balanced: "32768",
+  "macbook-pro-48g": "65536",
 };
 
 /**
@@ -23,34 +23,31 @@ const QWEN_CTX_BY_PROFILE: Record<MachineProfile, string> = {
  * freshly booted shells resolve to the same rel as before the port.
  */
 const DEFAULT_MODEL_CHOICES: Record<MachineProfile, readonly string[]> = {
-  'mac-mini-16g': [
-    'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf',
-    'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf',
-    'gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
+  "mac-mini-16g": [
+    "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
+    "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf",
+    "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
   ],
   balanced: [
-    'gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
-    'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf',
-    'gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf',
+    "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
+    "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
   ],
-  'macbook-pro-48g': [
-    'gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf',
-    'gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
-    'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf',
+  "macbook-pro-48g": [
+    "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+    "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
   ],
 } as const;
 
 /** First choice used when no file in the ladder exists on disk. */
 const DEFAULT_MODEL_FALLBACK: Record<MachineProfile, string> = {
-  'mac-mini-16g': 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf',
-  balanced: 'gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
-  'macbook-pro-48g': 'gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf',
+  "mac-mini-16g": "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
+  balanced: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+  "macbook-pro-48g": "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
 };
 
-function pick(
-  override: string | undefined,
-  fallback: string,
-): string {
+function pick(override: string | undefined, fallback: string): string {
   return override && override.length > 0 ? override : fallback;
 }
 
@@ -68,26 +65,24 @@ function pick(
  * Returns `null` when the env var is unset or empty, so callers fall
  * through to the production defaults with zero behaviour change.
  */
-function testProfileDefaults(
-  env: NodeJS.ProcessEnv,
-): Record<string, string> | null {
+function testProfileDefaults(env: NodeJS.ProcessEnv): Record<string, string> | null {
   const testProfile = env.LLAMACTL_TEST_PROFILE;
   if (!testProfile || testProfile.length === 0) return null;
-  const llamaCppRoot = join(testProfile, 'ai-models/llama.cpp');
-  const hfHome = join(testProfile, 'cache/huggingface');
+  const llamaCppRoot = join(testProfile, "ai-models/llama.cpp");
+  const hfHome = join(testProfile, "cache/huggingface");
   return {
     DEV_STORAGE: testProfile,
-    LOCAL_AI_RUNTIME_DIR: join(testProfile, 'ai-models/local-ai'),
+    LOCAL_AI_RUNTIME_DIR: join(testProfile, "ai-models/local-ai"),
     LLAMA_CPP_ROOT: llamaCppRoot,
-    LLAMA_CPP_MODELS: join(llamaCppRoot, 'models'),
-    LLAMA_CPP_CACHE: join(llamaCppRoot, '.cache'),
-    LLAMA_CPP_LOGS: join(testProfile, 'logs/llama.cpp'),
-    LLAMA_CPP_BIN: join(testProfile, 'bin'),
+    LLAMA_CPP_MODELS: join(llamaCppRoot, "models"),
+    LLAMA_CPP_CACHE: join(llamaCppRoot, ".cache"),
+    LLAMA_CPP_LOGS: join(testProfile, "logs/llama.cpp"),
+    LLAMA_CPP_BIN: join(testProfile, "bin"),
     HF_HOME: hfHome,
-    HUGGINGFACE_HUB_CACHE: join(hfHome, 'hub'),
-    OLLAMA_MODELS: join(testProfile, 'ai-models/ollama'),
-    LLAMA_CPP_HOST: '127.0.0.1',
-    LLAMA_CPP_PORT: '65534',
+    HUGGINGFACE_HUB_CACHE: join(hfHome, "hub"),
+    OLLAMA_MODELS: join(testProfile, "ai-models/ollama"),
+    LLAMA_CPP_HOST: "127.0.0.1",
+    LLAMA_CPP_PORT: "65534",
   };
 }
 
@@ -107,13 +102,11 @@ function pickWithTestProfile(
 }
 
 function resolveProvider(raw: string | undefined): Provider {
-  return raw === 'lmstudio' ? 'lmstudio' : 'llama.cpp';
+  return raw === "lmstudio" ? "lmstudio" : "llama.cpp";
 }
 
-export function resolveInternalProxyEndpoint(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  return env.LLAMACTL_INTERNAL_PROXY_URL ?? 'http://127.0.0.1:7944';
+export function resolveInternalProxyEndpoint(env: NodeJS.ProcessEnv = process.env): string {
+  return env.LLAMACTL_INTERNAL_PROXY_URL ?? "http://127.0.0.1:7944";
 }
 
 function resolveDefaultModel(
@@ -147,9 +140,9 @@ function resolveDefaultModel(
  * paths instead of nonexistent `~/.llamactl/src/...` ones.
  */
 function detectDevStorageDefault(): string {
-  const externalCandidate = join(homedir(), 'DevStorage');
+  const externalCandidate = join(homedir(), "DevStorage");
   if (existsSync(externalCandidate)) return externalCandidate;
-  return join(homedir(), '.llamactl');
+  return join(homedir(), ".llamactl");
 }
 
 export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
@@ -158,57 +151,54 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
 
   const devStorage = pickWithTestProfile(
     env.DEV_STORAGE,
-    t('DEV_STORAGE'),
+    t("DEV_STORAGE"),
     detectDevStorageDefault(),
   );
   const hfHome = pickWithTestProfile(
     env.HF_HOME,
-    t('HF_HOME'),
-    join(devStorage, 'cache/huggingface'),
+    t("HF_HOME"),
+    join(devStorage, "cache/huggingface"),
   );
-  const llamaCppSrc = pick(env.LLAMA_CPP_SRC, join(devStorage, 'src/llama.cpp'));
+  const llamaCppSrc = pick(env.LLAMA_CPP_SRC, join(devStorage, "src/llama.cpp"));
   const llamaCppBin = pickWithTestProfile(
     env.LLAMA_CPP_BIN,
-    t('LLAMA_CPP_BIN'),
-    join(llamaCppSrc, 'build/bin'),
+    t("LLAMA_CPP_BIN"),
+    join(llamaCppSrc, "build/bin"),
   );
   const llamaCppRoot = pickWithTestProfile(
     env.LLAMA_CPP_ROOT,
-    t('LLAMA_CPP_ROOT'),
-    join(devStorage, 'ai-models/llama.cpp'),
+    t("LLAMA_CPP_ROOT"),
+    join(devStorage, "ai-models/llama.cpp"),
   );
   const llamaCppModels = pickWithTestProfile(
     env.LLAMA_CPP_MODELS,
-    t('LLAMA_CPP_MODELS'),
-    join(llamaCppRoot, 'models'),
+    t("LLAMA_CPP_MODELS"),
+    join(llamaCppRoot, "models"),
   );
   const llamaCppCache = pickWithTestProfile(
     env.LLAMA_CPP_CACHE,
-    t('LLAMA_CPP_CACHE'),
-    join(llamaCppRoot, '.cache'),
+    t("LLAMA_CPP_CACHE"),
+    join(llamaCppRoot, ".cache"),
   );
 
   const profile = resolveProfile(env);
 
-  const host = pickWithTestProfile(env.LLAMA_CPP_HOST, t('LLAMA_CPP_HOST'), '127.0.0.1');
-  const port = pickWithTestProfile(env.LLAMA_CPP_PORT, t('LLAMA_CPP_PORT'), '8080');
-  const advertisedHost = pick(env.LLAMA_CPP_ADVERTISED_HOST, '');
+  const host = pickWithTestProfile(env.LLAMA_CPP_HOST, t("LLAMA_CPP_HOST"), "127.0.0.1");
+  const port = pickWithTestProfile(env.LLAMA_CPP_PORT, t("LLAMA_CPP_PORT"), "8080");
+  const advertisedHost = pick(env.LLAMA_CPP_ADVERTISED_HOST, "");
 
-  const lmStudioHost = pick(env.LOCAL_AI_LMSTUDIO_HOST, '127.0.0.1');
-  const lmStudioPort = pick(env.LOCAL_AI_LMSTUDIO_PORT, '1234');
+  const lmStudioHost = pick(env.LOCAL_AI_LMSTUDIO_HOST, "127.0.0.1");
+  const lmStudioPort = pick(env.LOCAL_AI_LMSTUDIO_PORT, "1234");
   const lmStudioBaseUrl = pick(
     env.LOCAL_AI_LMSTUDIO_BASE_URL,
     `http://${lmStudioHost}:${lmStudioPort}/v1`,
   );
-  const llamaCppBaseUrl = pick(
-    env.LOCAL_AI_LLAMA_CPP_BASE_URL,
-    `http://${host}:${port}/v1`,
-  );
+  const llamaCppBaseUrl = pick(env.LOCAL_AI_LLAMA_CPP_BASE_URL, `http://${host}:${port}/v1`);
 
   const runtimeDir = pickWithTestProfile(
     env.LOCAL_AI_RUNTIME_DIR,
-    t('LOCAL_AI_RUNTIME_DIR'),
-    join(devStorage, 'ai-models/local-ai'),
+    t("LOCAL_AI_RUNTIME_DIR"),
+    join(devStorage, "ai-models/local-ai"),
   );
   const defaultModel = resolveDefaultModel(env, profile, llamaCppModels);
   const gemmaCtx = pick(env.LLAMA_CPP_GEMMA_CTX_SIZE, GEMMA_CTX_BY_PROFILE[profile]);
@@ -221,17 +211,14 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
   let providerUrl: string;
   let apiKey: string;
   let model: string;
-  if (provider === 'lmstudio') {
+  if (provider === "lmstudio") {
     providerUrl = lmStudioBaseUrl;
-    apiKey = pick(env.LM_API_TOKEN, 'local');
-    model = pick(
-      env.LOCAL_AI_MODEL,
-      `local/${sourceModel.split('/')[0] ?? sourceModel}`,
-    );
+    apiKey = pick(env.LM_API_TOKEN, "local");
+    model = pick(env.LOCAL_AI_MODEL, `local/${sourceModel.split("/")[0] ?? sourceModel}`);
   } else {
     providerUrl = llamaCppBaseUrl;
-    apiKey = 'local';
-    model = pick(env.LOCAL_AI_MODEL, pick(env.LLAMA_CPP_SERVER_ALIAS, 'local'));
+    apiKey = "local";
+    model = pick(env.LOCAL_AI_MODEL, pick(env.LLAMA_CPP_SERVER_ALIAS, "local"));
   }
 
   return {
@@ -239,13 +226,13 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
     HF_HOME: hfHome,
     HUGGINGFACE_HUB_CACHE: pickWithTestProfile(
       env.HUGGINGFACE_HUB_CACHE,
-      t('HUGGINGFACE_HUB_CACHE'),
-      join(hfHome, 'hub'),
+      t("HUGGINGFACE_HUB_CACHE"),
+      join(hfHome, "hub"),
     ),
     OLLAMA_MODELS: pickWithTestProfile(
       env.OLLAMA_MODELS,
-      t('OLLAMA_MODELS'),
-      join(devStorage, 'ai-models/ollama'),
+      t("OLLAMA_MODELS"),
+      join(devStorage, "ai-models/ollama"),
     ),
     LLAMA_CPP_SRC: llamaCppSrc,
     LLAMA_CPP_BIN: llamaCppBin,
@@ -254,8 +241,8 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
     LLAMA_CPP_CACHE: llamaCppCache,
     LLAMA_CPP_LOGS: pickWithTestProfile(
       env.LLAMA_CPP_LOGS,
-      t('LLAMA_CPP_LOGS'),
-      join(devStorage, 'logs/llama.cpp'),
+      t("LLAMA_CPP_LOGS"),
+      join(devStorage, "logs/llama.cpp"),
     ),
     LLAMA_CPP_HOST: host,
     LLAMA_CPP_PORT: port,
@@ -264,33 +251,33 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
     LLAMA_CPP_GEMMA_CTX_SIZE: gemmaCtx,
     LLAMA_CPP_QWEN_CTX_SIZE: qwenCtx,
     LLAMA_CPP_DEFAULT_MODEL: defaultModel,
-    LLAMA_CPP_SERVER_ALIAS: pick(env.LLAMA_CPP_SERVER_ALIAS, 'local'),
+    LLAMA_CPP_SERVER_ALIAS: pick(env.LLAMA_CPP_SERVER_ALIAS, "local"),
     LLAMA_CACHE: pick(env.LLAMA_CACHE, llamaCppCache),
     LOCAL_AI_LMSTUDIO_HOST: lmStudioHost,
     LOCAL_AI_LMSTUDIO_PORT: lmStudioPort,
     LOCAL_AI_LMSTUDIO_BASE_URL: lmStudioBaseUrl,
     LOCAL_AI_LLAMA_CPP_BASE_URL: llamaCppBaseUrl,
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
-    LOCAL_AI_ENABLE_THINKING: pick(env.LOCAL_AI_ENABLE_THINKING, 'false'),
-    LOCAL_AI_PRESERVE_THINKING: pick(env.LOCAL_AI_PRESERVE_THINKING, 'true'),
-    LOCAL_AI_RECOMMENDATIONS_SOURCE: pick(env.LOCAL_AI_RECOMMENDATIONS_SOURCE, 'hf'),
-    LOCAL_AI_HF_CACHE_TTL_SECONDS: pick(env.LOCAL_AI_HF_CACHE_TTL_SECONDS, '43200'),
-    LOCAL_AI_DISCOVERY_AUTHOR: pick(env.LOCAL_AI_DISCOVERY_AUTHOR, 'unsloth'),
-    LOCAL_AI_DISCOVERY_LIMIT: pick(env.LOCAL_AI_DISCOVERY_LIMIT, '24'),
-    LOCAL_AI_DISCOVERY_SEARCH: pick(env.LOCAL_AI_DISCOVERY_SEARCH, 'GGUF'),
+    LOCAL_AI_ENABLE_THINKING: pick(env.LOCAL_AI_ENABLE_THINKING, "false"),
+    LOCAL_AI_PRESERVE_THINKING: pick(env.LOCAL_AI_PRESERVE_THINKING, "true"),
+    LOCAL_AI_RECOMMENDATIONS_SOURCE: pick(env.LOCAL_AI_RECOMMENDATIONS_SOURCE, "hf"),
+    LOCAL_AI_HF_CACHE_TTL_SECONDS: pick(env.LOCAL_AI_HF_CACHE_TTL_SECONDS, "43200"),
+    LOCAL_AI_DISCOVERY_AUTHOR: pick(env.LOCAL_AI_DISCOVERY_AUTHOR, "unsloth"),
+    LOCAL_AI_DISCOVERY_LIMIT: pick(env.LOCAL_AI_DISCOVERY_LIMIT, "24"),
+    LOCAL_AI_DISCOVERY_SEARCH: pick(env.LOCAL_AI_DISCOVERY_SEARCH, "GGUF"),
     LOCAL_AI_CUSTOM_CATALOG_FILE: pick(
       env.LOCAL_AI_CUSTOM_CATALOG_FILE,
-      join(runtimeDir, 'curated-models.tsv'),
+      join(runtimeDir, "curated-models.tsv"),
     ),
     LOCAL_AI_PRESET_OVERRIDES_FILE: pick(
       env.LOCAL_AI_PRESET_OVERRIDES_FILE,
-      join(runtimeDir, 'preset-overrides.tsv'),
+      join(runtimeDir, "preset-overrides.tsv"),
     ),
-    LLAMA_CPP_KEEP_ALIVE_INTERVAL: pick(env.LLAMA_CPP_KEEP_ALIVE_INTERVAL, '5'),
-    LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF: pick(env.LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF, '30'),
-    LLAMA_CPP_AUTO_TUNE_ON_PULL: pick(env.LLAMA_CPP_AUTO_TUNE_ON_PULL, 'true'),
-    LLAMA_CPP_AUTO_BENCH_VISION: pick(env.LLAMA_CPP_AUTO_BENCH_VISION, 'true'),
-    LOCAL_AI_BENCH_IMAGE: env.LOCAL_AI_BENCH_IMAGE ?? '',
+    LLAMA_CPP_KEEP_ALIVE_INTERVAL: pick(env.LLAMA_CPP_KEEP_ALIVE_INTERVAL, "5"),
+    LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF: pick(env.LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF, "30"),
+    LLAMA_CPP_AUTO_TUNE_ON_PULL: pick(env.LLAMA_CPP_AUTO_TUNE_ON_PULL, "true"),
+    LLAMA_CPP_AUTO_BENCH_VISION: pick(env.LLAMA_CPP_AUTO_BENCH_VISION, "true"),
+    LOCAL_AI_BENCH_IMAGE: env.LOCAL_AI_BENCH_IMAGE ?? "",
     LOCAL_AI_SOURCE_MODEL: sourceModel,
     LOCAL_AI_PROVIDER: provider,
     LOCAL_AI_CONTEXT_LENGTH: contextLength,
@@ -332,12 +319,12 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
 function subsystemDirs(resolved: ResolvedEnv): string[] {
   const devStorage = resolved.DEV_STORAGE;
   return [
-    join(devStorage, 'healer'),
-    join(devStorage, 'ops-chat'),
-    join(devStorage, 'workloads'),
-    join(devStorage, 'mcp', 'pipelines'),
-    join(devStorage, 'mcp', 'audit'),
-    join(devStorage, 'tunnel'),
+    join(devStorage, "healer"),
+    join(devStorage, "ops-chat"),
+    join(devStorage, "workloads"),
+    join(devStorage, "mcp", "pipelines"),
+    join(devStorage, "mcp", "audit"),
+    join(devStorage, "tunnel"),
   ];
 }
 
@@ -348,12 +335,9 @@ function subsystemDirs(resolved: ResolvedEnv): string[] {
  * every directory the resolver named actually exists on disk before the
  * function returns.
  */
-export function ensureDirs(
-  resolved: ResolvedEnv,
-  env: NodeJS.ProcessEnv = process.env,
-): void {
-  const dirs: string[] = MANAGED_DIRS.map((key) => resolved[key]).filter(
-    (d): d is string => Boolean(d),
+export function ensureDirs(resolved: ResolvedEnv, env: NodeJS.ProcessEnv = process.env): void {
+  const dirs: string[] = MANAGED_DIRS.map((key) => resolved[key]).filter((d): d is string =>
+    Boolean(d),
   );
   // Subsystem directories composed at use-site by each module.
   // Additive — no existing entry is replaced.
@@ -382,7 +366,7 @@ const POSIX_SAFE = /^[A-Za-z0-9_./:=@%+,\-]+$/;
  * Plain values matching `POSIX_SAFE` are emitted unquoted for readability.
  */
 function shellEscape(value: string): string {
-  if (value === '') return "''";
+  if (value === "") return "''";
   if (POSIX_SAFE.test(value)) return value;
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -404,8 +388,8 @@ export function formatEvalScript(
     lines.push(`export ${key}=${shellEscape(String(value))}`);
   }
 
-  const managed: string[] = MANAGED_DIRS.map((key) => resolved[key]).filter(
-    (d): d is string => Boolean(d),
+  const managed: string[] = MANAGED_DIRS.map((key) => resolved[key]).filter((d): d is string =>
+    Boolean(d),
   );
   // Keep the shell-emitted mkdir list in lockstep with `ensureDirs` so
   // `eval "$(llamactl env --eval)"` precreates the same subsystem dirs
@@ -416,7 +400,7 @@ export function formatEvalScript(
   }
   const dirs = managed.map(shellEscape);
   if (dirs.length > 0) {
-    lines.push(`mkdir -p ${dirs.join(' ')} 2>/dev/null || true`);
+    lines.push(`mkdir -p ${dirs.join(" ")} 2>/dev/null || true`);
   }
 
   // Prepend LLAMA_CPP_BIN to PATH when it exists on disk, mirroring the
@@ -429,5 +413,5 @@ export function formatEvalScript(
     );
   }
 
-  return `${lines.join('\n')}\n`;
+  return `${lines.join("\n")}\n`;
 }

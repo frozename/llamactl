@@ -1,7 +1,7 @@
-import { resolve } from 'node:path';
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
-import react from '@vitejs/plugin-react';
-import tailwindcss from '@tailwindcss/vite';
+import { resolve } from "node:path";
+import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 // Bundle everything except `electron` itself into the main/preload
 // outputs. The historical default here is `externalizeDepsPlugin` (keep
@@ -20,7 +20,13 @@ import tailwindcss from '@tailwindcss/vite';
 // `.js` imports against `.ts` files. Keep them *bundled* by excluding
 // them from the externalize list; everything else (native modules,
 // heavy libs like @trpc, undici) still externalizes via the plugin.
-const WORKSPACE_BUNDLE = ['@llamactl/core', '@llamactl/remote', '@nova/contracts', '@nova/mcp', '@nova/mcp-shared'];
+const WORKSPACE_BUNDLE = [
+  "@llamactl/core",
+  "@llamactl/remote",
+  "@nova/contracts",
+  "@nova/mcp",
+  "@nova/mcp-shared",
+];
 
 export default defineConfig({
   main: {
@@ -34,18 +40,18 @@ export default defineConfig({
     // to throwing shims instead: loading is harmless, calling throws.
     resolve: {
       alias: {
-        'bun:sqlite': resolve('electron/shims/bun-sqlite.ts'),
-        bun: resolve('electron/shims/bun.ts'),
+        "bun:sqlite": resolve("electron/shims/bun-sqlite.ts"),
+        bun: resolve("electron/shims/bun.ts"),
       },
     },
     build: {
       rollupOptions: {
-        input: { index: resolve('electron/main.ts') },
-        external: ['electron'],
+        input: { index: resolve("electron/main.ts") },
+        external: ["electron"],
         output: {
-          format: 'cjs',
-          entryFileNames: '[name].cjs',
-          chunkFileNames: 'chunks/[name]-[hash].cjs',
+          format: "cjs",
+          entryFileNames: "[name].cjs",
+          chunkFileNames: "chunks/[name]-[hash].cjs",
         },
       },
     },
@@ -55,31 +61,31 @@ export default defineConfig({
     // Same Bun-builtin shims as the main config — see the comment there.
     resolve: {
       alias: {
-        'bun:sqlite': resolve('electron/shims/bun-sqlite.ts'),
-        bun: resolve('electron/shims/bun.ts'),
+        "bun:sqlite": resolve("electron/shims/bun-sqlite.ts"),
+        bun: resolve("electron/shims/bun.ts"),
       },
     },
     build: {
       rollupOptions: {
-        input: { index: resolve('electron/preload.ts') },
-        external: ['electron'],
+        input: { index: resolve("electron/preload.ts") },
+        external: ["electron"],
         output: {
-          format: 'cjs',
-          entryFileNames: '[name].cjs',
-          chunkFileNames: 'chunks/[name]-[hash].cjs',
+          format: "cjs",
+          entryFileNames: "[name].cjs",
+          chunkFileNames: "chunks/[name]-[hash].cjs",
         },
       },
     },
   },
   renderer: {
-    root: resolve('src'),
+    root: resolve("src"),
     resolve: {
-      alias: { '@': resolve('src') },
+      alias: { "@": resolve("src") },
     },
     plugins: [react(), tailwindcss()],
     build: {
       rollupOptions: {
-        input: { index: resolve('src/index.html') },
+        input: { index: resolve("src/index.html") },
       },
     },
     server: {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -7,13 +7,10 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type {
-  SpawnSyncOptionsWithStringEncoding,
-  SpawnSyncReturns,
-} from 'node:child_process';
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
 import {
   assemblePlistOptions,
   currentBunTarget,
@@ -24,7 +21,7 @@ import {
   type FsLike,
   type InstallLaunchdDeps,
   type SpawnSyncLike,
-} from '../src/commands/agent-install/index.js';
+} from "../src/commands/agent-install/index.js";
 
 // ------------------------------------------------------------------
 // Shared fs-shim helpers. Typed once and reused so each test doesn't
@@ -34,21 +31,21 @@ import {
 // otherwise.
 // ------------------------------------------------------------------
 
-const accessFromDisk: FsLike['accessSync'] = (path, mode) => {
-  if (typeof path !== 'string' && !(path instanceof URL)) {
-    throw new Error('access shim requires string or URL path');
+const accessFromDisk: FsLike["accessSync"] = (path, mode) => {
+  if (typeof path !== "string" && !(path instanceof URL)) {
+    throw new Error("access shim requires string or URL path");
   }
-  const p = typeof path === 'string' ? path : path.pathname;
-  if (!existsSync(p)) throw new Error('ENOENT');
+  const p = typeof path === "string" ? path : path.pathname;
+  if (!existsSync(p)) throw new Error("ENOENT");
   void mode;
 };
 
-const writeFileFromDisk: FsLike['writeFileSync'] = (file, data): void => {
+const writeFileFromDisk: FsLike["writeFileSync"] = (file, data): void => {
   writeFileSync(file as string, data as string | NodeJS.ArrayBufferView);
 };
 
-const copyFileThrough: FsLike['copyFileSync'] = (src, dest): void => {
-  mkdirSync(join(dest as string, '..'), { recursive: true });
+const copyFileThrough: FsLike["copyFileSync"] = (src, dest): void => {
+  mkdirSync(join(dest as string, ".."), { recursive: true });
   writeFileSync(dest as string, readFileSync(src as string));
 };
 
@@ -87,15 +84,14 @@ function makeSpawnStub(config: SpawnStubConfig): {
 } {
   const calls: SpawnCall[] = [];
   const queued = (config.responses ?? []).slice();
-  const fallback: SpawnSyncReturns<string> =
-    config.fallback ?? {
-      pid: 0,
-      output: ['', '', ''],
-      stdout: '',
-      stderr: '',
-      status: 0,
-      signal: null,
-    };
+  const fallback: SpawnSyncReturns<string> = config.fallback ?? {
+    pid: 0,
+    output: ["", "", ""],
+    stdout: "",
+    stderr: "",
+    status: 0,
+    signal: null,
+  };
   const spawn: SpawnSyncLike = (
     command: string,
     args: string[],
@@ -126,23 +122,23 @@ function defaultFs(): FsLike {
     chmodSync: (..._args: Parameters<typeof chmodSync>): void => {
       /* noop */
     },
-    copyFileSync: (..._args: Parameters<FsLike['copyFileSync']>): void => {
+    copyFileSync: (..._args: Parameters<FsLike["copyFileSync"]>): void => {
       /* noop */
     },
-    unlinkSync: (..._args: Parameters<FsLike['unlinkSync']>): void => {
+    unlinkSync: (..._args: Parameters<FsLike["unlinkSync"]>): void => {
       /* noop */
     },
     statSync,
-    accessSync: (..._args: Parameters<FsLike['accessSync']>): void => {
+    accessSync: (..._args: Parameters<FsLike["accessSync"]>): void => {
       /* noop — existence + exec treated as satisfied */
     },
   } as unknown as FsLike;
 
-  function statSync(..._args: Parameters<FsLike['statSync']>): ReturnType<FsLike['statSync']> {
+  function statSync(..._args: Parameters<FsLike["statSync"]>): ReturnType<FsLike["statSync"]> {
     return {
       isFile: () => true,
       isDirectory: () => false,
-    } as unknown as ReturnType<FsLike['statSync']>;
+    } as unknown as ReturnType<FsLike["statSync"]>;
   }
 }
 
@@ -156,23 +152,23 @@ function makeTestDeps(over: Partial<InstallLaunchdDeps> = {}): {
   const defaults: InstallLaunchdDeps = {
     spawnSync: ((_c, _a, _o): SpawnSyncReturns<string> => ({
       pid: 0,
-      output: ['', '', ''],
-      stdout: '',
-      stderr: '',
+      output: ["", "", ""],
+      stdout: "",
+      stderr: "",
       status: 0,
       signal: null,
     })) as SpawnSyncLike,
     fs: defaultFs(),
     fetchAgentRelease: async () => ({
       ok: true,
-      version: 'v1.2.3',
-      target: 'darwin-arm64',
-      path: '/tmp/fake-release-binary',
-      sha256: 'deadbeef',
+      version: "v1.2.3",
+      target: "darwin-arm64",
+      path: "/tmp/fake-release-binary",
+      sha256: "deadbeef",
       bytes: 0,
-      signature: { verified: null, reason: 'skipped' },
+      signature: { verified: null, reason: "skipped" },
     }),
-    buildAgentBinary: async () => ({ ok: true, outPath: '/tmp/fake-built-binary', code: 0 }),
+    buildAgentBinary: async () => ({ ok: true, outPath: "/tmp/fake-built-binary", code: 0 }),
     stdout: (c) => {
       stdoutChunks.push(c);
     },
@@ -184,8 +180,8 @@ function makeTestDeps(over: Partial<InstallLaunchdDeps> = {}): {
       /* no-op for speed */
     },
     getuid: () => 501,
-    platform: 'darwin',
-    env: { HOME: '/Users/tester', USER: 'tester' },
+    platform: "darwin",
+    env: { HOME: "/Users/tester", USER: "tester" },
     ...over,
   };
   return {
@@ -199,84 +195,78 @@ function makeTestDeps(over: Partial<InstallLaunchdDeps> = {}): {
 // Flag parsing
 // -----------------------------------------------------------------------------
 
-describe('parseInstallLaunchdFlags', () => {
-  test('defaults: scope=user, source=from-source, default install path', () => {
+describe("parseInstallLaunchdFlags", () => {
+  test("defaults: scope=user, source=from-source, default install path", () => {
     const parsed = parseInstallLaunchdFlags([]);
-    if ('error' in parsed) throw new Error(parsed.error);
-    expect(parsed.scope).toBe('user');
-    expect(parsed.source).toEqual({ kind: 'source' });
-    expect(parsed.installPath).toBe('/usr/local/bin/llamactl-agent');
+    if ("error" in parsed) throw new Error(parsed.error);
+    expect(parsed.scope).toBe("user");
+    expect(parsed.source).toEqual({ kind: "source" });
+    expect(parsed.installPath).toBe("/usr/local/bin/llamactl-agent");
     expect(parsed.dryRun).toBe(false);
     expect(parsed.force).toBe(false);
-    expect(parsed.repo).toBe('frozename/llamactl');
+    expect(parsed.repo).toBe("frozename/llamactl");
   });
 
-  test('--binary=<path> sets source=binary', () => {
-    const parsed = parseInstallLaunchdFlags(['--binary=/opt/bin/agent']);
-    if ('error' in parsed) throw new Error(parsed.error);
-    expect(parsed.source).toEqual({ kind: 'binary', path: '/opt/bin/agent' });
+  test("--binary=<path> sets source=binary", () => {
+    const parsed = parseInstallLaunchdFlags(["--binary=/opt/bin/agent"]);
+    if ("error" in parsed) throw new Error(parsed.error);
+    expect(parsed.source).toEqual({ kind: "binary", path: "/opt/bin/agent" });
   });
 
-  test('--from-release=v0.4.0 sets source=release', () => {
-    const parsed = parseInstallLaunchdFlags(['--from-release=v0.4.0']);
-    if ('error' in parsed) throw new Error(parsed.error);
-    expect(parsed.source).toEqual({ kind: 'release', tag: 'v0.4.0' });
+  test("--from-release=v0.4.0 sets source=release", () => {
+    const parsed = parseInstallLaunchdFlags(["--from-release=v0.4.0"]);
+    if ("error" in parsed) throw new Error(parsed.error);
+    expect(parsed.source).toEqual({ kind: "release", tag: "v0.4.0" });
   });
 
-  test('mutually exclusive sources rejected', () => {
-    const parsed = parseInstallLaunchdFlags([
-      '--binary=/tmp/agent',
-      '--from-source',
-    ]);
-    expect('error' in parsed).toBe(true);
-    if ('error' in parsed) {
-      expect(parsed.error).toContain('mutually exclusive');
+  test("mutually exclusive sources rejected", () => {
+    const parsed = parseInstallLaunchdFlags(["--binary=/tmp/agent", "--from-source"]);
+    expect("error" in parsed).toBe(true);
+    if ("error" in parsed) {
+      expect(parsed.error).toContain("mutually exclusive");
     }
   });
 
-  test('--from-release with empty tag rejected', () => {
-    const parsed = parseInstallLaunchdFlags(['--from-release=']);
-    expect('error' in parsed).toBe(true);
-    if ('error' in parsed) {
-      expect(parsed.error).toContain('requires a tag');
+  test("--from-release with empty tag rejected", () => {
+    const parsed = parseInstallLaunchdFlags(["--from-release="]);
+    expect("error" in parsed).toBe(true);
+    if ("error" in parsed) {
+      expect(parsed.error).toContain("requires a tag");
     }
   });
 
-  test('--env=KEY=VAL parsed into envOverrides; repeatable accumulates', () => {
-    const parsed = parseInstallLaunchdFlags([
-      '--env=HF_HOME=/foo',
-      '--env=DEV_STORAGE=/bar',
-    ]);
-    if ('error' in parsed) throw new Error(parsed.error);
+  test("--env=KEY=VAL parsed into envOverrides; repeatable accumulates", () => {
+    const parsed = parseInstallLaunchdFlags(["--env=HF_HOME=/foo", "--env=DEV_STORAGE=/bar"]);
+    if ("error" in parsed) throw new Error(parsed.error);
     expect(parsed.envOverrides).toEqual({
-      HF_HOME: '/foo',
-      DEV_STORAGE: '/bar',
+      HF_HOME: "/foo",
+      DEV_STORAGE: "/bar",
     });
   });
 
-  test('--env without = inside value rejected', () => {
-    const parsed = parseInstallLaunchdFlags(['--env=KEY_WITHOUT_VALUE']);
-    expect('error' in parsed).toBe(true);
-    if ('error' in parsed) {
-      expect(parsed.error).toContain('--env must be KEY=VAL');
+  test("--env without = inside value rejected", () => {
+    const parsed = parseInstallLaunchdFlags(["--env=KEY_WITHOUT_VALUE"]);
+    expect("error" in parsed).toBe(true);
+    if ("error" in parsed) {
+      expect(parsed.error).toContain("--env must be KEY=VAL");
     }
   });
 
-  test('--dry-run + --force bare flags set booleans', () => {
-    const parsed = parseInstallLaunchdFlags(['--dry-run', '--force']);
-    if ('error' in parsed) throw new Error(parsed.error);
+  test("--dry-run + --force bare flags set booleans", () => {
+    const parsed = parseInstallLaunchdFlags(["--dry-run", "--force"]);
+    if ("error" in parsed) throw new Error(parsed.error);
     expect(parsed.dryRun).toBe(true);
     expect(parsed.force).toBe(true);
   });
 
-  test('--scope must be user|system', () => {
-    const parsed = parseInstallLaunchdFlags(['--scope=weird']);
-    expect('error' in parsed).toBe(true);
+  test("--scope must be user|system", () => {
+    const parsed = parseInstallLaunchdFlags(["--scope=weird"]);
+    expect("error" in parsed).toBe(true);
   });
 
-  test('unknown flag rejected', () => {
-    const parsed = parseInstallLaunchdFlags(['--weird=foo']);
-    expect('error' in parsed).toBe(true);
+  test("unknown flag rejected", () => {
+    const parsed = parseInstallLaunchdFlags(["--weird=foo"]);
+    expect("error" in parsed).toBe(true);
   });
 });
 
@@ -284,18 +274,18 @@ describe('parseInstallLaunchdFlags', () => {
 // Platform detection
 // -----------------------------------------------------------------------------
 
-describe('currentBunTarget', () => {
-  test('darwin/arm64 → darwin-arm64', () => {
-    expect(currentBunTarget('darwin', 'arm64')).toBe('darwin-arm64');
+describe("currentBunTarget", () => {
+  test("darwin/arm64 → darwin-arm64", () => {
+    expect(currentBunTarget("darwin", "arm64")).toBe("darwin-arm64");
   });
-  test('linux/x64 → linux-x64', () => {
-    expect(currentBunTarget('linux', 'x64')).toBe('linux-x64');
+  test("linux/x64 → linux-x64", () => {
+    expect(currentBunTarget("linux", "x64")).toBe("linux-x64");
   });
-  test('linux/arm64 → linux-arm64', () => {
-    expect(currentBunTarget('linux', 'arm64')).toBe('linux-arm64');
+  test("linux/arm64 → linux-arm64", () => {
+    expect(currentBunTarget("linux", "arm64")).toBe("linux-arm64");
   });
-  test('win32/x64 → null', () => {
-    expect(currentBunTarget('win32', 'x64')).toBeNull();
+  test("win32/x64 → null", () => {
+    expect(currentBunTarget("win32", "x64")).toBeNull();
   });
 });
 
@@ -303,13 +293,13 @@ describe('currentBunTarget', () => {
 // Binary resolution
 // -----------------------------------------------------------------------------
 
-describe('resolveBinary --binary', () => {
-  test('existing executable file is copied to installPath', async () => {
-    const tmpDir = mkdtempSync(join(tmpdir(), 'install-launchd-'));
+describe("resolveBinary --binary", () => {
+  test("existing executable file is copied to installPath", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "install-launchd-"));
     try {
-      const src = join(tmpDir, 'source-binary');
-      const dest = join(tmpDir, 'dest', 'llamactl-agent');
-      writeFileSync(src, '#!/bin/sh\necho ok\n', { mode: 0o755 });
+      const src = join(tmpDir, "source-binary");
+      const dest = join(tmpDir, "dest", "llamactl-agent");
+      writeFileSync(src, "#!/bin/sh\necho ok\n", { mode: 0o755 });
       chmodSync(src, 0o755);
 
       const { deps } = makeTestDeps({
@@ -325,10 +315,10 @@ describe('resolveBinary --binary', () => {
       });
 
       const resolved = await resolveBinary({
-        source: { kind: 'binary', path: src },
+        source: { kind: "binary", path: src },
         installPath: dest,
-        scope: 'user',
-        repo: 'frozename/llamactl',
+        scope: "user",
+        repo: "frozename/llamactl",
         dryRun: false,
         deps,
       });
@@ -348,14 +338,14 @@ describe('resolveBinary --binary', () => {
     });
     await expect(
       resolveBinary({
-        source: { kind: 'binary', path: '/no/such/binary' },
-        installPath: '/tmp/out',
-        scope: 'user',
-        repo: 'frozename/llamactl',
+        source: { kind: "binary", path: "/no/such/binary" },
+        installPath: "/tmp/out",
+        scope: "user",
+        repo: "frozename/llamactl",
         dryRun: false,
         deps,
       }),
-    ).rejects.toThrow('does not exist');
+    ).rejects.toThrow("does not exist");
   });
 
   test('non-executable file throws "not executable"', async () => {
@@ -364,23 +354,23 @@ describe('resolveBinary --binary', () => {
         ...defaultFs(),
         existsSync: () => true,
         accessSync: () => {
-          throw new Error('EACCES');
+          throw new Error("EACCES");
         },
       } as unknown as FsLike,
     });
     await expect(
       resolveBinary({
-        source: { kind: 'binary', path: '/tmp/not-exec' },
-        installPath: '/tmp/out',
-        scope: 'user',
-        repo: 'frozename/llamactl',
+        source: { kind: "binary", path: "/tmp/not-exec" },
+        installPath: "/tmp/out",
+        scope: "user",
+        repo: "frozename/llamactl",
         dryRun: false,
         deps,
       }),
-    ).rejects.toThrow('not executable');
+    ).rejects.toThrow("not executable");
   });
 
-  test('--from-release calls fetchAgentRelease with correct target/repo/tag', async () => {
+  test("--from-release calls fetchAgentRelease with correct target/repo/tag", async () => {
     let capturedArgs:
       | {
           repo: string;
@@ -406,31 +396,31 @@ describe('resolveBinary --binary', () => {
           ok: true,
           version: opts.version,
           target: opts.target,
-          path: '/tmp/fetched-binary',
-          sha256: 'abc',
+          path: "/tmp/fetched-binary",
+          sha256: "abc",
           bytes: 0,
-          signature: { verified: null, reason: 'skipped' },
+          signature: { verified: null, reason: "skipped" },
         };
       },
-      platform: 'darwin',
+      platform: "darwin",
     });
 
     const resolved = await resolveBinary({
-      source: { kind: 'release', tag: 'v0.4.0' },
-      installPath: '/tmp/install/agent',
-      scope: 'user',
-      repo: 'frozename/llamactl',
+      source: { kind: "release", tag: "v0.4.0" },
+      installPath: "/tmp/install/agent",
+      scope: "user",
+      repo: "frozename/llamactl",
       dryRun: false,
       deps,
     });
-    expect(resolved).toBe('/tmp/install/agent');
+    expect(resolved).toBe("/tmp/install/agent");
     expect(capturedArgs).toBeDefined();
-    expect(capturedArgs!.repo).toBe('frozename/llamactl');
-    expect(capturedArgs!.version).toBe('v0.4.0');
-    expect(capturedArgs!.verifySig).toBe('best-effort');
+    expect(capturedArgs!.repo).toBe("frozename/llamactl");
+    expect(capturedArgs!.version).toBe("v0.4.0");
+    expect(capturedArgs!.verifySig).toBe("best-effort");
   });
 
-  test('--from-source calls buildAgentBinary with detected target', async () => {
+  test("--from-source calls buildAgentBinary with detected target", async () => {
     let capturedTarget: string | undefined;
     const { deps } = makeTestDeps({
       fs: {
@@ -439,32 +429,32 @@ describe('resolveBinary --binary', () => {
       } as unknown as FsLike,
       buildAgentBinary: async (opts) => {
         capturedTarget = opts.target;
-        return { ok: true, outPath: '/tmp/built-binary', code: 0 };
+        return { ok: true, outPath: "/tmp/built-binary", code: 0 };
       },
-      platform: 'darwin',
+      platform: "darwin",
     });
     const resolved = await resolveBinary({
-      source: { kind: 'source' },
-      installPath: '/tmp/install/agent',
-      scope: 'user',
-      repo: 'frozename/llamactl',
+      source: { kind: "source" },
+      installPath: "/tmp/install/agent",
+      scope: "user",
+      repo: "frozename/llamactl",
       dryRun: false,
       deps,
     });
-    expect(resolved).toBe('/tmp/install/agent');
+    expect(resolved).toBe("/tmp/install/agent");
     // currentBunTarget on darwin picks arm64 on apple silicon CI, x64 on intel.
     expect(capturedTarget).toBeDefined();
-    expect(['darwin-arm64', 'darwin-x64']).toContain(capturedTarget!);
+    expect(["darwin-arm64", "darwin-x64"]).toContain(capturedTarget!);
   });
 
-  test('system scope with privileged path and non-root uid fails fast', async () => {
-    const { deps } = makeTestDeps({ getuid: () => 501, platform: 'darwin' });
+  test("system scope with privileged path and non-root uid fails fast", async () => {
+    const { deps } = makeTestDeps({ getuid: () => 501, platform: "darwin" });
     await expect(
       resolveBinary({
-        source: { kind: 'source' },
-        installPath: '/usr/local/bin/llamactl-agent',
-        scope: 'system',
-        repo: 'frozename/llamactl',
+        source: { kind: "source" },
+        installPath: "/usr/local/bin/llamactl-agent",
+        scope: "system",
+        repo: "frozename/llamactl",
         dryRun: false,
         deps,
       }),
@@ -476,36 +466,36 @@ describe('resolveBinary --binary', () => {
 // Plist assembly
 // -----------------------------------------------------------------------------
 
-describe('assemblePlistOptions', () => {
-  test('user scope omits user/group/workingDir', () => {
+describe("assemblePlistOptions", () => {
+  test("user scope omits user/group/workingDir", () => {
     const opts = assemblePlistOptions({
-      label: 'com.llamactl.agent',
-      installPath: '/usr/local/bin/llamactl-agent',
-      dirArg: '/Users/tester/agent',
-      logDir: '/Users/tester/logs',
-      env: { PATH: '/bin' },
-      scope: 'user',
+      label: "com.llamactl.agent",
+      installPath: "/usr/local/bin/llamactl-agent",
+      dirArg: "/Users/tester/agent",
+      logDir: "/Users/tester/logs",
+      env: { PATH: "/bin" },
+      scope: "user",
     });
     expect(opts.user).toBeUndefined();
     expect(opts.group).toBeUndefined();
     expect(opts.workingDir).toBeUndefined();
-    expect(opts.args).toEqual(['agent', 'serve', '--dir=/Users/tester/agent']);
+    expect(opts.args).toEqual(["agent", "serve", "--dir=/Users/tester/agent"]);
   });
 
-  test('system scope populates user/group/workingDir=dirArg', () => {
+  test("system scope populates user/group/workingDir=dirArg", () => {
     const opts = assemblePlistOptions({
-      label: 'com.llamactl.agent.daemon',
-      installPath: '/usr/local/bin/llamactl-agent',
-      dirArg: '/var/lib/llamactl-agent',
-      logDir: '/var/log/llamactl',
-      env: { PATH: '/bin' },
-      scope: 'system',
-      user: 'root',
-      group: 'wheel',
+      label: "com.llamactl.agent.daemon",
+      installPath: "/usr/local/bin/llamactl-agent",
+      dirArg: "/var/lib/llamactl-agent",
+      logDir: "/var/log/llamactl",
+      env: { PATH: "/bin" },
+      scope: "system",
+      user: "root",
+      group: "wheel",
     });
-    expect(opts.user).toBe('root');
-    expect(opts.group).toBe('wheel');
-    expect(opts.workingDir).toBe('/var/lib/llamactl-agent');
+    expect(opts.user).toBe("root");
+    expect(opts.group).toBe("wheel");
+    expect(opts.workingDir).toBe("/var/lib/llamactl-agent");
   });
 });
 
@@ -513,20 +503,20 @@ describe('assemblePlistOptions', () => {
 // Polling
 // -----------------------------------------------------------------------------
 
-describe('pollLaunchctlHealthy', () => {
-  test('state=running + pid > 0 → ok with parsed pid', async () => {
+describe("pollLaunchctlHealthy", () => {
+  test("state=running + pid > 0 → ok with parsed pid", async () => {
     const stub = makeSpawnStub({
       fallback: {
         pid: 0,
-        output: ['', '', ''],
-        stdout: 'some = thing\nstate = running\npid = 12345\nother = stuff\n',
-        stderr: '',
+        output: ["", "", ""],
+        stdout: "some = thing\nstate = running\npid = 12345\nother = stuff\n",
+        stderr: "",
         status: 0,
         signal: null,
       },
     });
     const { deps } = makeTestDeps({ spawnSync: stub.spawn });
-    const res = await pollLaunchctlHealthy('com.llamactl.agent', 'user', deps, 200, 10);
+    const res = await pollLaunchctlHealthy("com.llamactl.agent", "user", deps, 200, 10);
     expect(res.ok).toBe(true);
     expect(res.pid).toBe(12345);
   });
@@ -535,9 +525,9 @@ describe('pollLaunchctlHealthy', () => {
     const stub = makeSpawnStub({
       fallback: {
         pid: 0,
-        output: ['', '', ''],
-        stdout: 'state = spawn scheduled\npid = 0\n',
-        stderr: '',
+        output: ["", "", ""],
+        stdout: "state = spawn scheduled\npid = 0\n",
+        stderr: "",
         status: 0,
         signal: null,
       },
@@ -552,9 +542,9 @@ describe('pollLaunchctlHealthy', () => {
         return counter;
       },
     });
-    const res = await pollLaunchctlHealthy('com.llamactl.agent', 'user', deps, 200, 10);
+    const res = await pollLaunchctlHealthy("com.llamactl.agent", "user", deps, 200, 10);
     expect(res.ok).toBe(false);
-    expect(res.reason).toContain('timeout');
+    expect(res.reason).toContain("timeout");
   });
 });
 
@@ -562,12 +552,12 @@ describe('pollLaunchctlHealthy', () => {
 // End-to-end handler (success, dry-run, overwrite, launchctl failure)
 // -----------------------------------------------------------------------------
 
-describe('runAgentInstallLaunchd', () => {
-  test('--dry-run prints plist and does not touch disk or launchctl', async () => {
-    const tmpDir = mkdtempSync(join(tmpdir(), 'install-launchd-dryrun-'));
+describe("runAgentInstallLaunchd", () => {
+  test("--dry-run prints plist and does not touch disk or launchctl", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "install-launchd-dryrun-"));
     try {
-      const binary = join(tmpDir, 'agent-bin');
-      writeFileSync(binary, '#!/bin/sh\necho ok\n', { mode: 0o755 });
+      const binary = join(tmpDir, "agent-bin");
+      writeFileSync(binary, "#!/bin/sh\necho ok\n", { mode: 0o755 });
       chmodSync(binary, 0o755);
 
       let wroteCount = 0;
@@ -591,37 +581,37 @@ describe('runAgentInstallLaunchd', () => {
       });
 
       const code = await runAgentInstallLaunchd(
-        ['--dry-run', `--binary=${binary}`, `--install-path=${join(tmpDir, 'out')}`],
+        ["--dry-run", `--binary=${binary}`, `--install-path=${join(tmpDir, "out")}`],
         deps,
       );
       expect(code).toBe(0);
       expect(wroteCount).toBe(0);
       expect(stub.calls.length).toBe(0);
-      const joinedStdout = stdoutChunks.join('');
+      const joinedStdout = stdoutChunks.join("");
       expect(joinedStdout).toContain('<?xml version="1.0"');
-      expect(joinedStdout).toContain('com.llamactl.agent');
-      expect(joinedStdout).toContain('launchctl');
+      expect(joinedStdout).toContain("com.llamactl.agent");
+      expect(joinedStdout).toContain("launchctl");
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  test('overwrite protection: existing plist without --force → exit 1', async () => {
-    const tmpDir = mkdtempSync(join(tmpdir(), 'install-launchd-overwrite-'));
+  test("overwrite protection: existing plist without --force → exit 1", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "install-launchd-overwrite-"));
     try {
-      const binary = join(tmpDir, 'agent-bin');
-      writeFileSync(binary, '#!/bin/sh\necho ok\n', { mode: 0o755 });
+      const binary = join(tmpDir, "agent-bin");
+      writeFileSync(binary, "#!/bin/sh\necho ok\n", { mode: 0o755 });
       chmodSync(binary, 0o755);
       const home = tmpDir; // plist goes under $HOME/Library/LaunchAgents
-      const laDir = join(home, 'Library', 'LaunchAgents');
+      const laDir = join(home, "Library", "LaunchAgents");
       mkdirSync(laDir, { recursive: true });
-      const existing = join(laDir, 'com.llamactl.agent.plist');
-      writeFileSync(existing, '<!-- existing -->');
+      const existing = join(laDir, "com.llamactl.agent.plist");
+      writeFileSync(existing, "<!-- existing -->");
 
       const stub = makeSpawnStub({});
       const { deps, stderrChunks } = makeTestDeps({
         spawnSync: stub.spawn,
-        env: { HOME: home, USER: 'tester' },
+        env: { HOME: home, USER: "tester" },
         fs: {
           ...defaultFs(),
           existsSync,
@@ -629,28 +619,28 @@ describe('runAgentInstallLaunchd', () => {
           chmodSync,
           accessSync: accessFromDisk,
           writeFileSync: () => {
-            throw new Error('should not be called when overwrite blocked');
+            throw new Error("should not be called when overwrite blocked");
           },
           copyFileSync: copyFileThrough,
         } as unknown as FsLike,
       });
 
       const code = await runAgentInstallLaunchd(
-        [`--binary=${binary}`, `--install-path=${join(tmpDir, 'agent-installed')}`],
+        [`--binary=${binary}`, `--install-path=${join(tmpDir, "agent-installed")}`],
         deps,
       );
       expect(code).toBe(1);
-      expect(stderrChunks.join('')).toContain('already exists');
+      expect(stderrChunks.join("")).toContain("already exists");
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  test('launchctl load failure surfaces stderr output', async () => {
-    const tmpDir = mkdtempSync(join(tmpdir(), 'install-launchd-loadfail-'));
+  test("launchctl load failure surfaces stderr output", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "install-launchd-loadfail-"));
     try {
-      const binary = join(tmpDir, 'agent-bin');
-      writeFileSync(binary, '#!/bin/sh\necho ok\n', { mode: 0o755 });
+      const binary = join(tmpDir, "agent-bin");
+      writeFileSync(binary, "#!/bin/sh\necho ok\n", { mode: 0o755 });
       chmodSync(binary, 0o755);
       const home = tmpDir;
 
@@ -658,36 +648,36 @@ describe('runAgentInstallLaunchd', () => {
         responses: [
           {
             // plutil -lint → success
-            match: (c, a) => c === 'plutil' && a[0] === '-lint',
+            match: (c, a) => c === "plutil" && a[0] === "-lint",
             response: {
               pid: 0,
-              output: ['OK\n', '', ''],
-              stdout: 'OK\n',
-              stderr: '',
+              output: ["OK\n", "", ""],
+              stdout: "OK\n",
+              stderr: "",
               status: 0,
               signal: null,
             },
           },
           {
             // launchctl unload → irrelevant
-            match: (c, a) => c === 'launchctl' && a[0] === 'unload',
+            match: (c, a) => c === "launchctl" && a[0] === "unload",
             response: {
               pid: 0,
-              output: ['', '', ''],
-              stdout: '',
-              stderr: '',
+              output: ["", "", ""],
+              stdout: "",
+              stderr: "",
               status: 0,
               signal: null,
             },
           },
           {
             // launchctl load → fail
-            match: (c, a) => c === 'launchctl' && a[0] === 'load',
+            match: (c, a) => c === "launchctl" && a[0] === "load",
             response: {
               pid: 0,
-              output: ['', 'Load failed: 5: Input/output error\n', ''],
-              stdout: '',
-              stderr: 'Load failed: 5: Input/output error\n',
+              output: ["", "Load failed: 5: Input/output error\n", ""],
+              stdout: "",
+              stderr: "Load failed: 5: Input/output error\n",
               status: 1,
               signal: null,
             },
@@ -697,7 +687,7 @@ describe('runAgentInstallLaunchd', () => {
 
       const { deps, stderrChunks } = makeTestDeps({
         spawnSync: stub.spawn,
-        env: { HOME: home, USER: 'tester' },
+        env: { HOME: home, USER: "tester" },
         fs: {
           ...defaultFs(),
           existsSync,
@@ -710,70 +700,67 @@ describe('runAgentInstallLaunchd', () => {
       });
 
       const code = await runAgentInstallLaunchd(
-        [`--binary=${binary}`, `--install-path=${join(tmpDir, 'agent-installed')}`],
+        [`--binary=${binary}`, `--install-path=${join(tmpDir, "agent-installed")}`],
         deps,
       );
       expect(code).toBe(1);
-      expect(stderrChunks.join('')).toContain('launchctl load failed');
-      expect(stderrChunks.join('')).toContain('Load failed');
+      expect(stderrChunks.join("")).toContain("launchctl load failed");
+      expect(stderrChunks.join("")).toContain("Load failed");
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  test('system scope without root → exit 1 with sudo message', async () => {
+  test("system scope without root → exit 1 with sudo message", async () => {
     const { deps, stderrChunks } = makeTestDeps({
       getuid: () => 501,
-      platform: 'darwin',
+      platform: "darwin",
     });
-    const code = await runAgentInstallLaunchd(
-      ['--scope=system', '--from-source'],
-      deps,
-    );
+    const code = await runAgentInstallLaunchd(["--scope=system", "--from-source"], deps);
     expect(code).toBe(1);
-    expect(stderrChunks.join('')).toContain('--scope=system requires root');
+    expect(stderrChunks.join("")).toContain("--scope=system requires root");
   });
 
-  test('success path: poll returns pid → summary printed with FDA reminder', async () => {
-    const tmpDir = mkdtempSync(join(tmpdir(), 'install-launchd-success-'));
+  test("success path: poll returns pid → summary printed with FDA reminder", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "install-launchd-success-"));
     try {
-      const binary = join(tmpDir, 'agent-bin');
-      writeFileSync(binary, '#!/bin/sh\necho ok\n', { mode: 0o755 });
+      const binary = join(tmpDir, "agent-bin");
+      writeFileSync(binary, "#!/bin/sh\necho ok\n", { mode: 0o755 });
       chmodSync(binary, 0o755);
       const home = tmpDir;
-      const logDir = join(home, '.llamactl-launchd-logs');
+      const logDir = join(home, ".llamactl-launchd-logs");
 
       const stub = makeSpawnStub({
         responses: [
           {
-            match: (c, a) => c === 'plutil' && a[0] === '-lint',
+            match: (c, a) => c === "plutil" && a[0] === "-lint",
             response: {
               pid: 0,
-              output: ['OK\n', '', ''],
-              stdout: 'OK\n',
-              stderr: '',
+              output: ["OK\n", "", ""],
+              stdout: "OK\n",
+              stderr: "",
               status: 0,
               signal: null,
             },
           },
           {
-            match: (c, a) => c === 'launchctl' && a[0] === 'unload',
+            match: (c, a) => c === "launchctl" && a[0] === "unload",
             response: {
               pid: 0,
-              output: ['', '', ''],
-              stdout: '',
-              stderr: '',
+              output: ["", "", ""],
+              stdout: "",
+              stderr: "",
               status: 0,
               signal: null,
             },
           },
           {
-            match: (c, a) => c === 'launchctl' && a[0] === 'load',
+            match: (c, a) => c === "launchctl" && a[0] === "load",
             response: {
               pid: 0,
-              output: ['', '', ''],
-              stdout: '',
-              stderr: '',
+              output: ["", "", ""],
+              stdout: "",
+              stderr: "",
               status: 0,
               signal: null,
             },
@@ -782,9 +769,9 @@ describe('runAgentInstallLaunchd', () => {
         // Every launchctl print fallback returns a healthy service.
         fallback: {
           pid: 0,
-          output: ['', '', ''],
-          stdout: 'state = running\npid = 99999\n',
-          stderr: '',
+          output: ["", "", ""],
+          stdout: "state = running\npid = 99999\n",
+          stderr: "",
           status: 0,
           signal: null,
         },
@@ -792,7 +779,7 @@ describe('runAgentInstallLaunchd', () => {
 
       const { deps, stdoutChunks } = makeTestDeps({
         spawnSync: stub.spawn,
-        env: { HOME: home, USER: 'tester' },
+        env: { HOME: home, USER: "tester" },
         fs: {
           ...defaultFs(),
           existsSync,
@@ -808,65 +795,66 @@ describe('runAgentInstallLaunchd', () => {
       });
 
       const code = await runAgentInstallLaunchd(
-        [`--binary=${binary}`, `--install-path=${join(tmpDir, 'agent-installed')}`, `--log-dir=${logDir}`],
+        [
+          `--binary=${binary}`,
+          `--install-path=${join(tmpDir, "agent-installed")}`,
+          `--log-dir=${logDir}`,
+        ],
         deps,
       );
-      const stdout = stdoutChunks.join('');
+      const stdout = stdoutChunks.join("");
       expect(code).toBe(0);
-      expect(stdout).toContain('Installed:');
-      expect(stdout).toContain('com.llamactl.agent');
-      expect(stdout).toContain('pid:        99999');
-      expect(stdout).toContain('Full Disk Access');
+      expect(stdout).toContain("Installed:");
+      expect(stdout).toContain("com.llamactl.agent");
+      expect(stdout).toContain("pid:        99999");
+      expect(stdout).toContain("Full Disk Access");
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  test('polling failure reads stderr.log and includes contents in error', async () => {
-    const tmpDir = mkdtempSync(join(tmpdir(), 'install-launchd-pollfail-'));
+  test("polling failure reads stderr.log and includes contents in error", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "install-launchd-pollfail-"));
     try {
-      const binary = join(tmpDir, 'agent-bin');
-      writeFileSync(binary, '#!/bin/sh\necho ok\n', { mode: 0o755 });
+      const binary = join(tmpDir, "agent-bin");
+      writeFileSync(binary, "#!/bin/sh\necho ok\n", { mode: 0o755 });
       chmodSync(binary, 0o755);
       const home = tmpDir;
-      const logDir = join(home, '.llamactl-launchd-logs');
+      const logDir = join(home, ".llamactl-launchd-logs");
       mkdirSync(logDir, { recursive: true });
-      writeFileSync(
-        join(logDir, 'stderr.log'),
-        'FATAL: port 7843 already in use\nexiting\n',
-      );
+      writeFileSync(join(logDir, "stderr.log"), "FATAL: port 7843 already in use\nexiting\n");
 
       const stub = makeSpawnStub({
         responses: [
           {
-            match: (c, a) => c === 'plutil' && a[0] === '-lint',
+            match: (c, a) => c === "plutil" && a[0] === "-lint",
             response: {
               pid: 0,
-              output: ['OK\n', '', ''],
-              stdout: 'OK\n',
-              stderr: '',
+              output: ["OK\n", "", ""],
+              stdout: "OK\n",
+              stderr: "",
               status: 0,
               signal: null,
             },
           },
           {
-            match: (c, a) => c === 'launchctl' && a[0] === 'unload',
+            match: (c, a) => c === "launchctl" && a[0] === "unload",
             response: {
               pid: 0,
-              output: ['', '', ''],
-              stdout: '',
-              stderr: '',
+              output: ["", "", ""],
+              stdout: "",
+              stderr: "",
               status: 0,
               signal: null,
             },
           },
           {
-            match: (c, a) => c === 'launchctl' && a[0] === 'load',
+            match: (c, a) => c === "launchctl" && a[0] === "load",
             response: {
               pid: 0,
-              output: ['', '', ''],
-              stdout: '',
-              stderr: '',
+              output: ["", "", ""],
+              stdout: "",
+              stderr: "",
               status: 0,
               signal: null,
             },
@@ -875,9 +863,9 @@ describe('runAgentInstallLaunchd', () => {
         // launchctl print always reports spawn scheduled.
         fallback: {
           pid: 0,
-          output: ['', '', ''],
-          stdout: 'state = spawn scheduled\npid = 0\n',
-          stderr: '',
+          output: ["", "", ""],
+          stdout: "state = spawn scheduled\npid = 0\n",
+          stderr: "",
           status: 0,
           signal: null,
         },
@@ -886,7 +874,7 @@ describe('runAgentInstallLaunchd', () => {
       let ticks = 0;
       const { deps, stderrChunks } = makeTestDeps({
         spawnSync: stub.spawn,
-        env: { HOME: home, USER: 'tester' },
+        env: { HOME: home, USER: "tester" },
         now: () => {
           ticks += 200;
           return ticks;
@@ -904,13 +892,17 @@ describe('runAgentInstallLaunchd', () => {
       });
 
       const code = await runAgentInstallLaunchd(
-        [`--binary=${binary}`, `--install-path=${join(tmpDir, 'agent-installed')}`, `--log-dir=${logDir}`],
+        [
+          `--binary=${binary}`,
+          `--install-path=${join(tmpDir, "agent-installed")}`,
+          `--log-dir=${logDir}`,
+        ],
         deps,
       );
       expect(code).toBe(1);
-      const stderr = stderrChunks.join('');
-      expect(stderr).toContain('did not become healthy');
-      expect(stderr).toContain('FATAL: port 7843 already in use');
+      const stderr = stderrChunks.join("");
+      expect(stderr).toContain("did not become healthy");
+      expect(stderr).toContain("FATAL: port 7843 already in use");
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -9,12 +9,8 @@
  * topological-sort dependency would be far more surface than we
  * need.
  */
-import type {
-  CompositeSpec,
-  ComponentRef,
-  DependencyEdge,
-} from './schema.js';
-import { workloadRefName } from './schema.js';
+import type { CompositeSpec, ComponentRef, DependencyEdge } from "./schema.js";
+import { workloadRefName } from "./schema.js";
 
 /**
  * List every declared component as a `ComponentRef`. Order within
@@ -23,10 +19,9 @@ import { workloadRefName } from './schema.js';
  */
 export function listComponents(spec: CompositeSpec): ComponentRef[] {
   const out: ComponentRef[] = [];
-  for (const s of spec.services) out.push({ kind: 'service', name: s.name });
-  for (const w of spec.workloads)
-    out.push({ kind: 'workload', name: workloadRefName(w) });
-  for (const r of spec.ragNodes) out.push({ kind: 'rag', name: r.name });
+  for (const s of spec.services) out.push({ kind: "service", name: s.name });
+  for (const w of spec.workloads) out.push({ kind: "workload", name: workloadRefName(w) });
+  for (const r of spec.ragNodes) out.push({ kind: "rag", name: r.name });
   // Pipelines slot before gateways per spec D6 (services → ragNodes →
   // workloads → pipelines → gateways). Pipelines are a structural
   // prerequisite for any gateway that wants to surface freshly-ingested
@@ -35,9 +30,8 @@ export function listComponents(spec: CompositeSpec): ComponentRef[] {
   // (Zod fills the default), but a handful of tests construct specs
   // by hand with `as any` and predate the `pipelines` field — keep them
   // green without forcing every fixture to track every new field.
-  for (const p of spec.pipelines ?? [])
-    out.push({ kind: 'pipeline', name: p.name });
-  for (const g of spec.gateways) out.push({ kind: 'gateway', name: g.name });
+  for (const p of spec.pipelines ?? []) out.push({ kind: "pipeline", name: p.name });
+  for (const g of spec.gateways) out.push({ kind: "gateway", name: g.name });
   return out;
 }
 
@@ -59,16 +53,16 @@ export function impliedEdges(spec: CompositeSpec): DependencyEdge[] {
   for (const r of spec.ragNodes) {
     if (r.backingService) {
       edges.push({
-        from: { kind: 'rag', name: r.name },
-        to: { kind: 'service', name: r.backingService },
+        from: { kind: "rag", name: r.name },
+        to: { kind: "service", name: r.backingService },
       });
     }
   }
   for (const g of spec.gateways) {
     for (const up of g.upstreamWorkloads) {
       edges.push({
-        from: { kind: 'gateway', name: g.name },
-        to: { kind: 'workload', name: up },
+        from: { kind: "gateway", name: g.name },
+        to: { kind: "workload", name: up },
       });
     }
   }
@@ -77,8 +71,8 @@ export function impliedEdges(spec: CompositeSpec): DependencyEdge[] {
     const destRagNode = p.spec.destination.ragNode;
     if (ragNodeNames.has(destRagNode)) {
       edges.push({
-        from: { kind: 'pipeline', name: p.name },
-        to: { kind: 'rag', name: destRagNode },
+        from: { kind: "pipeline", name: p.name },
+        to: { kind: "rag", name: destRagNode },
       });
     }
   }
@@ -178,11 +172,9 @@ export function topologicalOrder(spec: CompositeSpec): ComponentRef[] {
   if (out.length !== nodes.length) {
     const stuck: string[] = [];
     for (const [k, count] of remaining) {
-      if (count > 0) stuck.push(k.replace('/', '/'));
+      if (count > 0) stuck.push(k.replace("/", "/"));
     }
-    throw new Error(
-      `cycle detected among: ${stuck.join(', ')}`,
-    );
+    throw new Error(`cycle detected among: ${stuck.join(", ")}`);
   }
 
   return out;

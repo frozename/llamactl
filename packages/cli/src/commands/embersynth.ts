@@ -1,8 +1,4 @@
-import {
-  config as kubecfg,
-  embersynth as embersynthMod,
-  resolveNodeKind,
-} from '@llamactl/remote';
+import { config as kubecfg, embersynth as embersynthMod, resolveNodeKind } from "@llamactl/remote";
 
 const USAGE = `llamactl embersynth — embersynth orchestrator integration
 
@@ -58,14 +54,14 @@ function parseCommonOpts(argv: string[]): { opts: CommonOpts; rest: string[] } |
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--path') {
+    if (a === "--path") {
       const next = argv[++i];
       if (!next) {
         process.stderr.write(`--path requires a value\n`);
         return null;
       }
       path = next;
-    } else if (a === '--help' || a === '-h') {
+    } else if (a === "--help" || a === "-h") {
       process.stdout.write(USAGE);
       return null;
     } else {
@@ -93,7 +89,7 @@ async function runInit(argv: string[]): Promise<number> {
     `wrote ${path}\n` +
       `  nodes: ${cfg.nodes.length}\n` +
       `  profiles: ${cfg.profiles.length}\n` +
-      `  synthetic models: ${synthList.join(', ') || '(none)'}\n` +
+      `  synthetic models: ${synthList.join(", ") || "(none)"}\n` +
       `  start embersynth with \`--config ${path}\`.\n`,
   );
   return 0;
@@ -126,29 +122,29 @@ async function runShow(argv: string[]): Promise<number> {
     return 1;
   }
   process.stdout.write(JSON.stringify(existing, null, 2));
-  process.stdout.write('\n');
+  process.stdout.write("\n");
   return 0;
 }
 
 async function runConnect(argv: string[]): Promise<number> {
   const url = argv[0];
-  if (!url || url.startsWith('--')) {
+  if (!url || url.startsWith("--")) {
     process.stderr.write(`embersynth connect: base URL is required\n\n${USAGE}`);
     return 1;
   }
-  let name = 'embersynth';
+  let name = "embersynth";
   let apiKeyRef: string | undefined;
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--name') {
-      name = argv[++i] ?? '';
+    if (arg === "--name") {
+      name = argv[++i] ?? "";
       if (!name) {
         process.stderr.write(`--name requires a value\n`);
         return 1;
       }
-    } else if (arg === '--api-key-ref') {
+    } else if (arg === "--api-key-ref") {
       apiKeyRef = argv[++i];
-    } else if (arg === '--help' || arg === '-h') {
+    } else if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return 0;
     } else {
@@ -156,17 +152,17 @@ async function runConnect(argv: string[]): Promise<number> {
       return 1;
     }
   }
-  const normalized = url.endsWith('/') ? url.slice(0, -1) : url;
-  const baseUrl = normalized.endsWith('/v1') ? normalized : `${normalized}/v1`;
+  const normalized = url.endsWith("/") ? url.slice(0, -1) : url;
+  const baseUrl = normalized.endsWith("/v1") ? normalized : `${normalized}/v1`;
   const cfgPath = kubecfg.defaultConfigPath();
   let cfg = kubecfg.loadConfig(cfgPath);
   const ctx = kubecfg.currentContext(cfg);
   cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
     name,
-    endpoint: '',
-    kind: 'gateway',
+    endpoint: "",
+    kind: "gateway",
     cloud: {
-      provider: 'embersynth',
+      provider: "embersynth",
       baseUrl,
       ...(apiKeyRef ? { apiKeyRef } : {}),
     },
@@ -181,7 +177,7 @@ async function runConnect(argv: string[]): Promise<number> {
 
 async function runPromotePrivate(argv: string[]): Promise<number> {
   const rel = argv[0];
-  if (!rel || rel.startsWith('--')) {
+  if (!rel || rel.startsWith("--")) {
     process.stderr.write(`embersynth promote-private: <rel> is required\n\n${USAGE}`);
     return 1;
   }
@@ -191,13 +187,11 @@ async function runPromotePrivate(argv: string[]): Promise<number> {
 
   const existing = embersynthMod.loadEmbersynthConfig(path);
   if (!existing) {
-    process.stderr.write(
-      `${path} does not exist. Run \`llamactl embersynth init\` first.\n`,
-    );
+    process.stderr.write(`${path} does not exist. Run \`llamactl embersynth init\` first.\n`);
     return 1;
   }
 
-  const profile = existing.profiles.find((p) => p.id === 'private-first');
+  const profile = existing.profiles.find((p) => p.id === "private-first");
   if (!profile) {
     process.stderr.write(
       `private-first profile not found in ${path}. Run \`llamactl embersynth sync\` to seed defaults.\n`,
@@ -205,7 +199,7 @@ async function runPromotePrivate(argv: string[]): Promise<number> {
     return 1;
   }
   const preferred = profile.preferredTags ?? [];
-  if (!preferred.includes('private')) {
+  if (!preferred.includes("private")) {
     process.stderr.write(
       `private-first profile is missing the "private" preferred tag. Edit ${path} or re-seed with \`sync\`.\n`,
     );
@@ -215,7 +209,7 @@ async function runPromotePrivate(argv: string[]): Promise<number> {
   const cfg = kubecfg.loadConfig();
   const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
   const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
-  const agentNodes = (cluster?.nodes ?? []).filter((n) => resolveNodeKind(n) === 'agent');
+  const agentNodes = (cluster?.nodes ?? []).filter((n) => resolveNodeKind(n) === "agent");
   if (agentNodes.length === 0) {
     process.stderr.write(
       `no agent nodes registered. Run \`llamactl agent init\` on a host, then \`llamactl node add\` to register.\n`,
@@ -226,7 +220,7 @@ async function runPromotePrivate(argv: string[]): Promise<number> {
   // Cross-reference embersynth.yaml nodes with kubeconfig agents — we
   // care about the `private` tag on the embersynth side, which is what
   // the profile matches against at routing time.
-  const privateAgents = existing.nodes.filter((n) => n.tags.includes('private'));
+  const privateAgents = existing.nodes.filter((n) => n.tags.includes("private"));
   if (privateAgents.length === 0) {
     process.stderr.write(
       `no nodes in ${path} carry the "private" tag. Re-run \`llamactl embersynth sync\` — agent nodes are tagged private by default.\n`,
@@ -236,9 +230,9 @@ async function runPromotePrivate(argv: string[]): Promise<number> {
 
   process.stdout.write(
     `model '${rel}' is routable under fusion-private-first.\n` +
-      `  private-first profile: ${profile.label ?? profile.id} (${(profile.preferredTags ?? []).join(',')})\n` +
+      `  private-first profile: ${profile.label ?? profile.id} (${(profile.preferredTags ?? []).join(",")})\n` +
       `  eligible private-tagged nodes (${privateAgents.length}):\n` +
-      privateAgents.map((n) => `    - ${n.id} → ${n.endpoint}`).join('\n') +
+      privateAgents.map((n) => `    - ${n.id} → ${n.endpoint}`).join("\n") +
       `\n  request the model via: POST /v1/chat/completions { "model": "fusion-private-first", ... }\n` +
       `  embersynth routes to a private-tagged node first; falls back to others only when no private node is healthy.\n`,
   );
@@ -247,15 +241,15 @@ async function runPromotePrivate(argv: string[]): Promise<number> {
 
 export async function runEmbersynth(argv: string[]): Promise<number> {
   const sub = argv[0];
-  if (!sub || sub === '--help' || sub === '-h') {
+  if (!sub || sub === "--help" || sub === "-h") {
     process.stdout.write(USAGE);
     return 0;
   }
-  if (sub === 'init') return runInit(argv.slice(1));
-  if (sub === 'sync') return runSync(argv.slice(1));
-  if (sub === 'show') return runShow(argv.slice(1));
-  if (sub === 'connect') return runConnect(argv.slice(1));
-  if (sub === 'promote-private') return runPromotePrivate(argv.slice(1));
+  if (sub === "init") return runInit(argv.slice(1));
+  if (sub === "sync") return runSync(argv.slice(1));
+  if (sub === "show") return runShow(argv.slice(1));
+  if (sub === "connect") return runConnect(argv.slice(1));
+  if (sub === "promote-private") return runPromotePrivate(argv.slice(1));
   process.stderr.write(`unknown embersynth subcommand: ${sub}\n\n${USAGE}`);
   return 1;
 }

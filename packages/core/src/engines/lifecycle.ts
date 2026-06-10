@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from "node:child_process";
 
 const POLL_MS = 100;
 function sleep(ms: number): Promise<void> {
@@ -6,7 +6,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export function formatHostForUrl(host: string): string {
-  return host.includes(':') ? `[${host}]` : host;
+  return host.includes(":") ? `[${host}]` : host;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -25,7 +25,7 @@ function isProcessAlive(pid: number): boolean {
  */
 function processGroupId(pid: number): number | null {
   try {
-    const out = spawnSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' });
+    const out = spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8" });
     if (out.status !== 0) return null;
     const parsed = Number.parseInt(out.stdout.trim(), 10);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
@@ -52,7 +52,7 @@ export async function gracefulShutdown(pid: number, graceMs = 10_000): Promise<v
   // the SIGKILL sweep of any worker that ignored SIGTERM.
   const target = shutdownSignalTarget(pid);
   try {
-    process.kill(target, 'SIGTERM');
+    process.kill(target, "SIGTERM");
   } catch {}
 
   const deadline = Date.now() + graceMs;
@@ -65,7 +65,7 @@ export async function gracefulShutdown(pid: number, graceMs = 10_000): Promise<v
   }
 
   try {
-    process.kill(target, 'SIGKILL');
+    process.kill(target, "SIGKILL");
   } catch {}
 }
 
@@ -73,14 +73,17 @@ async function fetchModelIds(
   endpoint: { host: string; port: number },
   timeoutMs: number,
 ): Promise<string[]> {
-  const response = await fetch(`http://${formatHostForUrl(endpoint.host)}:${endpoint.port}/v1/models`, {
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const response = await fetch(
+    `http://${formatHostForUrl(endpoint.host)}:${endpoint.port}/v1/models`,
+    {
+      signal: AbortSignal.timeout(timeoutMs),
+    },
+  );
   if (!response.ok) {
     return [];
   }
   const body = (await response.json()) as { data?: Array<{ id?: string }> };
-  return (body.data ?? []).map((model) => model.id ?? '').filter(Boolean);
+  return (body.data ?? []).map((model) => model.id ?? "").filter(Boolean);
 }
 
 export async function pollUntilModelIds(

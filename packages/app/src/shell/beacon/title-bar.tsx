@@ -1,10 +1,10 @@
-import * as React from 'react';
-import { CommandBar, Lockup, ThemeOrbs } from '@/ui';
-import { useThemeStore } from '@/stores/theme-store';
-import { useTabStore } from '@/stores/tab-store';
-import { NodeSelector } from '@/shell/node-selector';
-import { useCommandPaletteOpen } from '@/shell/command-palette';
-import { Bell } from 'lucide-react';
+import * as React from "react";
+import { CommandBar, Lockup, ThemeOrbs } from "@/ui";
+import { useThemeStore } from "@/stores/theme-store";
+import { useTabStore } from "@/stores/tab-store";
+import { NodeSelector } from "@/shell/node-selector";
+import { useCommandPaletteOpen } from "@/shell/command-palette";
+import { Bell } from "lucide-react";
 
 /**
  * Layout B — macOS traffic lights (handled by main process), a
@@ -26,17 +26,19 @@ export function TitleBar(): React.JSX.Element {
 
   return (
     <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'auto auto 1fr auto auto auto',
-        alignItems: 'center',
-        gap: 14,
-        height: 44,
-        padding: '0 14px',
-        background: 'var(--color-surface-1)',
-        borderBottom: '1px solid var(--color-border-subtle)',
-        WebkitAppRegion: 'drag',
-      } as React.CSSProperties}
+      style={
+        {
+          display: "grid",
+          gridTemplateColumns: "auto auto 1fr auto auto auto",
+          alignItems: "center",
+          gap: 14,
+          height: 44,
+          padding: "0 14px",
+          background: "var(--color-surface-1)",
+          borderBottom: "1px solid var(--color-border-subtle)",
+          WebkitAppRegion: "drag",
+        } as React.CSSProperties
+      }
     >
       {/* Traffic-light space — reserved so the drag region starts here,
            and the macOS lights overlay at `titleBarStyle: 'hiddenInset'`. */}
@@ -44,37 +46,37 @@ export function TitleBar(): React.JSX.Element {
 
       {/* Product lockup — leftmost mark, not draggable so it receives
            clicks (future: opens an "about" overlay). */}
-      <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+      <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
         <Lockup />
       </div>
 
-      <div
-        style={{ justifySelf: 'center', WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      >
+      <div style={{ justifySelf: "center", WebkitAppRegion: "no-drag" } as React.CSSProperties}>
         <CommandBar crumbs={crumbs} onClick={() => setPaletteOpen(true)} />
       </div>
 
-      <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+      <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
         <NodeSelector />
       </div>
 
-      <div style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+      <div style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
         <ThemeOrbs activeId={themeId} onPick={setThemeId} />
       </div>
 
       <button
         type="button"
-        style={{
-          all: 'unset',
-          width: 28,
-          height: 28,
-          display: 'grid',
-          placeItems: 'center',
-          borderRadius: 'var(--r-md)',
-          color: 'var(--color-text-tertiary)',
-          cursor: 'pointer',
-          WebkitAppRegion: 'no-drag',
-        } as React.CSSProperties}
+        style={
+          {
+            all: "unset",
+            width: 28,
+            height: 28,
+            display: "grid",
+            placeItems: "center",
+            borderRadius: "var(--r-md)",
+            color: "var(--color-text-tertiary)",
+            cursor: "pointer",
+            WebkitAppRegion: "no-drag",
+          } as React.CSSProperties
+        }
         title="Notifications (P3)"
       >
         <Bell size={14} strokeWidth={1.75} />

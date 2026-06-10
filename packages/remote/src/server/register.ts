@@ -1,15 +1,7 @@
-import { decodeBootstrap } from '../config/agent-config.js';
-import {
-  consumeBootstrapToken,
-  type ConsumeOptions,
-} from '../config/bootstrap-tokens.js';
-import {
-  currentContext,
-  loadConfig,
-  saveConfig,
-  upsertNode,
-} from '../config/kubeconfig.js';
-import type { ClusterNode } from '../config/schema.js';
+import { decodeBootstrap } from "../config/agent-config.js";
+import { consumeBootstrapToken, type ConsumeOptions } from "../config/bootstrap-tokens.js";
+import { currentContext, loadConfig, saveConfig, upsertNode } from "../config/kubeconfig.js";
+import type { ClusterNode } from "../config/schema.js";
 
 /**
  * HTTP handler for POST /register. Unauthenticated by design —
@@ -65,15 +57,15 @@ interface RegisterFailureBody {
 }
 
 const REASON_STATUS: Record<string, number> = {
-  'not-found': 401,
+  "not-found": 401,
   expired: 410,
-  'already-used': 409,
+  "already-used": 409,
 };
 
 function jsonResponse(body: RegisterSuccessBody | RegisterFailureBody, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json' },
+    headers: { "content-type": "application/json" },
   });
 }
 
@@ -81,25 +73,25 @@ export async function handleRegister(
   req: Request,
   opts: RegisterHandlerOptions = {},
 ): Promise<Response> {
-  if (req.method !== 'POST') {
-    return jsonResponse({ ok: false, error: 'method not allowed' }, 405);
+  if (req.method !== "POST") {
+    return jsonResponse({ ok: false, error: "method not allowed" }, 405);
   }
   let payload: RegisterRequestBody;
   try {
     const raw = (await req.json()) as Record<string, unknown>;
-    if (typeof raw.bootstrapToken !== 'string' || raw.bootstrapToken.length === 0) {
-      return jsonResponse({ ok: false, error: 'bootstrapToken is required' }, 400);
+    if (typeof raw.bootstrapToken !== "string" || raw.bootstrapToken.length === 0) {
+      return jsonResponse({ ok: false, error: "bootstrapToken is required" }, 400);
     }
-    if (typeof raw.blob !== 'string' || raw.blob.length === 0) {
-      return jsonResponse({ ok: false, error: 'blob is required' }, 400);
+    if (typeof raw.blob !== "string" || raw.blob.length === 0) {
+      return jsonResponse({ ok: false, error: "blob is required" }, 400);
     }
     payload = {
       bootstrapToken: raw.bootstrapToken,
       blob: raw.blob,
-      ...(typeof raw.nodeName === 'string' ? { nodeName: raw.nodeName } : {}),
+      ...(typeof raw.nodeName === "string" ? { nodeName: raw.nodeName } : {}),
     };
   } catch {
-    return jsonResponse({ ok: false, error: 'invalid JSON body' }, 400);
+    return jsonResponse({ ok: false, error: "invalid JSON body" }, 400);
   }
 
   const consumeOpts: ConsumeOptions = {
@@ -109,10 +101,7 @@ export async function handleRegister(
   const consumed = consumeBootstrapToken(payload.bootstrapToken, consumeOpts);
   if (!consumed.ok) {
     const status = REASON_STATUS[consumed.reason] ?? 401;
-    return jsonResponse(
-      { ok: false, error: `bootstrap token ${consumed.reason}` },
-      status,
-    );
+    return jsonResponse({ ok: false, error: `bootstrap token ${consumed.reason}` }, status);
   }
 
   let decoded: ReturnType<typeof decodeBootstrap>;
@@ -131,9 +120,7 @@ export async function handleRegister(
 
   cfg = {
     ...cfg,
-    users: cfg.users.map((u) =>
-      u.name === ctx.user ? { ...u, token: decoded.token } : u,
-    ),
+    users: cfg.users.map((u) => (u.name === ctx.user ? { ...u, token: decoded.token } : u)),
   };
   const entry: ClusterNode = {
     name: nodeName,

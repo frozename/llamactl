@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { config as cfgMod, makePinnedFetch } from '@llamactl/remote';
-import { getGlobals, isLocalDispatch } from '../dispatcher.js';
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { config as cfgMod, makePinnedFetch } from "@llamactl/remote";
+import { getGlobals, isLocalDispatch } from "../dispatcher.js";
 
 /**
  * `llamactl agent update --node <n> [--binary <path> | --from-release vX.Y]`
@@ -57,36 +57,38 @@ interface ParsedArgs {
 
 function parseArgs(argv: string[]): ParsedArgs | { error: string } {
   const out: ParsedArgs = {
-    repo: 'frozename/llamactl',
+    repo: "frozename/llamactl",
     readinessTimeoutSec: 30,
     json: false,
   };
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') return { error: '__help' };
-    if (arg === '--json') {
+    if (arg === "--help" || arg === "-h") return { error: "__help" };
+    if (arg === "--json") {
       out.json = true;
       continue;
     }
-    const eq = arg.indexOf('=');
-    if (!arg.startsWith('--') || eq < 0) {
+    const eq = arg.indexOf("=");
+    if (!arg.startsWith("--") || eq < 0) {
       return { error: `agent update: flags must be --key=value (${arg})` };
     }
     const key = arg.slice(2, eq);
     const value = arg.slice(eq + 1);
     switch (key) {
-      case 'binary':
+      case "binary":
         out.binary = value;
         break;
-      case 'from-release':
+      case "from-release":
         out.fromRelease = value;
         break;
-      case 'repo':
+      case "repo":
         out.repo = value;
         break;
-      case 'readiness-timeout': {
+      case "readiness-timeout": {
         const n = Number.parseInt(value, 10);
         if (!Number.isFinite(n) || n <= 0) {
-          return { error: `agent update: --readiness-timeout must be a positive integer (got ${value})` };
+          return {
+            error: `agent update: --readiness-timeout must be a positive integer (got ${value})`,
+          };
         }
         out.readinessTimeoutSec = n;
         break;
@@ -96,18 +98,18 @@ function parseArgs(argv: string[]): ParsedArgs | { error: string } {
     }
   }
   if (!out.binary && !out.fromRelease) {
-    return { error: 'agent update: pass --binary=<path> or --from-release=<tag>' };
+    return { error: "agent update: pass --binary=<path> or --from-release=<tag>" };
   }
   if (out.binary && out.fromRelease) {
-    return { error: 'agent update: --binary and --from-release are mutually exclusive' };
+    return { error: "agent update: --binary and --from-release are mutually exclusive" };
   }
   return out;
 }
 
 export async function runAgentUpdate(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
-  if ('error' in parsed) {
-    if (parsed.error === '__help') {
+  if ("error" in parsed) {
+    if (parsed.error === "__help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -117,9 +119,7 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
 
   const globals = getGlobals();
   if (isLocalDispatch()) {
-    process.stderr.write(
-      `agent update: --node is required + must point at a non-local agent\n`,
-    );
+    process.stderr.write(`agent update: --node is required + must point at a non-local agent\n`);
     return 1;
   }
   const nodeName = globals.nodeName!;
@@ -135,8 +135,10 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
     process.stderr.write(`agent update: node '${nodeName}' not found in current context\n`);
     return 1;
   }
-  if (node.endpoint.startsWith('inproc://')) {
-    process.stderr.write(`agent update: '${nodeName}' is a local in-proc node — cannot self-replace\n`);
+  if (node.endpoint.startsWith("inproc://")) {
+    process.stderr.write(
+      `agent update: '${nodeName}' is a local in-proc node — cannot self-replace\n`,
+    );
     return 1;
   }
   const user = cfg.users.find((u) => u.name === ctx.user);
@@ -149,17 +151,21 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
   // Resolve binary path: explicit --binary or fetched via 'artifacts fetch'.
   let binaryPath = parsed.binary;
   if (parsed.fromRelease) {
-    const { infraArtifactsFetch } = await import('@llamactl/remote');
-    const target = (node.facts?.platform as string | undefined) ?? 'darwin-arm64';
-    process.stderr.write(`agent update: fetching ${parsed.repo} ${parsed.fromRelease} for ${target}…\n`);
+    const { infraArtifactsFetch } = await import("@llamactl/remote");
+    const target = (node.facts?.platform as string | undefined) ?? "darwin-arm64";
+    process.stderr.write(
+      `agent update: fetching ${parsed.repo} ${parsed.fromRelease} for ${target}…\n`,
+    );
     const fetchResult = await infraArtifactsFetch.fetchAgentRelease({
       repo: parsed.repo,
       version: parsed.fromRelease,
       target,
-      verifySig: 'best-effort',
+      verifySig: "best-effort",
     });
     if (!fetchResult.ok) {
-      process.stderr.write(`agent update: fetch failed: ${fetchResult.reason} — ${fetchResult.message}\n`);
+      process.stderr.write(
+        `agent update: fetch failed: ${fetchResult.reason} — ${fetchResult.message}\n`,
+      );
       return 1;
     }
     binaryPath = fetchResult.path;
@@ -169,10 +175,10 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
     return 1;
   }
   const bytes = readFileSync(binaryPath);
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
   const size = statSync(binaryPath).size;
 
-  const url = `${node.endpoint.replace(/\/$/, '')}/agent/update`;
+  const url = `${node.endpoint.replace(/\/$/, "")}/agent/update`;
   process.stderr.write(
     `agent update: pushing ${(size / (1024 * 1024)).toFixed(1)} MB (sha256=${sha256.slice(0, 12)}…) to ${url}\n`,
   );
@@ -181,11 +187,11 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
   let res: Response;
   try {
     res = await pinnedFetch(url, {
-      method: 'POST',
+      method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
-        'content-type': 'application/octet-stream',
-        'x-sha256': sha256,
+        "content-type": "application/octet-stream",
+        "x-sha256": sha256,
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       body: bytes as any,
@@ -222,15 +228,17 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
   // Poll the agent's /healthz over the same pinned cert until the
   // respawned binary comes up (or fall back to a clear timeout
   // message that points at .previous for rollback).
-  process.stderr.write(`agent update: waiting for respawn (timeout ${parsed.readinessTimeoutSec}s)…\n`);
-  const healthUrl = `${node.endpoint.replace(/\/$/, '')}/healthz`;
+  process.stderr.write(
+    `agent update: waiting for respawn (timeout ${parsed.readinessTimeoutSec}s)…\n`,
+  );
+  const healthUrl = `${node.endpoint.replace(/\/$/, "")}/healthz`;
   const deadline = Date.now() + parsed.readinessTimeoutSec * 1000;
   let healthy = false;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 1000));
     try {
       const probe = await pinnedFetch(healthUrl, {
-        method: 'GET',
+        method: "GET",
         headers: { authorization: `Bearer ${token}` },
       });
       if (probe.ok) {

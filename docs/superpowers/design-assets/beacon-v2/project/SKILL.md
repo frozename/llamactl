@@ -20,8 +20,8 @@ Unified token system across two operator-class products. Theme-as-a-variable: sw
 Always link `colors_and_type.css` (which `@import`s `tokens.css`) and set a theme on the root:
 
 ```html
-<link rel="stylesheet" href="colors_and_type.css">
-<html data-theme="sirius">
+<link rel="stylesheet" href="colors_and_type.css" />
+<html data-theme="sirius"></html>
 ```
 
 Fonts (Inter, JetBrains Mono) are loaded via Google Fonts inside the stylesheet — nothing to add.
@@ -36,7 +36,7 @@ Fonts (Inter, JetBrains Mono) are loaded via Google Fonts inside the stylesheet 
 6. **Mono for identifiers and telemetry only** — never for prose. `svc.gateway`, `v2.1.4`, `⌘K`, `842ms`.
 7. **Operator surfaces run tight** (11–13px, 4–8px gaps). **Doc/marketing surfaces breathe** (14–18px body, 48–96px section rhythm).
 8. **Depth comes from surface steps**, not shadow. Shadows are subtle (sm/md/lg, all dark-tuned). Never inner shadow. Never frosted glass as a default.
-9. **Motion reveals, never performs.** < 400ms, `cubic-bezier(.4, 0, .2, 1)`. Theme switches fade 600ms. Pulse only on *live* data indicators.
+9. **Motion reveals, never performs.** < 400ms, `cubic-bezier(.4, 0, .2, 1)`. Theme switches fade 600ms. Pulse only on _live_ data indicators.
 10. **Radius scale is fixed:** sm 3 · md 6 · lg 10 · xl 16 · 2xl 24 · pill. Cards are xl; buttons are md; chips/kbd are sm.
 11. **Emphasis inside a line is an `<em>` painted brand** (`font-style: normal` via the `.t-emph` class). Never italic.
 12. **Never use purple-blue gradient backgrounds** or cards-with-colored-left-border-only. These are Beacon's "do not" list.
@@ -69,6 +69,7 @@ Full list in `tokens.css`. Semantic aliases in `colors_and_type.css`.
 ## Fixtures (realistic placeholder names)
 
 Use these when inventing copy — they match the source vocabulary:
+
 - Services: `llamactl-gateway`, `novaflow-render`, `shared-auth-gateway`, `scheduler-cron`
 - Regions: `us-west-2`, `us-east-1`, `eu-west-1`
 - Versions: `v2.1.4`, `v4.0.2`

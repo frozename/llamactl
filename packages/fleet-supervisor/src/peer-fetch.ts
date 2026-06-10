@@ -1,6 +1,6 @@
-import type { FleetSnapshotEntry } from './types.js';
-import type { AggregatorPeer } from './aggregator.js';
-import { resolveToken } from '../../remote/src/config/kubeconfig.js';
+import type { FleetSnapshotEntry } from "./types.js";
+import type { AggregatorPeer } from "./aggregator.js";
+import { resolveToken } from "../../remote/src/config/kubeconfig.js";
 
 interface PeerFetchResult {
   statusCode: number;
@@ -28,9 +28,9 @@ function doRequest(peer: AggregatorPeer): Promise<PeerFetchResult> {
   const headers: Record<string, string> = {};
   const token = resolvedPeerToken(peer);
   if (token) headers.authorization = `Bearer ${token}`;
-  const target = new URL('/v1/fleet/snapshot', peer.endpoint);
+  const target = new URL("/v1/fleet/snapshot", peer.endpoint);
   const init: RequestInit & { tls?: { ca: string } } = {
-    method: 'GET',
+    method: "GET",
     ...(Object.keys(headers).length ? { headers } : {}),
     ...(peer.certificate ? { tls: { ca: peer.certificate } } : {}),
   };
@@ -40,9 +40,7 @@ function doRequest(peer: AggregatorPeer): Promise<PeerFetchResult> {
   }));
 }
 
-export function createPeerFetch(
-  peer: AggregatorPeer,
-): () => Promise<FleetSnapshotEntry | null> {
+export function createPeerFetch(peer: AggregatorPeer): () => Promise<FleetSnapshotEntry | null> {
   return async () => {
     const result = await doRequest(peer);
     if (result.statusCode === 204) return null;

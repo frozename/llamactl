@@ -1,7 +1,4 @@
-import {
-  agentConfig as agentConfigMod,
-  bootstrapTokens,
-} from '@llamactl/remote';
+import { agentConfig as agentConfigMod, bootstrapTokens } from "@llamactl/remote";
 
 const USAGE = `llamactl deploy-node — mint a bootstrap token for a new node
 
@@ -42,16 +39,18 @@ function inferCentralUrl(): string | null {
   }
 }
 
-function parseFlags(argv: string[]): { mode: 'deploy'; flags: DeployFlags } | { mode: 'list' } | { mode: 'prune' } | null {
-  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
+function parseFlags(
+  argv: string[],
+): { mode: "deploy"; flags: DeployFlags } | { mode: "list" } | { mode: "prune" } | null {
+  if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
     process.stdout.write(USAGE);
     return null;
   }
-  if (argv[0] === '--list') return { mode: 'list' };
-  if (argv[0] === '--prune') return { mode: 'prune' };
+  if (argv[0] === "--list") return { mode: "list" };
+  if (argv[0] === "--prune") return { mode: "prune" };
 
   const name = argv[0];
-  if (!name || name.startsWith('--')) {
+  if (!name || name.startsWith("--")) {
     process.stderr.write(`deploy-node: node name is required\n\n${USAGE}`);
     return null;
   }
@@ -63,22 +62,22 @@ function parseFlags(argv: string[]): { mode: 'deploy'; flags: DeployFlags } | { 
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === undefined) continue;
-    if (arg === '--help' || arg === '-h') {
+    if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return null;
     }
-    const eq = arg.indexOf('=');
-    if (!arg.startsWith('--') || eq < 0) {
+    const eq = arg.indexOf("=");
+    if (!arg.startsWith("--") || eq < 0) {
       process.stderr.write(`deploy-node: unknown arg ${arg}\n\n${USAGE}`);
       return null;
     }
     const key = arg.slice(2, eq);
     const value = arg.slice(eq + 1);
     switch (key) {
-      case 'central-url':
+      case "central-url":
         flags.centralUrl = value;
         break;
-      case 'ttl': {
+      case "ttl": {
         const parsed = Number.parseInt(value, 10);
         if (!Number.isFinite(parsed) || parsed <= 0) {
           process.stderr.write(`deploy-node: --ttl must be a positive integer (minutes)\n`);
@@ -92,19 +91,19 @@ function parseFlags(argv: string[]): { mode: 'deploy'; flags: DeployFlags } | { 
         return null;
     }
   }
-  return { mode: 'deploy', flags };
+  return { mode: "deploy", flags };
 }
 
 function formatList(): void {
   const rows = bootstrapTokens.listBootstrapTokens();
   if (rows.length === 0) {
-    process.stdout.write('no outstanding bootstrap tokens\n');
+    process.stdout.write("no outstanding bootstrap tokens\n");
     return;
   }
   const now = new Date();
   for (const { record } of rows) {
     const expired = now > new Date(record.expiresAt);
-    const state = record.used ? 'used' : expired ? 'expired' : 'fresh';
+    const state = record.used ? "used" : expired ? "expired" : "fresh";
     process.stdout.write(
       `${record.nodeName}\t${state}\texpires=${record.expiresAt}\tcentral=${record.centralUrl}\n`,
     );
@@ -115,11 +114,11 @@ export async function runDeployNode(argv: string[]): Promise<number> {
   const parsed = parseFlags(argv);
   if (!parsed) return 0;
 
-  if (parsed.mode === 'list') {
+  if (parsed.mode === "list") {
     formatList();
     return 0;
   }
-  if (parsed.mode === 'prune') {
+  if (parsed.mode === "prune") {
     const removed = bootstrapTokens.pruneBootstrapTokens();
     process.stdout.write(`pruned ${removed} used+expired token(s)\n`);
     return 0;
@@ -128,8 +127,8 @@ export async function runDeployNode(argv: string[]): Promise<number> {
   const centralUrl = parsed.flags.centralUrl ?? inferCentralUrl();
   if (!centralUrl) {
     process.stderr.write(
-      'deploy-node: --central-url is required (could not infer from ~/.llamactl/agent.yaml).\n' +
-        'Hint: run `llamactl agent init` on this host first, or pass --central-url=https://<host>:<port>.\n',
+      "deploy-node: --central-url is required (could not infer from ~/.llamactl/agent.yaml).\n" +
+        "Hint: run `llamactl agent init` on this host first, or pass --central-url=https://<host>:<port>.\n",
     );
     return 1;
   }

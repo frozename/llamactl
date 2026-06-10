@@ -16,7 +16,7 @@
  * code `'platform-mismatch'` instead of letting the underlying
  * daemon error leak.
  */
-import type { RuntimeError } from './errors.js';
+import type { RuntimeError } from "./errors.js";
 
 export interface ImageRef {
   repository: string; // e.g. 'chromadb/chroma', 'pgvector/pgvector'
@@ -26,7 +26,7 @@ export interface ImageRef {
 export interface PortMapping {
   containerPort: number;
   hostPort?: number; // when omitted, backend may pick (docker ephemeral port)
-  protocol?: 'tcp' | 'udp';
+  protocol?: "tcp" | "udp";
 }
 
 export interface VolumeMount {
@@ -58,7 +58,7 @@ export interface Healthcheck {
   startPeriodMs?: number;
 }
 
-export type RestartPolicy = 'no' | 'on-failure' | 'unless-stopped' | 'always';
+export type RestartPolicy = "no" | "on-failure" | "unless-stopped" | "always";
 
 /**
  * Pod-controller kind the k8s backend should emit. Docker ignores
@@ -67,7 +67,7 @@ export type RestartPolicy = 'no' | 'on-failure' | 'unless-stopped' | 'always';
  * stateless services are the common case; stateful backends
  * (pgvector and future DBs) opt in via their handler.
  */
-export type ControllerKind = 'deployment' | 'statefulset';
+export type ControllerKind = "deployment" | "statefulset";
 
 /**
  * Secret reference carried on a deployment. Docker resolves these
@@ -129,7 +129,7 @@ export interface ServiceDeployment {
    * LoadBalancer services surface a host-reachable endpoint instead
    * of the in-cluster DNS name.
    */
-  serviceType?: 'ClusterIP' | 'NodePort' | 'LoadBalancer';
+  serviceType?: "ClusterIP" | "NodePort" | "LoadBalancer";
 }
 
 export interface ServiceRef {
@@ -139,7 +139,7 @@ export interface ServiceRef {
 export interface ServiceInstance {
   ref: ServiceRef;
   running: boolean;
-  health?: 'healthy' | 'unhealthy' | 'starting' | 'unknown';
+  health?: "healthy" | "unhealthy" | "starting" | "unknown";
   /**
    * Hash that was on the running container at inspect time. `null`
    * when the container predates the label convention or the label
@@ -221,10 +221,7 @@ export interface RuntimeBackend {
    * back to the per-component loop. Idempotent — a missing boundary
    * object is a no-op.
    */
-  destroyCompositeBoundary?(
-    compositeName: string,
-    opts?: RemoveServiceOptions,
-  ): Promise<void>;
+  destroyCompositeBoundary?(compositeName: string, opts?: RemoveServiceOptions): Promise<void>;
 
   /**
    * Resolve an externally-reachable URL for a managed service when
@@ -251,7 +248,7 @@ export interface RuntimeBackend {
    */
   resolveExternalServiceEndpoint?(
     ref: ServiceRef,
-    opts: { serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer' },
+    opts: { serviceType: "ClusterIP" | "NodePort" | "LoadBalancer" },
   ): Promise<string | null>;
 }
 

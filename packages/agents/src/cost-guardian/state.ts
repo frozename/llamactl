@@ -1,4 +1,4 @@
-import type { CostGuardianConfig } from './config.js';
+import type { CostGuardianConfig } from "./config.js";
 
 /**
  * Pure state machine. Given a cost snapshot + a budget + thresholds,
@@ -23,7 +23,7 @@ import type { CostGuardianConfig } from './config.js';
  * that. When neither is set, tier is always `noop`.
  */
 
-export type CostGuardianTier = 'noop' | 'warn' | 'force_private' | 'deregister';
+export type CostGuardianTier = "noop" | "warn" | "force_private" | "deregister";
 
 export interface CostSnapshotSubset {
   /** Rolling-window total cost in USD — `undefined` when no record
@@ -78,15 +78,17 @@ export interface GuardianDecision {
 
 function tierForFraction(
   fraction: number | undefined,
-  thresholds: CostGuardianConfig['thresholds'],
+  thresholds: CostGuardianConfig["thresholds"],
 ): { tier: CostGuardianTier; crossed: number } {
   if (fraction === undefined || !Number.isFinite(fraction)) {
-    return { tier: 'noop', crossed: 0 };
+    return { tier: "noop", crossed: 0 };
   }
-  if (fraction >= thresholds.deregister) return { tier: 'deregister', crossed: thresholds.deregister };
-  if (fraction >= thresholds.force_private) return { tier: 'force_private', crossed: thresholds.force_private };
-  if (fraction >= thresholds.warn) return { tier: 'warn', crossed: thresholds.warn };
-  return { tier: 'noop', crossed: 0 };
+  if (fraction >= thresholds.deregister)
+    return { tier: "deregister", crossed: thresholds.deregister };
+  if (fraction >= thresholds.force_private)
+    return { tier: "force_private", crossed: thresholds.force_private };
+  if (fraction >= thresholds.warn) return { tier: "warn", crossed: thresholds.warn };
+  return { tier: "noop", crossed: 0 };
 }
 
 const tierRank: Record<CostGuardianTier, number> = {
@@ -96,9 +98,7 @@ const tierRank: Record<CostGuardianTier, number> = {
   deregister: 3,
 };
 
-export function decideGuardianAction(
-  input: GuardianDecisionInput,
-): GuardianDecision {
+export function decideGuardianAction(input: GuardianDecisionInput): GuardianDecision {
   const now = input.now ? input.now() : new Date();
   const ts = now.toISOString();
   const { config, daily, weekly } = input;
@@ -121,8 +121,7 @@ export function decideGuardianAction(
   const weeklyTier = tierForFraction(weeklyFraction, config.thresholds);
 
   // Stricter of the two wins.
-  const winning =
-    tierRank[dailyTier.tier] >= tierRank[weeklyTier.tier] ? dailyTier : weeklyTier;
+  const winning = tierRank[dailyTier.tier] >= tierRank[weeklyTier.tier] ? dailyTier : weeklyTier;
 
   let reasonParts: string[] = [];
   if (dailyFraction !== undefined) {
@@ -136,20 +135,18 @@ export function decideGuardianAction(
     );
   }
   if (reasonParts.length === 0) {
-    reasonParts = ['no budget configured or no pricing data — nothing to evaluate'];
+    reasonParts = ["no budget configured or no pricing data — nothing to evaluate"];
   }
 
   const deregisterTarget =
-    winning.tier === 'deregister'
-      ? (daily?.snapshot.topProvider?.key ??
-          weekly?.snapshot.topProvider?.key ??
-          null)
+    winning.tier === "deregister"
+      ? (daily?.snapshot.topProvider?.key ?? weekly?.snapshot.topProvider?.key ?? null)
       : null;
 
   const decision: GuardianDecision = {
     ts,
     tier: winning.tier,
-    reason: reasonParts.join('; '),
+    reason: reasonParts.join("; "),
     thresholdCrossed: winning.crossed,
     deregisterTarget,
   };

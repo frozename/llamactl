@@ -4,7 +4,7 @@ import type {
   FleetTransitionEntry,
   NodeMemSnapshot,
   WorkloadSnapshot,
-} from './types.js';
+} from "./types.js";
 
 export interface PressureThresholds {
   headroomMinMb: number;
@@ -26,14 +26,15 @@ export class PressureWindow {
     this.buf.push({ node_mem, workloads });
     if (this.buf.length > this.capacity) this.buf.shift();
   }
-  size(): number { return this.buf.length; }
-  tail(n: number): PressureWindowEntry[] { return this.buf.slice(-n); }
+  size(): number {
+    return this.buf.length;
+  }
+  tail(n: number): PressureWindowEntry[] {
+    return this.buf.slice(-n);
+  }
 }
 
-export function isPressureHot(
-  entry: PressureWindowEntry,
-  thresholds: PressureThresholds,
-): boolean {
+export function isPressureHot(entry: PressureWindowEntry, thresholds: PressureThresholds): boolean {
   return (
     entry.node_mem.free_mb <= thresholds.headroomMinMb &&
     entry.node_mem.compressor_mb >= thresholds.compressorWarnMb
@@ -41,9 +42,9 @@ export function isPressureHot(
 }
 
 export interface PressureResult {
-  level: 'HIGH';
-  transition: Pick<FleetTransitionEntry, 'subject' | 'subjectKind' | 'signal' | 'from' | 'to'>;
-  proposal: Pick<FleetProposalEntry, 'transition' | 'action'>;
+  level: "HIGH";
+  transition: Pick<FleetTransitionEntry, "subject" | "subjectKind" | "signal" | "from" | "to">;
+  proposal: Pick<FleetProposalEntry, "transition" | "action">;
 }
 
 /**
@@ -65,19 +66,19 @@ export function detectPressure(
   if (!evictTarget) return null;
 
   const action: FleetProposalAction = {
-    type: 'evict',
+    type: "evict",
     workload: evictTarget.name,
     reason: `sustained memory pressure: ${thresholds.consecutiveTicks} ticks below headroom + above compressor threshold`,
   };
   const transition = {
-    subject: 'node',
-    subjectKind: 'node' as const,
-    signal: 'pressure' as const,
-    from: 'NORMAL',
-    to: 'HIGH',
+    subject: "node",
+    subjectKind: "node" as const,
+    signal: "pressure" as const,
+    from: "NORMAL",
+    to: "HIGH",
   };
   return {
-    level: 'HIGH',
+    level: "HIGH",
     transition,
     proposal: { transition, action },
   };
@@ -104,12 +105,12 @@ export interface DegradationThresholds {
   p95DegradedMs: number;
 }
 
-export type WorkloadHealthState = 'healthy' | 'degraded';
+export type WorkloadHealthState = "healthy" | "degraded";
 
 export interface DegradationResult {
   to: WorkloadHealthState;
-  transition: Pick<FleetTransitionEntry, 'subject' | 'subjectKind' | 'signal' | 'from' | 'to'>;
-  proposal?: Pick<FleetProposalEntry, 'transition' | 'action'>;
+  transition: Pick<FleetTransitionEntry, "subject" | "subjectKind" | "signal" | "from" | "to">;
+  proposal?: Pick<FleetProposalEntry, "transition" | "action">;
 }
 
 /**
@@ -128,39 +129,38 @@ export function detectDegradation(
     workload.p95_ms > thresholds.p95DegradedMs;
   const recovered = workload.reachable && workload.consecutiveErrors === 0;
 
-  if (unhealthy && priorState !== 'degraded') {
+  if (unhealthy && priorState !== "degraded") {
     const transition = {
       subject: workload.name,
-      subjectKind: 'workload' as const,
-      signal: 'degraded' as const,
+      subjectKind: "workload" as const,
+      signal: "degraded" as const,
       from: priorState,
-      to: 'degraded' as const,
+      to: "degraded" as const,
     };
     const action: FleetProposalAction = {
-      type: 'restart',
+      type: "restart",
       workload: workload.name,
-      reason: workload.consecutiveErrors >= thresholds.consecutiveErrorsForDegraded
-        ? `consecutive errors ${workload.consecutiveErrors} ≥ ${thresholds.consecutiveErrorsForDegraded}`
-        : `p95 ${workload.p95_ms}ms > ${thresholds.p95DegradedMs}ms`,
+      reason:
+        workload.consecutiveErrors >= thresholds.consecutiveErrorsForDegraded
+          ? `consecutive errors ${workload.consecutiveErrors} ≥ ${thresholds.consecutiveErrorsForDegraded}`
+          : `p95 ${workload.p95_ms}ms > ${thresholds.p95DegradedMs}ms`,
     };
-    return { to: 'degraded', transition, proposal: { transition, action } };
+    return { to: "degraded", transition, proposal: { transition, action } };
   }
-  if (recovered && priorState === 'degraded') {
+  if (recovered && priorState === "degraded") {
     const transition = {
       subject: workload.name,
-      subjectKind: 'workload' as const,
-      signal: 'degraded' as const,
-      from: 'degraded' as const,
-      to: 'healthy' as const,
+      subjectKind: "workload" as const,
+      signal: "degraded" as const,
+      from: "degraded" as const,
+      to: "healthy" as const,
     };
-    return { to: 'healthy', transition };
+    return { to: "healthy", transition };
   }
   return null;
 }
 
-export type AdmissionDenyReason =
-  | 'projected_free_below_headroom'
-  | 'compressor_above_threshold';
+export type AdmissionDenyReason = "projected_free_below_headroom" | "compressor_above_threshold";
 
 export interface AdmissionInput {
   currentFreeGiB: number;
@@ -186,22 +186,37 @@ export interface AdmissionInput {
 }
 
 export type AdmissionResult =
-  | { projectedFreeGiB: number; allowed: true; currentCompressorGiB?: number; source: 'measured' | 'declared' }
-  | { projectedFreeGiB: number; allowed: false; reason: AdmissionDenyReason; currentCompressorGiB?: number; source: 'measured' | 'declared' };
+  | {
+      projectedFreeGiB: number;
+      allowed: true;
+      currentCompressorGiB?: number;
+      source: "measured" | "declared";
+    }
+  | {
+      projectedFreeGiB: number;
+      allowed: false;
+      reason: AdmissionDenyReason;
+      currentCompressorGiB?: number;
+      source: "measured" | "declared";
+    };
 
 export function projectAdmissionHeadroom(input: AdmissionInput): AdmissionResult {
-  const source: 'measured' | 'declared' = input.measuredPeakMb !== undefined ? 'measured' : 'declared';
-  const projectedFreeGiB = source === 'measured'
-    ? input.currentFreeGiB - (input.measuredPeakMb! * 1.05) / 1024
-    : input.currentFreeGiB - input.expectedMemoryGiB * (input.safetyFactor ?? 1.3);
+  const source: "measured" | "declared" =
+    input.measuredPeakMb !== undefined ? "measured" : "declared";
+  const projectedFreeGiB =
+    source === "measured"
+      ? input.currentFreeGiB - (input.measuredPeakMb! * 1.05) / 1024
+      : input.currentFreeGiB - input.expectedMemoryGiB * (input.safetyFactor ?? 1.3);
 
   if (projectedFreeGiB < input.headroomMinGiB) {
     return {
       projectedFreeGiB,
       allowed: false,
-      reason: 'projected_free_below_headroom',
+      reason: "projected_free_below_headroom",
       source,
-      ...(input.currentCompressorGiB !== undefined ? { currentCompressorGiB: input.currentCompressorGiB } : {}),
+      ...(input.currentCompressorGiB !== undefined
+        ? { currentCompressorGiB: input.currentCompressorGiB }
+        : {}),
     };
   }
 
@@ -213,7 +228,7 @@ export function projectAdmissionHeadroom(input: AdmissionInput): AdmissionResult
     return {
       projectedFreeGiB,
       allowed: false,
-      reason: 'compressor_above_threshold',
+      reason: "compressor_above_threshold",
       source,
       currentCompressorGiB: input.currentCompressorGiB,
     };
@@ -223,6 +238,8 @@ export function projectAdmissionHeadroom(input: AdmissionInput): AdmissionResult
     projectedFreeGiB,
     allowed: true,
     source,
-    ...(input.currentCompressorGiB !== undefined ? { currentCompressorGiB: input.currentCompressorGiB } : {}),
+    ...(input.currentCompressorGiB !== undefined
+      ? { currentCompressorGiB: input.currentCompressorGiB }
+      : {}),
   };
 }

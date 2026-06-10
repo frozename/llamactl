@@ -5,18 +5,18 @@
  * land them in. Schemas apply defaults, so callers can parse the
  * trimmed YAML shape and get back fully-populated objects.
  */
-import { z } from 'zod';
-import { CompositeOwnershipSchema } from '../../workload/gateway-catalog/schema.js';
+import { z } from "zod";
+import { CompositeOwnershipSchema } from "../../workload/gateway-catalog/schema.js";
 
 export const FilesystemSourceSpecSchema = z.object({
-  kind: z.literal('filesystem'),
+  kind: z.literal("filesystem"),
   root: z.string().min(1),
-  glob: z.string().default('**/*'),
+  glob: z.string().default("**/*"),
   tag: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const HttpSourceSpecSchema = z.object({
-  kind: z.literal('http'),
+  kind: z.literal("http"),
   url: z.url(),
   max_depth: z.number().int().min(0).max(5).default(1),
   same_origin: z.boolean().default(true),
@@ -28,7 +28,7 @@ export const HttpSourceSpecSchema = z.object({
 });
 
 export const GitSourceSpecSchema = z.object({
-  kind: z.literal('git'),
+  kind: z.literal("git"),
   /**
    * Anything `git clone` accepts — https://host/org/repo.git,
    * git@host:org/repo.git, or a bare path to a local checkout. The
@@ -46,7 +46,7 @@ export const GitSourceSpecSchema = z.object({
   /** Restrict the walk to a subtree of the repo (e.g. `docs/`). */
   subpath: z.string().optional(),
   /** Glob applied under `root = clone/subpath`. Defaults to markdown. */
-  glob: z.string().default('**/*.md'),
+  glob: z.string().default("**/*.md"),
   /**
    * Optional token reference. Resolved via the same env:/keychain:/file:
    * grammar as the http source; injected as `https://x-access-token:
@@ -56,22 +56,20 @@ export const GitSourceSpecSchema = z.object({
   tag: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const SourceSpecSchema = z.discriminatedUnion('kind', [
+export const SourceSpecSchema = z.discriminatedUnion("kind", [
   FilesystemSourceSpecSchema,
   HttpSourceSpecSchema,
   GitSourceSpecSchema,
 ]);
 
 export const MarkdownChunkTransformSchema = z.object({
-  kind: z.literal('markdown-chunk'),
+  kind: z.literal("markdown-chunk"),
   chunk_size: z.number().int().positive().default(800),
   overlap: z.number().int().min(0).default(150),
   preserve_headings: z.boolean().default(true),
 });
 
-export const TransformSpecSchema = z.discriminatedUnion('kind', [
-  MarkdownChunkTransformSchema,
-]);
+export const TransformSpecSchema = z.discriminatedUnion("kind", [MarkdownChunkTransformSchema]);
 
 /**
  * Minimal schedule grammar accepted in v1 manifests:
@@ -111,7 +109,7 @@ export const RagPipelineSpecSchema = z.object({
    * Identical re-ingestions (same `doc_id` AND same sha) are
    * always no-ops, regardless of mode.
    */
-  on_duplicate: z.enum(['skip', 'replace', 'version']).default('skip'),
+  on_duplicate: z.enum(["skip", "replace", "version"]).default("skip"),
   /**
    * Optional cadence for the scheduler loop. When absent, the
    * pipeline is on-demand only (run via `llamactl rag pipeline run`).
@@ -119,8 +117,7 @@ export const RagPipelineSpecSchema = z.object({
   schedule: z
     .string()
     .regex(SCHEDULE_RE, {
-      message:
-        "expected @hourly, @daily, @weekly, or @every <N>{m|h|d} (e.g. '@every 15m')",
+      message: "expected @hourly, @daily, @weekly, or @every <N>{m|h|d} (e.g. '@every 15m')",
     })
     .optional(),
   /**
@@ -139,14 +136,14 @@ export const RagPipelineSpecSchema = z.object({
     .object({
       per_chunk_usd: z.number().min(0).optional(),
       per_doc_usd: z.number().min(0).optional(),
-      currency: z.string().default('USD'),
+      currency: z.string().default("USD"),
     })
     .optional(),
 });
 
 export const RagPipelineManifestSchema = z.object({
-  apiVersion: z.literal('llamactl/v1'),
-  kind: z.literal('RagPipeline'),
+  apiVersion: z.literal("llamactl/v1"),
+  kind: z.literal("RagPipeline"),
   metadata: z.object({ name: z.string().min(1) }),
   spec: RagPipelineSpecSchema,
   ownership: CompositeOwnershipSchema.optional(),

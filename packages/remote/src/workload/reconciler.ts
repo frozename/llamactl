@@ -1,17 +1,27 @@
-import { applyOne, applyOneModelHost, type ApplyEvent, type ApplyResult, type WorkloadClient } from './apply.js';
-import { computeModelHostSpecHash, readModelHostState, removeModelHostState } from '../../../core/src/engines/state.js';
-import { resolveEnv } from '../../../core/src/env.js';
-import { defaultNodeBudgetGiB } from './admission.js';
-import { listWorkloads, loadWorkloadByName, saveWorkload, defaultWorkloadsDir } from './store.js';
-import { listModelHosts, saveModelHost } from './modelhost-store.js';
-import { listNodeRuns } from './noderun-store.js';
-import type { ModelRun } from './schema.js';
-import { LOCAL_NODE_ID, type ModelHostManifest } from './modelhost-schema.js';
+import {
+  applyOne,
+  applyOneModelHost,
+  type ApplyEvent,
+  type ApplyResult,
+  type WorkloadClient,
+} from "./apply.js";
+import {
+  computeModelHostSpecHash,
+  readModelHostState,
+  removeModelHostState,
+} from "../../../core/src/engines/state.js";
+import { resolveEnv } from "../../../core/src/env.js";
+import { defaultNodeBudgetGiB } from "./admission.js";
+import { listWorkloads, loadWorkloadByName, saveWorkload, defaultWorkloadsDir } from "./store.js";
+import { listModelHosts, saveModelHost } from "./modelhost-store.js";
+import { listNodeRuns } from "./noderun-store.js";
+import type { ModelRun } from "./schema.js";
+import { LOCAL_NODE_ID, type ModelHostManifest } from "./modelhost-schema.js";
 
 export interface ReconcileNodeReport {
   name: string;
   node: string;
-  action: ApplyResult['action'];
+  action: ApplyResult["action"];
   error?: string;
 }
 
@@ -69,7 +79,9 @@ function liveHostSpecSnapshot(current: Record<string, unknown>): Record<string, 
 // explicit `apply -f` path.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 function hostSpecsEqual(manifest: ModelHostManifest, current: Record<string, unknown>): boolean {
-  return JSON.stringify(hostSpecSnapshot(manifest)) === JSON.stringify(liveHostSpecSnapshot(current));
+  return (
+    JSON.stringify(hostSpecSnapshot(manifest)) === JSON.stringify(liveHostSpecSnapshot(current))
+  );
 }
 
 /**
@@ -97,14 +109,19 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
     const name = manifest.metadata.name;
     const { spec } = manifest;
     try {
-      const result = await applyOne(manifest, opts.getClient, (e) => {
-        opts.onEvent?.({ ...e, name });
-      }, undefined, {
-        workloadsDir: dir,
-        ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
-        getNodeBudgetGiB: (nodeName) =>
-          nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
-      });
+      const result = await applyOne(
+        manifest,
+        opts.getClient,
+        (e) => {
+          opts.onEvent?.({ ...e, name });
+        },
+        undefined,
+        {
+          workloadsDir: dir,
+          ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
+          getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
+        },
+      );
       if (result.error) errors++;
       reports.push({
         name,
@@ -129,7 +146,7 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
     } catch (err) {
       errors++;
       const message = (err as Error).message;
-      reports.push({ name, node: spec.node, action: 'unchanged', error: message });
+      reports.push({ name, node: spec.node, action: "unchanged", error: message });
     }
   }
 
@@ -139,7 +156,7 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
     try {
       const client = opts.getClient(spec.node);
       const current = await client.modelHostStatus.query({ workload: name });
-      if (spec.enabled === false && current.state !== 'Running') {
+      if (spec.enabled === false && current.state !== "Running") {
         // A disabled host that isn't Running may still have a stale sidecar
         // (e.g. a dead-pid sidecar left by an out-of-band exit). statusModelHost
         // reports Stopped for a dead pid, so this short-circuit now runs before
@@ -151,7 +168,7 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
         reports.push({
           name,
           node: spec.node,
-          action: 'unchanged',
+          action: "unchanged",
         });
         continue;
       }
@@ -161,49 +178,54 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
       // modelHostStatus.specHash surfaced by the node dispatcher. Skip
       // restart iff Running and observedHash matches desiredHash.
       const desiredHash = computeModelHostSpecHash(spec);
-      const observedHash = spec.node === LOCAL_NODE_ID
-        ? readModelHostState({ name }, resolveEnv(process.env))?.specHash
-        : current.specHash;
-      if (current.state === 'Running' && observedHash === desiredHash) {
+      const observedHash =
+        spec.node === LOCAL_NODE_ID
+          ? readModelHostState({ name }, resolveEnv(process.env))?.specHash
+          : current.specHash;
+      if (current.state === "Running" && observedHash === desiredHash) {
         reports.push({
           name,
           node: spec.node,
-          action: 'unchanged',
+          action: "unchanged",
         });
         continue;
       }
-      const result = await applyOneModelHost(manifest, opts.getClient, (e) => {
-        opts.onEvent?.({ ...e, name });
-      }, {
-        env: process.env,
-        workloadsDir: dir,
-        getNodeBudgetGiB: (nodeName) =>
-          nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
-      });
-      if (result.ok && result.kind === 'ModelHost') {
+      const result = await applyOneModelHost(
+        manifest,
+        opts.getClient,
+        (e) => {
+          opts.onEvent?.({ ...e, name });
+        },
+        {
+          env: process.env,
+          workloadsDir: dir,
+          getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
+        },
+      );
+      if (result.ok && result.kind === "ModelHost") {
         reports.push({
           name,
           node: spec.node,
-          action: current.state === 'Running' ? 'restarted' : 'started',
+          action: current.state === "Running" ? "restarted" : "started",
         });
         saveModelHost(result.manifest, dir);
       } else {
         // applyOneModelHost only emits {ok:true, kind:'ModelHost'} or
         // {ok:false, error}; the ModelRun shape can't arrive here, but
         // narrow defensively for TS.
-        const errMsg = result.ok ? 'unexpected non-ModelHost outcome' : result.error;
+        const errMsg = result.ok ? "unexpected non-ModelHost outcome" : result.error;
         errors++;
         reports.push({
           name,
           node: spec.node,
-          action: 'unchanged',
+          action: "unchanged",
           error: errMsg,
         });
       }
     } catch (err) {
       errors++;
       const message = (err as Error).message;
-      reports.push({ name, node: spec.node, action: 'unchanged', error: message });
+      reports.push({ name, node: spec.node, action: "unchanged", error: message });
     }
   }
 

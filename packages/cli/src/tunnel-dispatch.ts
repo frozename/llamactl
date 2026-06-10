@@ -1,5 +1,5 @@
-import type { TunnelSendFn, TunnelSubscribeFn } from '@llamactl/remote';
-import { tls } from '@llamactl/remote';
+import type { TunnelSendFn, TunnelSubscribeFn } from "@llamactl/remote";
+import { tls } from "@llamactl/remote";
 
 const { computeFingerprint, fingerprintsEqual } = tls;
 
@@ -9,10 +9,7 @@ const { computeFingerprint, fingerprintsEqual } = tls;
  * this with a plain async function; the production default is the
  * runtime's global `fetch`.
  */
-export type FetchLike = (
-  input: string | URL | Request,
-  init?: RequestInit,
-) => Promise<Response>;
+export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 /**
  * Module-scoped guard so the `--insecure-tunnel-relay` stderr WARN
@@ -61,7 +58,7 @@ export interface TunnelRelayCallOptions {
    *  the caller proxy treats query vs mutation identically for
    *  non-streaming procedures; the node-client proxy passes the
    *  real type for server-side routing correctness. */
-  type?: 'query' | 'mutation';
+  type?: "query" | "mutation";
   /**
    * PEM of the *local central agent's* cert (distinct from the
    * remote node's cert). When set together with
@@ -79,7 +76,7 @@ export interface TunnelRelayCallOptions {
 }
 
 interface TunnelResEnvelope {
-  type: 'res';
+  type: "res";
   id: string;
   result?: unknown;
   error?: { code: string; message: string };
@@ -95,7 +92,7 @@ interface TunnelResEnvelope {
  */
 interface BuildRelayFetchInitOptions {
   method: string;
-  type: 'query' | 'mutation' | 'subscription';
+  type: "query" | "mutation" | "subscription";
   input: unknown;
   bearer: string;
   pinnedCa?: string;
@@ -123,16 +120,16 @@ function buildRelayFetchInit(
   if (opts.insecure) {
     if (!warnedAboutInsecureTunnel) {
       process.stderr.write(
-        'WARN: tunnel-relay fingerprint check bypassed (--insecure-tunnel-relay)\n',
+        "WARN: tunnel-relay fingerprint check bypassed (--insecure-tunnel-relay)\n",
       );
       warnedAboutInsecureTunnel = true;
     }
   } else {
     if (!opts.pinnedCa || !opts.expectedFingerprint) {
       throw new Error(
-        'tunnelCentralFingerprint + tunnelCentralCertificate must be ' +
-          'set in kubeconfig context, or pass --insecure-tunnel-relay to ' +
-          'bypass (run `llamactl tunnel pin-central` to populate)',
+        "tunnelCentralFingerprint + tunnelCentralCertificate must be " +
+          "set in kubeconfig context, or pass --insecure-tunnel-relay to " +
+          "bypass (run `llamactl tunnel pin-central` to populate)",
       );
     }
     const computed = computeFingerprint(opts.pinnedCa);
@@ -142,7 +139,7 @@ function buildRelayFetchInit(
       );
     }
   }
-  const base = centralUrl.replace(/\/$/, '');
+  const base = centralUrl.replace(/\/$/, "");
   let url = `${base}/tunnel-relay/${encodeURIComponent(nodeName)}`;
   if (query) {
     const qs = new URLSearchParams(query).toString();
@@ -153,9 +150,9 @@ function buildRelayFetchInit(
   // the fingerprint above — omit entirely in insecure mode so the
   // default system-CA trust path applies.
   const init: Parameters<FetchLike>[1] = {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'content-type': 'application/json',
+      "content-type": "application/json",
       authorization: `Bearer ${opts.bearer}`,
     },
     body: JSON.stringify({
@@ -171,27 +168,21 @@ function buildRelayFetchInit(
   return { url, init };
 }
 
-export async function callViaTunnelRelay(
-  opts: TunnelRelayCallOptions,
-): Promise<unknown> {
+export async function callViaTunnelRelay(opts: TunnelRelayCallOptions): Promise<unknown> {
   const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as FetchLike);
   const built = buildRelayFetchInit(opts.centralUrl, opts.nodeName, {
     method: opts.method,
-    type: opts.type ?? 'query',
+    type: opts.type ?? "query",
     input: opts.input,
     bearer: opts.bearer,
     ...(opts.pinnedCa ? { pinnedCa: opts.pinnedCa } : {}),
-    ...(opts.expectedFingerprint
-      ? { expectedFingerprint: opts.expectedFingerprint }
-      : {}),
+    ...(opts.expectedFingerprint ? { expectedFingerprint: opts.expectedFingerprint } : {}),
     ...(opts.insecure ? { insecure: opts.insecure } : {}),
   });
   const res = await fetchImpl(built.url, built.init);
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(
-      `tunnel-relay ${res.status}: ${text || res.statusText}`,
-    );
+    const text = await res.text().catch(() => "");
+    throw new Error(`tunnel-relay ${res.status}: ${text || res.statusText}`);
   }
   const envelope = (await res.json()) as TunnelResEnvelope;
   if (envelope.error) {
@@ -235,7 +226,7 @@ export function buildTunnelSend(opts: {
     // per node-client.ts's `proxyFromTunnel`. We unwrap it here so
     // the relay receives flat `{method, type, input}` — that's the
     // shape `handleTunnelRelay` parses on the server side.
-    const params = req.params as { type?: 'query' | 'mutation'; input?: unknown };
+    const params = req.params as { type?: "query" | "mutation"; input?: unknown };
     try {
       const callOpts: TunnelRelayCallOptions = {
         centralUrl: opts.centralUrl,
@@ -256,7 +247,7 @@ export function buildTunnelSend(opts: {
       return {
         id: req.id,
         error: {
-          code: e.code ?? 'tunnel-relay-failed',
+          code: e.code ?? "tunnel-relay-failed",
           message: e.message,
         },
       };
@@ -320,17 +311,15 @@ export function buildTunnelSubscribe(opts: {
           opts.nodeName,
           {
             method,
-            type: 'subscription',
+            type: "subscription",
             input,
             bearer: opts.bearer,
             signal: abort.signal,
             ...(opts.pinnedCa ? { pinnedCa: opts.pinnedCa } : {}),
-            ...(opts.expectedFingerprint
-              ? { expectedFingerprint: opts.expectedFingerprint }
-              : {}),
+            ...(opts.expectedFingerprint ? { expectedFingerprint: opts.expectedFingerprint } : {}),
             ...(opts.insecure ? { insecure: opts.insecure } : {}),
           },
-          { stream: 'true' },
+          { stream: "true" },
         );
       } catch (err) {
         safeError(err);
@@ -348,20 +337,18 @@ export function buildTunnelSubscribe(opts: {
         return;
       }
       if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        safeError(
-          new Error(`tunnel-relay ${res.status}: ${text || res.statusText}`),
-        );
+        const text = await res.text().catch(() => "");
+        safeError(new Error(`tunnel-relay ${res.status}: ${text || res.statusText}`));
         return;
       }
       handlers.onStarted?.();
       if (!res.body) {
-        safeError(new Error('tunnel-relay SSE returned an empty body'));
+        safeError(new Error("tunnel-relay SSE returned an empty body"));
         return;
       }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let buf = '';
+      let buf = "";
       try {
         while (true) {
           if (abort.signal.aborted) break;
@@ -370,28 +357,28 @@ export function buildTunnelSubscribe(opts: {
           buf += decoder.decode(value, { stream: true });
           // Parse one SSE frame at a time — standard \n\n separator.
           let idx: number;
-          while ((idx = buf.indexOf('\n\n')) !== -1) {
+          while ((idx = buf.indexOf("\n\n")) !== -1) {
             const chunk = buf.slice(0, idx);
             buf = buf.slice(idx + 2);
             if (!chunk) continue;
-            let eventName = '';
-            let dataPayload = '';
-            for (const line of chunk.split('\n')) {
-              if (line.startsWith('event:')) eventName = line.slice(6).trim();
-              else if (line.startsWith('data:')) dataPayload = line.slice(5).trim();
+            let eventName = "";
+            let dataPayload = "";
+            for (const line of chunk.split("\n")) {
+              if (line.startsWith("event:")) eventName = line.slice(6).trim();
+              else if (line.startsWith("data:")) dataPayload = line.slice(5).trim();
             }
-            if (eventName === 'done') {
+            if (eventName === "done") {
               let parsed: { ok: boolean; error?: { code: string; message: string } };
               try {
                 parsed = JSON.parse(dataPayload);
               } catch {
-                safeError(new Error('tunnel-relay SSE: malformed done frame'));
+                safeError(new Error("tunnel-relay SSE: malformed done frame"));
                 return;
               }
               if (parsed.ok) {
                 safeComplete();
               } else {
-                const err = new Error(parsed.error?.message ?? 'subscription error');
+                const err = new Error(parsed.error?.message ?? "subscription error");
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 (err as any).code = parsed.error?.code;
                 safeError(err);
@@ -405,7 +392,7 @@ export function buildTunnelSubscribe(opts: {
                 data = JSON.parse(dataPayload);
               } catch {
                 // Corrupted frame; surface as error.
-                safeError(new Error('tunnel-relay SSE: malformed data frame'));
+                safeError(new Error("tunnel-relay SSE: malformed data frame"));
                 return;
               }
               if (abort.signal.aborted) return;
@@ -420,7 +407,7 @@ export function buildTunnelSubscribe(opts: {
         }
         // Stream ended without a done frame (server closed body).
         if (abort.signal.aborted) safeComplete();
-        else safeError(new Error('tunnel-relay SSE: stream closed without a done frame'));
+        else safeError(new Error("tunnel-relay SSE: stream closed without a done frame"));
       } catch (err) {
         if (abort.signal.aborted) {
           safeComplete();

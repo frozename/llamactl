@@ -1,8 +1,8 @@
-import { recommendations } from '@llamactl/core';
-import { getNodeClient, isLocalDispatch } from '../dispatcher.js';
+import { recommendations } from "@llamactl/core";
+import { getNodeClient, isLocalDispatch } from "../dispatcher.js";
 
 function padRight(value: string, width: number): string {
-  return value.length >= width ? value : value + ' '.repeat(width - value.length);
+  return value.length >= width ? value : value + " ".repeat(width - value.length);
 }
 
 function formatRow(row: recommendations.RecommendationRow): string {
@@ -13,11 +13,7 @@ function formatRow(row: recommendations.RecommendationRow): string {
   const quant = padRight(row.quant, 6);
   const ctx = padRight(row.ctx, 6);
   const promotedNote =
-    row.promoted === 'env'
-      ? ' promoted=env'
-      : row.promoted === 'file'
-      ? ' promoted=file'
-      : '';
+    row.promoted === "env" ? " promoted=env" : row.promoted === "file" ? " promoted=file" : "";
   return `  ${target} ${label} class=${className} scope=${scope} quant=${quant} ctx=${ctx} model=${row.rel}${promotedNote}`;
 }
 
@@ -30,12 +26,12 @@ rel is catalogued and HF lookups are enabled.
 `;
 
 export async function runRecommendations(args: string[]): Promise<number> {
-  if (args.includes('-h') || args.includes('--help')) {
+  if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(USAGE);
     return 0;
   }
 
-  const requested = args[0] ?? 'current';
+  const requested = args[0] ?? "current";
 
   // Honor --node: when remote, the agent's `recommendations` tRPC
   // procedure resolves the profile against the target node's own
@@ -50,7 +46,7 @@ export async function runRecommendations(args: string[]): Promise<number> {
         process.stdout.write(`${formatRow(row)}\n`);
         if (row.hf) process.stdout.write(`             hf=${row.hf}\n`);
       }
-      process.stdout.write('\n');
+      process.stdout.write("\n");
     }
     return 0;
   }
@@ -66,7 +62,7 @@ export async function runRecommendations(args: string[]): Promise<number> {
       process.stdout.write(`${formatRow(row)}\n`);
       if (row.hf) process.stdout.write(`             hf=${row.hf}\n`);
     }
-    process.stdout.write('\n');
+    process.stdout.write("\n");
   }
 
   return 0;

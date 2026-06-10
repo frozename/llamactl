@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
-import { platform as nodePlatform, arch as nodeArch } from 'node:os';
-import { infraArtifactsFetch } from '@llamactl/remote';
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { platform as nodePlatform, arch as nodeArch } from "node:os";
+import { infraArtifactsFetch } from "@llamactl/remote";
 
 const USAGE = `llamactl artifacts — manage pre-built llamactl-agent binaries
 
@@ -67,28 +67,33 @@ EXAMPLES:
   llamactl artifacts show-path --target=linux-arm64
 `;
 
-export type Platform = 'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64';
-export const ALLOWED_PLATFORMS: Platform[] = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64'];
+export type Platform = "darwin-arm64" | "darwin-x64" | "linux-x64" | "linux-arm64";
+export const ALLOWED_PLATFORMS: Platform[] = [
+  "darwin-arm64",
+  "darwin-x64",
+  "linux-x64",
+  "linux-arm64",
+];
 
 export function currentPlatform(): Platform | null {
   const p = nodePlatform();
   const a = nodeArch();
-  if (p === 'darwin' && a === 'arm64') return 'darwin-arm64';
-  if (p === 'darwin' && a === 'x64') return 'darwin-x64';
-  if (p === 'linux' && a === 'x64') return 'linux-x64';
-  if (p === 'linux' && a === 'arm64') return 'linux-arm64';
+  if (p === "darwin" && a === "arm64") return "darwin-arm64";
+  if (p === "darwin" && a === "x64") return "darwin-x64";
+  if (p === "linux" && a === "x64") return "linux-x64";
+  if (p === "linux" && a === "arm64") return "linux-arm64";
   return null;
 }
 
 export function defaultArtifactsDir(): string {
   const override = process.env.LLAMACTL_ARTIFACTS_DIR?.trim();
   if (override) return override;
-  const base = process.env.DEV_STORAGE?.trim() || join(process.env.HOME ?? '.', '.llamactl');
-  return join(base, 'artifacts');
+  const base = process.env.DEV_STORAGE?.trim() || join(process.env.HOME ?? ".", ".llamactl");
+  return join(base, "artifacts");
 }
 
 export function agentBinaryPath(platform: Platform, dir: string): string {
-  return join(dir, 'agent', platform, 'llamactl-agent');
+  return join(dir, "agent", platform, "llamactl-agent");
 }
 
 /**
@@ -101,7 +106,7 @@ export function agentBinaryPath(platform: Platform, dir: string): string {
 export function resolveSourceDefault(): string | null {
   // import.meta.dir of this file is `.../packages/cli/src/commands`.
   // bin.ts sits one directory up.
-  const candidate = resolve(import.meta.dir, '..', 'bin.ts');
+  const candidate = resolve(import.meta.dir, "..", "bin.ts");
   return existsSync(candidate) ? candidate : null;
 }
 
@@ -156,28 +161,28 @@ export async function buildAgentBinary(
       outPath,
       code: 1,
       reason:
-        'could not locate packages/cli/src/bin.ts — pass --src=<path-to-source-repo>/packages/cli/src/bin.ts or re-run from a source checkout',
+        "could not locate packages/cli/src/bin.ts — pass --src=<path-to-source-repo>/packages/cli/src/bin.ts or re-run from a source checkout",
     };
   }
   mkdirSync(dirname(outPath), { recursive: true });
   const proc = Bun.spawn({
     cmd: [
-      'bun',
-      'build',
-      '--compile',
+      "bun",
+      "build",
+      "--compile",
       `--target=bun-${opts.target}`,
       opts.src,
-      '--outfile',
+      "--outfile",
       outPath,
     ],
-    stdout: 'inherit',
-    stderr: 'inherit',
+    stdout: "inherit",
+    stderr: "inherit",
   });
   const code = await proc.exited;
   if (code !== 0) return { ok: false, outPath, code };
 
-  const identity = opts.signIdentity ?? process.env.LLAMACTL_SIGN_IDENTITY ?? '';
-  if (identity && opts.target.startsWith('darwin')) {
+  const identity = opts.signIdentity ?? process.env.LLAMACTL_SIGN_IDENTITY ?? "";
+  if (identity && opts.target.startsWith("darwin")) {
     const signCode = await codesignBinary(outPath, identity);
     if (signCode !== 0) {
       return {
@@ -207,14 +212,11 @@ export async function buildAgentBinary(
  * (where `codesign` doesn't exist) will return a non-zero spawn-error
  * code rather than throwing.
  */
-export async function codesignBinary(
-  binaryPath: string,
-  identity: string,
-): Promise<number> {
+export async function codesignBinary(binaryPath: string, identity: string): Promise<number> {
   const proc = Bun.spawn({
-    cmd: ['codesign', '--force', '--sign', identity, '--timestamp=none', binaryPath],
-    stdout: 'inherit',
-    stderr: 'inherit',
+    cmd: ["codesign", "--force", "--sign", identity, "--timestamp=none", binaryPath],
+    stdout: "inherit",
+    stderr: "inherit",
   });
   return await proc.exited;
 }
@@ -229,34 +231,34 @@ interface BuildFlags {
 function parseBuildFlags(argv: string[]): BuildFlags | { error: string } {
   const current = currentPlatform();
   const flags: BuildFlags = {
-    target: current ?? 'darwin-arm64',
+    target: current ?? "darwin-arm64",
     src: resolveSourceDefault(),
     dir: defaultArtifactsDir(),
   };
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') return { error: '__help' };
-    const eq = arg.indexOf('=');
-    if (!arg.startsWith('--') || eq < 0) {
+    if (arg === "--help" || arg === "-h") return { error: "__help" };
+    const eq = arg.indexOf("=");
+    if (!arg.startsWith("--") || eq < 0) {
       return { error: `artifacts build-agent: flags must be --key=value (${arg})` };
     }
     const key = arg.slice(2, eq);
     const value = arg.slice(eq + 1);
     switch (key) {
-      case 'target':
+      case "target":
         if (!ALLOWED_PLATFORMS.includes(value as Platform)) {
           return {
-            error: `artifacts build-agent: unsupported --target ${value} (allowed: ${ALLOWED_PLATFORMS.join(', ')})`,
+            error: `artifacts build-agent: unsupported --target ${value} (allowed: ${ALLOWED_PLATFORMS.join(", ")})`,
           };
         }
         flags.target = value as Platform;
         break;
-      case 'src':
+      case "src":
         flags.src = value;
         break;
-      case 'dir':
+      case "dir":
         flags.dir = value;
         break;
-      case 'sign':
+      case "sign":
         flags.signIdentity = value;
         break;
       default:
@@ -268,8 +270,8 @@ function parseBuildFlags(argv: string[]): BuildFlags | { error: string } {
 
 async function runBuildAgent(argv: string[]): Promise<number> {
   const parsed = parseBuildFlags(argv);
-  if ('error' in parsed) {
-    if (parsed.error === '__help') {
+  if ("error" in parsed) {
+    if (parsed.error === "__help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -278,9 +280,9 @@ async function runBuildAgent(argv: string[]): Promise<number> {
   }
   if (!parsed.src) {
     process.stderr.write(
-      'artifacts build-agent: could not locate packages/cli/src/bin.ts.\n' +
-        'Running llamactl from a compiled binary? Use --src=<path-to-source-repo>/packages/cli/src/bin.ts,\n' +
-        'or re-run from a source checkout.\n',
+      "artifacts build-agent: could not locate packages/cli/src/bin.ts.\n" +
+        "Running llamactl from a compiled binary? Use --src=<path-to-source-repo>/packages/cli/src/bin.ts,\n" +
+        "or re-run from a source checkout.\n",
     );
     return 1;
   }
@@ -319,12 +321,12 @@ async function runBuildAgent(argv: string[]): Promise<number> {
 function runList(argv: string[]): number {
   let dir = defaultArtifactsDir();
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') {
+    if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return 0;
     }
-    const eq = arg.indexOf('=');
-    if (arg.startsWith('--dir=') && eq >= 0) {
+    const eq = arg.indexOf("=");
+    if (arg.startsWith("--dir=") && eq >= 0) {
       dir = arg.slice(eq + 1);
       continue;
     }
@@ -355,24 +357,24 @@ function runShowPath(argv: string[]): number {
   let target: Platform | null = current;
   let dir = defaultArtifactsDir();
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') {
+    if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return 0;
     }
-    const eq = arg.indexOf('=');
+    const eq = arg.indexOf("=");
     if (eq < 0) {
       process.stderr.write(`artifacts show-path: unknown arg ${arg}\n`);
       return 1;
     }
     const key = arg.slice(2, eq);
     const value = arg.slice(eq + 1);
-    if (key === 'target') {
+    if (key === "target") {
       if (!ALLOWED_PLATFORMS.includes(value as Platform)) {
         process.stderr.write(`artifacts show-path: unsupported --target ${value}\n`);
         return 1;
       }
       target = value as Platform;
-    } else if (key === 'dir') {
+    } else if (key === "dir") {
       dir = value;
     } else {
       process.stderr.write(`artifacts show-path: unknown flag --${key}\n`);
@@ -395,46 +397,46 @@ async function runFetch(argv: string[]): Promise<number> {
     target: string | undefined;
     repo: string;
     dir: string;
-    verifySig: 'skip' | 'best-effort' | 'require';
+    verifySig: "skip" | "best-effort" | "require";
   } = {
-    version: 'latest',
+    version: "latest",
     target: (currentPlatform() as string | null) ?? undefined,
-    repo: 'frozename/llamactl',
+    repo: "frozename/llamactl",
     dir: defaultArtifactsDir(),
-    verifySig: 'skip',
+    verifySig: "skip",
   };
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') {
+    if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return 0;
     }
     // --verify-sig without a value means best-effort.
-    if (arg === '--verify-sig') {
-      flags.verifySig = 'best-effort';
+    if (arg === "--verify-sig") {
+      flags.verifySig = "best-effort";
       continue;
     }
-    const eq = arg.indexOf('=');
-    if (!arg.startsWith('--') || eq < 0) {
+    const eq = arg.indexOf("=");
+    if (!arg.startsWith("--") || eq < 0) {
       process.stderr.write(`artifacts fetch: flags must be --key=value (${arg})\n`);
       return 1;
     }
     const key = arg.slice(2, eq);
     const value = arg.slice(eq + 1);
     switch (key) {
-      case 'version':
+      case "version":
         flags.version = value;
         break;
-      case 'target':
+      case "target":
         flags.target = value;
         break;
-      case 'repo':
+      case "repo":
         flags.repo = value;
         break;
-      case 'dir':
+      case "dir":
         flags.dir = value;
         break;
-      case 'verify-sig':
-        if (value !== 'skip' && value !== 'best-effort' && value !== 'require') {
+      case "verify-sig":
+        if (value !== "skip" && value !== "best-effort" && value !== "require") {
           process.stderr.write(
             `artifacts fetch: --verify-sig must be skip|best-effort|require (got ${value})\n`,
           );
@@ -453,9 +455,7 @@ async function runFetch(argv: string[]): Promise<number> {
     );
     return 1;
   }
-  process.stderr.write(
-    `artifacts fetch: ${flags.repo} ${flags.version} → ${flags.target}\n`,
-  );
+  process.stderr.write(`artifacts fetch: ${flags.repo} ${flags.version} → ${flags.target}\n`);
   const result = await infraArtifactsFetch.fetchAgentRelease({
     repo: flags.repo,
     version: flags.version,
@@ -498,42 +498,44 @@ function runPrune(argv: string[]): number {
     execute: false,
   };
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') {
+    if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return 0;
     }
-    if (arg === '--execute') {
+    if (arg === "--execute") {
       flags.execute = true;
       continue;
     }
-    const eq = arg.indexOf('=');
-    if (!arg.startsWith('--') || eq < 0) {
+    const eq = arg.indexOf("=");
+    if (!arg.startsWith("--") || eq < 0) {
       process.stderr.write(`artifacts prune: flags must be --key=value (${arg})\n`);
       return 1;
     }
     const key = arg.slice(2, eq);
     const value = arg.slice(eq + 1);
     switch (key) {
-      case 'target':
+      case "target":
         if (!ALLOWED_PLATFORMS.includes(value as Platform)) {
           process.stderr.write(
-            `artifacts prune: unsupported --target ${value} (allowed: ${ALLOWED_PLATFORMS.join(', ')})\n`,
+            `artifacts prune: unsupported --target ${value} (allowed: ${ALLOWED_PLATFORMS.join(", ")})\n`,
           );
           return 1;
         }
         flags.target = value;
         break;
-      case 'keep':
+      case "keep":
         {
           const n = Number.parseInt(value, 10);
           if (!Number.isFinite(n) || n < 0) {
-            process.stderr.write(`artifacts prune: --keep must be a non-negative integer (got ${value})\n`);
+            process.stderr.write(
+              `artifacts prune: --keep must be a non-negative integer (got ${value})\n`,
+            );
             return 1;
           }
           flags.keep = n;
         }
         break;
-      case 'dir':
+      case "dir":
         flags.dir = value;
         break;
       default:
@@ -553,16 +555,16 @@ function runPrune(argv: string[]): number {
   }
   process.stdout.write(
     `artifacts prune: ${result.inspected.length} installed, keep=${flags.keep}, ` +
-      `${result.candidates.length} candidate(s)${flags.execute ? '' : ' (dry-run — pass --execute to remove)'}\n`,
+      `${result.candidates.length} candidate(s)${flags.execute ? "" : " (dry-run — pass --execute to remove)"}\n`,
   );
   for (const c of result.candidates) {
     const age = Math.max(0, Math.floor((Date.now() - c.mtimeMs) / 86400_000));
     const sizeMb = (c.bytes / (1024 * 1024)).toFixed(1);
     const mark = flags.execute
       ? result.removed.some((r) => r.path === c.path)
-        ? 'REMOVED'
-        : 'FAILED '
-      : 'WOULD  ';
+        ? "REMOVED"
+        : "FAILED "
+      : "WOULD  ";
     process.stdout.write(
       `  ${mark}\t${c.target}\t${c.tag}\t${sizeMb} MB\t${age}d old\t${c.path}\n`,
     );
@@ -579,20 +581,20 @@ function runPrune(argv: string[]): number {
 export async function runArtifacts(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
-    case 'list':
+    case "list":
       return runList(rest);
-    case 'prune':
+    case "prune":
       return runPrune(rest);
-    case 'build-agent':
+    case "build-agent":
       return runBuildAgent(rest);
-    case 'fetch':
+    case "fetch":
       return runFetch(rest);
-    case 'show-path':
+    case "show-path":
       return runShowPath(rest);
     case undefined:
-    case '--help':
-    case '-h':
-    case 'help':
+    case "--help":
+    case "-h":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:

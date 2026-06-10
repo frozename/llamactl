@@ -8,6 +8,7 @@ pass before moving on.
 ## Phase 1 — Side-by-side atomic fork build
 
 **Deliverables:**
+
 - `tools/llama-cpp-mtp-atomic/PINNED_SHA` containing
   `2e81dc5f634501c744b69a65a8eeb84ba42e82ee`
   (HEAD of `feature/turboquant-kv-cache` at draft time).
@@ -15,11 +16,12 @@ pass before moving on.
   `https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant` into
   `${LLAMA_CPP_SRC_ATOMIC:-$DEV_STORAGE/src/llama.cpp-atomic}`,
   detached checkout at the pinned SHA, `cmake -DGGML_METAL=ON
-  -DGGML_METAL_EMBED_LIBRARY=ON -DLLAMA_CURL=ON
-  -DCMAKE_BUILD_TYPE=Release` then build `llama-server`,
+-DGGML_METAL_EMBED_LIBRARY=ON -DLLAMA_CURL=ON
+-DCMAKE_BUILD_TYPE=Release` then build `llama-server`,
   `llama-bench`, `llama-quantize`.
 
 **Acceptance:**
+
 1. `tools/llama-cpp-mtp-atomic/build.sh` exits 0.
 2. `$LLAMA_CPP_BIN_ATOMIC/llama-server --version` prints a non-empty
    line.
@@ -28,6 +30,7 @@ pass before moving on.
    cloned or the SHA pre-dates the feature.)
 
 **Failure handling:**
+
 - If cmake fails on Xcode SDK or Metal: fall back to checking out the
   release tag `turboquant-macos-arm64-f57a573` and rerun. Update
   `PINNED_SHA` accordingly and add a `FALLBACK` note.
@@ -36,8 +39,9 @@ pass before moving on.
 ## Phase 2 — Model acquisition
 
 **Deliverables:**
+
 - `tools/llama-cpp-mtp-atomic/download.sh` — idempotent (`hf download
-  --include` + skip-if-present), pulls:
+--include` + skip-if-present), pulls:
   - `unsloth/gemma-4-26B-A4B-it-GGUF` `*Q4_K_M*.gguf` →
     `$LLAMA_CPP_MODELS/gemma-4-26B-A4B-it-GGUF/`
   - `AtomicChat/gemma-4-26B-A4B-it-assistant-GGUF`
@@ -47,12 +51,14 @@ pass before moving on.
   `$LLAMA_CPP_MODELS` volume has ≥20 GB free before starting.
 
 **Acceptance:**
+
 1. Both target files exist and are non-empty after `download.sh`.
 2. `file <base>` and `file <head>` both report `data` (not text/HTML —
    guards against gated-repo HTML responses being saved).
 3. Re-running `download.sh` is a no-op (skip messages).
 
 **Failure handling:**
+
 - If the unsloth GGUF is missing the expected Q4_K_M file (naming
   drift), pin to the specific filename printed by `hf-tree` and update
   `download.sh`.
@@ -62,14 +68,16 @@ pass before moving on.
 ## Phase 3 — Vanilla baseline bench (atomic binary, no MTP flags)
 
 **Deliverables:**
+
 - `tools/llama-cpp-mtp-atomic/bench.sh` — parametric `vanilla|mtp`,
   takes `<base-rel>` plus optional `<head-rel>`, threads atomic flags
   through. Reuses `bench-client.py` from `tools/llama-cpp-mtp/`.
 - One invocation: `bench.sh vanilla
-  gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-Q4_K_M.gguf`.
+gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-Q4_K_M.gguf`.
 - Output JSON under `$DEV_STORAGE/bench/mtp-gemma4-pilot/`.
 
 **Bench harness invariants (the "tests"):**
+
 - Server health probe must pass within 120 s; otherwise capture
   `server.log` tail and exit non-zero.
 - Output JSON must contain `decode_tps`, `prefill_tps`, `ttft_ms`,
@@ -77,9 +85,10 @@ pass before moving on.
 - `port=18181` (matches prior pilot, avoids collision with
   `granite41-8b-local` on 8080 and mac-mini :8090).
 - Server flags: `-ngl 99 -fa on -ctk turbo3 -ctv turbo3 -c 8192
-  --no-warmup -np 1 -ub 512`.
+--no-warmup -np 1 -ub 512`.
 
 **Acceptance:**
+
 1. Server health 200 within 120 s.
 2. JSON output exists and parses, with all four required fields.
 3. `decode_tps` is plausible (>3 tps, <300 tps — sanity bounds for
@@ -88,14 +97,16 @@ pass before moving on.
 ## Phase 4 — MTP bench (atomic binary, full atomic flag set)
 
 **Deliverables:**
+
 - One invocation: `bench.sh mtp
-  gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-Q4_K_M.gguf
-  gemma-4-26B-A4B-it-assistant-GGUF/gemma-4-26B-A4B-it-assistant.Q4_K_M.gguf`.
+gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-Q4_K_M.gguf
+gemma-4-26B-A4B-it-assistant-GGUF/gemma-4-26B-A4B-it-assistant.Q4_K_M.gguf`.
 - Server flags: vanilla flags + `--mtp-head <head> --spec-type mtp
-  --draft-block-size 3 --draft-max 8 --draft-min 0 -ngld 99 -ctkd
-  turbo3 -ctvd turbo3`.
+--draft-block-size 3 --draft-max 8 --draft-min 0 -ngld 99 -ctkd
+turbo3 -ctvd turbo3`.
 
 **Acceptance:**
+
 1. Server health 200 within 180 s (head load may be slower than
    vanilla — extend timeout from Phase 3's 120 s).
 2. JSON output includes a non-null `accept_rate`.
@@ -103,6 +114,7 @@ pass before moving on.
    without server crash.
 
 **Failure handling:**
+
 - If server logs `unsupported architecture: gemma4_assistant`, the
   fork SHA does not yet have the assistant runtime. Bisect — newer
   branch tip might have it; older release tag may also. Update
@@ -114,6 +126,7 @@ pass before moving on.
 ## Phase 5 — Compare and gate
 
 **Deliverables:**
+
 - `docs/superpowers/specs/2026-05-08-llamacpp-mtp-gemma4-pilot-slice-a-results.md`
   with table comparing vanilla vs MTP on:
   - `decode_tps` (and ratio MTP/vanilla)
@@ -126,6 +139,7 @@ pass before moving on.
   - **Prefill ratio ≥ 0.9×** (no severe prefill regression)
 
 **Acceptance:**
+
 1. Results doc exists and references both bench JSON files by path.
 2. Decision is explicit ("go" or "no-go") with a one-paragraph
    rationale.
@@ -140,6 +154,7 @@ pass before moving on.
 ## Phase 6 — Slice B (contingent on Phase 5 go)
 
 **Deliverables (if and only if Phase 5 says go):**
+
 - Workload schema in `packages/core/src/types/workload.ts` (or
   wherever the canonical type lives — locate first):
   - `mtpHead?: string` field added.
@@ -147,7 +162,7 @@ pass before moving on.
   `packages/core/data/catalog.json` (or equivalent) pointing at
   the unsloth GGUF + the AtomicChat assistant.
 - Spawn path in the agent runtime — wherever the existing `decoding:
-  mtp` flag is honored — extended to:
+mtp` flag is honored — extended to:
   - Pick the atomic binary (`LLAMA_CPP_BIN_ATOMIC`) when MTP enabled.
   - Append `--mtp-head` resolved against `LLAMA_CPP_MODELS` +
     `mtpHeadRel`.
@@ -165,6 +180,7 @@ pass before moving on.
     confirm endpoint is healthy and one request returns tokens.
 
 **Acceptance:**
+
 1. `bun test` clean.
 2. Composite-apply succeeds and `/health` returns 200.
 3. End-to-end one-shot completion via the gateway returns >0 tokens.
@@ -172,6 +188,7 @@ pass before moving on.
 ## Out-of-band
 
 After all phases (whether Slice A passed or failed):
+
 - Strip downloaded models if Slice A failed.
 - Update auto-memory with the outcome and any retraps observed
   (binary signing, fork breakage, etc.).

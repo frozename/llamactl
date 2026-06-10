@@ -14,11 +14,11 @@
  *     --args=path/to/main.js
  */
 
-import { spawn, type ChildProcessByStdio } from 'node:child_process';
-import { createInterface } from 'node:readline';
-import type { Readable, Writable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { createInterface } from "node:readline";
+import type { Readable, Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 // ── Minimal JSON-RPC / MCP client ─────────────────────────────────
 
@@ -35,7 +35,7 @@ class McpClient {
   constructor(proc: ChildProcessByStdio<Writable, Readable, null>) {
     this.proc = proc;
     const rl = createInterface({ input: proc.stdout });
-    rl.on('line', (line) => {
+    rl.on("line", (line) => {
       if (!line.trim()) return;
       try {
         const frame = JSON.parse(line) as JsonRpcResponse;
@@ -62,11 +62,11 @@ class McpClient {
       });
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'tools/call',
+          method: "tools/call",
           params: { name: tool, arguments: args },
-        }) + '\n',
+        }) + "\n",
       );
     });
     if (res.error) throw new Error(`${tool} → ${res.error.message}`);
@@ -74,7 +74,7 @@ class McpClient {
       isError?: boolean;
       content?: Array<{ text?: string }>;
     };
-    const text = envelope?.content?.[0]?.text ?? '';
+    const text = envelope?.content?.[0]?.text ?? "";
     if (envelope?.isError) throw new Error(`${tool} → ${text}`);
     try {
       return JSON.parse(text);
@@ -88,20 +88,24 @@ class McpClient {
       this.pending.set(id, (r) => resolveP(r));
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'initialize',
+          method: "initialize",
           params: {
-            protocolVersion: '2024-11-05',
+            protocolVersion: "2024-11-05",
             capabilities: {},
-            clientInfo: { name: 'rail-views', version: '0.0.1' },
+            clientInfo: { name: "rail-views", version: "0.0.1" },
           },
-        }) + '\n',
+        }) + "\n",
       );
     });
   }
   kill(): void {
-    try { this.proc.kill(); } catch { /* ignore */ }
+    try {
+      this.proc.kill();
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -120,17 +124,18 @@ function parseArgs(argv: string[]): DriverArgs {
   const env: Record<string, string> = {};
   let userDataDir: string | undefined;
   for (const a of argv.slice(2)) {
-    if (a.startsWith('--executable=')) executable = a.slice('--executable='.length);
-    else if (a.startsWith('--args=')) execArgs = a.slice('--args='.length).split(' ').filter(Boolean);
-    else if (a.startsWith('--env=')) {
-      const kv = a.slice('--env='.length);
-      const eq = kv.indexOf('=');
+    if (a.startsWith("--executable=")) executable = a.slice("--executable=".length);
+    else if (a.startsWith("--args="))
+      execArgs = a.slice("--args=".length).split(" ").filter(Boolean);
+    else if (a.startsWith("--env=")) {
+      const kv = a.slice("--env=".length);
+      const eq = kv.indexOf("=");
       if (eq > 0) env[kv.slice(0, eq)] = kv.slice(eq + 1);
-    } else if (a.startsWith('--userDataDir=')) {
-      userDataDir = a.slice('--userDataDir='.length);
+    } else if (a.startsWith("--userDataDir=")) {
+      userDataDir = a.slice("--userDataDir=".length);
     }
   }
-  if (!executable) throw new Error('--executable required');
+  if (!executable) throw new Error("--executable required");
   const out: DriverArgs = { executable, execArgs, env };
   if (userDataDir !== undefined) out.userDataDir = userDataDir;
   return out;
@@ -139,19 +144,19 @@ function parseArgs(argv: string[]): DriverArgs {
 function resolveServerScript(here: string): string {
   const explicit = process.env.ELECTRON_MCP_DIR;
   if (explicit && explicit.length > 0) {
-    return resolve(explicit, 'dist', 'server', 'index.js');
+    return resolve(explicit, "dist", "server", "index.js");
   }
-  return resolve(here, '..', '..', '..', '..', 'electron-mcp-server', 'dist', 'server', 'index.js');
+  return resolve(here, "..", "..", "..", "..", "electron-mcp-server", "dist", "server", "index.js");
 }
 
 // ── Rail helpers ───────────────────────────────────────────────────
 
-const RAIL_VIEW_IDS = ['explorer', 'search', 'sessions', 'fleet'] as const;
+const RAIL_VIEW_IDS = ["explorer", "search", "sessions", "fleet"] as const;
 type RailViewId = (typeof RAIL_VIEW_IDS)[number];
 
 const TAB_OPENERS = [
-  { id: 'cost' as const,     affordance: 'cost-root' },
-  { id: 'settings' as const, affordance: 'settings-root' },
+  { id: "cost" as const, affordance: "cost-root" },
+  { id: "settings" as const, affordance: "settings-root" },
 ];
 
 /**
@@ -170,21 +175,17 @@ async function clickRailViewAndAssert(
   // DOM as confirmed by the dashboard-root mount earlier).
   await jsClick(client, sessionId, `[data-testid="rail-icon-${view}"]`);
 
-  await client.call('electron_wait_for_selector', {
+  await client.call("electron_wait_for_selector", {
     sessionId,
     selector: `[data-testid="rail-panel-${view}"]`,
-    state: 'visible',
+    state: "visible",
     timeout: 5_000,
   });
 }
 
 /** Dispatches a `.click()` directly on the matching DOM element. */
-async function jsClick(
-  client: McpClient,
-  sessionId: string,
-  selector: string,
-): Promise<void> {
-  await client.call('electron_evaluate_renderer', {
+async function jsClick(client: McpClient, sessionId: string, selector: string): Promise<void> {
+  await client.call("electron_evaluate_renderer", {
     sessionId,
     expression: `(() => {
       const el = document.querySelector(${JSON.stringify(selector)});
@@ -202,14 +203,14 @@ async function jsClick(
 async function clickTabOpenerAndAssert(
   client: McpClient,
   sessionId: string,
-  opener: { id: 'cost' | 'settings'; affordance: string },
+  opener: { id: "cost" | "settings"; affordance: string },
 ): Promise<void> {
   await jsClick(client, sessionId, `[data-testid="rail-icon-${opener.id}"]`);
 
-  await client.call('electron_wait_for_selector', {
+  await client.call("electron_wait_for_selector", {
     sessionId,
     selector: `[data-testid="${opener.affordance}"]`,
-    state: 'visible',
+    state: "visible",
     timeout: 5_000,
   });
 }
@@ -222,9 +223,9 @@ async function main(): Promise<void> {
   const serverScript = resolveServerScript(here);
 
   const env: NodeJS.ProcessEnv = { ...process.env };
-  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? 'warn';
-  const nodeBin = process.env.MCP_NODE ?? 'node';
-  const proc = spawn(nodeBin, [serverScript], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "warn";
+  const nodeBin = process.env.MCP_NODE ?? "node";
+  const proc = spawn(nodeBin, [serverScript], { env, stdio: ["pipe", "pipe", "inherit"] });
   const client = new McpClient(proc);
 
   try {
@@ -237,18 +238,18 @@ async function main(): Promise<void> {
     if (Object.keys(args.env).length > 0) launchArgMap.env = args.env;
     if (args.userDataDir !== undefined) launchArgMap.userDataDir = args.userDataDir;
 
-    const launch = (await client.call('electron_launch', launchArgMap, 270_000)) as {
+    const launch = (await client.call("electron_launch", launchArgMap, 270_000)) as {
       sessionId?: string;
     };
     const sessionId = launch.sessionId;
-    if (!sessionId) throw new Error('launch failed — no sessionId in response');
+    if (!sessionId) throw new Error("launch failed — no sessionId in response");
 
     // Wait for the renderer to be ready.
-    await client.call('electron_wait_for_window', { sessionId, index: 0, timeoutMs: 30_000 });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_window", { sessionId, index: 0, timeoutMs: 30_000 });
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="dashboard-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 15_000,
     });
 
@@ -264,10 +265,10 @@ async function main(): Promise<void> {
       console.log(`[PASS] rail-icon-${opener.id} → ${opener.affordance} visible`);
     }
 
-    await client.call('electron_close', { sessionId });
-    console.log('rail-views: ok');
+    await client.call("electron_close", { sessionId });
+    console.log("rail-views: ok");
   } catch (err) {
-    console.error('rail-views FAILED:', (err as Error).message);
+    console.error("rail-views FAILED:", (err as Error).message);
     process.exitCode = 1;
   } finally {
     client.kill();

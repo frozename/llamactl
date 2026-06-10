@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { useStatusBarStore, type StatusBarItem } from '@/stores/status-bar-store';
+import { useEffect } from "react";
+import { useStatusBarStore, type StatusBarItem } from "@/stores/status-bar-store";
 
 /**
  * Module-scoped status-bar contribution. Pass the active module id

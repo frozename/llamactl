@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process';
-import { env as envMod, keepAlive } from '@llamactl/core';
-import { getGlobals, getNodeClient, isLocalDispatch } from '../dispatcher.js';
-import { resolveWorkloadName } from './_workload-resolve.js';
+import { spawn } from "node:child_process";
+import { env as envMod, keepAlive } from "@llamactl/core";
+import { getGlobals, getNodeClient, isLocalDispatch } from "../dispatcher.js";
+import { resolveWorkloadName } from "./_workload-resolve.js";
 
 const USAGE = `Usage: llamactl keep-alive <subcommand>
 
@@ -31,16 +31,16 @@ async function runStart(args: string[]): Promise<number> {
   let json = false;
   const positional: string[] = [];
   for (const arg of args) {
-    if (arg === '--json') json = true;
-    else if (arg === '-h' || arg === '--help') {
+    if (arg === "--json") json = true;
+    else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('--')) {
+    } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
       return 1;
     } else positional.push(arg);
   }
-  const target = positional[0] ?? 'current';
+  const target = positional[0] ?? "current";
 
   // Remote path: the agent spawns its own supervisor — mirrors the
   // local flow but on the target node's machine.
@@ -50,15 +50,15 @@ async function runStart(args: string[]): Promise<number> {
       if (json) {
         process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
       } else if (!res.ok) {
-        process.stderr.write(`${res.error ?? 'keep-alive failed to start'}\n`);
+        process.stderr.write(`${res.error ?? "keep-alive failed to start"}\n`);
       } else {
-        process.stdout.write(
-          `keep-alive started pid=${res.pid} target=${target} (remote)\n`,
-        );
+        process.stdout.write(`keep-alive started pid=${res.pid} target=${target} (remote)\n`);
       }
       return res.ok ? 0 : 1;
     } catch (err) {
-      process.stderr.write(`keep-alive start: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `keep-alive start: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
@@ -78,12 +78,12 @@ async function runStart(args: string[]): Promise<number> {
   const bin = process.execPath;
   const entry = process.argv[1];
   if (!entry) {
-    process.stderr.write('Cannot determine bin path for supervisor\n');
+    process.stderr.write("Cannot determine bin path for supervisor\n");
     return 1;
   }
-  const child = spawn(bin, [entry, 'keep-alive', 'worker', target], {
+  const child = spawn(bin, [entry, "keep-alive", "worker", target], {
     detached: true,
-    stdio: 'ignore',
+    stdio: "ignore",
     env: { ...process.env },
   });
   child.unref();
@@ -108,11 +108,9 @@ async function runStart(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
     if (pid === null) {
-      process.stderr.write('keep-alive supervisor did not register a PID within 2s\n');
+      process.stderr.write("keep-alive supervisor did not register a PID within 2s\n");
     } else {
-      process.stdout.write(
-        `keep-alive started pid=${pid} target=${target} log=${report.log}\n`,
-      );
+      process.stdout.write(`keep-alive started pid=${pid} target=${target} log=${report.log}\n`);
     }
   }
   return pid !== null ? 0 : 1;
@@ -124,27 +122,27 @@ async function runStop(args: string[]): Promise<number> {
   let name: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
-    if (arg === '--json') json = true;
-    else if (arg.startsWith('--grace=')) {
-      const n = Number.parseInt(arg.slice('--grace='.length), 10);
+    if (arg === "--json") json = true;
+    else if (arg.startsWith("--grace=")) {
+      const n = Number.parseInt(arg.slice("--grace=".length), 10);
       if (Number.isFinite(n) && n > 0) graceSeconds = n;
-    } else if (arg === '--name') {
+    } else if (arg === "--name") {
       name = args[i + 1];
       if (!name) {
-        process.stderr.write('keep-alive stop: --name requires a value\n');
+        process.stderr.write("keep-alive stop: --name requires a value\n");
         return 1;
       }
       i += 1;
-    } else if (arg.startsWith('--name=')) {
-      name = arg.slice('--name='.length);
+    } else if (arg.startsWith("--name=")) {
+      name = arg.slice("--name=".length);
       if (!name) {
-        process.stderr.write('keep-alive stop: --name requires a value\n');
+        process.stderr.write("keep-alive stop: --name requires a value\n");
         return 1;
       }
-    } else if (arg === '-h' || arg === '--help') {
+    } else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('--')) {
+    } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
       return 1;
     }
@@ -163,9 +161,14 @@ async function runStop(args: string[]): Promise<number> {
     result = await keepAlive.stopKeepAlive({ key: { name: workload }, graceSeconds });
   } else {
     try {
-      result = await getNodeClient().keepAliveStop.mutate({ workload, graceSeconds }) as typeof result;
+      result = (await getNodeClient().keepAliveStop.mutate({
+        workload,
+        graceSeconds,
+      })) as typeof result;
     } catch (err) {
-      process.stderr.write(`keep-alive stop: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `keep-alive stop: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
@@ -173,7 +176,7 @@ async function runStop(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {
     process.stdout.write(
-      `stopped pid=${result.pid ?? 'none'}${result.killed ? ' (SIGTERM)' : ''}\n`,
+      `stopped pid=${result.pid ?? "none"}${result.killed ? " (SIGTERM)" : ""}\n`,
     );
   }
   return 0;
@@ -182,11 +185,11 @@ async function runStop(args: string[]): Promise<number> {
 async function runStatus(args: string[]): Promise<number> {
   let json = false;
   for (const arg of args) {
-    if (arg === '--json') json = true;
-    else if (arg === '-h' || arg === '--help') {
+    if (arg === "--json") json = true;
+    else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('--')) {
+    } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
       return 1;
     }
@@ -196,9 +199,11 @@ async function runStatus(args: string[]): Promise<number> {
     status = keepAlive.keepAliveStatus();
   } else {
     try {
-      status = await getNodeClient().keepAliveStatus.query() as typeof status;
+      status = (await getNodeClient().keepAliveStatus.query()) as typeof status;
     } catch (err) {
-      process.stderr.write(`keep-alive status: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `keep-alive status: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
@@ -207,7 +212,7 @@ async function runStatus(args: string[]): Promise<number> {
     return status.running ? 0 : 1;
   }
   process.stdout.write(
-    `keep-alive: ${status.running ? `running (pid=${status.pid})` : 'stopped'}\n`,
+    `keep-alive: ${status.running ? `running (pid=${status.pid})` : "stopped"}\n`,
   );
   if (status.state) {
     for (const [k, v] of Object.entries(status.state)) {
@@ -222,28 +227,28 @@ async function runWorker(args: string[]): Promise<number> {
   let intervalSeconds: number | undefined;
   let maxBackoff: number | undefined;
   for (const arg of args) {
-    if (arg === '-h' || arg === '--help') {
+    if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('--interval=')) {
-      const n = Number.parseInt(arg.slice('--interval='.length), 10);
+    } else if (arg.startsWith("--interval=")) {
+      const n = Number.parseInt(arg.slice("--interval=".length), 10);
       if (Number.isFinite(n) && n > 0) intervalSeconds = n;
-    } else if (arg.startsWith('--max-backoff=')) {
-      const n = Number.parseInt(arg.slice('--max-backoff='.length), 10);
+    } else if (arg.startsWith("--max-backoff=")) {
+      const n = Number.parseInt(arg.slice("--max-backoff=".length), 10);
       if (Number.isFinite(n) && n > 0) maxBackoff = n;
-    } else if (arg.startsWith('--')) {
+    } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
       return 1;
     } else positional.push(arg);
   }
-  const target = positional[0] ?? 'current';
+  const target = positional[0] ?? "current";
 
   // Wire SIGTERM to a trip the abort signal so the loop exits cleanly
   // (allowing the `finally` cleanup to stop llama-server).
   const controller = new AbortController();
   const onSignal = () => controller.abort();
-  process.on('SIGTERM', onSignal);
-  process.on('SIGINT', onSignal);
+  process.on("SIGTERM", onSignal);
+  process.on("SIGINT", onSignal);
 
   try {
     await keepAlive.runKeepAliveWorker({
@@ -255,26 +260,26 @@ async function runWorker(args: string[]): Promise<number> {
     });
     return 0;
   } finally {
-    process.off('SIGTERM', onSignal);
-    process.off('SIGINT', onSignal);
+    process.off("SIGTERM", onSignal);
+    process.off("SIGINT", onSignal);
   }
 }
 
 export async function runKeepAlive(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
-    case 'start':
+    case "start":
       return runStart(rest);
-    case 'stop':
+    case "stop":
       return runStop(rest);
-    case 'status':
+    case "status":
       return runStatus(rest);
-    case 'worker':
+    case "worker":
       return runWorker(rest);
     case undefined:
-    case '-h':
-    case '--help':
-    case 'help':
+    case "-h":
+    case "--help":
+    case "help":
       process.stdout.write(USAGE);
       return sub ? 0 : 1;
     default:

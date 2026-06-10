@@ -11,12 +11,12 @@
  * loss, and every cross-component reference must resolve inside
  * the manifest it was declared in.
  */
-import { z } from 'zod';
-import { ProviderConfigCommonSchema } from '../workload/gateway-catalog/schema.js';
-import { ModelRunSpecSchema } from '../workload/schema.js';
-import { RagBindingSchema } from '../config/schema.js';
-import { RagPipelineSpecSchema } from '../rag/pipeline/schema.js';
-import { ServiceSpecSchema } from '../service/schema.js';
+import { z } from "zod";
+import { ProviderConfigCommonSchema } from "../workload/gateway-catalog/schema.js";
+import { ModelRunSpecSchema } from "../workload/schema.js";
+import { RagBindingSchema } from "../config/schema.js";
+import { RagPipelineSpecSchema } from "../rag/pipeline/schema.js";
+import { ServiceSpecSchema } from "../service/schema.js";
 
 /**
  * ComponentRef — names a component by (kind, name) inside this
@@ -25,7 +25,7 @@ import { ServiceSpecSchema } from '../service/schema.js';
  * are not supported in v1.
  */
 export const ComponentRefSchema = z.object({
-  kind: z.enum(['service', 'workload', 'rag', 'gateway', 'pipeline']),
+  kind: z.enum(["service", "workload", "rag", "gateway", "pipeline"]),
   name: z.string().min(1),
 });
 export type ComponentRef = z.infer<typeof ComponentRefSchema>;
@@ -52,7 +52,7 @@ export type DependencyEdge = z.infer<typeof DependencyEdgeSchema>;
 export const GatewayCompositeEntrySchema = z.object({
   name: z.string().min(1),
   node: z.string().min(1),
-  provider: z.enum(['sirius', 'embersynth', 'agent-gateway']),
+  provider: z.enum(["sirius", "embersynth", "agent-gateway"]),
   upstreamWorkloads: z.array(z.string().min(1)).default([]),
   providerConfig: ProviderConfigCommonSchema.optional(),
 });
@@ -84,10 +84,7 @@ export const PipelineCompositeEntrySchema = z.object({
   name: z
     .string()
     .min(1)
-    .regex(
-      /^[a-z0-9][a-z0-9-]*$/,
-      'pipeline name must be lowercase-alphanumeric-hyphens',
-    ),
+    .regex(/^[a-z0-9][a-z0-9-]*$/, "pipeline name must be lowercase-alphanumeric-hyphens"),
   spec: RagPipelineSpecSchema,
 });
 export type PipelineCompositeEntry = z.infer<typeof PipelineCompositeEntrySchema>;
@@ -105,7 +102,7 @@ export type PipelineCompositeEntry = z.infer<typeof PipelineCompositeEntrySchema
  * kubeconfig. When unset, the router falls back to the
  * `LLAMACTL_RUNTIME_BACKEND` env var, then finally `'docker'`.
  */
-export const CompositeRuntimeSchema = z.enum(['docker', 'kubernetes']);
+export const CompositeRuntimeSchema = z.enum(["docker", "kubernetes"]);
 export type CompositeRuntime = z.infer<typeof CompositeRuntimeSchema>;
 
 export const CompositeSpecSchema = z.object({
@@ -115,22 +112,20 @@ export const CompositeSpecSchema = z.object({
   gateways: z.array(GatewayCompositeEntrySchema).default([]),
   pipelines: z.array(PipelineCompositeEntrySchema).default([]),
   dependencies: z.array(DependencyEdgeSchema).default([]),
-  onFailure: z.enum(['rollback', 'leave-partial']).default('rollback'),
+  onFailure: z.enum(["rollback", "leave-partial"]).default("rollback"),
   runtime: CompositeRuntimeSchema.optional(),
 });
 export type CompositeSpec = z.infer<typeof CompositeSpecSchema>;
 
 export const CompositeStatusComponentSchema = z.object({
   ref: ComponentRefSchema,
-  state: z.enum(['Pending', 'Applying', 'Ready', 'Failed']),
+  state: z.enum(["Pending", "Applying", "Ready", "Failed"]),
   message: z.string().optional(),
 });
-export type CompositeStatusComponent = z.infer<
-  typeof CompositeStatusComponentSchema
->;
+export type CompositeStatusComponent = z.infer<typeof CompositeStatusComponentSchema>;
 
 export const CompositeStatusSchema = z.object({
-  phase: z.enum(['Pending', 'Applying', 'Ready', 'Degraded', 'Failed']),
+  phase: z.enum(["Pending", "Applying", "Ready", "Degraded", "Failed"]),
   appliedAt: z.string().optional(),
   components: z.array(CompositeStatusComponentSchema).default([]),
 });
@@ -140,10 +135,7 @@ export const CompositeMetadataSchema = z.object({
   name: z
     .string()
     .min(1)
-    .regex(
-      /^[a-z0-9-]+$/,
-      'composite name must be lowercase-alphanumeric-hyphens',
-    ),
+    .regex(/^[a-z0-9-]+$/, "composite name must be lowercase-alphanumeric-hyphens"),
   labels: z.record(z.string(), z.string()).optional(),
 });
 export type CompositeMetadata = z.infer<typeof CompositeMetadataSchema>;
@@ -189,8 +181,8 @@ function workloadName(w: z.infer<typeof ModelRunSpecSchema>): string {
 
 export const CompositeSchema = z
   .object({
-    apiVersion: z.literal('llamactl/v1'),
-    kind: z.literal('Composite'),
+    apiVersion: z.literal("llamactl/v1"),
+    kind: z.literal("Composite"),
     metadata: CompositeMetadataSchema,
     spec: CompositeSpecSchema,
     status: CompositeStatusSchema.optional(),
@@ -228,9 +220,9 @@ export const CompositeSchema = z
       for (const [name, count] of bag) {
         if (count > 1) {
           ctx.addIssue({
-            code: 'custom',
+            code: "custom",
             message: `duplicate ${kind} component name: '${name}'`,
-            path: ['spec', kind === 'rag' ? 'ragNodes' : `${kind}s`],
+            path: ["spec", kind === "rag" ? "ragNodes" : `${kind}s`],
           });
         }
       }
@@ -238,7 +230,7 @@ export const CompositeSchema = z
 
     // 2. Dependencies must reference real components.
     const names = collectComponentNames(spec);
-    const pool: Record<ComponentRef['kind'], Set<string>> = {
+    const pool: Record<ComponentRef["kind"], Set<string>> = {
       service: names.service,
       workload: names.workload,
       rag: names.rag,
@@ -250,16 +242,16 @@ export const CompositeSchema = z
       if (!edge) continue;
       if (!pool[edge.from.kind].has(edge.from.name)) {
         ctx.addIssue({
-          code: 'custom',
+          code: "custom",
           message: `dependency.from references unknown ${edge.from.kind} '${edge.from.name}'`,
-          path: ['spec', 'dependencies', i, 'from'],
+          path: ["spec", "dependencies", i, "from"],
         });
       }
       if (!pool[edge.to.kind].has(edge.to.name)) {
         ctx.addIssue({
-          code: 'custom',
+          code: "custom",
           message: `dependency.to references unknown ${edge.to.kind} '${edge.to.name}'`,
-          path: ['spec', 'dependencies', i, 'to'],
+          path: ["spec", "dependencies", i, "to"],
         });
       }
     }
@@ -270,9 +262,9 @@ export const CompositeSchema = z
       if (!rn) continue;
       if (rn.backingService && !names.service.has(rn.backingService)) {
         ctx.addIssue({
-          code: 'custom',
+          code: "custom",
           message: `ragNode '${rn.name}' references unknown backingService '${rn.backingService}'`,
-          path: ['spec', 'ragNodes', i, 'backingService'],
+          path: ["spec", "ragNodes", i, "backingService"],
         });
       }
     }
@@ -285,9 +277,9 @@ export const CompositeSchema = z
         const up = gw.upstreamWorkloads[j];
         if (up && !names.workload.has(up)) {
           ctx.addIssue({
-            code: 'custom',
+            code: "custom",
             message: `gateway '${gw.name}' references unknown upstream workload '${up}'`,
-            path: ['spec', 'gateways', i, 'upstreamWorkloads', j],
+            path: ["spec", "gateways", i, "upstreamWorkloads", j],
           });
         }
       }
@@ -299,8 +291,6 @@ export type Composite = z.infer<typeof CompositeSchema>;
  * Helper exported for use by `./dag.ts` so both files agree on the
  * workload→name convention.
  */
-export function workloadRefName(
-  w: z.infer<typeof ModelRunSpecSchema>,
-): string {
+export function workloadRefName(w: z.infer<typeof ModelRunSpecSchema>): string {
   return workloadName(w);
 }

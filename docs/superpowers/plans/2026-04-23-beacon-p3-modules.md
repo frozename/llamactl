@@ -13,6 +13,7 @@
 ## File Structure
 
 Create:
+
 - `packages/app/src/stores/explorer-collapse-store.ts` — persisted Explorer collapse state
 - `packages/app/src/modules/ops/detail/workload-detail.tsx` — dynamic tab component
 - `packages/app/src/modules/ops/detail/node-detail.tsx`
@@ -25,12 +26,14 @@ Create:
 - `packages/app/test/stores/explorer-collapse-store.test.ts`
 
 Move / rename (per flattening plan):
+
 - `packages/app/src/modules/ops-tabbed/*` → promote children to `modules/ops-chat/` (already exists) + `modules/plan/` (already exists)
 - `packages/app/src/modules/models-tabbed/*` → promote to `modules/models/catalog/`, `modules/models/presets/`, `modules/models/pulls/`, `modules/models/bench/`, `modules/models/lmstudio/`, `modules/models/server/`
 - `packages/app/src/modules/knowledge-tabbed/*` → promote to `modules/knowledge/retrieval/`, `modules/knowledge/pipelines/`
 - `packages/app/src/modules/workloads-tabbed/*` → promote to `modules/workloads/model-runs/`, `modules/workloads/composites/`
 
 Modify:
+
 - `packages/app/src/modules/registry.ts` — replace the four `*-tabbed` entries with the flattened children
 - `packages/app/src/shell/beacon/layout.tsx` — render dynamic tabs via `dynamic-tab-router`; read collapse state from the store
 - `packages/app/src/shell/beacon/explorer-tree.tsx` — read/write collapse state from the store
@@ -42,6 +45,7 @@ Modify:
 - `packages/app/src/shell/title-bar.tsx` — legacy; update its ThemePickerButton usage to ThemeOrbs or delete
 
 Delete:
+
 - `packages/app/src/shell/tabbed-module.tsx`
 - `packages/app/src/shell/ide-layout.tsx`
 - `packages/app/src/shell/title-bar.tsx` (legacy; Beacon has its own)
@@ -56,6 +60,7 @@ Delete:
 ## Task 1: Explorer collapse store + tests
 
 **Files:**
+
 - Create: `packages/app/src/stores/explorer-collapse-store.ts`
 - Create: `packages/app/test/stores/explorer-collapse-store.test.ts`
 
@@ -64,36 +69,36 @@ Delete:
 Create `packages/app/test/stores/explorer-collapse-store.test.ts`:
 
 ```typescript
-import { describe, test, expect, beforeEach } from 'bun:test';
-import { useExplorerCollapse } from '../../src/stores/explorer-collapse-store';
+import { describe, test, expect, beforeEach } from "bun:test";
+import { useExplorerCollapse } from "../../src/stores/explorer-collapse-store";
 
 beforeEach(() => {
   useExplorerCollapse.setState({ collapsed: {} });
 });
 
-describe('explorer-collapse-store', () => {
-  test('isCollapsed returns false by default', () => {
-    expect(useExplorerCollapse.getState().isCollapsed('workspace')).toBe(false);
+describe("explorer-collapse-store", () => {
+  test("isCollapsed returns false by default", () => {
+    expect(useExplorerCollapse.getState().isCollapsed("workspace")).toBe(false);
   });
 
-  test('toggle flips the flag', () => {
-    useExplorerCollapse.getState().toggle('ops');
-    expect(useExplorerCollapse.getState().isCollapsed('ops')).toBe(true);
-    useExplorerCollapse.getState().toggle('ops');
-    expect(useExplorerCollapse.getState().isCollapsed('ops')).toBe(false);
+  test("toggle flips the flag", () => {
+    useExplorerCollapse.getState().toggle("ops");
+    expect(useExplorerCollapse.getState().isCollapsed("ops")).toBe(true);
+    useExplorerCollapse.getState().toggle("ops");
+    expect(useExplorerCollapse.getState().isCollapsed("ops")).toBe(false);
   });
 
-  test('set overrides the flag', () => {
-    useExplorerCollapse.getState().set('models', true);
-    expect(useExplorerCollapse.getState().isCollapsed('models')).toBe(true);
-    useExplorerCollapse.getState().set('models', false);
-    expect(useExplorerCollapse.getState().isCollapsed('models')).toBe(false);
+  test("set overrides the flag", () => {
+    useExplorerCollapse.getState().set("models", true);
+    expect(useExplorerCollapse.getState().isCollapsed("models")).toBe(true);
+    useExplorerCollapse.getState().set("models", false);
+    expect(useExplorerCollapse.getState().isCollapsed("models")).toBe(false);
   });
 
-  test('keys are independent', () => {
-    useExplorerCollapse.getState().set('workspace', true);
-    expect(useExplorerCollapse.getState().isCollapsed('workspace')).toBe(true);
-    expect(useExplorerCollapse.getState().isCollapsed('ops')).toBe(false);
+  test("keys are independent", () => {
+    useExplorerCollapse.getState().set("workspace", true);
+    expect(useExplorerCollapse.getState().isCollapsed("workspace")).toBe(true);
+    expect(useExplorerCollapse.getState().isCollapsed("ops")).toBe(false);
   });
 });
 ```
@@ -108,8 +113,8 @@ Expected: FAIL — module not found.
 Create `packages/app/src/stores/explorer-collapse-store.ts`:
 
 ```typescript
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 /**
  * Persisted per-user Explorer collapse state. Keys are free-form
@@ -132,7 +137,7 @@ export const useExplorerCollapse = create<Store>()(
       toggle: (key) => set((s) => ({ collapsed: { ...s.collapsed, [key]: !s.collapsed[key] } })),
       set: (key, value) => set((s) => ({ collapsed: { ...s.collapsed, [key]: value } })),
     }),
-    { name: 'beacon-explorer-collapsed', version: 1 },
+    { name: "beacon-explorer-collapsed", version: 1 },
   ),
 );
 ```
@@ -147,7 +152,7 @@ Expected: PASS.
 Edit `packages/app/src/shell/beacon/explorer-tree.tsx`. Replace the `useState<Record<string, boolean>>` collapse management with the store:
 
 ```typescript
-import { useExplorerCollapse } from '@/stores/explorer-collapse-store';
+import { useExplorerCollapse } from "@/stores/explorer-collapse-store";
 
 // Inside the component — remove `const [collapsed, setCollapsed] = useState(...)`
 const collapsed = useExplorerCollapse((s) => s.collapsed);
@@ -160,6 +165,7 @@ const toggleCollapse = useExplorerCollapse((s) => s.toggle);
 - [ ] **Step 6: Verify collapse state persists across reloads**
 
 Run: `bun run --cwd packages/app dev`
+
 - Collapse the Ops group → reload → it stays collapsed.
 - Expand a dynamic leaf (double-click Workloads) → reload → stays expanded.
 
@@ -175,6 +181,7 @@ git commit -m "feat(app): persist Explorer collapse state across sessions"
 ## Task 2: Flatten ops-tabbed
 
 **Files:**
+
 - Delete: `packages/app/src/modules/ops-tabbed/`
 - Modify: `packages/app/src/modules/registry.ts`
 
@@ -191,8 +198,8 @@ In `packages/app/src/modules/registry.ts`:
 1. Delete the `LazyOpsPage = lazy(() => import('./ops-tabbed/index'));` line.
 2. Add two new lazy imports:
    ```typescript
-   const LazyOpsChat = lazy(() => import('./ops-chat/index'));
-   const LazyPlan = lazy(() => import('./plan/index'));
+   const LazyOpsChat = lazy(() => import("./ops-chat/index"));
+   const LazyPlan = lazy(() => import("./plan/index"));
    ```
 3. Delete the `ops-chat` entry in `APP_MODULES` that currently uses `Component: LazyOpsPage`. Replace with two entries:
 
@@ -254,6 +261,7 @@ git commit -m "refactor(app): flatten ops-tabbed — promote Ops Chat + Planner 
 ## Task 3: Flatten models-tabbed
 
 **Files:**
+
 - Delete: `packages/app/src/modules/models-tabbed/`
 - Modify: `packages/app/src/modules/registry.ts`
 
@@ -275,14 +283,16 @@ In `packages/app/src/modules/registry.ts`:
 
 1. Delete `const LazyModelsPage = lazy(() => import('./models-tabbed/index'));`
 2. Add:
+
 ```typescript
-const LazyModelsCatalog = lazy(() => import('./models/catalog'));
-const LazyModelsPresets = lazy(() => import('./models/presets'));
-const LazyModelsPulls   = lazy(() => import('./models/pulls'));
-const LazyModelsBench   = lazy(() => import('./models/bench'));
-const LazyModelsLMStudio= lazy(() => import('./models/lmstudio'));
-const LazyModelsServer  = lazy(() => import('./models/server'));
+const LazyModelsCatalog = lazy(() => import("./models/catalog"));
+const LazyModelsPresets = lazy(() => import("./models/presets"));
+const LazyModelsPulls = lazy(() => import("./models/pulls"));
+const LazyModelsBench = lazy(() => import("./models/bench"));
+const LazyModelsLMStudio = lazy(() => import("./models/lmstudio"));
+const LazyModelsServer = lazy(() => import("./models/server"));
 ```
+
 (Adjust the import paths based on Step 1's findings. If the source files live under `modules/models-tabbed/children/`, move each one to `modules/models/<sub-id>/index.tsx` first via `git mv` — see step 3.)
 
 3. Delete the `models` entry from `APP_MODULES`. Replace with six entries:
@@ -392,6 +402,7 @@ git commit -m "refactor(app): flatten models-tabbed — six top-level models.* m
 ## Task 4: Flatten knowledge-tabbed
 
 **Files:**
+
 - Delete: `packages/app/src/modules/knowledge-tabbed/`
 - Modify: `packages/app/src/modules/registry.ts`
 
@@ -404,8 +415,8 @@ In `registry.ts`:
 1. Delete `const LazyKnowledgePage = lazy(() => import('./knowledge-tabbed/index'));`
 2. Add:
    ```typescript
-   const LazyKnowledgeRetrieval = lazy(() => import('./knowledge/retrieval'));
-   const LazyKnowledgePipelines = lazy(() => import('./knowledge/pipelines'));
+   const LazyKnowledgeRetrieval = lazy(() => import("./knowledge/retrieval"));
+   const LazyKnowledgePipelines = lazy(() => import("./knowledge/pipelines"));
    ```
 3. Delete the `knowledge` entry. Replace with:
 
@@ -462,6 +473,7 @@ git commit -m "refactor(app): flatten knowledge-tabbed — Retrieval + Pipelines
 ## Task 5: Flatten workloads-tabbed
 
 **Files:**
+
 - Delete: `packages/app/src/modules/workloads-tabbed/`
 - Modify: `packages/app/src/modules/registry.ts`
 
@@ -476,9 +488,9 @@ In `registry.ts`:
 1. Delete `const LazyWorkloadsPage = lazy(() => import('./workloads-tabbed/index'));`
 2. Add:
    ```typescript
-   const LazyWorkloadsList = lazy(() => import('./workloads/list'));
-   const LazyWorkloadsComposites = lazy(() => import('./workloads/composites'));
-   const LazyWorkloadsPlaceholder = lazy(() => import('./workloads/placeholder'));
+   const LazyWorkloadsList = lazy(() => import("./workloads/list"));
+   const LazyWorkloadsComposites = lazy(() => import("./workloads/composites"));
+   const LazyWorkloadsPlaceholder = lazy(() => import("./workloads/placeholder"));
    ```
 3. Update the existing `workloads` entry — change its `Component` to `LazyWorkloadsPlaceholder` (the group itself doesn't render a list anymore; opening the leaf opens a placeholder that reads "open a specific workload from the Explorer, or see the Model Runs list"). Keep `beaconKind: 'dynamic-group'`.
 4. Add two new entries:
@@ -551,6 +563,7 @@ git commit -m "refactor(app): flatten workloads-tabbed — Model Runs + Composit
 ## Task 6: Delete the legacy tabbed-module wrapper
 
 **Files:**
+
 - Delete: `packages/app/src/shell/tabbed-module.tsx`
 
 - [ ] **Step 1: Confirm there are no remaining callers**
@@ -580,6 +593,7 @@ git commit -m "refactor(app): delete legacy shell/tabbed-module.tsx"
 ## Task 7: WorkloadDetail dynamic tab component
 
 **Files:**
+
 - Create: `packages/app/src/modules/ops/detail/workload-detail.tsx`
 
 - [ ] **Step 1: Implement a useful-enough detail view**
@@ -656,6 +670,7 @@ git commit -m "feat(app/modules/ops): add WorkloadDetail dynamic tab component"
 ## Task 8: NodeDetail dynamic tab component
 
 **Files:**
+
 - Create: `packages/app/src/modules/ops/detail/node-detail.tsx`
 
 - [ ] **Step 1: Implement**
@@ -725,6 +740,7 @@ git commit -m "feat(app/modules/ops): add NodeDetail dynamic tab component"
 ## Task 9: OpsSessionDetail stub
 
 **Files:**
+
 - Create: `packages/app/src/modules/ops/detail/ops-session-detail.tsx`
 - Create: `packages/app/src/modules/ops/detail/index.ts`
 
@@ -759,9 +775,9 @@ export function OpsSessionDetail({ sessionId }: Props): React.JSX.Element {
 Create `packages/app/src/modules/ops/detail/index.ts`:
 
 ```typescript
-export { WorkloadDetail } from './workload-detail';
-export { NodeDetail } from './node-detail';
-export { OpsSessionDetail } from './ops-session-detail';
+export { WorkloadDetail } from "./workload-detail";
+export { NodeDetail } from "./node-detail";
+export { OpsSessionDetail } from "./ops-session-detail";
 ```
 
 - [ ] **Step 3: Commit**
@@ -776,6 +792,7 @@ git commit -m "feat(app/modules/ops): add OpsSessionDetail stub + ops/detail bar
 ## Task 10: Dynamic tab router + BeaconLayout wiring
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/dynamic-tab-router.tsx`
 - Modify: `packages/app/src/shell/beacon/layout.tsx`
 
@@ -848,6 +865,7 @@ git commit -m "feat(app/shell/beacon): route dynamic tabs through DynamicTabRout
 ## Task 11: Dashboard editorial hero
 
 **Files:**
+
 - Modify: `packages/app/src/modules/dashboard/index.tsx`
 
 - [ ] **Step 1: Read the current Dashboard**
@@ -859,7 +877,7 @@ Open `packages/app/src/modules/dashboard/index.tsx`. Identify the top section �
 At the top of the returned JSX, insert:
 
 ```tsx
-import { EditorialHero } from '@/ui';
+import { EditorialHero } from "@/ui";
 
 <EditorialHero
   eyebrow="Dashboard"
@@ -867,10 +885,10 @@ import { EditorialHero } from '@/ui';
   titleAccent="at a glance"
   lede="Nodes, workloads, and cost — in one view. Pin a workload or open a specific node from the Explorer to dig in."
   pills={[
-    { label: 'healthy', tone: 'ok' },
-    { label: 'Beacon', tone: 'info' },
+    { label: "healthy", tone: "ok" },
+    { label: "Beacon", tone: "info" },
   ]}
-/>
+/>;
 ```
 
 Place it above the existing content; preserve everything below it.
@@ -891,6 +909,7 @@ git commit -m "feat(app/dashboard): add EditorialHero landing treatment"
 ## Task 12: Primitive adoption playbook + reference migration (Chat, Logs, Projects)
 
 **Files:**
+
 - Modify: `packages/app/src/modules/chat/index.tsx`
 - Modify: `packages/app/src/modules/logs/index.tsx`
 - Modify: `packages/app/src/modules/projects/index.tsx`
@@ -901,14 +920,14 @@ This task seeds the migration pattern. Remaining modules adopt primitives increm
 
 For each target module, apply these substitutions (read the file first; don't rewrite code you don't understand):
 
-| Find                                                                | Replace with                          |
-|---------------------------------------------------------------------|---------------------------------------|
-| `<button type="button" class="... text-xs ...">`                    | `<Button variant="secondary" size="sm">` |
-| `<span class="... rounded bg-[color-mix…] text-xs …">`              | `<Badge variant="…">`                 |
-| Inline keyboard shortcut spans (`<span class="border-b-2 …">K</span>`) | `<Kbd>K</Kbd>`                     |
-| Inline status dots (`<span class="h-2 w-2 rounded-full bg-...">`)   | `<StatusDot tone="ok|warn|err|idle" />` |
-| Inline input with manual focus styles                                | `<Input>`                             |
-| Empty-state hero blocks                                              | `<EditorialHero>` (for full-bleed) or `<AtmosphericPanel>` (for inline) |
+| Find                                                                   | Replace with                                                            |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------- | ---- | --- | --------- |
+| `<button type="button" class="... text-xs ...">`                       | `<Button variant="secondary" size="sm">`                                |
+| `<span class="... rounded bg-[color-mix…] text-xs …">`                 | `<Badge variant="…">`                                                   |
+| Inline keyboard shortcut spans (`<span class="border-b-2 …">K</span>`) | `<Kbd>K</Kbd>`                                                          |
+| Inline status dots (`<span class="h-2 w-2 rounded-full bg-...">`)      | `<StatusDot tone="ok                                                    | warn | err | idle" />` |
+| Inline input with manual focus styles                                  | `<Input>`                                                               |
+| Empty-state hero blocks                                                | `<EditorialHero>` (for full-bleed) or `<AtmosphericPanel>` (for inline) |
 
 The `@/ui` primitives consume Beacon tokens directly — no theme-flip edge cases to chase during migration.
 
@@ -950,6 +969,7 @@ Note: the remaining modules (dashboard's stats grid, nodes, models, knowledge, w
 ## Task 13: Real Search rail view
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/search-view.tsx`
 - Modify: `packages/app/src/shell/beacon/explorer-panel.tsx`
 
@@ -1044,6 +1064,7 @@ git commit -m "feat(app/shell/beacon): add real Search rail view (module index s
 ## Task 14: Real Sessions rail view
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/sessions-view.tsx`
 - Modify: `packages/app/src/shell/beacon/explorer-panel.tsx`
 
@@ -1132,6 +1153,7 @@ git commit -m "feat(app/shell/beacon): add Sessions rail view (recent tabs group
 ## Task 15: Real Fleet rail view
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/fleet-view.tsx`
 - Modify: `packages/app/src/shell/beacon/explorer-panel.tsx`
 
@@ -1204,6 +1226,7 @@ git commit -m "feat(app/shell/beacon): add Fleet rail view (node quick-nav)"
 ## Task 16: Retire the feature flag + legacy shell
 
 **Files:**
+
 - Modify: `packages/app/src/App.tsx`
 - Delete: `packages/app/src/shell/ide-layout.tsx`
 - Delete: `packages/app/src/shell/title-bar.tsx`
@@ -1253,6 +1276,7 @@ Remove the shell-toggle `<section>` from `packages/app/src/modules/settings/inde
 - [ ] **Step 4: Check ThemePicker references before deletion**
 
 Run: `rg "ThemePicker|theme-picker" packages/app/src`
+
 - If `ThemePicker` (the dialog) is only used by the title-bar's `ThemePickerButton`, delete the whole file.
 - If `ThemePicker` is also opened by the palette or by `useThemePickerOpen`, keep the `ThemePicker` dialog + `useThemePickerOpen` hook but delete the `ThemePickerButton` export.
 
@@ -1284,15 +1308,18 @@ git commit -m "refactor(app): retire IDELayout + beacon-shell feature flag"
 ## Task 17: Remove legacy token aliases + legacy theme migration
 
 **Files:**
+
 - Modify: `packages/app/src/themes/tokens.css`
 - Modify: `packages/app/src/stores/theme-store.ts`
 
 - [ ] **Step 1: Confirm no remaining references to legacy token names**
 
 Run:
+
 ```bash
 rg -- "--color-fg|--color-fg-muted|--color-accent|--color-warning|--color-danger|--color-success|--color-brand-dim|--color-fg-inverted" packages/app/src
 ```
+
 Expected: zero hits outside `tokens.css` itself. If any remain — they're in modules that haven't migrated to `@/ui` primitives yet. Hold the alias deletion until those spots are fixed, or fix them inline now.
 
 - [ ] **Step 2: Remove the legacy alias block**
@@ -1322,7 +1349,7 @@ export const useThemeStore = create<ThemeStore>()(
       setThemeId: (id) => set({ themeId: id }),
       setScanlines: (on) => set({ scanlines: on }),
     }),
-    { name: 'beacon-theme', version: 2 },
+    { name: "beacon-theme", version: 2 },
   ),
 );
 ```
@@ -1369,6 +1396,7 @@ Run the integration/smoke pass across llamactl + sirius-gateway + embersynth per
 Run: `bun run --cwd packages/app dev`
 
 Exercise:
+
 1. Fresh start → Beacon shell, Dashboard tab open, editorial hero visible.
 2. Explorer: expand Ops → click a live workload → tab opens with workload detail; metrics populate.
 3. Click Nodes → expand → click a node → node-detail tab opens.
@@ -1402,9 +1430,10 @@ git tag beacon-p3
 - Legacy token alias removal — Task 17 ✓
 
 Follow-ups beyond P3 (spec §13 + incremental):
+
 - Split-view editor (§13) — TabBar is ready for it; implementation is a separate initiative.
 - Full-fat Search across logs + ops sessions + workload history — beyond module-index search.
 - Session replay + timeline for OpsSessionDetail — currently a stub.
-- Primitive adoption in the remaining modules (dashboard stats grid, nodes, models.*, knowledge.*, workloads.*, cost, settings, server). Long-tail cleanup.
+- Primitive adoption in the remaining modules (dashboard stats grid, nodes, models._, knowledge._, workloads.\*, cost, settings, server). Long-tail cleanup.
 - About / release-notes editorial pages.
 - `beacon://` deep-link URLs (§13 — stubbed in P3's tab context menu).

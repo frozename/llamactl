@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from "zustand";
 
 /**
  * Module-scoped status-bar contributions. Modules push items on
@@ -17,7 +17,7 @@ export interface StatusBarItem {
   /** Tooltip. */
   title?: string;
   /** Color hint — 'fg' | 'muted' | 'accent' | 'warn' | 'danger'. */
-  tone?: 'fg' | 'muted' | 'accent' | 'warn' | 'danger';
+  tone?: "fg" | "muted" | "accent" | "warn" | "danger";
   /** Click handler — if set, item renders as a clickable button. */
   onClick?: () => void;
 }

@@ -12,13 +12,13 @@ branch (`frozename/atomic-llama-cpp-turboquant`,
 **Scope of this plan:** five follow-up items that were deferred from the first-wave patch or
 identified during Fleet L validation.
 
-| Item | Where | Size |
-|---|---|---|
-| 0 · `spec.env` field | llamactl TypeScript | small |
-| 1 · Stream generation counter | MLX upstream (`scheduler.h`) | small |
-| 2 · Per-stream `MTLCommandQueue` / `MTLResidencySet` | MLX upstream (`metal/`) | substantial |
-| 3 · Watchdog env knob | MLX upstream (`scheduler.h`, `eval.cpp`) | small |
-| 4 · oMLX `--max-completion-batch-size` PR + llamactl wire | oMLX + llamactl | small |
+| Item                                                      | Where                                    | Size        |
+| --------------------------------------------------------- | ---------------------------------------- | ----------- |
+| 0 · `spec.env` field                                      | llamactl TypeScript                      | small       |
+| 1 · Stream generation counter                             | MLX upstream (`scheduler.h`)             | small       |
+| 2 · Per-stream `MTLCommandQueue` / `MTLResidencySet`      | MLX upstream (`metal/`)                  | substantial |
+| 3 · Watchdog env knob                                     | MLX upstream (`scheduler.h`, `eval.cpp`) | small       |
+| 4 · oMLX `--max-completion-batch-size` PR + llamactl wire | oMLX + llamactl                          | small       |
 
 ---
 
@@ -46,14 +46,14 @@ risk_class: schema-aware
 
 ```ts
 // test name: "spec.env is parsed and defaults to empty object"
-it('spec.env is parsed and defaults to empty object', () => {
+it("spec.env is parsed and defaults to empty object", () => {
   const raw = buildMinimalManifest(); // no env field
   const parsed = ModelHostManifestSchema.parse(raw);
   expect(parsed.spec.env).toEqual({});
 });
 
 // test name: "spec.env rejects non-string values"
-it('spec.env rejects non-string values', () => {
+it("spec.env rejects non-string values", () => {
   const raw = buildMinimalManifest({ env: { KEY: 123 } });
   expect(() => ModelHostManifestSchema.parse(raw)).toThrow();
 });
@@ -71,6 +71,7 @@ Key regex enforces POSIX env-var naming; no allowlist check in the schema — en
 happens at spawn time (Task 0.2).
 
 **Verify:**
+
 ```bash
 cd /Volumes/WorkSSD/repos/personal/llamactl
 bun test packages/remote/src/workload/__tests__/modelhost-schema.test.ts
@@ -95,19 +96,19 @@ risk_class: schema-aware
 
 ```ts
 // test name: "spec.env keys in allowlist are passed to child"
-it('spec.env keys in allowlist are passed to child', async () => {
+it("spec.env keys in allowlist are passed to child", async () => {
   const manifest = buildManifest({
-    env: { MLX_METAL_MAX_INFLIGHT_PER_STREAM: '1' },
+    env: { MLX_METAL_MAX_INFLIGHT_PER_STREAM: "1" },
   });
   const spawned = await captureSpawnEnv(manifest);
-  expect(spawned.env['MLX_METAL_MAX_INFLIGHT_PER_STREAM']).toBe('1');
+  expect(spawned.env["MLX_METAL_MAX_INFLIGHT_PER_STREAM"]).toBe("1");
 });
 
 // test name: "spec.env keys not in allowlist are silently dropped"
-it('spec.env keys not in allowlist are silently dropped', async () => {
-  const manifest = buildManifest({ env: { UNKNOWN_KEY: 'bad' } });
+it("spec.env keys not in allowlist are silently dropped", async () => {
+  const manifest = buildManifest({ env: { UNKNOWN_KEY: "bad" } });
   const spawned = await captureSpawnEnv(manifest);
-  expect(spawned.env['UNKNOWN_KEY']).toBeUndefined();
+  expect(spawned.env["UNKNOWN_KEY"]).toBeUndefined();
 });
 ```
 
@@ -127,6 +128,7 @@ const merged = { ...specEnvOverrides, ...launch.envOverrides };
 ```
 
 **Verify:**
+
 ```bash
 bun test packages/remote/src/server/__tests__/modelhost.test.ts
 tsc -p packages/remote/tsconfig.json --noEmit
@@ -214,6 +216,7 @@ and notify. Keep `release_stream_slot` as a forwarding alias with
 `current_stream_generation(s)` for callers that don't need stale-safety.
 
 **Verify:**
+
 ```bash
 cmake --build . -t mlx_tests && ./mlx_tests "[backpressure]"
 ```
@@ -278,6 +281,7 @@ Also call `scheduler::bump_stream_generation(s)` inside `flush()` / the existing
 stream-teardown path so a recycled stream index does not inherit stale counter state.
 
 **Verify:**
+
 ```bash
 cmake --build . -t mlx_tests && ./mlx_tests "[backpressure]"
 python - <<'PY'
@@ -364,6 +368,7 @@ When available, allocate one `MTLResidencySet` per stream at queue-creation time
 use it in `CommandEncoder` to `addResidentBuffers` before commit.
 
 **Verify:**
+
 ```bash
 cmake --build . -t mlx_tests && ./mlx_tests "[stream-resources]"
 ```
@@ -417,6 +422,7 @@ Wire the residency set if available: before `end_encoding()`, call
 `#if MLX_HAS_RESIDENCY_SET` guard.
 
 **Verify:**
+
 ```bash
 cmake --build . -t mlx_tests && ./mlx_tests "[stream-resources]"
 # Full regression
@@ -461,6 +467,7 @@ already used by `free_stream` / `close_stream` in `eval.cpp`. `release_command_q
 calls `queue->release()` and erases the map entry.
 
 **Verify:**
+
 ```bash
 cmake --build . -t mlx_tests && ./mlx_tests "[stream-resources]"
 cmake --build . -t mlx_tests && ./mlx_tests  # full suite, no regressions
@@ -483,7 +490,7 @@ regression. Record the number in the PR description.
 **Goal:** a background watchdog thread in `Scheduler` injects a stream error if a committed
 command buffer has not completed within `MLX_METAL_STREAM_WATCHDOG_SECS` seconds. This
 covers the case where Metal silently stops firing completion handlers (GPU wedge), which the
-existing per-acquire timeout does not catch (that timeout fires *before* commit, not after).
+existing per-acquire timeout does not catch (that timeout fires _before_ commit, not after).
 
 **Dispatch graph:** `3.1`
 
@@ -529,6 +536,7 @@ TEST_CASE("watchdog fires on stalled stream", "[backpressure]") {
 **Implementation** — in `Scheduler`:
 
 New private state:
+
 ```cpp
 std::unordered_map<int, std::chrono::steady_clock::time_point> stream_last_commit_;
 // guarded by inflight_mtx_
@@ -567,6 +575,7 @@ void watchdog_loop(int interval_secs) {
 ```
 
 Env var parsing (file-scope static in `eval.cpp`):
+
 ```cpp
 static int read_watchdog_secs() {
   const char* v = std::getenv("MLX_METAL_STREAM_WATCHDOG_SECS");
@@ -582,6 +591,7 @@ on first `new_stream()` call to avoid startup cost when the knob is unset.
 Also add `MLX_METAL_STREAM_WATCHDOG_SECS` to llamactl's `CHILD_ENV_ALLOWLIST`.
 
 **Verify:**
+
 ```bash
 cmake --build . -t mlx_tests && ./mlx_tests "[backpressure]"
 # Confirm watchdog is a no-op when env var is unset (throughput guard):
@@ -612,6 +622,7 @@ risk_class: paste-ready
 ```
 
 **Failing test:**
+
 ```bash
 test -f docs/upstream-patches/omlx-max-completion-batch-size-pr-description.md
 ```
@@ -633,6 +644,7 @@ test -f docs/upstream-patches/omlx-max-completion-batch-size-pr-description.md
   more than 2 seconds).
 
 **Verify:**
+
 ```bash
 test -f docs/upstream-patches/omlx-max-completion-batch-size-pr-description.md
 ```
@@ -658,14 +670,14 @@ risk_class: paste-ready
 
 ```ts
 // test name: "omlx engine accepts maxCompletionBatchSize in extraArgs"
-it('stress-fleet-L template round-trips through schema', () => {
+it("stress-fleet-L template round-trips through schema", () => {
   const raw = yaml.parse(
-    fs.readFileSync('templates/workloads/stress-fleet-L-mac-mini.yaml', 'utf8'),
+    fs.readFileSync("templates/workloads/stress-fleet-L-mac-mini.yaml", "utf8"),
   );
   const parsed = ModelHostManifestSchema.parse(raw);
   const args = parsed.spec.extraArgs;
-  expect(args).toContain('--max-completion-batch-size');
-  const idx = args.indexOf('--max-completion-batch-size');
+  expect(args).toContain("--max-completion-batch-size");
+  const idx = args.indexOf("--max-completion-batch-size");
   expect(parseInt(args[idx + 1])).toBeGreaterThan(0);
 });
 ```
@@ -694,6 +706,7 @@ spec:
 No schema change needed — `extraArgs` is already `z.array(z.string())`.
 
 **Verify:**
+
 ```bash
 bun test packages/remote/src/workload/__tests__/modelhost-schema.test.ts
 tsc -p packages/remote/tsconfig.json --noEmit
@@ -707,14 +720,14 @@ bench after oMLX supports the flag to confirm the quality delta from the Fleet L
 
 ## Recommended sprint order
 
-| Phase | Blocker | Estimated size | Can dispatch? |
-|---|---|---|---|
-| 0 (spec.env) | none | 1 day | yes — pure TS |
-| 4.2 (template) | 0.2 | 0.5 day | after Phase 0 |
-| 1 (generation counter) | none | 1 day | yes — C++ only |
-| 3 (watchdog) | 1.2 | 1 day | after Phase 1 |
-| 2 (per-stream queue) | 1.2 | 2-3 days | after Phase 1; separate upstream PR |
-| 4.1 (oMLX PR doc) | none | 0.5 day | yes — writing only |
+| Phase                  | Blocker | Estimated size | Can dispatch?                       |
+| ---------------------- | ------- | -------------- | ----------------------------------- |
+| 0 (spec.env)           | none    | 1 day          | yes — pure TS                       |
+| 4.2 (template)         | 0.2     | 0.5 day        | after Phase 0                       |
+| 1 (generation counter) | none    | 1 day          | yes — C++ only                      |
+| 3 (watchdog)           | 1.2     | 1 day          | after Phase 1                       |
+| 2 (per-stream queue)   | 1.2     | 2-3 days       | after Phase 1; separate upstream PR |
+| 4.1 (oMLX PR doc)      | none    | 0.5 day        | yes — writing only                  |
 
 Phases 0 and 1 can run in parallel across two dispatch lanes. Phase 2 blocks on Phase 1
 only for the generation-bump call in stream teardown; the queue allocation itself is
@@ -722,12 +735,12 @@ independent.
 
 ## Design decisions
 
-| Question | Decision |
-|---|---|
-| `spec.env` allowlist enforcement | At spawn time (filter against `CHILD_ENV_ALLOWLIST`); schema validates key format only |
-| Generation counter data structure | `unordered_map<int, uint64_t>` guarded by existing `inflight_mtx_` — no new mutex |
-| Per-stream queue: lazy vs eager | Lazy (on first `get_command_queue` call) — avoids breaking existing stream lifecycle |
-| ResidencySet availability guard | `#if MLX_HAS_RESIDENCY_SET` — detected via CMake `check_symbol_exists` for `MTLResidencySetDescriptor` |
-| Watchdog thread start | Lazy on first `new_stream` when env var is set — zero cost when disabled |
-| Watchdog vs acquire-side timeout | Complementary: acquire timeout catches "cannot enter Metal" (pre-commit); watchdog catches "Metal completion never fires" (post-commit) |
-| `--max-completion-batch-size` location | oMLX application layer — intentionally above MLX core so it doesn't affect non-oMLX callers |
+| Question                               | Decision                                                                                                                                |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `spec.env` allowlist enforcement       | At spawn time (filter against `CHILD_ENV_ALLOWLIST`); schema validates key format only                                                  |
+| Generation counter data structure      | `unordered_map<int, uint64_t>` guarded by existing `inflight_mtx_` — no new mutex                                                       |
+| Per-stream queue: lazy vs eager        | Lazy (on first `get_command_queue` call) — avoids breaking existing stream lifecycle                                                    |
+| ResidencySet availability guard        | `#if MLX_HAS_RESIDENCY_SET` — detected via CMake `check_symbol_exists` for `MTLResidencySetDescriptor`                                  |
+| Watchdog thread start                  | Lazy on first `new_stream` when env var is set — zero cost when disabled                                                                |
+| Watchdog vs acquire-side timeout       | Complementary: acquire timeout catches "cannot enter Metal" (pre-commit); watchdog catches "Metal completion never fires" (post-commit) |
+| `--max-completion-batch-size` location | oMLX application layer — intentionally above MLX core so it doesn't affect non-oMLX callers                                             |

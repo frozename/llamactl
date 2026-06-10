@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 /**
  * Bearer token auth for the node agent. The agent stores only the
@@ -10,19 +10,19 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
  */
 
 export function generateToken(): { token: string; hash: string } {
-  const token = `ll_agt_${randomBytes(24).toString('base64url')}`;
+  const token = `ll_agt_${randomBytes(24).toString("base64url")}`;
   return { token, hash: hashToken(token) };
 }
 
 export function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+  return createHash("sha256").update(token).digest("hex");
 }
 
 export function extractBearer(req: Request): string | null {
-  const h = req.headers.get('authorization');
+  const h = req.headers.get("authorization");
   if (!h) return null;
-  if (!h.startsWith('Bearer ')) return null;
-  const rest = h.slice('Bearer '.length).trim();
+  if (!h.startsWith("Bearer ")) return null;
+  const rest = h.slice("Bearer ".length).trim();
   return rest.length > 0 ? rest : null;
 }
 
@@ -31,7 +31,7 @@ export function verifyBearer(req: Request, expectedHashHex: string): boolean {
   if (!token) return false;
   const actualHex = hashToken(token);
   if (actualHex.length !== expectedHashHex.length) return false;
-  return timingSafeEqual(Buffer.from(actualHex, 'hex'), Buffer.from(expectedHashHex, 'hex'));
+  return timingSafeEqual(Buffer.from(actualHex, "hex"), Buffer.from(expectedHashHex, "hex"));
 }
 
 /**
@@ -41,15 +41,12 @@ export function verifyBearer(req: Request, expectedHashHex: string): boolean {
  * a bare-string body. Shape is stable so client-side recognizers can
  * key off `error.code === 'UNAUTHORIZED'`.
  */
-export function unauthorizedResponse(message: string = 'invalid bearer token'): Response {
-  return new Response(
-    JSON.stringify({ error: { code: 'UNAUTHORIZED', message } }),
-    {
-      status: 401,
-      headers: {
-        'content-type': 'application/json',
-        'www-authenticate': 'Bearer realm="llamactl-agent"',
-      },
+export function unauthorizedResponse(message: string = "invalid bearer token"): Response {
+  return new Response(JSON.stringify({ error: { code: "UNAUTHORIZED", message } }), {
+    status: 401,
+    headers: {
+      "content-type": "application/json",
+      "www-authenticate": 'Bearer realm="llamactl-agent"',
     },
-  );
+  });
 }

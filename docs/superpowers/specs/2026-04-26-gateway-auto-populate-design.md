@@ -11,7 +11,7 @@ When a composite spec routes upstream workloads through a sirius or embersynth g
 
 ## Background
 
-The K.7 substantive landing (2026-04-21, see `~/.claude/plans/radiant-converging-knuth.md`) shipped `CompositeGatewayContext { compositeName, upstreams[], providerConfig }` and threaded it through `dispatchGatewayApply` to handlers. The plan documented that "auto-population of their catalogs from `upstreamWorkloads` is a documented follow-up" — both `siriusHandler` and `embersynthHandler` currently ignore `opts.composite` entirely. Today the operator must hand-edit `sirius-providers.yaml` (`llamactl sirius add-provider`) or `embersynth.yaml` (`llamactl embersynth sync`) *before* running `compositeApply`, otherwise the apply fails with `SiriusUpstreamMissing` / `EmbersynthSyntheticMissing`. This work closes that gap.
+The K.7 substantive landing (2026-04-21, see `~/.claude/plans/radiant-converging-knuth.md`) shipped `CompositeGatewayContext { compositeName, upstreams[], providerConfig }` and threaded it through `dispatchGatewayApply` to handlers. The plan documented that "auto-population of their catalogs from `upstreamWorkloads` is a documented follow-up" — both `siriusHandler` and `embersynthHandler` currently ignore `opts.composite` entirely. Today the operator must hand-edit `sirius-providers.yaml` (`llamactl sirius add-provider`) or `embersynth.yaml` (`llamactl embersynth sync`) _before_ running `compositeApply`, otherwise the apply fails with `SiriusUpstreamMissing` / `EmbersynthSyntheticMissing`. This work closes that gap.
 
 The convergence model (locked in `radiant-converging-knuth.md`) is unchanged: **llamactl is the single authority for the YAML configs the other two read.** Sirius and embersynth re-read on `/providers/reload` and `/config/reload`. So the auto-populate path lives entirely in llamactl; the sibling repos see new entries the next time they reload, no code changes required there.
 
@@ -27,8 +27,8 @@ Every composite-authored entry carries a small `ownership` object:
 
 ```ts
 type CompositeOwnership = {
-  source: 'composite';
-  compositeNames: string[];   // length >= 1
+  source: "composite";
+  compositeNames: string[]; // length >= 1
   specHash: string;
 };
 ```
@@ -126,13 +126,13 @@ composite/
 
 ```ts
 export type ApplyConflict =
-  | { kind: 'name'; name: string; existingOwner: 'operator' }
-  | { kind: 'shape'; name: string; reason: string };
+  | { kind: "name"; name: string; existingOwner: "operator" }
+  | { kind: "shape"; name: string; reason: string };
 
 export interface ApplyResult {
-  nextYaml: GatewayYaml;       // tagged union
+  nextYaml: GatewayYaml; // tagged union
   changed: boolean;
-  conflicts: ApplyConflict[];  // empty when fully applied
+  conflicts: ApplyConflict[]; // empty when fully applied
 }
 
 export interface RemoveResult {
@@ -206,6 +206,7 @@ compositeApply(spec)
 ### Re-apply (idempotency)
 
 Re-applying the same composite spec:
+
 - Each derived entry's `specHash` matches the one on disk → `applyCompositeEntries` returns `changed: false`.
 - Handler skips `writeGatewayCatalog` and skips reload.
 - Net effect: zero disk write, zero HTTP, zero reload-induced bench recompute on embersynth's side.
@@ -225,6 +226,7 @@ compositeDestroy(name)
 ```
 
 `removeCompositeEntries` walks every entry; for any entry where `ownership.compositeNames.includes(name)`:
+
 - Strip `name` from the list.
 - If the list is now empty → drop the entry.
 - Otherwise → rewrite with the shorter list.
@@ -234,6 +236,7 @@ Operator entries (no `ownership`) are skipped entirely.
 ### Atomicity
 
 If YAML write succeeds but reload fails:
+
 - Entries persist; sirius/embersynth haven't yet seen them.
 - Handler returns `Pending: SiriusReloadFailed` (existing reason).
 - Re-apply is a no-op on the YAML side and retries the reload.
@@ -256,18 +259,18 @@ Two composites referencing the same upstream → one YAML entry with `compositeN
 
 ### Server
 
-| Test | Coverage |
-|---|---|
-| `gateway-catalog-schema.test.ts` | `CompositeOwnership` round-trip through YAML; loading entry without marker still parses |
-| `gateway-catalog-derive-sirius.test.ts` | One upstream → one openai-compatible provider; empty upstreams → empty list; `tags` flow into entry; `extra` preserved verbatim |
-| `gateway-catalog-derive-embersynth.test.ts` | Upstreams → node entries (one per upstream pointing at endpoint); `tags` flow into the node's `tags`; `priority` flows into the node's priority; ownership marker attached. SyntheticModels mapping is NOT touched. |
-| `gateway-catalog-hash.test.ts` | Deterministic for same shape; differs on tag changes; ignores `compositeNames` order |
-| `gateway-catalog-apply.test.ts` | New entry append; idempotent re-apply; union compositeNames on same shape; name conflict against operator entry; shape conflict between two composites |
-| `gateway-catalog-remove.test.ts` | Reference-counted removal; entry deleted when last composite removed; entry kept (shorter list) when other composite still references it; no-op when name not present |
-| `gateway-catalog-io.test.ts` | `readGatewayCatalog` / `writeGatewayCatalog` round-trip under `LLAMACTL_TEST_PROFILE` |
-| `gateway-handler-sirius-composite.test.ts` (extends existing) | With `opts.composite` set: writes entries, calls reload; conflict surfaces `Pending: NameCollision`; YAML write failure surfaces `Pending: SiriusCatalogWriteFailed`; idempotent re-apply skips reload |
-| `gateway-handler-embersynth-composite.test.ts` (extends existing) | Symmetric |
-| `composite-destroy-catalog-cleanup.test.ts` (extends existing destroy test) | Destroy strips name from entries; entries with no remaining composites disappear; reload triggered when changed; reload skipped when nothing changed |
+| Test                                                                        | Coverage                                                                                                                                                                                                            |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gateway-catalog-schema.test.ts`                                            | `CompositeOwnership` round-trip through YAML; loading entry without marker still parses                                                                                                                             |
+| `gateway-catalog-derive-sirius.test.ts`                                     | One upstream → one openai-compatible provider; empty upstreams → empty list; `tags` flow into entry; `extra` preserved verbatim                                                                                     |
+| `gateway-catalog-derive-embersynth.test.ts`                                 | Upstreams → node entries (one per upstream pointing at endpoint); `tags` flow into the node's `tags`; `priority` flows into the node's priority; ownership marker attached. SyntheticModels mapping is NOT touched. |
+| `gateway-catalog-hash.test.ts`                                              | Deterministic for same shape; differs on tag changes; ignores `compositeNames` order                                                                                                                                |
+| `gateway-catalog-apply.test.ts`                                             | New entry append; idempotent re-apply; union compositeNames on same shape; name conflict against operator entry; shape conflict between two composites                                                              |
+| `gateway-catalog-remove.test.ts`                                            | Reference-counted removal; entry deleted when last composite removed; entry kept (shorter list) when other composite still references it; no-op when name not present                                               |
+| `gateway-catalog-io.test.ts`                                                | `readGatewayCatalog` / `writeGatewayCatalog` round-trip under `LLAMACTL_TEST_PROFILE`                                                                                                                               |
+| `gateway-handler-sirius-composite.test.ts` (extends existing)               | With `opts.composite` set: writes entries, calls reload; conflict surfaces `Pending: NameCollision`; YAML write failure surfaces `Pending: SiriusCatalogWriteFailed`; idempotent re-apply skips reload              |
+| `gateway-handler-embersynth-composite.test.ts` (extends existing)           | Symmetric                                                                                                                                                                                                           |
+| `composite-destroy-catalog-cleanup.test.ts` (extends existing destroy test) | Destroy strips name from entries; entries with no remaining composites disappear; reload triggered when changed; reload skipped when nothing changed                                                                |
 
 All run under the existing hermetic `LLAMACTL_TEST_PROFILE` / `DEV_STORAGE` pattern.
 
@@ -291,6 +294,7 @@ Extend `packages/remote/test/composite-e2e.test.ts` (gated on `LLAMACTL_COMPOSIT
 Single PR, all-or-nothing in llamactl. Tag `composite-gateway-auto-populate`.
 
 **Pre-merge sequence:**
+
 1. D8 precondition check on sirius + embersynth schemas; ship one-line `passthrough()` PR per sibling if needed.
 2. Schema additions (sirius-providers, embersynth, composite spec) + their tests.
 3. Pure `gateway-catalog/` modules + tests.

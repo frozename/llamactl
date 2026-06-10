@@ -1,32 +1,33 @@
-import { expect, spyOn, test } from 'bun:test';
-import * as fs from 'node:fs';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   EXT_FLAG_SESSION_TITLE,
   EXT_FLAG_TOOL_MAP,
   readTrailer,
   writeTrailer,
   type KvTrailer,
-} from '../src/kvstore/index.js';
-import { openKvStorage } from '../src/kvstore/storage.js';
+} from "../src/kvstore/index.js";
+import { openKvStorage } from "../src/kvstore/storage.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
-  const root = mkdtempSync(join(tmpdir(), 'llamactl-kvstore-trailer-'));
+  const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-trailer-"));
   return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
-test('writeTrailer/readTrailer round-trip', () => {
+test("writeTrailer/readTrailer round-trip", () => {
   const t = makeTempRoot();
   try {
-    const slotFile = join(t.root, 'slots', 'wl-a', 'abc.kvslot');
+    const slotFile = join(t.root, "slots", "wl-a", "abc.kvslot");
     const trailer: KvTrailer = {
       extFlags: EXT_FLAG_TOOL_MAP | EXT_FLAG_SESSION_TITLE,
       toolMap: {
-        toolu_1: '{"id":"toolu_1","type":"function","function":{"name":"lookup","arguments":"{\\"q\\":\\"abc\\"}"}}',
+        toolu_1:
+          '{"id":"toolu_1","type":"function","function":{"name":"lookup","arguments":"{\\"q\\":\\"abc\\"}"}}',
       },
-      sessionTitle: 'hello world',
+      sessionTitle: "hello world",
     };
     const wrote = writeTrailer(slotFile, trailer);
     expect(wrote).toEqual({ ok: true });
@@ -36,28 +37,28 @@ test('writeTrailer/readTrailer round-trip', () => {
   }
 });
 
-test('readTrailer returns null for missing trailer file', () => {
+test("readTrailer returns null for missing trailer file", () => {
   const t = makeTempRoot();
   try {
-    const slotFile = join(t.root, 'slots', 'wl-a', 'missing.kvslot');
+    const slotFile = join(t.root, "slots", "wl-a", "missing.kvslot");
     expect(readTrailer(slotFile)).toBeNull();
   } finally {
     t.cleanup();
   }
 });
 
-test('atomic write leaves previous trailer intact when rename fails', () => {
+test("atomic write leaves previous trailer intact when rename fails", () => {
   const t = makeTempRoot();
   let renameSpy: ReturnType<typeof spyOn> | null = null;
   try {
-    const slotFile = join(t.root, 'slots', 'wl-a', 'stable.kvslot');
+    const slotFile = join(t.root, "slots", "wl-a", "stable.kvslot");
     const baseline: KvTrailer = {
       extFlags: EXT_FLAG_SESSION_TITLE,
-      sessionTitle: 'baseline',
+      sessionTitle: "baseline",
     };
     expect(writeTrailer(slotFile, baseline)).toEqual({ ok: true });
-    renameSpy = spyOn(fs, 'renameSync').mockImplementation(() => {
-      const err = new Error('rename blocked');
+    renameSpy = spyOn(fs, "renameSync").mockImplementation(() => {
+      const err = new Error("rename blocked");
       throw err;
     });
 
@@ -67,7 +68,7 @@ test('atomic write leaves previous trailer intact when rename fails', () => {
     };
     const wrote = writeTrailer(slotFile, replace);
     expect(wrote.ok).toBe(false);
-    if (!wrote.ok) expect(wrote.reason).toBe('other');
+    if (!wrote.ok) expect(wrote.reason).toBe("other");
 
     expect(readTrailer(slotFile)).toEqual(baseline);
   } finally {
@@ -76,20 +77,20 @@ test('atomic write leaves previous trailer intact when rename fails', () => {
   }
 });
 
-test('writeTrailer returns enospc and increments storage write-fail counter', () => {
+test("writeTrailer returns enospc and increments storage write-fail counter", () => {
   const t = makeTempRoot();
-  const writeSpy = spyOn(fs, 'writeFileSync').mockImplementation(() => {
-    const err = new Error('disk full') as Error & { code?: string };
-    err.code = 'ENOSPC';
+  const writeSpy = spyOn(fs, "writeFileSync").mockImplementation(() => {
+    const err = new Error("disk full") as Error & { code?: string };
+    err.code = "ENOSPC";
     throw err;
   });
   try {
     const storage = openKvStorage(t.root);
-    const slotFile = join(t.root, 'slots', 'wl-a', 'diskfull.kvslot');
-    const trailer: KvTrailer = { extFlags: EXT_FLAG_SESSION_TITLE, sessionTitle: 'x' };
+    const slotFile = join(t.root, "slots", "wl-a", "diskfull.kvslot");
+    const trailer: KvTrailer = { extFlags: EXT_FLAG_SESSION_TITLE, sessionTitle: "x" };
     const wrote = writeTrailer(slotFile, trailer, storage);
     expect(wrote.ok).toBe(false);
-    if (!wrote.ok) expect(wrote.reason).toBe('enospc');
+    if (!wrote.ok) expect(wrote.reason).toBe("enospc");
     expect(storage.registry_write_fail_total).toBe(1);
     storage.close();
   } finally {
@@ -98,7 +99,7 @@ test('writeTrailer returns enospc and increments storage write-fail counter', ()
   }
 });
 
-test('ext flag bit operations are additive and independent', () => {
+test("ext flag bit operations are additive and independent", () => {
   const combined = EXT_FLAG_TOOL_MAP | EXT_FLAG_SESSION_TITLE;
   expect((combined & EXT_FLAG_TOOL_MAP) !== 0).toBe(true);
   expect((combined & EXT_FLAG_SESSION_TITLE) !== 0).toBe(true);

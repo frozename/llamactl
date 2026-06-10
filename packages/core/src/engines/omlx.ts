@@ -6,22 +6,22 @@ import {
   symlinkSync,
   unlinkSync,
   writeFileSync,
-} from 'node:fs';
-import { basename, dirname, join, resolve, sep } from 'node:path';
-import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from './types.js';
-import { gracefulShutdown, pollUntilModelIds } from './lifecycle.js';
-import { ensureWorkloadRuntimeDir } from '../workloadRuntime.js';
-import { resolveEnv } from '../env.js';
-import { defaultOmlxMemoryGiBForProfile } from '../profile.js';
+} from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from "./types.js";
+import { gracefulShutdown, pollUntilModelIds } from "./lifecycle.js";
+import { ensureWorkloadRuntimeDir } from "../workloadRuntime.js";
+import { resolveEnv } from "../env.js";
+import { defaultOmlxMemoryGiBForProfile } from "../profile.js";
 
-const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost', '0.0.0.0']);
+const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost", "0.0.0.0"]);
 
 function omxBasePath(env: EngineBootEnv, workloadName: string): string {
   if (env.LLAMACTL_RUNTIME_DIR) {
-    return join(env.LLAMACTL_RUNTIME_DIR, 'workloads', workloadName, '.omlx');
+    return join(env.LLAMACTL_RUNTIME_DIR, "workloads", workloadName, ".omlx");
   }
   const resolved = resolveEnv();
-  return join(ensureWorkloadRuntimeDir(resolved, { name: workloadName }), '.omlx');
+  return join(ensureWorkloadRuntimeDir(resolved, { name: workloadName }), ".omlx");
 }
 
 // Per-workload isolated model dir: contains a single symlink pointing at the
@@ -39,7 +39,7 @@ function omxBasePath(env: EngineBootEnv, workloadName: string): string {
 // The schema already constrains hostedModels to exactly one entry, so this
 // matches the intended single-model-per-ModelHost contract.
 function isolatedModelDir(basePath: string): string {
-  return join(basePath, 'models');
+  return join(basePath, "models");
 }
 
 function ensureIsolatedModelSymlink(
@@ -78,18 +78,18 @@ function buildDflashModelSettings(spec: ModelHostSpecForEngine): Record<string, 
   if (!dflash?.enabled) return null;
   const settings: Record<string, unknown> = { dflash_enabled: dflash.dflash_enabled ?? true };
   for (const [key, value] of Object.entries(dflash)) {
-    if (key === 'enabled') continue;
+    if (key === "enabled") continue;
     if (value !== undefined) settings[key] = value;
   }
   return settings;
 }
 
 export const omlxEngine: EngineAdapter = {
-  name: 'omlx',
+  name: "omlx",
 
   validateSpec(spec) {
-    if (!spec.binary || spec.binary.trim() === '') {
-      return { ok: false, error: 'omlx engine requires spec.binary (no PATH fallback)' };
+    if (!spec.binary || spec.binary.trim() === "") {
+      return { ok: false, error: "omlx engine requires spec.binary (no PATH fallback)" };
     }
     if (!existsSync(spec.binary)) {
       return {
@@ -97,14 +97,17 @@ export const omlxEngine: EngineAdapter = {
         error: `omlx binary not found at ${spec.binary}; run tools/install-omlx-from-source.sh`,
       };
     }
-    if (!spec.endpoint || typeof spec.endpoint.port !== 'number') {
-      return { ok: false, error: 'omlx engine requires spec.endpoint.port' };
+    if (!spec.endpoint || typeof spec.endpoint.port !== "number") {
+      return { ok: false, error: "omlx engine requires spec.endpoint.port" };
     }
     if (!LOOPBACK.has(spec.endpoint.host)) {
-      return { ok: false, error: `endpoint.host must be loopback or 0.0.0.0; got ${spec.endpoint.host}` };
+      return {
+        ok: false,
+        error: `endpoint.host must be loopback or 0.0.0.0; got ${spec.endpoint.host}`,
+      };
     }
     if (!Array.isArray(spec.hostedModels) || spec.hostedModels.length !== 1) {
-      return { ok: false, error: 'hostedModels must have exactly one entry' };
+      return { ok: false, error: "hostedModels must have exactly one entry" };
     }
     return { ok: true };
   },
@@ -112,7 +115,7 @@ export const omlxEngine: EngineAdapter = {
   async prepareLaunch(spec: ModelHostSpecForEngine, env: EngineBootEnv) {
     const hostedModel = spec.hostedModels[0];
     if (!hostedModel) {
-      throw new Error('hostedModels must have exactly one entry');
+      throw new Error("hostedModels must have exactly one entry");
     }
     const workloadName = env.workloadName;
     if (workloadName) {
@@ -120,17 +123,13 @@ export const omlxEngine: EngineAdapter = {
       const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS;
       if (!modelsDir) {
         throw new Error(
-          'omlx prepareLaunch requires LLAMACTL_MODELS_DIR or LLAMA_CPP_MODELS in the boot env — otherwise the per-workload isolated symlink targets a path that does not exist and oMLX serves /v1/models=[] forever',
+          "omlx prepareLaunch requires LLAMACTL_MODELS_DIR or LLAMA_CPP_MODELS in the boot env — otherwise the per-workload isolated symlink targets a path that does not exist and oMLX serves /v1/models=[] forever",
         );
       }
-      ensureIsolatedModelSymlink(
-        isolatedModelDir(basePath),
-        modelsDir,
-        hostedModel.rel,
-      );
+      ensureIsolatedModelSymlink(isolatedModelDir(basePath), modelsDir, hostedModel.rel);
       const modelSettings = buildDflashModelSettings(spec);
       if (modelSettings) {
-        writeAtomicJson(join(basePath, 'model_settings.json'), {
+        writeAtomicJson(join(basePath, "model_settings.json"), {
           version: 1,
           models: {
             [basename(hostedModel.rel)]: modelSettings,
@@ -144,12 +143,12 @@ export const omlxEngine: EngineAdapter = {
     const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS;
     if (!modelsDir) {
       throw new Error(
-        'omlx prepareLaunch/buildBootCommand requires LLAMACTL_MODELS_DIR or LLAMA_CPP_MODELS in the boot env — otherwise the per-workload isolated symlink targets a path that does not exist and oMLX serves /v1/models=[] forever',
+        "omlx prepareLaunch/buildBootCommand requires LLAMACTL_MODELS_DIR or LLAMA_CPP_MODELS in the boot env — otherwise the per-workload isolated symlink targets a path that does not exist and oMLX serves /v1/models=[] forever",
       );
     }
     const hostedModel = spec.hostedModels[0];
     if (!hostedModel) {
-      throw new Error('hostedModels must have exactly one entry');
+      throw new Error("hostedModels must have exactly one entry");
     }
     const sanitizedModelRel = hostedModel.rel;
     const normalizedModelPath = resolve(modelsDir, sanitizedModelRel);
@@ -161,25 +160,24 @@ export const omlxEngine: EngineAdapter = {
     // oMLX only sees the declared hostedModel. Without `workloadName` (e.g.
     // a unit test invoking buildBootCommand without going through the
     // workload runtime) we fall back to the full models dir for back-compat.
-    const modelDirArg = workloadName
-      ? isolatedModelDir(omxBasePath(env, workloadName))
-      : modelsDir;
+    const modelDirArg = workloadName ? isolatedModelDir(omxBasePath(env, workloadName)) : modelsDir;
     const args: string[] = [
-      'serve',
-      '--model-dir',
+      "serve",
+      "--model-dir",
       modelDirArg,
-      '--host',
+      "--host",
       spec.endpoint.host,
-      '--port',
+      "--port",
       String(spec.endpoint.port),
     ];
     const maxModelMemoryGiB =
-      spec.resources?.expectedMemoryGiB ?? defaultOmlxMemoryGiBForProfile(env.machineProfile ?? 'macbook-pro-48g');
-    args.push('--max-model-memory', `${maxModelMemoryGiB}GB`);
+      spec.resources?.expectedMemoryGiB ??
+      defaultOmlxMemoryGiBForProfile(env.machineProfile ?? "macbook-pro-48g");
+    args.push("--max-model-memory", `${maxModelMemoryGiB}GB`);
     const modelSettings = workloadName ? buildDflashModelSettings(spec) : null;
     if (workloadName && modelSettings) {
       const basePath = omxBasePath(env, workloadName);
-      args.push('--base-path', basePath);
+      args.push("--base-path", basePath);
     }
     args.push(...spec.extraArgs);
     return { binary: spec.binary, args };

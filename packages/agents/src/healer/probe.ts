@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { parse as parseYaml } from 'yaml';
+import { existsSync, readFileSync } from "node:fs";
+import { parse as parseYaml } from "yaml";
 
 /**
  * Fleet health probe. Reads the operator YAMLs llamactl authors and
@@ -9,11 +9,11 @@ import { parse as parseYaml } from 'yaml';
  * — the loop + journal layers compose this.
  */
 
-export type ProbeState = 'healthy' | 'unhealthy';
+export type ProbeState = "healthy" | "unhealthy";
 
 export interface ProbeResult {
   name: string;
-  kind: 'gateway' | 'provider';
+  kind: "gateway" | "provider";
   baseUrl: string;
   state: ProbeState;
   status: number;
@@ -41,7 +41,7 @@ export interface ProbeFleetOptions {
 interface KubeconfigNode {
   name: string;
   endpoint?: string;
-  kind?: 'agent' | 'gateway' | 'provider' | 'cloud';
+  kind?: "agent" | "gateway" | "provider" | "cloud";
   cloud?: { provider: string; baseUrl: string };
   provider?: { gateway: string; providerName: string };
 }
@@ -59,18 +59,18 @@ interface SiriusProvidersShape {
 function readYamlIfExists(path: string): unknown | null {
   if (!existsSync(path)) return null;
   try {
-    return parseYaml(readFileSync(path, 'utf8'));
+    return parseYaml(readFileSync(path, "utf8"));
   } catch {
     return null;
   }
 }
 
-function resolveKind(n: KubeconfigNode): 'agent' | 'gateway' | 'provider' {
-  if (n.kind === 'gateway' || n.kind === 'cloud') return 'gateway';
-  if (n.kind === 'agent' || n.kind === 'provider') return n.kind;
-  if (n.provider) return 'provider';
-  if (n.cloud) return 'gateway';
-  return 'agent';
+function resolveKind(n: KubeconfigNode): "agent" | "gateway" | "provider" {
+  if (n.kind === "gateway" || n.kind === "cloud") return "gateway";
+  if (n.kind === "agent" || n.kind === "provider") return n.kind;
+  if (n.provider) return "provider";
+  if (n.cloud) return "gateway";
+  return "agent";
 }
 
 async function probeOne(
@@ -86,13 +86,13 @@ async function probeOne(
     const res = await fetchImpl(url, { signal: ctl.signal });
     const latencyMs = now() - startedAt;
     return {
-      state: res.ok ? 'healthy' : 'unhealthy',
+      state: res.ok ? "healthy" : "unhealthy",
       status: res.status,
       latencyMs,
     };
   } catch (err) {
     return {
-      state: 'unhealthy',
+      state: "unhealthy",
       status: 0,
       latencyMs: now() - startedAt,
       error: (err as Error).message,
@@ -113,10 +113,12 @@ export async function probeFleet(opts: ProbeFleetOptions): Promise<ProbeReport> 
   const cluster = kube?.clusters?.find((c) => c.name === ctx?.cluster);
 
   const gateways = (cluster?.nodes ?? [])
-    .filter((n) => resolveKind(n) === 'gateway' && n.cloud?.baseUrl)
+    .filter((n) => resolveKind(n) === "gateway" && n.cloud?.baseUrl)
     .map((n) => ({ name: n.name, baseUrl: n.cloud!.baseUrl }));
 
-  const providers = (sirius?.providers ?? []).filter((p) => typeof p.baseUrl === 'string' && p.baseUrl.length > 0);
+  const providers = (sirius?.providers ?? []).filter(
+    (p) => typeof p.baseUrl === "string" && p.baseUrl.length > 0,
+  );
 
   const probes: ProbeResult[] = [];
   const gatewayProbes = await Promise.all(
@@ -128,7 +130,7 @@ export async function probeFleet(opts: ProbeFleetOptions): Promise<ProbeReport> 
   for (const { g, probe } of gatewayProbes) {
     probes.push({
       name: g.name,
-      kind: 'gateway',
+      kind: "gateway",
       baseUrl: g.baseUrl,
       ...probe,
     });
@@ -143,13 +145,13 @@ export async function probeFleet(opts: ProbeFleetOptions): Promise<ProbeReport> 
   for (const { p, probe } of providerProbes) {
     probes.push({
       name: p.name,
-      kind: 'provider',
+      kind: "provider",
       baseUrl: p.baseUrl!,
       ...probe,
     });
   }
 
-  const unhealthy = probes.filter((p) => p.state === 'unhealthy').length;
+  const unhealthy = probes.filter((p) => p.state === "unhealthy").length;
   return { ts: new Date(now()).toISOString(), probes, unhealthy };
 }
 
@@ -158,18 +160,26 @@ export async function probeFleet(opts: ProbeFleetOptions): Promise<ProbeReport> 
  * them. Used by the loop to emit prominent "state change" journal
  * entries without spamming on steady-state ticks.
  */
-export function stateTransitions(prev: ProbeReport | null, next: ProbeReport): Array<{
+export function stateTransitions(
+  prev: ProbeReport | null,
+  next: ProbeReport,
+): Array<{
   name: string;
-  kind: 'gateway' | 'provider';
-  from: ProbeState | 'unknown';
+  kind: "gateway" | "provider";
+  from: ProbeState | "unknown";
   to: ProbeState;
 }> {
   const prevByKey = new Map<string, ProbeState>();
   for (const p of prev?.probes ?? []) prevByKey.set(`${p.kind}:${p.name}`, p.state);
-  const out: Array<{ name: string; kind: 'gateway' | 'provider'; from: ProbeState | 'unknown'; to: ProbeState }> = [];
+  const out: Array<{
+    name: string;
+    kind: "gateway" | "provider";
+    from: ProbeState | "unknown";
+    to: ProbeState;
+  }> = [];
   for (const p of next.probes) {
     const key = `${p.kind}:${p.name}`;
-    const from = prevByKey.get(key) ?? 'unknown';
+    const from = prevByKey.get(key) ?? "unknown";
     if (from !== p.state) {
       out.push({ name: p.name, kind: p.kind, from, to: p.state });
     }

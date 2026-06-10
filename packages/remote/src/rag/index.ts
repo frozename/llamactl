@@ -6,16 +6,16 @@
  *
  * v1 providers: `chroma` (MCP-proxied), `pgvector` (native SQL).
  */
-import type { RetrievalProvider } from '@nova/contracts';
-import type { ClusterNode, Config } from '../config/schema.js';
-import { createChromaAdapter } from './chroma/index.js';
-import { createPgvectorAdapter } from './pgvector/index.js';
-import type { Embedder } from './embedding.js';
+import type { RetrievalProvider } from "@nova/contracts";
+import type { ClusterNode, Config } from "../config/schema.js";
+import { createChromaAdapter } from "./chroma/index.js";
+import { createPgvectorAdapter } from "./pgvector/index.js";
+import type { Embedder } from "./embedding.js";
 
-export { RagError, type RagErrorCode } from './errors.js';
-export { ChromaRagAdapter, createChromaAdapter } from './chroma/index.js';
-export { PgvectorRagAdapter, createPgvectorAdapter } from './pgvector/index.js';
-export { createEmbedderFromBinding, type Embedder } from './embedding.js';
+export { RagError, type RagErrorCode } from "./errors.js";
+export { ChromaRagAdapter, createChromaAdapter } from "./chroma/index.js";
+export { PgvectorRagAdapter, createPgvectorAdapter } from "./pgvector/index.js";
+export { createEmbedderFromBinding, type Embedder } from "./embedding.js";
 
 export interface CreateRagAdapterOptions {
   env?: NodeJS.ProcessEnv;
@@ -37,16 +37,12 @@ export async function createRagAdapter(
   envOrOpts: NodeJS.ProcessEnv | CreateRagAdapterOptions = process.env,
 ): Promise<RetrievalProvider> {
   if (!node.rag) {
-    throw new Error(
-      `node '${node.name}' is not a RAG node — missing 'rag' binding`,
-    );
+    throw new Error(`node '${node.name}' is not a RAG node — missing 'rag' binding`);
   }
-  const opts: CreateRagAdapterOptions = isOptionsBag(envOrOpts)
-    ? envOrOpts
-    : { env: envOrOpts };
+  const opts: CreateRagAdapterOptions = isOptionsBag(envOrOpts) ? envOrOpts : { env: envOrOpts };
   const env = opts.env ?? process.env;
   switch (node.rag.provider) {
-    case 'chroma':
+    case "chroma":
       // HTTP-mode chroma honors a delegated embedder the same way
       // pgvector does; MCP-mode ignores it (chroma-mcp embeds via
       // the collection's embedding function).
@@ -55,7 +51,7 @@ export async function createRagAdapter(
         ...(opts.config && { config: opts.config }),
         ...(opts.embedder && { embedder: opts.embedder }),
       });
-    case 'pgvector':
+    case "pgvector":
       return createPgvectorAdapter(node.rag, {
         env,
         ...(opts.config && { config: opts.config }),
@@ -74,21 +70,21 @@ export async function createRagAdapter(
 function isOptionsBag(
   v: NodeJS.ProcessEnv | CreateRagAdapterOptions,
 ): v is CreateRagAdapterOptions {
-  if (typeof v !== 'object' || v === null) return false;
+  if (typeof v !== "object" || v === null) return false;
   const maybe = v as Partial<CreateRagAdapterOptions>;
   return (
-    typeof maybe.embedder === 'function' ||
-    (maybe.config !== undefined && typeof maybe.config === 'object') ||
-    (maybe.env !== undefined && typeof maybe.env === 'object' && !isProcessEnvShape(v))
+    typeof maybe.embedder === "function" ||
+    (maybe.config !== undefined && typeof maybe.config === "object") ||
+    (maybe.env !== undefined && typeof maybe.env === "object" && !isProcessEnvShape(v))
   );
 }
 
 function isProcessEnvShape(v: unknown): boolean {
-  if (typeof v !== 'object' || v === null) return false;
+  if (typeof v !== "object" || v === null) return false;
   // ProcessEnv has all-string values. Options-bag has function / object
   // fields. Sample a few keys to distinguish.
   for (const val of Object.values(v as Record<string, unknown>)) {
-    if (typeof val !== 'string' && val !== undefined) return false;
+    if (typeof val !== "string" && val !== undefined) return false;
   }
   return true;
 }

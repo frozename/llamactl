@@ -27,7 +27,7 @@
 
 - Shape: add `OmlxSlotClient` as a sibling to `UpstreamSlotClient` under `packages/core/src/kvstore/upstreamSlots.ts` (or split file), selected by route engine in proxy KV path.
 - Preconditions: confirm stable oMLX endpoints + payload contract equivalent to `save`, `restore`, `supports`.
-- Estimated effort: **0.5-1.5 days** (mostly integration and tests) *if* upstream API already exists and is stable.
+- Estimated effort: **0.5-1.5 days** (mostly integration and tests) _if_ upstream API already exists and is stable.
 
 ### B) Add slot API to oMLX upstream (small PR/fork patch), then consume it
 

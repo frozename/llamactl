@@ -62,16 +62,16 @@ spec:
       node: local
       binding:
         provider: pgvector
-        endpoint: ''                     # resolved from backingService
+        endpoint: "" # resolved from backingService
         collection: documents
         embedder:
-          node: sirius                   # CHANGE ME — any node exposing createEmbeddings
-          model: text-embedding-3-small  # CHANGE ME — model the embedder node speaks
+          node: sirius # CHANGE ME — any node exposing createEmbeddings
+          model: text-embedding-3-small # CHANGE ME — model the embedder node speaks
         extraArgs: []
       backingService: pg-main
 
   dependencies:
     - from: { kind: rag, name: kb }
-      to:   { kind: service, name: pg-main }
+      to: { kind: service, name: pg-main }
 
   onFailure: rollback

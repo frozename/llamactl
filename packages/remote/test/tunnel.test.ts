@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   TUNNEL_CLOSE_UNAUTHORIZED,
   createTunnelClient,
@@ -8,8 +8,8 @@ import {
   type TunnelMessage,
   type TunnelReq,
   type TunnelState,
-} from '../src/tunnel/index.js';
-import { hashToken } from '../src/server/auth.js';
+} from "../src/tunnel/index.js";
+import { hashToken } from "../src/server/auth.js";
 
 // Bun's built-in WebSocket on the client side is globalThis.WebSocket.
 // The server is Bun.serve with a websocket handler.
@@ -34,12 +34,9 @@ function startServer(bearer: string, opts: { fixedTime?: string } = {}): Running
   });
   const bun = Bun.serve({
     port: 0,
-    hostname: '127.0.0.1',
+    hostname: "127.0.0.1",
     fetch(req, server) {
-      return (
-        srv.handleUpgrade(req, server) ??
-        new Response('not found', { status: 404 })
-      );
+      return srv.handleUpgrade(req, server) ?? new Response("not found", { status: 404 });
     },
     websocket: srv.websocket,
   });
@@ -50,16 +47,14 @@ function startServer(bearer: string, opts: { fixedTime?: string } = {}): Running
     server: srv,
     connects,
     disconnects,
-    stop: async () => { bun.stop(true); },
+    stop: async () => {
+      bun.stop(true);
+    },
   };
 }
 
 // Helpers to avoid races in close-code tests.
-async function waitFor(
-  check: () => boolean,
-  timeoutMs = 2000,
-  intervalMs = 10,
-): Promise<void> {
+async function waitFor(check: () => boolean, timeoutMs = 2000, intervalMs = 10): Promise<void> {
   const start = Date.now();
   for (;;) {
     if (check()) return;
@@ -72,7 +67,9 @@ async function waitFor(
 
 let srv: RunningServer | null = null;
 
-beforeEach(() => { srv = null; });
+beforeEach(() => {
+  srv = null;
+});
 afterEach(async () => {
   if (srv) {
     await srv.stop();
@@ -80,49 +77,49 @@ afterEach(async () => {
   }
 });
 
-describe('message schema', () => {
-  test('parseTunnelMessage round-trips known shapes', () => {
-    const hello: TunnelMessage = { type: 'hello', bearer: 't', nodeName: 'gpu1' };
+describe("message schema", () => {
+  test("parseTunnelMessage round-trips known shapes", () => {
+    const hello: TunnelMessage = { type: "hello", bearer: "t", nodeName: "gpu1" };
     expect(parseTunnelMessage(encodeTunnelMessage(hello))).toEqual(hello);
     const res: TunnelMessage = {
-      type: 'res',
-      id: 'r1',
+      type: "res",
+      id: "r1",
       result: { ok: true, n: 7 },
     };
     expect(parseTunnelMessage(encodeTunnelMessage(res))).toEqual(res);
   });
-  test('rejects malformed JSON', () => {
-    expect(parseTunnelMessage('{not json')).toBeNull();
+  test("rejects malformed JSON", () => {
+    expect(parseTunnelMessage("{not json")).toBeNull();
   });
-  test('rejects unknown types', () => {
-    expect(parseTunnelMessage(JSON.stringify({ type: 'bogus' }))).toBeNull();
+  test("rejects unknown types", () => {
+    expect(parseTunnelMessage(JSON.stringify({ type: "bogus" }))).toBeNull();
   });
 });
 
-describe('tunnel handshake', () => {
-  test('hello with correct bearer → hello-ack + registry records connection', async () => {
-    srv = startServer('tok-good');
+describe("tunnel handshake", () => {
+  test("hello with correct bearer → hello-ack + registry records connection", async () => {
+    srv = startServer("tok-good");
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok-good',
-      nodeName: 'gpu1',
+      bearer: "tok-good",
+      nodeName: "gpu1",
       handleRequest: async () => ({ ok: true }),
     });
     await client.start();
     expect(client.isReady()).toBe(true);
-    await waitFor(() => srv!.connects.includes('gpu1'));
-    expect(srv.connects).toEqual(['gpu1']);
-    expect(srv.server.registry().map((e) => e.nodeName)).toEqual(['gpu1']);
+    await waitFor(() => srv!.connects.includes("gpu1"));
+    expect(srv.connects).toEqual(["gpu1"]);
+    expect(srv.server.registry().map((e) => e.nodeName)).toEqual(["gpu1"]);
     client.stop();
   });
 
-  test('hello with wrong bearer → close 4401 and connect rejects', async () => {
-    srv = startServer('tok-good');
+  test("hello with wrong bearer → close 4401 and connect rejects", async () => {
+    srv = startServer("tok-good");
     let closeCode = 0;
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok-bad',
-      nodeName: 'gpu1',
+      bearer: "tok-bad",
+      nodeName: "gpu1",
       handleRequest: async () => undefined,
       onClose: (code) => {
         closeCode = code;
@@ -136,54 +133,57 @@ describe('tunnel handshake', () => {
   });
 });
 
-describe('request/response correlation', () => {
-  test('server.send dispatches to the right node, resolves with its reply', async () => {
-    srv = startServer('tok');
+describe("request/response correlation", () => {
+  test("server.send dispatches to the right node, resolves with its reply", async () => {
+    srv = startServer("tok");
     const seen: TunnelReq[] = [];
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
+      bearer: "tok",
+      nodeName: "gpu1",
       handleRequest: async (req) => {
         seen.push(req);
-        if (req.method === 'node.facts') return { profile: 'macbook-pro-48g', memBytes: 68719476736 };
+        if (req.method === "node.facts")
+          return { profile: "macbook-pro-48g", memBytes: 68719476736 };
         throw new Error(`unknown method ${req.method}`);
       },
     });
     await client.start();
-    const res = await srv.server.send('gpu1', { id: 'r1', method: 'node.facts' });
-    expect(res.id).toBe('r1');
-    expect(res.result).toEqual({ profile: 'macbook-pro-48g', memBytes: 68719476736 });
+    const res = await srv.server.send("gpu1", { id: "r1", method: "node.facts" });
+    expect(res.id).toBe("r1");
+    expect(res.result).toEqual({ profile: "macbook-pro-48g", memBytes: 68719476736 });
     expect(res.error).toBeUndefined();
     expect(seen).toHaveLength(1);
-    expect(seen[0]!.method).toBe('node.facts');
+    expect(seen[0]!.method).toBe("node.facts");
     client.stop();
   });
 
-  test('handler that throws surfaces as res.error without tearing the tunnel down', async () => {
-    srv = startServer('tok');
+  test("handler that throws surfaces as res.error without tearing the tunnel down", async () => {
+    srv = startServer("tok");
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
-      handleRequest: async () => { throw new Error('boom'); },
+      bearer: "tok",
+      nodeName: "gpu1",
+      handleRequest: async () => {
+        throw new Error("boom");
+      },
     });
     await client.start();
-    const res = await srv.server.send('gpu1', { id: 'r2', method: 'any' });
-    expect(res.error?.code).toBe('handler-threw');
-    expect(res.error?.message).toBe('boom');
+    const res = await srv.server.send("gpu1", { id: "r2", method: "any" });
+    expect(res.error?.code).toBe("handler-threw");
+    expect(res.error?.message).toBe("boom");
     // Tunnel still up — a second call succeeds after the handler is swapped mentally.
-    const res2 = await srv.server.send('gpu1', { id: 'r3', method: 'another' });
-    expect(res2.error?.code).toBe('handler-threw');
+    const res2 = await srv.server.send("gpu1", { id: "r3", method: "another" });
+    expect(res2.error?.code).toBe("handler-threw");
     client.stop();
   });
 
-  test('three concurrent requests resolve with matching ids — no crossed wires', async () => {
-    srv = startServer('tok');
+  test("three concurrent requests resolve with matching ids — no crossed wires", async () => {
+    srv = startServer("tok");
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
+      bearer: "tok",
+      nodeName: "gpu1",
       handleRequest: async (req) => {
         // Randomize completion ordering.
         await new Promise((r) => setTimeout(r, Math.floor(Math.random() * 20)));
@@ -192,61 +192,61 @@ describe('request/response correlation', () => {
     });
     await client.start();
     const [a, b, c] = await Promise.all([
-      srv.server.send('gpu1', { id: 'rA', method: 'one' }),
-      srv.server.send('gpu1', { id: 'rB', method: 'two' }),
-      srv.server.send('gpu1', { id: 'rC', method: 'three' }),
+      srv.server.send("gpu1", { id: "rA", method: "one" }),
+      srv.server.send("gpu1", { id: "rB", method: "two" }),
+      srv.server.send("gpu1", { id: "rC", method: "three" }),
     ]);
-    expect([a.id, b.id, c.id]).toEqual(['rA', 'rB', 'rC']);
-    expect((a.result as { id: string }).id).toBe('rA');
-    expect((b.result as { method: string }).method).toBe('two');
-    expect((c.result as { id: string }).id).toBe('rC');
+    expect([a.id, b.id, c.id]).toEqual(["rA", "rB", "rC"]);
+    expect((a.result as { id: string }).id).toBe("rA");
+    expect((b.result as { method: string }).method).toBe("two");
+    expect((c.result as { id: string }).id).toBe("rC");
     client.stop();
   });
 
-  test('unknown node errors synchronously on send', async () => {
-    srv = startServer('tok');
-    await expect(
-      srv.server.send('no-such-node', { id: 'r1', method: 'x' }),
-    ).rejects.toThrow(/tunnel not connected/);
+  test("unknown node errors synchronously on send", async () => {
+    srv = startServer("tok");
+    await expect(srv.server.send("no-such-node", { id: "r1", method: "x" })).rejects.toThrow(
+      /tunnel not connected/,
+    );
   });
 });
 
-describe('ping/pong', () => {
-  test('client ping round-trips', async () => {
-    srv = startServer('tok');
+describe("ping/pong", () => {
+  test("client ping round-trips", async () => {
+    srv = startServer("tok");
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
+      bearer: "tok",
+      nodeName: "gpu1",
       handleRequest: async () => undefined,
     });
     await client.start();
-    await client.ping('nonce-xyz');
+    await client.ping("nonce-xyz");
     client.stop();
   });
 });
 
-describe('end-to-end I.3.3: router bridge + tunneled client over real ws', () => {
+describe("end-to-end I.3.3: router bridge + tunneled client over real ws", () => {
   // Build a fake "caller" that looks like tRPC's createCaller() shape.
   const fakeCaller = {
     catalog: {
       async list(input?: { classFilter?: string }) {
-        if (input?.classFilter === 'vision') return [{ rel: 'v1' }];
-        return [{ rel: 'a' }];
+        if (input?.classFilter === "vision") return [{ rel: "v1" }];
+        return [{ rel: "a" }];
       },
     },
   };
 
-  test('tunneled client.catalog.list.query round-trips through the ws', async () => {
-    const { createTunnelRouterHandler } = await import('../src/tunnel/router-bridge.js');
-    const { createNodeClient } = await import('../src/client/node-client.js');
+  test("tunneled client.catalog.list.query round-trips through the ws", async () => {
+    const { createTunnelRouterHandler } = await import("../src/tunnel/router-bridge.js");
+    const { createNodeClient } = await import("../src/client/node-client.js");
 
-    srv = startServer('tok');
+    srv = startServer("tok");
     const handle = createTunnelRouterHandler(fakeCaller);
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu-routed',
+      bearer: "tok",
+      nodeName: "gpu-routed",
       handleRequest: handle,
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
@@ -255,73 +255,75 @@ describe('end-to-end I.3.3: router bridge + tunneled client over real ws', () =>
     // Central-side NodeClient that routes via the tunnel server's send.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tunnelSend: any = (req: { id: string; method: string; params: unknown }) =>
-      srv!.server.send('gpu-routed', req);
+      srv!.server.send("gpu-routed", req);
     const nodeClient = createNodeClient(
       {
-        apiVersion: 'llamactl/v1',
-        kind: 'Config',
-        currentContext: 'default',
-        contexts: [{ name: 'default', cluster: 'home', user: 'me', defaultNode: 'gpu-routed' }],
+        apiVersion: "llamactl/v1",
+        kind: "Config",
+        currentContext: "default",
+        contexts: [{ name: "default", cluster: "home", user: "me", defaultNode: "gpu-routed" }],
         clusters: [
           {
-            name: 'home',
+            name: "home",
             nodes: [
               {
-                name: 'gpu-routed',
-                endpoint: 'https://fake.example:443',
-                kind: 'agent',
+                name: "gpu-routed",
+                endpoint: "https://fake.example:443",
+                kind: "agent",
                 tunnelPreferred: true,
               },
             ],
           },
         ],
-        users: [{ name: 'me', token: 't' }],
+        users: [{ name: "me", token: "t" }],
       },
-      { nodeName: 'gpu-routed', tunnelSend },
+      { nodeName: "gpu-routed", tunnelSend },
     );
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await (nodeClient as any).catalog.list.query({ classFilter: 'vision' });
-    expect(result).toEqual([{ rel: 'v1' }]);
+    const result = await (nodeClient as any).catalog.list.query({ classFilter: "vision" });
+    expect(result).toEqual([{ rel: "v1" }]);
     client.stop();
   });
 });
 
-describe('disconnect semantics', () => {
-  test('client close removes node from registry + fires onNodeDisconnect', async () => {
-    srv = startServer('tok');
+describe("disconnect semantics", () => {
+  test("client close removes node from registry + fires onNodeDisconnect", async () => {
+    srv = startServer("tok");
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
+      bearer: "tok",
+      nodeName: "gpu1",
       handleRequest: async () => undefined,
     });
     await client.start();
-    expect(srv.server.registry().map((e) => e.nodeName)).toEqual(['gpu1']);
+    expect(srv.server.registry().map((e) => e.nodeName)).toEqual(["gpu1"]);
     client.stop();
     await waitFor(() => srv!.disconnects.length > 0);
-    expect(srv.disconnects[0]?.node).toBe('gpu1');
+    expect(srv.disconnects[0]?.node).toBe("gpu1");
     expect(srv.server.registry()).toEqual([]);
   });
 
-  test('server disconnect errors pending requests', async () => {
-    srv = startServer('tok');
+  test("server disconnect errors pending requests", async () => {
+    srv = startServer("tok");
     // Handler never returns — the server-side send() promise should
     // be rejected when we forcibly disconnect the node.
     let release: (() => void) | null = null;
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
+      bearer: "tok",
+      nodeName: "gpu1",
       handleRequest: () =>
-        new Promise<unknown>((resolve) => { release = () => resolve(null); }),
+        new Promise<unknown>((resolve) => {
+          release = () => resolve(null);
+        }),
     });
     await client.start();
-    const inflight = srv.server.send('gpu1', { id: 'r1', method: 'stall' });
+    const inflight = srv.server.send("gpu1", { id: "r1", method: "stall" });
     // Give server/client a tick to set up the pending map before
     // we kick the tunnel.
     await new Promise((r) => setTimeout(r, 20));
-    srv.server.disconnect('gpu1', 'kicked');
+    srv.server.disconnect("gpu1", "kicked");
     await expect(inflight).rejects.toThrow(/tunnel-disconnected/);
     // Free the dangling handler so the test's cleanup doesn't hold
     // a live promise.
@@ -329,20 +331,20 @@ describe('disconnect semantics', () => {
     client.stop();
   });
 
-  test('duplicate nodeName: newest connection wins, older is closed with 4409', async () => {
-    srv = startServer('tok');
+  test("duplicate nodeName: newest connection wins, older is closed with 4409", async () => {
+    srv = startServer("tok");
     const first = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
-      handleRequest: async () => ({ from: 'first' }),
+      bearer: "tok",
+      nodeName: "gpu1",
+      handleRequest: async () => ({ from: "first" }),
     });
     await first.start();
     const second = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
-      handleRequest: async () => ({ from: 'second' }),
+      bearer: "tok",
+      nodeName: "gpu1",
+      handleRequest: async () => ({ from: "second" }),
       // Don't let `first` auto-reconnect after the server kicks it
       // with 4409 — this test is specifically about the replacement
       // behavior, not reconnect.
@@ -352,44 +354,44 @@ describe('disconnect semantics', () => {
     await second.start();
     // Give the older socket time to observe its close frame.
     await new Promise((r) => setTimeout(r, 50));
-    const res = await srv.server.send('gpu1', { id: 'r1', method: 'who' });
-    expect((res.result as { from: string }).from).toBe('second');
+    const res = await srv.server.send("gpu1", { id: "r1", method: "who" });
+    expect((res.result as { from: string }).from).toBe("second");
     first.stop();
     second.stop();
   });
 });
 
-describe('reconnect + heartbeat (I.3.2)', () => {
-  test('client auto-reconnects after the server kicks it', async () => {
-    srv = startServer('tok');
+describe("reconnect + heartbeat (I.3.2)", () => {
+  test("client auto-reconnects after the server kicks it", async () => {
+    srv = startServer("tok");
     const states: TunnelState[] = [];
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
+      bearer: "tok",
+      nodeName: "gpu1",
       handleRequest: async () => ({ ok: true }),
       reconnect: { minDelayMs: 20, maxDelayMs: 100, jitterFraction: 0 },
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
       onStateChange: (s) => states.push(s),
     });
     await client.start();
-    expect(client.state()).toBe('ready');
-    srv.server.disconnect('gpu1', 'test-kick');
+    expect(client.state()).toBe("ready");
+    srv.server.disconnect("gpu1", "test-kick");
     await waitFor(() => srv!.connects.length >= 2);
     await client.waitUntilReady(2000);
-    expect(client.state()).toBe('ready');
-    expect(srv.connects).toEqual(['gpu1', 'gpu1']);
-    expect(states).toContain('disconnected');
-    expect(states.filter((s) => s === 'ready').length).toBeGreaterThanOrEqual(2);
+    expect(client.state()).toBe("ready");
+    expect(srv.connects).toEqual(["gpu1", "gpu1"]);
+    expect(states).toContain("disconnected");
+    expect(states.filter((s) => s === "ready").length).toBeGreaterThanOrEqual(2);
     client.stop();
   });
 
-  test('stop() halts the reconnect loop — no further connects after stop', async () => {
-    srv = startServer('tok');
+  test("stop() halts the reconnect loop — no further connects after stop", async () => {
+    srv = startServer("tok");
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
+      bearer: "tok",
+      nodeName: "gpu1",
       handleRequest: async () => undefined,
       reconnect: { minDelayMs: 10, maxDelayMs: 50, jitterFraction: 0 },
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
@@ -399,15 +401,15 @@ describe('reconnect + heartbeat (I.3.2)', () => {
     const connectsAtStop = srv.connects.length;
     await new Promise((r) => setTimeout(r, 300));
     expect(srv.connects.length).toBe(connectsAtStop);
-    expect(client.state()).toBe('stopped');
+    expect(client.state()).toBe("stopped");
   });
 
-  test('waitUntilReady resolves immediately when already ready', async () => {
-    srv = startServer('tok');
+  test("waitUntilReady resolves immediately when already ready", async () => {
+    srv = startServer("tok");
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
+      bearer: "tok",
+      nodeName: "gpu1",
       handleRequest: async () => undefined,
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
@@ -417,12 +419,12 @@ describe('reconnect + heartbeat (I.3.2)', () => {
     client.stop();
   });
 
-  test('waitUntilReady rejects after timeout when we never reach ready', async () => {
-    srv = startServer('tok-good');
+  test("waitUntilReady rejects after timeout when we never reach ready", async () => {
+    srv = startServer("tok-good");
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok-bad',
-      nodeName: 'gpu1',
+      bearer: "tok-bad",
+      nodeName: "gpu1",
       handleRequest: async () => undefined,
       reconnect: { minDelayMs: 50, maxDelayMs: 50, jitterFraction: 0 },
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
@@ -433,12 +435,12 @@ describe('reconnect + heartbeat (I.3.2)', () => {
     client.stop();
   });
 
-  test('backoff resets on healthy hello-ack — second reconnect uses minDelay', async () => {
-    srv = startServer('tok');
+  test("backoff resets on healthy hello-ack — second reconnect uses minDelay", async () => {
+    srv = startServer("tok");
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
+      bearer: "tok",
+      nodeName: "gpu1",
       handleRequest: async () => undefined,
       reconnect: { minDelayMs: 30, maxDelayMs: 500, jitterFraction: 0 },
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
@@ -447,13 +449,13 @@ describe('reconnect + heartbeat (I.3.2)', () => {
     const delays: number[] = [];
 
     const t0 = Date.now();
-    srv.server.disconnect('gpu1', 'kick1');
+    srv.server.disconnect("gpu1", "kick1");
     await waitFor(() => srv!.connects.length >= 2);
     await client.waitUntilReady(1000);
     delays.push(Date.now() - t0);
 
     const t1 = Date.now();
-    srv.server.disconnect('gpu1', 'kick2');
+    srv.server.disconnect("gpu1", "kick2");
     await waitFor(() => srv!.connects.length >= 3);
     await client.waitUntilReady(1000);
     delays.push(Date.now() - t1);
@@ -467,12 +469,12 @@ describe('reconnect + heartbeat (I.3.2)', () => {
     client.stop();
   });
 
-  test('heartbeat round-trips with a healthy server — tunnel stays ready, no reconnect', async () => {
-    srv = startServer('tok');
+  test("heartbeat round-trips with a healthy server — tunnel stays ready, no reconnect", async () => {
+    srv = startServer("tok");
     const client = createTunnelClient({
       url: srv.url,
-      bearer: 'tok',
-      nodeName: 'gpu1',
+      bearer: "tok",
+      nodeName: "gpu1",
       handleRequest: async () => undefined,
       reconnect: { minDelayMs: 30, maxDelayMs: 100, jitterFraction: 0 },
       heartbeat: { intervalMs: 30, timeoutMs: 100 },
@@ -480,48 +482,54 @@ describe('reconnect + heartbeat (I.3.2)', () => {
     await client.start();
     const connectsAtStart = srv.connects.length;
     await new Promise((r) => setTimeout(r, 200));
-    expect(client.state()).toBe('ready');
+    expect(client.state()).toBe("ready");
     expect(srv.connects.length).toBe(connectsAtStart);
     client.stop();
   });
 
-  test('heartbeat timeout on a stub server that never pongs forces reconnect', async () => {
+  test("heartbeat timeout on a stub server that never pongs forces reconnect", async () => {
     // Custom stub: accepts hello + acks, then drops every subsequent
     // message (no pongs). Client should trip heartbeat timeout,
     // close with 4000, and reconnect.
     let acceptedHellos = 0;
     const bun = Bun.serve({
       port: 0,
-      hostname: '127.0.0.1',
+      hostname: "127.0.0.1",
       fetch(req, server) {
-        if (new URL(req.url).pathname !== '/tunnel') return new Response('nf', { status: 404 });
+        if (new URL(req.url).pathname !== "/tunnel") return new Response("nf", { status: 404 });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const ok = (server as any).upgrade(req, { data: { hello: false } });
-        return ok ? undefined : new Response('no', { status: 400 });
+        return ok ? undefined : new Response("no", { status: 400 });
       },
       websocket: {
-        open() { /* wait for hello */ },
+        open() {
+          /* wait for hello */
+        },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         message(ws: any, data: string | Buffer) {
-          const raw = typeof data === 'string' ? data : data.toString('utf8');
+          const raw = typeof data === "string" ? data : data.toString("utf8");
           const msg = parseTunnelMessage(raw);
           if (!msg) return;
-          if (msg.type === 'hello' && !ws.data.hello) {
+          if (msg.type === "hello" && !ws.data.hello) {
             ws.data.hello = true;
             acceptedHellos++;
-            ws.send(encodeTunnelMessage({ type: 'hello-ack', serverTime: new Date().toISOString() }));
+            ws.send(
+              encodeTunnelMessage({ type: "hello-ack", serverTime: new Date().toISOString() }),
+            );
             return;
           }
           // Drop everything else — no pong.
         },
-        close() { /* noop */ },
+        close() {
+          /* noop */
+        },
       },
     });
     try {
       const client = createTunnelClient({
         url: `ws://127.0.0.1:${bun.port}/tunnel`,
-        bearer: 'tok',
-        nodeName: 'gpu1',
+        bearer: "tok",
+        nodeName: "gpu1",
         handleRequest: async () => undefined,
         reconnect: { minDelayMs: 20, maxDelayMs: 60, jitterFraction: 0 },
         heartbeat: { intervalMs: 30, timeoutMs: 40 },

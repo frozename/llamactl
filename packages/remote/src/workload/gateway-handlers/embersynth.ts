@@ -1,17 +1,14 @@
-import {
-  loadEmbersynthConfig,
-  defaultEmbersynthConfigPath,
-} from '../../config/embersynth.js';
-import { resolveNodeKind, type ClusterNode } from '../../config/schema.js';
-import { currentContext, loadConfig, resolveToken } from '../../config/kubeconfig.js';
-import type { ApplyResult } from '../apply.js';
-import type { GatewayApplyOptions, GatewayHandler } from './types.js';
+import { loadEmbersynthConfig, defaultEmbersynthConfigPath } from "../../config/embersynth.js";
+import { resolveNodeKind, type ClusterNode } from "../../config/schema.js";
+import { currentContext, loadConfig, resolveToken } from "../../config/kubeconfig.js";
+import type { ApplyResult } from "../apply.js";
+import type { GatewayApplyOptions, GatewayHandler } from "./types.js";
 import {
   deriveEmbersynthEntries,
   applyCompositeEntries,
   readGatewayCatalog,
   writeGatewayCatalog,
-} from '../gateway-catalog/index.js';
+} from "../gateway-catalog/index.js";
 
 /**
  * Embersynth gateway handler.
@@ -35,9 +32,9 @@ import {
  * upstream changes land), not authoring routing config.
  */
 export const embersynthHandler: GatewayHandler = {
-  kind: 'embersynth',
+  kind: "embersynth",
   canHandle(node: ClusterNode): boolean {
-    return resolveNodeKind(node) === 'gateway' && node.cloud?.provider === 'embersynth';
+    return resolveNodeKind(node) === "gateway" && node.cloud?.provider === "embersynth";
   },
   async apply(opts: GatewayApplyOptions): Promise<ApplyResult> {
     const now = new Date().toISOString();
@@ -45,9 +42,9 @@ export const embersynthHandler: GatewayHandler = {
     let catalogChanged = false;
     if (opts.composite) {
       const derived = deriveEmbersynthEntries(opts.composite);
-      const current = readGatewayCatalog('embersynth');
+      const current = readGatewayCatalog("embersynth");
       const result = applyCompositeEntries({
-        kind: 'embersynth',
+        kind: "embersynth",
         compositeName: opts.composite.compositeName,
         derived,
         current,
@@ -55,21 +52,21 @@ export const embersynthHandler: GatewayHandler = {
       if (result.conflicts.length > 0) {
         const c = result.conflicts[0]!;
         const reason =
-          c.kind === 'name' ? 'EmbersynthUpstreamNameCollision' : 'EmbersynthUpstreamShapeMismatch';
+          c.kind === "name" ? "EmbersynthUpstreamNameCollision" : "EmbersynthUpstreamShapeMismatch";
         const message =
-          c.kind === 'name'
+          c.kind === "name"
             ? `node '${c.name}' already exists as an operator-authored embersynth node; remove it or change composite spec`
             : `node '${c.name}': ${c.detail}`;
         return pending(opts, reason, message, now);
       }
       if (result.changed) {
         try {
-          writeGatewayCatalog('embersynth', result.next);
+          writeGatewayCatalog("embersynth", result.next);
           catalogChanged = true;
         } catch (err) {
           return failure(
             opts,
-            'EmbersynthCatalogWriteFailed',
+            "EmbersynthCatalogWriteFailed",
             `could not write embersynth.yaml: ${(err as Error).message}`,
             now,
           );
@@ -81,12 +78,12 @@ export const embersynthHandler: GatewayHandler = {
     if (!target) {
       return failure(
         opts,
-        'EmbersynthTargetMalformed',
+        "EmbersynthTargetMalformed",
         `embersynth gateway manifests require spec.target.value to name a synthetic model`,
         now,
       );
     }
-    const synthetic = target.startsWith('fusion-') ? target : `fusion-${target}`;
+    const synthetic = target.startsWith("fusion-") ? target : `fusion-${target}`;
 
     // Best-effort host-side validation. When `embersynth.yaml` lives
     // on the operator's host (from `llamactl embersynth init`), we
@@ -102,20 +99,20 @@ export const embersynthHandler: GatewayHandler = {
     } catch (err) {
       return failure(
         opts,
-        'EmbersynthConfigUnreadable',
+        "EmbersynthConfigUnreadable",
         `failed to read embersynth.yaml: ${(err as Error).message}`,
         now,
       );
     }
     if (!cfg) {
       opts.onEvent?.({
-        type: 'gateway-pending',
+        type: "gateway-pending",
         message: `${opts.manifest.metadata.name}: host-side embersynth.yaml absent — deferring synthetic-model validation to embersynth /config/reload`,
       });
     } else if (!(synthetic in cfg.syntheticModels)) {
       return pending(
         opts,
-        'EmbersynthSyntheticMissing',
+        "EmbersynthSyntheticMissing",
         `synthetic model '${synthetic}' not defined in embersynth.yaml; run \`llamactl embersynth sync\` or edit syntheticModels`,
         now,
       );
@@ -125,12 +122,12 @@ export const embersynthHandler: GatewayHandler = {
     if (!baseUrl) {
       return failure(
         opts,
-        'EmbersynthBaseUrlMissing',
+        "EmbersynthBaseUrlMissing",
         `gateway node '${opts.node.name}' has no cloud.baseUrl — edit kubeconfig`,
         now,
       );
     }
-    const reloadUrl = normalizeBaseUrl(baseUrl) + '/config/reload';
+    const reloadUrl = normalizeBaseUrl(baseUrl) + "/config/reload";
 
     let token: string;
     try {
@@ -142,7 +139,7 @@ export const embersynthHandler: GatewayHandler = {
     } catch (err) {
       return failure(
         opts,
-        'EmbersynthTokenUnresolved',
+        "EmbersynthTokenUnresolved",
         `could not resolve bearer token for embersynth reload: ${(err as Error).message}`,
         now,
       );
@@ -151,30 +148,30 @@ export const embersynthHandler: GatewayHandler = {
     if (!opts.composite || catalogChanged) {
       try {
         const res = await fetch(reloadUrl, {
-          method: 'POST',
+          method: "POST",
           headers: {
             authorization: `Bearer ${token}`,
-            'content-type': 'application/json',
+            "content-type": "application/json",
           },
           body: JSON.stringify({
-            source: 'llamactl-workload',
+            source: "llamactl-workload",
             name: opts.manifest.metadata.name,
             syntheticModel: synthetic,
           }),
         });
         if (!res.ok) {
-          const body = (await res.text().catch(() => '')).slice(0, 500);
+          const body = (await res.text().catch(() => "")).slice(0, 500);
           return failure(
             opts,
-            'EmbersynthReloadFailed',
-            `POST ${reloadUrl} returned ${res.status}${body ? `: ${body}` : ''}`,
+            "EmbersynthReloadFailed",
+            `POST ${reloadUrl} returned ${res.status}${body ? `: ${body}` : ""}`,
             now,
           );
         }
       } catch (err) {
         return failure(
           opts,
-          'EmbersynthReloadUnreachable',
+          "EmbersynthReloadUnreachable",
           `POST ${reloadUrl} failed: ${(err as Error).message}`,
           now,
         );
@@ -183,21 +180,21 @@ export const embersynthHandler: GatewayHandler = {
 
     const endpoint = `${normalizeBaseUrl(baseUrl)}/v1/chat/completions`;
     opts.onEvent?.({
-      type: 'gateway-pending',
+      type: "gateway-pending",
       message: `${opts.manifest.metadata.name}: embersynth reloaded — '${synthetic}' routable at ${endpoint}`,
     });
     return {
-      action: 'started',
+      action: "started",
       statusSection: {
-        phase: 'Running',
+        phase: "Running",
         serverPid: null,
         endpoint,
         lastTransitionTime: now,
         conditions: [
           {
-            type: 'Applied',
-            status: 'True',
-            reason: 'EmbersynthReloaded',
+            type: "Applied",
+            status: "True",
+            reason: "EmbersynthReloaded",
             message: `embersynth reloaded; synthetic model '${synthetic}' is routable`,
             lastTransitionTime: now,
           },
@@ -208,7 +205,7 @@ export const embersynthHandler: GatewayHandler = {
 };
 
 function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/v1\/?$/, '').replace(/\/$/, '');
+  return url.replace(/\/v1\/?$/, "").replace(/\/$/, "");
 }
 
 function pending(
@@ -218,20 +215,20 @@ function pending(
   now: string,
 ): ApplyResult {
   opts.onEvent?.({
-    type: 'gateway-pending',
+    type: "gateway-pending",
     message: `${opts.manifest.metadata.name}: ${message}`,
   });
   return {
-    action: 'pending',
+    action: "pending",
     statusSection: {
-      phase: 'Pending',
+      phase: "Pending",
       serverPid: null,
       endpoint: null,
       lastTransitionTime: now,
       conditions: [
         {
-          type: 'Applied',
-          status: 'False',
+          type: "Applied",
+          status: "False",
           reason,
           message,
           lastTransitionTime: now,
@@ -248,20 +245,20 @@ function failure(
   now: string,
 ): ApplyResult {
   opts.onEvent?.({
-    type: 'gateway-pending',
+    type: "gateway-pending",
     message: `${opts.manifest.metadata.name}: ${message}`,
   });
   return {
-    action: 'pending',
+    action: "pending",
     statusSection: {
-      phase: 'Failed',
+      phase: "Failed",
       serverPid: null,
       endpoint: null,
       lastTransitionTime: now,
       conditions: [
         {
-          type: 'Applied',
-          status: 'False',
+          type: "Applied",
+          status: "False",
           reason,
           message,
           lastTransitionTime: now,

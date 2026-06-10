@@ -38,79 +38,79 @@ Out of scope:
 ## 2. Design question ledger (hard gate)
 
 1. Store integration shape  
-Decision: **shared store** in `defaultWorkloadsDir()` with kind filtering, same
-pattern as `NodeRun` (`packages/remote/src/workload/noderun-store.ts`).  
-Why: `llamactl disable` and `llamactl get workloads` are store-backed today
-(`packages/cli/src/commands/setEnabled.ts`, `packages/cli/src/commands/workload.ts`).
-Parallel directories would keep current blind spots.
+   Decision: **shared store** in `defaultWorkloadsDir()` with kind filtering, same
+   pattern as `NodeRun` (`packages/remote/src/workload/noderun-store.ts`).  
+   Why: `llamactl disable` and `llamactl get workloads` are store-backed today
+   (`packages/cli/src/commands/setEnabled.ts`, `packages/cli/src/commands/workload.ts`).
+   Parallel directories would keep current blind spots.
 
 2. Reconciler dispatch shape  
-Decision: keep separate apply functions per kind (`applyOneModelRun`,
-`applyOneModelHost`) behind `applyManifest` kind dispatch in
-`packages/remote/src/workload/apply.ts`.  
-Why: current `applyOne` is already large and ModelRun-specific (admission,
-worker RPC, gateway path). Forcing both kinds into one function will reduce
-maintainability and increase regression risk.
+   Decision: keep separate apply functions per kind (`applyOneModelRun`,
+   `applyOneModelHost`) behind `applyManifest` kind dispatch in
+   `packages/remote/src/workload/apply.ts`.  
+   Why: current `applyOne` is already large and ModelRun-specific (admission,
+   worker RPC, gateway path). Forcing both kinds into one function will reduce
+   maintainability and increase regression risk.
 
 3. Worker-side spawn path  
-Decision: add a dedicated node tRPC surface for ModelHost lifecycle:
-`modelHostStart` (subscription), `modelHostStop` (mutation), `modelHostStatus`
-(query), implemented in `packages/remote/src/router.ts` and backed by core engine
-entrypoints.  
-Why: reusing `serverStart` would overload ModelRun-specific inputs (`target`,
-llama-server semantics). Dedicated procedures preserve clear contracts and
-dispatcher fan-out (`--node`, tunnel, remote TLS pinning) without controller-local
-spawn.
+   Decision: add a dedicated node tRPC surface for ModelHost lifecycle:
+   `modelHostStart` (subscription), `modelHostStop` (mutation), `modelHostStatus`
+   (query), implemented in `packages/remote/src/router.ts` and backed by core engine
+   entrypoints.  
+   Why: reusing `serverStart` would overload ModelRun-specific inputs (`target`,
+   llama-server semantics). Dedicated procedures preserve clear contracts and
+   dispatcher fan-out (`--node`, tunnel, remote TLS pinning) without controller-local
+   spawn.
 
 4. State source of truth  
-Decision: desired state is yaml manifest in shared store; observed runtime state
-remains sidecars under `workloadRuntimeDir` (`modelhost.pid`, `modelhost.state`)
-via `writeModelHostState` / `readModelHostState` in
-`packages/core/src/engines/state.ts`.  
-Why: this matches current ModelRun pattern (manifest + runtime sidecars) and lets
-`reconcileOnce` rebuild status after process drift.
+   Decision: desired state is yaml manifest in shared store; observed runtime state
+   remains sidecars under `workloadRuntimeDir` (`modelhost.pid`, `modelhost.state`)
+   via `writeModelHostState` / `readModelHostState` in
+   `packages/core/src/engines/state.ts`.  
+   Why: this matches current ModelRun pattern (manifest + runtime sidecars) and lets
+   `reconcileOnce` rebuild status after process drift.
 
 5. `disable` semantics  
-Decision: `llamactl disable <name>` becomes kind-aware; for ModelHost it sets
-`spec.enabled=false` and executes ModelHost stop, which calls adapter
-`teardown(pid)` (`EngineAdapter.teardown`) through the new node procedure.  
-Why: today disable only loads ModelRun manifests; this is the direct fix for the
-reported operator breakage.
+   Decision: `llamactl disable <name>` becomes kind-aware; for ModelHost it sets
+   `spec.enabled=false` and executes ModelHost stop, which calls adapter
+   `teardown(pid)` (`EngineAdapter.teardown`) through the new node procedure.  
+   Why: today disable only loads ModelRun manifests; this is the direct fix for the
+   reported operator breakage.
 
 6. Admission policy  
-Decision: ModelHost uses the existing node budget gate (`computeNodeBudget`)
-against `spec.resources.expectedMemoryGiB`, with same `llamactl.io/force-admit`
-escape hatch as ModelRun. Port-collision checks are reused where endpoint exists.  
-Why: one policy surface keeps fleet behavior predictable and avoids introducing a
-second memory admission regime.
+   Decision: ModelHost uses the existing node budget gate (`computeNodeBudget`)
+   against `spec.resources.expectedMemoryGiB`, with same `llamactl.io/force-admit`
+   escape hatch as ModelRun. Port-collision checks are reused where endpoint exists.  
+   Why: one policy surface keeps fleet behavior predictable and avoids introducing a
+   second memory admission regime.
 
 7. mac-mini deployment constraint  
-Decision: Sub B removes the local-only guard in apply path and relies on node
-dispatch. Any node constraints remain schema/runtime-validated, not hard-coded to
-loopback identities.  
-Why: this unblocks Sub C without requiring Sub C feature scope in this design.
+   Decision: Sub B removes the local-only guard in apply path and relies on node
+   dispatch. Any node constraints remain schema/runtime-validated, not hard-coded to
+   loopback identities.  
+   Why: this unblocks Sub C without requiring Sub C feature scope in this design.
 
 8. Migration / compatibility  
-Decision: keep file format compatibility in shared workloads dir; no changes to
-existing `ModelRun` manifests. Add ModelHost store helpers and list/describe
-routing by `kind` so mixed directories continue to work.  
-Why: `NodeRun` already proved mixed-kind manifests are viable with parse-time kind
-filtering.
+   Decision: keep file format compatibility in shared workloads dir; no changes to
+   existing `ModelRun` manifests. Add ModelHost store helpers and list/describe
+   routing by `kind` so mixed directories continue to work.  
+   Why: `NodeRun` already proved mixed-kind manifests are viable with parse-time kind
+   filtering.
 
 ## 3. Architecture
 
 Control-plane path after Sub B:
 
 1. `llamactl apply -f host.yaml` parses YAML, detects `kind: ModelHost`, persists
-manifest to shared workloads store, then dispatches apply via remote workload layer.
+   manifest to shared workloads store, then dispatches apply via remote workload layer.
 2. Workload apply routes to `applyOneModelHost` (new) which:
    - runs admission + endpoint collision checks against store siblings,
    - calls node `modelHostStart` subscription,
    - writes status section back to persisted manifest.
 3. Reconciler (`reconcileOnce`) loads both kinds from shared store and applies
-kind-specific convergers each tick.
+   kind-specific convergers each tick.
 4. `llamactl get workloads` and `llamactl disable` operate on both kinds through
-kind-aware load/save/apply wiring.
+   kind-aware load/save/apply wiring.
 
 This keeps `packages/core` adapter logic pure and moves orchestration parity into
 `packages/remote` + `packages/cli`.
@@ -191,23 +191,23 @@ Primary tests to add/update:
 
 - Existing ModelRun YAML files remain untouched.
 - Existing ModelHost runtime sidecars remain readable; Sub B migration adds missing
-manifest persistence as the canonical desired state.
+  manifest persistence as the canonical desired state.
 - If an operator has a running Sub A ModelHost without a manifest in store, Sub B
-introduces a one-time reconciliation-safe bootstrap path:
+  introduces a one-time reconciliation-safe bootstrap path:
   - either require re-apply of YAML (preferred, explicit),
   - or optional synthesis helper from runtime sidecar to manifest stub (deferred;
     not required for Sub B acceptance).
 - `llamactl disable/list/describe` become additive for ModelHost; no behavior
-regression for ModelRun.
+  regression for ModelRun.
 
 ## 10. Open questions deferred
 
 - Sub C: policy for remote ModelHost binary provenance (`spec.binary` path
-portability vs per-node artifact resolution).
+  portability vs per-node artifact resolution).
 - Sub C: whether ModelHost status should include node-advertised endpoint metadata
-similar to `serverStatus.advertisedEndpoint`.
+  similar to `serverStatus.advertisedEndpoint`.
 - Sub D: whether train adapters require ModelHost schema extension or remain engine
-extraArgs + side-channel APIs.
+  extraArgs + side-channel APIs.
 
 ## 11. File touch list (informational, not the plan)
 

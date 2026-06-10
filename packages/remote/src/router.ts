@@ -1,35 +1,30 @@
-
-import { searchSessions } from './search/sessions.js';
-import { searchKnowledge } from './search/knowledge.js';
-import { searchLogs } from './search/logs.js';
-import { resolveDefaultRagNode } from './search/rag-node.js';
-import { createRagAdapter } from './rag/index.js';
-import { resolveRagNode } from './rag/resolve.js';
-import { initTRPC, TRPCError } from '@trpc/server';
-import { createTRPCClient } from '@trpc/client';
-import { z } from 'zod';
-import * as kubecfg from './config/kubeconfig.js';
-import { decodeBootstrap } from './config/agent-config.js';
-import * as infraLayoutMod from './infra/layout.js';
-import * as infraInstallMod from './infra/install.js';
-import * as infraServicesMod from './infra/services.js';
-import type { ClusterNode, Config } from './config/schema.js';
-import * as workloadStoreMod from './workload/store.js';
-import * as workloadApplyMod from './workload/apply.js';
-import { defaultNodeBudgetGiB, estimateModelHostMemoryGiB } from './workload/admission.js';
-import * as nodeRunStoreMod from './workload/noderun-store.js';
-import * as modelHostStoreMod from './workload/modelhost-store.js';
-import * as reconcileLoopMod from './workload/reconcileLoop.js';
-import * as benchScheduleMod from './bench/schedule.js';
-import * as benchScheduleLoopMod from './bench/scheduleLoop.js';
-import {
-  ModelRunSchema,
-  ModelRunSpecSchema,
-  type ModelRun,
-} from './workload/schema.js';
-import { ModelHostManifestSchema } from './workload/modelhost-schema.js';
-import { startModelHost, statusModelHost, stopModelHost } from './server/modelhost.js';
-import { buildPinnedLinks } from './client/links.js';
+import { searchSessions } from "./search/sessions.js";
+import { searchKnowledge } from "./search/knowledge.js";
+import { searchLogs } from "./search/logs.js";
+import { resolveDefaultRagNode } from "./search/rag-node.js";
+import { createRagAdapter } from "./rag/index.js";
+import { resolveRagNode } from "./rag/resolve.js";
+import { initTRPC, TRPCError } from "@trpc/server";
+import { createTRPCClient } from "@trpc/client";
+import { z } from "zod";
+import * as kubecfg from "./config/kubeconfig.js";
+import { decodeBootstrap } from "./config/agent-config.js";
+import * as infraLayoutMod from "./infra/layout.js";
+import * as infraInstallMod from "./infra/install.js";
+import * as infraServicesMod from "./infra/services.js";
+import type { ClusterNode, Config } from "./config/schema.js";
+import * as workloadStoreMod from "./workload/store.js";
+import * as workloadApplyMod from "./workload/apply.js";
+import { defaultNodeBudgetGiB, estimateModelHostMemoryGiB } from "./workload/admission.js";
+import * as nodeRunStoreMod from "./workload/noderun-store.js";
+import * as modelHostStoreMod from "./workload/modelhost-store.js";
+import * as reconcileLoopMod from "./workload/reconcileLoop.js";
+import * as benchScheduleMod from "./bench/schedule.js";
+import * as benchScheduleLoopMod from "./bench/scheduleLoop.js";
+import { ModelRunSchema, ModelRunSpecSchema, type ModelRun } from "./workload/schema.js";
+import { ModelHostManifestSchema } from "./workload/modelhost-schema.js";
+import { startModelHost, statusModelHost, stopModelHost } from "./server/modelhost.js";
+import { buildPinnedLinks } from "./client/links.js";
 import {
   createLlmExecutor,
   runPlanner,
@@ -38,9 +33,9 @@ import {
   computeCostSnapshot,
   type PlannerExecutor,
   type PlannerToolDescriptor,
-} from '@nova/mcp';
-import { createOpenAICompatProvider, type AiProvider } from '@nova/contracts';
-import { CompositeOwnershipSchema } from './workload/gateway-catalog/schema.js';
+} from "@nova/mcp";
+import { createOpenAICompatProvider, type AiProvider } from "@nova/contracts";
+import { CompositeOwnershipSchema } from "./workload/gateway-catalog/schema.js";
 import {
   decideGuardianAction,
   emptyCostGuardianConfig,
@@ -48,24 +43,21 @@ import {
   defaultCostGuardianConfigPath,
   defaultCostJournalPath,
   type CostJournalEntry,
-} from '@llamactl/agents';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+} from "@llamactl/agents";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import {
   KNOWN_OPS_CHAT_TOOLS,
   dispatchOpsChatTool,
   auditOpsChatToolRun,
-} from './ops-chat/dispatch.js';
-import {
-  readOpsChatAudit,
-  type OpsChatAuditEntry,
-} from './ops-chat/audit.js';
-import { listSessions, getSessionSummary } from './ops-chat/sessions/list.js';
-import { deleteSession } from './ops-chat/sessions/delete.js';
-import { readJournal } from './ops-chat/sessions/journal.js';
-import { sessionEventBus } from './ops-chat/sessions/event-bus.js';
-import { isTerminal } from './ops-chat/sessions/journal-schema.js';
+} from "./ops-chat/dispatch.js";
+import { readOpsChatAudit, type OpsChatAuditEntry } from "./ops-chat/audit.js";
+import { listSessions, getSessionSummary } from "./ops-chat/sessions/list.js";
+import { deleteSession } from "./ops-chat/sessions/delete.js";
+import { readJournal } from "./ops-chat/sessions/journal.js";
+import { sessionEventBus } from "./ops-chat/sessions/event-bus.js";
+import { isTerminal } from "./ops-chat/sessions/journal-schema.js";
 
 /**
  * Router↔client circular-type escape hatch — the `AppRouter → NodeClient
@@ -88,8 +80,7 @@ import { isTerminal } from './ops-chat/sessions/journal-schema.js';
  * or pinned tRPC) satisfies everything structurally, so this is a
  * pure type-level accumulator.
  */
-type WorkloadNodeClient = workloadApplyMod.WorkloadClient &
-  benchScheduleLoopMod.BenchClient;
+type WorkloadNodeClient = workloadApplyMod.WorkloadClient & benchScheduleLoopMod.BenchClient;
 
 /**
  * Build a tRPC-client-shaped proxy over `router.createCaller({})` so
@@ -105,11 +96,11 @@ function localCallerProxy(): WorkloadNodeClient {
     router.createCaller({}) as unknown as Record<string, (...a: unknown[]) => unknown>;
   const handler: ProxyHandler<object> = {
     get(_t, prop) {
-      if (typeof prop !== 'string') return undefined;
+      if (typeof prop !== "string") return undefined;
       const invoke = (...args: unknown[]): unknown => {
         const caller = getCaller();
         const fn = caller[prop];
-        if (typeof fn !== 'function') throw new Error(`unknown procedure '${prop}'`);
+        if (typeof fn !== "function") throw new Error(`unknown procedure '${prop}'`);
         return fn(...args);
       };
       return { query: invoke, mutate: invoke, subscribe: invoke };
@@ -131,7 +122,7 @@ async function* bridgeEventStream<T>(
 ): AsyncGenerator<T, void, unknown> {
   const controller = new AbortController();
   const onClientAbort = (): void => controller.abort();
-  clientSignal.addEventListener('abort', onClientAbort);
+  clientSignal.addEventListener("abort", onClientAbort);
 
   const queue: T[] = [];
   let finished = false;
@@ -170,7 +161,7 @@ async function* bridgeEventStream<T>(
     }
     if (err) throw err;
   } finally {
-    clientSignal.removeEventListener('abort', onClientAbort);
+    clientSignal.removeEventListener("abort", onClientAbort);
     controller.abort();
     await run.catch(() => {});
   }
@@ -178,7 +169,7 @@ async function* bridgeEventStream<T>(
 
 function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
   const resolved = kubecfg.resolveNode(cfg, nodeName);
-  if (resolved.node.endpoint.startsWith('inproc://')) {
+  if (resolved.node.endpoint.startsWith("inproc://")) {
     return localCallerProxy();
   }
   const token = kubecfg.resolveToken(resolved.user);
@@ -196,16 +187,16 @@ function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
 async function resolvePlannerProvider(nodeId: string): Promise<AiProvider> {
   const cfg = kubecfg.loadConfig();
   const resolved = kubecfg.resolveNode(cfg, nodeId);
-  if (resolved.node.endpoint === 'inproc://local') {
-    const { env: envMod } = await import('@llamactl/core');
+  if (resolved.node.endpoint === "inproc://local") {
+    const { env: envMod } = await import("@llamactl/core");
     const rEnv = envMod.resolveEnv();
     return createOpenAICompatProvider({
-      name: 'local',
+      name: "local",
       baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
-      apiKey: 'local',
+      apiKey: "local",
     });
   }
-  const { providerForNode } = await import('./providers/factory.js');
+  const { providerForNode } = await import("./providers/factory.js");
   return providerForNode({ node: resolved.node, user: resolved.user, cfg });
 }
 
@@ -215,7 +206,6 @@ async function resolvePlannerProvider(nodeId: string): Promise<AiProvider> {
  * RAG node — every ragX procedure uses this up-front so callers get
  * a predictable error shape instead of an adapter-layer exception.
  */
-
 
 /**
  * Lazy-initialized runtime backends shared by every composite
@@ -238,26 +228,26 @@ async function resolvePlannerProvider(nodeId: string): Promise<AiProvider> {
  * dry-run path so they never touch this helper.
  */
 const _compositeRuntimes = new Map<
-  import('./runtime/factory.js').RuntimeKind,
-  import('./runtime/backend.js').RuntimeBackend
+  import("./runtime/factory.js").RuntimeKind,
+  import("./runtime/backend.js").RuntimeBackend
 >();
 
 function resolveCompositeRuntimeKind(
-  requested?: import('./runtime/factory.js').RuntimeKind,
-): import('./runtime/factory.js').RuntimeKind {
+  requested?: import("./runtime/factory.js").RuntimeKind,
+): import("./runtime/factory.js").RuntimeKind {
   if (requested) return requested;
   const envHint = process.env.LLAMACTL_RUNTIME_BACKEND?.trim();
-  if (envHint === 'kubernetes') return 'kubernetes';
-  if (envHint === 'docker') return 'docker';
-  return 'docker';
+  if (envHint === "kubernetes") return "kubernetes";
+  if (envHint === "docker") return "docker";
+  return "docker";
 }
 
 async function getCompositeRuntime(
-  kind: import('./runtime/factory.js').RuntimeKind = 'docker',
-): Promise<import('./runtime/backend.js').RuntimeBackend> {
+  kind: import("./runtime/factory.js").RuntimeKind = "docker",
+): Promise<import("./runtime/backend.js").RuntimeBackend> {
   const cached = _compositeRuntimes.get(kind);
   if (cached) return cached;
-  const { createRuntimeBackend } = await import('./runtime/factory.js');
+  const { createRuntimeBackend } = await import("./runtime/factory.js");
   const backend = createRuntimeBackend({ kind });
   _compositeRuntimes.set(kind, backend);
   return backend;
@@ -280,28 +270,28 @@ async function getCompositeRuntime(
  */
 export const BUILT_IN_PLANNER_TOOLS: readonly PlannerToolDescriptor[] = [
   {
-    name: 'llamactl.composite.apply',
+    name: "llamactl.composite.apply",
     description:
       'Apply a Composite manifest that declares a full stack in one atomic unit — models + gateways + RAG nodes + supporting services (chroma, pgvector, and future database/nginx/redis backends) — with a dependency DAG and rollback on failure. PREFER this tool over multiple individual tool calls (llamactl.workload.apply + llamactl.rag.store + supporting-service setup) when the operator describes a multi-component setup (three or more interacting pieces). The manifest is a YAML string; the applier topologically orders components, spawns containers via Docker for runtime:"docker" services (external-runtime services are assumed up), wires RAG node endpoints from backing services, and registers everything atomically. For single-model or single-service asks, prefer the narrower individual tool instead.',
     inputSchema: {
-      type: 'object',
-      required: ['manifestYaml'],
+      type: "object",
+      required: ["manifestYaml"],
       properties: {
         manifestYaml: {
-          type: 'string',
+          type: "string",
           minLength: 1,
           description:
-            'The full Composite YAML manifest (apiVersion: llamactl/v1, kind: Composite). Includes services, workloads, ragNodes, gateways, and optional dependencies edges inside `spec`.',
+            "The full Composite YAML manifest (apiVersion: llamactl/v1, kind: Composite). Includes services, workloads, ragNodes, gateways, and optional dependencies edges inside `spec`.",
         },
         dryRun: {
-          type: 'boolean',
+          type: "boolean",
           default: false,
           description:
-            'When true, return the would-apply plan + topological order without hitting the backend. Use this on the first emission of the step so the operator can review the DAG before wet-run.',
+            "When true, return the would-apply plan + topological order without hitting the backend. Use this on the first emission of the step so the operator can review the DAG before wet-run.",
         },
       },
     },
-    tier: 'mutation-dry-run-safe',
+    tier: "mutation-dry-run-safe",
   },
 ];
 
@@ -346,25 +336,25 @@ import {
   target as targetMod,
   uninstall as uninstallMod,
   type MachineProfile,
-} from '@llamactl/core';
+} from "@llamactl/core";
 
 type PullStreamEvent =
   | pull.PullEvent
-  | { type: 'done'; result: pull.PullFileResult }
-  | { type: 'done-candidate'; result: pull.PullCandidateResult };
+  | { type: "done"; result: pull.PullFileResult }
+  | { type: "done-candidate"; result: pull.PullCandidateResult };
 
 type BenchStreamEvent =
   | bench.BenchEvent
-  | { type: 'done-preset'; result: bench.BenchPresetResult }
-  | { type: 'done-vision'; result: bench.BenchVisionResult };
+  | { type: "done-preset"; result: bench.BenchPresetResult }
+  | { type: "done-vision"; result: bench.BenchVisionResult };
 
 type ServerStartEvent =
   | serverMod.ServerEvent
-  | { type: 'done'; result: serverMod.StartServerResult };
+  | { type: "done"; result: serverMod.StartServerResult };
 
 type CandidateStreamEvent =
   | candidateMod.CandidateTestEvent
-  | { type: 'done-candidate-test'; result: candidateMod.CandidateTestResult };
+  | { type: "done-candidate-test"; result: candidateMod.CandidateTestResult };
 
 // Plain JSON serialisation — the core read surface returns POJOs only
 // (strings, numbers, arrays, nested objects). We'd swap in superjson if
@@ -395,7 +385,7 @@ async function probeNodeFacts(opts: {
   certificate: string | null;
   certificateFingerprint: string | null;
 }): Promise<nodeFactsMod.NodeFacts> {
-  const { fingerprintsEqual, computeFingerprint } = await import('./server/tls.js');
+  const { fingerprintsEqual, computeFingerprint } = await import("./server/tls.js");
   if (opts.certificate && opts.certificateFingerprint) {
     const actual = computeFingerprint(opts.certificate);
     if (!fingerprintsEqual(actual, opts.certificateFingerprint)) {
@@ -405,18 +395,23 @@ async function probeNodeFacts(opts: {
     }
   }
   const ca = opts.certificate;
-  const res = await fetch(`${opts.url}/trpc/nodeFacts?input=${encodeURIComponent(JSON.stringify({}))}`, {
-    method: 'GET',
-    headers: { authorization: `Bearer ${opts.token}` },
-    ...(ca ? ({ tls: { ca } } as Record<string, unknown>) : {}),
-  } as RequestInit);
+  const res = await fetch(
+    `${opts.url}/trpc/nodeFacts?input=${encodeURIComponent(JSON.stringify({}))}`,
+    {
+      method: "GET",
+      headers: { authorization: `Bearer ${opts.token}` },
+      ...(ca ? ({ tls: { ca } } as Record<string, unknown>) : {}),
+    } as RequestInit,
+  );
   if (!res.ok) {
-    throw new Error(`probe HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+    throw new Error(
+      `probe HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`,
+    );
   }
   // tRPC v11 GET-procedure responses wrap the payload as { result: { data: ... } }.
   const body = (await res.json()) as { result?: { data?: nodeFactsMod.NodeFacts } };
   if (!body.result?.data) {
-    throw new Error('probe response missing result.data');
+    throw new Error("probe response missing result.data");
   }
   return body.result.data;
 }
@@ -432,8 +427,8 @@ export const router = t.router({
     const cfg = kubecfg.loadConfig();
     const ctx = kubecfg.currentContext(cfg);
     const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
-    const { resolveNodeKind } = await import('./config/schema.js');
-    const { synthesizeProviderNodes } = await import('./config/provider-nodes.js');
+    const { resolveNodeKind } = await import("./config/schema.js");
+    const { synthesizeProviderNodes } = await import("./config/provider-nodes.js");
     // Provider-kind virtual nodes derived from sirius-providers.yaml
     // for each gateway. Synthesized fresh on every read — no cache.
     const synthetic = synthesizeProviderNodes(cfg);
@@ -443,7 +438,7 @@ export const router = t.router({
     }));
     const virtual = synthetic.map((n) => ({
       ...n,
-      effectiveKind: 'provider' as const,
+      effectiveKind: "provider" as const,
     }));
     return {
       context: ctx.name,
@@ -453,75 +448,73 @@ export const router = t.router({
     };
   }),
 
-  nodeTest: t.procedure
-    .input(z.object({ name: z.string().min(1) }))
-    .query(async ({ input }) => {
-      const cfg = kubecfg.loadConfig();
-      const resolved = kubecfg.resolveNode(cfg, input.name);
-      const { resolveNodeKind } = await import('./config/schema.js');
-      const kind = resolveNodeKind(resolved.node);
-      const node = resolved.node;
+  nodeTest: t.procedure.input(z.object({ name: z.string().min(1) })).query(async ({ input }) => {
+    const cfg = kubecfg.loadConfig();
+    const resolved = kubecfg.resolveNode(cfg, input.name);
+    const { resolveNodeKind } = await import("./config/schema.js");
+    const kind = resolveNodeKind(resolved.node);
+    const node = resolved.node;
 
-      // Gateway + provider kinds don't have nodeFacts (no llamactl
-      // agent behind them). Probe via the OpenAI-compat adapter's
-      // healthCheck — cheap `/v1/models` call that confirms the
-      // upstream answers and, for provider kind, that at least one
-      // model claims `owned_by === providerName`.
-      if (kind === 'gateway' || kind === 'provider') {
-        const { providerForNode } = await import('./providers/factory.js');
-        try {
-          const provider = providerForNode({ node, user: resolved.user, cfg });
-          const health = await provider.healthCheck?.();
-          if (!health) return { ok: true as const, facts: null };
-          if (health.state === 'healthy' || health.state === 'degraded') {
-            // For provider kind, also confirm the upstream actually
-            // carries that provider's models — a gateway reporting
-            // healthy doesn't prove the specific provider is alive.
-            if (kind === 'provider' && provider.listModels) {
-              try {
-                const models = await provider.listModels();
-                const binding = node.provider!;
-                const hit = models.some(
-                  (m) => (m as { owned_by?: string }).owned_by === binding.providerName,
-                );
-                if (!hit) {
-                  return {
-                    ok: false as const,
-                    error: `provider '${binding.providerName}' not present in gateway's model catalog`,
-                  };
-                }
-              } catch {
-                // If listModels fails, fall back to the gateway's
-                // health. Not ideal but not worth failing the probe.
-              }
-            }
-            return { ok: true as const, facts: null };
-          }
-          return {
-            ok: false as const,
-            error: health.error ?? `state=${health.state}`,
-          };
-        } catch (err) {
-          return { ok: false as const, error: (err as Error).message };
-        }
-      }
-
-      const token = kubecfg.resolveToken(resolved.user);
-      if (node.endpoint.startsWith('inproc://')) {
-        return { ok: true as const, facts: nodeFactsMod.collectNodeFacts() };
-      }
+    // Gateway + provider kinds don't have nodeFacts (no llamactl
+    // agent behind them). Probe via the OpenAI-compat adapter's
+    // healthCheck — cheap `/v1/models` call that confirms the
+    // upstream answers and, for provider kind, that at least one
+    // model claims `owned_by === providerName`.
+    if (kind === "gateway" || kind === "provider") {
+      const { providerForNode } = await import("./providers/factory.js");
       try {
-        const facts = await probeNodeFacts({
-          url: node.endpoint,
-          token,
-          certificate: node.certificate ?? null,
-          certificateFingerprint: node.certificateFingerprint ?? null,
-        });
-        return { ok: true as const, facts };
+        const provider = providerForNode({ node, user: resolved.user, cfg });
+        const health = await provider.healthCheck?.();
+        if (!health) return { ok: true as const, facts: null };
+        if (health.state === "healthy" || health.state === "degraded") {
+          // For provider kind, also confirm the upstream actually
+          // carries that provider's models — a gateway reporting
+          // healthy doesn't prove the specific provider is alive.
+          if (kind === "provider" && provider.listModels) {
+            try {
+              const models = await provider.listModels();
+              const binding = node.provider!;
+              const hit = models.some(
+                (m) => (m as { owned_by?: string }).owned_by === binding.providerName,
+              );
+              if (!hit) {
+                return {
+                  ok: false as const,
+                  error: `provider '${binding.providerName}' not present in gateway's model catalog`,
+                };
+              }
+            } catch {
+              // If listModels fails, fall back to the gateway's
+              // health. Not ideal but not worth failing the probe.
+            }
+          }
+          return { ok: true as const, facts: null };
+        }
+        return {
+          ok: false as const,
+          error: health.error ?? `state=${health.state}`,
+        };
       } catch (err) {
         return { ok: false as const, error: (err as Error).message };
       }
-    }),
+    }
+
+    const token = kubecfg.resolveToken(resolved.user);
+    if (node.endpoint.startsWith("inproc://")) {
+      return { ok: true as const, facts: nodeFactsMod.collectNodeFacts() };
+    }
+    try {
+      const facts = await probeNodeFacts({
+        url: node.endpoint,
+        token,
+        certificate: node.certificate ?? null,
+        certificateFingerprint: node.certificateFingerprint ?? null,
+      });
+      return { ok: true as const, facts };
+    } catch (err) {
+      return { ok: false as const, error: (err as Error).message };
+    }
+  }),
 
   nodeAdd: t.procedure
     .input(
@@ -545,7 +538,7 @@ export const router = t.router({
           });
         } catch (err) {
           throw new TRPCError({
-            code: 'BAD_REQUEST',
+            code: "BAD_REQUEST",
             message: `reachability check failed: ${(err as Error).message}`,
           });
         }
@@ -557,9 +550,7 @@ export const router = t.router({
 
       cfg = {
         ...cfg,
-        users: cfg.users.map((u) =>
-          u.name === ctx.user ? { ...u, token: decoded.token } : u,
-        ),
+        users: cfg.users.map((u) => (u.name === ctx.user ? { ...u, token: decoded.token } : u)),
       };
       const entry: ClusterNode = {
         name: input.name,
@@ -572,27 +563,23 @@ export const router = t.router({
       return { ok: true as const, name: input.name, endpoint: decoded.url };
     }),
 
-  nodeRemove: t.procedure
-    .input(z.object({ name: z.string().min(1) }))
-    .mutation(({ input }) => {
-      const cfgPath = kubecfg.defaultConfigPath();
-      let cfg = kubecfg.loadConfig(cfgPath);
-      const ctx = kubecfg.currentContext(cfg);
-      cfg = kubecfg.removeNode(cfg, ctx.cluster, input.name);
-      kubecfg.saveConfig(cfg, cfgPath);
-      return { ok: true as const };
-    }),
+  nodeRemove: t.procedure.input(z.object({ name: z.string().min(1) })).mutation(({ input }) => {
+    const cfgPath = kubecfg.defaultConfigPath();
+    let cfg = kubecfg.loadConfig(cfgPath);
+    const ctx = kubecfg.currentContext(cfg);
+    cfg = kubecfg.removeNode(cfg, ctx.cluster, input.name);
+    kubecfg.saveConfig(cfg, cfgPath);
+    return { ok: true as const };
+  }),
 
-  nodeSetDefault: t.procedure
-    .input(z.object({ name: z.string().min(1) }))
-    .mutation(({ input }) => {
-      const cfgPath = kubecfg.defaultConfigPath();
-      let cfg = kubecfg.loadConfig(cfgPath);
-      cfg = kubecfg.setDefaultNode(cfg, input.name);
-      kubecfg.saveConfig(cfg, cfgPath);
-      const ctx = kubecfg.currentContext(cfg);
-      return { ok: true as const, defaultNode: ctx.defaultNode };
-    }),
+  nodeSetDefault: t.procedure.input(z.object({ name: z.string().min(1) })).mutation(({ input }) => {
+    const cfgPath = kubecfg.defaultConfigPath();
+    let cfg = kubecfg.loadConfig(cfgPath);
+    cfg = kubecfg.setDefaultNode(cfg, input.name);
+    kubecfg.saveConfig(cfg, cfgPath);
+    const ctx = kubecfg.currentContext(cfg);
+    return { ok: true as const, defaultNode: ctx.defaultNode };
+  }),
 
   /**
    * Register a cloud-provider node. Unlike `nodeAdd` (which bootstraps
@@ -606,14 +593,14 @@ export const router = t.router({
       z.object({
         name: z.string().min(1),
         provider: z.enum([
-          'openai',
-          'anthropic',
-          'together',
-          'groq',
-          'mistral',
-          'openai-compatible',
-          'sirius',
-          'embersynth',
+          "openai",
+          "anthropic",
+          "together",
+          "groq",
+          "mistral",
+          "openai-compatible",
+          "sirius",
+          "embersynth",
         ]),
         baseUrl: z.url().optional(),
         // Optional: sirius-gateway / local dev endpoints may be
@@ -631,13 +618,11 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const { defaultCloudBinding, providerForCloudNode } = await import(
-        './providers/factory.js'
-      );
+      const { defaultCloudBinding, providerForCloudNode } = await import("./providers/factory.js");
       const cfgPath = kubecfg.defaultConfigPath();
       let cfg = kubecfg.loadConfig(cfgPath);
       const ctx = kubecfg.currentContext(cfg);
-      const binding = defaultCloudBinding(input.provider, input.apiKeyRef ?? '', {
+      const binding = defaultCloudBinding(input.provider, input.apiKeyRef ?? "", {
         ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
         ...(input.displayName ? { displayName: input.displayName } : {}),
       });
@@ -647,8 +632,8 @@ export const router = t.router({
       if (!input.apiKeyRef) delete (binding as { apiKeyRef?: string }).apiKeyRef;
       if (!binding.baseUrl) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: 'baseUrl is required for openai-compatible provider',
+          code: "BAD_REQUEST",
+          message: "baseUrl is required for openai-compatible provider",
         });
       }
       // Probe the binding — empty apiKeyRef or wrong URL fails here
@@ -659,8 +644,8 @@ export const router = t.router({
         try {
           const provider = providerForCloudNode({
             name: input.name,
-            endpoint: '',
-            kind: 'gateway',
+            endpoint: "",
+            kind: "gateway",
             cloud: binding,
           });
           const health = await provider.healthCheck?.();
@@ -670,22 +655,20 @@ export const router = t.router({
           // `degraded` covers all 4xx including 401 (bad key) and 404
           // (wrong base URL); `unhealthy` covers 5xx + network errors
           // and thrown exceptions from the provider adapter.
-          if (health && health.state !== 'healthy') {
-            throw new Error(
-              health.error ?? `cloud node health check returned ${health.state}`,
-            );
+          if (health && health.state !== "healthy") {
+            throw new Error(health.error ?? `cloud node health check returned ${health.state}`);
           }
         } catch (err) {
           throw new TRPCError({
-            code: 'BAD_REQUEST',
+            code: "BAD_REQUEST",
             message: `cloud node probe failed: ${(err as Error).message}`,
           });
         }
       }
       cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
         name: input.name,
-        endpoint: '',
-        kind: 'gateway',
+        endpoint: "",
+        kind: "gateway",
         cloud: binding,
       });
       kubecfg.saveConfig(cfg, cfgPath);
@@ -727,7 +710,7 @@ export const router = t.router({
       const resolved = kubecfg.resolveNode(cfg, input.node);
       if (!resolved.node.rag) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          code: "BAD_REQUEST",
           message: `node '${input.node}' is not a RAG node`,
         });
       }
@@ -785,31 +768,31 @@ export const router = t.router({
     )
     .mutation(async ({ input }) => {
       const { resolveProjectNodeTarget, appendProjectRoutingJournal } =
-        await import('./config/project-routing.js');
+        await import("./config/project-routing.js");
       const route = await resolveProjectNodeTarget(input.node);
       if (route.decision) {
         await appendProjectRoutingJournal(route.decision);
       }
       const cfg = kubecfg.loadConfig();
       const resolved = kubecfg.resolveNode(cfg, route.node);
-      if (resolved.node.endpoint === 'inproc://local') {
+      if (resolved.node.endpoint === "inproc://local") {
         // Local agent — short-circuit through core's openaiProxy.
-        const { openaiProxy } = await import('@llamactl/core');
-        const req = new Request('http://local/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
+        const { openaiProxy } = await import("@llamactl/core");
+        const req = new Request("http://local/v1/chat/completions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
           body: JSON.stringify({ ...input.request, stream: false }),
         });
         const res = await openaiProxy.proxyOpenAI(req);
         if (!res.ok) {
           throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
+            code: "INTERNAL_SERVER_ERROR",
             message: `local chat ${res.status}`,
           });
         }
         return res.json();
       }
-      const { providerForNode } = await import('./providers/factory.js');
+      const { providerForNode } = await import("./providers/factory.js");
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -841,25 +824,25 @@ export const router = t.router({
     )
     .subscription(async function* ({ input, signal }) {
       const { resolveProjectNodeTarget, appendProjectRoutingJournal } =
-        await import('./config/project-routing.js');
+        await import("./config/project-routing.js");
       const route = await resolveProjectNodeTarget(input.node);
       if (route.decision) {
         await appendProjectRoutingJournal(route.decision);
       }
       const cfg = kubecfg.loadConfig();
       const resolved = kubecfg.resolveNode(cfg, route.node);
-      const { providerForNode } = await import('./providers/factory.js');
+      const { providerForNode } = await import("./providers/factory.js");
       // Local-inproc agent: same OpenAI-compat adapter, but pointed at
       // the in-process llama-server's HTTP endpoint (not the
       // sentinel). resolveEnv() gives us LLAMA_CPP_HOST/PORT.
-      if (resolved.node.endpoint === 'inproc://local') {
-        const { env: envMod } = await import('@llamactl/core');
-        const { createOpenAICompatProvider } = await import('@nova/contracts');
+      if (resolved.node.endpoint === "inproc://local") {
+        const { env: envMod } = await import("@llamactl/core");
+        const { createOpenAICompatProvider } = await import("@nova/contracts");
         const rEnv = envMod.resolveEnv();
         const provider = createOpenAICompatProvider({
-          name: 'local',
+          name: "local",
           baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
-          apiKey: 'local',
+          apiKey: "local",
         });
         const stream = provider.streamResponse?.(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -867,7 +850,7 @@ export const router = t.router({
           signal,
         );
         if (!stream) {
-          yield { type: 'done' as const, finish_reason: 'stop' as const };
+          yield { type: "done" as const, finish_reason: "stop" as const };
           return;
         }
         for await (const ev of stream) {
@@ -884,7 +867,7 @@ export const router = t.router({
         signal,
       );
       if (!stream) {
-        yield { type: 'done' as const, finish_reason: 'stop' as const };
+        yield { type: "done" as const, finish_reason: "stop" as const };
         return;
       }
       for await (const ev of stream) {
@@ -899,77 +882,75 @@ export const router = t.router({
    * by the aggregate `/v1/models` surface and the chat UI's model
    * picker.
    */
-  nodeModels: t.procedure
-    .input(z.object({ name: z.string().min(1) }))
-    .query(async ({ input }) => {
-      const cfg = kubecfg.loadConfig();
-      const resolved = kubecfg.resolveNode(cfg, input.name);
-      const { resolveNodeKind } = await import('./config/schema.js');
-      const kind = resolveNodeKind(resolved.node);
-      if (kind === 'provider') {
-        // Scope to the parent gateway's catalog, filtered by
-        // `owned_by === providerName`. Sirius tags each model with
-        // the provider that serves it, so this is the natural
-        // narrowing for the chat UI's picker.
-        const binding = resolved.node.provider!;
-        const parent = cfg.clusters
-          .find((c) => c.name === kubecfg.currentContext(cfg).cluster)
-          ?.nodes.find((n) => n.name === binding.gateway);
-        if (!parent) {
-          throw new TRPCError({
-            code: 'INTERNAL_SERVER_ERROR',
-            message: `parent gateway '${binding.gateway}' not found`,
-          });
-        }
-        const { providerForCloudNode } = await import('./providers/factory.js');
-        const gatewayProvider = providerForCloudNode(parent);
-        const all = (await gatewayProvider.listModels?.()) ?? [];
-        const filtered = all.filter(
-          (m) => (m as { owned_by?: string }).owned_by === binding.providerName,
-        );
-        return { node: input.name, kind, models: filtered };
-      }
-      if (kind === 'gateway' || kind === 'cloud') {
-        // Cloud-direct and gateway-style cloud nodes both carry a
-        // `cloud` binding with a base URL + API key ref. The
-        // OpenAI-compat provider factory handles both identically
-        // — it opens an openai-compat client at that base URL with
-        // the resolved API key and scrapes /v1/models. We forward
-        // the effective kind so the chat UI can render the right
-        // label without round-tripping.
-        const { providerForCloudNode } = await import('./providers/factory.js');
-        const provider = providerForCloudNode(resolved.node);
-        const models = (await provider.listModels?.()) ?? [];
-        return { node: input.name, kind, models };
-      }
-      // Agent path — tRPC to the agent's nodeModels-via-openaiProxy.
-      // Reuse the existing forwarding shape: local caller or pinned
-      // client via clientForNode, then call openaiProxy's /v1/models
-      // through the agent's /v1 HTTP surface. For simplicity today,
-      // inline a call through the pinned-fetch path when remote,
-      // and use the core listOpenAIModels directly when local.
-      if (resolved.node.endpoint.startsWith('inproc://')) {
-        const { openaiProxy } = await import('@llamactl/core');
-        const data = openaiProxy.listOpenAIModels().data;
-        return { node: input.name, kind, models: data };
-      }
-      // Remote agent: scrape its /v1/models endpoint via pinned fetch.
-      const token = kubecfg.resolveToken(resolved.user);
-      const { makePinnedFetch } = await import('./client/links.js');
-      const pinned = makePinnedFetch(resolved.node);
-      const r = await pinned(`${resolved.node.endpoint}/v1/models`, {
-        method: 'GET',
-        headers: { authorization: `Bearer ${token}` },
-      });
-      if (!r.ok) {
+  nodeModels: t.procedure.input(z.object({ name: z.string().min(1) })).query(async ({ input }) => {
+    const cfg = kubecfg.loadConfig();
+    const resolved = kubecfg.resolveNode(cfg, input.name);
+    const { resolveNodeKind } = await import("./config/schema.js");
+    const kind = resolveNodeKind(resolved.node);
+    if (kind === "provider") {
+      // Scope to the parent gateway's catalog, filtered by
+      // `owned_by === providerName`. Sirius tags each model with
+      // the provider that serves it, so this is the natural
+      // narrowing for the chat UI's picker.
+      const binding = resolved.node.provider!;
+      const parent = cfg.clusters
+        .find((c) => c.name === kubecfg.currentContext(cfg).cluster)
+        ?.nodes.find((n) => n.name === binding.gateway);
+      if (!parent) {
         throw new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: `remote /v1/models ${r.status}`,
+          code: "INTERNAL_SERVER_ERROR",
+          message: `parent gateway '${binding.gateway}' not found`,
         });
       }
-      const body = (await r.json()) as { data?: unknown[] };
-      return { node: input.name, kind, models: (body.data ?? []) as unknown[] };
-    }),
+      const { providerForCloudNode } = await import("./providers/factory.js");
+      const gatewayProvider = providerForCloudNode(parent);
+      const all = (await gatewayProvider.listModels?.()) ?? [];
+      const filtered = all.filter(
+        (m) => (m as { owned_by?: string }).owned_by === binding.providerName,
+      );
+      return { node: input.name, kind, models: filtered };
+    }
+    if (kind === "gateway" || kind === "cloud") {
+      // Cloud-direct and gateway-style cloud nodes both carry a
+      // `cloud` binding with a base URL + API key ref. The
+      // OpenAI-compat provider factory handles both identically
+      // — it opens an openai-compat client at that base URL with
+      // the resolved API key and scrapes /v1/models. We forward
+      // the effective kind so the chat UI can render the right
+      // label without round-tripping.
+      const { providerForCloudNode } = await import("./providers/factory.js");
+      const provider = providerForCloudNode(resolved.node);
+      const models = (await provider.listModels?.()) ?? [];
+      return { node: input.name, kind, models };
+    }
+    // Agent path — tRPC to the agent's nodeModels-via-openaiProxy.
+    // Reuse the existing forwarding shape: local caller or pinned
+    // client via clientForNode, then call openaiProxy's /v1/models
+    // through the agent's /v1 HTTP surface. For simplicity today,
+    // inline a call through the pinned-fetch path when remote,
+    // and use the core listOpenAIModels directly when local.
+    if (resolved.node.endpoint.startsWith("inproc://")) {
+      const { openaiProxy } = await import("@llamactl/core");
+      const data = openaiProxy.listOpenAIModels().data;
+      return { node: input.name, kind, models: data };
+    }
+    // Remote agent: scrape its /v1/models endpoint via pinned fetch.
+    const token = kubecfg.resolveToken(resolved.user);
+    const { makePinnedFetch } = await import("./client/links.js");
+    const pinned = makePinnedFetch(resolved.node);
+    const r = await pinned(`${resolved.node.endpoint}/v1/models`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: `remote /v1/models ${r.status}`,
+      });
+    }
+    const body = (await r.json()) as { data?: unknown[] };
+    return { node: input.name, kind, models: (body.data ?? []) as unknown[] };
+  }),
 
   /**
    * Bundle everything a user needs to point an external OpenAI client
@@ -978,20 +959,18 @@ export const router = t.router({
    * the raw token — so the renderer calls this on-demand when the user
    * opens the "OpenAI config" panel, not eagerly with `nodeList`.
    */
-  nodeOpenAIConfig: t.procedure
-    .input(z.object({ name: z.string().min(1) }))
-    .query(({ input }) => {
-      const cfg = kubecfg.loadConfig();
-      const resolved = kubecfg.resolveNode(cfg, input.name);
-      const token = kubecfg.resolveToken(resolved.user);
-      return {
-        node: input.name,
-        baseUrl: `${resolved.node.endpoint}/v1`,
-        apiKey: token,
-        caCertPem: resolved.node.certificate ?? null,
-        caFingerprint: resolved.node.certificateFingerprint ?? null,
-      };
-    }),
+  nodeOpenAIConfig: t.procedure.input(z.object({ name: z.string().min(1) })).query(({ input }) => {
+    const cfg = kubecfg.loadConfig();
+    const resolved = kubecfg.resolveNode(cfg, input.name);
+    const token = kubecfg.resolveToken(resolved.user);
+    return {
+      node: input.name,
+      baseUrl: `${resolved.node.endpoint}/v1`,
+      apiKey: token,
+      caCertPem: resolved.node.certificate ?? null,
+      caFingerprint: resolved.node.certificateFingerprint ?? null,
+    };
+  }),
 
   /**
    * Broadcast-listen for llamactl agents on the local network.
@@ -1003,16 +982,14 @@ export const router = t.router({
   nodeDiscover: t.procedure
     .input(z.object({ timeoutMs: z.number().int().positive().max(10000).optional() }).optional())
     .query(async ({ input }) => {
-      const { discoverAgents } = await import('./server/mdns.js');
+      const { discoverAgents } = await import("./server/mdns.js");
       const found = await discoverAgents(input?.timeoutMs ?? 2500);
       const cfg = kubecfg.loadConfig();
-      const cluster = cfg.clusters.find(
-        (c) => c.name === kubecfg.currentContext(cfg).cluster,
-      );
+      const cluster = cfg.clusters.find((c) => c.name === kubecfg.currentContext(cfg).cluster);
       const existingFingerprints = new Set(
         (cluster?.nodes ?? [])
           .map((n) => n.certificateFingerprint)
-          .filter((fp): fp is string => typeof fp === 'string' && fp.length > 0),
+          .filter((fp): fp is string => typeof fp === "string" && fp.length > 0),
       );
       return found.map((svc) => ({
         name: svc.name,
@@ -1023,9 +1000,7 @@ export const router = t.router({
         version: svc.version,
         fingerprint: svc.fingerprint,
         url: `https://${svc.host}:${svc.port}`,
-        alreadyRegistered: svc.fingerprint
-          ? existingFingerprints.has(svc.fingerprint)
-          : false,
+        alreadyRegistered: svc.fingerprint ? existingFingerprints.has(svc.fingerprint) : false,
       }));
     }),
 
@@ -1050,22 +1025,22 @@ export const router = t.router({
     const rows = await Promise.all(
       manifests.map(async (manifest) => {
         const nodeName = manifest.spec.node;
-        let phase: 'Running' | 'Stopped' | 'Mismatch' | 'Unreachable' = 'Stopped';
+        let phase: "Running" | "Stopped" | "Mismatch" | "Unreachable" = "Stopped";
         let endpoint: string | null = null;
         try {
           const client = clientForNode(cfg, nodeName);
           const status = await client.serverStatus.query({ workload: manifest.metadata.name });
           const desired = manifest.spec.target.value;
-          if (status.state === 'up' && status.rel === desired) phase = 'Running';
-          else if (status.state === 'up' && status.rel !== desired) phase = 'Mismatch';
+          if (status.state === "up" && status.rel === desired) phase = "Running";
+          else if (status.state === "up" && status.rel !== desired) phase = "Mismatch";
           endpoint = status.advertisedEndpoint ?? status.endpoint;
         } catch {
-          phase = 'Unreachable';
+          phase = "Unreachable";
         }
         const workers = manifest.spec.workers ?? [];
         return {
           name: manifest.metadata.name,
-          kind: 'ModelRun' as const,
+          kind: "ModelRun" as const,
           node: nodeName,
           rel: manifest.spec.target.value,
           phase,
@@ -1093,15 +1068,15 @@ export const router = t.router({
       const ep = manifest.spec.endpoint;
       return {
         name: manifest.metadata.name,
-        kind: 'ModelHost' as const,
+        kind: "ModelHost" as const,
         node: manifest.spec.node,
         rel: manifest.spec.hostedModels[0]!.rel,
-        phase: (status.state === 'Running' ? 'Running' : 'Stopped') as
-          | 'Running'
-          | 'Stopped'
-          | 'Mismatch'
-          | 'Unreachable',
-        endpoint: ep ? `http://${ep.host ?? '127.0.0.1'}:${ep.port}` : null,
+        phase: (status.state === "Running" ? "Running" : "Stopped") as
+          | "Running"
+          | "Stopped"
+          | "Mismatch"
+          | "Unreachable",
+        endpoint: ep ? `http://${ep.host ?? "127.0.0.1"}:${ep.port}` : null,
         status: null,
         workerCount: 0,
         workerNodes: [] as string[],
@@ -1125,50 +1100,48 @@ export const router = t.router({
       return { manifest, liveStatus };
     }),
 
-  nodeBudget: t.procedure
-    .input(z.object({ node: z.string().min(1) }))
-    .query(async ({ input }) => {
-      const nodeRuns = nodeRunStoreMod.listNodeRuns();
-      const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
-      const budget = defaultNodeBudgetGiB(node?.spec.budget?.memoryGiB);
-      const resolved = envMod.resolveEnv();
-      const runRows = workloadStoreMod
-        .listWorkloads()
-        .filter((m) => m.spec.node === input.node)
-        .map((manifest) => ({
-          name: manifest.metadata.name,
-          kind: 'ModelRun' as const,
-          enabled: manifest.spec.enabled !== false,
-          expectedMemoryGiB: manifest.spec.resources?.expectedMemoryGiB ?? null,
-          endpoint: manifest.spec.endpoint
-            ? `${manifest.spec.endpoint.host ?? '127.0.0.1'}:${manifest.spec.endpoint.port ?? '?'}`
-            : null,
-          phase: (manifest.status?.phase ?? 'Pending') as string,
-        }));
-      // ModelHosts are charged against the same node budget by admission
-      // (listAnyWorkloadsForAdmission), but were omitted here — so
-      // `reserved` under-reported and the rollup silently disagreed with
-      // what `apply` actually enforces. Count them with the admission
-      // estimator so the two views match.
-      const hostRows = modelHostStoreMod
-        .listModelHosts()
-        .filter((h) => h.spec.node === input.node)
-        .map((manifest) => ({
-          name: manifest.metadata.name,
-          kind: 'ModelHost' as const,
-          enabled: manifest.spec.enabled !== false,
-          expectedMemoryGiB: estimateModelHostMemoryGiB(manifest, resolved),
-          endpoint: manifest.spec.endpoint
-            ? `${manifest.spec.endpoint.host ?? '127.0.0.1'}:${manifest.spec.endpoint.port ?? '?'}`
-            : null,
-          phase: statusModelHost({ key: { name: manifest.metadata.name } }).state as string,
-        }));
-      const workloads = [...runRows, ...hostRows].sort((a, b) => a.name.localeCompare(b.name));
-      const reserved = workloads
-        .filter((w) => w.enabled)
-        .reduce((sum, w) => sum + (w.expectedMemoryGiB ?? 0), 0);
-      return { budget, reserved, workloads };
-    }),
+  nodeBudget: t.procedure.input(z.object({ node: z.string().min(1) })).query(async ({ input }) => {
+    const nodeRuns = nodeRunStoreMod.listNodeRuns();
+    const node = nodeRuns.find((n: (typeof nodeRuns)[number]) => n.metadata.name === input.node);
+    const budget = defaultNodeBudgetGiB(node?.spec.budget?.memoryGiB);
+    const resolved = envMod.resolveEnv();
+    const runRows = workloadStoreMod
+      .listWorkloads()
+      .filter((m) => m.spec.node === input.node)
+      .map((manifest) => ({
+        name: manifest.metadata.name,
+        kind: "ModelRun" as const,
+        enabled: manifest.spec.enabled !== false,
+        expectedMemoryGiB: manifest.spec.resources?.expectedMemoryGiB ?? null,
+        endpoint: manifest.spec.endpoint
+          ? `${manifest.spec.endpoint.host ?? "127.0.0.1"}:${manifest.spec.endpoint.port ?? "?"}`
+          : null,
+        phase: (manifest.status?.phase ?? "Pending") as string,
+      }));
+    // ModelHosts are charged against the same node budget by admission
+    // (listAnyWorkloadsForAdmission), but were omitted here — so
+    // `reserved` under-reported and the rollup silently disagreed with
+    // what `apply` actually enforces. Count them with the admission
+    // estimator so the two views match.
+    const hostRows = modelHostStoreMod
+      .listModelHosts()
+      .filter((h) => h.spec.node === input.node)
+      .map((manifest) => ({
+        name: manifest.metadata.name,
+        kind: "ModelHost" as const,
+        enabled: manifest.spec.enabled !== false,
+        expectedMemoryGiB: estimateModelHostMemoryGiB(manifest, resolved),
+        endpoint: manifest.spec.endpoint
+          ? `${manifest.spec.endpoint.host ?? "127.0.0.1"}:${manifest.spec.endpoint.port ?? "?"}`
+          : null,
+        phase: statusModelHost({ key: { name: manifest.metadata.name } }).state as string,
+      }));
+    const workloads = [...runRows, ...hostRows].sort((a, b) => a.name.localeCompare(b.name));
+    const reserved = workloads
+      .filter((w) => w.enabled)
+      .reduce((sum, w) => sum + (w.expectedMemoryGiB ?? 0), 0);
+    return { budget, reserved, workloads };
+  }),
 
   workloadApply: t.procedure
     .input(z.object({ yaml: z.string().min(1) }))
@@ -1178,7 +1151,7 @@ export const router = t.router({
         manifest = workloadStoreMod.parseManifestYaml(input.yaml);
       } catch (err) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          code: "BAD_REQUEST",
           message: `invalid workload manifest: ${(err as Error).message}`,
         });
       }
@@ -1202,9 +1175,9 @@ export const router = t.router({
           getClient: (nodeName) => clientForNode(cfg, nodeName),
         });
         if (!result.ok) {
-          throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: result.error });
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error });
         }
-        if (result.kind === 'ModelRun') {
+        if (result.kind === "ModelRun") {
           const persisted: ModelRun = { ...result.manifest, status: result.result.statusSection };
           const savedPath = workloadStoreMod.saveWorkload(persisted, workloadsDir);
           return {
@@ -1216,15 +1189,20 @@ export const router = t.router({
           };
         }
         return {
-          action: 'started',
+          action: "started",
           path: null,
           status: {
-            phase: 'Running',
+            phase: "Running",
             serverPid: result.pid,
             endpoint: result.endpoint,
             lastTransitionTime: new Date().toISOString(),
             conditions: [
-              { type: 'Applied', status: 'True', reason: 'started', lastTransitionTime: new Date().toISOString() },
+              {
+                type: "Applied",
+                status: "True",
+                reason: "started",
+                lastTransitionTime: new Date().toISOString(),
+              },
             ],
           },
           name: result.manifest.metadata.name,
@@ -1237,31 +1215,27 @@ export const router = t.router({
     .input(modelHostStatusInput)
     .query(async ({ input }) => statusModelHost({ key: { name: input.workload } })),
 
-  modelHostStop: t.procedure
-    .input(modelHostStopInput)
-    .mutation(async ({ input }) =>
-      stopModelHost({
-        key: { name: input.workload },
-        graceSeconds: input.graceSeconds,
-      }),
-    ),
-
-  modelHostStart: t.procedure
-    .input(modelHostStartInput)
-    .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream(
-        signal ?? new AbortController().signal,
-        async (emit, subSignal) => {
-          await startModelHost({
-            key: { name: input.workload },
-            timeoutSeconds: input.timeoutSeconds,
-            manifest: input.manifest,
-            signal: subSignal,
-            onEvent: emit,
-          });
-        },
-      );
+  modelHostStop: t.procedure.input(modelHostStopInput).mutation(async ({ input }) =>
+    stopModelHost({
+      key: { name: input.workload },
+      graceSeconds: input.graceSeconds,
     }),
+  ),
+
+  modelHostStart: t.procedure.input(modelHostStartInput).subscription(async function* ({
+    input,
+    signal,
+  }) {
+    yield* bridgeEventStream(signal ?? new AbortController().signal, async (emit, subSignal) => {
+      await startModelHost({
+        key: { name: input.workload },
+        timeoutSeconds: input.timeoutSeconds,
+        manifest: input.manifest,
+        signal: subSignal,
+        onEvent: emit,
+      });
+    });
+  }),
 
   workloadDelete: t.procedure
     .input(
@@ -1278,7 +1252,7 @@ export const router = t.router({
         try {
           const client = clientForNode(cfg, manifest.spec.node);
           const status = await client.serverStatus.query({ workload: manifest.metadata.name });
-          if (status.state === 'up' && status.rel === manifest.spec.target.value) {
+          if (status.state === "up" && status.rel === manifest.spec.target.value) {
             await client.serverStop.mutate({
               workload: manifest.metadata.name,
               graceSeconds: 5,
@@ -1302,34 +1276,35 @@ export const router = t.router({
       return { ok: removed, name: input.name, stops };
     }),
 
-  workloadValidate: t.procedure
-    .input(z.object({ yaml: z.string().min(1) }))
-    .query(({ input }) => {
-      try {
-        const parsed = workloadStoreMod.parseManifestYaml(input.yaml);
-        if (!parsed || typeof parsed !== 'object') {
-          return { ok: false as const, error: 'invalid workload manifest: expected a YAML mapping' };
-        }
-        const kind = (parsed as { kind?: unknown }).kind;
-        if (kind === 'ModelRun') {
-          const parsedRun = ModelRunSchema.safeParse(parsed);
-          if (!parsedRun.success) {
-            return { ok: false as const, error: parsedRun.error.message };
-          }
-          return { ok: true as const, manifest: parsedRun.data };
-        }
-        if (kind === 'ModelHost') {
-          const parsedHost = ModelHostManifestSchema.safeParse(parsed);
-          if (!parsedHost.success) {
-            return { ok: false as const, error: parsedHost.error.message };
-          }
-          return { ok: true as const, manifest: parsedHost.data };
-        }
-        return { ok: false as const, error: `unsupported workload kind: ${typeof kind === 'string' ? kind : 'missing'}` };
-      } catch (err) {
-        return { ok: false as const, error: (err as Error).message };
+  workloadValidate: t.procedure.input(z.object({ yaml: z.string().min(1) })).query(({ input }) => {
+    try {
+      const parsed = workloadStoreMod.parseManifestYaml(input.yaml);
+      if (!parsed || typeof parsed !== "object") {
+        return { ok: false as const, error: "invalid workload manifest: expected a YAML mapping" };
       }
-    }),
+      const kind = (parsed as { kind?: unknown }).kind;
+      if (kind === "ModelRun") {
+        const parsedRun = ModelRunSchema.safeParse(parsed);
+        if (!parsedRun.success) {
+          return { ok: false as const, error: parsedRun.error.message };
+        }
+        return { ok: true as const, manifest: parsedRun.data };
+      }
+      if (kind === "ModelHost") {
+        const parsedHost = ModelHostManifestSchema.safeParse(parsed);
+        if (!parsedHost.success) {
+          return { ok: false as const, error: parsedHost.error.message };
+        }
+        return { ok: true as const, manifest: parsedHost.data };
+      }
+      return {
+        ok: false as const,
+        error: `unsupported workload kind: ${typeof kind === "string" ? kind : "missing"}`,
+      };
+    } catch (err) {
+      return { ok: false as const, error: (err as Error).message };
+    }
+  }),
 
   // Export the spec schema shape so the UI can build default manifests
   // from a model + node without re-declaring the whole zod graph.
@@ -1343,9 +1318,11 @@ export const router = t.router({
 
   reconcilerStart: t.procedure
     .input(
-      z.object({
-        intervalSeconds: z.number().int().positive().min(5).max(600).optional(),
-      }).optional(),
+      z
+        .object({
+          intervalSeconds: z.number().int().positive().min(5).max(600).optional(),
+        })
+        .optional(),
     )
     .mutation(({ input }) => {
       const cfg = kubecfg.loadConfig();
@@ -1395,8 +1372,12 @@ export const router = t.router({
         id: z.string().min(1),
         node: z.string().min(1),
         rel: z.string().min(1),
-        mode: z.enum(['auto', 'text', 'vision']).optional(),
-        intervalSeconds: z.number().int().min(60).max(30 * 24 * 3600),
+        mode: z.enum(["auto", "text", "vision"]).optional(),
+        intervalSeconds: z
+          .number()
+          .int()
+          .min(60)
+          .max(30 * 24 * 3600),
       }),
     )
     .mutation(({ input }) => {
@@ -1406,7 +1387,7 @@ export const router = t.router({
         id: input.id,
         node: input.node,
         rel: input.rel,
-        mode: input.mode ?? 'auto',
+        mode: input.mode ?? "auto",
         intervalSeconds: input.intervalSeconds,
         enabled: true,
       });
@@ -1418,10 +1399,7 @@ export const router = t.router({
     .input(z.object({ id: z.string().min(1) }))
     .mutation(({ input }) => {
       const path = benchScheduleMod.defaultScheduleFilePath();
-      const next = benchScheduleMod.removeSchedule(
-        benchScheduleMod.loadSchedules(path),
-        input.id,
-      );
+      const next = benchScheduleMod.removeSchedule(benchScheduleMod.loadSchedules(path), input.id);
       benchScheduleMod.saveSchedules(next, path);
       return next;
     }),
@@ -1430,24 +1408,22 @@ export const router = t.router({
     .input(z.object({ id: z.string().min(1), enabled: z.boolean() }))
     .mutation(({ input }) => {
       const path = benchScheduleMod.defaultScheduleFilePath();
-      const next = benchScheduleMod.updateSchedule(
-        benchScheduleMod.loadSchedules(path),
-        input.id,
-        { enabled: input.enabled },
-      );
+      const next = benchScheduleMod.updateSchedule(benchScheduleMod.loadSchedules(path), input.id, {
+        enabled: input.enabled,
+      });
       benchScheduleMod.saveSchedules(next, path);
       return next;
     }),
 
-  benchSchedulerStatus: t.procedure.query(() =>
-    benchScheduleLoopMod.benchSchedulerStatus(),
-  ),
+  benchSchedulerStatus: t.procedure.query(() => benchScheduleLoopMod.benchSchedulerStatus()),
 
   benchSchedulerStart: t.procedure
     .input(
-      z.object({
-        tickIntervalSeconds: z.number().int().min(30).max(3600).optional(),
-      }).optional(),
+      z
+        .object({
+          tickIntervalSeconds: z.number().int().min(30).max(3600).optional(),
+        })
+        .optional(),
     )
     .mutation(({ input }) => {
       const cfg = kubecfg.loadConfig();
@@ -1465,9 +1441,7 @@ export const router = t.router({
 
   benchSchedulerKick: t.procedure.mutation(async () => {
     const cfg = kubecfg.loadConfig();
-    await benchScheduleLoopMod.kickBenchScheduler((nodeName) =>
-      clientForNode(cfg, nodeName),
-    );
+    await benchScheduleLoopMod.kickBenchScheduler((nodeName) => clientForNode(cfg, nodeName));
     return benchScheduleLoopMod.benchSchedulerStatus();
   }),
 
@@ -1477,7 +1451,7 @@ export const router = t.router({
         name: z.string().min(1),
         node: z.string().min(1),
         target: z.string().min(1),
-        targetKind: z.enum(['rel', 'alias']).default('rel'),
+        targetKind: z.enum(["rel", "alias"]).default("rel"),
         extraArgs: z.array(z.string()).default([]),
         timeoutSeconds: z.number().int().positive().default(60),
       }),
@@ -1490,8 +1464,8 @@ export const router = t.router({
         timeoutSeconds: input.timeoutSeconds,
       });
       const manifest: ModelRun = {
-        apiVersion: 'llamactl/v1',
-        kind: 'ModelRun',
+        apiVersion: "llamactl/v1",
+        kind: "ModelRun",
         metadata: { name: input.name, labels: {}, annotations: {} },
         spec,
       };
@@ -1549,10 +1523,10 @@ export const router = t.router({
     .mutation(({ input }) => {
       if (input.version) {
         const removed = infraLayoutMod.removeInfraVersion(input.pkg, input.version);
-        return { ok: true as const, mode: 'version' as const, removed };
+        return { ok: true as const, mode: "version" as const, removed };
       }
       const removed = infraLayoutMod.removeInfraPackage(input.pkg);
-      return { ok: true as const, mode: 'package' as const, removed };
+      return { ok: true as const, mode: "package" as const, removed };
     }),
 
   // Service lifecycle — drives launchd/systemd for supervised pkgs
@@ -1584,7 +1558,7 @@ export const router = t.router({
     .input(
       z.object({
         pkg: z.string().min(1),
-        action: z.enum(['start', 'stop', 'reload', 'status']),
+        action: z.enum(["start", "stop", "reload", "status"]),
       }),
     )
     .mutation(async ({ input }) => {
@@ -1603,7 +1577,7 @@ export const router = t.router({
     }),
 
   catalogList: t.procedure
-    .input(z.enum(['all', 'builtin', 'custom']).default('all'))
+    .input(z.enum(["all", "builtin", "custom"]).default("all"))
     .query(({ input }) => {
       // Mirror the CLI's `catalog status` signal: a row is "installed"
       // when the GGUF exists under $LLAMA_CPP_MODELS. The renderer uses
@@ -1615,40 +1589,36 @@ export const router = t.router({
       }));
     }),
 
-  catalogStatus: t.procedure
-    .input(z.string().min(1))
-    .query(async ({ input }) => {
-      const entry = catalog.findByRel(input);
-      // Class resolution intentionally lives in the renderer's dedicated
-      // inspector view later; for now surface the catalog row + quant.
-      return {
-        rel: input,
-        entry,
-        quant: (await import('@llamactl/core')).quant.quantFromRel(input),
-      };
-    }),
+  catalogStatus: t.procedure.input(z.string().min(1)).query(async ({ input }) => {
+    const entry = catalog.findByRel(input);
+    // Class resolution intentionally lives in the renderer's dedicated
+    // inspector view later; for now surface the catalog row + quant.
+    return {
+      rel: input,
+      entry,
+      quant: (await import("@llamactl/core")).quant.quantFromRel(input),
+    };
+  }),
 
-  benchShow: t.procedure
-    .input(z.string().min(1))
-    .query(({ input }) => {
-      const resolved = envMod.resolveEnv();
-      const rows = bench.readBenchProfiles(bench.benchProfileFile(resolved));
-      const machine = bench.machineLabel(resolved);
-      const mode = bench.defaultModeForRel(input, resolved);
-      const ctx = resolved.LLAMA_CPP_GEMMA_CTX_SIZE;
-      const build = ''; // resolved by caller if they care
-      const latest = bench.findLatestProfile(rows, {
-        machine,
-        rel: input,
-        mode,
-        ctx,
-        build,
-      });
-      if (latest) return { kind: 'current' as const, row: latest };
-      const legacy = bench.findLegacyProfile(rows, input);
-      if (legacy) return { kind: 'legacy' as const, row: legacy };
-      return { kind: 'none' as const };
-    }),
+  benchShow: t.procedure.input(z.string().min(1)).query(({ input }) => {
+    const resolved = envMod.resolveEnv();
+    const rows = bench.readBenchProfiles(bench.benchProfileFile(resolved));
+    const machine = bench.machineLabel(resolved);
+    const mode = bench.defaultModeForRel(input, resolved);
+    const ctx = resolved.LLAMA_CPP_GEMMA_CTX_SIZE;
+    const build = ""; // resolved by caller if they care
+    const latest = bench.findLatestProfile(rows, {
+      machine,
+      rel: input,
+      mode,
+      ctx,
+      build,
+    });
+    if (latest) return { kind: "current" as const, row: latest };
+    const legacy = bench.findLegacyProfile(rows, input);
+    if (legacy) return { kind: "legacy" as const, row: legacy };
+    return { kind: "none" as const };
+  }),
 
   benchCompare: t.procedure
     .input(
@@ -1661,30 +1631,28 @@ export const router = t.router({
     )
     .query(({ input }) =>
       bench.benchCompare({
-        classFilter: (input?.classFilter ?? 'all') as
-          | 'multimodal'
-          | 'reasoning'
-          | 'general'
-          | 'custom'
-          | 'all',
-        scopeFilter: input?.scopeFilter ?? 'all',
+        classFilter: (input?.classFilter ?? "all") as
+          | "multimodal"
+          | "reasoning"
+          | "general"
+          | "custom"
+          | "all",
+        scopeFilter: input?.scopeFilter ?? "all",
       }),
     ),
 
-  recommendations: t.procedure
-    .input(z.string().default('current'))
-    .query(async ({ input }) => {
-      const profiles = recommendations.expandRequestedProfile(input);
-      const out = [] as Array<{
-        profile: MachineProfile;
-        rows: recommendations.RecommendationRow[];
-      }>;
-      for (const profile of profiles) {
-        const rows = await recommendations.recommendationsWithHf(profile);
-        out.push({ profile, rows });
-      }
-      return out;
-    }),
+  recommendations: t.procedure.input(z.string().default("current")).query(async ({ input }) => {
+    const profiles = recommendations.expandRequestedProfile(input);
+    const out = [] as Array<{
+      profile: MachineProfile;
+      rows: recommendations.RecommendationRow[];
+    }>;
+    for (const profile of profiles) {
+      const rows = await recommendations.recommendationsWithHf(profile);
+      out.push({ profile, rows });
+    }
+    return out;
+  }),
 
   promotions: t.procedure.query(() => {
     const resolved = envMod.resolveEnv();
@@ -1694,8 +1662,8 @@ export const router = t.router({
   promote: t.procedure
     .input(
       z.object({
-        profile: z.enum(['mac-mini-16g', 'balanced', 'macbook-pro-48g']),
-        preset: z.enum(['best', 'vision', 'balanced', 'fast']),
+        profile: z.enum(["mac-mini-16g", "balanced", "macbook-pro-48g"]),
+        preset: z.enum(["best", "vision", "balanced", "fast"]),
         rel: z.string().min(1),
       }),
     )
@@ -1708,8 +1676,8 @@ export const router = t.router({
   promoteDelete: t.procedure
     .input(
       z.object({
-        profile: z.enum(['mac-mini-16g', 'balanced', 'macbook-pro-48g']),
-        preset: z.enum(['best', 'vision', 'balanced', 'fast']),
+        profile: z.enum(["mac-mini-16g", "balanced", "macbook-pro-48g"]),
+        preset: z.enum(["best", "vision", "balanced", "fast"]),
       }),
     )
     .mutation(({ input }) => {
@@ -1731,16 +1699,14 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<serverLogsMod.LogLineEvent>(
-        signal as AbortSignal,
-        (emit, sig) =>
-          serverLogsMod.tailServerLog({
-            key: { name: input.workload },
-            lines: input.lines,
-            follow: input.follow,
-            signal: sig,
-            onLine: emit,
-          }),
+      yield* bridgeEventStream<serverLogsMod.LogLineEvent>(signal as AbortSignal, (emit, sig) =>
+        serverLogsMod.tailServerLog({
+          key: { name: input.workload },
+          lines: input.lines,
+          follow: input.follow,
+          signal: sig,
+          onLine: emit,
+        }),
       );
     }),
 
@@ -1765,34 +1731,33 @@ export const router = t.router({
         target: z.string().min(1),
         extraArgs: z.array(z.string()).optional(),
         allowExternalBind: z.boolean().optional(),
-        endpoint: z.object({
-          host: z.string().optional(),
-          port: z.number().int().min(1).max(65535).optional(),
-        }).optional(),
+        endpoint: z
+          .object({
+            host: z.string().optional(),
+            port: z.number().int().min(1).max(65535).optional(),
+          })
+          .optional(),
         binary: z.string().optional(),
         timeoutSeconds: z.number().int().positive().max(600).optional(),
         skipTuned: z.boolean().optional(),
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<ServerStartEvent>(
-        signal as AbortSignal,
-        async (emit, sig) => {
-          const result = await serverMod.startServer({
-            key: { name: input.workload },
-            target: input.target,
-            extraArgs: input.extraArgs,
-            allowExternalBind: input.allowExternalBind,
-            endpoint: input.endpoint,
-            binary: input.binary,
-            timeoutSeconds: input.timeoutSeconds,
-            skipTuned: input.skipTuned,
-            signal: sig,
-            onEvent: emit,
-          });
-          emit({ type: 'done', result });
-        },
-      );
+      yield* bridgeEventStream<ServerStartEvent>(signal as AbortSignal, async (emit, sig) => {
+        const result = await serverMod.startServer({
+          key: { name: input.workload },
+          target: input.target,
+          extraArgs: input.extraArgs,
+          allowExternalBind: input.allowExternalBind,
+          endpoint: input.endpoint,
+          binary: input.binary,
+          timeoutSeconds: input.timeoutSeconds,
+          skipTuned: input.skipTuned,
+          signal: sig,
+          onEvent: emit,
+        });
+        emit({ type: "done", result });
+      });
     }),
 
   lmstudioScan: t.procedure
@@ -1847,9 +1812,7 @@ export const router = t.router({
     .query(async () => rpcServerMod.checkRpcServerAvailable()),
 
   rpcServerStop: t.procedure
-    .input(
-      z.object({ graceSeconds: z.number().int().positive().max(60).optional() }).optional(),
-    )
+    .input(z.object({ graceSeconds: z.number().int().positive().max(60).optional() }).optional())
     .mutation(async ({ input }) =>
       rpcServerMod.stopRpcServer({ graceSeconds: input?.graceSeconds }),
     ),
@@ -1867,18 +1830,15 @@ export const router = t.router({
     .subscription(async function* ({ input, signal }) {
       type RpcEvent =
         | rpcServerMod.RpcServerEvent
-        | { type: 'done'; result: rpcServerMod.StartRpcServerResult };
-      yield* bridgeEventStream<RpcEvent>(
-        signal as AbortSignal,
-        async (emit, sig) => {
-          const result = await rpcServerMod.startRpcServer({
-            ...input,
-            signal: sig,
-            onEvent: emit,
-          });
-          emit({ type: 'done', result });
-        },
-      );
+        | { type: "done"; result: rpcServerMod.StartRpcServerResult };
+      yield* bridgeEventStream<RpcEvent>(signal as AbortSignal, async (emit, sig) => {
+        const result = await rpcServerMod.startRpcServer({
+          ...input,
+          signal: sig,
+          onEvent: emit,
+        });
+        emit({ type: "done", result });
+      });
     }),
 
   keepAliveStop: t.procedure
@@ -1901,8 +1861,8 @@ export const router = t.router({
       // Spawn a detached `llamactl keep-alive worker <target>` child by
       // shelling out to `bun` with the CLI entry. Matches what
       // \`llamactl keep-alive start\` does from a shell session.
-      const { spawn } = await import('node:child_process');
-      const { join } = await import('node:path');
+      const { spawn } = await import("node:child_process");
+      const { join } = await import("node:path");
       const resolved = envMod.resolveEnv();
       const existing = keepAliveMod.readKeepAlivePid(resolved);
       if (existing !== null) {
@@ -1912,12 +1872,12 @@ export const router = t.router({
           error: `keep-alive already running (pid=${existing})`,
         };
       }
-      const llamactlHome = process.env.LLAMACTL_HOME
-        ?? join(resolved.DEV_STORAGE, 'repos', 'personal', 'llamactl');
-      const entry = join(llamactlHome, 'packages', 'cli', 'src', 'bin.ts');
-      const child = spawn('bun', [entry, 'keep-alive', 'worker', input.target], {
+      const llamactlHome =
+        process.env.LLAMACTL_HOME ?? join(resolved.DEV_STORAGE, "repos", "personal", "llamactl");
+      const entry = join(llamactlHome, "packages", "cli", "src", "bin.ts");
+      const child = spawn("bun", [entry, "keep-alive", "worker", input.target], {
         detached: true,
-        stdio: 'ignore',
+        stdio: "ignore",
         env: { ...process.env },
       });
       child.unref();
@@ -1931,7 +1891,7 @@ export const router = t.router({
       return {
         ok: pid !== null,
         pid,
-        error: pid === null ? 'supervisor did not register a PID within 2s' : undefined,
+        error: pid === null ? "supervisor did not register a PID within 2s" : undefined,
       };
     }),
 
@@ -1944,20 +1904,17 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<CandidateStreamEvent>(
-        signal as AbortSignal,
-        async (emit, sig) => {
-          const result = await candidateMod.candidateTest({
-            repo: input.repo,
-            file: input.file,
-            profile: input.profile,
-            signal: sig,
-            onEvent: emit,
-          });
-          if ('error' in result) throw new Error(result.error);
-          emit({ type: 'done-candidate-test', result });
-        },
-      );
+      yield* bridgeEventStream<CandidateStreamEvent>(signal as AbortSignal, async (emit, sig) => {
+        const result = await candidateMod.candidateTest({
+          repo: input.repo,
+          file: input.file,
+          profile: input.profile,
+          signal: sig,
+          onEvent: emit,
+        });
+        if ("error" in result) throw new Error(result.error);
+        emit({ type: "done-candidate-test", result });
+      });
     }),
 
   uninstall: t.procedure
@@ -1984,19 +1941,16 @@ export const router = t.router({
     .subscription(async function* ({ input, signal }) {
       type TuneEvent =
         | bench.BenchEvent
-        | { type: 'done-tune'; result: autotuneMod.MaybeTuneAfterPullResult };
-      yield* bridgeEventStream<TuneEvent>(
-        signal as AbortSignal,
-        async (emit, sig) => {
-          const result = await autotuneMod.maybeTuneAfterPull({
-            rel: input.rel,
-            wasMissing: input.wasMissing,
-            signal: sig,
-            onEvent: emit,
-          });
-          emit({ type: 'done-tune', result });
-        },
-      );
+        | { type: "done-tune"; result: autotuneMod.MaybeTuneAfterPullResult };
+      yield* bridgeEventStream<TuneEvent>(signal as AbortSignal, async (emit, sig) => {
+        const result = await autotuneMod.maybeTuneAfterPull({
+          rel: input.rel,
+          wasMissing: input.wasMissing,
+          signal: sig,
+          onEvent: emit,
+        });
+        emit({ type: "done-tune", result });
+      });
     }),
 
   pullFile: t.procedure
@@ -2007,18 +1961,15 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<PullStreamEvent>(
-        signal as AbortSignal,
-        async (emit, sig) => {
-          const result = await pull.pullRepoFile({
-            repo: input.repo,
-            file: input.file,
-            signal: sig,
-            onEvent: emit,
-          });
-          emit({ type: 'done', result });
-        },
-      );
+      yield* bridgeEventStream<PullStreamEvent>(signal as AbortSignal, async (emit, sig) => {
+        const result = await pull.pullRepoFile({
+          repo: input.repo,
+          file: input.file,
+          signal: sig,
+          onEvent: emit,
+        });
+        emit({ type: "done", result });
+      });
     }),
 
   benchHistory: t.procedure
@@ -2047,20 +1998,20 @@ export const router = t.router({
           gen_ts: r.gen_ts,
           prompt_ts: r.prompt_ts,
           launch_args: r.launch_args,
-          kind: 'current' as const,
+          kind: "current" as const,
         })),
         ...rows.legacy.map((r) => ({
           updated_at: r.updated_at,
-          machine: 'legacy',
+          machine: "legacy",
           rel: r.rel,
-          mode: 'legacy',
-          ctx: 'legacy',
-          build: 'legacy',
+          mode: "legacy",
+          ctx: "legacy",
+          build: "legacy",
           profile: r.profile,
           gen_ts: r.gen_ts,
           prompt_ts: r.prompt_ts,
           launch_args: r.launch_args,
-          kind: 'legacy' as const,
+          kind: "legacy" as const,
         })),
       ];
       const filtered = filter ? merged.filter((r) => r.rel === filter) : merged;
@@ -2077,40 +2028,34 @@ export const router = t.router({
     .input(
       z.object({
         target: z.string().min(1),
-        mode: z.enum(['auto', 'text', 'vision']).optional(),
+        mode: z.enum(["auto", "text", "vision"]).optional(),
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<BenchStreamEvent>(
-        signal as AbortSignal,
-        async (emit, sig) => {
-          const result = await bench.benchPreset({
-            target: input.target,
-            mode: input.mode,
-            signal: sig,
-            onEvent: emit,
-          });
-          if ('error' in result) throw new Error(result.error);
-          emit({ type: 'done-preset', result });
-        },
-      );
+      yield* bridgeEventStream<BenchStreamEvent>(signal as AbortSignal, async (emit, sig) => {
+        const result = await bench.benchPreset({
+          target: input.target,
+          mode: input.mode,
+          signal: sig,
+          onEvent: emit,
+        });
+        if ("error" in result) throw new Error(result.error);
+        emit({ type: "done-preset", result });
+      });
     }),
 
   benchVisionRun: t.procedure
     .input(z.object({ target: z.string().min(1) }))
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<BenchStreamEvent>(
-        signal as AbortSignal,
-        async (emit, sig) => {
-          const result = await bench.benchVision({
-            target: input.target,
-            signal: sig,
-            onEvent: emit,
-          });
-          if ('error' in result) throw new Error(result.error);
-          emit({ type: 'done-vision', result });
-        },
-      );
+      yield* bridgeEventStream<BenchStreamEvent>(signal as AbortSignal, async (emit, sig) => {
+        const result = await bench.benchVision({
+          target: input.target,
+          signal: sig,
+          onEvent: emit,
+        });
+        if ("error" in result) throw new Error(result.error);
+        emit({ type: "done-vision", result });
+      });
     }),
 
   pullCandidate: t.procedure
@@ -2122,20 +2067,17 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      yield* bridgeEventStream<PullStreamEvent>(
-        signal as AbortSignal,
-        async (emit, sig) => {
-          const result = await pull.pullCandidate({
-            repo: input.repo,
-            file: input.file,
-            profile: input.profile,
-            signal: sig,
-            onEvent: emit,
-          });
-          if ('error' in result) throw new Error(result.error);
-          emit({ type: 'done-candidate', result });
-        },
-      );
+      yield* bridgeEventStream<PullStreamEvent>(signal as AbortSignal, async (emit, sig) => {
+        const result = await pull.pullCandidate({
+          repo: input.repo,
+          file: input.file,
+          profile: input.profile,
+          signal: sig,
+          onEvent: emit,
+        });
+        if ("error" in result) throw new Error(result.error);
+        emit({ type: "done-candidate", result });
+      });
     }),
 
   discover: t.procedure
@@ -2156,9 +2098,7 @@ export const router = t.router({
       }),
     ),
 
-  resolveTarget: t.procedure
-    .input(z.string())
-    .query(({ input }) => targetMod.resolveTarget(input)),
+  resolveTarget: t.procedure.input(z.string()).query(({ input }) => targetMod.resolveTarget(input)),
 
   /**
    * LLM-backed operator planner. Translates a natural-language goal
@@ -2181,7 +2121,7 @@ export const router = t.router({
             z.object({
               name: z.string().min(1),
               description: z.string(),
-              tier: z.enum(['read', 'mutation-dry-run-safe', 'mutation-destructive']),
+              tier: z.enum(["read", "mutation-dry-run-safe", "mutation-destructive"]),
             }),
           )
           .optional(),
@@ -2196,7 +2136,7 @@ export const router = t.router({
         history: z
           .array(
             z.object({
-              role: z.enum(['user', 'assistant']),
+              role: z.enum(["user", "assistant"]),
               text: z.string(),
             }),
           )
@@ -2208,8 +2148,8 @@ export const router = t.router({
       if (input.nodeId) {
         if (!input.model) {
           throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: 'model is required when nodeId is set',
+            code: "BAD_REQUEST",
+            message: "model is required when nodeId is set",
           });
         }
         const provider = await resolvePlannerProvider(input.nodeId);
@@ -2218,7 +2158,7 @@ export const router = t.router({
       const callerTools: PlannerToolDescriptor[] = (input.tools ?? []).map((t) => ({
         name: t.name,
         description: t.description,
-        inputSchema: { type: 'object' },
+        inputSchema: { type: "object" },
         tier: t.tier,
       }));
       // Merge caller-supplied tools with server-side built-ins (e.g.
@@ -2237,9 +2177,9 @@ export const router = t.router({
       const transcript = history
         .map((turn) => `${turn.role}: ${turn.text.trim()}`)
         .filter((line) => line.length > `user:`.length)
-        .join('\n');
-      const userContext = input.context?.trim() ?? '';
-      const mergedContext = [transcript, userContext].filter((s) => s.length > 0).join('\n\n');
+        .join("\n");
+      const userContext = input.context?.trim() ?? "";
+      const mergedContext = [transcript, userContext].filter((s) => s.length > 0).join("\n\n");
 
       const result = await runPlanner({
         goal: input.goal,
@@ -2324,8 +2264,8 @@ export const router = t.router({
     .query(async ({ input }) => {
       const path = defaultCostJournalPath();
       if (!existsSync(path)) return { entries: [] as CostJournalEntry[], path };
-      const body = readFileSync(path, 'utf8');
-      const lines = body.split('\n').filter((l) => l.trim().length > 0);
+      const body = readFileSync(path, "utf8");
+      const lines = body.split("\n").filter((l) => l.trim().length > 0);
       const entries: CostJournalEntry[] = [];
       for (const l of lines.slice(-input.limit).reverse()) {
         try {
@@ -2356,22 +2296,22 @@ export const router = t.router({
           .string()
           .min(1)
           .max(80)
-          .describe('Human-friendly pipeline name; slugified for the file basename.'),
+          .describe("Human-friendly pipeline name; slugified for the file basename."),
         description: z
           .string()
           .max(500)
           .optional()
-          .describe('Short description surfaced to MCP clients.'),
+          .describe("Short description surfaced to MCP clients."),
         stages: z
           .array(
             z.object({
               node: z.string().min(1),
               model: z.string().min(1),
-              systemPrompt: z.string().default(''),
+              systemPrompt: z.string().default(""),
               capabilities: z.array(z.string()).default([]),
             }),
           )
-          .min(1, 'pipeline must have at least one stage'),
+          .min(1, "pipeline must have at least one stage"),
         overwrite: z.boolean().default(false),
       }),
     )
@@ -2380,8 +2320,8 @@ export const router = t.router({
         input.name
           .trim()
           .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-+|-+$/g, '') || `pipeline-${Date.now().toString(36)}`;
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "") || `pipeline-${Date.now().toString(36)}`;
       // Cascade: override > DEV_STORAGE (honours hermetic audits and
       // the resolver's test-profile re-root seeded in Electron main)
       // > production default under the operator's homedir.
@@ -2389,37 +2329,37 @@ export const router = t.router({
       const baseDir =
         process.env.LLAMACTL_MCP_PIPELINES_DIR?.trim() ||
         (devStorage
-          ? join(devStorage, 'mcp', 'pipelines')
-          : join(homedir(), '.llamactl', 'mcp', 'pipelines'));
+          ? join(devStorage, "mcp", "pipelines")
+          : join(homedir(), ".llamactl", "mcp", "pipelines"));
       const outPath = join(baseDir, `${slug}.json`);
       if (!input.overwrite && existsSync(outPath)) {
         return {
           ok: false as const,
           path: outPath,
           slug,
-          reason: 'exists',
+          reason: "exists",
           message: `${outPath} already exists. Pass overwrite:true to replace.`,
         };
       }
       const stub = {
-        apiVersion: 'llamactl/v1' as const,
-        kind: 'PipelineTool' as const,
+        apiVersion: "llamactl/v1" as const,
+        kind: "PipelineTool" as const,
         name: `llamactl.pipeline.${slug}`,
         title: input.name,
         description:
           input.description ??
-          `Multi-stage pipeline with ${input.stages.length} stage${input.stages.length === 1 ? '' : 's'}.`,
+          `Multi-stage pipeline with ${input.stages.length} stage${input.stages.length === 1 ? "" : "s"}.`,
         inputSchema: {
-          type: 'object',
+          type: "object",
           properties: {
-            input: { type: 'string', description: 'Initial user content' },
+            input: { type: "string", description: "Initial user content" },
           },
-          required: ['input'],
+          required: ["input"],
         },
         stages: input.stages,
       };
       mkdirSync(dirname(outPath), { recursive: true });
-      writeFileSync(outPath, JSON.stringify(stub, null, 2) + '\n', 'utf8');
+      writeFileSync(outPath, JSON.stringify(stub, null, 2) + "\n", "utf8");
       return {
         ok: true as const,
         path: outPath,
@@ -2465,8 +2405,8 @@ export const router = t.router({
         dryRun: input.dryRun,
         ok: dispatched.ok,
         durationMs: dispatched.durationMs,
-        errorCode: dispatched.ok ? undefined : (dispatched.error?.code ?? 'dispatch_error'),
-        errorMessage: dispatched.ok ? undefined : (dispatched.error?.message ?? '(no message)'),
+        errorCode: dispatched.ok ? undefined : (dispatched.error?.code ?? "dispatch_error"),
+        errorMessage: dispatched.ok ? undefined : (dispatched.error?.message ?? "(no message)"),
         sessionId: input.sessionId,
       });
       return dispatched;
@@ -2477,13 +2417,18 @@ export const router = t.router({
       z.object({
         limit: z.number().int().positive().max(200).default(50),
         cursor: z.string().optional(),
-        status: z.enum(['live', 'done', 'refused', 'aborted']).optional(),
+        status: z.enum(["live", "done", "refused", "aborted"]).optional(),
       }),
     )
     .query(({ input }) => listSessions(input)),
 
   opsSessionGet: t.procedure
-    .input(z.object({ sessionId: z.string().min(1), tail: z.number().int().positive().max(500).default(50) }))
+    .input(
+      z.object({
+        sessionId: z.string().min(1),
+        tail: z.number().int().positive().max(500).default(50),
+      }),
+    )
     .query(async ({ input }) => {
       const summary = await getSessionSummary(input.sessionId);
       const events = await readJournal(input.sessionId);
@@ -2501,13 +2446,13 @@ export const router = t.router({
       if (persisted.some(isTerminal)) return;
       if (!sessionEventBus.hasChannel(input.sessionId)) {
         yield {
-          type: 'aborted' as const,
+          type: "aborted" as const,
           ts: new Date().toISOString(),
-          reason: 'signal' as const,
+          reason: "signal" as const,
         };
         return;
       }
-      const queue: import('./ops-chat/sessions/journal-schema.js').JournalEvent[] = [];
+      const queue: import("./ops-chat/sessions/journal-schema.js").JournalEvent[] = [];
       let resolve: (() => void) | null = null;
       const off = sessionEventBus.subscribe(input.sessionId, (event) => {
         queue.push(event);
@@ -2575,14 +2520,14 @@ export const router = t.router({
             z.object({
               name: z.string().min(1),
               description: z.string(),
-              tier: z.enum(['read', 'mutation-dry-run-safe', 'mutation-destructive']),
+              tier: z.enum(["read", "mutation-dry-run-safe", "mutation-destructive"]),
             }),
           )
           .optional(),
         history: z
           .array(
             z.object({
-              role: z.enum(['user', 'assistant']),
+              role: z.enum(["user", "assistant"]),
               text: z.string(),
             }),
           )
@@ -2591,13 +2536,13 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      const { runLoopExecutor } = await import('./ops-chat/loop-executor.js');
+      const { runLoopExecutor } = await import("./ops-chat/loop-executor.js");
       let executor: PlannerExecutor = stubPlannerExecutor;
       if (input.nodeId) {
         if (!input.model) {
           throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: 'model is required when nodeId is set',
+            code: "BAD_REQUEST",
+            message: "model is required when nodeId is set",
           });
         }
         const provider = await resolvePlannerProvider(input.nodeId);
@@ -2606,7 +2551,7 @@ export const router = t.router({
       const callerTools: PlannerToolDescriptor[] = (input.tools ?? []).map((tool) => ({
         name: tool.name,
         description: tool.description,
-        inputSchema: { type: 'object' },
+        inputSchema: { type: "object" },
         tier: tool.tier,
       }));
       const plannerTools = mergePlannerTools(callerTools, BUILT_IN_PLANNER_TOOLS);
@@ -2645,7 +2590,7 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const { submitOutcome } = await import('./ops-chat/loop-executor.js');
+      const { submitOutcome } = await import("./ops-chat/loop-executor.js");
       const delivered = submitOutcome({
         sessionId: input.sessionId,
         stepId: input.stepId,
@@ -2655,7 +2600,7 @@ export const router = t.router({
       });
       return delivered
         ? ({ ok: true as const } as const)
-        : ({ ok: false as const, reason: 'stale' as const } as const);
+        : ({ ok: false as const, reason: "stale" as const } as const);
     }),
 
   // ---- RAG (retrieval) --------------------------------------------------
@@ -2677,7 +2622,7 @@ export const router = t.router({
     )
     .query(async ({ input }) => {
       const { node, cfg } = resolveRagNode(input.node);
-      const { createRagAdapter } = await import('./rag/index.js');
+      const { createRagAdapter } = await import("./rag/index.js");
       const adapter = await createRagAdapter(node, { config: cfg });
       try {
         return await adapter.search({
@@ -2710,7 +2655,7 @@ export const router = t.router({
     )
     .mutation(async ({ input }) => {
       const { node, cfg } = resolveRagNode(input.node);
-      const { createRagAdapter } = await import('./rag/index.js');
+      const { createRagAdapter } = await import("./rag/index.js");
       const adapter = await createRagAdapter(node, { config: cfg });
       try {
         return await adapter.store({
@@ -2732,7 +2677,7 @@ export const router = t.router({
     )
     .mutation(async ({ input }) => {
       const { node, cfg } = resolveRagNode(input.node);
-      const { createRagAdapter } = await import('./rag/index.js');
+      const { createRagAdapter } = await import("./rag/index.js");
       const adapter = await createRagAdapter(node, { config: cfg });
       try {
         return await adapter.delete({
@@ -2748,7 +2693,7 @@ export const router = t.router({
     .input(z.object({ node: z.string().min(1) }))
     .query(async ({ input }) => {
       const { node, cfg } = resolveRagNode(input.node);
-      const { createRagAdapter } = await import('./rag/index.js');
+      const { createRagAdapter } = await import("./rag/index.js");
       const adapter = await createRagAdapter(node, { config: cfg });
       try {
         return await adapter.listCollections();
@@ -2773,22 +2718,22 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const { parse: parseYaml } = await import('yaml');
-      const { RagPipelineManifestSchema } = await import('./rag/pipeline/index.js');
-      const { applyPipeline } = await import('./rag/pipeline/store.js');
+      const { parse: parseYaml } = await import("yaml");
+      const { RagPipelineManifestSchema } = await import("./rag/pipeline/index.js");
+      const { applyPipeline } = await import("./rag/pipeline/store.js");
       let parsedYaml: unknown;
       try {
         parsedYaml = parseYaml(input.manifestYaml);
       } catch (err) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          code: "BAD_REQUEST",
           message: `RagPipeline manifest is not valid YAML: ${(err as Error).message}`,
         });
       }
       const parsed = RagPipelineManifestSchema.safeParse(parsedYaml);
       if (!parsed.success) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          code: "BAD_REQUEST",
           message: `invalid RagPipeline manifest: ${JSON.stringify(parsed.error.issues)}`,
         });
       }
@@ -2809,9 +2754,9 @@ export const router = t.router({
           };
         }
         throw new TRPCError({
-          code: 'CONFLICT',
+          code: "CONFLICT",
           message:
-            result.conflict.kind === 'name'
+            result.conflict.kind === "name"
               ? `pipeline name conflict: ${result.conflict.name} (existing owner: ${result.conflict.existingOwner})`
               : `pipeline shape conflict: ${result.conflict.name} (${result.conflict.reason})`,
         });
@@ -2832,14 +2777,13 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const { loadPipeline, writeLastRun, journalPathFor } = await import(
-        './rag/pipeline/store.js'
-      );
-      const { runPipeline } = await import('./rag/pipeline/index.js');
+      const { loadPipeline, writeLastRun, journalPathFor } =
+        await import("./rag/pipeline/store.js");
+      const { runPipeline } = await import("./rag/pipeline/index.js");
       const manifest = loadPipeline(input.name);
       if (!manifest) {
         throw new TRPCError({
-          code: 'NOT_FOUND',
+          code: "NOT_FOUND",
           message: `rag pipeline '${input.name}' not found — run \`llamactl rag pipeline list\` to see registered names`,
         });
       }
@@ -2855,7 +2799,7 @@ export const router = t.router({
     }),
 
   ragPipelineList: t.procedure.query(async () => {
-    const { listPipelines } = await import('./rag/pipeline/store.js');
+    const { listPipelines } = await import("./rag/pipeline/store.js");
     return { pipelines: listPipelines() };
   }),
 
@@ -2867,8 +2811,8 @@ export const router = t.router({
     // pipeline's journal tail for an unpaired `run-started` and
     // surfaces those entries with `stale: true` so the UI can warn
     // without mistaking them for a live run.
-    const { pipelineEvents } = await import('./rag/pipeline/event-bus.js');
-    const { detectOrphanedRuns } = await import('./rag/pipeline/orphan.js');
+    const { pipelineEvents } = await import("./rag/pipeline/event-bus.js");
+    const { detectOrphanedRuns } = await import("./rag/pipeline/orphan.js");
     const liveNames = pipelineEvents.allRunning();
     const running = liveNames
       .map((name) => pipelineEvents.currentRun(name))
@@ -2895,11 +2839,11 @@ export const router = t.router({
   ragPipelineGet: t.procedure
     .input(z.object({ name: z.string().min(1) }))
     .query(async ({ input }) => {
-      const { loadPipeline } = await import('./rag/pipeline/store.js');
+      const { loadPipeline } = await import("./rag/pipeline/store.js");
       const manifest = loadPipeline(input.name);
       if (!manifest) {
         throw new TRPCError({
-          code: 'NOT_FOUND',
+          code: "NOT_FOUND",
           message: `rag pipeline '${input.name}' not found`,
         });
       }
@@ -2914,7 +2858,7 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const { removePipeline } = await import('./rag/pipeline/store.js');
+      const { removePipeline } = await import("./rag/pipeline/store.js");
       // Composite-aware path: ref-counted removal. Conflicts surface in
       // the response body so the composite handler can translate them
       // to Pending. Operator CLI/UI path (no compositeName) keeps the
@@ -2938,23 +2882,21 @@ export const router = t.router({
       // walks each query through `ragSearch`, scores hits against
       // expected doc IDs / substrings, and returns a report. No
       // disk writes — the report is the whole product.
-      const { parse: parseYaml } = await import('yaml');
-      const { RagBenchManifestSchema, runRagBench } = await import(
-        './rag/bench.js'
-      );
+      const { parse: parseYaml } = await import("yaml");
+      const { RagBenchManifestSchema, runRagBench } = await import("./rag/bench.js");
       let parsedYaml: unknown;
       try {
         parsedYaml = parseYaml(input.manifestYaml);
       } catch (err) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          code: "BAD_REQUEST",
           message: `RagBench manifest is not valid YAML: ${(err as Error).message}`,
         });
       }
       const parsed = RagBenchManifestSchema.safeParse(parsedYaml);
       if (!parsed.success) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          code: "BAD_REQUEST",
           message: `invalid RagBench manifest: ${JSON.stringify(parsed.error.issues)}`,
         });
       }
@@ -2974,14 +2916,14 @@ export const router = t.router({
   ragPipelineDraft: t.procedure
     .input(
       z.object({
-        description: z.string().default(''),
+        description: z.string().default(""),
         availableRagNodes: z.array(z.string()).optional(),
         defaultRagNode: z.string().optional(),
         nameOverride: z.string().optional(),
       }),
     )
     .query(async ({ input }) => {
-      const { draftPipeline } = await import('./rag/pipeline/index.js');
+      const { draftPipeline } = await import("./rag/pipeline/index.js");
       const ctx: Parameters<typeof draftPipeline>[1] = {};
       if (input.availableRagNodes) ctx.availableRagNodes = input.availableRagNodes;
       if (input.defaultRagNode !== undefined) ctx.defaultRagNode = input.defaultRagNode;
@@ -2998,8 +2940,8 @@ export const router = t.router({
       }),
     )
     .query(async ({ input }) => {
-      const { journalPathFor } = await import('./rag/pipeline/store.js');
-      const { existsSync, readFileSync } = await import('node:fs');
+      const { journalPathFor } = await import("./rag/pipeline/store.js");
+      const { existsSync, readFileSync } = await import("node:fs");
       const path = journalPathFor(input.name);
       if (!existsSync(path)) {
         return { ok: true as const, path, entries: [] as Array<Record<string, unknown>> };
@@ -3007,9 +2949,9 @@ export const router = t.router({
       // Lines are ~hundreds of bytes each; for N=200 (default) we load
       // the full file, split, tail. If journals grow to millions of
       // lines we'll want a seek-to-tail reader; v1 is plenty.
-      const raw = readFileSync(path, 'utf8');
+      const raw = readFileSync(path, "utf8");
       const all = raw
-        .split('\n')
+        .split("\n")
         .map((l) => l.trim())
         .filter((l) => l.length > 0);
       const tail = all.slice(Math.max(0, all.length - input.tail));
@@ -3017,7 +2959,7 @@ export const router = t.router({
       for (const line of tail) {
         try {
           const parsed = JSON.parse(line) as unknown;
-          if (parsed && typeof parsed === 'object') {
+          if (parsed && typeof parsed === "object") {
             entries.push(parsed as Record<string, unknown>);
           }
         } catch {
@@ -3045,27 +2987,22 @@ export const router = t.router({
   projectApply: t.procedure
     .input(z.object({ manifestYaml: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const { parse: parseYaml } = await import('yaml');
-      const {
-        ProjectSchema,
-        loadProjects,
-        saveProjects,
-        upsertProject,
-        defaultProjectsPath,
-      } = await import('./config/projects.js');
+      const { parse: parseYaml } = await import("yaml");
+      const { ProjectSchema, loadProjects, saveProjects, upsertProject, defaultProjectsPath } =
+        await import("./config/projects.js");
       let parsedYaml: unknown;
       try {
         parsedYaml = parseYaml(input.manifestYaml);
       } catch (err) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          code: "BAD_REQUEST",
           message: `Project manifest is not valid YAML: ${(err as Error).message}`,
         });
       }
       const parsed = ProjectSchema.safeParse(parsedYaml);
       if (!parsed.success) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          code: "BAD_REQUEST",
           message: `invalid Project manifest: ${JSON.stringify(parsed.error.issues)}`,
         });
       }
@@ -3083,35 +3020,29 @@ export const router = t.router({
     }),
 
   projectList: t.procedure.query(async () => {
-    const { loadProjects } = await import('./config/projects.js');
+    const { loadProjects } = await import("./config/projects.js");
     const projects = loadProjects();
     return { ok: true as const, projects };
   }),
 
-  projectGet: t.procedure
-    .input(z.object({ name: z.string().min(1) }))
-    .query(async ({ input }) => {
-      const { loadProjects } = await import('./config/projects.js');
-      const projects = loadProjects();
-      const project = projects.find((p) => p.metadata.name === input.name);
-      if (!project) {
-        throw new TRPCError({
-          code: 'NOT_FOUND',
-          message: `project '${input.name}' not found — run \`llamactl project list\` to see registered names`,
-        });
-      }
-      return { ok: true as const, project };
-    }),
+  projectGet: t.procedure.input(z.object({ name: z.string().min(1) })).query(async ({ input }) => {
+    const { loadProjects } = await import("./config/projects.js");
+    const projects = loadProjects();
+    const project = projects.find((p) => p.metadata.name === input.name);
+    if (!project) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: `project '${input.name}' not found — run \`llamactl project list\` to see registered names`,
+      });
+    }
+    return { ok: true as const, project };
+  }),
 
   projectRemove: t.procedure
     .input(z.object({ name: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const {
-        loadProjects,
-        saveProjects,
-        removeProject,
-        defaultProjectsPath,
-      } = await import('./config/projects.js');
+      const { loadProjects, saveProjects, removeProject, defaultProjectsPath } =
+        await import("./config/projects.js");
       const path = defaultProjectsPath();
       const existing = loadProjects(path);
       const next = removeProject(existing, input.name);
@@ -3126,19 +3057,19 @@ export const router = t.router({
   projectIndex: t.procedure
     .input(z.object({ name: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const { loadProjects } = await import('./config/projects.js');
-      const { stringify: stringifyYaml } = await import('yaml');
+      const { loadProjects } = await import("./config/projects.js");
+      const { stringify: stringifyYaml } = await import("yaml");
       const projects = loadProjects();
       const project = projects.find((p) => p.metadata.name === input.name);
       if (!project) {
         throw new TRPCError({
-          code: 'NOT_FOUND',
+          code: "NOT_FOUND",
           message: `project '${input.name}' not found`,
         });
       }
       if (!project.spec.rag) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          code: "BAD_REQUEST",
           message: `project '${input.name}' has no spec.rag — declare { node, collection } before indexing`,
         });
       }
@@ -3148,7 +3079,7 @@ export const router = t.router({
       // `llamactl rag pipeline list`.
       const pipelineName = `project-${project.metadata.name}`;
       const source: Record<string, unknown> = {
-        kind: 'filesystem',
+        kind: "filesystem",
         root: project.spec.path,
         glob: project.spec.rag.docsGlob,
       };
@@ -3156,8 +3087,8 @@ export const router = t.router({
       if (project.spec.purpose) tag.purpose = project.spec.purpose;
       source.tag = tag;
       const pipelineManifest: Record<string, unknown> = {
-        apiVersion: 'llamactl/v1',
-        kind: 'RagPipeline',
+        apiVersion: "llamactl/v1",
+        kind: "RagPipeline",
         metadata: { name: pipelineName },
         spec: {
           destination: {
@@ -3167,16 +3098,14 @@ export const router = t.router({
           sources: [source],
           transforms: [
             {
-              kind: 'markdown-chunk',
+              kind: "markdown-chunk",
               chunk_size: 800,
               overlap: 150,
               preserve_headings: true,
             },
           ],
-          on_duplicate: 'replace',
-          ...(project.spec.rag.schedule
-            ? { schedule: project.spec.rag.schedule }
-            : {}),
+          on_duplicate: "replace",
+          ...(project.spec.rag.schedule ? { schedule: project.spec.rag.schedule } : {}),
         },
       };
       // Delegate to the existing ragPipelineApply procedure via a
@@ -3210,14 +3139,12 @@ export const router = t.router({
       }),
     )
     .query(async ({ input }) => {
-      const { loadProjects, resolveProjectRouting } = await import(
-        './config/projects.js'
-      );
+      const { loadProjects, resolveProjectRouting } = await import("./config/projects.js");
       const projects = loadProjects();
       const project = projects.find((p) => p.metadata.name === input.project);
       if (!project) {
         throw new TRPCError({
-          code: 'NOT_FOUND',
+          code: "NOT_FOUND",
           message: `project '${input.project}' not found`,
         });
       }
@@ -3230,7 +3157,7 @@ export const router = t.router({
         matched,
         // Additive field for Phase 3 callers — existing consumers
         // that destructure {ok, target, matched} keep working.
-        reason: matched ? ('matched' as const) : ('fallback-default' as const),
+        reason: matched ? ("matched" as const) : ("fallback-default" as const),
       };
     }),
 
@@ -3245,9 +3172,7 @@ export const router = t.router({
   projectRoutePreview: t.procedure
     .input(z.object({ node: z.string().min(1) }))
     .query(async ({ input }) => {
-      const { resolveProjectNodeTarget } = await import(
-        './config/project-routing.js'
-      );
+      const { resolveProjectNodeTarget } = await import("./config/project-routing.js");
       const route = await resolveProjectNodeTarget(input.node);
       return { ok: true as const, ...route };
     }),
@@ -3271,24 +3196,22 @@ export const router = t.router({
       }),
     )
     .query(async ({ input }) => {
-      const { defaultProjectRoutingJournalPath } = await import(
-        './config/project-routing.js'
-      );
-      const { existsSync, readFileSync } = await import('node:fs');
+      const { defaultProjectRoutingJournalPath } = await import("./config/project-routing.js");
+      const { existsSync, readFileSync } = await import("node:fs");
       const path = defaultProjectRoutingJournalPath();
       if (!existsSync(path)) {
         return { ok: true as const, path, entries: [] as Array<Record<string, unknown>> };
       }
-      const raw = readFileSync(path, 'utf8');
+      const raw = readFileSync(path, "utf8");
       const all = raw
-        .split('\n')
+        .split("\n")
         .map((l) => l.trim())
         .filter((l) => l.length > 0);
       const entries: Array<Record<string, unknown>> = [];
       for (const line of all) {
         try {
           const parsed = JSON.parse(line) as unknown;
-          if (!parsed || typeof parsed !== 'object') continue;
+          if (!parsed || typeof parsed !== "object") continue;
           if (input.project) {
             const entry = parsed as { project?: unknown };
             if (entry.project !== input.project) continue;
@@ -3318,16 +3241,14 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const { parseComposite } = await import('./composite/store.js');
-      const { topologicalOrder, impliedEdges } = await import(
-        './composite/dag.js'
-      );
+      const { parseComposite } = await import("./composite/store.js");
+      const { topologicalOrder, impliedEdges } = await import("./composite/dag.js");
       let manifest;
       try {
         manifest = parseComposite(input.manifestYaml);
       } catch (err) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          code: "BAD_REQUEST",
           message: `invalid composite manifest: ${(err as Error).message}`,
         });
       }
@@ -3344,8 +3265,8 @@ export const router = t.router({
       // Wet run — drive the applier through the shared backend and
       // publish every event onto the in-memory bus so concurrent
       // `compositeStatus` subscribers can stream live progress.
-      const { applyComposite } = await import('./composite/apply.js');
-      const { compositeEvents } = await import('./composite/event-bus.js');
+      const { applyComposite } = await import("./composite/apply.js");
+      const { compositeEvents } = await import("./composite/event-bus.js");
       const kind = resolveCompositeRuntimeKind(manifest.spec.runtime);
       const backend = await getCompositeRuntime(kind);
       const name = manifest.metadata.name;
@@ -3375,16 +3296,12 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const { loadComposite, deleteComposite } = await import(
-        './composite/store.js'
-      );
-      const { topologicalOrder, reverseOrder } = await import(
-        './composite/dag.js'
-      );
+      const { loadComposite, deleteComposite } = await import("./composite/store.js");
+      const { topologicalOrder, reverseOrder } = await import("./composite/dag.js");
       const manifest = loadComposite(input.name);
       if (!manifest) {
         throw new TRPCError({
-          code: 'NOT_FOUND',
+          code: "NOT_FOUND",
           message: `composite '${input.name}' not found`,
         });
       }
@@ -3397,7 +3314,7 @@ export const router = t.router({
           wouldPurgeVolumes: input.purgeVolumes,
         };
       }
-      const { destroyComposite } = await import('./composite/apply.js');
+      const { destroyComposite } = await import("./composite/apply.js");
       const kind = resolveCompositeRuntimeKind(manifest.spec.runtime);
       const backend = await getCompositeRuntime(kind);
       const result = await destroyComposite({
@@ -3421,14 +3338,14 @@ export const router = t.router({
     }),
 
   compositeList: t.procedure.query(async () => {
-    const { listComposites } = await import('./composite/store.js');
+    const { listComposites } = await import("./composite/store.js");
     return listComposites();
   }),
 
   compositeGet: t.procedure
     .input(z.object({ name: z.string().min(1) }))
     .query(async ({ input }) => {
-      const { loadComposite } = await import('./composite/store.js');
+      const { loadComposite } = await import("./composite/store.js");
       return loadComposite(input.name);
     }),
 
@@ -3444,71 +3361,72 @@ export const router = t.router({
     .input(z.object({ name: z.string().min(1) }))
     .subscription(({ input, signal }) => {
       const clientSignal = signal ?? new AbortController().signal;
-      return bridgeEventStream<
-        import('./composite/types.js').CompositeApplyEvent
-      >(clientSignal, async (emit) => {
-        const { compositeEvents } = await import('./composite/event-bus.js');
-        const runBus = compositeEvents.currentRun(input.name);
-        if (runBus && !runBus.done) {
-          // Live path — replay the buffer + attach for future events.
-          // The returned Promise resolves on the terminal `done` event
-          // or when the client disconnects, whichever lands first.
-          return new Promise<void>((resolve) => {
-            let settled = false;
-            const finish = (): void => {
-              if (settled) return;
-              settled = true;
-              unsub();
-              resolve();
-            };
-            const unsub = compositeEvents.subscribe(input.name, (e) => {
-              emit(e);
-              if (e.type === 'done') {
-                finish();
-              }
+      return bridgeEventStream<import("./composite/types.js").CompositeApplyEvent>(
+        clientSignal,
+        async (emit) => {
+          const { compositeEvents } = await import("./composite/event-bus.js");
+          const runBus = compositeEvents.currentRun(input.name);
+          if (runBus && !runBus.done) {
+            // Live path — replay the buffer + attach for future events.
+            // The returned Promise resolves on the terminal `done` event
+            // or when the client disconnects, whichever lands first.
+            return new Promise<void>((resolve) => {
+              let settled = false;
+              const finish = (): void => {
+                if (settled) return;
+                settled = true;
+                unsub();
+                resolve();
+              };
+              const unsub = compositeEvents.subscribe(input.name, (e) => {
+                emit(e);
+                if (e.type === "done") {
+                  finish();
+                }
+              });
+              clientSignal.addEventListener("abort", finish);
             });
-            clientSignal.addEventListener('abort', finish);
-          });
-        }
-        // Fall back to the persisted-status synthesis path.
-        const { loadComposite } = await import('./composite/store.js');
-        const manifest = loadComposite(input.name);
-        if (!manifest) {
-          throw new TRPCError({
-            code: 'NOT_FOUND',
-            message: `composite '${input.name}' not found`,
-          });
-        }
-        const status = manifest.status;
-        if (status) {
-          emit({ type: 'phase', phase: status.phase });
-          for (const c of status.components) {
-            emit({ type: 'component-start', ref: c.ref });
-            if (c.state === 'Ready') {
-              emit({
-                type: 'component-ready',
-                ref: c.ref,
-                ...(c.message !== undefined && { message: c.message }),
-              });
-            } else if (c.state === 'Failed') {
-              emit({
-                type: 'component-failed',
-                ref: c.ref,
-                message: c.message ?? 'component failed',
-              });
-            }
           }
-          emit({
-            type: 'done',
-            ok: status.phase === 'Ready',
-          });
-        } else {
-          // Manifest exists but was never applied — emit a pending
-          // phase so the UI can render an empty state cleanly.
-          emit({ type: 'phase', phase: 'Pending' });
-          emit({ type: 'done', ok: false });
-        }
-      });
+          // Fall back to the persisted-status synthesis path.
+          const { loadComposite } = await import("./composite/store.js");
+          const manifest = loadComposite(input.name);
+          if (!manifest) {
+            throw new TRPCError({
+              code: "NOT_FOUND",
+              message: `composite '${input.name}' not found`,
+            });
+          }
+          const status = manifest.status;
+          if (status) {
+            emit({ type: "phase", phase: status.phase });
+            for (const c of status.components) {
+              emit({ type: "component-start", ref: c.ref });
+              if (c.state === "Ready") {
+                emit({
+                  type: "component-ready",
+                  ref: c.ref,
+                  ...(c.message !== undefined && { message: c.message }),
+                });
+              } else if (c.state === "Failed") {
+                emit({
+                  type: "component-failed",
+                  ref: c.ref,
+                  message: c.message ?? "component failed",
+                });
+              }
+            }
+            emit({
+              type: "done",
+              ok: status.phase === "Ready",
+            });
+          } else {
+            // Manifest exists but was never applied — emit a pending
+            // phase so the UI can render an empty state cleanly.
+            emit({ type: "phase", phase: "Pending" });
+            emit({ type: "done", ok: false });
+          }
+        },
+      );
     }),
 
   globalSearchRagStatus: t.procedure.query(async () => {
@@ -3522,14 +3440,14 @@ export const router = t.router({
       let cols: string[] = [];
       try {
         const resCol = await adapter.listCollections();
-        cols = resCol.collections.map(c => c.name);
+        cols = resCol.collections.map((c) => c.name);
       } finally {
         await adapter.close();
       }
       return {
-        sessions: cols.includes('sessions'),
-        knowledge: cols.includes('knowledge'),
-        logs: cols.includes('logs'),
+        sessions: cols.includes("sessions"),
+        knowledge: cols.includes("knowledge"),
+        logs: cols.includes("logs"),
         defaultNode: nodeName,
       };
     } catch {
@@ -3544,20 +3462,17 @@ export const router = t.router({
       return { hits };
     }),
 
-  logsSearch: t.procedure
-    .input(z.object({ query: z.string().min(1) }))
-    .query(async ({ input }) => {
-      const hits = await searchLogs({
-        query: input.query,
-        files: [
-          { label: 'agent', path: '/tmp/llamactl-agent.log' },
-          { label: 'electron', path: '/tmp/llamactl-electron.log' },
-        ],
-        limit: 30,
-      });
-      return { hits };
-    }),
-
+  logsSearch: t.procedure.input(z.object({ query: z.string().min(1) })).query(async ({ input }) => {
+    const hits = await searchLogs({
+      query: input.query,
+      files: [
+        { label: "agent", path: "/tmp/llamactl-agent.log" },
+        { label: "electron", path: "/tmp/llamactl-electron.log" },
+      ],
+      limit: 30,
+    });
+    return { hits };
+  }),
 });
 
 export type AppRouter = typeof router;

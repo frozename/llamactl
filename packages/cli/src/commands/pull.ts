@@ -1,11 +1,11 @@
-import { autotune, bench, pull } from '@llamactl/core';
+import { autotune, bench, pull } from "@llamactl/core";
 import {
   getGlobals,
   getNodeClient,
   isLocalDispatch,
   matchDoneEvent,
   subscribeRemote,
-} from '../dispatcher.js';
+} from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl pull <subcommand>
 
@@ -41,10 +41,10 @@ function parseArgs(args: string[]): ParsedArgs | { error: string } {
   let json = false;
   let noTune = false;
   for (const arg of args) {
-    if (arg === '--json') json = true;
-    else if (arg === '--no-tune') noTune = true;
-    else if (arg === '-h' || arg === '--help') return { error: 'help' };
-    else if (arg.startsWith('--')) return { error: `Unknown flag: ${arg}` };
+    if (arg === "--json") json = true;
+    else if (arg === "--no-tune") noTune = true;
+    else if (arg === "-h" || arg === "--help") return { error: "help" };
+    else if (arg.startsWith("--")) return { error: `Unknown flag: ${arg}` };
     else positional.push(arg);
   }
   return { positional, json, noTune };
@@ -56,31 +56,31 @@ function parseArgs(args: string[]): ParsedArgs | { error: string } {
  * BenchEvent — both carry line-based events with the same shape.
  */
 function forwardStream(e: pull.PullEvent | bench.BenchEvent): void {
-  if (e.type === 'stderr' || e.type === 'stdout') {
+  if (e.type === "stderr" || e.type === "stdout") {
     process.stderr.write(`${e.line}\n`);
-  } else if (e.type === 'start') {
-    process.stderr.write(`$ ${e.command} ${e.args.join(' ')}\n`);
-  } else if (e.type === 'profile-start') {
+  } else if (e.type === "start") {
+    process.stderr.write(`$ ${e.command} ${e.args.join(" ")}\n`);
+  } else if (e.type === "profile-start") {
     process.stderr.write(`-- profile=${e.profile} --\n`);
-  } else if (e.type === 'profile-done') {
+  } else if (e.type === "profile-done") {
     process.stderr.write(
       `-- profile=${e.profile} gen_ts=${e.gen_ts} prompt_ts=${e.prompt_ts} --\n`,
     );
-  } else if (e.type === 'profile-fail') {
+  } else if (e.type === "profile-fail") {
     process.stderr.write(`-- profile=${e.profile} failed (code=${e.code}) --\n`);
   }
 }
 
 async function runPullRepo(args: string[]): Promise<number> {
   const parsed = parseArgs(args);
-  if ('error' in parsed) {
-    const stream = parsed.error === 'help' ? process.stdout : process.stderr;
+  if ("error" in parsed) {
+    const stream = parsed.error === "help" ? process.stdout : process.stderr;
     stream.write(USAGE);
-    return parsed.error === 'help' ? 0 : 1;
+    return parsed.error === "help" ? 0 : 1;
   }
   const [repo, target] = parsed.positional;
   if (!repo) {
-    process.stderr.write('Usage: llamactl pull <hf-repo> [target-dir] [--json]\n');
+    process.stderr.write("Usage: llamactl pull <hf-repo> [target-dir] [--json]\n");
     return 1;
   }
 
@@ -118,14 +118,14 @@ function printTuneSummary(report: autotune.MaybeTuneAfterPullResult): void {
 
 async function runPullFile(args: string[]): Promise<number> {
   const parsed = parseArgs(args);
-  if ('error' in parsed) {
-    const stream = parsed.error === 'help' ? process.stdout : process.stderr;
+  if ("error" in parsed) {
+    const stream = parsed.error === "help" ? process.stdout : process.stderr;
     stream.write(USAGE);
-    return parsed.error === 'help' ? 0 : 1;
+    return parsed.error === "help" ? 0 : 1;
   }
   const [repo, file] = parsed.positional;
   if (!repo || !file) {
-    process.stderr.write('Usage: llamactl pull file <hf-repo> <gguf-file> [--json] [--no-tune]\n');
+    process.stderr.write("Usage: llamactl pull file <hf-repo> <gguf-file> [--json] [--no-tune]\n");
     return 1;
   }
 
@@ -142,10 +142,12 @@ async function runPullFile(args: string[]): Promise<number> {
       result = await subscribeRemote<pull.PullEvent, pull.PullFileResult>({
         subscribe: (handlers) => getNodeClient().pullFile.subscribe({ repo, file }, handlers),
         onEvent: forwardStream,
-        extractDone: matchDoneEvent<pull.PullFileResult>('done'),
+        extractDone: matchDoneEvent<pull.PullFileResult>("done"),
       });
     } catch (err) {
-      process.stderr.write(`pull file: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `pull file: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
@@ -165,15 +167,18 @@ async function runPullFile(args: string[]): Promise<number> {
     } else {
       try {
         tune = await subscribeRemote<bench.BenchEvent, autotune.MaybeTuneAfterPullResult>({
-          subscribe: (handlers) => getNodeClient().autotuneAfterPull.subscribe(
-            { rel: result.rel, wasMissing: result.wasMissing },
-            handlers,
-          ),
+          subscribe: (handlers) =>
+            getNodeClient().autotuneAfterPull.subscribe(
+              { rel: result.rel, wasMissing: result.wasMissing },
+              handlers,
+            ),
           onEvent: forwardStream,
-          extractDone: matchDoneEvent<autotune.MaybeTuneAfterPullResult>('done-tune'),
+          extractDone: matchDoneEvent<autotune.MaybeTuneAfterPullResult>("done-tune"),
         });
       } catch (err) {
-        process.stderr.write(`autotune: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+        process.stderr.write(
+          `autotune: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+        );
         // Pull itself succeeded; don't fail the command on an autotune
         // error — just skip the tune summary.
       }
@@ -184,7 +189,7 @@ async function runPullFile(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify({ ...result, tune }, null, 2)}\n`);
   } else {
     process.stdout.write(
-      `Pulled ${result.rel} (wasMissing=${result.wasMissing}${result.mmproj ? `, mmproj=${result.mmproj}` : ''})\n`,
+      `Pulled ${result.rel} (wasMissing=${result.wasMissing}${result.mmproj ? `, mmproj=${result.mmproj}` : ""})\n`,
     );
     if (tune) printTuneSummary(tune);
   }
@@ -193,15 +198,15 @@ async function runPullFile(args: string[]): Promise<number> {
 
 async function runPullCandidate(args: string[]): Promise<number> {
   const parsed = parseArgs(args);
-  if ('error' in parsed) {
-    const stream = parsed.error === 'help' ? process.stdout : process.stderr;
+  if ("error" in parsed) {
+    const stream = parsed.error === "help" ? process.stdout : process.stderr;
     stream.write(USAGE);
-    return parsed.error === 'help' ? 0 : 1;
+    return parsed.error === "help" ? 0 : 1;
   }
   const [repo, file, profile] = parsed.positional;
   if (!repo) {
     process.stderr.write(
-      'Usage: llamactl pull candidate <hf-repo> [gguf-file] [profile] [--json] [--no-tune]\n',
+      "Usage: llamactl pull candidate <hf-repo> [gguf-file] [profile] [--json] [--no-tune]\n",
     );
     return 1;
   }
@@ -220,17 +225,23 @@ async function runPullCandidate(args: string[]): Promise<number> {
       const input: { repo: string; file?: string; profile?: string } = { repo };
       if (file !== undefined) input.file = file;
       if (profile !== undefined) input.profile = profile;
-      result = await subscribeRemote<pull.PullEvent, Awaited<ReturnType<typeof pull.pullCandidate>>>({
+      result = await subscribeRemote<
+        pull.PullEvent,
+        Awaited<ReturnType<typeof pull.pullCandidate>>
+      >({
         subscribe: (handlers) => getNodeClient().pullCandidate.subscribe(input, handlers),
         onEvent: forwardStream,
-        extractDone: matchDoneEvent<Awaited<ReturnType<typeof pull.pullCandidate>>>('done-candidate'),
+        extractDone:
+          matchDoneEvent<Awaited<ReturnType<typeof pull.pullCandidate>>>("done-candidate"),
       });
     } catch (err) {
-      process.stderr.write(`pull candidate: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `pull candidate: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
-  if ('error' in result) {
+  if ("error" in result) {
     if (parsed.json) {
       process.stdout.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
     } else {
@@ -254,15 +265,18 @@ async function runPullCandidate(args: string[]): Promise<number> {
     } else {
       try {
         tune = await subscribeRemote<bench.BenchEvent, autotune.MaybeTuneAfterPullResult>({
-          subscribe: (handlers) => getNodeClient().autotuneAfterPull.subscribe(
-            { rel: result.rel, wasMissing: result.wasMissing },
-            handlers,
-          ),
+          subscribe: (handlers) =>
+            getNodeClient().autotuneAfterPull.subscribe(
+              { rel: result.rel, wasMissing: result.wasMissing },
+              handlers,
+            ),
           onEvent: forwardStream,
-          extractDone: matchDoneEvent<autotune.MaybeTuneAfterPullResult>('done-tune'),
+          extractDone: matchDoneEvent<autotune.MaybeTuneAfterPullResult>("done-tune"),
         });
       } catch (err) {
-        process.stderr.write(`autotune: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+        process.stderr.write(
+          `autotune: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+        );
       }
     }
   }
@@ -271,7 +285,7 @@ async function runPullCandidate(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify({ ...result, tune }, null, 2)}\n`);
   } else {
     process.stdout.write(
-      `Pulled ${result.rel} (source=${result.picked.source}, profile=${result.picked.profile}, wasMissing=${result.wasMissing}${result.mmproj ? `, mmproj=${result.mmproj}` : ''})\n`,
+      `Pulled ${result.rel} (source=${result.picked.source}, profile=${result.picked.profile}, wasMissing=${result.wasMissing}${result.mmproj ? `, mmproj=${result.mmproj}` : ""})\n`,
     );
     if (tune) printTuneSummary(tune);
   }
@@ -280,14 +294,14 @@ async function runPullCandidate(args: string[]): Promise<number> {
 
 export async function runPull(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
-  if (!sub || sub === '-h' || sub === '--help' || sub === 'help') {
+  if (!sub || sub === "-h" || sub === "--help" || sub === "help") {
     process.stdout.write(USAGE);
     return sub ? 0 : 1;
   }
   switch (sub) {
-    case 'file':
+    case "file":
       return runPullFile(rest);
-    case 'candidate':
+    case "candidate":
       return runPullCandidate(rest);
     default:
       // First positional wasn't a subcommand — treat the whole argv

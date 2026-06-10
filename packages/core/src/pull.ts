@@ -1,13 +1,13 @@
-import { spawn } from 'node:child_process';
-import fs, { existsSync, mkdirSync } from 'node:fs';
-import os from 'node:os';
-import { delimiter, join } from 'node:path';
-import { relFromRepoAndFile } from './catalog.js';
-import { eligibleGgufSiblings, pickFile } from './discovery.js';
-import { resolveEnv } from './env.js';
-import { fetchModelInfo, mmprojFileForRepo } from './hf.js';
-import { normalizeProfile, resolveProfile } from './profile.js';
-import type { MachineProfile, ResolvedEnv } from './types.js';
+import { spawn } from "node:child_process";
+import fs, { existsSync, mkdirSync } from "node:fs";
+import os from "node:os";
+import { delimiter, join } from "node:path";
+import { relFromRepoAndFile } from "./catalog.js";
+import { eligibleGgufSiblings, pickFile } from "./discovery.js";
+import { resolveEnv } from "./env.js";
+import { fetchModelInfo, mmprojFileForRepo } from "./hf.js";
+import { normalizeProfile, resolveProfile } from "./profile.js";
+import type { MachineProfile, ResolvedEnv } from "./types.js";
 
 /**
  * Resolve which HuggingFace CLI binary to invoke. Probe order:
@@ -20,10 +20,10 @@ import type { MachineProfile, ResolvedEnv } from './types.js';
 export function resolveHfBin(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LOCAL_AI_HF_BIN;
   if (override && override.length > 0) return override;
-  const path = env.PATH ?? '';
-  const candidates = ['hf', 'huggingface-cli'];
+  const path = env.PATH ?? "";
+  const candidates = ["hf", "huggingface-cli"];
   const extensions =
-    process.platform === 'win32' ? (env.PATHEXT ?? '.EXE;.BAT;.CMD').split(';') : [''];
+    process.platform === "win32" ? (env.PATHEXT ?? ".EXE;.BAT;.CMD").split(";") : [""];
   for (const dir of path.split(delimiter)) {
     if (!dir) continue;
     for (const name of candidates) {
@@ -33,7 +33,7 @@ export function resolveHfBin(env: NodeJS.ProcessEnv = process.env): string {
       }
     }
   }
-  return 'hf';
+  return "hf";
 }
 
 export function resolveHfToken(): string | undefined {
@@ -44,15 +44,15 @@ export function resolveHfToken(): string | undefined {
   if (legacy && legacy.length > 0) return legacy;
 
   try {
-    const home = process.env.HF_HOME ?? join(os.homedir(), '.cache/huggingface');
-    const token = fs.readFileSync(join(home, 'token'), 'utf8').trim();
+    const home = process.env.HF_HOME ?? join(os.homedir(), ".cache/huggingface");
+    const token = fs.readFileSync(join(home, "token"), "utf8").trim();
     return token.length > 0 ? token : undefined;
   } catch {
     return undefined;
   }
 }
 
-export type RepoFormat = 'gguf' | 'mlx';
+export type RepoFormat = "gguf" | "mlx";
 
 export function classifyRepoFormat(
   repo: string,
@@ -61,24 +61,22 @@ export function classifyRepoFormat(
 ): { ok: true; format: RepoFormat } | { ok: false; error: string } {
   if (opts.override) return { ok: true, format: opts.override };
 
-  const hasGguf = files.some((f) => f.toLowerCase().endsWith('.gguf'));
-  if (hasGguf) return { ok: true, format: 'gguf' };
+  const hasGguf = files.some((f) => f.toLowerCase().endsWith(".gguf"));
+  if (hasGguf) return { ok: true, format: "gguf" };
 
-  const hasConfig = files.includes('config.json');
-  const hasTokenizer = files.includes('tokenizer.json') || files.includes('tokenizer.model');
-  const hasSafetensors = files.some(
-    (f) => {
-      const lower = f.toLowerCase();
-      return (
-        lower === 'model.safetensors' ||
-        lower === 'model.safetensors.index.json' ||
-        lower.endsWith('.safetensors')
-      );
-    },
-  );
-  if (hasConfig && hasTokenizer && hasSafetensors) return { ok: true, format: 'mlx' };
+  const hasConfig = files.includes("config.json");
+  const hasTokenizer = files.includes("tokenizer.json") || files.includes("tokenizer.model");
+  const hasSafetensors = files.some((f) => {
+    const lower = f.toLowerCase();
+    return (
+      lower === "model.safetensors" ||
+      lower === "model.safetensors.index.json" ||
+      lower.endsWith(".safetensors")
+    );
+  });
+  if (hasConfig && hasTokenizer && hasSafetensors) return { ok: true, format: "mlx" };
 
-  if (repo.startsWith('mlx-community/')) {
+  if (repo.startsWith("mlx-community/")) {
     return {
       ok: false,
       error: `repo ${repo} looks like an MLX repo by namespace but is missing required files (need config.json + tokenizer + safetensors)`,
@@ -95,10 +93,10 @@ export function classifyRepoFormat(
  * in-place progress bars); `exit` fires once with the final code.
  */
 export type PullEvent =
-  | { type: 'start'; command: 'hf'; args: string[]; target: string }
-  | { type: 'stdout'; line: string }
-  | { type: 'stderr'; line: string }
-  | { type: 'exit'; code: number };
+  | { type: "start"; command: "hf"; args: string[]; target: string }
+  | { type: "stdout"; line: string }
+  | { type: "stderr"; line: string }
+  | { type: "exit"; code: number };
 
 /**
  * Runner signature for `hf`. Overridable so tests can assert the argv
@@ -113,7 +111,7 @@ export type RunHf = (
 ) => Promise<number>;
 
 function repoBasename(repo: string): string {
-  const slash = repo.lastIndexOf('/');
+  const slash = repo.lastIndexOf("/");
   return slash >= 0 ? repo.slice(slash + 1) : repo;
 }
 
@@ -124,14 +122,11 @@ function repoBasename(repo: string): string {
  * surface intermediate progress states rather than waiting for the
  * final `\n`.
  */
-function drainLines(
-  buf: string,
-  onLine: (line: string) => void,
-): string {
+function drainLines(buf: string, onLine: (line: string) => void): string {
   let remaining = buf;
   while (true) {
-    const nl = remaining.indexOf('\n');
-    const cr = remaining.indexOf('\r');
+    const nl = remaining.indexOf("\n");
+    const cr = remaining.indexOf("\r");
     let idx: number;
     if (nl === -1 && cr === -1) break;
     else if (nl === -1) idx = cr;
@@ -150,41 +145,38 @@ export const defaultRunHf: RunHf = (args, onEvent, signal) => {
     const env = { ...process.env };
     const token = resolveHfToken();
     if (token) env.HF_TOKEN = token;
-    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
-    const forward = (
-      stream: NodeJS.ReadableStream,
-      kind: 'stdout' | 'stderr',
-    ) => {
-      let buf = '';
-      stream.on('data', (chunk: Buffer) => {
-        buf += chunk.toString('utf8');
+    const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env });
+    const forward = (stream: NodeJS.ReadableStream, kind: "stdout" | "stderr") => {
+      let buf = "";
+      stream.on("data", (chunk: Buffer) => {
+        buf += chunk.toString("utf8");
         buf = drainLines(buf, (line) => onEvent?.({ type: kind, line }));
       });
-      stream.on('end', () => {
+      stream.on("end", () => {
         if (buf.length > 0) onEvent?.({ type: kind, line: buf });
       });
     };
-    if (child.stdout) forward(child.stdout, 'stdout');
-    if (child.stderr) forward(child.stderr, 'stderr');
+    if (child.stdout) forward(child.stdout, "stdout");
+    if (child.stderr) forward(child.stderr, "stderr");
     const onAbort = () => {
       try {
-        child.kill('SIGTERM');
+        child.kill("SIGTERM");
       } catch {
         // child may already be gone
       }
     };
     if (signal) {
       if (signal.aborted) onAbort();
-      else signal.addEventListener('abort', onAbort, { once: true });
+      else signal.addEventListener("abort", onAbort, { once: true });
     }
-    child.once('error', (err) => {
-      signal?.removeEventListener('abort', onAbort);
+    child.once("error", (err) => {
+      signal?.removeEventListener("abort", onAbort);
       reject(err);
     });
-    child.once('exit', (code) => {
-      signal?.removeEventListener('abort', onAbort);
+    child.once("exit", (code) => {
+      signal?.removeEventListener("abort", onAbort);
       const c = code ?? 1;
-      onEvent?.({ type: 'exit', code: c });
+      onEvent?.({ type: "exit", code: c });
       resolve(c);
     });
   });
@@ -214,7 +206,7 @@ export interface PullRepoResult {
  * target under `$LLAMA_CPP_MODELS`.
  */
 export async function pullRepo(opts: PullRepoOptions): Promise<PullRepoResult> {
-  if (!opts.repo) throw new Error('pullRepo: repo is required');
+  if (!opts.repo) throw new Error("pullRepo: repo is required");
   const resolved = opts.resolved ?? resolveEnv();
   const target =
     opts.targetDir && opts.targetDir.length > 0
@@ -222,8 +214,8 @@ export async function pullRepo(opts: PullRepoOptions): Promise<PullRepoResult> {
       : join(resolved.LLAMA_CPP_MODELS, repoBasename(opts.repo));
   mkdirSync(target, { recursive: true });
 
-  const args = ['download', opts.repo, '--local-dir', target];
-  opts.onEvent?.({ type: 'start', command: 'hf', args, target });
+  const args = ["download", opts.repo, "--local-dir", target];
+  opts.onEvent?.({ type: "start", command: "hf", args, target });
   const run = opts.runHf ?? defaultRunHf;
   const code = await run(args, opts.onEvent, opts.signal);
   return { repo: opts.repo, target, code };
@@ -271,11 +263,9 @@ export interface PullFileResult {
  * The structured result reports `wasMissing` so callers can drive
  * conditional post-pull steps like auto-tune.
  */
-export async function pullRepoFile(
-  opts: PullFileOptions,
-): Promise<PullFileResult> {
-  if (!opts.repo) throw new Error('pullRepoFile: repo is required');
-  if (!opts.file) throw new Error('pullRepoFile: file is required');
+export async function pullRepoFile(opts: PullFileOptions): Promise<PullFileResult> {
+  if (!opts.repo) throw new Error("pullRepoFile: repo is required");
+  if (!opts.file) throw new Error("pullRepoFile: file is required");
   const resolved = opts.resolved ?? resolveEnv();
   const target = join(resolved.LLAMA_CPP_MODELS, repoBasename(opts.repo));
   const rel = relFromRepoAndFile(opts.repo, opts.file);
@@ -293,8 +283,8 @@ export async function pullRepoFile(
 
   mkdirSync(target, { recursive: true });
   const requestedFiles = mmproj ? [opts.file, mmproj] : [opts.file];
-  const args = ['download', opts.repo, ...requestedFiles, '--local-dir', target];
-  opts.onEvent?.({ type: 'start', command: 'hf', args, target });
+  const args = ["download", opts.repo, ...requestedFiles, "--local-dir", target];
+  opts.onEvent?.({ type: "start", command: "hf", args, target });
   const run = opts.runHf ?? defaultRunHf;
   const code = await run(args, opts.onEvent, opts.signal);
 
@@ -324,7 +314,7 @@ export interface PickCandidateOptions {
 export interface PickCandidateResult {
   repo: string;
   file: string;
-  source: 'requested' | 'picked';
+  source: "requested" | "picked";
   profile: MachineProfile;
   eligible: string[];
 }
@@ -339,18 +329,17 @@ export interface PickCandidateResult {
 export async function pickCandidateFile(
   opts: PickCandidateOptions,
 ): Promise<PickCandidateResult | null> {
-  if (!opts.repo) throw new Error('pickCandidateFile: repo is required');
+  if (!opts.repo) throw new Error("pickCandidateFile: repo is required");
   const resolved = opts.resolved ?? resolveEnv();
   const profile: MachineProfile =
-    (typeof opts.profile === 'string'
-      ? normalizeProfile(opts.profile)
-      : opts.profile) ?? resolveProfile();
+    (typeof opts.profile === "string" ? normalizeProfile(opts.profile) : opts.profile) ??
+    resolveProfile();
 
   if (opts.file) {
     return {
       repo: opts.repo,
       file: opts.file,
-      source: 'requested',
+      source: "requested",
       profile,
       eligible: [opts.file],
     };
@@ -365,7 +354,7 @@ export async function pickCandidateFile(
   return {
     repo: opts.repo,
     file: picked,
-    source: 'picked',
+    source: "picked",
     profile,
     eligible,
   };
@@ -386,7 +375,7 @@ export interface PullCandidateOptions {
 
 export interface PullCandidateResult extends PullFileResult {
   picked: {
-    source: 'requested' | 'picked';
+    source: "requested" | "picked";
     profile: MachineProfile;
     eligible: string[];
   };

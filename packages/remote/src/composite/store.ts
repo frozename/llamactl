@@ -6,32 +6,20 @@
  * workloads / infra / kubeconfig stores, so ops tools that bulk-
  * relocate llamactl state can redirect all of them uniformly).
  */
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { CompositeSchema, type Composite } from './schema.js';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { CompositeSchema, type Composite } from "./schema.js";
 
-export function defaultCompositesDir(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function defaultCompositesDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_COMPOSITES_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'composites');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "composites");
 }
 
-export function compositePath(
-  name: string,
-  dir: string = defaultCompositesDir(),
-): string {
+export function compositePath(name: string, dir: string = defaultCompositesDir()): string {
   return join(dir, `${name}.yaml`);
 }
 
@@ -52,27 +40,22 @@ export function loadComposite(
 ): Composite | null {
   const path = compositePath(name, dir);
   if (!existsSync(path)) return null;
-  return parseComposite(readFileSync(path, 'utf8'));
+  return parseComposite(readFileSync(path, "utf8"));
 }
 
-export function saveComposite(
-  manifest: Composite,
-  dir: string = defaultCompositesDir(),
-): string {
+export function saveComposite(manifest: Composite, dir: string = defaultCompositesDir()): string {
   const validated = CompositeSchema.parse(manifest);
   mkdirSync(dir, { recursive: true });
   const path = compositePath(validated.metadata.name, dir);
-  writeFileSync(path, stringifyYaml(validated), 'utf8');
+  writeFileSync(path, stringifyYaml(validated), "utf8");
   return path;
 }
 
-export function listCompositeNames(
-  dir: string = defaultCompositesDir(),
-): string[] {
+export function listCompositeNames(dir: string = defaultCompositesDir()): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
-    .filter((f) => f.endsWith('.yaml'))
-    .map((f) => basename(f, '.yaml'))
+    .filter((f) => f.endsWith(".yaml"))
+    .map((f) => basename(f, ".yaml"))
     .sort();
 }
 
@@ -84,18 +67,16 @@ export function listCompositeNames(
  * are silently skipped; `llamactl describe composite <n>` surfaces
  * the real error to operators on demand.
  */
-export function listComposites(
-  dir: string = defaultCompositesDir(),
-): Composite[] {
+export function listComposites(dir: string = defaultCompositesDir()): Composite[] {
   if (!existsSync(dir)) return [];
   const out: Composite[] = [];
   for (const entry of readdirSync(dir)) {
-    if (!entry.endsWith('.yaml')) continue;
+    if (!entry.endsWith(".yaml")) continue;
     const path = join(dir, entry);
     try {
-      const raw = readFileSync(path, 'utf8');
+      const raw = readFileSync(path, "utf8");
       const parsed = parseYaml(raw) as { kind?: string } | null;
-      if (parsed?.kind !== 'Composite') continue;
+      if (parsed?.kind !== "Composite") continue;
       out.push(CompositeSchema.parse(parsed));
     } catch {
       // Skip malformed files; operators see these via describe.
@@ -104,10 +85,7 @@ export function listComposites(
   return out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 }
 
-export function deleteComposite(
-  name: string,
-  dir: string = defaultCompositesDir(),
-): boolean {
+export function deleteComposite(name: string, dir: string = defaultCompositesDir()): boolean {
   const path = compositePath(name, dir);
   if (!existsSync(path)) return false;
   rmSync(path, { force: true });

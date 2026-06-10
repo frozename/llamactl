@@ -1,1 +1,10 @@
-{"note": "Qwen 3.6 27B dense + Qwen3.5-4B drafter, 10 mixed prompts, max_tokens=600, -np 2 -rea off on M4 Pro :18888 (patched binary)", "a_specdraft": {"wall_s": 300, "note": "1+ curl timeout at 300s; some incomplete responses", "draft_acceptance_observed": [0.75, 0.83, 0.84, 0.75, 0.76, 0.76, 0.85, 0.78, 0.78]}, "b_vanilla": {"wall_s": 191.81, "note": "all 10 prompts complete cleanly"}, "throughput_delta": "-50%"}
+{
+  "note": "Qwen 3.6 27B dense + Qwen3.5-4B drafter, 10 mixed prompts, max_tokens=600, -np 2 -rea off on M4 Pro :18888 (patched binary)",
+  "a_specdraft": {
+    "wall_s": 300,
+    "note": "1+ curl timeout at 300s; some incomplete responses",
+    "draft_acceptance_observed": [0.75, 0.83, 0.84, 0.75, 0.76, 0.76, 0.85, 0.78, 0.78]
+  },
+  "b_vanilla": { "wall_s": 191.81, "note": "all 10 prompts complete cleanly" },
+  "throughput_delta": "-50%"
+}

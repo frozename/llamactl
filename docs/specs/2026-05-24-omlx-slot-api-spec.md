@@ -7,6 +7,7 @@ Add a llama.cpp-compatible slot save/restore API to oMLX so llamactl can remove 
 ## Review inputs (traceability)
 
 This v2 spec revision applies the convergent findings from:
+
 - `docs/notes/adversarial-synthesis-2026-05-24.md`
 - `docs/notes/adversarial-plan-omlx-2026-05-24-architect.md`
 - `docs/notes/adversarial-plan-omlx-2026-05-24-simplifier.md`
@@ -16,17 +17,20 @@ This v2 spec revision applies the convergent findings from:
 ## Hard runtime invariant
 
 This is a hard safety invariant for v1 slot endpoints:
+
 - If `slot_save_path` is set, `max_concurrent_requests` MUST be exactly `1`.
 - Startup MUST refuse to boot slot endpoints when `slot_save_path` is set and `max_concurrent_requests != 1`.
 - Startup MUST emit an explicit operator-facing log line describing the violation and the required fix.
 - If the invariant is ever violated after startup (defensive runtime check), every slot request MUST return HTTP 503 with an explicit machine-readable reason (`slot_invariant_violation`) and no scheduler/cache mutation.
 
 Identity model and model targeting:
+
 - v1 hard-gates to `slot_id=0` only.
 - Slot requests MUST include a `model` selector (`model` body field), unless the server is in explicit single-model strict mode.
 - In single-model strict mode, server MUST verify exactly one resolved model target before executing save/restore; otherwise return HTTP 409.
 
 Future identity model (v2 direction):
+
 - Canonical identity evolves to `(model_id, request_handle)`.
 - `slot=0` remains a compatibility alias only.
 
@@ -39,10 +43,11 @@ Future identity model (v2 direction):
 ### Request body
 
 ```json
-{"filename":"<basename>","model":"<model_id_or_alias_optional_in_strict_single_model_mode>"}
+{ "filename": "<basename>", "model": "<model_id_or_alias_optional_in_strict_single_model_mode>" }
 ```
 
 Rules:
+
 - `filename` must be a basename relative to `--slot-save-path`.
 - Absolute paths and path traversal (`..`) are rejected with HTTP 400.
 - `slot_id` must be `0` in v1.
@@ -53,16 +58,17 @@ Rules:
 `action=save`:
 
 ```json
-{"id_slot":0,"model":"<resolved_model>","filename":"abc.kvslot","n_saved":12345}
+{ "id_slot": 0, "model": "<resolved_model>", "filename": "abc.kvslot", "n_saved": 12345 }
 ```
 
 `action=restore`:
 
 ```json
-{"id_slot":0,"model":"<resolved_model>","filename":"abc.kvslot","n_restored":12345}
+{ "id_slot": 0, "model": "<resolved_model>", "filename": "abc.kvslot", "n_restored": 12345 }
 ```
 
 Notes:
+
 - `n_saved`/`n_restored` are token counts for compatibility with `packages/core/src/kvstore/upstreamSlots.ts`.
 - `id_slot` echoes the path parameter.
 - `model` echoes the resolved model binding used for the operation.
@@ -83,7 +89,7 @@ Notes:
   "error": {
     "code": "slot_serialize_failed",
     "message": "failed to serialize KV cache",
-    "details": {"slot_id":0,"filename":"abc.kvslot","model":"<resolved_model>"}
+    "details": { "slot_id": 0, "filename": "abc.kvslot", "model": "<resolved_model>" }
   }
 }
 ```
@@ -135,11 +141,13 @@ Notes:
 ## Disk format
 
 v1 SHOULD reuse oMLX's existing safetensors-based persistence primitives and cache-format versioning rather than introducing a second serialization stack:
+
 - safetensors persistence patterns: `omlx/cache/paged_ssd_cache.py:1281-1304`
 - boundary snapshot persistence: `omlx/cache/boundary_snapshot_store.py:9-13`
 - scheduler-managed async persistence pipeline touchpoints: `omlx/scheduler.py:1020-1072`, `omlx/scheduler.py:5046-5156`
 
 Recommended v1 slot artifact fields (whether embedded metadata or sidecar manifest):
+
 - `slot_format_version`
 - `model_fingerprint`
 - `model_id`
@@ -160,14 +168,17 @@ Recommended v1 slot artifact fields (whether embedded metadata or sidecar manife
 ## Safety guards
 
 Restore must hard-fail (HTTP 409) on v1 guard mismatch for:
+
 - Model fingerprint mismatch.
 - Context size mismatch.
 
 Deferred to v1.1 unless evidence requires earlier:
+
 - Quant configuration guard.
 - Secondary-tuple guard symmetry (`workload`, `quant_bits`, `ctx_size`, `workload_epoch`) with llamactl policy.
 
 Fingerprint definition (v1):
+
 - `sha256` over canonicalized model artifact manifest under `EngineEntry.model_path` (`omlx/engine_pool.py:50-56`) with stable fields (filename + size + selected content-hash inputs).
 - Raw mtime should not be a primary fingerprint input.
 
@@ -176,22 +187,26 @@ Fingerprint definition (v1):
 This section is normative and must be implemented before Phase B.
 
 Per-slot state set:
+
 - `IDLE`
 - `SAVING`
 - `RESTORING`
 - `GENERATING`
 
 Per-slot mutex semantics:
+
 - All slot transitions and slot read/write operations are guarded by a per-slot mutex.
 - No slot mutation is allowed outside mutex ownership.
 - Save/restore operations must never race silently with generation.
 
 Busy/refusal behavior:
+
 - `save` while slot is active (`GENERATING`, `SAVING`, `RESTORING`) => HTTP 409 Conflict.
 - `restore` while slot is active (`GENERATING`, `SAVING`, `RESTORING`) => HTTP 423 Locked.
 - No best-effort partial snapshotting; no silent downgrade.
 
 Transition intent (v1):
+
 - `IDLE -> SAVING -> IDLE`
 - `IDLE -> RESTORING -> IDLE`
 - `IDLE -> GENERATING -> IDLE`
@@ -202,6 +217,7 @@ Transition intent (v1):
 ## Phase A: capability + skeleton + wiring
 
 RED:
+
 - Add failing tests in `tests/test_settings.py`, `tests/test_cli.py`, and `tests/integration/test_server_endpoints.py` for:
   - `--slot-save-path` parse/env/default behavior.
   - auth parity with existing protected endpoints.
@@ -209,19 +225,23 @@ RED:
   - capability discovery via `/props` parity or `/v1/slots/capabilities`.
 
 GREEN:
+
 - Add settings/CLI/env wiring, endpoint skeleton, auth gate, invariant checks, and disabled behavior.
 - Add explicit capability surface for slots.
 
 VERIFY:
+
 - `pytest tests/test_settings.py tests/test_cli.py tests/integration/test_server_endpoints.py -k slots`
 
 ## Phase B: save path with memory-safe async pipeline
 
 RED:
+
 - Add tests for save success and busy refusal with bounded-memory behavior expectations.
 - Add tests asserting no synchronous multi-GB blocking on request thread.
 
 GREEN:
+
 - Implement save path by reusing existing scheduler/cache async primitives:
   - background write worker and staged write flow (`omlx/scheduler.py:1020-1072`)
   - completion/store pipeline hooks (`omlx/scheduler.py:5046-5156`)
@@ -229,45 +249,54 @@ GREEN:
 - Implement atomic publish semantics and explicit state transitions.
 
 VERIFY:
+
 - `pytest tests/test_scheduler.py tests/integration/test_server_endpoints.py -k "slots and save"`
 
 ## Phase C: restore path + minimal guard set
 
 RED:
+
 - Add restore tests for success, missing file (404), active-state refusal (423), and the two v1 guards (fingerprint + ctx size).
 
 GREEN:
+
 - Implement restore load/apply path under per-slot mutex.
 - Enforce only v1 guards: fingerprint + ctx size.
 - Defer quant guard + secondary tuple to a v1.1 follow-up unless evidence demands earlier.
 
 VERIFY:
+
 - `pytest tests/test_scheduler.py tests/integration/test_server_endpoints.py -k "slots and restore"`
 
 ## Phase D: cross-repo contract CI and version negotiation
 
 RED:
+
 - Add failing contract tests in llamactl and oMLX pairwise lane for:
   - capability negotiation presence.
   - `supportsSlots()` gating on capability, not inference.
   - save/restore response shape parity.
 
 GREEN:
+
 - Add version negotiation field to capability surface.
 - Add pinned oMLX commit/tag contract lane and paired smoke test execution.
 
 VERIFY:
+
 - paired CI lane builds both repos, runs slot save/restore parity tests, and reports compatibility tuple.
 
 ## Test surface
 
 Existing test files to extend:
+
 - `tests/test_settings.py` (new setting/env/default validation + invariant checks)
 - `tests/test_cli.py` (new CLI flag)
 - `tests/integration/test_server_endpoints.py` (HTTP contract, disabled mode, busy responses, errors)
 - `tests/test_scheduler.py` (state machine + save/restore logic)
 
 New test module (recommended):
+
 - `tests/test_slot_store.py` for serializer/validator/guard/state-machine unit tests.
 
 ## Cross-repo contract governance

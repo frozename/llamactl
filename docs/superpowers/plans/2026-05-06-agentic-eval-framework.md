@@ -15,6 +15,7 @@
 ## File structure
 
 **New files:**
+
 - `packages/eval/package.json` — TS package; depends on `@llamactl/core`
 - `packages/eval/tsconfig.json`
 - `packages/eval/src/index.ts` — public API barrel
@@ -41,6 +42,7 @@
 - `packages/mcp/src/tools/models-leaderboard.ts` — `llamactl_models_leaderboard` MCP tool
 
 **Modified files:**
+
 - `packages/cli/src/index.ts` — register `eval` subcommand router
 - `packages/mcp/src/server.ts` (or wherever tools are registered) — register `llamactl_models_leaderboard`
 - `packages/core/src/catalog.ts` — Phase 2 only: 8 new catalog entries
@@ -54,6 +56,7 @@ Goal: a working `bun packages/eval/src/cli-stub.ts throughput <model>` end-to-en
 ### Task A1: Package scaffold
 
 **Files:**
+
 - Create `packages/eval/package.json`
 - Create `packages/eval/tsconfig.json`
 - Create `packages/eval/src/index.ts`
@@ -86,18 +89,22 @@ Match the project's existing version pins by copying from `packages/core/package
 - [ ] **Step 2: Create `tsconfig.json`** (clone from `packages/core/tsconfig.json`).
 
 - [ ] **Step 3: Create `src/index.ts`** as an empty barrel:
+
 ```ts
 export {};
 ```
 
 - [ ] **Step 4: Verify the workspace picks up the new package**
+
 ```bash
 bun install
 ls node_modules/@llamactl/eval
 ```
+
 Expect a symlink into `packages/eval/`.
 
 - [ ] **Step 5: Commit**
+
 ```bash
 git add packages/eval/package.json packages/eval/tsconfig.json packages/eval/src/index.ts
 git commit -m "eval: scaffold @llamactl/eval package"
@@ -106,6 +113,7 @@ git commit -m "eval: scaffold @llamactl/eval package"
 ### Task A2: Server lifecycle helper
 
 **Files:**
+
 - Create `packages/eval/src/server.ts`
 - Create `packages/eval/test/server.test.ts`
 
@@ -123,15 +131,22 @@ describe("buildServerArgs", () => {
       ub: 256,
     });
     expect(args).toEqual([
-      "--host", "127.0.0.1",
-      "--port", "18181",
-      "--model", "/models/foo.gguf",
-      "--ctx-size", "8192",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "18181",
+      "--model",
+      "/models/foo.gguf",
+      "--ctx-size",
+      "8192",
       "--no-warmup",
-      "-np", "1",
-      "-ngl", "999",
+      "-np",
+      "1",
+      "-ngl",
+      "999",
       "--flash-attn",
-      "-ub", "256",
+      "-ub",
+      "256",
     ]);
   });
 
@@ -158,6 +173,7 @@ describe("buildServerArgs", () => {
 ```
 
 - [ ] **Step 2: Run, fail.**
+
 ```bash
 bun test packages/eval/test/server.test.ts
 ```
@@ -177,13 +193,19 @@ export interface ServerOptions {
 
 export function buildServerArgs(opts: ServerOptions): string[] {
   const args = [
-    "--host", "127.0.0.1",
-    "--port", String(opts.port),
-    "--model", opts.modelPath,
-    "--ctx-size", String(opts.ctxSize ?? 8192),
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(opts.port),
+    "--model",
+    opts.modelPath,
+    "--ctx-size",
+    String(opts.ctxSize ?? 8192),
     "--no-warmup",
-    "-np", "1",
-    "-ngl", "999",
+    "-np",
+    "1",
+    "-ngl",
+    "999",
   ];
   if (opts.flashAttn !== false) args.push("--flash-attn");
   args.push("-ub", String(opts.ub));
@@ -204,7 +226,8 @@ export async function spawnServer(
   const args = buildServerArgs(opts);
   const log = Bun.file(logPath).writer();
   const proc = spawn([binary, ...args], {
-    stdout: "pipe", stderr: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
   });
   // pipe stdout+stderr to log; non-blocking
   (async () => {
@@ -229,7 +252,9 @@ export async function waitForHealth(
     try {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(1000) });
       if (res.status === 200) return;
-    } catch { /* not up yet */ }
+    } catch {
+      /* not up yet */
+    }
     await Bun.sleep(500);
   }
   throw new Error(`server failed health within ${timeoutMs}ms`);
@@ -237,16 +262,22 @@ export async function waitForHealth(
 
 export async function killServer(s: SpawnedServer): Promise<void> {
   s.proc.kill("SIGTERM");
-  try { await s.proc.exited; } catch { /* fine */ }
+  try {
+    await s.proc.exited;
+  } catch {
+    /* fine */
+  }
 }
 ```
 
 - [ ] **Step 4: Test, pass.**
+
 ```bash
 bun test packages/eval/test/server.test.ts
 ```
 
 - [ ] **Step 5: Commit**
+
 ```bash
 git add packages/eval/src/server.ts packages/eval/test/server.test.ts
 git commit -m "eval: add llama-server lifecycle helper"
@@ -255,6 +286,7 @@ git commit -m "eval: add llama-server lifecycle helper"
 ### Task A3: Chat-completions client
 
 **Files:**
+
 - Create `packages/eval/src/client.ts`
 - Create `packages/eval/test/client.test.ts`
 
@@ -388,6 +420,7 @@ export async function completeChat(
 ```
 
 - [ ] **Step 3: Test, pass. Commit.**
+
 ```bash
 bun test packages/eval/test/client.test.ts
 git add packages/eval/src/client.ts packages/eval/test/client.test.ts
@@ -397,6 +430,7 @@ git commit -m "eval: add chat-completions client (OpenAI-compat)"
 ### Task A4: Throughput runner
 
 **Files:**
+
 - Create `packages/eval/src/runners/throughput.ts`
 - Create `packages/eval/src/fixtures/prompts-throughput.json`
 - Create `packages/eval/test/runners-throughput.test.ts`
@@ -405,15 +439,36 @@ git commit -m "eval: add chat-completions client (OpenAI-compat)"
 
 ```json
 [
-  { "name": "code_python",      "prompt": "Write a Python function that returns the n-th Fibonacci number using memoization. Include a docstring." },
-  { "name": "code_cpp",         "prompt": "Write a C++ template function `clamp(x, lo, hi)` that returns x clamped to [lo, hi]. No std::clamp." },
-  { "name": "explain_concept",  "prompt": "Explain how speculative decoding works in large language model inference, in three short paragraphs." },
-  { "name": "summarize",        "prompt": "Summarize in two sentences: The Industrial Revolution began in Britain..." },
-  { "name": "qa_factual",       "prompt": "Q: What are the four fundamental forces of physics?\nA:" },
-  { "name": "translation",      "prompt": "Translate to French: 'The quick brown fox jumps over the lazy dog.'" },
-  { "name": "creative_short",   "prompt": "Write a four-line poem about an old lighthouse." },
-  { "name": "stepwise_math",    "prompt": "Solve step by step: A train leaves station A at 60 km/h..." },
-  { "name": "long_code_review", "prompt": "You are reviewing a backend service... (full text from bench-client.py)" }
+  {
+    "name": "code_python",
+    "prompt": "Write a Python function that returns the n-th Fibonacci number using memoization. Include a docstring."
+  },
+  {
+    "name": "code_cpp",
+    "prompt": "Write a C++ template function `clamp(x, lo, hi)` that returns x clamped to [lo, hi]. No std::clamp."
+  },
+  {
+    "name": "explain_concept",
+    "prompt": "Explain how speculative decoding works in large language model inference, in three short paragraphs."
+  },
+  {
+    "name": "summarize",
+    "prompt": "Summarize in two sentences: The Industrial Revolution began in Britain..."
+  },
+  { "name": "qa_factual", "prompt": "Q: What are the four fundamental forces of physics?\nA:" },
+  {
+    "name": "translation",
+    "prompt": "Translate to French: 'The quick brown fox jumps over the lazy dog.'"
+  },
+  { "name": "creative_short", "prompt": "Write a four-line poem about an old lighthouse." },
+  {
+    "name": "stepwise_math",
+    "prompt": "Solve step by step: A train leaves station A at 60 km/h..."
+  },
+  {
+    "name": "long_code_review",
+    "prompt": "You are reviewing a backend service... (full text from bench-client.py)"
+  }
 ]
 ```
 
@@ -501,6 +556,7 @@ export async function runThroughput(url: string): Promise<ThroughputResult> {
 ### Task A5: CLI stub for end-to-end smoke
 
 **Files:**
+
 - Create `packages/eval/src/cli-stub.ts` (temp, replaced by Slice D)
 
 - [ ] **Step 1: Build a minimal CLI** that picks up env, spawns server, runs throughput, dumps JSON.
@@ -523,21 +579,30 @@ const LLAMA_CPP_BIN = process.env.LLAMA_CPP_BIN ?? "";
 const LLAMA_CPP_MODELS = process.env.LLAMA_CPP_MODELS ?? "";
 const DEV_STORAGE = process.env.DEV_STORAGE ?? "";
 if (!LLAMA_CPP_BIN || !LLAMA_CPP_MODELS || !DEV_STORAGE) {
-  console.error("env not set; run: eval \"$(bun packages/cli/src/bin.ts env --eval)\"");
+  console.error('env not set; run: eval "$(bun packages/cli/src/bin.ts env --eval)"');
   process.exit(2);
 }
 
 const modelPath = join(LLAMA_CPP_MODELS, modelRel);
-if (!existsSync(modelPath)) { console.error(`missing model: ${modelPath}`); process.exit(3); }
+if (!existsSync(modelPath)) {
+  console.error(`missing model: ${modelPath}`);
+  process.exit(3);
+}
 
 const ts = new Date().toISOString().replace(/[:.]/g, "-");
 const outDir = join(DEV_STORAGE, "eval", ts);
 mkdirSync(outDir, { recursive: true });
 const logPath = join(outDir, `server.log`);
 
-const server = await spawnServer(`${LLAMA_CPP_BIN}/llama-server`, {
-  modelPath, port: 18181, ub,
-}, logPath);
+const server = await spawnServer(
+  `${LLAMA_CPP_BIN}/llama-server`,
+  {
+    modelPath,
+    port: 18181,
+    ub,
+  },
+  logPath,
+);
 try {
   console.log(`==> waiting for ${server.url}/health`);
   await waitForHealth(server.url, server.proc);
@@ -546,7 +611,9 @@ try {
   const outFile = join(outDir, `throughput.json`);
   await Bun.write(outFile, JSON.stringify(r, null, 2));
   console.log(`==> wrote ${outFile}`);
-  console.log(`mean tps: ${r.mean_tps.toFixed(2)} (p10=${r.p10_tps.toFixed(2)} p90=${r.p90_tps.toFixed(2)})`);
+  console.log(
+    `mean tps: ${r.mean_tps.toFixed(2)} (p10=${r.p10_tps.toFixed(2)} p90=${r.p90_tps.toFixed(2)})`,
+  );
 } finally {
   await killServer(server);
 }
@@ -562,6 +629,7 @@ bun packages/eval/src/cli-stub.ts <smallest-rel> 512
 Expect: server boots in ~10s, throughput prints mean tps, JSON file lands.
 
 - [ ] **Step 3: Commit (stub + e2e proof)**
+
 ```bash
 git add packages/eval/src/cli-stub.ts packages/eval/src/runners/throughput.ts \
         packages/eval/src/fixtures/prompts-throughput.json \
@@ -576,6 +644,7 @@ git commit -m "eval: throughput runner + cli stub for e2e smoke"
 ### Task B1: Penumbra-shaped tool schemas
 
 **Files:**
+
 - Create `packages/eval/src/fixtures/tools-penumbra.json`
 
 - [ ] Create the fixture with these 5 tool defs (function-calling format):
@@ -613,9 +682,11 @@ shape via a quick `curl` against any model first):
 ### Task B2: Tool-calling fixture set
 
 **Files:**
+
 - Create `packages/eval/src/fixtures/prompts-tool-calling.json`
 
 - [ ] 12 prompts. Each entry:
+
 ```json
 {
   "name": "string id",
@@ -627,9 +698,15 @@ shape via a quick `curl` against any model first):
   }
 }
 ```
+
 or
+
 ```json
-{ "name": "creative_no_tool", "prompt": "Write a haiku about the moon.", "expected": { "should_call": false } }
+{
+  "name": "creative_no_tool",
+  "prompt": "Write a haiku about the moon.",
+  "expected": { "should_call": false }
+}
 ```
 
 12 cases: 8 should-call (mix across all 5 tools), 4 should-not-call. Predicates use small DSL — `string_eq`, `string_contains`, `int_eq`. Implement the predicate evaluator in `runners/tool-calling.ts`.
@@ -637,6 +714,7 @@ or
 ### Task B3: Tool-calling runner
 
 **Files:**
+
 - Create `packages/eval/src/runners/tool-calling.ts`
 - Create `packages/eval/test/runners-tool-calling.test.ts`
 
@@ -657,6 +735,7 @@ or
 ### Task B4: JSON output fixture set
 
 **Files:**
+
 - Create `packages/eval/src/fixtures/prompts-json-output.json`
 
 - [ ] 5 prompts, each with a JSON Schema (subset usable by zod). Examples:
@@ -690,6 +769,7 @@ or
 ### Task B5: JSON output runner
 
 **Files:**
+
 - Create `packages/eval/src/runners/json-output.ts`
 - Create `packages/eval/test/runners-json-output.test.ts`
 
@@ -706,10 +786,11 @@ or
 ### Task C1: Haystack base + needle generation
 
 **Files:**
+
 - Create `packages/eval/src/fixtures/haystack-base.txt` (committed; deterministic)
 - Create `packages/eval/src/fixtures/prompts-context.json`
 
-- [ ] **Step 1: Build the haystack base.** ~20k tokens of public-domain text (e.g., excerpt from Project Gutenberg's *Moby-Dick* or *Pride and Prejudice* — both are well in the training set so the model can't "skip past" it via boredom). Trim to ~80kB plain text.
+- [ ] **Step 1: Build the haystack base.** ~20k tokens of public-domain text (e.g., excerpt from Project Gutenberg's _Moby-Dick_ or _Pride and Prejudice_ — both are well in the training set so the model can't "skip past" it via boredom). Trim to ~80kB plain text.
 
 - [ ] **Step 2: Define 9 needles** (3 per depth tier 4k/8k/16k). Each needle is a 1-sentence statement that's verifiably absent from the haystack base. Insert at 0.25, 0.5, 0.75 fractional depth.
 
@@ -728,6 +809,7 @@ or
 ### Task C2: Context retrieval runner
 
 **Files:**
+
 - Create `packages/eval/src/runners/context-retrieval.ts`
 - Create `packages/eval/test/runners-context.test.ts`
 
@@ -754,6 +836,7 @@ or
 ### Task D1: Composite scorer
 
 **Files:**
+
 - Create `packages/eval/src/score/compose.ts`
 - Create `packages/eval/test/score.test.ts`
 
@@ -764,26 +847,29 @@ or
 ```ts
 export interface SubBenchScores {
   throughput_tps: number;
-  tool_call_score: number;          // [0, 1]
-  context_8k_score: number;          // [0, 1]
+  tool_call_score: number; // [0, 1]
+  context_8k_score: number; // [0, 1]
   context_16k_score: number | null;
-  json_score: number;                // [0, 1]
+  json_score: number; // [0, 1]
 }
 
 export function composite(s: SubBenchScores): number {
   const norm_tps = Math.min(1, s.throughput_tps / 30);
   const ctx16 = s.context_16k_score ?? s.context_8k_score;
-  return 0.30 * norm_tps
-       + 0.30 * s.tool_call_score
-       + 0.20 * s.context_8k_score
-       + 0.10 * ctx16
-       + 0.10 * s.json_score;
+  return (
+    0.3 * norm_tps +
+    0.3 * s.tool_call_score +
+    0.2 * s.context_8k_score +
+    0.1 * ctx16 +
+    0.1 * s.json_score
+  );
 }
 ```
 
 ### Task D2: SQLite store
 
 **Files:**
+
 - Create `packages/eval/src/store/sqlite.ts`
 - Create `packages/eval/test/store.test.ts`
 
@@ -813,6 +899,7 @@ API: `upsertRow`, `queryRows({ node?, sortBy?, minThroughput?, minToolCall? })`.
 ### Task D3: Per-model report renderer
 
 **Files:**
+
 - Create `packages/eval/src/report/render-card.ts`
 - Create `packages/eval/test/report.test.ts`
 
@@ -828,44 +915,55 @@ Source: <hf-repo> @ <file>
 Tested on: <node-list>
 
 ## Summary
+
 - Best composite: <X.XX> on <node> with -ub <Y>
 - Verdict: <one-sentence>
 
 ## Hardware matrix
-| Node | -ub | tps | tool-call | ctx-8k | ctx-16k | json | composite |
-|---|---|---|---|---|---|---|---|
-| local | 256 | ... | ... | ... | ... | ... | ... |
+
+| Node  | -ub | tps | tool-call | ctx-8k | ctx-16k | json | composite |
+| ----- | --- | --- | --------- | ------ | ------- | ---- | --------- |
+| local | 256 | ... | ...       | ...    | ...     | ...  | ...       |
+
 ...
 
 ## Per sub-bench
 
 ### Throughput
+
 mean: X tps, p10: Y, p90: Z
 notable: <slowest prompt, fastest prompt>
 
 ### Tool-calling
+
 score: X / 12
 failures:
+
 - <prompt name>: <reason>
-...
+  ...
 
 ### Context retrieval
+
 4k score: X/3
 8k score: X/3
 16k score: X/3 (or "skipped — does not fit")
 
 ### JSON output
+
 score: X / 5
 failures:
+
 - <prompt name>: <reason>
 
 ## Tuning sweep
+
 -ub 256 vs 512: <delta-summary>
 ```
 
 ### Task D4: Leaderboard MCP tool
 
 **Files:**
+
 - Create `packages/mcp/src/tools/models-leaderboard.ts`
 - Modify wherever MCP tools are registered (find via `grep -rn "registerTool\|tools:" packages/mcp/src/ | head -20`)
 
@@ -876,6 +974,7 @@ failures:
 ### Task D5: CLI commands
 
 **Files:**
+
 - Create `packages/cli/src/commands/eval.ts`
 - Modify `packages/cli/src/index.ts` (or wherever subcommands register)
 
@@ -904,17 +1003,17 @@ failures:
 
 - [ ] Read `packages/core/src/catalog.ts`. Map each penumbra `local-*` agent name to the corresponding `CuratedModel.id`. Build a mapping table:
 
-| Penumbra agent | Catalog id | GGUF rel |
-|---|---|---|
-| local-gemma26 | gemma26 (verify) | ... |
-| local-gemma31 | gemma31 (verify) | ... |
-| local-qwen36-35b-moe | qwen36-q4m (verify) | ... |
-| local-qwen36-27b | ? | ... |
-| local-qwen35-27b | ? | ... |
-| local-qwen3-coder | ? | ... |
-| local-qwen35-4b | ? | ... |
+| Penumbra agent       | Catalog id          | GGUF rel |
+| -------------------- | ------------------- | -------- |
+| local-gemma26        | gemma26 (verify)    | ...      |
+| local-gemma31        | gemma31 (verify)    | ...      |
+| local-qwen36-35b-moe | qwen36-q4m (verify) | ...      |
+| local-qwen36-27b     | ?                   | ...      |
+| local-qwen35-27b     | ?                   | ...      |
+| local-qwen3-coder    | ?                   | ...      |
+| local-qwen35-4b      | ?                   | ...      |
 
-The Penumbra "local-*" names may not match catalog ids 1:1. Resolve from
+The Penumbra "local-\*" names may not match catalog ids 1:1. Resolve from
 the actual penumbra agent registry (`mcp__penumbra__chain_list_agents`
 output gave us the names; the catalog may use shorter ids).
 
@@ -928,14 +1027,17 @@ and skip that baseline.** Don't add catalog entries in Slice E.
 - [ ] On mac-mini: only run `qwen35-4b` (or whichever baseline fits).
 
 - [ ] Spot-validate `--flash-attn off` on Qwen 3.6 27B at `-ub 512`. Add this as a one-off:
+
 ```bash
 LLAMACTL_EVAL_FLASH_ATTN=0 llamactl eval run qwen36-27b --node local --ub 512
 ```
+
 (needs an env-flag escape hatch in the CLI; trivial addition).
 
 - [ ] Verify all baseline report cards lands in `docs/superpowers/specs/`.
 
 - [ ] Commit:
+
 ```bash
 git add docs/superpowers/specs/2026-05-06-model-eval-*.md
 git commit -m "eval: Phase 1 baseline reports for existing penumbra local-* agents"
@@ -948,17 +1050,19 @@ git commit -m "eval: Phase 1 baseline reports for existing penumbra local-* agen
 ### Task F1: Verify HF repos
 
 - [ ] For each Phase 2 candidate, probe HF API:
+
 ```bash
 for repo in <list>; do
   echo "$repo: $(curl -fsSL "https://huggingface.co/api/models/$repo" 2>/dev/null | jq -r '.id' || echo MISSING)"
 done
 ```
 
-- [ ] If a proposed repo doesn't exist, find the closest substitute (typically bartowski/* or unsloth/* equivalents). Document substitutions in the per-model report.
+- [ ] If a proposed repo doesn't exist, find the closest substitute (typically bartowski/_ or unsloth/_ equivalents). Document substitutions in the per-model report.
 
 ### Task F2: Add catalog entries
 
 **Files:**
+
 - Modify `packages/core/src/catalog.ts`
 - Add tests under `packages/core/test/`
 
@@ -998,8 +1102,8 @@ done
 ### Task G2: Update slice-a-results doc
 
 - [ ] If MTP flips: append an "Update 2026-05-06" section to
-  `docs/superpowers/specs/2026-05-05-llamacpp-mtp-pilot-slice-a-results.md`
-  documenting the new numbers and re-opening the Slice B decision.
+      `docs/superpowers/specs/2026-05-05-llamacpp-mtp-pilot-slice-a-results.md`
+      documenting the new numbers and re-opening the Slice B decision.
 - [ ] If MTP doesn't flip: append a one-paragraph update confirming the verdict held under the better tuning.
 
 - [ ] Commit either way.
@@ -1009,6 +1113,7 @@ done
 ## Self-review
 
 **Spec coverage:**
+
 - Per-model report cards (Slice D3) + leaderboard MCP (D4) — artifact A+B from spec ✅
 - Portfolio: Phase 1 baselines (E2) + Phase 2 candidates (F4) — 15 models ✅
 - Sub-benches: throughput (A4), tool-calling (B3), context (C2), JSON (B5) ✅

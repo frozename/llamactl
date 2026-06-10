@@ -3,13 +3,9 @@ import {
   type ArtifactResolver,
   type NodeRunApplyResult,
   type NodeRunInfraClient,
-} from './noderun-apply.js';
-import {
-  defaultNodeRunsDir,
-  listNodeRuns,
-  saveNodeRun,
-} from './noderun-store.js';
-import type { NodeRun } from './noderun-schema.js';
+} from "./noderun-apply.js";
+import { defaultNodeRunsDir, listNodeRuns, saveNodeRun } from "./noderun-store.js";
+import type { NodeRun } from "./noderun-schema.js";
 
 /**
  * Single-pass NodeRun reconciliation. Iterates every persisted
@@ -26,7 +22,7 @@ import type { NodeRun } from './noderun-schema.js';
 export interface NodeRunReconcileReport {
   name: string;
   node: string;
-  phase: NodeRunApplyResult['status']['phase'];
+  phase: NodeRunApplyResult["status"]["phase"];
   actions: number;
   errors: number;
   error?: string;
@@ -70,7 +66,7 @@ export async function reconcileNodeRunsOnce(
       const client = opts.getClient(node);
       const resolveArtifact = opts.getArtifactResolver(node, client);
       const result = await applyNodeRun(manifest, { client, resolveArtifact });
-      const actionCount = result.actions.filter((a) => a.type !== 'skip').length;
+      const actionCount = result.actions.filter((a) => a.type !== "skip").length;
       const errorCount = result.outcomes.filter((o) => !o.ok).length;
       if (errorCount > 0) errors++;
       const report: NodeRunReconcileReport = {
@@ -92,7 +88,7 @@ export async function reconcileNodeRunsOnce(
       const report: NodeRunReconcileReport = {
         name,
         node,
-        phase: 'Failed',
+        phase: "Failed",
         actions: 0,
         errors: 1,
         error: message,

@@ -1,7 +1,7 @@
-import type { ClusterNode } from '../../config/schema.js';
-import type { ApplyEvent, ApplyResult, WorkloadClient } from '../apply.js';
-import type { ModelRun } from '../schema.js';
-import type { ProviderConfigCommon } from '../gateway-catalog/schema.js';
+import type { ClusterNode } from "../../config/schema.js";
+import type { ApplyEvent, ApplyResult, WorkloadClient } from "../apply.js";
+import type { ModelRun } from "../schema.js";
+import type { ProviderConfigCommon } from "../gateway-catalog/schema.js";
 
 /**
  * Composite-authored context passed to gateway handlers when the

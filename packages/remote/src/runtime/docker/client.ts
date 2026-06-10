@@ -20,13 +20,13 @@
  * authoritative source is `moby/moby/api/swagger.yaml` at basePath
  * `/v1.54`.
  */
-import { RuntimeError, type RuntimeErrorCode } from '../errors.js';
+import { RuntimeError, type RuntimeErrorCode } from "../errors.js";
 
 /**
  * Docker Engine API version we target. Stable across Docker Desktop
  * 4.x and Engine 24.x; older engines fall back transparently.
  */
-export const DOCKER_API_VERSION = 'v1.54';
+export const DOCKER_API_VERSION = "v1.54";
 
 /**
  * Default socket path on macOS (Docker Desktop exposes a VM proxy
@@ -34,7 +34,7 @@ export const DOCKER_API_VERSION = 'v1.54';
  * their podman-machine socket — the Podman REST API is
  * Docker-compatible.
  */
-export const DEFAULT_SOCKET_PATH = '/var/run/docker.sock';
+export const DEFAULT_SOCKET_PATH = "/var/run/docker.sock";
 
 export interface DockerClientOptions {
   socketPath?: string;
@@ -63,7 +63,7 @@ export function createDockerClient(opts: DockerClientOptions = {}): DockerClient
     socketPath,
     async request(path, init = {}) {
       const { query, ...rest } = init;
-      const qs = query ? encodeQuery(query) : '';
+      const qs = query ? encodeQuery(query) : "";
       const url = `http://docker/${DOCKER_API_VERSION}${path}${qs}`;
       try {
         // Bun's fetch accepts `unix` to bind HTTP over a unix
@@ -84,7 +84,7 @@ export function createDockerClient(opts: DockerClientOptions = {}): DockerClient
 
 function encodeQuery(q: Record<string, string | number | boolean | undefined>): string {
   const entries = Object.entries(q).filter(([, v]) => v !== undefined);
-  if (entries.length === 0) return '';
+  if (entries.length === 0) return "";
   const sp = new URLSearchParams();
   for (const [k, v] of entries) sp.set(k, String(v));
   return `?${sp.toString()}`;
@@ -94,12 +94,8 @@ function wrapTransportError(err: unknown, socketPath: string): RuntimeError {
   const msg = (err as Error)?.message ?? String(err);
   // ENOENT = socket missing entirely (Docker not installed / stopped).
   // ECONNREFUSED = socket present but daemon isn't accepting.
-  const code: 'backend-unreachable' = 'backend-unreachable';
-  return new RuntimeError(
-    code,
-    `docker daemon unreachable (${msg})`,
-    { socketPath, cause: err },
-  );
+  const code: "backend-unreachable" = "backend-unreachable";
+  return new RuntimeError(code, `docker daemon unreachable (${msg})`, { socketPath, cause: err });
 }
 
 /**
@@ -120,7 +116,7 @@ export async function parseJsonOrThrow<T>(
     try {
       return JSON.parse(text) as T;
     } catch {
-      throw new RuntimeError('create-failed', `invalid JSON from docker (${context})`);
+      throw new RuntimeError("create-failed", `invalid JSON from docker (${context})`);
     }
   }
   throw await failWith(errorCode, res, context);
@@ -131,7 +127,7 @@ export async function failWith(
   res: Response,
   context: string,
 ): Promise<RuntimeError> {
-  const body = await res.text().catch(() => '');
+  const body = await res.text().catch(() => "");
   let message = body;
   try {
     const parsed = JSON.parse(body) as { message?: string };
@@ -139,10 +135,7 @@ export async function failWith(
   } catch {
     // body wasn't JSON — keep the raw text
   }
-  return new RuntimeError(
-    code,
-    `${context} failed (HTTP ${res.status}): ${message.slice(0, 300)}`,
-  );
+  return new RuntimeError(code, `${context} failed (HTTP ${res.status}): ${message.slice(0, 300)}`);
 }
 
 /**
@@ -157,7 +150,7 @@ export async function failWith(
  */
 export async function drainNdjson(
   res: Response,
-  errorCode: 'image-pull-failed' | 'create-failed',
+  errorCode: "image-pull-failed" | "create-failed",
   context: string,
 ): Promise<Array<Record<string, unknown>>> {
   if (!res.ok) {
@@ -167,16 +160,16 @@ export async function drainNdjson(
   const lines: Array<Record<string, unknown>> = [];
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buf = '';
+  let buf = "";
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
-    let newline = buf.indexOf('\n');
+    let newline = buf.indexOf("\n");
     while (newline !== -1) {
       const line = buf.slice(0, newline).trim();
       buf = buf.slice(newline + 1);
-      newline = buf.indexOf('\n');
+      newline = buf.indexOf("\n");
       if (line.length === 0) continue;
       let parsed: Record<string, unknown>;
       try {
@@ -184,7 +177,7 @@ export async function drainNdjson(
       } catch {
         continue; // malformed line — docker occasionally interleaves non-JSON progress
       }
-      if (typeof parsed.error === 'string') {
+      if (typeof parsed.error === "string") {
         throw new RuntimeError(errorCode, `${context}: ${parsed.error}`);
       }
       lines.push(parsed);
@@ -194,7 +187,7 @@ export async function drainNdjson(
   if (trailing.length > 0) {
     try {
       const parsed = JSON.parse(trailing) as Record<string, unknown>;
-      if (typeof parsed.error === 'string') {
+      if (typeof parsed.error === "string") {
         throw new RuntimeError(errorCode, `${context}: ${parsed.error}`);
       }
       lines.push(parsed);

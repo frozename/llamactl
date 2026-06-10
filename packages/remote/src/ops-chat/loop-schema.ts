@@ -1,5 +1,5 @@
-import { z } from 'zod';
-import { PlanStepSchema } from '@nova/mcp';
+import { z } from "zod";
+import { PlanStepSchema } from "@nova/mcp";
 
 /**
  * Event stream shape for `operatorChatStream`. The server emits one
@@ -22,13 +22,13 @@ import { PlanStepSchema } from '@nova/mcp';
  */
 
 export const OpsChatRefusalSchema = z.object({
-  type: z.literal('refusal'),
+  type: z.literal("refusal"),
   reason: z.string().min(1),
 });
 export type OpsChatRefusal = z.infer<typeof OpsChatRefusalSchema>;
 
 export const OpsChatPlanProposedSchema = z.object({
-  type: z.literal('plan_proposed'),
+  type: z.literal("plan_proposed"),
   sessionId: z.string().min(1),
   stepId: z.string().min(1),
   /** Sequence index within the session — useful for UI ordering. */
@@ -36,7 +36,7 @@ export const OpsChatPlanProposedSchema = z.object({
   step: PlanStepSchema,
   /** Tier of this step's tool, pre-computed server-side so the
    *  renderer doesn't have to duplicate the classifier. */
-  tier: z.enum(['read', 'mutation-dry-run-safe', 'mutation-destructive']),
+  tier: z.enum(["read", "mutation-dry-run-safe", "mutation-destructive"]),
   /** Short free-form model reasoning for the whole plan — attached to
    *  the first step of each iteration so the UI can surface it. Empty
    *  string on subsequent iterations from the same plan. */
@@ -45,13 +45,13 @@ export const OpsChatPlanProposedSchema = z.object({
 export type OpsChatPlanProposed = z.infer<typeof OpsChatPlanProposedSchema>;
 
 export const OpsChatDoneSchema = z.object({
-  type: z.literal('done'),
+  type: z.literal("done"),
   /** Total iterations run before termination. */
   iterations: z.number().int().nonnegative(),
 });
 export type OpsChatDone = z.infer<typeof OpsChatDoneSchema>;
 
-export const OpsChatStreamEventSchema = z.discriminatedUnion('type', [
+export const OpsChatStreamEventSchema = z.discriminatedUnion("type", [
   OpsChatPlanProposedSchema,
   OpsChatRefusalSchema,
   OpsChatDoneSchema,

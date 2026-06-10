@@ -20,12 +20,8 @@
  * re-passes them as Bun's native `tls:` init field. Under Node the
  * shim is bypassed — the library's default path works there.
  */
-import { readFileSync } from 'node:fs';
-import {
-  AppsV1Api,
-  CoreV1Api,
-  KubeConfig,
-} from '@kubernetes/client-node';
+import { readFileSync } from "node:fs";
+import { AppsV1Api, CoreV1Api, KubeConfig } from "@kubernetes/client-node";
 
 export interface KubernetesClientOptions {
   /** Override the kubeconfig path. When unset, uses KubeConfig.loadFromDefault(). */
@@ -49,9 +45,7 @@ export interface KubernetesClient {
   readonly kc: KubeConfig;
 }
 
-export function createKubernetesClient(
-  opts: KubernetesClientOptions = {},
-): KubernetesClient {
+export function createKubernetesClient(opts: KubernetesClientOptions = {}): KubernetesClient {
   // A caller-supplied KubeConfig is the test-injection path. Those
   // tests override `kc.makeApiClient` to return fakes, so we must
   // honor the library's path and not reach for our Bun shim.
@@ -86,7 +80,7 @@ function loadKubeConfig(opts: KubernetesClientOptions): KubeConfig {
 
 function resolveNamespace(kc: KubeConfig, contextName: string): string {
   const ctx = kc.getContextObject(contextName);
-  return ctx?.namespace ?? 'default';
+  return ctx?.namespace ?? "default";
 }
 
 /**
@@ -100,7 +94,7 @@ function makeApiClient<T>(kc: KubeConfig, ClientCtor: any, injectedKc: boolean):
     // Tests rely on their stub kc.makeApiClient to return fakes.
     return kc.makeApiClient(ClientCtor) as T;
   }
-  if (typeof (globalThis as { Bun?: unknown }).Bun === 'undefined') {
+  if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") {
     return kc.makeApiClient(ClientCtor) as T;
   }
   return makeApiClientForBun(kc, ClientCtor);
@@ -115,20 +109,20 @@ function makeApiClientForBun<T>(kc: KubeConfig, ClientCtor: any): T {
   // Dynamic import so Node-only test runs don't pay the cost (and
   // don't exercise the library's subpath exports on machines where
   // the package's export map is wired for CommonJS fallbacks).
-  const client = require('@kubernetes/client-node');
+  const client = require("@kubernetes/client-node");
   const cluster = kc.getCurrentCluster();
   if (!cluster) {
-    throw new Error('No active cluster!');
+    throw new Error("No active cluster!");
   }
   const ServerConfiguration = client.ServerConfiguration;
   const createConfiguration = client.createConfiguration;
-  if (typeof ServerConfiguration !== 'function' || typeof createConfiguration !== 'function') {
+  if (typeof ServerConfiguration !== "function" || typeof createConfiguration !== "function") {
     // Fallback: library didn't re-export the low-level constructors.
     // Node-path does the right thing; under Bun this leaves us with
     // the broken default, but surfaces a loud error rather than a
     // silent TLS mystery.
     throw new Error(
-      'BunFetchHttpLibrary: @kubernetes/client-node did not expose ServerConfiguration + createConfiguration; upgrade the library or run under Node.',
+      "BunFetchHttpLibrary: @kubernetes/client-node did not expose ServerConfiguration + createConfiguration; upgrade the library or run under Node.",
     );
   }
   const config = createConfiguration({
@@ -157,9 +151,7 @@ class BunFetchHttpLibrary {
     const body = request.getBody() as string | Uint8Array | null | undefined;
     const headers = request.getHeaders();
     const signal = request.getSignal();
-    const agent = request.getAgent() as
-      | { options?: Record<string, unknown> }
-      | undefined;
+    const agent = request.getAgent() as { options?: Record<string, unknown> } | undefined;
     const tls = agentToTls(agent);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const init: Record<string, unknown> = {
@@ -179,12 +171,12 @@ class BunFetchHttpLibrary {
       text: () => resp.text(),
       binary: async () => Buffer.from(await resp.arrayBuffer()),
     };
-    const client = require('@kubernetes/client-node');
+    const client = require("@kubernetes/client-node");
     return new client.ResponseContext(resp.status, headerMap, respBody);
   }
 
   send(request: KubeRequestContext): unknown {
-    const client = require('@kubernetes/client-node');
+    const client = require("@kubernetes/client-node");
     // The library's default http library returns an RxJS Observable
     // (a `rxjsStub.Observable`, which is just a promise wrapper with
     // a `pipe` + `toPromise`). `from()` isn't re-exported from the

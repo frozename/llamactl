@@ -1,8 +1,8 @@
-import { initTRPC, TRPCError } from '@trpc/server';
-import { getErrorShape } from '@trpc/server/unstable-core-do-not-import';
-import { observable } from '@trpc/server/observable';
-import { createTRPCClient } from '@trpc/client';
-import { z } from 'zod';
+import { initTRPC, TRPCError } from "@trpc/server";
+import { getErrorShape } from "@trpc/server/unstable-core-do-not-import";
+import { observable } from "@trpc/server/observable";
+import { createTRPCClient } from "@trpc/client";
+import { z } from "zod";
 import {
   router as baseRouter,
   type AppRouter as BaseAppRouter,
@@ -11,9 +11,9 @@ import {
   LOCAL_NODE_ENDPOINT,
   type PinnedFetchFactory,
   type ClusterNode,
-  } from '@llamactl/remote';
-import { makeNodePinnedFetch } from './node-pinned-fetch.js';
-import { fanOutSurface, listAgentNodes } from './cross-node-fan-out.js';
+} from "@llamactl/remote";
+import { makeNodePinnedFetch } from "./node-pinned-fetch.js";
+import { fanOutSurface, listAgentNodes } from "./cross-node-fan-out.js";
 
 /**
  * Electron main's dispatcher router. Exposes the same wire shape as
@@ -85,14 +85,14 @@ function asyncIterableToObservable<T>(iter: AsyncIterable<T>) {
  * make sense from the control plane's perspective.
  */
 const CONTROL_PLANE_ONLY = new Set<string>([
-  'nodeList',
-  'nodeAdd',
-  'nodeRemove',
-  'nodeTest',
-  'nodeSetDefault',
-  'nodeOpenAIConfig',
-  'nodeDiscover',
-  'nodeAddCloud',
+  "nodeList",
+  "nodeAdd",
+  "nodeRemove",
+  "nodeTest",
+  "nodeSetDefault",
+  "nodeOpenAIConfig",
+  "nodeDiscover",
+  "nodeAddCloud",
   // nodeModels resolves a by-name lookup against the local
   // kubeconfig + scrapes /v1/models on whatever the node's
   // endpoint resolves to. Must run on the control plane;
@@ -100,40 +100,40 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   // look up the CALLER's node name in its OWN kubeconfig (which
   // doesn't have it) and error + leave the chat models dropdown
   // hanging on isLoading forever.
-  'nodeModels',
-  'chatComplete',
-  'chatStream',
-  'workloadList',
-  'workloadsDir',
-  'workloadDescribe',
-  'workloadApply',
-  'workloadDelete',
-  'workloadValidate',
-  'workloadTemplate',
-  'reconcilerStatus',
-  'reconcilerEvents',
-  'reconcilerStart',
-  'reconcilerStop',
-  'reconcilerKick',
-  'benchScheduleList',
-  'benchScheduleAdd',
-  'benchScheduleRemove',
-  'benchScheduleToggle',
-  'benchSchedulerStatus',
-  'benchSchedulerStart',
-  'benchSchedulerStop',
-  'benchSchedulerKick',
+  "nodeModels",
+  "chatComplete",
+  "chatStream",
+  "workloadList",
+  "workloadsDir",
+  "workloadDescribe",
+  "workloadApply",
+  "workloadDelete",
+  "workloadValidate",
+  "workloadTemplate",
+  "reconcilerStatus",
+  "reconcilerEvents",
+  "reconcilerStart",
+  "reconcilerStop",
+  "reconcilerKick",
+  "benchScheduleList",
+  "benchScheduleAdd",
+  "benchScheduleRemove",
+  "benchScheduleToggle",
+  "benchSchedulerStatus",
+  "benchSchedulerStart",
+  "benchSchedulerStop",
+  "benchSchedulerKick",
   // Ops Chat: the audit journal, the session registry, and the
   // planner's allowlist all live on the control plane's filesystem +
   // main-process memory. Routing these to a remote would split the
   // session registry across processes (subscription on main, outcome
   // ack on remote) and leak audit entries into the wrong log.
-  'operatorPlan',
-  'operatorRunTool',
-  'operatorChatStream',
-  'operatorSubmitStepOutcome',
-  'opsChatTools',
-  'opsChatAuditTail',
+  "operatorPlan",
+  "operatorRunTool",
+  "operatorChatStream",
+  "operatorSubmitStepOutcome",
+  "opsChatTools",
+  "opsChatAuditTail",
   // Projects live in the control plane's projects.yaml — the
   // kubeconfig default + every registered route target + every
   // policy reference is control-plane state. Routing to a remote
@@ -141,32 +141,32 @@ const CONTROL_PLANE_ONLY = new Set<string>([
   // exist) and its auth layer 401s with a plain-text body that
   // the renderer's JSON parser chokes on
   // ("Unexpected token 'u', 'unauthorized' is not valid JSON").
-  'projectApply',
-  'projectList',
-  'projectGet',
-  'projectRemove',
-  'projectIndex',
-  'projectResolveRouting',
-  'projectRoutePreview',
-  'projectRoutingJournal',
+  "projectApply",
+  "projectList",
+  "projectGet",
+  "projectRemove",
+  "projectIndex",
+  "projectResolveRouting",
+  "projectRoutePreview",
+  "projectRoutingJournal",
   // Cost guardian's journal + snapshot are aggregated across the
   // whole fleet's usage records; the read lives on the control
   // plane's $DEV_STORAGE. Dispatching to a remote turns a 0.5s
   // local read into a hung tRPC call to an agent that doesn't
   // implement costSnapshot semantics — hence "loading forever".
-  'costSnapshot',
-  'costGuardianStatus',
-  'costJournalTail',
+  "costSnapshot",
+  "costGuardianStatus",
+  "costJournalTail",
   // UI-only procedures added by this module never go over the wire.
-  'uiSetActiveNode',
-  'uiGetActiveNode',
+  "uiSetActiveNode",
+  "uiGetActiveNode",
   // UI-only procedures added alongside the projects-form picker +
   // git-repo scan. Both touch the main-process filesystem +
   // Electron dialog; forwarding them to a remote agent would
   // either error (no electron runtime on agents) or scan the
   // wrong machine.
-  'uiPickDirectory',
-  'uiScanGitRepos',
+  "uiPickDirectory",
+  "uiScanGitRepos",
 ]);
 
 /**
@@ -201,12 +201,13 @@ export function __resetActiveNodeOverrideForTests(): void {
  * and never forward; `CONTROL_PLANE_ONLY` blocks accidental routing.
  */
 const uiRouter = t.router({
-  
   uiCrossNodeOpsSessionSearch: t.procedure
-    .input(z.object({
-      query: z.string().min(1),
-      perNodeTimeoutMs: z.number().int().positive().max(30000).optional(),
-    }))
+    .input(
+      z.object({
+        query: z.string().min(1),
+        perNodeTimeoutMs: z.number().int().positive().max(30000).optional(),
+      }),
+    )
     .query(async ({ input, signal }) => {
       const cfg = kubecfg.loadConfig();
       const ctx = kubecfg.currentContext(cfg);
@@ -217,7 +218,7 @@ const uiRouter = t.router({
       const result = await fanOutSurface<{
         sessionId: string;
         goal: string;
-        status: 'live' | 'done' | 'refused' | 'aborted';
+        status: "live" | "done" | "refused" | "aborted";
         startedAt: string;
         matches: { where: string; snippet: string; spans: { start: number; end: number }[] }[];
         score: number;
@@ -226,9 +227,17 @@ const uiRouter = t.router({
         nodes: peers,
         perNodeFetch: async (node, peerSignal) => {
           const client = getPeerClient(node, user) as {
-            opsSessionSearch: { query: (i: { query: string }, o?: { signal?: AbortSignal }) => Promise<{ hits: any[] }> };
+            opsSessionSearch: {
+              query: (
+                i: { query: string },
+                o?: { signal?: AbortSignal },
+              ) => Promise<{ hits: any[] }>;
+            };
           };
-          const r = await client.opsSessionSearch.query({ query: input.query }, { signal: peerSignal });
+          const r = await client.opsSessionSearch.query(
+            { query: input.query },
+            { signal: peerSignal },
+          );
           return r.hits.map((h: any) => ({ ...h, originNode: node.name }));
         },
         perNodeTimeoutMs: input.perNodeTimeoutMs ?? 2000,
@@ -241,10 +250,12 @@ const uiRouter = t.router({
     }),
 
   uiCrossNodeLogsSearch: t.procedure
-    .input(z.object({
-      query: z.string().min(1),
-      perNodeTimeoutMs: z.number().int().positive().max(30000).optional(),
-    }))
+    .input(
+      z.object({
+        query: z.string().min(1),
+        perNodeTimeoutMs: z.number().int().positive().max(30000).optional(),
+      }),
+    )
     .query(async ({ input, signal }) => {
       const cfg = kubecfg.loadConfig();
       const ctx = kubecfg.currentContext(cfg);
@@ -255,14 +266,24 @@ const uiRouter = t.router({
       const result = await fanOutSurface<{
         fileLabel: string;
         filePath: string;
-        matches: { lineNumber: number; where: string; snippet: string; spans: { start: number; end: number }[] }[];
+        matches: {
+          lineNumber: number;
+          where: string;
+          snippet: string;
+          spans: { start: number; end: number }[];
+        }[];
         score: number;
         originNode?: string;
       }>({
         nodes: peers,
         perNodeFetch: async (node, peerSignal) => {
           const client = getPeerClient(node, user) as {
-            logsSearch: { query: (i: { query: string }, o?: { signal?: AbortSignal }) => Promise<{ hits: any[] }> };
+            logsSearch: {
+              query: (
+                i: { query: string },
+                o?: { signal?: AbortSignal },
+              ) => Promise<{ hits: any[] }>;
+            };
           };
           const r = await client.logsSearch.query({ query: input.query }, { signal: peerSignal });
           return r.hits.map((h: any) => ({ ...h, originNode: node.name }));
@@ -303,18 +324,18 @@ const uiRouter = t.router({
     .mutation(async ({ input }) => {
       // Lazy-import so CLI consumers of the remote router don't pull
       // in Electron's main-process `dialog` module by accident.
-      const { dialog, BrowserWindow } = await import('electron');
+      const { dialog, BrowserWindow } = await import("electron");
       const focused = BrowserWindow.getFocusedWindow();
       const result = focused
         ? await dialog.showOpenDialog(focused, {
-            title: input?.title ?? 'Pick a project directory',
+            title: input?.title ?? "Pick a project directory",
             defaultPath: input?.defaultPath,
-            properties: ['openDirectory', 'createDirectory'],
+            properties: ["openDirectory", "createDirectory"],
           })
         : await dialog.showOpenDialog({
-            title: input?.title ?? 'Pick a project directory',
+            title: input?.title ?? "Pick a project directory",
             defaultPath: input?.defaultPath,
-            properties: ['openDirectory', 'createDirectory'],
+            properties: ["openDirectory", "createDirectory"],
           });
       if (result.canceled || result.filePaths.length === 0) return null;
       return result.filePaths[0] as string;
@@ -338,16 +359,17 @@ const uiRouter = t.router({
       }),
     )
     .query(async ({ input }) => {
-      const { existsSync, statSync, readdirSync } = await import('node:fs');
-      const { join } = await import('node:path');
+      const { existsSync, statSync, readdirSync } = await import("node:fs");
+      const { join } = await import("node:path");
       // Under a hermetic test profile, reroot `~` to the profile dir —
       // the operator's real home (and its git repos) must not leak into
       // audit/CI renders. Same philosophy as env.ts's testProfileDefaults:
       // every machine-specific path gets rerooted under the profile.
-      const home = process.env.LLAMACTL_TEST_PROFILE && process.env.LLAMACTL_TEST_PROFILE.length > 0
-        ? process.env.LLAMACTL_TEST_PROFILE
-        : process.env.HOME ?? '';
-      const expandedRoot = input.root.startsWith('~/')
+      const home =
+        process.env.LLAMACTL_TEST_PROFILE && process.env.LLAMACTL_TEST_PROFILE.length > 0
+          ? process.env.LLAMACTL_TEST_PROFILE
+          : (process.env.HOME ?? "");
+      const expandedRoot = input.root.startsWith("~/")
         ? input.root.replace(/^~/, home)
         : input.root;
       if (!existsSync(expandedRoot)) {
@@ -369,12 +391,12 @@ const uiRouter = t.router({
         }
         // If this dir is itself a repo, don't descend (avoid
         // returning submodules + siblings with the same mtime).
-        if (items.includes('.git')) {
+        if (items.includes(".git")) {
           try {
             const st = statSync(dir);
             hits.push({
               path: dir,
-              name: dir.split('/').slice(-1)[0] ?? dir,
+              name: dir.split("/").slice(-1)[0] ?? dir,
               mtimeMs: st.mtimeMs,
             });
           } catch {
@@ -383,8 +405,8 @@ const uiRouter = t.router({
           return;
         }
         for (const item of items) {
-          if (item.startsWith('.')) continue;
-          if (item === 'node_modules') continue;
+          if (item.startsWith(".")) continue;
+          if (item === "node_modules") continue;
           const child = join(dir, item);
           try {
             const st = statSync(child);
@@ -409,7 +431,7 @@ const uiRouter = t.router({
 });
 
 interface DispatchTarget {
-  kind: 'local' | 'remote';
+  kind: "local" | "remote";
   node?: {
     name: string;
     endpoint: string;
@@ -420,32 +442,32 @@ interface DispatchTarget {
 }
 
 function resolveDispatchTarget(path: string): DispatchTarget {
-  if (CONTROL_PLANE_ONLY.has(path)) return { kind: 'local' };
+  if (CONTROL_PLANE_ONLY.has(path)) return { kind: "local" };
   let cfg;
   try {
     cfg = kubecfg.loadConfig();
   } catch {
-    return { kind: 'local' };
+    return { kind: "local" };
   }
   const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
-  if (!ctx) return { kind: 'local' };
+  if (!ctx) return { kind: "local" };
   // The renderer's selected node takes precedence over kubeconfig's
   // default — so switching the UI doesn't also change what `llamactl`
   // defaults to from the CLI.
   const nodeName = getActiveNodeOverride() ?? ctx.defaultNode;
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   const node = cluster?.nodes.find((n) => n.name === nodeName);
-  if (!node || node.endpoint === LOCAL_NODE_ENDPOINT) return { kind: 'local' };
+  if (!node || node.endpoint === LOCAL_NODE_ENDPOINT) return { kind: "local" };
   const user = cfg.users.find((u) => u.name === ctx.user);
-  if (!user) return { kind: 'local' };
+  if (!user) return { kind: "local" };
   let token: string;
   try {
     token = kubecfg.resolveToken(user);
   } catch {
-    return { kind: 'local' };
+    return { kind: "local" };
   }
   return {
-    kind: 'remote',
+    kind: "remote",
     node: {
       name: node.name,
       endpoint: node.endpoint,
@@ -479,8 +501,8 @@ const baseCaller: ProxyClient = baseRouter.createCaller({}) as unknown as ProxyC
 const clientCache = new Map<string, ProxyClient>();
 
 function cacheKey(target: DispatchTarget): string {
-  if (!target.node || !target.token) return '';
-  const fp = target.node.certificateFingerprint ?? '';
+  if (!target.node || !target.token) return "";
+  const fp = target.node.certificateFingerprint ?? "";
   // Use only the token's first 8 chars in the key — the full token is
   // already the cache invalidation signal; 8 chars is enough to
   // disambiguate independent rotations without keeping the secret in
@@ -488,12 +510,9 @@ function cacheKey(target: DispatchTarget): string {
   return `${target.node.endpoint}|${fp}|${target.token.slice(0, 8)}`;
 }
 
-function buildRemoteClient(
-  target: DispatchTarget,
-  fetchFactory: PinnedFetchFactory,
-): ProxyClient {
+function buildRemoteClient(target: DispatchTarget, fetchFactory: PinnedFetchFactory): ProxyClient {
   if (!target.node || !target.token) {
-    throw new Error('remote target missing node or token');
+    throw new Error("remote target missing node or token");
   }
   const key = cacheKey(target);
   const cached = clientCache.get(key);
@@ -523,7 +542,6 @@ export function __resetClientCacheForTests(): void {
   clientCache.clear();
 }
 
-
 type PeerClientFactory = (node: ClusterNode) => unknown;
 let peerClientFactoryOverride: PeerClientFactory | null = null;
 
@@ -538,7 +556,7 @@ function getPeerClient(node: ClusterNode, user: any): unknown {
   if (peerClientFactoryOverride) return peerClientFactoryOverride(node);
   return buildRemoteClient(
     {
-      kind: 'remote',
+      kind: "remote",
       node: {
         name: node.name,
         endpoint: node.endpoint,
@@ -551,21 +569,18 @@ function getPeerClient(node: ClusterNode, user: any): unknown {
   );
 }
 
-
 function wrapQueryOrMutation(
   path: string,
-  type: 'query' | 'mutation',
+  type: "query" | "mutation",
   fetchFactory: PinnedFetchFactory,
 ): unknown {
   const resolver = async ({ input }: { input: unknown }) => {
     const target = resolveDispatchTarget(path);
-    if (target.kind === 'local') {
+    if (target.kind === "local") {
       return baseCaller[path](input);
     }
     const client = buildRemoteClient(target, fetchFactory);
-    return type === 'query'
-      ? client[path].query(input)
-      : client[path].mutate(input);
+    return type === "query" ? client[path].query(input) : client[path].mutate(input);
   };
   // Input shape is inferred from the underlying procedure at call
   // time; we don't re-validate here because the destination (local
@@ -578,7 +593,7 @@ function wrapQueryOrMutation(
   // `z.unknown()` keeps the transformer-lookup path happy while
   // preserving our pass-through semantics.
   const base = t.procedure.input(z.unknown());
-  return type === 'query' ? base.query(resolver) : base.mutation(resolver);
+  return type === "query" ? base.query(resolver) : base.mutation(resolver);
 }
 
 function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unknown {
@@ -592,7 +607,7 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
   return t.procedure.input(z.unknown()).subscription(async function* (opts) {
     const target = resolveDispatchTarget(path);
     const clientSignal = opts.signal as AbortSignal | undefined;
-    if (target.kind === 'local') {
+    if (target.kind === "local") {
       // The base subscription resolver needs a real AbortSignal
       // (`bridgeEventStream` in @llamactl/remote calls
       // `signal.addEventListener('abort', ...)` unconditionally).
@@ -606,7 +621,7 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
       const controller = new AbortController();
       if (clientSignal?.aborted) controller.abort();
       const onOuterAbort = (): void => controller.abort();
-      clientSignal?.addEventListener('abort', onOuterAbort);
+      clientSignal?.addEventListener("abort", onOuterAbort);
       try {
         const localCaller = baseRouter.createCaller(
           {},
@@ -618,7 +633,7 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
           yield ev;
         }
       } finally {
-        clientSignal?.removeEventListener('abort', onOuterAbort);
+        clientSignal?.removeEventListener("abort", onOuterAbort);
         controller.abort();
       }
       return;
@@ -661,7 +676,7 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
       done = true;
       drain();
     };
-    clientSignal?.addEventListener('abort', onClientAbort);
+    clientSignal?.addEventListener("abort", onClientAbort);
 
     try {
       while (true) {
@@ -677,7 +692,7 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): unkno
       }
       if (err) throw err;
     } finally {
-      clientSignal?.removeEventListener('abort', onClientAbort);
+      clientSignal?.removeEventListener("abort", onClientAbort);
       try {
         sub?.unsubscribe?.();
       } catch {
@@ -714,19 +729,19 @@ export function buildDispatcherRouter(
     // used `_def.query`/`_def.mutation`/`_def.subscription` booleans
     // — check both to stay robust across tRPC point releases.
     const def = orig?._def ?? {};
-    let type: 'query' | 'mutation' | 'subscription' | undefined;
-    if (def.type === 'query' || def.type === 'mutation' || def.type === 'subscription') {
+    let type: "query" | "mutation" | "subscription" | undefined;
+    if (def.type === "query" || def.type === "mutation" || def.type === "subscription") {
       type = def.type;
     } else if (def.query) {
-      type = 'query';
+      type = "query";
     } else if (def.mutation) {
-      type = 'mutation';
+      type = "mutation";
     } else if (def.subscription) {
-      type = 'subscription';
+      type = "subscription";
     }
-    if (type === 'query') procs[name] = wrapQueryOrMutation(name, 'query', fetchFactory);
-    else if (type === 'mutation') procs[name] = wrapQueryOrMutation(name, 'mutation', fetchFactory);
-    else if (type === 'subscription') procs[name] = wrapSubscription(name, fetchFactory);
+    if (type === "query") procs[name] = wrapQueryOrMutation(name, "query", fetchFactory);
+    else if (type === "mutation") procs[name] = wrapQueryOrMutation(name, "mutation", fetchFactory);
+    else if (type === "subscription") procs[name] = wrapSubscription(name, fetchFactory);
   }
   // Cast the dynamic wrapped router to the base AppRouter type, then
   // merge with the typed UI router. The resulting type surfaces every
@@ -755,9 +770,9 @@ export function buildDispatcherRouter(
   for (const [path, origProc] of Object.entries(procsDef)) {
     const d = origProc?._def;
     if (!d) continue;
-    if (d.type === 'query') d.query = true;
-    else if (d.type === 'mutation') d.mutation = true;
-    else if (d.type === 'subscription') d.subscription = true;
+    if (d.type === "query") d.query = true;
+    else if (d.type === "mutation") d.mutation = true;
+    else if (d.type === "subscription") d.subscription = true;
     // Wrap with a v10-compat shim. The shim is callable both ways:
     // when invoked with v11's `ProcedureCallOptions` (from
     // createCaller) it passes through; when invoked with v10's
@@ -771,10 +786,10 @@ export function buildDispatcherRouter(
     // is the v10-shape one — detected by the missing `getRawInput`
     // field. v11 createCaller paths (tests, future callers) keep the
     // AsyncIterable so they stay native.
-    const isSubscription = d.type === 'subscription';
+    const isSubscription = d.type === "subscription";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const shim: any = async (opts: any) => {
-      const isV10ShapeCall = opts && typeof opts.getRawInput !== 'function';
+      const isV10ShapeCall = opts && typeof opts.getRawInput !== "function";
       if (isV10ShapeCall) {
         const rawInput = opts.rawInput;
         opts = { ...opts, getRawInput: () => Promise.resolve(rawInput) };
@@ -794,19 +809,20 @@ export function buildDispatcherRouter(
   // errors raised inside any procedure propagate to the renderer
   // instead of crashing the main process with "n.getErrorShape is not
   // a function".
-  if (typeof merged.getErrorShape !== 'function') {
+  if (typeof merged.getErrorShape !== "function") {
     merged.getErrorShape = (opts: {
       error: unknown;
-      type: 'query' | 'mutation' | 'subscription' | 'unknown';
+      type: "query" | "mutation" | "subscription" | "unknown";
       path: string | undefined;
       input: unknown;
       ctx: unknown;
     }) =>
       getErrorShape({
         config: merged._def._config,
-        error: opts.error instanceof TRPCError
-          ? opts.error
-          : new TRPCError({ code: 'INTERNAL_SERVER_ERROR', cause: opts.error as Error }),
+        error:
+          opts.error instanceof TRPCError
+            ? opts.error
+            : new TRPCError({ code: "INTERNAL_SERVER_ERROR", cause: opts.error as Error }),
         type: opts.type,
         path: opts.path,
         input: opts.input,

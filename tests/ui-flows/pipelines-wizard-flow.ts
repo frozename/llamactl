@@ -19,11 +19,11 @@
  * so the Pipelines tab is rendered (use LLAMACTL_TEST_PROFILE).
  * See tests/ui-flows/README.md for setup.
  */
-import { spawn, type ChildProcessByStdio } from 'node:child_process';
-import { createInterface } from 'node:readline';
-import type { Readable, Writable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { createInterface } from "node:readline";
+import type { Readable, Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 interface JsonRpcResponse {
   id?: number;
@@ -38,7 +38,7 @@ class McpClient {
   constructor(proc: ChildProcessByStdio<Writable, Readable, null>) {
     this.proc = proc;
     const rl = createInterface({ input: proc.stdout });
-    rl.on('line', (line) => {
+    rl.on("line", (line) => {
       if (!line.trim()) return;
       try {
         const frame = JSON.parse(line) as JsonRpcResponse;
@@ -65,11 +65,11 @@ class McpClient {
       });
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'tools/call',
+          method: "tools/call",
           params: { name: tool, arguments: args },
-        }) + '\n',
+        }) + "\n",
       );
     });
     if (res.error) throw new Error(`${tool} → ${res.error.message}`);
@@ -77,7 +77,7 @@ class McpClient {
       isError?: boolean;
       content?: Array<{ text?: string }>;
     };
-    const text = envelope?.content?.[0]?.text ?? '';
+    const text = envelope?.content?.[0]?.text ?? "";
     if (envelope?.isError) throw new Error(`${tool} → ${text}`);
     try {
       return JSON.parse(text);
@@ -91,15 +91,15 @@ class McpClient {
       this.pending.set(id, (r) => resolveP(r));
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'initialize',
+          method: "initialize",
           params: {
-            protocolVersion: '2024-11-05',
+            protocolVersion: "2024-11-05",
             capabilities: {},
-            clientInfo: { name: 'pipelines-wizard-flow', version: '0.0.1' },
+            clientInfo: { name: "pipelines-wizard-flow", version: "0.0.1" },
           },
-        }) + '\n',
+        }) + "\n",
       );
     });
   }
@@ -125,34 +125,35 @@ function parseArgs(argv: string[]): DriverArgs {
   const env: Record<string, string> = {};
   let userDataDir: string | undefined;
   for (const a of argv.slice(2)) {
-    if (a.startsWith('--executable=')) executable = a.slice('--executable='.length);
-    else if (a.startsWith('--args=')) execArgs = a.slice('--args='.length).split(' ').filter(Boolean);
-    else if (a.startsWith('--env=')) {
-      const kv = a.slice('--env='.length);
-      const eq = kv.indexOf('=');
+    if (a.startsWith("--executable=")) executable = a.slice("--executable=".length);
+    else if (a.startsWith("--args="))
+      execArgs = a.slice("--args=".length).split(" ").filter(Boolean);
+    else if (a.startsWith("--env=")) {
+      const kv = a.slice("--env=".length);
+      const eq = kv.indexOf("=");
       if (eq > 0) env[kv.slice(0, eq)] = kv.slice(eq + 1);
-    } else if (a.startsWith('--userDataDir=')) {
-      userDataDir = a.slice('--userDataDir='.length);
+    } else if (a.startsWith("--userDataDir=")) {
+      userDataDir = a.slice("--userDataDir=".length);
     }
   }
-  if (!executable) throw new Error('--executable required');
+  if (!executable) throw new Error("--executable required");
   const out: DriverArgs = { executable, execArgs, env };
   if (userDataDir !== undefined) out.userDataDir = userDataDir;
   return out;
 }
 
-function check(label: string, cond: boolean, detail = ''): void {
-  const mark = cond ? 'PASS' : 'FAIL';
-  console.log(`[${mark}] ${label}${detail ? ' — ' + detail : ''}`);
+function check(label: string, cond: boolean, detail = ""): void {
+  const mark = cond ? "PASS" : "FAIL";
+  console.log(`[${mark}] ${label}${detail ? " — " + detail : ""}`);
   if (!cond) process.exitCode = 1;
 }
 
 function resolveServerScript(here: string): string {
   const explicit = process.env.ELECTRON_MCP_DIR;
   if (explicit && explicit.length > 0) {
-    return resolve(explicit, 'dist', 'server', 'index.js');
+    return resolve(explicit, "dist", "server", "index.js");
   }
-  return resolve(here, '..', '..', '..', 'electron-mcp-server', 'dist', 'server', 'index.js');
+  return resolve(here, "..", "..", "..", "electron-mcp-server", "dist", "server", "index.js");
 }
 
 async function main(): Promise<void> {
@@ -160,9 +161,9 @@ async function main(): Promise<void> {
   const here = dirname(fileURLToPath(import.meta.url));
   const serverScript = resolveServerScript(here);
   const env: NodeJS.ProcessEnv = { ...process.env };
-  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? 'warn';
-  const nodeBin = process.env.MCP_NODE ?? 'node';
-  const proc = spawn(nodeBin, [serverScript], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "warn";
+  const nodeBin = process.env.MCP_NODE ?? "node";
+  const proc = spawn(nodeBin, [serverScript], { env, stdio: ["pipe", "pipe", "inherit"] });
   const client = new McpClient(proc);
 
   try {
@@ -173,23 +174,23 @@ async function main(): Promise<void> {
     };
     if (Object.keys(args.env).length > 0) launchArgs.env = args.env;
     if (args.userDataDir !== undefined) launchArgs.userDataDir = args.userDataDir;
-    const launch = (await client.call('electron_launch', launchArgs, 60_000)) as {
+    const launch = (await client.call("electron_launch", launchArgs, 60_000)) as {
       sessionId?: string;
     };
     const sessionId = launch.sessionId;
-    if (!sessionId) throw new Error('launch failed');
-    await client.call('electron_wait_for_window', { sessionId, index: 0, timeoutMs: 30_000 });
-    await client.call('electron_wait_for_selector', {
+    if (!sessionId) throw new Error("launch failed");
+    await client.call("electron_wait_for_window", { sessionId, index: 0, timeoutMs: 30_000 });
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="dashboard-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 10_000,
     });
 
     // Navigate to Knowledge → Retrieval via the command palette (Beacon shell).
     // Inline the openPalette / paletteType / paletteConfirm pattern from
     // tier-a-modules.ts — no import needed.
-    await client.call('electron_evaluate_renderer', {
+    await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `(() => {
         const e = new KeyboardEvent('keydown', {
@@ -203,18 +204,18 @@ async function main(): Promise<void> {
         document.dispatchEvent(e);
       })()`,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="command-palette"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    await client.call('electron_fill', {
+    await client.call("electron_fill", {
       sessionId,
       selector: '[data-testid="command-palette-input"]',
-      value: 'Retrieval',
+      value: "Retrieval",
     });
-    await client.call('electron_evaluate_renderer', {
+    await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `(() => {
         const e = new KeyboardEvent('keydown', {
@@ -229,224 +230,218 @@ async function main(): Promise<void> {
         target.dispatchEvent(e);
       })()`,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="knowledge-retrieval-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 8_000,
     });
 
     // Fast-exit if the profile has no rag nodes (the Pipelines tab only
     // renders when there's at least one to target).
-    const hasPipelinesTab = (await client.call('electron_evaluate_renderer', {
+    const hasPipelinesTab = (await client.call("electron_evaluate_renderer", {
       sessionId,
-      expression:
-        'document.querySelectorAll("[data-testid=\\"knowledge-tab-pipelines\\"]").length',
+      expression: 'document.querySelectorAll("[data-testid=\\"knowledge-tab-pipelines\\"]").length',
     })) as { result: number };
     if (hasPipelinesTab.result === 0) {
-      console.log(
-        'SKIP — no rag nodes registered in this profile; wizard flow requires one.',
-      );
-      await client.call('electron_close', { sessionId });
+      console.log("SKIP — no rag nodes registered in this profile; wizard flow requires one.");
+      await client.call("electron_close", { sessionId });
       return;
     }
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="knowledge-tab-pipelines"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipelines-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 5_000,
     });
 
     // Open the wizard.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipelines-new"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-modal"]',
-      state: 'visible',
+      state: "visible",
       timeout: 5_000,
     });
-    check('wizard modal opens', true);
-    await client.call('electron_wait_for_selector', {
+    check("wizard modal opens", true);
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-destination"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
 
     // --- Round 1: advance with empty form, confirm Review flags errors.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-next"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-sources"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-next"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-transforms"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-next"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-review"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-errors"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    check('review step surfaces validation errors with empty form', true);
+    check("review step surfaces validation errors with empty form", true);
 
-    const applyDisabled = (await client.call('electron_evaluate_renderer', {
+    const applyDisabled = (await client.call("electron_evaluate_renderer", {
       sessionId,
       expression:
         'document.querySelector("[data-testid=\\"pipeline-wizard-apply\\"]")?.disabled ?? null',
     })) as { result: boolean | null };
     check(
-      'Apply button disabled while errors remain',
+      "Apply button disabled while errors remain",
       applyDisabled.result === true,
       `disabled=${String(applyDisabled.result)}`,
     );
 
     // --- Round 2: back to Destination, fill the required fields.
     // Click the stepper button directly to jump back.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-step-destination"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-destination"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    await client.call('electron_fill', {
+    await client.call("electron_fill", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-name"]',
-      value: 'wizard-flow-smoke',
+      value: "wizard-flow-smoke",
     });
     // The ragnode select already carries the default from the Pipelines
     // tab context; we assert the option is chosen by reading its value.
-    const ragNode = (await client.call('electron_evaluate_renderer', {
+    const ragNode = (await client.call("electron_evaluate_renderer", {
       sessionId,
       expression:
         'document.querySelector("[data-testid=\\"pipeline-wizard-ragnode\\"]")?.value || ""',
     })) as { result: string };
     check(
-      'ragNode select pre-populated from Pipelines tab context',
+      "ragNode select pre-populated from Pipelines tab context",
       ragNode.result.length > 0,
       `value=${ragNode.result}`,
     );
-    await client.call('electron_fill', {
+    await client.call("electron_fill", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-collection"]',
-      value: 'smoke_docs',
+      value: "smoke_docs",
     });
 
     // Sources step — fill filesystem root.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-step-sources"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-source-0"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    await client.call('electron_fill', {
+    await client.call("electron_fill", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-source-root-0"]',
-      value: '/tmp/wizard-flow-docs',
+      value: "/tmp/wizard-flow-docs",
     });
 
     // Jump to Review. Errors div should be gone; Apply enabled.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-step-review"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-yaml"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    const errsGone = (await client.call('electron_evaluate_renderer', {
+    const errsGone = (await client.call("electron_evaluate_renderer", {
       sessionId,
-      expression:
-        'document.querySelectorAll("[data-testid=\\"pipeline-wizard-errors\\"]").length',
+      expression: 'document.querySelectorAll("[data-testid=\\"pipeline-wizard-errors\\"]").length',
     })) as { result: number };
     check(
-      'errors block cleared after fields are filled',
+      "errors block cleared after fields are filled",
       errsGone.result === 0,
       `errors-count=${errsGone.result}`,
     );
-    const applyEnabledNow = (await client.call('electron_evaluate_renderer', {
+    const applyEnabledNow = (await client.call("electron_evaluate_renderer", {
       sessionId,
       expression:
         'document.querySelector("[data-testid=\\"pipeline-wizard-apply\\"]")?.disabled ?? null',
     })) as { result: boolean | null };
     check(
-      'Apply button enabled once every required field is set',
+      "Apply button enabled once every required field is set",
       applyEnabledNow.result === false,
       `disabled=${String(applyEnabledNow.result)}`,
     );
 
-    const yaml = (await client.call('electron_evaluate_renderer', {
+    const yaml = (await client.call("electron_evaluate_renderer", {
       sessionId,
       expression:
         'document.querySelector("[data-testid=\\"pipeline-wizard-yaml\\"]")?.textContent || ""',
     })) as { result: string };
     check(
-      'Review YAML reflects filled form values',
-      yaml.result.includes('name: wizard-flow-smoke') &&
-        yaml.result.includes('collection: smoke_docs') &&
-        yaml.result.includes('/tmp/wizard-flow-docs'),
+      "Review YAML reflects filled form values",
+      yaml.result.includes("name: wizard-flow-smoke") &&
+        yaml.result.includes("collection: smoke_docs") &&
+        yaml.result.includes("/tmp/wizard-flow-docs"),
     );
 
     // Close without applying.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-close"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-modal"]',
-      state: 'detached',
+      state: "detached",
       timeout: 3_000,
     });
-    check('wizard closes cleanly', true);
+    check("wizard closes cleanly", true);
 
-    await client.call('electron_close', { sessionId });
+    await client.call("electron_close", { sessionId });
     console.log(
-      process.exitCode === 1
-        ? 'FAIL — see above'
-        : 'PASS — wizard stepper + validation flow green',
+      process.exitCode === 1 ? "FAIL — see above" : "PASS — wizard stepper + validation flow green",
     );
   } catch (err) {
-    console.error('flow crashed:', err);
+    console.error("flow crashed:", err);
     process.exitCode = 1;
   } finally {
     client.kill();

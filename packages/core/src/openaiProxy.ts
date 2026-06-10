@@ -1,23 +1,23 @@
-import type { ModelInfo, ModelListResponse } from '@nova/contracts';
-import { mkdirSync, readdirSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import type { ModelInfo, ModelListResponse } from "@nova/contracts";
+import { mkdirSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import {
   AnthropicTranslationError,
   translateAnthropicRequest,
-} from './anthropic/translateRequest.js';
-import { translateOpenAIResponse } from './anthropic/translateResponse.js';
-import { translateOpenAIStreamToAnthropic } from './anthropic/translateStream.js';
-import type { AnthropicMessagesRequest } from './anthropic/types.js';
-import { resolveEnv } from './env.js';
-import { ctxForModel } from './ctx.js';
-import { endpoint as llamaEndpoint, readServerState, readServerPid } from './server.js';
-import { readModelHostState } from './engines/state.js';
-import type { ResolvedEnv } from './types.js';
-import * as workloadRuntime from './workloadRuntime.js';
-import type { WorkloadKey } from './workloadRuntime.js';
-import { type PeerNode, listPeers } from '../../remote/src/config/peers.js';
-import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from './cache-identity/canonical.js';
+} from "./anthropic/translateRequest.js";
+import { translateOpenAIResponse } from "./anthropic/translateResponse.js";
+import { translateOpenAIStreamToAnthropic } from "./anthropic/translateStream.js";
+import type { AnthropicMessagesRequest } from "./anthropic/types.js";
+import { resolveEnv } from "./env.js";
+import { ctxForModel } from "./ctx.js";
+import { endpoint as llamaEndpoint, readServerState, readServerPid } from "./server.js";
+import { readModelHostState } from "./engines/state.js";
+import type { ResolvedEnv } from "./types.js";
+import * as workloadRuntime from "./workloadRuntime.js";
+import type { WorkloadKey } from "./workloadRuntime.js";
+import { type PeerNode, listPeers } from "../../remote/src/config/peers.js";
+import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from "./cache-identity/canonical.js";
 import {
   EXT_FLAG_SESSION_TITLE,
   EXT_FLAG_TOOL_MAP,
@@ -34,7 +34,7 @@ import {
   writeTrailer,
   type KvTrailer,
   type KvStorage,
-} from './kvstore/index.js';
+} from "./kvstore/index.js";
 import {
   isDeterministic,
   openResponseCacheStorage,
@@ -42,7 +42,7 @@ import {
   runResponseCacheEvictionIfOverBudget,
   type ResponseCacheEntry,
   type ResponseCacheStorage,
-} from './responsecache/index.js';
+} from "./responsecache/index.js";
 
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
 
@@ -68,18 +68,13 @@ const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
  * single llama-server that's running (identified by its rel), or an
  * empty list when nothing is tracked.
  */
-export function listOpenAIModels(
-  resolved?: ResolvedEnv,
-): ModelListResponse;
-export function listOpenAIModels(
-  key: WorkloadKey,
-  resolved?: ResolvedEnv,
-): ModelListResponse;
+export function listOpenAIModels(resolved?: ResolvedEnv): ModelListResponse;
+export function listOpenAIModels(key: WorkloadKey, resolved?: ResolvedEnv): ModelListResponse;
 export function listOpenAIModels(
   keyOrResolved: WorkloadKey | ResolvedEnv = resolveEnv(),
   resolved: ResolvedEnv = resolveEnv(),
 ): ModelListResponse {
-  if ('name' in keyOrResolved) {
+  if ("name" in keyOrResolved) {
     const key = keyOrResolved;
     const state = readServerState(key, resolved);
     const pid = readServerPid(key, resolved);
@@ -87,21 +82,21 @@ export function listOpenAIModels(
     if (state && pid !== null) {
       data.push({
         id: state.rel,
-        object: 'model',
+        object: "model",
         created: Math.floor(new Date(state.startedAt).getTime() / 1000),
-        owned_by: 'llamactl-agent',
-        capabilities: ['chat'],
+        owned_by: "llamactl-agent",
+        capabilities: ["chat"],
       });
     }
-    return { object: 'list', data };
+    return { object: "list", data };
   }
 
   return getCachedModelsResponse(keyOrResolved);
 }
 
 function createdAtForRoute(route: workloadRuntime.ClusterRoute, resolved: ResolvedEnv): number {
-  if ('isPeer' in route && route.isPeer) return 0;
-  if (route.kind === 'ModelHost') {
+  if ("isPeer" in route && route.isPeer) return 0;
+  if (route.kind === "ModelHost") {
     const state = readModelHostState({ name: route.workload }, resolved);
     if (state?.startedAt) return Math.floor(new Date(state.startedAt).getTime() / 1000);
   } else {
@@ -125,7 +120,7 @@ function buildListOpenAIModels(resolved: ResolvedEnv): ModelListResponse {
   const data: ModelInfo[] = [];
   const winners = new Map<string, { kind: string; workload: string }>();
   const routes = [...listRoutesForProxy(resolved)].sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === 'ModelRun' ? -1 : 1;
+    if (a.kind !== b.kind) return a.kind === "ModelRun" ? -1 : 1;
     return a.workload.localeCompare(b.workload);
   });
   for (const route of routes) {
@@ -139,22 +134,27 @@ function buildListOpenAIModels(resolved: ResolvedEnv): ModelListResponse {
     winners.set(route.model, { kind: route.kind, workload: route.workload });
     data.push({
       id: route.model,
-      object: 'model',
+      object: "model",
       created: createdAtForRoute(route, resolved),
-      owned_by: route.kind === 'ModelHost' ? 'llamactl-host' : 'llamactl-agent',
-      capabilities: ['chat'],
+      owned_by: route.kind === "ModelHost" ? "llamactl-host" : "llamactl-agent",
+      capabilities: ["chat"],
     });
   }
-  return { object: 'list', data };
+  return { object: "list", data };
 }
 
-const WORKLOAD_STATE_FILES = ['llama-server.pid', 'server.state', 'modelhost.pid', 'modelhost.state'];
+const WORKLOAD_STATE_FILES = [
+  "llama-server.pid",
+  "server.state",
+  "modelhost.pid",
+  "modelhost.state",
+];
 
 function statMtimeNs(path: string): string {
   try {
     return statSync(path, { bigint: true }).mtimeNs.toString();
   } catch {
-    return '-';
+    return "-";
   }
 }
 
@@ -177,7 +177,7 @@ function workloadRuntimeCacheSignature(resolved: ResolvedEnv): string {
   } catch {
     // workloads root missing/unreadable — signature is just the root stat.
   }
-  return parts.join('|');
+  return parts.join("|");
 }
 
 let modelsResponseCache: { sig: string; response: ModelListResponse } | null = null;
@@ -197,7 +197,7 @@ function getCachedModelsResponse(resolved: ResolvedEnv): ModelListResponse {
 function isJsonContentType(contentType: string | null): boolean {
   if (!contentType) return false;
   const lower = contentType.toLowerCase();
-  return lower.includes('application/json') || lower.includes('+json');
+  return lower.includes("application/json") || lower.includes("+json");
 }
 
 function peerTlsForRoute(route: RoutedEntry | undefined): { ca: string } | undefined {
@@ -208,7 +208,7 @@ function peerTlsForRoute(route: RoutedEntry | undefined): { ca: string } | undef
 function requestedModelFromBody(bodyText: string): string | undefined {
   try {
     const parsed = JSON.parse(bodyText) as { model?: unknown };
-    return typeof parsed.model === 'string' ? parsed.model : undefined;
+    return typeof parsed.model === "string" ? parsed.model : undefined;
   } catch {
     return undefined;
   }
@@ -223,9 +223,10 @@ function routedEndpointForModel(
   const routeMap = getRouteMap(resolved);
   const entry = routeMap.get(model);
   if (!entry) return null;
-  const target = entry.isPeer && entry.peerEndpoint
-    ? `${entry.peerEndpoint}${pathname}${search}`
-    : `http://${entry.host}:${entry.port}${pathname}${search}`;
+  const target =
+    entry.isPeer && entry.peerEndpoint
+      ? `${entry.peerEndpoint}${pathname}${search}`
+      : `http://${entry.host}:${entry.port}${pathname}${search}`;
   return {
     ...entry,
     target,
@@ -236,8 +237,8 @@ type RouteEntry = {
   host: string;
   port: number;
   workload: string;
-  kind: 'ModelRun' | 'ModelHost';
-  engine: workloadRuntime.LocalRoute['engine'];
+  kind: "ModelRun" | "ModelHost";
+  engine: workloadRuntime.LocalRoute["engine"];
   model: string;
   isPeer?: true;
   peerEndpoint?: string;
@@ -288,7 +289,7 @@ interface ResponseCacheRequestState {
   model: string;
   workload: string;
   workloadEpoch: string;
-  protocolVariant: 'openai' | 'anthropic';
+  protocolVariant: "openai" | "anthropic";
   deterministic: boolean;
   requestBodyBytes: number;
 }
@@ -346,7 +347,7 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
   const out = new Map<string, RouteEntry>();
   const winners = new Map<string, { kind: string; workload: string }>();
   const routes = [...listRoutesForProxy(resolved)].sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === 'ModelRun' ? -1 : 1;
+    if (a.kind !== b.kind) return a.kind === "ModelRun" ? -1 : 1;
     return a.workload.localeCompare(b.workload);
   });
   for (const route of routes) {
@@ -365,12 +366,12 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
       kind: route.kind,
       engine: route.engine,
       model: route.model,
-      isPeer: 'isPeer' in route && route.isPeer ? true : undefined,
-      peerEndpoint: 'isPeer' in route && route.isPeer ? route.peerEndpoint : undefined,
-      certificate: 'isPeer' in route && route.isPeer ? route.certificate : undefined,
-      token: 'isPeer' in route && route.isPeer ? route.token : undefined,
-      targetNodeId: 'isPeer' in route && route.isPeer ? route.targetNodeId : undefined,
-      revision: 'isPeer' in route && route.isPeer ? route.revision : undefined,
+      isPeer: "isPeer" in route && route.isPeer ? true : undefined,
+      peerEndpoint: "isPeer" in route && route.isPeer ? route.peerEndpoint : undefined,
+      certificate: "isPeer" in route && route.isPeer ? route.certificate : undefined,
+      token: "isPeer" in route && route.isPeer ? route.token : undefined,
+      targetNodeId: "isPeer" in route && route.isPeer ? route.targetNodeId : undefined,
+      revision: "isPeer" in route && route.isPeer ? route.revision : undefined,
     });
   }
   return out;
@@ -447,8 +448,8 @@ function anthropicTranslationErrorResponse(error: unknown): Response {
   return Response.json(
     {
       error: {
-        message: error instanceof Error ? error.message : 'anthropic request translation failed',
-        type: 'anthropic_translation_error',
+        message: error instanceof Error ? error.message : "anthropic request translation failed",
+        type: "anthropic_translation_error",
       },
     },
     { status: error instanceof AnthropicTranslationError ? error.statusCode : 400 },
@@ -456,25 +457,33 @@ function anthropicTranslationErrorResponse(error: unknown): Response {
 }
 
 function isOversizedJsonBody(req: Request): boolean {
-  const contentLength = req.headers.get('content-length');
+  const contentLength = req.headers.get("content-length");
   if (!contentLength) return false;
   const parsedContentLength = Number.parseInt(contentLength, 10);
   return Number.isFinite(parsedContentLength) && parsedContentLength > MAX_JSON_BODY_BYTES;
 }
 
-async function parseIncoming(req: Request, resolved: ResolvedEnv): Promise<ProxyContext | Response> {
+async function parseIncoming(
+  req: Request,
+  resolved: ResolvedEnv,
+): Promise<ProxyContext | Response> {
   const url = new URL(req.url);
   const headers = new Headers();
   for (const [key, value] of req.headers.entries()) {
     const lower = key.toLowerCase();
-    if (lower === 'host' || lower === 'connection' || lower === 'content-length' || lower === 'authorization') {
+    if (
+      lower === "host" ||
+      lower === "connection" ||
+      lower === "content-length" ||
+      lower === "authorization"
+    ) {
       continue;
     }
     headers.set(key, value);
   }
-  if (url.pathname === '/v1/messages') {
+  if (url.pathname === "/v1/messages") {
     if (isOversizedJsonBody(req)) {
-      return new Response('Payload Too Large', { status: 413 });
+      return new Response("Payload Too Large", { status: 413 });
     }
     try {
       const bodyText = await req.text();
@@ -482,7 +491,7 @@ async function parseIncoming(req: Request, resolved: ResolvedEnv): Promise<Proxy
       const translated = translateAnthropicRequest(incoming);
       const translatedBodyText = JSON.stringify(translated);
       const translatedUrl = new URL(req.url);
-      translatedUrl.pathname = '/v1/chat/completions';
+      translatedUrl.pathname = "/v1/chat/completions";
       return {
         req,
         resolved,
@@ -503,7 +512,9 @@ async function parseIncoming(req: Request, resolved: ResolvedEnv): Promise<Proxy
       if (error instanceof AnthropicTranslationError || error instanceof SyntaxError) {
         return anthropicTranslationErrorResponse(error);
       }
-      return anthropicTranslationErrorResponse(new AnthropicTranslationError('anthropic request translation failed'));
+      return anthropicTranslationErrorResponse(
+        new AnthropicTranslationError("anthropic request translation failed"),
+      );
     }
   }
   const fallbackTarget = `${llamaEndpoint(resolved)}${url.pathname}${url.search}`;
@@ -511,12 +522,12 @@ async function parseIncoming(req: Request, resolved: ResolvedEnv): Promise<Proxy
     req,
     resolved,
     target: fallbackTarget,
-      pathname: url.pathname,
-      search: url.search,
-      isAnthropic: false,
-      init: {
-        method: req.method,
-        headers,
+    pathname: url.pathname,
+    search: url.search,
+    isAnthropic: false,
+    init: {
+      method: req.method,
+      headers,
     },
   };
 }
@@ -531,8 +542,8 @@ const responseCacheRuntimeByDataRoot = new Map<string, ResponseCacheRuntime>();
 function resolveKvDataRoot(resolved: ResolvedEnv): string {
   // KV state is rooted beside workload runtime files to avoid route-map cache churn on each KV write.
   const runtimeRoot = (resolved as Partial<ResolvedEnv>).LOCAL_AI_RUNTIME_DIR;
-  if (typeof runtimeRoot === 'string' && runtimeRoot.length > 0) return runtimeRoot;
-  return join(homedir(), '.llamactl', 'data');
+  if (typeof runtimeRoot === "string" && runtimeRoot.length > 0) return runtimeRoot;
+  return join(homedir(), ".llamactl", "data");
 }
 
 function kvRuntimeFor(resolved: ResolvedEnv): KvRuntime {
@@ -582,7 +593,10 @@ function slotClientFor(
   const endpoint = `http://${host}:${port}`;
   const cached = runtime.slotClients.get(workload);
   if (cached && cached.endpoint === endpoint) return cached.client;
-  const client = new UpstreamSlotClient(endpoint, engine === 'omlx' ? { engine: 'omlx' } : undefined);
+  const client = new UpstreamSlotClient(
+    endpoint,
+    engine === "omlx" ? { engine: "omlx" } : undefined,
+  );
   runtime.slotClients.set(workload, { endpoint, client });
   return client;
 }
@@ -607,7 +621,7 @@ function parseContextWindow(extraArgs: readonly string[] | undefined, fallback: 
     }
     return null;
   };
-  return readAfterFlag('-c', '--ctx-size') ?? fallback;
+  return readAfterFlag("-c", "--ctx-size") ?? fallback;
 }
 
 function quantBitsFromModelId(model: string): number {
@@ -632,7 +646,7 @@ function resolveRouteKvMetadata(context: ProxyContext): {
 } | null {
   const route = context.route;
   if (!route) return null;
-  if ('isPeer' in route && route.isPeer === true) return null;
+  if ("isPeer" in route && route.isPeer === true) return null;
   if (!isRouteKvEligible(route)) return null;
 
   const key = { name: route.workload };
@@ -640,14 +654,18 @@ function resolveRouteKvMetadata(context: ProxyContext): {
   if (!workloadEpoch) return null;
 
   const state = readServerState(key, context.resolved);
-  const modelHostState = route.kind === 'ModelHost' ? readModelHostState(key, context.resolved) : null;
+  const modelHostState =
+    route.kind === "ModelHost" ? readModelHostState(key, context.resolved) : null;
   const rel = state?.rel ?? route.model;
   const defaultCtx = Number.parseInt(ctxForModel(rel, context.resolved), 10);
-  const ctxSize = parseContextWindow(state?.extraArgs, Number.isFinite(defaultCtx) ? defaultCtx : 32768);
+  const ctxSize = parseContextWindow(
+    state?.extraArgs,
+    Number.isFinite(defaultCtx) ? defaultCtx : 32768,
+  );
   const slotDir =
-    route.kind === 'ModelRun'
-      ? state?.slotSavePath ?? parseAbsoluteSlotSavePath(state?.extraArgs ?? [])
-      : modelHostState?.slotSavePath ?? null;
+    route.kind === "ModelRun"
+      ? (state?.slotSavePath ?? parseAbsoluteSlotSavePath(state?.extraArgs ?? []))
+      : (modelHostState?.slotSavePath ?? null);
   if (slotDir === null) return null;
   return {
     model: route.model,
@@ -661,15 +679,18 @@ function resolveRouteKvMetadata(context: ProxyContext): {
   };
 }
 
-export function isRouteKvEligible(route: { kind: 'ModelRun' | 'ModelHost'; engine: string }): boolean {
+export function isRouteKvEligible(route: {
+  kind: "ModelRun" | "ModelHost";
+  engine: string;
+}): boolean {
   // llama-server (ModelRun/llamacpp) always participates in the proxy slot cache.
-  if (route.kind === 'ModelRun' && route.engine === 'llamacpp') return true;
+  if (route.kind === "ModelRun" && route.engine === "llamacpp") return true;
   // oMLX ModelHosts always participate too, symmetric with llama.cpp. The proxy
   // injects x_omlx_save_handle on the chat so the server records the prompt
   // token-ids and can serialize the slot on the subsequent save (L4). Activation
   // is guarded at runtime by the supports_save_handle capability probe
   // (/v1/slots/capabilities), so a server that can't save-by-handle is a no-op.
-  if (route.kind === 'ModelHost' && route.engine === 'omlx') return true;
+  if (route.kind === "ModelHost" && route.engine === "omlx") return true;
   return false;
 }
 
@@ -682,15 +703,23 @@ function kvBudgetBytes(): number {
 }
 
 function shouldUseKvPath(context: ProxyContext): boolean {
-  return context.req.method === 'POST' && context.pathname === '/v1/chat/completions' && typeof context.bodyText === 'string';
+  return (
+    context.req.method === "POST" &&
+    context.pathname === "/v1/chat/completions" &&
+    typeof context.bodyText === "string"
+  );
 }
 
 function shouldUseResponseCachePath(context: ProxyContext): boolean {
-  return context.req.method === 'POST' && context.pathname === '/v1/chat/completions' && typeof context.bodyText === 'string';
+  return (
+    context.req.method === "POST" &&
+    context.pathname === "/v1/chat/completions" &&
+    typeof context.bodyText === "string"
+  );
 }
 
-function responseCacheProtocolVariant(context: ProxyContext): 'openai' | 'anthropic' {
-  return context.isAnthropic ? 'anthropic' : 'openai';
+function responseCacheProtocolVariant(context: ProxyContext): "openai" | "anthropic" {
+  return context.isAnthropic ? "anthropic" : "openai";
 }
 
 function responseCacheBudgetBytes(): number {
@@ -718,15 +747,15 @@ function responseCacheTtlMs(): number {
 }
 
 function requestModel(parsedBody: unknown): string | null {
-  if (!parsedBody || typeof parsedBody !== 'object') return null;
+  if (!parsedBody || typeof parsedBody !== "object") return null;
   const maybeModel = (parsedBody as { model?: unknown }).model;
-  return typeof maybeModel === 'string' ? maybeModel : null;
+  return typeof maybeModel === "string" ? maybeModel : null;
 }
 
 function cacheHitResponse(entry: ResponseCacheEntry): Response {
   const headers = new Headers();
-  headers.set('content-type', entry.contentType);
-  if (entry.contentType.toLowerCase().startsWith('text/event-stream')) {
+  headers.set("content-type", entry.contentType);
+  if (entry.contentType.toLowerCase().startsWith("text/event-stream")) {
     return new Response(
       new ReadableStream<Uint8Array>({
         start(controller) {
@@ -762,8 +791,8 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
   //    restart-invalidation).
   const route = context.route;
   if (!route || !isRouteKvEligible(route)) return context;
-  const isPeer = 'isPeer' in route && route.isPeer === true;
-  const peerRevision = isPeer && 'revision' in route && route.revision ? `:${route.revision}` : '';
+  const isPeer = "isPeer" in route && route.isPeer === true;
+  const peerRevision = isPeer && "revision" in route && route.revision ? `:${route.revision}` : "";
   const workloadEpoch = isPeer
     ? `peer:${route.targetNodeId ?? route.workload}:${route.model}${peerRevision}`
     : readWorkloadEpoch({ name: route.workload }, context.resolved);
@@ -781,7 +810,7 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
   const runtime = responseCacheRuntimeFor(context.resolved);
   const sha = canonicalRequestSha(bodyText);
   const protocolVariant = responseCacheProtocolVariant(context);
-  const requestBodyBytes = Buffer.byteLength(bodyText, 'utf8');
+  const requestBodyBytes = Buffer.byteLength(bodyText, "utf8");
   context.responseCache = {
     runtime,
     sha,
@@ -819,7 +848,11 @@ function shouldEnforceFirstTokenEquivalence(bodyText: string): boolean {
   try {
     const parsed = JSON.parse(bodyText) as { temperature?: unknown; seed?: unknown };
     if (parsed.seed !== null && parsed.seed !== undefined) return true;
-    if (typeof parsed.temperature === 'number' && Number.isFinite(parsed.temperature) && parsed.temperature > 0) {
+    if (
+      typeof parsed.temperature === "number" &&
+      Number.isFinite(parsed.temperature) &&
+      parsed.temperature > 0
+    ) {
       // First-token checks are unstable under sampled decoding without a fixed seed.
       return false;
     }
@@ -838,17 +871,17 @@ function normalizeFirstResponseToken(text: string): string | null {
 }
 
 function firstTokenTextFromContent(content: unknown): string | null {
-  if (typeof content === 'string') return normalizeFirstResponseToken(content);
+  if (typeof content === "string") return normalizeFirstResponseToken(content);
   if (Array.isArray(content)) {
     for (const part of content) {
-      if (typeof part === 'string') {
+      if (typeof part === "string") {
         const fromString = normalizeFirstResponseToken(part);
         if (fromString) return fromString;
         continue;
       }
-      if (!part || typeof part !== 'object') continue;
+      if (!part || typeof part !== "object") continue;
       const partText = (part as { text?: unknown }).text;
-      if (typeof partText !== 'string') continue;
+      if (typeof partText !== "string") continue;
       const normalized = normalizeFirstResponseToken(partText);
       if (normalized) return normalized;
     }
@@ -857,19 +890,19 @@ function firstTokenTextFromContent(content: unknown): string | null {
 }
 
 function extractFirstResponseTokenFromJson(payload: unknown): string | null {
-  if (!payload || typeof payload !== 'object') return null;
+  if (!payload || typeof payload !== "object") return null;
   const choices = (payload as { choices?: unknown }).choices;
   if (!Array.isArray(choices) || choices.length === 0) return null;
   const firstChoice = choices[0];
-  if (!firstChoice || typeof firstChoice !== 'object') return null;
+  if (!firstChoice || typeof firstChoice !== "object") return null;
   const message = (firstChoice as { message?: unknown }).message;
-  if (message && typeof message === 'object') {
+  if (message && typeof message === "object") {
     const content = (message as { content?: unknown }).content;
     const fromMessage = firstTokenTextFromContent(content);
     if (fromMessage) return fromMessage;
   }
   const delta = (firstChoice as { delta?: unknown }).delta;
-  if (delta && typeof delta === 'object') {
+  if (delta && typeof delta === "object") {
     const content = (delta as { content?: unknown }).content;
     return firstTokenTextFromContent(content);
   }
@@ -877,7 +910,7 @@ function extractFirstResponseTokenFromJson(payload: unknown): string | null {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === "object" && value !== null;
 }
 
 function extractToolMapFromJson(payload: unknown): Record<string, string> {
@@ -893,12 +926,13 @@ function extractToolMapFromJson(payload: unknown): Record<string, string> {
     if (!Array.isArray(toolCalls)) continue;
     for (const rawCall of toolCalls) {
       if (!isRecord(rawCall)) continue;
-      if (rawCall.type !== 'function' || typeof rawCall.id !== 'string') continue;
+      if (rawCall.type !== "function" || typeof rawCall.id !== "string") continue;
       const fn = rawCall.function;
-      if (!isRecord(fn) || typeof fn.name !== 'string' || typeof fn.arguments !== 'string') continue;
+      if (!isRecord(fn) || typeof fn.name !== "string" || typeof fn.arguments !== "string")
+        continue;
       out[rawCall.id] = JSON.stringify({
         id: rawCall.id,
-        type: 'function',
+        type: "function",
         function: {
           name: fn.name,
           arguments: fn.arguments,
@@ -911,22 +945,22 @@ function extractToolMapFromJson(payload: unknown): Record<string, string> {
 
 function deriveSessionTitle(req: AnthropicMessagesRequest | undefined): string | undefined {
   if (!req) return undefined;
-  const firstUser = req.messages.find((message) => message.role === 'user');
+  const firstUser = req.messages.find((message) => message.role === "user");
   if (!firstUser) return undefined;
-  if (typeof firstUser.content === 'string') {
+  if (typeof firstUser.content === "string") {
     const text = firstUser.content.trim();
     return text.length > 0 ? text.slice(0, 80) : undefined;
   }
   const text = firstUser.content
-    .filter((block) => block.type === 'text')
+    .filter((block) => block.type === "text")
     .map((block) => block.text)
-    .join('')
+    .join("")
     .trim();
   return text.length > 0 ? text.slice(0, 80) : undefined;
 }
 
 async function readFirstResponseToken(upstream: Response): Promise<string | null> {
-  const contentType = upstream.headers.get('content-type');
+  const contentType = upstream.headers.get("content-type");
   if (!contentType || !isJsonContentType(contentType)) return null;
   try {
     return extractFirstResponseTokenFromJson(await upstream.clone().json());
@@ -937,7 +971,7 @@ async function readFirstResponseToken(upstream: Response): Promise<string | null
 
 function basenameStripKvslot(path: string): string {
   const file = basename(path);
-  return file.endsWith('.kvslot') ? file.slice(0, -'.kvslot'.length) : file;
+  return file.endsWith(".kvslot") ? file.slice(0, -".kvslot".length) : file;
 }
 
 function logSlotInjectionEvent(event: string, fields: Record<string, unknown>): void {
@@ -960,14 +994,14 @@ function stripUserSuppliedOmlxVendorFields(
   model: string,
   workload: string,
 ): boolean {
-  const hadRequestHandle = Object.prototype.hasOwnProperty.call(body, 'x_omlx_request_handle');
-  const hadRestoreEpoch = Object.prototype.hasOwnProperty.call(body, 'x_omlx_restore_epoch');
-  const hadSaveHandle = Object.prototype.hasOwnProperty.call(body, 'x_omlx_save_handle');
+  const hadRequestHandle = Object.prototype.hasOwnProperty.call(body, "x_omlx_request_handle");
+  const hadRestoreEpoch = Object.prototype.hasOwnProperty.call(body, "x_omlx_restore_epoch");
+  const hadSaveHandle = Object.prototype.hasOwnProperty.call(body, "x_omlx_save_handle");
   if (!hadRequestHandle && !hadRestoreEpoch && !hadSaveHandle) return false;
   delete body.x_omlx_request_handle;
   delete body.x_omlx_restore_epoch;
   delete body.x_omlx_save_handle;
-  logSlotInjectionEvent('slot_injection_user_supplied_stripped', {
+  logSlotInjectionEvent("slot_injection_user_supplied_stripped", {
     model,
     workload,
     had_handle: hadRequestHandle,
@@ -981,8 +1015,8 @@ function injectVendorFields(
   body: Record<string, unknown>,
   fields: { x_omlx_request_handle: string; x_omlx_restore_epoch: string },
 ): boolean {
-  const hadRequestHandle = Object.prototype.hasOwnProperty.call(body, 'x_omlx_request_handle');
-  const hadRestoreEpoch = Object.prototype.hasOwnProperty.call(body, 'x_omlx_restore_epoch');
+  const hadRequestHandle = Object.prototype.hasOwnProperty.call(body, "x_omlx_request_handle");
+  const hadRestoreEpoch = Object.prototype.hasOwnProperty.call(body, "x_omlx_restore_epoch");
   body.x_omlx_request_handle = fields.x_omlx_request_handle;
   body.x_omlx_restore_epoch = fields.x_omlx_restore_epoch;
   return hadRequestHandle || hadRestoreEpoch;
@@ -998,19 +1032,19 @@ async function maybeInjectOmlxRestoreBind(
   restoreEpoch: string | null,
 ): Promise<void> {
   if (restoreEpoch === null || context.bodyText === undefined) {
-    logSlotInjectionEvent('slot_injection_skipped', {
+    logSlotInjectionEvent("slot_injection_skipped", {
       workload,
       model,
-      reason: 'no_restore_epoch',
+      reason: "no_restore_epoch",
     });
     return;
   }
   const handleSupported = await slotClient.supportsRequestHandle();
   if (!handleSupported) {
-    logSlotInjectionEvent('slot_injection_skipped', {
+    logSlotInjectionEvent("slot_injection_skipped", {
       workload,
       model,
-      reason: 'capability_missing',
+      reason: "capability_missing",
     });
     return;
   }
@@ -1027,11 +1061,11 @@ async function maybeInjectOmlxRestoreBind(
     x_omlx_restore_epoch: restoreEpoch,
   });
   if (overwritten) {
-    logSlotInjectionEvent('slot_injection_overwrote_user_field', {
+    logSlotInjectionEvent("slot_injection_overwrote_user_field", {
       workload,
       model,
       had_user_value: userValue !== undefined,
-      user_value_len: typeof userValue === 'string' ? userValue.length : 0,
+      user_value_len: typeof userValue === "string" ? userValue.length : 0,
       proxy_value_prefix: prefixForRestoreEpoch(restoreEpoch),
     });
   }
@@ -1041,7 +1075,7 @@ async function maybeInjectOmlxRestoreBind(
     ...context.init,
     body: injectedBody,
   };
-  logSlotInjectionEvent('slot_injection_applied', {
+  logSlotInjectionEvent("slot_injection_applied", {
     workload,
     model,
     request_handle: basenameStripKvslot(upstreamSlotFile),
@@ -1065,7 +1099,7 @@ async function maybeInjectOmlxSaveHandle(
 ): Promise<void> {
   if (context.bodyText === undefined) return;
   if (!(await slotClient.supportsSaveHandle())) {
-    logSlotInjectionEvent('save_handle_skipped', { workload, model, reason: 'capability_missing' });
+    logSlotInjectionEvent("save_handle_skipped", { workload, model, reason: "capability_missing" });
     return;
   }
   let parsed: unknown;
@@ -1080,7 +1114,7 @@ async function maybeInjectOmlxSaveHandle(
   const injectedBody = JSON.stringify(parsed);
   context.bodyText = injectedBody;
   context.init = { ...context.init, body: injectedBody };
-  logSlotInjectionEvent('save_handle_injected', { workload, model, request_handle: sha });
+  logSlotInjectionEvent("save_handle_injected", { workload, model, request_handle: sha });
 }
 
 async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
@@ -1090,7 +1124,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   const runtime = kvRuntimeFor(context.resolved);
   const bodyText = context.bodyText!;
   const enforceFirstTokenEquivalence = shouldEnforceFirstTokenEquivalence(bodyText);
-  let prefixMetric = Buffer.byteLength(bodyText, 'utf8');
+  let prefixMetric = Buffer.byteLength(bodyText, "utf8");
   let sha = boundaryNaiveBytePrefixSha(bodyText);
 
   // Phase 6 is boundary-naive: use byte length as both byte prefix and token guard until token accounting lands.
@@ -1108,13 +1142,15 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
     // (model included) and one oMLX ModelHost serves one model, so this should
     // be unreachable — log it and fall through to a cold prefill if it ever is.
     runtime.storage.kv_model_mismatch_total += 1;
-    console.warn(JSON.stringify({
-      event: 'kv_model_mismatch',
-      workload: metadata.workload,
-      sha: hit.sha,
-      expected: hit.model,
-      got: metadata.model,
-    }));
+    console.warn(
+      JSON.stringify({
+        event: "kv_model_mismatch",
+        workload: metadata.workload,
+        sha: hit.sha,
+        expected: hit.model,
+        got: metadata.model,
+      }),
+    );
     hit = null;
   }
 
@@ -1127,7 +1163,13 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
     if (reserveWrite.ok && reserved) {
       const lease = slotAllocatorFor(runtime, metadata.workload).acquire();
       if (lease) {
-        const slotClient = slotClientFor(runtime, metadata.workload, metadata.host, metadata.port, context.route?.engine);
+        const slotClient = slotClientFor(
+          runtime,
+          metadata.workload,
+          metadata.host,
+          metadata.port,
+          context.route?.engine,
+        );
         // llama-server's slot API only accepts a bare filename (relative to its
         // --slot-save-path). We store the absolute path in the registry for
         // orphan sweep + integrity scan, but pass basename to the upstream call.
@@ -1135,7 +1177,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
         const restore = await slotClient.restore(
           lease.slotId,
           basename(hit.upstreamSlotFile),
-          context.route?.engine === 'omlx' ? { model: metadata.model } : undefined,
+          context.route?.engine === "omlx" ? { model: metadata.model } : undefined,
         );
         let activated = false;
         const activateWrite = runtime.storage.safeWrite(() => {
@@ -1143,9 +1185,9 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
         });
         if (restore.ok && activateWrite.ok && activated) {
           if (
-            context.isAnthropic
-            && context.anthropicRequest
-            && (hit.extFlags & EXT_FLAG_TOOL_MAP) !== 0
+            context.isAnthropic &&
+            context.anthropicRequest &&
+            (hit.extFlags & EXT_FLAG_TOOL_MAP) !== 0
           ) {
             const trailer = readTrailer(hit.upstreamSlotFile);
             const toolMap = trailer?.toolMap;
@@ -1154,15 +1196,17 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
                 translateAnthropicRequest(context.anthropicRequest, { toolMap }),
               );
               const replaySha = boundaryNaiveBytePrefixSha(replayBodyText);
-              const replayPrefixMetric = Buffer.byteLength(replayBodyText, 'utf8');
+              const replayPrefixMetric = Buffer.byteLength(replayBodyText, "utf8");
               if (replaySha !== hit.sha) {
                 runtime.storage.kv_replay_mismatch_total += 1;
-                console.warn(JSON.stringify({
-                  event: 'kv_replay_mismatch',
-                  workload: metadata.workload,
-                  expected: hit.sha,
-                  got: replaySha,
-                }));
+                console.warn(
+                  JSON.stringify({
+                    event: "kv_replay_mismatch",
+                    workload: metadata.workload,
+                    expected: hit.sha,
+                    got: replaySha,
+                  }),
+                );
                 replayMismatch = true;
               } else {
                 context.bodyText = replayBodyText;
@@ -1275,9 +1319,21 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   // L4: cold-miss path for a save-eligible oMLX route — inject the save handle
   // (= this request's sha, which becomes the slot filename on save) so the server
   // records the prompt token-ids for the upcoming save. No-op for llama.cpp.
-  if (context.route?.engine === 'omlx') {
-    const saveSlotClient = slotClientFor(runtime, metadata.workload, metadata.host, metadata.port, context.route.engine);
-    await maybeInjectOmlxSaveHandle(context, saveSlotClient, metadata.workload, metadata.model, sha);
+  if (context.route?.engine === "omlx") {
+    const saveSlotClient = slotClientFor(
+      runtime,
+      metadata.workload,
+      metadata.host,
+      metadata.port,
+      context.route.engine,
+    );
+    await maybeInjectOmlxSaveHandle(
+      context,
+      saveSlotClient,
+      metadata.workload,
+      metadata.model,
+      sha,
+    );
   }
 
   context.kv = {
@@ -1301,14 +1357,17 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   return context;
 }
 
-async function maybePersistResponseCache(context: ProxyContext, upstream: Response): Promise<Response> {
+async function maybePersistResponseCache(
+  context: ProxyContext,
+  upstream: Response,
+): Promise<Response> {
   const responseCache = context.responseCache;
   if (!responseCache) return upstream;
   if (context.responseCacheHit) return upstream;
 
-  const contentType = upstream.headers.get('content-type') ?? '';
+  const contentType = upstream.headers.get("content-type") ?? "";
   const isJson = isJsonContentType(contentType);
-  const isSse = contentType.toLowerCase().startsWith('text/event-stream');
+  const isSse = contentType.toLowerCase().startsWith("text/event-stream");
   const cacheableType = isJson || isSse;
   const bodyBytes = new Uint8Array(await upstream.arrayBuffer());
   const replay = new Response(bodyBytes, {
@@ -1319,27 +1378,31 @@ async function maybePersistResponseCache(context: ProxyContext, upstream: Respon
   if (upstream.status !== 200 || !responseCache.deterministic || !cacheableType) return replay;
   if (isJson) {
     try {
-      const parsed = JSON.parse(Buffer.from(bodyBytes).toString('utf8')) as { error?: unknown };
-      if (parsed && typeof parsed === 'object' && parsed.error) {
-        console.warn(JSON.stringify({
-          event: 'response_cache_skip_error_envelope',
-          sha: responseCache.sha,
-          model: responseCache.model,
-        }));
+      const parsed = JSON.parse(Buffer.from(bodyBytes).toString("utf8")) as { error?: unknown };
+      if (parsed && typeof parsed === "object" && parsed.error) {
+        console.warn(
+          JSON.stringify({
+            event: "response_cache_skip_error_envelope",
+            sha: responseCache.sha,
+            model: responseCache.model,
+          }),
+        );
         return replay;
       }
     } catch {}
   }
   if (isSse) {
-    const sseBody = Buffer.from(bodyBytes).toString('utf8');
-    const hasOpenAiDone = sseBody.includes('data: [DONE]\n');
-    const hasAnthropicDone = sseBody.includes('event: message_stop');
+    const sseBody = Buffer.from(bodyBytes).toString("utf8");
+    const hasOpenAiDone = sseBody.includes("data: [DONE]\n");
+    const hasAnthropicDone = sseBody.includes("event: message_stop");
     if (!hasOpenAiDone && !hasAnthropicDone) {
-      console.warn(JSON.stringify({
-        event: 'response_cache_skip_partial_sse',
-        sha: responseCache.sha,
-        model: responseCache.model,
-      }));
+      console.warn(
+        JSON.stringify({
+          event: "response_cache_skip_partial_sse",
+          sha: responseCache.sha,
+          model: responseCache.model,
+        }),
+      );
       return replay;
     }
   }
@@ -1355,7 +1418,7 @@ async function maybePersistResponseCache(context: ProxyContext, upstream: Respon
       workload: responseCache.workload,
       workloadEpoch: responseCache.workloadEpoch,
       protocolVariant: responseCache.protocolVariant,
-      contentType: isSse ? 'text/event-stream' : 'application/json',
+      contentType: isSse ? "text/event-stream" : "application/json",
       statusCode: upstream.status,
       responseBody: bodyBytes,
       requestBodyBytes: responseCache.requestBodyBytes,
@@ -1389,16 +1452,16 @@ function releaseWarmHitLease(context: ProxyContext): void {
 
 async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Response> {
   const { req, resolved } = context;
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    const contentType = req.headers.get('content-type');
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    const contentType = req.headers.get("content-type");
     if (isJsonContentType(contentType)) {
       if (context.bodyText === undefined) {
         if (isOversizedJsonBody(req)) {
-          return new Response('Payload Too Large', { status: 413 });
+          return new Response("Payload Too Large", { status: 413 });
         }
         const bodyText = await context.req.text();
         if (bodyText.length > MAX_JSON_BODY_BYTES) {
-          return new Response('Payload Too Large', { status: 413 });
+          return new Response("Payload Too Large", { status: 413 });
         }
         context = {
           ...context,
@@ -1412,7 +1475,12 @@ async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Respo
       const bodyText = context.bodyText;
       const model = bodyText ? requestedModelFromBody(bodyText) : undefined;
       if (model) {
-        const routedTarget = routedEndpointForModel(model, context.pathname, context.search, resolved);
+        const routedTarget = routedEndpointForModel(
+          model,
+          context.pathname,
+          context.search,
+          resolved,
+        );
         if (routedTarget) {
           context.target = routedTarget.target;
           context.route = routedTarget;
@@ -1424,7 +1492,7 @@ async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Respo
       ...context.init,
       body: req.body,
     };
-    (context.init as unknown as { duplex: string }).duplex = 'half';
+    (context.init as unknown as { duplex: string }).duplex = "half";
   }
   return context;
 }
@@ -1433,7 +1501,7 @@ function requestBodyContainsOmlxRequestHandle(bodyText: string | undefined): boo
   if (!bodyText) return false;
   try {
     const parsed = JSON.parse(bodyText) as { x_omlx_request_handle?: unknown };
-    return Object.prototype.hasOwnProperty.call(parsed, 'x_omlx_request_handle');
+    return Object.prototype.hasOwnProperty.call(parsed, "x_omlx_request_handle");
   } catch {
     return false;
   }
@@ -1441,7 +1509,7 @@ function requestBodyContainsOmlxRequestHandle(bodyText: string | undefined): boo
 
 async function forward(context: ProxyContext): Promise<Response> {
   if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
-    return Response.json({ error: 'cross-node slot ops not supported' }, { status: 400 });
+    return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
   }
 
   const init: RequestInit & { headers: Headers; tls?: { ca: string } } = {
@@ -1449,7 +1517,7 @@ async function forward(context: ProxyContext): Promise<Response> {
     headers: new Headers(context.init.headers ?? {}),
   };
   if (context.route?.isPeer && context.route.token) {
-    init.headers.set('authorization', `Bearer ${context.route.token}`);
+    init.headers.set("authorization", `Bearer ${context.route.token}`);
   }
   const peerTls = peerTlsForRoute(context.route);
   if (peerTls) (init as RequestInit & { tls?: { ca: string } }).tls = peerTls;
@@ -1462,7 +1530,7 @@ async function forward(context: ProxyContext): Promise<Response> {
       {
         error: {
           message: `upstream llama-server unreachable: ${(err as Error).message}`,
-          type: 'llamactl_upstream_error',
+          type: "llamactl_upstream_error",
         },
       },
       { status: 502 },
@@ -1477,8 +1545,9 @@ async function forward(context: ProxyContext): Promise<Response> {
 async function maybePersistKv(context: ProxyContext, upstream: Response): Promise<void> {
   const kv = context.kv;
   if (!kv) return;
-  const contentType = upstream.headers.get('content-type');
-  const shouldParseJson = upstream.status === 200 && !!contentType && isJsonContentType(contentType);
+  const contentType = upstream.headers.get("content-type");
+  const shouldParseJson =
+    upstream.status === 200 && !!contentType && isJsonContentType(contentType);
   let upstreamJson: unknown | null = null;
   if (shouldParseJson) {
     try {
@@ -1487,7 +1556,9 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
       upstreamJson = null;
     }
   }
-  const firstResponseToken = upstreamJson ? extractFirstResponseTokenFromJson(upstreamJson) : await readFirstResponseToken(upstream);
+  const firstResponseToken = upstreamJson
+    ? extractFirstResponseTokenFromJson(upstreamJson)
+    : await readFirstResponseToken(upstream);
   try {
     if (
       kv.warmHitSha &&
@@ -1497,13 +1568,15 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
       kv.warmHitExpectedFirstResponseToken !== firstResponseToken
     ) {
       kv.runtime.storage.kv_false_hit_total += 1;
-      console.warn(JSON.stringify({
-        event: 'kv_false_hit',
-        workload: kv.workload,
-        sha: kv.warmHitSha,
-        expected: kv.warmHitExpectedFirstResponseToken,
-        got: firstResponseToken,
-      }));
+      console.warn(
+        JSON.stringify({
+          event: "kv_false_hit",
+          workload: kv.workload,
+          sha: kv.warmHitSha,
+          expected: kv.warmHitExpectedFirstResponseToken,
+          got: firstResponseToken,
+        }),
+      );
       const staleSha = kv.warmHitSha;
       kv.warmHitSha = null;
       kv.runtime.storage.safeWrite(() => {
@@ -1517,14 +1590,20 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
 
     if (!kv.shouldPersist) return;
     // TODO(phase9): defer KV save for streams until exact replay boundaries are captured.
-    if (contentType?.toLowerCase().startsWith('text/event-stream')) return;
+    if (contentType?.toLowerCase().startsWith("text/event-stream")) return;
     if (upstream.status !== 200 || !isJsonContentType(contentType) || upstreamJson === null) return;
 
     // oMLX save requires the save-by-handle path; if this server can't do it,
     // skip before acquiring a lease (avoids the slot_serialize_failed noise that
     // 4e101c7 removed, and a leaked lease). Gate the probe to the omlx engine.
-    if (context.route?.engine === 'omlx') {
-      const saveProbeClient = slotClientFor(kv.runtime, kv.workload, kv.host, kv.port, context.route.engine);
+    if (context.route?.engine === "omlx") {
+      const saveProbeClient = slotClientFor(
+        kv.runtime,
+        kv.workload,
+        kv.host,
+        kv.port,
+        context.route.engine,
+      );
       if (!(await saveProbeClient.supportsSaveHandle())) return;
     }
     const allocator = slotAllocatorFor(kv.runtime, kv.workload);
@@ -1535,7 +1614,13 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
       mkdirSync(slotDir, { recursive: true });
       const slotBasename = `${kv.sha}.kvslot`;
       const slotFile = join(slotDir, slotBasename);
-      const slotClient = slotClientFor(kv.runtime, kv.workload, kv.host, kv.port, context.route?.engine);
+      const slotClient = slotClientFor(
+        kv.runtime,
+        kv.workload,
+        kv.host,
+        kv.port,
+        context.route?.engine,
+      );
       // llama-server's slot API only accepts a bare filename (relative to its
       // --slot-save-path). We store the absolute path in the registry for
       // orphan sweep + integrity scan, but pass basename to the upstream call.
@@ -1543,10 +1628,12 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
       const saved = await slotClient.save(
         lease.slotId,
         slotBasename,
-        context.route?.engine === 'omlx' ? { model: context.route.model } : undefined,
+        context.route?.engine === "omlx" ? { model: context.route.model } : undefined,
       );
       if (!saved.ok) {
-        console.warn(`[kvstore] slot save skipped for workload='${kv.workload}' sha='${kv.sha}': ${saved.reason}`);
+        console.warn(
+          `[kvstore] slot save skipped for workload='${kv.workload}' sha='${kv.sha}': ${saved.reason}`,
+        );
         return;
       }
 
@@ -1593,34 +1680,50 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
             }
           })(),
           textBytes: kv.prefixMetric,
-          reason: 'cold',
+          reason: "cold",
           prefixByteLength: kv.prefixMetric,
           workloadEpoch: kv.workloadEpoch,
           quarantined: 0,
-          state: 'idle',
+          state: "idle",
           firstResponseToken,
           extFlags,
         });
       });
       if (!wrote.ok) return;
 
-      const eviction = runEvictionIfOverBudget(kv.runtime.registry, kv.workload, kvBudgetBytes(), now);
+      const eviction = runEvictionIfOverBudget(
+        kv.runtime.registry,
+        kv.workload,
+        kvBudgetBytes(),
+        now,
+      );
       for (const blockedSha of eviction.blockedActive) {
-        console.debug(JSON.stringify({
-          event: 'slot_eviction_blocked_active_request',
-          workload: kv.workload,
-          sha: blockedSha,
-        }));
+        console.debug(
+          JSON.stringify({
+            event: "slot_eviction_blocked_active_request",
+            workload: kv.workload,
+            sha: blockedSha,
+          }),
+        );
       }
       try {
         kv.runtime.registry.deleteEpochStale(kv.workload, kv.workloadEpoch);
       } catch (error) {
-        console.warn(`[kvstore] stale epoch purge failed for workload='${kv.workload}': ${error instanceof Error ? error.message : String(error)}`);
+        console.warn(
+          `[kvstore] stale epoch purge failed for workload='${kv.workload}': ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
       try {
-        sweepOrphanSlotFiles({ slotDir: kv.slotDir, registry: kv.runtime.registry, ttlMs: 24 * 60 * 60 * 1000, now });
+        sweepOrphanSlotFiles({
+          slotDir: kv.slotDir,
+          registry: kv.runtime.registry,
+          ttlMs: 24 * 60 * 60 * 1000,
+          now,
+        });
       } catch (error) {
-        console.warn(`[kvstore] orphan sweep failed for workload='${kv.workload}': ${error instanceof Error ? error.message : String(error)}`);
+        console.warn(
+          `[kvstore] orphan sweep failed for workload='${kv.workload}': ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     } finally {
       lease.release();
@@ -1630,20 +1733,23 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
   }
 }
 
-async function maybeTranslateResponse(context: ProxyContext, upstream: Response): Promise<Response> {
-  const contentType = upstream.headers.get('content-type');
-  if (context.isAnthropic && contentType?.toLowerCase().startsWith('text/event-stream')) {
+async function maybeTranslateResponse(
+  context: ProxyContext,
+  upstream: Response,
+): Promise<Response> {
+  const contentType = upstream.headers.get("content-type");
+  if (context.isAnthropic && contentType?.toLowerCase().startsWith("text/event-stream")) {
     if (!upstream.body) return upstream;
     const respHeaders = new Headers();
     for (const [key, value] of upstream.headers.entries()) {
       const lower = key.toLowerCase();
-      if (lower === 'transfer-encoding' || lower === 'connection') continue;
+      if (lower === "transfer-encoding" || lower === "connection") continue;
       respHeaders.set(key, value);
     }
-    respHeaders.set('content-type', 'text/event-stream');
+    respHeaders.set("content-type", "text/event-stream");
     return new Response(
       translateOpenAIStreamToAnthropic(upstream.body, {
-        model: context.anthropicModel ?? 'claude-compatible',
+        model: context.anthropicModel ?? "claude-compatible",
       }),
       {
         status: upstream.status,
@@ -1658,7 +1764,7 @@ async function maybeTranslateResponse(context: ProxyContext, upstream: Response)
       const respHeaders = new Headers();
       for (const [key, value] of upstream.headers.entries()) {
         const lower = key.toLowerCase();
-        if (lower === 'transfer-encoding' || lower === 'connection') continue;
+        if (lower === "transfer-encoding" || lower === "connection") continue;
         respHeaders.set(key, value);
       }
       return Response.json(translated, { status: upstream.status, headers: respHeaders });
@@ -1666,8 +1772,9 @@ async function maybeTranslateResponse(context: ProxyContext, upstream: Response)
       return Response.json(
         {
           error: {
-            message: error instanceof Error ? error.message : 'anthropic response translation failed',
-            type: 'anthropic_response_translation_error',
+            message:
+              error instanceof Error ? error.message : "anthropic response translation failed",
+            type: "anthropic_response_translation_error",
           },
         },
         { status: 502 },
@@ -1677,7 +1784,7 @@ async function maybeTranslateResponse(context: ProxyContext, upstream: Response)
   const respHeaders = new Headers();
   for (const [key, value] of upstream.headers.entries()) {
     const lower = key.toLowerCase();
-    if (lower === 'transfer-encoding' || lower === 'connection') continue;
+    if (lower === "transfer-encoding" || lower === "connection") continue;
     respHeaders.set(key, value);
   }
   return new Response(upstream.body, {
@@ -1703,7 +1810,7 @@ export async function proxyOpenAI(
   const routed = await resolveRoute(translated);
   if (routed instanceof Response) return routed;
   if (routed.route?.isPeer && requestBodyContainsOmlxRequestHandle(routed.bodyText)) {
-    return Response.json({ error: 'cross-node slot ops not supported' }, { status: 400 });
+    return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
   }
   if (routed.bodyText) {
     let parsedBody: unknown;
@@ -1715,8 +1822,8 @@ export async function proxyOpenAI(
     if (isRecord(parsedBody)) {
       stripUserSuppliedOmlxVendorFields(
         parsedBody,
-        requestedModelFromBody(routed.bodyText) ?? routed.route?.model ?? 'unknown',
-        routed.route?.workload ?? 'unknown',
+        requestedModelFromBody(routed.bodyText) ?? routed.route?.model ?? "unknown",
+        routed.route?.workload ?? "unknown",
       );
       const strippedBodyText = JSON.stringify(parsedBody);
       if (strippedBodyText !== routed.bodyText) {
@@ -1737,14 +1844,18 @@ export async function proxyOpenAI(
   try {
     withKvLookup = await maybeKvLookup(withResponseCacheLookup);
   } catch (error) {
-    console.warn(`[openaiProxy] kv lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(
+      `[openaiProxy] kv lookup failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   try {
     const upstream = await forward(withKvLookup);
     try {
       await maybePersistKv(withKvLookup, upstream);
     } catch (error) {
-      console.warn(`[openaiProxy] kv persist failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `[openaiProxy] kv persist failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     const translatedResponse = await maybeTranslateResponse(withKvLookup, upstream);
     return await maybePersistResponseCache(withKvLookup, translatedResponse);

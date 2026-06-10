@@ -52,8 +52,8 @@ is explicitly deferred until both phases land and prove informative.
 
 - No LLM-as-judge in Phase 1. All scoring is objective / countable.
 - No penumbra dispatch path in Phase 1. Bench hits `llama-server` directly
-  via `/v1/chat/completions`. (Penumbra-shaped tool *schemas* are used in
-  fixtures; the *dispatch* is direct.)
+  via `/v1/chat/completions`. (Penumbra-shaped tool _schemas_ are used in
+  fixtures; the _dispatch_ is direct.)
 - No model fine-tuning, no quantization work. Bench uses GGUFs as
   downloaded.
 - No remote / cloud model evaluation. Local llama.cpp only.
@@ -85,17 +85,17 @@ Returns a sortable matrix:
 
 ```typescript
 type LeaderboardRow = {
-  model: string;          // catalog id
-  node: string;           // 'local' | 'mac-mini'
-  ub: 256 | 512;          // tuning config (best of the two)
+  model: string; // catalog id
+  node: string; // 'local' | 'mac-mini'
+  ub: 256 | 512; // tuning config (best of the two)
   throughput_tps: number; // decode tps mean
-  ttft_ms: number;        // time to first token
+  ttft_ms: number; // time to first token
   tool_call_score: number; // [0, 1]
   context_8k_score: number; // [0, 1]
   context_16k_score: number | null; // null if model can't fit ctx
-  json_score: number;     // [0, 1]
-  composite: number;      // weighted average, see scoring below
-  asof: string;           // ISO timestamp of latest run
+  json_score: number; // [0, 1]
+  composite: number; // weighted average, see scoring below
+  asof: string; // ISO timestamp of latest run
 };
 ```
 
@@ -173,6 +173,7 @@ model on M4 Pro (4 sub-benches × 2 ub) but only 2 server boots. Boot is
 ### Tuning sweep
 
 Pinned across all runs:
+
 - `-ngl 999` (all-on-GPU; sane Apple Silicon default)
 - `--flash-attn` (sane default per community wisdom)
 - `-c 8192` (sane ctx; long-context sub-bench expands per-prompt)
@@ -204,6 +205,7 @@ creative, math. Each prompt: `n_predict=192`, `temperature=0`, `seed=42`,
 `cache_prompt=false`, non-streaming.
 
 Captures from server timings:
+
 - `predicted_per_second` per prompt
 - `prompt_per_second` per prompt
 - TTFT (synthesized from wall_time - predicted_n / predicted_per_second)
@@ -217,11 +219,13 @@ not normalized.
 Fixture file: `prompts-tool-calling.json`. ~12 prompts, each paired with
 the same penumbra-shaped tool schema set in `tools-penumbra.json`. Gold
 answer per prompt is one of:
+
 - `{ should_call: false }` — model should NOT call any tool
 - `{ should_call: true, tool: "name", args_predicate: { ... } }` — model
   should call this specific tool, with args matching the predicate
 
 Tools (penumbra-shaped):
+
 - `chain_start(initial_agent: string, message: string, task_type?: enum)`
 - `handoff_approve(handoff_id: string)`
 - `task_get(task_id: string)`
@@ -229,6 +233,7 @@ Tools (penumbra-shaped):
 - `fs_grep(pattern: string, path?: string)`
 
 Example fixtures:
+
 - "Find references to `LLAMA_CPP_BIN_MTP` in the codebase" → fs_grep
 - "What did we decide about MTP gate criteria?" → memory_search
 - "Approve handoff 8337e3c8-bef1-4f55-8326-89879833ac6d" → handoff_approve
@@ -236,6 +241,7 @@ Example fixtures:
 - "Get me the status of task 5" → task_get with `task_id: "5"`
 
 Per-prompt scoring (binary):
+
 - `valid_json`: did the model emit a parseable `tool_calls` array?
 - `correct_decision`: did `should_call` match?
 - `correct_tool`: if should_call, did `tool` match?
@@ -254,6 +260,7 @@ filler (committed to repo as `fixtures/haystack-base.txt`), insert one
 runs).
 
 Needle examples:
+
 - "The quartermaster of the HMS Endeavour in 1771 was named Charles
   Whittington."
 - "The first commit hash recorded in the experimental ledger was
@@ -279,10 +286,11 @@ Fixture file: `prompts-json-output.json`. Five prompts asking for
 structured JSON output. Each fixture pairs a prompt with a JSON Schema.
 
 Examples:
+
 - "Extract the entities mentioned in this text and return as JSON
   matching `{entities: [{name: string, type: 'person'|'place'|'org'}]}`"
 - "Parse this changelog into a JSON list of `{version, date, breaking,
-  added, fixed}`"
+added, fixed}`"
 
 Per-prompt scoring (binary): does the response contain a JSON block that
 parses AND validates against the schema?
@@ -313,12 +321,12 @@ revisit after Phase 1 data.
 
 ## Hardware fit
 
-| Node | Profile | RAM | Models in scope |
-|---|---|---:|---|
-| `local` | macbook-pro-48g (M4 Pro) | 48 GB | All M4 Pro tier (gpt-oss-20b, Mistral 24B, Granite-4-Code-20B, QwQ-32B-Preview) + all baselines that fit (gemma31, gemma26, qwen36-35b-moe, qwen36-27b, qwen35-27b, qwen3-coder) + all mac-mini tier (cross-validates) |
-| `mac-mini` | mac-mini-16g | 16 GB | Mac-mini tier only (Qwen3.6-8B, Llama-3.3-8B, Phi-4-mini, Granite-4-3B-Code) + qwen35-4b baseline |
+| Node       | Profile                  |   RAM | Models in scope                                                                                                                                                                                                        |
+| ---------- | ------------------------ | ----: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `local`    | macbook-pro-48g (M4 Pro) | 48 GB | All M4 Pro tier (gpt-oss-20b, Mistral 24B, Granite-4-Code-20B, QwQ-32B-Preview) + all baselines that fit (gemma31, gemma26, qwen36-35b-moe, qwen36-27b, qwen35-27b, qwen3-coder) + all mac-mini tier (cross-validates) |
+| `mac-mini` | mac-mini-16g             | 16 GB | Mac-mini tier only (Qwen3.6-8B, Llama-3.3-8B, Phi-4-mini, Granite-4-3B-Code) + qwen35-4b baseline                                                                                                                      |
 
-Auto-skip rule: if model GGUF size > (node_ram_gb * 0.6 GiB), skip the
+Auto-skip rule: if model GGUF size > (node_ram_gb \* 0.6 GiB), skip the
 (node, model) pair and record `skipped: oom_likely`.
 
 ## Portfolio
@@ -330,10 +338,10 @@ sanity-checked.
 
 ### Phase 1 — baseline existing penumbra agents (no downloads)
 
-| Catalog id | Source | Tier |
-|---|---|---|
+| Catalog id                                    | Source            | Tier   |
+| --------------------------------------------- | ----------------- | ------ |
 | existing — see `packages/core/src/catalog.ts` | (already on disk) | M4 Pro |
-| ... | ... | ... |
+| ...                                           | ...               | ...    |
 
 Concrete ids (cross-checked against current penumbra agent list):
 `gemma26`, `gemma31`, `qwen36-35b-moe`, `qwen36-27b`, `qwen35-27b`,
@@ -344,16 +352,16 @@ schema changes.
 
 ### Phase 2 — new candidates (eight downloads)
 
-| Tier | Catalog id (proposed) | HF source | Approx Q5_K_M GB |
-|---|---|---|---:|
-| M4 Pro | `gpt-oss-20b` | `openai/gpt-oss-20b-GGUF` (or community equivalent) | ~14 |
-| M4 Pro | `mistral-small-32-24b` | `bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-GGUF` | ~17 |
-| M4 Pro | `granite-4-code-20b` | `bartowski/ibm-granite_granite-4-code-20b-instruct-GGUF` (verify name) | ~14 |
-| M4 Pro | `qwq-32b-preview` | `bartowski/Qwen_QwQ-32B-Preview-GGUF` | ~22 |
-| mac-mini | `qwen36-8b` | `bartowski/Qwen_Qwen3.6-8B-Instruct-GGUF` (verify) | ~6 |
-| mac-mini | `llama33-8b` | `bartowski/meta-llama_Llama-3.3-8B-Instruct-GGUF` (verify) | ~6 |
-| mac-mini | `phi-4-mini` | `bartowski/microsoft_Phi-4-mini-instruct-GGUF` | ~5 |
-| mac-mini | `granite-4-code-3b` | `bartowski/ibm-granite_granite-4-code-3b-instruct-GGUF` | ~3 |
+| Tier     | Catalog id (proposed)  | HF source                                                              | Approx Q5_K_M GB |
+| -------- | ---------------------- | ---------------------------------------------------------------------- | ---------------: |
+| M4 Pro   | `gpt-oss-20b`          | `openai/gpt-oss-20b-GGUF` (or community equivalent)                    |              ~14 |
+| M4 Pro   | `mistral-small-32-24b` | `bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-GGUF`              |              ~17 |
+| M4 Pro   | `granite-4-code-20b`   | `bartowski/ibm-granite_granite-4-code-20b-instruct-GGUF` (verify name) |              ~14 |
+| M4 Pro   | `qwq-32b-preview`      | `bartowski/Qwen_QwQ-32B-Preview-GGUF`                                  |              ~22 |
+| mac-mini | `qwen36-8b`            | `bartowski/Qwen_Qwen3.6-8B-Instruct-GGUF` (verify)                     |               ~6 |
+| mac-mini | `llama33-8b`           | `bartowski/meta-llama_Llama-3.3-8B-Instruct-GGUF` (verify)             |               ~6 |
+| mac-mini | `phi-4-mini`           | `bartowski/microsoft_Phi-4-mini-instruct-GGUF`                         |               ~5 |
+| mac-mini | `granite-4-code-3b`    | `bartowski/ibm-granite_granite-4-code-3b-instruct-GGUF`                |               ~3 |
 
 The plan stage verifies each HF repo exists before committing the catalog
 addition. Substitutes are explicitly allowed if a listed source 404s — pick

@@ -1,13 +1,13 @@
-import type { RetrievalProvider } from '@nova/contracts';
-import type { Config, RagBinding } from '../../config/schema.js';
-import { RagError } from '../errors.js';
-import type { Embedder } from '../embedding.js';
-import { PgvectorRagAdapter } from './adapter.js';
-import { connectPgvector, redactPostgresUrl } from './client.js';
+import type { RetrievalProvider } from "@nova/contracts";
+import type { Config, RagBinding } from "../../config/schema.js";
+import { RagError } from "../errors.js";
+import type { Embedder } from "../embedding.js";
+import { PgvectorRagAdapter } from "./adapter.js";
+import { connectPgvector, redactPostgresUrl } from "./client.js";
 
-export { PgvectorRagAdapter, extractQueryVector } from './adapter.js';
-export { connectPgvector, redactPostgresUrl } from './client.js';
-export type { PgvectorClient } from './client.js';
+export { PgvectorRagAdapter, extractQueryVector } from "./adapter.js";
+export { connectPgvector, redactPostgresUrl } from "./client.js";
+export type { PgvectorClient } from "./client.js";
 
 export interface CreatePgvectorAdapterOptions {
   env?: NodeJS.ProcessEnv;
@@ -39,25 +39,24 @@ export async function createPgvectorAdapter(
   binding: RagBinding,
   envOrOpts: NodeJS.ProcessEnv | CreatePgvectorAdapterOptions = process.env,
 ): Promise<RetrievalProvider> {
-  if (binding.provider !== 'pgvector') {
+  if (binding.provider !== "pgvector") {
     throw new RagError(
-      'invalid-request',
+      "invalid-request",
       `createPgvectorAdapter called with binding.provider=${binding.provider}`,
     );
   }
 
   // Backward-compat: the v1 signature passes a raw ProcessEnv. We
   // detect that by the absence of the options-bag sentinel keys.
-  const asOpts: CreatePgvectorAdapterOptions =
-    isOptionsBag(envOrOpts)
-      ? envOrOpts
-      : { env: envOrOpts };
+  const asOpts: CreatePgvectorAdapterOptions = isOptionsBag(envOrOpts)
+    ? envOrOpts
+    : { env: envOrOpts };
   const env = asOpts.env ?? process.env;
 
   const client = connectPgvector(binding, env);
   let embedder = asOpts.embedder;
   if (!embedder && binding.embedder && asOpts.config) {
-    const { createEmbedderFromBinding } = await import('../embedding.js');
+    const { createEmbedderFromBinding } = await import("../embedding.js");
     embedder = createEmbedderFromBinding({
       binding: binding.embedder,
       config: asOpts.config,
@@ -87,11 +86,11 @@ function isOptionsBag(
   // specific non-string fields. A process.env that someone literally
   // set with a `config: Config` key would confuse this, but that's
   // pathological and the compat shim errs on new-signature inputs.
-  if (typeof v !== 'object' || v === null) return false;
+  if (typeof v !== "object" || v === null) return false;
   const maybe = v as Partial<CreatePgvectorAdapterOptions>;
   return (
-    typeof maybe.embedder === 'function' ||
-    (maybe.config !== undefined && typeof maybe.config === 'object') ||
-    (maybe.env !== undefined && typeof maybe.env === 'object')
+    typeof maybe.embedder === "function" ||
+    (maybe.config !== undefined && typeof maybe.config === "object") ||
+    (maybe.env !== undefined && typeof maybe.env === "object")
   );
 }

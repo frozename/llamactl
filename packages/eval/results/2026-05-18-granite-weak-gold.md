@@ -17,10 +17,10 @@ strong-gold tier ~tied. The delta must live in the weak-gold half.
 
 ## Result (weak-gold mined only, n=50)
 
-| Model | NDCG@5 | tps | p50 (ms) | p95 (ms) |
-|---|---:|---:|---:|---:|
-| granite-3b-Q8 | **0.5605** | 30.52 | 1716 | 2049 |
-| granite-8b-Q4 | 0.2437 | 28.40 | 8480 | 9436 |
+| Model         |     NDCG@5 |   tps | p50 (ms) | p95 (ms) |
+| ------------- | ---------: | ----: | -------: | -------: |
+| granite-3b-Q8 | **0.5605** | 30.52 |     1716 |     2049 |
+| granite-8b-Q4 |     0.2437 | 28.40 |     8480 |     9436 |
 
 **Gap: granite-3b-Q8 wins by +31.7 pp on weak-gold.**
 
@@ -41,14 +41,15 @@ Both decomposes cleanly — no measurement artifact.
 
 The mined corpus is dominated by short, identifier-heavy queries
 extracted from real penumbra `t0_events` (e.g., `chain_start`,
-`memory_search swa-full cache reuse`, etc.). These are *token-identity*
+`memory_search swa-full cache reuse`, etc.). These are _token-identity_
 matching tasks — recall hinges on the model preserving distinct
 embeddings for code symbols across vocab rotation / quantization.
 
 The granite-3b-Q8's 31.7 pp lead matches the prior attention-thesis
 finding from `project_attention_thesis_eval_2026-05-16.md` (Q8 small
+
 > Q4 large on a memory-efficacy classifier) on a third workload type:
-ranking retrieval. The pattern is robust.
+> ranking retrieval. The pattern is robust.
 
 ### Latency surprise: granite-8b is 5× slower per query at near-equal tps
 
@@ -64,7 +65,7 @@ self-elaboration trips over the short identifier-heavy prompts.
   node (≤4 GiB), **granite-3b-Q8 is the right granite**. Don't reach
   for granite-8b at Q4 unless RAM is plentiful AND the workload is
   prose-heavy.
-- For *generative* workloads (refiner-rubric, code-summarize),
+- For _generative_ workloads (refiner-rubric, code-summarize),
   granite-8b probably retains the edge — it has 2.6× more params to
   spend on producing fluent text. Future work: re-bench granite-8b
   at Q8 to disentangle "is Q4 the problem, or is 8B + ranking the
@@ -78,7 +79,7 @@ self-elaboration trips over the short identifier-heavy prompts.
 - granite-3b-Q8 ran with `-np 1` (this bench) vs `-np 4` in the
   production judge yaml. Single-slot vs 4-slot doesn't change quality
   on a sequential bench, but tps could shift on concurrent traffic.
-- Weak-gold is BM25-top-1, so an *honest semantic ranker* with a
+- Weak-gold is BM25-top-1, so an _honest semantic ranker_ with a
   better-than-BM25 read could underperform here. Both granites are
   scoring against the same gold; the relative result is sound.
 - No direct granite-8b-Q8 cell was measured today; the "Q4 is the

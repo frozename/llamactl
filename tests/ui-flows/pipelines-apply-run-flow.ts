@@ -28,12 +28,12 @@
  *
  * Invoke manually; see tests/ui-flows/README.md for setup.
  */
-import { spawn, type ChildProcessByStdio } from 'node:child_process';
-import { createInterface } from 'node:readline';
-import type { Readable, Writable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve, join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { createInterface } from "node:readline";
+import type { Readable, Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve, join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 interface JsonRpcResponse {
   id?: number;
@@ -48,7 +48,7 @@ class McpClient {
   constructor(proc: ChildProcessByStdio<Writable, Readable, null>) {
     this.proc = proc;
     const rl = createInterface({ input: proc.stdout });
-    rl.on('line', (line) => {
+    rl.on("line", (line) => {
       if (!line.trim()) return;
       try {
         const frame = JSON.parse(line) as JsonRpcResponse;
@@ -75,11 +75,11 @@ class McpClient {
       });
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'tools/call',
+          method: "tools/call",
           params: { name: tool, arguments: args },
-        }) + '\n',
+        }) + "\n",
       );
     });
     if (res.error) throw new Error(`${tool} → ${res.error.message}`);
@@ -87,7 +87,7 @@ class McpClient {
       isError?: boolean;
       content?: Array<{ text?: string }>;
     };
-    const text = envelope?.content?.[0]?.text ?? '';
+    const text = envelope?.content?.[0]?.text ?? "";
     if (envelope?.isError) throw new Error(`${tool} → ${text}`);
     try {
       return JSON.parse(text);
@@ -101,15 +101,15 @@ class McpClient {
       this.pending.set(id, (r) => resolveP(r));
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'initialize',
+          method: "initialize",
           params: {
-            protocolVersion: '2024-11-05',
+            protocolVersion: "2024-11-05",
             capabilities: {},
-            clientInfo: { name: 'pipelines-apply-run-flow', version: '0.0.1' },
+            clientInfo: { name: "pipelines-apply-run-flow", version: "0.0.1" },
           },
-        }) + '\n',
+        }) + "\n",
       );
     });
   }
@@ -135,34 +135,35 @@ function parseArgs(argv: string[]): DriverArgs {
   const env: Record<string, string> = {};
   let userDataDir: string | undefined;
   for (const a of argv.slice(2)) {
-    if (a.startsWith('--executable=')) executable = a.slice('--executable='.length);
-    else if (a.startsWith('--args=')) execArgs = a.slice('--args='.length).split(' ').filter(Boolean);
-    else if (a.startsWith('--env=')) {
-      const kv = a.slice('--env='.length);
-      const eq = kv.indexOf('=');
+    if (a.startsWith("--executable=")) executable = a.slice("--executable=".length);
+    else if (a.startsWith("--args="))
+      execArgs = a.slice("--args=".length).split(" ").filter(Boolean);
+    else if (a.startsWith("--env=")) {
+      const kv = a.slice("--env=".length);
+      const eq = kv.indexOf("=");
       if (eq > 0) env[kv.slice(0, eq)] = kv.slice(eq + 1);
-    } else if (a.startsWith('--userDataDir=')) {
-      userDataDir = a.slice('--userDataDir='.length);
+    } else if (a.startsWith("--userDataDir=")) {
+      userDataDir = a.slice("--userDataDir=".length);
     }
   }
-  if (!executable) throw new Error('--executable required');
+  if (!executable) throw new Error("--executable required");
   const out: DriverArgs = { executable, execArgs, env };
   if (userDataDir !== undefined) out.userDataDir = userDataDir;
   return out;
 }
 
-function check(label: string, cond: boolean, detail = ''): void {
-  const mark = cond ? 'PASS' : 'FAIL';
-  console.log(`[${mark}] ${label}${detail ? ' — ' + detail : ''}`);
+function check(label: string, cond: boolean, detail = ""): void {
+  const mark = cond ? "PASS" : "FAIL";
+  console.log(`[${mark}] ${label}${detail ? " — " + detail : ""}`);
   if (!cond) process.exitCode = 1;
 }
 
 function resolveServerScript(here: string): string {
   const explicit = process.env.ELECTRON_MCP_DIR;
   if (explicit && explicit.length > 0) {
-    return resolve(explicit, 'dist', 'server', 'index.js');
+    return resolve(explicit, "dist", "server", "index.js");
   }
-  return resolve(here, '..', '..', '..', 'electron-mcp-server', 'dist', 'server', 'index.js');
+  return resolve(here, "..", "..", "..", "electron-mcp-server", "dist", "server", "index.js");
 }
 
 async function waitUntil<T>(
@@ -192,12 +193,12 @@ async function main(): Promise<void> {
 
   // --- Fixture: filesystem source the pipeline will ingest. Tiny,
   // deterministic, safe to re-run.
-  const fixtureRoot = '/tmp/llamactl-wizard-smoke';
+  const fixtureRoot = "/tmp/llamactl-wizard-smoke";
   mkdirSync(fixtureRoot, { recursive: true });
   writeFileSync(
-    join(fixtureRoot, 'doc.md'),
-    '# Wizard smoke\n\nSingle-paragraph doc so the filesystem fetcher has one chunk to ingest.\n',
-    'utf8',
+    join(fixtureRoot, "doc.md"),
+    "# Wizard smoke\n\nSingle-paragraph doc so the filesystem fetcher has one chunk to ingest.\n",
+    "utf8",
   );
 
   const ts = Date.now();
@@ -205,9 +206,9 @@ async function main(): Promise<void> {
   const collectionName = `wizard_smoke_${ts}`;
 
   const env: NodeJS.ProcessEnv = { ...process.env };
-  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? 'warn';
-  const nodeBin = process.env.MCP_NODE ?? 'node';
-  const proc = spawn(nodeBin, [serverScript], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "warn";
+  const nodeBin = process.env.MCP_NODE ?? "node";
+  const proc = spawn(nodeBin, [serverScript], { env, stdio: ["pipe", "pipe", "inherit"] });
   const client = new McpClient(proc);
 
   try {
@@ -218,23 +219,23 @@ async function main(): Promise<void> {
     };
     if (Object.keys(args.env).length > 0) launchArgs.env = args.env;
     if (args.userDataDir !== undefined) launchArgs.userDataDir = args.userDataDir;
-    const launch = (await client.call('electron_launch', launchArgs, 60_000)) as {
+    const launch = (await client.call("electron_launch", launchArgs, 60_000)) as {
       sessionId?: string;
     };
     const sessionId = launch.sessionId;
-    if (!sessionId) throw new Error('launch failed');
-    await client.call('electron_wait_for_window', { sessionId, index: 0, timeoutMs: 30_000 });
-    await client.call('electron_wait_for_selector', {
+    if (!sessionId) throw new Error("launch failed");
+    await client.call("electron_wait_for_window", { sessionId, index: 0, timeoutMs: 30_000 });
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="dashboard-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 10_000,
     });
 
     // Navigate to Knowledge → Retrieval via the command palette (Beacon shell).
     // Inline the openPalette / paletteType / paletteConfirm pattern from
     // tier-a-modules.ts — no import needed.
-    await client.call('electron_evaluate_renderer', {
+    await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `(() => {
         const e = new KeyboardEvent('keydown', {
@@ -248,18 +249,18 @@ async function main(): Promise<void> {
         document.dispatchEvent(e);
       })()`,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="command-palette"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    await client.call('electron_fill', {
+    await client.call("electron_fill", {
       sessionId,
       selector: '[data-testid="command-palette-input"]',
-      value: 'Retrieval',
+      value: "Retrieval",
     });
-    await client.call('electron_evaluate_renderer', {
+    await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `(() => {
         const e = new KeyboardEvent('keydown', {
@@ -274,112 +275,111 @@ async function main(): Promise<void> {
         target.dispatchEvent(e);
       })()`,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="knowledge-retrieval-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 8_000,
     });
-    const hasTab = (await client.call('electron_evaluate_renderer', {
+    const hasTab = (await client.call("electron_evaluate_renderer", {
       sessionId,
-      expression:
-        'document.querySelectorAll("[data-testid=\\"knowledge-tab-pipelines\\"]").length',
+      expression: 'document.querySelectorAll("[data-testid=\\"knowledge-tab-pipelines\\"]").length',
     })) as { result: number };
     if (hasTab.result === 0) {
-      console.log('SKIP — no rag nodes registered; E2E smoke requires one.');
-      await client.call('electron_close', { sessionId });
+      console.log("SKIP — no rag nodes registered; E2E smoke requires one.");
+      await client.call("electron_close", { sessionId });
       return;
     }
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="knowledge-tab-pipelines"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipelines-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 5_000,
     });
 
     // --- Wizard: fill every required field, apply.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipelines-new"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-modal"]',
-      state: 'visible',
+      state: "visible",
       timeout: 5_000,
     });
-    await client.call('electron_fill', {
+    await client.call("electron_fill", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-name"]',
       value: pipelineName,
     });
-    await client.call('electron_fill', {
+    await client.call("electron_fill", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-collection"]',
       value: collectionName,
     });
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-step-sources"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-source-0"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    await client.call('electron_fill', {
+    await client.call("electron_fill", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-source-root-0"]',
       value: fixtureRoot,
     });
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-step-review"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-yaml"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-apply"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="pipeline-wizard-modal"]',
-      state: 'detached',
+      state: "detached",
       timeout: 10_000,
     });
-    check('wizard closes after Apply', true);
+    check("wizard closes after Apply", true);
 
     // Row should appear in the Pipelines table within a polling
     // window (ragPipelineList invalidates on Apply success).
     const rowSelector = `[data-testid="pipelines-row-${pipelineName}"]`;
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: rowSelector,
-      state: 'visible',
+      state: "visible",
       timeout: 10_000,
     });
-    check('applied pipeline appears in the Pipelines table', true);
+    check("applied pipeline appears in the Pipelines table", true);
 
     // --- Click Run (wet). Running badge should appear in < 3s
     // (scheduler is not involved; the runtime's startRun fires
     // synchronously after the run-started journal append).
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: `[data-testid="pipelines-run-${pipelineName}"]`,
     });
     const runningAppeared = await waitUntil(
       async () => {
-        const r = (await client.call('electron_evaluate_renderer', {
+        const r = (await client.call("electron_evaluate_renderer", {
           sessionId,
           expression: `document.querySelector('[data-testid="pipelines-running-${pipelineName}"]') !== null`,
         })) as { result: boolean };
@@ -389,10 +389,7 @@ async function main(): Promise<void> {
       10_000,
       250,
     );
-    check(
-      'running badge appears after Run click (Phase B signal live)',
-      runningAppeared.ok,
-    );
+    check("running badge appears after Run click (Phase B signal live)", runningAppeared.ok);
 
     // --- Wait for the run to complete — running badge goes away
     // and lastRun badge renders instead. Filesystem ingest of one
@@ -400,7 +397,7 @@ async function main(): Promise<void> {
     // embeds internally), but give it 60s to cover cold embedders.
     const runEnded = await waitUntil(
       async () => {
-        const r = (await client.call('electron_evaluate_renderer', {
+        const r = (await client.call("electron_evaluate_renderer", {
           sessionId,
           expression: `(() => {
             const runningEl = document.querySelector('[data-testid="pipelines-running-${pipelineName}"]');
@@ -415,53 +412,53 @@ async function main(): Promise<void> {
       500,
     );
     check(
-      'running badge clears + lastRun badge appears after completion',
+      "running badge clears + lastRun badge appears after completion",
       runEnded.ok,
       runEnded.value
         ? `running=${runEnded.value.running} lastRun=${runEnded.value.lastRun}`
-        : 'timeout',
+        : "timeout",
     );
 
     // --- Check that the lastRun badge's summary looks sane. The
     // one-doc filesystem ingest should result in exactly one
     // doc + >= 1 chunk, zero errors. We just assert "ok" (green
     // badge) which the component renders when errors === 0.
-    const badgeText = (await client.call('electron_evaluate_renderer', {
+    const badgeText = (await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `document.querySelector('[data-testid="pipelines-row-${pipelineName}"] [data-testid^="pipelines-lastrun"]')?.textContent || ''`,
     })) as { result: string };
     check(
-      'lastRun badge reports ok (zero errors)',
-      badgeText.result.includes('ok'),
+      "lastRun badge reports ok (zero errors)",
+      badgeText.result.includes("ok"),
       `text=${JSON.stringify(badgeText.result.slice(0, 80))}`,
     );
 
     // --- Cleanup: click Remove. The component uses window.confirm;
     // flip the dialog policy to accept so the flow doesn't hang.
-    await client.call('electron_dialog_policy', {
+    await client.call("electron_dialog_policy", {
       sessionId,
-      policy: 'accept',
+      policy: "accept",
     });
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: `[data-testid="pipelines-remove-${pipelineName}"]`,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: rowSelector,
-      state: 'detached',
+      state: "detached",
       timeout: 10_000,
     });
-    check('Remove detaches the row', true);
+    check("Remove detaches the row", true);
 
-    await client.call('electron_close', { sessionId });
+    await client.call("electron_close", { sessionId });
     console.log(
       process.exitCode === 1
-        ? 'FAIL — see above'
-        : 'PASS — full apply → run → running → done → remove arc green',
+        ? "FAIL — see above"
+        : "PASS — full apply → run → running → done → remove arc green",
     );
   } catch (err) {
-    console.error('flow crashed:', err);
+    console.error("flow crashed:", err);
     process.exitCode = 1;
   } finally {
     client.kill();

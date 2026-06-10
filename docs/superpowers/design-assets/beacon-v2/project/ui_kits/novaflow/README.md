@@ -3,6 +3,7 @@
 Creative canvas for generative brand design. Demonstrates Beacon tokens applied to a bright creative tool (Ember theme) rather than an operator console.
 
 **Patterns demonstrated:**
+
 - Top bar (48px): brand · crumb · tool palette (center) · primary actions
 - Tool chips with shortcut glyphs and glowing active state
 - Layers panel with thumbnail squares, eye toggles, indentation

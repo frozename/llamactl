@@ -1,15 +1,8 @@
-import { createTRPCClient } from '@trpc/client';
-import { router as appRouter, type AppRouter } from '../router.js';
-import { buildPinnedLinks } from './links.js';
-import {
-  resolveNode,
-  resolveToken,
-} from '../config/kubeconfig.js';
-import {
-  LOCAL_NODE_ENDPOINT,
-  type ClusterNode,
-  type Config,
-} from '../config/schema.js';
+import { createTRPCClient } from "@trpc/client";
+import { router as appRouter, type AppRouter } from "../router.js";
+import { buildPinnedLinks } from "./links.js";
+import { resolveNode, resolveToken } from "../config/kubeconfig.js";
+import { LOCAL_NODE_ENDPOINT, type ClusterNode, type Config } from "../config/schema.js";
 
 export type NodeClient = ReturnType<typeof createTRPCClient<AppRouter>>;
 
@@ -25,11 +18,7 @@ export type NodeClient = ReturnType<typeof createTRPCClient<AppRouter>>;
  * call; the server handle from `createTunnelServer().send` already
  * requires callers to provide this.
  */
-export type TunnelSendFn = (req: {
-  id: string;
-  method: string;
-  params: unknown;
-}) => Promise<{
+export type TunnelSendFn = (req: { id: string; method: string; params: unknown }) => Promise<{
   id: string;
   result?: unknown;
   error?: { code: string; message: string };
@@ -115,15 +104,23 @@ function resolveDefaultNodeName(config: Config, contextName?: string): string {
  * surface either way.
  */
 function proxyFromCaller(): NodeClient {
-  const caller = appRouter.createCaller({}) as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const caller = appRouter.createCaller({}) as unknown as Record<
+    string,
+    (...args: unknown[]) => unknown
+  >;
   const callerWithSignal = (signal: AbortSignal): Record<string, (...args: unknown[]) => unknown> =>
-    appRouter.createCaller({}, { signal }) as unknown as Record<string, (...args: unknown[]) => unknown>;
+    appRouter.createCaller({}, { signal }) as unknown as Record<
+      string,
+      (...args: unknown[]) => unknown
+    >;
 
   function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
-    if (typeof value !== 'object' || value === null) return false;
+    if (typeof value !== "object" || value === null) return false;
     // Symbol.asyncIterator is the runtime contract tRPC v11 uses for
     // async-generator subscriptions in in-proc callers.
-    return typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === 'function';
+    return (
+      typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function"
+    );
   }
 
   function subscribeViaCaller(
@@ -147,7 +144,7 @@ function proxyFromCaller(): NodeClient {
     const run = async (): Promise<void> => {
       try {
         const methodFn = callerWithSignal(abort.signal)[method];
-        if (typeof methodFn !== 'function') {
+        if (typeof methodFn !== "function") {
           throw new Error(`unknown procedure '${method}'`);
         }
         const stream = await methodFn(input);
@@ -180,8 +177,8 @@ function proxyFromCaller(): NodeClient {
 
   const handler: ProxyHandler<object> = {
     get(_target, prop) {
-      if (typeof prop !== 'string') return undefined;
-      if (typeof caller[prop] !== 'function') return undefined;
+      if (typeof prop !== "string") return undefined;
+      if (typeof caller[prop] !== "function") return undefined;
       // Binding tRPC v10's caller proxy via .bind() breaks path
       // tracking; wrapping each call as a fresh invocation preserves
       // the proxy's per-call context. The .query/.mutate/.subscribe
@@ -228,7 +225,11 @@ function proxyFromTunnel(
   const nextId = (): string =>
     `tunnel-${nodeName}-${Date.now().toString(36)}-${(counter++).toString(36)}`;
 
-  async function invoke(type: 'query' | 'mutation', method: string, input: unknown): Promise<unknown> {
+  async function invoke(
+    type: "query" | "mutation",
+    method: string,
+    input: unknown,
+  ): Promise<unknown> {
     const res = await send({
       id: nextId(),
       method,
@@ -245,14 +246,17 @@ function proxyFromTunnel(
 
   function buildLeaf(method: string): Record<string, unknown> {
     return {
-      query: (input: unknown) => invoke('query', method, input),
-      mutate: (input: unknown) => invoke('mutation', method, input),
-      subscribe: (input: unknown, handlers: {
-        onData: (e: unknown) => void;
-        onError: (err: unknown) => void;
-        onComplete: () => void;
-        onStarted?: () => void;
-      }) => {
+      query: (input: unknown) => invoke("query", method, input),
+      mutate: (input: unknown) => invoke("mutation", method, input),
+      subscribe: (
+        input: unknown,
+        handlers: {
+          onData: (e: unknown) => void;
+          onError: (err: unknown) => void;
+          onComplete: () => void;
+          onStarted?: () => void;
+        },
+      ) => {
         if (!subscribeFn) {
           throw new Error(
             `tunnel-routed subscribe('${method}') requires a tunnelSubscribe dispatcher; none was configured`,
@@ -274,9 +278,9 @@ function proxyFromTunnel(
     let leaf: Record<string, unknown> | null = null;
     const handler: ProxyHandler<object> = {
       get(_target, prop) {
-        if (typeof prop !== 'string') return undefined;
-        if (prop === 'query' || prop === 'mutate' || prop === 'subscribe') {
-          if (!leaf) leaf = buildLeaf(path.join('.'));
+        if (typeof prop !== "string") return undefined;
+        if (prop === "query" || prop === "mutate" || prop === "subscribe") {
+          if (!leaf) leaf = buildLeaf(path.join("."));
           return leaf[prop];
         }
         return makeNamespaceProxy([...path, prop]);
@@ -296,7 +300,7 @@ export function createRemoteNodeClient(opts: {
 }): NodeClient {
   return proxyFromHttp(
     {
-      name: 'ad-hoc',
+      name: "ad-hoc",
       endpoint: opts.url,
       certificate: opts.certificate,
       certificateFingerprint: opts.certificateFingerprint,

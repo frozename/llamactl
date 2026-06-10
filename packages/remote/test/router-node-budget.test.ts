@@ -1,15 +1,15 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { router } from '../src/router.js';
-import { saveNodeRun } from '../src/workload/noderun-store.js';
-import { parseWorkload, saveWorkload } from '../src/workload/store.js';
-import { parseModelHost, saveModelHost } from '../src/workload/modelhost-store.js';
+import { router } from "../src/router.js";
+import { saveNodeRun } from "../src/workload/noderun-store.js";
+import { parseWorkload, saveWorkload } from "../src/workload/store.js";
+import { parseModelHost, saveModelHost } from "../src/workload/modelhost-store.js";
 
 const originalEnv = { ...process.env };
-let tmp = '';
+let tmp = "";
 
 const nodeRunYaml = `
 apiVersion: llamactl/v1
@@ -79,10 +79,10 @@ spec:
 `;
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-router-node-budget-'));
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-router-node-budget-"));
   Object.assign(process.env, {
     LLAMACTL_WORKLOADS_DIR: tmp,
-    LLAMACTL_CONFIG: join(tmp, 'config-missing'),
+    LLAMACTL_CONFIG: join(tmp, "config-missing"),
   });
 });
 
@@ -92,15 +92,15 @@ afterEach(() => {
   Object.assign(process.env, originalEnv);
 });
 
-describe('nodeBudget', () => {
-  test('rolls up budget and reserved memory for workloads on a node', async () => {
+describe("nodeBudget", () => {
+  test("rolls up budget and reserved memory for workloads on a node", async () => {
     saveNodeRun(
       {
-        apiVersion: 'llamactl/v1',
-        kind: 'NodeRun',
-        metadata: { name: 'budget-node', labels: {} },
+        apiVersion: "llamactl/v1",
+        kind: "NodeRun",
+        metadata: { name: "budget-node", labels: {} },
         spec: {
-          node: 'local',
+          node: "local",
           budget: { memoryGiB: 36 },
           infra: [],
         },
@@ -111,25 +111,25 @@ describe('nodeBudget', () => {
     saveWorkload(parseWorkload(workloadB), tmp);
 
     const caller = router.createCaller({});
-    const result = await caller.nodeBudget({ node: 'local' });
+    const result = await caller.nodeBudget({ node: "local" });
 
     expect(result.budget).toBe(36);
     expect(result.reserved).toBe(24);
     expect(result.workloads.length).toBe(2);
     expect(result.workloads.map((w) => w.name)).toEqual([
-      'gemma4-26b-a4b-mtp',
-      'granite41-8b-long-lived',
+      "gemma4-26b-a4b-mtp",
+      "granite41-8b-long-lived",
     ]);
   });
 
-  test('counts enabled ModelHost reservations and tags workload kind', async () => {
+  test("counts enabled ModelHost reservations and tags workload kind", async () => {
     saveNodeRun(
       {
-        apiVersion: 'llamactl/v1',
-        kind: 'NodeRun',
-        metadata: { name: 'budget-node', labels: {} },
+        apiVersion: "llamactl/v1",
+        kind: "NodeRun",
+        metadata: { name: "budget-node", labels: {} },
         spec: {
-          node: 'local',
+          node: "local",
           budget: { memoryGiB: 36 },
           infra: [],
         },
@@ -140,7 +140,7 @@ describe('nodeBudget', () => {
     saveModelHost(parseModelHost(modelHostC), tmp); // ModelHost, 12 GiB
 
     const caller = router.createCaller({});
-    const result = await caller.nodeBudget({ node: 'local' });
+    const result = await caller.nodeBudget({ node: "local" });
 
     // Must agree with admission, which counts ModelHosts via
     // listAnyWorkloadsForAdmission. Before this fix nodeBudget saw
@@ -148,12 +148,12 @@ describe('nodeBudget', () => {
     expect(result.reserved).toBe(20);
 
     const byName = Object.fromEntries(result.workloads.map((w) => [w.name, w] as const));
-    expect(byName['granite41-8b-long-lived']!.kind).toBe('ModelRun');
-    const host = byName['mlx-host-local'];
+    expect(byName["granite41-8b-long-lived"]!.kind).toBe("ModelRun");
+    const host = byName["mlx-host-local"];
     expect(host).toBeDefined();
-    expect(host!.kind).toBe('ModelHost');
+    expect(host!.kind).toBe("ModelHost");
     expect(host!.enabled).toBe(true);
     expect(host!.expectedMemoryGiB).toBe(12);
-    expect(host!.endpoint).toBe('127.0.0.1:8094');
+    expect(host!.endpoint).toBe("127.0.0.1:8094");
   });
 });

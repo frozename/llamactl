@@ -1,14 +1,14 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { buildNovaMcpServer, type PlannerToolDescriptor } from '@nova/mcp';
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { buildNovaMcpServer, type PlannerToolDescriptor } from "@nova/mcp";
 import type {
   Runbook,
   RunbookContext,
   RunbookResult,
   RunbookToolClient,
   ToolCallInput,
-} from './types.js';
-import { RUNBOOKS } from './runbooks/index.js';
+} from "./types.js";
+import { RUNBOOKS } from "./runbooks/index.js";
 
 export interface HarnessToolDescriptor {
   name: string;
@@ -39,13 +39,21 @@ async function mountInProcess(
 ): Promise<MountedServer> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: clientName, version: '0.0.0' });
+  const client = new Client({ name: clientName, version: "0.0.0" });
   await client.connect(clientTransport);
   return {
     client,
     close: async () => {
-      try { await client.close(); } catch { /* ignore */ }
-      try { await server.close(); } catch { /* ignore */ }
+      try {
+        await client.close();
+      } catch {
+        /* ignore */
+      }
+      try {
+        await server.close();
+      } catch {
+        /* ignore */
+      }
     },
   };
 }
@@ -68,19 +76,19 @@ export interface DefaultToolClientHandle {
 /** Heuristic safety tier for a tool name. Keep conservative — we'd
  *  rather an operator explicitly bump a read tool to mutation than
  *  have a destructive tool leak into the planner allowlist. */
-function inferTier(name: string): PlannerToolDescriptor['tier'] {
+function inferTier(name: string): PlannerToolDescriptor["tier"] {
   // Clearly-destructive tier — name must match exactly or have one
   // of these verbs as the final segment.
   if (/\.(uninstall|deregister|delete|remove)$/.test(name)) {
-    return 'mutation-destructive';
+    return "mutation-destructive";
   }
   // Mutation verbs. Rest of the surface is treated as read even if
   // it writes (e.g. `catalog.promote` which edits a TSV) — the
   // planner's dry-run cascade catches those.
   if (/\.(install|promote|start|stop|sync|apply|kick|rotate)/.test(name)) {
-    return 'mutation-dry-run-safe';
+    return "mutation-dry-run-safe";
   }
-  return 'read';
+  return "read";
 }
 
 /**
@@ -101,18 +109,18 @@ async function defaultToolClient(): Promise<DefaultToolClientHandle> {
   // Electron main bundle, which reaches this package via @llamactl/remote);
   // the chunk is only ever loaded under the Bun/CLI runtime that actually
   // boots the harness.
-  const { buildMcpServer } = await import('@llamactl/mcp');
+  const { buildMcpServer } = await import("@llamactl/mcp");
   const llamactl = await mountInProcess(
-    buildMcpServer({ name: 'llamactl-runbook-harness' }),
-    'llamactl-runbook-harness',
+    buildMcpServer({ name: "llamactl-runbook-harness" }),
+    "llamactl-runbook-harness",
   );
   const nova = await mountInProcess(
-    buildNovaMcpServer({ name: 'nova-runbook-harness' }),
-    'nova-runbook-harness',
+    buildNovaMcpServer({ name: "nova-runbook-harness" }),
+    "nova-runbook-harness",
   );
   const client: RunbookToolClient = {
     async callTool(input: ToolCallInput) {
-      const target = input.name.startsWith('nova.') ? nova.client : llamactl.client;
+      const target = input.name.startsWith("nova.") ? nova.client : llamactl.client;
       return target.callTool({ name: input.name, arguments: input.arguments });
     },
   };
@@ -126,7 +134,7 @@ async function defaultToolClient(): Promise<DefaultToolClientHandle> {
     for (const t of (lTools as { tools: Array<any> }).tools) {
       out.push({
         name: t.name,
-        description: t.description ?? '',
+        description: t.description ?? "",
         inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
       });
     }
@@ -134,7 +142,7 @@ async function defaultToolClient(): Promise<DefaultToolClientHandle> {
     for (const t of (nTools as { tools: Array<any> }).tools) {
       out.push({
         name: t.name,
-        description: t.description ?? '',
+        description: t.description ?? "",
         inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
       });
     }

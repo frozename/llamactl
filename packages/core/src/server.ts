@@ -1,12 +1,6 @@
-import { spawn } from 'node:child_process';
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { basename, join } from 'node:path';
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import {
   benchProfileFile,
   defaultModeForRel,
@@ -14,22 +8,19 @@ import {
   machineLabel,
   readBenchProfiles,
   serverProfileArgs,
-} from './bench/index.js';
-import { resolveBuildId } from './build.js';
-import { ctxForModel } from './ctx.js';
-import { resolveEnv } from './env.js';
+} from "./bench/index.js";
+import { resolveBuildId } from "./build.js";
+import { ctxForModel } from "./ctx.js";
+import { resolveEnv } from "./env.js";
 import {
   defaultReadProcessCommand,
   parseSlotSavePathFromCommand,
   resolveSlotSavePathArgs,
-} from './kvstore/index.js';
-import { resolveTarget } from './target.js';
-import type { ResolvedEnv } from './types.js';
-import type { WorkloadKey } from './workloadRuntime.js';
-import {
-  ensureWorkloadRuntimeDir,
-  workloadRuntimeDir,
-} from './workloadRuntime.js';
+} from "./kvstore/index.js";
+import { resolveTarget } from "./target.js";
+import type { ResolvedEnv } from "./types.js";
+import type { WorkloadKey } from "./workloadRuntime.js";
+import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from "./workloadRuntime.js";
 
 /**
  * Lifecycle events emitted during `startServer`. Forwarded to the CLI
@@ -37,19 +28,19 @@ import {
  * live start-up log.
  */
 export type ServerEvent =
-  | { type: 'launch'; pid: number; command: string; args: string[] }
-  | { type: 'waiting'; attempt: number; httpCode: string | null }
-  | { type: 'ready'; pid: number; endpoint: string }
-  | { type: 'retry'; reason: string }
-  | { type: 'timeout'; pid: number }
-  | { type: 'exited'; code: number | null };
+  | { type: "launch"; pid: number; command: string; args: string[] }
+  | { type: "waiting"; attempt: number; httpCode: string | null }
+  | { type: "ready"; pid: number; endpoint: string }
+  | { type: "retry"; reason: string }
+  | { type: "timeout"; pid: number }
+  | { type: "exited"; code: number | null };
 
 function pidFile(resolved: ResolvedEnv, key: WorkloadKey): string {
-  return join(workloadRuntimeDir(resolved, key), 'llama-server.pid');
+  return join(workloadRuntimeDir(resolved, key), "llama-server.pid");
 }
 
 function serverLog(resolved: ResolvedEnv, key: WorkloadKey): string {
-  return join(workloadRuntimeDir(resolved, key), 'llama-server.log');
+  return join(workloadRuntimeDir(resolved, key), "llama-server.log");
 }
 
 /**
@@ -60,9 +51,7 @@ function serverLog(resolved: ResolvedEnv, key: WorkloadKey): string {
  * passes the flag itself, never a value.
  */
 export function hasFlag(args: readonly string[], ...flags: string[]): boolean {
-  return args.some((tok) =>
-    flags.some((f) => tok === f || tok.startsWith(f + '=')),
-  );
+  return args.some((tok) => flags.some((f) => tok === f || tok.startsWith(f + "=")));
 }
 
 /**
@@ -79,9 +68,9 @@ export function filterProfileArgs(
   userArgs: readonly string[],
 ): string[] {
   const aliasGroups: Record<string, string[]> = {
-    '-fa': ['-fa', '--flash-attn'],
-    '-b': ['-b', '--batch-size'],
-    '-ub': ['-ub', '--ubatch-size'],
+    "-fa": ["-fa", "--flash-attn"],
+    "-b": ["-b", "--batch-size"],
+    "-ub": ["-ub", "--ubatch-size"],
   };
   const out: string[] = [];
   for (let i = 0; i < profileArgs.length; i += 2) {
@@ -96,7 +85,7 @@ export function filterProfileArgs(
 }
 
 function serverStateFile(resolved: ResolvedEnv, key: WorkloadKey): string {
-  return join(workloadRuntimeDir(resolved, key), 'llama-server.state');
+  return join(workloadRuntimeDir(resolved, key), "llama-server.state");
 }
 
 export function endpoint(
@@ -125,15 +114,15 @@ export function advertisedEndpoint(
 }
 
 function useTunedArgsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env.LLAMA_CPP_USE_TUNED_ARGS ?? 'true';
+  const raw = env.LLAMA_CPP_USE_TUNED_ARGS ?? "true";
   switch (raw) {
-    case '0':
-    case 'false':
-    case 'FALSE':
-    case 'no':
-    case 'NO':
-    case 'off':
-    case 'OFF':
+    case "0":
+    case "false":
+    case "FALSE":
+    case "no":
+    case "NO":
+    case "off":
+    case "OFF":
       return false;
     default:
       return true;
@@ -142,18 +131,20 @@ function useTunedArgsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 
 function safeRetryArgs(): string[] {
   return [
-    '--flash-attn', 'off',
-    '--no-cache-prompt',
-    '--parallel', '1',
-    '--no-cont-batching',
-    '--no-mmproj-offload',
-    '--no-warmup',
+    "--flash-attn",
+    "off",
+    "--no-cache-prompt",
+    "--parallel",
+    "1",
+    "--no-cont-batching",
+    "--no-mmproj-offload",
+    "--no-warmup",
   ];
 }
 
 function hasMmprojArg(args: readonly string[]): boolean {
-  return args.some((a) =>
-    a === '--mmproj' || a === '-mm' || a === '--mmproj-url' || a === '--mmproj-auto',
+  return args.some(
+    (a) => a === "--mmproj" || a === "-mm" || a === "--mmproj-url" || a === "--mmproj-auto",
   );
 }
 
@@ -171,7 +162,7 @@ export function readServerPid(
   const file = pidFile(resolved, key);
   if (!existsSync(file)) return null;
   try {
-    const raw = readFileSync(file, 'utf8').trim();
+    const raw = readFileSync(file, "utf8").trim();
     const pid = Number.parseInt(raw, 10);
     return Number.isFinite(pid) && pid > 0 ? pid : null;
   } catch {
@@ -211,12 +202,12 @@ export interface ServerState {
   port: string;
   binary: string;
   pid: number;
-  startedAt: string;           // ISO 8601
+  startedAt: string; // ISO 8601
   tunedProfile: string | null;
 }
 
 export interface ServerStatus {
-  state: 'up' | 'down';
+  state: "up" | "down";
   /** URL the local process uses to poll /health. Always derived from
    *  the bind host, so it works even when the server is on loopback. */
   endpoint: string;
@@ -256,16 +247,16 @@ export function readServerState(
   const file = serverStateFile(resolved, key);
   if (!existsSync(file)) return null;
   try {
-    const raw = readFileSync(file, 'utf8');
+    const raw = readFileSync(file, "utf8");
     const parsed = JSON.parse(raw) as ServerState;
     if (
-      typeof parsed.rel === 'string'
-      && Array.isArray(parsed.extraArgs)
-      && typeof parsed.pid === 'number'
-      && typeof parsed.startedAt === 'string'
+      typeof parsed.rel === "string" &&
+      Array.isArray(parsed.extraArgs) &&
+      typeof parsed.pid === "number" &&
+      typeof parsed.startedAt === "string"
     ) {
-      if (typeof parsed.binary !== 'string') parsed.binary = '';
-      parsed.slotSavePath = typeof parsed.slotSavePath === 'string' ? parsed.slotSavePath : null;
+      if (typeof parsed.binary !== "string") parsed.binary = "";
+      parsed.slotSavePath = typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null;
       return parsed;
     }
     return null;
@@ -305,14 +296,12 @@ export async function serverStatus(
   // PIDs diverge, the state file is from a previous launch that
   // exited uncleanly. Clean up in that case.
   const validSidecar = sidecar && sidecar.pid === pid;
-  const endpointOverride = validSidecar
-    ? { host: sidecar.host, port: sidecar.port }
-    : undefined;
+  const endpointOverride = validSidecar ? { host: sidecar.host, port: sidecar.port } : undefined;
   const healthUrl = `${endpoint(resolved, endpointOverride)}/health`;
   let httpCode: number | null = null;
   try {
     const res = await fetch(healthUrl, {
-      method: 'GET',
+      method: "GET",
       signal: AbortSignal.timeout(1500),
     });
     httpCode = res.status;
@@ -321,9 +310,9 @@ export async function serverStatus(
   }
 
   const reachable = httpCode === 200;
-  const state: ServerStatus['state'] = reachable || pid !== null ? 'up' : 'down';
+  const state: ServerStatus["state"] = reachable || pid !== null ? "up" : "down";
 
-  if (sidecar && !validSidecar && state === 'down') {
+  if (sidecar && !validSidecar && state === "down") {
     removeServerState(resolved, key);
   }
 
@@ -338,7 +327,7 @@ export async function serverStatus(
     startedAt: validSidecar ? sidecar.startedAt : null,
     host: validSidecar ? sidecar.host : null,
     port: validSidecar ? Number.parseInt(sidecar.port, 10) || null : null,
-    binary: validSidecar ? (sidecar.binary || null) : null,
+    binary: validSidecar ? sidecar.binary || null : null,
     tunedProfile: validSidecar ? sidecar.tunedProfile : null,
   };
 }
@@ -393,14 +382,14 @@ export interface StartServerResult {
 async function detectPortConflict(endpointUrl: string): Promise<string | null> {
   try {
     const res = await fetch(`${endpointUrl}/health`, {
-      method: 'GET',
+      method: "GET",
       signal: AbortSignal.timeout(500),
     });
     // Anything that answers means the port is taken. 200 = a stale
     // llama-server somehow survived our stopServer; everything else
     // = a foreign listener (Docker forwards, etc.).
     return (
-      `port ${endpointUrl.replace(/^https?:\/\//, '')} is already bound ` +
+      `port ${endpointUrl.replace(/^https?:\/\//, "")} is already bound ` +
       `(HTTP ${res.status} on /health) \u2014 stop the foreign process ` +
       `(try: lsof -P -iTCP:PORT) or set LLAMA_CPP_PORT to a free port`
     );
@@ -426,10 +415,10 @@ const FIND_LISTENER_TIMEOUT_MS = 2000;
 // the launchd PATH — a bare `lsof` would ENOENT there and silently disable
 // adoption in production.
 function resolveLsofPath(): string {
-  for (const candidate of ['/usr/sbin/lsof', '/usr/bin/lsof']) {
+  for (const candidate of ["/usr/sbin/lsof", "/usr/bin/lsof"]) {
     if (existsSync(candidate)) return candidate;
   }
-  return 'lsof';
+  return "lsof";
 }
 
 function lsofListenerPid(filter: string): Promise<number | null> {
@@ -441,23 +430,21 @@ function lsofListenerPid(filter: string): Promise<number | null> {
       settled = true;
       clearTimeout(timer);
       try {
-        child?.kill('SIGKILL');
+        child?.kill("SIGKILL");
       } catch {}
       resolve(value);
     };
     const timer = setTimeout(() => finish(null), FIND_LISTENER_TIMEOUT_MS);
     try {
-      child = spawn(
-        resolveLsofPath(),
-        ['-nP', filter, '-sTCP:LISTEN', '-t'],
-        { stdio: ['ignore', 'pipe', 'ignore'] },
-      );
-      let out = '';
-      child.stdout?.on('data', (chunk) => {
+      child = spawn(resolveLsofPath(), ["-nP", filter, "-sTCP:LISTEN", "-t"], {
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      let out = "";
+      child.stdout?.on("data", (chunk) => {
         out += String(chunk);
       });
-      child.on('error', () => finish(null));
-      child.on('close', () => {
+      child.on("error", () => finish(null));
+      child.on("close", () => {
         const pid = out
           .split(/\s+/)
           .map((token) => Number.parseInt(token, 10))
@@ -486,13 +473,13 @@ async function findListenerPid(host: string, port: number): Promise<number | nul
 async function probeServerModelIds(endpointUrl: string, timeoutMs: number): Promise<string[]> {
   try {
     const res = await fetch(`${endpointUrl}/v1/models`, {
-      method: 'GET',
+      method: "GET",
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return [];
     const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
     return (body.data ?? [])
-      .map((m) => (typeof m?.id === 'string' ? m.id : ''))
+      .map((m) => (typeof m?.id === "string" ? m.id : ""))
       .filter((id): id is string => id.length > 0);
   } catch {
     return [];
@@ -505,7 +492,7 @@ async function probeServerModelIds(endpointUrl: string, timeoutMs: number): Prom
 export function aliasesFromArgs(extraArgs: readonly string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i + 1 < extraArgs.length; i += 1) {
-    if (extraArgs[i] === '--alias' || extraArgs[i] === '-a') out.push(extraArgs[i + 1]!);
+    if (extraArgs[i] === "--alias" || extraArgs[i] === "-a") out.push(extraArgs[i + 1]!);
   }
   return out;
 }
@@ -560,7 +547,7 @@ export async function tryAdoptExistingServer(args: {
   writeServerState(args.resolved, args.key, {
     rel: args.rel,
     extraArgs: args.extraArgs,
-    slotSavePath: typeof cmdline === 'string' ? parseSlotSavePathFromCommand(cmdline) : null,
+    slotSavePath: typeof cmdline === "string" ? parseSlotSavePathFromCommand(cmdline) : null,
     host: args.host,
     port: String(args.port),
     binary: args.binary,
@@ -572,7 +559,7 @@ export async function tryAdoptExistingServer(args: {
 }
 
 interface PollReadyResult {
-  outcome: 'ready' | 'exited' | 'timeout' | 'aborted';
+  outcome: "ready" | "exited" | "timeout" | "aborted";
   /** Last HTTP status code the probe saw on the health endpoint, if
    *  any. When `outcome === 'timeout'` and this is a non-503 code
    *  (e.g. 401, 404), another process is almost certainly bound to
@@ -594,36 +581,37 @@ async function pollReady(
   let lastHttpCode: string | null = null;
   let nonLoadingHttpCount = 0;
   for (let attempt = 0; attempt < timeoutSeconds; attempt += 1) {
-    if (signal?.aborted) return { outcome: 'aborted' };
+    if (signal?.aborted) return { outcome: "aborted" };
     let httpCode: string | null = null;
     try {
       const res = await fetch(healthUrl, {
-        method: 'GET',
+        method: "GET",
         signal: AbortSignal.timeout(1000),
       });
       httpCode = String(res.status);
       lastHttpCode = httpCode;
-      if (res.status === 200) return { outcome: 'ready', lastHttpCode: httpCode };
+      if (res.status === 200) return { outcome: "ready", lastHttpCode: httpCode };
       // 503 is the documented "loading" code llama-server emits
       // while loading the model. Any other non-200 (401/403/404)
       // almost always means *something else* is bound to the same
       // port and we're polling the wrong process.
       if (res.status === 503) {
-        onEvent?.({ type: 'waiting', attempt, httpCode });
+        onEvent?.({ type: "waiting", attempt, httpCode });
       } else {
         nonLoadingHttpCount += 1;
-        if (!isProcessAlive(pid)) return { outcome: 'exited', lastHttpCode: httpCode };
-        onEvent?.({ type: 'waiting', attempt, httpCode });
+        if (!isProcessAlive(pid)) return { outcome: "exited", lastHttpCode: httpCode };
+        onEvent?.({ type: "waiting", attempt, httpCode });
       }
     } catch {
-      if (!isProcessAlive(pid)) return { outcome: 'exited', lastHttpCode: lastHttpCode ?? undefined };
-      onEvent?.({ type: 'waiting', attempt, httpCode });
+      if (!isProcessAlive(pid))
+        return { outcome: "exited", lastHttpCode: lastHttpCode ?? undefined };
+      onEvent?.({ type: "waiting", attempt, httpCode });
     }
     // Interruptible sleep so SIGTERM + abort react within ~1s.
     await new Promise<void>((resolve) => {
       const t = setTimeout(resolve, 1000);
       signal?.addEventListener(
-        'abort',
+        "abort",
         () => {
           clearTimeout(t);
           resolve();
@@ -632,11 +620,11 @@ async function pollReady(
       );
     });
   }
-  if (signal?.aborted) return { outcome: 'aborted' };
+  if (signal?.aborted) return { outcome: "aborted" };
   const alive = isProcessAlive(pid);
   const portConflict = nonLoadingHttpCount >= Math.max(3, timeoutSeconds - 1);
   const result: PollReadyResult = {
-    outcome: alive ? 'timeout' : 'exited',
+    outcome: alive ? "timeout" : "exited",
   };
   if (lastHttpCode !== null) result.lastHttpCode = lastHttpCode;
   if (portConflict) result.portConflict = true;
@@ -659,9 +647,7 @@ async function pollReady(
  * Returns a structured result; non-null `error` indicates a hard
  * failure the caller should surface.
  */
-export async function startServer(
-  opts: StartServerOptions,
-): Promise<StartServerResult> {
+export async function startServer(opts: StartServerOptions): Promise<StartServerResult> {
   const env = opts.env ?? process.env;
   const resolved = opts.resolved ?? resolveEnv(env);
   const key = opts.key;
@@ -692,7 +678,7 @@ export async function startServer(
       error: `Model file not found: ${modelPath}`,
     };
   }
-  const bin = opts.binary ?? join(resolved.LLAMA_CPP_BIN, 'llama-server');
+  const bin = opts.binary ?? join(resolved.LLAMA_CPP_BIN, "llama-server");
   if (!existsSync(bin)) {
     return {
       ok: false,
@@ -732,7 +718,11 @@ export async function startServer(
       binary: bin,
     });
     if (adoptedPid !== null) {
-      opts.onEvent?.({ type: 'ready', pid: adoptedPid, endpoint: endpoint(resolved, launchEndpoint) });
+      opts.onEvent?.({
+        type: "ready",
+        pid: adoptedPid,
+        endpoint: endpoint(resolved, launchEndpoint),
+      });
       return {
         ok: true,
         pid: adoptedPid,
@@ -769,7 +759,7 @@ export async function startServer(
   const launchArgs: string[] = [];
   let profileArgs: string[] = [];
   if (!opts.skipTuned && useTunedArgsEnabled(env)) {
-    const mode = hasMmprojArg(extra) ? 'vision' : defaultModeForRel(rel, resolved);
+    const mode = hasMmprojArg(extra) ? "vision" : defaultModeForRel(rel, resolved);
     const ctx = ctxForModel(rel, resolved);
     const build = resolveBuildId(resolved);
     const machine = machineLabel(resolved);
@@ -779,10 +769,10 @@ export async function startServer(
       tunedProfile = hit.profile;
       profileArgs = serverProfileArgs(hit.profile).split(/\s+/).filter(Boolean);
     } else {
-      profileArgs = serverProfileArgs('default').split(/\s+/).filter(Boolean);
+      profileArgs = serverProfileArgs("default").split(/\s+/).filter(Boolean);
     }
   } else {
-    profileArgs = serverProfileArgs('default').split(/\s+/).filter(Boolean);
+    profileArgs = serverProfileArgs("default").split(/\s+/).filter(Boolean);
   }
   launchArgs.push(...filterProfileArgs(profileArgs, slotPathResolved.args));
   launchArgs.push(...slotPathResolved.args);
@@ -816,22 +806,22 @@ export async function startServer(
   // a tRPC unsubscribe or Ctrl-C doesn't leave an orphan server.
   const killOnAbort = () => {
     try {
-      if (isProcessAlive(pid)) process.kill(pid, 'SIGTERM');
+      if (isProcessAlive(pid)) process.kill(pid, "SIGTERM");
     } catch {
       // already gone
     }
   };
   if (opts.signal) {
     if (opts.signal.aborted) killOnAbort();
-    else opts.signal.addEventListener('abort', killOnAbort, { once: true });
+    else opts.signal.addEventListener("abort", killOnAbort, { once: true });
   }
 
   const timeoutSeconds = opts.timeoutSeconds ?? 60;
   const healthUrl = `${endpoint(resolved, launchEndpoint)}/health`;
   let readyResult = await pollReady(pid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
   let outcome = readyResult.outcome;
-  if (outcome === 'aborted') {
-    opts.signal?.removeEventListener('abort', killOnAbort);
+  if (outcome === "aborted") {
+    opts.signal?.removeEventListener("abort", killOnAbort);
     killOnAbort();
     removeServerPid(resolved, key);
     return {
@@ -841,12 +831,12 @@ export async function startServer(
       advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
       tunedProfile,
       retried: false,
-      error: 'Start aborted by caller',
+      error: "Start aborted by caller",
     };
   }
-  if (outcome === 'ready') {
-    opts.signal?.removeEventListener('abort', killOnAbort);
-    opts.onEvent?.({ type: 'ready', pid, endpoint: endpoint(resolved, launchEndpoint) });
+  if (outcome === "ready") {
+    opts.signal?.removeEventListener("abort", killOnAbort);
+    opts.onEvent?.({ type: "ready", pid, endpoint: endpoint(resolved, launchEndpoint) });
     return {
       ok: true,
       pid,
@@ -860,7 +850,7 @@ export async function startServer(
   // Retry path: mmproj-safe flags.
   let retried = false;
   if (hasMmprojArg(launchArgs)) {
-    opts.onEvent?.({ type: 'retry', reason: 'mmproj safe-flag retry' });
+    opts.onEvent?.({ type: "retry", reason: "mmproj safe-flag retry" });
     await stopServer({ key, resolved });
     const retryArgs = [...launchArgs, ...safeRetryArgs()];
     const retryPid = await launchBackground({
@@ -878,14 +868,14 @@ export async function startServer(
     readyResult = await pollReady(retryPid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
     outcome = readyResult.outcome;
     retried = true;
-    if (outcome === 'aborted') {
+    if (outcome === "aborted") {
       try {
-        if (isProcessAlive(retryPid)) process.kill(retryPid, 'SIGTERM');
+        if (isProcessAlive(retryPid)) process.kill(retryPid, "SIGTERM");
       } catch {
         // already gone
       }
       removeServerPid(resolved, key);
-      opts.signal?.removeEventListener('abort', killOnAbort);
+      opts.signal?.removeEventListener("abort", killOnAbort);
       return {
         ok: false,
         pid: null,
@@ -893,12 +883,16 @@ export async function startServer(
         advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
         tunedProfile,
         retried: true,
-        error: 'Start aborted by caller',
+        error: "Start aborted by caller",
       };
     }
-    if (outcome === 'ready') {
-      opts.signal?.removeEventListener('abort', killOnAbort);
-      opts.onEvent?.({ type: 'ready', pid: retryPid, endpoint: endpoint(resolved, launchEndpoint) });
+    if (outcome === "ready") {
+      opts.signal?.removeEventListener("abort", killOnAbort);
+      opts.onEvent?.({
+        type: "ready",
+        pid: retryPid,
+        endpoint: endpoint(resolved, launchEndpoint),
+      });
       return {
         ok: true,
         pid: retryPid,
@@ -910,10 +904,10 @@ export async function startServer(
     }
   }
 
-  opts.signal?.removeEventListener('abort', killOnAbort);
+  opts.signal?.removeEventListener("abort", killOnAbort);
 
-  if (outcome === 'timeout') {
-    opts.onEvent?.({ type: 'timeout', pid });
+  if (outcome === "timeout") {
+    opts.onEvent?.({ type: "timeout", pid });
     // Port-collision hint: when the probe kept seeing a non-503 HTTP
     // status on the health endpoint, something else is bound to the
     // port and llama-server is answering nobody. Name the status
@@ -921,7 +915,7 @@ export async function startServer(
     const conflictHint =
       readyResult.portConflict && readyResult.lastHttpCode
         ? ` \u2014 health endpoint returned HTTP ${readyResult.lastHttpCode} repeatedly; another process is likely bound to this port (try: lsof -P -iTCP:PORT)`
-        : '';
+        : "";
     return {
       ok: false,
       pid,
@@ -933,7 +927,7 @@ export async function startServer(
     };
   }
 
-  opts.onEvent?.({ type: 'exited', code: null });
+  opts.onEvent?.({ type: "exited", code: null });
   return {
     ok: false,
     pid: null,
@@ -941,7 +935,7 @@ export async function startServer(
     advertisedEndpoint: advertisedEndpoint(resolved, launchEndpoint),
     tunedProfile,
     retried,
-    error: 'llama-server exited before becoming ready',
+    error: "llama-server exited before becoming ready",
   };
 }
 
@@ -958,28 +952,30 @@ interface LaunchArgs {
   onEvent?: (e: ServerEvent) => void;
 }
 
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
 function findArgValue(args: readonly string[], flag: string): string | null {
   for (let i = 0; i < args.length; i += 1) {
     const tok = args[i]!;
     if (tok === flag) return args[i + 1] ?? null;
-    if (tok.startsWith(flag + '=')) return tok.slice(flag.length + 1);
+    if (tok.startsWith(flag + "=")) return tok.slice(flag.length + 1);
   }
   return null;
 }
 
 function validateHostBind(args: readonly string[], allowExternalBind: boolean | undefined): void {
-  const host = findArgValue(args, '--host');
+  const host = findArgValue(args, "--host");
   if (host === null || LOOPBACK_HOSTS.has(host)) return;
   if (allowExternalBind === true) return;
-  throw new Error(`refusing to bind llama-server to ${host} without \`allowExternalBind: true\` in the workload spec`);
+  throw new Error(
+    `refusing to bind llama-server to ${host} without \`allowExternalBind: true\` in the workload spec`,
+  );
 }
 
 async function launchBackground(opts: LaunchArgs): Promise<number> {
-  const { openSync, closeSync } = await import('node:fs');
+  const { openSync, closeSync } = await import("node:fs");
   ensureWorkloadRuntimeDir(opts.resolved, opts.key);
-  const logFd = openSync(serverLog(opts.resolved, opts.key), 'a');
+  const logFd = openSync(serverLog(opts.resolved, opts.key), "a");
   // Daemon-injected defaults: only prepended when the user's args don't
   // already specify them, so a manifest's `--host 0.0.0.0` overrides the
   // env-default `--host 127.0.0.1` instead of producing a duplicate that
@@ -987,30 +983,27 @@ async function launchBackground(opts: LaunchArgs): Promise<number> {
   // resolved model path; user-side overrides for the model path aren't
   // a supported pattern.
   const fullArgs: string[] = [
-    '-m', opts.modelPath,
-    ...(hasFlag(opts.args, '--alias', '-a')
+    "-m",
+    opts.modelPath,
+    ...(hasFlag(opts.args, "--alias", "-a")
       ? []
-      : ['--alias', opts.resolved.LLAMA_CPP_SERVER_ALIAS]),
-    ...(hasFlag(opts.args, '--host')
+      : ["--alias", opts.resolved.LLAMA_CPP_SERVER_ALIAS]),
+    ...(hasFlag(opts.args, "--host") ? [] : ["--host", opts.host ?? opts.resolved.LLAMA_CPP_HOST]),
+    ...(hasFlag(opts.args, "--port")
       ? []
-      : ['--host', opts.host ?? opts.resolved.LLAMA_CPP_HOST]),
-    ...(hasFlag(opts.args, '--port')
-      ? []
-      : ['--port', String(opts.port ?? opts.resolved.LLAMA_CPP_PORT)]),
-    ...(hasFlag(opts.args, '-ngl', '--n-gpu-layers', '--gpu-layers')
-      ? []
-      : ['-ngl', '999']),
+      : ["--port", String(opts.port ?? opts.resolved.LLAMA_CPP_PORT)]),
+    ...(hasFlag(opts.args, "-ngl", "--n-gpu-layers", "--gpu-layers") ? [] : ["-ngl", "999"]),
     ...opts.args,
   ];
   validateHostBind(fullArgs, opts.allowExternalBind);
   const child = spawn(opts.bin, fullArgs, {
-    stdio: ['ignore', logFd, logFd],
+    stdio: ["ignore", logFd, logFd],
     detached: true,
   });
   child.unref();
   closeSync(logFd);
   const pid = child.pid ?? 0;
-  opts.onEvent?.({ type: 'launch', pid, command: opts.bin, args: fullArgs });
+  opts.onEvent?.({ type: "launch", pid, command: opts.bin, args: fullArgs });
   return pid;
 }
 
@@ -1034,9 +1027,7 @@ export interface StopServerResult {
  * in the PID file, then escalates to SIGKILL if the process is still
  * alive after the grace period. Clears the PID file on exit.
  */
-export async function stopServer(
-  opts: StopServerOptions,
-): Promise<StopServerResult> {
+export async function stopServer(opts: StopServerOptions): Promise<StopServerResult> {
   const resolved = opts.resolved ?? resolveEnv();
   const key = opts.key;
   const grace = Math.max(1, opts.graceSeconds ?? 5);
@@ -1048,7 +1039,7 @@ export async function stopServer(
   }
 
   try {
-    process.kill(pid, 'SIGTERM');
+    process.kill(pid, "SIGTERM");
   } catch {
     removeServerPid(resolved, key);
     removeServerState(resolved, key);
@@ -1065,7 +1056,7 @@ export async function stopServer(
   }
 
   try {
-    process.kill(pid, 'SIGKILL');
+    process.kill(pid, "SIGKILL");
   } catch {
     // process already gone
   }

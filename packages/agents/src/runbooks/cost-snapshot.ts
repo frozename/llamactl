@@ -1,6 +1,6 @@
-import { z } from 'zod';
-import type { Runbook, RunbookStep } from '../types.js';
-import { parseToolJson } from '../types.js';
+import { z } from "zod";
+import type { Runbook, RunbookStep } from "../types.js";
+import { parseToolJson } from "../types.js";
 
 /**
  * Read-only cost snapshot. Aggregates recorded usage JSONL for the
@@ -48,20 +48,20 @@ interface CostSnapshotPayload {
 }
 
 export const costSnapshot: Runbook<Params> = {
-  name: 'cost-snapshot',
+  name: "cost-snapshot",
   description:
-    'Read-only spend snapshot — aggregates ~/.llamactl/usage/*.jsonl over the last N days via nova.ops.cost.snapshot. Reports top spenders by provider + model. No mutations.',
+    "Read-only spend snapshot — aggregates ~/.llamactl/usage/*.jsonl over the last N days via nova.ops.cost.snapshot. Reports top spenders by provider + model. No mutations.",
   paramsSchema: ParamsSchema,
   async execute(ctx, params) {
     const steps: RunbookStep[] = [];
     const snap = parseToolJson<CostSnapshotPayload>(
       await ctx.tools.callTool({
-        name: 'nova.ops.cost.snapshot',
+        name: "nova.ops.cost.snapshot",
         arguments: { days: params.days },
       }),
     );
     steps.push({
-      tool: 'nova.ops.cost.snapshot',
+      tool: "nova.ops.cost.snapshot",
       dryRun: false,
       result: {
         filesScanned: snap.filesScanned,

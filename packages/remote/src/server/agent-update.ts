@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -7,9 +7,9 @@ import {
   renameSync,
   statSync,
   writeFileSync,
-} from 'node:fs';
-import { dirname, join } from 'node:path';
-import { unauthorizedResponse, verifyBearer } from './auth.js';
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { unauthorizedResponse, verifyBearer } from "./auth.js";
 
 /**
  * In-place agent self-update. Operator on the control plane POSTs
@@ -66,31 +66,28 @@ function sha256OfFile(path: string): string {
   // Sync read is fine — agent binaries are ~70 MB on the high end.
   // Streaming would matter for >1 GB; not our case.
   const bytes = readFileSync(path);
-  return createHash('sha256').update(bytes).digest('hex');
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function sha256OfBytes(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
-export async function handleAgentUpdate(
-  req: Request,
-  opts: AgentUpdateOptions,
-): Promise<Response> {
-  if (req.method !== 'POST') {
-    return new Response('method not allowed', { status: 405 });
+export async function handleAgentUpdate(req: Request, opts: AgentUpdateOptions): Promise<Response> {
+  if (req.method !== "POST") {
+    return new Response("method not allowed", { status: 405 });
   }
   if (!verifyBearer(req, opts.tokenHash)) {
     return unauthorizedResponse();
   }
-  const expectedSha = req.headers.get('x-sha256')?.trim().toLowerCase();
+  const expectedSha = req.headers.get("x-sha256")?.trim().toLowerCase();
   if (!expectedSha || !/^[0-9a-f]{64}$/.test(expectedSha)) {
-    return jsonError(400, 'missing-or-invalid-x-sha256-header');
+    return jsonError(400, "missing-or-invalid-x-sha256-header");
   }
 
   const buffer = new Uint8Array(await req.arrayBuffer());
   if (buffer.length === 0) {
-    return jsonError(400, 'empty-body');
+    return jsonError(400, "empty-body");
   }
   const actualSha = sha256OfBytes(buffer);
   if (actualSha !== expectedSha) {
@@ -105,7 +102,7 @@ export async function handleAgentUpdate(
   const oldSize = statSync(selfPath).size;
   const newSize = buffer.length;
   const installDir = dirname(selfPath);
-  const stagingPath = join(installDir, '.llamactl-agent.staging');
+  const stagingPath = join(installDir, ".llamactl-agent.staging");
   const previousPath = `${selfPath}.previous`;
 
   try {
@@ -141,14 +138,14 @@ export async function handleAgentUpdate(
 
   return new Response(body, {
     status: 200,
-    headers: { 'content-type': 'application/json' },
+    headers: { "content-type": "application/json" },
   });
 }
 
 function jsonError(status: number, message: string): Response {
   return new Response(JSON.stringify({ ok: false, message }), {
     status,
-    headers: { 'content-type': 'application/json' },
+    headers: { "content-type": "application/json" },
   });
 }
 
@@ -185,8 +182,8 @@ export async function handleAgentRollback(
   req: Request,
   opts: AgentRollbackOptions,
 ): Promise<Response> {
-  if (req.method !== 'POST') {
-    return new Response('method not allowed', { status: 405 });
+  if (req.method !== "POST") {
+    return new Response("method not allowed", { status: 405 });
   }
   if (!verifyBearer(req, opts.tokenHash)) {
     return unauthorizedResponse();
@@ -230,6 +227,6 @@ export async function handleAgentRollback(
 
   return new Response(body, {
     status: 200,
-    headers: { 'content-type': 'application/json' },
+    headers: { "content-type": "application/json" },
   });
 }

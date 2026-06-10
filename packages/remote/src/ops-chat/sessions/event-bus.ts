@@ -1,5 +1,5 @@
-import { EventEmitter } from 'node:events';
-import type { JournalEvent } from './journal-schema.js';
+import { EventEmitter } from "node:events";
+import type { JournalEvent } from "./journal-schema.js";
 
 const channels = new Map<string, EventEmitter>();
 const openChannels = new Set<string>();
@@ -26,16 +26,13 @@ export const sessionEventBus = {
     if (!openChannels.has(sessionId)) return;
     const e = channels.get(sessionId);
     if (!e) return;
-    e.emit('event', event);
+    e.emit("event", event);
   },
-  subscribe(
-    sessionId: string,
-    listener: (event: JournalEvent) => void,
-  ): () => void {
+  subscribe(sessionId: string, listener: (event: JournalEvent) => void): () => void {
     const e = ensure(sessionId);
-    e.on('event', listener);
+    e.on("event", listener);
     return () => {
-      e.off('event', listener);
+      e.off("event", listener);
     };
   },
   close(sessionId: string): void {

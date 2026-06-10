@@ -1,6 +1,6 @@
 // packages/remote/src/search/ingest/sessions.ts
-import { sessionEventBus } from '../../ops-chat/sessions/event-bus.js';
-import type { JournalEvent } from '../../ops-chat/sessions/journal-schema.js';
+import { sessionEventBus } from "../../ops-chat/sessions/event-bus.js";
+import type { JournalEvent } from "../../ops-chat/sessions/journal-schema.js";
 
 export interface IngestRecord {
   id: string;
@@ -16,7 +16,7 @@ export interface SessionsIngestOpts {
 }
 
 function recordFor(event: JournalEvent): IngestRecord | null {
-  if (event.type === 'session_started') {
+  if (event.type === "session_started") {
     if (!event.goal) return null;
     return {
       id: `${event.sessionId}::start`,
@@ -25,19 +25,19 @@ function recordFor(event: JournalEvent): IngestRecord | null {
         sessionId: event.sessionId,
         goal: event.goal,
         startedAt: event.ts,
-        where: 'goal',
+        where: "goal",
       },
     };
   }
-  if (event.type === 'plan_proposed') {
+  if (event.type === "plan_proposed") {
     const argsText = JSON.stringify((event.step as any).args ?? {});
-    const text = [event.reasoning, argsText].filter(Boolean).join('\n');
+    const text = [event.reasoning, argsText].filter(Boolean).join("\n");
     if (!text.trim()) return null;
     return {
-      id: `${(event as any).sessionId ?? '?'}::${event.stepId}`,
+      id: `${(event as any).sessionId ?? "?"}::${event.stepId}`,
       content: text,
       metadata: {
-        sessionId: (event as any).sessionId ?? '?',
+        sessionId: (event as any).sessionId ?? "?",
         stepId: event.stepId,
         iteration: event.iteration,
         where: `iteration #${event.iteration + 1}`,

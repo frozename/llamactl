@@ -1,8 +1,8 @@
-import * as React from 'react';
-import { useMemo, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { trpc } from '@/lib/trpc';
-import { Button, Input, EditorialHero } from '@/ui';
+import * as React from "react";
+import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { trpc } from "@/lib/trpc";
+import { Button, Input, EditorialHero } from "@/ui";
 
 /**
  * Preset gallery. Joins `promotions` (preset-overrides.tsv) with
@@ -13,32 +13,32 @@ import { Button, Input, EditorialHero } from '@/ui';
  * and can re-promote a faster candidate with one click.
  */
 
-const PROFILES = ['mac-mini-16g', 'balanced', 'macbook-pro-48g'] as const;
-const PRESETS = ['best', 'vision', 'balanced', 'fast'] as const;
+const PROFILES = ["mac-mini-16g", "balanced", "macbook-pro-48g"] as const;
+const PRESETS = ["best", "vision", "balanced", "fast"] as const;
 type Profile = (typeof PROFILES)[number];
 type Preset = (typeof PRESETS)[number];
 
-type ClassFilter = 'all' | 'reasoning' | 'multimodal' | 'general' | 'custom';
+type ClassFilter = "all" | "reasoning" | "multimodal" | "general" | "custom";
 
 function fmtTps(raw: string | undefined | null): string {
-  if (raw == null || raw === '') return '—';
+  if (raw == null || raw === "") return "—";
   const n = Number.parseFloat(raw);
-  if (!Number.isFinite(n)) return '—';
+  if (!Number.isFinite(n)) return "—";
   return n.toFixed(1);
 }
 
 export default function Presets(): React.JSX.Element {
   const queryClient = useQueryClient();
   const promotions = trpc.promotions.useQuery();
-  const [classFilter, setClassFilter] = useState<ClassFilter>('all');
+  const [classFilter, setClassFilter] = useState<ClassFilter>("all");
   const [minTps, setMinTps] = useState(0);
   const [installedOnly, setInstalledOnly] = useState(false);
-  const bench = trpc.benchCompare.useQuery({ classFilter, scopeFilter: 'all' });
+  const bench = trpc.benchCompare.useQuery({ classFilter, scopeFilter: "all" });
 
   // Inline promote controls — one row can be pending at a time.
   const [pendingRel, setPendingRel] = useState<string | null>(null);
-  const [pickProfile, setPickProfile] = useState<Profile>('macbook-pro-48g');
-  const [pickPreset, setPickPreset] = useState<Preset>('best');
+  const [pickProfile, setPickProfile] = useState<Profile>("macbook-pro-48g");
+  const [pickPreset, setPickPreset] = useState<Preset>("best");
   const [error, setError] = useState<string | null>(null);
   const [copiedRel, setCopiedRel] = useState<string | null>(null);
 
@@ -47,7 +47,7 @@ export default function Presets(): React.JSX.Element {
       setPendingRel(null);
       setError(null);
       await queryClient.invalidateQueries({
-        queryKey: [['promotions'], { type: 'query' }],
+        queryKey: [["promotions"], { type: "query" }],
       });
     },
     onError: (err) => setError(err.message),
@@ -57,7 +57,7 @@ export default function Presets(): React.JSX.Element {
     onSuccess: async () => {
       setError(null);
       await queryClient.invalidateQueries({
-        queryKey: [['promotions'], { type: 'query' }],
+        queryKey: [["promotions"], { type: "query" }],
       });
     },
     onError: (err) => setError(err.message),
@@ -109,32 +109,69 @@ export default function Presets(): React.JSX.Element {
   }
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', padding: 24 }} data-testid="models-presets-root">
-      <div style={{ marginBottom: 4, fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
+    <div
+      style={{ height: "100%", overflow: "auto", padding: 24 }}
+      data-testid="models-presets-root"
+    >
+      <div
+        style={{
+          marginBottom: 4,
+          fontSize: 12,
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
         Presets
       </div>
-      <h1 style={{ marginBottom: 16, fontSize: 24, fontWeight: 600, color: 'var(--color-text)' }}>
+      <h1 style={{ marginBottom: 16, fontSize: 24, fontWeight: 600, color: "var(--color-text)" }}>
         Promotions &amp; candidates
       </h1>
 
       {error && (
-        <div style={{ marginBottom: 12, borderRadius: 6, border: '1px solid var(--color-err)', backgroundColor: 'var(--color-surface-1)', padding: '8px 12px', fontSize: 14, color: 'var(--color-err)' }}>
+        <div
+          style={{
+            marginBottom: 12,
+            borderRadius: 6,
+            border: "1px solid var(--color-err)",
+            backgroundColor: "var(--color-surface-1)",
+            padding: "8px 12px",
+            fontSize: 14,
+            color: "var(--color-err)",
+          }}
+        >
           {error}
         </div>
       )}
 
       {/* Current promotions — (profile × preset) matrix. */}
       <section style={{ marginBottom: 24 }}>
-        <h2 style={{ marginBottom: 8, fontSize: 14, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
+        <h2
+          style={{
+            marginBottom: 8,
+            fontSize: 14,
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+            color: "var(--color-text-secondary)",
+          }}
+        >
           Current promotions
         </h2>
-        <div style={{ overflow: 'hidden', borderRadius: 6, border: '1px solid var(--color-border)' }}>
-          <table style={{ width: '100%', fontFamily: 'monospace', fontSize: 14 }}>
-            <thead style={{ backgroundColor: 'var(--color-surface-1)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
+        <div
+          style={{ overflow: "hidden", borderRadius: 6, border: "1px solid var(--color-border)" }}
+        >
+          <table style={{ width: "100%", fontFamily: "monospace", fontSize: 14 }}>
+            <thead
+              style={{
+                backgroundColor: "var(--color-surface-1)",
+                textAlign: "left",
+                color: "var(--color-text-secondary)",
+              }}
+            >
               <tr>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Profile</th>
+                <th style={{ padding: "8px 12px", fontWeight: 500 }}>Profile</th>
                 {PRESETS.map((p) => (
-                  <th key={p} style={{ padding: '8px 12px', fontWeight: 500 }}>
+                  <th key={p} style={{ padding: "8px 12px", fontWeight: 500 }}>
                     {p}
                   </th>
                 ))}
@@ -142,25 +179,46 @@ export default function Presets(): React.JSX.Element {
             </thead>
             <tbody>
               {PROFILES.map((profile) => (
-                <tr key={profile} style={{ borderTop: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)' }}>
-                  <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>{profile}</td>
+                <tr
+                  key={profile}
+                  style={{
+                    borderTop: "1px solid var(--color-border)",
+                    backgroundColor: "var(--color-surface-1)",
+                  }}
+                >
+                  <td style={{ padding: "8px 12px", color: "var(--color-text-secondary)" }}>
+                    {profile}
+                  </td>
                   {PRESETS.map((preset) => {
                     const row = (promotions.data ?? []).find(
                       (o) => o.profile === profile && o.preset === preset,
                     );
                     if (!row) {
                       return (
-                        <td key={preset} style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>
+                        <td
+                          key={preset}
+                          style={{ padding: "8px 12px", color: "var(--color-text-secondary)" }}
+                        >
                           —
                         </td>
                       );
                     }
                     const tps = tpsByRel.get(row.rel);
                     return (
-                      <td key={preset} style={{ padding: '8px 12px' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                          <span style={{ color: 'var(--color-brand)', wordBreak: 'break-all' }}>{row.rel}</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--color-text-secondary)' }}>
+                      <td key={preset} style={{ padding: "8px 12px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                          <span style={{ color: "var(--color-brand)", wordBreak: "break-all" }}>
+                            {row.rel}
+                          </span>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              fontSize: 10,
+                              color: "var(--color-text-secondary)",
+                            }}
+                          >
                             {tps !== undefined ? (
                               <span>{tps.toFixed(1)} tok/s</span>
                             ) : (
@@ -171,7 +229,7 @@ export default function Presets(): React.JSX.Element {
                               size="sm"
                               onClick={() => deleteMutation.mutate({ profile, preset })}
                               disabled={deleteMutation.isPending}
-                              style={{ fontSize: 10, padding: '2px 4px' }}
+                              style={{ fontSize: 10, padding: "2px 4px" }}
                               title={`remove promotion for ${profile}/${preset}`}
                             >
                               ×
@@ -190,12 +248,43 @@ export default function Presets(): React.JSX.Element {
 
       {/* Filters — all drive the candidate table below. */}
       <section>
-        <div style={{ marginBottom: 8, display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-          <h2 style={{ fontSize: 14, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
+        <div
+          style={{
+            marginBottom: 8,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          }}
+        >
+          <h2
+            style={{
+              fontSize: 14,
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              color: "var(--color-text-secondary)",
+            }}
+          >
             Candidates ({candidates.length})
           </h2>
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, fontSize: 12 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--color-text-secondary)' }}>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 12,
+              fontSize: 12,
+            }}
+          >
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                color: "var(--color-text-secondary)",
+              }}
+            >
               min tok/s
               <Input
                 type="number"
@@ -204,10 +293,17 @@ export default function Presets(): React.JSX.Element {
                 value={minTps}
                 onChange={(e) => setMinTps(Math.max(0, Number.parseFloat(e.target.value) || 0))}
                 data-testid="presets-min-tps"
-                style={{ width: 64, textAlign: 'right', fontFamily: 'monospace' }}
+                style={{ width: 64, textAlign: "right", fontFamily: "monospace" }}
               />
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--color-text-secondary)' }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                color: "var(--color-text-secondary)",
+              }}
+            >
               <input
                 type="checkbox"
                 checked={installedOnly}
@@ -216,18 +312,18 @@ export default function Presets(): React.JSX.Element {
               />
               installed only
             </label>
-            <span style={{ color: 'var(--color-text-secondary)' }}>class</span>
+            <span style={{ color: "var(--color-text-secondary)" }}>class</span>
             <select
               value={classFilter}
               onChange={(e) => setClassFilter(e.target.value as ClassFilter)}
               style={{
                 borderRadius: 4,
-                border: '1px solid var(--color-border)',
-                backgroundColor: 'var(--color-surface-2)',
-                padding: '4px 8px',
-                fontFamily: 'monospace',
+                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-surface-2)",
+                padding: "4px 8px",
+                fontFamily: "monospace",
                 fontSize: 11,
-                color: 'var(--color-text)',
+                color: "var(--color-text)",
               }}
             >
               <option value="all">all</option>
@@ -239,17 +335,35 @@ export default function Presets(): React.JSX.Element {
           </div>
         </div>
 
-        <div style={{ overflow: 'hidden', borderRadius: 6, border: '1px solid var(--color-border)' }}>
-          <table style={{ width: '100%', fontFamily: 'monospace', fontSize: 14 }}>
-            <thead style={{ backgroundColor: 'var(--color-surface-1)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
+        <div
+          style={{ overflow: "hidden", borderRadius: 6, border: "1px solid var(--color-border)" }}
+        >
+          <table style={{ width: "100%", fontFamily: "monospace", fontSize: 14 }}>
+            <thead
+              style={{
+                backgroundColor: "var(--color-surface-1)",
+                textAlign: "left",
+                color: "var(--color-text-secondary)",
+              }}
+            >
               <tr>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Rel</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Class</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Installed</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500, textAlign: 'right' }}>gen tok/s</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500, textAlign: 'right' }}>prompt tok/s</th>
-                <th style={{ width: 80, padding: '8px 12px', fontWeight: 500, textAlign: 'right' }}>Start</th>
-                <th style={{ width: 288, padding: '8px 12px', fontWeight: 500, textAlign: 'right' }}>Promote</th>
+                <th style={{ padding: "8px 12px", fontWeight: 500 }}>Rel</th>
+                <th style={{ padding: "8px 12px", fontWeight: 500 }}>Class</th>
+                <th style={{ padding: "8px 12px", fontWeight: 500 }}>Installed</th>
+                <th style={{ padding: "8px 12px", fontWeight: 500, textAlign: "right" }}>
+                  gen tok/s
+                </th>
+                <th style={{ padding: "8px 12px", fontWeight: 500, textAlign: "right" }}>
+                  prompt tok/s
+                </th>
+                <th style={{ width: 80, padding: "8px 12px", fontWeight: 500, textAlign: "right" }}>
+                  Start
+                </th>
+                <th
+                  style={{ width: 288, padding: "8px 12px", fontWeight: 500, textAlign: "right" }}
+                >
+                  Promote
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -260,16 +374,37 @@ export default function Presets(): React.JSX.Element {
                 return (
                   <tr
                     key={row.rel}
-                    style={{ borderTop: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-1)' }}
+                    style={{
+                      borderTop: "1px solid var(--color-border)",
+                      backgroundColor: "var(--color-surface-1)",
+                    }}
                   >
-                    <td style={{ padding: '8px 12px', color: 'var(--color-brand)', wordBreak: 'break-all' }}>{row.rel}</td>
-                    <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>{row.class}</td>
-                    <td style={{ padding: '8px 12px', color: 'var(--color-text-secondary)' }}>
-                      {row.installed ? 'yes' : 'no'}
+                    <td
+                      style={{
+                        padding: "8px 12px",
+                        color: "var(--color-brand)",
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      {row.rel}
                     </td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>{gen}</td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right', color: 'var(--color-text-secondary)' }}>{pt}</td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                    <td style={{ padding: "8px 12px", color: "var(--color-text-secondary)" }}>
+                      {row.class}
+                    </td>
+                    <td style={{ padding: "8px 12px", color: "var(--color-text-secondary)" }}>
+                      {row.installed ? "yes" : "no"}
+                    </td>
+                    <td style={{ padding: "8px 12px", textAlign: "right" }}>{gen}</td>
+                    <td
+                      style={{
+                        padding: "8px 12px",
+                        textAlign: "right",
+                        color: "var(--color-text-secondary)",
+                      }}
+                    >
+                      {pt}
+                    </td>
+                    <td style={{ padding: "8px 12px", textAlign: "right" }}>
                       <Button
                         variant="secondary"
                         size="sm"
@@ -278,23 +413,30 @@ export default function Presets(): React.JSX.Element {
                         }}
                         data-testid={`presets-start-${row.rel}`}
                         title={`Copy: llamactl server start '${row.rel}'`}
-                        style={{ fontSize: 11, padding: '2px 8px' }}
+                        style={{ fontSize: 11, padding: "2px 8px" }}
                       >
-                        {copiedRel === row.rel ? 'copied' : 'start'}
+                        {copiedRel === row.rel ? "copied" : "start"}
                       </Button>
                     </td>
-                    <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                    <td style={{ padding: "8px 12px", textAlign: "right" }}>
                       {isPending ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11 }}>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            fontSize: 11,
+                          }}
+                        >
                           <select
                             value={pickProfile}
                             onChange={(e) => setPickProfile(e.target.value as Profile)}
                             style={{
                               borderRadius: 4,
-                              border: '1px solid var(--color-border)',
-                              backgroundColor: 'var(--color-surface-2)',
-                              padding: '2px 4px',
-                              fontFamily: 'monospace',
+                              border: "1px solid var(--color-border)",
+                              backgroundColor: "var(--color-surface-2)",
+                              padding: "2px 4px",
+                              fontFamily: "monospace",
                             }}
                           >
                             {PROFILES.map((p) => (
@@ -308,10 +450,10 @@ export default function Presets(): React.JSX.Element {
                             onChange={(e) => setPickPreset(e.target.value as Preset)}
                             style={{
                               borderRadius: 4,
-                              border: '1px solid var(--color-border)',
-                              backgroundColor: 'var(--color-surface-2)',
-                              padding: '2px 4px',
-                              fontFamily: 'monospace',
+                              border: "1px solid var(--color-border)",
+                              backgroundColor: "var(--color-surface-2)",
+                              padding: "2px 4px",
+                              fontFamily: "monospace",
                             }}
                           >
                             {PRESETS.map((p) => (
@@ -331,15 +473,15 @@ export default function Presets(): React.JSX.Element {
                                 rel: row.rel,
                               })
                             }
-                            style={{ padding: '2px 8px' }}
+                            style={{ padding: "2px 8px" }}
                           >
-                            {promoteMutation.isPending ? 'Setting…' : 'Set'}
+                            {promoteMutation.isPending ? "Setting…" : "Set"}
                           </Button>
                           <Button
                             variant="secondary"
                             size="sm"
                             onClick={() => setPendingRel(null)}
-                            style={{ padding: '2px 8px' }}
+                            style={{ padding: "2px 8px" }}
                           >
                             Cancel
                           </Button>
@@ -362,7 +504,14 @@ export default function Presets(): React.JSX.Element {
               })}
               {bench.isSuccess && candidates.length === 0 && (
                 <tr>
-                  <td colSpan={7} style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                  <td
+                    colSpan={7}
+                    style={{
+                      padding: "24px 12px",
+                      textAlign: "center",
+                      color: "var(--color-text-secondary)",
+                    }}
+                  >
                     No candidates for class "{classFilter}".
                   </td>
                 </tr>

@@ -1,9 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import yaml from 'yaml';
-import { probeNodeMem, projectAdmissionHeadroom } from '@llamactl/fleet-supervisor';
-import { readMeasuredMemoryCache } from '../../../fleet-supervisor/src/measured-memory.js';
-import { runAdmitMeasure } from './admit-measure.js';
+import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import yaml from "yaml";
+import { probeNodeMem, projectAdmissionHeadroom } from "@llamactl/fleet-supervisor";
+import { readMeasuredMemoryCache } from "../../../fleet-supervisor/src/measured-memory.js";
+import { runAdmitMeasure } from "./admit-measure.js";
 
 function requireFinite(value: number, flag: string): number {
   if (!Number.isFinite(value) || value < 0) {
@@ -43,8 +43,8 @@ EXIT CODES:
 `;
 
 export async function runAdmit(args: string[]): Promise<number> {
-  if (args[0] === 'measure') return runAdmitMeasure(args.slice(1));
-  if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
+  if (args[0] === "measure") return runAdmitMeasure(args.slice(1));
+  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
     console.log(USAGE);
     return args.length === 0 ? 2 : 0;
   }
@@ -56,22 +56,47 @@ export async function runAdmit(args: string[]): Promise<number> {
   let quiet = false;
   try {
     for (const raw of args.slice(1)) {
-      if (raw === '--json') { emitJson = true; continue; }
-      if (raw === '--quiet') { quiet = true; continue; }
-      if (raw.startsWith('--headroom-mb=')) { headroomMb = requireFinite(Number(raw.slice('--headroom-mb='.length)), '--headroom-mb'); continue; }
-      if (raw.startsWith('--safety-factor=')) { safetyFactor = requireFinite(Number(raw.slice('--safety-factor='.length)), '--safety-factor'); continue; }
+      if (raw === "--json") {
+        emitJson = true;
+        continue;
+      }
+      if (raw === "--quiet") {
+        quiet = true;
+        continue;
+      }
+      if (raw.startsWith("--headroom-mb=")) {
+        headroomMb = requireFinite(Number(raw.slice("--headroom-mb=".length)), "--headroom-mb");
+        continue;
+      }
+      if (raw.startsWith("--safety-factor=")) {
+        safetyFactor = requireFinite(
+          Number(raw.slice("--safety-factor=".length)),
+          "--safety-factor",
+        );
+        continue;
+      }
       // alias for back-compat
-      if (raw.startsWith('--overhead-factor=')) { safetyFactor = requireFinite(Number(raw.slice('--overhead-factor='.length)), '--overhead-factor'); continue; }
-      if (raw.startsWith('--compressor-max-mb=')) { compressorMaxMb = requireFinite(Number(raw.slice('--compressor-max-mb='.length)), '--compressor-max-mb'); continue; }
+      if (raw.startsWith("--overhead-factor=")) {
+        safetyFactor = requireFinite(
+          Number(raw.slice("--overhead-factor=".length)),
+          "--overhead-factor",
+        );
+        continue;
+      }
+      if (raw.startsWith("--compressor-max-mb=")) {
+        compressorMaxMb = requireFinite(
+          Number(raw.slice("--compressor-max-mb=".length)),
+          "--compressor-max-mb",
+        );
+        continue;
+      }
     }
   } catch (err) {
     console.error((err as Error).message);
     return 2;
   }
 
-  const path = target.endsWith('.yaml')
-    ? target
-    : `templates/workloads/${target}.yaml`;
+  const path = target.endsWith(".yaml") ? target : `templates/workloads/${target}.yaml`;
   let manifest: {
     kind?: string;
     spec?: {
@@ -82,36 +107,40 @@ export async function runAdmit(args: string[]): Promise<number> {
     metadata?: { name?: string };
   };
   try {
-    manifest = yaml.parse(readFileSync(path, 'utf8'));
+    manifest = yaml.parse(readFileSync(path, "utf8"));
   } catch (err) {
     console.error(`admit: failed to read ${path}: ${(err as Error).message}`);
     return 2;
   }
   const name = manifest.metadata?.name ?? target;
   const expectedMemoryGiB = manifest.spec?.resources?.expectedMemoryGiB;
-  if (typeof expectedMemoryGiB !== 'number') {
-    console.error(`admit: ${name}: spec.resources.expectedMemoryGiB missing — cannot project headroom`);
+  if (typeof expectedMemoryGiB !== "number") {
+    console.error(
+      `admit: ${name}: spec.resources.expectedMemoryGiB missing — cannot project headroom`,
+    );
     return 2;
   }
 
   // Build cache key to look up any prior `llamactl admit measure` result.
   let modelKey: string | undefined;
-  if (manifest.kind === 'ModelRun') {
+  if (manifest.kind === "ModelRun") {
     const val = manifest.spec?.target?.value;
     if (val) modelKey = `${val}::`;
-  } else if (manifest.kind === 'ModelHost') {
+  } else if (manifest.kind === "ModelHost") {
     const rel = manifest.spec?.hostedModels?.[0]?.rel;
     if (rel) modelKey = `${rel}::`;
   }
   const measured = modelKey ? readMeasuredMemoryCache(modelKey) : null;
 
-  const nodeMem = await probeNodeMem({ exec: async (cmd) => {
-    // Argument-vector exec (no shell). Caller passes 'vm_stat' verbatim;
-    // we don't compose shell strings from user input.
-    const result = spawnSync(cmd, [], { encoding: 'utf8' });
-    if (result.status !== 0) throw new Error(`exec failed: ${cmd}`);
-    return result.stdout;
-  } });
+  const nodeMem = await probeNodeMem({
+    exec: async (cmd) => {
+      // Argument-vector exec (no shell). Caller passes 'vm_stat' verbatim;
+      // we don't compose shell strings from user input.
+      const result = spawnSync(cmd, [], { encoding: "utf8" });
+      if (result.status !== 0) throw new Error(`exec failed: ${cmd}`);
+      return result.stdout;
+    },
+  });
 
   const currentFreeGiB = nodeMem.free_mb / 1024;
   const currentCompressorGiB = nodeMem.compressor_mb / 1024;
@@ -127,39 +156,55 @@ export async function runAdmit(args: string[]): Promise<number> {
   });
 
   if (emitJson) {
-    console.log(JSON.stringify({
-      workload: name,
-      currentFreeMb: nodeMem.free_mb,
-      currentFreeGiB,
-      currentCompressorMb: nodeMem.compressor_mb,
-      compressorMaxMb: compressorMaxMb ?? null,
-      expectedMemoryGiB,
-      safetyFactor,
-      measuredPeakMb: measured?.peakMb ?? null,
-      headroomMinMb: headroomMb,
-      projectedFreeGiB: result.projectedFreeGiB,
-      allowed: result.allowed,
-      reason: result.allowed ? null : result.reason,
-      source: result.source,
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          workload: name,
+          currentFreeMb: nodeMem.free_mb,
+          currentFreeGiB,
+          currentCompressorMb: nodeMem.compressor_mb,
+          compressorMaxMb: compressorMaxMb ?? null,
+          expectedMemoryGiB,
+          safetyFactor,
+          measuredPeakMb: measured?.peakMb ?? null,
+          headroomMinMb: headroomMb,
+          projectedFreeGiB: result.projectedFreeGiB,
+          allowed: result.allowed,
+          reason: result.allowed ? null : result.reason,
+          source: result.source,
+        },
+        null,
+        2,
+      ),
+    );
   } else if (quiet) {
-    console.log(result.allowed
-      ? `allow ${name}`
-      : `deny ${name} — ${result.reason} (projected_free=${result.projectedFreeGiB.toFixed(2)}GiB, min=${(headroomMb/1024).toFixed(2)}GiB)`);
+    console.log(
+      result.allowed
+        ? `allow ${name}`
+        : `deny ${name} — ${result.reason} (projected_free=${result.projectedFreeGiB.toFixed(2)}GiB, min=${(headroomMb / 1024).toFixed(2)}GiB)`,
+    );
   } else {
     console.log(`workload:          ${name}`);
-    console.log(`current free:      ${nodeMem.free_mb.toFixed(0)} MiB (${currentFreeGiB.toFixed(2)} GiB)`);
+    console.log(
+      `current free:      ${nodeMem.free_mb.toFixed(0)} MiB (${currentFreeGiB.toFixed(2)} GiB)`,
+    );
     if (compressorMaxMb !== undefined) {
-      console.log(`compressor:        ${nodeMem.compressor_mb.toFixed(0)} MiB (max ${compressorMaxMb})`);
+      console.log(
+        `compressor:        ${nodeMem.compressor_mb.toFixed(0)} MiB (max ${compressorMaxMb})`,
+      );
     }
     if (measured) {
-      console.log(`measured peak:     ${measured.peakMb.toFixed(1)} MiB × 1.05 safety = ${(measured.peakMb * 1.05 / 1024).toFixed(2)} GiB  [source: measured]`);
+      console.log(
+        `measured peak:     ${measured.peakMb.toFixed(1)} MiB × 1.05 safety = ${((measured.peakMb * 1.05) / 1024).toFixed(2)} GiB  [source: measured]`,
+      );
     } else {
-      console.log(`expected to load:  ${expectedMemoryGiB} GiB × ${safetyFactor} safety = ${(expectedMemoryGiB * safetyFactor).toFixed(2)} GiB  [source: declared]`);
+      console.log(
+        `expected to load:  ${expectedMemoryGiB} GiB × ${safetyFactor} safety = ${(expectedMemoryGiB * safetyFactor).toFixed(2)} GiB  [source: declared]`,
+      );
     }
     console.log(`projected free:    ${result.projectedFreeGiB.toFixed(2)} GiB`);
     console.log(`headroom min:      ${(headroomMb / 1024).toFixed(2)} GiB`);
-    console.log(`decision:          ${result.allowed ? 'ALLOW' : 'DENY'}`);
+    console.log(`decision:          ${result.allowed ? "ALLOW" : "DENY"}`);
     if (!result.allowed) console.log(`reason:            ${result.reason}`);
   }
   return result.allowed ? 0 : 1;

@@ -20,17 +20,17 @@
  * values can exceed the 63-char label value limit in edge cases.
  */
 export const K8S_LABEL_KEYS = {
-  managedBy: 'app.kubernetes.io/managed-by',
-  instance: 'app.kubernetes.io/instance',
-  partOf: 'app.kubernetes.io/part-of',
+  managedBy: "app.kubernetes.io/managed-by",
+  instance: "app.kubernetes.io/instance",
+  partOf: "app.kubernetes.io/part-of",
   // llamactl-namespaced — our drift detection + scoping
-  composite: 'llamactl.io/composite',
-  component: 'llamactl.io/component',
-  node: 'llamactl.io/node',
+  composite: "llamactl.io/composite",
+  component: "llamactl.io/component",
+  node: "llamactl.io/node",
 } as const;
 
 export const K8S_ANNOTATION_KEYS = {
-  specHash: 'llamactl.io/spec-hash',
+  specHash: "llamactl.io/spec-hash",
 } as const;
 
-export const MANAGED_BY_VALUE = 'llamactl';
+export const MANAGED_BY_VALUE = "llamactl";

@@ -7,14 +7,11 @@
  * Construction is eager; tests / callers that want to mock inject
  * their own backend instead of calling this function.
  */
-import type { RuntimeBackend } from './backend.js';
-import { createDockerBackend, type DockerBackendOptions } from './docker/backend.js';
-import {
-  createKubernetesBackend,
-  type KubernetesBackendOptions,
-} from './kubernetes/backend.js';
+import type { RuntimeBackend } from "./backend.js";
+import { createDockerBackend, type DockerBackendOptions } from "./docker/backend.js";
+import { createKubernetesBackend, type KubernetesBackendOptions } from "./kubernetes/backend.js";
 
-export type RuntimeKind = 'docker' | 'kubernetes';
+export type RuntimeKind = "docker" | "kubernetes";
 
 export interface RuntimeFactoryOptions {
   kind: RuntimeKind;
@@ -22,13 +19,11 @@ export interface RuntimeFactoryOptions {
   kubernetes?: KubernetesBackendOptions;
 }
 
-export function createRuntimeBackend(
-  opts: RuntimeFactoryOptions,
-): RuntimeBackend {
+export function createRuntimeBackend(opts: RuntimeFactoryOptions): RuntimeBackend {
   switch (opts.kind) {
-    case 'docker':
+    case "docker":
       return createDockerBackend(opts.docker);
-    case 'kubernetes':
+    case "kubernetes":
       return createKubernetesBackend(opts.kubernetes);
     default: {
       const exhaustive: never = opts.kind;

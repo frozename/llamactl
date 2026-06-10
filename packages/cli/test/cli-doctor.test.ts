@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { runAgent } from '../src/commands/agent.js';
+import { runAgent } from "../src/commands/agent.js";
 
 /**
  * CLI-side coverage for `llamactl agent cli doctor`. Runs against an
@@ -15,8 +15,8 @@ import { runAgent } from '../src/commands/agent.js';
  * assert.
  */
 
-let tmp = '';
-let cfgPath = '';
+let tmp = "";
+let cfgPath = "";
 const originalEnv = { ...process.env };
 
 function captureStdio<T>(fn: () => Promise<T>): Promise<{
@@ -24,18 +24,18 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{
   out: string;
   err: string;
 }> {
-  let out = '';
-  let err = '';
+  let out = "";
+  let err = "";
   const origOut = process.stdout.write.bind(process.stdout);
   const origErr = process.stderr.write.bind(process.stderr);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (process.stdout as any).write = (s: string | Uint8Array): boolean => {
-    out += typeof s === 'string' ? s : String(s);
+    out += typeof s === "string" ? s : String(s);
     return true;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (process.stderr as any).write = (s: string | Uint8Array): boolean => {
-    err += typeof s === 'string' ? s : String(s);
+    err += typeof s === "string" ? s : String(s);
     return true;
   };
   return fn()
@@ -49,13 +49,13 @@ function captureStdio<T>(fn: () => Promise<T>): Promise<{
 }
 
 function writeConfig(yaml: string): void {
-  const fs = require('node:fs') as typeof import('node:fs');
-  fs.writeFileSync(cfgPath, yaml, 'utf8');
+  const fs = require("node:fs") as typeof import("node:fs");
+  fs.writeFileSync(cfgPath, yaml, "utf8");
 }
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-cli-doctor-'));
-  cfgPath = join(tmp, 'config');
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-cli-doctor-"));
+  cfgPath = join(tmp, "config");
   process.env = { ...originalEnv, LLAMACTL_CONFIG: cfgPath };
 });
 afterEach(() => {
@@ -63,24 +63,24 @@ afterEach(() => {
   process.env = { ...originalEnv };
 });
 
-describe('llamactl agent cli doctor', () => {
-  test('help subcommand prints USAGE with exit 0', async () => {
-    const { result, out } = await captureStdio(() => runAgent(['cli', '-h']));
+describe("llamactl agent cli doctor", () => {
+  test("help subcommand prints USAGE with exit 0", async () => {
+    const { result, out } = await captureStdio(() => runAgent(["cli", "-h"]));
     expect(result).toBe(0);
-    expect(out).toContain('Usage: llamactl agent cli');
+    expect(out).toContain("Usage: llamactl agent cli");
   });
 
-  test('unknown cli subcommand exits 1', async () => {
-    const { result, err } = await captureStdio(() => runAgent(['cli', 'bogus']));
+  test("unknown cli subcommand exits 1", async () => {
+    const { result, err } = await captureStdio(() => runAgent(["cli", "bogus"]));
     expect(result).toBe(1);
-    expect(err).toContain('Unknown agent cli subcommand');
+    expect(err).toContain("Unknown agent cli subcommand");
   });
 
-  test('doctor with no current-context exits 1', async () => {
-    writeConfig('apiVersion: llamactl/v1\nkind: Config\ncurrentContext: \ncontexts: []\nclusters: []\nusers: []\n');
-    const { result, err } = await captureStdio(() =>
-      runAgent(['cli', 'doctor']),
+  test("doctor with no current-context exits 1", async () => {
+    writeConfig(
+      "apiVersion: llamactl/v1\nkind: Config\ncurrentContext: \ncontexts: []\nclusters: []\nusers: []\n",
     );
+    const { result, err } = await captureStdio(() => runAgent(["cli", "doctor"]));
     // no current context triggers the non-zero exit; the exact
     // message depends on whether loadConfig or the subsequent
     // context check fires first.
@@ -88,7 +88,7 @@ describe('llamactl agent cli doctor', () => {
     expect(err.length).toBeGreaterThan(0);
   });
 
-  test('doctor reports unhealthy for a preset whose binary is missing', async () => {
+  test("doctor reports unhealthy for a preset whose binary is missing", async () => {
     // Register an agent with a claude-preset binding pointing at a
     // non-existent command so `healthCheck` surfaces the spawn
     // failure. We override `command` to something we know isn't in
@@ -116,18 +116,16 @@ users:
   - name: me
     token: t
 `);
-    const { result, out } = await captureStdio(() =>
-      runAgent(['cli', 'doctor', '--json']),
-    );
+    const { result, out } = await captureStdio(() => runAgent(["cli", "doctor", "--json"]));
     expect(result).toBe(2);
     const parsed = JSON.parse(out.trim());
     expect(parsed.results).toHaveLength(1);
-    expect(parsed.results[0].state).toBe('unhealthy');
-    expect(parsed.results[0].agent).toBe('mac-mini');
-    expect(parsed.results[0].binding).toBe('missing-probe');
+    expect(parsed.results[0].state).toBe("unhealthy");
+    expect(parsed.results[0].agent).toBe("mac-mini");
+    expect(parsed.results[0].binding).toBe("missing-probe");
   });
 
-  test('--node filter restricts the probe to a single agent', async () => {
+  test("--node filter restricts the probe to a single agent", async () => {
     writeConfig(`apiVersion: llamactl/v1
 kind: Config
 currentContext: default
@@ -159,15 +157,15 @@ users:
     token: t
 `);
     const { out } = await captureStdio(() =>
-      runAgent(['cli', 'doctor', '--node=laptop', '--json']),
+      runAgent(["cli", "doctor", "--node=laptop", "--json"]),
     );
     const parsed = JSON.parse(out.trim());
     expect(parsed.results).toHaveLength(1);
-    expect(parsed.results[0].agent).toBe('laptop');
-    expect(parsed.results[0].binding).toBe('binding-b');
+    expect(parsed.results[0].agent).toBe("laptop");
+    expect(parsed.results[0].binding).toBe("binding-b");
   });
 
-  test('no agents + no bindings renders a clean empty result (exit 0)', async () => {
+  test("no agents + no bindings renders a clean empty result (exit 0)", async () => {
     writeConfig(`apiVersion: llamactl/v1
 kind: Config
 currentContext: default
@@ -185,10 +183,8 @@ users:
   - name: me
     token: t
 `);
-    const { result, out } = await captureStdio(() =>
-      runAgent(['cli', 'doctor']),
-    );
+    const { result, out } = await captureStdio(() => runAgent(["cli", "doctor"]));
     expect(result).toBe(0);
-    expect(out).toContain('no CLI bindings declared');
+    expect(out).toContain("no CLI bindings declared");
   });
 });

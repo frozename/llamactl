@@ -66,6 +66,7 @@ packages/
 ## Cross-repo
 
 Nova changes propagate:
+
 ```bash
 (cd ../nova && bun test)
 bun install && bun test

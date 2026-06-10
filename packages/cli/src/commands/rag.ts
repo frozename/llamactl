@@ -1,6 +1,6 @@
-import type { NodeClient } from '@llamactl/remote';
-import { config as kubecfg, resolveNodeKind } from '@llamactl/remote';
-import { getNodeClient } from '../dispatcher.js';
+import type { NodeClient } from "@llamactl/remote";
+import { config as kubecfg, resolveNodeKind } from "@llamactl/remote";
+import { getNodeClient } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl rag <subcommand>
 
@@ -64,20 +64,20 @@ function resolveClient(): NodeClient {
 export async function runRag(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
-    case 'ask':
+    case "ask":
       return runAsk(rest);
-    case 'pipeline': {
-      const { runRagPipeline } = await import('./rag-pipeline.js');
+    case "pipeline": {
+      const { runRagPipeline } = await import("./rag-pipeline.js");
       return runRagPipeline(rest);
     }
-    case 'bench': {
-      const { runRagBenchCli } = await import('./rag-bench.js');
+    case "bench": {
+      const { runRagBenchCli } = await import("./rag-bench.js");
       return runRagBenchCli(rest);
     }
     case undefined:
-    case '--help':
-    case '-h':
-    case 'help':
+    case "--help":
+    case "-h":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:
@@ -101,14 +101,14 @@ interface AskOpts {
 }
 
 function splitFlag(arg: string): [string, string | undefined] {
-  const eq = arg.indexOf('=');
+  const eq = arg.indexOf("=");
   if (eq < 0) return [arg, undefined];
   return [arg.slice(0, eq), arg.slice(eq + 1)];
 }
 
 function parseAsk(args: string[]): AskOpts | { error: string } {
   const opts: AskOpts = {
-    question: '',
+    question: "",
     kb: undefined,
     via: undefined,
     model: undefined,
@@ -127,75 +127,75 @@ function parseAsk(args: string[]): AskOpts | { error: string } {
     const [flag, inline] = splitFlag(arg);
     const takeValue = (): string | undefined =>
       inline ?? (i + 1 < args.length ? args[++i] : undefined);
-    if (!flag.startsWith('-')) {
+    if (!flag.startsWith("-")) {
       // Positional — everything non-flag accumulates into the question.
       questionParts.push(arg);
       continue;
     }
     switch (flag) {
-      case '--kb':
+      case "--kb":
         opts.kb = takeValue();
         break;
-      case '--via':
+      case "--via":
         opts.via = takeValue();
         break;
-      case '--model':
+      case "--model":
         opts.model = takeValue();
         break;
-      case '--top-k': {
+      case "--top-k": {
         const raw = takeValue();
         const n = Number(raw);
         if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
           return {
-            error: `rag ask: --top-k must be a positive integer (got ${raw ?? '<empty>'})`,
+            error: `rag ask: --top-k must be a positive integer (got ${raw ?? "<empty>"})`,
           };
         }
         opts.topK = n;
         break;
       }
-      case '--collection':
+      case "--collection":
         opts.collection = takeValue();
         break;
-      case '--max-tokens': {
+      case "--max-tokens": {
         const raw = takeValue();
         const n = Number(raw);
         if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
           return {
-            error: `rag ask: --max-tokens must be a positive integer (got ${raw ?? '<empty>'})`,
+            error: `rag ask: --max-tokens must be a positive integer (got ${raw ?? "<empty>"})`,
           };
         }
         opts.maxTokens = n;
         break;
       }
-      case '--temperature': {
+      case "--temperature": {
         const raw = takeValue();
         const n = Number(raw);
         if (!Number.isFinite(n) || n < 0) {
           return {
-            error: `rag ask: --temperature must be a non-negative number (got ${raw ?? '<empty>'})`,
+            error: `rag ask: --temperature must be a non-negative number (got ${raw ?? "<empty>"})`,
           };
         }
         opts.temperature = n;
         break;
       }
-      case '--system-prompt':
+      case "--system-prompt":
         opts.systemPrompt = takeValue();
         break;
-      case '--cite':
+      case "--cite":
         opts.cite = true;
         break;
-      case '--json':
+      case "--json":
         opts.json = true;
         break;
-      case '-h':
-      case '--help':
-        return { error: '__help__' };
+      case "-h":
+      case "--help":
+        return { error: "__help__" };
       default:
         return { error: `rag ask: unknown flag ${flag}` };
     }
   }
 
-  opts.question = questionParts.join(' ').trim();
+  opts.question = questionParts.join(" ").trim();
   return opts;
 }
 
@@ -210,9 +210,7 @@ function autoResolveKb(): { name: string } | { error: string } {
   const cfg = kubecfg.loadConfig(cfgPath);
   const ctx = kubecfg.currentContext(cfg);
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
-  const ragNodes = (cluster?.nodes ?? []).filter(
-    (n) => resolveNodeKind(n) === 'rag',
-  );
+  const ragNodes = (cluster?.nodes ?? []).filter((n) => resolveNodeKind(n) === "rag");
   if (ragNodes.length === 1) return { name: ragNodes[0]!.name };
   if (ragNodes.length === 0) {
     return {
@@ -221,7 +219,7 @@ function autoResolveKb(): { name: string } | { error: string } {
         "  hint: register one with 'llamactl node add-rag', or see 'llamactl node ls'.",
     };
   }
-  const names = ragNodes.map((n) => n.name).join(', ');
+  const names = ragNodes.map((n) => n.name).join(", ");
   return {
     error:
       `rag ask: --kb is required — multiple rag nodes available (${names}).\n` +
@@ -256,8 +254,8 @@ interface ChatResponseShape {
 
 async function runAsk(args: string[]): Promise<number> {
   const parsed = parseAsk(args);
-  if ('error' in parsed) {
-    if (parsed.error === '__help__') {
+  if ("error" in parsed) {
+    if (parsed.error === "__help__") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -267,15 +265,15 @@ async function runAsk(args: string[]): Promise<number> {
   const opts = parsed;
 
   if (!opts.question) {
-    process.stderr.write('rag ask: <question> is required\n');
+    process.stderr.write("rag ask: <question> is required\n");
     return 1;
   }
   if (!opts.via) {
-    process.stderr.write('rag ask: --via is required\n');
+    process.stderr.write("rag ask: --via is required\n");
     return 1;
   }
   if (!opts.model) {
-    process.stderr.write('rag ask: --model is required\n');
+    process.stderr.write("rag ask: --model is required\n");
     return 1;
   }
 
@@ -286,7 +284,7 @@ async function runAsk(args: string[]): Promise<number> {
     kbName = opts.kb;
   } else {
     const auto = autoResolveKb();
-    if ('error' in auto) {
+    if ("error" in auto) {
       process.stderr.write(`${auto.error}\n`);
       return 1;
     }
@@ -318,10 +316,10 @@ async function runAsk(args: string[]): Promise<number> {
   // --- Step 2: build the prompt ----------------------------------------
   const systemPrompt =
     opts.systemPrompt ??
-    'Answer strictly from the provided context. If the answer isn\'t there, say "I don\'t know." Be concise.';
+    "Answer strictly from the provided context. If the answer isn't there, say \"I don't know.\" Be concise.";
   const contextBlock = retrieval.results
     .map((r, i) => `[${i + 1}] ${r.document.content}`)
-    .join('\n');
+    .join("\n");
   const userPrompt = `Context:\n${contextBlock}\n\nQuestion: ${opts.question}`;
 
   // --- Step 3: chat completion -----------------------------------------
@@ -332,8 +330,8 @@ async function runAsk(args: string[]): Promise<number> {
       request: {
         model: opts.model,
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
         ],
         max_tokens: opts.maxTokens,
         temperature: opts.temperature,
@@ -350,11 +348,7 @@ async function runAsk(args: string[]): Promise<number> {
 
   const rawAnswer = chat.choices?.[0]?.message?.content;
   const answer =
-    typeof rawAnswer === 'string'
-      ? rawAnswer
-      : rawAnswer == null
-        ? ''
-        : JSON.stringify(rawAnswer);
+    typeof rawAnswer === "string" ? rawAnswer : rawAnswer == null ? "" : JSON.stringify(rawAnswer);
 
   // --- Step 4: render ---------------------------------------------------
   if (opts.json) {
@@ -373,19 +367,16 @@ async function runAsk(args: string[]): Promise<number> {
   }
 
   if (opts.cite) {
-    process.stdout.write(
-      `Retrieved ${retrieval.results.length} passage(s) from ${kbName}:\n`,
-    );
+    process.stdout.write(`Retrieved ${retrieval.results.length} passage(s) from ${kbName}:\n`);
     for (let i = 0; i < retrieval.results.length; i++) {
       const r = retrieval.results[i]!;
       // Truncate long passages at ~240 chars for readability; full text
       // is available via --json.
       const content = r.document.content;
-      const shown =
-        content.length > 240 ? `${content.slice(0, 237)}…` : content;
+      const shown = content.length > 240 ? `${content.slice(0, 237)}…` : content;
       process.stdout.write(`  [${i + 1}] ${shown}\n`);
     }
-    process.stdout.write('\n');
+    process.stdout.write("\n");
   }
 
   process.stdout.write(`${answer}\n`);

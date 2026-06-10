@@ -3,12 +3,12 @@ import type {
   FleetJournalEntry,
   FleetProposalEntry,
   MoveProposal,
-} from './types.js';
+} from "./types.js";
 
 export interface NodeSnapshot {
   node?: string;
   schedulerLeaseHolder?: string;
-  pressureState: 'NORMAL' | 'HIGH';
+  pressureState: "NORMAL" | "HIGH";
   nodeMem: { freeMb: number };
   workloads?: Array<{ name: string; reachable: boolean }>;
 }
@@ -17,7 +17,7 @@ export interface MigrationWorkload {
   name: string;
   node?: string;
   spec?: {
-    placement?: 'auto' | 'pinned' | string;
+    placement?: "auto" | "pinned" | string;
     resources?: {
       memoryMb?: number;
     };
@@ -59,7 +59,7 @@ export class MigrationController {
   constructor(private readonly deps: MigrationControllerDeps) {
     if (!deps.readRecentMoves) return;
     for (const recentMove of deps.readRecentMoves()) {
-      if (!recentMove || typeof recentMove.workload !== 'string') continue;
+      if (!recentMove || typeof recentMove.workload !== "string") continue;
       if (!Number.isFinite(recentMove.movedAtMs)) continue;
       const prior = this.inFlightMoves.get(recentMove.workload);
       if (!prior || recentMove.movedAtMs > prior.movedAtMs) {
@@ -93,7 +93,7 @@ export class MigrationController {
   }
 
   private minRequiredFreeMb(workloadMemoryMb?: number): number {
-    if (typeof workloadMemoryMb !== 'number' || !Number.isFinite(workloadMemoryMb)) {
+    if (typeof workloadMemoryMb !== "number" || !Number.isFinite(workloadMemoryMb)) {
       return this.minDestinationFreeMb;
     }
     return Math.max(this.minDestinationFreeMb, workloadMemoryMb);
@@ -107,9 +107,12 @@ export class MigrationController {
     await new Promise<void>((resolve) => setTimeout(resolve, ms));
   }
 
-  async evaluateMove(workload: MigrationWorkload, snapshot: NodeSnapshot): Promise<MoveProposal | null> {
+  async evaluateMove(
+    workload: MigrationWorkload,
+    snapshot: NodeSnapshot,
+  ): Promise<MoveProposal | null> {
     if (this.deps.leaseholder !== snapshot.schedulerLeaseHolder) return null;
-    if (workload.spec?.placement === 'pinned') return null;
+    if (workload.spec?.placement === "pinned") return null;
     if (this.isInMoveCooldown(workload.name)) return null;
 
     const fromNode = snapshot.node ?? workload.node;
@@ -138,7 +141,7 @@ export class MigrationController {
 
       const freeMb = peerSnapshot.nodeMem?.freeMb;
       const isViable =
-        peerSnapshot.pressureState === 'NORMAL' &&
+        peerSnapshot.pressureState === "NORMAL" &&
         Number.isFinite(freeMb) &&
         freeMb >= requiredFreeMb;
       if (!isViable) continue;
@@ -174,9 +177,10 @@ export class MigrationController {
   isInMoveCooldown(workload: string): boolean {
     const state = this.inFlightMoves.get(workload);
     if (!state) return false;
-    const active = state.tick !== undefined && this.deps.getCurrentTick
-      ? this.currentTick - state.tick < this.moveCooldownTicks
-      : this.nowMs - state.movedAtMs < this.moveCooldownTicks * this.pollIntervalMs;
+    const active =
+      state.tick !== undefined && this.deps.getCurrentTick
+        ? this.currentTick - state.tick < this.moveCooldownTicks
+        : this.nowMs - state.movedAtMs < this.moveCooldownTicks * this.pollIntervalMs;
     if (!active) this.inFlightMoves.delete(workload);
     return active;
   }
@@ -184,28 +188,28 @@ export class MigrationController {
   async executeMove(
     proposal: MoveProposal,
     writeJournalEntry: (entry: FleetJournalEntry) => void,
-  ): Promise<'executed' | 'timed_out' | 'destination_unavailable' | 'apply_failed'> {
+  ): Promise<"executed" | "timed_out" | "destination_unavailable" | "apply_failed"> {
     if (!this.deps.deployWorkload || !this.deps.removeWorkload) {
-      return 'destination_unavailable';
+      return "destination_unavailable";
     }
     const expiresAtMs = proposal.expiresAtMs ?? Date.parse(proposal.expiresAt);
     if (!Number.isFinite(expiresAtMs) || expiresAtMs < this.nowMs) {
-      return 'timed_out';
+      return "timed_out";
     }
 
     const destinationSnapshot = await this.safeFetchSnapshot(proposal.toNode);
     if (!destinationSnapshot) {
-      return 'destination_unavailable';
+      return "destination_unavailable";
     }
 
     const destFreeMb = destinationSnapshot.nodeMem?.freeMb;
     const requiredFreeMb = this.minRequiredFreeMb(proposal.workloadMemoryMb);
     if (
-      destinationSnapshot.pressureState !== 'NORMAL' ||
+      destinationSnapshot.pressureState !== "NORMAL" ||
       !Number.isFinite(destFreeMb) ||
       destFreeMb < requiredFreeMb
     ) {
-      return 'destination_unavailable';
+      return "destination_unavailable";
     }
 
     const ts = new Date(this.nowMs).toISOString();
@@ -214,52 +218,56 @@ export class MigrationController {
       await this.deps.deployWorkload(proposal.workload, proposal.toNode);
     } catch (err) {
       writeJournalEntry({
-        kind: 'fleet-execution',
+        kind: "fleet-execution",
         ts: new Date(this.nowMs).toISOString(),
         node: this.deps.leaseholder,
         proposalId: proposal.proposalId,
         action: {
-          type: 'move',
+          type: "move",
           workload: proposal.workload,
           fromNode: proposal.fromNode,
           toNode: proposal.toNode,
-          reason: 'rebalance',
+          reason: "rebalance",
         },
-        status: 'failed',
+        status: "failed",
         reason: `apply failed: ${(err as Error).message}`,
       });
-      return 'apply_failed';
+      return "apply_failed";
     }
 
     const skippedEvict: FleetExecutionEntry = {
-      kind: 'fleet-execution',
+      kind: "fleet-execution",
       ts,
       node: this.deps.leaseholder,
       proposalId: proposal.evictProposalId,
-      action: { type: 'evict', workload: proposal.workload, reason: `evict suppressed by move ${proposal.proposalId}` },
-      status: 'skipped',
+      action: {
+        type: "evict",
+        workload: proposal.workload,
+        reason: `evict suppressed by move ${proposal.proposalId}`,
+      },
+      status: "skipped",
       reason: `evict suppressed by move ${proposal.proposalId}`,
     };
     writeJournalEntry(skippedEvict);
 
     const moveProposalEntry: FleetProposalEntry = {
-      kind: 'fleet-proposal',
+      kind: "fleet-proposal",
       ts,
       node: this.deps.leaseholder,
       proposalId: proposal.proposalId,
       transition: {
         subject: proposal.workload,
-        subjectKind: 'workload',
-        signal: 'placement',
+        subjectKind: "workload",
+        signal: "placement",
         from: proposal.fromNode,
         to: proposal.toNode,
       },
       action: {
-        type: 'move',
+        type: "move",
         workload: proposal.workload,
         fromNode: proposal.fromNode,
         toNode: proposal.toNode,
-        reason: 'rebalance',
+        reason: "rebalance",
       },
       expiresAt: proposal.expiresAt,
     };
@@ -276,42 +284,42 @@ export class MigrationController {
       if (reachable) {
         await this.deps.removeWorkload(proposal.workload, proposal.fromNode);
         writeJournalEntry({
-          kind: 'fleet-execution',
+          kind: "fleet-execution",
           ts: new Date(this.nowMs).toISOString(),
           node: this.deps.leaseholder,
           proposalId: proposal.proposalId,
           action: {
-            type: 'move',
+            type: "move",
             workload: proposal.workload,
             fromNode: proposal.fromNode,
             toNode: proposal.toNode,
-            reason: 'rebalance',
+            reason: "rebalance",
           },
-          status: 'executed',
+          status: "executed",
         });
-        return 'executed';
+        return "executed";
       }
 
       await this.sleep(this.pollIntervalMs);
     }
 
     writeJournalEntry({
-      kind: 'fleet-execution',
+      kind: "fleet-execution",
       ts: new Date(this.nowMs).toISOString(),
       node: this.deps.leaseholder,
       proposalId: proposal.proposalId,
       action: {
-        type: 'move',
+        type: "move",
         workload: proposal.workload,
         fromNode: proposal.fromNode,
         toNode: proposal.toNode,
-        reason: 'rebalance',
+        reason: "rebalance",
       },
-      status: 'failed',
-      reason: 'timeout waiting for destination health',
+      status: "failed",
+      reason: "timeout waiting for destination health",
     });
 
-    return 'timed_out';
+    return "timed_out";
   }
 
   async onJournalEntry(
@@ -320,11 +328,11 @@ export class MigrationController {
     snapshot?: NodeSnapshot,
   ): Promise<MoveProposal | null> {
     const isPressureRise =
-      entry.kind === 'fleet-transition' &&
-      entry.subjectKind === 'node' &&
-      entry.signal === 'pressure' &&
-      entry.from === 'NORMAL' &&
-      entry.to === 'HIGH';
+      entry.kind === "fleet-transition" &&
+      entry.subjectKind === "node" &&
+      entry.signal === "pressure" &&
+      entry.from === "NORMAL" &&
+      entry.to === "HIGH";
 
     if (!isPressureRise) return null;
     if (!workload || !snapshot) return null;

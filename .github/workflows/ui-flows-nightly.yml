@@ -6,7 +6,7 @@ name: ui-flows-nightly
 
 on:
   schedule:
-    - cron: '30 9 * * *'   # 09:30 UTC, after cross-repo-smoke
+    - cron: "30 9 * * *" # 09:30 UTC, after cross-repo-smoke
   workflow_dispatch:
 
 jobs:

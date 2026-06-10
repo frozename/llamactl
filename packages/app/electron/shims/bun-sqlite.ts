@@ -15,8 +15,8 @@
 export class Database {
   constructor() {
     throw new Error(
-      'bun:sqlite is unavailable in the Electron process; ' +
-        'sqlite-backed stores must run in the Bun daemon',
+      "bun:sqlite is unavailable in the Electron process; " +
+        "sqlite-backed stores must run in the Bun daemon",
     );
   }
 }

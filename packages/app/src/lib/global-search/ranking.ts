@@ -1,8 +1,8 @@
 // packages/app/src/lib/global-search/ranking.ts
-import type { Hit, SurfaceGroup, SurfaceKind } from './types';
+import type { Hit, SurfaceGroup, SurfaceKind } from "./types";
 
 const SURFACE_TIER_BIAS: Record<SurfaceKind, number> = {
-  'tab-history': 0.1,
+  "tab-history": 0.1,
   module: 0.1,
   workload: 0.1,
   node: 0.1,
@@ -18,7 +18,7 @@ export function applySurfaceBias(hit: Hit): number {
 
 const TIE_BREAK_ORDER: Record<SurfaceKind, number> = {
   module: 8,
-  'tab-history': 7,
+  "tab-history": 7,
   workload: 6,
   node: 5,
   preset: 4,

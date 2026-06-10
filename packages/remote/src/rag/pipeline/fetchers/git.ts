@@ -13,31 +13,31 @@
  * URLs (`git@host:org/repo.git`) bypass the injection because their
  * auth is per-user SSH config, not a token.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { readFile } from 'node:fs/promises';
-import { relative } from 'node:path';
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { relative } from "node:path";
 
-import type { Fetcher, FetcherContext } from '../types.js';
-import { GitSourceSpecSchema } from '../schema.js';
-import { looksBinary } from './filesystem.js';
-import { resolveSecret } from '../../../config/secret.js';
+import type { Fetcher, FetcherContext } from "../types.js";
+import { GitSourceSpecSchema } from "../schema.js";
+import { looksBinary } from "./filesystem.js";
+import { resolveSecret } from "../../../config/secret.js";
 
 export const gitFetcher: Fetcher = {
-  kind: 'git',
+  kind: "git",
   async *fetch(ctx) {
     const spec = GitSourceSpecSchema.parse(ctx.spec);
-    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-rag-git-'));
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-rag-git-"));
     try {
       const cloneUrl = resolveCloneUrl(spec, ctx);
-      const cloneArgs = ['clone', '--depth=1', '--quiet'];
-      if (spec.ref) cloneArgs.push('--branch', spec.ref);
+      const cloneArgs = ["clone", "--depth=1", "--quiet"];
+      if (spec.ref) cloneArgs.push("--branch", spec.ref);
       cloneArgs.push(cloneUrl, tmp);
       const cloneResult = await runGit(cloneArgs, { cwd: process.cwd() });
       if (!cloneResult.ok) {
         ctx.log({
-          level: 'error',
+          level: "error",
           msg: `git clone failed: ${cloneResult.stderr.trim()}`,
           data: { repo: spec.repo, ref: spec.ref },
         });
@@ -51,13 +51,13 @@ export const gitFetcher: Fetcher = {
         try {
           const buf = await readFile(absPath);
           if (looksBinary(buf)) {
-            ctx.log({ level: 'warn', msg: `skipping binary file: ${absPath}` });
+            ctx.log({ level: "warn", msg: `skipping binary file: ${absPath}` });
             continue;
           }
-          content = buf.toString('utf8');
+          content = buf.toString("utf8");
         } catch (err) {
           ctx.log({
-            level: 'warn',
+            level: "warn",
             msg: `unreadable file: ${absPath}`,
             data: { error: (err as Error).message },
           });
@@ -68,7 +68,7 @@ export const gitFetcher: Fetcher = {
           id: rel || absPath,
           content,
           metadata: {
-            source_kind: 'git',
+            source_kind: "git",
             repo: spec.repo,
             path: rel || absPath,
             ...(spec.ref !== undefined ? { ref: spec.ref } : {}),
@@ -99,14 +99,12 @@ async function runGit(args: string[], opts: { cwd: string }): Promise<GitResult>
   // Prefer Bun.spawn; fall back to node:child_process for non-Bun
   // test runs. Most llamactl test runs use Bun, but keep both paths
   // compiling for portability.
-  const BunGlobal = (
-    globalThis as { Bun?: { spawn: typeof Bun.spawn } }
-  ).Bun;
+  const BunGlobal = (globalThis as { Bun?: { spawn: typeof Bun.spawn } }).Bun;
   if (BunGlobal?.spawn) {
-    const proc = BunGlobal.spawn(['git', ...args], {
+    const proc = BunGlobal.spawn(["git", ...args], {
       cwd: opts.cwd,
-      stdout: 'pipe',
-      stderr: 'pipe',
+      stdout: "pipe",
+      stderr: "pipe",
     });
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -116,18 +114,18 @@ async function runGit(args: string[], opts: { cwd: string }): Promise<GitResult>
     return { ok: code === 0, stdout, stderr, code };
   }
   // Fallback for plain Node.
-  const { spawn } = await import('node:child_process');
+  const { spawn } = await import("node:child_process");
   return new Promise<GitResult>((resolvePromise) => {
-    const child = spawn('git', args, { cwd: opts.cwd });
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (b: Buffer) => {
+    const child = spawn("git", args, { cwd: opts.cwd });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (b: Buffer) => {
       stdout += b.toString();
     });
-    child.stderr?.on('data', (b: Buffer) => {
+    child.stderr?.on("data", (b: Buffer) => {
       stderr += b.toString();
     });
-    child.on('close', (code) => {
+    child.on("close", (code) => {
       resolvePromise({ ok: code === 0, stdout, stderr, code: code ?? 1 });
     });
   });
@@ -143,20 +141,20 @@ function resolveCloneUrl(
   ctx: FetcherContext,
 ): string {
   if (!spec.auth?.tokenRef) return spec.repo;
-  if (!spec.repo.startsWith('https://')) return spec.repo;
+  if (!spec.repo.startsWith("https://")) return spec.repo;
   let token: string;
   try {
     token = resolveSecret(spec.auth.tokenRef, ctx.env);
   } catch (err) {
     ctx.log({
-      level: 'warn',
-      msg: 'git source: unable to resolve tokenRef, falling back to unauth clone',
+      level: "warn",
+      msg: "git source: unable to resolve tokenRef, falling back to unauth clone",
       data: { error: (err as Error).message },
     });
     return spec.repo;
   }
   const url = new URL(spec.repo);
-  url.username = 'x-access-token';
+  url.username = "x-access-token";
   url.password = token;
   return url.toString();
 }
@@ -169,7 +167,13 @@ function resolveCloneUrl(
  */
 async function* scanFiles(root: string, pattern: string): AsyncIterable<string> {
   const BunGlobal = (
-    globalThis as { Bun?: { Glob: new (p: string) => { scan: (opts: { cwd: string; absolute?: boolean }) => AsyncIterable<string> } } }
+    globalThis as {
+      Bun?: {
+        Glob: new (p: string) => {
+          scan: (opts: { cwd: string; absolute?: boolean }) => AsyncIterable<string>;
+        };
+      };
+    }
   ).Bun;
   if (BunGlobal?.Glob) {
     const g = new BunGlobal.Glob(pattern);
@@ -178,7 +182,7 @@ async function* scanFiles(root: string, pattern: string): AsyncIterable<string> 
     }
     return;
   }
-  const { readdir } = await import('node:fs/promises');
+  const { readdir } = await import("node:fs/promises");
   const regex = globToRegex(pattern);
   async function* walk(dir: string): AsyncIterable<string> {
     let entries;
@@ -201,20 +205,20 @@ async function* scanFiles(root: string, pattern: string): AsyncIterable<string> 
 }
 
 function globToRegex(glob: string): RegExp {
-  let re = '';
+  let re = "";
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i]!;
-    if (c === '*') {
-      if (glob[i + 1] === '*') {
-        re += '.*';
+    if (c === "*") {
+      if (glob[i + 1] === "*") {
+        re += ".*";
         i++;
-        if (glob[i + 1] === '/') i++;
+        if (glob[i + 1] === "/") i++;
       } else {
-        re += '[^/]*';
+        re += "[^/]*";
       }
-    } else if (c === '?') {
-      re += '[^/]';
-    } else if ('\\^$+{}()|[].'.includes(c)) {
+    } else if (c === "?") {
+      re += "[^/]";
+    } else if ("\\^$+{}()|[].".includes(c)) {
       re += `\\${c}`;
     } else {
       re += c;

@@ -1,8 +1,8 @@
-import type { ClusterNode, Config } from '@llamactl/remote';
+import type { ClusterNode, Config } from "@llamactl/remote";
 
 export interface NodeFailure {
   nodeName: string;
-  reason: 'timeout' | 'rejected' | 'aborted';
+  reason: "timeout" | "rejected" | "aborted";
   detail?: string;
 }
 
@@ -40,8 +40,8 @@ export function listAgentNodes(cfg: Config, activeNodeName: string): ClusterNode
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   if (!cluster) return [];
   return cluster.nodes.filter((n) => {
-    const kind = (n as { kind?: string }).kind ?? 'agent';
-    if (kind !== 'agent') return false;
+    const kind = (n as { kind?: string }).kind ?? "agent";
+    if (kind !== "agent") return false;
     if (n.name === activeNodeName) return false;
     return true;
   });
@@ -67,15 +67,17 @@ export async function fanOutSurface<T>(opts: FanOutOpts<T>): Promise<FanOutResul
     opts.nodes.map(async (node) => {
       const child = new AbortController();
       const onOuterAbort = (): void => child.abort();
-      opts.signal?.addEventListener('abort', onOuterAbort);
+      opts.signal?.addEventListener("abort", onOuterAbort);
       const timer = setTimeout(() => child.abort(), timeoutMs);
       try {
         const result = await opts.perNodeFetch(node, child.signal);
         return { node: node.name, ok: true as const, hits: result };
       } catch (err) {
-        const reason: NodeFailure['reason'] = child.signal.aborted
-          ? (opts.signal?.aborted ? 'aborted' : 'timeout')
-          : 'rejected';
+        const reason: NodeFailure["reason"] = child.signal.aborted
+          ? opts.signal?.aborted
+            ? "aborted"
+            : "timeout"
+          : "rejected";
         return {
           node: node.name,
           ok: false as const,
@@ -84,13 +86,13 @@ export async function fanOutSurface<T>(opts: FanOutOpts<T>): Promise<FanOutResul
         };
       } finally {
         clearTimeout(timer);
-        opts.signal?.removeEventListener('abort', onOuterAbort);
+        opts.signal?.removeEventListener("abort", onOuterAbort);
       }
     }),
   );
 
   for (const r of settled) {
-    if (r.status === 'rejected') continue; // shouldn't happen — inner catches
+    if (r.status === "rejected") continue; // shouldn't happen — inner catches
     const v = r.value;
     if (v.ok) {
       hits.push(...v.hits);

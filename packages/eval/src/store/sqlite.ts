@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite';
+import { Database } from "bun:sqlite";
 
 export interface LeaderboardRow {
   model: string;
@@ -82,23 +82,23 @@ export function queryRows(db: Database, filter: QueryFilter = {}): LeaderboardRo
   const clauses: string[] = [];
   const params: Record<string, unknown> = {};
   if (filter.node) {
-    clauses.push('node = $node');
+    clauses.push("node = $node");
     params.$node = filter.node;
   }
   if (filter.min_throughput !== undefined) {
-    clauses.push('throughput_tps >= $min_throughput');
+    clauses.push("throughput_tps >= $min_throughput");
     params.$min_throughput = filter.min_throughput;
   }
   if (filter.min_tool_call_score !== undefined) {
-    clauses.push('tool_call_score >= $min_tool_call_score');
+    clauses.push("tool_call_score >= $min_tool_call_score");
     params.$min_tool_call_score = filter.min_tool_call_score;
   }
-  const orderBy = filter.sort_by ?? 'composite';
+  const orderBy = filter.sort_by ?? "composite";
   const rows = db
     .query(
       `SELECT model, node, ub, throughput_tps, ttft_ms, tool_call_score, context_8k_score, context_16k_score, json_score, composite, asof
        FROM leaderboard
-       ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
+       ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
        ORDER BY ${orderBy} DESC, model ASC, node ASC, ub ASC`,
     )
     .all(params as any) as LeaderboardRow[];

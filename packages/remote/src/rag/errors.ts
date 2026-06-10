@@ -19,19 +19,19 @@
  *     would fail; auto-migration is intentionally out of scope).
  */
 export type RagErrorCode =
-  | 'connect-failed'
-  | 'tool-missing'
-  | 'tool-error'
-  | 'invalid-response'
-  | 'invalid-request'
-  | 'dimension-mismatch';
+  | "connect-failed"
+  | "tool-missing"
+  | "tool-error"
+  | "invalid-response"
+  | "invalid-request"
+  | "dimension-mismatch";
 
 export class RagError extends Error {
   readonly code: RagErrorCode;
   override readonly cause?: unknown;
   constructor(code: RagErrorCode, message: string, cause?: unknown) {
     super(message);
-    this.name = 'RagError';
+    this.name = "RagError";
     this.code = code;
     this.cause = cause;
   }

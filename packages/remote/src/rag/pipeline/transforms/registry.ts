@@ -4,9 +4,9 @@
  * `strip-boilerplate`, or `code-fence-split` plugs in by appending
  * a single entry here.
  */
-import type { Transform } from '../types.js';
-import { markdownChunkTransform } from './markdown-chunk.js';
+import type { Transform } from "../types.js";
+import { markdownChunkTransform } from "./markdown-chunk.js";
 
 export const TRANSFORMS: Record<string, Transform> = {
-  'markdown-chunk': markdownChunkTransform,
+  "markdown-chunk": markdownChunkTransform,
 };

@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve as resolvePath } from 'node:path';
-import { stringify as stringifyYaml } from 'yaml';
-import { getNodeClient } from '../dispatcher.js';
+import { existsSync, readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
+import { getNodeClient } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl composite <subcommand>
 
@@ -26,21 +26,21 @@ Subcommands:
 export async function runComposite(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
-    case 'apply':
+    case "apply":
       return runApply(rest);
-    case 'destroy':
+    case "destroy":
       return runDestroy(rest);
-    case 'list':
-    case 'ls':
+    case "list":
+    case "ls":
       return runList(rest);
-    case 'get':
+    case "get":
       return runGet(rest);
-    case 'status':
+    case "status":
       return runStatus(rest);
     case undefined:
-    case '-h':
-    case '--help':
-    case 'help':
+    case "-h":
+    case "--help":
+    case "help":
       process.stdout.write(USAGE);
       return sub === undefined ? 1 : 0;
     default:
@@ -57,41 +57,41 @@ interface ApplyFlags {
 }
 
 function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
-  let file = '';
+  let file = "";
   let dryRun = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '-f' || arg === '--file') {
-      file = args[++i] ?? '';
-    } else if (arg.startsWith('--file=')) {
-      file = arg.slice('--file='.length);
-    } else if (arg === '--dry-run') {
+    if (arg === "-f" || arg === "--file") {
+      file = args[++i] ?? "";
+    } else if (arg.startsWith("--file=")) {
+      file = arg.slice("--file=".length);
+    } else if (arg === "--dry-run") {
       dryRun = true;
-    } else if (arg === '-h' || arg === '--help') {
-      return { error: 'help' };
-    } else if (arg.startsWith('-')) {
+    } else if (arg === "-h" || arg === "--help") {
+      return { error: "help" };
+    } else if (arg.startsWith("-")) {
       return { error: `Unknown flag: ${arg}` };
     } else {
       return { error: `Unexpected argument: ${arg}` };
     }
   }
-  if (!file) return { error: 'composite apply: -f <manifest.yaml> is required' };
+  if (!file) return { error: "composite apply: -f <manifest.yaml> is required" };
   return { file, dryRun };
 }
 
 async function runApply(args: string[]): Promise<number> {
   const parsed = parseApplyFlags(args);
-  if ('error' in parsed) {
-    const stream = parsed.error === 'help' ? process.stdout : process.stderr;
-    stream.write(parsed.error === 'help' ? USAGE : `${parsed.error}\n\n${USAGE}`);
-    return parsed.error === 'help' ? 0 : 1;
+  if ("error" in parsed) {
+    const stream = parsed.error === "help" ? process.stdout : process.stderr;
+    stream.write(parsed.error === "help" ? USAGE : `${parsed.error}\n\n${USAGE}`);
+    return parsed.error === "help" ? 0 : 1;
   }
   const manifestPath = resolvePath(parsed.file);
   if (!existsSync(manifestPath)) {
     process.stderr.write(`composite apply: file not found: ${manifestPath}\n`);
     return 1;
   }
-  const manifestYaml = readFileSync(manifestPath, 'utf8');
+  const manifestYaml = readFileSync(manifestPath, "utf8");
 
   const client = getNodeClient();
   let result: unknown;
@@ -115,9 +115,7 @@ async function runApply(args: string[]): Promise<number> {
         to: { kind: string; name: string };
       }>;
     };
-    process.stdout.write(
-      `dry-run composite/${r.manifest.metadata.name}\n`,
-    );
+    process.stdout.write(`dry-run composite/${r.manifest.metadata.name}\n`);
     process.stdout.write(`  topological order (${r.order.length} components):\n`);
     if (r.order.length === 0) {
       process.stdout.write(`    (none)\n`);
@@ -141,13 +139,13 @@ async function runApply(args: string[]): Promise<number> {
     dryRun: false;
     ok: boolean;
     status: {
-      phase: 'Pending' | 'Applying' | 'Ready' | 'Degraded' | 'Failed';
+      phase: "Pending" | "Applying" | "Ready" | "Degraded" | "Failed";
       appliedAt?: string;
     };
     rolledBack: boolean;
     componentResults: Array<{
       ref: { kind: string; name: string };
-      state: 'Ready' | 'Failed';
+      state: "Ready" | "Failed";
       message?: string;
     }>;
   };
@@ -155,12 +153,10 @@ async function runApply(args: string[]): Promise<number> {
   if (r.componentResults.length > 0) {
     process.stdout.write(`components:\n`);
     for (const c of r.componentResults) {
-      if (c.state === 'Ready') {
+      if (c.state === "Ready") {
         process.stdout.write(`  ✓ ${c.ref.kind}/${c.ref.name}\n`);
       } else {
-        process.stdout.write(
-          `  ✗ ${c.ref.kind}/${c.ref.name} — ${c.message ?? 'failed'}\n`,
-        );
+        process.stdout.write(`  ✗ ${c.ref.kind}/${c.ref.name} — ${c.message ?? "failed"}\n`);
       }
     }
   }
@@ -179,18 +175,18 @@ interface DestroyFlags {
 }
 
 function parseDestroyFlags(args: string[]): DestroyFlags | { error: string } {
-  let name = '';
+  let name = "";
   let dryRun = false;
   let purgeVolumes = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--dry-run') {
+    if (arg === "--dry-run") {
       dryRun = true;
-    } else if (arg === '--purge-volumes') {
+    } else if (arg === "--purge-volumes") {
       purgeVolumes = true;
-    } else if (arg === '-h' || arg === '--help') {
-      return { error: 'help' };
-    } else if (arg.startsWith('-')) {
+    } else if (arg === "-h" || arg === "--help") {
+      return { error: "help" };
+    } else if (arg.startsWith("-")) {
       return { error: `Unknown flag: ${arg}` };
     } else if (!name) {
       name = arg;
@@ -198,16 +194,16 @@ function parseDestroyFlags(args: string[]): DestroyFlags | { error: string } {
       return { error: `Unexpected argument: ${arg}` };
     }
   }
-  if (!name) return { error: 'composite destroy: <name> is required' };
+  if (!name) return { error: "composite destroy: <name> is required" };
   return { name, dryRun, purgeVolumes };
 }
 
 async function runDestroy(args: string[]): Promise<number> {
   const parsed = parseDestroyFlags(args);
-  if ('error' in parsed) {
-    const stream = parsed.error === 'help' ? process.stdout : process.stderr;
-    stream.write(parsed.error === 'help' ? USAGE : `${parsed.error}\n\n${USAGE}`);
-    return parsed.error === 'help' ? 0 : 1;
+  if ("error" in parsed) {
+    const stream = parsed.error === "help" ? process.stdout : process.stderr;
+    stream.write(parsed.error === "help" ? USAGE : `${parsed.error}\n\n${USAGE}`);
+    return parsed.error === "help" ? 0 : 1;
   }
 
   const client = getNodeClient();
@@ -257,9 +253,7 @@ async function runDestroy(args: string[]): Promise<number> {
   if (r.errors.length > 0) {
     process.stdout.write(`  errors (${r.errors.length}):\n`);
     for (const e of r.errors) {
-      process.stdout.write(
-        `    ✗ ${e.ref.kind}/${e.ref.name} — ${e.message}\n`,
-      );
+      process.stdout.write(`    ✗ ${e.ref.kind}/${e.ref.name} — ${e.message}\n`);
     }
   }
   return r.ok && r.errors.length === 0 ? 0 : 1;
@@ -276,14 +270,14 @@ interface CompositeListRow {
     gateways: unknown[];
   };
   status?: {
-    phase: 'Pending' | 'Applying' | 'Ready' | 'Degraded' | 'Failed';
+    phase: "Pending" | "Applying" | "Ready" | "Degraded" | "Failed";
     appliedAt?: string;
   };
 }
 
 async function runList(args: string[]): Promise<number> {
   for (const arg of args) {
-    if (arg === '-h' || arg === '--help') {
+    if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -301,28 +295,27 @@ async function runList(args: string[]): Promise<number> {
   }
 
   if (rows.length === 0) {
-    process.stdout.write('No composites registered.\n');
+    process.stdout.write("No composites registered.\n");
     return 0;
   }
 
   const entries = rows.map((r) => ({
     name: r.metadata.name,
-    phase: (r.status?.phase ?? 'Pending') as string,
+    phase: (r.status?.phase ?? "Pending") as string,
     components: String(
       r.spec.services.length +
         r.spec.workloads.length +
         r.spec.ragNodes.length +
         r.spec.gateways.length,
     ),
-    applied: r.status?.appliedAt ?? '-',
+    applied: r.status?.appliedAt ?? "-",
   }));
-  const pad = (s: string, w: number): string =>
-    s.length >= w ? s : s + ' '.repeat(w - s.length);
+  const pad = (s: string, w: number): string => (s.length >= w ? s : s + " ".repeat(w - s.length));
   const nameW = Math.max(4, ...entries.map((e) => e.name.length));
   const phaseW = Math.max(5, ...entries.map((e) => e.phase.length));
   const compsW = Math.max(10, ...entries.map((e) => e.components.length));
   process.stdout.write(
-    `${pad('NAME', nameW)}  ${pad('PHASE', phaseW)}  ${pad('COMPONENTS', compsW)}  APPLIED\n`,
+    `${pad("NAME", nameW)}  ${pad("PHASE", phaseW)}  ${pad("COMPONENTS", compsW)}  APPLIED\n`,
   );
   for (const e of entries) {
     process.stdout.write(
@@ -335,13 +328,13 @@ async function runList(args: string[]): Promise<number> {
 // ---- get -----------------------------------------------------------
 
 async function runGet(args: string[]): Promise<number> {
-  let name = '';
+  let name = "";
   for (const arg of args) {
-    if (arg === '-h' || arg === '--help') {
+    if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
     }
-    if (arg.startsWith('-')) {
+    if (arg.startsWith("-")) {
       process.stderr.write(`composite get: unknown flag ${arg}\n`);
       return 1;
     }
@@ -352,7 +345,7 @@ async function runGet(args: string[]): Promise<number> {
     }
   }
   if (!name) {
-    process.stderr.write('composite get: <name> is required\n');
+    process.stderr.write("composite get: <name> is required\n");
     return 1;
   }
 
@@ -376,30 +369,30 @@ async function runGet(args: string[]): Promise<number> {
 
 /** Exported for unit testing — maps one event to a single line of output. */
 export function formatStatusEvent(e: unknown): string | null {
-  if (typeof e !== 'object' || e === null) return null;
+  if (typeof e !== "object" || e === null) return null;
   const ev = e as Record<string, unknown>;
   switch (ev.type) {
-    case 'phase':
+    case "phase":
       return `→ phase: ${String(ev.phase)}`;
-    case 'component-start': {
+    case "component-start": {
       const ref = ev.ref as { kind: string; name: string };
       return `  ▸ ${ref.kind}/${ref.name}: starting`;
     }
-    case 'component-ready': {
+    case "component-ready": {
       const ref = ev.ref as { kind: string; name: string };
       return `  ✓ ${ref.kind}/${ref.name}: ready`;
     }
-    case 'component-failed': {
+    case "component-failed": {
       const ref = ev.ref as { kind: string; name: string };
-      return `  ✗ ${ref.kind}/${ref.name}: ${String(ev.message ?? 'failed')}`;
+      return `  ✗ ${ref.kind}/${ref.name}: ${String(ev.message ?? "failed")}`;
     }
-    case 'rollback-start': {
+    case "rollback-start": {
       const refs = (ev.refs as unknown[]) ?? [];
       return `⇢ rolling back ${refs.length} components`;
     }
-    case 'rollback-complete':
+    case "rollback-complete":
       return `⇠ rollback done`;
-    case 'done':
+    case "done":
       return `⏺ done (ok=${String(ev.ok)})`;
     default:
       return null;
@@ -407,13 +400,13 @@ export function formatStatusEvent(e: unknown): string | null {
 }
 
 async function runStatus(args: string[]): Promise<number> {
-  let name = '';
+  let name = "";
   for (const arg of args) {
-    if (arg === '-h' || arg === '--help') {
+    if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
     }
-    if (arg.startsWith('-')) {
+    if (arg.startsWith("-")) {
       process.stderr.write(`composite status: unknown flag ${arg}\n`);
       return 1;
     }
@@ -424,7 +417,7 @@ async function runStatus(args: string[]): Promise<number> {
     }
   }
   if (!name) {
-    process.stderr.write('composite status: <name> is required\n');
+    process.stderr.write("composite status: <name> is required\n");
     return 1;
   }
 
@@ -449,7 +442,7 @@ async function runStatus(args: string[]): Promise<number> {
   // Local caller path: async iterable.
   if (
     streamable &&
-    typeof streamable === 'object' &&
+    typeof streamable === "object" &&
     Symbol.asyncIterator in (streamable as Record<PropertyKey, unknown>)
   ) {
     const iter = streamable as AsyncIterable<unknown>;
@@ -457,8 +450,8 @@ async function runStatus(args: string[]): Promise<number> {
     const abort = (): void => {
       aborted = true;
     };
-    process.on('SIGINT', abort);
-    process.on('SIGTERM', abort);
+    process.on("SIGINT", abort);
+    process.on("SIGTERM", abort);
     try {
       for await (const ev of iter) {
         if (aborted) break;
@@ -469,8 +462,8 @@ async function runStatus(args: string[]): Promise<number> {
       process.stderr.write(`composite status: ${(err as Error).message}\n`);
       return 1;
     } finally {
-      process.off('SIGINT', abort);
-      process.off('SIGTERM', abort);
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
     }
     return 0;
   }
@@ -509,10 +502,10 @@ async function runStatus(args: string[]): Promise<number> {
       resolve(0);
     };
     const cleanup = (): void => {
-      process.off('SIGINT', abort);
-      process.off('SIGTERM', abort);
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
     };
-    process.on('SIGINT', abort);
-    process.on('SIGTERM', abort);
+    process.on("SIGINT", abort);
+    process.on("SIGTERM", abort);
   });
 }

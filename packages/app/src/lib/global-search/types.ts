@@ -1,15 +1,15 @@
 // packages/app/src/lib/global-search/types.ts
 export type SurfaceKind =
-  | 'module'
-  | 'tab-history'
-  | 'workload'
-  | 'node'
-  | 'preset'
-  | 'session'
-  | 'knowledge'
-  | 'logs';
+  | "module"
+  | "tab-history"
+  | "workload"
+  | "node"
+  | "preset"
+  | "session"
+  | "knowledge"
+  | "logs";
 
-export type MatchKind = 'exact' | 'semantic';
+export type MatchKind = "exact" | "semantic";
 
 export interface MatchExcerpt {
   where: string;
@@ -17,9 +17,7 @@ export interface MatchExcerpt {
   spans: { start: number; end: number }[];
 }
 
-export type HitAction =
-  | { kind: 'open-tab'; tab: any }
-  | { kind: 'command'; id: string };
+export type HitAction = { kind: "open-tab"; tab: any } | { kind: "command"; id: string };
 
 export interface Hit {
   surface: SurfaceKind;

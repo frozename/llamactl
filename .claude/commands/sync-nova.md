@@ -8,19 +8,23 @@ consumer, refreshes lockfiles, runs their test suites.
 Sequence:
 
 1. **Confirm Nova is green first.**
+
    ```bash
    (cd ../nova && bun test && bun run typecheck)
    ```
+
    If red, fix Nova before propagating.
 
 2. **Refresh each consumer.** For every repo that depends on
    `@nova/*` via `file:` (llamactl, sirius-gateway, embersynth,
    plus any new consumer):
+
    ```bash
    (cd ../<consumer> && bun install && bun test)
    ```
 
 3. **Llamactl last** since it's the most sensitive:
+
    ```bash
    bun install
    bun test

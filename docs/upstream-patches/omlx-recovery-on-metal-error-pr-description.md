@@ -43,8 +43,8 @@ the batch alive but is a best-effort heuristic rather than a guarantee.
 
 Trade-off vs. failing the whole batch:
 
-* fail-the-whole-batch loses N - 1 innocent requests per error
-* fail-one-victim occasionally blames an innocent late-arrival when the
+- fail-the-whole-batch loses N - 1 innocent requests per error
+- fail-one-victim occasionally blames an innocent late-arrival when the
   actual culprit was an older sibling
 
 The latter is strictly better when error rates inside a batch are

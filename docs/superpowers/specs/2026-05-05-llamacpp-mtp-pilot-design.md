@@ -10,6 +10,7 @@ where MTP heads are embedded in the same GGUF as the target model. The pinned
 PR SHA for this pilot is `17df5830e72b82841ba6d6c9570fcb31c14da327`.
 
 During validation, two blockers were confirmed for Gemma 4 in this PR line:
+
 - `convert_hf_to_gguf.py` does not register `Gemma4AssistantForCausalLM`.
 - Runtime support for `gemma4_assistant` is absent in the PR tree.
 
@@ -32,8 +33,8 @@ bench evidence.
 
 ## Hardware fit
 
-| Node | Profile | Models in scope | Fit |
-|---|---|---|---|
+| Node    | Profile                  | Models in scope                                                     | Fit                  |
+| ------- | ------------------------ | ------------------------------------------------------------------- | -------------------- |
 | `local` | macbook-pro-48g (M4 Pro) | `qwen36-27b-q4m` (vanilla, ~17 GB) + `qwen36-27b-mtp` (MTP, ~17 GB) | Comfortable headroom |
 
 ### Why 27B dense and not 35B-A3B?
@@ -63,14 +64,15 @@ No conversion harness is part of this pilot.
 
 ## Two slices
 
-| Slice | Deliverable | Gate to next |
-|---|---|---|
-| A | MTP build + one downloaded Qwen MTP GGUF + bench vs vanilla on `local` | Decode speedup >= 1.4x for short-chat and acceptable long-prompt wall-clock |
-| B | Opt-in `decoding: mtp` workload wiring for Qwen on `local` | — |
+| Slice | Deliverable                                                            | Gate to next                                                                |
+| ----- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| A     | MTP build + one downloaded Qwen MTP GGUF + bench vs vanilla on `local` | Decode speedup >= 1.4x for short-chat and acceptable long-prompt wall-clock |
+| B     | Opt-in `decoding: mtp` workload wiring for Qwen on `local`             | —                                                                           |
 
 ### Slice A — validation and benchmark
 
 Deliverables:
+
 1. Build side-by-side MTP binary tree from pinned PR SHA.
 2. Download harness (`download.sh`) for pre-built MTP GGUFs.
 3. Acquire two models: `qwen36-27b-q4m` (vanilla baseline) and `qwen36-27b-mtp` (MTP variant).
@@ -78,6 +80,7 @@ Deliverables:
 5. Results doc with go/no-go recommendation.
 
 Bench structure is unchanged from the original pilot design:
+
 - Short-chat profile (decode-focused)
 - Long-prompt profile (prefill sensitivity)
 - Capture decode throughput, prefill throughput, TTFT, and RSS
@@ -87,6 +90,7 @@ Bench structure is unchanged from the original pilot design:
 Triggered only if Slice A passes for the single in-scope pair.
 
 Schema and routing shape:
+
 - Workload keeps `decoding: mtp | vanilla` (default `vanilla`).
 - Catalog gains a new entry `qwen36-27b-q4m` with `rel` pointing at the vanilla
   baseline and `mtpRel` pointing at the MTP variant. Existing `qwen36-q4m`
@@ -102,12 +106,14 @@ Composite target for this pilot is `chat-mtp-local` (M4 Pro).
 ## Deferred from this pilot
 
 As of 2026-05-05, this pivot intentionally defers:
+
 - Gemma 4 MTP: blocked on upstream runtime/conversion work not present in
   llama.cpp PR #22673.
 - mac-mini 16G MTP: no compatible smaller MTP-capable Qwen model is available
   upstream, and current Qwen 3.6 MTP artifacts exceed that node class.
 
 Revisit when either of the following ships upstream:
+
 - Gemma 4 KV-share MTP runtime path in llama.cpp.
 - A smaller Qwen MTP-capable model artifact suitable for 16G class nodes.
 
@@ -119,6 +125,7 @@ Revisit when either of the following ships upstream:
 ## Reversibility
 
 Fully reversible:
+
 - Remove `LLAMA_CPP_SRC_MTP` / `LLAMA_CPP_BIN_MTP`.
 - Remove downloaded MTP GGUF(s).
 - Flip any `decoding: mtp` workloads back to `vanilla`.

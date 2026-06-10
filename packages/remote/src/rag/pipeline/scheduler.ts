@@ -14,12 +14,12 @@
  * starve the scheduler.
  */
 
-import type { RunSummary } from './runtime.js';
-import type { RagPipelineManifest } from './schema.js';
-import type { PipelineRecord } from './store.js';
-import { listPipelines, writeLastRun, journalPathFor } from './store.js';
-import { openJournal, type JournalEntry } from './journal.js';
-import { runPipeline } from './runtime.js';
+import type { RunSummary } from "./runtime.js";
+import type { RagPipelineManifest } from "./schema.js";
+import type { PipelineRecord } from "./store.js";
+import { listPipelines, writeLastRun, journalPathFor } from "./store.js";
+import { openJournal, type JournalEntry } from "./journal.js";
+import { runPipeline } from "./runtime.js";
 
 /**
  * Compute the timestamp of the next scheduled run for a manifest
@@ -40,13 +40,13 @@ export function nextRunAt(
 ): number | null {
   if (!schedule) return null;
   const trimmed = schedule.trim();
-  if (trimmed === '@hourly') {
+  if (trimmed === "@hourly") {
     return nextBoundary(now, 60 * 60 * 1000);
   }
-  if (trimmed === '@daily') {
+  if (trimmed === "@daily") {
     return nextBoundary(now, 24 * 60 * 60 * 1000);
   }
-  if (trimmed === '@weekly') {
+  if (trimmed === "@weekly") {
     // Sunday-at-midnight UTC cycle. Anchor to epoch Sunday
     // (1970-01-04T00:00:00Z) so the math is stable.
     const WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -59,8 +59,7 @@ export function nextRunAt(
   if (m) {
     const n = Number(m[1]);
     const unit = m[2];
-    const step =
-      unit === 'm' ? n * 60_000 : unit === 'h' ? n * 3_600_000 : n * 86_400_000;
+    const step = unit === "m" ? n * 60_000 : unit === "h" ? n * 3_600_000 : n * 86_400_000;
     if (step <= 0) return null;
     // First run (no prior) fires right away; otherwise `lastRunAt + step`.
     if (lastRunAtMs === null) return now;
@@ -128,15 +127,15 @@ export interface TickReport {
  */
 export type SchedulerJournalEntry =
   | {
-      kind: 'schedule-fired';
+      kind: "schedule-fired";
       ts: string;
       schedule: string;
       next_at: string;
     }
   | {
-      kind: 'schedule-skipped';
+      kind: "schedule-skipped";
       ts: string;
-      reason: 'in-flight' | 'schedule-unparseable';
+      reason: "in-flight" | "schedule-unparseable";
       schedule: string;
     };
 
@@ -151,11 +150,9 @@ export function startPipelineScheduler(
   const now = opts.now ?? Date.now;
   const list = opts.listPipelines ?? (() => listPipelines(opts.env));
   const write = opts.writeLastRun ?? ((name, summary) => writeLastRun(name, summary, opts.env));
-  const journalPath =
-    opts.journalPathFor ?? ((name: string) => journalPathFor(name, opts.env));
+  const journalPath = opts.journalPathFor ?? ((name: string) => journalPathFor(name, opts.env));
   const run =
-    opts.runPipeline ??
-    (async (manifest, path) => runPipeline({ manifest, journalPath: path }));
+    opts.runPipeline ?? (async (manifest, path) => runPipeline({ manifest, journalPath: path }));
 
   let stopped = false;
   const inFlight = new Set<string>();
@@ -174,9 +171,7 @@ export function startPipelineScheduler(
         records = list();
       } catch (err) {
         if (opts.verbose) {
-          process.stderr.write(
-            `rag-pipeline-scheduler: listPipelines failed: ${toMessage(err)}\n`,
-          );
+          process.stderr.write(`rag-pipeline-scheduler: listPipelines failed: ${toMessage(err)}\n`);
         }
       }
 
@@ -189,9 +184,9 @@ export function startPipelineScheduler(
         if (next === null) {
           unparseable.push(rec.name);
           await appendSchedulerEntry(journalPath(rec.name), {
-            kind: 'schedule-skipped',
+            kind: "schedule-skipped",
             ts,
-            reason: 'schedule-unparseable',
+            reason: "schedule-unparseable",
             schedule,
           });
           continue;
@@ -200,9 +195,9 @@ export function startPipelineScheduler(
         if (inFlight.has(rec.name)) {
           skippedInFlight.push(rec.name);
           await appendSchedulerEntry(journalPath(rec.name), {
-            kind: 'schedule-skipped',
+            kind: "schedule-skipped",
             ts,
-            reason: 'in-flight',
+            reason: "in-flight",
             schedule,
           });
           continue;
@@ -212,10 +207,10 @@ export function startPipelineScheduler(
         fired.push(rec.name);
         const nextAfter = nextRunAt(schedule, nowMs, nowMs);
         await appendSchedulerEntry(journalPath(rec.name), {
-          kind: 'schedule-fired',
+          kind: "schedule-fired",
           ts,
           schedule,
-          next_at: nextAfter !== null ? new Date(nextAfter).toISOString() : 'unknown',
+          next_at: nextAfter !== null ? new Date(nextAfter).toISOString() : "unknown",
         });
         // Fire and await — sequential within a tick keeps the scheduler
         // loop single-threaded and predictable. Long-running ingestions
@@ -265,10 +260,7 @@ export function startPipelineScheduler(
   };
 }
 
-async function appendSchedulerEntry(
-  path: string,
-  entry: SchedulerJournalEntry,
-): Promise<void> {
+async function appendSchedulerEntry(path: string, entry: SchedulerJournalEntry): Promise<void> {
   try {
     const j = await openJournal(path);
     // Scheduler entries piggyback on the runtime's journal; the

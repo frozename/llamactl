@@ -10,8 +10,8 @@
  * e.g. `# API > ## Auth > ### Tokens` — so retrieval surfaces the
  * anchor without relying on the body text naming itself.
  */
-import type { RawDoc, Transform } from '../types.js';
-import { MarkdownChunkTransformSchema } from '../schema.js';
+import type { RawDoc, Transform } from "../types.js";
+import { MarkdownChunkTransformSchema } from "../schema.js";
 
 interface Section {
   path: string[];
@@ -19,7 +19,7 @@ interface Section {
 }
 
 export const markdownChunkTransform: Transform = {
-  kind: 'markdown-chunk',
+  kind: "markdown-chunk",
   async *transform(docs, specRaw) {
     const spec = MarkdownChunkTransformSchema.parse(specRaw);
     for await (const doc of docs) {
@@ -54,9 +54,8 @@ export function chunkMarkdown(
   const out: Array<{ content: string; headingPath: string[] }> = [];
 
   for (const sec of sections) {
-    const prefix = spec.preserve_headings && sec.path.length > 0
-      ? formatHeadingPrefix(sec.path) + '\n\n'
-      : '';
+    const prefix =
+      spec.preserve_headings && sec.path.length > 0 ? formatHeadingPrefix(sec.path) + "\n\n" : "";
     const budget = Math.max(1, spec.chunk_size - prefix.length);
     const paragraphs = sec.body
       .split(/\n{2,}/)
@@ -75,7 +74,7 @@ export function chunkMarkdown(
       continue;
     }
 
-    let current = '';
+    let current = "";
     for (const p of paragraphs) {
       const candidate = current.length === 0 ? p : `${current}\n\n${p}`;
       if (candidate.length <= budget || current.length === 0) {
@@ -86,9 +85,10 @@ export function chunkMarkdown(
         content: prefix + current,
         headingPath: sec.path,
       });
-      const tail = spec.overlap > 0 && current.length > spec.overlap
-        ? current.slice(current.length - spec.overlap)
-        : '';
+      const tail =
+        spec.overlap > 0 && current.length > spec.overlap
+          ? current.slice(current.length - spec.overlap)
+          : "";
       current = tail.length > 0 ? `${tail}\n\n${p}` : p;
     }
     if (current.length > 0) {
@@ -115,7 +115,7 @@ function splitByHeadings(text: string): Section[] {
   let bodyLines: string[] = [];
 
   const flush = () => {
-    const body = bodyLines.join('\n').trim();
+    const body = bodyLines.join("\n").trim();
     const path = pathStack.map((p) => p.title);
     if (body.length > 0 || path.length > 0) {
       sections.push({ path, body });
@@ -146,7 +146,5 @@ function splitByHeadings(text: string): Section[] {
 }
 
 function formatHeadingPrefix(path: string[]): string {
-  return path
-    .map((title, i) => `${'#'.repeat(i + 1)} ${title}`)
-    .join(' > ');
+  return path.map((title, i) => `${"#".repeat(i + 1)} ${title}`).join(" > ");
 }

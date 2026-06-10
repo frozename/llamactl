@@ -1,19 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { z } from 'zod';
-import { bench, env as envMod, schemas } from '@llamactl/core';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { z } from "zod";
+import { bench, env as envMod, schemas } from "@llamactl/core";
 type BenchHistoryEntry = schemas.BenchHistoryEntry;
-import { loadConfig, resolveToken } from './kubeconfig.js';
-import {
-  LOCAL_NODE_ENDPOINT,
-  resolveNodeKind,
-  type ClusterNode,
-  type Config,
-} from './schema.js';
-import { loadSiriusProviders } from './sirius-providers.js';
-import { CompositeOwnershipSchema } from '../workload/gateway-catalog/schema.js';
+import { loadConfig, resolveToken } from "./kubeconfig.js";
+import { LOCAL_NODE_ENDPOINT, resolveNodeKind, type ClusterNode, type Config } from "./schema.js";
+import { loadSiriusProviders } from "./sirius-providers.js";
+import { CompositeOwnershipSchema } from "../workload/gateway-catalog/schema.js";
 
 /**
  * llamactl-owned `embersynth.yaml` generator. Embersynth orchestrates
@@ -36,10 +31,10 @@ import { CompositeOwnershipSchema } from '../workload/gateway-catalog/schema.js'
 
 // ---- Schema (tight subset of embersynth's full config) --------------
 
-const EmbersynthAuthSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('none') }),
+const EmbersynthAuthSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("none") }),
   z.object({
-    type: z.literal('bearer'),
+    type: z.literal("bearer"),
     token: z.string(),
   }),
 ]);
@@ -48,12 +43,12 @@ const EmbersynthNodeSchema = z.object({
   id: z.string().min(1),
   label: z.string(),
   endpoint: z.string(),
-  transport: z.literal('http').default('http'),
+  transport: z.literal("http").default("http"),
   enabled: z.boolean().default(true),
   capabilities: z.array(z.string()).default([]),
   tags: z.array(z.string()).default([]),
-  providerType: z.literal('openai-compatible').default('openai-compatible'),
-  modelId: z.string().default('default'),
+  providerType: z.literal("openai-compatible").default("openai-compatible"),
+  modelId: z.string().default("default"),
   priority: z.number().int().default(10),
   auth: EmbersynthAuthSchema.optional(),
   health: z
@@ -101,10 +96,10 @@ const EmbersynthProfileSchema = z.object({
 export const EmbersynthConfigSchema = z.object({
   server: z
     .object({
-      host: z.string().default('127.0.0.1'),
+      host: z.string().default("127.0.0.1"),
       port: z.number().int().default(7777),
     })
-    .default({ host: '127.0.0.1', port: 7777 }),
+    .default({ host: "127.0.0.1", port: 7777 }),
   nodes: z.array(EmbersynthNodeSchema).default([]),
   profiles: z.array(EmbersynthProfileSchema).default([]),
   syntheticModels: z.record(z.string(), z.string()).default({}),
@@ -126,15 +121,15 @@ export type EmbersynthProfile = z.infer<typeof EmbersynthProfileSchema>;
 export function defaultEmbersynthConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_EMBERSYNTH_CONFIG?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'embersynth.yaml');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "embersynth.yaml");
 }
 
 export function loadEmbersynthConfig(
   path: string = defaultEmbersynthConfigPath(),
 ): EmbersynthConfig | null {
   if (!existsSync(path)) return null;
-  const raw = readFileSync(path, 'utf8');
+  const raw = readFileSync(path, "utf8");
   return EmbersynthConfigSchema.parse(parseYaml(raw) ?? {});
 }
 
@@ -143,7 +138,7 @@ export function saveEmbersynthConfig(
   path: string = defaultEmbersynthConfigPath(),
 ): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, stringifyYaml(EmbersynthConfigSchema.parse(cfg)), 'utf8');
+  writeFileSync(path, stringifyYaml(EmbersynthConfigSchema.parse(cfg)), "utf8");
 }
 
 // ---- Generation from llamactl state ----------------------------------
@@ -156,12 +151,12 @@ export function saveEmbersynthConfig(
  * build; users can add `vision` when they pull a vision model.
  */
 const DEFAULT_CAPABILITIES_BY_PROVIDER: Record<string, string[]> = {
-  openai: ['reasoning', 'tools', 'json_mode'],
-  anthropic: ['reasoning', 'long_context', 'tools'],
-  together: ['reasoning'],
-  groq: ['reasoning'],
-  mistral: ['reasoning'],
-  'openai-compatible': ['reasoning'],
+  openai: ["reasoning", "tools", "json_mode"],
+  anthropic: ["reasoning", "long_context", "tools"],
+  together: ["reasoning"],
+  groq: ["reasoning"],
+  mistral: ["reasoning"],
+  "openai-compatible": ["reasoning"],
 };
 
 /**
@@ -214,9 +209,10 @@ function agentToEmbersynthNode(
   token: string,
   benchSummary: BenchSummary | null,
 ): EmbersynthNode {
-  const endpoint = node.endpoint === LOCAL_NODE_ENDPOINT
-    ? 'http://127.0.0.1:8080'
-    : node.endpoint.replace(/\/$/, '');
+  const endpoint =
+    node.endpoint === LOCAL_NODE_ENDPOINT
+      ? "http://127.0.0.1:8080"
+      : node.endpoint.replace(/\/$/, "");
   const priority = benchSummary ? priorityFromGenTps(benchSummary.genTps) : 5;
   const optimization =
     benchSummary && benchSummary.contextWindow
@@ -226,15 +222,15 @@ function agentToEmbersynthNode(
     id: `agent-${node.name}`,
     label: `llamactl agent '${node.name}'`,
     endpoint: `${endpoint}/v1`,
-    transport: 'http',
+    transport: "http",
     enabled: true,
-    capabilities: ['reasoning'],
-    tags: ['llamactl', 'agent', 'local', 'private'],
-    providerType: 'openai-compatible',
-    modelId: benchSummary?.rel ?? 'default',
+    capabilities: ["reasoning"],
+    tags: ["llamactl", "agent", "local", "private"],
+    providerType: "openai-compatible",
+    modelId: benchSummary?.rel ?? "default",
     priority,
-    auth: { type: 'bearer', token },
-    health: { endpoint: '/health', intervalMs: 30000 },
+    auth: { type: "bearer", token },
+    health: { endpoint: "/health", intervalMs: 30000 },
     ...(optimization ? { optimization } : {}),
   });
 }
@@ -245,58 +241,57 @@ function siriusProviderToEmbersynthNode(
   baseUrl: string,
   apiKeyRef?: string,
 ): EmbersynthNode {
-  const capabilities = DEFAULT_CAPABILITIES_BY_PROVIDER[providerKind] ?? ['reasoning'];
+  const capabilities = DEFAULT_CAPABILITIES_BY_PROVIDER[providerKind] ?? ["reasoning"];
   return EmbersynthNodeSchema.parse({
     id: `provider-${providerName}`,
     label: `${providerKind} (via sirius)`,
-    endpoint: baseUrl.replace(/\/$/, ''),
-    transport: 'http',
+    endpoint: baseUrl.replace(/\/$/, ""),
+    transport: "http",
     enabled: true,
     capabilities,
-    tags: ['cloud', providerKind],
-    providerType: 'openai-compatible',
-    modelId: 'default',
+    tags: ["cloud", providerKind],
+    providerType: "openai-compatible",
+    modelId: "default",
     priority: 10,
-    auth: apiKeyRef
-      ? { type: 'bearer', token: apiKeyRef }
-      : { type: 'none' },
+    auth: apiKeyRef ? { type: "bearer", token: apiKeyRef } : { type: "none" },
   });
 }
 
 export const DEFAULT_EMBERSYNTH_PROFILES: EmbersynthProfile[] = [
   {
-    id: 'auto',
-    label: 'Automatic',
-    description: 'Balanced routing with automatic capability selection',
+    id: "auto",
+    label: "Automatic",
+    description: "Balanced routing with automatic capability selection",
     preferLowerPriority: true,
     allowDegradedNodes: false,
   },
   {
-    id: 'fast',
-    label: 'Fast',
-    description: 'Prefer lowest latency, minimize pipeline stages',
+    id: "fast",
+    label: "Fast",
+    description: "Prefer lowest latency, minimize pipeline stages",
     maxStages: 1,
     preferLowerPriority: true,
   },
   {
-    id: 'private',
-    label: 'Private',
-    description: 'Only use nodes tagged private',
-    requiredTags: ['private'],
+    id: "private",
+    label: "Private",
+    description: "Only use nodes tagged private",
+    requiredTags: ["private"],
   },
   {
-    id: 'private-first',
-    label: 'Private First',
-    description: 'Prefer private agents; fall back to other nodes only when no private node is healthy',
+    id: "private-first",
+    label: "Private First",
+    description:
+      "Prefer private agents; fall back to other nodes only when no private node is healthy",
     preferLowerPriority: true,
     allowDegradedNodes: false,
-    preferredTags: ['private'],
+    preferredTags: ["private"],
   },
   {
-    id: 'vision',
-    label: 'Vision',
-    description: 'Vision-capable pipeline with synthesis',
-    preferredCapabilities: ['vision'],
+    id: "vision",
+    label: "Vision",
+    description: "Vision-capable pipeline with synthesis",
+    preferredCapabilities: ["vision"],
     synthesisRequired: true,
   },
 ];
@@ -347,7 +342,7 @@ export function generateEmbersynthConfig(opts?: {
 
   // Agents
   for (const n of cluster?.nodes ?? []) {
-    if (resolveNodeKind(n) !== 'agent') continue;
+    if (resolveNodeKind(n) !== "agent") continue;
     if (n.endpoint === LOCAL_NODE_ENDPOINT) {
       // Skip the inproc sentinel — embersynth needs an HTTP endpoint.
       continue;
@@ -372,11 +367,9 @@ export function generateEmbersynthConfig(opts?: {
     }
   })();
   for (const p of providers) {
-    const baseUrl = p.baseUrl ?? '';
+    const baseUrl = p.baseUrl ?? "";
     if (!baseUrl) continue;
-    nodes.push(
-      siriusProviderToEmbersynthNode(p.name, p.kind, baseUrl, p.apiKeyRef),
-    );
+    nodes.push(siriusProviderToEmbersynthNode(p.name, p.kind, baseUrl, p.apiKeyRef));
   }
 
   const profiles = opts?.existing?.profiles?.length
@@ -384,13 +377,12 @@ export function generateEmbersynthConfig(opts?: {
     : DEFAULT_EMBERSYNTH_PROFILES;
 
   const syntheticModels =
-    opts?.existing?.syntheticModels &&
-    Object.keys(opts.existing.syntheticModels).length > 0
+    opts?.existing?.syntheticModels && Object.keys(opts.existing.syntheticModels).length > 0
       ? opts.existing.syntheticModels
       : Object.fromEntries(profiles.map((p) => [`fusion-${p.id}`, p.id]));
 
   return EmbersynthConfigSchema.parse({
-    server: opts?.existing?.server ?? { host: '127.0.0.1', port: 7777 },
+    server: opts?.existing?.server ?? { host: "127.0.0.1", port: 7777 },
     nodes,
     profiles,
     syntheticModels,

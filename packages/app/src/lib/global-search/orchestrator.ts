@@ -1,21 +1,15 @@
 // packages/app/src/lib/global-search/orchestrator.ts
-import type {
-  GroupedResults,
-  Hit,
-  ParsedQuery,
-  SurfaceGroup,
-  SurfaceKind,
-} from './types';
-import type { TabHistoryState } from './surfaces/tab-history';
-import type { WorkloadItem } from './surfaces/workloads';
-import type { NodeItem } from './surfaces/nodes';
-import type { PresetItem } from './surfaces/presets';
-import { matchModules } from './surfaces/modules';
-import { matchTabHistory } from './surfaces/tab-history';
-import { matchWorkloads } from './surfaces/workloads';
-import { matchNodes } from './surfaces/nodes';
-import { matchPresets } from './surfaces/presets';
-import { applySurfaceBias, sortGroups } from './ranking';
+import type { GroupedResults, Hit, ParsedQuery, SurfaceGroup, SurfaceKind } from "./types";
+import type { TabHistoryState } from "./surfaces/tab-history";
+import type { WorkloadItem } from "./surfaces/workloads";
+import type { NodeItem } from "./surfaces/nodes";
+import type { PresetItem } from "./surfaces/presets";
+import { matchModules } from "./surfaces/modules";
+import { matchTabHistory } from "./surfaces/tab-history";
+import { matchWorkloads } from "./surfaces/workloads";
+import { matchNodes } from "./surfaces/nodes";
+import { matchPresets } from "./surfaces/presets";
+import { applySurfaceBias, sortGroups } from "./ranking";
 
 export interface ClientPhaseInput {
   query: ParsedQuery;
@@ -25,7 +19,7 @@ export interface ClientPhaseInput {
   presets: PresetItem[];
 }
 
-const SERVER_SURFACES: SurfaceKind[] = ['session', 'logs'];
+const SERVER_SURFACES: SurfaceKind[] = ["session", "logs"];
 
 function groupHits(hits: Hit[]): SurfaceGroup[] {
   const groups = new Map<SurfaceKind, SurfaceGroup>();
@@ -52,11 +46,11 @@ export function runClientPhase(input: ClientPhaseInput): GroupedResults {
   if (!needle) return [];
   const allow = (s: SurfaceKind) => !surfaceFilter || surfaceFilter === s;
   const hits: Hit[] = [];
-  if (allow('module')) hits.push(...matchModules(needle));
-  if (allow('tab-history')) hits.push(...matchTabHistory(needle, input.tabState));
-  if (allow('workload')) hits.push(...matchWorkloads(needle, input.workloads));
-  if (allow('node')) hits.push(...matchNodes(needle, input.nodes));
-  if (allow('preset')) hits.push(...matchPresets(needle, input.presets));
+  if (allow("module")) hits.push(...matchModules(needle));
+  if (allow("tab-history")) hits.push(...matchTabHistory(needle, input.tabState));
+  if (allow("workload")) hits.push(...matchWorkloads(needle, input.workloads));
+  if (allow("node")) hits.push(...matchNodes(needle, input.nodes));
+  if (allow("preset")) hits.push(...matchPresets(needle, input.presets));
   const groups = groupHits(hits);
   if (surfaceFilter) return groups.filter((g) => g.surface === surfaceFilter);
   return groups;
@@ -88,7 +82,9 @@ export function mergeServerHits(
       topScore: top,
       pending: false,
       error: opts.error,
-      ...(opts.unreachableNodes || g.unreachableNodes ? { unreachableNodes: opts.unreachableNodes ?? g.unreachableNodes } : {}),
+      ...(opts.unreachableNodes || g.unreachableNodes
+        ? { unreachableNodes: opts.unreachableNodes ?? g.unreachableNodes }
+        : {}),
     };
   });
   if (!current.some((g) => g.surface === surface)) {
@@ -97,7 +93,14 @@ export function mergeServerHits(
       const f = applySurfaceBias(h);
       if (f > top) top = f;
     }
-    out.push({ surface, hits, topScore: top, pending: false, error: opts.error, ...(opts.unreachableNodes ? { unreachableNodes: opts.unreachableNodes } : {}) });
+    out.push({
+      surface,
+      hits,
+      topScore: top,
+      pending: false,
+      error: opts.error,
+      ...(opts.unreachableNodes ? { unreachableNodes: opts.unreachableNodes } : {}),
+    });
   }
   return sortGroups(out);
 }

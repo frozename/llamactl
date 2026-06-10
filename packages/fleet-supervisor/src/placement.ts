@@ -1,7 +1,7 @@
-import { basename } from 'node:path';
-import { projectAdmissionHeadroom } from './policy.js';
-import type { FleetPlacementDecision, NodeScore } from './types.js';
-import type { SnapshotRow } from './aggregator-db.js';
+import { basename } from "node:path";
+import { projectAdmissionHeadroom } from "./policy.js";
+import type { FleetPlacementDecision, NodeScore } from "./types.js";
+import type { SnapshotRow } from "./aggregator-db.js";
 
 export interface PlacementInput {
   workload: string;
@@ -28,14 +28,14 @@ export function scoreNodes(
   return rows.map((entry) => {
     if (!entry) {
       return {
-        node: 'unknown',
+        node: "unknown",
         score: -Infinity,
         freeAfterMb: 0,
         freePenaltyMb: 0,
         compressorMb: 0,
         requestRate5m: 0,
         eligible: false,
-        ineligibilityReason: 'no_telemetry',
+        ineligibilityReason: "no_telemetry",
       };
     }
 
@@ -49,19 +49,20 @@ export function scoreNodes(
         compressorMb: 0,
         requestRate5m: 0,
         eligible: false,
-        ineligibilityReason: 'no_telemetry',
+        ineligibilityReason: "no_telemetry",
       };
     }
 
     const targetModel = input.targetModel.trim();
     const normalizedTarget = basename(targetModel);
-    const modelFilePresent = targetModel.length === 0
-      ? true
-      : snapshot.workloads.some((workload) => {
-          return workload.models.some((model) =>
-            model === targetModel || model === normalizedTarget,
-          );
-        });
+    const modelFilePresent =
+      targetModel.length === 0
+        ? true
+        : snapshot.workloads.some((workload) => {
+            return workload.models.some(
+              (model) => model === targetModel || model === normalizedTarget,
+            );
+          });
 
     const freeAfterMb = snapshot.node_mem.free_mb - input.expectedMemoryMb;
     const freePenaltyMb = modelFilePresent ? 0 : modelFilePenaltyMb;
@@ -79,7 +80,7 @@ export function scoreNodes(
       compressorMaxGiB: compressorWarnMb / 1024,
     });
 
-    const pressureState: NodeScore['pressureState'] = projected.allowed ? 'NORMAL' : 'HIGH';
+    const pressureState: NodeScore["pressureState"] = projected.allowed ? "NORMAL" : "HIGH";
     if (projected.allowed === false) {
       return {
         node: snapshot.node,
@@ -89,7 +90,7 @@ export function scoreNodes(
         compressorMb,
         requestRate5m,
         eligible: false,
-        ineligibilityReason: 'pressure',
+        ineligibilityReason: "pressure",
         pressureState,
       };
     }
@@ -103,7 +104,7 @@ export function scoreNodes(
         compressorMb,
         requestRate5m,
         eligible: false,
-        ineligibilityReason: 'insufficient_headroom',
+        ineligibilityReason: "insufficient_headroom",
         pressureState,
       };
     }
@@ -124,9 +125,7 @@ export function scoreNodes(
   });
 }
 
-export function chooseBestNode(
-  scores: ReadonlyArray<NodeScore>,
-): string | null {
+export function chooseBestNode(scores: ReadonlyArray<NodeScore>): string | null {
   const ranked = [...scores].sort((a, b) => {
     if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
     if (a.score !== b.score) return b.score - a.score;
@@ -145,13 +144,11 @@ export type BuildPlacementDecisionInput = {
   modelFilePenaltyMb?: number;
 };
 
-export function makePlacementDecision(
-  input: BuildPlacementDecisionInput,
-): FleetPlacementDecision {
+export function makePlacementDecision(input: BuildPlacementDecisionInput): FleetPlacementDecision {
   return {
     workload: input.workloadName,
     requestedNode: input.requestedNode,
-    chosenNode: input.scores.find((score) => score.eligible)?.node ?? '',
+    chosenNode: input.scores.find((score) => score.eligible)?.node ?? "",
     expectedMemoryMb: input.expectedMemoryMb,
     headroomMinMb: input.headroomMinMb ?? DEFAULT_HEADROOM_MIN_MB,
     modelFilePenaltyMb: input.modelFilePenaltyMb ?? DEFAULT_MODEL_FILE_PENALTY_MB,

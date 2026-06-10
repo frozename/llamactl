@@ -10,19 +10,19 @@
 
 Cold→warm wall-time gain is far above the 50% trigger threshold at all measured frontiers; write cost is well under 100 ms p95; false-hit rate is zero across every observed warm hit. No write-amplification or false-hit signal motivates the chat-anchor + suppression-API work in Phase 8. Proceed to Phase 9 (already shipped at `559dc34`) or onward.
 
-| acceptance criterion | threshold | observed | verdict |
-|---|---|---|---|
-| 16k-equivalent cold/warm ratio | ≥ 2.0× | 26.5× (1k frontier ≈ 6 k tokens, 2026-05-24) → 34.5× (2k frontier ≈ 12 k tokens, 2026-05-25) | **PASS** |
-| write cost p95 | ≤ 100 ms | not separately instrumented; cold path includes write + decode and stays under 75 s end-to-end at 12 k tokens, so the registry+slot write itself is ≪ 100 ms | PASS (inferred) |
-| false-hit rate (`kv_false_hit_total / kv_warm_hit_total`) | ≤ 1 % | 0/65 across every observed warm hit | **PASS** |
+| acceptance criterion                                      | threshold | observed                                                                                                                                                     | verdict         |
+| --------------------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- |
+| 16k-equivalent cold/warm ratio                            | ≥ 2.0×    | 26.5× (1k frontier ≈ 6 k tokens, 2026-05-24) → 34.5× (2k frontier ≈ 12 k tokens, 2026-05-25)                                                                 | **PASS**        |
+| write cost p95                                            | ≤ 100 ms  | not separately instrumented; cold path includes write + decode and stays under 75 s end-to-end at 12 k tokens, so the registry+slot write itself is ≪ 100 ms | PASS (inferred) |
+| false-hit rate (`kv_false_hit_total / kv_warm_hit_total`) | ≤ 1 %     | 0/65 across every observed warm hit                                                                                                                          | **PASS**        |
 
 ## raw measurements
 
-| date | frontier (label) | est. real tokens | cold ms | warm p50 ms | ratio | kv_warm_hit | kv_cold_miss | kv_false_hit |
-|---|---|---|---|---|---|---|---|---|
-| 2026-05-24 | 512  | ~3 k  | 248    | 188   | 1.32× | 3  | 2   | 0 |
-| 2026-05-24 | 1024 | ~6 k  | 5 645  | 213   | 26.46× | 6  | 3   | 0 |
-| 2026-05-25 | 2048 (smoke) | ~12 k | 73 634 | 2 136 | 34.47× | 65 | 192 | 0 |
+| date       | frontier (label) | est. real tokens | cold ms | warm p50 ms | ratio  | kv_warm_hit | kv_cold_miss | kv_false_hit |
+| ---------- | ---------------- | ---------------- | ------- | ----------- | ------ | ----------- | ------------ | ------------ |
+| 2026-05-24 | 512              | ~3 k             | 248     | 188         | 1.32×  | 3           | 2            | 0            |
+| 2026-05-24 | 1024             | ~6 k             | 5 645   | 213         | 26.46× | 6           | 3            | 0            |
+| 2026-05-25 | 2048 (smoke)     | ~12 k            | 73 634  | 2 136       | 34.47× | 65          | 192          | 0            |
 
 (The 5 644 → 73 634 cold-time difference between 1k and 2k is partly real prefill scaling and partly machine load from co-running dispatches during the 2k run. The warm-vs-cold ratio is the load-invariant signal and is what the gate measures.)
 

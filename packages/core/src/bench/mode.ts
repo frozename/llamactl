@@ -1,9 +1,9 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { findByRel } from '../catalog.js';
-import { resolveEnv } from '../env.js';
-import { findLocalMmproj } from '../mmproj.js';
-import type { BenchMode } from '../types.js';
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { findByRel } from "../catalog.js";
+import { resolveEnv } from "../env.js";
+import { findLocalMmproj } from "../mmproj.js";
+import type { BenchMode } from "../types.js";
 
 /**
  * Pick the bench mode label for a rel. Used to key bench records and
@@ -24,25 +24,22 @@ import type { BenchMode } from '../types.js';
  * can do without network; when HF wires in, that layer slots between
  * (2) and (3).
  */
-export function defaultModeForRel(
-  rel: string,
-  resolved = resolveEnv(),
-): BenchMode {
-  if (/^Qwen3\.5-27B-GGUF\//.test(rel)) return 'text';
+export function defaultModeForRel(rel: string, resolved = resolveEnv()): BenchMode {
+  if (/^Qwen3\.5-27B-GGUF\//.test(rel)) return "text";
 
   const modelPath = join(resolved.LLAMA_CPP_MODELS, rel);
   if (existsSync(modelPath)) {
-    const sep = rel.lastIndexOf('/');
+    const sep = rel.lastIndexOf("/");
     if (sep >= 0) {
       const modelDir = join(resolved.LLAMA_CPP_MODELS, rel.slice(0, sep));
-      if (findLocalMmproj(modelDir)) return 'vision';
+      if (findLocalMmproj(modelDir)) return "vision";
     }
   }
 
   const entry = findByRel(rel);
-  if (entry?.class === 'multimodal') return 'vision';
+  if (entry?.class === "multimodal") return "vision";
 
-  return 'text';
+  return "text";
 }
 
 /**

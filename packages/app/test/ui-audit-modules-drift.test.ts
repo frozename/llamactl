@@ -1,7 +1,7 @@
-import { describe, test, expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { APP_MODULES } from '../src/modules/registry';
+import { describe, test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { APP_MODULES } from "../src/modules/registry";
 
 /**
  * Drift gate: tests/ui-audit-modules.json (consumed by the ui-audit
@@ -20,7 +20,7 @@ import { APP_MODULES } from '../src/modules/registry';
  * (then reseed baselines for any added module: scripts/audit.sh update)
  */
 
-const MODULES_JSON_PATH = resolve(import.meta.dir, '../../../tests/ui-audit-modules.json');
+const MODULES_JSON_PATH = resolve(import.meta.dir, "../../../tests/ui-audit-modules.json");
 
 interface AuditModuleEntry {
   id: string;
@@ -28,8 +28,8 @@ interface AuditModuleEntry {
   rootTestId?: string;
 }
 
-describe('ui-audit-modules.json drift', () => {
-  const actual = JSON.parse(readFileSync(MODULES_JSON_PATH, 'utf8')) as AuditModuleEntry[];
+describe("ui-audit-modules.json drift", () => {
+  const actual = JSON.parse(readFileSync(MODULES_JSON_PATH, "utf8")) as AuditModuleEntry[];
 
   const expected: AuditModuleEntry[] = APP_MODULES.map((m) => {
     const entry: AuditModuleEntry = { id: m.id, label: m.labelKey };
@@ -37,11 +37,11 @@ describe('ui-audit-modules.json drift', () => {
     return entry;
   });
 
-  test('covers every registry module, in registry order, with matching labels/testids', () => {
+  test("covers every registry module, in registry order, with matching labels/testids", () => {
     expect(actual).toEqual(expected);
   });
 
-  test('driver derivation (rootTestId ?? `${id}-root`) resolves to each smokeAffordance', () => {
+  test("driver derivation (rootTestId ?? `${id}-root`) resolves to each smokeAffordance", () => {
     // Locks the contract the driver relies on: when rootTestId is
     // omitted, `${id}-root` must BE the smokeAffordance.
     for (const [i, entry] of actual.entries()) {

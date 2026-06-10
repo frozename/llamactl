@@ -1,9 +1,9 @@
-import type { Runbook } from '../types.js';
-import { promoteFastestVisionModel } from './promote-fastest-vision-model.js';
-import { auditFleet } from './audit-fleet.js';
-import { costSnapshot } from './cost-snapshot.js';
-import { drainNode } from './drain-node.js';
-import { onboardNewGpuNode } from './onboard-new-gpu-node.js';
+import type { Runbook } from "../types.js";
+import { promoteFastestVisionModel } from "./promote-fastest-vision-model.js";
+import { auditFleet } from "./audit-fleet.js";
+import { costSnapshot } from "./cost-snapshot.js";
+import { drainNode } from "./drain-node.js";
+import { onboardNewGpuNode } from "./onboard-new-gpu-node.js";
 
 /**
  * Registry of known runbooks, keyed by name. New runbooks land here

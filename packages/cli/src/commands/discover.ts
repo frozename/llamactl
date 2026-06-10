@@ -1,8 +1,8 @@
-import { discovery } from '@llamactl/core';
-import { getNodeClient, isLocalDispatch } from '../dispatcher.js';
+import { discovery } from "@llamactl/core";
+import { getNodeClient, isLocalDispatch } from "../dispatcher.js";
 
 function padRight(value: string, width: number): string {
-  return value.length >= width ? value : value + ' '.repeat(width - value.length);
+  return value.length >= width ? value : value + " ".repeat(width - value.length);
 }
 
 const USAGE = `Usage: llamactl discover [filter] [profile] [limit]
@@ -26,12 +26,12 @@ Limit: number of HF repos to scan. Defaults to LOCAL_AI_DISCOVERY_LIMIT.
 `;
 
 export async function runDiscover(args: string[]): Promise<number> {
-  if (args.includes('-h') || args.includes('--help')) {
+  if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(USAGE);
     return 0;
   }
 
-  const filter = args[0] ?? 'other';
+  const filter = args[0] ?? "other";
   const requestedProfile = args[1];
   const limitArg = args[2];
   const limit = limitArg ? Number.parseInt(limitArg, 10) : undefined;
@@ -53,7 +53,7 @@ export async function runDiscover(args: string[]): Promise<number> {
       });
 
   if (!result) {
-    process.stderr.write('Unable to fetch Hugging Face discovery feed\n');
+    process.stderr.write("Unable to fetch Hugging Face discovery feed\n");
     return 1;
   }
 
@@ -62,7 +62,7 @@ export async function runDiscover(args: string[]): Promise<number> {
   );
 
   if (result.rows.length === 0) {
-    process.stdout.write('  no-discovery-results\n');
+    process.stdout.write("  no-discovery-results\n");
     return 0;
   }
 
@@ -79,7 +79,7 @@ export async function runDiscover(args: string[]): Promise<number> {
     process.stdout.write(
       `             file=${row.file} downloads=${row.downloads} likes=${row.likes} updated=${row.updated} task=${row.pipeline} rel=${row.rel}\n`,
     );
-    if (row.catalogStatus === 'new') {
+    if (row.catalogStatus === "new") {
       // Keep the shell-compatible hint until `llamactl candidate test`
       // lands; today the user still has `llama-candidate-test` in zsh.
       process.stdout.write(`             try: llama-candidate-test ${row.repo}\n`);

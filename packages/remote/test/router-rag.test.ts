@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test, mock } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test, mock } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type {
   DeleteRequest,
@@ -12,11 +12,11 @@ import type {
   SearchResponse,
   StoreRequest,
   StoreResponse,
-} from '@nova/contracts';
+} from "@nova/contracts";
 
-import { router } from '../src/router.js';
-import { saveConfig, upsertNode } from '../src/config/kubeconfig.js';
-import { freshConfig } from '../src/config/schema.js';
+import { router } from "../src/router.js";
+import { saveConfig, upsertNode } from "../src/config/kubeconfig.js";
+import { freshConfig } from "../src/config/schema.js";
 
 /**
  * Phase 4 — RAG router procedures. Mocks `./rag/index.js` so the test
@@ -37,7 +37,7 @@ interface FakeProviderOptions {
   listCollections?: () => Promise<ListCollectionsResponse>;
 }
 
-let tmp = '';
+let tmp = "";
 const originalEnv = { ...process.env };
 
 let closeCount = 0;
@@ -54,29 +54,29 @@ const calls: Array<{ op: CalledOp; input: unknown }> = [];
 
 function makeFakeProvider(options: FakeProviderOptions): RetrievalProvider {
   return {
-    kind: 'fake',
+    kind: "fake",
     async search(req) {
-      calls.push({ op: 'search', input: req });
+      calls.push({ op: "search", input: req });
       if (options.search) return options.search(req);
-      return { collection: req.collection ?? 'default', results: [] };
+      return { collection: req.collection ?? "default", results: [] };
     },
     async store(req) {
-      calls.push({ op: 'store', input: req });
+      calls.push({ op: "store", input: req });
       if (options.store) return options.store(req);
       return {
-        collection: req.collection ?? 'default',
+        collection: req.collection ?? "default",
         ids: req.documents.map((d) => d.id),
       };
     },
     async delete(req) {
-      calls.push({ op: 'delete', input: req });
+      calls.push({ op: "delete", input: req });
       if (options.delete) return options.delete(req);
-      return { collection: req.collection ?? 'default', deleted: req.ids.length };
+      return { collection: req.collection ?? "default", deleted: req.ids.length };
     },
     async listCollections() {
-      calls.push({ op: 'listCollections', input: null });
+      calls.push({ op: "listCollections", input: null });
       if (options.listCollections) return options.listCollections();
-      return { collections: [{ name: 'default' }] };
+      return { collections: [{ name: "default" }] };
     },
     async close() {
       closeCount++;
@@ -84,7 +84,7 @@ function makeFakeProvider(options: FakeProviderOptions): RetrievalProvider {
   };
 }
 
-mock.module('../src/rag/index.js', () => ({
+mock.module("../src/rag/index.js", () => ({
   createRagAdapter: async (node: { name: string }, opts?: unknown) => {
     lastNodeName = node.name;
     lastFactoryOpts = opts;
@@ -93,9 +93,9 @@ mock.module('../src/rag/index.js', () => ({
 }));
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-router-rag-'));
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-router-rag-"));
   Object.assign(process.env, {
-    LLAMACTL_CONFIG: join(tmp, 'config'),
+    LLAMACTL_CONFIG: join(tmp, "config"),
   });
   closeCount = 0;
   lastNodeName = null;
@@ -103,28 +103,28 @@ beforeEach(() => {
   calls.length = 0;
 
   let cfg = freshConfig();
-  cfg = upsertNode(cfg, 'home', {
-    name: 'kb-chroma',
-    endpoint: '',
-    kind: 'rag',
+  cfg = upsertNode(cfg, "home", {
+    name: "kb-chroma",
+    endpoint: "",
+    kind: "rag",
     rag: {
-      provider: 'chroma',
-      endpoint: 'chroma-mcp run --persist-directory /tmp/chroma-test',
+      provider: "chroma",
+      endpoint: "chroma-mcp run --persist-directory /tmp/chroma-test",
       extraArgs: [],
     },
   });
-  cfg = upsertNode(cfg, 'home', {
-    name: 'kb-pg',
-    endpoint: '',
-    kind: 'rag',
+  cfg = upsertNode(cfg, "home", {
+    name: "kb-pg",
+    endpoint: "",
+    kind: "rag",
     rag: {
-      provider: 'pgvector',
-      endpoint: 'postgres://kb@db.local:5432/kb',
-      collection: 'docs',
+      provider: "pgvector",
+      endpoint: "postgres://kb@db.local:5432/kb",
+      collection: "docs",
       extraArgs: [],
     },
   });
-  saveConfig(cfg, join(tmp, 'config'));
+  saveConfig(cfg, join(tmp, "config"));
 });
 
 afterEach(() => {
@@ -133,14 +133,14 @@ afterEach(() => {
   Object.assign(process.env, originalEnv);
 });
 
-describe('router RAG procedures', () => {
-  test('ragSearch dispatches to adapter and forwards input', async () => {
+describe("router RAG procedures", () => {
+  test("ragSearch dispatches to adapter and forwards input", async () => {
     lastProviderOptions = {
       search: async (req) => ({
-        collection: req.collection ?? 'default',
+        collection: req.collection ?? "default",
         results: [
           {
-            document: { id: 'doc-1', content: 'hello world', metadata: { src: 'test' } },
+            document: { id: "doc-1", content: "hello world", metadata: { src: "test" } },
             score: 0.92,
             distance: 0.08,
           },
@@ -150,118 +150,114 @@ describe('router RAG procedures', () => {
 
     const caller = router.createCaller({});
     const res = await caller.ragSearch({
-      node: 'kb-chroma',
-      query: 'greeting',
+      node: "kb-chroma",
+      query: "greeting",
       topK: 5,
-      filter: { src: 'test' },
-      collection: 'default',
+      filter: { src: "test" },
+      collection: "default",
     });
 
     expect(res.results).toHaveLength(1);
-    expect(res.results[0]?.document.id).toBe('doc-1');
+    expect(res.results[0]?.document.id).toBe("doc-1");
     expect(res.results[0]?.score).toBeCloseTo(0.92);
-    expect(lastNodeName).toBe('kb-chroma');
+    expect(lastNodeName).toBe("kb-chroma");
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.op).toBe('search');
-    expect((calls[0]?.input as SearchRequest).query).toBe('greeting');
+    expect(calls[0]?.op).toBe("search");
+    expect((calls[0]?.input as SearchRequest).query).toBe("greeting");
     expect((calls[0]?.input as SearchRequest).topK).toBe(5);
     expect(closeCount).toBe(1);
   });
 
-  test('ragSearch applies default topK', async () => {
+  test("ragSearch applies default topK", async () => {
     const caller = router.createCaller({});
-    await caller.ragSearch({ node: 'kb-chroma', query: 'hi' });
+    await caller.ragSearch({ node: "kb-chroma", query: "hi" });
     expect((calls[0]?.input as SearchRequest).topK).toBe(10);
   });
 
-  test('ragStore dispatches to adapter and forwards docs', async () => {
+  test("ragStore dispatches to adapter and forwards docs", async () => {
     const caller = router.createCaller({});
     const res = await caller.ragStore({
-      node: 'kb-chroma',
+      node: "kb-chroma",
       documents: [
-        { id: 'a', content: 'alpha' },
-        { id: 'b', content: 'beta', metadata: { k: 'v' } },
+        { id: "a", content: "alpha" },
+        { id: "b", content: "beta", metadata: { k: "v" } },
       ],
     });
 
-    expect(res.ids).toEqual(['a', 'b']);
+    expect(res.ids).toEqual(["a", "b"]);
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.op).toBe('store');
+    expect(calls[0]?.op).toBe("store");
     expect((calls[0]?.input as StoreRequest).documents).toHaveLength(2);
     expect(closeCount).toBe(1);
   });
 
-  test('ragDelete dispatches to adapter and forwards ids', async () => {
+  test("ragDelete dispatches to adapter and forwards ids", async () => {
     const caller = router.createCaller({});
     const res = await caller.ragDelete({
-      node: 'kb-pg',
-      ids: ['a', 'b', 'c'],
-      collection: 'docs',
+      node: "kb-pg",
+      ids: ["a", "b", "c"],
+      collection: "docs",
     });
 
     expect(res.deleted).toBe(3);
-    expect(calls[0]?.op).toBe('delete');
-    expect((calls[0]?.input as DeleteRequest).ids).toEqual(['a', 'b', 'c']);
+    expect(calls[0]?.op).toBe("delete");
+    expect((calls[0]?.input as DeleteRequest).ids).toEqual(["a", "b", "c"]);
     expect(closeCount).toBe(1);
   });
 
-  test('ragListCollections dispatches to adapter', async () => {
+  test("ragListCollections dispatches to adapter", async () => {
     lastProviderOptions = {
       listCollections: async () => ({
         collections: [
-          { name: 'docs', count: 42 },
-          { name: 'logs', count: 7 },
+          { name: "docs", count: 42 },
+          { name: "logs", count: 7 },
         ],
       }),
     };
 
     const caller = router.createCaller({});
-    const res = await caller.ragListCollections({ node: 'kb-pg' });
+    const res = await caller.ragListCollections({ node: "kb-pg" });
 
     expect(res.collections).toHaveLength(2);
-    expect(res.collections[0]?.name).toBe('docs');
-    expect(calls[0]?.op).toBe('listCollections');
+    expect(res.collections[0]?.name).toBe("docs");
+    expect(calls[0]?.op).toBe("listCollections");
     expect(closeCount).toBe(1);
   });
 
-  test('adapter.close() runs even when the adapter method throws', async () => {
+  test("adapter.close() runs even when the adapter method throws", async () => {
     lastProviderOptions = {
       search: async () => {
-        throw new Error('adapter-layer failure');
+        throw new Error("adapter-layer failure");
       },
     };
 
     const caller = router.createCaller({});
-    await expect(
-      caller.ragSearch({ node: 'kb-chroma', query: 'boom' }),
-    ).rejects.toThrow(/adapter-layer failure/);
+    await expect(caller.ragSearch({ node: "kb-chroma", query: "boom" })).rejects.toThrow(
+      /adapter-layer failure/,
+    );
     expect(closeCount).toBe(1);
   });
 
-  test('non-RAG node rejected with BAD_REQUEST', async () => {
+  test("non-RAG node rejected with BAD_REQUEST", async () => {
     // The `local` node from freshConfig() is an inproc agent — not a
     // RAG node — so every ragX procedure must refuse it.
     const caller = router.createCaller({});
-    await expect(
-      caller.ragSearch({ node: 'local', query: 'x' }),
-    ).rejects.toThrow(/not a RAG node/);
+    await expect(caller.ragSearch({ node: "local", query: "x" })).rejects.toThrow(/not a RAG node/);
     expect(closeCount).toBe(0);
   });
 
-  test('missing node rejected', async () => {
+  test("missing node rejected", async () => {
     const caller = router.createCaller({});
-    await expect(
-      caller.ragSearch({ node: 'nope', query: 'x' }),
-    ).rejects.toThrow(/not found/);
+    await expect(caller.ragSearch({ node: "nope", query: "x" })).rejects.toThrow(/not found/);
     expect(closeCount).toBe(0);
   });
 });
 
-describe('router ragX → createRagAdapter options passthrough', () => {
-  test('ragSearch passes { config } so binding.embedder can resolve', async () => {
+describe("router ragX → createRagAdapter options passthrough", () => {
+  test("ragSearch passes { config } so binding.embedder can resolve", async () => {
     lastFactoryOpts = undefined;
     const caller = router.createCaller({});
-    await caller.ragSearch({ node: 'kb-chroma', query: 'hi' });
+    await caller.ragSearch({ node: "kb-chroma", query: "hi" });
     expect(lastFactoryOpts).toBeDefined();
     const opts = lastFactoryOpts as { config?: unknown } | undefined;
     expect(opts?.config).toBeDefined();
@@ -271,44 +267,45 @@ describe('router ragX → createRagAdapter options passthrough', () => {
     const cfg = opts!.config as {
       clusters?: Array<{ nodes?: Array<{ name: string }> }>;
     };
-    const nodeNames =
-      cfg.clusters?.[0]?.nodes?.map((n) => n.name) ?? [];
-    expect(nodeNames).toContain('kb-chroma');
+    const nodeNames = cfg.clusters?.[0]?.nodes?.map((n) => n.name) ?? [];
+    expect(nodeNames).toContain("kb-chroma");
   });
 
-  test('ragStore passes config too', async () => {
+  test("ragStore passes config too", async () => {
     lastFactoryOpts = undefined;
     const caller = router.createCaller({});
     await caller.ragStore({
-      node: 'kb-chroma',
-      documents: [{ id: 'x', content: 'x' }],
+      node: "kb-chroma",
+      documents: [{ id: "x", content: "x" }],
     });
     const opts = lastFactoryOpts as { config?: unknown } | undefined;
     expect(opts?.config).toBeDefined();
   });
 
-  test('embedder binding lands on the node seen by the factory', async () => {
+  test("embedder binding lands on the node seen by the factory", async () => {
     // Register a pgvector node carrying an embedder binding. The
     // router reads kubeconfig via resolveRagNode and passes the
     // full node object (+ config) to createRagAdapter. The fake
     // factory records both; we assert the embedder made it.
-    const { loadConfig, saveConfig, upsertNode: upsert } = await import(
-      '../src/config/kubeconfig.js'
-    );
-    const { join } = await import('node:path');
-    const cfgPath = join(tmp, 'config');
+    const {
+      loadConfig,
+      saveConfig,
+      upsertNode: upsert,
+    } = await import("../src/config/kubeconfig.js");
+    const { join } = await import("node:path");
+    const cfgPath = join(tmp, "config");
     const cfg = loadConfig(cfgPath);
-    const next = upsert(cfg, 'home', {
-      name: 'kb-pg-embed',
-      endpoint: '',
-      kind: 'rag',
+    const next = upsert(cfg, "home", {
+      name: "kb-pg-embed",
+      endpoint: "",
+      kind: "rag",
       rag: {
-        provider: 'pgvector',
-        endpoint: 'postgres://kb@db.local:5432/kb',
-        collection: 'docs',
+        provider: "pgvector",
+        endpoint: "postgres://kb@db.local:5432/kb",
+        collection: "docs",
         embedder: {
-          node: 'sirius',
-          model: 'text-embedding-3-small',
+          node: "sirius",
+          model: "text-embedding-3-small",
         },
         extraArgs: [],
       },
@@ -317,10 +314,10 @@ describe('router ragX → createRagAdapter options passthrough', () => {
 
     lastNodeName = null;
     const caller = router.createCaller({});
-    await caller.ragSearch({ node: 'kb-pg-embed', query: 'hi' });
+    await caller.ragSearch({ node: "kb-pg-embed", query: "hi" });
     // Read through `String()` so TypeScript doesn't narrow the
     // variable to the literal `null` after the assignment above.
-    expect(String(lastNodeName)).toBe('kb-pg-embed');
+    expect(String(lastNodeName)).toBe("kb-pg-embed");
     const opts = lastFactoryOpts as { config?: unknown } | undefined;
     expect(opts?.config).toBeDefined();
     // The factory would use config to resolve the embedder node; we
@@ -330,47 +327,49 @@ describe('router ragX → createRagAdapter options passthrough', () => {
   });
 });
 
-describe('router nodeUpdateRagBinding', () => {
-  test('sets an embedder binding on a RAG node and persists to kubeconfig', async () => {
+describe("router nodeUpdateRagBinding", () => {
+  test("sets an embedder binding on a RAG node and persists to kubeconfig", async () => {
     const caller = router.createCaller({});
     const res = await caller.nodeUpdateRagBinding({
-      node: 'kb-pg',
-      embedder: { node: 'sirius', model: 'text-embedding-3-small' },
+      node: "kb-pg",
+      embedder: { node: "sirius", model: "text-embedding-3-small" },
     });
     expect(res.ok).toBe(true);
     expect(res.embedder).toEqual({
-      node: 'sirius',
-      model: 'text-embedding-3-small',
+      node: "sirius",
+      model: "text-embedding-3-small",
     });
-    const { loadConfig } = await import('../src/config/kubeconfig.js');
-    const cfg = loadConfig(join(tmp, 'config'));
+    const { loadConfig } = await import("../src/config/kubeconfig.js");
+    const cfg = loadConfig(join(tmp, "config"));
     const node = cfg.clusters
-      .find((c) => c.name === 'home')!
-      .nodes.find((n) => n.name === 'kb-pg')!;
+      .find((c) => c.name === "home")!
+      .nodes.find((n) => n.name === "kb-pg")!;
     expect(node.rag?.embedder).toEqual({
-      node: 'sirius',
-      model: 'text-embedding-3-small',
+      node: "sirius",
+      model: "text-embedding-3-small",
     });
     // Sibling fields on the binding survive.
-    expect(node.rag?.provider).toBe('pgvector');
-    expect(node.rag?.collection).toBe('docs');
+    expect(node.rag?.provider).toBe("pgvector");
+    expect(node.rag?.collection).toBe("docs");
   });
 
-  test('clears the embedder binding when passed null', async () => {
+  test("clears the embedder binding when passed null", async () => {
     // Seed an existing embedder so the clear is observable.
-    const { loadConfig, saveConfig, upsertNode: upsert } = await import(
-      '../src/config/kubeconfig.js'
-    );
-    const cfgPath = join(tmp, 'config');
-    const seeded = upsert(loadConfig(cfgPath), 'home', {
-      name: 'kb-pg',
-      endpoint: '',
-      kind: 'rag',
+    const {
+      loadConfig,
+      saveConfig,
+      upsertNode: upsert,
+    } = await import("../src/config/kubeconfig.js");
+    const cfgPath = join(tmp, "config");
+    const seeded = upsert(loadConfig(cfgPath), "home", {
+      name: "kb-pg",
+      endpoint: "",
+      kind: "rag",
       rag: {
-        provider: 'pgvector',
-        endpoint: 'postgres://kb@db.local:5432/kb',
-        collection: 'docs',
-        embedder: { node: 'sirius', model: 'text-embedding-3-small' },
+        provider: "pgvector",
+        endpoint: "postgres://kb@db.local:5432/kb",
+        collection: "docs",
+        embedder: { node: "sirius", model: "text-embedding-3-small" },
         extraArgs: [],
       },
     });
@@ -378,35 +377,35 @@ describe('router nodeUpdateRagBinding', () => {
 
     const caller = router.createCaller({});
     const res = await caller.nodeUpdateRagBinding({
-      node: 'kb-pg',
+      node: "kb-pg",
       embedder: null,
     });
     expect(res.ok).toBe(true);
     expect(res.embedder).toBeNull();
     const cfg = loadConfig(cfgPath);
     const node = cfg.clusters
-      .find((c) => c.name === 'home')!
-      .nodes.find((n) => n.name === 'kb-pg')!;
+      .find((c) => c.name === "home")!
+      .nodes.find((n) => n.name === "kb-pg")!;
     expect(node.rag?.embedder).toBeUndefined();
   });
 
-  test('unknown node rejected', async () => {
+  test("unknown node rejected", async () => {
     const caller = router.createCaller({});
     await expect(
       caller.nodeUpdateRagBinding({
-        node: 'nope',
-        embedder: { node: 'sirius', model: 'text-embedding-3-small' },
+        node: "nope",
+        embedder: { node: "sirius", model: "text-embedding-3-small" },
       }),
     ).rejects.toThrow(/not found/);
   });
 
-  test('non-RAG node rejected with BAD_REQUEST', async () => {
+  test("non-RAG node rejected with BAD_REQUEST", async () => {
     // `local` is an inproc agent — not a RAG node.
     const caller = router.createCaller({});
     await expect(
       caller.nodeUpdateRagBinding({
-        node: 'local',
-        embedder: { node: 'sirius', model: 'text-embedding-3-small' },
+        node: "local",
+        embedder: { node: "sirius", model: "text-embedding-3-small" },
       }),
     ).rejects.toThrow(/not a RAG node/);
   });

@@ -1,10 +1,10 @@
-import { entrySpecHash } from './hash.js';
-import type { ApplyConflict, CompositeOwnership } from './schema.js';
+import { entrySpecHash } from "./hash.js";
+import type { ApplyConflict, CompositeOwnership } from "./schema.js";
 
 type AnyEntry = Record<string, unknown> & { ownership?: CompositeOwnership };
 
 export interface ApplyOpts<T> {
-  kind: 'sirius' | 'embersynth';
+  kind: "sirius" | "embersynth";
   compositeName: string;
   derived: T[];
   current: T[];
@@ -16,11 +16,9 @@ export interface ApplyResult<T> {
   conflicts: ApplyConflict[];
 }
 
-const KEY_OF: Record<string, string> = { sirius: 'name', embersynth: 'id' };
+const KEY_OF: Record<string, string> = { sirius: "name", embersynth: "id" };
 
-export function applyCompositeEntries<T extends AnyEntry>(
-  opts: ApplyOpts<T>,
-): ApplyResult<T> {
+export function applyCompositeEntries<T extends AnyEntry>(opts: ApplyOpts<T>): ApplyResult<T> {
   const key = KEY_OF[opts.kind]!;
   const map = new Map<string, T>();
   for (const e of opts.current) {
@@ -38,7 +36,7 @@ export function applyCompositeEntries<T extends AnyEntry>(
       const next = {
         ...d,
         ownership: {
-          source: 'composite' as const,
+          source: "composite" as const,
           compositeNames: [opts.compositeName],
           specHash: newHash,
         },
@@ -49,14 +47,14 @@ export function applyCompositeEntries<T extends AnyEntry>(
     }
 
     if (!existing.ownership) {
-      conflicts.push({ kind: 'name', name: k, detail: 'operator' });
+      conflicts.push({ kind: "name", name: k, detail: "operator" });
       continue;
     }
 
     const existingHash = entrySpecHash(existing);
     if (existingHash !== newHash) {
       conflicts.push({
-        kind: 'shape',
+        kind: "shape",
         name: k,
         detail: `existing shape (specHash=${existingHash}) does not match composite-derived shape (specHash=${newHash})`,
       });

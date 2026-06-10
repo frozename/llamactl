@@ -48,14 +48,10 @@ import type {
   V1StatefulSet,
   V1Volume,
   V1VolumeMount,
-} from '@kubernetes/client-node';
+} from "@kubernetes/client-node";
 
-import type { ServiceDeployment } from '../backend.js';
-import {
-  K8S_ANNOTATION_KEYS,
-  K8S_LABEL_KEYS,
-  MANAGED_BY_VALUE,
-} from './labels.js';
+import type { ServiceDeployment } from "../backend.js";
+import { K8S_ANNOTATION_KEYS, K8S_LABEL_KEYS, MANAGED_BY_VALUE } from "./labels.js";
 
 export interface TranslateStatefulSetOptions {
   /** Composite-scoped namespace. Applier creates it before calling us. */
@@ -101,29 +97,26 @@ export interface TranslatedStatefulSet {
 }
 
 /** Name of the single container in every emitted pod template. */
-const CONTAINER_NAME = 'container';
+const CONTAINER_NAME = "container";
 /** Default storage request when `spec.volumes[]` doesn't carry one. */
-const DEFAULT_STORAGE_REQUEST = '20Gi';
+const DEFAULT_STORAGE_REQUEST = "20Gi";
 /** Suffix on the regular (non-headless) Service. See module header. */
-const CLIENT_SERVICE_SUFFIX = '-client';
+const CLIENT_SERVICE_SUFFIX = "-client";
 /** Suffix on the Secret emitted alongside the StatefulSet. */
-const SECRET_SUFFIX = '-secrets';
+const SECRET_SUFFIX = "-secrets";
 
 /**
  * Build the shared label taxonomy. Stamped on the StatefulSet,
  * pod template metadata, both Services, and the Secret so
  * label-selector based list/destroy operations reach every child.
  */
-function commonLabels(
-  spec: ServiceDeployment,
-  compositeName: string,
-): Record<string, string> {
+function commonLabels(spec: ServiceDeployment, compositeName: string): Record<string, string> {
   const labels: Record<string, string> = {
     [K8S_LABEL_KEYS.managedBy]: MANAGED_BY_VALUE,
     [K8S_LABEL_KEYS.instance]: `${compositeName}-${spec.name}`,
     [K8S_LABEL_KEYS.partOf]: compositeName,
     [K8S_LABEL_KEYS.composite]: compositeName,
-    [K8S_LABEL_KEYS.component]: 'service',
+    [K8S_LABEL_KEYS.component]: "service",
     // `app` is the StatefulSet + Services selector key. Keeping it
     // short + conventional matches the examples in the upstream
     // StatefulSet docs.
@@ -148,31 +141,25 @@ function commonAnnotations(spec: ServiceDeployment): Record<string, string> {
   };
 }
 
-function containerPorts(
-  spec: ServiceDeployment,
-): V1ContainerPort[] | undefined {
+function containerPorts(spec: ServiceDeployment): V1ContainerPort[] | undefined {
   if (!spec.ports || spec.ports.length === 0) return undefined;
   return spec.ports.map((p) => ({
     containerPort: p.containerPort,
-    protocol: (p.protocol ?? 'tcp').toUpperCase(),
+    protocol: (p.protocol ?? "tcp").toUpperCase(),
   }));
 }
 
-function containerEnv(
-  spec: ServiceDeployment,
-  secretName: string,
-): V1EnvVar[] | undefined {
-  const staticEntries: V1EnvVar[] = Object.entries(spec.env ?? {}).map(
-    ([name, value]) => ({ name, value }),
-  );
-  const secretEntries: V1EnvVar[] = Object.keys(spec.secrets ?? {}).map(
-    (name) => ({
-      name,
-      valueFrom: {
-        secretKeyRef: { name: secretName, key: name },
-      },
-    }),
-  );
+function containerEnv(spec: ServiceDeployment, secretName: string): V1EnvVar[] | undefined {
+  const staticEntries: V1EnvVar[] = Object.entries(spec.env ?? {}).map(([name, value]) => ({
+    name,
+    value,
+  }));
+  const secretEntries: V1EnvVar[] = Object.keys(spec.secrets ?? {}).map((name) => ({
+    name,
+    valueFrom: {
+      secretKeyRef: { name: secretName, key: name },
+    },
+  }));
   const all = [...staticEntries, ...secretEntries];
   return all.length > 0 ? all : undefined;
 }
@@ -184,25 +171,16 @@ function livenessProbe(spec: ServiceDeployment): V1Probe | undefined {
   const command = spec.healthcheck.test.slice(1);
   const probe: V1Probe = { exec: { command } };
   if (spec.healthcheck.intervalMs !== undefined) {
-    probe.periodSeconds = Math.max(
-      1,
-      Math.round(spec.healthcheck.intervalMs / 1000),
-    );
+    probe.periodSeconds = Math.max(1, Math.round(spec.healthcheck.intervalMs / 1000));
   }
   if (spec.healthcheck.timeoutMs !== undefined) {
-    probe.timeoutSeconds = Math.max(
-      1,
-      Math.round(spec.healthcheck.timeoutMs / 1000),
-    );
+    probe.timeoutSeconds = Math.max(1, Math.round(spec.healthcheck.timeoutMs / 1000));
   }
   if (spec.healthcheck.retries !== undefined) {
     probe.failureThreshold = spec.healthcheck.retries;
   }
   if (spec.healthcheck.startPeriodMs !== undefined) {
-    probe.initialDelaySeconds = Math.max(
-      0,
-      Math.round(spec.healthcheck.startPeriodMs / 1000),
-    );
+    probe.initialDelaySeconds = Math.max(0, Math.round(spec.healthcheck.startPeriodMs / 1000));
   }
   return probe;
 }
@@ -249,8 +227,8 @@ function buildVolumeClaimTemplates(
       return;
     }
     const name = v.name ?? `data-${i}`;
-    const pvcSpec: V1PersistentVolumeClaim['spec'] = {
-      accessModes: ['ReadWriteOnce'],
+    const pvcSpec: V1PersistentVolumeClaim["spec"] = {
+      accessModes: ["ReadWriteOnce"],
       resources: { requests: { storage: DEFAULT_STORAGE_REQUEST } },
     };
     // Omit the field entirely when the operator didn't set it.
@@ -284,7 +262,7 @@ function servicePorts(spec: ServiceDeployment): V1ServicePort[] | undefined {
   return spec.ports.map((p) => ({
     port: p.hostPort ?? p.containerPort,
     targetPort: p.containerPort,
-    protocol: (p.protocol ?? 'tcp').toUpperCase(),
+    protocol: (p.protocol ?? "tcp").toUpperCase(),
   }));
 }
 
@@ -304,7 +282,7 @@ function encodeSecretData(
         `translate-statefulset: missing resolved secret for key '${key}' (backend must resolve every spec.secrets entry before translate)`,
       );
     }
-    data[key] = Buffer.from(value, 'utf8').toString('base64');
+    data[key] = Buffer.from(value, "utf8").toString("base64");
   }
   return data;
 }
@@ -325,10 +303,7 @@ export function translateToStatefulSet(
   const hasSecrets = secretNames.length > 0;
   const secretObjectName = `${spec.name}${SECRET_SUFFIX}`;
 
-  const { templates, mounts, podVolumes } = buildVolumeClaimTemplates(
-    spec,
-    storageClassName,
-  );
+  const { templates, mounts, podVolumes } = buildVolumeClaimTemplates(spec, storageClassName);
 
   const container: V1Container = {
     name: CONTAINER_NAME,
@@ -344,8 +319,8 @@ export function translateToStatefulSet(
   if (mounts.length > 0) container.volumeMounts = mounts;
 
   const statefulSet: V1StatefulSet = {
-    apiVersion: 'apps/v1',
-    kind: 'StatefulSet',
+    apiVersion: "apps/v1",
+    kind: "StatefulSet",
     metadata: {
       name: spec.name,
       namespace,
@@ -372,8 +347,8 @@ export function translateToStatefulSet(
   const svcPorts = servicePorts(spec);
 
   const headlessService: V1Service = {
-    apiVersion: 'v1',
-    kind: 'Service',
+    apiVersion: "v1",
+    kind: "Service",
     metadata: {
       name: spec.name,
       namespace,
@@ -381,15 +356,15 @@ export function translateToStatefulSet(
       annotations,
     },
     spec: {
-      clusterIP: 'None',
+      clusterIP: "None",
       selector: { app: spec.name },
       ...(svcPorts && { ports: svcPorts }),
     },
   };
 
   const service: V1Service = {
-    apiVersion: 'v1',
-    kind: 'Service',
+    apiVersion: "v1",
+    kind: "Service",
     metadata: {
       name: `${spec.name}${CLIENT_SERVICE_SUFFIX}`,
       namespace,
@@ -402,8 +377,7 @@ export function translateToStatefulSet(
       // regardless of the override (the StatefulSet's serviceName
       // contract relies on it). Absence → default ClusterIP with
       // `type` omitted so k8s auto-allocates.
-      ...(spec.serviceType &&
-        spec.serviceType !== 'ClusterIP' && { type: spec.serviceType }),
+      ...(spec.serviceType && spec.serviceType !== "ClusterIP" && { type: spec.serviceType }),
       // Omit `clusterIP` entirely → k8s auto-allocates a ClusterIP.
       // Do NOT set `'None'` here: that would make it headless too.
       selector: { app: spec.name },
@@ -413,9 +387,9 @@ export function translateToStatefulSet(
 
   const secret: V1Secret | null = hasSecrets
     ? {
-        apiVersion: 'v1',
-        kind: 'Secret',
-        type: 'Opaque',
+        apiVersion: "v1",
+        kind: "Secret",
+        type: "Opaque",
         metadata: {
           name: secretObjectName,
           namespace,

@@ -9,18 +9,18 @@
  * materially equal hash to the same digest across hosts, JS
  * engines, and zod versions.
  */
-import { createHash } from 'node:crypto';
+import { createHash } from "node:crypto";
 
 export function canonicalStringify(value: unknown): string {
   return JSON.stringify(canonicalize(value));
 }
 
 export function sha256Hex(value: unknown): string {
-  return createHash('sha256').update(canonicalStringify(value)).digest('hex');
+  return createHash("sha256").update(canonicalStringify(value)).digest("hex");
 }
 
 function canonicalize(value: unknown): unknown {
-  if (value === null || typeof value !== 'object') return value;
+  if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map(canonicalize);
   const obj = value as Record<string, unknown>;
   const keys = Object.keys(obj)

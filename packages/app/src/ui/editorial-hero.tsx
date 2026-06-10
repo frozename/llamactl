@@ -1,6 +1,6 @@
-import * as React from 'react';
-import { cx } from './classes';
-import { AtmosphericPanel } from './atmospheric-panel';
+import * as React from "react";
+import { cx } from "./classes";
+import { AtmosphericPanel } from "./atmospheric-panel";
 
 export interface EditorialHeroProps {
   eyebrow?: React.ReactNode;
@@ -9,7 +9,7 @@ export interface EditorialHeroProps {
    *  plain text or a <em> — this component wraps it. */
   titleAccent?: React.ReactNode;
   lede?: React.ReactNode;
-  pills?: readonly { label: React.ReactNode; tone?: 'default' | 'ok' | 'info' }[];
+  pills?: readonly { label: React.ReactNode; tone?: "default" | "ok" | "info" }[];
   actions?: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
@@ -31,18 +31,18 @@ export function EditorialHero({
   style,
 }: EditorialHeroProps): React.JSX.Element {
   return (
-    <AtmosphericPanel className={cx('bcn-editorial-hero', className)} style={style}>
+    <AtmosphericPanel className={cx("bcn-editorial-hero", className)} style={style}>
       {eyebrow && (
         <div
           style={{
-            display: 'inline-flex',
-            alignItems: 'center',
+            display: "inline-flex",
+            alignItems: "center",
             gap: 10,
-            fontFamily: 'var(--font-mono)',
+            fontFamily: "var(--font-mono)",
             fontSize: 11,
-            letterSpacing: '0.16em',
-            textTransform: 'uppercase',
-            color: 'var(--color-text-tertiary)',
+            letterSpacing: "0.16em",
+            textTransform: "uppercase",
+            color: "var(--color-text-tertiary)",
             marginBottom: 20,
           }}
         >
@@ -51,9 +51,9 @@ export function EditorialHero({
             style={{
               width: 6,
               height: 6,
-              borderRadius: '50%',
-              background: 'var(--color-brand)',
-              boxShadow: '0 0 8px var(--color-brand)',
+              borderRadius: "50%",
+              background: "var(--color-brand)",
+              boxShadow: "0 0 8px var(--color-brand)",
             }}
           />
           {eyebrow}
@@ -61,20 +61,25 @@ export function EditorialHero({
       )}
       <h1
         style={{
-          fontFamily: 'var(--font-display)',
+          fontFamily: "var(--font-display)",
           fontWeight: 300,
-          fontSize: 'clamp(28px, 3.4vw, 48px)',
-          letterSpacing: '-0.025em',
+          fontSize: "clamp(28px, 3.4vw, 48px)",
+          letterSpacing: "-0.025em",
           lineHeight: 1.05,
-          margin: '0 0 16px',
-          color: 'var(--color-text)',
+          margin: "0 0 16px",
+          color: "var(--color-text)",
         }}
       >
         {title}
         {titleAccent && (
           <>
-            {' '}
-            <em className="t-brand" style={{ color: 'var(--color-brand)', fontWeight: 400, fontStyle: 'normal' }}>{titleAccent}</em>
+            {" "}
+            <em
+              className="t-brand"
+              style={{ color: "var(--color-brand)", fontWeight: 400, fontStyle: "normal" }}
+            >
+              {titleAccent}
+            </em>
           </>
         )}
       </h1>
@@ -83,9 +88,9 @@ export function EditorialHero({
           style={{
             fontSize: 15,
             lineHeight: 1.55,
-            color: 'var(--color-text-secondary)',
-            maxWidth: '62ch',
-            margin: '0 0 20px',
+            color: "var(--color-text-secondary)",
+            maxWidth: "62ch",
+            margin: "0 0 20px",
             fontWeight: 300,
           }}
         >
@@ -93,21 +98,21 @@ export function EditorialHero({
         </p>
       )}
       {pills && pills.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: actions ? 24 : 0 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: actions ? 24 : 0 }}>
           {pills.map((p, i) => (
             <span
               key={i}
               style={{
-                display: 'inline-flex',
-                alignItems: 'center',
+                display: "inline-flex",
+                alignItems: "center",
                 gap: 6,
-                padding: '4px 10px',
-                borderRadius: 'var(--r-pill)',
-                background: 'var(--color-surface-2)',
-                border: '1px solid var(--color-border-subtle)',
-                fontFamily: 'var(--font-mono)',
+                padding: "4px 10px",
+                borderRadius: "var(--r-pill)",
+                background: "var(--color-surface-2)",
+                border: "1px solid var(--color-border-subtle)",
+                fontFamily: "var(--font-mono)",
                 fontSize: 11,
-                color: 'var(--color-text-secondary)',
+                color: "var(--color-text-secondary)",
               }}
             >
               <span
@@ -115,15 +120,19 @@ export function EditorialHero({
                 style={{
                   width: 6,
                   height: 6,
-                  borderRadius: '50%',
+                  borderRadius: "50%",
                   background:
-                    p.tone === 'ok' ? 'var(--color-ok)' :
-                    p.tone === 'info' ? 'var(--color-info)' :
-                    'var(--color-text-tertiary)',
+                    p.tone === "ok"
+                      ? "var(--color-ok)"
+                      : p.tone === "info"
+                        ? "var(--color-info)"
+                        : "var(--color-text-tertiary)",
                   boxShadow:
-                    p.tone === 'ok' ? '0 0 6px var(--color-ok)' :
-                    p.tone === 'info' ? '0 0 6px var(--color-info)' :
-                    'none',
+                    p.tone === "ok"
+                      ? "0 0 6px var(--color-ok)"
+                      : p.tone === "info"
+                        ? "0 0 6px var(--color-info)"
+                        : "none",
                 }}
               />
               {p.label}

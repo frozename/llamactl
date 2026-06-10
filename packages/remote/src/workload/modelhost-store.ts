@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { resolve, sep, join } from 'node:path';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import { defaultWorkloadsDir } from './store.js';
-import { ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { resolve, sep, join } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { defaultWorkloadsDir } from "./store.js";
+import { ModelHostManifestSchema, type ModelHostManifest } from "./modelhost-schema.js";
 
 export function defaultModelHostDir(env: NodeJS.ProcessEnv = process.env): string {
   return defaultWorkloadsDir(env);
@@ -10,8 +10,8 @@ export function defaultModelHostDir(env: NodeJS.ProcessEnv = process.env): strin
 
 export function parseModelHost(raw: string): ModelHostManifest {
   const parsed = parseYaml(raw) as { apiVersion?: string } | null;
-  if (parsed && parsed.apiVersion === 'llamactl.io/v1') {
-    parsed.apiVersion = 'llamactl/v1';
+  if (parsed && parsed.apiVersion === "llamactl.io/v1") {
+    parsed.apiVersion = "llamactl/v1";
   }
   return ModelHostManifestSchema.parse(parsed);
 }
@@ -25,27 +25,35 @@ function ensureModelHostPathWithinDir(path: string, dir: string): string {
   const resolvedPath = resolve(path);
   const allowedPrefix = `${resolvedDir}${sep}`;
   if (resolvedPath !== resolvedDir && !resolvedPath.startsWith(allowedPrefix)) {
-    throw new Error(`ModelHost path escapes workloads dir: ${resolvedPath} not within ${resolvedDir}`);
+    throw new Error(
+      `ModelHost path escapes workloads dir: ${resolvedPath} not within ${resolvedDir}`,
+    );
   }
   return resolvedPath;
 }
 
 export function loadModelHost(path: string): ModelHostManifest {
-  return parseModelHost(readFileSync(path, 'utf8'));
+  return parseModelHost(readFileSync(path, "utf8"));
 }
 
-export function loadModelHostByName(name: string, dir: string = defaultModelHostDir()): ModelHostManifest {
+export function loadModelHostByName(
+  name: string,
+  dir: string = defaultModelHostDir(),
+): ModelHostManifest {
   const path = ensureModelHostPathWithinDir(modelHostPath(name, dir), dir);
   if (!existsSync(path)) throw new Error(`ModelHost ${name} not found at ${path}`);
   return loadModelHost(path);
 }
 
-export function saveModelHost(manifest: ModelHostManifest, dir: string = defaultModelHostDir()): string {
+export function saveModelHost(
+  manifest: ModelHostManifest,
+  dir: string = defaultModelHostDir(),
+): string {
   const { status: _status, ...desired } = manifest as ModelHostManifest & { status?: unknown };
   const validated = ModelHostManifestSchema.parse(desired);
   mkdirSync(dir, { recursive: true });
   const path = ensureModelHostPathWithinDir(modelHostPath(validated.metadata.name, dir), dir);
-  writeFileSync(path, stringifyYaml(validated), 'utf8');
+  writeFileSync(path, stringifyYaml(validated), "utf8");
   return path;
 }
 
@@ -56,17 +64,20 @@ export function listModelHosts(
   if (!existsSync(dir)) return [];
   const out: ModelHostManifest[] = [];
   for (const entry of readdirSync(dir)) {
-    if (!entry.endsWith('.yaml')) continue;
+    if (!entry.endsWith(".yaml")) continue;
     const file = join(dir, entry);
     try {
-      const parsed = parseYaml(readFileSync(file, 'utf8')) as { kind?: string };
-      if (parsed?.kind !== 'ModelHost') continue;
+      const parsed = parseYaml(readFileSync(file, "utf8")) as { kind?: string };
+      if (parsed?.kind !== "ModelHost") continue;
       out.push(ModelHostManifestSchema.parse(parsed));
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      (onSkip ?? ((skippedFile: string, skippedErr: Error) => {
-        console.warn(`listModelHosts: skipped ${skippedFile}: ${skippedErr.message}`);
-      }))(file, error);
+      (
+        onSkip ??
+        ((skippedFile: string, skippedErr: Error) => {
+          console.warn(`listModelHosts: skipped ${skippedFile}: ${skippedErr.message}`);
+        })
+      )(file, error);
     }
   }
   return out.sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));

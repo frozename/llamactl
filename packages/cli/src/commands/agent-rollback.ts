@@ -1,5 +1,5 @@
-import { config as cfgMod, makePinnedFetch } from '@llamactl/remote';
-import { getGlobals, isLocalDispatch } from '../dispatcher.js';
+import { config as cfgMod, makePinnedFetch } from "@llamactl/remote";
+import { getGlobals, isLocalDispatch } from "../dispatcher.js";
 
 /**
  * `llamactl --node <n> agent rollback`
@@ -37,21 +37,23 @@ interface ParsedArgs {
 function parseArgs(argv: string[]): ParsedArgs | { error: string } {
   const out: ParsedArgs = { readinessTimeoutSec: 30, json: false };
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') return { error: '__help' };
-    if (arg === '--json') {
+    if (arg === "--help" || arg === "-h") return { error: "__help" };
+    if (arg === "--json") {
       out.json = true;
       continue;
     }
-    const eq = arg.indexOf('=');
-    if (!arg.startsWith('--') || eq < 0) {
+    const eq = arg.indexOf("=");
+    if (!arg.startsWith("--") || eq < 0) {
       return { error: `agent rollback: flags must be --key=value (${arg})` };
     }
     const key = arg.slice(2, eq);
     const value = arg.slice(eq + 1);
-    if (key === 'readiness-timeout') {
+    if (key === "readiness-timeout") {
       const n = Number.parseInt(value, 10);
       if (!Number.isFinite(n) || n <= 0) {
-        return { error: `agent rollback: --readiness-timeout must be a positive integer (got ${value})` };
+        return {
+          error: `agent rollback: --readiness-timeout must be a positive integer (got ${value})`,
+        };
       }
       out.readinessTimeoutSec = n;
     } else {
@@ -63,8 +65,8 @@ function parseArgs(argv: string[]): ParsedArgs | { error: string } {
 
 export async function runAgentRollback(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
-  if ('error' in parsed) {
-    if (parsed.error === '__help') {
+  if ("error" in parsed) {
+    if (parsed.error === "__help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -90,8 +92,10 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
     process.stderr.write(`agent rollback: node '${nodeName}' not found in current context\n`);
     return 1;
   }
-  if (node.endpoint.startsWith('inproc://')) {
-    process.stderr.write(`agent rollback: '${nodeName}' is a local in-proc node — nothing to roll back\n`);
+  if (node.endpoint.startsWith("inproc://")) {
+    process.stderr.write(
+      `agent rollback: '${nodeName}' is a local in-proc node — nothing to roll back\n`,
+    );
     return 1;
   }
   const user = cfg.users.find((u) => u.name === ctx.user);
@@ -101,14 +105,14 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
   }
   const token = cfgMod.resolveToken(user);
 
-  const url = `${node.endpoint.replace(/\/$/, '')}/agent/rollback`;
+  const url = `${node.endpoint.replace(/\/$/, "")}/agent/rollback`;
   process.stderr.write(`agent rollback: requesting swap on ${url}\n`);
 
   const pinnedFetch = makePinnedFetch(node);
   let res: Response;
   try {
     res = await pinnedFetch(url, {
-      method: 'POST',
+      method: "POST",
       headers: { authorization: `Bearer ${token}` },
     });
   } catch (err) {
@@ -137,15 +141,17 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
       `now-active=${result.newSha256.slice(0, 12)}\u2026\n`,
   );
 
-  const healthUrl = `${node.endpoint.replace(/\/$/, '')}/healthz`;
-  process.stderr.write(`agent rollback: waiting for respawn (timeout ${parsed.readinessTimeoutSec}s)\u2026\n`);
+  const healthUrl = `${node.endpoint.replace(/\/$/, "")}/healthz`;
+  process.stderr.write(
+    `agent rollback: waiting for respawn (timeout ${parsed.readinessTimeoutSec}s)\u2026\n`,
+  );
   const deadline = Date.now() + parsed.readinessTimeoutSec * 1000;
   let healthy = false;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 1000));
     try {
       const probe = await pinnedFetch(healthUrl, {
-        method: 'GET',
+        method: "GET",
         headers: { authorization: `Bearer ${token}` },
       });
       if (probe.ok) {

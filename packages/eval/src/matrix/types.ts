@@ -1,8 +1,8 @@
-import type { ResponseFormat } from '../client.js';
+import type { ResponseFormat } from "../client.js";
 
 export interface ModelSpec {
   name: string;
-  engine?: 'llamacpp' | 'omlx';
+  engine?: "llamacpp" | "omlx";
   gguf_path: string;
   mlx_model_dir?: string;
   quant: string;
@@ -26,7 +26,7 @@ export interface ModelSpec {
    *  breaks structured-output scorers. */
   disable_thinking?: boolean;
   lora_path?: string;
-  prompt_template?: 'chat-format' | 'bare-instruct' | 'bare-base';
+  prompt_template?: "chat-format" | "bare-instruct" | "bare-base";
   inference_toggles?: Record<string, unknown>;
   /**
    * Optional dflash block forwarded to oMLX prepareLaunch via

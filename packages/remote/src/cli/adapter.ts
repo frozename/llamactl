@@ -20,7 +20,7 @@
  *   - No Streaming in v1. `streamResponse` is intentionally omitted.
  *     Phase 5 adds it for presets that can line-buffer.
  */
-import { randomUUID } from 'node:crypto';
+import { randomUUID } from "node:crypto";
 import type {
   AiProvider,
   ChatMessage,
@@ -28,11 +28,11 @@ import type {
   UnifiedAiRequest,
   UnifiedAiResponse,
   UnifiedStreamEvent,
-} from '@nova/contracts';
+} from "@nova/contracts";
 
-import type { CliBinding } from '../config/schema.js';
-import { resolvePreset, expandArgs } from './presets.js';
-import { appendCliJournal, type CliJournalEntry } from './journal.js';
+import type { CliBinding } from "../config/schema.js";
+import { resolvePreset, expandArgs } from "./presets.js";
+import { appendCliJournal, type CliJournalEntry } from "./journal.js";
 
 export interface CliProviderOptions {
   /** The agent node's name — used for the virtual provider id +
@@ -107,9 +107,7 @@ export interface SpawnStreamResult {
  * request from the factory, not per-workspace — each adapter is
  * cheap (no persistent connection; every call re-spawns).
  */
-export function createCliSubprocessProvider(
-  opts: CliProviderOptions,
-): AiProvider {
+export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvider {
   const resolved = resolvePreset(opts.binding);
   const providerId = `${opts.agentName}.${opts.binding.name}`;
   const spawn = opts.spawn ?? defaultBunSpawn;
@@ -122,10 +120,7 @@ export function createCliSubprocessProvider(
 
     async createResponse(request: UnifiedAiRequest): Promise<UnifiedAiResponse> {
       const prompt = messagesToPrompt(request.messages);
-      const { args: expandedArgs, promptOnStdin } = expandArgs(
-        resolved.args,
-        prompt,
-      );
+      const { args: expandedArgs, promptOnStdin } = expandArgs(resolved.args, prompt);
       const argv = [resolved.command, ...expandedArgs];
       const env = mergeEnv(opts.env ?? process.env, opts.binding.env);
 
@@ -149,17 +144,15 @@ export function createCliSubprocessProvider(
           ...(opts.binding.subscription !== undefined
             ? { subscription: opts.binding.subscription }
             : {}),
-          ...(opts.binding.defaultModel !== undefined
-            ? { model: opts.binding.defaultModel }
-            : {}),
-          prompt_bytes: Buffer.byteLength(prompt, 'utf8'),
+          ...(opts.binding.defaultModel !== undefined ? { model: opts.binding.defaultModel } : {}),
+          prompt_bytes: Buffer.byteLength(prompt, "utf8"),
           response_bytes: 0,
           latency_ms: Date.now() - startedAt,
           ok: false,
-          error_code: 'spawn-failed',
+          error_code: "spawn-failed",
         };
         await journalWrite(entry);
-        throw wrapCliError(providerId, err, 'spawn-failed');
+        throw wrapCliError(providerId, err, "spawn-failed");
       } finally {
         clearTimeout(timer);
       }
@@ -173,18 +166,16 @@ export function createCliSubprocessProvider(
         ...(opts.binding.subscription !== undefined
           ? { subscription: opts.binding.subscription }
           : {}),
-        ...(opts.binding.defaultModel !== undefined
-          ? { model: opts.binding.defaultModel }
-          : {}),
-        prompt_bytes: Buffer.byteLength(prompt, 'utf8'),
-        response_bytes: Buffer.byteLength(spawnResult.stdout, 'utf8'),
+        ...(opts.binding.defaultModel !== undefined ? { model: opts.binding.defaultModel } : {}),
+        prompt_bytes: Buffer.byteLength(prompt, "utf8"),
+        response_bytes: Buffer.byteLength(spawnResult.stdout, "utf8"),
         latency_ms: latencyMs,
         ok: !spawnResult.aborted && spawnResult.exitCode === 0,
         exit_code: spawnResult.exitCode,
         ...(spawnResult.aborted
-          ? { error_code: 'timeout' }
+          ? { error_code: "timeout" }
           : spawnResult.exitCode !== 0
-            ? { error_code: 'non-zero-exit' }
+            ? { error_code: "non-zero-exit" }
             : {}),
       };
       await journalWrite(entry);
@@ -195,7 +186,7 @@ export function createCliSubprocessProvider(
           new Error(
             `timed out after ${opts.binding.timeoutMs}ms (stderr: ${truncate(spawnResult.stderr, 400)})`,
           ),
-          'timeout',
+          "timeout",
         );
       }
       if (spawnResult.exitCode !== 0) {
@@ -204,37 +195,29 @@ export function createCliSubprocessProvider(
           new Error(
             `exited with code ${spawnResult.exitCode} (stderr: ${truncate(spawnResult.stderr, 400)})`,
           ),
-          'non-zero-exit',
+          "non-zero-exit",
         );
       }
 
-      const assistantContent = parseAssistantContent(
-        spawnResult.stdout,
-        resolved.format,
-      );
-      const model =
-        request.model ||
-        opts.binding.defaultModel ||
-        `${opts.binding.preset}-cli`;
+      const assistantContent = parseAssistantContent(spawnResult.stdout, resolved.format);
+      const model = request.model || opts.binding.defaultModel || `${opts.binding.preset}-cli`;
 
       // Rough token estimation — 4 chars/token is the industry
       // rule of thumb. Real adapters (openai-compat) read usage
       // off the response; CLIs don't expose it, so the journal
       // carries bytes and the UsageRecord carries an estimate.
-      const promptTokens = Math.ceil(Buffer.byteLength(prompt, 'utf8') / 4);
-      const completionTokens = Math.ceil(
-        Buffer.byteLength(assistantContent, 'utf8') / 4,
-      );
+      const promptTokens = Math.ceil(Buffer.byteLength(prompt, "utf8") / 4);
+      const completionTokens = Math.ceil(Buffer.byteLength(assistantContent, "utf8") / 4);
       return {
         id: `cli-${randomUUID()}`,
-        object: 'chat.completion',
+        object: "chat.completion",
         model,
         created: Math.floor(startedAt / 1000),
         choices: [
           {
             index: 0,
-            message: { role: 'assistant', content: assistantContent },
-            finish_reason: 'stop',
+            message: { role: "assistant", content: assistantContent },
+            finish_reason: "stop",
           },
         ],
         usage: {
@@ -259,10 +242,7 @@ export function createCliSubprocessProvider(
             callerSignal?: AbortSignal,
           ): AsyncGenerator<UnifiedStreamEvent, void, void> {
             const prompt = messagesToPrompt(request.messages);
-            const { args: expandedArgs, promptOnStdin } = expandArgs(
-              resolved.args,
-              prompt,
-            );
+            const { args: expandedArgs, promptOnStdin } = expandArgs(resolved.args, prompt);
             const argv = [resolved.command, ...expandedArgs];
             const env = mergeEnv(opts.env ?? process.env, opts.binding.env);
 
@@ -270,20 +250,15 @@ export function createCliSubprocessProvider(
             // flip it. The caller's AbortSignal (from tRPC) takes
             // precedence — if the UI cancels, kill the child.
             const ctrl = new AbortController();
-            const timer = setTimeout(
-              () => ctrl.abort(),
-              opts.binding.timeoutMs,
-            );
+            const timer = setTimeout(() => ctrl.abort(), opts.binding.timeoutMs);
             const onCallerAbort = (): void => ctrl.abort();
             if (callerSignal) {
               if (callerSignal.aborted) ctrl.abort();
-              else callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+              else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
             }
             const startedAt = Date.now();
             const model =
-              request.model ||
-              opts.binding.defaultModel ||
-              `${opts.binding.preset}-cli`;
+              request.model || opts.binding.defaultModel || `${opts.binding.preset}-cli`;
             const chunkId = `cli-${randomUUID()}`;
             let responseBytes = 0;
             let yieldedRole = false;
@@ -297,7 +272,7 @@ export function createCliSubprocessProvider(
               });
             } catch (err) {
               clearTimeout(timer);
-              callerSignal?.removeEventListener('abort', onCallerAbort);
+              callerSignal?.removeEventListener("abort", onCallerAbort);
               const entry: CliJournalEntry = {
                 ts: new Date(startedAt).toISOString(),
                 agent: opts.agentName,
@@ -309,18 +284,18 @@ export function createCliSubprocessProvider(
                 ...(opts.binding.defaultModel !== undefined
                   ? { model: opts.binding.defaultModel }
                   : {}),
-                prompt_bytes: Buffer.byteLength(prompt, 'utf8'),
+                prompt_bytes: Buffer.byteLength(prompt, "utf8"),
                 response_bytes: 0,
                 latency_ms: Date.now() - startedAt,
                 ok: false,
-                error_code: 'spawn-failed',
+                error_code: "spawn-failed",
               };
               await journalWrite(entry);
               yield {
-                type: 'error',
+                type: "error",
                 error: {
                   message: `cli provider '${providerId}' spawn-failed: ${(err as Error).message}`,
-                  code: 'spawn-failed',
+                  code: "spawn-failed",
                 },
               };
               return;
@@ -334,22 +309,20 @@ export function createCliSubprocessProvider(
                 // \n is trimmed in consumers that display
                 // token-by-token.
                 const delta = `${rawLine}\n`;
-                responseBytes += Buffer.byteLength(delta, 'utf8');
+                responseBytes += Buffer.byteLength(delta, "utf8");
                 const choice: {
                   index: number;
-                  delta: { role?: 'assistant'; content: string };
+                  delta: { role?: "assistant"; content: string };
                 } = {
                   index: 0,
-                  delta: yieldedRole
-                    ? { content: delta }
-                    : { role: 'assistant', content: delta },
+                  delta: yieldedRole ? { content: delta } : { role: "assistant", content: delta },
                 };
                 yieldedRole = true;
                 yield {
-                  type: 'chunk',
+                  type: "chunk",
                   chunk: {
                     id: chunkId,
-                    object: 'chat.completion.chunk',
+                    object: "chat.completion.chunk",
                     model,
                     created: Math.floor(startedAt / 1000),
                     choices: [choice],
@@ -358,10 +331,10 @@ export function createCliSubprocessProvider(
               }
             } catch (err) {
               yield {
-                type: 'error',
+                type: "error",
                 error: {
                   message: `cli provider '${providerId}' stream-failed: ${(err as Error).message}`,
-                  code: 'stream-failed',
+                  code: "stream-failed",
                 },
               };
               // Fall through to the journal write + done below.
@@ -370,7 +343,7 @@ export function createCliSubprocessProvider(
             const { exitCode, aborted } = await stream.exitedPromise;
             const stderrText = await stream.stderrPromise;
             clearTimeout(timer);
-            callerSignal?.removeEventListener('abort', onCallerAbort);
+            callerSignal?.removeEventListener("abort", onCallerAbort);
 
             const entry: CliJournalEntry = {
               ts: new Date(startedAt).toISOString(),
@@ -383,41 +356,41 @@ export function createCliSubprocessProvider(
               ...(opts.binding.defaultModel !== undefined
                 ? { model: opts.binding.defaultModel }
                 : {}),
-              prompt_bytes: Buffer.byteLength(prompt, 'utf8'),
+              prompt_bytes: Buffer.byteLength(prompt, "utf8"),
               response_bytes: responseBytes,
               latency_ms: Date.now() - startedAt,
               ok: !aborted && exitCode === 0,
               exit_code: exitCode,
               ...(aborted
-                ? { error_code: 'timeout' }
+                ? { error_code: "timeout" }
                 : exitCode !== 0
-                  ? { error_code: 'non-zero-exit' }
+                  ? { error_code: "non-zero-exit" }
                   : {}),
             };
             await journalWrite(entry);
 
             if (aborted) {
               yield {
-                type: 'error',
+                type: "error",
                 error: {
                   message: `cli provider '${providerId}' timeout after ${opts.binding.timeoutMs}ms`,
-                  code: 'timeout',
+                  code: "timeout",
                   retryable: false,
                 },
               };
-              yield { type: 'done', finish_reason: 'stop' };
+              yield { type: "done", finish_reason: "stop" };
               return;
             }
             if (exitCode !== 0) {
               yield {
-                type: 'error',
+                type: "error",
                 error: {
                   message: `cli provider '${providerId}' non-zero-exit ${exitCode}: ${truncate(stderrText, 400)}`,
-                  code: 'non-zero-exit',
+                  code: "non-zero-exit",
                 },
               };
             }
-            yield { type: 'done', finish_reason: 'stop' };
+            yield { type: "done", finish_reason: "stop" };
           },
         }
       : {}),
@@ -430,43 +403,40 @@ export function createCliSubprocessProvider(
       // burn through the call timeout.
       const timer = setTimeout(() => ctrl.abort(), 10_000);
       try {
-        const result = await spawn(
-          [resolved.command, ...resolved.versionProbe],
-          {
-            env: mergeEnv(opts.env ?? process.env, opts.binding.env),
-            signal: ctrl.signal,
-            promptOnStdin: false,
-            prompt: '',
-          },
-        );
+        const result = await spawn([resolved.command, ...resolved.versionProbe], {
+          env: mergeEnv(opts.env ?? process.env, opts.binding.env),
+          signal: ctrl.signal,
+          promptOnStdin: false,
+          prompt: "",
+        });
         const latencyMs = Date.now() - startedAt;
         if (result.aborted) {
           return {
-            state: 'unhealthy',
+            state: "unhealthy",
             lastChecked: new Date().toISOString(),
             latencyMs,
-            error: `timeout running ${resolved.command} ${resolved.versionProbe.join(' ')}`,
+            error: `timeout running ${resolved.command} ${resolved.versionProbe.join(" ")}`,
           };
         }
         if (result.exitCode !== 0) {
           return {
-            state: 'unhealthy',
+            state: "unhealthy",
             lastChecked: new Date().toISOString(),
             latencyMs,
-            error: `${resolved.command} ${resolved.versionProbe.join(' ')} exited ${result.exitCode}: ${truncate(result.stderr, 240)}`,
+            error: `${resolved.command} ${resolved.versionProbe.join(" ")} exited ${result.exitCode}: ${truncate(result.stderr, 240)}`,
           };
         }
         return {
-          state: 'healthy',
+          state: "healthy",
           lastChecked: new Date().toISOString(),
           latencyMs,
         };
       } catch (err) {
         return {
-          state: 'unhealthy',
+          state: "unhealthy",
           lastChecked: new Date().toISOString(),
           latencyMs: Date.now() - startedAt,
-          error: (err as Error).message || 'spawn-failed',
+          error: (err as Error).message || "spawn-failed",
         };
       } finally {
         clearTimeout(timer);
@@ -495,43 +465,40 @@ export function messagesToPrompt(messages: readonly ChatMessage[]): string {
     if (!text) continue;
     lines.push(`${m.role}: ${text}`);
   }
-  return lines.join('\n');
+  return lines.join("\n");
 }
 
-function flattenContent(content: ChatMessage['content']): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
+function flattenContent(content: ChatMessage["content"]): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
   const parts: string[] = [];
   for (const block of content) {
     if (!block) continue;
-    if ('text' in block && typeof block.text === 'string') {
+    if ("text" in block && typeof block.text === "string") {
       parts.push(block.text);
-    } else if ('type' in block && block.type === 'image_url') {
-      parts.push('[image omitted — CLI presets do not accept multimodal input]');
+    } else if ("type" in block && block.type === "image_url") {
+      parts.push("[image omitted — CLI presets do not accept multimodal input]");
     }
   }
-  return parts.join('\n');
+  return parts.join("\n");
 }
 
-function parseAssistantContent(
-  stdout: string,
-  format: 'text' | 'json',
-): string {
-  if (format === 'text') return stdout.trimEnd();
+function parseAssistantContent(stdout: string, format: "text" | "json"): string {
+  if (format === "text") return stdout.trimEnd();
   try {
     const parsed = JSON.parse(stdout) as unknown;
     // Best-effort extraction — presets that emit JSON vary. We look
     // for common shapes: `{ response: string }`, `{ content: string }`,
     // `{ choices: [{ message: { content: string } }] }`. Fall back
     // to the full JSON string so nothing is silently dropped.
-    if (parsed && typeof parsed === 'object') {
+    if (parsed && typeof parsed === "object") {
       const obj = parsed as Record<string, unknown>;
-      if (typeof obj.response === 'string') return obj.response;
-      if (typeof obj.content === 'string') return obj.content;
+      if (typeof obj.response === "string") return obj.response;
+      if (typeof obj.content === "string") return obj.content;
       const choices = obj.choices;
       if (Array.isArray(choices) && choices[0]) {
         const first = choices[0] as { message?: { content?: unknown } };
-        if (typeof first.message?.content === 'string') {
+        if (typeof first.message?.content === "string") {
           return first.message.content;
         }
       }
@@ -542,10 +509,7 @@ function parseAssistantContent(
   }
 }
 
-function mergeEnv(
-  base: NodeJS.ProcessEnv,
-  overlay?: Record<string, string>,
-): NodeJS.ProcessEnv {
+function mergeEnv(base: NodeJS.ProcessEnv, overlay?: Record<string, string>): NodeJS.ProcessEnv {
   if (!overlay) return { ...base };
   return { ...base, ...overlay };
 }
@@ -558,7 +522,7 @@ function truncate(s: string, n: number): string {
 function wrapCliError(
   providerId: string,
   cause: unknown,
-  code: 'spawn-failed' | 'timeout' | 'non-zero-exit' | 'parse-error',
+  code: "spawn-failed" | "timeout" | "non-zero-exit" | "parse-error",
 ): Error {
   const msg = cause instanceof Error ? cause.message : String(cause);
   const err = new Error(`cli provider '${providerId}' ${code}: ${msg}`);
@@ -580,16 +544,14 @@ const defaultBunSpawnStream: SpawnStreamFn = async (argv, opts) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const Bun = (globalThis as any).Bun;
   if (!Bun?.spawn) {
-    throw new Error(
-      'Bun runtime not detected — cli adapter streaming requires Bun.spawn',
-    );
+    throw new Error("Bun runtime not detected — cli adapter streaming requires Bun.spawn");
   }
   const [command, ...args] = argv;
   const proc = Bun.spawn([command, ...args], {
     env: opts.env,
-    stdout: 'pipe',
-    stderr: 'pipe',
-    stdin: opts.promptOnStdin ? 'pipe' : null,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: opts.promptOnStdin ? "pipe" : null,
   });
   if (opts.promptOnStdin && proc.stdin) {
     try {
@@ -608,29 +570,29 @@ const defaultBunSpawnStream: SpawnStreamFn = async (argv, opts) => {
       /* already exited */
     }
   };
-  opts.signal.addEventListener('abort', onAbort, { once: true });
+  opts.signal.addEventListener("abort", onAbort, { once: true });
 
   const stderrPromise = new Response(proc.stderr).text();
   const exitedPromise = proc.exited.then((exitCode: number) => {
-    opts.signal.removeEventListener('abort', onAbort);
+    opts.signal.removeEventListener("abort", onAbort);
     return { exitCode, aborted };
   });
 
   async function* readLines(): AsyncIterable<string> {
     const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader();
     const decoder = new TextDecoder();
-    let buffer = '';
+    let buffer = "";
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-        let nl = buffer.indexOf('\n');
+        let nl = buffer.indexOf("\n");
         while (nl >= 0) {
           const line = buffer.slice(0, nl);
           buffer = buffer.slice(nl + 1);
           yield line;
-          nl = buffer.indexOf('\n');
+          nl = buffer.indexOf("\n");
         }
       }
       // Drain decoder + yield any trailing fragment that didn't
@@ -660,18 +622,16 @@ const defaultBunSpawn: SpawnFn = async (argv, opts) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const Bun = (globalThis as any).Bun;
   if (!Bun?.spawn) {
-    throw new Error(
-      'Bun runtime not detected — cli adapter requires Bun.spawn',
-    );
+    throw new Error("Bun runtime not detected — cli adapter requires Bun.spawn");
   }
   const [command, ...args] = argv;
   const proc = Bun.spawn([command, ...args], {
     env: opts.env,
-    stdout: 'pipe',
-    stderr: 'pipe',
+    stdout: "pipe",
+    stderr: "pipe",
     // Bun.spawn supports stdin: 'pipe' | ArrayBuffer | file. Use
     // pipe when we need to send the prompt; null otherwise.
-    stdin: opts.promptOnStdin ? 'pipe' : null,
+    stdin: opts.promptOnStdin ? "pipe" : null,
   });
   if (opts.promptOnStdin && proc.stdin) {
     try {
@@ -690,7 +650,7 @@ const defaultBunSpawn: SpawnFn = async (argv, opts) => {
       /* already exited */
     }
   };
-  opts.signal.addEventListener('abort', onAbort, { once: true });
+  opts.signal.addEventListener("abort", onAbort, { once: true });
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -699,6 +659,6 @@ const defaultBunSpawn: SpawnFn = async (argv, opts) => {
     ]);
     return { stdout, stderr, exitCode, aborted };
   } finally {
-    opts.signal.removeEventListener('abort', onAbort);
+    opts.signal.removeEventListener("abort", onAbort);
   }
 };

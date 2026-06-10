@@ -1,21 +1,21 @@
-import type { RetrievalProvider } from '@nova/contracts';
-import type { Config, RagBinding } from '../../config/schema.js';
-import { createEmbedderFromBinding, type Embedder } from '../embedding.js';
-import { ChromaRagAdapter } from './adapter.js';
-import { connectChromaMcp } from './client.js';
+import type { RetrievalProvider } from "@nova/contracts";
+import type { Config, RagBinding } from "../../config/schema.js";
+import { createEmbedderFromBinding, type Embedder } from "../embedding.js";
+import { ChromaRagAdapter } from "./adapter.js";
+import { connectChromaMcp } from "./client.js";
 import {
   HttpChromaClient,
   parseHttpChromaEndpoint,
   resolveChromaHttpToken,
-} from './http-client.js';
+} from "./http-client.js";
 
-export { ChromaRagAdapter, extractQueryVector, type ChromaBackend } from './adapter.js';
+export { ChromaRagAdapter, extractQueryVector, type ChromaBackend } from "./adapter.js";
 export {
   connectChromaMcp,
   type ChromaMcpClient,
   type ChromaMcpConnection,
   type ChromaToolResult,
-} from './client.js';
+} from "./client.js";
 export {
   CHROMA_DEFAULT_DATABASE,
   CHROMA_DEFAULT_TENANT,
@@ -28,7 +28,7 @@ export {
   type ChromaQueryResponse,
   type ChromaUpsertPayload,
   type HttpChromaClientOptions,
-} from './http-client.js';
+} from "./http-client.js";
 
 export interface CreateChromaAdapterOptions {
   env?: NodeJS.ProcessEnv;
@@ -66,9 +66,7 @@ export async function createChromaAdapter(
   binding: RagBinding,
   envOrOpts: NodeJS.ProcessEnv | CreateChromaAdapterOptions = process.env,
 ): Promise<RetrievalProvider> {
-  const opts: CreateChromaAdapterOptions = isOptionsBag(envOrOpts)
-    ? envOrOpts
-    : { env: envOrOpts };
+  const opts: CreateChromaAdapterOptions = isOptionsBag(envOrOpts) ? envOrOpts : { env: envOrOpts };
   const env = opts.env ?? process.env;
 
   if (isHttpEndpoint(binding.endpoint)) {
@@ -92,7 +90,7 @@ export async function createChromaAdapter(
     }
     return new ChromaRagAdapter(
       {
-        kind: 'http',
+        kind: "http",
         client,
         ...(embedder && { embedder }),
         teardown: () => client.close(),
@@ -107,17 +105,17 @@ export async function createChromaAdapter(
 
 function isHttpEndpoint(endpoint: string): boolean {
   const trimmed = endpoint.trim().toLowerCase();
-  return trimmed.startsWith('http://') || trimmed.startsWith('https://');
+  return trimmed.startsWith("http://") || trimmed.startsWith("https://");
 }
 
 function isOptionsBag(
   v: NodeJS.ProcessEnv | CreateChromaAdapterOptions,
 ): v is CreateChromaAdapterOptions {
-  if (typeof v !== 'object' || v === null) return false;
+  if (typeof v !== "object" || v === null) return false;
   const maybe = v as Partial<CreateChromaAdapterOptions>;
   return (
-    typeof maybe.embedder === 'function' ||
-    typeof maybe.fetch === 'function' ||
-    (maybe.config !== undefined && typeof maybe.config === 'object')
+    typeof maybe.embedder === "function" ||
+    typeof maybe.fetch === "function" ||
+    (maybe.config !== undefined && typeof maybe.config === "object")
   );
 }

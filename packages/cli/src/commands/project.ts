@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { stringify as stringifyYaml } from 'yaml';
-import type { NodeClient } from '@llamactl/remote';
-import { getNodeClient } from '../dispatcher.js';
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
+import type { NodeClient } from "@llamactl/remote";
+import { getNodeClient } from "../dispatcher.js";
 
 /**
  * `llamactl project …` — first-class project resource CLI (Phase 2
@@ -81,26 +81,26 @@ function client(): NodeClient {
 export async function runProject(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
-    case 'add':
+    case "add":
       return runAdd(rest);
-    case 'apply':
+    case "apply":
       return runApply(rest);
-    case 'list':
-    case 'ls':
+    case "list":
+    case "ls":
       return runList(rest);
-    case 'get':
+    case "get":
       return runGet(rest);
-    case 'rm':
-    case 'remove':
+    case "rm":
+    case "remove":
       return runRemove(rest);
-    case 'index':
+    case "index":
       return runIndex(rest);
-    case 'route':
+    case "route":
       return runRoute(rest);
     case undefined:
-    case '--help':
-    case '-h':
-    case 'help':
+    case "--help":
+    case "-h":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:
@@ -124,8 +124,8 @@ interface AddOpts {
 }
 
 function parseAddFlags(args: string[]): AddOpts | { error: string } {
-  let name = '';
-  let path = '';
+  let name = "";
+  let path = "";
   let purpose: string | undefined;
   let stack: string[] = [];
   let ragNode: string | undefined;
@@ -135,37 +135,44 @@ function parseAddFlags(args: string[]): AddOpts | { error: string } {
   const routes: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--path') {
-      path = args[++i] ?? '';
-    } else if (arg.startsWith('--path=')) {
-      path = arg.slice('--path='.length);
-    } else if (arg === '--purpose') {
+    if (arg === "--path") {
+      path = args[++i] ?? "";
+    } else if (arg.startsWith("--path=")) {
+      path = arg.slice("--path=".length);
+    } else if (arg === "--purpose") {
       purpose = args[++i];
-    } else if (arg.startsWith('--purpose=')) {
-      purpose = arg.slice('--purpose='.length);
-    } else if (arg === '--stack') {
-      stack = (args[++i] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-    } else if (arg.startsWith('--stack=')) {
-      stack = arg.slice('--stack='.length).split(',').map((s) => s.trim()).filter(Boolean);
-    } else if (arg === '--rag-node') {
+    } else if (arg.startsWith("--purpose=")) {
+      purpose = arg.slice("--purpose=".length);
+    } else if (arg === "--stack") {
+      stack = (args[++i] ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else if (arg.startsWith("--stack=")) {
+      stack = arg
+        .slice("--stack=".length)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else if (arg === "--rag-node") {
       ragNode = args[++i];
-    } else if (arg.startsWith('--rag-node=')) {
-      ragNode = arg.slice('--rag-node='.length);
-    } else if (arg === '--rag-collection') {
+    } else if (arg.startsWith("--rag-node=")) {
+      ragNode = arg.slice("--rag-node=".length);
+    } else if (arg === "--rag-collection") {
       ragCollection = args[++i];
-    } else if (arg.startsWith('--rag-collection=')) {
-      ragCollection = arg.slice('--rag-collection='.length);
-    } else if (arg === '--rag-glob') {
+    } else if (arg.startsWith("--rag-collection=")) {
+      ragCollection = arg.slice("--rag-collection=".length);
+    } else if (arg === "--rag-glob") {
       ragGlob = args[++i];
-    } else if (arg.startsWith('--rag-glob=')) {
-      ragGlob = arg.slice('--rag-glob='.length);
-    } else if (arg === '--rag-schedule') {
+    } else if (arg.startsWith("--rag-glob=")) {
+      ragGlob = arg.slice("--rag-glob=".length);
+    } else if (arg === "--rag-schedule") {
       ragSchedule = args[++i];
-    } else if (arg.startsWith('--rag-schedule=')) {
-      ragSchedule = arg.slice('--rag-schedule='.length);
-    } else if (arg === '--route') {
-      const pair = args[++i] ?? '';
-      const eqIndex = pair.indexOf('=');
+    } else if (arg.startsWith("--rag-schedule=")) {
+      ragSchedule = arg.slice("--rag-schedule=".length);
+    } else if (arg === "--route") {
+      const pair = args[++i] ?? "";
+      const eqIndex = pair.indexOf("=");
       if (eqIndex === -1) {
         return { error: `--route expects <taskKind>=<target>, got '${pair}'` };
       }
@@ -175,9 +182,9 @@ function parseAddFlags(args: string[]): AddOpts | { error: string } {
         return { error: `--route expects a non-empty taskKind and target` };
       }
       routes[key] = value;
-    } else if (arg.startsWith('--route=')) {
-      const pair = arg.slice('--route='.length);
-      const eqIndex = pair.indexOf('=');
+    } else if (arg.startsWith("--route=")) {
+      const pair = arg.slice("--route=".length);
+      const eqIndex = pair.indexOf("=");
       if (eqIndex === -1) {
         return { error: `--route expects <taskKind>=<target>, got '${pair}'` };
       }
@@ -187,9 +194,9 @@ function parseAddFlags(args: string[]): AddOpts | { error: string } {
         return { error: `--route expects a non-empty taskKind and target` };
       }
       routes[key] = value;
-    } else if (arg === '-h' || arg === '--help') {
-      return { error: 'help' };
-    } else if (arg.startsWith('-')) {
+    } else if (arg === "-h" || arg === "--help") {
+      return { error: "help" };
+    } else if (arg.startsWith("-")) {
       return { error: `Unknown flag: ${arg}` };
     } else if (!name) {
       name = arg;
@@ -197,10 +204,10 @@ function parseAddFlags(args: string[]): AddOpts | { error: string } {
       return { error: `Unexpected argument: ${arg}` };
     }
   }
-  if (!name) return { error: 'project add: <name> is required' };
-  if (!path) return { error: 'project add: --path is required' };
+  if (!name) return { error: "project add: <name> is required" };
+  if (!path) return { error: "project add: --path is required" };
   if ((ragNode && !ragCollection) || (!ragNode && ragCollection)) {
-    return { error: 'project add: --rag-node and --rag-collection must be set together' };
+    return { error: "project add: --rag-node and --rag-collection must be set together" };
   }
   return {
     name,
@@ -217,8 +224,8 @@ function parseAddFlags(args: string[]): AddOpts | { error: string } {
 
 async function runAdd(args: string[]): Promise<number> {
   const parsed = parseAddFlags(args);
-  if ('error' in parsed) {
-    if (parsed.error === 'help') {
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -239,8 +246,8 @@ async function runAdd(args: string[]): Promise<number> {
   }
   if (Object.keys(parsed.routes).length > 0) spec.routing = parsed.routes;
   const manifest = {
-    apiVersion: 'llamactl/v1',
-    kind: 'Project',
+    apiVersion: "llamactl/v1",
+    kind: "Project",
     metadata: { name: parsed.name },
     spec,
   };
@@ -248,7 +255,7 @@ async function runAdd(args: string[]): Promise<number> {
   try {
     const res = await client().projectApply.mutate({ manifestYaml });
     process.stdout.write(
-      `${res.created ? 'applied' : 'updated'} project '${res.name}'\n  path: ${res.path}\n`,
+      `${res.created ? "applied" : "updated"} project '${res.name}'\n  path: ${res.path}\n`,
     );
     return 0;
   } catch (err) {
@@ -264,29 +271,29 @@ interface ApplyOpts {
 }
 
 function parseApplyFlags(args: string[]): ApplyOpts | { error: string } {
-  let file = '';
+  let file = "";
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '-f' || arg === '--file') {
-      file = args[++i] ?? '';
-    } else if (arg.startsWith('--file=')) {
-      file = arg.slice('--file='.length);
-    } else if (arg === '-h' || arg === '--help') {
-      return { error: 'help' };
-    } else if (arg.startsWith('-')) {
+    if (arg === "-f" || arg === "--file") {
+      file = args[++i] ?? "";
+    } else if (arg.startsWith("--file=")) {
+      file = arg.slice("--file=".length);
+    } else if (arg === "-h" || arg === "--help") {
+      return { error: "help" };
+    } else if (arg.startsWith("-")) {
       return { error: `Unknown flag: ${arg}` };
     } else {
       return { error: `Unexpected argument: ${arg}` };
     }
   }
-  if (!file) return { error: 'project apply: -f <file.yaml> is required' };
+  if (!file) return { error: "project apply: -f <file.yaml> is required" };
   return { file };
 }
 
 async function runApply(args: string[]): Promise<number> {
   const parsed = parseApplyFlags(args);
-  if ('error' in parsed) {
-    if (parsed.error === 'help') {
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -294,9 +301,9 @@ async function runApply(args: string[]): Promise<number> {
     return 1;
   }
   let manifestYaml: string;
-  if (parsed.file === '-') {
+  if (parsed.file === "-") {
     try {
-      manifestYaml = readFileSync(0, 'utf8');
+      manifestYaml = readFileSync(0, "utf8");
     } catch (err) {
       process.stderr.write(
         `project apply: failed reading manifest from stdin: ${(err as Error).message}\n`,
@@ -304,7 +311,7 @@ async function runApply(args: string[]): Promise<number> {
       return 1;
     }
     if (!manifestYaml.trim()) {
-      process.stderr.write('project apply: stdin was empty — pipe a Project YAML in.\n');
+      process.stderr.write("project apply: stdin was empty — pipe a Project YAML in.\n");
       return 1;
     }
   } else {
@@ -313,12 +320,12 @@ async function runApply(args: string[]): Promise<number> {
       process.stderr.write(`project apply: file not found: ${absPath}\n`);
       return 1;
     }
-    manifestYaml = readFileSync(absPath, 'utf8');
+    manifestYaml = readFileSync(absPath, "utf8");
   }
   try {
     const res = await client().projectApply.mutate({ manifestYaml });
     process.stdout.write(
-      `${res.created ? 'applied' : 'updated'} project '${res.name}'\n  path: ${res.path}\n`,
+      `${res.created ? "applied" : "updated"} project '${res.name}'\n  path: ${res.path}\n`,
     );
     return 0;
   } catch (err) {
@@ -332,8 +339,8 @@ async function runApply(args: string[]): Promise<number> {
 async function runList(args: string[]): Promise<number> {
   let json = false;
   for (const a of args) {
-    if (a === '--json') json = true;
-    else if (a === '-h' || a === '--help') {
+    if (a === "--json") json = true;
+    else if (a === "-h" || a === "--help") {
       process.stdout.write(USAGE);
       return 0;
     } else {
@@ -348,13 +355,11 @@ async function runList(args: string[]): Promise<number> {
       return 0;
     }
     if (res.projects.length === 0) {
-      process.stdout.write('(no projects registered)\n');
+      process.stdout.write("(no projects registered)\n");
       return 0;
     }
     for (const p of res.projects) {
-      const ragLine = p.spec.rag
-        ? `rag=${p.spec.rag.node}/${p.spec.rag.collection}`
-        : 'rag=<none>';
+      const ragLine = p.spec.rag ? `rag=${p.spec.rag.node}/${p.spec.rag.collection}` : "rag=<none>";
       const routeCount = Object.keys(p.spec.routing).length;
       process.stdout.write(
         `${p.metadata.name}\n  path: ${p.spec.path}\n  ${ragLine}  routes=${routeCount}\n`,
@@ -370,15 +375,15 @@ async function runList(args: string[]): Promise<number> {
 // ---- get ------------------------------------------------------------
 
 async function runGet(args: string[]): Promise<number> {
-  let name = '';
+  let name = "";
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--json') json = true;
-    else if (arg === '-h' || arg === '--help') {
+    if (arg === "--json") json = true;
+    else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('-')) {
+    } else if (arg.startsWith("-")) {
       process.stderr.write(`Unknown flag: ${arg}\n\n${USAGE}`);
       return 1;
     } else if (!name) {
@@ -410,7 +415,7 @@ async function runGet(args: string[]): Promise<number> {
 
 async function runRemove(args: string[]): Promise<number> {
   const [name] = args;
-  if (!name || name.startsWith('-')) {
+  if (!name || name.startsWith("-")) {
     process.stderr.write(`project rm: <name> is required\n\n${USAGE}`);
     return 1;
   }
@@ -432,7 +437,7 @@ async function runRemove(args: string[]): Promise<number> {
 
 async function runIndex(args: string[]): Promise<number> {
   const [name] = args;
-  if (!name || name.startsWith('-')) {
+  if (!name || name.startsWith("-")) {
     process.stderr.write(`project index: <name> is required\n\n${USAGE}`);
     return 1;
   }
@@ -455,15 +460,15 @@ async function runRoute(args: string[]): Promise<number> {
   let json = false;
   const positional: string[] = [];
   for (const a of args) {
-    if (a === '--json') json = true;
+    if (a === "--json") json = true;
     else positional.push(a);
   }
   const [name, taskKind] = positional;
-  if (!name || name.startsWith('-')) {
+  if (!name || name.startsWith("-")) {
     process.stderr.write(`project route: <name> is required\n\n${USAGE}`);
     return 1;
   }
-  if (!taskKind || taskKind.startsWith('-')) {
+  if (!taskKind || taskKind.startsWith("-")) {
     process.stderr.write(`project route: <taskKind> is required\n\n${USAGE}`);
     return 1;
   }
@@ -487,11 +492,9 @@ async function runRoute(args: string[]): Promise<number> {
     }
     const d = res.decision;
     const budgetNote = d.budget
-      ? ` · budget ${d.budget.usdToday?.toFixed(4) ?? '?'}/${d.budget.limit?.toFixed(2) ?? '?'} USD`
-      : '';
-    process.stdout.write(
-      `${name}/${taskKind} → ${d.target} (${d.reason})${budgetNote}\n`,
-    );
+      ? ` · budget ${d.budget.usdToday?.toFixed(4) ?? "?"}/${d.budget.limit?.toFixed(2) ?? "?"} USD`
+      : "";
+    process.stdout.write(`${name}/${taskKind} → ${d.target} (${d.reason})${budgetNote}\n`);
     return 0;
   } catch (err) {
     process.stderr.write(`project route: ${(err as Error).message}\n`);

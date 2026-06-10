@@ -7,14 +7,14 @@
  * minimal glob matcher when running under plain Node (dev-time test
  * runs on CI that haven't switched to Bun yet).
  */
-import { readFile, readdir } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { readFile, readdir } from "node:fs/promises";
+import { join, relative } from "node:path";
 
-import type { Fetcher } from '../types.js';
-import { FilesystemSourceSpecSchema } from '../schema.js';
+import type { Fetcher } from "../types.js";
+import { FilesystemSourceSpecSchema } from "../schema.js";
 
 export const filesystemFetcher: Fetcher = {
-  kind: 'filesystem',
+  kind: "filesystem",
   async *fetch(ctx) {
     const spec = FilesystemSourceSpecSchema.parse(ctx.spec);
     for await (const absPath of scanFiles(spec.root, spec.glob)) {
@@ -24,15 +24,15 @@ export const filesystemFetcher: Fetcher = {
         const buf = await readFile(absPath);
         if (looksBinary(buf)) {
           ctx.log({
-            level: 'warn',
+            level: "warn",
             msg: `skipping binary file: ${absPath}`,
           });
           continue;
         }
-        content = buf.toString('utf8');
+        content = buf.toString("utf8");
       } catch (err) {
         ctx.log({
-          level: 'warn',
+          level: "warn",
           msg: `unreadable file: ${absPath}`,
           data: { error: (err as Error).message },
         });
@@ -43,7 +43,7 @@ export const filesystemFetcher: Fetcher = {
         id: rel || absPath,
         content,
         metadata: {
-          source_kind: 'filesystem',
+          source_kind: "filesystem",
           path: absPath,
           ...(spec.tag ?? {}),
         },
@@ -58,7 +58,15 @@ export const filesystemFetcher: Fetcher = {
  * recursive walk for non-Bun runtimes.
  */
 async function* scanFiles(root: string, pattern: string): AsyncIterable<string> {
-  const BunGlobal = (globalThis as { Bun?: { Glob: new (p: string) => { scan: (opts: { cwd: string; absolute?: boolean }) => AsyncIterable<string> } } }).Bun;
+  const BunGlobal = (
+    globalThis as {
+      Bun?: {
+        Glob: new (p: string) => {
+          scan: (opts: { cwd: string; absolute?: boolean }) => AsyncIterable<string>;
+        };
+      };
+    }
+  ).Bun;
   if (BunGlobal?.Glob) {
     const g = new BunGlobal.Glob(pattern);
     for await (const entry of g.scan({ cwd: root, absolute: true })) {
@@ -69,10 +77,7 @@ async function* scanFiles(root: string, pattern: string): AsyncIterable<string> 
   yield* walkAndMatch(root, pattern);
 }
 
-async function* walkAndMatch(
-  root: string,
-  pattern: string,
-): AsyncIterable<string> {
+async function* walkAndMatch(root: string, pattern: string): AsyncIterable<string> {
   const regex = globToRegex(pattern);
   async function* walk(dir: string): AsyncIterable<string> {
     let entries;
@@ -101,20 +106,20 @@ async function* walkAndMatch(
  * the Bun runtime don't fail outright.
  */
 function globToRegex(glob: string): RegExp {
-  let re = '';
+  let re = "";
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i]!;
-    if (c === '*') {
-      if (glob[i + 1] === '*') {
-        re += '.*';
+    if (c === "*") {
+      if (glob[i + 1] === "*") {
+        re += ".*";
         i++;
-        if (glob[i + 1] === '/') i++;
+        if (glob[i + 1] === "/") i++;
       } else {
-        re += '[^/]*';
+        re += "[^/]*";
       }
-    } else if (c === '?') {
-      re += '[^/]';
-    } else if ('\\^$+{}()|[].'.includes(c)) {
+    } else if (c === "?") {
+      re += "[^/]";
+    } else if ("\\^$+{}()|[].".includes(c)) {
       re += `\\${c}`;
     } else {
       re += c;

@@ -1,10 +1,6 @@
-import { loadSiriusProviders, type SiriusProvider } from './sirius-providers.js';
-import { loadEmbersynthConfig, listSyntheticModelIds } from './embersynth.js';
-import {
-  resolveNodeKind,
-  type ClusterNode,
-  type Config,
-} from './schema.js';
+import { loadSiriusProviders, type SiriusProvider } from "./sirius-providers.js";
+import { loadEmbersynthConfig, listSyntheticModelIds } from "./embersynth.js";
+import { resolveNodeKind, type ClusterNode, type Config } from "./schema.js";
 
 /**
  * Synthesizes `kind: 'provider'` virtual nodes from gateway-specific
@@ -43,7 +39,7 @@ export function synthesizeProviderNodes(
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   if (!cluster) return [];
 
-  const gateways = cluster.nodes.filter((n) => resolveNodeKind(n) === 'gateway');
+  const gateways = cluster.nodes.filter((n) => resolveNodeKind(n) === "gateway");
   // NOTE: do not early-return here — the CLI-binding synthesis
   // below emits virtual nodes from agent nodes, independent of
   // whether any gateways exist. The sirius + embersynth blocks
@@ -54,7 +50,7 @@ export function synthesizeProviderNodes(
 
   const virtual: ClusterNode[] = [];
 
-  const siriusGateways = gateways.filter((g) => g.cloud?.provider === 'sirius');
+  const siriusGateways = gateways.filter((g) => g.cloud?.provider === "sirius");
   if (siriusGateways.length > 0) {
     let providers: SiriusProvider[] = [];
     try {
@@ -66,17 +62,15 @@ export function synthesizeProviderNodes(
       for (const p of providers) {
         virtual.push({
           name: `${gw.name}.${p.name}`,
-          endpoint: '',
-          kind: 'provider',
+          endpoint: "",
+          kind: "provider",
           provider: { gateway: gw.name, providerName: p.name },
         });
       }
     }
   }
 
-  const embersynthGateways = gateways.filter(
-    (g) => g.cloud?.provider === 'embersynth',
-  );
+  const embersynthGateways = gateways.filter((g) => g.cloud?.provider === "embersynth");
   if (embersynthGateways.length > 0) {
     let eCfg: ReturnType<typeof loadEmbersynthConfig> = null;
     try {
@@ -89,8 +83,8 @@ export function synthesizeProviderNodes(
       for (const m of synthModels) {
         virtual.push({
           name: `${gw.name}.${m}`,
-          endpoint: '',
-          kind: 'provider',
+          endpoint: "",
+          kind: "provider",
           provider: { gateway: gw.name, providerName: m },
         });
       }
@@ -103,18 +97,18 @@ export function synthesizeProviderNodes(
   // discriminator tells the factory to build a subprocess adapter
   // instead of an OpenAI-compat one.
   const agentsWithCli = cluster.nodes.filter(
-    (n) => resolveNodeKind(n) === 'agent' && (n.cli?.length ?? 0) > 0,
+    (n) => resolveNodeKind(n) === "agent" && (n.cli?.length ?? 0) > 0,
   );
   for (const agent of agentsWithCli) {
     for (const binding of agent.cli ?? []) {
       virtual.push({
         name: `${agent.name}.${binding.name}`,
-        endpoint: '',
-        kind: 'provider',
+        endpoint: "",
+        kind: "provider",
         provider: {
           gateway: agent.name,
           providerName: binding.name,
-          source: 'cli',
+          source: "cli",
         },
       });
     }
@@ -128,8 +122,10 @@ export function synthesizeProviderNodes(
  * its components. Returns null when the name doesn't match the
  * expected shape — callers treat that as "not a provider node".
  */
-export function parseProviderNodeName(name: string): { gateway: string; providerName: string } | null {
-  const dot = name.indexOf('.');
+export function parseProviderNodeName(
+  name: string,
+): { gateway: string; providerName: string } | null {
+  const dot = name.indexOf(".");
   if (dot <= 0 || dot === name.length - 1) return null;
   return {
     gateway: name.slice(0, dot),
@@ -148,7 +144,7 @@ export function parseProviderNodeName(name: string): { gateway: string; provider
 export function findCliBindingForNode(
   cfg: Config,
   nodeName: string,
-): { agentName: string; binding: import('./schema.js').CliBinding } | null {
+): { agentName: string; binding: import("./schema.js").CliBinding } | null {
   const parsed = parseProviderNodeName(nodeName);
   if (!parsed) return null;
   const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
@@ -156,7 +152,7 @@ export function findCliBindingForNode(
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   if (!cluster) return null;
   const agent = cluster.nodes.find(
-    (n) => n.name === parsed.gateway && resolveNodeKind(n) === 'agent',
+    (n) => n.name === parsed.gateway && resolveNodeKind(n) === "agent",
   );
   if (!agent || !agent.cli) return null;
   const binding = agent.cli.find((b) => b.name === parsed.providerName);

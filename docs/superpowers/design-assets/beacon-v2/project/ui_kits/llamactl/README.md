@@ -3,6 +3,7 @@
 Web control plane for LLM fleet operations. Dense, terminal-adjacent, built on Beacon's Sirius theme.
 
 **Patterns demonstrated:**
+
 - Title bar with traffic lights, brand orb, command-path center piece, theme-switch area
 - Activity rail (left 56px) + explorer (280px) + editor surface
 - Tabs with brand-accented top border

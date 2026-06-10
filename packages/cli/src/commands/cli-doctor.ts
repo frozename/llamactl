@@ -15,7 +15,7 @@ import {
   resolveNodeKind,
   type ClusterNode,
   type Config,
-} from '@llamactl/remote';
+} from "@llamactl/remote";
 
 const USAGE = `Usage: llamactl agent cli <subcommand>
 
@@ -29,12 +29,12 @@ Subcommands:
 export async function runAgentCli(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
-    case 'doctor':
+    case "doctor":
       return runDoctor(rest);
     case undefined:
-    case '--help':
-    case '-h':
-    case 'help':
+    case "--help":
+    case "-h":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:
@@ -53,10 +53,10 @@ function parseDoctor(args: string[]): DoctorOpts | { error: string } {
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
-    if (a === '--node' || a === '-n') node = args[++i];
-    else if (a.startsWith('--node=')) node = a.slice('--node='.length);
-    else if (a === '--json') json = true;
-    else if (a === '-h' || a === '--help') return { error: 'help' };
+    if (a === "--node" || a === "-n") node = args[++i];
+    else if (a.startsWith("--node=")) node = a.slice("--node=".length);
+    else if (a === "--json") json = true;
+    else if (a === "-h" || a === "--help") return { error: "help" };
     else return { error: `Unknown flag: ${a}` };
   }
   return { node, json };
@@ -66,15 +66,15 @@ export interface DoctorResult {
   agent: string;
   binding: string;
   preset: string;
-  state: 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
+  state: "healthy" | "degraded" | "unhealthy" | "unknown";
   latencyMs: number | null;
   error?: string;
 }
 
 async function runDoctor(args: string[]): Promise<number> {
   const parsed = parseDoctor(args);
-  if ('error' in parsed) {
-    if (parsed.error === 'help') {
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -103,12 +103,11 @@ async function runDoctor(args: string[]): Promise<number> {
 
   const agents = cluster.nodes.filter(
     (n): n is ClusterNode =>
-      resolveNodeKind(n) === 'agent' &&
-      (!parsed.node || n.name === parsed.node),
+      resolveNodeKind(n) === "agent" && (!parsed.node || n.name === parsed.node),
   );
   if (agents.length === 0) {
     process.stderr.write(
-      `agent cli doctor: no agent nodes match${parsed.node ? ` --node=${parsed.node}` : ''}\n`,
+      `agent cli doctor: no agent nodes match${parsed.node ? ` --node=${parsed.node}` : ""}\n`,
     );
     return 1;
   }
@@ -125,9 +124,9 @@ async function runDoctor(args: string[]): Promise<number> {
           agent: agent.name,
           binding: binding.name,
           preset: binding.preset,
-          state: 'unknown',
+          state: "unknown",
           latencyMs: null,
-          error: 'healthCheck not implemented',
+          error: "healthCheck not implemented",
         });
         continue;
       }
@@ -138,7 +137,7 @@ async function runDoctor(args: string[]): Promise<number> {
           binding: binding.name,
           preset: binding.preset,
           state: h.state,
-          latencyMs: typeof h.latencyMs === 'number' ? h.latencyMs : null,
+          latencyMs: typeof h.latencyMs === "number" ? h.latencyMs : null,
         };
         if (h.error) entry.error = h.error;
         results.push(entry);
@@ -147,7 +146,7 @@ async function runDoctor(args: string[]): Promise<number> {
           agent: agent.name,
           binding: binding.name,
           preset: binding.preset,
-          state: 'unhealthy',
+          state: "unhealthy",
           latencyMs: null,
           error: (err as Error).message,
         });
@@ -159,18 +158,18 @@ async function runDoctor(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify({ results })}\n`);
   } else {
     if (results.length === 0) {
-      process.stdout.write('(no CLI bindings declared on any agent)\n');
+      process.stdout.write("(no CLI bindings declared on any agent)\n");
     } else {
       for (const r of results) {
-        const mark = r.state === 'healthy' ? 'ok' : r.state;
-        const latency = r.latencyMs !== null ? `${r.latencyMs}ms` : '—';
+        const mark = r.state === "healthy" ? "ok" : r.state;
+        const latency = r.latencyMs !== null ? `${r.latencyMs}ms` : "—";
         process.stdout.write(
-          `[${mark}] ${r.agent}.${r.binding} (${r.preset}) · ${latency}${r.error ? ` · ${r.error}` : ''}\n`,
+          `[${mark}] ${r.agent}.${r.binding} (${r.preset}) · ${latency}${r.error ? ` · ${r.error}` : ""}\n`,
         );
       }
     }
   }
 
-  const anyBad = results.some((r) => r.state !== 'healthy');
+  const anyBad = results.some((r) => r.state !== "healthy");
   return anyBad ? 2 : 0;
 }

@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { registerFleetTools } from '../src/tools/fleet.js';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { registerFleetTools } from "../src/tools/fleet.js";
 import type {
   FleetJournalEntry,
   FleetSnapshotEntry,
@@ -13,42 +13,42 @@ import type {
   FleetTransitionEntry,
   FleetProposalEntry,
   FleetExecutionEntry,
-} from '@llamactl/fleet-supervisor';
+} from "@llamactl/fleet-supervisor";
 
-let tmpDir = '';
+let tmpDir = "";
 
 beforeEach(() => {
-  tmpDir = mkdtempSync(join(tmpdir(), 'llamactl-fleet-test-'));
+  tmpDir = mkdtempSync(join(tmpdir(), "llamactl-fleet-test-"));
 });
 
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function journalAt(name = 'journal.jsonl'): string {
+function journalAt(name = "journal.jsonl"): string {
   return join(tmpDir, name);
 }
 
-function writeJournal(entries: FleetJournalEntry[], name = 'journal.jsonl'): string {
+function writeJournal(entries: FleetJournalEntry[], name = "journal.jsonl"): string {
   const path = journalAt(name);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, entries.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8');
+  writeFileSync(path, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
   return path;
 }
 
 async function connected() {
-  const server = new McpServer({ name: 'test-fleet', version: '0.0.0' });
+  const server = new McpServer({ name: "test-fleet", version: "0.0.0" });
   registerFleetTools(server);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  const client = new Client({ name: "test-client", version: "0.0.0" });
   await client.connect(clientTransport);
   return { client };
 }
 
 function textOf(result: unknown): string {
   const c = (result as { content?: Array<{ type: string; text: string }> }).content ?? [];
-  return c[0]?.text ?? '';
+  return c[0]?.text ?? "";
 }
 
 function call(client: Client, name: string, args: Record<string, unknown>) {
@@ -58,15 +58,23 @@ function call(client: Client, name: string, args: Record<string, unknown>) {
 // ── fixtures ────────────────────────────────────────────────────────────────
 
 const snapshot = (node: string, ts: string): FleetSnapshotEntry => ({
-  kind: 'fleet-snapshot',
+  kind: "fleet-snapshot",
   ts,
   node,
-  node_mem: { free_mb: 8000, active_mb: 4000, inactive_mb: 2000, wired_mb: 1000, compressor_mb: 500, swap_in: 0, swap_out: 0 },
+  node_mem: {
+    free_mb: 8000,
+    active_mb: 4000,
+    inactive_mb: 2000,
+    wired_mb: 1000,
+    compressor_mb: 500,
+    swap_in: 0,
+    swap_out: 0,
+  },
   workloads: [],
 });
 
 const heartbeat = (node: string, ts: string): FleetHeartbeatEntry => ({
-  kind: 'fleet-heartbeat',
+  kind: "fleet-heartbeat",
   ts,
   node,
 });
@@ -74,13 +82,13 @@ const heartbeat = (node: string, ts: string): FleetHeartbeatEntry => ({
 const transition = (
   node: string,
   ts: string,
-  signal: 'pressure' | 'pressure-cleared' | 'degraded',
+  signal: "pressure" | "pressure-cleared" | "degraded",
   from: string,
   to: string,
-  subjectKind: 'node' | 'workload' = 'node',
+  subjectKind: "node" | "workload" = "node",
   subject = node,
 ): FleetTransitionEntry => ({
-  kind: 'fleet-transition',
+  kind: "fleet-transition",
   ts,
   node,
   subject,
@@ -92,168 +100,174 @@ const transition = (
 
 let _proposalSeq = 0;
 const proposal = (node: string, ts: string, id?: string): FleetProposalEntry => ({
-  kind: 'fleet-proposal',
+  kind: "fleet-proposal",
   ts,
   node,
   proposalId: id ?? `p-${++_proposalSeq}`,
-  transition: { subject: node, subjectKind: 'node', signal: 'pressure', from: 'NORMAL', to: 'HIGH' },
-  action: { type: 'evict', workload: 'test-workload', reason: 'pressure' },
+  transition: {
+    subject: node,
+    subjectKind: "node",
+    signal: "pressure",
+    from: "NORMAL",
+    to: "HIGH",
+  },
+  action: { type: "evict", workload: "test-workload", reason: "pressure" },
 });
 
 const execution = (node: string, ts: string, proposalId: string): FleetExecutionEntry => ({
-  kind: 'fleet-execution',
+  kind: "fleet-execution",
   ts,
   node,
   proposalId,
-  action: { type: 'evict', workload: 'test-workload', reason: 'pressure' },
-  status: 'executed',
+  action: { type: "evict", workload: "test-workload", reason: "pressure" },
+  status: "executed",
 });
 
 // ── llamactl_fleet_snapshot ──────────────────────────────────────────────────
 
-describe('llamactl_fleet_snapshot', () => {
-  test('empty journal → empty snapshots', async () => {
+describe("llamactl_fleet_snapshot", () => {
+  test("empty journal → empty snapshots", async () => {
     const path = writeJournal([]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_snapshot', { journalPath: path });
+    const result = await call(client, "llamactl_fleet_snapshot", { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as { snapshots: unknown[] };
     expect(parsed.snapshots).toEqual([]);
   });
 
-  test('missing journal → empty snapshots (no throw)', async () => {
+  test("missing journal → empty snapshots (no throw)", async () => {
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_snapshot', {
-      journalPath: join(tmpDir, 'no-such-file.jsonl'),
+    const result = await call(client, "llamactl_fleet_snapshot", {
+      journalPath: join(tmpDir, "no-such-file.jsonl"),
     });
     const parsed = JSON.parse(textOf(result)) as { snapshots: unknown[] };
     expect(parsed.snapshots).toEqual([]);
   });
 
-  test('returns latest snapshot per node from mixed journal', async () => {
+  test("returns latest snapshot per node from mixed journal", async () => {
     const path = writeJournal([
-      snapshot('node-a', '2026-01-01T00:00:00Z'),
-      heartbeat('node-a', '2026-01-01T00:00:05Z'),
-      snapshot('node-a', '2026-01-01T00:01:00Z'),
-      snapshot('node-b', '2026-01-01T00:00:30Z'),
+      snapshot("node-a", "2026-01-01T00:00:00Z"),
+      heartbeat("node-a", "2026-01-01T00:00:05Z"),
+      snapshot("node-a", "2026-01-01T00:01:00Z"),
+      snapshot("node-b", "2026-01-01T00:00:30Z"),
     ]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_snapshot', { journalPath: path });
+    const result = await call(client, "llamactl_fleet_snapshot", { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as { snapshots: FleetSnapshotEntry[] };
     expect(parsed.snapshots).toHaveLength(2);
-    const a = parsed.snapshots.find((s) => s.node === 'node-a');
-    expect(a?.ts).toBe('2026-01-01T00:01:00Z');
+    const a = parsed.snapshots.find((s) => s.node === "node-a");
+    expect(a?.ts).toBe("2026-01-01T00:01:00Z");
   });
 
-  test('node filter returns only that node', async () => {
+  test("node filter returns only that node", async () => {
     const path = writeJournal([
-      snapshot('node-a', '2026-01-01T00:00:00Z'),
-      snapshot('node-b', '2026-01-01T00:00:01Z'),
+      snapshot("node-a", "2026-01-01T00:00:00Z"),
+      snapshot("node-b", "2026-01-01T00:00:01Z"),
     ]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_snapshot', {
+    const result = await call(client, "llamactl_fleet_snapshot", {
       journalPath: path,
-      node: 'node-b',
+      node: "node-b",
     });
     const parsed = JSON.parse(textOf(result)) as { snapshots: FleetSnapshotEntry[] };
     expect(parsed.snapshots).toHaveLength(1);
-    expect(parsed.snapshots[0]!.node).toBe('node-b');
+    expect(parsed.snapshots[0]!.node).toBe("node-b");
   });
 
-  test('malformed lines are skipped without throwing', async () => {
+  test("malformed lines are skipped without throwing", async () => {
     const path = journalAt();
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(
       path,
       [
-        JSON.stringify(snapshot('node-a', '2026-01-01T00:00:00Z')),
-        '{not valid json',
-        JSON.stringify(snapshot('node-a', '2026-01-01T00:01:00Z')),
-      ].join('\n') + '\n',
-      'utf8',
+        JSON.stringify(snapshot("node-a", "2026-01-01T00:00:00Z")),
+        "{not valid json",
+        JSON.stringify(snapshot("node-a", "2026-01-01T00:01:00Z")),
+      ].join("\n") + "\n",
+      "utf8",
     );
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_snapshot', { journalPath: path });
+    const result = await call(client, "llamactl_fleet_snapshot", { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as { snapshots: FleetSnapshotEntry[] };
     expect(parsed.snapshots).toHaveLength(1);
-    expect(parsed.snapshots[0]!.ts).toBe('2026-01-01T00:01:00Z');
+    expect(parsed.snapshots[0]!.ts).toBe("2026-01-01T00:01:00Z");
   });
 });
 
 // ── llamactl_fleet_pressure ──────────────────────────────────────────────────
 
-describe('llamactl_fleet_pressure', () => {
-  test('empty journal → empty nodes', async () => {
+describe("llamactl_fleet_pressure", () => {
+  test("empty journal → empty nodes", async () => {
     const path = writeJournal([]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_pressure', { journalPath: path });
+    const result = await call(client, "llamactl_fleet_pressure", { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as { nodes: unknown[] };
     expect(parsed.nodes).toEqual([]);
   });
 
-  test('node with snapshot but no transition → NORMAL with null lastTransitionAt', async () => {
-    const path = writeJournal([snapshot('node-a', '2026-01-01T00:00:00Z')]);
+  test("node with snapshot but no transition → NORMAL with null lastTransitionAt", async () => {
+    const path = writeJournal([snapshot("node-a", "2026-01-01T00:00:00Z")]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_pressure', { journalPath: path });
+    const result = await call(client, "llamactl_fleet_pressure", { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as {
       nodes: { name: string; state: string; lastTransitionAt: string | null }[];
     };
     expect(parsed.nodes).toHaveLength(1);
-    expect(parsed.nodes[0]!.state).toBe('NORMAL');
+    expect(parsed.nodes[0]!.state).toBe("NORMAL");
     expect(parsed.nodes[0]!.lastTransitionAt).toBeNull();
   });
 
-  test('pressure transition HIGH reflected in state', async () => {
+  test("pressure transition HIGH reflected in state", async () => {
     const path = writeJournal([
-      snapshot('node-a', '2026-01-01T00:00:00Z'),
-      transition('node-a', '2026-01-01T00:01:00Z', 'pressure', 'NORMAL', 'HIGH'),
+      snapshot("node-a", "2026-01-01T00:00:00Z"),
+      transition("node-a", "2026-01-01T00:01:00Z", "pressure", "NORMAL", "HIGH"),
     ]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_pressure', { journalPath: path });
+    const result = await call(client, "llamactl_fleet_pressure", { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as {
       nodes: { name: string; state: string; lastTransitionAt: string | null }[];
     };
-    const a = parsed.nodes.find((n) => n.name === 'node-a')!;
-    expect(a.state).toBe('HIGH');
-    expect(a.lastTransitionAt).toBe('2026-01-01T00:01:00Z');
+    const a = parsed.nodes.find((n) => n.name === "node-a")!;
+    expect(a.state).toBe("HIGH");
+    expect(a.lastTransitionAt).toBe("2026-01-01T00:01:00Z");
   });
 
-  test('latest transition wins (HIGH then back to NORMAL)', async () => {
+  test("latest transition wins (HIGH then back to NORMAL)", async () => {
     const path = writeJournal([
-      snapshot('node-a', '2026-01-01T00:00:00Z'),
-      transition('node-a', '2026-01-01T00:01:00Z', 'pressure', 'NORMAL', 'HIGH'),
-      transition('node-a', '2026-01-01T00:02:00Z', 'pressure-cleared', 'HIGH', 'NORMAL'),
+      snapshot("node-a", "2026-01-01T00:00:00Z"),
+      transition("node-a", "2026-01-01T00:01:00Z", "pressure", "NORMAL", "HIGH"),
+      transition("node-a", "2026-01-01T00:02:00Z", "pressure-cleared", "HIGH", "NORMAL"),
     ]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_pressure', { journalPath: path });
+    const result = await call(client, "llamactl_fleet_pressure", { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as {
       nodes: { name: string; state: string }[];
     };
-    expect(parsed.nodes.find((n) => n.name === 'node-a')!.state).toBe('NORMAL');
+    expect(parsed.nodes.find((n) => n.name === "node-a")!.state).toBe("NORMAL");
   });
 
-  test('node filter restricts to single node', async () => {
+  test("node filter restricts to single node", async () => {
     const path = writeJournal([
-      snapshot('node-a', '2026-01-01T00:00:00Z'),
-      snapshot('node-b', '2026-01-01T00:00:01Z'),
-      transition('node-b', '2026-01-01T00:01:00Z', 'pressure', 'NORMAL', 'HIGH'),
+      snapshot("node-a", "2026-01-01T00:00:00Z"),
+      snapshot("node-b", "2026-01-01T00:00:01Z"),
+      transition("node-b", "2026-01-01T00:01:00Z", "pressure", "NORMAL", "HIGH"),
     ]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_pressure', {
+    const result = await call(client, "llamactl_fleet_pressure", {
       journalPath: path,
-      node: 'node-a',
+      node: "node-a",
     });
     const parsed = JSON.parse(textOf(result)) as { nodes: { name: string }[] };
-    expect(parsed.nodes.every((n) => n.name === 'node-a')).toBe(true);
+    expect(parsed.nodes.every((n) => n.name === "node-a")).toBe(true);
   });
 });
 
 // ── llamactl_fleet_proposals ─────────────────────────────────────────────────
 
-describe('llamactl_fleet_proposals', () => {
-  test('empty journal → empty proposals', async () => {
+describe("llamactl_fleet_proposals", () => {
+  test("empty journal → empty proposals", async () => {
     const path = writeJournal([]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_proposals', {
+    const result = await call(client, "llamactl_fleet_proposals", {
       journalPath: path,
       pendingOnly: false,
     });
@@ -262,27 +276,27 @@ describe('llamactl_fleet_proposals', () => {
     expect(parsed.total).toBe(0);
   });
 
-  test('pendingOnly=true (default) excludes executed proposals', async () => {
+  test("pendingOnly=true (default) excludes executed proposals", async () => {
     _proposalSeq = 0;
-    const p1 = proposal('node-a', '2026-01-01T00:01:00Z', 'prop-1');
-    const p2 = proposal('node-a', '2026-01-01T00:02:00Z', 'prop-2');
-    const ex1 = execution('node-a', '2026-01-01T00:01:30Z', 'prop-1');
+    const p1 = proposal("node-a", "2026-01-01T00:01:00Z", "prop-1");
+    const p2 = proposal("node-a", "2026-01-01T00:02:00Z", "prop-2");
+    const ex1 = execution("node-a", "2026-01-01T00:01:30Z", "prop-1");
     const path = writeJournal([p1, p2, ex1]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_proposals', { journalPath: path });
+    const result = await call(client, "llamactl_fleet_proposals", { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as { proposals: FleetProposalEntry[]; total: number };
     expect(parsed.proposals).toHaveLength(1);
-    expect(parsed.proposals[0]!.proposalId).toBe('prop-2');
+    expect(parsed.proposals[0]!.proposalId).toBe("prop-2");
     expect(parsed.total).toBe(1);
   });
 
-  test('pendingOnly=false returns all proposals', async () => {
-    const p1 = proposal('node-a', '2026-01-01T00:01:00Z', 'prop-A');
-    const ex1 = execution('node-a', '2026-01-01T00:01:30Z', 'prop-A');
-    const p2 = proposal('node-a', '2026-01-01T00:02:00Z', 'prop-B');
+  test("pendingOnly=false returns all proposals", async () => {
+    const p1 = proposal("node-a", "2026-01-01T00:01:00Z", "prop-A");
+    const ex1 = execution("node-a", "2026-01-01T00:01:30Z", "prop-A");
+    const p2 = proposal("node-a", "2026-01-01T00:02:00Z", "prop-B");
     const path = writeJournal([p1, ex1, p2]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_proposals', {
+    const result = await call(client, "llamactl_fleet_proposals", {
       journalPath: path,
       pendingOnly: false,
     });
@@ -290,28 +304,28 @@ describe('llamactl_fleet_proposals', () => {
     expect(parsed.total).toBe(2);
   });
 
-  test('node filter restricts proposals', async () => {
-    const p1 = proposal('node-a', '2026-01-01T00:01:00Z', 'p-a');
-    const p2 = proposal('node-b', '2026-01-01T00:02:00Z', 'p-b');
+  test("node filter restricts proposals", async () => {
+    const p1 = proposal("node-a", "2026-01-01T00:01:00Z", "p-a");
+    const p2 = proposal("node-b", "2026-01-01T00:02:00Z", "p-b");
     const path = writeJournal([p1, p2]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_proposals', {
+    const result = await call(client, "llamactl_fleet_proposals", {
       journalPath: path,
-      node: 'node-b',
+      node: "node-b",
       pendingOnly: false,
     });
     const parsed = JSON.parse(textOf(result)) as { proposals: FleetProposalEntry[] };
     expect(parsed.proposals).toHaveLength(1);
-    expect(parsed.proposals[0]!.proposalId).toBe('p-b');
+    expect(parsed.proposals[0]!.proposalId).toBe("p-b");
   });
 
-  test('results are most-recent-first and limit is respected', async () => {
+  test("results are most-recent-first and limit is respected", async () => {
     const entries = Array.from({ length: 10 }, (_, i) =>
-      proposal('node-a', `2026-01-01T00:0${i}:00Z`, `p-${i}`),
+      proposal("node-a", `2026-01-01T00:0${i}:00Z`, `p-${i}`),
     );
     const path = writeJournal(entries);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_proposals', {
+    const result = await call(client, "llamactl_fleet_proposals", {
       journalPath: path,
       pendingOnly: false,
       limit: 3,
@@ -325,222 +339,267 @@ describe('llamactl_fleet_proposals', () => {
 
 // ── llamactl_fleet_executions ────────────────────────────────────────────────
 
-
-
-  describe('llamactl_fleet_pressure_status', () => {
-    test('empty journal -> empty nodes', async () => {
-      const path = writeJournal([]);
-      const { client } = await connected();
-      const result = await call(client, 'llamactl_fleet_pressure_status', { journalPath: path });
-      const parsed = JSON.parse(textOf(result));
-      expect(parsed).toEqual({ nodes: [] });
-    });
-
-    test('returns derived status from transitions and status entries', async () => {
-      const path = writeJournal([
-        { kind: 'fleet-transition', ts: '2026-05-23T10:00:00.000Z', node: 'local', subject: 'node', subjectKind: 'node', signal: 'pressure', from: 'NORMAL', to: 'HIGH' },
-        { kind: 'fleet-pressure-status', ts: '2026-05-23T10:01:00.000Z', node: 'local', state: 'HIGH', enteredAt: '2026-05-23T10:00:00.000Z', durationMs: 60000, consecutiveClearTicks: 2, clearTicksNeeded: 5, free_mb: 100, compressor_mb: 200, headroomBreach: true, compressorBreach: false }
-      ] as any);
-      const { client } = await connected();
-      const result = await call(client, 'llamactl_fleet_pressure_status', { journalPath: path });
-      const parsed = JSON.parse(textOf(result));
-      expect(parsed.nodes).toHaveLength(1);
-      expect(parsed.nodes[0].state).toBe('HIGH');
-      expect(parsed.nodes[0].consecutiveClearTicks).toBe(2);
-      expect(parsed.nodes[0].recent).toHaveLength(1);
-    });
-
-    test('deprecated alias returns same shape and warns once', async () => {
-      const path = writeJournal([
-        { kind: 'fleet-pressure-status', ts: '2026-05-23T10:01:00.000Z', node: 'local', state: 'NORMAL', enteredAt: '2026-05-23T10:00:00.000Z', durationMs: 60000, consecutiveClearTicks: 2, clearTicksNeeded: 5, free_mb: 100, compressor_mb: 200, headroomBreach: false, compressorBreach: false },
-      ] as any);
-      const { client } = await connected();
-
-      const baseline = await call(client, 'llamactl_fleet_pressure_status', { journalPath: path });
-      const expected = JSON.parse(textOf(baseline));
-      const previous = console.error;
-      const errorLines: string[] = [];
-      console.error = ((...args: unknown[]) => errorLines.push(args.map((arg) => String(arg)).join(' '))) as typeof console.error;
-
-      try {
-        const first = await call(client, 'llamactl_fleet_supervisor_status', { journalPath: path });
-        const second = await call(client, 'llamactl_fleet_supervisor_status', { journalPath: path });
-        const aliasedFirst = JSON.parse(textOf(first));
-        const aliasedSecond = JSON.parse(textOf(second));
-
-        expect(aliasedFirst).toEqual(expected);
-        expect(aliasedSecond).toEqual(expected);
-        const warningLines = errorLines.filter(
-          (line) => line.includes('[llamactl-mcp] deprecated: llamactl_fleet_supervisor_status -> llamactl_fleet_pressure_status; will be removed'),
-        );
-        expect(warningLines).toHaveLength(1);
-      } finally {
-        console.error = previous;
-      }
-    });
-  });
-
-  
-  describe('llamactl_fleet_audit', () => {
-    test('empty journal -> empty entries', async () => {
-      const path = writeJournal([]);
-      const { client } = await connected();
-      const result = await call(client, 'llamactl_fleet_audit', { auditPath: path });
-      const parsed = JSON.parse(textOf(result));
-      expect(parsed).toEqual({ entries: [], total: 0, auditPath: path, malformedLines: 0 });
-    });
-
-    test('returns derived status from audit entries', async () => {
-      const path = writeJournal([
-        { kind: 'mcp-audit', ts: '2026-05-23T10:00:00.000Z', tool: 'test-tool', input: { a: 1 }, outcome: 'success', detail: {} }
-      ] as any);
-      const { client } = await connected();
-      const result = await call(client, 'llamactl_fleet_audit', { auditPath: path });
-      const parsed = JSON.parse(textOf(result));
-      expect(parsed.entries).toHaveLength(1);
-      expect(parsed.entries[0].tool).toBe('test-tool');
-      expect(parsed.total).toBe(1);
-    });
-  });
-
-  describe('llamactl_fleet_executions', () => {
-  test('empty journal → empty executions', async () => {
+describe("llamactl_fleet_pressure_status", () => {
+  test("empty journal -> empty nodes", async () => {
     const path = writeJournal([]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_executions', { journalPath: path });
+    const result = await call(client, "llamactl_fleet_pressure_status", { journalPath: path });
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed).toEqual({ nodes: [] });
+  });
+
+  test("returns derived status from transitions and status entries", async () => {
+    const path = writeJournal([
+      {
+        kind: "fleet-transition",
+        ts: "2026-05-23T10:00:00.000Z",
+        node: "local",
+        subject: "node",
+        subjectKind: "node",
+        signal: "pressure",
+        from: "NORMAL",
+        to: "HIGH",
+      },
+      {
+        kind: "fleet-pressure-status",
+        ts: "2026-05-23T10:01:00.000Z",
+        node: "local",
+        state: "HIGH",
+        enteredAt: "2026-05-23T10:00:00.000Z",
+        durationMs: 60000,
+        consecutiveClearTicks: 2,
+        clearTicksNeeded: 5,
+        free_mb: 100,
+        compressor_mb: 200,
+        headroomBreach: true,
+        compressorBreach: false,
+      },
+    ] as any);
+    const { client } = await connected();
+    const result = await call(client, "llamactl_fleet_pressure_status", { journalPath: path });
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed.nodes).toHaveLength(1);
+    expect(parsed.nodes[0].state).toBe("HIGH");
+    expect(parsed.nodes[0].consecutiveClearTicks).toBe(2);
+    expect(parsed.nodes[0].recent).toHaveLength(1);
+  });
+
+  test("deprecated alias returns same shape and warns once", async () => {
+    const path = writeJournal([
+      {
+        kind: "fleet-pressure-status",
+        ts: "2026-05-23T10:01:00.000Z",
+        node: "local",
+        state: "NORMAL",
+        enteredAt: "2026-05-23T10:00:00.000Z",
+        durationMs: 60000,
+        consecutiveClearTicks: 2,
+        clearTicksNeeded: 5,
+        free_mb: 100,
+        compressor_mb: 200,
+        headroomBreach: false,
+        compressorBreach: false,
+      },
+    ] as any);
+    const { client } = await connected();
+
+    const baseline = await call(client, "llamactl_fleet_pressure_status", { journalPath: path });
+    const expected = JSON.parse(textOf(baseline));
+    const previous = console.error;
+    const errorLines: string[] = [];
+    console.error = ((...args: unknown[]) =>
+      errorLines.push(args.map((arg) => String(arg)).join(" "))) as typeof console.error;
+
+    try {
+      const first = await call(client, "llamactl_fleet_supervisor_status", { journalPath: path });
+      const second = await call(client, "llamactl_fleet_supervisor_status", { journalPath: path });
+      const aliasedFirst = JSON.parse(textOf(first));
+      const aliasedSecond = JSON.parse(textOf(second));
+
+      expect(aliasedFirst).toEqual(expected);
+      expect(aliasedSecond).toEqual(expected);
+      const warningLines = errorLines.filter((line) =>
+        line.includes(
+          "[llamactl-mcp] deprecated: llamactl_fleet_supervisor_status -> llamactl_fleet_pressure_status; will be removed",
+        ),
+      );
+      expect(warningLines).toHaveLength(1);
+    } finally {
+      console.error = previous;
+    }
+  });
+});
+
+describe("llamactl_fleet_audit", () => {
+  test("empty journal -> empty entries", async () => {
+    const path = writeJournal([]);
+    const { client } = await connected();
+    const result = await call(client, "llamactl_fleet_audit", { auditPath: path });
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed).toEqual({ entries: [], total: 0, auditPath: path, malformedLines: 0 });
+  });
+
+  test("returns derived status from audit entries", async () => {
+    const path = writeJournal([
+      {
+        kind: "mcp-audit",
+        ts: "2026-05-23T10:00:00.000Z",
+        tool: "test-tool",
+        input: { a: 1 },
+        outcome: "success",
+        detail: {},
+      },
+    ] as any);
+    const { client } = await connected();
+    const result = await call(client, "llamactl_fleet_audit", { auditPath: path });
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed.entries).toHaveLength(1);
+    expect(parsed.entries[0].tool).toBe("test-tool");
+    expect(parsed.total).toBe(1);
+  });
+});
+
+describe("llamactl_fleet_executions", () => {
+  test("empty journal → empty executions", async () => {
+    const path = writeJournal([]);
+    const { client } = await connected();
+    const result = await call(client, "llamactl_fleet_executions", { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as { executions: unknown[]; total: number };
     expect(parsed.executions).toEqual([]);
     expect(parsed.total).toBe(0);
   });
 
-  test('returns executions most-recent-first with correct total', async () => {
+  test("returns executions most-recent-first with correct total", async () => {
     const entries = [
-      execution('node-a', '2026-01-01T00:01:00Z', 'p-1'),
-      execution('node-a', '2026-01-01T00:02:00Z', 'p-2'),
-      execution('node-b', '2026-01-01T00:03:00Z', 'p-3'),
+      execution("node-a", "2026-01-01T00:01:00Z", "p-1"),
+      execution("node-a", "2026-01-01T00:02:00Z", "p-2"),
+      execution("node-b", "2026-01-01T00:03:00Z", "p-3"),
     ];
     const path = writeJournal(entries);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_executions', {
+    const result = await call(client, "llamactl_fleet_executions", {
       journalPath: path,
       limit: 2,
     });
-    const parsed = JSON.parse(textOf(result)) as { executions: FleetExecutionEntry[]; total: number };
+    const parsed = JSON.parse(textOf(result)) as {
+      executions: FleetExecutionEntry[];
+      total: number;
+    };
     expect(parsed.total).toBe(3);
     expect(parsed.executions).toHaveLength(2);
     expect(parsed.executions[0]!.ts > parsed.executions[1]!.ts).toBe(true);
   });
 
-  test('node filter restricts executions', async () => {
+  test("node filter restricts executions", async () => {
     const path = writeJournal([
-      execution('node-a', '2026-01-01T00:01:00Z', 'pa-1'),
-      execution('node-b', '2026-01-01T00:02:00Z', 'pb-1'),
+      execution("node-a", "2026-01-01T00:01:00Z", "pa-1"),
+      execution("node-b", "2026-01-01T00:02:00Z", "pb-1"),
     ]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_executions', {
+    const result = await call(client, "llamactl_fleet_executions", {
       journalPath: path,
-      node: 'node-a',
+      node: "node-a",
     });
     const parsed = JSON.parse(textOf(result)) as { executions: FleetExecutionEntry[] };
     expect(parsed.executions).toHaveLength(1);
-    expect(parsed.executions[0]!.proposalId).toBe('pa-1');
+    expect(parsed.executions[0]!.proposalId).toBe("pa-1");
   });
 
-  test('sinceIsoTs filters out older entries', async () => {
+  test("sinceIsoTs filters out older entries", async () => {
     const path = writeJournal([
-      execution('node-a', '2026-01-01T00:01:00Z', 'old'),
-      execution('node-a', '2026-01-01T00:03:00Z', 'new'),
+      execution("node-a", "2026-01-01T00:01:00Z", "old"),
+      execution("node-a", "2026-01-01T00:03:00Z", "new"),
     ]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_executions', {
+    const result = await call(client, "llamactl_fleet_executions", {
       journalPath: path,
-      sinceIsoTs: '2026-01-01T00:02:00Z',
+      sinceIsoTs: "2026-01-01T00:02:00Z",
     });
     const parsed = JSON.parse(textOf(result)) as { executions: FleetExecutionEntry[] };
     expect(parsed.executions).toHaveLength(1);
-    expect(parsed.executions[0]!.proposalId).toBe('new');
+    expect(parsed.executions[0]!.proposalId).toBe("new");
   });
 });
 
 // ── llamactl_fleet_journal_tail ──────────────────────────────────────────────
 
-describe('llamactl_fleet_journal_tail', () => {
-  test('empty journal → empty entries', async () => {
+describe("llamactl_fleet_journal_tail", () => {
+  test("empty journal → empty entries", async () => {
     const path = writeJournal([]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_journal_tail', { journalPath: path });
+    const result = await call(client, "llamactl_fleet_journal_tail", { journalPath: path });
     const parsed = JSON.parse(textOf(result)) as { entries: unknown[] };
     expect(parsed.entries).toEqual([]);
   });
 
-  test('returns last N entries in chronological order', async () => {
+  test("returns last N entries in chronological order", async () => {
     const entries: FleetJournalEntry[] = [
-      snapshot('node-a', '2026-01-01T00:00:00Z'),
-      heartbeat('node-a', '2026-01-01T00:01:00Z'),
-      snapshot('node-a', '2026-01-01T00:02:00Z'),
-      heartbeat('node-a', '2026-01-01T00:03:00Z'),
-      snapshot('node-a', '2026-01-01T00:04:00Z'),
+      snapshot("node-a", "2026-01-01T00:00:00Z"),
+      heartbeat("node-a", "2026-01-01T00:01:00Z"),
+      snapshot("node-a", "2026-01-01T00:02:00Z"),
+      heartbeat("node-a", "2026-01-01T00:03:00Z"),
+      snapshot("node-a", "2026-01-01T00:04:00Z"),
     ];
     const path = writeJournal(entries);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_journal_tail', {
+    const result = await call(client, "llamactl_fleet_journal_tail", {
       journalPath: path,
       limit: 3,
     });
     const parsed = JSON.parse(textOf(result)) as { entries: FleetJournalEntry[] };
     expect(parsed.entries).toHaveLength(3);
-    expect(parsed.entries[0]!.ts).toBe('2026-01-01T00:02:00Z');
-    expect(parsed.entries[2]!.ts).toBe('2026-01-01T00:04:00Z');
+    expect(parsed.entries[0]!.ts).toBe("2026-01-01T00:02:00Z");
+    expect(parsed.entries[2]!.ts).toBe("2026-01-01T00:04:00Z");
   });
 
-  test('kinds filter restricts entry types', async () => {
+  test("kinds filter restricts entry types", async () => {
     const path = writeJournal([
-      snapshot('node-a', '2026-01-01T00:00:00Z'),
-      heartbeat('node-a', '2026-01-01T00:01:00Z'),
-      snapshot('node-a', '2026-01-01T00:02:00Z'),
+      snapshot("node-a", "2026-01-01T00:00:00Z"),
+      heartbeat("node-a", "2026-01-01T00:01:00Z"),
+      snapshot("node-a", "2026-01-01T00:02:00Z"),
     ]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_journal_tail', {
+    const result = await call(client, "llamactl_fleet_journal_tail", {
       journalPath: path,
-      kinds: ['fleet-heartbeat'],
+      kinds: ["fleet-heartbeat"],
     });
     const parsed = JSON.parse(textOf(result)) as { entries: FleetJournalEntry[] };
     expect(parsed.entries).toHaveLength(1);
-    expect(parsed.entries[0]!.kind).toBe('fleet-heartbeat');
+    expect(parsed.entries[0]!.kind).toBe("fleet-heartbeat");
   });
 
-  test('node filter restricts entries to that node', async () => {
+  test("node filter restricts entries to that node", async () => {
     const path = writeJournal([
-      snapshot('node-a', '2026-01-01T00:00:00Z'),
-      snapshot('node-b', '2026-01-01T00:01:00Z'),
-      heartbeat('node-a', '2026-01-01T00:02:00Z'),
+      snapshot("node-a", "2026-01-01T00:00:00Z"),
+      snapshot("node-b", "2026-01-01T00:01:00Z"),
+      heartbeat("node-a", "2026-01-01T00:02:00Z"),
     ]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_journal_tail', {
+    const result = await call(client, "llamactl_fleet_journal_tail", {
       journalPath: path,
-      node: 'node-b',
+      node: "node-b",
     });
     const parsed = JSON.parse(textOf(result)) as { entries: FleetJournalEntry[] };
     expect(parsed.entries).toHaveLength(1);
-    expect((parsed.entries[0] as FleetSnapshotEntry).node).toBe('node-b');
+    expect((parsed.entries[0] as FleetSnapshotEntry).node).toBe("node-b");
   });
 
-  test('mixed journal with node + kinds filter', async () => {
+  test("mixed journal with node + kinds filter", async () => {
     const path = writeJournal([
-      snapshot('node-a', '2026-01-01T00:00:00Z'),
-      heartbeat('node-a', '2026-01-01T00:01:00Z'),
-      snapshot('node-b', '2026-01-01T00:02:00Z'),
-      snapshot('node-a', '2026-01-01T00:03:00Z'),
+      snapshot("node-a", "2026-01-01T00:00:00Z"),
+      heartbeat("node-a", "2026-01-01T00:01:00Z"),
+      snapshot("node-b", "2026-01-01T00:02:00Z"),
+      snapshot("node-a", "2026-01-01T00:03:00Z"),
     ]);
     const { client } = await connected();
-    const result = await call(client, 'llamactl_fleet_journal_tail', {
+    const result = await call(client, "llamactl_fleet_journal_tail", {
       journalPath: path,
-      node: 'node-a',
-      kinds: ['fleet-snapshot'],
+      node: "node-a",
+      kinds: ["fleet-snapshot"],
     });
     const parsed = JSON.parse(textOf(result)) as { entries: FleetJournalEntry[] };
     expect(parsed.entries).toHaveLength(2);
-    expect(parsed.entries.every((e) => e.kind === 'fleet-snapshot')).toBe(true);
-    expect(parsed.entries.every((e) => (e as FleetSnapshotEntry).node === 'node-a')).toBe(true);
+    expect(parsed.entries.every((e) => e.kind === "fleet-snapshot")).toBe(true);
+    expect(parsed.entries.every((e) => (e as FleetSnapshotEntry).node === "node-a")).toBe(true);
   });
 });

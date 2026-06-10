@@ -1,5 +1,5 @@
-import { env as envMod, server, serverLogs as serverLogsMod } from '@llamactl/core';
-import { workloadSchema, workloadStore } from '@llamactl/remote';
+import { env as envMod, server, serverLogs as serverLogsMod } from "@llamactl/core";
+import { workloadSchema, workloadStore } from "@llamactl/remote";
 import {
   getGlobals,
   getNodeClient,
@@ -7,8 +7,8 @@ import {
   resolveEffectiveNodeName,
   matchDoneEvent,
   subscribeRemote,
-} from '../dispatcher.js';
-import { resolveWorkloadName } from './_workload-resolve.js';
+} from "../dispatcher.js";
+import { resolveWorkloadName } from "./_workload-resolve.js";
 
 const USAGE = `Usage: llamactl server <subcommand>
 
@@ -35,31 +35,29 @@ Subcommands:
 
 function forwardEvent(e: server.ServerEvent): void {
   switch (e.type) {
-    case 'launch':
-      process.stderr.write(`$ ${e.command} ${e.args.join(' ')}\n`);
+    case "launch":
+      process.stderr.write(`$ ${e.command} ${e.args.join(" ")}\n`);
       process.stderr.write(`launched pid=${e.pid}\n`);
       break;
-    case 'waiting':
+    case "waiting":
       // Quiet by default — a dot would help but spams stderr. Emit
       // one line every ~10 attempts so the user sees forward progress
       // without drowning in httpCode logs.
       if (e.attempt % 10 === 0) {
-        process.stderr.write(
-          `waiting ... attempt=${e.attempt} http=${e.httpCode ?? 'n/a'}\n`,
-        );
+        process.stderr.write(`waiting ... attempt=${e.attempt} http=${e.httpCode ?? "n/a"}\n`);
       }
       break;
-    case 'retry':
+    case "retry":
       process.stderr.write(`retrying: ${e.reason}\n`);
       break;
-    case 'ready':
+    case "ready":
       process.stderr.write(`ready pid=${e.pid} endpoint=${e.endpoint}\n`);
       break;
-    case 'timeout':
+    case "timeout":
       process.stderr.write(`timeout pid=${e.pid}\n`);
       break;
-    case 'exited':
-      process.stderr.write(`exited code=${e.code ?? '?'}\n`);
+    case "exited":
+      process.stderr.write(`exited code=${e.code ?? "?"}\n`);
       break;
   }
 }
@@ -78,66 +76,61 @@ async function runStart(args: string[]): Promise<number> {
       extra.push(arg);
       continue;
     }
-    if (arg === '--') {
+    if (arg === "--") {
       sawDashDash = true;
       continue;
-    } else if (arg === '--json') {
+    } else if (arg === "--json") {
       json = true;
       continue;
-    } else if (arg === '--no-tuned') {
+    } else if (arg === "--no-tuned") {
       skipTuned = true;
       continue;
-    } else if (arg.startsWith('--timeout=')) {
-      const n = Number.parseInt(arg.slice('--timeout='.length), 10);
+    } else if (arg.startsWith("--timeout=")) {
+      const n = Number.parseInt(arg.slice("--timeout=".length), 10);
       if (Number.isFinite(n) && n > 0) timeoutSeconds = n;
       continue;
-    } else if (arg === '--name') {
+    } else if (arg === "--name") {
       workloadExplicit = args[i + 1];
       if (!workloadExplicit) {
-        process.stderr.write('server start: --name requires a value\n');
+        process.stderr.write("server start: --name requires a value\n");
         return 1;
       }
       i += 1;
       continue;
-    } else if (arg.startsWith('--name=')) {
-      workloadExplicit = arg.slice('--name='.length);
+    } else if (arg.startsWith("--name=")) {
+      workloadExplicit = arg.slice("--name=".length);
       if (!workloadExplicit) {
-        process.stderr.write('server start: --name requires a value\n');
+        process.stderr.write("server start: --name requires a value\n");
         return 1;
       }
       continue;
-    } else if (arg === '-h' || arg === '--help') {
+    } else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('--')) {
+    } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
       return 1;
     } else {
       positional.push(arg);
     }
   }
-  const target = positional[0] ?? 'current';
+  const target = positional[0] ?? "current";
   if (positional.length > 1) {
     process.stderr.write(
-      `Extra positional args need to follow \`--\`: ${positional.slice(1).join(' ')}\n`,
+      `Extra positional args need to follow \`--\`: ${positional.slice(1).join(" ")}\n`,
     );
     return 1;
   }
 
   const resolved = envMod.resolveEnv();
   const node = resolveEffectiveNodeName();
-  const workload = resolveWorkloadName(
-    workloadExplicit,
-    resolved,
-    { synthesizeIfEmpty: true },
-  );
+  const workload = resolveWorkloadName(workloadExplicit, resolved, { synthesizeIfEmpty: true });
 
-  const workloadKind: 'rel' | 'alias' = target.includes('/') || target.endsWith('.gguf')
-    ? 'rel'
-    : 'alias';
+  const workloadKind: "rel" | "alias" =
+    target.includes("/") || target.endsWith(".gguf") ? "rel" : "alias";
   const manifest: workloadSchema.ModelRun = {
-    apiVersion: 'llamactl/v1',
-    kind: 'ModelRun',
+    apiVersion: "llamactl/v1",
+    kind: "ModelRun",
     metadata: { name: workload, labels: {}, annotations: {} },
     spec: {
       node,
@@ -145,7 +138,7 @@ async function runStart(args: string[]): Promise<number> {
       target: { kind: workloadKind, value: target },
       extraArgs: extra,
       workers: [],
-      restartPolicy: 'Always',
+      restartPolicy: "Always",
       timeoutSeconds,
       gateway: false,
       allowExternalBind: false,
@@ -165,7 +158,13 @@ async function runStart(args: string[]): Promise<number> {
       resolved,
     });
   } else {
-    const input: { workload: string; target: string; extraArgs?: string[]; timeoutSeconds?: number; skipTuned?: boolean } = {
+    const input: {
+      workload: string;
+      target: string;
+      extraArgs?: string[];
+      timeoutSeconds?: number;
+      skipTuned?: boolean;
+    } = {
       workload,
       target,
     };
@@ -173,13 +172,18 @@ async function runStart(args: string[]): Promise<number> {
       if (extra.length > 0) input.extraArgs = extra;
       if (timeoutSeconds !== 60) input.timeoutSeconds = timeoutSeconds;
       if (skipTuned) input.skipTuned = skipTuned;
-      result = await subscribeRemote<server.ServerEvent, Awaited<ReturnType<typeof server.startServer>>>({
+      result = await subscribeRemote<
+        server.ServerEvent,
+        Awaited<ReturnType<typeof server.startServer>>
+      >({
         subscribe: (handlers) => getNodeClient().serverStart.subscribe(input, handlers),
         onEvent: forwardEvent,
-        extractDone: matchDoneEvent<Awaited<ReturnType<typeof server.startServer>>>('done'),
+        extractDone: matchDoneEvent<Awaited<ReturnType<typeof server.startServer>>>("done"),
       });
     } catch (err) {
-      process.stderr.write(`server start: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `server start: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
@@ -187,10 +191,10 @@ async function runStart(args: string[]): Promise<number> {
   if (json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else if (!result.ok) {
-    process.stderr.write(`${result.error ?? 'server failed to start'}\n`);
+    process.stderr.write(`${result.error ?? "server failed to start"}\n`);
   } else {
     process.stdout.write(
-      `llama-server up pid=${result.pid} endpoint=${result.endpoint}${result.tunedProfile ? ` tuned=${result.tunedProfile}` : ''}${result.retried ? ' (retried)' : ''}\n`,
+      `llama-server up pid=${result.pid} endpoint=${result.endpoint}${result.tunedProfile ? ` tuned=${result.tunedProfile}` : ""}${result.retried ? " (retried)" : ""}\n`,
     );
   }
   return result.ok ? 0 : 1;
@@ -202,27 +206,27 @@ async function runStop(args: string[]): Promise<number> {
   let name: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
-    if (arg === '--json') json = true;
-    else if (arg.startsWith('--grace=')) {
-      const n = Number.parseInt(arg.slice('--grace='.length), 10);
+    if (arg === "--json") json = true;
+    else if (arg.startsWith("--grace=")) {
+      const n = Number.parseInt(arg.slice("--grace=".length), 10);
       if (Number.isFinite(n) && n > 0) graceSeconds = n;
-    } else if (arg === '--name') {
+    } else if (arg === "--name") {
       name = args[i + 1];
       if (!name) {
-        process.stderr.write('server stop: --name requires a value\n');
+        process.stderr.write("server stop: --name requires a value\n");
         return 1;
       }
       i += 1;
-    } else if (arg.startsWith('--name=')) {
-      name = arg.slice('--name='.length);
+    } else if (arg.startsWith("--name=")) {
+      name = arg.slice("--name=".length);
       if (!name) {
-        process.stderr.write('server stop: --name requires a value\n');
+        process.stderr.write("server stop: --name requires a value\n");
         return 1;
       }
-    } else if (arg === '-h' || arg === '--help') {
+    } else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('--')) {
+    } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
       return 1;
     }
@@ -239,9 +243,14 @@ async function runStop(args: string[]): Promise<number> {
     result = await server.stopServer({ key: { name: workload }, graceSeconds });
   } else {
     try {
-      result = await getNodeClient().serverStop.mutate({ workload, graceSeconds }) as typeof result;
+      result = (await getNodeClient().serverStop.mutate({
+        workload,
+        graceSeconds,
+      })) as typeof result;
     } catch (err) {
-      process.stderr.write(`server stop: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `server stop: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
@@ -249,7 +258,7 @@ async function runStop(args: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {
     process.stdout.write(
-      `stopped pid=${result.pid ?? 'none'}${result.killed ? ' (SIGKILL)' : ''}\n`,
+      `stopped pid=${result.pid ?? "none"}${result.killed ? " (SIGKILL)" : ""}\n`,
     );
   }
   return 0;
@@ -260,24 +269,24 @@ async function runStatus(args: string[]): Promise<number> {
   let name: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
-    if (arg === '--json') json = true;
-    else if (arg === '--name') {
+    if (arg === "--json") json = true;
+    else if (arg === "--name") {
       name = args[i + 1];
       if (!name) {
-        process.stderr.write('server status: --name requires a value\n');
+        process.stderr.write("server status: --name requires a value\n");
         return 1;
       }
       i += 1;
-    } else if (arg.startsWith('--name=')) {
-      name = arg.slice('--name='.length);
+    } else if (arg.startsWith("--name=")) {
+      name = arg.slice("--name=".length);
       if (!name) {
-        process.stderr.write('server status: --name requires a value\n');
+        process.stderr.write("server status: --name requires a value\n");
         return 1;
       }
-    } else if (arg === '-h' || arg === '--help') {
+    } else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('--')) {
+    } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
       return 1;
     }
@@ -294,29 +303,28 @@ async function runStatus(args: string[]): Promise<number> {
     status = await server.serverStatus({ name: workload }, envMod.resolveEnv());
   } else {
     try {
-      status = await getNodeClient().serverStatus.query({ workload }) as typeof status;
+      status = (await getNodeClient().serverStatus.query({ workload })) as typeof status;
     } catch (err) {
-      process.stderr.write(`server status: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `server status: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
   if (json) {
     process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
-    return status.state === 'up' ? 0 : 1;
+    return status.state === "up" ? 0 : 1;
   }
-  const lines: string[] = [
-    `state=${status.state}`,
-    `endpoint=${status.endpoint}`,
-  ];
+  const lines: string[] = [`state=${status.state}`, `endpoint=${status.endpoint}`];
   if (status.advertisedEndpoint && status.advertisedEndpoint !== status.endpoint) {
     lines.push(`advertised=${status.advertisedEndpoint}`);
   }
-  lines.push(`pid=${status.pid ?? 'none'}`);
-  lines.push(`http=${status.health.httpCode ?? 'unreachable'}`);
+  lines.push(`pid=${status.pid ?? "none"}`);
+  lines.push(`http=${status.health.httpCode ?? "unreachable"}`);
   if (status.rel) lines.push(`rel=${status.rel}`);
-  lines.push('');
-  process.stdout.write(lines.join('\n'));
-  return status.state === 'up' ? 0 : 1;
+  lines.push("");
+  process.stdout.write(lines.join("\n"));
+  return status.state === "up" ? 0 : 1;
 }
 
 async function runLogs(args: string[]): Promise<number> {
@@ -325,31 +333,31 @@ async function runLogs(args: string[]): Promise<number> {
   let name: string | undefined;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
-    if (arg === '--follow' || arg === '-f') follow = true;
-    else if (arg === '--name') {
+    if (arg === "--follow" || arg === "-f") follow = true;
+    else if (arg === "--name") {
       name = args[i + 1];
       if (!name) {
-        process.stderr.write('server logs: --name requires a value\n');
+        process.stderr.write("server logs: --name requires a value\n");
         return 1;
       }
       i += 1;
-    } else if (arg.startsWith('--name=')) {
-      name = arg.slice('--name='.length);
+    } else if (arg.startsWith("--name=")) {
+      name = arg.slice("--name=".length);
       if (!name) {
-        process.stderr.write('server logs: --name requires a value\n');
+        process.stderr.write("server logs: --name requires a value\n");
         return 1;
       }
-    } else if (arg === '-h' || arg === '--help') {
+    } else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('--lines=')) {
-      const n = Number.parseInt(arg.slice('--lines='.length), 10);
+    } else if (arg.startsWith("--lines=")) {
+      const n = Number.parseInt(arg.slice("--lines=".length), 10);
       if (!Number.isFinite(n) || n < 0) {
         process.stderr.write(`server logs: invalid --lines: ${arg}\n`);
         return 1;
       }
       lines = n;
-    } else if (arg.startsWith('--')) {
+    } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
       return 1;
     }
@@ -370,8 +378,8 @@ async function runLogs(args: string[]): Promise<number> {
   if (isLocalDispatch()) {
     const ac = new AbortController();
     const abort = (): void => ac.abort();
-    process.once('SIGINT', abort);
-    process.once('SIGTERM', abort);
+    process.once("SIGINT", abort);
+    process.once("SIGTERM", abort);
     try {
       await serverLogsMod.tailServerLog({
         key: { name: workload },
@@ -381,8 +389,8 @@ async function runLogs(args: string[]): Promise<number> {
         onLine,
       });
     } finally {
-      process.off('SIGINT', abort);
-      process.off('SIGTERM', abort);
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
     }
     return 0;
   }
@@ -396,7 +404,7 @@ async function runLogs(args: string[]): Promise<number> {
       {
         onData: (e: unknown) => {
           const evt = e as serverLogsMod.LogLineEvent;
-          if (evt.type === 'line') onLine(evt);
+          if (evt.type === "line") onLine(evt);
         },
         onError: (err: unknown) => {
           cleanup();
@@ -414,13 +422,15 @@ async function runLogs(args: string[]): Promise<number> {
       resolve();
     };
     const cleanup = (): void => {
-      process.off('SIGINT', abort);
-      process.off('SIGTERM', abort);
+      process.off("SIGINT", abort);
+      process.off("SIGTERM", abort);
     };
-    process.on('SIGINT', abort);
-    process.on('SIGTERM', abort);
+    process.on("SIGINT", abort);
+    process.on("SIGTERM", abort);
   }).catch((err: Error) => {
-    process.stderr.write(`server logs: remote call to '${getGlobals().nodeName ?? ''}' failed: ${err.message}\n`);
+    process.stderr.write(
+      `server logs: remote call to '${getGlobals().nodeName ?? ""}' failed: ${err.message}\n`,
+    );
     return 1;
   });
   return 0;
@@ -429,18 +439,18 @@ async function runLogs(args: string[]): Promise<number> {
 export async function runServer(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
-    case 'start':
+    case "start":
       return runStart(rest);
-    case 'stop':
+    case "stop":
       return runStop(rest);
-    case 'status':
+    case "status":
       return runStatus(rest);
-    case 'logs':
+    case "logs":
       return runLogs(rest);
     case undefined:
-    case '-h':
-    case '--help':
-    case 'help':
+    case "-h":
+    case "--help":
+    case "help":
       process.stdout.write(USAGE);
       return sub ? 0 : 1;
     default:

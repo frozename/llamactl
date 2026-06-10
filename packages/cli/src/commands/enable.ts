@@ -1,4 +1,4 @@
-import { setWorkloadEnabled } from './setEnabled.js';
+import { setWorkloadEnabled } from "./setEnabled.js";
 
 const USAGE = `Usage: llamactl enable <workload>
 
@@ -7,7 +7,7 @@ server starts.
 `;
 
 export async function runEnable(args: string[]): Promise<number> {
-  if (args.length === 0 || args[0] === '-h' || args[0] === '--help') {
+  if (args.length === 0 || args[0] === "-h" || args[0] === "--help") {
     process.stdout.write(USAGE);
     return args.length === 0 ? 1 : 0;
   }

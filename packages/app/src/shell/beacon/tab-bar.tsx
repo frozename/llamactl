@@ -1,6 +1,6 @@
-import * as React from 'react';
-import { X, Pin } from 'lucide-react';
-import { useTabStore, type TabEntry } from '@/stores/tab-store';
+import * as React from "react";
+import { X, Pin } from "lucide-react";
+import { useTabStore, type TabEntry } from "@/stores/tab-store";
 
 /**
  * Persistent tab strip. Pinned tabs render leftmost with a pin glyph
@@ -25,13 +25,13 @@ export function TabBar(): React.JSX.Element {
     if (!menu) return;
     const dismiss = (): void => setMenu(null);
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setMenu(null);
+      if (e.key === "Escape") setMenu(null);
     };
-    window.addEventListener('click', dismiss);
-    window.addEventListener('keydown', onKey);
+    window.addEventListener("click", dismiss);
+    window.addEventListener("keydown", onKey);
     return () => {
-      window.removeEventListener('click', dismiss);
-      window.removeEventListener('keydown', onKey);
+      window.removeEventListener("click", dismiss);
+      window.removeEventListener("keydown", onKey);
     };
   }, [menu]);
 
@@ -43,11 +43,11 @@ export function TabBar(): React.JSX.Element {
     <div
       role="tablist"
       style={{
-        display: 'flex',
-        alignItems: 'stretch',
-        background: 'var(--color-surface-1)',
-        borderBottom: '1px solid var(--color-border-subtle)',
-        overflowX: 'auto',
+        display: "flex",
+        alignItems: "stretch",
+        background: "var(--color-surface-1)",
+        borderBottom: "1px solid var(--color-border-subtle)",
+        overflowX: "auto",
         minHeight: 38,
       }}
     >
@@ -72,9 +72,9 @@ export function TabBar(): React.JSX.Element {
               setMenu({ x: e.clientX, y: e.clientY, tab });
             }}
             onKeyDown={(e) => {
-              if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+              if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
                 e.preventDefault();
-                const dir = e.key === 'ArrowRight' ? 1 : -1;
+                const dir = e.key === "ArrowRight" ? 1 : -1;
                 const next = tabs[(idx + dir + tabs.length) % tabs.length];
                 if (next) {
                   setActive(next.tabKey);
@@ -82,7 +82,7 @@ export function TabBar(): React.JSX.Element {
                 }
                 return;
               }
-              if (e.key === 'Home') {
+              if (e.key === "Home") {
                 e.preventDefault();
                 const first = tabs[0];
                 if (first) {
@@ -91,7 +91,7 @@ export function TabBar(): React.JSX.Element {
                 }
                 return;
               }
-              if (e.key === 'End') {
+              if (e.key === "End") {
                 e.preventDefault();
                 const last = tabs[tabs.length - 1];
                 if (last) {
@@ -100,36 +100,36 @@ export function TabBar(): React.JSX.Element {
                 }
                 return;
               }
-              if (e.key === 'Enter' || e.key === ' ') {
+              if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 setActive(tab.tabKey);
               }
             }}
             style={{
-              display: 'flex',
-              alignItems: 'center',
+              display: "flex",
+              alignItems: "center",
               gap: 8,
-              padding: '0 14px',
+              padding: "0 14px",
               fontSize: 12,
-              color: active ? 'var(--color-text)' : 'var(--color-text-tertiary)',
-              background: active ? 'var(--color-surface-0)' : 'transparent',
-              cursor: 'pointer',
-              borderRight: '1px solid var(--color-border-subtle)',
-              position: 'relative',
-              whiteSpace: 'nowrap',
-              transition: 'background 160ms, color 160ms',
+              color: active ? "var(--color-text)" : "var(--color-text-tertiary)",
+              background: active ? "var(--color-surface-0)" : "transparent",
+              cursor: "pointer",
+              borderRight: "1px solid var(--color-border-subtle)",
+              position: "relative",
+              whiteSpace: "nowrap",
+              transition: "background 160ms, color 160ms",
             }}
           >
             {active && (
               <span
                 aria-hidden="true"
                 style={{
-                  position: 'absolute',
+                  position: "absolute",
                   left: 0,
                   right: 0,
                   top: 0,
                   height: 1.5,
-                  background: 'var(--color-brand)',
+                  background: "var(--color-brand)",
                 }}
               />
             )}
@@ -137,8 +137,8 @@ export function TabBar(): React.JSX.Element {
               style={{
                 width: 7,
                 height: 7,
-                borderRadius: '50%',
-                background: active ? 'var(--color-brand)' : 'var(--color-text-ghost)',
+                borderRadius: "50%",
+                background: active ? "var(--color-brand)" : "var(--color-text-ghost)",
               }}
             />
             <span>{tab.title}</span>
@@ -153,17 +153,17 @@ export function TabBar(): React.JSX.Element {
                 }
               }}
               style={{
-                all: 'unset',
+                all: "unset",
                 width: 16,
                 height: 16,
-                display: 'grid',
-                placeItems: 'center',
+                display: "grid",
+                placeItems: "center",
                 borderRadius: 4,
-                cursor: 'pointer',
+                cursor: "pointer",
                 marginLeft: 4,
-                color: 'inherit',
+                color: "inherit",
               }}
-              title={tab.pinned ? 'Unpin' : 'Close'}
+              title={tab.pinned ? "Unpin" : "Close"}
             >
               {tab.pinned ? (
                 <Pin size={11} strokeWidth={2} fill="currentColor" />
@@ -178,21 +178,21 @@ export function TabBar(): React.JSX.Element {
         <div
           onClick={(e) => e.stopPropagation()}
           style={{
-            position: 'fixed',
+            position: "fixed",
             left: menu.x,
             top: menu.y,
-            background: 'var(--color-surface-2)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--r-md)',
+            background: "var(--color-surface-2)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--r-md)",
             padding: 4,
-            boxShadow: 'var(--shadow-md)',
+            boxShadow: "var(--shadow-md)",
             fontSize: 12,
             zIndex: 2000,
             minWidth: 180,
           }}
         >
           <MenuItem
-            label={menu.tab.pinned ? 'Unpin' : 'Pin'}
+            label={menu.tab.pinned ? "Unpin" : "Pin"}
             onPick={() => {
               if (menu.tab.pinned) {
                 unpin(menu.tab.tabKey);
@@ -235,19 +235,19 @@ function MenuItem({ label, onPick }: { label: string; onPick: () => void }): Rea
       type="button"
       onClick={onPick}
       style={{
-        all: 'unset',
-        display: 'block',
-        width: '100%',
-        padding: '6px 10px',
-        cursor: 'pointer',
-        color: 'var(--color-text)',
+        all: "unset",
+        display: "block",
+        width: "100%",
+        padding: "6px 10px",
+        cursor: "pointer",
+        color: "var(--color-text)",
         borderRadius: 4,
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.background = 'var(--color-surface-3)';
+        e.currentTarget.style.background = "var(--color-surface-3)";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.background = 'transparent';
+        e.currentTarget.style.background = "transparent";
       }}
     >
       {label}

@@ -24,7 +24,7 @@
  * apply outcome lives on the composite YAML's `status` field via
  * `saveComposite(..)`.
  */
-import type { CompositeApplyEvent } from './types.js';
+import type { CompositeApplyEvent } from "./types.js";
 
 export interface CompositeRun {
   name: string;
@@ -71,7 +71,7 @@ export function createCompositeEventBus(): CompositeEventBus {
     }
   };
 
-  const startRun: CompositeEventBus['startRun'] = (name) => {
+  const startRun: CompositeEventBus["startRun"] = (name) => {
     const existing = runs.get(name);
     if (existing) {
       clearRetention(existing);
@@ -92,7 +92,7 @@ export function createCompositeEventBus(): CompositeEventBus {
     });
   };
 
-  const emit: CompositeEventBus['emit'] = (name, event) => {
+  const emit: CompositeEventBus["emit"] = (name, event) => {
     const state = runs.get(name);
     if (!state) return;
     if (state.run.events.length >= COMPOSITE_MAX_EVENTS_PER_RUN) return;
@@ -107,7 +107,7 @@ export function createCompositeEventBus(): CompositeEventBus {
     }
   };
 
-  const endRun: CompositeEventBus['endRun'] = (name) => {
+  const endRun: CompositeEventBus["endRun"] = (name) => {
     const state = runs.get(name);
     if (!state) return;
     state.run.done = true;
@@ -125,7 +125,7 @@ export function createCompositeEventBus(): CompositeEventBus {
     t.unref?.();
   };
 
-  const subscribe: CompositeEventBus['subscribe'] = (name, listener) => {
+  const subscribe: CompositeEventBus["subscribe"] = (name, listener) => {
     const state = runs.get(name);
     if (!state) {
       return () => {
@@ -148,7 +148,7 @@ export function createCompositeEventBus(): CompositeEventBus {
     };
   };
 
-  const currentRun: CompositeEventBus['currentRun'] = (name) => {
+  const currentRun: CompositeEventBus["currentRun"] = (name) => {
     const state = runs.get(name);
     if (!state) return null;
     // Return a shallow copy so mutations on `events` by the caller
@@ -180,14 +180,10 @@ export const compositeEvents: CompositeEventBus = createCompositeEventBus();
  */
 export function _resetForTests(): void {
   const fresh = createCompositeEventBus();
-  (compositeEvents as { startRun: CompositeEventBus['startRun'] }).startRun =
-    fresh.startRun;
-  (compositeEvents as { emit: CompositeEventBus['emit'] }).emit = fresh.emit;
-  (compositeEvents as { endRun: CompositeEventBus['endRun'] }).endRun =
-    fresh.endRun;
-  (compositeEvents as { subscribe: CompositeEventBus['subscribe'] }).subscribe =
-    fresh.subscribe;
-  (
-    compositeEvents as { currentRun: CompositeEventBus['currentRun'] }
-  ).currentRun = fresh.currentRun;
+  (compositeEvents as { startRun: CompositeEventBus["startRun"] }).startRun = fresh.startRun;
+  (compositeEvents as { emit: CompositeEventBus["emit"] }).emit = fresh.emit;
+  (compositeEvents as { endRun: CompositeEventBus["endRun"] }).endRun = fresh.endRun;
+  (compositeEvents as { subscribe: CompositeEventBus["subscribe"] }).subscribe = fresh.subscribe;
+  (compositeEvents as { currentRun: CompositeEventBus["currentRun"] }).currentRun =
+    fresh.currentRun;
 }

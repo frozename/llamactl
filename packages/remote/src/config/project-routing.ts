@@ -25,16 +25,16 @@
  * JSONL, append-only, small-volume (one line per chat request).
  */
 
-import { appendFile, mkdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { appendFile, mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 import {
   defaultProjectsPath,
   loadProjects,
   resolveProjectRouting,
   type Project,
-} from './projects.js';
+} from "./projects.js";
 
 export interface ProjectRoutingDecision {
   ts: string;
@@ -47,11 +47,7 @@ export interface ProjectRoutingDecision {
    *  "operator intentionally picked this target" apart from
    *  "we fell back because the project didn't declare it". */
   matched: boolean;
-  reason:
-    | 'matched'
-    | 'fallback-default'
-    | 'project-not-found'
-    | 'over-budget';
+  reason: "matched" | "fallback-default" | "project-not-found" | "over-budget";
   /** Populated when reason === 'over-budget'. */
   budget?: {
     usdToday?: number;
@@ -86,20 +82,15 @@ export interface ResolveProjectNodeTargetOptions {
    * null to indicate "no USD tracking available today" (default
    * behavior — structurally ready but non-enforcing in v1).
    */
-  checkBudget?: (args: {
-    project: Project;
-    limit: number;
-  }) => Promise<BudgetSnapshot | null>;
+  checkBudget?: (args: { project: Project; limit: number }) => Promise<BudgetSnapshot | null>;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
 }
 
-export function parseProjectNodeName(
-  name: string,
-): { project: string; taskKind: string } | null {
-  if (!name.startsWith('project:')) return null;
-  const rest = name.slice('project:'.length);
-  const slash = rest.indexOf('/');
+export function parseProjectNodeName(name: string): { project: string; taskKind: string } | null {
+  if (!name.startsWith("project:")) return null;
+  const rest = name.slice("project:".length);
+  const slash = rest.indexOf("/");
   if (slash <= 0 || slash === rest.length - 1) return null;
   const project = rest.slice(0, slash);
   const taskKind = rest.slice(slash + 1);
@@ -131,14 +122,14 @@ export async function resolveProjectNodeTarget(
       // Stale / unknown project — fall back to private-first rather
       // than erroring. The decision journal + UI surface the bad
       // name so the operator notices.
-      node: 'private-first',
+      node: "private-first",
       decision: {
         ts,
         project: parsed.project,
         taskKind: parsed.taskKind,
-        target: 'private-first',
+        target: "private-first",
         matched: false,
-        reason: 'project-not-found',
+        reason: "project-not-found",
       },
     };
   }
@@ -156,14 +147,14 @@ export async function resolveProjectNodeTarget(
       const snap = await opts.checkBudget({ project, limit });
       if (snap && snap.usdToday >= snap.usdLimit) {
         return {
-          node: 'private-first',
+          node: "private-first",
           decision: {
             ts,
             project: parsed.project,
             taskKind: parsed.taskKind,
-            target: 'private-first',
+            target: "private-first",
             matched,
-            reason: 'over-budget',
+            reason: "over-budget",
             budget: { usdToday: snap.usdToday, limit: snap.usdLimit },
           },
         };
@@ -183,18 +174,16 @@ export async function resolveProjectNodeTarget(
       taskKind: parsed.taskKind,
       target,
       matched,
-      reason: matched ? 'matched' : 'fallback-default',
+      reason: matched ? "matched" : "fallback-default",
     },
   };
 }
 
-export function defaultProjectRoutingJournalPath(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function defaultProjectRoutingJournalPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_PROJECT_ROUTING_JOURNAL?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'project-routing.jsonl');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "project-routing.jsonl");
 }
 
 /**
@@ -209,7 +198,7 @@ export async function appendProjectRoutingJournal(
   try {
     const path = defaultProjectRoutingJournalPath(env);
     await mkdir(dirname(path), { recursive: true });
-    await appendFile(path, `${JSON.stringify(decision)}\n`, 'utf8');
+    await appendFile(path, `${JSON.stringify(decision)}\n`, "utf8");
   } catch (err) {
     process.stderr.write(
       `project-routing: journal append failed (${(err as Error).message}) — continuing\n`,

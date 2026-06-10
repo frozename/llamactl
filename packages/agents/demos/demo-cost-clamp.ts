@@ -10,12 +10,12 @@
  * Uses a fake RunbookToolClient so no network, no fs writes outside
  * a tempdir, no real usage corpus needed.
  */
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { runCostGuardianTick } from '../src/cost-guardian/tick.js';
-import type { CostGuardianConfig } from '../src/cost-guardian/config.js';
-import type { RunbookToolClient, ToolCallInput } from '../src/types.js';
+import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runCostGuardianTick } from "../src/cost-guardian/tick.js";
+import type { CostGuardianConfig } from "../src/cost-guardian/config.js";
+import type { RunbookToolClient, ToolCallInput } from "../src/types.js";
 
 const NARRATIVE = `\
 N.5 golden-path demo — cost-clamp (guardian tier escalation)
@@ -34,7 +34,7 @@ Tick 3 — spend $8.50 (85%): tier = force_private
 `;
 
 function banner(text: string): void {
-  process.stdout.write(`\n─── ${text} ${'─'.repeat(Math.max(0, 60 - text.length))}\n`);
+  process.stdout.write(`\n─── ${text} ${"─".repeat(Math.max(0, 60 - text.length))}\n`);
 }
 
 /**
@@ -46,7 +46,7 @@ function banner(text: string): void {
 function fakeToolClient(stage: { dailyUsd: number; weeklyUsd: number }): RunbookToolClient {
   return {
     async callTool(input: ToolCallInput): Promise<unknown> {
-      if (input.name === 'nova.ops.cost.snapshot') {
+      if (input.name === "nova.ops.cost.snapshot") {
         const days = Number((input.arguments as { days?: number }).days ?? 1);
         const total = days === 1 ? stage.dailyUsd : stage.weeklyUsd;
         const now = new Date();
@@ -54,11 +54,11 @@ function fakeToolClient(stage: { dailyUsd: number; weeklyUsd: number }): Runbook
           totalEstimatedCostUsd: total,
           windowSince: new Date(now.getTime() - days * 86_400_000).toISOString(),
           windowUntil: now.toISOString(),
-          byProvider: [{ key: 'openai', estimatedCostUsd: total }],
+          byProvider: [{ key: "openai", estimatedCostUsd: total }],
         };
-        return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
+        return { content: [{ type: "text", text: JSON.stringify(payload) }] };
       }
-      if (input.name === 'llamactl.embersynth.set-default-profile') {
+      if (input.name === "llamactl.embersynth.set-default-profile") {
         // Tier-2 effect: guardian asks llamactl to remap the default
         // synthetic model to private-first. Return a success shape
         // the tick handler expects.
@@ -66,14 +66,14 @@ function fakeToolClient(stage: { dailyUsd: number; weeklyUsd: number }): Runbook
         return {
           content: [
             {
-              type: 'text',
+              type: "text",
               text: JSON.stringify({
                 ok: true,
-                profile: args.profile ?? 'private-first',
-                syntheticModel: args.syntheticModel ?? 'fusion-auto',
-                path: '<demo>/embersynth.yaml',
-                previous: 'auto',
-                next: args.profile ?? 'private-first',
+                profile: args.profile ?? "private-first",
+                syntheticModel: args.syntheticModel ?? "fusion-auto",
+                path: "<demo>/embersynth.yaml",
+                previous: "auto",
+                next: args.profile ?? "private-first",
               }),
             },
           ],
@@ -87,9 +87,9 @@ function fakeToolClient(stage: { dailyUsd: number; weeklyUsd: number }): Runbook
 async function main(): Promise<void> {
   process.stdout.write(NARRATIVE);
 
-  const runtimeDir = mkdtempSync(join(tmpdir(), 'llamactl-demo-cost-clamp-'));
-  const journalPath = join(runtimeDir, 'cost-journal.jsonl');
-  banner('Fleet seeded');
+  const runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-demo-cost-clamp-"));
+  const journalPath = join(runtimeDir, "cost-journal.jsonl");
+  banner("Fleet seeded");
   process.stdout.write(`  journal: ${journalPath}\n`);
 
   const config: CostGuardianConfig = {
@@ -102,9 +102,9 @@ async function main(): Promise<void> {
   };
 
   const scenarios = [
-    { label: 'Tick 1 (20% spend)', dailyUsd: 2, weeklyUsd: 12 },
-    { label: 'Tick 2 (60% spend)', dailyUsd: 6, weeklyUsd: 36 },
-    { label: 'Tick 3 (85% spend)', dailyUsd: 8.5, weeklyUsd: 48 },
+    { label: "Tick 1 (20% spend)", dailyUsd: 2, weeklyUsd: 12 },
+    { label: "Tick 2 (60% spend)", dailyUsd: 6, weeklyUsd: 36 },
+    { label: "Tick 3 (85% spend)", dailyUsd: 8.5, weeklyUsd: 48 },
   ];
 
   try {
@@ -122,42 +122,38 @@ async function main(): Promise<void> {
       process.stdout.write(`  reason: ${decision.reason}\n`);
     }
 
-    banner('Journal entries');
-    const raw = existsSync(journalPath) ? readFileSync(journalPath, 'utf8') : '';
+    banner("Journal entries");
+    const raw = existsSync(journalPath) ? readFileSync(journalPath, "utf8") : "";
     const entries = raw
-      .split('\n')
+      .split("\n")
       .filter((l) => l.trim().length > 0)
       .map((l) => JSON.parse(l) as { kind: string; decision?: { tier?: string; reason?: string } });
     for (const e of entries) {
-      if (e.kind === 'tick') {
+      if (e.kind === "tick") {
         const d = e.decision;
-        process.stdout.write(
-          `  tick: tier=${d?.tier ?? '?'}  reason=${d?.reason ?? '?'}\n`,
-        );
+        process.stdout.write(`  tick: tier=${d?.tier ?? "?"}  reason=${d?.reason ?? "?"}\n`);
       } else {
         process.stdout.write(`  ${e.kind}: ${JSON.stringify(e)}\n`);
       }
     }
 
-    banner('Result');
-    const tiers = entries
-      .filter((e) => e.kind === 'tick')
-      .map((e) => e.decision?.tier ?? '');
+    banner("Result");
+    const tiers = entries.filter((e) => e.kind === "tick").map((e) => e.decision?.tier ?? "");
     const ok =
       tiers.length === 3 &&
-      tiers[0] === 'noop' &&
-      tiers[1] === 'warn' &&
-      tiers[2] === 'force_private';
-    process.stdout.write(`  tier progression: ${tiers.join(' → ')}\n`);
+      tiers[0] === "noop" &&
+      tiers[1] === "warn" &&
+      tiers[2] === "force_private";
+    process.stdout.write(`  tier progression: ${tiers.join(" → ")}\n`);
     process.stdout.write(`  ok=${ok}\n`);
     if (!ok) process.exitCode = 1;
   } finally {
     rmSync(runtimeDir, { recursive: true, force: true });
-    banner('Teardown complete');
+    banner("Teardown complete");
   }
 }
 
 main().catch((err) => {
-  console.error('demo-cost-clamp crashed:', err);
+  console.error("demo-cost-clamp crashed:", err);
   process.exitCode = 1;
 });

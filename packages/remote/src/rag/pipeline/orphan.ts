@@ -22,8 +22,8 @@
  * read per tick — well within budget.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { journalPathFor, listPipelines, type PipelineRecord } from './store.js';
+import { existsSync, readFileSync } from "node:fs";
+import { journalPathFor, listPipelines, type PipelineRecord } from "./store.js";
 
 export interface OrphanedRun {
   name: string;
@@ -73,7 +73,7 @@ export function detectOrphanedRuns(opts: DetectOrphansOptions = {}): OrphanedRun
     ((name: string): string | null => {
       const path = journalPathFor(name, opts.env);
       if (!existsSync(path)) return null;
-      return readFileSync(path, 'utf8');
+      return readFileSync(path, "utf8");
     });
 
   const out: OrphanedRun[] = [];
@@ -115,7 +115,7 @@ export function findTrailingOrphan(
   thresholdMs: number,
   nowMs: number,
 ): TrailingOrphan | null {
-  const lines = journalRaw.split('\n');
+  const lines = journalRaw.split("\n");
   // Scan tail-first so we find the newest run-started quickly.
   let lastRunStarted: {
     ts: string;
@@ -134,19 +134,19 @@ export function findTrailingOrphan(
     } catch {
       continue;
     }
-    if (!entry || typeof entry !== 'object') continue;
+    if (!entry || typeof entry !== "object") continue;
     const e = entry as {
       kind?: string;
       ts?: string;
       sources?: unknown;
     };
-    if (e.kind === 'run-started' && typeof e.ts === 'string') {
+    if (e.kind === "run-started" && typeof e.ts === "string") {
       lastRunStarted = {
         ts: e.ts,
         sources: Array.isArray(e.sources) ? (e.sources as string[]) : [],
       };
       sawCompleteAfter = false;
-    } else if (e.kind === 'run-complete') {
+    } else if (e.kind === "run-complete") {
       sawCompleteAfter = true;
     }
   }

@@ -10,12 +10,12 @@ import type {
   SearchResult,
   StoreRequest,
   StoreResponse,
-} from '@nova/contracts';
-import type { RagBinding } from '../../config/schema.js';
-import type { Embedder } from '../embedding.js';
-import { RagError } from '../errors.js';
-import type { ChromaMcpClient, ChromaToolResult } from './client.js';
-import type { HttpChromaClient } from './http-client.js';
+} from "@nova/contracts";
+import type { RagBinding } from "../../config/schema.js";
+import type { Embedder } from "../embedding.js";
+import { RagError } from "../errors.js";
+import type { ChromaMcpClient, ChromaToolResult } from "./client.js";
+import type { HttpChromaClient } from "./http-client.js";
 
 /**
  * Proxies the `RetrievalProvider` surface onto a chroma backend —
@@ -55,12 +55,12 @@ import type { HttpChromaClient } from './http-client.js';
  * dedicated embedding endpoint.
  */
 
-const TOOL_QUERY = 'chroma_query_documents';
-const TOOL_ADD = 'chroma_add_documents';
-const TOOL_DELETE = 'chroma_delete_documents';
-const TOOL_LIST = 'chroma_list_collections';
-const CHROMA_EMPTY_SENTINEL = '__NO_COLLECTIONS_FOUND__';
-const DEFAULT_COLLECTION = 'default_collection';
+const TOOL_QUERY = "chroma_query_documents";
+const TOOL_ADD = "chroma_add_documents";
+const TOOL_DELETE = "chroma_delete_documents";
+const TOOL_LIST = "chroma_list_collections";
+const CHROMA_EMPTY_SENTINEL = "__NO_COLLECTIONS_FOUND__";
+const DEFAULT_COLLECTION = "default_collection";
 
 interface ChromaQueryResponse {
   // All fields are [nQueries][nResults]. We only ever send one query,
@@ -78,9 +78,9 @@ interface ChromaQueryResponse {
  * based on the binding's endpoint shape.
  */
 export type ChromaBackend =
-  | { kind: 'mcp'; client: ChromaMcpClient; teardown: () => Promise<void> }
+  | { kind: "mcp"; client: ChromaMcpClient; teardown: () => Promise<void> }
   | {
-      kind: 'http';
+      kind: "http";
       client: HttpChromaClient;
       /** Optional delegated embedder — mirrors pgvector. */
       embedder?: Embedder;
@@ -88,7 +88,7 @@ export type ChromaBackend =
     };
 
 export class ChromaRagAdapter implements RetrievalProvider {
-  readonly kind = 'chroma';
+  readonly kind = "chroma";
 
   private readonly backend: ChromaBackend;
   private readonly defaultCollection: string;
@@ -98,7 +98,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
    * (`createChromaAdapter`) uses this overload after selecting the
    * right backend based on the binding endpoint.
    */
-  constructor(backend: ChromaBackend, binding: Pick<RagBinding, 'collection'>);
+  constructor(backend: ChromaBackend, binding: Pick<RagBinding, "collection">);
   /**
    * Legacy 3-arg overload — keeps pre-G1 call sites (and unit tests
    * that stand up a mock `ChromaMcpClient` directly) working. When
@@ -108,12 +108,12 @@ export class ChromaRagAdapter implements RetrievalProvider {
    */
   constructor(
     client: ChromaMcpClient,
-    binding: Pick<RagBinding, 'collection'>,
+    binding: Pick<RagBinding, "collection">,
     teardown?: () => Promise<void>,
   );
   constructor(
     backendOrClient: ChromaBackend | ChromaMcpClient,
-    binding: Pick<RagBinding, 'collection'>,
+    binding: Pick<RagBinding, "collection">,
     teardown?: () => Promise<void>,
   ) {
     if (isChromaBackend(backendOrClient)) {
@@ -121,7 +121,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
     } else {
       const client = backendOrClient as ChromaMcpClient;
       this.backend = {
-        kind: 'mcp',
+        kind: "mcp",
         client,
         teardown: teardown ?? (() => client.close()),
       };
@@ -131,7 +131,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
 
   async search(request: SearchRequest): Promise<SearchResponse> {
     const collection = request.collection ?? this.defaultCollection;
-    if (this.backend.kind === 'mcp') {
+    if (this.backend.kind === "mcp") {
       return this.searchMcp(collection, request);
     }
     return this.searchHttp(collection, request);
@@ -139,7 +139,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
 
   async store(request: StoreRequest): Promise<StoreResponse> {
     const collection = request.collection ?? this.defaultCollection;
-    if (this.backend.kind === 'mcp') {
+    if (this.backend.kind === "mcp") {
       return this.storeMcp(collection, request);
     }
     return this.storeHttp(collection, request);
@@ -147,22 +147,22 @@ export class ChromaRagAdapter implements RetrievalProvider {
 
   async delete(request: DeleteRequest): Promise<DeleteResponse> {
     const collection = request.collection ?? this.defaultCollection;
-    if (this.backend.kind === 'mcp') {
+    if (this.backend.kind === "mcp") {
       return this.deleteMcp(collection, request);
     }
     return this.deleteHttp(collection, request);
   }
 
   async listCollections(): Promise<ListCollectionsResponse> {
-    if (this.backend.kind === 'mcp') {
+    if (this.backend.kind === "mcp") {
       const payload = await this.callTool<unknown>(TOOL_LIST, {});
       return { collections: normalizeListCollections(payload) };
     }
     const rows = await this.backend.client.listCollections();
     const collections: CollectionInfo[] = rows.map((r) => {
       const info: CollectionInfo = { name: r.name };
-      if (typeof r.dimension === 'number' && r.dimension > 0) info.dimensions = r.dimension;
-      if (r.metadata && typeof r.metadata === 'object') {
+      if (typeof r.dimension === "number" && r.dimension > 0) info.dimensions = r.dimension;
+      if (r.metadata && typeof r.metadata === "object") {
         info.metadata = r.metadata;
       }
       return info;
@@ -176,15 +176,12 @@ export class ChromaRagAdapter implements RetrievalProvider {
 
   // ---- MCP path --------------------------------------------------------
 
-  private async searchMcp(
-    collection: string,
-    request: SearchRequest,
-  ): Promise<SearchResponse> {
+  private async searchMcp(collection: string, request: SearchRequest): Promise<SearchResponse> {
     const args: Record<string, unknown> = {
       collection_name: collection,
       query_texts: [request.query],
       n_results: request.topK,
-      include: ['documents', 'metadatas', 'distances'],
+      include: ["documents", "metadatas", "distances"],
     };
     if (request.filter) args.where = request.filter;
 
@@ -200,10 +197,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
     return { results, collection };
   }
 
-  private async storeMcp(
-    collection: string,
-    request: StoreRequest,
-  ): Promise<StoreResponse> {
+  private async storeMcp(collection: string, request: StoreRequest): Promise<StoreResponse> {
     const ids = request.documents.map((d) => d.id);
     const contents = request.documents.map((d) => d.content);
     const metadatas = request.documents.map((d) => d.metadata ?? {});
@@ -216,10 +210,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
     return { ids, collection };
   }
 
-  private async deleteMcp(
-    collection: string,
-    request: DeleteRequest,
-  ): Promise<DeleteResponse> {
+  private async deleteMcp(collection: string, request: DeleteRequest): Promise<DeleteResponse> {
     await this.callTool<unknown>(TOOL_DELETE, {
       collection_name: collection,
       ids: request.ids,
@@ -229,17 +220,14 @@ export class ChromaRagAdapter implements RetrievalProvider {
 
   // ---- HTTP path -------------------------------------------------------
 
-  private async searchHttp(
-    collection: string,
-    request: SearchRequest,
-  ): Promise<SearchResponse> {
-    if (this.backend.kind !== 'http') throw new Error('unreachable');
+  private async searchHttp(collection: string, request: SearchRequest): Promise<SearchResponse> {
+    if (this.backend.kind !== "http") throw new Error("unreachable");
     const vector = await this.embedQuery(request);
     const id = await this.backend.client.resolveCollectionId(collection);
     const payload = await this.backend.client.query(id, {
       query_embeddings: [vector],
       n_results: request.topK,
-      include: ['distances', 'documents', 'metadatas'],
+      include: ["distances", "documents", "metadatas"],
       ...(request.filter && { where: request.filter }),
     });
 
@@ -249,16 +237,18 @@ export class ChromaRagAdapter implements RetrievalProvider {
     const metadatas = payload.metadatas?.[0] ?? [];
 
     const results: SearchResult[] = ids.map((rid, i) =>
-      buildResult(rid, documents[i] ?? undefined, metadatas[i] ?? undefined, distances[i] ?? undefined),
+      buildResult(
+        rid,
+        documents[i] ?? undefined,
+        metadatas[i] ?? undefined,
+        distances[i] ?? undefined,
+      ),
     );
     return { results, collection };
   }
 
-  private async storeHttp(
-    collection: string,
-    request: StoreRequest,
-  ): Promise<StoreResponse> {
-    if (this.backend.kind !== 'http') throw new Error('unreachable');
+  private async storeHttp(collection: string, request: StoreRequest): Promise<StoreResponse> {
+    if (this.backend.kind !== "http") throw new Error("unreachable");
     const ids = request.documents.map((d) => d.id);
     const contents = request.documents.map((d) => d.content);
     const metadatas = request.documents.map((d) => d.metadata ?? null);
@@ -274,11 +264,8 @@ export class ChromaRagAdapter implements RetrievalProvider {
     return { ids, collection };
   }
 
-  private async deleteHttp(
-    collection: string,
-    request: DeleteRequest,
-  ): Promise<DeleteResponse> {
-    if (this.backend.kind !== 'http') throw new Error('unreachable');
+  private async deleteHttp(collection: string, request: DeleteRequest): Promise<DeleteResponse> {
+    if (this.backend.kind !== "http") throw new Error("unreachable");
     const collectionId = await this.backend.client.resolveCollectionId(collection);
     const deleted = await this.backend.client.deleteRecords(collectionId, {
       ids: request.ids,
@@ -309,20 +296,20 @@ export class ChromaRagAdapter implements RetrievalProvider {
    * know to wire one up.
    */
   private async embedQuery(request: SearchRequest): Promise<number[]> {
-    if (this.backend.kind !== 'http') throw new Error('unreachable');
+    if (this.backend.kind !== "http") throw new Error("unreachable");
     const supplied = extractQueryVector(request);
     if (supplied) return supplied;
     if (!this.backend.embedder) {
       throw new RagError(
-        'invalid-request',
-        'chroma http search needs a query vector — pass filter.vector or configure rag.embedder',
+        "invalid-request",
+        "chroma http search needs a query vector — pass filter.vector or configure rag.embedder",
       );
     }
     const [vector] = await this.backend.embedder([request.query]);
     if (!vector) {
       throw new RagError(
-        'invalid-response',
-        'chroma http search: embedder returned no vector for the query',
+        "invalid-response",
+        "chroma http search: embedder returned no vector for the query",
       );
     }
     return vector;
@@ -334,7 +321,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
    * delegated embedder fills every missing slot in one batch.
    */
   private async embedDocuments(documents: readonly Document[]): Promise<number[][]> {
-    if (this.backend.kind !== 'http') throw new Error('unreachable');
+    if (this.backend.kind !== "http") throw new Error("unreachable");
     const missingIdx: number[] = [];
     for (let i = 0; i < documents.length; i++) {
       const d = documents[i]!;
@@ -343,7 +330,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
     if (missingIdx.length > 0 && !this.backend.embedder) {
       const firstMissing = documents[missingIdx[0]!]!;
       throw new RagError(
-        'invalid-request',
+        "invalid-request",
         `chroma http store: doc id=${firstMissing.id} has no .vector and no rag.embedder is configured`,
       );
     }
@@ -354,7 +341,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
       computed = await this.backend.embedder(texts);
       if (computed.length !== missingIdx.length) {
         throw new RagError(
-          'invalid-response',
+          "invalid-response",
           `chroma http store: embedder returned ${computed.length} vectors for ${missingIdx.length} docs`,
         );
       }
@@ -366,7 +353,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
       const v = idx >= 0 ? computed[idx] : null;
       if (!v) {
         throw new RagError(
-          'invalid-request',
+          "invalid-request",
           `chroma http store: no vector resolved for doc id=${d.id}`,
         );
       }
@@ -376,11 +363,8 @@ export class ChromaRagAdapter implements RetrievalProvider {
 
   // ---- shared helpers --------------------------------------------------
 
-  private async callTool<T>(
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<T> {
-    if (this.backend.kind !== 'mcp') {
+  private async callTool<T>(name: string, args: Record<string, unknown>): Promise<T> {
+    if (this.backend.kind !== "mcp") {
       throw new Error(`callTool invoked on non-MCP backend (kind=${this.backend.kind})`);
     }
     let raw: ChromaToolResult;
@@ -391,18 +375,21 @@ export class ChromaRagAdapter implements RetrievalProvider {
       // MCP SDK throws `McpError` with code -32601 for unknown tools;
       // other failures (transport, timeout) surface as generic errors.
       if (/method not found|unknown tool|-32601/i.test(msg)) {
-        throw new RagError('tool-missing', `chroma-mcp does not expose "${name}": ${msg}`, cause);
+        throw new RagError("tool-missing", `chroma-mcp does not expose "${name}": ${msg}`, cause);
       }
-      throw new RagError('tool-error', `chroma-mcp call "${name}" failed: ${msg}`, cause);
+      throw new RagError("tool-error", `chroma-mcp call "${name}" failed: ${msg}`, cause);
     }
 
     if (raw.isError === true) {
-      throw new RagError('tool-error', `chroma-mcp returned isError for "${name}": ${extractText(raw)}`);
+      throw new RagError(
+        "tool-error",
+        `chroma-mcp returned isError for "${name}": ${extractText(raw)}`,
+      );
     }
 
     const text = extractText(raw);
     if (text === null) {
-      throw new RagError('invalid-response', `chroma-mcp "${name}" response had no text content`);
+      throw new RagError("invalid-response", `chroma-mcp "${name}" response had no text content`);
     }
     try {
       return JSON.parse(text) as T;
@@ -413,9 +400,9 @@ export class ChromaRagAdapter implements RetrievalProvider {
 }
 
 function isChromaBackend(v: unknown): v is ChromaBackend {
-  if (typeof v !== 'object' || v === null) return false;
+  if (typeof v !== "object" || v === null) return false;
   const kind = (v as { kind?: unknown }).kind;
-  return kind === 'mcp' || kind === 'http';
+  return kind === "mcp" || kind === "http";
 }
 
 function buildResult(
@@ -424,14 +411,13 @@ function buildResult(
   metadata: Record<string, unknown> | null | undefined,
   distance: number | null | undefined,
 ): SearchResult {
-  const dist =
-    typeof distance === 'number' && Number.isFinite(distance) ? distance : Number.NaN;
+  const dist = typeof distance === "number" && Number.isFinite(distance) ? distance : Number.NaN;
   const score = Number.isFinite(dist) ? clamp01(1 - dist) : 0;
   const doc: Document = {
     id,
-    content: typeof content === 'string' ? content : '',
+    content: typeof content === "string" ? content : "",
   };
-  if (metadata && typeof metadata === 'object') doc.metadata = metadata;
+  if (metadata && typeof metadata === "object") doc.metadata = metadata;
   const result: SearchResult = { document: doc, score };
   if (Number.isFinite(dist)) result.distance = dist;
   return result;
@@ -439,7 +425,7 @@ function buildResult(
 
 function extractText(raw: ChromaToolResult): string | null {
   const first = raw.content?.[0];
-  if (first && first.type === 'text' && typeof first.text === 'string') return first.text;
+  if (first && first.type === "text" && typeof first.text === "string") return first.text;
   return null;
 }
 
@@ -459,7 +445,7 @@ export function extractQueryVector(req: SearchRequest): number[] | null {
   if (!f) return null;
   const v = (f as { vector?: unknown }).vector;
   if (!Array.isArray(v) || v.length === 0) return null;
-  if (!v.every((n) => typeof n === 'number' && Number.isFinite(n))) return null;
+  if (!v.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
   return v as number[];
 }
 
@@ -470,25 +456,25 @@ function normalizeListCollections(payload: unknown): CollectionInfo[] {
   // aren't punished.
   if (!Array.isArray(payload)) {
     throw new RagError(
-      'invalid-response',
+      "invalid-response",
       `chroma_list_collections payload is not an array (got ${typeof payload})`,
     );
   }
   if (payload.length === 1 && payload[0] === CHROMA_EMPTY_SENTINEL) return [];
   return payload.map((entry, i): CollectionInfo => {
-    if (typeof entry === 'string') return { name: entry };
-    if (entry && typeof entry === 'object' && 'name' in entry) {
+    if (typeof entry === "string") return { name: entry };
+    if (entry && typeof entry === "object" && "name" in entry) {
       const obj = entry as Record<string, unknown>;
       const info: CollectionInfo = { name: String(obj.name) };
-      if (typeof obj.count === 'number') info.count = obj.count;
-      if (typeof obj.dimensions === 'number') info.dimensions = obj.dimensions;
-      if (obj.metadata && typeof obj.metadata === 'object') {
+      if (typeof obj.count === "number") info.count = obj.count;
+      if (typeof obj.dimensions === "number") info.dimensions = obj.dimensions;
+      if (obj.metadata && typeof obj.metadata === "object") {
         info.metadata = obj.metadata as Record<string, unknown>;
       }
       return info;
     }
     throw new RagError(
-      'invalid-response',
+      "invalid-response",
       `chroma_list_collections entry at index ${i} is neither a string nor a named object`,
     );
   });

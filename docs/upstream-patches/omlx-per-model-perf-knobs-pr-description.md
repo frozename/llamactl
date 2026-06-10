@@ -65,6 +65,7 @@ the scheduler-admission / config-resolution layer.
 ## Tests
 
 `tests/test_per_model_perf_knobs.py` covers:
+
 - defaults are empty dicts
 - `to_dict`/`from_dict` round-trip with int coercion
 - CLI parser accepts both pre-parsed dicts and CLI strings

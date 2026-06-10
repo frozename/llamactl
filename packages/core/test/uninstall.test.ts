@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { uninstall } from '../src/uninstall.js';
-import { envForTemp, makeTempRuntime } from './helpers.js';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { uninstall } from "../src/uninstall.js";
+import { envForTemp, makeTempRuntime } from "./helpers.js";
 
-describe('uninstall (integration)', () => {
+describe("uninstall (integration)", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
   let originalEnv: NodeJS.ProcessEnv;
   let customFile: string;
@@ -13,20 +13,20 @@ describe('uninstall (integration)', () => {
   let benchHistoryFile: string;
   let benchVisionFile: string;
 
-  const rel = 'Test-GGUF/test-Q4.gguf';
-  const modelDir = () => join(temp.modelsDir, 'Test-GGUF');
-  const modelPath = () => join(modelDir(), 'test-Q4.gguf');
-  const mmproj = () => join(modelDir(), 'mmproj-BF16.gguf');
-  const cacheDir = () => join(modelDir(), '.cache');
+  const rel = "Test-GGUF/test-Q4.gguf";
+  const modelDir = () => join(temp.modelsDir, "Test-GGUF");
+  const modelPath = () => join(modelDir(), "test-Q4.gguf");
+  const mmproj = () => join(modelDir(), "mmproj-BF16.gguf");
+  const cacheDir = () => join(modelDir(), ".cache");
 
   beforeEach(() => {
     temp = makeTempRuntime();
     const env = envForTemp(temp);
     customFile = env.LOCAL_AI_CUSTOM_CATALOG_FILE!;
     overridesFile = env.LOCAL_AI_PRESET_OVERRIDES_FILE!;
-    benchProfileFile = join(temp.runtimeDir, 'llama-bench-profiles.tsv');
-    benchHistoryFile = join(temp.runtimeDir, 'llama-bench-history.tsv');
-    benchVisionFile = join(temp.runtimeDir, 'bench-vision.tsv');
+    benchProfileFile = join(temp.runtimeDir, "llama-bench-profiles.tsv");
+    benchHistoryFile = join(temp.runtimeDir, "llama-bench-history.tsv");
+    benchVisionFile = join(temp.runtimeDir, "bench-vision.tsv");
     originalEnv = { ...process.env };
     for (const [k, v] of Object.entries(env)) {
       if (v !== undefined) process.env[k] = v;
@@ -35,9 +35,9 @@ describe('uninstall (integration)', () => {
     // synthesise a model + mmproj + hf cache sidecar + TSV rows
     mkdirSync(modelDir(), { recursive: true });
     mkdirSync(cacheDir(), { recursive: true });
-    writeFileSync(modelPath(), '');
-    writeFileSync(mmproj(), '');
-    writeFileSync(join(cacheDir(), 'meta.json'), '{}');
+    writeFileSync(modelPath(), "");
+    writeFileSync(mmproj(), "");
+    writeFileSync(join(cacheDir(), "meta.json"), "{}");
 
     mkdirSync(temp.runtimeDir, { recursive: true });
     writeFileSync(
@@ -74,10 +74,10 @@ describe('uninstall (integration)', () => {
     temp.cleanup();
   });
 
-  test('candidate scope: removes model + sidecar + prunes bench TSVs', () => {
+  test("candidate scope: removes model + sidecar + prunes bench TSVs", () => {
     const report = uninstall({ rel });
     expect(report.code).toBe(0);
-    expect(report.scope).toBe('candidate');
+    expect(report.scope).toBe("candidate");
 
     // model dir gone
     expect(existsSync(modelDir())).toBe(false);
@@ -87,9 +87,9 @@ describe('uninstall (integration)', () => {
     expect(overridesBody).toBeDefined();
 
     // Bench profile row for rel pruned, unrelated row retained
-    const bp = require('node:fs').readFileSync(benchProfileFile, 'utf8');
+    const bp = require("node:fs").readFileSync(benchProfileFile, "utf8");
     expect(bp).not.toContain(rel);
-    expect(bp).toContain('unrelated-rel');
+    expect(bp).toContain("unrelated-rel");
 
     // History + vision fully pruned -> files deleted
     expect(existsSync(benchHistoryFile)).toBe(false);
@@ -99,7 +99,7 @@ describe('uninstall (integration)', () => {
     expect(existsSync(customFile)).toBe(false);
   });
 
-  test('refuses non-candidate scope without --force', () => {
+  test("refuses non-candidate scope without --force", () => {
     // Change scope to something non-candidate and retry
     writeFileSync(
       customFile,
@@ -112,23 +112,23 @@ describe('uninstall (integration)', () => {
     expect(existsSync(modelPath())).toBe(true);
   });
 
-  test('--force removes promotion overrides too', () => {
+  test("--force removes promotion overrides too", () => {
     const report = uninstall({ rel, force: true });
     expect(report.code).toBe(0);
     // Promotion file keeps the unrelated row, but the rel row is gone
-    const body = require('node:fs').readFileSync(overridesFile, 'utf8');
+    const body = require("node:fs").readFileSync(overridesFile, "utf8");
     expect(body).not.toContain(rel);
-    expect(body).toContain('another/model.gguf');
+    expect(body).toContain("another/model.gguf");
   });
 
-  test('rejects bogus rel shape', () => {
-    const report = uninstall({ rel: 'no-slash-here.gguf' });
+  test("rejects bogus rel shape", () => {
+    const report = uninstall({ rel: "no-slash-here.gguf" });
     expect(report.code).toBe(1);
     expect(report.error).toMatch(/<repo-dir>\/<file\.gguf>/);
   });
 
-  test('no catalog entry + no file on disk -> refusal', () => {
-    const report = uninstall({ rel: 'Does-Not-Exist/file.gguf' });
+  test("no catalog entry + no file on disk -> refusal", () => {
+    const report = uninstall({ rel: "Does-Not-Exist/file.gguf" });
     expect(report.code).toBe(1);
     expect(report.error).toMatch(/No catalog entry/);
   });

@@ -39,7 +39,7 @@ single machine can hold the weights.
 
 3. **Shared GGUF at the same relative path on every node** under
    `$LLAMA_CPP_MODELS` (rsync, NFS, or per-node `llamactl pull
-   file`). The coordinator loads the model; workers serve their
+file`). The coordinator loads the model; workers serve their
    shard after the coordinator routes the graph.
 4. **Reachable network between coordinator and workers.** The
    coordinator opens a TCP connection to each `rpcHost:rpcPort`;
@@ -101,7 +101,7 @@ spec:
   # Flags passed to the coordinator's llama-server. The --rpc <csv>
   # flag is appended automatically when spec.workers is non-empty;
   # don't include it here.
-  extraArgs: ['--host', '0.0.0.0', '--port', '8080', '--ctx-size', '8192']
+  extraArgs: ["--host", "0.0.0.0", "--port", "8080", "--ctx-size", "8192"]
   # Worker pool: each starts rpc-server before the coordinator launches.
   workers:
     - node: gpu-box-1

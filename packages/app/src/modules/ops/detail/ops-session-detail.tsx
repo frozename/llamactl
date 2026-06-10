@@ -1,9 +1,9 @@
-import * as React from 'react';
-import { useOpsSession } from '../../../lib/use-ops-session';
-import { useTabStore } from '../../../stores/tab-store';
-import { SessionHeader } from './session-header';
-import { IterationCard } from './iteration-card';
-import { OpsSessionEmpty } from './empty-state';
+import * as React from "react";
+import { useOpsSession } from "../../../lib/use-ops-session";
+import { useTabStore } from "../../../stores/tab-store";
+import { SessionHeader } from "./session-header";
+import { IterationCard } from "./iteration-card";
+import { OpsSessionEmpty } from "./empty-state";
 
 interface Props {
   sessionId: string;
@@ -37,15 +37,15 @@ export function OpsSessionDetail({ sessionId }: Props): React.JSX.Element {
   return (
     <div
       data-testid="ops-session-detail-root"
-      style={{ padding: '32px 48px 48px', maxWidth: 1100, margin: '0 auto' }}
+      style={{ padding: "32px 48px 48px", maxWidth: 1100, margin: "0 auto" }}
     >
       <SessionHeader
         view={view}
         onOpenInOpsChat={() => {
           useTabStore.getState().open({
-            tabKey: 'module:ops-chat',
-            title: 'Ops Chat',
-            kind: 'module',
+            tabKey: "module:ops-chat",
+            title: "Ops Chat",
+            kind: "module",
             openedAt: Date.now(),
           });
         }}
@@ -53,12 +53,12 @@ export function OpsSessionDetail({ sessionId }: Props): React.JSX.Element {
       {loading && view.iterations.length === 0 && (
         <div
           data-testid="ops-session-loading"
-          style={{ padding: 24, color: 'var(--color-text-secondary)', textAlign: 'center' }}
+          style={{ padding: 24, color: "var(--color-text-secondary)", textAlign: "center" }}
         >
           Loading session…
         </div>
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 24 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 24 }}>
         {view.iterations.map((it) => (
           <IterationCard
             key={it.stepId}
@@ -68,16 +68,16 @@ export function OpsSessionDetail({ sessionId }: Props): React.JSX.Element {
           />
         ))}
       </div>
-      {view.status === 'refused' && view.refusalReason && (
+      {view.status === "refused" && view.refusalReason && (
         <div
           data-testid="ops-session-refusal"
           style={{
             marginTop: 24,
             padding: 16,
-            border: '1px solid var(--color-border-subtle)',
+            border: "1px solid var(--color-border-subtle)",
             borderRadius: 8,
-            background: 'var(--color-bg-elevated)',
-            color: 'var(--color-text)',
+            background: "var(--color-bg-elevated)",
+            color: "var(--color-text)",
           }}
         >
           <strong>Refused:</strong> {view.refusalReason}

@@ -1,6 +1,6 @@
-import { env as envMod } from '@llamactl/core';
-import { listPeers, workloadStore } from '@llamactl/remote';
-import { readSchedulerLease } from '../../../remote/src/config/peers.js';
+import { env as envMod } from "@llamactl/core";
+import { listPeers, workloadStore } from "@llamactl/remote";
+import { readSchedulerLease } from "../../../remote/src/config/peers.js";
 import {
   startSupervisorLoop,
   defaultFleetJournalPath,
@@ -16,9 +16,9 @@ import {
   createPeerFetch,
   runExecutor,
   readRecentMovesFromJournal,
-} from '../../../fleet-supervisor/src/index.js';
-import { getGlobals } from '../dispatcher.js';
-import { setWorkloadEnabled } from './setEnabled.js';
+} from "../../../fleet-supervisor/src/index.js";
+import { getGlobals } from "../dispatcher.js";
+import { setWorkloadEnabled } from "./setEnabled.js";
 
 const USAGE = `llamactl supervisor — fleet observability + severity-gated remediation
 
@@ -83,11 +83,11 @@ EXAMPLES:
 
 export async function runSupervisor(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
-  if (!sub || sub === '--help' || sub === '-h' || rest.includes('--help') || rest.includes('-h')) {
+  if (!sub || sub === "--help" || sub === "-h" || rest.includes("--help") || rest.includes("-h")) {
     console.log(USAGE);
     return sub ? 0 : 1;
   }
-  if (sub !== 'serve' && sub !== 'tick' && sub !== 'status' && sub !== 'audit') {
+  if (sub !== "serve" && sub !== "tick" && sub !== "status" && sub !== "audit") {
     console.error(`Unknown supervisor subcommand: ${sub}`);
     console.error(USAGE);
     return 1;
@@ -100,7 +100,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
     return 2;
   }
 
-  if (sub === 'serve' || sub === 'tick') {
+  if (sub === "serve" || sub === "tick") {
     // TODO: Re-resolve on each tick once we have low-overhead cache + invalidation.
     flags.workloads = resolveWorkloadTargetsAtStartup(flags.workloads, process.env);
   }
@@ -109,7 +109,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
   if (globalNode) flags.node = globalNode;
   const journalPath = flags.journal ?? defaultFleetJournalPath();
 
-  if (sub === 'status') {
+  if (sub === "status") {
     const report = await readSupervisorStatus({
       journalPath,
       node: flags.node,
@@ -127,22 +127,26 @@ export async function runSupervisor(args: string[]): Promise<number> {
     }
 
     for (const node of report.nodes) {
-      if (node.state === 'NORMAL') {
+      if (node.state === "NORMAL") {
         console.log(`node ${node.name}: NORMAL (no recent pressure event)`);
         console.log();
       } else {
         const mins = Math.floor(node.durationMs / 60000);
         console.log(`node ${node.name}: HIGH for ${mins}m (since ${node.enteredAt})`);
         console.log(`  clear progress: ${node.consecutiveClearTicks}/${node.clearTicksNeeded}`);
-        console.log(`  free_mb=${node.free_mb} (breach: ${node.headroomBreach ? 'yes' : 'no'}) compressor_mb=${node.compressor_mb} (breach: ${node.compressorBreach ? 'yes' : 'no'})`);
+        console.log(
+          `  free_mb=${node.free_mb} (breach: ${node.headroomBreach ? "yes" : "no"}) compressor_mb=${node.compressor_mb} (breach: ${node.compressorBreach ? "yes" : "no"})`,
+        );
         console.log(`  last ${node.recent.length} pressure-status:`);
         for (const recent of node.recent) {
-          const t = new Date(recent.ts).toLocaleTimeString('en-US', { hour12: false });
+          const t = new Date(recent.ts).toLocaleTimeString("en-US", { hour12: false });
           let hits = [];
-          if (recent.headroomBreach) hits.push('headroom');
-          if (recent.compressorBreach) hits.push('compressor');
-          const hitsStr = hits.length > 0 ? hits.join(',') : '(none)';
-          console.log(`    ${t}  free=${recent.free_mb}  comp=${recent.compressor_mb}  clear=${recent.consecutiveClearTicks}/${recent.clearTicksNeeded}  hits=${hitsStr}`);
+          if (recent.headroomBreach) hits.push("headroom");
+          if (recent.compressorBreach) hits.push("compressor");
+          const hitsStr = hits.length > 0 ? hits.join(",") : "(none)";
+          console.log(
+            `    ${t}  free=${recent.free_mb}  comp=${recent.compressor_mb}  clear=${recent.consecutiveClearTicks}/${recent.clearTicksNeeded}  hits=${hitsStr}`,
+          );
         }
         console.log();
       }
@@ -150,7 +154,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
     return 0;
   }
 
-  if (sub === 'audit') {
+  if (sub === "audit") {
     const res = await readAuditEntries({
       auditPath: flags.auditPath,
       tool: flags.tool,
@@ -168,14 +172,15 @@ export async function runSupervisor(args: string[]): Promise<number> {
       console.log(`audit: ${res.malformedLines} malformed lines skipped`);
     }
     console.log(`audit: ${res.auditPath}  total=${res.total} entries=${res.entries.length}\n`);
-    
+
     const summarize = (obj: any) => {
       if (!obj || typeof obj !== "object" || Object.keys(obj).length === 0) return "{}";
-      
+
       let out = "";
       if ("proposalId" in obj) out += `proposalId:"${obj.proposalId}" `;
       if ("name" in obj) out += `name:"${obj.name}" `;
-      if ("error" in obj && typeof obj.error === "string") out += `error:"${obj.error.slice(0, 40)}" `;
+      if ("error" in obj && typeof obj.error === "string")
+        out += `error:"${obj.error.slice(0, 40)}" `;
       if ("auto" in obj) out += `auto:${obj.auto} `;
       if ("memMb" in obj) out += `memMb=${obj.memMb} `;
       if ("action" in obj && typeof obj.action === "string") out += `action:"${obj.action}" `;
@@ -196,22 +201,25 @@ export async function runSupervisor(args: string[]): Promise<number> {
       } else {
         detStr = summarize(e.detail);
       }
-      
-      console.log(`${e.ts}  ${e.outcome.padEnd(7)}  ${e.tool.padEnd(30)}  input=${inStr}  detail=${detStr}`);
+
+      console.log(
+        `${e.ts}  ${e.outcome.padEnd(7)}  ${e.tool.padEnd(30)}  input=${inStr}  detail=${detStr}`,
+      );
     }
     return 0;
   }
 
-  const once = sub === 'tick' || flags.once;
-  const writeJournal = (entry: FleetJournalEntry) =>
-    appendFleetJournal(entry, journalPath);
+  const once = sub === "tick" || flags.once;
+  const writeJournal = (entry: FleetJournalEntry) => appendFleetJournal(entry, journalPath);
 
-  const migrationEnabled = process.env.LLAMACTL_FLEET_MOVE_ENABLED === '1';
+  const migrationEnabled = process.env.LLAMACTL_FLEET_MOVE_ENABLED === "1";
   const migrationController = migrationEnabled
     ? createMigrationController({
         peers: listPeers({ currentNodeName: flags.node }).map((peer) => peer.id),
         fetchSnapshot: async (node) => {
-          const peer = listPeers({ currentNodeName: flags.node }).find((candidate) => candidate.id === node);
+          const peer = listPeers({ currentNodeName: flags.node }).find(
+            (candidate) => candidate.id === node,
+          );
           if (!peer) {
             throw new Error(`unknown peer: ${node}`);
           }
@@ -223,7 +231,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
           return {
             node: snapshot.node,
             schedulerLeaseHolder: readSchedulerLease(journalPath)?.holder ?? flags.node,
-            pressureState: 'NORMAL',
+            pressureState: "NORMAL",
             nodeMem: { freeMb: snapshot.node_mem.free_mb },
             workloads: snapshot.workloads.map((workload) => ({
               name: workload.name,
@@ -267,19 +275,21 @@ export async function runSupervisor(args: string[]): Promise<number> {
             writeJournal,
             disable: async (name) => {
               const r = await setWorkloadEnabled(name, false);
-              if (r.message && !flags.quiet) process.stderr.write(`supervisor: executor: ${r.message}`);
+              if (r.message && !flags.quiet)
+                process.stderr.write(`supervisor: executor: ${r.message}`);
               return r.code;
             },
             enable: async (name) => {
               const r = await setWorkloadEnabled(name, true);
-              if (r.message && !flags.quiet) process.stderr.write(`supervisor: executor: ${r.message}`);
+              if (r.message && !flags.quiet)
+                process.stderr.write(`supervisor: executor: ${r.message}`);
               return r.code;
             },
           });
           if (!flags.quiet && results.length > 0) {
             for (const r of results) {
               process.stderr.write(
-                `supervisor: executor: ${r.status} proposal=${r.proposalId} action=${r.action.type}${r.reason ? ` reason=${r.reason}` : ''}${r.exitCode != null ? ` exitCode=${r.exitCode}` : ''}\n`,
+                `supervisor: executor: ${r.status} proposal=${r.proposalId} action=${r.action.type}${r.reason ? ` reason=${r.reason}` : ""}${r.exitCode != null ? ` exitCode=${r.exitCode}` : ""}\n`,
               );
             }
           }
@@ -288,23 +298,30 @@ export async function runSupervisor(args: string[]): Promise<number> {
   };
 
   if (!flags.quiet) {
-    const wlSummary = flags.workloads.length === 0
-      ? '(mem-only)'
-      : flags.workloads.map((w) => `${w.name}@${redactEndpoint(w.endpoint)}`).join(', ');
-    process.stderr.write(`supervisor: node=${flags.node} interval=${flags.intervalMs}ms once=${once} workloads=${wlSummary}\n`);
+    const wlSummary =
+      flags.workloads.length === 0
+        ? "(mem-only)"
+        : flags.workloads.map((w) => `${w.name}@${redactEndpoint(w.endpoint)}`).join(", ");
+    process.stderr.write(
+      `supervisor: node=${flags.node} interval=${flags.intervalMs}ms once=${once} workloads=${wlSummary}\n`,
+    );
     process.stderr.write(`supervisor: journal=${journalPath}\n`);
     if (executorEnabled) {
-      process.stderr.write(`supervisor: executor=on auto=${flags.auto} threshold=${flags.severityThreshold}${flags.executeId ? ` executeId=${flags.executeId}` : ''}\n`);
+      process.stderr.write(
+        `supervisor: executor=on auto=${flags.auto} threshold=${flags.severityThreshold}${flags.executeId ? ` executeId=${flags.executeId}` : ""}\n`,
+      );
     }
   }
   if (flags.noWorkloadsConflict) {
-    process.stderr.write('supervisor: warning — both --no-workloads and --workload= were passed; --no-workloads wins, workloads ignored.\n');
+    process.stderr.write(
+      "supervisor: warning — both --no-workloads and --workload= were passed; --no-workloads wins, workloads ignored.\n",
+    );
   }
 
   const handle = startSupervisorLoop(loopOpts);
   if (!once) {
-    process.on('SIGINT', () => handle.stop());
-    process.on('SIGTERM', () => handle.stop());
+    process.on("SIGINT", () => handle.stop());
+    process.on("SIGTERM", () => handle.stop());
   }
   await handle.done;
   return 0;
@@ -334,7 +351,6 @@ interface Flags {
   tool?: string;
   outcome?: "denied" | "success" | "error";
   since?: string;
-
 }
 
 interface ResolveWorkloadUrlDeps {
@@ -354,13 +370,14 @@ export function resolveWorkloadUrl(
   env: NodeJS.ProcessEnv = process.env,
   deps: ResolveWorkloadUrlDeps = {},
 ): string {
-  const loadWorkloadByNameAny = deps.loadWorkloadByNameAny
-    ?? ((workloadName: string) => (
-      deps.loadWorkloadByName
+  const loadWorkloadByNameAny =
+    deps.loadWorkloadByNameAny ??
+    ((workloadName: string) =>
+      (deps.loadWorkloadByName
         ? deps.loadWorkloadByName(workloadName)
-        : workloadStore.loadWorkloadByName(workloadName)
-    ) as { spec: { useProxy?: boolean } });
-  const resolveInternalProxyEndpoint = deps.resolveInternalProxyEndpoint ?? envMod.resolveInternalProxyEndpoint;
+        : workloadStore.loadWorkloadByName(workloadName)) as { spec: { useProxy?: boolean } });
+  const resolveInternalProxyEndpoint =
+    deps.resolveInternalProxyEndpoint ?? envMod.resolveInternalProxyEndpoint;
   const warn = deps.warn ?? ((message: string) => process.stderr.write(`${message}\n`));
 
   try {
@@ -370,7 +387,9 @@ export function resolveWorkloadUrl(
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    warn(`[supervisor] workload=${name} failed to read deployed spec (${message}); using configured URL ${fallbackUrl}`);
+    warn(
+      `[supervisor] workload=${name} failed to read deployed spec (${message}); using configured URL ${fallbackUrl}`,
+    );
   }
 
   return fallbackUrl;
@@ -391,7 +410,9 @@ export function resolveWorkloadTargetsAtStartup(
     const signature = `${target.endpoint}->${resolvedEndpoint}`;
     const prev = loggedOverrides.get(target.name);
     if (prev !== signature) {
-      info(`[supervisor] workload=${target.name} routing via proxy ${resolvedEndpoint} (was ${target.endpoint})`);
+      info(
+        `[supervisor] workload=${target.name} routing via proxy ${resolvedEndpoint} (was ${target.endpoint})`,
+      );
       loggedOverrides.set(target.name, signature);
     }
     return { ...target, endpoint: resolvedEndpoint };
@@ -403,7 +424,9 @@ const warnedDeprecatedAuditFlagNames = new Set<string>();
 function num(raw: string, prefix: string, fallback: number): number {
   const v = Number(raw.slice(prefix.length));
   if (!Number.isFinite(v) || v < 0) {
-    throw new Error(`supervisor: ${prefix.replace(/=$/, '')} must be finite non-negative (got ${raw.slice(prefix.length)})`);
+    throw new Error(
+      `supervisor: ${prefix.replace(/=$/, "")} must be finite non-negative (got ${raw.slice(prefix.length)})`,
+    );
   }
   return v || fallback;
 }
@@ -412,14 +435,14 @@ function parseFlags(argv: string[]): Flags {
   let intervalMs = 30_000;
   let once = false;
   let journal: string | undefined;
-  let node = 'local';
+  let node = "local";
   let headroomMb = 512;
   let compressorMb = 2048;
   let consecutiveTicks = 3;
   let clearTicks: number | undefined;
   let p95DegradedMs = 5000;
   let consecutiveErrors = 3;
-  let kind: 'ModelHost' | 'ModelRun' = 'ModelHost';
+  let kind: "ModelHost" | "ModelRun" = "ModelHost";
   const workloads: WorkloadTarget[] = [];
   let noWorkloads = false;
   let quiet = false;
@@ -434,53 +457,112 @@ function parseFlags(argv: string[]): Flags {
   let outcome: "denied" | "success" | "error" | undefined;
   let since: string | undefined;
 
-
   for (const raw of argv) {
-    if (raw === '--once') { once = true; continue; }
-    if (raw === '--no-workloads') { noWorkloads = true; continue; }
-    if (raw === '--quiet') { quiet = true; continue; }
-    if (raw === '--auto') { auto = true; continue; }
-    if (raw === '--json') { json = true; continue; }
-    if (raw.startsWith('--limit=')) { limit = num(raw, '--limit=', 0) || undefined; continue; }
-    if (raw.startsWith('--audit-path=')) { auditPath = raw.slice('--audit-path='.length); continue; }
-    if (raw.startsWith('--audit=')) {
-      if (!warnedDeprecatedAuditFlagNames.has('--audit')) {
-        console.error('supervisor audit: --audit is deprecated; use --audit-path');
-        warnedDeprecatedAuditFlagNames.add('--audit');
+    if (raw === "--once") {
+      once = true;
+      continue;
+    }
+    if (raw === "--no-workloads") {
+      noWorkloads = true;
+      continue;
+    }
+    if (raw === "--quiet") {
+      quiet = true;
+      continue;
+    }
+    if (raw === "--auto") {
+      auto = true;
+      continue;
+    }
+    if (raw === "--json") {
+      json = true;
+      continue;
+    }
+    if (raw.startsWith("--limit=")) {
+      limit = num(raw, "--limit=", 0) || undefined;
+      continue;
+    }
+    if (raw.startsWith("--audit-path=")) {
+      auditPath = raw.slice("--audit-path=".length);
+      continue;
+    }
+    if (raw.startsWith("--audit=")) {
+      if (!warnedDeprecatedAuditFlagNames.has("--audit")) {
+        console.error("supervisor audit: --audit is deprecated; use --audit-path");
+        warnedDeprecatedAuditFlagNames.add("--audit");
       }
-      auditPath = raw.slice('--audit='.length);
+      auditPath = raw.slice("--audit=".length);
       continue;
     }
-    if (raw.startsWith('--tool=')) { tool = raw.slice('--tool='.length); continue; }
-    if (raw.startsWith('--outcome=')) {
-      const v = raw.slice('--outcome='.length);
-      if (v === 'denied' || v === 'success' || v === 'error') outcome = v;
+    if (raw.startsWith("--tool=")) {
+      tool = raw.slice("--tool=".length);
       continue;
     }
-    if (raw.startsWith('--since=')) { since = raw.slice('--since='.length); continue; }
-    if (raw.startsWith('--interval=')) { intervalMs = num(raw, '--interval=', 30) * 1000; continue; }
-    if (raw.startsWith('--journal=')) { journal = raw.slice('--journal='.length); continue; }
-    if (raw.startsWith('--node=')) { node = raw.slice('--node='.length); continue; }
-    if (raw.startsWith('--headroom-mb=')) { headroomMb = num(raw, '--headroom-mb=', 512); continue; }
-    if (raw.startsWith('--compressor-mb=')) { compressorMb = num(raw, '--compressor-mb=', 2048); continue; }
-    if (raw.startsWith('--consecutive-ticks=')) { consecutiveTicks = num(raw, '--consecutive-ticks=', 3); continue; }
-    if (raw.startsWith('--clear-ticks=')) { const v = Number(raw.slice('--clear-ticks='.length)); if (!Number.isFinite(v) || v < 0) throw new Error('supervisor: clear-ticks must be finite non-negative'); clearTicks = v; continue; }
-    if (raw.startsWith('--p95-degraded-ms=')) { p95DegradedMs = num(raw, '--p95-degraded-ms=', 5000); continue; }
-    if (raw.startsWith('--consecutive-errors=')) { consecutiveErrors = num(raw, '--consecutive-errors=', 3); continue; }
-    if (raw.startsWith('--severity-threshold=')) {
-      const v = Number(raw.slice('--severity-threshold='.length));
+    if (raw.startsWith("--outcome=")) {
+      const v = raw.slice("--outcome=".length);
+      if (v === "denied" || v === "success" || v === "error") outcome = v;
+      continue;
+    }
+    if (raw.startsWith("--since=")) {
+      since = raw.slice("--since=".length);
+      continue;
+    }
+    if (raw.startsWith("--interval=")) {
+      intervalMs = num(raw, "--interval=", 30) * 1000;
+      continue;
+    }
+    if (raw.startsWith("--journal=")) {
+      journal = raw.slice("--journal=".length);
+      continue;
+    }
+    if (raw.startsWith("--node=")) {
+      node = raw.slice("--node=".length);
+      continue;
+    }
+    if (raw.startsWith("--headroom-mb=")) {
+      headroomMb = num(raw, "--headroom-mb=", 512);
+      continue;
+    }
+    if (raw.startsWith("--compressor-mb=")) {
+      compressorMb = num(raw, "--compressor-mb=", 2048);
+      continue;
+    }
+    if (raw.startsWith("--consecutive-ticks=")) {
+      consecutiveTicks = num(raw, "--consecutive-ticks=", 3);
+      continue;
+    }
+    if (raw.startsWith("--clear-ticks=")) {
+      const v = Number(raw.slice("--clear-ticks=".length));
+      if (!Number.isFinite(v) || v < 0)
+        throw new Error("supervisor: clear-ticks must be finite non-negative");
+      clearTicks = v;
+      continue;
+    }
+    if (raw.startsWith("--p95-degraded-ms=")) {
+      p95DegradedMs = num(raw, "--p95-degraded-ms=", 5000);
+      continue;
+    }
+    if (raw.startsWith("--consecutive-errors=")) {
+      consecutiveErrors = num(raw, "--consecutive-errors=", 3);
+      continue;
+    }
+    if (raw.startsWith("--severity-threshold=")) {
+      const v = Number(raw.slice("--severity-threshold=".length));
       if (v === 1 || v === 2 || v === 3) severityThreshold = v;
       continue;
     }
-    if (raw.startsWith('--execute=')) { executeId = raw.slice('--execute='.length); continue; }
-    if (raw.startsWith('--kind=')) {
-      const v = raw.slice('--kind='.length);
-      if (v === 'ModelHost' || v === 'ModelRun') kind = v;
+    if (raw.startsWith("--execute=")) {
+      executeId = raw.slice("--execute=".length);
       continue;
     }
-    if (raw.startsWith('--workload=')) {
-      const v = raw.slice('--workload='.length);
-      const [name, endpoint] = v.split('@', 2);
+    if (raw.startsWith("--kind=")) {
+      const v = raw.slice("--kind=".length);
+      if (v === "ModelHost" || v === "ModelRun") kind = v;
+      continue;
+    }
+    if (raw.startsWith("--workload=")) {
+      const v = raw.slice("--workload=".length);
+      const [name, endpoint] = v.split("@", 2);
       if (name && endpoint) workloads.push({ name, endpoint, kind });
       continue;
     }
@@ -511,5 +593,4 @@ function parseFlags(argv: string[]): Flags {
     outcome,
     since,
   };
-
 }

@@ -1,5 +1,5 @@
-import { hf, lmstudio } from '@llamactl/core';
-import { getGlobals, getNodeClient, isLocalDispatch } from '../dispatcher.js';
+import { hf, lmstudio } from "@llamactl/core";
+import { getGlobals, getNodeClient, isLocalDispatch } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl lmstudio <subcommand>
 
@@ -16,20 +16,20 @@ Subcommands:
       catalog row but leaves the file in place.
 `;
 
-function parseImportFlags(args: string[]):
-  | { root?: string; apply: boolean; link: boolean; json: boolean }
-  | { error: string } {
+function parseImportFlags(
+  args: string[],
+): { root?: string; apply: boolean; link: boolean; json: boolean } | { error: string } {
   let root: string | undefined;
   let apply = false;
   let link = true;
   let json = false;
   for (const arg of args) {
-    if (arg === '--apply') apply = true;
-    else if (arg === '--no-link') link = false;
-    else if (arg === '--json') json = true;
-    else if (arg === '-h' || arg === '--help') return { error: 'help' };
-    else if (arg.startsWith('--root=')) root = arg.slice('--root='.length);
-    else if (arg.startsWith('--')) return { error: `Unknown flag: ${arg}` };
+    if (arg === "--apply") apply = true;
+    else if (arg === "--no-link") link = false;
+    else if (arg === "--json") json = true;
+    else if (arg === "-h" || arg === "--help") return { error: "help" };
+    else if (arg.startsWith("--root=")) root = arg.slice("--root=".length);
+    else if (arg.startsWith("--")) return { error: `Unknown flag: ${arg}` };
     else return { error: `Unexpected positional: ${arg}` };
   }
   return { root, apply, link, json };
@@ -39,13 +39,13 @@ async function runScan(args: string[]): Promise<number> {
   let root: string | undefined;
   let json = false;
   for (const arg of args) {
-    if (arg === '--json') json = true;
-    else if (arg === '-h' || arg === '--help') {
+    if (arg === "--json") json = true;
+    else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
       return 0;
-    } else if (arg.startsWith('--root=')) {
-      root = arg.slice('--root='.length);
-    } else if (arg.startsWith('--')) {
+    } else if (arg.startsWith("--root=")) {
+      root = arg.slice("--root=".length);
+    } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
       return 1;
     }
@@ -55,9 +55,11 @@ async function runScan(args: string[]): Promise<number> {
     scan = lmstudio.scanLMStudio({ root });
   } else {
     try {
-      scan = await getNodeClient().lmstudioScan.query(root ? { root } : undefined) as typeof scan;
+      scan = (await getNodeClient().lmstudioScan.query(root ? { root } : undefined)) as typeof scan;
     } catch (err) {
-      process.stderr.write(`lmstudio scan: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `lmstudio scan: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
@@ -66,7 +68,9 @@ async function runScan(args: string[]): Promise<number> {
     return scan.models.length > 0 ? 0 : 1;
   }
   if (!scan.root) {
-    process.stderr.write('No LM Studio install detected. Pass --root or set LMSTUDIO_MODELS_DIR.\n');
+    process.stderr.write(
+      "No LM Studio install detected. Pass --root or set LMSTUDIO_MODELS_DIR.\n",
+    );
     return 1;
   }
   process.stdout.write(`root=${scan.root} (${scan.models.length} models)\n`);
@@ -80,8 +84,8 @@ async function runScan(args: string[]): Promise<number> {
 
 async function runImport(args: string[]): Promise<number> {
   const parsed = parseImportFlags(args);
-  if ('error' in parsed) {
-    if (parsed.error === 'help') {
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -99,9 +103,13 @@ async function runImport(args: string[]): Promise<number> {
         const input: { root?: string; link?: boolean } = {};
         if (root !== undefined) input.root = root;
         if (link !== true) input.link = link;
-        plan = await getNodeClient().lmstudioPlan.query(Object.keys(input).length > 0 ? input : undefined) as typeof plan;
+        plan = (await getNodeClient().lmstudioPlan.query(
+          Object.keys(input).length > 0 ? input : undefined,
+        )) as typeof plan;
       } catch (err) {
-        process.stderr.write(`lmstudio plan: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+        process.stderr.write(
+          `lmstudio plan: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+        );
         return 1;
       }
     }
@@ -110,12 +118,14 @@ async function runImport(args: string[]): Promise<number> {
       return 0;
     }
     if (!plan.root) {
-      process.stderr.write('No LM Studio install detected. Pass --root or set LMSTUDIO_MODELS_DIR.\n');
+      process.stderr.write(
+        "No LM Studio install detected. Pass --root or set LMSTUDIO_MODELS_DIR.\n",
+      );
       return 1;
     }
     process.stdout.write(`root=${plan.root} (${plan.items.length} candidates)\n`);
     for (const item of plan.items) {
-      const suffix = item.reason ? ` — ${item.reason}` : '';
+      const suffix = item.reason ? ` — ${item.reason}` : "";
       process.stdout.write(
         `  ${item.action.padEnd(26)} rel=${item.rel.padEnd(40)} target=${item.targetPath}${suffix}\n`,
       );
@@ -132,9 +142,11 @@ async function runImport(args: string[]): Promise<number> {
       const input: { root?: string; link?: boolean } = {};
       if (root !== undefined) input.root = root;
       if (link !== true) input.link = link;
-      result = await getNodeClient().lmstudioImport.mutate(input) as typeof result;
+      result = (await getNodeClient().lmstudioImport.mutate(input)) as typeof result;
     } catch (err) {
-      process.stderr.write(`lmstudio import: remote call to '${getGlobals().nodeName ?? ''}' failed: ${(err as Error).message}\n`);
+      process.stderr.write(
+        `lmstudio import: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+      );
       return 1;
     }
   }
@@ -143,7 +155,7 @@ async function runImport(args: string[]): Promise<number> {
     return result.errors.length === 0 ? 0 : 1;
   }
   if (!result.root) {
-    process.stderr.write('No LM Studio install detected.\n');
+    process.stderr.write("No LM Studio install detected.\n");
     return 1;
   }
   process.stdout.write(
@@ -164,14 +176,14 @@ async function runImport(args: string[]): Promise<number> {
 export async function runLMStudio(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
-    case 'scan':
+    case "scan":
       return runScan(rest);
-    case 'import':
+    case "import":
       return runImport(rest);
     case undefined:
-    case '-h':
-    case '--help':
-    case 'help':
+    case "-h":
+    case "--help":
+    case "help":
       process.stdout.write(USAGE);
       return sub ? 0 : 1;
     default:

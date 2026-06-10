@@ -11,7 +11,7 @@ that was already running there. Concrete incident: applying
 Gemma's `:8181` consumer (home-mgmt SDK) flipped into a
 ConnectionRefused respawn loop. The local node behaves as a
 single-server appliance even though port-collision preflight already
-proves the *port* machinery can support multiple.
+proves the _port_ machinery can support multiple.
 
 The root cause is in two places:
 
@@ -55,7 +55,7 @@ The root cause is in two places:
 ## Approach
 
 Move from a per-node-singleton state model to a per-workload state
-model, with apply semantics defaulting to *parallel*, evict opt-in,
+model, with apply semantics defaulting to _parallel_, evict opt-in,
 and an advisory RAM budget check.
 
 ### Architecture
@@ -83,7 +83,7 @@ Invariants:
   `runtime/workloads/*/llama-server.pid`, probes each PID, and
   reconciles against `workloads/*.yaml`.
 - `llamactl server start` (imperative escape hatch) gains `--name
-  <key>` and synthesizes a transient manifest named
+<key>` and synthesizes a transient manifest named
   `imperative-<unix-ms>` when omitted; that manifest is a normal
   first-class workload from then on.
 
@@ -196,9 +196,9 @@ the root) are deleted from the live code; tests update.
    translates that to a non-zero exit with a "rerun with `--force`"
    hint.
 6. **Diff for this workload only.** `client.serverStatus.query({
-   workload: manifest.metadata.name })` returns state for that
+workload: manifest.metadata.name })` returns state for that
    workload's process. The "stop the mismatched server" branch only
-   stops *this* workload's old process. Other workloads on the node
+   stops _this_ workload's old process. Other workloads on the node
    are not touched — the core bug fix.
 7. Start the new server under the workload's runtime dir.
 8. Status reporting unchanged in shape; `ModelRunStatus` is already
@@ -282,12 +282,12 @@ If the legacy process is already dead at boot, delete the stale files
 Bun test suites (`packages/remote/src/workload/`,
 `packages/core/src/`):
 
-| Suite | Cases |
-|---|---|
-| `server.test.ts` (core) | Two workloads spawn concurrently into separate dirs; `serverStop(A)` does not touch B; `listLocalWorkloads()` returns both; crash-recovery walk after orphaning A's pid. |
-| `apply.test.ts` | Parallel apply: B applies cleanly while A is live, no stop. Evict: `evict: A` stops A then starts B; A's runtime dir cleaned. Budget overflow → `pending` + `BudgetExceeded`, unless `force-admit`. Hot-swap of same name still restarts in place. Disable while running stops the server, status reports `Disabled`, RAM accounting drops it. Re-enable starts it back. |
-| `migration.test.ts` | Legacy `runtime/llama-server.pid` + matching manifest → moves under workload dir. No matching manifest → synthesizes `imperative-*`. `.migrated-v2` flag blocks re-run. |
-| Integration shell (`test/run-all.zsh`) | Apply Granite + Gemma → both serve. `apply --evict granite gemma` → only Gemma. Apply over budget → fails; `--force` → succeeds. |
+| Suite                                  | Cases                                                                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `server.test.ts` (core)                | Two workloads spawn concurrently into separate dirs; `serverStop(A)` does not touch B; `listLocalWorkloads()` returns both; crash-recovery walk after orphaning A's pid.                                                                                                                                                                                                 |
+| `apply.test.ts`                        | Parallel apply: B applies cleanly while A is live, no stop. Evict: `evict: A` stops A then starts B; A's runtime dir cleaned. Budget overflow → `pending` + `BudgetExceeded`, unless `force-admit`. Hot-swap of same name still restarts in place. Disable while running stops the server, status reports `Disabled`, RAM accounting drops it. Re-enable starts it back. |
+| `migration.test.ts`                    | Legacy `runtime/llama-server.pid` + matching manifest → moves under workload dir. No matching manifest → synthesizes `imperative-*`. `.migrated-v2` flag blocks re-run.                                                                                                                                                                                                  |
+| Integration shell (`test/run-all.zsh`) | Apply Granite + Gemma → both serve. `apply --evict granite gemma` → only Gemma. Apply over budget → fails; `--force` → succeeds.                                                                                                                                                                                                                                         |
 
 Cross-repo smoke (per the project's standing cross-repo validation
 rule): manually verify home-mgmt SDK keeps hitting `:8181` (Granite)

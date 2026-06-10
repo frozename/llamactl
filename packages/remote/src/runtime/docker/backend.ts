@@ -21,7 +21,7 @@
  *     with a clear error; the daemon would otherwise surface a
  *     less-friendly "no matching manifest" near the start stage.
  */
-import { arch as nodeArch, platform as nodePlatform } from 'node:os';
+import { arch as nodeArch, platform as nodePlatform } from "node:os";
 
 import type {
   ImageRef,
@@ -31,9 +31,9 @@ import type {
   ServiceFilter,
   ServiceInstance,
   ServiceRef,
-} from '../backend.js';
-import { RuntimeError } from '../errors.js';
-import { LABEL_KEYS, MANAGED_BY_VALUE } from '../labels.js';
+} from "../backend.js";
+import { RuntimeError } from "../errors.js";
+import { LABEL_KEYS, MANAGED_BY_VALUE } from "../labels.js";
 import {
   createDockerClient,
   drainNdjson,
@@ -41,7 +41,7 @@ import {
   parseJsonOrThrow,
   type DockerClient,
   type DockerClientOptions,
-} from './client.js';
+} from "./client.js";
 
 const STOP_TIMEOUT_SECONDS = 10;
 
@@ -55,14 +55,12 @@ export interface DockerBackendOptions extends DockerClientOptions {
   hostOs?: string;
 }
 
-export function createDockerBackend(
-  opts: DockerBackendOptions = {},
-): RuntimeBackend {
+export function createDockerBackend(opts: DockerBackendOptions = {}): RuntimeBackend {
   return new DockerBackend(opts);
 }
 
 export class DockerBackend implements RuntimeBackend {
-  readonly kind = 'docker';
+  readonly kind = "docker";
   private readonly client: DockerClient;
   private readonly hostArchOverride: string | undefined;
   private readonly hostOsOverride: string | undefined;
@@ -70,10 +68,8 @@ export class DockerBackend implements RuntimeBackend {
 
   constructor(opts: DockerBackendOptions = {}) {
     this.client = createDockerClient(opts);
-    this.hostArchOverride =
-      opts.hostArch !== undefined ? normalizeArch(opts.hostArch) : undefined;
-    this.hostOsOverride =
-      opts.hostOs !== undefined ? normalizeOs(opts.hostOs) : undefined;
+    this.hostArchOverride = opts.hostArch !== undefined ? normalizeArch(opts.hostArch) : undefined;
+    this.hostOsOverride = opts.hostOs !== undefined ? normalizeOs(opts.hostOs) : undefined;
   }
 
   /**
@@ -92,11 +88,11 @@ export class DockerBackend implements RuntimeBackend {
       };
       return this.daemonPlatformCache;
     }
-    const res = await this.client.request('/info');
+    const res = await this.client.request("/info");
     const info = await parseJsonOrThrow<{ OSType?: string; Architecture?: string }>(
       res,
-      'backend-unreachable',
-      'docker info',
+      "backend-unreachable",
+      "docker info",
     );
     this.daemonPlatformCache = {
       os: this.hostOsOverride ?? normalizeOs(info.OSType ?? nodePlatform()),
@@ -107,19 +103,19 @@ export class DockerBackend implements RuntimeBackend {
 
   // swagger: operationId=SystemPing (GET /_ping)
   async ping(): Promise<void> {
-    const res = await this.client.request('/_ping');
+    const res = await this.client.request("/_ping");
     if (!res.ok) {
-      throw await failWith('backend-unreachable', res, 'docker ping');
+      throw await failWith("backend-unreachable", res, "docker ping");
     }
     // Body is the literal string "OK" — drain so the connection is
     // released.
-    await res.text().catch(() => '');
+    await res.text().catch(() => "");
   }
 
   async ensureService(spec: ServiceDeployment): Promise<ServiceInstance> {
     if (!spec.image.tag || spec.image.tag.length === 0) {
       throw new RuntimeError(
-        'spec-invalid',
+        "spec-invalid",
         `image.tag is required (got empty for ${spec.image.repository})`,
       );
     }
@@ -140,7 +136,7 @@ export class DockerBackend implements RuntimeBackend {
     const inspected = await this.inspectService({ name: spec.name });
     if (!inspected) {
       throw new RuntimeError(
-        'start-failed',
+        "start-failed",
         `container '${spec.name}' disappeared immediately after start`,
       );
     }
@@ -157,36 +153,31 @@ export class DockerBackend implements RuntimeBackend {
   // touched — see `RemoveServiceOptions` docs.
   async removeService(ref: ServiceRef, opts?: RemoveServiceOptions): Promise<void> {
     // swagger: operationId=ContainerStop (POST /containers/{id}/stop)
-    const stopRes = await this.client.request(
-      `/containers/${encodeURIComponent(ref.name)}/stop`,
-      { method: 'POST', query: { t: STOP_TIMEOUT_SECONDS } },
-    );
+    const stopRes = await this.client.request(`/containers/${encodeURIComponent(ref.name)}/stop`, {
+      method: "POST",
+      query: { t: STOP_TIMEOUT_SECONDS },
+    });
     // 204 stopped, 304 already stopped, 404 doesn't exist — all fine
     if (!stopRes.ok && stopRes.status !== 304 && stopRes.status !== 404) {
-      throw await failWith('backend-unreachable', stopRes, `stop ${ref.name}`);
+      throw await failWith("backend-unreachable", stopRes, `stop ${ref.name}`);
     }
 
-    const delRes = await this.client.request(
-      `/containers/${encodeURIComponent(ref.name)}`,
-      {
-        method: 'DELETE',
-        query: { force: true, v: opts?.purgeVolumes ?? false },
-      },
-    );
+    const delRes = await this.client.request(`/containers/${encodeURIComponent(ref.name)}`, {
+      method: "DELETE",
+      query: { force: true, v: opts?.purgeVolumes ?? false },
+    });
     if (!delRes.ok && delRes.status !== 404) {
-      throw await failWith('backend-unreachable', delRes, `remove ${ref.name}`);
+      throw await failWith("backend-unreachable", delRes, `remove ${ref.name}`);
     }
   }
 
   // swagger: operationId=ContainerInspect (GET /containers/{id}/json)
   async inspectService(ref: ServiceRef): Promise<ServiceInstance | null> {
-    const res = await this.client.request(
-      `/containers/${encodeURIComponent(ref.name)}/json`,
-    );
+    const res = await this.client.request(`/containers/${encodeURIComponent(ref.name)}/json`);
     if (res.status === 404) return null;
     const body = await parseJsonOrThrow<ContainerInspectResponse>(
       res,
-      'backend-unreachable',
+      "backend-unreachable",
       `inspect ${ref.name}`,
     );
     return toServiceInstance(body);
@@ -199,13 +190,13 @@ export class DockerBackend implements RuntimeBackend {
     if (filter.service) labels.push(`${LABEL_KEYS.service}=${filter.service}`);
     const filters = JSON.stringify({ label: labels });
 
-    const res = await this.client.request('/containers/json', {
+    const res = await this.client.request("/containers/json", {
       query: { all: filter.includeStopped ?? false, filters },
     });
     const list = await parseJsonOrThrow<ContainerListItem[]>(
       res,
-      'backend-unreachable',
-      'list containers',
+      "backend-unreachable",
+      "list containers",
     );
     // /containers/json returns a trimmer shape than /json; for the
     // full ServiceInstance we'd have to inspect each. v1 does that
@@ -213,7 +204,7 @@ export class DockerBackend implements RuntimeBackend {
     // the inspect calls are cheap (unix socket, no TLS).
     const out: ServiceInstance[] = [];
     for (const item of list) {
-      const ref: ServiceRef = { name: trimContainerName(item.Names[0] ?? '') };
+      const ref: ServiceRef = { name: trimContainerName(item.Names[0] ?? "") };
       const full = await this.inspectService(ref);
       if (full) out.push(full);
     }
@@ -222,11 +213,11 @@ export class DockerBackend implements RuntimeBackend {
 
   // swagger: operationId=ImageCreate (POST /images/create)
   async pullImage(ref: ImageRef): Promise<void> {
-    const res = await this.client.request('/images/create', {
-      method: 'POST',
+    const res = await this.client.request("/images/create", {
+      method: "POST",
       query: { fromImage: ref.repository, tag: ref.tag },
     });
-    await drainNdjson(res, 'image-pull-failed', `pull ${ref.repository}:${ref.tag}`);
+    await drainNdjson(res, "image-pull-failed", `pull ${ref.repository}:${ref.tag}`);
   }
 
   // -----
@@ -243,7 +234,7 @@ export class DockerBackend implements RuntimeBackend {
       const afterPull = await this.inspectImage(ref);
       if (!afterPull) {
         throw new RuntimeError(
-          'image-pull-failed',
+          "image-pull-failed",
           `pull of ${ref.repository}:${ref.tag} succeeded but image not found post-pull`,
         );
       }
@@ -256,13 +247,11 @@ export class DockerBackend implements RuntimeBackend {
   // swagger: operationId=ImageInspect (GET /images/{name}/json)
   private async inspectImage(ref: ImageRef): Promise<ImageInspectResponse | null> {
     const name = `${ref.repository}:${ref.tag}`;
-    const res = await this.client.request(
-      `/images/${encodeURIComponent(name)}/json`,
-    );
+    const res = await this.client.request(`/images/${encodeURIComponent(name)}/json`);
     if (res.status === 404) return null;
     return parseJsonOrThrow<ImageInspectResponse>(
       res,
-      'backend-unreachable',
+      "backend-unreachable",
       `inspect image ${name}`,
     );
   }
@@ -274,7 +263,7 @@ export class DockerBackend implements RuntimeBackend {
     const { os: hostOs, arch: hostArch } = await this.getDaemonPlatform();
     if (imageArch !== hostArch || imageOs !== hostOs) {
       throw new RuntimeError(
-        'platform-mismatch',
+        "platform-mismatch",
         `image ${ref.repository}:${ref.tag} is ${imageOs}/${imageArch}, docker daemon is ${hostOs}/${hostArch}`,
       );
     }
@@ -283,15 +272,15 @@ export class DockerBackend implements RuntimeBackend {
   // swagger: operationId=ContainerCreate (POST /containers/create)
   private async createContainer(spec: ServiceDeployment): Promise<string> {
     const body = translateDeployment(spec, this.resolveSecrets(spec));
-    const res = await this.client.request('/containers/create', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+    const res = await this.client.request("/containers/create", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
       query: { name: spec.name },
     });
     const parsed = await parseJsonOrThrow<{ Id: string }>(
       res,
-      'create-failed',
+      "create-failed",
       `create ${spec.name}`,
     );
     return parsed.Id;
@@ -300,11 +289,11 @@ export class DockerBackend implements RuntimeBackend {
   // swagger: operationId=ContainerStart (POST /containers/{id}/start)
   private async startContainer(id: string): Promise<void> {
     const res = await this.client.request(`/containers/${id}/start`, {
-      method: 'POST',
+      method: "POST",
     });
     // 204 started, 304 already running — both ok
     if (!res.ok && res.status !== 304) {
-      throw await failWith('start-failed', res, `start ${id}`);
+      throw await failWith("start-failed", res, `start ${id}`);
     }
   }
 
@@ -324,14 +313,15 @@ export class DockerBackend implements RuntimeBackend {
     // Lazy import — the resolver lives in config/secret.ts which
     // docker/backend.ts doesn't otherwise pull in. Keeps load order
     // predictable when tests mock either side.
-    const { resolveSecret } = require('../../config/secret.js') as typeof import('../../config/secret.js');
+    const { resolveSecret } =
+      require("../../config/secret.js") as typeof import("../../config/secret.js");
     const resolved: Record<string, string> = {};
     for (const [envName, secret] of Object.entries(spec.secrets)) {
       try {
         resolved[envName] = resolveSecret(secret.ref);
       } catch (err) {
         throw new RuntimeError(
-          'spec-invalid',
+          "spec-invalid",
           `failed to resolve secret '${envName}' (ref='${secret.ref}'): ${(err as Error).message}`,
         );
       }
@@ -366,7 +356,7 @@ interface DockerHealthcheck {
 }
 
 interface DockerMount {
-  Type: 'bind' | 'volume';
+  Type: "bind" | "volume";
   Source: string;
   Target: string;
   ReadOnly?: boolean;
@@ -400,7 +390,7 @@ function translateDeployment(
     body.ExposedPorts = {};
     body.HostConfig.PortBindings = {};
     for (const p of spec.ports) {
-      const key = `${p.containerPort}/${p.protocol ?? 'tcp'}`;
+      const key = `${p.containerPort}/${p.protocol ?? "tcp"}`;
       body.ExposedPorts[key] = {};
       if (p.hostPort !== undefined) {
         body.HostConfig.PortBindings[key] = [{ HostPort: String(p.hostPort) }];
@@ -417,13 +407,13 @@ function translateDeployment(
       // operators can pick hostPath / name instead.
       if (v.configMap !== undefined) {
         throw new RuntimeError(
-          'spec-invalid',
+          "spec-invalid",
           `volumes[${i}]: configMap mounts require runtime: kubernetes; use hostPath or name for docker`,
         );
       }
       return {
-        Type: v.hostPath ? 'bind' : 'volume',
-        Source: v.hostPath ?? v.name ?? '',
+        Type: v.hostPath ? "bind" : "volume",
+        Source: v.hostPath ?? v.name ?? "",
         Target: v.containerPath,
         ReadOnly: v.readOnly,
       };
@@ -456,7 +446,7 @@ interface ContainerInspectResponse {
   Created: string;
   State: {
     Running: boolean;
-    Health?: { Status: 'healthy' | 'unhealthy' | 'starting' | 'none' };
+    Health?: { Status: "healthy" | "unhealthy" | "starting" | "none" };
   };
   Config: {
     Labels: Record<string, string> | null;
@@ -480,8 +470,7 @@ interface ImageInspectResponse {
 function toServiceInstance(body: ContainerInspectResponse): ServiceInstance {
   const labels = body.Config.Labels ?? {};
   const specHash = labels[LABEL_KEYS.specHash] ?? null;
-  const health =
-    body.State.Health?.Status === 'none' ? undefined : body.State.Health?.Status;
+  const health = body.State.Health?.Status === "none" ? undefined : body.State.Health?.Status;
 
   let endpoint: { host: string; port: number } | null = null;
   const ports = body.NetworkSettings.Ports ?? {};
@@ -492,9 +481,7 @@ function toServiceInstance(body: ContainerInspectResponse): ServiceInstance {
     const port = Number.parseInt(b.HostPort, 10);
     if (!Number.isFinite(port)) continue;
     // 0.0.0.0 / :: bindings — route to 127.0.0.1 for local use.
-    const host = b.HostIp === '0.0.0.0' || b.HostIp === '::' || !b.HostIp
-      ? '127.0.0.1'
-      : b.HostIp;
+    const host = b.HostIp === "0.0.0.0" || b.HostIp === "::" || !b.HostIp ? "127.0.0.1" : b.HostIp;
     endpoint = { host, port };
     break;
   }
@@ -512,14 +499,14 @@ function toServiceInstance(body: ContainerInspectResponse): ServiceInstance {
 function trimContainerName(name: string): string {
   // Docker inspect returns names with a leading '/' (legacy
   // convention from when containers were tree-addressed).
-  return name.startsWith('/') ? name.slice(1) : name;
+  return name.startsWith("/") ? name.slice(1) : name;
 }
 
 function normalizeArch(a: string): string {
   // node 'x64' ↔ docker 'amd64'; docker daemon /info reports 'aarch64'
   // while image manifests use 'arm64'.
-  if (a === 'x64') return 'amd64';
-  if (a === 'aarch64') return 'arm64';
+  if (a === "x64") return "amd64";
+  if (a === "aarch64") return "arm64";
   return a;
 }
 

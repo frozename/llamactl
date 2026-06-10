@@ -5,15 +5,13 @@
 // /Volumes/WorkSSD/repos/personal/penumbra/packages/core/src/readers/memory-efficacy.ts
 // so this corpus matches what the memory-efficacy job runner would see.
 
-import { readdirSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readdirSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 const REVIEWS_DIR =
-  process.env.REVIEWS_DIR ??
-  '/Volumes/WorkSSD/repos/personal/penumbra/.penumbra/reviews';
+  process.env.REVIEWS_DIR ?? "/Volumes/WorkSSD/repos/personal/penumbra/.penumbra/reviews";
 
-const OUT_PATH =
-  process.argv[2] ?? './tools/memory-efficacy-bench/corpus/findings.json';
+const OUT_PATH = process.argv[2] ?? "./tools/memory-efficacy-bench/corpus/findings.json";
 
 interface ParsedFinding {
   text: string;
@@ -31,9 +29,9 @@ interface CorpusRow {
 }
 
 function hashFinding(synthesisPath: string, index: number, text: string): string {
-  const hasher = new Bun.CryptoHasher('sha256');
+  const hasher = new Bun.CryptoHasher("sha256");
   hasher.update(`${synthesisPath}|${index}|${text}`);
-  return hasher.digest('hex').slice(0, 32);
+  return hasher.digest("hex").slice(0, 32);
 }
 
 // Permissive parser. The penumbra parser at packages/core/src/readers/
@@ -44,17 +42,15 @@ function hashFinding(synthesisPath: string, index: number, text: string): string
 // production output. This bench parser handles both real formats.
 function stripMarkdown(s: string): string {
   return s
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
     .trim();
 }
 
-function parseSynthesis(
-  synthesisPath: string,
-): { ts: string; findings: ParsedFinding[] } | null {
+function parseSynthesis(synthesisPath: string): { ts: string; findings: ParsedFinding[] } | null {
   let content: string;
   try {
-    content = readFileSync(synthesisPath, 'utf8');
+    content = readFileSync(synthesisPath, "utf8");
   } catch {
     return null;
   }
@@ -63,7 +59,7 @@ function parseSynthesis(
   const ts = tsMatch
     ? tsMatch[1]!.replace(
         /^(\d{4})-(\d{2})-(\d{2})T(\d{2})[-:](\d{2})[-:](\d{2})$/,
-        '$1-$2-$3T$4:$5:$6Z',
+        "$1-$2-$3T$4:$5:$6Z",
       )
     : new Date().toISOString();
 
@@ -76,7 +72,7 @@ function parseSynthesis(
 
   const findings: ParsedFinding[] = [];
   let index = 0;
-  for (const rawLine of section[1]!.split('\n')) {
+  for (const rawLine of section[1]!.split("\n")) {
     const line = rawLine.trim();
     // Match: "1. ..." possibly followed by `**`. Capture rest as raw payload.
     const m = line.match(/^(\d+)[.)\]]\s+(.+)$/);
@@ -95,7 +91,7 @@ function parseSynthesis(
     if (sevInBold) {
       severity = sevInBold[1]!;
       // Concatenate the title with any trailing text (e.g., persona attribution).
-      textRaw = `${sevInBold[2]!} ${sevInBold[3] ?? ''}`.trim();
+      textRaw = `${sevInBold[2]!} ${sevInBold[3] ?? ""}`.trim();
     } else if (sevAfterBold) {
       severity = sevAfterBold[1]!;
       textRaw = sevAfterBold[2]!;
@@ -124,7 +120,7 @@ function main() {
   const sevHistogram: Record<string, number> = { High: 0, Medium: 0, Low: 0, null: 0 };
 
   for (const entry of entries) {
-    const synthesisPath = join(REVIEWS_DIR, entry, 'synthesis.md');
+    const synthesisPath = join(REVIEWS_DIR, entry, "synthesis.md");
     const parsed = parseSynthesis(synthesisPath);
     if (!parsed) {
       dirsSkipped += 1;
@@ -140,7 +136,7 @@ function main() {
         severity: f.severity,
         text: f.text,
       });
-      sevHistogram[f.severity ?? 'null']! += 1;
+      sevHistogram[f.severity ?? "null"]! += 1;
     }
   }
 

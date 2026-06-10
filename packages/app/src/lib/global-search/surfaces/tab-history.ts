@@ -1,5 +1,5 @@
 // packages/app/src/lib/global-search/surfaces/tab-history.ts
-import type { Hit } from '../types';
+import type { Hit } from "../types";
 
 export interface TabHistoryState {
   tabs: { tabKey: string; title: string; kind: string; openedAt: number; [k: string]: any }[];
@@ -16,12 +16,12 @@ export function matchTabHistory(needle: string, state: TabHistoryState): Hit[] {
     if (!t.title.toLowerCase().includes(lowered)) continue;
     seen.add(t.tabKey);
     out.push({
-      surface: 'tab-history',
+      surface: "tab-history",
       parentId: t.tabKey,
       parentTitle: t.title,
       score: t.title.toLowerCase().startsWith(lowered) ? 0.8 : 0.5,
-      matchKind: 'exact',
-      action: { kind: 'open-tab', tab: { ...t, openedAt: Date.now() } },
+      matchKind: "exact",
+      action: { kind: "open-tab", tab: { ...t, openedAt: Date.now() } },
     });
   }
   for (const c of state.closed) {
@@ -31,12 +31,12 @@ export function matchTabHistory(needle: string, state: TabHistoryState): Hit[] {
     const { closedAt, ...rest } = c;
     const t = { ...rest, openedAt: Date.now() };
     out.push({
-      surface: 'tab-history',
+      surface: "tab-history",
       parentId: c.tabKey,
       parentTitle: c.title,
       score: c.title.toLowerCase().startsWith(lowered) ? 0.7 : 0.4,
-      matchKind: 'exact',
-      action: { kind: 'open-tab', tab: t },
+      matchKind: "exact",
+      action: { kind: "open-tab", tab: t },
     });
   }
   return out;

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * ModelRun — declarative request for "this model should run on this
@@ -21,7 +21,7 @@ export const ModelRunTargetSchema = z.object({
    * LLAMA_CPP_MODELS directory. `alias` — a preset name that the node
    * resolves via its own resolveTarget (e.g. "best", "fast").
    */
-  kind: z.enum(['rel', 'alias']).default('rel'),
+  kind: z.enum(["rel", "alias"]).default("rel"),
   value: z.string().min(1),
 });
 
@@ -41,7 +41,7 @@ export const ModelRunWorkerSchema = z.object({
 });
 
 export const ModelRunSpecSchema = z.object({
-  node: z.union([z.literal('auto'), z.string().min(1)]).default('auto'),
+  node: z.union([z.literal("auto"), z.string().min(1)]).default("auto"),
   enabled: z.boolean().default(true),
   target: ModelRunTargetSchema,
   extraArgs: z.array(z.string()).default([]),
@@ -60,10 +60,12 @@ export const ModelRunSpecSchema = z.object({
    * server alone. The imperative `apply` command always starts the
    * server once regardless of this value.
    */
-  restartPolicy: z.enum(['Always', 'OnFailure', 'Never']).default('Always'),
-  resources: z.object({
-    expectedMemoryGiB: z.number().positive().optional(),
-  }).optional(),
+  restartPolicy: z.enum(["Always", "OnFailure", "Never"]).default("Always"),
+  resources: z
+    .object({
+      expectedMemoryGiB: z.number().positive().optional(),
+    })
+    .optional(),
   /** Optional — informational only in Phase D; carry-through for the
    *  Phase-D-and-beyond controller to prefer a specific endpoint. */
   endpoint: ModelRunEndpointSchema.optional(),
@@ -98,19 +100,19 @@ export const ModelRunSpecSchema = z.object({
    * cross-node scheduling when `node` is unset/auto.
    * `pinned` keeps the workload on its current node.
    */
-  placement: z.enum(['auto', 'pinned']).optional(),
+  placement: z.enum(["auto", "pinned"]).optional(),
 });
 
 export const ModelRunConditionSchema = z.object({
   type: z.string(),
-  status: z.enum(['True', 'False', 'Unknown']),
+  status: z.enum(["True", "False", "Unknown"]),
   reason: z.string().optional(),
   message: z.string().optional(),
   lastTransitionTime: z.string(),
 });
 
 export const ModelRunStatusSchema = z.object({
-  phase: z.enum(['Pending', 'Running', 'Failed', 'Stopped']),
+  phase: z.enum(["Pending", "Running", "Failed", "Stopped"]),
   serverPid: z.number().nullable().default(null),
   endpoint: z.string().nullable().default(null),
   lastTransitionTime: z.string(),
@@ -118,15 +120,19 @@ export const ModelRunStatusSchema = z.object({
 });
 
 export const ModelRunMetadataSchema = z.object({
-  name: z.string().regex(/^[a-z0-9][-a-z0-9]{0,62}$/,
-    'name must be lowercase alphanumeric with dashes, max 63 chars'),
+  name: z
+    .string()
+    .regex(
+      /^[a-z0-9][-a-z0-9]{0,62}$/,
+      "name must be lowercase alphanumeric with dashes, max 63 chars",
+    ),
   labels: z.record(z.string(), z.string()).default({}),
   annotations: z.record(z.string(), z.string()).default({}),
 });
 
 export const ModelRunSchema = z.object({
-  apiVersion: z.literal('llamactl/v1'),
-  kind: z.literal('ModelRun'),
+  apiVersion: z.literal("llamactl/v1"),
+  kind: z.literal("ModelRun"),
   metadata: ModelRunMetadataSchema,
   spec: ModelRunSpecSchema,
   status: ModelRunStatusSchema.optional(),

@@ -1,12 +1,12 @@
 // packages/remote/src/ops-chat/sessions/list.ts
-import { readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { defaultSessionsDir } from '../paths.js';
-import { readJournal } from './journal.js';
-import type { JournalEvent } from './journal-schema.js';
-import { isTerminal } from './journal-schema.js';
+import { readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { defaultSessionsDir } from "../paths.js";
+import { readJournal } from "./journal.js";
+import type { JournalEvent } from "./journal-schema.js";
+import { isTerminal } from "./journal-schema.js";
 
-export type SessionStatus = 'live' | 'done' | 'refused' | 'aborted';
+export type SessionStatus = "live" | "done" | "refused" | "aborted";
 
 export interface SessionSummary {
   sessionId: string;
@@ -21,20 +21,20 @@ export interface SessionSummary {
 
 export async function getSessionSummary(sessionId: string): Promise<SessionSummary> {
   const events = await readJournal(sessionId);
-  const start = events.find((e) => e.type === 'session_started');
-  if (!start || start.type !== 'session_started') {
+  const start = events.find((e) => e.type === "session_started");
+  if (!start || start.type !== "session_started") {
     throw new Error(`session ${sessionId} has no session_started event`);
   }
   const terminal = events.find((e) => isTerminal(e));
-  let status: SessionStatus = 'live';
+  let status: SessionStatus = "live";
   let endedAt: string | undefined;
   if (terminal) {
     endedAt = terminal.ts;
-    if (terminal.type === 'done') status = 'done';
-    else if (terminal.type === 'refusal') status = 'refused';
-    else status = 'aborted';
+    if (terminal.type === "done") status = "done";
+    else if (terminal.type === "refusal") status = "refused";
+    else status = "aborted";
   }
-  const iterations = events.filter((e) => e.type === 'plan_proposed').length;
+  const iterations = events.filter((e) => e.type === "plan_proposed").length;
   return {
     sessionId,
     goal: start.goal,
@@ -66,9 +66,7 @@ export async function listSessions(opts: {
     }
   }
   summaries.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
-  const filtered = opts.status
-    ? summaries.filter((s) => s.status === opts.status)
-    : summaries;
+  const filtered = opts.status ? summaries.filter((s) => s.status === opts.status) : summaries;
   const startIdx = opts.cursor
     ? Math.max(0, filtered.findIndex((s) => s.sessionId === opts.cursor) + 1)
     : 0;

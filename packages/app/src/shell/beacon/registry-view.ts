@@ -1,18 +1,18 @@
-import type { AppModule } from '@/modules/registry';
+import type { AppModule } from "@/modules/registry";
 
-export type ExplorerGroupId = 'workspace' | 'ops' | 'models' | 'knowledge' | 'observability';
+export type ExplorerGroupId = "workspace" | "ops" | "models" | "knowledge" | "observability";
 
 export interface DynamicInstance {
   id: string;
   title: string;
-  tone?: 'ok' | 'warn' | 'err' | 'idle';
+  tone?: "ok" | "warn" | "err" | "idle";
 }
 
 export interface ExplorerLeaf {
   /** Source module id (e.g. 'workloads'). */
   id: string;
   title: string;
-  kind: 'static' | 'dynamic-group';
+  kind: "static" | "dynamic-group";
   order: number;
   /** Populated when kind === 'dynamic-group' and the live data query
    *  yielded instances for this leaf. */
@@ -30,20 +30,20 @@ export interface DynamicSources {
   nodes: DynamicInstance[];
 }
 
-const GROUP_ORDER: ExplorerGroupId[] = ['workspace', 'ops', 'models', 'knowledge', 'observability'];
+const GROUP_ORDER: ExplorerGroupId[] = ["workspace", "ops", "models", "knowledge", "observability"];
 
 const GROUP_LABELS: Record<ExplorerGroupId, string> = {
-  workspace: 'Workspace',
-  ops: 'Ops',
-  models: 'Models',
-  knowledge: 'Knowledge',
-  observability: 'Observability',
+  workspace: "Workspace",
+  ops: "Ops",
+  models: "Models",
+  knowledge: "Knowledge",
+  observability: "Observability",
 };
 
 /** Map a dynamic-group leaf id to the sources key. */
 function dynamicSourceFor(leafId: string): keyof DynamicSources | undefined {
-  if (leafId === 'workloads') return 'workloads';
-  if (leafId === 'nodes') return 'nodes';
+  if (leafId === "workloads") return "workloads";
+  if (leafId === "nodes") return "nodes";
   return undefined;
 }
 
@@ -61,27 +61,25 @@ export function buildExplorerTree(
 
   for (const mod of modules) {
     const g = mod.beaconGroup;
-    if (!g || g === 'hidden' || g === 'settings') continue;
+    if (!g || g === "hidden" || g === "settings") continue;
     if (!GROUP_ORDER.includes(g as ExplorerGroupId)) continue;
     const leaf: ExplorerLeaf = {
       id: mod.id,
       title: mod.labelKey,
-      kind: mod.beaconKind ?? 'static',
+      kind: mod.beaconKind ?? "static",
       order: mod.beaconOrder ?? 1000,
     };
-    if (leaf.kind === 'dynamic-group') {
+    if (leaf.kind === "dynamic-group") {
       const src = dynamicSourceFor(leaf.id);
       leaf.instances = src ? sources[src] : [];
     }
     byGroup.get(g as ExplorerGroupId)!.push(leaf);
   }
 
-  return GROUP_ORDER
-    .map((id) => {
-      const leaves = (byGroup.get(id) ?? [])
-        .slice()
-        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-      return { id, label: GROUP_LABELS[id], leaves };
-    })
-    .filter((g) => g.leaves.length > 0);
+  return GROUP_ORDER.map((id) => {
+    const leaves = (byGroup.get(id) ?? [])
+      .slice()
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    return { id, label: GROUP_LABELS[id], leaves };
+  }).filter((g) => g.leaves.length > 0);
 }

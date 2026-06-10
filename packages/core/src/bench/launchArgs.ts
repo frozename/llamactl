@@ -6,13 +6,13 @@
  */
 export function serverProfileArgs(profile: string): string {
   switch (profile) {
-    case 'throughput':
-      return '-fa on -b 4096 -ub 1024';
-    case 'conservative':
-      return '-fa off -b 1024 -ub 256';
-    case 'default':
+    case "throughput":
+      return "-fa on -b 4096 -ub 1024";
+    case "conservative":
+      return "-fa off -b 1024 -ub 256";
+    case "default":
     default:
-      return '-fa on -b 2048 -ub 512';
+      return "-fa on -b 2048 -ub 512";
   }
 }
 
@@ -23,12 +23,12 @@ export function serverProfileArgs(profile: string): string {
  */
 export function benchProfileArgs(profile: string): string {
   switch (profile) {
-    case 'throughput':
-      return '-fa 1 -b 4096 -ub 1024';
-    case 'conservative':
-      return '-fa 0 -b 1024 -ub 256';
-    case 'default':
+    case "throughput":
+      return "-fa 1 -b 4096 -ub 1024";
+    case "conservative":
+      return "-fa 0 -b 1024 -ub 256";
+    case "default":
     default:
-      return '-fa 1 -b 2048 -ub 512';
+      return "-fa 1 -b 2048 -ub 512";
   }
 }

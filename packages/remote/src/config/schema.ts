@@ -1,13 +1,13 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 export const GpuFactsSchema = z.object({
-  kind: z.enum(['metal', 'cuda', 'rocm', 'cpu']),
+  kind: z.enum(["metal", "cuda", "rocm", "cpu"]),
   name: z.string().optional(),
   memoryMB: z.number().optional(),
 });
 
 export const NodeFactsSchema = z.object({
-  profile: z.enum(['mac-mini-16g', 'balanced', 'macbook-pro-48g']),
+  profile: z.enum(["mac-mini-16g", "balanced", "macbook-pro-48g"]),
   memBytes: z.number().nullable(),
   os: z.string(),
   arch: z.string(),
@@ -32,15 +32,15 @@ export const NodeFactsSchema = z.object({
  * raw keys.
  */
 export const CloudProviderSchema = z.enum([
-  'openai',
-  'anthropic',
-  'gemini',
-  'together',
-  'groq',
-  'mistral',
-  'openai-compatible',
-  'sirius',
-  'embersynth',
+  "openai",
+  "anthropic",
+  "gemini",
+  "together",
+  "groq",
+  "mistral",
+  "openai-compatible",
+  "sirius",
+  "embersynth",
 ]);
 export type CloudProvider = z.infer<typeof CloudProviderSchema>;
 
@@ -79,25 +79,28 @@ export type CloudBinding = z.infer<typeof CloudBindingSchema>;
  * hammered. `subscription` is an operator-picked stable label that
  * groups calls across agents (e.g. "claude-pro-alex").
  */
-export const CliPresetSchema = z.enum(['claude', 'codex', 'gemini', 'custom']);
+export const CliPresetSchema = z.enum(["claude", "codex", "gemini", "custom"]);
 export type CliPreset = z.infer<typeof CliPresetSchema>;
 
 export const CliBindingSchema = z.object({
   /** Local-unique inside the agent. Part of the virtual node id
    *  `<agent.name>.<cli.name>`. Filesystem-safe shape. */
-  name: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/),
-  preset: CliPresetSchema.default('custom'),
+  name: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9][a-z0-9-]*$/),
+  preset: CliPresetSchema.default("custom"),
   /** Preset=custom requires `command` + `args`. For known presets
    *  these are optional overrides of the preset defaults. */
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
-  format: z.enum(['text', 'json']).default('text'),
+  format: z.enum(["text", "json"]).default("text"),
   timeoutMs: z.number().int().positive().default(120_000),
   /** Informational routing hints — embersynth-agnostic. UIs surface
    *  these; routing decisions use them as preference signals. */
   advertisedModels: z.array(z.string()).default([]),
   defaultModel: z.string().optional(),
-  capabilities: z.array(z.string()).default(['reasoning']),
+  capabilities: z.array(z.string()).default(["reasoning"]),
   /** Stable label the cli-journal uses to attribute calls. Operators
    *  pick any string; cost-guardian aggregates by this key. */
   subscription: z.string().optional(),
@@ -132,7 +135,7 @@ export type CliBinding = z.infer<typeof CliBindingSchema>;
  *     `RetrievalProvider` contract in `@nova/contracts`. The `rag`
  *     binding block selects the backend and carries endpoint / auth.
  */
-export const NodeKindSchema = z.enum(['agent', 'gateway', 'provider', 'rag', 'cloud']);
+export const NodeKindSchema = z.enum(["agent", "gateway", "provider", "rag", "cloud"]);
 export type NodeKind = z.infer<typeof NodeKindSchema>;
 
 /**
@@ -141,7 +144,7 @@ export type NodeKind = z.infer<typeof NodeKindSchema>;
  * pgvector extension. Future backends (Qdrant, Weaviate, …) extend
  * this enum alongside their adapter.
  */
-export const RagProviderKindSchema = z.enum(['chroma', 'pgvector']);
+export const RagProviderKindSchema = z.enum(["chroma", "pgvector"]);
 export type RagProviderKind = z.infer<typeof RagProviderKindSchema>;
 
 /**
@@ -229,82 +232,81 @@ export const ProviderBindingSchema = z.object({
    * existing OpenAI-compat path. Optional for backward compat with
    * existing sirius-synthesized virtual nodes that don't carry it.
    */
-  source: z.enum(['sirius', 'embersynth', 'cli']).optional(),
+  source: z.enum(["sirius", "embersynth", "cli"]).optional(),
 });
 export type ProviderBinding = z.infer<typeof ProviderBindingSchema>;
 
-export const ClusterNodeSchema = z.object({
-  name: z.string().min(1),
-  /** Agent endpoint — `https://host:port` for a remote agent or the
-   *  `inproc://local` sentinel. Ignored (may be empty or absent on
-   *  disk) for gateway and provider nodes. */
-  endpoint: z.string().default(''),
-  kind: NodeKindSchema.optional(),
-  certificateFingerprint: z.string().optional(),
-  certificate: z.string().optional(),
-  facts: NodeFactsSchema.partial().optional(),
-  cloud: CloudBindingSchema.optional(),
-  /** Provider-kind only — pointer into a gateway's upstream catalog. */
-  provider: ProviderBindingSchema.optional(),
-  /**
-   * Reverse-tunnel preference (I.3.3). When `true`, the dispatcher
-   * tries the WebSocket tunnel before falling back to direct HTTPS.
-   * Set for NAT'd / no-port-forward agents that dial central; leave
-   * `false` (default) for LAN / Tailscale nodes that accept inbound.
-   * Irrelevant for gateway + provider nodes — they're never reached
-   * through the tunnel.
-   */
-  tunnelPreferred: z.boolean().optional(),
-  /**
-   * RAG backend binding. Set on `kind: 'rag'` nodes only — the
-   * refine below enforces the pairing. `rag` and the cloud/provider
-   * blocks are mutually exclusive (a node is exactly one kind).
-   */
-  rag: RagBindingSchema.optional(),
-  /**
-   * CLI subscription backends hosted by this agent. Only valid on
-   * `kind: 'agent'` nodes — the subprocess runs on the agent's
-   * machine where the CLI is authenticated. Each entry synthesizes
-   * as a virtual `<agent>.<cli-name>` provider-kind node.
-   */
-  cli: z.array(CliBindingSchema).optional(),
-}).refine(
-  (n) => {
-    // Legacy kubeconfigs may carry `kind: 'cloud'`. Treat that as
-    // gateway for validation — the data shape is identical.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rawKind = (n as any).kind as string | undefined;
-    const k =
-      rawKind === 'gateway' ||
-      rawKind === 'agent' ||
-      rawKind === 'provider' ||
-      rawKind === 'rag'
-        ? rawKind
-        : rawKind === 'cloud'
-          ? 'gateway'
-          : n.provider
-            ? 'provider'
-            : n.rag
-              ? 'rag'
-              : n.cloud
-                ? 'gateway'
-                : 'agent';
-    // CLI bindings only on agent nodes. Checked first so rag /
-    // gateway / provider rejection wins over their own
-    // block-specific rules when cli[] is present.
-    if (n.cli && n.cli.length > 0 && k !== 'agent') return false;
-    if (k === 'rag') return !!n.rag;
-    // Non-rag nodes must not carry a rag block.
-    if (n.rag) return false;
-    if (k === 'provider') return !!n.provider;
-    if (k === 'gateway') return !!n.cloud;
-    return typeof n.endpoint === 'string' && n.endpoint.length > 0;
-  },
-  {
-    message:
-      "agent nodes require endpoint; gateway nodes require cloud{} block; provider nodes require provider{} block; rag nodes require rag{} block and must not carry cloud/provider blocks; cli[] is agent-only",
-  },
-);
+export const ClusterNodeSchema = z
+  .object({
+    name: z.string().min(1),
+    /** Agent endpoint — `https://host:port` for a remote agent or the
+     *  `inproc://local` sentinel. Ignored (may be empty or absent on
+     *  disk) for gateway and provider nodes. */
+    endpoint: z.string().default(""),
+    kind: NodeKindSchema.optional(),
+    certificateFingerprint: z.string().optional(),
+    certificate: z.string().optional(),
+    facts: NodeFactsSchema.partial().optional(),
+    cloud: CloudBindingSchema.optional(),
+    /** Provider-kind only — pointer into a gateway's upstream catalog. */
+    provider: ProviderBindingSchema.optional(),
+    /**
+     * Reverse-tunnel preference (I.3.3). When `true`, the dispatcher
+     * tries the WebSocket tunnel before falling back to direct HTTPS.
+     * Set for NAT'd / no-port-forward agents that dial central; leave
+     * `false` (default) for LAN / Tailscale nodes that accept inbound.
+     * Irrelevant for gateway + provider nodes — they're never reached
+     * through the tunnel.
+     */
+    tunnelPreferred: z.boolean().optional(),
+    /**
+     * RAG backend binding. Set on `kind: 'rag'` nodes only — the
+     * refine below enforces the pairing. `rag` and the cloud/provider
+     * blocks are mutually exclusive (a node is exactly one kind).
+     */
+    rag: RagBindingSchema.optional(),
+    /**
+     * CLI subscription backends hosted by this agent. Only valid on
+     * `kind: 'agent'` nodes — the subprocess runs on the agent's
+     * machine where the CLI is authenticated. Each entry synthesizes
+     * as a virtual `<agent>.<cli-name>` provider-kind node.
+     */
+    cli: z.array(CliBindingSchema).optional(),
+  })
+  .refine(
+    (n) => {
+      // Legacy kubeconfigs may carry `kind: 'cloud'`. Treat that as
+      // gateway for validation — the data shape is identical.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rawKind = (n as any).kind as string | undefined;
+      const k =
+        rawKind === "gateway" || rawKind === "agent" || rawKind === "provider" || rawKind === "rag"
+          ? rawKind
+          : rawKind === "cloud"
+            ? "gateway"
+            : n.provider
+              ? "provider"
+              : n.rag
+                ? "rag"
+                : n.cloud
+                  ? "gateway"
+                  : "agent";
+      // CLI bindings only on agent nodes. Checked first so rag /
+      // gateway / provider rejection wins over their own
+      // block-specific rules when cli[] is present.
+      if (n.cli && n.cli.length > 0 && k !== "agent") return false;
+      if (k === "rag") return !!n.rag;
+      // Non-rag nodes must not carry a rag block.
+      if (n.rag) return false;
+      if (k === "provider") return !!n.provider;
+      if (k === "gateway") return !!n.cloud;
+      return typeof n.endpoint === "string" && n.endpoint.length > 0;
+    },
+    {
+      message:
+        "agent nodes require endpoint; gateway nodes require cloud{} block; provider nodes require provider{} block; rag nodes require rag{} block and must not carry cloud/provider blocks; cli[] is agent-only",
+    },
+  );
 
 export const ClusterSchema = z.object({
   name: z.string().min(1),
@@ -315,7 +317,7 @@ export const ContextSchema = z.object({
   name: z.string().min(1),
   cluster: z.string().min(1),
   user: z.string().min(1),
-  defaultNode: z.string().min(1).default('local'),
+  defaultNode: z.string().min(1).default("local"),
   /**
    * Base URL of the local agent hosting `/tunnel-relay` for this
    * context. Required when any node in this cluster has
@@ -344,17 +346,19 @@ export const ContextSchema = z.object({
   tunnelCentralCertificate: z.string().optional(),
 });
 
-export const UserSchema = z.object({
-  name: z.string().min(1),
-  tokenRef: z.string().min(1).optional(),
-  token: z.string().min(1).optional(),
-}).refine((u) => u.tokenRef !== undefined || u.token !== undefined, {
-  message: 'user must have either tokenRef or token',
-});
+export const UserSchema = z
+  .object({
+    name: z.string().min(1),
+    tokenRef: z.string().min(1).optional(),
+    token: z.string().min(1).optional(),
+  })
+  .refine((u) => u.tokenRef !== undefined || u.token !== undefined, {
+    message: "user must have either tokenRef or token",
+  });
 
 export const ConfigSchema = z.object({
-  apiVersion: z.literal('llamactl/v1'),
-  kind: z.literal('Config'),
+  apiVersion: z.literal("llamactl/v1"),
+  kind: z.literal("Config"),
   currentContext: z.string().min(1),
   contexts: z.array(ContextSchema).default([]),
   clusters: z.array(ClusterSchema).default([]),
@@ -369,8 +373,8 @@ export type Context = z.infer<typeof ContextSchema>;
 export type User = z.infer<typeof UserSchema>;
 export type Config = z.infer<typeof ConfigSchema>;
 
-export const LOCAL_NODE_NAME = 'local';
-export const LOCAL_NODE_ENDPOINT = 'inproc://local';
+export const LOCAL_NODE_NAME = "local";
+export const LOCAL_NODE_ENDPOINT = "inproc://local";
 
 /**
  * Derive the effective kind of a node.
@@ -386,15 +390,15 @@ export function resolveNodeKind(node: ClusterNode): NodeKind {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const explicit = (node as any).kind as string | undefined;
   if (
-    explicit === 'gateway' ||
-    explicit === 'agent' ||
-    explicit === 'provider' ||
-    explicit === 'rag' ||
-    explicit === 'cloud'
+    explicit === "gateway" ||
+    explicit === "agent" ||
+    explicit === "provider" ||
+    explicit === "rag" ||
+    explicit === "cloud"
   )
     return explicit;
-  if (node.provider) return 'provider';
-  if (node.rag) return 'rag';
+  if (node.provider) return "provider";
+  if (node.rag) return "rag";
   if (node.cloud) {
     // Distinguish "HTTP gateway that fans out to many upstreams"
     // (sirius, embersynth, openai-compatible) from "direct cloud
@@ -405,52 +409,46 @@ export function resolveNodeKind(node: ClusterNode): NodeKind {
     // gateway in the map + chip.
     const upstream = node.cloud.provider;
     const isGatewayStyle =
-      upstream === 'sirius' ||
-      upstream === 'embersynth' ||
-      upstream === 'openai-compatible';
-    return isGatewayStyle ? 'gateway' : 'cloud';
+      upstream === "sirius" || upstream === "embersynth" || upstream === "openai-compatible";
+    return isGatewayStyle ? "gateway" : "cloud";
   }
-  return 'agent';
+  return "agent";
 }
 
 /** Default OpenAI-compatible base URLs for each built-in provider.
  *  UIs pre-fill these so users only need to paste the API key. */
 export const DEFAULT_CLOUD_BASE_URLS: Record<CloudProvider, string> = {
-  openai: 'https://api.openai.com/v1',
-  anthropic: 'https://api.anthropic.com/v1',
+  openai: "https://api.openai.com/v1",
+  anthropic: "https://api.anthropic.com/v1",
   // Google's OpenAI-compat shim — served at /v1beta/openai/ (not
   // /v1). The factory skips the `normalizeOpenAICompatBaseUrl` /v1
   // append for this URL because the versioned prefix is already in
   // the path.
-  gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
-  together: 'https://api.together.xyz/v1',
-  groq: 'https://api.groq.com/openai/v1',
-  mistral: 'https://api.mistral.ai/v1',
-  'openai-compatible': '',
+  gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+  together: "https://api.together.xyz/v1",
+  groq: "https://api.groq.com/openai/v1",
+  mistral: "https://api.mistral.ai/v1",
+  "openai-compatible": "",
   // sirius-gateway typically runs on localhost for the single-user
   // case; production deployments will point at a real host. The
   // OpenAI-compat adapter treats this identically to `openai-compatible`,
   // we keep the provider name distinct so the UI can render a
   // gateway badge and the user understands what they're pointing at.
-  sirius: 'http://localhost:3000/v1',
+  sirius: "http://localhost:3000/v1",
   // embersynth defaults to port 7777 per its example config. Like
   // sirius it's an OpenAI-compatible gateway — the distinction is
   // behavioural (capability-based routing via `syntheticModels`
   // rather than model-name lookup).
-  embersynth: 'http://localhost:7777/v1',
+  embersynth: "http://localhost:7777/v1",
 };
 
 export function freshConfig(): Config {
   return {
-    apiVersion: 'llamactl/v1',
-    kind: 'Config',
-    currentContext: 'default',
-    contexts: [
-      { name: 'default', cluster: 'home', user: 'me', defaultNode: LOCAL_NODE_NAME },
-    ],
-    clusters: [
-      { name: 'home', nodes: [{ name: LOCAL_NODE_NAME, endpoint: LOCAL_NODE_ENDPOINT }] },
-    ],
-    users: [{ name: 'me', token: 'inproc-local' }],
+    apiVersion: "llamactl/v1",
+    kind: "Config",
+    currentContext: "default",
+    contexts: [{ name: "default", cluster: "home", user: "me", defaultNode: LOCAL_NODE_NAME }],
+    clusters: [{ name: "home", nodes: [{ name: LOCAL_NODE_NAME, endpoint: LOCAL_NODE_ENDPOINT }] }],
+    users: [{ name: "me", token: "inproc-local" }],
   };
 }

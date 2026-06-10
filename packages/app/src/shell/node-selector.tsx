@@ -1,10 +1,10 @@
-import * as React from 'react';
-import { useEffect } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import { trpc, trpcUIClient } from '@/lib/trpc';
-import { useUIStore } from '@/stores/ui-store';
+import * as React from "react";
+import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { trpc, trpcUIClient } from "@/lib/trpc";
+import { useUIStore } from "@/stores/ui-store";
 
 /**
  * Cluster chip that sits in the title bar. Shows the kubeconfig
@@ -36,7 +36,7 @@ export const useNodeSelection = create<NodeSelectionStore>()(
       selectedNode: null,
       setSelectedNode: (name) => set({ selectedNode: name }),
     }),
-    { name: 'llamactl-node-selection' },
+    { name: "llamactl-node-selection" },
   ),
 );
 
@@ -62,7 +62,7 @@ export function useSyncActiveNode(): void {
     // in the new UX), no re-sync fires and the override stays null.
     if (selectedNode !== null) {
       setSelectedNode(null);
-      void trpcUIClient.uiSetActiveNode.mutate({ name: 'local' }).catch(() => {});
+      void trpcUIClient.uiSetActiveNode.mutate({ name: "local" }).catch(() => {});
       void utils.invalidate();
       void qc.invalidateQueries();
     }
@@ -77,25 +77,23 @@ export function NodeSelector(): React.JSX.Element | null {
 
   if (list.isLoading || !list.data) return null;
   const nodes = list.data.nodes ?? [];
-  const agentCount = nodes.filter(
-    (n) => (n.effectiveKind ?? 'agent') === 'agent',
-  ).length;
-  const gatewayCount = nodes.filter((n) => n.effectiveKind === 'gateway').length;
+  const agentCount = nodes.filter((n) => (n.effectiveKind ?? "agent") === "agent").length;
+  const gatewayCount = nodes.filter((n) => n.effectiveKind === "gateway").length;
   const totalCount = nodes.length;
 
   return (
     <button
       type="button"
-      onClick={() => setActiveModule('dashboard')}
+      onClick={() => setActiveModule("dashboard")}
       className="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text)] hover:border-[var(--color-ok)]"
-      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       data-testid="node-selector-root"
       data-node-count={totalCount}
-      title={`${totalCount} node${totalCount === 1 ? '' : 's'} in the cluster (${agentCount} agent, ${gatewayCount} gateway) \u2014 click to open the cluster map`}
+      title={`${totalCount} node${totalCount === 1 ? "" : "s"} in the cluster (${agentCount} agent, ${gatewayCount} gateway) \u2014 click to open the cluster map`}
     >
       <span className="text-[10px] text-[color:var(--color-text-secondary)]">cluster</span>
       <span className="font-mono text-[11px]">
-        {totalCount} node{totalCount === 1 ? '' : 's'}
+        {totalCount} node{totalCount === 1 ? "" : "s"}
       </span>
     </button>
   );

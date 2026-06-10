@@ -1,12 +1,12 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import { App } from './App';
-import { useTabStore } from './stores/tab-store';
-import { useThemeStore } from './stores/theme-store';
-import './index.css';
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { App } from "./App";
+import { useTabStore } from "./stores/tab-store";
+import { useThemeStore } from "./stores/theme-store";
+import "./index.css";
 
-const rootNode = document.getElementById('root');
-if (!rootNode) throw new Error('Root element missing');
+const rootNode = document.getElementById("root");
+if (!rootNode) throw new Error("Root element missing");
 
 ReactDOM.createRoot(rootNode).render(
   <React.StrictMode>

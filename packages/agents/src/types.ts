@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import type { z } from "zod";
 
 /**
  * Runbook contract. A runbook is a named, parameterized script that
@@ -76,6 +76,6 @@ export interface Runbook<Params = void> {
  */
 export function parseToolJson<T = unknown>(result: unknown): T {
   const content = (result as { content?: Array<{ type: string; text: string }> }).content ?? [];
-  const text = content[0]?.text ?? 'null';
+  const text = content[0]?.text ?? "null";
   return JSON.parse(text) as T;
 }

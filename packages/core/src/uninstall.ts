@@ -1,13 +1,9 @@
-import { existsSync, readdirSync, readFileSync, rmSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
-import { findByRel } from './catalog.js';
-import {
-  benchHistoryFile,
-  benchProfileFile,
-  benchVisionFile,
-} from './bench/store.js';
-import { resolveEnv } from './env.js';
-import { atomicWriteFile } from './fsAtomic.js';
+import { existsSync, readdirSync, readFileSync, rmSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { findByRel } from "./catalog.js";
+import { benchHistoryFile, benchProfileFile, benchVisionFile } from "./bench/store.js";
+import { resolveEnv } from "./env.js";
+import { atomicWriteFile } from "./fsAtomic.js";
 
 export interface UninstallOptions {
   rel: string;
@@ -31,22 +27,19 @@ export interface UninstallReport {
  * the file atomically. Removes the file entirely when no lines remain,
  * matching the shell library's `[ -s "$file" ] || rm -f "$file"` idiom.
  */
-function pruneTsv(
-  file: string,
-  predicate: (cols: string[]) => boolean,
-): boolean {
+function pruneTsv(file: string, predicate: (cols: string[]) => boolean): boolean {
   if (!existsSync(file)) return false;
-  const raw = readFileSync(file, 'utf8');
+  const raw = readFileSync(file, "utf8");
   const next: string[] = [];
-  for (const line of raw.split('\n')) {
-    if (line === '') continue;
-    const cols = line.split('\t');
+  for (const line of raw.split("\n")) {
+    if (line === "") continue;
+    const cols = line.split("\t");
     if (!predicate(cols)) next.push(line);
   }
   if (next.length === 0) {
     unlinkSync(file);
   } else {
-    atomicWriteFile(file, `${next.join('\n')}\n`);
+    atomicWriteFile(file, `${next.join("\n")}\n`);
   }
   return true;
 }
@@ -78,11 +71,11 @@ export function uninstall(opts: UninstallOptions): UninstallReport {
 
   if (!rel) {
     report.code = 1;
-    report.error = 'Usage: llamactl uninstall <rel> [--force]';
+    report.error = "Usage: llamactl uninstall <rel> [--force]";
     return report;
   }
 
-  const slash = rel.indexOf('/');
+  const slash = rel.indexOf("/");
   if (slash <= 0 || slash === rel.length - 1) {
     report.code = 1;
     report.error = `Expected rel of form <repo-dir>/<file.gguf>, got: ${rel}`;
@@ -102,14 +95,14 @@ export function uninstall(opts: UninstallOptions): UninstallReport {
     return report;
   }
 
-  if (report.scope && report.scope !== 'candidate' && !force) {
+  if (report.scope && report.scope !== "candidate" && !force) {
     report.code = 1;
     report.error = `Refusing to uninstall ${rel}: scope=${report.scope} (use --force to override)`;
     return report;
   }
 
   report.actions.push(
-    `Uninstalling ${rel} (scope=${report.scope ?? 'unknown'}, force=${force ? 1 : 0})`,
+    `Uninstalling ${rel} (scope=${report.scope ?? "unknown"}, force=${force ? 1 : 0})`,
   );
 
   if (existsSync(modelPath)) {
@@ -127,7 +120,7 @@ export function uninstall(opts: UninstallOptions): UninstallReport {
       const entries = readdirSync(modelDir);
       remainingGguf = entries.some((name) => {
         const lower = name.toLowerCase();
-        return lower.endsWith('.gguf') && !lower.includes('mmproj');
+        return lower.endsWith(".gguf") && !lower.includes("mmproj");
       });
     } catch {
       remainingGguf = true;
@@ -135,36 +128,26 @@ export function uninstall(opts: UninstallOptions): UninstallReport {
     if (!remainingGguf) {
       rmSync(modelDir, { recursive: true, force: true });
       if (!existsSync(modelDir)) {
-        report.actions.push(
-          `  removed empty dir ${modelDir} (including mmproj + hf cache)`,
-        );
+        report.actions.push(`  removed empty dir ${modelDir} (including mmproj + hf cache)`);
       }
     }
   }
 
-  if (
-    pruneTsv(benchProfileFile(resolved), (cols) => cols[0] === rel || cols[1] === rel)
-  ) {
+  if (pruneTsv(benchProfileFile(resolved), (cols) => cols[0] === rel || cols[1] === rel)) {
     report.actions.push(`  pruned bench profile rows for ${rel}`);
   }
-  if (
-    pruneTsv(benchHistoryFile(resolved), (cols) => cols[1] === rel || cols[2] === rel)
-  ) {
+  if (pruneTsv(benchHistoryFile(resolved), (cols) => cols[1] === rel || cols[2] === rel)) {
     report.actions.push(`  pruned bench history rows for ${rel}`);
   }
   if (pruneTsv(benchVisionFile(resolved), (cols) => cols[1] === rel)) {
     report.actions.push(`  pruned vision bench rows for ${rel}`);
   }
-  if (
-    pruneTsv(resolved.LOCAL_AI_CUSTOM_CATALOG_FILE, (cols) => cols[5] === rel)
-  ) {
+  if (pruneTsv(resolved.LOCAL_AI_CUSTOM_CATALOG_FILE, (cols) => cols[5] === rel)) {
     report.actions.push(`  pruned custom catalog entries for ${rel}`);
   }
 
   if (force) {
-    if (
-      pruneTsv(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE, (cols) => cols[2] === rel)
-    ) {
+    if (pruneTsv(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE, (cols) => cols[2] === rel)) {
       report.actions.push(`  pruned promotion overrides for ${rel}`);
     }
   }

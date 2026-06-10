@@ -1,7 +1,7 @@
 # RAG Pipelines — declarative ingestion for knowledge bases
 
-A **RagPipeline** is a manifest that declares *how documents get into
-a RAG node*: where to pull them from, how to chunk them, and which
+A **RagPipeline** is a manifest that declares _how documents get into
+a RAG node_: where to pull them from, how to chunk them, and which
 collection to land them in. `llamactl rag pipeline apply -f …` persists
 the manifest to disk; `llamactl rag pipeline run <name>` walks the
 sources, runs the transforms, embeds each chunk, and stores the
@@ -9,9 +9,9 @@ results in the declared destination. Everything is auditable via a
 per-pipeline JSONL journal; re-runs are dedupe-aware so unchanged
 documents are never re-embedded.
 
-For the retrieval side of the story (RAG *nodes* themselves — chroma
+For the retrieval side of the story (RAG _nodes_ themselves — chroma
 and pgvector backends), see [`docs/rag-nodes.md`](./rag-nodes.md).
-This doc is the upstream half: getting content *into* those nodes.
+This doc is the upstream half: getting content _into_ those nodes.
 
 ---
 
@@ -41,7 +41,7 @@ overkill for a one-time poke.
 
 ## Prerequisites
 
-- **A registered RAG node.** Pipelines ingest *into* nodes
+- **A registered RAG node.** Pipelines ingest _into_ nodes
   (`kb-pg`, `kb-chroma`, etc.) registered in your kubeconfig. See
   `docs/rag-nodes.md` for how to add one.
 - **An embedder.** pgvector nodes need an `embedder` binding on
@@ -53,7 +53,7 @@ overkill for a one-time poke.
   git binary.
 - **Disk.** Pipeline state lives under
   `$DEV_STORAGE/rag-pipelines/<name>/{spec.yaml, journal.jsonl,
-  state.json}`. Override the root via
+state.json}`. Override the root via
   `LLAMACTL_RAG_PIPELINES_DIR`.
 
 ---
@@ -64,31 +64,32 @@ overkill for a one-time poke.
 apiVersion: llamactl/v1
 kind: RagPipeline
 metadata:
-  name: llamactl-docs              # filesystem-safe identifier
+  name: llamactl-docs # filesystem-safe identifier
 
 spec:
   destination:
-    ragNode: kb-pg                 # a rag-kind node in kubeconfig
-    collection: llamactl_docs      # collection name in that node
+    ragNode: kb-pg # a rag-kind node in kubeconfig
+    collection: llamactl_docs # collection name in that node
 
   sources:
-    - kind: filesystem             # see "Sources" below
+    - kind: filesystem # see "Sources" below
       root: /Volumes/WorkSSD/repos/personal/llamactl/docs
       glob: "**/*.md"
-      tag:                         # merged into every doc's metadata
+      tag: # merged into every doc's metadata
         source: llamactl-docs
         repo: llamactl
 
   transforms:
-    - kind: markdown-chunk         # see "Transforms" below
+    - kind: markdown-chunk # see "Transforms" below
       chunk_size: 800
       overlap: 150
       preserve_headings: true
 
-  schedule: "@daily"               # optional — scheduler loop fires
-                                   #   when the next-run time arrives
-  on_duplicate: skip               # skip | replace | version
-  concurrency: 4                   # parallel doc pipelines per source
+  schedule:
+    "@daily" # optional — scheduler loop fires
+    #   when the next-run time arrives
+  on_duplicate: skip # skip | replace | version
+  concurrency: 4 # parallel doc pipelines per source
 ```
 
 Every field is validated through a zod schema
@@ -108,8 +109,8 @@ the transform pipeline.
 
 ```yaml
 - kind: filesystem
-  root: /path/to/docs              # required
-  glob: "**/*.md"                  # default "**/*"
+  root: /path/to/docs # required
+  glob: "**/*.md" # default "**/*"
   tag: { source: local-docs }
 ```
 
@@ -122,14 +123,14 @@ minimal glob translator on plain Node.
 
 ```yaml
 - kind: http
-  url: https://docs.example.com/   # required
-  max_depth: 2                     # default 1, capped at 5
-  same_origin: true                # default true
-  ignore_robots: false             # default false — honors /robots.txt
-  rate_limit_per_sec: 2            # default 2
-  timeout_ms: 10000                # default 10_000
+  url: https://docs.example.com/ # required
+  max_depth: 2 # default 1, capped at 5
+  same_origin: true # default true
+  ignore_robots: false # default false — honors /robots.txt
+  rate_limit_per_sec: 2 # default 2
+  timeout_ms: 10000 # default 10_000
   auth:
-    tokenRef: env:DOCS_TOKEN       # env: / keychain: / file: grammar
+    tokenRef: env:DOCS_TOKEN # env: / keychain: / file: grammar
 ```
 
 Breadth-first crawl from `url`. By default it fetches `/robots.txt`
@@ -142,17 +143,17 @@ token reference is resolved at fetch time via the shared
 
 ```yaml
 - kind: git
-  repo: https://github.com/acme/docs.git    # https or git@host:org/repo.git
-  ref: main                                 # optional, default HEAD
-  subpath: docs                             # optional, restrict walk
-  glob: "**/*.md"                           # default "**/*.md"
+  repo: https://github.com/acme/docs.git # https or git@host:org/repo.git
+  ref: main # optional, default HEAD
+  subpath: docs # optional, restrict walk
+  glob: "**/*.md" # default "**/*.md"
   auth:
-    tokenRef: env:GITHUB_TOKEN              # optional, for private repos
+    tokenRef: env:GITHUB_TOKEN # optional, for private repos
 ```
 
 Shallow-clones the repo into a tmpdir, walks the (optional)
 subpath with the glob, removes the checkout when the source
-finishes (successfully *or* on abort). https URLs with
+finishes (successfully _or_ on abort). https URLs with
 `auth.tokenRef` set get rewritten to embed the token as
 `x-access-token` basic-auth — GitHub / GitLab / Gitea style. SSH
 URLs pass through unchanged (auth lives in the user's SSH
@@ -170,9 +171,9 @@ kind:
 
 ```yaml
 - kind: markdown-chunk
-  chunk_size: 800                  # default 800 chars
-  overlap: 150                     # default 150 chars
-  preserve_headings: true          # default true
+  chunk_size: 800 # default 800 chars
+  overlap: 150 # default 150 chars
+  preserve_headings: true # default true
 ```
 
 Splits on Markdown headings (`#`/`##`/…), packs paragraphs into
@@ -190,7 +191,7 @@ produces a single chunk), omit the `transforms` field entirely.
 
 ## Dedupe semantics — `on_duplicate`
 
-Controls what happens when a `doc_id` reappears with *different*
+Controls what happens when a `doc_id` reappears with _different_
 content (same sha → always a no-op, regardless of mode). Three
 values:
 
@@ -219,9 +220,9 @@ convention.
 ```yaml
 spec:
   cost:
-    per_chunk_usd: 0.0001       # optional; rate per stored chunk
-    per_doc_usd: 0.0             # optional; rate per ingested doc
-    currency: USD                # default USD
+    per_chunk_usd: 0.0001 # optional; rate per stored chunk
+    per_doc_usd: 0.0 # optional; rate per ingested doc
+    currency: USD # default USD
 ```
 
 When present, each run's summary gets an `estimated_cost.usd`
@@ -396,18 +397,18 @@ file and edit before applying.
 Every run appends entries to
 `$DEV_STORAGE/rag-pipelines/<name>/journal.jsonl`. Kinds:
 
-| Kind | When |
-|---|---|
-| `run-started` | at the top of every `runPipeline` call |
-| `source-started` | before each source's fetcher runs |
-| `doc-ingested` | per doc successfully stored (wet run) |
-| `doc-would-ingest` | per doc processed in `--dry-run` |
-| `doc-skipped` | per doc where `{doc_id, sha}` was already seen |
-| `source-complete` | after each source completes |
-| `error` | fetch / transform / store failure (non-fatal path) |
-| `run-complete` | final summary: total_docs / total_chunks / elapsed_ms |
-| `schedule-fired` | scheduler kicked a run |
-| `schedule-skipped` | scheduler skipped (in-flight or bad schedule) |
+| Kind               | When                                                  |
+| ------------------ | ----------------------------------------------------- |
+| `run-started`      | at the top of every `runPipeline` call                |
+| `source-started`   | before each source's fetcher runs                     |
+| `doc-ingested`     | per doc successfully stored (wet run)                 |
+| `doc-would-ingest` | per doc processed in `--dry-run`                      |
+| `doc-skipped`      | per doc where `{doc_id, sha}` was already seen        |
+| `source-complete`  | after each source completes                           |
+| `error`            | fetch / transform / store failure (non-fatal path)    |
+| `run-complete`     | final summary: total_docs / total_chunks / elapsed_ms |
+| `schedule-fired`   | scheduler kicked a run                                |
+| `schedule-skipped` | scheduler skipped (in-flight or bad schedule)         |
 
 `state.json` caches the last run's summary for `list` / UI use;
 the journal is the source of truth.
@@ -439,11 +440,11 @@ spec:
     - kind: http
       url: https://docs.vendor.com
       max_depth: 3
-      rate_limit_per_sec: 1      # be a good neighbor
+      rate_limit_per_sec: 1 # be a good neighbor
   transforms:
     - { kind: markdown-chunk, chunk_size: 800 }
   schedule: "@daily"
-  on_duplicate: replace          # stale URLs get cleaned up
+  on_duplicate: replace # stale URLs get cleaned up
 ```
 
 ### Git repo with auth, private subpath
@@ -477,7 +478,7 @@ spec:
       glob: "**/*.md"
   transforms:
     - { kind: markdown-chunk, chunk_size: 2000, overlap: 0 }
-  on_duplicate: version          # old + new coexist; queries see both
+  on_duplicate: version # old + new coexist; queries see both
 ```
 
 ---
@@ -491,7 +492,7 @@ spec:
 - **Every doc logs `skipping binary file`** → your glob is too
   wide. Narrow to `**/*.md` or similar.
 - **`on_duplicate=replace requested but adapter has no delete
-  binding`** → you wired a custom adapter that doesn't implement
+binding`** → you wired a custom adapter that doesn't implement
   `delete`. Either implement it or stay on `skip`. The run
   continues; it just can't clean orphan chunks.
 - **Crawl returns zero docs** → check `ignore_robots` and

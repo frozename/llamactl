@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import type { NodeClient } from '@llamactl/remote';
-import { getNodeClient } from '../dispatcher.js';
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import type { NodeClient } from "@llamactl/remote";
+import { getNodeClient } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl rag bench -f <file.yaml | ->
 
@@ -62,32 +62,32 @@ interface Opts {
 }
 
 function parseFlags(args: string[]): Opts | { error: string } {
-  let file = '';
+  let file = "";
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '-f' || arg === '--file') {
-      file = args[++i] ?? '';
-    } else if (arg.startsWith('--file=')) {
-      file = arg.slice('--file='.length);
-    } else if (arg === '--json') {
+    if (arg === "-f" || arg === "--file") {
+      file = args[++i] ?? "";
+    } else if (arg.startsWith("--file=")) {
+      file = arg.slice("--file=".length);
+    } else if (arg === "--json") {
       json = true;
-    } else if (arg === '-h' || arg === '--help') {
-      return { error: 'help' };
-    } else if (arg.startsWith('-')) {
+    } else if (arg === "-h" || arg === "--help") {
+      return { error: "help" };
+    } else if (arg.startsWith("-")) {
       return { error: `Unknown flag: ${arg}` };
     } else {
       return { error: `Unexpected argument: ${arg}` };
     }
   }
-  if (!file) return { error: 'rag bench: -f <file.yaml | -> is required' };
+  if (!file) return { error: "rag bench: -f <file.yaml | -> is required" };
   return { file, json };
 }
 
 export async function runRagBenchCli(args: string[]): Promise<number> {
   const parsed = parseFlags(args);
-  if ('error' in parsed) {
-    if (parsed.error === 'help') {
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -95,8 +95,8 @@ export async function runRagBenchCli(args: string[]): Promise<number> {
     return 1;
   }
   let manifestYaml: string;
-  if (parsed.file === '-') {
-    const reader = testSeams.readStdinYaml ?? (() => readFileSync(0, 'utf8'));
+  if (parsed.file === "-") {
+    const reader = testSeams.readStdinYaml ?? (() => readFileSync(0, "utf8"));
     try {
       manifestYaml = reader();
     } catch (err) {
@@ -106,7 +106,7 @@ export async function runRagBenchCli(args: string[]): Promise<number> {
       return 1;
     }
     if (!manifestYaml.trim()) {
-      process.stderr.write('rag bench: stdin was empty — pipe a RagBench YAML in.\n');
+      process.stderr.write("rag bench: stdin was empty — pipe a RagBench YAML in.\n");
       return 1;
     }
   } else {
@@ -115,7 +115,7 @@ export async function runRagBenchCli(args: string[]): Promise<number> {
       process.stderr.write(`rag bench: file not found: ${absPath}\n`);
       return 1;
     }
-    manifestYaml = readFileSync(absPath, 'utf8');
+    manifestYaml = readFileSync(absPath, "utf8");
   }
 
   let report;
@@ -139,12 +139,10 @@ export async function runRagBenchCli(args: string[]): Promise<number> {
   lines.push(`RagBench: ${report.manifest.metadata.name}`);
   lines.push(
     `  node ${report.manifest.spec.node}` +
-      (report.manifest.spec.collection
-        ? ` / collection ${report.manifest.spec.collection}`
-        : '') +
+      (report.manifest.spec.collection ? ` / collection ${report.manifest.spec.collection}` : "") +
       ` · topK ${report.manifest.spec.topK}`,
   );
-  lines.push('');
+  lines.push("");
   lines.push(
     `  hit rate  ${pct(report.hitRate)}  (${report.hits}/${report.totalQueries - report.errors} scored)`,
   );
@@ -153,8 +151,8 @@ export async function runRagBenchCli(args: string[]): Promise<number> {
     lines.push(`  errors    ${report.errors}`);
   }
   lines.push(`  elapsed   ${report.elapsed_ms}ms`);
-  lines.push('');
-  lines.push('  per-query:');
+  lines.push("");
+  lines.push("  per-query:");
   const misses = report.perQuery.filter((q) => q.hitRank === null && !q.error);
   const errs = report.perQuery.filter((q) => q.error !== undefined);
   const hits = report.perQuery.filter((q) => q.hitRank !== null);
@@ -165,11 +163,9 @@ export async function runRagBenchCli(args: string[]): Promise<number> {
     lines.push(`    [miss] ${q.query}`);
   }
   for (const q of hits) {
-    lines.push(
-      `    [hit ] ${q.query} — rank ${q.hitRank} via ${q.hitKind} (${q.matchedDocId})`,
-    );
+    lines.push(`    [hit ] ${q.query} — rank ${q.hitRank} via ${q.hitKind} (${q.matchedDocId})`);
   }
-  process.stdout.write(`${lines.join('\n')}\n`);
+  process.stdout.write(`${lines.join("\n")}\n`);
   // Exit non-zero when ANY query failed to hit — this is a quality
   // gate and the CI-style "treat bench result as pass/fail" pattern
   // expects a meaningful exit code.

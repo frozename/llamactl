@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -17,9 +17,9 @@ export function makeTempRuntime(): {
   modelsDir: string;
   cleanup: () => void;
 } {
-  const devStorage = mkdtempSync(join(tmpdir(), 'llamactl-test-'));
-  const runtimeDir = join(devStorage, 'ai-models', 'local-ai');
-  const modelsDir = join(devStorage, 'ai-models', 'llama.cpp', 'models');
+  const devStorage = mkdtempSync(join(tmpdir(), "llamactl-test-"));
+  const runtimeDir = join(devStorage, "ai-models", "local-ai");
+  const modelsDir = join(devStorage, "ai-models", "llama.cpp", "models");
   return {
     runtimeDir,
     devStorage,
@@ -38,13 +38,13 @@ export function envForTemp(temp: ReturnType<typeof makeTempRuntime>): NodeJS.Pro
     DEV_STORAGE: temp.devStorage,
     LOCAL_AI_RUNTIME_DIR: temp.runtimeDir,
     LLAMA_CPP_MODELS: temp.modelsDir,
-    LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
-    LOCAL_AI_RECOMMENDATIONS_SOURCE: 'off',
-    LOCAL_AI_CUSTOM_CATALOG_FILE: join(temp.runtimeDir, 'curated-models.tsv'),
-    LOCAL_AI_PRESET_OVERRIDES_FILE: join(temp.runtimeDir, 'preset-overrides.tsv'),
-    PATH: process.env.PATH ?? '',
-    HOME: process.env.HOME ?? '/tmp',
+    LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
+    LOCAL_AI_RECOMMENDATIONS_SOURCE: "off",
+    LOCAL_AI_CUSTOM_CATALOG_FILE: join(temp.runtimeDir, "curated-models.tsv"),
+    LOCAL_AI_PRESET_OVERRIDES_FILE: join(temp.runtimeDir, "preset-overrides.tsv"),
+    PATH: process.env.PATH ?? "",
+    HOME: process.env.HOME ?? "/tmp",
   };
 }
 
-export const FIXTURE_DIR = join(__dirname, 'fixtures');
+export const FIXTURE_DIR = join(__dirname, "fixtures");

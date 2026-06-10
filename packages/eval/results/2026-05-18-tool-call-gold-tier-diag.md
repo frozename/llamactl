@@ -21,12 +21,12 @@ each tier.
 
 ## Headline table — mean_exact_match by tier
 
-| Model | full (n=50) | no-call (n=5) | single (n=34) | multi (n=11) |
-|---|---:|---:|---:|---:|
-| gemma4-26b-a4b-mtp | 0.6400 | 0.8000 | 0.8235 | **0.0000** |
-| gemma4-e4b-vanilla | 0.3800 | 0.8000 | 0.4412 | **0.0000** |
-| qwen3.5-9b-mtp-UDQ4KXL | **0.6600** | **1.0000** | 0.8235 | **0.0000** |
-| granite-3b-Q8 | 0.6327 | 0.6000 | **0.8485** | **0.0000** |
+| Model                  | full (n=50) | no-call (n=5) | single (n=34) | multi (n=11) |
+| ---------------------- | ----------: | ------------: | ------------: | -----------: |
+| gemma4-26b-a4b-mtp     |      0.6400 |        0.8000 |        0.8235 |   **0.0000** |
+| gemma4-e4b-vanilla     |      0.3800 |        0.8000 |        0.4412 |   **0.0000** |
+| qwen3.5-9b-mtp-UDQ4KXL |  **0.6600** |    **1.0000** |        0.8235 |   **0.0000** |
+| granite-3b-Q8          |      0.6327 |        0.6000 |    **0.8485** |   **0.0000** |
 
 Weighted-avg sanity check (gemma4-26b): `(5×0.80 + 34×0.8235 + 11×0.00) / 50 = 0.6400` ✓
 identical to direct full-corpus cell. Same identity holds for all four
@@ -70,14 +70,14 @@ unblocks Q2 of the K-track if it ever returns to tool-call work.
 Ignoring the broken multi-call tier and weighting by single (34) +
 no-call (5) = 39 rows:
 
-| Model | weighted EM (n=39) |
-|---|---:|
-| qwen3.5-9b-mtp | (1.00×5 + 0.8235×34) / 39 = **0.8462** |
+| Model              |                     weighted EM (n=39) |
+| ------------------ | -------------------------------------: |
+| qwen3.5-9b-mtp     | (1.00×5 + 0.8235×34) / 39 = **0.8462** |
 | gemma4-26b-a4b-mtp | (0.80×5 + 0.8235×34) / 39 = **0.8205** |
-| granite-3b-Q8 | (0.60×5 + 0.8485×34) / 39 = **0.8167** |
+| granite-3b-Q8      | (0.60×5 + 0.8485×34) / 39 = **0.8167** |
 | gemma4-e4b-vanilla | (0.80×5 + 0.4412×34) / 39 = **0.4872** |
 
-On the *valid* slices, qwen3.5-9b-mtp narrowly wins, gemma4-26b is
+On the _valid_ slices, qwen3.5-9b-mtp narrowly wins, gemma4-26b is
 second, granite-3b-Q8 a close third — within 3 pp across three of four
 candidates.
 
@@ -96,7 +96,7 @@ candidates.
 
 gemma4-e4b-vanilla scored 0.4412 on single-call vs 0.8235 for its 26B
 sibling. Same gap as the 2026-05-13 within-machine maestro bench. The
-E4B is a *narrow* model — strong on memory-recall ranking (#2 in
+E4B is a _narrow_ model — strong on memory-recall ranking (#2 in
 yesterday's fleet), weak on structured tool-call emission. The
 workload-shape qualifier from `project_e4b_reval_2026-05-13.md` keeps
 adding workloads to its "do not use" side.

@@ -1,7 +1,12 @@
-import { spawn as nodeSpawn } from 'node:child_process';
-import { ENGINES } from '../../../core/src/engines/index.js';
-import { computeModelHostSpecHash, readModelHostState, removeModelHostState, writeModelHostState } from '../../../core/src/engines/state.js';
-import { resolveEnv } from '../../../core/src/env.js';
+import { spawn as nodeSpawn } from "node:child_process";
+import { ENGINES } from "../../../core/src/engines/index.js";
+import {
+  computeModelHostSpecHash,
+  readModelHostState,
+  removeModelHostState,
+  writeModelHostState,
+} from "../../../core/src/engines/state.js";
+import { resolveEnv } from "../../../core/src/env.js";
 import {
   appendFleetJournal,
   makePlacementDecision,
@@ -14,15 +19,23 @@ import {
   projectAdmissionHeadroom,
   scoreNodes,
   type FleetPlacementEntry,
-} from '@llamactl/fleet-supervisor';
-import type { ModelRun, ModelRunStatus, ModelRunWorker } from './schema.js';
-import { ModelRunSchema } from './schema.js';
-import { LOCAL_NODE_ID, ModelHostManifestSchema, type ModelHostManifest } from './modelhost-schema.js';
-import type { GatewayDispatch } from './gateway-handlers/types.js';
-import { computeNodeBudget, defaultNodeBudgetGiB, estimateModelHostMemoryGiB } from './admission.js';
-import { defaultWorkloadsDir, listAnyWorkloadsForAdmission, listWorkloads } from './store.js';
-import { withNodeLock } from './node-mutex.js';
-import { basename } from 'node:path';
+} from "@llamactl/fleet-supervisor";
+import type { ModelRun, ModelRunStatus, ModelRunWorker } from "./schema.js";
+import { ModelRunSchema } from "./schema.js";
+import {
+  LOCAL_NODE_ID,
+  ModelHostManifestSchema,
+  type ModelHostManifest,
+} from "./modelhost-schema.js";
+import type { GatewayDispatch } from "./gateway-handlers/types.js";
+import {
+  computeNodeBudget,
+  defaultNodeBudgetGiB,
+  estimateModelHostMemoryGiB,
+} from "./admission.js";
+import { defaultWorkloadsDir, listAnyWorkloadsForAdmission, listWorkloads } from "./store.js";
+import { withNodeLock } from "./node-mutex.js";
+import { basename } from "node:path";
 
 /**
  * Structural subset of `NodeClient` that `applyOne` actually touches.
@@ -33,19 +46,23 @@ import { basename } from 'node:path';
  * cast at the router boundary.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type SubscribeCallbacks = { onData: (e: any) => void; onError: (err: any) => void; onComplete: () => void };
+type SubscribeCallbacks = {
+  onData: (e: any) => void;
+  onError: (err: any) => void;
+  onComplete: () => void;
+};
 type Unsubscribable = { unsubscribe?: () => void };
 
 const CHILD_ENV_ALLOWLIST = [
-  'PATH',
-  'HOME',
-  'USER',
-  'LANG',
-  'LC_ALL',
-  'TMPDIR',
-  'LLAMACTL_MODELS_DIR',
-  'LLAMA_CPP_MODELS',
-  'LLAMA_CPP_BIN',
+  "PATH",
+  "HOME",
+  "USER",
+  "LANG",
+  "LC_ALL",
+  "TMPDIR",
+  "LLAMACTL_MODELS_DIR",
+  "LLAMA_CPP_MODELS",
+  "LLAMA_CPP_BIN",
 ];
 
 export interface WorkloadClient {
@@ -89,7 +106,9 @@ export interface WorkloadClient {
     mutate(input: { workload: string; graceSeconds?: number }): Promise<unknown>;
   };
   modelHostStatus: {
-    query(input: { workload: string }): Promise<{ state: string; pid?: number | null; specHash?: string }>;
+    query(input: {
+      workload: string;
+    }): Promise<{ state: string; pid?: number | null; specHash?: string }>;
   };
   rpcServerStart: {
     subscribe(
@@ -104,27 +123,27 @@ export interface WorkloadClient {
       path: string | null;
       llamaCppBin: string | null;
       reason?:
-        | 'LLAMA_CPP_BIN-unset'
-        | 'LLAMA_CPP_BIN-missing'
-        | 'rpc-server-missing'
-        | 'rpc-server-not-executable';
+        | "LLAMA_CPP_BIN-unset"
+        | "LLAMA_CPP_BIN-missing"
+        | "rpc-server-missing"
+        | "rpc-server-not-executable";
       hint?: string;
     }>;
   };
 }
 
-export type ApplyAction = 'unchanged' | 'started' | 'restarted' | 'pending';
+export type ApplyAction = "unchanged" | "started" | "restarted" | "pending";
 
 export interface ApplyEvent {
   type:
-    | 'stop'
-    | 'start'
-    | 'started'
-    | 'skipped'
-    | 'worker-start'
-    | 'worker-ready'
-    | 'worker-preflight'
-    | 'gateway-pending';
+    | "stop"
+    | "start"
+    | "started"
+    | "skipped"
+    | "worker-start"
+    | "worker-ready"
+    | "worker-preflight"
+    | "gateway-pending";
   message: string;
 }
 
@@ -167,12 +186,13 @@ interface PlacementContext {
 }
 
 function shouldAutoPlace(manifest: ModelRun): boolean {
-  return manifest.spec.node === 'auto' && manifest.spec.placement !== 'pinned';
+  return manifest.spec.node === "auto" && manifest.spec.placement !== "pinned";
 }
 
-async function runPlacement(context: PlacementContext): Promise<
-  { ok: true; manifest: ModelRun; decision: FleetPlacementEntry }
-  | { ok: false; error: string }
+async function runPlacement(
+  context: PlacementContext,
+): Promise<
+  { ok: true; manifest: ModelRun; decision: FleetPlacementEntry } | { ok: false; error: string }
 > {
   let db;
   try {
@@ -203,7 +223,7 @@ async function runPlacement(context: PlacementContext): Promise<
     });
 
     const entry: FleetPlacementEntry = {
-      kind: 'fleet-placement',
+      kind: "fleet-placement",
       ts: new Date().toISOString(),
       node: best,
       decision: {
@@ -212,12 +232,12 @@ async function runPlacement(context: PlacementContext): Promise<
       },
     };
     const transition: FleetTransitionEntry = {
-      kind: 'fleet-transition',
+      kind: "fleet-transition",
       ts: entry.ts,
       node: best,
       subject: context.manifest.metadata.name,
-      subjectKind: 'workload',
-      signal: 'placement',
+      subjectKind: "workload",
+      signal: "placement",
       from: context.manifest.spec.node,
       to: best,
     };
@@ -237,13 +257,13 @@ async function runPlacement(context: PlacementContext): Promise<
 }
 
 export type ApplyManifestOutcome =
-  | { ok: true; kind: 'ModelRun'; manifest: ModelRun; result: ApplyResult }
+  | { ok: true; kind: "ModelRun"; manifest: ModelRun; result: ApplyResult }
   | {
       // M7: ModelHost outcome carries only the desired-state manifest.
       // Observed status lives in the runtime sidecar (writeModelHostState),
       // not in the persisted YAML or on this outcome.
       ok: true;
-      kind: 'ModelHost';
+      kind: "ModelHost";
       manifest: ModelHostManifest;
       pid: number | null;
       endpoint: string;
@@ -257,14 +277,17 @@ function sameExtraArgs(a: readonly string[], b: readonly string[]): boolean {
 }
 
 function normalizeLoopbackHost(host: string | undefined): string {
-  return host === '::1' ? '127.0.0.1' : host ?? '127.0.0.1';
+  return host === "::1" ? "127.0.0.1" : (host ?? "127.0.0.1");
 }
 
 function formatHostForUrl(host: string): string {
-  return host.includes(':') ? `[${host}]` : host;
+  return host.includes(":") ? `[${host}]` : host;
 }
 
-function sanitizeChildEnv(parent: NodeJS.ProcessEnv, overrides: Record<string, string> | undefined): NodeJS.ProcessEnv {
+function sanitizeChildEnv(
+  parent: NodeJS.ProcessEnv,
+  overrides: Record<string, string> | undefined,
+): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const key of CHILD_ENV_ALLOWLIST) {
     const value = parent[key];
@@ -277,14 +300,14 @@ function sanitizeChildEnv(parent: NodeJS.ProcessEnv, overrides: Record<string, s
 }
 
 function manifestKind(raw: unknown): string | null {
-  if (!raw || typeof raw !== 'object') return null;
+  if (!raw || typeof raw !== "object") return null;
   const kind = (raw as { kind?: unknown }).kind;
-  return typeof kind === 'string' ? kind : null;
+  return typeof kind === "string" ? kind : null;
 }
 
 async function applyModelHostManifest(
   manifest: ModelHostManifest,
-  opts: Omit<ApplyManifestOptions, 'manifest'>,
+  opts: Omit<ApplyManifestOptions, "manifest">,
 ): Promise<ApplyManifestOutcome> {
   if (opts.supervisor && manifest.spec.resources?.expectedMemoryGiB) {
     const projected = projectAdmissionHeadroom({
@@ -298,7 +321,7 @@ async function applyModelHostManifest(
     }
   }
   const engine = ENGINES[manifest.spec.engine];
-  if (manifest.spec.node === 'local') {
+  if (manifest.spec.node === "local") {
     const validation = engine.validateSpec({
       engine: manifest.spec.engine,
       binary: manifest.spec.binary,
@@ -333,7 +356,7 @@ async function applyModelHostManifest(
     removeModelHostState({ name: manifest.metadata.name }, resolved);
     return {
       ok: true,
-      kind: 'ModelHost',
+      kind: "ModelHost",
       manifest,
       pid: null,
       endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
@@ -353,12 +376,12 @@ async function applyModelHostManifest(
     livingManifests,
     incoming: {
       apiVersion: manifest.apiVersion,
-      kind: 'ModelRun',
+      kind: "ModelRun",
       metadata: { name: manifest.metadata.name, labels: {}, annotations: {} },
       spec: {
         node: manifest.spec.node,
         enabled: manifest.spec.enabled,
-        target: { kind: 'rel', value: manifest.spec.hostedModels[0]!.rel },
+        target: { kind: "rel", value: manifest.spec.hostedModels[0]!.rel },
         extraArgs: manifest.spec.extraArgs,
         workers: [],
         restartPolicy: manifest.spec.restartPolicy,
@@ -383,7 +406,7 @@ async function applyModelHostManifest(
       | { ok: true; error?: string; pid?: number | null; state?: string | null }
       | { ok: false; error: string };
     const startResult = await new Promise<StartResult | null>((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error('modelHostStart timed out')), timeoutMs);
+      timer = setTimeout(() => reject(new Error("modelHostStart timed out")), timeoutMs);
       let done: StartResult | null = null;
       sub = client.modelHostStart.subscribe(
         {
@@ -394,7 +417,7 @@ async function applyModelHostManifest(
         {
           onData: (evt: unknown) => {
             const e = evt as { type?: string; result?: unknown };
-            if (e.type === 'done') done = e.result as StartResult;
+            if (e.type === "done") done = e.result as StartResult;
           },
           onError: (err: unknown) => {
             if (timer) clearTimeout(timer);
@@ -406,13 +429,18 @@ async function applyModelHostManifest(
           },
         },
       );
-    }).catch((err: unknown): StartResult => ({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+    }).catch(
+      (err: unknown): StartResult => ({
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
 
     if (!startResult?.ok) {
-      return { ok: false, error: startResult?.error ?? 'modelHostStart failed' };
+      return { ok: false, error: startResult?.error ?? "modelHostStart failed" };
     }
 
-    if (typeof startResult.pid === 'number' && typeof startResult.state === 'string') {
+    if (typeof startResult.pid === "number" && typeof startResult.state === "string") {
       status = {
         state: startResult.state,
         pid: startResult.pid,
@@ -433,17 +461,18 @@ async function applyModelHostManifest(
   // state; writing here would leak a stale entry into local consumers
   // (probe, openai-proxy routing, workloadEpoch). Also require a real
   // pid — without one the sidecar liveness/teardown semantics are wrong.
-  if (manifest.spec.node === LOCAL_NODE_ID && typeof status.pid === 'number' && status.pid > 0) {
+  if (manifest.spec.node === LOCAL_NODE_ID && typeof status.pid === "number" && status.pid > 0) {
     writeModelHostState(
       {
-        kind: 'ModelHost',
+        kind: "ModelHost",
         engine: manifest.spec.engine,
         pid: status.pid,
         host: manifest.spec.endpoint.host,
         port: manifest.spec.endpoint.port,
         modelAliases,
         startedAt: new Date().toISOString(),
-        slotSavePath: existing && existing.pid === status.pid ? existing.slotSavePath ?? null : null,
+        slotSavePath:
+          existing && existing.pid === status.pid ? (existing.slotSavePath ?? null) : null,
         specHash: computeModelHostSpecHash(manifest.spec),
       },
       { name: manifest.metadata.name },
@@ -453,7 +482,7 @@ async function applyModelHostManifest(
 
   return {
     ok: true,
-    kind: 'ModelHost',
+    kind: "ModelHost",
     manifest,
     pid: status.pid ?? null,
     endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${manifest.spec.endpoint.port}`,
@@ -515,13 +544,10 @@ async function preflightWorkers(
   workers: readonly ModelRunWorker[],
   getClient: (nodeName: string) => WorkloadClient,
   onEvent?: (e: ApplyEvent) => void,
-): Promise<
-  | { ok: true }
-  | { ok: false; error: string }
-> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   if (workers.length === 0) return { ok: true };
   onEvent?.({
-    type: 'worker-preflight',
+    type: "worker-preflight",
     message: `preflight: checking rpc-server on ${workers.length} worker node(s)`,
   });
   const results = await Promise.all(
@@ -529,11 +555,14 @@ async function preflightWorkers(
       try {
         const wc = getClient(w.node);
         const r = await wc.rpcServerDoctor.query({});
-        return { node: w.node, result: r as {
-          ok: boolean;
-          reason?: string;
-          hint?: string;
-        } };
+        return {
+          node: w.node,
+          result: r as {
+            ok: boolean;
+            reason?: string;
+            hint?: string;
+          },
+        };
       } catch (err) {
         // Treat dispatcher / network failures as a preflight failure
         // so the operator sees the node name. Wrapping into the same
@@ -543,7 +572,7 @@ async function preflightWorkers(
           node: w.node,
           result: {
             ok: false,
-            reason: 'doctor-call-failed',
+            reason: "doctor-call-failed",
             hint: `could not reach ${w.node}: ${msg}`,
           },
         };
@@ -553,15 +582,13 @@ async function preflightWorkers(
   const failures = results.filter((r) => !r.result.ok);
   if (failures.length === 0) return { ok: true };
   const lines = failures.map((f) => {
-    const reason = f.result.reason ?? 'unknown';
-    const hint = f.result.hint ?? '(no hint)';
+    const reason = f.result.reason ?? "unknown";
+    const hint = f.result.hint ?? "(no hint)";
     return `  - ${f.node}: ${reason}\n    ${hint}`;
   });
   return {
     ok: false,
-    error:
-      `rpc-server not available on ${failures.length} worker node(s):\n` +
-      lines.join('\n'),
+    error: `rpc-server not available on ${failures.length} worker node(s):\n` + lines.join("\n"),
   };
 }
 
@@ -578,17 +605,19 @@ async function startWorkers(
   // node + the cmake hint.
   const preflight = await preflightWorkers(workers, getClient, onEvent);
   if (!preflight.ok) {
-    return { rpcList: '', error: preflight.error };
+    return { rpcList: "", error: preflight.error };
   }
   const endpoints: string[] = [];
   for (const worker of workers) {
     onEvent?.({
-      type: 'worker-start',
+      type: "worker-start",
       message: `worker ${worker.node}: starting rpc-server on ${worker.rpcHost}:${worker.rpcPort}`,
     });
     const wc = getClient(worker.node);
     // Stop any prior rpc-server on that node; ignore errors.
-    try { await wc.rpcServerStop.mutate({ graceSeconds: 2 }); } catch {}
+    try {
+      await wc.rpcServerStop.mutate({ graceSeconds: 2 });
+    } catch {}
     const started = await new Promise<{ ok: boolean; endpoint: string; error?: string } | null>(
       (resolve, reject) => {
         const timer = setTimeout(
@@ -598,7 +627,7 @@ async function startWorkers(
         let done: { ok: boolean; endpoint: string; error?: string } | null = null;
         const sub = wc.rpcServerStart.subscribe(
           {
-            host: '0.0.0.0',
+            host: "0.0.0.0",
             port: worker.rpcPort,
             ...(worker.extraArgs.length > 0 ? { extraArgs: worker.extraArgs } : {}),
             timeoutSeconds: worker.timeoutSeconds,
@@ -606,10 +635,16 @@ async function startWorkers(
           {
             onData: (e: unknown) => {
               const evt = e as { type?: string; result?: unknown };
-              if (evt.type === 'done') done = evt.result as typeof done;
+              if (evt.type === "done") done = evt.result as typeof done;
             },
-            onError: (err: unknown) => { clearTimeout(timer); reject(err as Error); },
-            onComplete: () => { clearTimeout(timer); resolve(done); },
+            onError: (err: unknown) => {
+              clearTimeout(timer);
+              reject(err as Error);
+            },
+            onComplete: () => {
+              clearTimeout(timer);
+              resolve(done);
+            },
           },
         );
         void sub;
@@ -617,17 +652,17 @@ async function startWorkers(
     );
     if (!started || !started.ok) {
       return {
-        rpcList: '',
-        error: `worker ${worker.node}: ${started?.error ?? 'rpc-server failed to start'}`,
+        rpcList: "",
+        error: `worker ${worker.node}: ${started?.error ?? "rpc-server failed to start"}`,
       };
     }
     onEvent?.({
-      type: 'worker-ready',
+      type: "worker-ready",
       message: `worker ${worker.node}: ready on ${worker.rpcHost}:${worker.rpcPort}`,
     });
     endpoints.push(`${worker.rpcHost}:${worker.rpcPort}`);
   }
-  return { rpcList: endpoints.join(',') };
+  return { rpcList: endpoints.join(",") };
 }
 
 async function stopWorkers(
@@ -688,19 +723,19 @@ export async function applyOne(
       const msg =
         `gateway workload targeting '${manifest.spec.node}': ` +
         `no gateway dispatcher provided — manifest validated but no upstream mutation performed`;
-      onEvent?.({ type: 'gateway-pending', message: `${manifest.metadata.name}: ${msg}` });
+      onEvent?.({ type: "gateway-pending", message: `${manifest.metadata.name}: ${msg}` });
       return {
-        action: 'pending',
+        action: "pending",
         statusSection: {
-          phase: 'Pending',
+          phase: "Pending",
           serverPid: null,
           endpoint: null,
           lastTransitionTime: now,
           conditions: [
             {
-              type: 'Applied',
-              status: 'False',
-              reason: 'GatewayRegistrationPending',
+              type: "Applied",
+              status: "False",
+              reason: "GatewayRegistrationPending",
               message: msg,
               lastTransitionTime: now,
             },
@@ -713,22 +748,22 @@ export async function applyOne(
   if (manifest.spec.enabled === false) {
     const now = new Date().toISOString();
     const status = await client.serverStatus.query({ workload: manifest.metadata.name });
-    if (status.state === 'up') {
-      onEvent?.({ type: 'stop', message: `${manifest.metadata.name}: stopping disabled server` });
+    if (status.state === "up") {
+      onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping disabled server` });
       await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
     }
     return {
-      action: 'unchanged',
+      action: "unchanged",
       statusSection: {
-        phase: 'Stopped',
+        phase: "Stopped",
         serverPid: null,
         endpoint: null,
         lastTransitionTime: now,
         conditions: [
           {
-            type: 'Applied',
-            status: 'True',
-            reason: 'Disabled',
+            type: "Applied",
+            status: "True",
+            reason: "Disabled",
             lastTransitionTime: now,
           },
         ],
@@ -752,8 +787,8 @@ export async function applyOne(
       .filter((m) => m.spec.enabled !== false);
     for (const other of others) {
       if (
-        other.status?.phase === 'Failed' &&
-        other.status.conditions[0]?.reason === 'PortCollision'
+        other.status?.phase === "Failed" &&
+        other.status.conditions[0]?.reason === "PortCollision"
       ) {
         continue;
       }
@@ -762,23 +797,22 @@ export async function applyOne(
       if (o.port !== desired.port) continue;
       const dHost = normalizeLoopbackHost(desired.host);
       const oHost = normalizeLoopbackHost(o.host);
-      const hostCollides =
-        dHost === oHost || dHost === '0.0.0.0' || oHost === '0.0.0.0';
+      const hostCollides = dHost === oHost || dHost === "0.0.0.0" || oHost === "0.0.0.0";
       if (hostCollides) {
         const now = new Date().toISOString();
         return {
-          action: 'pending',
+          action: "pending",
           error: `port collision: ${other.metadata.name} already claims ${oHost}:${o.port} on node ${manifest.spec.node}`,
           statusSection: {
-            phase: 'Failed',
+            phase: "Failed",
             serverPid: null,
             endpoint: null,
             lastTransitionTime: now,
             conditions: [
               {
-                type: 'Applied',
-                status: 'False',
-                reason: 'PortCollision',
+                type: "Applied",
+                status: "False",
+                reason: "PortCollision",
                 message: `port ${desired.port} already claimed by ${other.metadata.name}`,
                 lastTransitionTime: now,
               },
@@ -801,42 +835,48 @@ export async function applyOne(
 
   let rpcFlag: string[] = [];
   if (workers.length > 0) {
-    rpcFlag = [
-      '--rpc',
-      workers.map((w) => `${w.rpcHost}:${w.rpcPort}`).join(','),
-    ];
+    rpcFlag = ["--rpc", workers.map((w) => `${w.rpcHost}:${w.rpcPort}`).join(",")];
     effectiveExtraArgs = [...manifest.spec.extraArgs, ...rpcFlag];
   }
   const desiredArgs = effectiveExtraArgs;
   const liveRel = status.rel;
   const liveArgs = status.extraArgs ?? [];
-  const running = status.state === 'up';
+  const running = status.state === "up";
   const endpointMatches =
-    !desiredEndpoint
-    || ((status.host ?? null) === (desiredEndpoint.host ?? null)
-      && (status.port ?? null) === (desiredEndpoint.port ?? null));
-  const binaryMatches =
-    !manifest.spec.binary || (status.binary ?? null) === manifest.spec.binary;
+    !desiredEndpoint ||
+    ((status.host ?? null) === (desiredEndpoint.host ?? null) &&
+      (status.port ?? null) === (desiredEndpoint.port ?? null));
+  const binaryMatches = !manifest.spec.binary || (status.binary ?? null) === manifest.spec.binary;
   const matches =
-    running && liveRel === desiredRel && sameExtraArgs(liveArgs, desiredArgs) && endpointMatches && binaryMatches;
+    running &&
+    liveRel === desiredRel &&
+    sameExtraArgs(liveArgs, desiredArgs) &&
+    endpointMatches &&
+    binaryMatches;
 
   const now = new Date().toISOString();
-  const evictTargets = (manifest.metadata.annotations['llamactl.io/evict'] ?? '')
-    .split(',')
+  const evictTargets = (manifest.metadata.annotations["llamactl.io/evict"] ?? "")
+    .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
   for (const target of evictTargets) {
     try {
       const targetStatus = await client.serverStatus.query({ workload: target });
-      if (targetStatus.state !== 'up') {
-        onEvent?.({ type: 'skipped', message: `${manifest.metadata.name}: eviction target ${target} already stopped` });
+      if (targetStatus.state !== "up") {
+        onEvent?.({
+          type: "skipped",
+          message: `${manifest.metadata.name}: eviction target ${target} already stopped`,
+        });
         continue;
       }
-      onEvent?.({ type: 'stop', message: `${manifest.metadata.name}: evicting ${target}` });
+      onEvent?.({ type: "stop", message: `${manifest.metadata.name}: evicting ${target}` });
       await client.serverStop.mutate({ workload: target, graceSeconds: 5 });
     } catch {
-      onEvent?.({ type: 'skipped', message: `${manifest.metadata.name}: eviction target ${target} not found` });
+      onEvent?.({
+        type: "skipped",
+        message: `${manifest.metadata.name}: eviction target ${target} not found`,
+      });
     }
   }
 
@@ -844,13 +884,13 @@ export async function applyOne(
     const listManifests = opts?.listManifests ?? (() => listWorkloads(opts?.workloadsDir));
     const living = listManifests().filter(
       (m) =>
-        m.metadata.name !== manifest.metadata.name
-        && m.spec.node === manifest.spec.node
-        && m.spec.enabled !== false
-        && !evictTargets.includes(m.metadata.name),
+        m.metadata.name !== manifest.metadata.name &&
+        m.spec.node === manifest.spec.node &&
+        m.spec.enabled !== false &&
+        !evictTargets.includes(m.metadata.name),
     );
     const budget = opts?.getNodeBudgetGiB?.(manifest.spec.node) ?? Number.POSITIVE_INFINITY;
-    const forceAdmit = manifest.metadata.annotations['llamactl.io/force-admit'] === 'true';
+    const forceAdmit = manifest.metadata.annotations["llamactl.io/force-admit"] === "true";
     const adm = computeNodeBudget({
       nodeName: manifest.spec.node,
       nodeBudgetGiB: budget,
@@ -860,18 +900,18 @@ export async function applyOne(
     });
     if (!adm.ok) {
       return {
-        action: 'pending',
+        action: "pending",
         error: adm.reason,
         statusSection: {
-          phase: 'Failed',
+          phase: "Failed",
           serverPid: null,
           endpoint: null,
           lastTransitionTime: now,
           conditions: [
             {
-              type: 'Applied',
-              status: 'False',
-              reason: 'BudgetExceeded',
+              type: "Applied",
+              status: "False",
+              reason: "BudgetExceeded",
               message: adm.reason,
               lastTransitionTime: now,
             },
@@ -882,18 +922,18 @@ export async function applyOne(
 
     if (matches) {
       onEvent?.({
-        type: 'skipped',
+        type: "skipped",
         message: `${manifest.metadata.name}: already running (${desiredRel})`,
       });
       return {
-        action: 'unchanged',
+        action: "unchanged",
         statusSection: {
-          phase: 'Running',
+          phase: "Running",
           serverPid: status.pid,
           endpoint: status.endpoint,
           lastTransitionTime: now,
           conditions: [
-            { type: 'Applied', status: 'True', reason: 'unchanged', lastTransitionTime: now },
+            { type: "Applied", status: "True", reason: "unchanged", lastTransitionTime: now },
           ],
         },
       };
@@ -901,11 +941,11 @@ export async function applyOne(
 
     let action: ApplyAction;
     if (running) {
-      onEvent?.({ type: 'stop', message: `${manifest.metadata.name}: stopping mismatched server` });
+      onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping mismatched server` });
       await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
-      action = 'restarted';
+      action = "restarted";
     } else {
-      action = 'started';
+      action = "started";
     }
 
     if (workers.length > 0) {
@@ -915,14 +955,14 @@ export async function applyOne(
         return {
           action,
           statusSection: {
-            phase: 'Failed',
+            phase: "Failed",
             serverPid: null,
             endpoint: null,
             lastTransitionTime: when,
             conditions: [
               {
-                type: 'Applied',
-                status: 'False',
+                type: "Applied",
+                status: "False",
                 reason: action,
                 message: wres.error,
                 lastTransitionTime: when,
@@ -934,10 +974,10 @@ export async function applyOne(
       }
     }
 
-    onEvent?.({ type: 'start', message: `${manifest.metadata.name}: starting ${desiredRel}` });
+    onEvent?.({ type: "start", message: `${manifest.metadata.name}: starting ${desiredRel}` });
     const startResult = await new Promise<StartDone | null>((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new Error('serverStart timed out')),
+        () => reject(new Error("serverStart timed out")),
         (manifest.spec.timeoutSeconds + 5) * 1000,
       );
       let done: StartDone | null = null;
@@ -954,7 +994,7 @@ export async function applyOne(
         {
           onData: (evt: unknown) => {
             const e = evt as { type?: string; result?: unknown };
-            if (e.type === 'done') done = e.result as StartDone;
+            if (e.type === "done") done = e.result as StartDone;
           },
           onError: (err: unknown) => {
             clearTimeout(timer);
@@ -970,17 +1010,23 @@ export async function applyOne(
     });
 
     if (!startResult || !startResult.ok) {
-      const err = startResult?.error ?? 'serverStart failed';
+      const err = startResult?.error ?? "serverStart failed";
       if (workers.length > 0) await stopWorkers(workers, getClient);
       return {
         action,
         statusSection: {
-          phase: 'Failed',
+          phase: "Failed",
           serverPid: null,
           endpoint: null,
           lastTransitionTime: now,
           conditions: [
-            { type: 'Applied', status: 'False', reason: action, message: err, lastTransitionTime: now },
+            {
+              type: "Applied",
+              status: "False",
+              reason: action,
+              message: err,
+              lastTransitionTime: now,
+            },
           ],
         },
         error: err,
@@ -988,23 +1034,23 @@ export async function applyOne(
     }
 
     onEvent?.({
-      type: 'started',
-      message: `${manifest.metadata.name}: ready at ${startResult.endpoint} pid=${startResult.pid ?? '?'}`,
+      type: "started",
+      message: `${manifest.metadata.name}: ready at ${startResult.endpoint} pid=${startResult.pid ?? "?"}`,
     });
 
     return {
       action,
       statusSection: {
-        phase: 'Running',
+        phase: "Running",
         serverPid: startResult.pid,
         endpoint: startResult.endpoint,
         lastTransitionTime: now,
         conditions: [
-          { type: 'Applied', status: 'True', reason: action, lastTransitionTime: now },
+          { type: "Applied", status: "True", reason: action, lastTransitionTime: now },
           {
-            type: 'BudgetReserved',
-            status: 'True',
-            message: `node reserves ${adm.reservedAfter.toFixed(1)} / ${adm.budget === Infinity ? 'unbounded' : adm.budget.toFixed(1)} GiB`,
+            type: "BudgetReserved",
+            status: "True",
+            message: `node reserves ${adm.reservedAfter.toFixed(1)} / ${adm.budget === Infinity ? "unbounded" : adm.budget.toFixed(1)} GiB`,
             lastTransitionTime: now,
           },
         ],
@@ -1013,11 +1059,9 @@ export async function applyOne(
   });
 }
 
-export async function applyManifest(
-  opts: ApplyManifestOptions,
-): Promise<ApplyManifestOutcome> {
+export async function applyManifest(opts: ApplyManifestOptions): Promise<ApplyManifestOutcome> {
   const kind = manifestKind(opts.manifest);
-  if (kind === 'ModelRun') {
+  if (kind === "ModelRun") {
     const parsed = ModelRunSchema.safeParse(opts.manifest);
     if (!parsed.success) {
       return { ok: false, error: parsed.error.message };
@@ -1035,20 +1079,20 @@ export async function applyManifest(
       manifest = placement.manifest;
     }
     if (!opts.getClient) {
-      return { ok: false, error: 'applyManifest requires getClient for ModelRun manifests' };
+      return { ok: false, error: "applyManifest requires getClient for ModelRun manifests" };
     }
     const result = await applyOne(manifest, opts.getClient);
     if (result.error) {
       return { ok: false, error: result.error };
     }
-    return { ok: true, kind: 'ModelRun', manifest, result };
+    return { ok: true, kind: "ModelRun", manifest, result };
   }
-  if (kind === 'ModelHost') {
+  if (kind === "ModelHost") {
     const parsed = ModelHostManifestSchema.safeParse(opts.manifest);
     if (!parsed.success) {
       return { ok: false, error: parsed.error.message };
     }
     return await applyModelHostManifest(parsed.data, opts);
   }
-  return { ok: false, error: `unsupported manifest kind: ${kind ?? 'unknown'}` };
+  return { ok: false, error: `unsupported manifest kind: ${kind ?? "unknown"}` };
 }

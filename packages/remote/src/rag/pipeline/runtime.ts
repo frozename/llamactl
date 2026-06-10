@@ -10,28 +10,28 @@
  * distributed work-stealing land in R2 — the public contract stays
  * the same regardless.
  */
-import { createHash } from 'node:crypto';
+import { createHash } from "node:crypto";
 
-import type { DeleteRequest, StoreRequest, RetrievalProvider } from '@nova/contracts';
+import type { DeleteRequest, StoreRequest, RetrievalProvider } from "@nova/contracts";
 
-import { RagPipelineManifestSchema, type RagPipelineManifest } from './schema.js';
-import { openJournal, type Journal, type JournalEntry } from './journal.js';
-import { FETCHERS } from './fetchers/registry.js';
-import { TRANSFORMS } from './transforms/registry.js';
-import { pipelineEvents } from './event-bus.js';
-import type { RawDoc } from './types.js';
-import { loadConfig, resolveNode, defaultConfigPath } from '../../config/kubeconfig.js';
-import { createRagAdapter } from '../index.js';
+import { RagPipelineManifestSchema, type RagPipelineManifest } from "./schema.js";
+import { openJournal, type Journal, type JournalEntry } from "./journal.js";
+import { FETCHERS } from "./fetchers/registry.js";
+import { TRANSFORMS } from "./transforms/registry.js";
+import { pipelineEvents } from "./event-bus.js";
+import type { RawDoc } from "./types.js";
+import { loadConfig, resolveNode, defaultConfigPath } from "../../config/kubeconfig.js";
+import { createRagAdapter } from "../index.js";
 
 export interface OpenAdapterResult {
-  store: RetrievalProvider['store'];
+  store: RetrievalProvider["store"];
   /**
    * Optional — only required when the manifest's `on_duplicate` is
    * `replace`. Tests that don't exercise that code path can omit it;
    * the runtime logs a descriptive error and continues with the wet
    * store if a replace is attempted without a delete binding.
    */
-  delete?: RetrievalProvider['delete'];
+  delete?: RetrievalProvider["delete"];
   close(): Promise<void>;
 }
 
@@ -78,15 +78,13 @@ export interface RunSummary {
   estimated_cost?: {
     usd: number;
     currency: string;
-    source: 'per_chunk' | 'per_doc' | 'combined';
+    source: "per_chunk" | "per_doc" | "combined";
   };
 }
 
 const BATCH_SIZE = 20;
 
-export async function runPipeline(
-  opts: RunPipelineOptions,
-): Promise<RunSummary> {
+export async function runPipeline(opts: RunPipelineOptions): Promise<RunSummary> {
   const manifest = RagPipelineManifestSchema.parse(opts.manifest);
   const env = opts.env ?? process.env;
   const signal = opts.signal ?? new AbortController().signal;
@@ -100,7 +98,7 @@ export async function runPipeline(
 
   const specHash = sha256HexBytes(JSON.stringify(manifest.spec));
   await journal.append({
-    kind: 'run-started',
+    kind: "run-started",
     ts: new Date().toISOString(),
     spec_hash: specHash,
     sources: sourceLabels,
@@ -119,12 +117,12 @@ export async function runPipeline(
       adapter = await openAdapter(manifest.spec.destination.ragNode);
     } catch (err) {
       await journal.append({
-        kind: 'error',
+        kind: "error",
         ts: new Date().toISOString(),
         message: `openAdapter failed: ${toMessage(err)}`,
       });
       await journal.append({
-        kind: 'run-complete',
+        kind: "run-complete",
         ts: new Date().toISOString(),
         total_docs: 0,
         total_chunks: 0,
@@ -150,7 +148,7 @@ export async function runPipeline(
         const fetcher = FETCHERS[src.kind];
         if (!fetcher) {
           await journal.append({
-            kind: 'error',
+            kind: "error",
             ts: new Date().toISOString(),
             source: label,
             message: `unknown source kind '${src.kind}'`,
@@ -161,7 +159,7 @@ export async function runPipeline(
         }
 
         await journal.append({
-          kind: 'source-started',
+          kind: "source-started",
           ts: new Date().toISOString(),
           source: label,
         });
@@ -193,7 +191,7 @@ export async function runPipeline(
         });
 
         await journal.append({
-          kind: 'source-complete',
+          kind: "source-complete",
           ts: new Date().toISOString(),
           source: label,
           docs: perSource.docs,
@@ -213,7 +211,7 @@ export async function runPipeline(
     const cost = computeEstimatedCost(manifest.spec.cost, summary);
     if (cost) summary.estimated_cost = cost;
     await journal.append({
-      kind: 'run-complete',
+      kind: "run-complete",
       ts: new Date().toISOString(),
       total_docs: summary.total_docs,
       total_chunks: summary.total_chunks,
@@ -237,13 +235,13 @@ interface PerSourceTally {
   errors: number;
 }
 
-type OnDuplicate = RagPipelineManifest['spec']['on_duplicate'];
+type OnDuplicate = RagPipelineManifest["spec"]["on_duplicate"];
 
 async function runSource(args: {
   label: string;
   fetcher: (typeof FETCHERS)[string];
   sourceSpec: unknown;
-  transforms: RagPipelineManifest['spec']['transforms'];
+  transforms: RagPipelineManifest["spec"]["transforms"];
   collection: string;
   adapter: OpenAdapterResult;
   journal: Journal;
@@ -254,8 +252,8 @@ async function runSource(args: {
   onDuplicate: OnDuplicate;
 }): Promise<PerSourceTally> {
   const tally: PerSourceTally = { docs: 0, chunks: 0, skipped: 0, errors: 0 };
-  const log = (event: Parameters<Parameters<typeof args.fetcher.fetch>[0]['log']>[0]) => {
-    if (event.level === 'error') {
+  const log = (event: Parameters<Parameters<typeof args.fetcher.fetch>[0]["log"]>[0]) => {
+    if (event.level === "error") {
       void appendErrorEntry(args.journal, args.label, event.msg);
     }
   };
@@ -320,7 +318,7 @@ async function runSource(args: {
 async function processDoc(args: {
   label: string;
   rawDoc: RawDoc;
-  transforms: RagPipelineManifest['spec']['transforms'];
+  transforms: RagPipelineManifest["spec"]["transforms"];
   collection: string;
   adapter: OpenAdapterResult;
   journal: Journal;
@@ -332,11 +330,11 @@ async function processDoc(args: {
   // Exact re-ingest is always a no-op — every mode.
   if (await journal.seen(label, rawDoc.id, sha)) {
     await journal.append({
-      kind: 'doc-skipped',
+      kind: "doc-skipped",
       ts: new Date().toISOString(),
       source: label,
       doc_id: rawDoc.id,
-      reason: 'duplicate',
+      reason: "duplicate",
     });
     return { skipped: true, errored: false, chunks: 0 };
   }
@@ -361,8 +359,8 @@ async function processDoc(args: {
   // The orig id stays in metadata so retrieval can still attribute
   // the chunk to its doc. `replace` and `skip` use the chunks as the
   // transform emitted them.
-  let chunkIdSuffix = '';
-  if (onDuplicate === 'version') {
+  let chunkIdSuffix = "";
+  if (onDuplicate === "version") {
     const prior = await journal.priorIngestions(label, rawDoc.id);
     if (prior.length > 0) chunkIdSuffix = `@${sha.slice(0, 12)}`;
   }
@@ -380,7 +378,7 @@ async function processDoc(args: {
     // `replace`: union every prior ingestion's chunk_ids and delete
     // them up front. Only relevant when this doc_id has been seen
     // before with a different sha. No-ops for fresh docs.
-    if (onDuplicate === 'replace') {
+    if (onDuplicate === "replace") {
       const priorIds = await collectPriorChunkIds(journal, label, rawDoc.id);
       if (priorIds.length > 0) {
         if (!adapter.delete) {
@@ -439,7 +437,7 @@ async function processDoc(args: {
   }
 
   await journal.append({
-    kind: dryRun ? 'doc-would-ingest' : 'doc-ingested',
+    kind: dryRun ? "doc-would-ingest" : "doc-ingested",
     ts: new Date().toISOString(),
     source: label,
     doc_id: rawDoc.id,
@@ -491,7 +489,7 @@ function injectIdSuffix(chunkId: string, docId: string, suffix: string): string 
  */
 async function applyTransforms(
   rawDoc: RawDoc,
-  transforms: RagPipelineManifest['spec']['transforms'],
+  transforms: RagPipelineManifest["spec"]["transforms"],
 ): Promise<RawDoc[]> {
   let stream: AsyncIterable<RawDoc> = asAsync(rawDoc);
   for (const t of transforms) {
@@ -515,7 +513,7 @@ async function appendErrorEntry(
   doc_id?: string,
 ): Promise<void> {
   const entry: JournalEntry = {
-    kind: 'error',
+    kind: "error",
     ts: new Date().toISOString(),
     source,
     message,
@@ -525,7 +523,7 @@ async function appendErrorEntry(
 }
 
 function sha256HexBytes(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function sourceLabel(pipeline: string, index: number, kind: string): string {
@@ -541,9 +539,9 @@ function sourceLabel(pipeline: string, index: number, kind: string): string {
  * so they can label the estimate honestly.
  */
 function computeEstimatedCost(
-  cost: RagPipelineManifest['spec']['cost'] | undefined,
-  summary: Pick<RunSummary, 'total_docs' | 'total_chunks'>,
-): NonNullable<RunSummary['estimated_cost']> | null {
+  cost: RagPipelineManifest["spec"]["cost"] | undefined,
+  summary: Pick<RunSummary, "total_docs" | "total_chunks">,
+): NonNullable<RunSummary["estimated_cost"]> | null {
   if (!cost) return null;
   const perChunk = cost.per_chunk_usd ?? 0;
   const perDoc = cost.per_doc_usd ?? 0;
@@ -551,12 +549,12 @@ function computeEstimatedCost(
   const chunkCost = summary.total_chunks * perChunk;
   const docCost = summary.total_docs * perDoc;
   const usd = chunkCost + docCost;
-  let costSource: 'per_chunk' | 'per_doc' | 'combined' = 'combined';
-  if (perChunk > 0 && perDoc === 0) costSource = 'per_chunk';
-  else if (perDoc > 0 && perChunk === 0) costSource = 'per_doc';
+  let costSource: "per_chunk" | "per_doc" | "combined" = "combined";
+  if (perChunk > 0 && perDoc === 0) costSource = "per_chunk";
+  else if (perDoc > 0 && perChunk === 0) costSource = "per_doc";
   return {
     usd: roundTo6(usd),
-    currency: cost.currency ?? 'USD',
+    currency: cost.currency ?? "USD",
     source: costSource,
   };
 }

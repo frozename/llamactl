@@ -1,13 +1,13 @@
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Absolute path to the CLI entry (source TS, executed by Bun). */
-export const CLI_ENTRY = join(__dirname, '..', 'src', 'bin.ts');
+export const CLI_ENTRY = join(__dirname, "..", "src", "bin.ts");
 
 /**
  * Hermetic runtime rooted in a temp dir. Tests should use this rather
@@ -22,19 +22,19 @@ export function makeTempRuntime(): {
   modelsDir: string;
   cleanup: () => void;
 } {
-  const devStorage = mkdtempSync(join(tmpdir(), 'llamactl-cli-test-'));
-  const runtimeDir = join(devStorage, 'ai-models', 'local-ai');
-  const modelsDir = join(devStorage, 'ai-models', 'llama.cpp', 'models');
+  const devStorage = mkdtempSync(join(tmpdir(), "llamactl-cli-test-"));
+  const runtimeDir = join(devStorage, "ai-models", "local-ai");
+  const modelsDir = join(devStorage, "ai-models", "llama.cpp", "models");
   const env: NodeJS.ProcessEnv = {
-    PATH: process.env.PATH ?? '',
-    HOME: process.env.HOME ?? '/tmp',
+    PATH: process.env.PATH ?? "",
+    HOME: process.env.HOME ?? "/tmp",
     DEV_STORAGE: devStorage,
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
     LLAMA_CPP_MODELS: modelsDir,
-    LLAMA_CPP_MACHINE_PROFILE: 'macbook-pro-48g',
-    LOCAL_AI_RECOMMENDATIONS_SOURCE: 'off', // no network from tests
-    LOCAL_AI_CUSTOM_CATALOG_FILE: join(runtimeDir, 'curated-models.tsv'),
-    LOCAL_AI_PRESET_OVERRIDES_FILE: join(runtimeDir, 'preset-overrides.tsv'),
+    LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
+    LOCAL_AI_RECOMMENDATIONS_SOURCE: "off", // no network from tests
+    LOCAL_AI_CUSTOM_CATALOG_FILE: join(runtimeDir, "curated-models.tsv"),
+    LOCAL_AI_PRESET_OVERRIDES_FILE: join(runtimeDir, "preset-overrides.tsv"),
   };
   return {
     env,
@@ -56,14 +56,14 @@ export interface RunResult {
  * tests are short enough that streaming would be pointless.
  */
 export function runCli(args: string[], env: NodeJS.ProcessEnv): RunResult {
-  const proc = spawnSync('bun', [CLI_ENTRY, ...args], {
+  const proc = spawnSync("bun", [CLI_ENTRY, ...args], {
     env: { ...env },
-    encoding: 'utf8',
-    cwd: join(__dirname, '..'),
+    encoding: "utf8",
+    cwd: join(__dirname, ".."),
   });
   return {
     code: proc.status ?? -1,
-    stdout: proc.stdout ?? '',
-    stderr: proc.stderr ?? '',
+    stdout: proc.stdout ?? "",
+    stderr: proc.stderr ?? "",
   };
 }

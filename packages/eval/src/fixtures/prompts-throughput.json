@@ -1,11 +1,32 @@
 [
-  {"name":"code_python","prompt":"Write a Python function that returns the n-th Fibonacci number using memoization. Include a docstring."},
-  {"name":"code_cpp","prompt":"Write a C++ template function `clamp(x, lo, hi)` that returns x clamped to [lo, hi]. No std::clamp."},
-  {"name":"explain_concept","prompt":"Explain how speculative decoding works in large language model inference, in three short paragraphs."},
-  {"name":"summarize","prompt":"Summarize in two sentences: The Industrial Revolution began in Britain in the late 18th century, transforming manufacturing through mechanization, steam power, and the factory system. It spread to continental Europe and North America during the 19th century."},
-  {"name":"qa_factual","prompt":"Q: What are the four fundamental forces of physics?\nA:"},
-  {"name":"translation","prompt":"Translate to French: 'The quick brown fox jumps over the lazy dog.'"},
-  {"name":"creative_short","prompt":"Write a four-line poem about an old lighthouse."},
-  {"name":"stepwise_math","prompt":"Solve step by step: A train leaves station A at 60 km/h. Two hours later, a second train leaves the same station on the same track at 90 km/h. How long until the second train catches the first?"},
-  {"name":"long_code_review","prompt":"You are reviewing a backend service that has been suffering intermittent latency spikes in production. Below is the relevant code and a description of the system. After reading carefully, produce a structured review with three sections: (1) likely root causes ranked by probability, (2) concrete code or configuration changes you would make first, (3) what telemetry you would add to confirm the diagnosis.\n\nSystem description: a Python FastAPI service in front of a Postgres 15 database, deployed as four replicas behind an nginx load balancer. Each request reads a user record, fetches their last 50 events from a partitioned events table, computes an aggregate score, writes the score back to the user row, and returns a JSON response. Average payload is 4 KB. p50 latency is 35 ms; p99 spikes to 1.8 seconds approximately every 90 seconds in a regular pattern. The spikes correlate with elevated Postgres CPU but not with elevated Postgres connection count. The application pool is sized at 20 connections per replica. PgBouncer is in front of Postgres in transaction pooling mode with a pool size of 50.\n\nBegin your review now."}
+  {
+    "name": "code_python",
+    "prompt": "Write a Python function that returns the n-th Fibonacci number using memoization. Include a docstring."
+  },
+  {
+    "name": "code_cpp",
+    "prompt": "Write a C++ template function `clamp(x, lo, hi)` that returns x clamped to [lo, hi]. No std::clamp."
+  },
+  {
+    "name": "explain_concept",
+    "prompt": "Explain how speculative decoding works in large language model inference, in three short paragraphs."
+  },
+  {
+    "name": "summarize",
+    "prompt": "Summarize in two sentences: The Industrial Revolution began in Britain in the late 18th century, transforming manufacturing through mechanization, steam power, and the factory system. It spread to continental Europe and North America during the 19th century."
+  },
+  { "name": "qa_factual", "prompt": "Q: What are the four fundamental forces of physics?\nA:" },
+  {
+    "name": "translation",
+    "prompt": "Translate to French: 'The quick brown fox jumps over the lazy dog.'"
+  },
+  { "name": "creative_short", "prompt": "Write a four-line poem about an old lighthouse." },
+  {
+    "name": "stepwise_math",
+    "prompt": "Solve step by step: A train leaves station A at 60 km/h. Two hours later, a second train leaves the same station on the same track at 90 km/h. How long until the second train catches the first?"
+  },
+  {
+    "name": "long_code_review",
+    "prompt": "You are reviewing a backend service that has been suffering intermittent latency spikes in production. Below is the relevant code and a description of the system. After reading carefully, produce a structured review with three sections: (1) likely root causes ranked by probability, (2) concrete code or configuration changes you would make first, (3) what telemetry you would add to confirm the diagnosis.\n\nSystem description: a Python FastAPI service in front of a Postgres 15 database, deployed as four replicas behind an nginx load balancer. Each request reads a user record, fetches their last 50 events from a partitioned events table, computes an aggregate score, writes the score back to the user row, and returns a JSON response. Average payload is 4 KB. p50 latency is 35 ms; p99 spikes to 1.8 seconds approximately every 90 seconds in a regular pattern. The spikes correlate with elevated Postgres CPU but not with elevated Postgres connection count. The application pool is sized at 20 connections per replica. PgBouncer is in front of Postgres in transaction pooling mode with a pool size of 50.\n\nBegin your review now."
+  }
 ]

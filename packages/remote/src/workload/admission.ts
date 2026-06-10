@@ -1,9 +1,9 @@
-import { totalmem } from 'node:os';
-import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import type { ResolvedEnv } from '@llamactl/core';
-import type { ModelHostManifest } from './modelhost-schema.js';
-import type { ModelRun } from './schema.js';
+import { totalmem } from "node:os";
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import type { ResolvedEnv } from "@llamactl/core";
+import type { ModelHostManifest } from "./modelhost-schema.js";
+import type { ModelRun } from "./schema.js";
 
 const MODEL_HOST_MEMORY_HEURISTIC_MULTIPLIER = 2;
 
@@ -30,7 +30,7 @@ export function sumReservedForNode(manifests: ModelRun[], nodeName: string): num
 }
 
 export function defaultNodeBudgetGiB(nodeBudgetFromManifest?: number): number {
-  if (typeof nodeBudgetFromManifest === 'number') return nodeBudgetFromManifest;
+  if (typeof nodeBudgetFromManifest === "number") return nodeBudgetFromManifest;
   return (totalmem() / 1024 ** 3) * 0.75;
 }
 
@@ -55,7 +55,7 @@ export function estimateWorkloadMemoryGiB(
   resolved: ResolvedEnv,
 ): number | null {
   if (manifest.spec.gateway) return null;
-  if (manifest.spec.target.kind !== 'rel') return null;
+  if (manifest.spec.target.kind !== "rel") return null;
   const ggufPath = join(resolved.LLAMA_CPP_MODELS, manifest.spec.target.value);
   try {
     const sz = statSync(ggufPath).size;
@@ -84,7 +84,11 @@ export function estimateModelHostMemoryGiB(
   const rel = manifest.spec.hostedModels[0]?.rel;
   if (!rel) return null;
   try {
-    return (pathSizeBytes(join(resolved.LLAMA_CPP_MODELS, rel)) * MODEL_HOST_MEMORY_HEURISTIC_MULTIPLIER) / 1024 ** 3;
+    return (
+      (pathSizeBytes(join(resolved.LLAMA_CPP_MODELS, rel)) *
+        MODEL_HOST_MEMORY_HEURISTIC_MULTIPLIER) /
+      1024 ** 3
+    );
   } catch {
     return null;
   }

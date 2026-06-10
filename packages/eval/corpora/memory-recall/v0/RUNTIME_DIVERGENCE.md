@@ -53,7 +53,7 @@ fts_query: "memory OR verification OR audit OR trail"
 { "hits": [] }
 ```
 
-**Divergence: 3 vs 0 hits.** The MCP tool returns *nothing* on a query
+**Divergence: 3 vs 0 hits.** The MCP tool returns _nothing_ on a query
 the direct rewriter finds 3 topical t2 matches for. The MCP layer is
 filtering or scoring in a way that drops every candidate that BM25
 would surface; the cause is opaque from the caller side.
@@ -71,8 +71,8 @@ selection looked like mine_t0.py's" — not against what the agent
 actually saw when it ran the search.
 
 For the corpus to measure runtime retrieval accuracy (the thing we
-actually care about), the labeler needs the *same rewriter + tier
-selection + scoring* the live system uses. Today it doesn't.
+actually care about), the labeler needs the _same rewriter + tier
+selection + scoring_ the live system uses. Today it doesn't.
 
 ## What ask #4 unlocks
 

@@ -1,12 +1,12 @@
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
   tool_call_id?: string;
   name?: string;
 }
 
 export interface ToolDef {
-  type: 'function';
+  type: "function";
   function: {
     name: string;
     description: string;
@@ -30,8 +30,8 @@ export interface CompletionRequest {
 }
 
 export type ResponseFormat =
-  | { type: 'json_object' }
-  | { type: 'json_schema'; json_schema: { name: string; schema: Record<string, unknown> } };
+  | { type: "json_object" }
+  | { type: "json_schema"; json_schema: { name: string; schema: Record<string, unknown> } };
 
 export interface CompletionResponse {
   choices: Array<{
@@ -40,7 +40,7 @@ export interface CompletionResponse {
       reasoning_content?: string | null;
       tool_calls?: Array<{
         id: string;
-        type: 'function';
+        type: "function";
         function: { name: string; arguments: string };
       }>;
     };
@@ -75,13 +75,13 @@ export function buildCompletionRequest(opts: {
 }): CompletionRequest {
   return {
     body: {
-      model: opts.model ?? 'local',
+      model: opts.model ?? "local",
       messages: opts.messages,
       temperature: opts.temperature ?? 0,
       max_tokens: opts.maxTokens,
       seed: opts.seed,
       stream: false,
-      ...(opts.tools ? { tools: opts.tools, tool_choice: opts.tool_choice ?? 'auto' } : {}),
+      ...(opts.tools ? { tools: opts.tools, tool_choice: opts.tool_choice ?? "auto" } : {}),
       ...(opts.response_format ? { response_format: opts.response_format } : {}),
       ...(opts.enableThinking === false
         ? { chat_template_kwargs: { enable_thinking: false } }
@@ -96,8 +96,8 @@ export async function completeChat(
 ): Promise<{ resp: CompletionResponse; wallMs: number }> {
   const t0 = performance.now();
   const r = await fetch(`${url}/v1/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req.body),
   });
   if (!r.ok) {

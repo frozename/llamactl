@@ -28,30 +28,19 @@
  *      in-proc caller so we don't depend on a running agent HTTP
  *      surface. On failure, surface the component that broke.
  */
-import {
-  createInterface,
-  type Interface as ReadlineInterface,
-} from 'node:readline/promises';
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
-import { homedir, platform } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { createInterface, type Interface as ReadlineInterface } from "node:readline/promises";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, platform } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-type RuntimeKind = 'docker' | 'kubernetes';
-type TemplateKey =
-  | 'chroma-only'
-  | 'pgvector-with-embedder'
-  | 'chroma-plus-workload';
+type RuntimeKind = "docker" | "kubernetes";
+type TemplateKey = "chroma-only" | "pgvector-with-embedder" | "chroma-plus-workload";
 
 const TEMPLATE_ORDER: readonly TemplateKey[] = [
-  'chroma-only',
-  'pgvector-with-embedder',
-  'chroma-plus-workload',
+  "chroma-only",
+  "pgvector-with-embedder",
+  "chroma-plus-workload",
 ];
 
 interface InitArgs {
@@ -59,7 +48,7 @@ interface InitArgs {
   yes: boolean;
   force: boolean;
   noApply: boolean;
-  runtime: RuntimeKind | 'auto';
+  runtime: RuntimeKind | "auto";
   template: TemplateKey | null;
   name: string;
 }
@@ -95,7 +84,7 @@ export async function runInit(argv: string[]): Promise<number> {
       );
       return 1;
     }
-    writeFileSync(targetPath, rewritten, 'utf8');
+    writeFileSync(targetPath, rewritten, "utf8");
     process.stdout.write(`✓ wrote composite to ${targetPath}\n`);
 
     const shouldApply = await confirmApply(args, rl);
@@ -108,9 +97,7 @@ export async function runInit(argv: string[]): Promise<number> {
 
     const applyResult = await applyComposite(targetPath);
     if (!applyResult.ok) {
-      process.stderr.write(
-        `\n✗ apply failed: ${applyResult.message ?? 'unknown error'}\n`,
-      );
+      process.stderr.write(`\n✗ apply failed: ${applyResult.message ?? "unknown error"}\n`);
       return 1;
     }
     process.stdout.write(`\n✓ composite '${args.name}' applied\n`);
@@ -123,9 +110,7 @@ export async function runInit(argv: string[]): Promise<number> {
 // ---- steps ---------------------------------------------------------------
 
 async function greet(): Promise<void> {
-  process.stdout.write(
-    'llamactl init — onboarding wizard for a brand-new install.\n',
-  );
+  process.stdout.write("llamactl init — onboarding wizard for a brand-new install.\n");
   process.stdout.write(
     "I'll pick a runtime, seed a quickstart composite, and (optionally) apply it.\n\n",
   );
@@ -140,7 +125,7 @@ async function detectRuntimes(): Promise<DetectedRuntimes> {
   let docker = false;
   let kubernetes = false;
   try {
-    const { createDockerBackend } = await import('@llamactl/remote');
+    const { createDockerBackend } = await import("@llamactl/remote");
     const b = createDockerBackend();
     await b.ping();
     docker = true;
@@ -148,7 +133,7 @@ async function detectRuntimes(): Promise<DetectedRuntimes> {
     docker = false;
   }
   try {
-    const { KubernetesBackend } = await import('@llamactl/remote');
+    const { KubernetesBackend } = await import("@llamactl/remote");
     const b = new KubernetesBackend();
     await b.ping();
     kubernetes = true;
@@ -163,7 +148,7 @@ async function pickRuntime(
   detected: DetectedRuntimes,
   rl: ReadlineInterface | null,
 ): Promise<RuntimeKind> {
-  if (args.runtime === 'docker' || args.runtime === 'kubernetes') {
+  if (args.runtime === "docker" || args.runtime === "kubernetes") {
     return args.runtime;
   }
   // auto: Docker is the default — k8s is opt-in. We only offer the
@@ -173,78 +158,70 @@ async function pickRuntime(
   // spec.runtime:kubernetes at composite author time.
   if (detected.docker && detected.kubernetes && rl) {
     const ans = await rl.question(
-      'Both Docker and Kubernetes are reachable. Which runtime? [docker/kubernetes] (docker): ',
+      "Both Docker and Kubernetes are reachable. Which runtime? [docker/kubernetes] (docker): ",
     );
     const pick = ans.trim().toLowerCase();
-    if (pick === 'k8s' || pick === 'kubernetes') return 'kubernetes';
-    return 'docker';
+    if (pick === "k8s" || pick === "kubernetes") return "kubernetes";
+    return "docker";
   }
   if (detected.docker) {
-    return 'docker';
+    return "docker";
   }
   if (detected.kubernetes) {
     // Only reachable runtime is k8s — surface that as the pick.
-    process.stdout.write('Runtime: kubernetes (only reachable runtime)\n');
-    return 'kubernetes';
+    process.stdout.write("Runtime: kubernetes (only reachable runtime)\n");
+    return "kubernetes";
   }
   // Docker didn't answer — k8s didn't either. Init goes ahead with
   // docker as the default; the manifest won't apply until Docker is
   // up, but we want to let the operator finish authoring the YAML.
   process.stdout.write(
-    'Runtime: docker (default — neither runtime answered; run `llamactl doctor` after install).\n',
+    "Runtime: docker (default — neither runtime answered; run `llamactl doctor` after install).\n",
   );
-  return 'docker';
+  return "docker";
 }
 
-async function pickTemplate(
-  args: InitArgs,
-  rl: ReadlineInterface | null,
-): Promise<TemplateKey> {
+async function pickTemplate(args: InitArgs, rl: ReadlineInterface | null): Promise<TemplateKey> {
   if (args.template) return args.template;
-  if (!rl) return 'chroma-only';
+  if (!rl) return "chroma-only";
 
-  process.stdout.write('\nAvailable quickstart templates:\n');
+  process.stdout.write("\nAvailable quickstart templates:\n");
   TEMPLATE_ORDER.forEach((key, i) => {
     process.stdout.write(`  ${i + 1}) ${key}${templateBlurb(key)}\n`);
   });
-  const ans = await rl.question('Pick a template [1]: ');
+  const ans = await rl.question("Pick a template [1]: ");
   const n = Number.parseInt(ans.trim(), 10);
   if (Number.isFinite(n) && n >= 1 && n <= TEMPLATE_ORDER.length) {
     return TEMPLATE_ORDER[n - 1]!;
   }
-  return 'chroma-only';
+  return "chroma-only";
 }
 
 function templateBlurb(key: TemplateKey): string {
   switch (key) {
-    case 'chroma-only':
-      return '       — chroma + one rag node (simplest)';
-    case 'pgvector-with-embedder':
-      return ' — pgvector + rag node + delegated embedder';
-    case 'chroma-plus-workload':
-      return '  — chroma + a llama-server workload';
+    case "chroma-only":
+      return "       — chroma + one rag node (simplest)";
+    case "pgvector-with-embedder":
+      return " — pgvector + rag node + delegated embedder";
+    case "chroma-plus-workload":
+      return "  — chroma + a llama-server workload";
   }
 }
 
 function loadTemplate(key: TemplateKey): string {
   const candidates = [
     // dev: repo-root templates/ dir alongside packages/.
-    resolve(moduleDir(), '..', '..', '..', '..', 'templates', 'composites', `${key}.yaml`),
+    resolve(moduleDir(), "..", "..", "..", "..", "templates", "composites", `${key}.yaml`),
     // alternate dev layout: packages/cli run from repo root.
-    resolve(process.cwd(), 'templates', 'composites', `${key}.yaml`),
+    resolve(process.cwd(), "templates", "composites", `${key}.yaml`),
   ];
   for (const p of candidates) {
-    if (existsSync(p)) return readFileSync(p, 'utf8');
+    if (existsSync(p)) return readFileSync(p, "utf8");
   }
-  throw new Error(
-    `template '${key}' not found in any candidate path: ${candidates.join(', ')}`,
-  );
+  throw new Error(`template '${key}' not found in any candidate path: ${candidates.join(", ")}`);
 }
 
-function applyRewrites(
-  yaml: string,
-  opts: { name: string; runtime: RuntimeKind },
-): string {
+function applyRewrites(yaml: string, opts: { name: string; runtime: RuntimeKind }): string {
   // Flat string rewrites avoid pulling a YAML parser — templates
   // are operator-authored with stable formatting. Handles the two
   // knobs init actually changes: metadata.name and spec.runtime.
@@ -256,42 +233,35 @@ function applyRewrites(
 function defaultCompositesDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_COMPOSITES_DIR;
   if (override) return override;
-  const base = env.LLAMACTL_HOME ?? join(homedir(), '.llamactl');
-  return join(base, 'composites');
+  const base = env.LLAMACTL_HOME ?? join(homedir(), ".llamactl");
+  return join(base, "composites");
 }
 
-async function confirmApply(
-  args: InitArgs,
-  rl: ReadlineInterface | null,
-): Promise<boolean> {
+async function confirmApply(args: InitArgs, rl: ReadlineInterface | null): Promise<boolean> {
   if (args.noApply) return false;
   if (args.yes) return true;
   if (!rl) return false;
-  const ans = await rl.question('\nApply this composite now? [y/N]: ');
+  const ans = await rl.question("\nApply this composite now? [y/N]: ");
   return /^(y|yes)$/i.test(ans.trim());
 }
 
-async function applyComposite(
-  yamlPath: string,
-): Promise<{ ok: boolean; message?: string }> {
+async function applyComposite(yamlPath: string): Promise<{ ok: boolean; message?: string }> {
   try {
-    const { router } = await import('@llamactl/remote');
+    const { router } = await import("@llamactl/remote");
     const caller = router.createCaller({});
-    const yaml = readFileSync(yamlPath, 'utf8');
+    const yaml = readFileSync(yamlPath, "utf8");
     const result = await caller.compositeApply({
       manifestYaml: yaml,
       dryRun: false,
     });
     if (!result || result.dryRun !== false) {
-      return { ok: false, message: 'expected a wet-run result' };
+      return { ok: false, message: "expected a wet-run result" };
     }
     if (!result.ok) {
-      const failed = result.componentResults.find(
-        (r) => r.state === 'Failed',
-      );
+      const failed = result.componentResults.find((r) => r.state === "Failed");
       return {
         ok: false,
-        message: failed?.message ?? 'one or more components failed',
+        message: failed?.message ?? "one or more components failed",
       };
     }
     return { ok: true };
@@ -308,25 +278,25 @@ function parseArgs(argv: string[]): InitArgs {
     yes: false,
     force: false,
     noApply: false,
-    runtime: 'auto',
+    runtime: "auto",
     template: null,
-    name: 'quickstart',
+    name: "quickstart",
   };
   for (const arg of argv) {
-    if (arg === '-h' || arg === '--help') a.help = true;
-    else if (arg === '-y' || arg === '--yes') a.yes = true;
-    else if (arg === '--force') a.force = true;
-    else if (arg === '--no-apply') a.noApply = true;
-    else if (arg.startsWith('--runtime=')) {
-      const v = arg.slice('--runtime='.length) as RuntimeKind | 'auto';
-      if (v === 'docker' || v === 'kubernetes' || v === 'auto') a.runtime = v;
-    } else if (arg.startsWith('--template=')) {
-      const v = arg.slice('--template='.length) as TemplateKey;
+    if (arg === "-h" || arg === "--help") a.help = true;
+    else if (arg === "-y" || arg === "--yes") a.yes = true;
+    else if (arg === "--force") a.force = true;
+    else if (arg === "--no-apply") a.noApply = true;
+    else if (arg.startsWith("--runtime=")) {
+      const v = arg.slice("--runtime=".length) as RuntimeKind | "auto";
+      if (v === "docker" || v === "kubernetes" || v === "auto") a.runtime = v;
+    } else if (arg.startsWith("--template=")) {
+      const v = arg.slice("--template=".length) as TemplateKey;
       if ((TEMPLATE_ORDER as readonly string[]).includes(v)) {
         a.template = v;
       }
-    } else if (arg.startsWith('--name=')) {
-      const v = arg.slice('--name='.length).trim();
+    } else if (arg.startsWith("--name=")) {
+      const v = arg.slice("--name=".length).trim();
       if (v.length > 0) a.name = v;
     }
   }
@@ -359,11 +329,11 @@ Flags:
   --force           Overwrite an existing composite YAML.
   --no-apply        Write the manifest but don't apply.
   --runtime=<k>     Force runtime instead of auto-detecting.
-  --template=<key>  One of: ${TEMPLATE_ORDER.join(', ')}.
+  --template=<key>  One of: ${TEMPLATE_ORDER.join(", ")}.
   --name=<name>     Composite name (default: 'quickstart').
 
 Templates:
-${TEMPLATE_ORDER.map((k) => `  ${k}${templateBlurb(k)}`).join('\n')}
+${TEMPLATE_ORDER.map((k) => `  ${k}${templateBlurb(k)}`).join("\n")}
 
 Exit codes:
   0 — manifest written (and optionally applied)

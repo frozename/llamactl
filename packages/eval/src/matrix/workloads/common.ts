@@ -1,5 +1,5 @@
-import type { ResponseFormat } from '../../client.js';
-import type { WorkloadEval } from '../types.js';
+import type { ResponseFormat } from "../../client.js";
+import type { WorkloadEval } from "../types.js";
 
 export interface ChatCorpusRow {
   messages: Array<{ role: string; content: string }>;
@@ -20,7 +20,7 @@ export interface JsonClassifierOpts {
 
 export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadEval {
   if (opts.validLabels && opts.validLabels.size === 0) {
-    throw new Error('buildJsonClassifierWorkload: validLabels must contain at least one label');
+    throw new Error("buildJsonClassifierWorkload: validLabels must contain at least one label");
   }
   const normalize = opts.normalizeLabel ?? ((v: unknown) => String(v));
   const accept = (label: string): boolean => !opts.validLabels || opts.validLabels.has(label);
@@ -28,16 +28,16 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
   const labels = opts.validLabels ? Array.from(opts.validLabels) : undefined;
   const response_format: ResponseFormat | undefined = labels
     ? {
-        type: 'json_schema',
+        type: "json_schema",
         json_schema: {
-          name: opts.name.replace(/[^a-zA-Z0-9_]/g, '_'),
+          name: opts.name.replace(/[^a-zA-Z0-9_]/g, "_"),
           schema: {
-            type: 'object',
+            type: "object",
             properties: {
-              [opts.labelField]: { type: 'string', enum: labels },
-              ...(requireReason ? { reason: { type: 'string' } } : {}),
+              [opts.labelField]: { type: "string", enum: labels },
+              ...(requireReason ? { reason: { type: "string" } } : {}),
             },
-            required: requireReason ? [opts.labelField, 'reason'] : [opts.labelField],
+            required: requireReason ? [opts.labelField, "reason"] : [opts.labelField],
             additionalProperties: false,
           },
         },
@@ -45,7 +45,7 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
     : undefined;
   function stripCodeFences(s: string): string {
     const m = s.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
-    if (m) return m[1] ?? '';
+    if (m) return m[1] ?? "";
     return s;
   }
   function tryParseJson(s: string): Record<string, unknown> | null {
@@ -63,16 +63,16 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
   }
   function extract(content: string): string {
     const parsed = tryParseJson(content);
-    if (!parsed || !(opts.labelField in parsed)) return 'parse_error';
+    if (!parsed || !(opts.labelField in parsed)) return "parse_error";
     const raw = parsed[opts.labelField];
-    if (raw === undefined || raw === null) return 'parse_error';
+    if (raw === undefined || raw === null) return "parse_error";
     const label = normalize(raw);
-    return accept(label) ? label : 'parse_error';
+    return accept(label) ? label : "parse_error";
   }
   return {
     name: opts.name,
     corpus_path: opts.corpus_path,
-    primary_metric_name: 'macro_f1',
+    primary_metric_name: "macro_f1",
     ...(response_format ? { response_format } : {}),
     prompt_builder: (row) => {
       const r = row as ChatCorpusRow;
@@ -81,7 +81,7 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
     scorer: (row, completion) => {
       const pred = extract(completion);
       const r = row as ChatCorpusRow;
-      const goldContent = r.messages[r.messages.length - 1]?.content ?? '';
+      const goldContent = r.messages[r.messages.length - 1]?.content ?? "";
       const gold = extract(goldContent);
       return { metrics: { correct: pred === gold ? 1 : 0 }, prediction: pred, gold };
     },

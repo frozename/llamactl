@@ -8,23 +8,16 @@
  * `/api/v1/heartbeat` endpoint the image also wires into its own
  * HEALTHCHECK directive.
  */
-import type {
-  ServiceDeployment,
-  ServiceInstance,
-} from '../../runtime/backend.js';
-import { LABEL_KEYS, MANAGED_BY_VALUE } from '../../runtime/labels.js';
-import { ServiceError } from '../errors.js';
-import type { ChromaServiceSpec } from '../schema.js';
-import { sha256Hex } from './hash.js';
-import type {
-  ResolvedServiceEndpoint,
-  ServiceHandler,
-  HandlerTranslateOptions,
-} from './types.js';
+import type { ServiceDeployment, ServiceInstance } from "../../runtime/backend.js";
+import { LABEL_KEYS, MANAGED_BY_VALUE } from "../../runtime/labels.js";
+import { ServiceError } from "../errors.js";
+import type { ChromaServiceSpec } from "../schema.js";
+import { sha256Hex } from "./hash.js";
+import type { ResolvedServiceEndpoint, ServiceHandler, HandlerTranslateOptions } from "./types.js";
 
-const DEFAULT_IMAGE_REPOSITORY = 'chromadb/chroma';
-const DEFAULT_IMAGE_TAG = '1.5.8';
-const DEFAULT_MOUNT_PATH = '/data';
+const DEFAULT_IMAGE_REPOSITORY = "chromadb/chroma";
+const DEFAULT_IMAGE_TAG = "1.5.8";
+const DEFAULT_MOUNT_PATH = "/data";
 const CONTAINER_PORT = 8000;
 
 function resolveImage(spec: ChromaServiceSpec): {
@@ -65,19 +58,19 @@ function hashMaterial(spec: ChromaServiceSpec): Record<string, unknown> {
 }
 
 export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
-  kind: 'chroma',
+  kind: "chroma",
 
   validate(spec) {
-    if (spec.runtime === 'external') {
+    if (spec.runtime === "external") {
       if (!spec.externalEndpoint || spec.externalEndpoint.length === 0) {
         throw new ServiceError(
-          'spec-invalid',
+          "spec-invalid",
           `chroma service '${spec.name}': runtime='external' requires externalEndpoint`,
         );
       }
       if (spec.image) {
         throw new ServiceError(
-          'spec-invalid',
+          "spec-invalid",
           `chroma service '${spec.name}': runtime='external' cannot set image — remove it or switch runtime to 'docker'`,
         );
       }
@@ -86,7 +79,7 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
     // runtime === 'docker'
     if (spec.externalEndpoint && spec.externalEndpoint.length > 0) {
       throw new ServiceError(
-        'spec-invalid',
+        "spec-invalid",
         `chroma service '${spec.name}': runtime='docker' cannot set externalEndpoint — remove it or switch runtime to 'external'`,
       );
     }
@@ -96,11 +89,8 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
     return sha256Hex(hashMaterial(spec));
   },
 
-  toDeployment(
-    spec,
-    opts: HandlerTranslateOptions,
-  ): ServiceDeployment | null {
-    if (spec.runtime === 'external') return null;
+  toDeployment(spec, opts: HandlerTranslateOptions): ServiceDeployment | null {
+    if (spec.runtime === "external") return null;
 
     const image = resolveImage(spec);
     const hash = chromaHandler.computeSpecHash(spec);
@@ -110,9 +100,7 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
     const deployment: ServiceDeployment = {
       name,
       image,
-      ports: [
-        { containerPort: CONTAINER_PORT, hostPort: spec.port, protocol: 'tcp' },
-      ],
+      ports: [{ containerPort: CONTAINER_PORT, hostPort: spec.port, protocol: "tcp" }],
       labels: {
         [LABEL_KEYS.managedBy]: MANAGED_BY_VALUE,
         [LABEL_KEYS.composite]: opts.compositeName,
@@ -120,25 +108,20 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
         [LABEL_KEYS.specHash]: hash,
       },
       healthcheck: {
-        test: [
-          'CMD',
-          'curl',
-          '-f',
-          `http://localhost:${CONTAINER_PORT}/api/v1/heartbeat`,
-        ],
+        test: ["CMD", "curl", "-f", `http://localhost:${CONTAINER_PORT}/api/v1/heartbeat`],
         intervalMs: 10_000,
         timeoutMs: 3_000,
         retries: 5,
       },
-      restartPolicy: 'unless-stopped',
+      restartPolicy: "unless-stopped",
       specHash: hash,
-      serviceType: spec.serviceType ?? 'ClusterIP',
+      serviceType: spec.serviceType ?? "ClusterIP",
     };
 
     if (spec.persistence?.volume) {
       const v = spec.persistence.volume;
       deployment.volumes = [
-        v.startsWith('/')
+        v.startsWith("/")
           ? { hostPath: v, containerPath: mountPath }
           : { name: v, containerPath: mountPath },
       ];
@@ -151,15 +134,12 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
     return deployment;
   },
 
-  resolvedEndpoint(
-    spec,
-    instance: ServiceInstance | null,
-  ): ResolvedServiceEndpoint {
-    if (spec.runtime === 'external') {
+  resolvedEndpoint(spec, instance: ServiceInstance | null): ResolvedServiceEndpoint {
+    if (spec.runtime === "external") {
       const raw = spec.externalEndpoint;
       if (!raw) {
         throw new ServiceError(
-          'spec-invalid',
+          "spec-invalid",
           `chroma service '${spec.name}': externalEndpoint is missing`,
         );
       }
@@ -168,14 +148,14 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
         parsed = new URL(raw);
       } catch (err) {
         throw new ServiceError(
-          'spec-invalid',
+          "spec-invalid",
           `chroma service '${spec.name}': externalEndpoint '${raw}' is not a valid URL`,
           err,
         );
       }
       const port = parsed.port
         ? Number(parsed.port)
-        : parsed.protocol === 'https:'
+        : parsed.protocol === "https:"
           ? 443
           : CONTAINER_PORT;
       return { host: parsed.hostname, port, url: raw };
@@ -184,8 +164,8 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
     // runtime === 'docker'
     if (!instance || !instance.endpoint) {
       throw new ServiceError(
-        'endpoint-unresolvable',
-        `chroma service '${spec.name}': docker runtime has no reachable endpoint yet (instance=${instance ? 'present-no-endpoint' : 'null'})`,
+        "endpoint-unresolvable",
+        `chroma service '${spec.name}': docker runtime has no reachable endpoint yet (instance=${instance ? "present-no-endpoint" : "null"})`,
       );
     }
     const { host, port } = instance.endpoint;

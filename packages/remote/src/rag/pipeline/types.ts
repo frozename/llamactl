@@ -13,7 +13,7 @@ export interface RawDoc {
 }
 
 export type LogEvent = {
-  level: 'info' | 'warn' | 'error';
+  level: "info" | "warn" | "error";
   msg: string;
   data?: unknown;
 };
@@ -34,8 +34,5 @@ export interface Fetcher {
 
 export interface Transform {
   kind: string;
-  transform(
-    docs: AsyncIterable<RawDoc>,
-    spec: unknown,
-  ): AsyncIterable<RawDoc>;
+  transform(docs: AsyncIterable<RawDoc>, spec: unknown): AsyncIterable<RawDoc>;
 }

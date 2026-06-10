@@ -1,6 +1,6 @@
-import type { InstalledInfra } from '../infra/layout.js';
-import type { InstallResult } from '../infra/install.js';
-import type { NodeRun, NodeRunInfraItem, NodeRunStatus } from './noderun-schema.js';
+import type { InstalledInfra } from "../infra/layout.js";
+import type { InstallResult } from "../infra/install.js";
+import type { NodeRun, NodeRunInfraItem, NodeRunStatus } from "./noderun-schema.js";
 
 /**
  * Diff + converge a NodeRun manifest against the live infra state
@@ -40,7 +40,7 @@ export interface NodeRunInfraClient {
   infraUninstall: {
     mutate(input: { pkg: string; version?: string }): Promise<{
       ok: true;
-      mode: 'package' | 'version';
+      mode: "package" | "version";
       removed: boolean;
     }>;
   };
@@ -52,11 +52,11 @@ export type ArtifactResolver = (opts: {
 }) => Promise<{ tarballUrl: string; sha256: string }>;
 
 export type NodeRunAction =
-  | { type: 'install'; pkg: string; version: string; reason: 'missing' | 'version-mismatch' }
-  | { type: 'activate'; pkg: string; version: string }
-  | { type: 'uninstall-pkg'; pkg: string; reason: 'unwanted' }
-  | { type: 'uninstall-version'; pkg: string; version: string; reason: 'superseded' }
-  | { type: 'skip'; pkg: string; version: string; reason: 'already-current' };
+  | { type: "install"; pkg: string; version: string; reason: "missing" | "version-mismatch" }
+  | { type: "activate"; pkg: string; version: string }
+  | { type: "uninstall-pkg"; pkg: string; reason: "unwanted" }
+  | { type: "uninstall-version"; pkg: string; version: string; reason: "superseded" }
+  | { type: "skip"; pkg: string; version: string; reason: "already-current" };
 
 export interface NodeRunActionOutcome {
   action: NodeRunAction;
@@ -77,10 +77,7 @@ export interface NodeRunApplyResult {
  * observed? No network. Useful for `apply --dry-run` and the
  * reconciler's "drift" report.
  */
-export function planNodeRun(
-  spec: NodeRun['spec'],
-  live: InstalledInfra[],
-): NodeRunAction[] {
+export function planNodeRun(spec: NodeRun["spec"], live: InstalledInfra[]): NodeRunAction[] {
   const actions: NodeRunAction[] = [];
   const desiredByPkg = new Map<string, NodeRunInfraItem>();
   for (const item of spec.infra) desiredByPkg.set(item.pkg, item);
@@ -89,33 +86,33 @@ export function planNodeRun(
     const observed = live.find((r) => r.pkg === item.pkg);
     if (!observed) {
       actions.push({
-        type: 'install',
+        type: "install",
         pkg: item.pkg,
         version: item.version,
-        reason: 'missing',
+        reason: "missing",
       });
       continue;
     }
     if (observed.active === item.version) {
       actions.push({
-        type: 'skip',
+        type: "skip",
         pkg: item.pkg,
         version: item.version,
-        reason: 'already-current',
+        reason: "already-current",
       });
     } else if (observed.versions.includes(item.version)) {
       // Version is installed but not active — flip the symlink.
       actions.push({
-        type: 'activate',
+        type: "activate",
         pkg: item.pkg,
         version: item.version,
       });
     } else {
       actions.push({
-        type: 'install',
+        type: "install",
         pkg: item.pkg,
         version: item.version,
-        reason: 'version-mismatch',
+        reason: "version-mismatch",
       });
     }
     // Prune superseded versions on the same pkg. v1 keeps only the
@@ -124,10 +121,10 @@ export function planNodeRun(
     for (const v of observed.versions) {
       if (v !== item.version) {
         actions.push({
-          type: 'uninstall-version',
+          type: "uninstall-version",
           pkg: item.pkg,
           version: v,
-          reason: 'superseded',
+          reason: "superseded",
         });
       }
     }
@@ -137,9 +134,9 @@ export function planNodeRun(
   for (const row of live) {
     if (!desiredByPkg.has(row.pkg)) {
       actions.push({
-        type: 'uninstall-pkg',
+        type: "uninstall-pkg",
         pkg: row.pkg,
-        reason: 'unwanted',
+        reason: "unwanted",
       });
     }
   }
@@ -177,14 +174,14 @@ export async function applyNodeRun(
       actions,
       outcomes: actions.map((action) => ({ action, ok: true })),
       status: {
-        phase: actions.every((a) => a.type === 'skip') ? 'Converged' : 'Drift',
+        phase: actions.every((a) => a.type === "skip") ? "Converged" : "Drift",
         observedInfra: observedSummary(manifest, live),
         lastTransitionTime: now(),
         conditions: [
           {
-            type: 'Planned',
-            status: 'True',
-            reason: 'dry-run',
+            type: "Planned",
+            status: "True",
+            reason: "dry-run",
             lastTransitionTime: now(),
           },
         ],
@@ -196,11 +193,11 @@ export async function applyNodeRun(
 
   for (const action of actions) {
     try {
-      if (action.type === 'skip') {
+      if (action.type === "skip") {
         outcomes.push({ action, ok: true });
         continue;
       }
-      if (action.type === 'install') {
+      if (action.type === "install") {
         const artifact = await resolveArtifact({
           pkg: action.pkg,
           version: action.version,
@@ -222,7 +219,7 @@ export async function applyNodeRun(
         if (!result.ok && !firstError) firstError = result.error;
         continue;
       }
-      if (action.type === 'activate') {
+      if (action.type === "activate") {
         const result = await client.infraActivate.mutate({
           pkg: action.pkg,
           version: action.version,
@@ -230,7 +227,7 @@ export async function applyNodeRun(
         outcomes.push({ action, ok: result.ok, detail: result });
         continue;
       }
-      if (action.type === 'uninstall-version') {
+      if (action.type === "uninstall-version") {
         const result = await client.infraUninstall.mutate({
           pkg: action.pkg,
           version: action.version,
@@ -238,7 +235,7 @@ export async function applyNodeRun(
         outcomes.push({ action, ok: result.ok, detail: result });
         continue;
       }
-      if (action.type === 'uninstall-pkg') {
+      if (action.type === "uninstall-pkg") {
         const result = await client.infraUninstall.mutate({ pkg: action.pkg });
         outcomes.push({ action, ok: result.ok, detail: result });
         continue;
@@ -253,11 +250,11 @@ export async function applyNodeRun(
   // Re-fetch to record the post-apply state.
   const postLive = await client.infraList.query();
   const anyFailure = outcomes.some((o) => !o.ok);
-  const phase: NodeRunStatus['phase'] = anyFailure
-    ? 'Failed'
-    : actions.every((a) => a.type === 'skip')
-      ? 'Converged'
-      : 'Converged';
+  const phase: NodeRunStatus["phase"] = anyFailure
+    ? "Failed"
+    : actions.every((a) => a.type === "skip")
+      ? "Converged"
+      : "Converged";
 
   return {
     actions,
@@ -268,9 +265,9 @@ export async function applyNodeRun(
       lastTransitionTime: now(),
       conditions: [
         {
-          type: 'Applied',
-          status: anyFailure ? 'False' : 'True',
-          reason: anyFailure ? 'partial-failure' : 'converged',
+          type: "Applied",
+          status: anyFailure ? "False" : "True",
+          reason: anyFailure ? "partial-failure" : "converged",
           ...(firstError ? { message: firstError } : {}),
           lastTransitionTime: now(),
         },
@@ -283,13 +280,13 @@ export async function applyNodeRun(
 function observedSummary(
   manifest: NodeRun,
   live: InstalledInfra[],
-): NodeRunStatus['observedInfra'] {
-  const out: NodeRunStatus['observedInfra'] = [];
+): NodeRunStatus["observedInfra"] {
+  const out: NodeRunStatus["observedInfra"] = [];
   const desired = new Set(manifest.spec.infra.map((i) => i.pkg));
   for (const row of live) {
     out.push({
       pkg: row.pkg,
-      version: row.active ?? '',
+      version: row.active ?? "",
       active: row.active !== null && desired.has(row.pkg),
     });
   }

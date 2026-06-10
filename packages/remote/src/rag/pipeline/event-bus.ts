@@ -63,7 +63,7 @@ export function createPipelineEventBus(): PipelineEventBus {
     }
   };
 
-  const startRun: PipelineEventBus['startRun'] = (name, init) => {
+  const startRun: PipelineEventBus["startRun"] = (name, init) => {
     const existing = runs.get(name);
     if (existing) clearRetention(existing);
     runs.set(name, {
@@ -77,7 +77,7 @@ export function createPipelineEventBus(): PipelineEventBus {
     });
   };
 
-  const endRun: PipelineEventBus['endRun'] = (name) => {
+  const endRun: PipelineEventBus["endRun"] = (name) => {
     const state = runs.get(name);
     if (!state) return;
     state.run.done = true;
@@ -93,7 +93,7 @@ export function createPipelineEventBus(): PipelineEventBus {
     t.unref?.();
   };
 
-  const currentRun: PipelineEventBus['currentRun'] = (name) => {
+  const currentRun: PipelineEventBus["currentRun"] = (name) => {
     const state = runs.get(name);
     if (!state) return null;
     return {
@@ -104,7 +104,7 @@ export function createPipelineEventBus(): PipelineEventBus {
     };
   };
 
-  const allRunning: PipelineEventBus['allRunning'] = () => {
+  const allRunning: PipelineEventBus["allRunning"] = () => {
     const out: string[] = [];
     for (const [name, state] of runs) {
       if (!state.run.done) out.push(name);
@@ -125,12 +125,8 @@ export const pipelineEvents: PipelineEventBus = createPipelineEventBus();
 
 export function _resetPipelineEventsForTests(): void {
   const fresh = createPipelineEventBus();
-  (pipelineEvents as { startRun: PipelineEventBus['startRun'] }).startRun =
-    fresh.startRun;
-  (pipelineEvents as { endRun: PipelineEventBus['endRun'] }).endRun =
-    fresh.endRun;
-  (pipelineEvents as { currentRun: PipelineEventBus['currentRun'] }).currentRun =
-    fresh.currentRun;
-  (pipelineEvents as { allRunning: PipelineEventBus['allRunning'] }).allRunning =
-    fresh.allRunning;
+  (pipelineEvents as { startRun: PipelineEventBus["startRun"] }).startRun = fresh.startRun;
+  (pipelineEvents as { endRun: PipelineEventBus["endRun"] }).endRun = fresh.endRun;
+  (pipelineEvents as { currentRun: PipelineEventBus["currentRun"] }).currentRun = fresh.currentRun;
+  (pipelineEvents as { allRunning: PipelineEventBus["allRunning"] }).allRunning = fresh.allRunning;
 }

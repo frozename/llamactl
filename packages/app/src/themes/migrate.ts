@@ -4,8 +4,8 @@
  * load after upgrading. Pure; no side-effects.
  */
 
-export type LegacyThemeId = 'glass' | 'neon' | 'ops';
-export type BeaconThemeId = 'sirius' | 'ember' | 'clinical' | 'scrubs';
+export type LegacyThemeId = "glass" | "neon" | "ops";
+export type BeaconThemeId = "sirius" | "ember" | "clinical" | "scrubs";
 export type AnyThemeId = LegacyThemeId | BeaconThemeId | string;
 
 export interface MigrationExtras {
@@ -22,18 +22,18 @@ export interface MigrationResult {
 
 export function migrateLegacyThemeId(id: AnyThemeId): MigrationResult {
   switch (id) {
-    case 'glass':
-      return { themeId: 'sirius', extras: {} };
-    case 'neon':
-      return { themeId: 'sirius', extras: { scanlines: true } };
-    case 'ops':
-      return { themeId: 'scrubs', extras: {} };
-    case 'sirius':
-    case 'ember':
-    case 'clinical':
-    case 'scrubs':
+    case "glass":
+      return { themeId: "sirius", extras: {} };
+    case "neon":
+      return { themeId: "sirius", extras: { scanlines: true } };
+    case "ops":
+      return { themeId: "scrubs", extras: {} };
+    case "sirius":
+    case "ember":
+    case "clinical":
+    case "scrubs":
       return { themeId: id, extras: {} };
     default:
-      return { themeId: 'sirius', extras: {} };
+      return { themeId: "sirius", extras: {} };
   }
 }

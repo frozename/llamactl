@@ -1,7 +1,7 @@
-import * as React from 'react';
-import { useMemo, useState } from 'react';
-import { trpc } from '@/lib/trpc';
-import { PipelineWizardModal } from './pipeline-wizard';
+import * as React from "react";
+import { useMemo, useState } from "react";
+import { trpc } from "@/lib/trpc";
+import { PipelineWizardModal } from "./pipeline-wizard";
 
 /**
  * Pipelines tab — the operator-facing view of the R1/R2 RAG
@@ -29,7 +29,7 @@ interface PipelineManifest {
     destination: { ragNode: string; collection: string };
     sources: Array<{ kind: string } & Record<string, unknown>>;
     schedule?: string;
-    on_duplicate?: 'skip' | 'replace' | 'version';
+    on_duplicate?: "skip" | "replace" | "version";
   };
 }
 
@@ -47,7 +47,7 @@ interface PipelineRecord {
       estimated_cost?: {
         usd: number;
         currency: string;
-        source: 'per_chunk' | 'per_doc' | 'combined';
+        source: "per_chunk" | "per_doc" | "combined";
       };
     };
   };
@@ -77,7 +77,7 @@ interface RunningResponse {
 
 function formatElapsed(startIso: string, now: number = Date.now()): string {
   const ms = now - Date.parse(startIso);
-  if (!Number.isFinite(ms) || ms < 0) return '';
+  if (!Number.isFinite(ms) || ms < 0) return "";
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
@@ -113,7 +113,7 @@ function RunningBadge(props: { entry: RunningEntry }): React.JSX.Element {
     <span
       className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-surface-0)]"
       data-testid={`pipelines-running-${entry.name}`}
-      title={`started ${entry.startedAt} · sources: ${entry.sources.join(', ')}`}
+      title={`started ${entry.startedAt} · sources: ${entry.sources.join(", ")}`}
     >
       <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-surface-0)]" />
       running · {formatElapsed(entry.startedAt, now)}
@@ -159,8 +159,8 @@ function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
   const { summary, at } = rec.lastRun;
   const ok = summary.errors === 0;
   const cls = ok
-    ? 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]'
-    : 'bg-[var(--color-err)] text-[color:var(--color-text-inverse)]';
+    ? "bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]"
+    : "bg-[var(--color-err)] text-[color:var(--color-text-inverse)]";
   const costStr = summary.estimated_cost ? formatCost(summary.estimated_cost) : null;
   const tooltipParts: string[] = [
     `${summary.total_docs} docs`,
@@ -173,15 +173,15 @@ function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
     <div className="flex items-baseline gap-2" data-testid="pipelines-lastrun">
       <span
         className={`rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${cls}`}
-        title={tooltipParts.join(' · ')}
+        title={tooltipParts.join(" · ")}
       >
-        {ok ? 'ok' : `${summary.errors} err`}
+        {ok ? "ok" : `${summary.errors} err`}
       </span>
       <span className="text-[10px] text-[color:var(--color-text-secondary)]">
         {summary.total_docs}/{summary.total_chunks} · {formatRelative(at)}
         {costStr && (
           <>
-            {' · '}
+            {" · "}
             <span
               className="mono text-[color:var(--color-text)]"
               data-testid={`pipelines-lastrun-cost-${rec.name}`}
@@ -196,10 +196,7 @@ function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
   );
 }
 
-function LogsPanel(props: {
-  name: string;
-  onClose: () => void;
-}): React.JSX.Element {
+function LogsPanel(props: { name: string; onClose: () => void }): React.JSX.Element {
   const { name, onClose } = props;
   const logs = trpc.ragPipelineLogs.useQuery(
     { name, tail: 200 },
@@ -231,9 +228,7 @@ function LogsPanel(props: {
         <div className="p-3 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
       )}
       {logs.error && (
-        <div className="p-3 text-sm text-[color:var(--color-err)]">
-          {logs.error.message}
-        </div>
+        <div className="p-3 text-sm text-[color:var(--color-err)]">{logs.error.message}</div>
       )}
       {!logs.isLoading && !logs.error && entries.length === 0 && (
         <div className="p-3 text-sm text-[color:var(--color-text-secondary)]">
@@ -242,7 +237,7 @@ function LogsPanel(props: {
       )}
       {entries.length > 0 && (
         <pre className="max-h-96 overflow-auto p-3 mono text-[10px] text-[color:var(--color-text)]">
-          {entries.map((e) => `${JSON.stringify(e)}\n`).join('')}
+          {entries.map((e) => `${JSON.stringify(e)}\n`).join("")}
         </pre>
       )}
     </div>
@@ -304,10 +299,8 @@ function PipelineRow(props: {
     removeMut.mutate({ name: rec.name });
   };
 
-  const schedule = rec.manifest.spec.schedule ?? '—';
-  const sources = rec.manifest.spec.sources
-    .map((s) => s.kind)
-    .join(', ');
+  const schedule = rec.manifest.spec.schedule ?? "—";
+  const sources = rec.manifest.spec.sources.map((s) => s.kind).join(", ");
   // Prefer the authoritative server signal when present; fall back
   // to our optimistic stamp so fast runs (<2s) still render a badge.
   // Orphan entries (stale: true) don't block the Run button — the
@@ -331,21 +324,13 @@ function PipelineRow(props: {
         className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
         data-testid={`pipelines-row-${rec.name}`}
       >
-        <td className="px-3 py-2 text-[color:var(--color-ok)] break-all">
-          {rec.name}
-        </td>
-        <td className="px-3 py-2 text-[color:var(--color-text)] text-xs">
-          {sources}
-        </td>
+        <td className="px-3 py-2 text-[color:var(--color-ok)] break-all">{rec.name}</td>
+        <td className="px-3 py-2 text-[color:var(--color-text)] text-xs">{sources}</td>
         <td className="px-3 py-2 mono text-xs text-[color:var(--color-text-secondary)]">
           {schedule}
         </td>
         <td className="px-3 py-2">
-          {displayRunning ? (
-            <RunningBadge entry={displayRunning} />
-          ) : (
-            <LastRunBadge rec={rec} />
-          )}
+          {displayRunning ? <RunningBadge entry={displayRunning} /> : <LastRunBadge rec={rec} />}
         </td>
         <td className="px-3 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
@@ -364,10 +349,16 @@ function PipelineRow(props: {
               onClick={onRun}
               disabled={runMut.isPending || isLive}
               data-testid={`pipelines-run-${rec.name}`}
-              title={isLive ? 'run in progress' : displayRunning?.stale ? 'previous run was orphaned — click to start a fresh run' : undefined}
+              title={
+                isLive
+                  ? "run in progress"
+                  : displayRunning?.stale
+                    ? "previous run was orphaned — click to start a fresh run"
+                    : undefined
+              }
               className="rounded bg-[var(--color-brand)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {runMut.isPending ? '…' : isLive ? 'Running' : 'Run'}
+              {runMut.isPending ? "…" : isLive ? "Running" : "Run"}
             </button>
             <button
               type="button"
@@ -375,7 +366,7 @@ function PipelineRow(props: {
               data-testid={`pipelines-logs-toggle-${rec.name}`}
               className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
             >
-              {logsOpen ? 'Hide logs' : 'Logs'}
+              {logsOpen ? "Hide logs" : "Logs"}
             </button>
             <button
               type="button"
@@ -407,16 +398,13 @@ function PipelineRow(props: {
   );
 }
 
-function DraftPanel(props: {
-  selectedNode: string;
-  availableNodes: string[];
-}): React.JSX.Element {
+function DraftPanel(props: { selectedNode: string; availableNodes: string[] }): React.JSX.Element {
   const { selectedNode, availableNodes } = props;
   const utils = trpc.useUtils();
   const [open, setOpen] = useState(false);
-  const [description, setDescription] = useState('');
-  const [nameOverride, setNameOverride] = useState('');
-  const [yaml, setYaml] = useState('');
+  const [description, setDescription] = useState("");
+  const [nameOverride, setNameOverride] = useState("");
+  const [yaml, setYaml] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [drafting, setDrafting] = useState(false);
@@ -465,10 +453,9 @@ function DraftPanel(props: {
     >
       <div className="mb-2 flex items-baseline justify-between">
         <div className="text-xs text-[color:var(--color-text-secondary)]">
-          Draft a pipeline manifest from a description. The drafter is
-          deterministic — extracts URLs, paths, schedule aliases, and
-          rag node hints. Review the YAML, then apply via CLI or the
-          tRPC procedure.
+          Draft a pipeline manifest from a description. The drafter is deterministic — extracts
+          URLs, paths, schedule aliases, and rag node hints. Review the YAML, then apply via CLI or
+          the tRPC procedure.
         </div>
         <button
           type="button"
@@ -512,13 +499,11 @@ function DraftPanel(props: {
             data-testid="pipelines-draft-submit"
             className="w-full rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {drafting ? '…' : 'Draft'}
+            {drafting ? "…" : "Draft"}
           </button>
         </div>
       </div>
-      {error && (
-        <div className="mt-2 text-xs text-[color:var(--color-err)]">{error}</div>
-      )}
+      {error && <div className="mt-2 text-xs text-[color:var(--color-err)]">{error}</div>}
       {warnings.length > 0 && (
         <ul
           className="mt-2 space-y-1 text-xs text-[color:var(--color-text-secondary)]"
@@ -583,10 +568,7 @@ export function PipelinesTab(props: {
   // Show every pipeline; filter note if it targets a different node.
   // Operators often have a single rag node, but filtering would hide
   // misconfigured pipelines — we surface them instead.
-  const sorted = useMemo(
-    () => [...rows].sort((a, b) => a.name.localeCompare(b.name)),
-    [rows],
-  );
+  const sorted = useMemo(() => [...rows].sort((a, b) => a.name.localeCompare(b.name)), [rows]);
 
   return (
     <div className="space-y-4" data-testid="pipelines-root">
@@ -629,16 +611,11 @@ export function PipelinesTab(props: {
           className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6 text-sm text-[color:var(--color-text-secondary)]"
           data-testid="pipelines-empty"
         >
-          <div className="text-[color:var(--color-text)]">
-            No pipelines applied yet.
-          </div>
-          <p className="mt-2 text-xs">
-            Apply one from the CLI:
-          </p>
+          <div className="text-[color:var(--color-text)]">No pipelines applied yet.</div>
+          <p className="mt-2 text-xs">Apply one from the CLI:</p>
           <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]">{`llamactl rag pipeline apply -f templates/rag-pipelines/llamactl-docs.yaml`}</pre>
           <p className="mt-2 text-xs">
-            Or use the Draft button above to scaffold a new manifest from a
-            description.
+            Or use the Draft button above to scaffold a new manifest from a description.
           </p>
         </div>
       )}
@@ -662,9 +639,7 @@ export function PipelinesTab(props: {
                 <PipelineRow
                   key={rec.name}
                   rec={rec}
-                  onLogsToggle={() =>
-                    setLogsOpen((cur) => (cur === rec.name ? null : rec.name))
-                  }
+                  onLogsToggle={() => setLogsOpen((cur) => (cur === rec.name ? null : rec.name))}
                   logsOpen={logsOpen === rec.name}
                   running={runningByName.get(rec.name) ?? null}
                 />

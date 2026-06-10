@@ -3,8 +3,8 @@ import {
   LOCAL_NODE_ENDPOINT,
   resolveNodeKind,
   siriusProviders,
-} from '@llamactl/remote';
-import { stringify as stringifyYaml } from 'yaml';
+} from "@llamactl/remote";
+import { stringify as stringifyYaml } from "yaml";
 
 const USAGE = `llamactl sirius — sirius-gateway integration
 
@@ -80,14 +80,15 @@ function collectAgentNodes(tokenInline: boolean): NodeEntry[] {
   const entries: NodeEntry[] = [];
   for (const node of cluster.nodes) {
     const kind = resolveNodeKind(node);
-    if (kind !== 'agent') continue;
+    if (kind !== "agent") continue;
     if (node.endpoint === LOCAL_NODE_ENDPOINT) continue; // sirius runs on the control plane, no inproc handoff
-    const apiKey = tokenInline && user
-      ? tryResolveToken(user)
-      : `\${LLAMACTL_TOKEN_${node.name.toUpperCase().replace(/[^A-Z0-9]/g, '_')}}`;
+    const apiKey =
+      tokenInline && user
+        ? tryResolveToken(user)
+        : `\${LLAMACTL_TOKEN_${node.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}}`;
     entries.push({
       name: node.name,
-      baseUrl: `${node.endpoint.replace(/\/$/, '')}/v1`,
+      baseUrl: `${node.endpoint.replace(/\/$/, "")}/v1`,
       apiKey,
     });
   }
@@ -118,23 +119,23 @@ function renderEnv(entries: NodeEntry[]): string {
 
 async function runConnect(argv: string[]): Promise<number> {
   const url = argv[0];
-  if (!url || url.startsWith('--')) {
+  if (!url || url.startsWith("--")) {
     process.stderr.write(`sirius connect: base URL is required\n\n${USAGE}`);
     return 1;
   }
-  let name = 'sirius';
+  let name = "sirius";
   let apiKeyRef: string | undefined;
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--name') {
-      name = argv[++i] ?? '';
+    if (arg === "--name") {
+      name = argv[++i] ?? "";
       if (!name) {
         process.stderr.write(`--name requires a value\n`);
         return 1;
       }
-    } else if (arg === '--api-key-ref') {
+    } else if (arg === "--api-key-ref") {
       apiKeyRef = argv[++i];
-    } else if (arg === '--help' || arg === '-h') {
+    } else if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return 0;
     } else {
@@ -142,21 +143,21 @@ async function runConnect(argv: string[]): Promise<number> {
       return 1;
     }
   }
-  const normalized = url.endsWith('/') ? url.slice(0, -1) : url;
-  const baseUrl = normalized.endsWith('/v1') ? normalized : `${normalized}/v1`;
+  const normalized = url.endsWith("/") ? url.slice(0, -1) : url;
+  const baseUrl = normalized.endsWith("/v1") ? normalized : `${normalized}/v1`;
   const cfgPath = kubecfg.defaultConfigPath();
   let cfg = kubecfg.loadConfig(cfgPath);
   const ctx = kubecfg.currentContext(cfg);
   cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
     name,
-    endpoint: '',
+    endpoint: "",
     // Sirius is a gateway (fans out to many providers), not a cloud
     // provider per se. `kind: 'gateway'` lets the UI render the right
     // badge and future gateway-specific features (routing insight,
     // per-provider health) light up only for these nodes.
-    kind: 'gateway',
+    kind: "gateway",
     cloud: {
-      provider: 'sirius',
+      provider: "sirius",
       baseUrl,
       ...(apiKeyRef ? { apiKeyRef } : {}),
     },
@@ -171,20 +172,20 @@ async function runConnect(argv: string[]): Promise<number> {
 
 async function runAddProvider(argv: string[]): Promise<number> {
   const kind = argv[0];
-  if (!kind || kind.startsWith('--')) {
+  if (!kind || kind.startsWith("--")) {
     process.stderr.write(`sirius add-provider: kind is required\n\n${USAGE}`);
     return 1;
   }
   const validKinds: ReadonlyArray<string> = [
-    'openai',
-    'anthropic',
-    'together',
-    'groq',
-    'mistral',
-    'openai-compatible',
+    "openai",
+    "anthropic",
+    "together",
+    "groq",
+    "mistral",
+    "openai-compatible",
   ];
   if (!validKinds.includes(kind)) {
-    process.stderr.write(`unknown provider kind: ${kind}\nvalid: ${validKinds.join(', ')}\n`);
+    process.stderr.write(`unknown provider kind: ${kind}\nvalid: ${validKinds.join(", ")}\n`);
     return 1;
   }
   let name = kind;
@@ -193,11 +194,11 @@ async function runAddProvider(argv: string[]): Promise<number> {
   let displayName: string | undefined;
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--name') name = argv[++i] ?? name;
-    else if (arg === '--api-key-ref') apiKeyRef = argv[++i];
-    else if (arg === '--base-url') baseUrl = argv[++i];
-    else if (arg === '--display-name') displayName = argv[++i];
-    else if (arg === '--help' || arg === '-h') {
+    if (arg === "--name") name = argv[++i] ?? name;
+    else if (arg === "--api-key-ref") apiKeyRef = argv[++i];
+    else if (arg === "--base-url") baseUrl = argv[++i];
+    else if (arg === "--display-name") displayName = argv[++i];
+    else if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return 0;
     } else {
@@ -206,15 +207,14 @@ async function runAddProvider(argv: string[]): Promise<number> {
     }
   }
   if (!baseUrl) {
-    baseUrl = siriusProviders.SIRIUS_PROVIDER_DEFAULT_BASE_URLS[
-      kind as siriusProviders.SiriusProviderKind
-    ];
+    baseUrl =
+      siriusProviders.SIRIUS_PROVIDER_DEFAULT_BASE_URLS[kind as siriusProviders.SiriusProviderKind];
   }
   if (!baseUrl) {
     process.stderr.write(`--base-url is required for ${kind}\n`);
     return 1;
   }
-  if (kind !== 'openai-compatible' && !apiKeyRef) {
+  if (kind !== "openai-compatible" && !apiKeyRef) {
     process.stderr.write(`--api-key-ref is required for ${kind}\n`);
     return 1;
   }
@@ -238,17 +238,17 @@ async function runAddProvider(argv: string[]): Promise<number> {
 }
 
 async function runListProviders(argv: string[]): Promise<number> {
-  let format: 'json' | 'yaml' = 'json';
+  let format: "json" | "yaml" = "json";
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--format') {
+    if (arg === "--format") {
       const next = argv[++i];
-      if (next !== 'json' && next !== 'yaml') {
+      if (next !== "json" && next !== "yaml") {
         process.stderr.write(`--format must be json|yaml\n`);
         return 1;
       }
       format = next;
-    } else if (arg === '--help' || arg === '-h') {
+    } else if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return 0;
     } else {
@@ -258,11 +258,9 @@ async function runListProviders(argv: string[]): Promise<number> {
   }
   const providers = siriusProviders.loadSiriusProviders();
   const rendered =
-    format === 'json'
-      ? JSON.stringify(providers, null, 2)
-      : stringifyYaml({ providers });
+    format === "json" ? JSON.stringify(providers, null, 2) : stringifyYaml({ providers });
   process.stdout.write(rendered);
-  if (!rendered.endsWith('\n')) process.stdout.write('\n');
+  if (!rendered.endsWith("\n")) process.stdout.write("\n");
   return 0;
 }
 
@@ -286,32 +284,32 @@ async function runRemoveProvider(argv: string[]): Promise<number> {
 
 export async function runSirius(argv: string[]): Promise<number> {
   const sub = argv[0];
-  if (!sub || sub === '--help' || sub === '-h') {
+  if (!sub || sub === "--help" || sub === "-h") {
     process.stdout.write(USAGE);
     return 0;
   }
-  if (sub === 'connect') return runConnect(argv.slice(1));
-  if (sub === 'add-provider') return runAddProvider(argv.slice(1));
-  if (sub === 'list-providers') return runListProviders(argv.slice(1));
-  if (sub === 'remove-provider') return runRemoveProvider(argv.slice(1));
-  if (sub !== 'export') {
+  if (sub === "connect") return runConnect(argv.slice(1));
+  if (sub === "add-provider") return runAddProvider(argv.slice(1));
+  if (sub === "list-providers") return runListProviders(argv.slice(1));
+  if (sub === "remove-provider") return runRemoveProvider(argv.slice(1));
+  if (sub !== "export") {
     process.stderr.write(`unknown sirius subcommand: ${sub}\n\n${USAGE}`);
     return 1;
   }
-  let format: 'json' | 'yaml' | 'env' = 'json';
+  let format: "json" | "yaml" | "env" = "json";
   let tokenInline = false;
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--format') {
+    if (arg === "--format") {
       const next = argv[++i];
-      if (next !== 'json' && next !== 'yaml' && next !== 'env') {
-        process.stderr.write(`--format must be json|yaml|env (got ${next ?? ''})\n`);
+      if (next !== "json" && next !== "yaml" && next !== "env") {
+        process.stderr.write(`--format must be json|yaml|env (got ${next ?? ""})\n`);
         return 1;
       }
       format = next;
-    } else if (arg === '--token-inline') {
+    } else if (arg === "--token-inline") {
       tokenInline = true;
-    } else if (arg === '--help' || arg === '-h') {
+    } else if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return 0;
     } else {
@@ -322,15 +320,17 @@ export async function runSirius(argv: string[]): Promise<number> {
 
   const entries = collectAgentNodes(tokenInline);
   if (entries.length === 0) {
-    process.stderr.write('no remote agent nodes registered — nothing to export\n');
+    process.stderr.write("no remote agent nodes registered — nothing to export\n");
     return 0;
   }
 
   const rendered =
-    format === 'json' ? renderJson(entries) :
-    format === 'yaml' ? renderYaml(entries) :
-    renderEnv(entries);
+    format === "json"
+      ? renderJson(entries)
+      : format === "yaml"
+        ? renderYaml(entries)
+        : renderEnv(entries);
   process.stdout.write(rendered);
-  if (!rendered.endsWith('\n')) process.stdout.write('\n');
+  if (!rendered.endsWith("\n")) process.stdout.write("\n");
   return 0;
 }

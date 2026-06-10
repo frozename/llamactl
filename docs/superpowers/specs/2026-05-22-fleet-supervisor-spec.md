@@ -28,7 +28,7 @@ runtime conditions that don't kill a process:
 
 This spec proposes a new **`@llamactl/fleet-supervisor`** package that
 fills these gaps. The supervisor watches, journals, proposes, and (per
-severity gates) acts. It is explicitly *not* an engine replacement —
+severity gates) acts. It is explicitly _not_ an engine replacement —
 the engines (oMLX, llama-server) keep their per-process scheduling
 responsibilities. The supervisor sits above them, treating the engine
 as a black box that loads tokens-into-tensors.
@@ -36,6 +36,7 @@ as a black box that loads tokens-into-tensors.
 ## Goals (L1 → L5)
 
 ### L1: Observability (must)
+
 - Per-workload signal: RSS, Metal residency estimate, /v1/models reachability,
   /health latency, observed request rate (5-min window), observed error rate.
 - Per-node signal: free pages, active/inactive ratio, compressor pages
@@ -45,6 +46,7 @@ as a black box that loads tokens-into-tensors.
   but a different `kind` ("fleet-snapshot"). One snapshot per tick.
 
 ### L2: Reactive ops (must)
+
 - **Memory pressure remediation**: when a node's free-pages SMA falls
   below threshold AND compressor pages above threshold for N consecutive
   ticks, mark `pressure: HIGH` and emit a remediation proposal:
@@ -59,6 +61,7 @@ as a black box that loads tokens-into-tensors.
   if the projection drops below `headroom_min`.
 
 ### L3: Workload reshaping (nice-to-have)
+
 - Dynamic mcr adjust under observed contention: when a workload's p95
   rises sharply during co-residency with another workload, propose
   reducing its mcr by 1. (Caveat: oMLX requires restart to change
@@ -66,6 +69,7 @@ as a black box that loads tokens-into-tensors.
 - max-model-memory shrink/grow: same shape; engine-dependent.
 
 ### L4: Adaptive composition (nice-to-have)
+
 - `spec.priority: 0-100` field on ModelHost/ModelRun. L2 eviction
   uses this for the eviction order.
 - Cross-node role failover: when an agentchat role pool member dies
@@ -74,9 +78,10 @@ as a black box that loads tokens-into-tensors.
   source-of-truth ordering.)
 
 ### L5: Predictive admission (must)
+
 - Pre-flight check on `llamactl enable`: project memory after load,
   reject if below `headroom_min`. Distinct from L2's reactive policy
-  — this catches the problem *before* it happens.
+  — this catches the problem _before_ it happens.
 - (Same logic available as a stand-alone `llamactl admit <workload>`
   CLI command for dry-run capacity planning.)
 
@@ -149,14 +154,18 @@ as a black box that loads tokens-into-tensors.
 ```
 
 Snapshot shape (jsonl):
+
 ```json
 {
   "ts": "2026-05-22T17:00:00Z",
   "kind": "fleet-snapshot",
   "node": "local",
   "node_mem": {
-    "free_mb": 122, "compressor_mb": 4045,
-    "active_mb": 912, "inactive_mb": 839, "wired_mb": 320
+    "free_mb": 122,
+    "compressor_mb": 4045,
+    "active_mb": 912,
+    "inactive_mb": 839,
+    "wired_mb": 320
   },
   "workloads": [
     {
@@ -166,7 +175,8 @@ Snapshot shape (jsonl):
       "rss_mb": 36,
       "request_rate_5m": 2.3,
       "error_rate_5m": 0.0,
-      "p50_ms": 240, "p95_ms": 480,
+      "p50_ms": 240,
+      "p95_ms": 480,
       "models": ["Qwen3.6-35B-A3B-4bit"],
       "reachable": true
     }
@@ -209,8 +219,8 @@ Transition + proposal shape: same as healer journal (transition kind
      around (no process kill).
    - Tier 3 (destructive, propose-only by default): evict, kill,
      restart.
-   Should "evict" ever be tier 2? Argument for: reversible (re-enable
-   later). Argument against: data in flight is lost.
+     Should "evict" ever be tier 2? Argument for: reversible (re-enable
+     later). Argument against: data in flight is lost.
 
 7. **Failure mode**: what if the supervisor itself stalls or hangs?
    Heal-of-heal-er pattern? At minimum, the supervisor should journal
@@ -265,4 +275,4 @@ the persona disagreement converges on different scoping.
 - 2026-05-22 fleet audit (this session): role pool composition,
   bench-informed defaults for which workloads should bear which load.
 - `[Daemon arg-dedup fix 2026-05-15]`, `[Mac-mini iso spawn regression
-  2026-05-21]` — historical incidents the supervisor should help avoid.
+2026-05-21]` — historical incidents the supervisor should help avoid.

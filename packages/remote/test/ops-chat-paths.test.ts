@@ -1,9 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { defaultOpsChatAuditPath, defaultSessionsDir, defaultSessionDir } from '../src/ops-chat/paths.js';
+import {
+  defaultOpsChatAuditPath,
+  defaultSessionsDir,
+  defaultSessionDir,
+} from "../src/ops-chat/paths.js";
 
 /**
  * State-isolation fix — ops-chat audit path must honour `$DEV_STORAGE`
@@ -13,11 +17,11 @@ import { defaultOpsChatAuditPath, defaultSessionsDir, defaultSessionDir } from '
  * other llamactl data-path helper already implements.
  */
 
-let tmp = '';
+let tmp = "";
 const originalEnv = { ...process.env };
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-opschat-paths-'));
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-opschat-paths-"));
   for (const k of Object.keys(process.env)) delete process.env[k];
 });
 
@@ -27,62 +31,58 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-describe('defaultOpsChatAuditPath', () => {
-  test('LLAMACTL_OPS_CHAT_AUDIT override wins over every cascade step', () => {
-    const custom = join(tmp, 'custom-audit.jsonl');
+describe("defaultOpsChatAuditPath", () => {
+  test("LLAMACTL_OPS_CHAT_AUDIT override wins over every cascade step", () => {
+    const custom = join(tmp, "custom-audit.jsonl");
     const env = {
       LLAMACTL_OPS_CHAT_AUDIT: custom,
-      DEV_STORAGE: join(tmp, 'dev-storage'),
+      DEV_STORAGE: join(tmp, "dev-storage"),
     } as NodeJS.ProcessEnv;
     expect(defaultOpsChatAuditPath(env)).toBe(custom);
   });
 
-  test('DEV_STORAGE re-roots the audit dir when set', () => {
-    const devStorage = join(tmp, 'dev-storage');
+  test("DEV_STORAGE re-roots the audit dir when set", () => {
+    const devStorage = join(tmp, "dev-storage");
     const env = { DEV_STORAGE: devStorage } as NodeJS.ProcessEnv;
-    expect(defaultOpsChatAuditPath(env)).toBe(
-      join(devStorage, 'ops-chat', 'audit.jsonl'),
-    );
+    expect(defaultOpsChatAuditPath(env)).toBe(join(devStorage, "ops-chat", "audit.jsonl"));
   });
 
-  test('falls back to homedir when neither override nor DEV_STORAGE set', () => {
+  test("falls back to homedir when neither override nor DEV_STORAGE set", () => {
     const env = {} as NodeJS.ProcessEnv;
     expect(defaultOpsChatAuditPath(env)).toBe(
-      join(homedir(), '.llamactl', 'ops-chat', 'audit.jsonl'),
+      join(homedir(), ".llamactl", "ops-chat", "audit.jsonl"),
     );
   });
 
-  test('empty string DEV_STORAGE falls through to homedir', () => {
-    const env = { DEV_STORAGE: '   ' } as NodeJS.ProcessEnv;
+  test("empty string DEV_STORAGE falls through to homedir", () => {
+    const env = { DEV_STORAGE: "   " } as NodeJS.ProcessEnv;
     expect(defaultOpsChatAuditPath(env)).toBe(
-      join(homedir(), '.llamactl', 'ops-chat', 'audit.jsonl'),
+      join(homedir(), ".llamactl", "ops-chat", "audit.jsonl"),
     );
   });
 
-  test('reads process.env by default', () => {
-    const devStorage = join(tmp, 'dev-storage-proc');
+  test("reads process.env by default", () => {
+    const devStorage = join(tmp, "dev-storage-proc");
     process.env.DEV_STORAGE = devStorage;
-    expect(defaultOpsChatAuditPath()).toBe(
-      join(devStorage, 'ops-chat', 'audit.jsonl'),
-    );
+    expect(defaultOpsChatAuditPath()).toBe(join(devStorage, "ops-chat", "audit.jsonl"));
   });
 });
 
-describe('ops-chat paths — sessions', () => {
-  test('defaultSessionsDir uses DEV_STORAGE when set', () => {
-    expect(defaultSessionsDir({ DEV_STORAGE: '/tmp/abc' } as any)).toBe(
-      '/tmp/abc/ops-chat/sessions',
+describe("ops-chat paths — sessions", () => {
+  test("defaultSessionsDir uses DEV_STORAGE when set", () => {
+    expect(defaultSessionsDir({ DEV_STORAGE: "/tmp/abc" } as any)).toBe(
+      "/tmp/abc/ops-chat/sessions",
     );
   });
 
-  test('defaultSessionsDir falls back to homedir/.llamactl when DEV_STORAGE missing', () => {
+  test("defaultSessionsDir falls back to homedir/.llamactl when DEV_STORAGE missing", () => {
     const out = defaultSessionsDir({} as any);
-    expect(out.endsWith('/.llamactl/ops-chat/sessions')).toBe(true);
+    expect(out.endsWith("/.llamactl/ops-chat/sessions")).toBe(true);
   });
 
-  test('defaultSessionDir joins sessionId', () => {
-    expect(defaultSessionDir({ DEV_STORAGE: '/tmp/abc' } as any, 'sess-1')).toBe(
-      '/tmp/abc/ops-chat/sessions/sess-1',
+  test("defaultSessionDir joins sessionId", () => {
+    expect(defaultSessionDir({ DEV_STORAGE: "/tmp/abc" } as any, "sess-1")).toBe(
+      "/tmp/abc/ops-chat/sessions/sess-1",
     );
   });
 });

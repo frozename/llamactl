@@ -108,6 +108,7 @@ code only activates them when explicitly set by upstream callers
 ## Tests
 
 `tests/test_admission_pause_refinement.py` covers:
+
 1. Mixed-size queue under pressure: small request admitted, large
    rejected.
 2. Multi-request queue with all-too-large requests: every waiter gets

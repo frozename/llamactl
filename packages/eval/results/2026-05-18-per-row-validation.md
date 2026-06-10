@@ -34,20 +34,20 @@ ORDER BY model_name;
 
 ## Result
 
-| Tier | Model | SQL EM | tier-bench EM | match |
-|---|---|---:|---:|:---:|
-| nocall | gemma4-26b-a4b-mtp | 0.8000 | 0.8000 | ✓ |
-| nocall | gemma4-e4b-vanilla | 0.8000 | 0.8000 | ✓ |
-| nocall | granite-3b-Q8 | 0.6000 | 0.6000 | ✓ |
-| nocall | qwen3.5-9b-mtp | 1.0000 | 1.0000 | ✓ |
-| single | gemma4-26b-a4b-mtp | 0.8235 | 0.8235 | ✓ |
-| single | gemma4-e4b-vanilla | 0.4412 | 0.4412 | ✓ |
-| single | granite-3b-Q8 | 0.8485 (n=33) | 0.8485 (n=34, 1 err) | ✓ |
-| single | qwen3.5-9b-mtp | 0.8235 | 0.8235 | ✓ |
-| multi | gemma4-26b-a4b-mtp | 0.0000 | 0.0000 | ✓ |
-| multi | gemma4-e4b-vanilla | 0.0000 | 0.0000 | ✓ |
-| multi | granite-3b-Q8 | 0.0000 | 0.0000 | ✓ |
-| multi | qwen3.5-9b-mtp | 0.0000 | 0.0000 | ✓ |
+| Tier   | Model              |        SQL EM |        tier-bench EM | match |
+| ------ | ------------------ | ------------: | -------------------: | :---: |
+| nocall | gemma4-26b-a4b-mtp |        0.8000 |               0.8000 |   ✓   |
+| nocall | gemma4-e4b-vanilla |        0.8000 |               0.8000 |   ✓   |
+| nocall | granite-3b-Q8      |        0.6000 |               0.6000 |   ✓   |
+| nocall | qwen3.5-9b-mtp     |        1.0000 |               1.0000 |   ✓   |
+| single | gemma4-26b-a4b-mtp |        0.8235 |               0.8235 |   ✓   |
+| single | gemma4-e4b-vanilla |        0.4412 |               0.4412 |   ✓   |
+| single | granite-3b-Q8      | 0.8485 (n=33) | 0.8485 (n=34, 1 err) |   ✓   |
+| single | qwen3.5-9b-mtp     |        0.8235 |               0.8235 |   ✓   |
+| multi  | gemma4-26b-a4b-mtp |        0.0000 |               0.0000 |   ✓   |
+| multi  | gemma4-e4b-vanilla |        0.0000 |               0.0000 |   ✓   |
+| multi  | granite-3b-Q8      |        0.0000 |               0.0000 |   ✓   |
+| multi  | qwen3.5-9b-mtp     |        0.0000 |               0.0000 |   ✓   |
 
 Detail-row counts per model: 50/50 for three, 49/50 for granite-3b-Q8
 (the row-44 grammar-parse 500 hits the `errors` counter but doesn't

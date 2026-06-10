@@ -1,9 +1,5 @@
-import { Agent } from 'undici';
-import {
-  assertFingerprintMatch,
-  type ClusterNode,
-  type PinnedFetch,
-} from '@llamactl/remote';
+import { Agent } from "undici";
+import { assertFingerprintMatch, type ClusterNode, type PinnedFetch } from "@llamactl/remote";
 
 /**
  * Electron main runs Node.js (not Bun), so Bun's `fetch({ tls: { ca } })`
@@ -20,15 +16,16 @@ import {
 export function makeNodePinnedFetch(node: ClusterNode): PinnedFetch {
   assertFingerprintMatch(node);
   const ca = node.certificate;
-  const dispatcher = ca
-    ? new Agent({ connect: { ca } })
-    : undefined;
+  const dispatcher = ca ? new Agent({ connect: { ca } }) : undefined;
 
   return async (input: string | URL | Request, init?: RequestInit) => {
     const extra = dispatcher ? { dispatcher } : {};
-    return fetch(input as string | URL, {
-      ...init,
-      ...extra,
-    } as RequestInit);
+    return fetch(
+      input as string | URL,
+      {
+        ...init,
+        ...extra,
+      } as RequestInit,
+    );
   };
 }

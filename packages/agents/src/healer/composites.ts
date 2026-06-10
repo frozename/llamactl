@@ -1,4 +1,4 @@
-import type { RunbookToolClient } from '../types.js';
+import type { RunbookToolClient } from "../types.js";
 
 /**
  * Composite fetcher — calls `llamactl.composite.list` through the in-
@@ -21,21 +21,12 @@ import type { RunbookToolClient } from '../types.js';
  * re-apply verb wants the manifest YAML, not a name).
  */
 
-export type CompositePhase =
-  | 'Pending'
-  | 'Applying'
-  | 'Ready'
-  | 'Degraded'
-  | 'Failed';
+export type CompositePhase = "Pending" | "Applying" | "Ready" | "Degraded" | "Failed";
 
-export type CompositeComponentState =
-  | 'Pending'
-  | 'Applying'
-  | 'Ready'
-  | 'Failed';
+export type CompositeComponentState = "Pending" | "Applying" | "Ready" | "Failed";
 
 export interface CompositeComponentSummary {
-  kind: 'service' | 'workload' | 'rag' | 'gateway';
+  kind: "service" | "workload" | "rag" | "gateway";
   name: string;
   state: CompositeComponentState;
   message?: string;
@@ -43,7 +34,7 @@ export interface CompositeComponentSummary {
 
 export interface CompositeSummary {
   name: string;
-  phase: CompositePhase | 'Unknown';
+  phase: CompositePhase | "Unknown";
   components: CompositeComponentSummary[];
   /** Raw manifest JSON re-serialized as YAML so the loop can plug it
    *  straight into `llamactl.composite.apply`'s `manifestYaml` input.
@@ -60,7 +51,7 @@ function firstTextBlock(result: McpCallResult): string | undefined {
   const content = result.content;
   if (!Array.isArray(content) || content.length === 0) return undefined;
   const first = content[0];
-  if (!first || first.type !== 'text' || typeof first.text !== 'string') return undefined;
+  if (!first || first.type !== "text" || typeof first.text !== "string") return undefined;
   return first.text;
 }
 
@@ -84,18 +75,16 @@ interface CompositeListEnvelope {
 function parseEnvelope(result: McpCallResult): CompositeListEnvelope {
   const text = firstTextBlock(result);
   if (text === undefined) {
-    throw new Error('llamactl.composite.list: missing text content block');
+    throw new Error("llamactl.composite.list: missing text content block");
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    throw new Error(
-      `llamactl.composite.list: JSON parse failed — ${(err as Error).message}`,
-    );
+    throw new Error(`llamactl.composite.list: JSON parse failed — ${(err as Error).message}`);
   }
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('llamactl.composite.list: envelope is not an object');
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("llamactl.composite.list: envelope is not an object");
   }
   return parsed as CompositeListEnvelope;
 }
@@ -112,50 +101,44 @@ function toManifestYaml(raw: unknown): string {
   return JSON.stringify(raw, null, 2);
 }
 
-function normalizeComponentKind(
-  raw: string | undefined,
-): CompositeComponentSummary['kind'] {
-  if (raw === 'service' || raw === 'workload' || raw === 'rag' || raw === 'gateway') {
+function normalizeComponentKind(raw: string | undefined): CompositeComponentSummary["kind"] {
+  if (raw === "service" || raw === "workload" || raw === "rag" || raw === "gateway") {
     return raw;
   }
   // Defensive — if the server emits an unknown kind we don't want to
   // crash the loop; treat it as 'service' and let the apply path
   // surface the real validation error downstream.
-  return 'service';
+  return "service";
 }
 
-function normalizeComponentState(
-  raw: string | undefined,
-): CompositeComponentState {
-  if (raw === 'Pending' || raw === 'Applying' || raw === 'Ready' || raw === 'Failed') {
+function normalizeComponentState(raw: string | undefined): CompositeComponentState {
+  if (raw === "Pending" || raw === "Applying" || raw === "Ready" || raw === "Failed") {
     return raw;
   }
-  return 'Pending';
+  return "Pending";
 }
 
-function normalizePhase(raw: string | undefined): CompositeSummary['phase'] {
+function normalizePhase(raw: string | undefined): CompositeSummary["phase"] {
   if (
-    raw === 'Pending' ||
-    raw === 'Applying' ||
-    raw === 'Ready' ||
-    raw === 'Degraded' ||
-    raw === 'Failed'
+    raw === "Pending" ||
+    raw === "Applying" ||
+    raw === "Ready" ||
+    raw === "Degraded" ||
+    raw === "Failed"
   ) {
     return raw;
   }
-  return 'Unknown';
+  return "Unknown";
 }
 
-export async function fetchComposites(
-  toolClient: RunbookToolClient,
-): Promise<CompositeSummary[]> {
+export async function fetchComposites(toolClient: RunbookToolClient): Promise<CompositeSummary[]> {
   const raw = (await toolClient.callTool({
-    name: 'llamactl.composite.list',
+    name: "llamactl.composite.list",
     arguments: {},
   })) as McpCallResult;
 
   if (raw?.isError === true) {
-    const text = firstTextBlock(raw) ?? 'llamactl.composite.list returned isError';
+    const text = firstTextBlock(raw) ?? "llamactl.composite.list returned isError";
     throw new Error(text.slice(0, 500));
   }
 
@@ -164,16 +147,16 @@ export async function fetchComposites(
   const out: CompositeSummary[] = [];
   for (const entry of list) {
     const name = entry?.metadata?.name;
-    if (typeof name !== 'string' || name.length === 0) continue;
+    if (typeof name !== "string" || name.length === 0) continue;
     const phase = normalizePhase(entry.status?.phase);
     const components: CompositeComponentSummary[] = [];
     for (const c of entry.status?.components ?? []) {
       const summary: CompositeComponentSummary = {
         kind: normalizeComponentKind(c.ref?.kind),
-        name: typeof c.ref?.name === 'string' ? c.ref.name : '',
+        name: typeof c.ref?.name === "string" ? c.ref.name : "",
         state: normalizeComponentState(c.state),
       };
-      if (typeof c.message === 'string' && c.message.length > 0) {
+      if (typeof c.message === "string" && c.message.length > 0) {
         summary.message = c.message;
       }
       components.push(summary);
@@ -201,16 +184,16 @@ export async function fetchComposites(
  * stale empty status would create churn.
  */
 export function shouldRemediateComposite(summary: CompositeSummary): boolean {
-  if (summary.phase === 'Degraded' || summary.phase === 'Failed') return true;
-  if (summary.phase === 'Unknown') return false;
-  return summary.components.some((c) => c.state === 'Failed');
+  if (summary.phase === "Degraded" || summary.phase === "Failed") return true;
+  if (summary.phase === "Unknown") return false;
+  return summary.components.some((c) => c.state === "Failed");
 }
 
 /** Short human-readable reason string used in journal entries. */
 export function formatCompositeReason(summary: CompositeSummary): string {
-  const failed = summary.components.filter((c) => c.state === 'Failed').length;
+  const failed = summary.components.filter((c) => c.state === "Failed").length;
   const total = summary.components.length;
-  if (summary.phase === 'Degraded' || summary.phase === 'Failed') {
+  if (summary.phase === "Degraded" || summary.phase === "Failed") {
     return total > 0
       ? `composite ${summary.name} reports ${summary.phase} (${failed}/${total} components Failed), re-applying`
       : `composite ${summary.name} reports ${summary.phase}, re-applying`;

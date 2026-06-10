@@ -18,11 +18,11 @@
  * Every result is `.trim()`'d — trailing newlines from `security`
  * exports and text-editor "save" actions are common and harmless.
  */
-import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir, platform } from 'node:os';
+import { execSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir, platform } from "node:os";
 
-export type SecretBackend = 'env' | 'file' | 'keychain';
+export type SecretBackend = "env" | "file" | "keychain";
 
 export interface SecretResolver {
   /**
@@ -49,9 +49,7 @@ export interface SecretResolverOptions {
   runSecurityCli?: (service: string, account: string) => string;
 }
 
-export function createSecretResolver(
-  opts: SecretResolverOptions = {},
-): SecretResolver {
+export function createSecretResolver(opts: SecretResolverOptions = {}): SecretResolver {
   const env = opts.env ?? process.env;
   const hostPlatform = opts.hostPlatform ?? platform();
   const runSecurity = opts.runSecurityCli ?? defaultRunSecurityCli;
@@ -63,16 +61,16 @@ export function createSecretResolver(
     resolve(ref) {
       const { backend, body } = classify(ref);
       switch (backend) {
-        case 'env':
+        case "env":
           return resolveEnv(body, env);
-        case 'keychain':
-          if (hostPlatform !== 'darwin') {
+        case "keychain":
+          if (hostPlatform !== "darwin") {
             throw new Error(
               `keychain secret ref '${ref}' requires macOS; host is '${hostPlatform}'`,
             );
           }
           return resolveKeychain(body, runSecurity);
-        case 'file':
+        case "file":
           return resolveFile(body, env);
       }
     },
@@ -80,10 +78,7 @@ export function createSecretResolver(
 }
 
 /** Convenience for callers that don't need dependency injection. */
-export function resolveSecret(
-  ref: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function resolveSecret(ref: string, env: NodeJS.ProcessEnv = process.env): string {
   return createSecretResolver({ env }).resolve(ref);
 }
 
@@ -92,40 +87,40 @@ export function resolveSecret(
 function classify(ref: string): { backend: SecretBackend; body: string } {
   const trimmed = ref.trim();
   if (trimmed.length === 0) {
-    throw new Error('empty secret reference');
+    throw new Error("empty secret reference");
   }
-  if (trimmed.startsWith('env:')) {
-    return { backend: 'env', body: trimmed.slice('env:'.length) };
+  if (trimmed.startsWith("env:")) {
+    return { backend: "env", body: trimmed.slice("env:".length) };
   }
-  if (trimmed.startsWith('$')) {
-    return { backend: 'env', body: trimmed.slice(1) };
+  if (trimmed.startsWith("$")) {
+    return { backend: "env", body: trimmed.slice(1) };
   }
-  if (trimmed.startsWith('keychain:')) {
-    return { backend: 'keychain', body: trimmed.slice('keychain:'.length) };
+  if (trimmed.startsWith("keychain:")) {
+    return { backend: "keychain", body: trimmed.slice("keychain:".length) };
   }
-  if (trimmed.startsWith('file:')) {
-    return { backend: 'file', body: trimmed.slice('file:'.length) };
+  if (trimmed.startsWith("file:")) {
+    return { backend: "file", body: trimmed.slice("file:".length) };
   }
   // Legacy: anything else is a filesystem path.
-  return { backend: 'file', body: trimmed };
+  return { backend: "file", body: trimmed };
 }
 
 function resolveEnv(varName: string, env: NodeJS.ProcessEnv): string {
-  if (!varName) throw new Error('env secret ref has empty variable name');
+  if (!varName) throw new Error("env secret ref has empty variable name");
   const value = env[varName];
-  if (value === undefined || value === '') {
+  if (value === undefined || value === "") {
     throw new Error(`env var '${varName}' is not set`);
   }
   return value.trim();
 }
 
 function resolveFile(path: string, env: NodeJS.ProcessEnv): string {
-  if (!path) throw new Error('file secret ref has empty path');
+  if (!path) throw new Error("file secret ref has empty path");
   const resolved = path.replace(/^~(?=$|\/)/, env.HOME ?? homedir());
   if (!existsSync(resolved)) {
     throw new Error(`file secret ref '${path}' does not exist at ${resolved}`);
   }
-  return readFileSync(resolved, 'utf8').trim();
+  return readFileSync(resolved, "utf8").trim();
 }
 
 /**
@@ -139,8 +134,8 @@ function resolveKeychain(
   body: string,
   runSecurity: (service: string, account: string) => string,
 ): string {
-  if (!body) throw new Error('keychain secret ref has empty service/account');
-  const slash = body.indexOf('/');
+  if (!body) throw new Error("keychain secret ref has empty service/account");
+  const slash = body.indexOf("/");
   if (slash < 0) {
     throw new Error(
       `keychain secret ref '${body}' missing '/account' — expected 'keychain:<service>/<account>'`,
@@ -149,9 +144,7 @@ function resolveKeychain(
   const service = body.slice(0, slash);
   const account = body.slice(slash + 1);
   if (!service || !account) {
-    throw new Error(
-      `keychain secret ref '${body}' has empty service or account segment`,
-    );
+    throw new Error(`keychain secret ref '${body}' has empty service or account segment`);
   }
   try {
     return runSecurity(service, account).trim();
@@ -159,7 +152,7 @@ function resolveKeychain(
     // Don't echo any CLI stderr body — it can contain hints that
     // reveal whether a service/account exists. Just name the miss.
     throw new Error(
-      `keychain lookup failed for service='${service}' account='${account}' (${(err as Error).message ?? 'unknown'})`,
+      `keychain lookup failed for service='${service}' account='${account}' (${(err as Error).message ?? "unknown"})`,
     );
   }
 }
@@ -170,7 +163,7 @@ function defaultRunSecurityCli(service: string, account: string): string {
   // wraps that into the redacted "lookup failed" message above.
   const out = execSync(
     `/usr/bin/security find-generic-password -w -s ${shellEscape(service)} -a ${shellEscape(account)}`,
-    { stdio: ['ignore', 'pipe', 'pipe'] },
+    { stdio: ["ignore", "pipe", "pipe"] },
   );
   return out.toString();
 }

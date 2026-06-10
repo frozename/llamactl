@@ -14,12 +14,12 @@
  * collapse tags and whitespace. Good enough for doc crawls; we
  * don't replace a real search-engine extractor.
  */
-import type { Fetcher, RawDoc } from '../types.js';
-import { HttpSourceSpecSchema } from '../schema.js';
-import { resolveSecret } from '../../../config/secret.js';
+import type { Fetcher, RawDoc } from "../types.js";
+import { HttpSourceSpecSchema } from "../schema.js";
+import { resolveSecret } from "../../../config/secret.js";
 
 export const httpFetcher: Fetcher = {
-  kind: 'http',
+  kind: "http",
   async *fetch(ctx) {
     const spec = HttpSourceSpecSchema.parse(ctx.spec);
     const start = new URL(spec.url);
@@ -33,7 +33,7 @@ export const httpFetcher: Fetcher = {
         authHeader = `Bearer ${token}`;
       } catch (err) {
         ctx.log({
-          level: 'error',
+          level: "error",
           msg: `http source: unable to resolve tokenRef`,
           data: { error: (err as Error).message },
         });
@@ -55,7 +55,7 @@ export const httpFetcher: Fetcher = {
         const allowed = await robots.isAllowed(url, ctx, spec.timeout_ms);
         if (!allowed) {
           ctx.log({
-            level: 'info',
+            level: "info",
             msg: `robots.txt disallows ${item.url}`,
           });
           continue;
@@ -72,7 +72,7 @@ export const httpFetcher: Fetcher = {
           {
             headers: {
               ...(authHeader ? { Authorization: authHeader } : {}),
-              'User-Agent': 'llamactl-pipeline/1',
+              "User-Agent": "llamactl-pipeline/1",
             },
             signal: ctx.signal,
           },
@@ -80,7 +80,7 @@ export const httpFetcher: Fetcher = {
         );
       } catch (err) {
         ctx.log({
-          level: 'warn',
+          level: "warn",
           msg: `fetch failed: ${item.url}`,
           data: { error: (err as Error).message },
         });
@@ -88,23 +88,22 @@ export const httpFetcher: Fetcher = {
       }
       if (!res.ok) {
         ctx.log({
-          level: 'warn',
+          level: "warn",
           msg: `http ${res.status} for ${item.url}`,
         });
         continue;
       }
-      const contentType = res.headers.get('content-type') ?? '';
+      const contentType = res.headers.get("content-type") ?? "";
       const html = await res.text();
 
-      const isHtml = contentType.includes('html') ||
-        /<html[\s>]/i.test(html.slice(0, 512));
+      const isHtml = contentType.includes("html") || /<html[\s>]/i.test(html.slice(0, 512));
 
       const text = isHtml ? extractReadableText(html) : html;
       const doc: RawDoc = {
         id: item.url,
         content: text,
         metadata: {
-          source_kind: 'http',
+          source_kind: "http",
           url: item.url,
           fetched_at: new Date().toISOString(),
           status: res.status,
@@ -127,7 +126,7 @@ export const httpFetcher: Fetcher = {
         } catch {
           continue;
         }
-        if (u.protocol !== 'http:' && u.protocol !== 'https:') continue;
+        if (u.protocol !== "http:" && u.protocol !== "https:") continue;
         if (spec.same_origin && u.origin !== origin) continue;
         visited.add(next);
         queue.push({ url: next, depth: item.depth + 1 });
@@ -139,7 +138,7 @@ export const httpFetcher: Fetcher = {
 function canonicalize(urlStr: string): string {
   try {
     const u = new URL(urlStr);
-    u.hash = '';
+    u.hash = "";
     return u.toString();
   } catch {
     return urlStr;
@@ -156,14 +155,14 @@ async function fetchWithTimeout(
   const onAbort = () => controller.abort();
   if (outer) {
     if (outer.aborted) controller.abort();
-    else outer.addEventListener('abort', onAbort, { once: true });
+    else outer.addEventListener("abort", onAbort, { once: true });
   }
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
-    if (outer) outer.removeEventListener('abort', onAbort);
+    if (outer) outer.removeEventListener("abort", onAbort);
   }
 }
 
@@ -174,12 +173,12 @@ async function fetchWithTimeout(
  */
 export function extractReadableText(html: string): string {
   let h = html;
-  h = h.replace(/<!--[\s\S]*?-->/g, '');
-  h = h.replace(/<script[\s\S]*?<\/script>/gi, '');
-  h = h.replace(/<style[\s\S]*?<\/style>/gi, '');
-  h = h.replace(/<nav[\s\S]*?<\/nav>/gi, '');
-  h = h.replace(/<footer[\s\S]*?<\/footer>/gi, '');
-  h = h.replace(/<header[\s\S]*?<\/header>/gi, '');
+  h = h.replace(/<!--[\s\S]*?-->/g, "");
+  h = h.replace(/<script[\s\S]*?<\/script>/gi, "");
+  h = h.replace(/<style[\s\S]*?<\/style>/gi, "");
+  h = h.replace(/<nav[\s\S]*?<\/nav>/gi, "");
+  h = h.replace(/<footer[\s\S]*?<\/footer>/gi, "");
+  h = h.replace(/<header[\s\S]*?<\/header>/gi, "");
 
   const main = h.match(/<main[\s\S]*?<\/main>/i);
   const article = h.match(/<article[\s\S]*?<\/article>/i);
@@ -187,14 +186,14 @@ export function extractReadableText(html: string): string {
   const chosen = main?.[0] ?? article?.[0] ?? body?.[0] ?? h;
 
   return chosen
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -240,7 +239,7 @@ class RateLimiter {
     await new Promise<void>((resolve) => {
       const t = setTimeout(resolve, delay);
       signal.addEventListener(
-        'abort',
+        "abort",
         () => {
           clearTimeout(t);
           resolve();
@@ -261,18 +260,17 @@ class RobotsCache {
 
   async isAllowed(
     url: URL,
-    ctx: { signal: AbortSignal; log: (e: { level: 'info' | 'warn' | 'error'; msg: string; data?: unknown }) => void },
+    ctx: {
+      signal: AbortSignal;
+      log: (e: { level: "info" | "warn" | "error"; msg: string; data?: unknown }) => void;
+    },
     timeoutMs: number,
   ): Promise<boolean> {
     const host = url.origin;
     if (!this.fetched.has(host)) {
       this.fetched.add(host);
       try {
-        const res = await fetchWithTimeout(
-          `${host}/robots.txt`,
-          { signal: ctx.signal },
-          timeoutMs,
-        );
+        const res = await fetchWithTimeout(`${host}/robots.txt`, { signal: ctx.signal }, timeoutMs);
         if (res.ok) {
           const body = await res.text();
           this.disallows.set(host, parseRobots(body));
@@ -286,7 +284,7 @@ class RobotsCache {
     const rules = this.disallows.get(host) ?? [];
     const path = url.pathname + url.search;
     for (const rule of rules) {
-      if (rule === '') continue;
+      if (rule === "") continue;
       if (path.startsWith(rule)) return false;
     }
     return true;
@@ -302,19 +300,19 @@ export function parseRobots(text: string): string[] {
   const disallow: string[] = [];
   let inStar = false;
   for (const raw of lines) {
-    const line = raw.replace(/#.*/, '').trim();
+    const line = raw.replace(/#.*/, "").trim();
     if (!line) {
       // Blank line ends the current group, per the robots.txt spec.
       inStar = false;
       continue;
     }
-    const idx = line.indexOf(':');
+    const idx = line.indexOf(":");
     if (idx < 0) continue;
     const field = line.slice(0, idx).trim().toLowerCase();
     const value = line.slice(idx + 1).trim();
-    if (field === 'user-agent') {
-      inStar = value === '*';
-    } else if (field === 'disallow' && inStar) {
+    if (field === "user-agent") {
+      inStar = value === "*";
+    } else if (field === "disallow" && inStar) {
       disallow.push(value);
     }
   }

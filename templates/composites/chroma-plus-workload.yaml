@@ -34,8 +34,8 @@ spec:
     - node: local
       target:
         kind: rel
-        value: qwen2.5-7b.Q4_K_M.gguf    # CHANGE ME — any GGUF from `llamactl catalog list`
-      extraArgs: ['--ctx-size', '8192']
+        value: qwen2.5-7b.Q4_K_M.gguf # CHANGE ME — any GGUF from `llamactl catalog list`
+      extraArgs: ["--ctx-size", "8192"]
       workers: []
       restartPolicy: OnFailure
       gateway: false
@@ -46,12 +46,12 @@ spec:
       node: local
       binding:
         provider: chroma
-        endpoint: ''
+        endpoint: ""
         extraArgs: []
       backingService: chroma-main
 
   dependencies:
     - from: { kind: rag, name: kb }
-      to:   { kind: service, name: chroma-main }
+      to: { kind: service, name: chroma-main }
 
   onFailure: rollback

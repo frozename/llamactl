@@ -18,13 +18,13 @@ Pure-TypeScript tests using [`bun:test`](https://bun.com/docs/cli/test). Two fla
 
 Fixtures live under `test/fixtures/`:
 
-| file | shape |
-| --- | --- |
-| `curated-custom.tsv` | sample `LOCAL_AI_CUSTOM_CATALOG_FILE` with comments + blanks |
-| `bench-profiles.tsv` | mix of current (9-col) + legacy (5-col) rows |
-| `bench-history.tsv` | mix of current (10-col) + legacy (6-col) rows |
-| `bench-vision.tsv` | one vision record |
-| `preset-overrides.tsv` | two promotion rows |
+| file                   | shape                                                        |
+| ---------------------- | ------------------------------------------------------------ |
+| `curated-custom.tsv`   | sample `LOCAL_AI_CUSTOM_CATALOG_FILE` with comments + blanks |
+| `bench-profiles.tsv`   | mix of current (9-col) + legacy (5-col) rows                 |
+| `bench-history.tsv`    | mix of current (10-col) + legacy (6-col) rows                |
+| `bench-vision.tsv`     | one vision record                                            |
+| `preset-overrides.tsv` | two promotion rows                                           |
 
 ## Tier 2 — CLI (`packages/cli/test/`)
 

@@ -9,6 +9,7 @@
 Make oMLX slot save/restore functionally complete — when llamactl restores slot N, the next inbound chat-completion request that matches the slot's binding key MUST skip prefill and resume from the cached KV state on disk.
 
 This requires three things v1 deferred:
+
 1. **Canonical identity**: bind a slot to `(model_id, request_handle)` instead of the v1 numeric alias `slot=0`.
 2. **Real serialization**: replace the v1 JSON `repr()` stub in `_serialize_slot_payload` with `mlx_lm.models.cache.save_prompt_cache` / `load_prompt_cache` (safetensors round-trippable).
 3. **Apply linkage**: a scheduler-side hook that parks a restored cache and binds it to the next inbound request whose admission key matches.
@@ -25,6 +26,7 @@ This requires three things v1 deferred:
 ### Slot key (v2)
 
 A slot is identified by a tuple `(model_id, request_handle)`:
+
 - `model_id`: the resolved model alias used at save time (already required in v1 request body)
 - `request_handle`: an opaque string the caller generates and provides on save AND restore. Must be URL-safe basename (same constraints as v1 `filename`). Length 1-128 chars. Charset `[A-Za-z0-9_.-]`.
 
@@ -36,11 +38,11 @@ v1 clients that POST `/slots/0?action=save|restore` continue to work. The server
 
 Behavior matrix:
 
-| v1 request shape | v2 interpretation |
-|---|---|
+| v1 request shape                                                     | v2 interpretation                                                                                                                                       |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /slots/0?action=save body={"filename":"x.kvslot","model":"M"}` | request_handle="x.kvslot" (filename stripped of any `.kvslot` suffix → request_handle="x"; `.kvslot` becomes implicit), saved under `<root>/M/x.kvslot` |
-| `POST /slots/0?action=save body={"model":"M"}` (no filename) | request_handle="default", saved under `<root>/M/default.kvslot` |
-| `POST /slots/N?action=…` where N != 0 | HTTP 400 `invalid_slot_id` (unchanged from v1) |
+| `POST /slots/0?action=save body={"model":"M"}` (no filename)         | request_handle="default", saved under `<root>/M/default.kvslot`                                                                                         |
+| `POST /slots/N?action=…` where N != 0                                | HTTP 400 `invalid_slot_id` (unchanged from v1)                                                                                                          |
 
 ### New endpoint surface
 
@@ -61,6 +63,7 @@ Both surfaces share the same SlotStore + state machine + manifest format.
 ### Save side
 
 When `save` fires, the server:
+
 1. Looks up the currently active request (max_concurrent_requests==1 → exactly one active request).
 2. Pulls `prompt_cache` from that request via `_extract_slot_request_payload` (v1 already does this).
 3. Calls `mlx_lm.models.cache.save_prompt_cache(tmp_file, prompt_cache, metadata=manifest_fields)` (replaces the JSON `repr()` stub).
@@ -70,6 +73,7 @@ When `save` fires, the server:
 ### Restore side
 
 When `restore` fires, the server:
+
 1. Loads payload via `mlx_lm.models.cache.load_prompt_cache(tmp_file, return_metadata=True)`.
 2. Validates manifest guards (model_fingerprint, ctx_size — unchanged from v1).
 3. **Parks the cache** in a new server-state structure: `_server_state.pending_restores: dict[(model_id, request_handle), PendingRestore]`.
@@ -80,6 +84,7 @@ When `restore` fires, the server:
 A new method on the scheduler — call it `scheduler.try_apply_pending_restore(request: Request) -> bool` — runs as part of the request admission path (before prefill).
 
 Trigger condition: the caller's chat-completion request includes a new optional header or body field `request_handle`. Concretely, an OpenAI-format request body grows an optional top-level `"x_omlx_request_handle": "H"` (vendor-prefixed for namespacing). When set:
+
 1. At admission, the scheduler queries `_server_state.pending_restores` for key `(request.model_id, request.x_omlx_request_handle)`.
 2. If a `PendingRestore` is parked, the scheduler:
    - Assigns the parked `prompt_cache` to `request.prompt_cache`
@@ -100,10 +105,12 @@ If `prompt_token_ids[:manifest.n_tokens] != cache.tokens` (the cache's recorded 
 ## Concurrency state machine (v2 deltas)
 
 Two new states extend the v1 set:
+
 - `PENDING_RESTORE`: cache loaded from disk, parked in `_server_state.pending_restores`, awaiting admission match. Slot is **NOT** locked while pending — other saves/restores for OTHER `(model, handle)` keys can proceed.
 - `APPLIED`: cache has been bound to a live request; cleared when that request terminates.
 
 The v1 per-slot state (`IDLE`, `SAVING`, `RESTORING`, `GENERATING`) is replaced by a **per-(model, handle) state**:
+
 - Save flow: `IDLE → SAVING → IDLE`
 - Restore flow: `IDLE → RESTORING → PENDING_RESTORE → APPLIED → IDLE`
 - Generation: `IDLE → GENERATING → IDLE`
@@ -149,6 +156,7 @@ Returns 404 if not present.
 ### Error responses
 
 All v1 codes preserved. New v2 codes:
+
 - HTTP 409 `slot_prefix_mismatch` — restore's prompt prefix doesn't match cache's recorded prefix at admission time.
 - HTTP 410 `slot_pending_expired` — caller's chat-completion request quoted a `x_omlx_request_handle` that had a TTL'd pending restore; cache is gone.
 - HTTP 400 `invalid_request_handle` — handle violates charset/length rules.
@@ -226,23 +234,27 @@ All v1 codes preserved. New v2 codes:
 ## GREEN phase (implementation order)
 
 Phase v2.A — serialization swap (smallest, lowest-risk slice):
+
 - Replace `_serialize_slot_payload` + `_apply_slot_restore_payload` JSON repr stubs with `mlx_lm.models.cache.save_prompt_cache` / `load_prompt_cache`.
 - Manifest gains `n_tokens` from real cache, not from manifest echo.
 - v1 alias behavior unchanged on the wire.
 - Tests 1, 7 (without admission hook), 21 must pass.
 
 Phase v2.B — pending registry + new endpoints:
+
 - Add `PendingRestoreRegistry`, `PendingRestore` dataclass.
 - Add `/v1/slots/save|restore|list|delete|capabilities` endpoints + v1 alias plumbing.
 - Tests 2, 3, 4, 5, 6, 8, 12, 13, 14, 15, 16.
 
 Phase v2.C — admission hook:
+
 - Add `x_omlx_request_handle` to Request.
 - Add `scheduler.try_apply_pending_restore` + admission-path integration.
 - Add prefix-mismatch + guard re-check semantics.
 - Tests 9, 10, 11, 17, 18, 19, 20.
 
 Phase v2.D — background GC + observability:
+
 - Async eviction loop.
 - Structured log events: `slot_restore_applied`, `slot_restore_rejected_prefix_mismatch`, `slot_pending_expired`, `slot_invariant_violation`.
 - Capability surface advertises `pending_ttl_seconds` + per-feature flags.
@@ -250,6 +262,7 @@ Phase v2.D — background GC + observability:
 ## Cross-repo coordination (llamactl side)
 
 llamactl's `UpstreamSlotClient` (`packages/core/src/kvstore/upstreamSlots.ts`):
+
 - Add `requestHandle: string` parameter to `save()` and `restore()` methods.
 - Add `x_omlx_request_handle` plumbing through `openaiProxy`: when KV path picks up a slot restore for a workload, the proxy must inject `x_omlx_request_handle` into the upstream chat-completion request body.
 - Capability negotiation: `supportsSlots()` already exists (v1); add `supportsRequestHandle()` checking `capabilities.features.includes("request_handle")`.

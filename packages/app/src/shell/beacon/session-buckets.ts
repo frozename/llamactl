@@ -1,4 +1,4 @@
-import type { TabEntry } from '@/stores/tab-store';
+import type { TabEntry } from "@/stores/tab-store";
 
 export interface SessionBuckets {
   today: TabEntry[];

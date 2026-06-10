@@ -1,13 +1,13 @@
-import type { ResolvedEnv } from '../types.js';
+import type { ResolvedEnv } from "../types.js";
 
-export type EngineName = 'llamacpp' | 'omlx';
+export type EngineName = "llamacpp" | "omlx";
 
 export interface EngineBootEnv {
   LLAMACTL_MODELS_DIR?: string;
   LLAMA_CPP_MODELS?: string;
   LLAMACTL_RUNTIME_DIR?: string;
   workloadName?: string;
-  machineProfile?: ResolvedEnv['LLAMA_CPP_MACHINE_PROFILE'];
+  machineProfile?: ResolvedEnv["LLAMA_CPP_MACHINE_PROFILE"];
 }
 
 export interface ModelHostHostedModel {

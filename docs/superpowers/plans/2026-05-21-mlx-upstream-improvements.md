@@ -12,10 +12,12 @@ llamactl `env` field); Phase B ships the load-bearing MLX per-stream isolation (
 control; Phase D adds the llamactl Fleet abstraction.
 
 **Predecessor patches (already on `fix/exception-safe-completion-handler` in `/Volumes/WorkSSD/src/mlx-fix`):**
+
 - `8c514a1a` — exception-safe Metal command-buffer error handling (v3, validated)
 - `982ef62d` — per-stream in-flight back-pressure gate (validated unit-only)
 
 **Evidence chain:**
+
 - 3 × 8B-class MLX models in one oMLX process @ `mcr=1` → 0 errors, 1041 s wall.
 - Same @ `mcr=2/4` → ~100% failures: `kIOGPUCommandBufferCallbackErrorTimeout`.
 - Back-pressure gate at `limit=1` keeps process alive but GPU still times out (intra-buffer contention).
@@ -23,6 +25,7 @@ control; Phase D adds the llamactl Fleet abstraction.
 - **Three separate oMLX processes (one per model, `mcr=4` each)** → 0 errors, identical quality. Per-process Metal context isolation is the architectural unlock.
 
 **Upstream working trees:**
+
 - MLX core: `/Volumes/WorkSSD/src/mlx-fix` (`fix/exception-safe-completion-handler` branch)
 - oMLX: `/Volumes/WorkSSD/src/omlx` (local fork of `jundot/omlx`)
 
@@ -80,7 +83,7 @@ Tests must not require Metal hardware — drive through the `Scheduler` API dire
 
 1. `mlx/stream.h` — add `uint64_t generation = 0;` to the `Stream` struct.
 2. `mlx/stream.cpp` (`new_stream` / `gpu::new_stream`) — bump a process-global `std::atomic<uint64_t>
-   stream_generation_counter_` and set `s.generation` on allocation.
+stream_generation_counter_` and set `s.generation` on allocation.
 3. `mlx/scheduler.h` — extend `stream_error_` map from `unordered_map<int, string>` to
    `unordered_map<int, pair<uint64_t, string>>` (generation + message).
 4. `mlx/scheduler.cpp` — in `notify_stream_error(s, msg)`: store `{s.generation, msg}`.
@@ -88,14 +91,17 @@ Tests must not require Metal hardware — drive through the `Scheduler` API dire
    silently drop and erase.
 
 **Verify:**
+
 ```bash
 cd /Volumes/WorkSSD/src/mlx-fix/build
 cmake --build . -t mlx_tests && ./mlx_tests "[StreamGeneration]"
 ```
+
 Expected: `StaleCompletionHandlerDoesNotPolluteLiveStream` passes; all prior back-pressure tests
 still pass.
 
 **Artifact export:**
+
 ```bash
 cd /Volumes/WorkSSD/src/mlx-fix
 git format-patch origin/main --stdout -- \
@@ -104,6 +110,7 @@ git format-patch origin/main --stdout -- \
 ```
 
 **Verify artifact:**
+
 ```bash
 test -s docs/upstream-patches/mlx-stream-generation-counter.patch
 ```
@@ -182,11 +189,13 @@ Replace the hard-coded `40` literals at the `max_ops_per_buffer_` / `max_mb_per_
 initialization sites with calls to `read_max_ops_per_buffer()` / `read_max_mb_per_buffer()`.
 
 **Verify:**
+
 ```bash
 cmake --build . -t mlx_tests && ./mlx_tests "[MetalDeviceKnobs]"
 ```
 
 **Artifact export:**
+
 ```bash
 git format-patch origin/main --stdout -- \
   mlx/backend/metal/device.cpp mlx/tests/ \
@@ -194,6 +203,7 @@ git format-patch origin/main --stdout -- \
 ```
 
 **Verify artifact:**
+
 ```bash
 test -s docs/upstream-patches/mlx-metal-max-ops-per-buffer-env.patch
 ```
@@ -251,13 +261,16 @@ def test_max_completion_batch_size_cli_parse(tmp_path):
 3. Write the three test cases above.
 
 **Verify:**
+
 ```bash
 cd /Volumes/WorkSSD/src/omlx
 python -m pytest tests/test_settings.py -k "max_completion_batch_size" -v
 ```
+
 Expected: three tests pass.
 
 **Artifact export:**
+
 ```bash
 cd /Volumes/WorkSSD/src/omlx
 git diff origin/main -- omlx/settings.py omlx/cli.py tests/ \
@@ -265,6 +278,7 @@ git diff origin/main -- omlx/settings.py omlx/cli.py tests/ \
 ```
 
 **Verify artifact:**
+
 ```bash
 test -s docs/upstream-patches/omlx-max-completion-batch-size.patch
 ```
@@ -333,9 +347,11 @@ it("rejects non-string env values", () => {
 ```
 
 **Verify (red):**
+
 ```bash
 cd packages/remote && bun test --filter "env field"
 ```
+
 Expected: compile or assertion failure because `env` is not in the schema.
 
 **Implementation:**
@@ -355,15 +371,19 @@ Expected: compile or assertion failure because `env` is not in the schema.
    ```
 
 **Verify (green):**
+
 ```bash
 cd packages/remote && bun test --filter "env field"
 ```
+
 Expected: all three tests pass.
 
 **Integration:** run the full `packages/remote` test suite:
+
 ```bash
 bun test packages/remote
 ```
+
 Expected: existing tests unaffected. Commit as a standalone llamactl commit.
 
 ---
@@ -435,12 +455,15 @@ TEST(StreamTag, UntaggedAndTaggedStreamsDifferentiate) {
    M1/M2 wire it in B.2/B.3.
 
 **Verify:**
+
 ```bash
 cmake --build . -t mlx_tests && ./mlx_tests "[StreamTag]"
 ```
+
 Expected: all three tag tests pass.
 
 **Artifact export:**
+
 ```bash
 git format-patch <A.1-commit>..HEAD --stdout -- mlx/stream.h mlx/tests/ \
   > /Volumes/WorkSSD/repos/personal/llamactl/docs/upstream-patches/mlx-stream-tag.patch
@@ -513,15 +536,20 @@ Linux/CPU-only.
 **Implementation** — in `/Volumes/WorkSSD/src/mlx-fix`:
 
 1. `mlx/backend/metal/device.h` — replace:
+
    ```cpp
    NS::SharedPtr<MTL::CommandQueue> queue_;
    ```
+
    with:
+
    ```cpp
    std::unordered_map<int, NS::SharedPtr<MTL::CommandQueue>> stream_queues_;
    std::mutex stream_queue_mtx_;
    ```
+
    Add public accessors:
+
    ```cpp
    MTL::CommandQueue* queue_for_stream(const Stream& s);
    MTL::CommandQueue* get_or_create_queue(const Stream& s);
@@ -546,6 +574,7 @@ Linux/CPU-only.
 as fallback) when `stream_queues_.size() >= 200`. Document this cap in the PR.
 
 **Verify:**
+
 ```bash
 MLX_BUILD_METAL=ON cmake --build . -t mlx_tests
 ./mlx_tests "[PerStreamQueue]"
@@ -566,9 +595,11 @@ assert set(results) == {"s1", "s2"}, results
 print("ok")
 PY
 ```
+
 Expected: unit tests pass; Python smoke prints `ok` with both streams completing.
 
 **Artifact export:**
+
 ```bash
 git format-patch <B.1-commit>..HEAD --stdout -- \
   mlx/backend/metal/device.h mlx/backend/metal/device.cpp \
@@ -627,9 +658,11 @@ TEST(PerStreamResidency, ResidencySetReleasedOnStreamDestroy) {
 **Implementation** — same shape as B.2 but for `MTL::ResidencySet`:
 
 1. `mlx/backend/metal/device.h` — add:
+
    ```cpp
    std::unordered_map<int, NS::SharedPtr<MTL::ResidencySet>> stream_residency_sets_;
    ```
+
    Add: `get_or_create_residency_set(s)`, `release_residency_set(s)`,
    `residency_set_for_stream(s)`, `active_residency_set_count()`.
 
@@ -641,11 +674,13 @@ TEST(PerStreamResidency, ResidencySetReleasedOnStreamDestroy) {
    `get_or_create_residency_set(current_stream)` instead of the device-global set.
 
 **Verify:**
+
 ```bash
 MLX_BUILD_METAL=ON cmake --build . -t mlx_tests && ./mlx_tests "[PerStreamResidency]"
 ```
 
 **Artifact export:**
+
 ```bash
 git format-patch <B.1-commit>..HEAD --stdout -- \
   mlx/backend/metal/device.h mlx/backend/metal/device.cpp \
@@ -673,6 +708,7 @@ risk_class: paste-ready
 ```
 
 **Failing test (acceptance criterion):**
+
 ```bash
 # One oMLX process, three models (granite-3b, granite-8b, qwen3-8b),
 # --max-concurrent-requests=4. Expect 0 Metal errors across 240 rows.
@@ -779,9 +815,11 @@ def test_non_metal_error_propagates():
 ```
 
 **Verify (red):**
+
 ```bash
 cd /Volumes/WorkSSD/src/omlx && python -m pytest tests/test_recovery.py -v
 ```
+
 Expected: `ImportError` or `AttributeError` because `_generate_with_recovery` doesn't exist.
 
 **Implementation** — in `omlx/engine/batched.py`:
@@ -810,11 +848,13 @@ Replace the direct `_generate_batch` call in the `BatchedEngine` step loop with
 `_generate_with_recovery`.
 
 **Verify (green):**
+
 ```bash
 python -m pytest tests/test_recovery.py -v
 ```
 
 **Artifact export:**
+
 ```bash
 git diff origin/main -- omlx/engine/batched.py omlx/scheduler.py tests/ \
   > /Volumes/WorkSSD/repos/personal/llamactl/docs/upstream-patches/omlx-recovery-on-metal-error.patch
@@ -877,11 +917,13 @@ def test_per_model_cap_limits_admission():
    `self._inflight[model_name]`.
 
 **Verify:**
+
 ```bash
 python -m pytest tests/test_per_model_caps.py -v
 ```
 
 **Artifact export:**
+
 ```bash
 git diff origin/main -- omlx/settings.py omlx/cli.py omlx/scheduler.py tests/ \
   > /Volumes/WorkSSD/repos/personal/llamactl/docs/upstream-patches/omlx-per-model-concurrency-caps.patch
@@ -935,14 +977,16 @@ def test_isolate_models_spawns_n_children(tmp_path):
 ```
 
 **Implementation** — new `omlx/router.py`:
+
 - `Router` class: on init, for each model dir, spawn a child `omlx serve --model-dir <dir>
-  --port <base+i>` subprocess.
+--port <base+i>` subprocess.
 - Readiness probe: poll each child's `/health` until 200 (max 60 s).
 - Request forwarding: peek `model` field from JSON body; route to matching child port.
 - Graceful shutdown: `SIGTERM` each child, wait up to 10 s, then `SIGKILL`.
 - Log multiplexing: prefix each child's stderr line with `[model-N]`.
 
 **Verify:**
+
 ```bash
 python -m pytest tests/test_router.py -v
 ```
@@ -1000,6 +1044,7 @@ it("Fleet expands to N ModelHost manifests", () => {
 ```
 
 **Implementation:**
+
 1. `packages/remote/src/workload/fleet-schema.ts` — Zod schema for `kind: "Fleet"` with fields
    `name`, `family`, `models: string[]`, `env?: Record<string, string>`, `portBase: number`.
 2. `expandFleet(fleet: Fleet): ModelHost[]` — map each model to a `ModelHost` manifest inheriting
@@ -1008,6 +1053,7 @@ it("Fleet expands to N ModelHost manifests", () => {
    `expandFleet`, apply each resulting `ModelHost` manifest.
 
 **Verify:**
+
 ```bash
 cd packages/remote && bun test --filter "Fleet"
 ```
@@ -1019,13 +1065,13 @@ Fleet L template as a live example.
 
 ## Design decisions
 
-| Question | Decision |
-|---|---|
-| M4 (`generation`) struct location | On `Stream` directly — sibling `StreamMeta` adds indirection with no benefit for a two-field struct |
-| M3 (`tag`) as `optional<string>` | `optional` over empty-string sentinel — call sites can distinguish "unset" from `""` without a magic value |
-| B.2 queue-per-stream vs queue-per-process | Queue per stream: lets two models in one process use independent GPU command lists; queue-per-process is what we have today |
-| B.3 ResidencySet gating | Guard with `#if MTL_RESIDENCY_AVAILABLE` — ResidencySet API requires macOS 15 / Metal 3.2 |
-| O3 recovery: fail-first or fail-matched | Fail-first: simplest and avoids needing per-request GPU-stream attribution which we don't have yet |
-| Phase D (Fleet) gating | Explicitly deferred — one live pattern doesn't justify a new top-level schema kind yet |
-| Phase C.3 (--isolate-models) conditionality | Conditioned on B.4 failure — per-stream queue is the right architectural fix; spawn-per-model is the fallback |
-| Patch sequencing for upstream | M4 + M5 as one PR, M3 + M1 as a second PR (M3 is tiny but must land first), M2 as a third PR. O4 as a standalone oMLX PR. |
+| Question                                    | Decision                                                                                                                    |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| M4 (`generation`) struct location           | On `Stream` directly — sibling `StreamMeta` adds indirection with no benefit for a two-field struct                         |
+| M3 (`tag`) as `optional<string>`            | `optional` over empty-string sentinel — call sites can distinguish "unset" from `""` without a magic value                  |
+| B.2 queue-per-stream vs queue-per-process   | Queue per stream: lets two models in one process use independent GPU command lists; queue-per-process is what we have today |
+| B.3 ResidencySet gating                     | Guard with `#if MTL_RESIDENCY_AVAILABLE` — ResidencySet API requires macOS 15 / Metal 3.2                                   |
+| O3 recovery: fail-first or fail-matched     | Fail-first: simplest and avoids needing per-request GPU-stream attribution which we don't have yet                          |
+| Phase D (Fleet) gating                      | Explicitly deferred — one live pattern doesn't justify a new top-level schema kind yet                                      |
+| Phase C.3 (--isolate-models) conditionality | Conditioned on B.4 failure — per-stream queue is the right architectural fix; spawn-per-model is the fallback               |
+| Patch sequencing for upstream               | M4 + M5 as one PR, M3 + M1 as a second PR (M3 is tiny but must land first), M2 as a third PR. O4 as a standalone oMLX PR.   |

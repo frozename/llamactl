@@ -1,4 +1,4 @@
-import type { GuardianDecision } from './state.js';
+import type { GuardianDecision } from "./state.js";
 
 /**
  * First real action on the cost-guardian foundation. Posts the
@@ -16,7 +16,7 @@ import type { GuardianDecision } from './state.js';
 export interface WebhookFetcher {
   (
     url: string,
-    init: { method: 'POST'; headers: Record<string, string>; body: string; signal?: AbortSignal },
+    init: { method: "POST"; headers: Record<string, string>; body: string; signal?: AbortSignal },
   ): Promise<{ ok: boolean; status: number; text?: () => Promise<string> }>;
 }
 
@@ -35,7 +35,7 @@ export type WebhookOutcome =
 
 function defaultFetcher(
   url: string,
-  init: { method: 'POST'; headers: Record<string, string>; body: string; signal?: AbortSignal },
+  init: { method: "POST"; headers: Record<string, string>; body: string; signal?: AbortSignal },
 ): ReturnType<WebhookFetcher> {
   const fetchInit: RequestInit = {
     method: init.method,
@@ -59,10 +59,10 @@ export async function postGuardianWebhook(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetcher(opts.url, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'content-type': 'application/json',
-        'user-agent': 'llamactl-cost-guardian/0.1',
+        "content-type": "application/json",
+        "user-agent": "llamactl-cost-guardian/0.1",
       },
       body: JSON.stringify(opts.decision),
       signal: controller.signal,
@@ -70,9 +70,9 @@ export async function postGuardianWebhook(
     if (res.ok) {
       return { ok: true, status: res.status };
     }
-    let errBody = '';
+    let errBody = "";
     try {
-      errBody = (await res.text?.()) ?? '';
+      errBody = (await res.text?.()) ?? "";
     } catch {
       // best-effort
     }
@@ -85,7 +85,7 @@ export async function postGuardianWebhook(
     return {
       ok: false,
       status: 0,
-      error: (err as Error).message || 'webhook fetcher threw',
+      error: (err as Error).message || "webhook fetcher threw",
     };
   } finally {
     clearTimeout(timer);

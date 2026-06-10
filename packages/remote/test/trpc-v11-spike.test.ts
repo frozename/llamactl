@@ -1,15 +1,10 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { initTRPC, tracked, TRPCError } from '@trpc/server';
-import { observable } from '@trpc/server/observable';
-import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
-import {
-  createTRPCClient,
-  httpBatchLink,
-  httpSubscriptionLink,
-  splitLink,
-} from '@trpc/client';
-import { EventSource } from 'eventsource';
-import { z } from 'zod';
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { initTRPC, tracked, TRPCError } from "@trpc/server";
+import { observable } from "@trpc/server/observable";
+import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+import { createTRPCClient, httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
+import { EventSource } from "eventsource";
+import { z } from "zod";
 
 /**
  * Phase B.1 day-1 spike. Validates that the tRPC v11 migration target
@@ -30,14 +25,14 @@ function createSpikeRouter(probe: { seen: { signal: AbortSignal | null } }) {
   const t = initTRPC.context<SpikeContext>().create();
 
   const authedProcedure = t.procedure.use(({ ctx, next }) => {
-    if (ctx.token !== 'good-token') {
-      throw new TRPCError({ code: 'UNAUTHORIZED', message: 'bad token' });
+    if (ctx.token !== "good-token") {
+      throw new TRPCError({ code: "UNAUTHORIZED", message: "bad token" });
     }
     return next();
   });
 
   return t.router({
-    ping: t.procedure.query(() => 'pong'),
+    ping: t.procedure.query(() => "pong"),
     echo: t.procedure
       .input(z.string().min(1))
       .mutation(({ input }) => ({ echoed: input.toUpperCase() })),
@@ -52,17 +47,16 @@ function createSpikeRouter(probe: { seen: { signal: AbortSignal | null } }) {
           await new Promise((r) => setTimeout(r, 5));
         }
       }),
-    slow: t.procedure
-      .subscription(async function* (opts) {
-        probe.seen.signal = opts.signal ?? null;
-        // Yield one quick event so client subscription resolves, then
-        // idle forever (until client aborts).
-        yield tracked('start', { t: 'ready' });
-        for (let i = 0; ; i++) {
-          if (opts.signal?.aborted) return;
-          await new Promise((r) => setTimeout(r, 20));
-        }
-      }),
+    slow: t.procedure.subscription(async function* (opts) {
+      probe.seen.signal = opts.signal ?? null;
+      // Yield one quick event so client subscription resolves, then
+      // idle forever (until client aborts).
+      yield tracked("start", { t: "ready" });
+      for (let i = 0; ; i++) {
+        if (opts.signal?.aborted) return;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    }),
     // v10 legacy shape — deprecated in v11 but still compiles. The
     // production router currently uses this form for pullFile + 5
     // others; if this subscription delivers events over SSE to a v11
@@ -80,7 +74,9 @@ function createSpikeRouter(probe: { seen: { signal: AbortSignal | null } }) {
             }
             emit.complete();
           })();
-          return () => { cancelled = true; };
+          return () => {
+            cancelled = true;
+          };
         });
       }),
   });
@@ -91,19 +87,17 @@ type SpikeRouter = ReturnType<typeof createSpikeRouter>;
 function startServer(router: SpikeRouter): { url: string; stop: () => void } {
   const server = Bun.serve({
     port: 0,
-    hostname: '127.0.0.1',
+    hostname: "127.0.0.1",
     fetch(req) {
       const url = new URL(req.url);
-      if (!url.pathname.startsWith('/trpc')) {
-        return new Response('not found', { status: 404 });
+      if (!url.pathname.startsWith("/trpc")) {
+        return new Response("not found", { status: 404 });
       }
-      const authHeader = req.headers.get('authorization');
-      const token = authHeader?.startsWith('Bearer ')
-        ? authHeader.slice('Bearer '.length)
-        : null;
+      const authHeader = req.headers.get("authorization");
+      const token = authHeader?.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null;
       return fetchRequestHandler({
         req,
-        endpoint: '/trpc',
+        endpoint: "/trpc",
         router,
         createContext: (): SpikeContext => ({ token }),
       });
@@ -115,45 +109,49 @@ function startServer(router: SpikeRouter): { url: string; stop: () => void } {
   };
 }
 
-describe('tRPC v11 + Bun.serve + fetchRequestHandler', () => {
+describe("tRPC v11 + Bun.serve + fetchRequestHandler", () => {
   const probe = { seen: { signal: null as AbortSignal | null } };
   const router = createSpikeRouter(probe);
   let svr: ReturnType<typeof startServer>;
 
-  beforeAll(() => { svr = startServer(router); });
-  afterAll(() => { svr.stop(); });
+  beforeAll(() => {
+    svr = startServer(router);
+  });
+  afterAll(() => {
+    svr.stop();
+  });
 
-  test('query round-trips with createTRPCClient (v11 rename)', async () => {
+  test("query round-trips with createTRPCClient (v11 rename)", async () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [httpBatchLink({ url: svr.url })],
     });
-    expect(await client.ping.query()).toBe('pong');
+    expect(await client.ping.query()).toBe("pong");
   });
 
-  test('mutation + input validation round-trip', async () => {
+  test("mutation + input validation round-trip", async () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [httpBatchLink({ url: svr.url })],
     });
-    expect(await client.echo.mutate('hello')).toEqual({ echoed: 'HELLO' });
+    expect(await client.echo.mutate("hello")).toEqual({ echoed: "HELLO" });
   });
 
-  test('authed procedure propagates bearer via createContext', async () => {
+  test("authed procedure propagates bearer via createContext", async () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [
         httpBatchLink({
           url: svr.url,
-          headers: { authorization: 'Bearer good-token' },
+          headers: { authorization: "Bearer good-token" },
         }),
       ],
     });
-    expect(await client.whoami.query()).toEqual({ token: 'good-token' });
+    expect(await client.whoami.query()).toEqual({ token: "good-token" });
   });
 
-  test('async-generator subscription over SSE delivers N events', async () => {
+  test("async-generator subscription over SSE delivers N events", async () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [
         splitLink({
-          condition: (op) => op.type === 'subscription',
+          condition: (op) => op.type === "subscription",
           true: httpSubscriptionLink({ url: svr.url, EventSource }),
           false: httpBatchLink({ url: svr.url }),
         }),
@@ -174,16 +172,16 @@ describe('tRPC v11 + Bun.serve + fetchRequestHandler', () => {
           onError: reject,
         },
       );
-      setTimeout(() => reject(new Error('subscription timeout')), 2000);
+      setTimeout(() => reject(new Error("subscription timeout")), 2000);
     });
     expect(received.map((r) => r.i)).toEqual([0, 1, 2, 3, 4]);
   });
 
-  test('client unsubscribe aborts server-side opts.signal', async () => {
+  test("client unsubscribe aborts server-side opts.signal", async () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [
         splitLink({
-          condition: (op) => op.type === 'subscription',
+          condition: (op) => op.type === "subscription",
           true: httpSubscriptionLink({ url: svr.url, EventSource }),
           false: httpBatchLink({ url: svr.url }),
         }),
@@ -201,7 +199,7 @@ describe('tRPC v11 + Bun.serve + fetchRequestHandler', () => {
     sub.unsubscribe();
     // Give the SSE close + server-side signal a few event-loop ticks to fire.
     const capturedSignal = probe.seen.signal as AbortSignal | null;
-    if (capturedSignal === null) throw new Error('server never attached signal');
+    if (capturedSignal === null) throw new Error("server never attached signal");
     for (let i = 0; i < 50; i++) {
       if (capturedSignal.aborted) break;
       await new Promise((r) => setTimeout(r, 20));
@@ -209,18 +207,18 @@ describe('tRPC v11 + Bun.serve + fetchRequestHandler', () => {
     expect(capturedSignal.aborted).toBe(true);
   });
 
-  test('createCaller runs procedures in-process without HTTP', async () => {
-    const caller = router.createCaller({ token: 'good-token' });
-    expect(await caller.ping()).toBe('pong');
-    expect(await caller.whoami()).toEqual({ token: 'good-token' });
-    expect(await caller.echo('in-proc')).toEqual({ echoed: 'IN-PROC' });
+  test("createCaller runs procedures in-process without HTTP", async () => {
+    const caller = router.createCaller({ token: "good-token" });
+    expect(await caller.ping()).toBe("pong");
+    expect(await caller.whoami()).toEqual({ token: "good-token" });
+    expect(await caller.echo("in-proc")).toEqual({ echoed: "IN-PROC" });
   });
 
-  test('v10 observable subscription is consumable over v11 SSE link', async () => {
+  test("v10 observable subscription is consumable over v11 SSE link", async () => {
     const client = createTRPCClient<SpikeRouter>({
       links: [
         splitLink({
-          condition: (op) => op.type === 'subscription',
+          condition: (op) => op.type === "subscription",
           true: httpSubscriptionLink({ url: svr.url, EventSource }),
           false: httpBatchLink({ url: svr.url }),
         }),
@@ -232,7 +230,7 @@ describe('tRPC v11 + Bun.serve + fetchRequestHandler', () => {
         { count: 4 },
         {
           onData: (evt: { i: number } | { data: { i: number } }) => {
-            const i = 'i' in evt ? evt.i : evt.data.i;
+            const i = "i" in evt ? evt.i : evt.data.i;
             received.push(i);
             if (received.length >= 4) {
               sub.unsubscribe();
@@ -242,7 +240,7 @@ describe('tRPC v11 + Bun.serve + fetchRequestHandler', () => {
           onError: reject,
         },
       );
-      setTimeout(() => reject(new Error('legacy subscription timeout')), 2000);
+      setTimeout(() => reject(new Error("legacy subscription timeout")), 2000);
     });
     expect(received).toEqual([0, 1, 2, 3]);
   });

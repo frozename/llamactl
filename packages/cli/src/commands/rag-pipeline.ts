@@ -1,13 +1,13 @@
-import { existsSync, readFileSync, statSync, watchFile, unwatchFile } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, statSync, watchFile, unwatchFile } from "node:fs";
+import { resolve } from "node:path";
 import type {
   NodeClient,
   PipelineSchedulerHandle,
   PipelineSchedulerOptions,
   TickReport,
-} from '@llamactl/remote';
-import { startPipelineScheduler } from '@llamactl/remote';
-import { getNodeClient } from '../dispatcher.js';
+} from "@llamactl/remote";
+import { startPipelineScheduler } from "@llamactl/remote";
+import { getNodeClient } from "../dispatcher.js";
 
 const USAGE = `Usage: llamactl rag pipeline <subcommand>
 
@@ -60,9 +60,7 @@ export interface RagPipelineTestSeams {
    * Tests use this to avoid booting the real scheduler's in-proc
    * listPipelines / runPipeline.
    */
-  startPipelineScheduler?: (
-    opts: PipelineSchedulerOptions,
-  ) => PipelineSchedulerHandle;
+  startPipelineScheduler?: (opts: PipelineSchedulerOptions) => PipelineSchedulerHandle;
   /**
    * Override the stdin reader for `apply -f -` tests. Default reads
    * fd 0 via readFileSync, which tests can't redirect without
@@ -88,28 +86,28 @@ function client(): NodeClient {
 export async function runRagPipeline(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
-    case 'apply':
+    case "apply":
       return runApply(rest);
-    case 'run':
+    case "run":
       return runRun(rest);
-    case 'list':
-    case 'ls':
+    case "list":
+    case "ls":
       return runList(rest);
-    case 'get':
+    case "get":
       return runGet(rest);
-    case 'rm':
-    case 'remove':
+    case "rm":
+    case "remove":
       return runRemove(rest);
-    case 'logs':
+    case "logs":
       return runLogs(rest);
-    case 'scheduler':
+    case "scheduler":
       return runScheduler(rest);
-    case 'draft':
+    case "draft":
       return runDraft(rest);
     case undefined:
-    case '--help':
-    case '-h':
-    case 'help':
+    case "--help":
+    case "-h":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:
@@ -125,29 +123,29 @@ interface ApplyOpts {
 }
 
 function parseApplyFlags(args: string[]): ApplyOpts | { error: string } {
-  let file = '';
+  let file = "";
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '-f' || arg === '--file') {
-      file = args[++i] ?? '';
-    } else if (arg.startsWith('--file=')) {
-      file = arg.slice('--file='.length);
-    } else if (arg === '-h' || arg === '--help') {
-      return { error: 'help' };
-    } else if (arg.startsWith('-')) {
+    if (arg === "-f" || arg === "--file") {
+      file = args[++i] ?? "";
+    } else if (arg.startsWith("--file=")) {
+      file = arg.slice("--file=".length);
+    } else if (arg === "-h" || arg === "--help") {
+      return { error: "help" };
+    } else if (arg.startsWith("-")) {
       return { error: `Unknown flag: ${arg}` };
     } else {
       return { error: `Unexpected argument: ${arg}` };
     }
   }
-  if (!file) return { error: 'rag pipeline apply: -f <file.yaml> is required' };
+  if (!file) return { error: "rag pipeline apply: -f <file.yaml> is required" };
   return { file };
 }
 
 async function runApply(args: string[]): Promise<number> {
   const parsed = parseApplyFlags(args);
-  if ('error' in parsed) {
-    if (parsed.error === 'help') {
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -155,13 +153,13 @@ async function runApply(args: string[]): Promise<number> {
     return 1;
   }
   let manifestYaml: string;
-  if (parsed.file === '-') {
+  if (parsed.file === "-") {
     // Enables: `llamactl rag pipeline draft "…" | llamactl rag pipeline apply -f -`
     // Reads all of stdin synchronously since tRPC mutations need
     // the full body up front. Small manifests (< a few MB); we're
     // not streaming anywhere. Tests override via `readStdinYaml`
     // seam because fd-0 can't be redirected without a subprocess.
-    const reader = testSeams.readStdinYaml ?? (() => readFileSync(0, 'utf8'));
+    const reader = testSeams.readStdinYaml ?? (() => readFileSync(0, "utf8"));
     try {
       manifestYaml = reader();
     } catch (err) {
@@ -171,9 +169,7 @@ async function runApply(args: string[]): Promise<number> {
       return 1;
     }
     if (!manifestYaml.trim()) {
-      process.stderr.write(
-        'rag pipeline apply: stdin was empty — pipe a RagPipeline YAML in.\n',
-      );
+      process.stderr.write("rag pipeline apply: stdin was empty — pipe a RagPipeline YAML in.\n");
       return 1;
     }
   } else {
@@ -182,7 +178,7 @@ async function runApply(args: string[]): Promise<number> {
       process.stderr.write(`rag pipeline apply: file not found: ${absPath}\n`);
       return 1;
     }
-    manifestYaml = readFileSync(absPath, 'utf8');
+    manifestYaml = readFileSync(absPath, "utf8");
   }
   try {
     const res = await client().ragPipelineApply.mutate({ manifestYaml });
@@ -191,7 +187,7 @@ async function runApply(args: string[]): Promise<number> {
       return 1;
     }
     process.stdout.write(
-      `${res.created ? 'applied' : 'updated'} rag pipeline '${res.name}'\n  path: ${res.path}\n`,
+      `${res.created ? "applied" : "updated"} rag pipeline '${res.name}'\n  path: ${res.path}\n`,
     );
     return 0;
   } catch (err) {
@@ -209,26 +205,26 @@ interface RunOpts {
 }
 
 function parseRunFlags(args: string[]): RunOpts | { error: string } {
-  let name = '';
+  let name = "";
   let dryRun = false;
   let json = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--dry-run') dryRun = true;
-    else if (arg === '--json') json = true;
-    else if (arg === '-h' || arg === '--help') return { error: 'help' };
-    else if (arg.startsWith('-')) return { error: `Unknown flag: ${arg}` };
+    if (arg === "--dry-run") dryRun = true;
+    else if (arg === "--json") json = true;
+    else if (arg === "-h" || arg === "--help") return { error: "help" };
+    else if (arg.startsWith("-")) return { error: `Unknown flag: ${arg}` };
     else if (!name) name = arg;
     else return { error: `Unexpected argument: ${arg}` };
   }
-  if (!name) return { error: 'rag pipeline run: <name> is required' };
+  if (!name) return { error: "rag pipeline run: <name> is required" };
   return { name, dryRun, json };
 }
 
 async function runRun(args: string[]): Promise<number> {
   const parsed = parseRunFlags(args);
-  if ('error' in parsed) {
-    if (parsed.error === 'help') {
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -246,18 +242,15 @@ async function runRun(args: string[]): Promise<number> {
     }
     const s = res.summary;
     process.stdout.write(
-      `${parsed.dryRun ? 'dry-ran' : 'ran'} pipeline '${parsed.name}' in ${s.elapsed_ms}ms\n` +
+      `${parsed.dryRun ? "dry-ran" : "ran"} pipeline '${parsed.name}' in ${s.elapsed_ms}ms\n` +
         `  total_docs: ${s.total_docs} (skipped ${s.skipped_docs})\n` +
         `  total_chunks: ${s.total_chunks}\n` +
         `  errors: ${s.errors}\n` +
         `  per_source:\n` +
         s.per_source
-          .map(
-            (p) =>
-              `    - ${p.source}  docs=${p.docs} chunks=${p.chunks} errors=${p.errors}`,
-          )
-          .join('\n') +
-        '\n',
+          .map((p) => `    - ${p.source}  docs=${p.docs} chunks=${p.chunks} errors=${p.errors}`)
+          .join("\n") +
+        "\n",
     );
     return 0;
   } catch (err) {
@@ -269,13 +262,13 @@ async function runRun(args: string[]): Promise<number> {
 // ---- list -----------------------------------------------------------
 
 async function runList(args: string[]): Promise<number> {
-  const json = args.includes('--json');
+  const json = args.includes("--json");
   for (const a of args) {
-    if (a !== '--json' && a !== '-h' && a !== '--help') {
+    if (a !== "--json" && a !== "-h" && a !== "--help") {
       process.stderr.write(`Unknown flag: ${a}\n\n${USAGE}`);
       return 1;
     }
-    if (a === '-h' || a === '--help') {
+    if (a === "-h" || a === "--help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -287,18 +280,16 @@ async function runList(args: string[]): Promise<number> {
       return 0;
     }
     if (res.pipelines.length === 0) {
-      process.stdout.write('(no rag pipelines applied)\n');
+      process.stdout.write("(no rag pipelines applied)\n");
       return 0;
     }
     for (const p of res.pipelines) {
       const dest = `${p.manifest.spec.destination.ragNode}/${p.manifest.spec.destination.collection}`;
-      const sources = p.manifest.spec.sources.map((s) => s.kind).join(',');
+      const sources = p.manifest.spec.sources.map((s) => s.kind).join(",");
       const last = p.lastRun
         ? `last=${p.lastRun.at} docs=${p.lastRun.summary.total_docs} chunks=${p.lastRun.summary.total_chunks}`
-        : 'never-run';
-      process.stdout.write(
-        `${p.name}\n  → ${dest}  (sources: ${sources})  ${last}\n`,
-      );
+        : "never-run";
+      process.stdout.write(`${p.name}\n  → ${dest}  (sources: ${sources})  ${last}\n`);
     }
     return 0;
   } catch (err) {
@@ -311,13 +302,13 @@ async function runList(args: string[]): Promise<number> {
 
 async function runGet(args: string[]): Promise<number> {
   const [name] = args;
-  if (!name || name.startsWith('-')) {
+  if (!name || name.startsWith("-")) {
     process.stderr.write(`rag pipeline get: <name> is required\n\n${USAGE}`);
     return 1;
   }
   try {
     const res = await client().ragPipelineGet.query({ name });
-    const { stringify } = await import('yaml');
+    const { stringify } = await import("yaml");
     process.stdout.write(stringify(res.manifest));
     return 0;
   } catch (err) {
@@ -330,7 +321,7 @@ async function runGet(args: string[]): Promise<number> {
 
 async function runRemove(args: string[]): Promise<number> {
   const [name] = args;
-  if (!name || name.startsWith('-')) {
+  if (!name || name.startsWith("-")) {
     process.stderr.write(`rag pipeline rm: <name> is required\n\n${USAGE}`);
     return 1;
   }
@@ -340,7 +331,7 @@ async function runRemove(args: string[]): Promise<number> {
       process.stderr.write(`rag pipeline rm: conflict — ${JSON.stringify(res.conflict)}\n`);
       return 1;
     }
-    const removed = 'removed' in res ? res.removed : res.deleted;
+    const removed = "removed" in res ? res.removed : res.deleted;
     if (!removed) {
       process.stderr.write(`rag pipeline rm: '${name}' not found\n`);
       return 1;
@@ -362,34 +353,34 @@ interface LogsOpts {
 }
 
 function parseLogsFlags(args: string[]): LogsOpts | { error: string } {
-  let name = '';
+  let name = "";
   let follow = false;
   let tail = 50;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--follow' || arg === '-f') follow = true;
-    else if (arg.startsWith('--tail=')) {
-      const n = Number.parseInt(arg.slice('--tail='.length), 10);
+    if (arg === "--follow" || arg === "-f") follow = true;
+    else if (arg.startsWith("--tail=")) {
+      const n = Number.parseInt(arg.slice("--tail=".length), 10);
       if (!Number.isFinite(n) || n < 0) return { error: `--tail must be a non-negative integer` };
       tail = n;
-    } else if (arg === '--tail') {
+    } else if (arg === "--tail") {
       const raw = args[++i];
-      const n = Number.parseInt(raw ?? '', 10);
+      const n = Number.parseInt(raw ?? "", 10);
       if (!Number.isFinite(n) || n < 0) return { error: `--tail must be a non-negative integer` };
       tail = n;
-    } else if (arg === '-h' || arg === '--help') return { error: 'help' };
-    else if (arg.startsWith('-')) return { error: `Unknown flag: ${arg}` };
+    } else if (arg === "-h" || arg === "--help") return { error: "help" };
+    else if (arg.startsWith("-")) return { error: `Unknown flag: ${arg}` };
     else if (!name) name = arg;
     else return { error: `Unexpected argument: ${arg}` };
   }
-  if (!name) return { error: 'rag pipeline logs: <name> is required' };
+  if (!name) return { error: "rag pipeline logs: <name> is required" };
   return { name, follow, tail };
 }
 
 async function runLogs(args: string[]): Promise<number> {
   const parsed = parseLogsFlags(args);
-  if ('error' in parsed) {
-    if (parsed.error === 'help') {
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -399,22 +390,20 @@ async function runLogs(args: string[]): Promise<number> {
   const resolveJournal =
     testSeams.journalPathFor ??
     (async (name: string): Promise<string> => {
-      const { journalPathFor } = await import('@llamactl/remote');
+      const { journalPathFor } = await import("@llamactl/remote");
       return journalPathFor(name);
     });
   const path =
-    typeof resolveJournal === 'function'
+    typeof resolveJournal === "function"
       ? await Promise.resolve(resolveJournal(parsed.name))
       : resolveJournal;
   if (!existsSync(path)) {
-    process.stderr.write(
-      `rag pipeline logs: no journal at ${path} — has the pipeline been run?\n`,
-    );
+    process.stderr.write(`rag pipeline logs: no journal at ${path} — has the pipeline been run?\n`);
     return 1;
   }
   // Print the last --tail entries.
-  const contents = readFileSync(path, 'utf8');
-  const lines = contents.split('\n').filter((l) => l.trim().length > 0);
+  const contents = readFileSync(path, "utf8");
+  const lines = contents.split("\n").filter((l) => l.trim().length > 0);
   const start = parsed.tail === 0 ? 0 : Math.max(0, lines.length - parsed.tail);
   for (let i = start; i < lines.length; i++) {
     process.stdout.write(`${lines[i]}\n`);
@@ -430,11 +419,11 @@ async function runLogs(args: string[]): Promise<number> {
       unwatchFile(path);
       res();
     };
-    process.on('SIGINT', stop);
-    process.on('SIGTERM', stop);
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
     watchFile(path, { interval: 500 }, (curr) => {
       if (curr.size <= lastSize) return;
-      const tailBytes = readFileSync(path, 'utf8').slice(lastSize);
+      const tailBytes = readFileSync(path, "utf8").slice(lastSize);
       process.stdout.write(tailBytes);
       lastSize = curr.size;
     });
@@ -456,20 +445,20 @@ function parseSchedulerFlags(args: string[]): SchedulerOpts | { error: string } 
   let quiet = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--once') once = true;
-    else if (arg === '--quiet') quiet = true;
-    else if (arg === '--interval' || arg === '-i') {
-      const v = args[++i] ?? '';
+    if (arg === "--once") once = true;
+    else if (arg === "--quiet") quiet = true;
+    else if (arg === "--interval" || arg === "-i") {
+      const v = args[++i] ?? "";
       const n = Number(v);
       if (!Number.isFinite(n) || n <= 0) return { error: `Invalid --interval value: ${v}` };
       intervalSec = n;
-    } else if (arg.startsWith('--interval=')) {
-      const v = arg.slice('--interval='.length);
+    } else if (arg.startsWith("--interval=")) {
+      const v = arg.slice("--interval=".length);
       const n = Number(v);
       if (!Number.isFinite(n) || n <= 0) return { error: `Invalid --interval value: ${v}` };
       intervalSec = n;
-    } else if (arg === '-h' || arg === '--help') return { error: 'help' };
-    else if (arg.startsWith('-')) return { error: `Unknown flag: ${arg}` };
+    } else if (arg === "-h" || arg === "--help") return { error: "help" };
+    else if (arg.startsWith("-")) return { error: `Unknown flag: ${arg}` };
     else return { error: `Unexpected argument: ${arg}` };
   }
   return { once, intervalSec, quiet };
@@ -477,8 +466,8 @@ function parseSchedulerFlags(args: string[]): SchedulerOpts | { error: string } 
 
 async function runScheduler(args: string[]): Promise<number> {
   const parsed = parseSchedulerFlags(args);
-  if ('error' in parsed) {
-    if (parsed.error === 'help') {
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -510,11 +499,11 @@ async function runScheduler(args: string[]): Promise<number> {
 
   // Graceful shutdown on SIGINT / SIGTERM — finish the current tick
   // and the in-flight run before exiting.
-  const stopSignals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
+  const stopSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
   const onSignal = (): void => {
     handle.stop();
     if (!parsed.quiet) {
-      process.stderr.write('rag-pipeline-scheduler: stop requested, finishing current tick…\n');
+      process.stderr.write("rag-pipeline-scheduler: stop requested, finishing current tick…\n");
     }
   };
   for (const sig of stopSignals) process.on(sig, onSignal);
@@ -540,27 +529,27 @@ function parseDraftFlags(args: string[]): DraftOpts | { error: string } {
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === '--name') {
-      nameOverride = args[++i] ?? '';
-    } else if (arg.startsWith('--name=')) {
-      nameOverride = arg.slice('--name='.length);
-    } else if (arg === '--node') {
-      nodeOverride = args[++i] ?? '';
-    } else if (arg.startsWith('--node=')) {
-      nodeOverride = arg.slice('--node='.length);
-    } else if (arg === '-h' || arg === '--help') {
-      return { error: 'help' };
-    } else if (arg.startsWith('-')) {
+    if (arg === "--name") {
+      nameOverride = args[++i] ?? "";
+    } else if (arg.startsWith("--name=")) {
+      nameOverride = arg.slice("--name=".length);
+    } else if (arg === "--node") {
+      nodeOverride = args[++i] ?? "";
+    } else if (arg.startsWith("--node=")) {
+      nodeOverride = arg.slice("--node=".length);
+    } else if (arg === "-h" || arg === "--help") {
+      return { error: "help" };
+    } else if (arg.startsWith("-")) {
       return { error: `Unknown flag: ${arg}` };
     } else {
       positional.push(arg);
     }
   }
   if (positional.length === 0) {
-    return { error: 'rag pipeline draft: <description> is required' };
+    return { error: "rag pipeline draft: <description> is required" };
   }
   return {
-    description: positional.join(' '),
+    description: positional.join(" "),
     nameOverride,
     nodeOverride,
   };
@@ -568,8 +557,8 @@ function parseDraftFlags(args: string[]): DraftOpts | { error: string } {
 
 async function runDraft(args: string[]): Promise<number> {
   const parsed = parseDraftFlags(args);
-  if ('error' in parsed) {
-    if (parsed.error === 'help') {
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -585,7 +574,7 @@ async function runDraft(args: string[]): Promise<number> {
     if (parsed.nameOverride !== undefined) input.nameOverride = parsed.nameOverride;
     if (parsed.nodeOverride !== undefined) input.defaultRagNode = parsed.nodeOverride;
     const res = await client().ragPipelineDraft.query(input);
-    process.stdout.write(res.yaml.endsWith('\n') ? res.yaml : `${res.yaml}\n`);
+    process.stdout.write(res.yaml.endsWith("\n") ? res.yaml : `${res.yaml}\n`);
     for (const w of res.warnings) {
       process.stderr.write(`warning: ${w}\n`);
     }

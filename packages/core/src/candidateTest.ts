@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   benchCompare,
   benchHistoryFile,
@@ -11,7 +11,7 @@ import {
   machineLabel,
   readBenchProfiles,
   readBenchVision,
-} from './bench/index.js';
+} from "./bench/index.js";
 import {
   benchPreset,
   benchVision,
@@ -19,23 +19,23 @@ import {
   type BenchPresetResult,
   type BenchVisionResult,
   type RunCli,
-} from './bench/runner.js';
-import { resolveBuildId } from './build.js';
-import { findByRel, relFromRepoAndFile } from './catalog.js';
-import { addCurated } from './catalogWriter.js';
-import { ctxForModel } from './ctx.js';
-import { resolveEnv } from './env.js';
-import { findLocalMmprojForRel } from './mmproj.js';
-import { autoVisionBenchEnabled } from './autotune.js';
-import type { BenchCompareRow } from './bench/compare.js';
+} from "./bench/runner.js";
+import { resolveBuildId } from "./build.js";
+import { findByRel, relFromRepoAndFile } from "./catalog.js";
+import { addCurated } from "./catalogWriter.js";
+import { ctxForModel } from "./ctx.js";
+import { resolveEnv } from "./env.js";
+import { findLocalMmprojForRel } from "./mmproj.js";
+import { autoVisionBenchEnabled } from "./autotune.js";
+import type { BenchCompareRow } from "./bench/compare.js";
 import {
   pickCandidateFile,
   pullRepoFile,
   type PullEvent,
   type PullFileResult,
   type RunHf,
-} from './pull.js';
-import type { MachineProfile, ResolvedEnv } from './types.js';
+} from "./pull.js";
+import type { MachineProfile, ResolvedEnv } from "./types.js";
 
 export type CandidateTestEvent = PullEvent | BenchEvent;
 
@@ -62,7 +62,7 @@ export interface CandidateTestResult {
   file: string;
   rel: string;
   machine: string;
-  mode: 'text' | 'vision';
+  mode: "text" | "vision";
   ctx: string;
   build: string;
   curatedAdded: boolean;
@@ -108,12 +108,12 @@ export async function candidateTest(
   const rel = relFromRepoAndFile(opts.repo, pick.file);
   let curatedAdded = false;
   if (!findByRel(rel)) {
-    const base = rel.slice(rel.lastIndexOf('/') + 1).replace(/\.gguf$/i, '');
+    const base = rel.slice(rel.lastIndexOf("/") + 1).replace(/\.gguf$/i, "");
     const addRes = await addCurated({
       repo: opts.repo,
       fileOrRel: pick.file,
       label: base,
-      scope: 'candidate',
+      scope: "candidate",
     });
     if (!addRes.ok) return { error: addRes.error };
     curatedAdded = true;
@@ -138,7 +138,7 @@ export async function candidateTest(
 
   // --- preset ------------------------------------------------------------
   let preset: CandidateTestStep<BenchPresetResult> = { ran: false };
-  const benchBin = join(resolved.LLAMA_CPP_BIN, 'llama-bench');
+  const benchBin = join(resolved.LLAMA_CPP_BIN, "llama-bench");
   if (!existsSync(benchBin)) {
     preset = { ran: false, reason: `llama-bench binary not found: ${benchBin}` };
   } else {
@@ -158,7 +158,7 @@ export async function candidateTest(
         resolved,
         signal: opts.signal,
       });
-      if ('error' in out) return { error: out.error };
+      if ("error" in out) return { error: out.error };
       preset = { ran: true, result: out };
     }
   }
@@ -174,15 +174,15 @@ export async function candidateTest(
   // before its multimodal status is reflected in HF metadata). Treat
   // presence of a local mmproj as authoritative — if the projector is
   // on disk, vision benches can run.
-  const isMultimodal = entry?.class === 'multimodal' || localMmproj !== null;
-  const mtmdBin = join(resolved.LLAMA_CPP_BIN, 'llama-mtmd-cli');
+  const isMultimodal = entry?.class === "multimodal" || localMmproj !== null;
+  const mtmdBin = join(resolved.LLAMA_CPP_BIN, "llama-mtmd-cli");
   const visionAutoOn = autoVisionBenchEnabled(env);
   if (!isMultimodal) {
-    vision = { ran: false, reason: `Not multimodal (class=${entry?.class ?? 'unknown'})` };
+    vision = { ran: false, reason: `Not multimodal (class=${entry?.class ?? "unknown"})` };
   } else if (!existsSync(mtmdBin)) {
     vision = { ran: false, reason: `llama-mtmd-cli binary not found: ${mtmdBin}` };
   } else if (!visionAutoOn) {
-    vision = { ran: false, reason: 'LLAMA_CPP_AUTO_BENCH_VISION=off' };
+    vision = { ran: false, reason: "LLAMA_CPP_AUTO_BENCH_VISION=off" };
   } else if (!localMmproj) {
     vision = { ran: false, reason: `No local mmproj sibling for ${rel}` };
   } else {
@@ -201,7 +201,7 @@ export async function candidateTest(
         resolved,
         signal: opts.signal,
       });
-      if ('error' in out) {
+      if ("error" in out) {
         vision = { ran: false, reason: out.error };
       } else {
         vision = { ran: true, result: out };
@@ -209,10 +209,7 @@ export async function candidateTest(
     }
   }
 
-  const compare = benchCompare(
-    { classFilter: entry?.class ?? 'all', scopeFilter: 'all' },
-    env,
-  );
+  const compare = benchCompare({ classFilter: entry?.class ?? "all", scopeFilter: "all" }, env);
 
   return {
     repo: opts.repo,

@@ -1,7 +1,7 @@
-import { runRunbook } from '../harness.js';
-import { RUNBOOKS } from '../runbooks/index.js';
-import type { RunbookToolClient } from '../types.js';
-import type { PlanLike, PlanStepLike } from './severity.js';
+import { runRunbook } from "../harness.js";
+import { RUNBOOKS } from "../runbooks/index.js";
+import type { RunbookToolClient } from "../types.js";
+import type { PlanLike, PlanStepLike } from "./severity.js";
 
 /**
  * Plan execution for the healer loop. Dispatches each step to either
@@ -13,9 +13,7 @@ import type { PlanLike, PlanStepLike } from './severity.js';
  * gets a complete step record for the journal.
  */
 
-export type StepOutcome =
-  | { ok: true; result: unknown }
-  | { ok: false; error: string };
+export type StepOutcome = { ok: true; result: unknown } | { ok: false; error: string };
 
 export interface ExecuteStepOptions {
   toolClient: RunbookToolClient;
@@ -53,7 +51,7 @@ export async function executePlanStep(
         log,
       });
       if (result.ok) return { ok: true, result };
-      return { ok: false, error: result.error ?? 'runbook reported failure' };
+      return { ok: false, error: result.error ?? "runbook reported failure" };
     }
     // The MCP SDK's default request timeout is 60s. Composite-apply
     // runs readiness polling against K8s (`readinessTimeoutMs`
@@ -62,11 +60,10 @@ export async function executePlanStep(
     // when the apply itself is progressing. Healer remediations can't
     // race these: bump the per-tool budget to 5m so slow image pulls
     // and readiness waits don't mask successful recoveries.
-    const raw = await opts.toolClient.callTool(
-      { name: step.tool, arguments: args },
-      undefined,
-      { timeout: 300_000, resetTimeoutOnProgress: true },
-    );
+    const raw = await opts.toolClient.callTool({ name: step.tool, arguments: args }, undefined, {
+      timeout: 300_000,
+      resetTimeoutOnProgress: true,
+    });
     const envelope = raw as {
       isError?: boolean;
       content?: Array<{ type: string; text?: string }>;
@@ -74,7 +71,7 @@ export async function executePlanStep(
     if (envelope?.isError === true) {
       const first = envelope.content?.[0];
       const msg =
-        first && first.type === 'text' && typeof first.text === 'string'
+        first && first.type === "text" && typeof first.text === "string"
           ? first.text
           : `${step.tool}: tool returned isError`;
       return { ok: false, error: msg.slice(0, 500) };
@@ -93,7 +90,7 @@ export async function executePlan(
   plan: PlanLike,
   opts: ExecuteStepOptions,
 ): Promise<ExecutePlanResult> {
-  const out: ExecutePlanResult['steps'] = [];
+  const out: ExecutePlanResult["steps"] = [];
   for (let i = 0; i < plan.steps.length; i++) {
     const step = plan.steps[i]!;
     const outcome = await executePlanStep(step, opts);

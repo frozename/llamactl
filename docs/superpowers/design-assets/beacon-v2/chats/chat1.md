@@ -6,8 +6,6 @@ _Started 2026-04-23 15:09 UTC_
 
 ## User
 
-
-
 ## Assistant
 
 I'll start by exploring the uploaded Beacon.zip file to understand what we're working with.
@@ -229,4 +227,3 @@ Beacon is packaged. Everything lives in the Design System tab:
 - `README.md` has the complete visual + content rules. `SKILL.md` is the loadable ruleset.
 
 Caveats flagged in the README: no source icon library (Lucide recommended as substitute), no photography library, no slide template provided.
-

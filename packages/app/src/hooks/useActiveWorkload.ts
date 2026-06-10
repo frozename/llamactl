@@ -1,6 +1,11 @@
-import { trpc } from '@/lib/trpc';
-import { useWorkloadSelectionStore } from '@/stores/workload-selection-store';
-import { getLiveWorkloads, selectActiveWorkload, type LiveWorkload, type WorkloadRow } from './workload-selection';
+import { trpc } from "@/lib/trpc";
+import { useWorkloadSelectionStore } from "@/stores/workload-selection-store";
+import {
+  getLiveWorkloads,
+  selectActiveWorkload,
+  type LiveWorkload,
+  type WorkloadRow,
+} from "./workload-selection";
 
 export interface ActiveWorkload {
   workload: string | null;

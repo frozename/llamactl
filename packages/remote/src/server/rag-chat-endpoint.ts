@@ -1,6 +1,6 @@
-import { TRPCError } from '@trpc/server';
-import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import type { AppRouter } from '../router.js';
+import { TRPCError } from "@trpc/server";
+import { getHTTPStatusCodeFromError } from "@trpc/server/http";
+import type { AppRouter } from "../router.js";
 
 /**
  * Thin server-side wrapper over the OpenAI-compatible
@@ -127,13 +127,10 @@ const DEFAULT_SYSTEM_PROMPT_PREFIX =
   "Answer from the provided context. If the answer isn't there, say \"I don't know.\" Be concise.";
 
 function jsonError(status: number, message: string, type: string): Response {
-  return new Response(
-    JSON.stringify({ error: { message, type } }),
-    {
-      status,
-      headers: { 'content-type': 'application/json' },
-    },
-  );
+  return new Response(JSON.stringify({ error: { message, type } }), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 /**
@@ -147,21 +144,21 @@ function jsonError(status: number, message: string, type: string): Response {
 export function lastUserMessageContent(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (!m || m.role !== 'user') continue;
+    if (!m || m.role !== "user") continue;
     const c = m.content;
-    if (typeof c === 'string') return c;
+    if (typeof c === "string") return c;
     if (Array.isArray(c)) {
       const texts: string[] = [];
       for (const part of c) {
-        if (part && typeof part === 'object') {
+        if (part && typeof part === "object") {
           const p = part as Record<string, unknown>;
           // OpenAI-style `{type:'text', text:'...'}` — other shapes
           // (image_url, input_audio) carry no retrieval query, skip.
-          const text = p['text'];
-          if (typeof text === 'string') texts.push(text);
+          const text = p["text"];
+          if (typeof text === "string") texts.push(text);
         }
       }
-      return texts.join('\n');
+      return texts.join("\n");
     }
     // null / other — treat as empty; keep looking back for a useful
     // one in case the last user turn was a media-only placeholder.
@@ -175,42 +172,39 @@ export function lastUserMessageContent(messages: ChatMessage[]): string | null {
  * see the same grounding format regardless of which client path ran
  * the retrieval.
  */
-export function buildRagSystemMessage(
-  results: RagSearchResult[],
-  prefix: string,
-): string {
-  const blocks = results
-    .map((r, i) => `[${i + 1}] ${r.document.content}`)
-    .join('\n');
+export function buildRagSystemMessage(results: RagSearchResult[], prefix: string): string {
+  const blocks = results.map((r, i) => `[${i + 1}] ${r.document.content}`).join("\n");
   return `${prefix}\n\nContext:\n${blocks}`;
 }
 
-function parseRagField(raw: unknown): { ok: true; rag: RagExtensionField } | { ok: false; error: string } {
-  if (raw == null) return { ok: false, error: 'rag is null' };
-  if (typeof raw !== 'object') return { ok: false, error: 'rag must be an object' };
+function parseRagField(
+  raw: unknown,
+): { ok: true; rag: RagExtensionField } | { ok: false; error: string } {
+  if (raw == null) return { ok: false, error: "rag is null" };
+  if (typeof raw !== "object") return { ok: false, error: "rag must be an object" };
   const r = raw as Record<string, unknown>;
-  if (typeof r['node'] !== 'string' || r['node'].trim() === '') {
+  if (typeof r["node"] !== "string" || r["node"].trim() === "") {
     return { ok: false, error: "rag.node is required (string)" };
   }
-  const out: RagExtensionField = { node: r['node'] };
-  if ('topK' in r) {
-    const tk = r['topK'];
-    if (typeof tk !== 'number' || !Number.isInteger(tk) || tk <= 0) {
-      return { ok: false, error: 'rag.topK must be a positive integer' };
+  const out: RagExtensionField = { node: r["node"] };
+  if ("topK" in r) {
+    const tk = r["topK"];
+    if (typeof tk !== "number" || !Number.isInteger(tk) || tk <= 0) {
+      return { ok: false, error: "rag.topK must be a positive integer" };
     }
     out.topK = tk;
   }
-  if ('collection' in r && r['collection'] !== undefined) {
-    if (typeof r['collection'] !== 'string') {
-      return { ok: false, error: 'rag.collection must be a string' };
+  if ("collection" in r && r["collection"] !== undefined) {
+    if (typeof r["collection"] !== "string") {
+      return { ok: false, error: "rag.collection must be a string" };
     }
-    out.collection = r['collection'];
+    out.collection = r["collection"];
   }
-  if ('system_prompt_prefix' in r && r['system_prompt_prefix'] !== undefined) {
-    if (typeof r['system_prompt_prefix'] !== 'string') {
-      return { ok: false, error: 'rag.system_prompt_prefix must be a string' };
+  if ("system_prompt_prefix" in r && r["system_prompt_prefix"] !== undefined) {
+    if (typeof r["system_prompt_prefix"] !== "string") {
+      return { ok: false, error: "rag.system_prompt_prefix must be a string" };
     }
-    out.system_prompt_prefix = r['system_prompt_prefix'];
+    out.system_prompt_prefix = r["system_prompt_prefix"];
   }
   return { ok: true, rag: out };
 }
@@ -219,14 +213,14 @@ function validateMessages(raw: unknown): ChatMessage[] | null {
   if (!Array.isArray(raw)) return null;
   const out: ChatMessage[] = [];
   for (const m of raw) {
-    if (!m || typeof m !== 'object') return null;
+    if (!m || typeof m !== "object") return null;
     const mm = m as Record<string, unknown>;
-    if (typeof mm['role'] !== 'string') return null;
-    const content = mm['content'];
-    if (typeof content !== 'string' && !Array.isArray(content) && content !== null) {
+    if (typeof mm["role"] !== "string") return null;
+    const content = mm["content"];
+    if (typeof content !== "string" && !Array.isArray(content) && content !== null) {
       return null;
     }
-    out.push({ role: mm['role'], content: content as ChatMessage['content'] });
+    out.push({ role: mm["role"], content: content as ChatMessage["content"] });
   }
   return out;
 }
@@ -244,7 +238,11 @@ export async function handleRagChatCompletions(
   req: Request,
   ctx: RagChatEndpointContext,
 ): Promise<Response> {
-  const log = ctx.log ?? ((line) => { console.error(line); });
+  const log =
+    ctx.log ??
+    ((line) => {
+      console.error(line);
+    });
 
   // Read the body once. We may need to replay it to the fallback
   // when neither `rag` nor `via` are present.
@@ -255,7 +253,7 @@ export async function handleRagChatCompletions(
     return jsonError(
       400,
       `failed to read request body: ${(err as Error).message}`,
-      'invalid_request_error',
+      "invalid_request_error",
     );
   }
 
@@ -263,15 +261,11 @@ export async function handleRagChatCompletions(
   try {
     body = JSON.parse(bodyText) as RagChatRequestBody;
   } catch (err) {
-    return jsonError(
-      400,
-      `invalid JSON body: ${(err as Error).message}`,
-      'invalid_request_error',
-    );
+    return jsonError(400, `invalid JSON body: ${(err as Error).message}`, "invalid_request_error");
   }
 
-  const hasRag = 'rag' in body && body.rag !== undefined && body.rag !== null;
-  const hasVia = 'via' in body && body.via !== undefined && body.via !== null;
+  const hasRag = "rag" in body && body.rag !== undefined && body.rag !== null;
+  const hasVia = "via" in body && body.via !== undefined && body.via !== null;
 
   // Plain OpenAI request — fall through to the legacy openai-proxy
   // path so existing callers (plain SDKs, smoke tests) keep working.
@@ -289,77 +283,75 @@ export async function handleRagChatCompletions(
     }
     return jsonError(
       400,
-      'request must include `via` (node name to route chat through) or the `rag` extension',
-      'invalid_request_error',
+      "request must include `via` (node name to route chat through) or the `rag` extension",
+      "invalid_request_error",
     );
   }
 
   // From here on the request uses the extension — `via` is mandatory.
-  if (!hasVia || typeof body.via !== 'string' || body.via.trim() === '') {
+  if (!hasVia || typeof body.via !== "string" || body.via.trim() === "") {
     return jsonError(
       400,
-      'via is required — name the llamactl node to route chat through (gateway / agent / cloud)',
-      'invalid_request_error',
+      "via is required — name the llamactl node to route chat through (gateway / agent / cloud)",
+      "invalid_request_error",
     );
   }
   const via = body.via;
 
   // Validate core OpenAI fields we plan to forward.
-  if (typeof body.model !== 'string' || body.model === '') {
-    return jsonError(400, 'model is required (string)', 'invalid_request_error');
+  if (typeof body.model !== "string" || body.model === "") {
+    return jsonError(400, "model is required (string)", "invalid_request_error");
   }
   const messages = validateMessages(body.messages);
   if (!messages || messages.length === 0) {
     return jsonError(
       400,
-      'messages must be a non-empty array of {role, content}',
-      'invalid_request_error',
+      "messages must be a non-empty array of {role, content}",
+      "invalid_request_error",
     );
   }
 
   let maxTokens: number | undefined;
   if (body.max_tokens !== undefined) {
-    if (typeof body.max_tokens !== 'number' || !Number.isInteger(body.max_tokens) || body.max_tokens <= 0) {
-      return jsonError(
-        400,
-        'max_tokens must be a positive integer',
-        'invalid_request_error',
-      );
+    if (
+      typeof body.max_tokens !== "number" ||
+      !Number.isInteger(body.max_tokens) ||
+      body.max_tokens <= 0
+    ) {
+      return jsonError(400, "max_tokens must be a positive integer", "invalid_request_error");
     }
     maxTokens = body.max_tokens;
   }
   let temperature: number | undefined;
   if (body.temperature !== undefined) {
-    if (typeof body.temperature !== 'number' || !Number.isFinite(body.temperature)) {
-      return jsonError(
-        400,
-        'temperature must be a finite number',
-        'invalid_request_error',
-      );
+    if (typeof body.temperature !== "number" || !Number.isFinite(body.temperature)) {
+      return jsonError(400, "temperature must be a finite number", "invalid_request_error");
     }
     temperature = body.temperature;
   }
   let providerOptions: Record<string, unknown> | undefined;
   if (body.providerOptions !== undefined) {
-    if (!body.providerOptions || typeof body.providerOptions !== 'object' || Array.isArray(body.providerOptions)) {
-      return jsonError(
-        400,
-        'providerOptions must be an object',
-        'invalid_request_error',
-      );
+    if (
+      !body.providerOptions ||
+      typeof body.providerOptions !== "object" ||
+      Array.isArray(body.providerOptions)
+    ) {
+      return jsonError(400, "providerOptions must be an object", "invalid_request_error");
     }
     providerOptions = body.providerOptions as Record<string, unknown>;
   }
 
   // Resolve the caller — tests inject a fake; production builds one
   // from the shared appRouter.
-  const caller = ctx.caller ?? (() => {
-    const c = ctx.appRouter.createCaller({}) as {
-      ragSearch: (input: RagSearchInput) => Promise<RagSearchResponse>;
-      chatComplete: (input: ChatCompleteInput) => Promise<unknown>;
-    };
-    return { ragSearch: c.ragSearch, chatComplete: c.chatComplete };
-  })();
+  const caller =
+    ctx.caller ??
+    (() => {
+      const c = ctx.appRouter.createCaller({}) as {
+        ragSearch: (input: RagSearchInput) => Promise<RagSearchResponse>;
+        chatComplete: (input: ChatCompleteInput) => Promise<unknown>;
+      };
+      return { ragSearch: c.ragSearch, chatComplete: c.chatComplete };
+    })();
 
   // ---- retrieval (optional) --------------------------------------------
   let retrievedCount = 0;
@@ -367,15 +359,15 @@ export async function handleRagChatCompletions(
   if (hasRag) {
     const parsed = parseRagField(body.rag);
     if (!parsed.ok) {
-      return jsonError(400, parsed.error, 'invalid_request_error');
+      return jsonError(400, parsed.error, "invalid_request_error");
     }
     const rag = parsed.rag;
     const query = lastUserMessageContent(messages);
     if (query == null) {
       return jsonError(
         400,
-        'no user message found in messages (rag retrieval needs a user query)',
-        'invalid_request_error',
+        "no user message found in messages (rag retrieval needs a user query)",
+        "invalid_request_error",
       );
     }
     const topK = rag.topK ?? DEFAULT_TOP_K;
@@ -397,19 +389,19 @@ export async function handleRagChatCompletions(
       // HTTP code is a stable 502.
       log(
         JSON.stringify({
-          evt: 'rag_chat_retrieval_error',
+          evt: "rag_chat_retrieval_error",
           node: rag.node,
           topK,
           elapsed_ms: Date.now() - started,
           error: msg,
         }),
       );
-      return jsonError(502, `retrieval failed: ${msg}`, 'rag_error');
+      return jsonError(502, `retrieval failed: ${msg}`, "rag_error");
     }
     retrievedCount = retrieval.results.length;
     log(
       JSON.stringify({
-        evt: 'rag_chat_retrieval_ok',
+        evt: "rag_chat_retrieval_ok",
         node: rag.node,
         topK,
         received: retrievedCount,
@@ -419,7 +411,7 @@ export async function handleRagChatCompletions(
 
     const prefix = rag.system_prompt_prefix ?? DEFAULT_SYSTEM_PROMPT_PREFIX;
     const systemMessage: ChatMessage = {
-      role: 'system',
+      role: "system",
       content: buildRagSystemMessage(retrieval.results, prefix),
     };
     // Our system message goes first so caller-supplied system messages
@@ -429,7 +421,7 @@ export async function handleRagChatCompletions(
   }
 
   // ---- chat forwarding --------------------------------------------------
-  const chatRequest: ChatCompleteInput['request'] = {
+  const chatRequest: ChatCompleteInput["request"] = {
     model: body.model,
     messages: augmentedMessages,
   };
@@ -449,13 +441,13 @@ export async function handleRagChatCompletions(
         JSON.stringify({
           error: {
             message: err.message,
-            type: 'upstream_error',
+            type: "upstream_error",
             code: err.code,
           },
         }),
         {
           status,
-          headers: { 'content-type': 'application/json' },
+          headers: { "content-type": "application/json" },
         },
       );
     }
@@ -464,21 +456,21 @@ export async function handleRagChatCompletions(
       JSON.stringify({
         error: {
           message: `chat failed: ${msg}`,
-          type: 'upstream_error',
+          type: "upstream_error",
         },
       }),
       {
         status: 502,
-        headers: { 'content-type': 'application/json' },
+        headers: { "content-type": "application/json" },
       },
     );
   }
 
   const headers: Record<string, string> = {
-    'content-type': 'application/json',
+    "content-type": "application/json",
   };
   if (hasRag) {
-    headers['x-llamactl-rag'] = `retrieved=${retrievedCount}`;
+    headers["x-llamactl-rag"] = `retrieved=${retrievedCount}`;
   }
   return new Response(JSON.stringify(chatResult), {
     status: 200,

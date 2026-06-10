@@ -1,43 +1,43 @@
 #!/usr/bin/env bun
-import { runEnv } from './commands/env.js';
-import { runCatalog } from './commands/catalog.js';
-import { runBench } from './commands/bench.js';
-import { runCandidate } from './commands/candidate.js';
-import { runServer } from './commands/server.js';
-import { runKeepAlive } from './commands/keepAlive.js';
-import { runLMStudio } from './commands/lmstudio.js';
-import { runRecommendations } from './commands/recommendations.js';
-import { runDiscover } from './commands/discover.js';
-import { runPull } from './commands/pull.js';
-import { runUninstall } from './commands/uninstall.js';
-import { runAgent } from './commands/agent.js';
-import { runNode } from './commands/node.js';
-import { runRag } from './commands/rag.js';
-import { runCtx } from './commands/ctx.js';
-import { runApply, runDelete, runDescribe, runGet } from './commands/workload.js';
-import { runEnable } from './commands/enable.js';
-import { runDisable } from './commands/disable.js';
-import { runComposite } from './commands/composite.js';
-import { runDoctor } from './commands/doctor.js';
-import { runInit } from './commands/init.js';
-import { runController } from './commands/controller.js';
-import { runExpose } from './commands/expose.js';
-import { runSirius } from './commands/sirius.js';
-import { runEmbersynth } from './commands/embersynth.js';
-import { runRunbookCmd } from './commands/runbook.js';
-import { runHeal } from './commands/heal.js';
-import { runSupervisor } from './commands/supervisor.js';
-import { runAdmit } from './commands/admit.js';
-import { runDeployNode } from './commands/deploy.js';
-import { runArtifacts } from './commands/artifacts.js';
-import { runEval } from './commands/eval.js';
-import { runCostGuardian } from './commands/cost-guardian.js';
-import { runPlan } from './commands/plan.js';
-import { runInfra } from './commands/infra.js';
-import { runProject } from './commands/project.js';
-import { runTunnel } from './commands/tunnel.js';
-import { runFleet } from './commands/fleet.js';
-import { extractGlobalFlags, setGlobals } from './dispatcher.js';
+import { runEnv } from "./commands/env.js";
+import { runCatalog } from "./commands/catalog.js";
+import { runBench } from "./commands/bench.js";
+import { runCandidate } from "./commands/candidate.js";
+import { runServer } from "./commands/server.js";
+import { runKeepAlive } from "./commands/keepAlive.js";
+import { runLMStudio } from "./commands/lmstudio.js";
+import { runRecommendations } from "./commands/recommendations.js";
+import { runDiscover } from "./commands/discover.js";
+import { runPull } from "./commands/pull.js";
+import { runUninstall } from "./commands/uninstall.js";
+import { runAgent } from "./commands/agent.js";
+import { runNode } from "./commands/node.js";
+import { runRag } from "./commands/rag.js";
+import { runCtx } from "./commands/ctx.js";
+import { runApply, runDelete, runDescribe, runGet } from "./commands/workload.js";
+import { runEnable } from "./commands/enable.js";
+import { runDisable } from "./commands/disable.js";
+import { runComposite } from "./commands/composite.js";
+import { runDoctor } from "./commands/doctor.js";
+import { runInit } from "./commands/init.js";
+import { runController } from "./commands/controller.js";
+import { runExpose } from "./commands/expose.js";
+import { runSirius } from "./commands/sirius.js";
+import { runEmbersynth } from "./commands/embersynth.js";
+import { runRunbookCmd } from "./commands/runbook.js";
+import { runHeal } from "./commands/heal.js";
+import { runSupervisor } from "./commands/supervisor.js";
+import { runAdmit } from "./commands/admit.js";
+import { runDeployNode } from "./commands/deploy.js";
+import { runArtifacts } from "./commands/artifacts.js";
+import { runEval } from "./commands/eval.js";
+import { runCostGuardian } from "./commands/cost-guardian.js";
+import { runPlan } from "./commands/plan.js";
+import { runInfra } from "./commands/infra.js";
+import { runProject } from "./commands/project.js";
+import { runTunnel } from "./commands/tunnel.js";
+import { runFleet } from "./commands/fleet.js";
+import { extractGlobalFlags, setGlobals } from "./dispatcher.js";
 
 const USAGE = `llamactl — local-first toolkit for running llama.cpp
 
@@ -222,93 +222,93 @@ historical zsh surface. See https://github.com/frozename/llamactl.
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   switch (command) {
-    case 'env':
+    case "env":
       return runEnv(rest);
-    case 'catalog':
+    case "catalog":
       return runCatalog(rest);
-    case 'bench':
+    case "bench":
       return runBench(rest);
-    case 'recommendations':
+    case "recommendations":
       return runRecommendations(rest);
-    case 'discover':
+    case "discover":
       return runDiscover(rest);
-    case 'uninstall':
+    case "uninstall":
       return runUninstall(rest);
-    case 'pull':
+    case "pull":
       return runPull(rest);
-    case 'candidate':
+    case "candidate":
       return runCandidate(rest);
-    case 'server':
+    case "server":
       return runServer(rest);
-    case 'keep-alive':
+    case "keep-alive":
       return runKeepAlive(rest);
-    case 'lmstudio':
+    case "lmstudio":
       return runLMStudio(rest);
-    case 'agent':
+    case "agent":
       return runAgent(rest);
-    case 'node':
+    case "node":
       return runNode(rest);
-    case 'rag':
+    case "rag":
       return runRag(rest);
-    case 'ctx':
+    case "ctx":
       return runCtx(rest);
-    case 'apply':
+    case "apply":
       return runApply(rest);
-    case 'get':
+    case "get":
       return runGet(rest);
-    case 'describe':
+    case "describe":
       return runDescribe(rest);
-    case 'delete':
+    case "delete":
       return runDelete(rest);
-    case 'enable':
+    case "enable":
       return runEnable(rest);
-    case 'disable':
+    case "disable":
       return runDisable(rest);
-    case 'composite':
+    case "composite":
       return runComposite(rest);
-    case 'doctor':
+    case "doctor":
       return runDoctor(rest);
-    case 'init':
+    case "init":
       return runInit(rest);
-    case 'controller':
+    case "controller":
       return runController(rest);
-    case 'expose':
+    case "expose":
       return runExpose(rest);
-    case 'sirius':
+    case "sirius":
       return runSirius(rest);
-    case 'embersynth':
+    case "embersynth":
       return runEmbersynth(rest);
-    case 'runbook':
+    case "runbook":
       return runRunbookCmd(rest);
     // Alias: canonical form is 'llamactl agent heal'.
-    case 'heal':
+    case "heal":
       return runHeal(rest);
-    case 'supervisor':
+    case "supervisor":
       process.exit(await runSupervisor(rest));
-    case 'admit':
+    case "admit":
       process.exit(await runAdmit(rest));
-    case 'cost-guardian':
+    case "cost-guardian":
       return runCostGuardian(rest);
-    case 'plan':
+    case "plan":
       return runPlan(rest);
-    case 'deploy-node':
+    case "deploy-node":
       return runDeployNode(rest);
-    case 'artifacts':
+    case "artifacts":
       return runArtifacts(rest);
-    case 'eval':
+    case "eval":
       return runEval(rest);
-    case 'infra':
+    case "infra":
       return runInfra(rest);
-    case 'project':
+    case "project":
       return runProject(rest);
-    case 'tunnel':
+    case "tunnel":
       return runTunnel(rest);
-    case 'fleet':
+    case "fleet":
       return runFleet(rest);
     case undefined:
-    case '--help':
-    case '-h':
-    case 'help':
+    case "--help":
+    case "-h":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:

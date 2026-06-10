@@ -14,13 +14,13 @@ You are taking over as maestro in `/Volumes/WorkSSD/repos/personal/llamactl`. If
 
 ## What this session shipped (in order)
 
-| Commit | What | How |
-|--------|------|-----|
-| `291253b` | eval(report): `as const` the depth literal array | hand — 30s scope |
-| `7a09685` | cli(test): catalog builtin count 10 → 12 + named-row asserts | hand — granite-4.1 entries were added but the test wasn't refreshed |
-| `755b2cb` | remote(test): functional bonjour mock with shared registry | hand — old mock was inert; new one wires publish → registry → find so discoverAgents actually finds the two beforeAll-registered agents. Isolated `bun test ./test/mdns.test.ts` now 2/2; the full-suite synthetic-host failure that remains is cross-file vi.mock pollution and unrelated. |
-| `dc1b235` | remote(workload): atomic save + per-dir mutex; resolve node aliases in port-collision check | hand — closed both TOCTOU A2 and cross-node D3 in one slice. Added `withWorkloadsMutex(key, fn)` in store.ts; atomic write via tmp+rename in `saveWorkload`; `resolveNodeIdentity?` opt on `applyOne`. Router wraps applyOne+save under the mutex. CLI workload + expose both pass the kubecfg-based resolver. Three regression tests in new `workload-concurrency.test.ts`. |
-| `e84bcda` | remote(workload): thread `resolveNodeIdentity` through reconciler + composite paths | **dispatched to codex-mini (use_worktree=false), 3min, single shot success.** Completed D3 across the remaining two applyOne callers: `workload/reconciler.ts` + `reconcileLoop.ts` (wired via `controller.ts` and `router.ts:reconcilerStart/Kick`) and `composite/apply.ts:applyWorkloadComponent`. New regression test in `workload-concurrency.test.ts` covering reconcileOnce-over-aliases. |
+| Commit    | What                                                                                        | How                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `291253b` | eval(report): `as const` the depth literal array                                            | hand — 30s scope                                                                                                                                                                                                                                                                                                                                                                                 |
+| `7a09685` | cli(test): catalog builtin count 10 → 12 + named-row asserts                                | hand — granite-4.1 entries were added but the test wasn't refreshed                                                                                                                                                                                                                                                                                                                              |
+| `755b2cb` | remote(test): functional bonjour mock with shared registry                                  | hand — old mock was inert; new one wires publish → registry → find so discoverAgents actually finds the two beforeAll-registered agents. Isolated `bun test ./test/mdns.test.ts` now 2/2; the full-suite synthetic-host failure that remains is cross-file vi.mock pollution and unrelated.                                                                                                      |
+| `dc1b235` | remote(workload): atomic save + per-dir mutex; resolve node aliases in port-collision check | hand — closed both TOCTOU A2 and cross-node D3 in one slice. Added `withWorkloadsMutex(key, fn)` in store.ts; atomic write via tmp+rename in `saveWorkload`; `resolveNodeIdentity?` opt on `applyOne`. Router wraps applyOne+save under the mutex. CLI workload + expose both pass the kubecfg-based resolver. Three regression tests in new `workload-concurrency.test.ts`.                     |
+| `e84bcda` | remote(workload): thread `resolveNodeIdentity` through reconciler + composite paths         | **dispatched to codex-mini (use_worktree=false), 3min, single shot success.** Completed D3 across the remaining two applyOne callers: `workload/reconciler.ts` + `reconcileLoop.ts` (wired via `controller.ts` and `router.ts:reconcilerStart/Kick`) and `composite/apply.ts:applyWorkloadComponent`. New regression test in `workload-concurrency.test.ts` covering reconcileOnce-over-aliases. |
 
 ### Maestro smoke (no commit — task #6 from morning handoff)
 
@@ -33,12 +33,12 @@ You are taking over as maestro in `/Volumes/WorkSSD/repos/personal/llamactl`. If
 
 ### Dispatch history (the rabbit hole)
 
-| Handoff | Agent | Outcome | Why |
-|---------|-------|---------|-----|
-| `349af578` | codex-mini | watchdog timeout 15min | wrong-repo trap: worktree created under `/Volumes/WorkSSD/repos/penumbra-worktrees/` (penumbra), agent never reached llamactl. Pivoted to hand-implementing. |
-| `e756b96f`, `4f55af9b` | codex-mini | ok (ping tests) | confirmed: even with `use_worktree=false`, daemon spawns codex in `/Volumes/WorkSSD/repos/personal/penumbra` |
-| `7c05815b` | codex-mini | ok but aborted | over-strict verification in my prompt ("seeing `packages/mcp` = penumbra") falsely tripped on llamactl which ALSO has `packages/mcp` |
-| `dc1301a1` | codex-mini | **ok, e84bcda landed in 3min** | corrected check using `packages/remote` (llamactl-specific) |
+| Handoff                | Agent      | Outcome                        | Why                                                                                                                                                          |
+| ---------------------- | ---------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `349af578`             | codex-mini | watchdog timeout 15min         | wrong-repo trap: worktree created under `/Volumes/WorkSSD/repos/penumbra-worktrees/` (penumbra), agent never reached llamactl. Pivoted to hand-implementing. |
+| `e756b96f`, `4f55af9b` | codex-mini | ok (ping tests)                | confirmed: even with `use_worktree=false`, daemon spawns codex in `/Volumes/WorkSSD/repos/personal/penumbra`                                                 |
+| `7c05815b`             | codex-mini | ok but aborted                 | over-strict verification in my prompt ("seeing `packages/mcp` = penumbra") falsely tripped on llamactl which ALSO has `packages/mcp`                         |
+| `dc1301a1`             | codex-mini | **ok, e84bcda landed in 3min** | corrected check using `packages/remote` (llamactl-specific)                                                                                                  |
 
 ## Live state at end of session
 

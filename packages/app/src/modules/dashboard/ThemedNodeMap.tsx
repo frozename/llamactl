@@ -1,8 +1,13 @@
-import * as React from 'react';
-import { useThemeStore } from '@/stores/theme-store';
-import { getTheme } from '@/themes';
-import { NodeMap } from './NodeMap';
-import { NodeMapTailscale, NodeMapCyberpunk, NodeMapDatadog, useMockNodes } from './NodeMapVariants';
+import * as React from "react";
+import { useThemeStore } from "@/stores/theme-store";
+import { getTheme } from "@/themes";
+import { NodeMap } from "./NodeMap";
+import {
+  NodeMapTailscale,
+  NodeMapCyberpunk,
+  NodeMapDatadog,
+  useMockNodes,
+} from "./NodeMapVariants";
 
 /**
  * Cluster map that swaps its visual variant based on the active
@@ -19,11 +24,11 @@ export function ThemedNodeMap(): React.JSX.Element {
   const theme = getTheme(themeId);
   const nodes = useMockNodes();
   switch (theme.mapVariant) {
-    case 'glass':
+    case "glass":
       return <NodeMapTailscale nodes={nodes} />;
-    case 'neon':
+    case "neon":
       return <NodeMapCyberpunk nodes={nodes} />;
-    case 'hex':
+    case "hex":
       return <NodeMapDatadog nodes={nodes} />;
     default:
       return <NodeMap />;

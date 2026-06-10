@@ -156,14 +156,14 @@ correctness, not data correctness.
 Six files under `tests/ui-flows/shell/`, each a hand-written flow on
 top of `pilot-driver.ts`:
 
-| File | Asserts |
-|---|---|
-| `theme-switch.ts` | Cycle all four themes via `ThemeOrbs`; `[data-theme]` on `<html>` flips and persists across reload (`localStorage` key `beacon-theme`, version 2). |
-| `command-palette.ts` | `Cmd+Shift+P` opens; type "log" filters; `Enter` opens Logs; `Esc` closes without opening a tab. |
-| `rail-views.ts` | Click each rail icon (Explorer, Search, Sessions, Fleet, Tokens); the matching panel becomes visible and the previous becomes hidden. No pixel checks. |
-| `tab-bar.ts` | Open 3 modules → reorder via drag → close middle tab → `activeKey` falls back right then left. Pin a tab → close-others → pinned survives. |
-| `dynamic-tabs.ts` | Programmatically `useTabStore.open({ kind: 'workload', instanceId: 'wl-fixture' })`; assert `WorkloadDetail` renders. Same for `node` and `ops-session`. Requires fixture data via the test profile (see Open questions). |
-| `error-boundary.ts` | After all other Tier A passes, sweep the DOM: no `[data-testid="beacon-error-boundary"]` anywhere. Belt-and-suspenders against the per-module assertion. |
+| File                 | Asserts                                                                                                                                                                                                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `theme-switch.ts`    | Cycle all four themes via `ThemeOrbs`; `[data-theme]` on `<html>` flips and persists across reload (`localStorage` key `beacon-theme`, version 2).                                                                        |
+| `command-palette.ts` | `Cmd+Shift+P` opens; type "log" filters; `Enter` opens Logs; `Esc` closes without opening a tab.                                                                                                                          |
+| `rail-views.ts`      | Click each rail icon (Explorer, Search, Sessions, Fleet, Tokens); the matching panel becomes visible and the previous becomes hidden. No pixel checks.                                                                    |
+| `tab-bar.ts`         | Open 3 modules → reorder via drag → close middle tab → `activeKey` falls back right then left. Pin a tab → close-others → pinned survives.                                                                                |
+| `dynamic-tabs.ts`    | Programmatically `useTabStore.open({ kind: 'workload', instanceId: 'wl-fixture' })`; assert `WorkloadDetail` renders. Same for `node` and `ops-session`. Requires fixture data via the test profile (see Open questions). |
+| `error-boundary.ts`  | After all other Tier A passes, sweep the DOM: no `[data-testid="beacon-error-boundary"]` anywhere. Belt-and-suspenders against the per-module assertion.                                                                  |
 
 Estimated total Tier A runtime: **~90 seconds**, plus checkout +
 build (~3 minutes wall-clock per PR).
@@ -181,13 +181,13 @@ itself stays as the driver primitive.
 
 **Keep + repair (5):**
 
-| Flow | Repair scope |
-|---|---|
+| Flow                          | Repair scope                                                                                    |
+| ----------------------------- | ----------------------------------------------------------------------------------------------- |
 | `pipelines-apply-run-flow.ts` | Update navigation to palette/activity-bar; verify `data-testid` selectors against current code. |
-| `ops-chat-flow.ts` | Same — navigation + selectors. |
-| `chat-compare-flow.ts` | Same. |
-| `pipelines-wizard-flow.ts` | Same. |
-| `projects-tab-flow.ts` | Same; specifically validate the EditorialHero empty-state landed in P3. |
+| `ops-chat-flow.ts`            | Same — navigation + selectors.                                                                  |
+| `chat-compare-flow.ts`        | Same.                                                                                           |
+| `pipelines-wizard-flow.ts`    | Same.                                                                                           |
+| `projects-tab-flow.ts`        | Same; specifically validate the EditorialHero empty-state landed in P3.                         |
 
 Each repair is one commit. Estimated 30–60 minutes per flow.
 
@@ -206,7 +206,7 @@ Trigger changes from `on: [push, pull_request]` to:
 
 ```yaml
 on:
-  schedule: [{ cron: '0 9 * * *' }]
+  schedule: [{ cron: "0 9 * * *" }]
   workflow_dispatch:
 ```
 
@@ -215,12 +215,12 @@ brings it to ~1 run/day plus manual triggers.
 
 ## CI workflow inventory
 
-| Workflow | Trigger | Blocks merge? |
-|---|---|---|
-| `ui-tier-a.yml` (new) | PR + push to main | yes |
-| `ui-flows-nightly.yml` (new) | nightly cron + manual | no (advisory) |
+| Workflow                                       | Trigger               | Blocks merge? |
+| ---------------------------------------------- | --------------------- | ------------- |
+| `ui-tier-a.yml` (new)                          | PR + push to main     | yes           |
+| `ui-flows-nightly.yml` (new)                   | nightly cron + manual | no (advisory) |
 | `cross-repo-smoke.yml` (existing, retriggered) | nightly cron + manual | no (advisory) |
-| `ui-audit.yml` (existing, untouched) | as-is | as-is |
+| `ui-audit.yml` (existing, untouched)           | as-is                 | as-is         |
 
 `ui-tier-a.yml` is the only new merge-blocking check. Tier A runs on
 `macos-latest` because Electron requires a GUI environment. Cost is

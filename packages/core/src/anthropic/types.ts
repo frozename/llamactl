@@ -1,39 +1,41 @@
-export type AnthropicRole = 'user' | 'assistant';
+export type AnthropicRole = "user" | "assistant";
 
 export interface AnthropicTextContentBlock {
-  type: 'text';
+  type: "text";
   text: string;
 }
 
 export interface AnthropicImageSourceBase64 {
-  type: 'base64';
+  type: "base64";
   media_type: string;
   data: string;
 }
 
 export interface AnthropicImageSourceUrl {
-  type: 'url';
+  type: "url";
   url: string;
 }
 
 export type AnthropicImageSource = AnthropicImageSourceBase64 | AnthropicImageSourceUrl;
 
 export interface AnthropicImageContentBlock {
-  type: 'image';
+  type: "image";
   source: AnthropicImageSource;
 }
 
 export interface AnthropicToolUseContentBlock {
-  type: 'tool_use';
+  type: "tool_use";
   id: string;
   name: string;
   input: Record<string, unknown>;
 }
 
-export type AnthropicToolResultContentBlock = AnthropicTextContentBlock | AnthropicImageContentBlock;
+export type AnthropicToolResultContentBlock =
+  | AnthropicTextContentBlock
+  | AnthropicImageContentBlock;
 
 export interface AnthropicToolResultContentBlockBase {
-  type: 'tool_result';
+  type: "tool_result";
   tool_use_id: string;
   content: string | AnthropicToolResultContentBlock[];
 }
@@ -59,11 +61,11 @@ export interface AnthropicTool {
 }
 
 export type AnthropicToolChoice =
-  | 'auto'
-  | 'any'
-  | 'none'
+  | "auto"
+  | "any"
+  | "none"
   | {
-      type: 'tool';
+      type: "tool";
       name: string;
     };
 
@@ -82,11 +84,11 @@ export interface AnthropicMessagesRequest {
 
 export interface AnthropicMessagesResponse {
   id: string;
-  type: 'message';
-  role: 'assistant';
+  type: "message";
+  role: "assistant";
   content: AnthropicContentBlock[];
   model: string;
-  stop_reason: 'end_turn' | 'max_tokens' | 'stop_sequence' | 'tool_use';
+  stop_reason: "end_turn" | "max_tokens" | "stop_sequence" | "tool_use";
   stop_sequence?: string;
   usage: {
     input_tokens: number;
@@ -101,7 +103,7 @@ export interface OpenAIUsage {
 
 export interface OpenAIChatToolCall {
   id: string;
-  type: 'function';
+  type: "function";
   function: {
     name: string;
     arguments: string;
@@ -109,7 +111,7 @@ export interface OpenAIChatToolCall {
 }
 
 export interface OpenAIChatMessageResponse {
-  role: 'assistant';
+  role: "assistant";
   content: string | null;
   tool_calls?: OpenAIChatToolCall[];
 }

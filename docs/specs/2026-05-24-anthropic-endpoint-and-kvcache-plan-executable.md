@@ -85,17 +85,20 @@ T1.1  refactor openaiProxy.ts into staged pipeline + add RED tests + kvstore REA
 **RED → GREEN → VERIFY:**
 
 RED:
+
 - Add test asserting existing `/v1/chat/completions` routing behavior unchanged after refactor (snapshot test of forwarding semantics).
 - Add test asserting `/v1/messages` currently returns a deterministic 501, not silent passthrough.
 - Add test asserting `routeMapCache` build count does not increase across N successive non-workload-changing requests.
 
 GREEN:
+
 - Refactor `proxyOpenAI` into `parseIncoming → maybeTranslate → resolveRoute → forward → maybeTranslateResponse` pipeline.
 - Translator slot is a no-op for now; structure only.
 - Preserve all existing forwarding semantics (header strip, JSON body routing, ReadableStream re-wrap).
 - Write `packages/core/src/kvstore/README.md` (one paragraph): storage dir is `<dataRoot>/kvstore/` — a sibling of the workload runtime dir, intentionally outside `workloadRuntimeRoot` so KV metadata writes do not bump `workloadRuntimeRoot` mtime and do not thrash `routeMapCache` or `modelsResponseCache`.
 
 **FAILURE MODES + DETECTION:**
+
 - Seam extraction silently changes routing → snapshot-shaped tests catch.
 - `/v1/messages` falls through legacy forwarding → 501 assertion catches.
 
@@ -139,14 +142,17 @@ T2.1  translateRequest.ts + types.ts + wire into proxyOpenAI + fixture tests
 **RED → GREEN → VERIFY:**
 
 RED:
+
 - Failing cases for: `system` (string + content[]), text blocks, image blocks (base64 → data URL), `tool_use` blocks (→ `assistant.tool_calls`), `tool_result` blocks (→ `role:"tool"` with N-results fanout), `tools` wrap, `tool_choice` enum permutations (auto/any/none/specific).
 - Failing test for malformed/unsupported content blocks → deterministic 4xx translation error.
 
 GREEN:
+
 - Pure function `translateRequest(req: AnthropicMessagesRequest): OpenAIChatRequest`.
 - Wire `/v1/messages` branch in `proxyOpenAI` to translator → existing OpenAI forward path → upstream `/v1/chat/completions`.
 
 **FAILURE MODES + DETECTION:**
+
 - Wrong role/block mapping silently mutates semantics → golden fixture tests assert full translated JSON via structured diff.
 - `tool_choice` enum mismatch → contract tests for each permutation with explicit upstream payload assertion.
 
@@ -188,12 +194,15 @@ T3.2  translateStream.ts + SSE state machine + fuzz + upstream-error contract  (
 **Targets:** `packages/core/src/anthropic/translateResponse.ts`, `packages/core/test/anthropic.translateResponse.test.ts`
 
 RED:
+
 - Failing test: stop_reason map (`stop→end_turn`, `length→max_tokens`, `tool_calls→tool_use`).
 
 GREEN:
+
 - `translateResponse(res: OpenAIChatResponse): AnthropicMessagesResponse` pure function.
 
 **FAILURE MODES + DETECTION:**
+
 - Wrong stop_reason → per-value contract tests.
 
 ### T3.2 — SSE stream translator + fuzz
@@ -201,6 +210,7 @@ GREEN:
 **Targets:** `packages/core/src/anthropic/translateStream.ts`, `packages/core/test/anthropic.translateStream.test.ts`
 
 RED:
+
 - Failing test: SSE event-order invariant — every `content_block_delta` falls between an open `content_block_start` and its matching `content_block_stop`.
 - Failing test: mixed OpenAI deltas (`content` + `tool_calls` interleaved) emit correctly indexed Anthropic blocks.
 - Failing fuzz test: tool-call JSON arguments split across N random chunk boundaries → reconstructed JSON must parse and match source.
@@ -208,11 +218,13 @@ RED:
 - Failing test: unknown upstream SSE event type → `translator_unknown_event_total` counter increments, stream continues unless invariant break.
 
 GREEN:
+
 - Line-buffered SSE parser + state machine in `translateStream.ts`. Track open content-block index, demote OpenAI text deltas → `text_delta`, demote `tool_calls[].index` deltas → `input_json_delta` keyed by index, emit transitions.
 - `[DONE]` handling, periodic `ping` every ~15s.
 - Document and implement the synthetic stop_reason fallback for upstream errors: `end_turn` + `usage.output_tokens` reflecting partial output + a structured log event `anthropic_stream_upstream_error`.
 
 **FAILURE MODES + DETECTION:**
+
 - Out-of-order event emission closes strict clients → state-machine invariant tests assert legal transition graph.
 - Tool-call args fragmented produce invalid JSON → fuzz test.
 - Upstream disconnect mid-stream → terminal-mapping contract test.
@@ -262,11 +274,13 @@ T4.3  secondary guard enforcement + ENOSPC fault injection  (depends T4.1)
 **Targets:** `packages/core/src/kvstore/registry.ts`, `packages/core/src/kvstore/storage.ts`, `packages/core/src/kvstore/index.ts`, `packages/core/test/kvstore.storage.test.ts`
 
 RED:
+
 - Schema migration test: create v0 DB → run migrator → v1 schema present + data preserved.
 - Crash-mid-write recovery test: kill between metadata write and placeholder write → startup integrity scan flags it, increments `registry_integrity_errors_total`, quarantines the row.
 - KV metadata writes do NOT bump `workloadRuntimeRoot` mtime (no `routeMapCache` thrash).
 
 GREEN:
+
 - SQLite + WAL, migration version table.
 - Entry shape (minimal, per simplifier): `sha, workload, upstreamSlotFile, quantBits, tokens, ctxSize, hits, createdAt, lastUsed, payloadBytes, textBytes, reason`. Also: `prefix_byte_length, workload_epoch` for secondary guard.
 - Storage dir: `<dataRoot>/kvstore/` (sibling of workload runtime, not child).
@@ -277,9 +291,11 @@ GREEN:
 **Targets:** `packages/core/src/kvstore/evictionScore.ts`, `packages/core/test/kvstore.eviction.test.ts`
 
 RED:
+
 - DS4-shape decay: 6h hit half-life, live-prefix overlap penalty, hard-protect `protected_sha`.
 
 GREEN:
+
 - Pure `evictionScore(entry, liveTokens, protectedSha, now)` port of `ds4_kvstore_entry_eviction_score`.
 
 ### T4.3 — Secondary guard + ENOSPC
@@ -287,14 +303,17 @@ GREEN:
 **Targets:** `packages/core/src/kvstore/policy.ts`, tests folded into `kvstore.registry.test.ts`
 
 RED:
+
 - Single-SHA-match without full secondary tuple must be rejected.
 - ENOSPC during eviction → `registry_write_fail_total{reason="enospc"}` + registry remains queryable.
 
 GREEN:
+
 - `longestPrefixLookup()` enforces full tuple `(sha + prefix_byte_length + token_count + workload + quantBits + ctxSize)`.
 - ENOSPC fault-injection path with structured warning.
 
 **FAILURE MODES + DETECTION (all T4.x):**
+
 - Crash mid-write → integrity scan + counter.
 - ENOSPC → fault-injection test + counter.
 - SHA collision → secondary guard hard-rejects single-SHA-match without full tuple.
@@ -340,6 +359,7 @@ T5.2  race tests + orphan sweeper + multi-slot allocator   (depends T5.1)
 **Targets:** `packages/core/src/kvstore/upstreamSlots.ts`, minor `packages/core/src/engines/state.ts` extension, `packages/core/test/kvstore.upstreamSlots.test.ts`
 
 RED:
+
 - Mocked-upstream test: `/slots/0?action=save` writes file, `?action=restore` reads it back.
 - Restore-miss → structured error + `kv_restore_miss_total`.
 - Epoch mismatch → `kv_restore_reject_total{reason="epoch"}`.
@@ -347,6 +367,7 @@ RED:
 - ctxSize mismatch → hard-reject + counter.
 
 GREEN:
+
 - `save(slotId, filepath)` / `restore(slotId, filepath)` against llama-server `/slots/<id>?action=`.
 - `workload_epoch` from `pid + startedAt + rel + args-hash` read from runtime sidecar files; expose via `engines/state.ts` helper.
 - Orphan slot-file sweeper at startup + TTL.
@@ -356,15 +377,18 @@ GREEN:
 **Targets:** additions to `kvstore.upstreamSlots.test.ts` + slot allocator in `upstreamSlots.ts`
 
 RED:
+
 - Concurrent restore + eviction on same entry → registry transitions `reserved→active→idle`; eviction defers when state ≠ `idle`.
 - Stale slot file exists on disk with no matching registry row → flagged as orphan + TTL-based cleanup.
 - Under `--parallel >1`, slot allocator picks a non-zero slot when slot 0 is in use.
 
 GREEN:
+
 - Slot allocator abstraction: single-slot fast path (slot=0, `--parallel 1` default) + guarded multi-slot pool with explicit allocation policy.
 - Per-slot contention metric.
 
 **FAILURE MODES + DETECTION:**
+
 - Concurrent requests trample slot → per-slot lock + tests proving no interleaved save/restore.
 - Wrong-quant/model-binary mismatch silently restores garbage → hard guard chain.
 - Restore-vs-eviction race → transactional state.
@@ -410,12 +434,14 @@ T6.2  first-decoded-token false-hit detection + fallback + invalidation   (depen
 **Targets:** `packages/core/src/openaiProxy.ts`, `packages/core/test/openaiProxy.kv-cache.test.ts`
 
 RED:
+
 - Cold-miss request forwards full prompt + saves slot post-response.
 - Identical-prefix request restores slot + forwards suffix only.
 - Per-workload byte budget exceeded → eviction runs + drops lowest-score entries.
 - Workload disable/re-enable mid-request → `slot_eviction_blocked_active_request` event; active request completes without slot being yanked.
 
 GREEN:
+
 - Lookup at proxy ingress: compute byte-prefix SHA + secondary guard tuple → `longestPrefixLookup()`.
 - On hit: call `upstreamSlots.restore`, forward only the suffix tokens, attach `kv_restored=true` to upstream request metadata.
 - On response: save new slot file + register entry (single save per response, v1 policy).
@@ -426,12 +452,15 @@ GREEN:
 **Targets:** additions to `openaiProxy.ts` + `openaiProxy.kv-cache.test.ts`
 
 RED:
+
 - Mocked upstream returns a token at first-decoded-position inconsistent with save-time snapshot → `kv_false_hit_total` + cold prefill fallback + entry invalidation.
 
 GREEN:
+
 - First-decoded-token equivalence check: compare first response token under temperature=0 between cold and warm; on mismatch, downgrade to cold prefill.
 
 **FAILURE MODES + DETECTION:**
+
 - False positive cache hit → first-decoded-token equivalence + counter + entry invalidation.
 - Mid-flight slot eviction → blocked-active-request event + defer.
 - Cache write storm under tool-call bursts → not addressed in v1 (Phase 8 if triggered).
@@ -480,6 +509,7 @@ T7.2  run bench on M4 Pro, record results, write decision doc                   
 **Targets:** `packages/eval/matrix/` (new workload type `kv-warm-bench`)
 
 Implement:
+
 - Per-frontier loop at 2k/4k/8k/16k/32k token frontiers with KV restore between probes.
 - Semantic parity assertion: compare generated tokens vs cold-prefill run with same seed.
 - Workload config for Gemma-4 26B-A4B M4 Pro / mac-mini :8181.
@@ -487,6 +517,7 @@ Implement:
 ### T7.2 — Bench run + decision doc (manual)
 
 Run locally:
+
 ```bash
 bun run --cwd packages/eval kv-warm-bench --workload gemma4-26b-a4b --frontiers 2k,4k,8k,16k,32k
 ```
@@ -494,11 +525,13 @@ bun run --cwd packages/eval kv-warm-bench --workload gemma4-26b-a4b --frontiers 
 Record in `docs/benchmarks/2026-05-XX-kv-warm-restore.md` with raw CSV.
 
 **Decision rules:**
+
 - cold→warm prefill wall ≥50% AND write cost <100ms p95 → Phase 8 **skipped**.
 - gain ≥50% AND write cost >100ms p95 → Phase 8 **mandatory**.
 - gain <50% → root-cause before proceeding to Phase 9.
 
 **FAILURE MODES + DETECTION:**
+
 - Unsafe cache reuse synthetically passes bench → semantic parity assertion in harness (compare tokens vs cold-prefill run with same seed).
 
 ### Acceptance gate → Phase 8 or Phase 9
@@ -518,7 +551,7 @@ grep -E "gain|decision" docs/benchmarks/2026-05-*-kv-warm-restore.md
 ```yaml
 task_class: STANDARD
 task_type: implement_substantial
-initial_agent: TBD  # defer until Phase 7 decision doc is written
+initial_agent: TBD # defer until Phase 7 decision doc is written
 use_worktree: true
 expected_wall_time: 3–5 days
 blocking_checkpoint: TBD — defined after Phase 7 results
@@ -527,6 +560,7 @@ blocking_checkpoint: TBD — defined after Phase 7 results
 **Trigger:** Phase 7 records `decision: mandatory` (write amplification OR false-hit rate ≥ measurable threshold: write cost >100ms p95 or gain <50%).
 
 **Scope (only if triggered):**
+
 - Per-workload tokenizer access (extend `/v1/models` or read workload yaml — decide based on workload type at trigger time).
 - Chat-anchor token IDs configurable per workload.
 - `continued_interval_tokens` cadence; only write at chat-anchor positions.
@@ -568,10 +602,12 @@ T9.3  3-turn integration test + trailer corruption test           (depends T9.2)
 **Targets:** `packages/core/src/kvstore/trailer.ts`, registry `extFlags` column (migration)
 
 RED:
+
 - Trailer JSON round-trips through Phase 4 storage + Phase 5 save/restore.
 - Trailer corruption (truncated JSON) → main slot file still usable + trailer marked invalid in registry.
 
 GREEN:
+
 - `extFlags` bitfield (`TOOL_MAP | SESSION_TITLE | THINKING_VISIBLE | RESPONSES_VISIBLE`) with per-flag read/write hooks.
 - `extFlags` column added to registry with schema migration.
 - Atomicity: temp-file + rename of both main slot file and trailer together.
@@ -581,6 +617,7 @@ GREEN:
 **Targets:** `packages/core/src/anthropic/translateRequest.ts`, `translateStream.ts`, `translateResponse.ts`
 
 Implement:
+
 - On save: Anthropic translator writes `tool_map: {tool_use_id → exact bytes upstream emitted}` to trailer.
 - On restore: translator reads `tool_map` and substitutes exact bytes during turn-N prompt rendering.
 
@@ -589,10 +626,12 @@ Implement:
 **Targets:** `packages/core/test/anthropic.kv.integration.test.ts`
 
 RED:
+
 - 3-turn test: Anthropic SDK → proxy → local workload. Turn 2 must hit warm cache. Upstream must receive exact `tool_use` DSML bytes from turn 1 (not a re-canonicalization).
 - Closes `project_qwen_tool_grammar_2026-05-15` canonicalization gap.
 
 **FAILURE MODES + DETECTION:**
+
 - Trailer write succeeds but main-file save fails → atomicity via temp-file + rename of both.
 - Tool-use bytes diverge from canonical re-render but cache reuses anyway → semantic parity assertion in test.
 
@@ -612,8 +651,8 @@ bun run --cwd packages/core tsc --noEmit
 ```yaml
 task_class: STANDARD
 task_type: unknown
-initial_agent: TBD  # assign based on Sub A oMLX surface familiarity; likely claude-acp-sonnet
-use_worktree: false  # investigation only; no committed code required initially
+initial_agent: TBD # assign based on Sub A oMLX surface familiarity; likely claude-acp-sonnet
+use_worktree: false # investigation only; no committed code required initially
 expected_wall_time: 1–3 days investigation + potential follow-up scope
 blocking_checkpoint: "ls docs/specs/2026-05-*-omlx-kv-decision.md"
 ```
@@ -627,6 +666,7 @@ blocking_checkpoint: "ls docs/specs/2026-05-*-omlx-kv-decision.md"
 **Targets:** `packages/remote/src/server/modelhost.ts` (read-only audit)
 
 Investigate:
+
 1. Does oMLX (`ModelHost` workload kind) expose a slot save/restore API? Audit Sub A surface from `project_mlx_sub_a_shipped_2026-05-19`.
 2. Apply decision matrix:
    - **Yes** → minor wrapper in `upstreamSlots.ts`; oMLX workloads get KV warm-restore for free.
@@ -649,19 +689,19 @@ bun run --cwd packages/remote tsc --noEmit
 
 ## Phase summary table
 
-| Phase | Agent | Task class | Depends on | Can parallelize with |
-|---|---|---|---|---|
-| 1 | `codex-acp-fast` | STANDARD / implement_small | — | — |
-| 2 | `codex-acp-deep` | STANDARD / implement_substantial | Phase 1 gate | Phase 4 (after Phase 1) |
-| 3 | `claude-acp-sonnet` | STANDARD / implement_substantial | Phase 2 gate | Phase 4, Phase 5 |
-| 4 | `claude-acp-sonnet` | STANDARD / implement_substantial | Phase 1 gate | Phase 2, Phase 3 |
-| 5 | `codex-acp-deep` | STANDARD / implement_substantial | Phase 4 gate | Phase 3 |
-| 6 | `claude-acp-sonnet` | STANDARD / implement_substantial | Phase 3 + Phase 5 gates | — |
-| 7 | `codex-acp-deep` | STANDARD / implement_small | Phase 6 gate | Phase 10 |
-| 8 | TBD (conditional) | STANDARD / implement_substantial | Phase 7 trigger | Skip if decision=skip |
-| 9 | `claude-acp-sonnet` | STANDARD / implement_substantial | Phase 3 + Phase 6 gates | Phase 10 |
-| 10 | TBD | STANDARD / unknown | Phase 5+ (soft) | Phases 7–9 |
+| Phase | Agent               | Task class                       | Depends on              | Can parallelize with    |
+| ----- | ------------------- | -------------------------------- | ----------------------- | ----------------------- |
+| 1     | `codex-acp-fast`    | STANDARD / implement_small       | —                       | —                       |
+| 2     | `codex-acp-deep`    | STANDARD / implement_substantial | Phase 1 gate            | Phase 4 (after Phase 1) |
+| 3     | `claude-acp-sonnet` | STANDARD / implement_substantial | Phase 2 gate            | Phase 4, Phase 5        |
+| 4     | `claude-acp-sonnet` | STANDARD / implement_substantial | Phase 1 gate            | Phase 2, Phase 3        |
+| 5     | `codex-acp-deep`    | STANDARD / implement_substantial | Phase 4 gate            | Phase 3                 |
+| 6     | `claude-acp-sonnet` | STANDARD / implement_substantial | Phase 3 + Phase 5 gates | —                       |
+| 7     | `codex-acp-deep`    | STANDARD / implement_small       | Phase 6 gate            | Phase 10                |
+| 8     | TBD (conditional)   | STANDARD / implement_substantial | Phase 7 trigger         | Skip if decision=skip   |
+| 9     | `claude-acp-sonnet` | STANDARD / implement_substantial | Phase 3 + Phase 6 gates | Phase 10                |
+| 10    | TBD                 | STANDARD / unknown               | Phase 5+ (soft)         | Phases 7–9              |
 
 ---
 
-*End of executable plan.*
+_End of executable plan._

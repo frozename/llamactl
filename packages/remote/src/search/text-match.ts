@@ -16,8 +16,8 @@ export interface TextMatch {
 const DEFAULT_SNIPPET = 120;
 
 function isWordBoundary(text: string, idx: number, len: number): boolean {
-  const before = idx === 0 ? ' ' : text[idx - 1] ?? ' ';
-  const after = idx + len >= text.length ? ' ' : text[idx + len] ?? ' ';
+  const before = idx === 0 ? " " : (text[idx - 1] ?? " ");
+  const after = idx + len >= text.length ? " " : (text[idx + len] ?? " ");
   return !/\w/.test(before) && !/\w/.test(after);
 }
 

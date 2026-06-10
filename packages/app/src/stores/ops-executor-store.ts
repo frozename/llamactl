@@ -1,5 +1,5 @@
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 /**
  * Shared executor config for the Ops Console (Ops Chat + Planner
@@ -23,6 +23,6 @@ export const useOpsExecutorStore = create<OpsExecutorStore>()(
       setNode: (nodeId) => set({ nodeId, model: null }),
       setModel: (model) => set({ model }),
     }),
-    { name: 'llamactl-ops-executor' },
+    { name: "llamactl-ops-executor" },
   ),
 );

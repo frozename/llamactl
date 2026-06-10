@@ -1,7 +1,7 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import type { RagBinding } from '../../config/schema.js';
-import { RagError } from '../errors.js';
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { RagBinding } from "../../config/schema.js";
+import { RagError } from "../errors.js";
 
 /**
  * Stdio connection to a chroma-mcp subprocess. The binding's
@@ -20,8 +20,8 @@ import { RagError } from '../errors.js';
  * the test seam honest.
  */
 
-const CLIENT_NAME = 'llamactl-rag-chroma';
-const CLIENT_VERSION = '0.1.0';
+const CLIENT_NAME = "llamactl-rag-chroma";
+const CLIENT_VERSION = "0.1.0";
 
 export interface ChromaToolResult {
   content: Array<{ type: string; text?: string; [key: string]: unknown }>;
@@ -43,8 +43,8 @@ function parseEndpoint(binding: RagBinding): { command: string; args: string[] }
   const trimmed = binding.endpoint.trim();
   if (trimmed.length === 0) {
     throw new RagError(
-      'connect-failed',
-      'chroma RAG binding has an empty endpoint; expected the chroma-mcp command line',
+      "connect-failed",
+      "chroma RAG binding has an empty endpoint; expected the chroma-mcp command line",
     );
   }
   // Minimal tokenizer — split on runs of whitespace. chroma-mcp command
@@ -63,13 +63,13 @@ export async function connectChromaMcp(
   const { command, args } = parseEndpoint(binding);
   const childEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
-    if (typeof v === 'string') childEnv[k] = v;
+    if (typeof v === "string") childEnv[k] = v;
   }
   const transport = new StdioClientTransport({
     command,
     args,
     env: childEnv,
-    stderr: 'inherit',
+    stderr: "inherit",
   });
   const client = new Client({ name: CLIENT_NAME, version: CLIENT_VERSION });
   try {
@@ -77,7 +77,7 @@ export async function connectChromaMcp(
   } catch (cause) {
     const msg = cause instanceof Error ? cause.message : String(cause);
     throw new RagError(
-      'connect-failed',
+      "connect-failed",
       `failed to connect to chroma-mcp via "${command}": ${msg}`,
       cause,
     );

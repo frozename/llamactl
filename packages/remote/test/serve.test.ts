@@ -1,23 +1,23 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createRemoteNodeClient } from '../src/client/node-client.js';
-import { generateToken } from '../src/server/auth.js';
-import { startAgentServer, runStartupMigration, type RunningAgent } from '../src/server/serve.js';
-import { generateSelfSignedCert } from '../src/server/tls.js';
-import { loadWorkload } from '../src/workload/store.js';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createRemoteNodeClient } from "../src/client/node-client.js";
+import { generateToken } from "../src/server/auth.js";
+import { startAgentServer, runStartupMigration, type RunningAgent } from "../src/server/serve.js";
+import { generateSelfSignedCert } from "../src/server/tls.js";
+import { loadWorkload } from "../src/workload/store.js";
 
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'llamactl-serve-'));
+  dir = mkdtempSync(join(tmpdir(), "llamactl-serve-"));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe('startAgentServer (plain HTTP, for test isolation)', () => {
+describe("startAgentServer (plain HTTP, for test isolation)", () => {
   let server: RunningAgent;
   const { token, hash } = generateToken();
 
@@ -28,41 +28,41 @@ describe('startAgentServer (plain HTTP, for test isolation)', () => {
     await server.stop();
   });
 
-  test('/healthz responds 200 without auth', async () => {
+  test("/healthz responds 200 without auth", async () => {
     const resp = await fetch(`${server.url}/healthz`);
     expect(resp.status).toBe(200);
-    expect(await resp.text()).toBe('ok');
+    expect(await resp.text()).toBe("ok");
   });
 
-  test('unknown path responds 404', async () => {
+  test("unknown path responds 404", async () => {
     const resp = await fetch(`${server.url}/nowhere`);
     expect(resp.status).toBe(404);
   });
 
-  test('missing bearer → 401', async () => {
+  test("missing bearer → 401", async () => {
     const resp = await fetch(`${server.url}/trpc/env`);
     expect(resp.status).toBe(401);
-    expect(resp.headers.get('www-authenticate')).toContain('Bearer');
+    expect(resp.headers.get("www-authenticate")).toContain("Bearer");
   });
 
-  test('bad bearer → 401', async () => {
+  test("bad bearer → 401", async () => {
     const resp = await fetch(`${server.url}/trpc/env`, {
-      headers: { authorization: 'Bearer wrong' },
+      headers: { authorization: "Bearer wrong" },
     });
     expect(resp.status).toBe(401);
   });
 
-  test('good bearer returns tRPC response for env query', async () => {
+  test("good bearer returns tRPC response for env query", async () => {
     const client = createRemoteNodeClient({ url: server.url, token });
     const env = await client.env.query();
     // env is a POJO with a LOCAL_AI_RUNTIME_DIR field. Existence is
     // the contract; value depends on the test runner's process env.
     expect(env).toBeDefined();
-    expect(typeof env.LOCAL_AI_RUNTIME_DIR).toBe('string');
+    expect(typeof env.LOCAL_AI_RUNTIME_DIR).toBe("string");
   });
 });
 
-describe('startAgentServer (TLS, pinned cert)', () => {
+describe("startAgentServer (TLS, pinned cert)", () => {
   let server: RunningAgent;
   let certPath: string;
   let keyPath: string;
@@ -73,8 +73,8 @@ describe('startAgentServer (TLS, pinned cert)', () => {
   beforeEach(async () => {
     const gen = await generateSelfSignedCert({
       dir,
-      commonName: '127.0.0.1',
-      hostnames: ['127.0.0.1', 'localhost'],
+      commonName: "127.0.0.1",
+      hostnames: ["127.0.0.1", "localhost"],
     });
     certPath = gen.certPath;
     keyPath = gen.keyPath;
@@ -90,12 +90,12 @@ describe('startAgentServer (TLS, pinned cert)', () => {
     await server.stop();
   });
 
-  test('agent URL uses https', () => {
-    expect(server.url.startsWith('https://')).toBe(true);
+  test("agent URL uses https", () => {
+    expect(server.url.startsWith("https://")).toBe(true);
     expect(server.fingerprint).toBe(fingerprint);
   });
 
-  test('client with pinned cert + good token round-trips env query', async () => {
+  test("client with pinned cert + good token round-trips env query", async () => {
     const client = createRemoteNodeClient({
       url: server.url,
       token,
@@ -106,8 +106,8 @@ describe('startAgentServer (TLS, pinned cert)', () => {
     expect(env).toBeDefined();
   });
 
-  test('client with tampered stored fingerprint fails construction', () => {
-    const bad = fingerprint.slice(0, -1) + (fingerprint.endsWith('0') ? '1' : '0');
+  test("client with tampered stored fingerprint fails construction", () => {
+    const bad = fingerprint.slice(0, -1) + (fingerprint.endsWith("0") ? "1" : "0");
     expect(() =>
       createRemoteNodeClient({
         url: server.url,
@@ -118,12 +118,12 @@ describe('startAgentServer (TLS, pinned cert)', () => {
     ).toThrow(/certificate fingerprint mismatch/);
   });
 
-  test('client without CA fails TLS (self-signed cert not trusted)', async () => {
+  test("client without CA fails TLS (self-signed cert not trusted)", async () => {
     const client = createRemoteNodeClient({ url: server.url, token });
     await expect(client.env.query()).rejects.toThrow();
   });
 
-  test('valid CA + bad token → UNAUTHORIZED', async () => {
+  test("valid CA + bad token → UNAUTHORIZED", async () => {
     const { hash: wrongHash } = generateToken();
     // Fresh server with a different expected token
     const srv2 = startAgentServer({
@@ -134,7 +134,7 @@ describe('startAgentServer (TLS, pinned cert)', () => {
     try {
       const client = createRemoteNodeClient({
         url: srv2.url,
-        token,          // mismatched
+        token, // mismatched
         certificate: certPem,
         certificateFingerprint: fingerprint,
       });
@@ -149,61 +149,63 @@ describe('startAgentServer (TLS, pinned cert)', () => {
   });
 });
 
-describe('startAgentServer migration bootstrap', () => {
+describe("startAgentServer migration bootstrap", () => {
   let runtimeDir: string;
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
     process.env.DEV_STORAGE = dir;
-    runtimeDir = join(dir, 'runtime');
+    runtimeDir = join(dir, "runtime");
     process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
     mkdirSync(runtimeDir, { recursive: true });
-    writeFileSync(join(runtimeDir, 'llama-server.pid'), '12345\n');
+    writeFileSync(join(runtimeDir, "llama-server.pid"), "12345\n");
     writeFileSync(
-      join(runtimeDir, 'llama-server.state'),
+      join(runtimeDir, "llama-server.state"),
       JSON.stringify({
-        rel: 'granite/granite-4.1-8b-Q4_K_M.gguf',
-        extraArgs: ['--ctx-size', '4096'],
-        host: '127.0.0.1',
+        rel: "granite/granite-4.1-8b-Q4_K_M.gguf",
+        extraArgs: ["--ctx-size", "4096"],
+        host: "127.0.0.1",
         port: 8181,
-        binary: '/fake/bin/llama-server',
+        binary: "/fake/bin/llama-server",
         pid: 12345,
         startedAt: new Date().toISOString(),
         tunedProfile: null,
       }),
     );
-    writeFileSync(join(runtimeDir, 'llama-server.log'), 'legacy log');
+    writeFileSync(join(runtimeDir, "llama-server.log"), "legacy log");
     runStartupMigration();
   });
 
   afterEach(() => {
-    for (const key of ['DEV_STORAGE', 'LOCAL_AI_RUNTIME_DIR']) {
+    for (const key of ["DEV_STORAGE", "LOCAL_AI_RUNTIME_DIR"]) {
       if (originalEnv[key] === undefined) delete process.env[key];
       else process.env[key] = originalEnv[key]!;
     }
   });
 
-  test('re-homes legacy runtime and persists a synthesized manifest', () => {
-    const manifestFiles = readdirSync(join(dir, 'workloads')).filter((name) => name.endsWith('.yaml'));
+  test("re-homes legacy runtime and persists a synthesized manifest", () => {
+    const manifestFiles = readdirSync(join(dir, "workloads")).filter((name) =>
+      name.endsWith(".yaml"),
+    );
     expect(manifestFiles).toHaveLength(1);
-    const manifestName = manifestFiles[0]!.replace(/\.yaml$/, '');
-    const workloadDir = join(runtimeDir, 'workloads', manifestName);
-    const manifestPath = join(dir, 'workloads', manifestFiles[0]!);
-    expect(existsSync(join(workloadDir, 'llama-server.pid'))).toBe(true);
-    expect(existsSync(join(workloadDir, 'llama-server.state'))).toBe(true);
-    expect(existsSync(join(workloadDir, 'llama-server.log'))).toBe(true);
-    expect(existsSync(join(runtimeDir, 'llama-server.pid'))).toBe(false);
+    const manifestName = manifestFiles[0]!.replace(/\.yaml$/, "");
+    const workloadDir = join(runtimeDir, "workloads", manifestName);
+    const manifestPath = join(dir, "workloads", manifestFiles[0]!);
+    expect(existsSync(join(workloadDir, "llama-server.pid"))).toBe(true);
+    expect(existsSync(join(workloadDir, "llama-server.state"))).toBe(true);
+    expect(existsSync(join(workloadDir, "llama-server.log"))).toBe(true);
+    expect(existsSync(join(runtimeDir, "llama-server.pid"))).toBe(false);
     expect(existsSync(manifestPath)).toBe(true);
 
     const manifest = loadWorkload(manifestPath);
     expect(manifest.metadata.name).toMatch(/^imperative-\d+$/);
-    expect(manifest.spec.node).toBe('local');
+    expect(manifest.spec.node).toBe("local");
     expect(manifest.spec.target).toEqual({
-      kind: 'rel',
-      value: 'granite/granite-4.1-8b-Q4_K_M.gguf',
+      kind: "rel",
+      value: "granite/granite-4.1-8b-Q4_K_M.gguf",
     });
-    expect(manifest.spec.endpoint).toEqual({ host: '127.0.0.1', port: 8181 });
-    expect(manifest.spec.extraArgs).toEqual(['--ctx-size', '4096']);
-    expect(manifest.spec.restartPolicy).toBe('Never');
+    expect(manifest.spec.endpoint).toEqual({ host: "127.0.0.1", port: 8181 });
+    expect(manifest.spec.extraArgs).toEqual(["--ctx-size", "4096"]);
+    expect(manifest.spec.restartPolicy).toBe("Never");
   });
 });

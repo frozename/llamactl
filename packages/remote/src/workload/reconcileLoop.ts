@@ -1,6 +1,6 @@
-import { reconcileOnce, type ReconcileOptions, type ReconcileResult } from './reconciler.js';
-import type { ApplyEvent } from './apply.js';
-import type { ModelRun } from './schema.js';
+import { reconcileOnce, type ReconcileOptions, type ReconcileResult } from "./reconciler.js";
+import type { ApplyEvent } from "./apply.js";
+import type { ModelRun } from "./schema.js";
 
 export interface ReconcileLoopStatus {
   running: boolean;
@@ -20,7 +20,7 @@ interface LoopState {
   inflight: boolean;
 }
 
-type ReconcileLoopOpts = Pick<ReconcileOptions, 'getClient' | 'resolveNodeIdentity'>;
+type ReconcileLoopOpts = Pick<ReconcileOptions, "getClient" | "resolveNodeIdentity">;
 
 const state: LoopState = {
   timer: null,
@@ -57,7 +57,7 @@ async function tick(opts: ReconcileLoopOpts): Promise<void> {
     const result = await reconcileOnce({
       // Skip manifests whose restartPolicy is Never — the whole
       // point of the policy is "controller leaves this alone".
-      filter: (m: ModelRun) => m.spec.restartPolicy !== 'Never',
+      filter: (m: ModelRun) => m.spec.restartPolicy !== "Never",
       getClient: opts.getClient,
       resolveNodeIdentity: opts.resolveNodeIdentity,
       onEvent: (e) => {
@@ -68,16 +68,14 @@ async function tick(opts: ReconcileLoopOpts): Promise<void> {
   } catch (err) {
     const now = new Date().toISOString();
     events.push({
-      name: '(loop)',
-      type: 'skipped',
+      name: "(loop)",
+      type: "skipped",
       message: `reconcile loop error: ${(err as Error).message}`,
       ts: now,
     });
     state.lastResult = {
       errors: 1,
-      reports: [
-        { name: '(loop)', node: '-', action: 'unchanged', error: (err as Error).message },
-      ],
+      reports: [{ name: "(loop)", node: "-", action: "unchanged", error: (err as Error).message }],
     };
   } finally {
     state.inflight = false;
@@ -89,8 +87,8 @@ async function tick(opts: ReconcileLoopOpts): Promise<void> {
 }
 
 export function startReconcileLoop(opts: {
-  getClient: ReconcileOptions['getClient'];
-  resolveNodeIdentity?: ReconcileOptions['resolveNodeIdentity'];
+  getClient: ReconcileOptions["getClient"];
+  resolveNodeIdentity?: ReconcileOptions["resolveNodeIdentity"];
   intervalMs?: number;
 }): void {
   if (state.running) return;

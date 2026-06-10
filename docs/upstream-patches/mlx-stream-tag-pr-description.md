@@ -67,9 +67,9 @@ s.tag = "qwen3-8b";
 `tests/test_stream_tag.cpp` — two doctest cases covering the
 struct-level contract (Metal hardware not required):
 
-| Test case | What it checks |
-|-----------|----------------|
-| `A fresh stream has an empty tag` | `new_stream()` result has `nullopt` tag |
+| Test case                                         | What it checks                               |
+| ------------------------------------------------- | -------------------------------------------- |
+| `A fresh stream has an empty tag`                 | `new_stream()` result has `nullopt` tag      |
 | `Assigning a tag round-trips through stream copy` | Tag survives value-copy; copy is independent |
 
 Run alongside the existing suite:

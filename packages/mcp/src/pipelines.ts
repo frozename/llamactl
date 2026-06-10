@@ -1,11 +1,11 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { router } from '@llamactl/remote';
-import { toTextContent } from '@nova/mcp-shared';
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { router } from "@llamactl/remote";
+import { toTextContent } from "@nova/mcp-shared";
 
 /**
  * M.1 — pipeline-tool pickup. Operators author pipelines in the
@@ -20,14 +20,14 @@ import { toTextContent } from '@nova/mcp-shared';
  */
 
 const PipelineToolSchema = z.object({
-  apiVersion: z.literal('llamactl/v1'),
-  kind: z.literal('PipelineTool'),
+  apiVersion: z.literal("llamactl/v1"),
+  kind: z.literal("PipelineTool"),
   name: z.string().min(1),
   title: z.string().min(1),
-  description: z.string().default(''),
+  description: z.string().default(""),
   inputSchema: z
     .object({
-      type: z.literal('object'),
+      type: z.literal("object"),
       properties: z.record(z.string(), z.unknown()).default({}),
       required: z.array(z.string()).default([]),
     })
@@ -37,7 +37,7 @@ const PipelineToolSchema = z.object({
       z.object({
         node: z.string().min(1),
         model: z.string().min(1),
-        systemPrompt: z.string().default(''),
+        systemPrompt: z.string().default(""),
         capabilities: z.array(z.string()).default([]),
       }),
     )
@@ -46,10 +46,7 @@ const PipelineToolSchema = z.object({
 export type PipelineTool = z.infer<typeof PipelineToolSchema>;
 
 function defaultPipelinesDir(): string {
-  return (
-    process.env.LLAMACTL_MCP_PIPELINES_DIR ??
-    join(homedir(), '.llamactl', 'mcp', 'pipelines')
-  );
+  return process.env.LLAMACTL_MCP_PIPELINES_DIR ?? join(homedir(), ".llamactl", "mcp", "pipelines");
 }
 
 /**
@@ -72,21 +69,19 @@ export function discoverPipelineTools(opts?: {
   }
   const out: PipelineTool[] = [];
   for (const file of files) {
-    if (!file.endsWith('.json')) continue;
+    if (!file.endsWith(".json")) continue;
     const path = join(dir, file);
     let raw: unknown;
     try {
-      raw = JSON.parse(readFileSync(path, 'utf8'));
+      raw = JSON.parse(readFileSync(path, "utf8"));
     } catch (err) {
-      opts?.onWarn?.(
-        `pipeline-tool: skipped ${path} — invalid JSON: ${(err as Error).message}`,
-      );
+      opts?.onWarn?.(`pipeline-tool: skipped ${path} — invalid JSON: ${(err as Error).message}`);
       continue;
     }
     const parsed = PipelineToolSchema.safeParse(raw);
     if (!parsed.success) {
       opts?.onWarn?.(
-        `pipeline-tool: skipped ${path} — ${parsed.error.issues.map((i) => i.message).join('; ')}`,
+        `pipeline-tool: skipped ${path} — ${parsed.error.issues.map((i) => i.message).join("; ")}`,
       );
       continue;
     }
@@ -119,9 +114,9 @@ async function runPipeline(
     if (!stage) continue;
     const messages: ChatMessage[] = [];
     if (stage.systemPrompt.trim().length > 0) {
-      messages.push({ role: 'system', content: stage.systemPrompt });
+      messages.push({ role: "system", content: stage.systemPrompt });
     }
-    messages.push({ role: 'user', content: pending });
+    messages.push({ role: "user", content: pending });
     const request: {
       model: string;
       messages: ChatMessage[];
@@ -140,7 +135,7 @@ async function runPipeline(
     })) as {
       choices?: Array<{ message?: { content?: string } }>;
     };
-    const finalContent = response.choices?.[0]?.message?.content ?? '';
+    const finalContent = response.choices?.[0]?.message?.content ?? "";
     stages.push({ stage: i, output: finalContent });
     pending = finalContent;
   }
@@ -168,9 +163,9 @@ export function registerPipelineTools(
         title: tool.title,
         description:
           tool.description ||
-          `Multi-stage pipeline with ${tool.stages.length} stage${tool.stages.length === 1 ? '' : 's'}.`,
+          `Multi-stage pipeline with ${tool.stages.length} stage${tool.stages.length === 1 ? "" : "s"}.`,
         inputSchema: {
-          input: z.string().min(1).describe('Initial user content.'),
+          input: z.string().min(1).describe("Initial user content."),
         },
       },
       async ({ input }) => {

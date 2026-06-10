@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { stringify as stringifyYaml } from 'yaml';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
 import {
   startHealerLoop,
   type JournalEntry,
@@ -11,7 +11,7 @@ import {
   type JournalRefusedEntry,
   type RunbookToolClient,
   type ToolCallInput,
-} from '../src/index.js';
+} from "../src/index.js";
 
 /**
  * Slice D — healer composite remediation. The loop, on every tick,
@@ -26,10 +26,10 @@ import {
  * the one under test — no cross-talk with Phase-2 remediation.
  */
 
-let runtimeDir = '';
+let runtimeDir = "";
 
 beforeEach(() => {
-  runtimeDir = mkdtempSync(join(tmpdir(), 'llamactl-healer-composite-'));
+  runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-healer-composite-"));
 });
 afterEach(() => {
   rmSync(runtimeDir, { recursive: true, force: true });
@@ -42,42 +42,40 @@ function seedYamls(): {
   // One healthy gateway so the probe path has something to ack. The
   // fakeFetch below returns 200, so no probe-side transitions fire
   // and nothing competes with the composite branch.
-  const kubeconfigPath = join(runtimeDir, 'config');
+  const kubeconfigPath = join(runtimeDir, "config");
   writeFileSync(
     kubeconfigPath,
     stringifyYaml({
-      apiVersion: 'llamactl/v1',
-      kind: 'Config',
-      currentContext: 'default',
-      contexts: [
-        { name: 'default', cluster: 'home', user: 'me', defaultNode: 'local' },
-      ],
+      apiVersion: "llamactl/v1",
+      kind: "Config",
+      currentContext: "default",
+      contexts: [{ name: "default", cluster: "home", user: "me", defaultNode: "local" }],
       clusters: [
         {
-          name: 'home',
+          name: "home",
           nodes: [
-            { name: 'local', endpoint: 'inproc://local' },
+            { name: "local", endpoint: "inproc://local" },
             {
-              name: 'gw-ok',
-              endpoint: '',
-              kind: 'gateway',
-              cloud: { provider: 'sirius', baseUrl: 'http://127.0.0.1:65535/v1' },
+              name: "gw-ok",
+              endpoint: "",
+              kind: "gateway",
+              cloud: { provider: "sirius", baseUrl: "http://127.0.0.1:65535/v1" },
             },
           ],
         },
       ],
-      users: [{ name: 'me', token: 't' }],
+      users: [{ name: "me", token: "t" }],
     }),
   );
-  const siriusProvidersPath = join(runtimeDir, 'sirius-providers.yaml');
+  const siriusProvidersPath = join(runtimeDir, "sirius-providers.yaml");
   writeFileSync(siriusProvidersPath, stringifyYaml({ providers: [] }));
   return { kubeconfigPath, siriusProvidersPath };
 }
 
 function envelope(payload: unknown): {
-  content: Array<{ type: 'text'; text: string }>;
+  content: Array<{ type: "text"; text: string }>;
 } {
-  return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
+  return { content: [{ type: "text", text: JSON.stringify(payload) }] };
 }
 
 interface MockClientInvocation {
@@ -85,9 +83,10 @@ interface MockClientInvocation {
   arguments: Record<string, unknown>;
 }
 
-function makeMockClient(
-  handler: (input: ToolCallInput) => Promise<unknown>,
-): { client: RunbookToolClient; calls: MockClientInvocation[] } {
+function makeMockClient(handler: (input: ToolCallInput) => Promise<unknown>): {
+  client: RunbookToolClient;
+  calls: MockClientInvocation[];
+} {
   const calls: MockClientInvocation[] = [];
   return {
     calls,
@@ -106,8 +105,8 @@ const HEALTHY_HEALTHCHECK = envelope({
   timeoutMs: 1500,
   gateways: [
     {
-      name: 'gw-ok',
-      baseUrl: 'http://127.0.0.1:65535/v1',
+      name: "gw-ok",
+      baseUrl: "http://127.0.0.1:65535/v1",
       ok: true,
       status: 200,
     },
@@ -122,8 +121,8 @@ function manifestFixture(
   components: Array<{ kind: string; name: string; state: string }>,
 ): Record<string, unknown> {
   return {
-    apiVersion: 'llamactl/v1',
-    kind: 'Composite',
+    apiVersion: "llamactl/v1",
+    kind: "Composite",
     metadata: { name },
     spec: {
       services: [],
@@ -131,7 +130,7 @@ function manifestFixture(
       ragNodes: [],
       gateways: [],
       dependencies: [],
-      onFailure: 'rollback',
+      onFailure: "rollback",
     },
     status: {
       phase,
@@ -144,24 +143,22 @@ function manifestFixture(
   };
 }
 
-describe('healer composite remediation — propose mode', () => {
-  test('only Degraded + Failed composites produce proposals; Ready is ignored', async () => {
+describe("healer composite remediation — propose mode", () => {
+  test("only Degraded + Failed composites produce proposals; Ready is ignored", async () => {
     const { kubeconfigPath, siriusProvidersPath } = seedYamls();
     const composites = [
-      manifestFixture('sky-ready', 'Ready', [
-        { kind: 'service', name: 'chroma', state: 'Ready' },
+      manifestFixture("sky-ready", "Ready", [{ kind: "service", name: "chroma", state: "Ready" }]),
+      manifestFixture("sky-degraded", "Degraded", [
+        { kind: "service", name: "chroma", state: "Ready" },
+        { kind: "workload", name: "llama1", state: "Failed" },
       ]),
-      manifestFixture('sky-degraded', 'Degraded', [
-        { kind: 'service', name: 'chroma', state: 'Ready' },
-        { kind: 'workload', name: 'llama1', state: 'Failed' },
-      ]),
-      manifestFixture('sky-failed', 'Failed', [
-        { kind: 'service', name: 'chroma', state: 'Failed' },
+      manifestFixture("sky-failed", "Failed", [
+        { kind: "service", name: "chroma", state: "Failed" },
       ]),
     ];
     const { client, calls } = makeMockClient(async (input) => {
-      if (input.name === 'nova.ops.healthcheck') return HEALTHY_HEALTHCHECK;
-      if (input.name === 'llamactl.composite.list') {
+      if (input.name === "nova.ops.healthcheck") return HEALTHY_HEALTHCHECK;
+      if (input.name === "llamactl.composite.list") {
         return envelope({ count: composites.length, composites });
       }
       throw new Error(`unexpected tool call: ${input.name}`);
@@ -173,52 +170,52 @@ describe('healer composite remediation — propose mode', () => {
       once: true,
       toolClient: client,
       // propose mode is the default; explicit for clarity.
-      mode: 'propose',
+      mode: "propose",
       writeJournal: (e) => journaled.push(e),
     });
     await handle.done;
 
     const proposals = journaled.filter(
       (e): e is JournalProposalEntry =>
-        e.kind === 'proposal' && e.transition.resourceKind === 'composite',
+        e.kind === "proposal" && e.transition.resourceKind === "composite",
     );
     const names = proposals.map((p) => p.transition.name).sort();
-    expect(names).toEqual(['sky-degraded', 'sky-failed']);
+    expect(names).toEqual(["sky-degraded", "sky-failed"]);
 
     // Each proposal targets the apply tool with a manifestYaml arg.
     for (const p of proposals) {
       expect(p.plan.steps).toHaveLength(1);
-      expect(p.plan.steps[0]?.tool).toBe('llamactl.composite.apply');
+      expect(p.plan.steps[0]?.tool).toBe("llamactl.composite.apply");
       const args = p.plan.steps[0]?.args as { manifestYaml?: string } | undefined;
-      expect(typeof args?.manifestYaml).toBe('string');
+      expect(typeof args?.manifestYaml).toBe("string");
       expect(p.plan.requiresConfirmation).toBe(false);
       expect(p.proposalId).toHaveLength(12);
-      expect(p.transition.resourceKind).toBe('composite');
+      expect(p.transition.resourceKind).toBe("composite");
     }
 
     // Propose mode — no executed entries.
-    expect(journaled.find((e) => e.kind === 'executed')).toBeUndefined();
+    expect(journaled.find((e) => e.kind === "executed")).toBeUndefined();
 
     // Apply was not called (propose-only); list was called exactly once.
     const callNames = calls.map((c) => c.name);
-    expect(callNames.filter((n) => n === 'llamactl.composite.list')).toHaveLength(1);
-    expect(callNames).not.toContain('llamactl.composite.apply');
+    expect(callNames.filter((n) => n === "llamactl.composite.list")).toHaveLength(1);
+    expect(callNames).not.toContain("llamactl.composite.apply");
   });
 
-  test('Ready phase with one Failed component still bubbles up', async () => {
+  test("Ready phase with one Failed component still bubbles up", async () => {
     const { kubeconfigPath, siriusProvidersPath } = seedYamls();
     const composites = [
       // Phase is Ready but a single component reports Failed — the
       // loop must still emit a proposal so the operator journal
       // shows the discrepancy.
-      manifestFixture('sky-component-failed', 'Ready', [
-        { kind: 'service', name: 'chroma', state: 'Ready' },
-        { kind: 'workload', name: 'rag', state: 'Failed' },
+      manifestFixture("sky-component-failed", "Ready", [
+        { kind: "service", name: "chroma", state: "Ready" },
+        { kind: "workload", name: "rag", state: "Failed" },
       ]),
     ];
     const { client } = makeMockClient(async (input) => {
-      if (input.name === 'nova.ops.healthcheck') return HEALTHY_HEALTHCHECK;
-      if (input.name === 'llamactl.composite.list') {
+      if (input.name === "nova.ops.healthcheck") return HEALTHY_HEALTHCHECK;
+      if (input.name === "llamactl.composite.list") {
         return envelope({ count: composites.length, composites });
       }
       throw new Error(`unexpected tool call: ${input.name}`);
@@ -229,36 +226,36 @@ describe('healer composite remediation — propose mode', () => {
       siriusProvidersPath,
       once: true,
       toolClient: client,
-      mode: 'propose',
+      mode: "propose",
       writeJournal: (e) => journaled.push(e),
     });
     await handle.done;
 
     const proposal = journaled.find(
       (e): e is JournalProposalEntry =>
-        e.kind === 'proposal' && e.transition.resourceKind === 'composite',
+        e.kind === "proposal" && e.transition.resourceKind === "composite",
     );
     expect(proposal).toBeDefined();
-    expect(proposal?.transition.name).toBe('sky-component-failed');
-    expect(proposal?.plan.reasoning).toContain('Failed');
+    expect(proposal?.transition.name).toBe("sky-component-failed");
+    expect(proposal?.plan.reasoning).toContain("Failed");
   });
 });
 
-describe('healer composite remediation — auto mode', () => {
-  test('tier-2 plan passes the gate → apply invoked + executed entry journaled', async () => {
+describe("healer composite remediation — auto mode", () => {
+  test("tier-2 plan passes the gate → apply invoked + executed entry journaled", async () => {
     const { kubeconfigPath, siriusProvidersPath } = seedYamls();
     const composites = [
-      manifestFixture('sky-degraded', 'Degraded', [
-        { kind: 'service', name: 'chroma', state: 'Failed' },
+      manifestFixture("sky-degraded", "Degraded", [
+        { kind: "service", name: "chroma", state: "Failed" },
       ]),
     ];
     const { client, calls } = makeMockClient(async (input) => {
-      if (input.name === 'nova.ops.healthcheck') return HEALTHY_HEALTHCHECK;
-      if (input.name === 'llamactl.composite.list') {
+      if (input.name === "nova.ops.healthcheck") return HEALTHY_HEALTHCHECK;
+      if (input.name === "llamactl.composite.list") {
         return envelope({ count: composites.length, composites });
       }
-      if (input.name === 'llamactl.composite.apply') {
-        return envelope({ ok: true, status: { phase: 'Ready' } });
+      if (input.name === "llamactl.composite.apply") {
+        return envelope({ ok: true, status: { phase: "Ready" } });
       }
       throw new Error(`unexpected tool call: ${input.name}`);
     });
@@ -268,41 +265,37 @@ describe('healer composite remediation — auto mode', () => {
       siriusProvidersPath,
       once: true,
       toolClient: client,
-      mode: 'auto',
+      mode: "auto",
       severityThreshold: 2,
       writeJournal: (e) => journaled.push(e),
     });
     await handle.done;
 
-    const executed = journaled.find(
-      (e): e is JournalExecutedEntry => e.kind === 'executed',
-    );
+    const executed = journaled.find((e): e is JournalExecutedEntry => e.kind === "executed");
     expect(executed).toBeDefined();
     expect(executed?.steps).toHaveLength(1);
-    expect(executed?.steps[0]?.tool).toBe('llamactl.composite.apply');
+    expect(executed?.steps[0]?.tool).toBe("llamactl.composite.apply");
     expect(executed?.steps[0]?.outcome.ok).toBe(true);
 
     // The apply tool actually got called with a manifestYaml arg.
-    const applyCall = calls.find((c) => c.name === 'llamactl.composite.apply');
+    const applyCall = calls.find((c) => c.name === "llamactl.composite.apply");
     expect(applyCall).toBeDefined();
-    expect(typeof applyCall?.arguments.manifestYaml).toBe('string');
+    expect(typeof applyCall?.arguments.manifestYaml).toBe("string");
   });
 
-  test('severity threshold 1 refuses the tier-2 plan → refused entry, apply never runs', async () => {
+  test("severity threshold 1 refuses the tier-2 plan → refused entry, apply never runs", async () => {
     const { kubeconfigPath, siriusProvidersPath } = seedYamls();
     const composites = [
-      manifestFixture('sky-failed', 'Failed', [
-        { kind: 'service', name: 'chroma', state: 'Failed' },
+      manifestFixture("sky-failed", "Failed", [
+        { kind: "service", name: "chroma", state: "Failed" },
       ]),
     ];
     const { client, calls } = makeMockClient(async (input) => {
-      if (input.name === 'nova.ops.healthcheck') return HEALTHY_HEALTHCHECK;
-      if (input.name === 'llamactl.composite.list') {
+      if (input.name === "nova.ops.healthcheck") return HEALTHY_HEALTHCHECK;
+      if (input.name === "llamactl.composite.list") {
         return envelope({ count: composites.length, composites });
       }
-      throw new Error(
-        `auto mode at threshold 1 should not have invoked ${input.name}`,
-      );
+      throw new Error(`auto mode at threshold 1 should not have invoked ${input.name}`);
     });
     const journaled: JournalEntry[] = [];
     const handle = startHealerLoop({
@@ -310,29 +303,27 @@ describe('healer composite remediation — auto mode', () => {
       siriusProvidersPath,
       once: true,
       toolClient: client,
-      mode: 'auto',
+      mode: "auto",
       severityThreshold: 1,
       writeJournal: (e) => journaled.push(e),
     });
     await handle.done;
 
-    const refused = journaled.find(
-      (e): e is JournalRefusedEntry => e.kind === 'refused',
-    );
+    const refused = journaled.find((e): e is JournalRefusedEntry => e.kind === "refused");
     expect(refused).toBeDefined();
-    expect(refused?.reason).toBe('severity-exceeded');
-    expect(refused?.refusedSteps?.[0]?.tool).toBe('llamactl.composite.apply');
+    expect(refused?.reason).toBe("severity-exceeded");
+    expect(refused?.refusedSteps?.[0]?.tool).toBe("llamactl.composite.apply");
     expect(refused?.refusedSteps?.[0]?.tier).toBe(2);
 
-    expect(journaled.find((e) => e.kind === 'executed')).toBeUndefined();
-    expect(calls.map((c) => c.name)).not.toContain('llamactl.composite.apply');
+    expect(journaled.find((e) => e.kind === "executed")).toBeUndefined();
+    expect(calls.map((c) => c.name)).not.toContain("llamactl.composite.apply");
   });
 
-  test('empty composite list → no proposals, no errors', async () => {
+  test("empty composite list → no proposals, no errors", async () => {
     const { kubeconfigPath, siriusProvidersPath } = seedYamls();
     const { client } = makeMockClient(async (input) => {
-      if (input.name === 'nova.ops.healthcheck') return HEALTHY_HEALTHCHECK;
-      if (input.name === 'llamactl.composite.list') {
+      if (input.name === "nova.ops.healthcheck") return HEALTHY_HEALTHCHECK;
+      if (input.name === "llamactl.composite.list") {
         return envelope({ count: 0, composites: [] });
       }
       throw new Error(`unexpected tool call: ${input.name}`);
@@ -343,43 +334,42 @@ describe('healer composite remediation — auto mode', () => {
       siriusProvidersPath,
       once: true,
       toolClient: client,
-      mode: 'auto',
+      mode: "auto",
       severityThreshold: 2,
       writeJournal: (e) => journaled.push(e),
     });
     await handle.done;
 
     const compositeProposals = journaled.filter(
-      (e) =>
-        e.kind === 'proposal' && e.transition.resourceKind === 'composite',
+      (e) => e.kind === "proposal" && e.transition.resourceKind === "composite",
     );
     expect(compositeProposals).toHaveLength(0);
-    expect(journaled.find((e) => e.kind === 'plan-failed')).toBeUndefined();
+    expect(journaled.find((e) => e.kind === "plan-failed")).toBeUndefined();
   });
 
-  test('composite without status (Unknown phase) is not remediated', async () => {
+  test("composite without status (Unknown phase) is not remediated", async () => {
     const { kubeconfigPath, siriusProvidersPath } = seedYamls();
     // Manifest with no `status` block — treated as Unknown, should be
     // skipped to avoid churning every freshly-authored composite that
     // hasn't been applied yet.
     const composites = [
       {
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'sky-new' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "sky-new" },
         spec: {
           services: [],
           workloads: [],
           ragNodes: [],
           gateways: [],
           dependencies: [],
-          onFailure: 'rollback',
+          onFailure: "rollback",
         },
       },
     ];
     const { client } = makeMockClient(async (input) => {
-      if (input.name === 'nova.ops.healthcheck') return HEALTHY_HEALTHCHECK;
-      if (input.name === 'llamactl.composite.list') {
+      if (input.name === "nova.ops.healthcheck") return HEALTHY_HEALTHCHECK;
+      if (input.name === "llamactl.composite.list") {
         return envelope({ count: 1, composites });
       }
       throw new Error(`unexpected tool call: ${input.name}`);
@@ -390,27 +380,26 @@ describe('healer composite remediation — auto mode', () => {
       siriusProvidersPath,
       once: true,
       toolClient: client,
-      mode: 'auto',
+      mode: "auto",
       severityThreshold: 2,
       writeJournal: (e) => journaled.push(e),
     });
     await handle.done;
 
     const compositeProposals = journaled.filter(
-      (e) =>
-        e.kind === 'proposal' && e.transition.resourceKind === 'composite',
+      (e) => e.kind === "proposal" && e.transition.resourceKind === "composite",
     );
     expect(compositeProposals).toHaveLength(0);
   });
 });
 
-describe('healer composite remediation — list failure', () => {
-  test('throw from llamactl.composite.list is journaled as plan-failed + loop continues', async () => {
+describe("healer composite remediation — list failure", () => {
+  test("throw from llamactl.composite.list is journaled as plan-failed + loop continues", async () => {
     const { kubeconfigPath, siriusProvidersPath } = seedYamls();
     const { client } = makeMockClient(async (input) => {
-      if (input.name === 'nova.ops.healthcheck') return HEALTHY_HEALTHCHECK;
-      if (input.name === 'llamactl.composite.list') {
-        throw new Error('composite store unreachable');
+      if (input.name === "nova.ops.healthcheck") return HEALTHY_HEALTHCHECK;
+      if (input.name === "llamactl.composite.list") {
+        throw new Error("composite store unreachable");
       }
       throw new Error(`unexpected tool call: ${input.name}`);
     });
@@ -420,23 +409,21 @@ describe('healer composite remediation — list failure', () => {
       siriusProvidersPath,
       once: true,
       toolClient: client,
-      mode: 'auto',
+      mode: "auto",
       severityThreshold: 2,
       writeJournal: (e) => journaled.push(e),
     });
     await handle.done;
 
     const planFailed = journaled.find(
-      (e) =>
-        e.kind === 'plan-failed' &&
-        e.transition.resourceKind === 'composite',
+      (e) => e.kind === "plan-failed" && e.transition.resourceKind === "composite",
     );
     expect(planFailed).toBeDefined();
-    if (planFailed && planFailed.kind === 'plan-failed') {
-      expect(planFailed.reason).toBe('composite-list-failed');
-      expect(planFailed.message).toContain('composite store unreachable');
+    if (planFailed && planFailed.kind === "plan-failed") {
+      expect(planFailed.reason).toBe("composite-list-failed");
+      expect(planFailed.message).toContain("composite store unreachable");
     }
     // Probe path still produced its normal tick entry.
-    expect(journaled.find((e) => e.kind === 'tick')).toBeDefined();
+    expect(journaled.find((e) => e.kind === "tick")).toBeDefined();
   });
 });

@@ -1,14 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { NodeClient } from '@llamactl/remote';
-import { parse as parseYaml } from 'yaml';
-import { runProject } from '../src/commands/project.js';
-import {
-  __setProjectTestSeams,
-  __resetProjectTestSeams,
-} from '../src/commands/project.js';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { NodeClient } from "@llamactl/remote";
+import { parse as parseYaml } from "yaml";
+import { runProject } from "../src/commands/project.js";
+import { __setProjectTestSeams, __resetProjectTestSeams } from "../src/commands/project.js";
 
 /**
  * CLI coverage for `llamactl project …`. Tests run against a stubbed
@@ -23,17 +20,17 @@ interface Captured {
 }
 
 function captureStdio<T>(fn: () => Promise<T>): Promise<{ result: T; cap: Captured }> {
-  const chunks: Captured = { out: '', err: '' };
+  const chunks: Captured = { out: "", err: "" };
   const origOut = process.stdout.write.bind(process.stdout);
   const origErr = process.stderr.write.bind(process.stderr);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (process.stdout as any).write = (s: string | Uint8Array): boolean => {
-    chunks.out += typeof s === 'string' ? s : String(s);
+    chunks.out += typeof s === "string" ? s : String(s);
     return true;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (process.stderr as any).write = (s: string | Uint8Array): boolean => {
-    chunks.err += typeof s === 'string' ? s : String(s);
+    chunks.err += typeof s === "string" ? s : String(s);
     return true;
   };
   return fn()
@@ -72,22 +69,22 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
   const stubs: StubProcs = {
     projectApply: async () => ({
       ok: true,
-      name: 'test',
-      path: '/tmp/projects.yaml',
+      name: "test",
+      path: "/tmp/projects.yaml",
       created: true,
     }),
     projectList: async () => ({
       ok: true,
       projects: [
         {
-          apiVersion: 'llamactl/v1',
-          kind: 'Project',
-          metadata: { name: 'demo' },
+          apiVersion: "llamactl/v1",
+          kind: "Project",
+          metadata: { name: "demo" },
           spec: {
-            path: '/abs/demo',
-            stack: ['typescript'],
-            routing: { quick_qna: 'private-first' },
-            rag: { node: 'kb-pg', collection: 'demo_docs', docsGlob: 'docs/**/*.md' },
+            path: "/abs/demo",
+            stack: ["typescript"],
+            routing: { quick_qna: "private-first" },
+            rag: { node: "kb-pg", collection: "demo_docs", docsGlob: "docs/**/*.md" },
           },
         },
       ],
@@ -95,8 +92,8 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
     projectGet: async ({ name }) => ({
       ok: true,
       project: {
-        apiVersion: 'llamactl/v1',
-        kind: 'Project',
+        apiVersion: "llamactl/v1",
+        kind: "Project",
         metadata: { name },
         spec: {
           path: `/abs/${name}`,
@@ -116,27 +113,27 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
       ok: true,
       project,
       taskKind,
-      target: 'mac-mini.claude-pro',
+      target: "mac-mini.claude-pro",
       matched: true,
-      reason: 'matched',
+      reason: "matched",
     }),
     projectRoutePreview: async ({ node }) => {
       // Parse `project:<name>/<taskKind>`; stub defaults to a
       // "matched" decision pointing at mac-mini.claude-pro so the
       // existing CLI tests don't have to inject overrides.
       const m = node.match(/^project:([^/]+)\/(.+)$/);
-      const project = m?.[1] ?? 'unknown';
-      const taskKind = m?.[2] ?? 'unknown';
+      const project = m?.[1] ?? "unknown";
+      const taskKind = m?.[2] ?? "unknown";
       return {
         ok: true,
-        node: 'mac-mini.claude-pro',
+        node: "mac-mini.claude-pro",
         decision: {
-          ts: '2026-04-22T00:00:00.000Z',
+          ts: "2026-04-22T00:00:00.000Z",
           project,
           taskKind,
-          target: 'mac-mini.claude-pro',
+          target: "mac-mini.claude-pro",
           matched: true,
-          reason: 'matched' as const,
+          reason: "matched" as const,
         },
       };
     },
@@ -154,10 +151,10 @@ function makeStubClient(overrides: Partial<StubProcs> = {}): NodeClient {
   } as any as NodeClient;
 }
 
-let tmp = '';
+let tmp = "";
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-project-'));
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-project-"));
   __setProjectTestSeams({ nodeClient: makeStubClient() });
 });
 
@@ -166,71 +163,69 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-describe('project — help + unknown', () => {
-  test('no subcommand prints USAGE + exit 0', async () => {
+describe("project — help + unknown", () => {
+  test("no subcommand prints USAGE + exit 0", async () => {
     const { result, cap } = await captureStdio(() => runProject([]));
     expect(result).toBe(0);
-    expect(cap.out).toContain('Usage: llamactl project');
+    expect(cap.out).toContain("Usage: llamactl project");
   });
 
-  test('unknown subcommand → exit 1', async () => {
-    const { result, cap } = await captureStdio(() => runProject(['bogus']));
+  test("unknown subcommand → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["bogus"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('Unknown project subcommand');
+    expect(cap.err).toContain("Unknown project subcommand");
   });
 });
 
-describe('project add', () => {
-  test('missing name → exit 1', async () => {
-    const { result, cap } = await captureStdio(() => runProject(['add']));
+describe("project add", () => {
+  test("missing name → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["add"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('<name> is required');
+    expect(cap.err).toContain("<name> is required");
   });
 
-  test('missing --path → exit 1', async () => {
+  test("missing --path → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["add", "foo"]));
+    expect(result).toBe(1);
+    expect(cap.err).toContain("--path is required");
+  });
+
+  test("partial rag flags → exit 1", async () => {
     const { result, cap } = await captureStdio(() =>
-      runProject(['add', 'foo']),
+      runProject(["add", "foo", "--path", "/abs", "--rag-node", "kb-pg"]),
     );
     expect(result).toBe(1);
-    expect(cap.err).toContain('--path is required');
+    expect(cap.err).toContain("--rag-node and --rag-collection must be set together");
   });
 
-  test('partial rag flags → exit 1', async () => {
-    const { result, cap } = await captureStdio(() =>
-      runProject(['add', 'foo', '--path', '/abs', '--rag-node', 'kb-pg']),
-    );
-    expect(result).toBe(1);
-    expect(cap.err).toContain('--rag-node and --rag-collection must be set together');
-  });
-
-  test('happy path builds + applies a Project manifest', async () => {
-    let sawYaml = '';
+  test("happy path builds + applies a Project manifest", async () => {
+    let sawYaml = "";
     __setProjectTestSeams({
       nodeClient: makeStubClient({
         projectApply: async (i) => {
           sawYaml = i.manifestYaml;
-          return { ok: true, name: 'novaflow', path: '/tmp/projects.yaml', created: true };
+          return { ok: true, name: "novaflow", path: "/tmp/projects.yaml", created: true };
         },
       }),
     });
     const { result, cap } = await captureStdio(() =>
       runProject([
-        'add',
-        'novaflow',
-        '--path',
-        '/abs/novaflow',
-        '--purpose',
-        'NestJS monorepo',
-        '--stack',
-        'nestjs,nextjs',
-        '--rag-node',
-        'kb-chroma',
-        '--rag-collection',
-        'novaflow_docs',
-        '--route',
-        'quick_qna=private-first',
-        '--route',
-        'code_review=mac-mini.claude-pro',
+        "add",
+        "novaflow",
+        "--path",
+        "/abs/novaflow",
+        "--purpose",
+        "NestJS monorepo",
+        "--stack",
+        "nestjs,nextjs",
+        "--rag-node",
+        "kb-chroma",
+        "--rag-collection",
+        "novaflow_docs",
+        "--route",
+        "quick_qna=private-first",
+        "--route",
+        "code_review=mac-mini.claude-pro",
       ]),
     );
     expect(result).toBe(0);
@@ -247,243 +242,216 @@ describe('project add', () => {
         routing?: Record<string, string>;
       };
     };
-    expect(parsed.apiVersion).toBe('llamactl/v1');
-    expect(parsed.kind).toBe('Project');
-    expect(parsed.metadata.name).toBe('novaflow');
-    expect(parsed.spec.path).toBe('/abs/novaflow');
-    expect(parsed.spec.purpose).toBe('NestJS monorepo');
-    expect(parsed.spec.stack).toEqual(['nestjs', 'nextjs']);
-    expect(parsed.spec.rag!.node).toBe('kb-chroma');
-    expect(parsed.spec.rag!.collection).toBe('novaflow_docs');
-    expect(parsed.spec.routing!.quick_qna).toBe('private-first');
-    expect(parsed.spec.routing!.code_review).toBe('mac-mini.claude-pro');
+    expect(parsed.apiVersion).toBe("llamactl/v1");
+    expect(parsed.kind).toBe("Project");
+    expect(parsed.metadata.name).toBe("novaflow");
+    expect(parsed.spec.path).toBe("/abs/novaflow");
+    expect(parsed.spec.purpose).toBe("NestJS monorepo");
+    expect(parsed.spec.stack).toEqual(["nestjs", "nextjs"]);
+    expect(parsed.spec.rag!.node).toBe("kb-chroma");
+    expect(parsed.spec.rag!.collection).toBe("novaflow_docs");
+    expect(parsed.spec.routing!.quick_qna).toBe("private-first");
+    expect(parsed.spec.routing!.code_review).toBe("mac-mini.claude-pro");
   });
 
-  test('bad --route syntax → exit 1', async () => {
+  test("bad --route syntax → exit 1", async () => {
     const { result, cap } = await captureStdio(() =>
-      runProject([
-        'add',
-        'x',
-        '--path',
-        '/abs',
-        '--route',
-        'missing-equals',
-      ]),
+      runProject(["add", "x", "--path", "/abs", "--route", "missing-equals"]),
     );
     expect(result).toBe(1);
-    expect(cap.err).toContain('--route expects <taskKind>=<target>');
+    expect(cap.err).toContain("--route expects <taskKind>=<target>");
   });
 });
 
-describe('project apply', () => {
-  test('missing -f → exit 1', async () => {
-    const { result, cap } = await captureStdio(() => runProject(['apply']));
+describe("project apply", () => {
+  test("missing -f → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["apply"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('-f <file.yaml> is required');
+    expect(cap.err).toContain("-f <file.yaml> is required");
   });
 
-  test('file not on disk → exit 1', async () => {
+  test("file not on disk → exit 1", async () => {
     const { result, cap } = await captureStdio(() =>
-      runProject(['apply', '-f', '/nope/no-such.yaml']),
+      runProject(["apply", "-f", "/nope/no-such.yaml"]),
     );
     expect(result).toBe(1);
-    expect(cap.err).toContain('file not found');
+    expect(cap.err).toContain("file not found");
   });
 
-  test('happy path forwards raw YAML', async () => {
-    const p = join(tmp, 'project.yaml');
+  test("happy path forwards raw YAML", async () => {
+    const p = join(tmp, "project.yaml");
     writeFileSync(
       p,
-      'apiVersion: llamactl/v1\nkind: Project\nmetadata:\n  name: piped\nspec:\n  path: /abs/piped\n',
+      "apiVersion: llamactl/v1\nkind: Project\nmetadata:\n  name: piped\nspec:\n  path: /abs/piped\n",
     );
-    const { result, cap } = await captureStdio(() =>
-      runProject(['apply', '-f', p]),
-    );
+    const { result, cap } = await captureStdio(() => runProject(["apply", "-f", p]));
     expect(result).toBe(0);
     expect(cap.out).toContain("applied project 'test'");
   });
 });
 
-describe('project list', () => {
-  test('prints one row per project', async () => {
-    const { result, cap } = await captureStdio(() => runProject(['list']));
+describe("project list", () => {
+  test("prints one row per project", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["list"]));
     expect(result).toBe(0);
-    expect(cap.out).toContain('demo');
-    expect(cap.out).toContain('/abs/demo');
-    expect(cap.out).toContain('rag=kb-pg/demo_docs');
-    expect(cap.out).toContain('routes=1');
+    expect(cap.out).toContain("demo");
+    expect(cap.out).toContain("/abs/demo");
+    expect(cap.out).toContain("rag=kb-pg/demo_docs");
+    expect(cap.out).toContain("routes=1");
   });
 
-  test('empty registry → informative message', async () => {
+  test("empty registry → informative message", async () => {
     __setProjectTestSeams({
       nodeClient: makeStubClient({
         projectList: async () => ({ ok: true, projects: [] }),
       }),
     });
-    const { cap } = await captureStdio(() => runProject(['list']));
-    expect(cap.out).toContain('no projects registered');
+    const { cap } = await captureStdio(() => runProject(["list"]));
+    expect(cap.out).toContain("no projects registered");
   });
 
-  test('--json emits structured doc', async () => {
-    const { cap } = await captureStdio(() => runProject(['list', '--json']));
+  test("--json emits structured doc", async () => {
+    const { cap } = await captureStdio(() => runProject(["list", "--json"]));
     const parsed = JSON.parse(cap.out.trim());
     expect(Array.isArray(parsed.projects)).toBe(true);
   });
 });
 
-describe('project get', () => {
-  test('prints manifest as YAML', async () => {
-    const { result, cap } = await captureStdio(() =>
-      runProject(['get', 'demo']),
-    );
+describe("project get", () => {
+  test("prints manifest as YAML", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["get", "demo"]));
     expect(result).toBe(0);
-    expect(cap.out).toContain('apiVersion: llamactl/v1');
-    expect(cap.out).toContain('kind: Project');
+    expect(cap.out).toContain("apiVersion: llamactl/v1");
+    expect(cap.out).toContain("kind: Project");
   });
 
-  test('missing name → exit 1', async () => {
-    const { result, cap } = await captureStdio(() => runProject(['get']));
+  test("missing name → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["get"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('<name> is required');
+    expect(cap.err).toContain("<name> is required");
   });
 
-  test('--json emits JSON', async () => {
-    const { cap } = await captureStdio(() =>
-      runProject(['get', 'demo', '--json']),
-    );
+  test("--json emits JSON", async () => {
+    const { cap } = await captureStdio(() => runProject(["get", "demo", "--json"]));
     const parsed = JSON.parse(cap.out.trim());
-    expect(parsed.metadata.name).toBe('demo');
+    expect(parsed.metadata.name).toBe("demo");
   });
 });
 
-describe('project rm', () => {
-  test('happy path', async () => {
-    const { result, cap } = await captureStdio(() =>
-      runProject(['rm', 'demo']),
-    );
+describe("project rm", () => {
+  test("happy path", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["rm", "demo"]));
     expect(result).toBe(0);
     expect(cap.out).toContain("removed project 'demo'");
   });
 
-  test('not found → exit 1', async () => {
+  test("not found → exit 1", async () => {
     __setProjectTestSeams({
       nodeClient: makeStubClient({
         projectRemove: async () => ({ ok: true, removed: false }),
       }),
     });
-    const { result, cap } = await captureStdio(() =>
-      runProject(['rm', 'ghost']),
-    );
+    const { result, cap } = await captureStdio(() => runProject(["rm", "ghost"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('not found');
+    expect(cap.err).toContain("not found");
   });
 });
 
-describe('project index', () => {
-  test('missing name → exit 1', async () => {
-    const { result, cap } = await captureStdio(() => runProject(['index']));
+describe("project index", () => {
+  test("missing name → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["index"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('<name> is required');
+    expect(cap.err).toContain("<name> is required");
   });
 
-  test('happy path reports the generated pipeline name', async () => {
-    const { result, cap } = await captureStdio(() =>
-      runProject(['index', 'novaflow']),
-    );
+  test("happy path reports the generated pipeline name", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["index", "novaflow"]));
     expect(result).toBe(0);
     expect(cap.out).toContain("indexed project 'novaflow'");
-    expect(cap.out).toContain('pipeline: project-novaflow');
-    expect(cap.out).toContain('llamactl rag pipeline run project-novaflow');
+    expect(cap.out).toContain("pipeline: project-novaflow");
+    expect(cap.out).toContain("llamactl rag pipeline run project-novaflow");
   });
 });
 
-describe('project route', () => {
-  test('missing name → exit 1', async () => {
-    const { result, cap } = await captureStdio(() => runProject(['route']));
+describe("project route", () => {
+  test("missing name → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["route"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('<name> is required');
+    expect(cap.err).toContain("<name> is required");
   });
 
-  test('missing taskKind → exit 1', async () => {
-    const { result, cap } = await captureStdio(() =>
-      runProject(['route', 'demo']),
-    );
+  test("missing taskKind → exit 1", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["route", "demo"]));
     expect(result).toBe(1);
-    expect(cap.err).toContain('<taskKind> is required');
+    expect(cap.err).toContain("<taskKind> is required");
   });
 
-  test('prints target + reason for a declared policy entry', async () => {
-    const { result, cap } = await captureStdio(() =>
-      runProject(['route', 'demo', 'quick_qna']),
-    );
+  test("prints target + reason for a declared policy entry", async () => {
+    const { result, cap } = await captureStdio(() => runProject(["route", "demo", "quick_qna"]));
     expect(result).toBe(0);
-    expect(cap.out).toContain('demo/quick_qna → mac-mini.claude-pro (matched)');
+    expect(cap.out).toContain("demo/quick_qna → mac-mini.claude-pro (matched)");
   });
 
-  test('prints fallback-default reason when policy falls back', async () => {
+  test("prints fallback-default reason when policy falls back", async () => {
     __setProjectTestSeams({
       nodeClient: makeStubClient({
         projectRoutePreview: async ({ node }) => {
           const m = node.match(/^project:([^/]+)\/(.+)$/);
           return {
             ok: true,
-            node: 'private-first',
+            node: "private-first",
             decision: {
-              ts: '2026-04-22T00:00:00.000Z',
-              project: m?.[1] ?? '?',
-              taskKind: m?.[2] ?? '?',
-              target: 'private-first',
+              ts: "2026-04-22T00:00:00.000Z",
+              project: m?.[1] ?? "?",
+              taskKind: m?.[2] ?? "?",
+              target: "private-first",
               matched: false,
-              reason: 'fallback-default' as const,
+              reason: "fallback-default" as const,
             },
           };
         },
       }),
     });
     const { result, cap } = await captureStdio(() =>
-      runProject(['route', 'demo', 'never_heard_of']),
+      runProject(["route", "demo", "never_heard_of"]),
     );
     expect(result).toBe(0);
-    expect(cap.out).toContain(
-      'demo/never_heard_of → private-first (fallback-default)',
-    );
+    expect(cap.out).toContain("demo/never_heard_of → private-first (fallback-default)");
   });
 
-  test('--json emits the raw decision envelope', async () => {
+  test("--json emits the raw decision envelope", async () => {
     const { result, cap } = await captureStdio(() =>
-      runProject(['route', 'demo', 'quick_qna', '--json']),
+      runProject(["route", "demo", "quick_qna", "--json"]),
     );
     expect(result).toBe(0);
     const parsed = JSON.parse(cap.out.trim());
-    expect(parsed.decision.reason).toBe('matched');
-    expect(parsed.node).toBe('mac-mini.claude-pro');
+    expect(parsed.decision.reason).toBe("matched");
+    expect(parsed.node).toBe("mac-mini.claude-pro");
   });
 
-  test('over-budget reason surfaces the budget annotation', async () => {
+  test("over-budget reason surfaces the budget annotation", async () => {
     __setProjectTestSeams({
       nodeClient: makeStubClient({
         projectRoutePreview: async ({ node }) => {
           const m = node.match(/^project:([^/]+)\/(.+)$/);
           return {
             ok: true,
-            node: 'private-first',
+            node: "private-first",
             decision: {
-              ts: '2026-04-22T00:00:00.000Z',
-              project: m?.[1] ?? '?',
-              taskKind: m?.[2] ?? '?',
-              target: 'private-first',
+              ts: "2026-04-22T00:00:00.000Z",
+              project: m?.[1] ?? "?",
+              taskKind: m?.[2] ?? "?",
+              target: "private-first",
               matched: true,
-              reason: 'over-budget' as const,
+              reason: "over-budget" as const,
               budget: { usdToday: 1.25, limit: 1.0 },
             },
           };
         },
       }),
     });
-    const { cap } = await captureStdio(() =>
-      runProject(['route', 'demo', 'code_review']),
-    );
-    expect(cap.out).toContain('(over-budget)');
-    expect(cap.out).toContain('1.2500/1.00 USD');
+    const { cap } = await captureStdio(() => runProject(["route", "demo", "code_review"]));
+    expect(cap.out).toContain("(over-budget)");
+    expect(cap.out).toContain("1.2500/1.00 USD");
   });
 });

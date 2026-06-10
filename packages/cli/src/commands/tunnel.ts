@@ -1,10 +1,6 @@
-import * as tlsModule from 'node:tls';
-import { URL } from 'node:url';
-import {
-  config as kubecfg,
-  tls,
-  type Config,
-} from '@llamactl/remote';
+import * as tlsModule from "node:tls";
+import { URL } from "node:url";
+import { config as kubecfg, tls, type Config } from "@llamactl/remote";
 
 const { computeFingerprint } = tls;
 
@@ -35,14 +31,14 @@ NOTES:
 `;
 
 export async function runTunnel(argv: string[]): Promise<number> {
-  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h') {
+  if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
     process.stdout.write(USAGE);
     return 0;
   }
   const sub = argv[0];
   const rest = argv.slice(1);
   switch (sub) {
-    case 'pin-central':
+    case "pin-central":
       return runPinCentral(rest);
     default:
       process.stderr.write(`unknown subcommand: tunnel ${sub}\n\n${USAGE}`);
@@ -58,22 +54,27 @@ interface PinCentralFlags {
 function parsePinCentralFlags(argv: string[]): PinCentralFlags | { error: string } {
   const flags: PinCentralFlags = {};
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') {
-      return { error: 'help' };
+    if (arg === "--help" || arg === "-h") {
+      return { error: "help" };
     }
-    if (!arg.startsWith('--')) {
+    if (!arg.startsWith("--")) {
       return { error: `tunnel pin-central: unexpected positional ${arg}` };
     }
-    const eq = arg.indexOf('=');
+    const eq = arg.indexOf("=");
     if (eq < 0) {
       return { error: `tunnel pin-central: flag must be --key=value: ${arg}` };
     }
     const key = arg.slice(0, eq);
     const value = arg.slice(eq + 1);
     switch (key) {
-      case '--context': flags.context = value; break;
-      case '--url': flags.url = value; break;
-      default: return { error: `tunnel pin-central: unknown flag ${key}` };
+      case "--context":
+        flags.context = value;
+        break;
+      case "--url":
+        flags.url = value;
+        break;
+      default:
+        return { error: `tunnel pin-central: unknown flag ${key}` };
     }
   }
   return flags;
@@ -81,8 +82,8 @@ function parsePinCentralFlags(argv: string[]): PinCentralFlags | { error: string
 
 async function runPinCentral(argv: string[]): Promise<number> {
   const parsed = parsePinCentralFlags(argv);
-  if ('error' in parsed) {
-    if (parsed.error === 'help') {
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
       process.stdout.write(USAGE);
       return 0;
     }
@@ -115,7 +116,7 @@ async function runPinCentral(argv: string[]): Promise<number> {
     process.stderr.write(`tunnel pin-central: invalid URL '${urlStr}'\n`);
     return 1;
   }
-  if (parsedUrl.protocol !== 'https:') {
+  if (parsedUrl.protocol !== "https:") {
     process.stderr.write(
       `tunnel pin-central: tunnelCentralUrl must be https:// (got '${parsedUrl.protocol}')\n`,
     );
@@ -162,7 +163,10 @@ async function runPinCentral(argv: string[]): Promise<number> {
  * operator can inspect the fingerprint. Subsequent relay POSTs pin
  * against the stored value.
  */
-function capturePeerCert(host: string, port: number): Promise<{ pem: string; fingerprint: string }> {
+function capturePeerCert(
+  host: string,
+  port: number,
+): Promise<{ pem: string; fingerprint: string }> {
   return new Promise((resolve, reject) => {
     const socket = tlsModule.connect({
       host,
@@ -184,10 +188,10 @@ function capturePeerCert(host: string, port: number): Promise<{ pem: string; fin
       }
       fn();
     };
-    socket.on('secureConnect', () => {
+    socket.on("secureConnect", () => {
       const cert = socket.getPeerCertificate(true);
       if (!cert || !cert.raw || cert.raw.length === 0) {
-        done(() => reject(new Error('no peer cert received')));
+        done(() => reject(new Error("no peer cert received")));
         return;
       }
       const pem = derToPem(cert.raw);
@@ -200,10 +204,10 @@ function capturePeerCert(host: string, port: number): Promise<{ pem: string; fin
       }
       done(() => resolve({ pem, fingerprint }));
     });
-    socket.on('error', (err) => {
+    socket.on("error", (err) => {
       done(() => reject(err));
     });
-    socket.on('timeout', () => {
+    socket.on("timeout", () => {
       done(() => reject(new Error(`timeout connecting to ${host}:${port}`)));
     });
   });
@@ -215,10 +219,10 @@ function capturePeerCert(host: string, port: number): Promise<{ pem: string; fin
  * same bytes back.
  */
 function derToPem(der: Buffer): string {
-  const b64 = der.toString('base64');
+  const b64 = der.toString("base64");
   const lines: string[] = [];
   for (let i = 0; i < b64.length; i += 64) {
     lines.push(b64.slice(i, i + 64));
   }
-  return `-----BEGIN CERTIFICATE-----\n${lines.join('\n')}\n-----END CERTIFICATE-----\n`;
+  return `-----BEGIN CERTIFICATE-----\n${lines.join("\n")}\n-----END CERTIFICATE-----\n`;
 }

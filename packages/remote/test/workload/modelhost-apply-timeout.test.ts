@@ -1,23 +1,23 @@
-import { describe, expect, test } from 'bun:test';
-import { applyManifest, type WorkloadClient } from '../../src/workload/apply.js';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, expect, test } from "bun:test";
+import { applyManifest, type WorkloadClient } from "../../src/workload/apply.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-describe('applyManifest — ModelHost timeout cleanup', () => {
-  test('unsubscribes the modelHostStart subscription when apply times out', async () => {
+describe("applyManifest — ModelHost timeout cleanup", () => {
+  test("unsubscribes the modelHostStart subscription when apply times out", async () => {
     let unsubscribed = false;
     const client: WorkloadClient = {
       serverStatus: {
         query: async () => ({
-          state: 'down',
+          state: "down",
           rel: null,
           extraArgs: [],
           pid: null,
           host: null,
           port: null,
           binary: null,
-          endpoint: '',
+          endpoint: "",
         }),
       },
       serverStop: { mutate: async () => ({ ok: true }) },
@@ -30,29 +30,29 @@ describe('applyManifest — ModelHost timeout cleanup', () => {
         }),
       },
       modelHostStop: { mutate: async () => ({ ok: true }) },
-      modelHostStatus: { query: async () => ({ state: 'Running' }) },
+      modelHostStatus: { query: async () => ({ state: "Running" }) },
       rpcServerStart: { subscribe: () => ({ unsubscribe() {} }) },
       rpcServerStop: { mutate: async () => ({ ok: true }) },
       rpcServerDoctor: { query: async () => ({ ok: true, path: null, llamaCppBin: null }) },
     };
 
-    const tmp = mkdtempSync(join(tmpdir(), 'llamactl-timeout-test-'));
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-timeout-test-"));
     let result;
     try {
       result = await applyManifest({
         manifest: {
-          apiVersion: 'llamactl/v1',
-          kind: 'ModelHost',
-          metadata: { name: 'mlx-host-timeout' },
+          apiVersion: "llamactl/v1",
+          kind: "ModelHost",
+          metadata: { name: "mlx-host-timeout" },
           spec: {
-            engine: 'omlx',
-            node: 'local',
+            engine: "omlx",
+            node: "local",
             enabled: true,
-            binary: '/usr/bin/true',
-            endpoint: { host: '127.0.0.1', port: 18095 },
-            hostedModels: [{ rel: 'mlx-community/Test-MLX-4bit' }],
+            binary: "/usr/bin/true",
+            endpoint: { host: "127.0.0.1", port: 18095 },
+            hostedModels: [{ rel: "mlx-community/Test-MLX-4bit" }],
             extraArgs: [],
-            restartPolicy: 'Always',
+            restartPolicy: "Always",
             timeoutSeconds: 1,
           },
         },
@@ -65,7 +65,7 @@ describe('applyManifest — ModelHost timeout cleanup', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toContain('timed out');
+    expect(result.error).toContain("timed out");
     expect(unsubscribed).toBe(true);
   });
 });

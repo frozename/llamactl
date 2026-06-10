@@ -16,10 +16,40 @@ describe("supervisor status - CII regressions", () => {
 
   test("--node filter is respected by readSupervisorStatus", async () => {
     const lines = [
-      JSON.stringify({ kind: "fleet-snapshot", ts: "2026-05-01T00:01:00Z", node: "local", node_mem: {}, workloads: [] }),
-      JSON.stringify({ kind: "fleet-snapshot", ts: "2026-05-01T00:01:00Z", node: "mac-mini", node_mem: {}, workloads: [] }),
-      JSON.stringify({ kind: "fleet-transition", ts: "2026-05-01T00:01:00Z", node: "mac-mini", subjectKind: "node", subject: "node", signal: "pressure", from: "NORMAL", to: "HIGH" }),
-      JSON.stringify({ kind: "fleet-transition", ts: "2026-05-01T00:01:00Z", node: "local", subjectKind: "node", subject: "node", signal: "pressure", from: "NORMAL", to: "HIGH" })
+      JSON.stringify({
+        kind: "fleet-snapshot",
+        ts: "2026-05-01T00:01:00Z",
+        node: "local",
+        node_mem: {},
+        workloads: [],
+      }),
+      JSON.stringify({
+        kind: "fleet-snapshot",
+        ts: "2026-05-01T00:01:00Z",
+        node: "mac-mini",
+        node_mem: {},
+        workloads: [],
+      }),
+      JSON.stringify({
+        kind: "fleet-transition",
+        ts: "2026-05-01T00:01:00Z",
+        node: "mac-mini",
+        subjectKind: "node",
+        subject: "node",
+        signal: "pressure",
+        from: "NORMAL",
+        to: "HIGH",
+      }),
+      JSON.stringify({
+        kind: "fleet-transition",
+        ts: "2026-05-01T00:01:00Z",
+        node: "local",
+        subjectKind: "node",
+        subject: "node",
+        signal: "pressure",
+        from: "NORMAL",
+        to: "HIGH",
+      }),
     ].join("\n");
     await withTempJournal(lines, async (journalPath) => {
       const res = await readSupervisorStatus({ journalPath, node: "local" });

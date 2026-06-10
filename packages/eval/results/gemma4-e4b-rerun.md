@@ -5,27 +5,27 @@ Cells: 2
 
 ## Primary metric (mixed)
 
-| Model | memory-recall | tool-call-grammar |
-| -- | -- | -- |
-| gemma4-e4b-mlx-4bit-nothink | 0.5229 | 0.6400 |
+| Model                       | memory-recall | tool-call-grammar |
+| --------------------------- | ------------- | ----------------- |
+| gemma4-e4b-mlx-4bit-nothink | 0.5229        | 0.6400            |
 
 ## Latency (p50 / p95, ms)
 
-| Model | memory-recall | tool-call-grammar |
-| -- | -- | -- |
-| gemma4-e4b-mlx-4bit-nothink | 2087 / 4831 | 807 / 1830 |
+| Model                       | memory-recall | tool-call-grammar |
+| --------------------------- | ------------- | ----------------- |
+| gemma4-e4b-mlx-4bit-nothink | 2087 / 4831   | 807 / 1830        |
 
 ## Throughput (tps)
 
-| Model | memory-recall | tool-call-grammar |
-| -- | -- | -- |
-| gemma4-e4b-mlx-4bit-nothink | 42.51 | 38.89 |
+| Model                       | memory-recall | tool-call-grammar |
+| --------------------------- | ------------- | ----------------- |
+| gemma4-e4b-mlx-4bit-nothink | 42.51         | 38.89             |
 
 ## Errors
 
-| Model | memory-recall | tool-call-grammar |
-| -- | -- | -- |
-| gemma4-e4b-mlx-4bit-nothink | 0 | 0 |
+| Model                       | memory-recall | tool-call-grammar |
+| --------------------------- | ------------- | ----------------- |
+| gemma4-e4b-mlx-4bit-nothink | 0             | 0                 |
 
 ## Per-workload winner
 

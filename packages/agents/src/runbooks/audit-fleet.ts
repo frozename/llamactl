@@ -1,6 +1,6 @@
-import { z } from 'zod';
-import type { Runbook, RunbookStep } from '../types.js';
-import { parseToolJson } from '../types.js';
+import { z } from "zod";
+import type { Runbook, RunbookStep } from "../types.js";
+import { parseToolJson } from "../types.js";
 
 /**
  * Snapshot every piece of fleet state a human operator would assemble
@@ -64,18 +64,18 @@ interface BenchRow {
 }
 
 export const auditFleet: Runbook<Params> = {
-  name: 'audit-fleet',
+  name: "audit-fleet",
   description:
-    'Read-only fleet snapshot — nodes + promotions + workloads + local llama-server status + installed+benched model count. No mutations; safe to run on any cadence.',
+    "Read-only fleet snapshot — nodes + promotions + workloads + local llama-server status + installed+benched model count. No mutations; safe to run on any cadence.",
   paramsSchema: ParamsSchema,
   async execute(ctx) {
     const steps: RunbookStep[] = [];
 
     const nodes = parseToolJson<NodesLsPayload>(
-      await ctx.tools.callTool({ name: 'llamactl.node.ls', arguments: {} }),
+      await ctx.tools.callTool({ name: "llamactl.node.ls", arguments: {} }),
     );
     steps.push({
-      tool: 'llamactl.node.ls',
+      tool: "llamactl.node.ls",
       dryRun: false,
       result: {
         context: nodes.context,
@@ -85,19 +85,19 @@ export const auditFleet: Runbook<Params> = {
     });
 
     const promotions = parseToolJson<PromotionRow[]>(
-      await ctx.tools.callTool({ name: 'llamactl.promotions.list', arguments: {} }),
+      await ctx.tools.callTool({ name: "llamactl.promotions.list", arguments: {} }),
     );
     steps.push({
-      tool: 'llamactl.promotions.list',
+      tool: "llamactl.promotions.list",
       dryRun: false,
       result: { count: promotions.length },
     });
 
     const workloads = parseToolJson<WorkloadListPayload>(
-      await ctx.tools.callTool({ name: 'llamactl.workload.list', arguments: {} }),
+      await ctx.tools.callTool({ name: "llamactl.workload.list", arguments: {} }),
     );
     steps.push({
-      tool: 'llamactl.workload.list',
+      tool: "llamactl.workload.list",
       dryRun: false,
       result: { count: workloads.count },
     });
@@ -105,28 +105,28 @@ export const auditFleet: Runbook<Params> = {
     let serverStatus: ServerStatusPayload | { error: string };
     try {
       serverStatus = parseToolJson<ServerStatusPayload>(
-        await ctx.tools.callTool({ name: 'llamactl.server.status', arguments: {} }),
+        await ctx.tools.callTool({ name: "llamactl.server.status", arguments: {} }),
       );
     } catch (err) {
       serverStatus = { error: (err as Error).message };
     }
     steps.push({
-      tool: 'llamactl.server.status',
+      tool: "llamactl.server.status",
       dryRun: false,
       result: serverStatus,
     });
 
     const bench = parseToolJson<BenchRow[]>(
       await ctx.tools.callTool({
-        name: 'llamactl.bench.compare',
-        arguments: { classFilter: 'all', scopeFilter: 'all' },
+        name: "llamactl.bench.compare",
+        arguments: { classFilter: "all", scopeFilter: "all" },
       }),
     );
     const installedAndBenched = bench.filter(
-      (r) => r.installed && r.tuned && Number.parseFloat(r.tuned.gen_tps ?? '0') > 0,
+      (r) => r.installed && r.tuned && Number.parseFloat(r.tuned.gen_tps ?? "0") > 0,
     );
     steps.push({
-      tool: 'llamactl.bench.compare',
+      tool: "llamactl.bench.compare",
       dryRun: false,
       result: {
         inspected: bench.length,
@@ -152,7 +152,7 @@ export const auditFleet: Runbook<Params> = {
         installedAndBenched: installedAndBenched.map((r) => ({
           rel: r.rel,
           class: r.class,
-          genTps: r.tuned?.gen_tps ?? '0',
+          genTps: r.tuned?.gen_tps ?? "0",
         })),
       },
     };

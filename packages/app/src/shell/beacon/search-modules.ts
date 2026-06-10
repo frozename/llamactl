@@ -1,4 +1,4 @@
-import type { AppModule } from '@/modules/registry';
+import type { AppModule } from "@/modules/registry";
 
 export interface SearchHit {
   m: AppModule;
@@ -12,10 +12,10 @@ export function searchModules(modules: readonly AppModule[], query: string): Sea
   const needle = query.trim().toLowerCase();
   if (!needle) return [];
   return modules
-    .filter((m) => m.beaconGroup && m.beaconGroup !== 'hidden')
+    .filter((m) => m.beaconGroup && m.beaconGroup !== "hidden")
     .map((m) => {
-      const hay = [m.labelKey, ...(m.aliases ?? []), m.id, m.beaconGroup ?? '']
-        .join(' ')
+      const hay = [m.labelKey, ...(m.aliases ?? []), m.id, m.beaconGroup ?? ""]
+        .join(" ")
         .toLowerCase();
       const score = hay.includes(needle)
         ? m.labelKey.toLowerCase().startsWith(needle)

@@ -1,10 +1,10 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
-import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { toTextContent } from '@nova/mcp-shared';
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+import { spawn } from "node:child_process";
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { toTextContent } from "@nova/mcp-shared";
 import {
   appendFleetJournal,
   defaultFleetJournalPath,
@@ -14,13 +14,13 @@ import {
   type FleetSnapshotEntry,
   type FleetExecutionEntry,
   readAuditEntries,
-} from '@llamactl/fleet-supervisor';
-import { defaultFleetAuditPath } from '../../../fleet-supervisor/src/journal.js';
-import { FleetAggregator } from '../../../fleet-supervisor/src/aggregator.js';
-import { createPeerFetch } from '../../../fleet-supervisor/src/peer-fetch.js';
-import { listPeers } from '../../../remote/src/config/peers.js';
+} from "@llamactl/fleet-supervisor";
+import { defaultFleetAuditPath } from "../../../fleet-supervisor/src/journal.js";
+import { FleetAggregator } from "../../../fleet-supervisor/src/aggregator.js";
+import { createPeerFetch } from "../../../fleet-supervisor/src/peer-fetch.js";
+import { listPeers } from "../../../remote/src/config/peers.js";
 
-const CLI_BIN_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../../cli/src/bin.ts');
+const CLI_BIN_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../cli/src/bin.ts");
 let cliBinChecked = false;
 function ensureCliBin(): void {
   if (cliBinChecked) return;
@@ -35,7 +35,7 @@ const MAX_TIMEOUT_MS_ADMIT = 300_000;
 const MAX_TIMEOUT_MS_EXECUTE = 120_000;
 const MAX_TIMEOUT_FOLLOWUP_MS = 5_000;
 const KILL_TIMEOUT_MS = 2_000;
-const OUTPUT_TRUNCATION_SENTINEL = '[output truncated]';
+const OUTPUT_TRUNCATION_SENTINEL = "[output truncated]";
 const deprecatedToolWarnings = new Set<string>();
 
 function readProcessOutput(chunks: Buffer[]): string {
@@ -56,13 +56,13 @@ function warnDeprecatedToolAlias(oldName: string, newName: string): void {
 function appendAudit(
   tool: string,
   input: Record<string, unknown>,
-  outcome: 'success' | 'error' | 'denied',
+  outcome: "success" | "error" | "denied",
   detail: unknown = {},
 ): void {
   try {
     appendFleetJournal(
       {
-        kind: 'mcp-audit',
+        kind: "mcp-audit",
         ts: new Date().toISOString(),
         tool,
         input,
@@ -83,7 +83,7 @@ interface RunProcessResult {
 }
 
 function toTimeoutMs(value: number | undefined, maxMs: number): number {
-  if (typeof value !== 'number' || value <= 0) return maxMs;
+  if (typeof value !== "number" || value <= 0) return maxMs;
   return Math.min(value, maxMs);
 }
 
@@ -102,7 +102,7 @@ function makeResultError(
 }
 
 function getRunProcessFailureMessage(result: RunProcessResult): string {
-  if (result.timedOut) return 'command timed out';
+  if (result.timedOut) return "command timed out";
   if (result.stderr) return result.stderr.trim();
   if (result.stdout) return result.stdout.trim();
   return `command failed with code ${result.code ?? -1}`;
@@ -141,18 +141,18 @@ function runProcess(
       });
       proc.kill();
       killTimeout = setTimeout(() => {
-        proc.kill('SIGKILL');
+        proc.kill("SIGKILL");
       }, KILL_TIMEOUT_MS);
     }, timeoutMs);
 
-    proc.stdout?.on('data', (chunk: Buffer) => {
+    proc.stdout?.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
     });
-    proc.stderr?.on('data', (chunk: Buffer) => {
+    proc.stderr?.on("data", (chunk: Buffer) => {
       stderrChunks.push(chunk);
     });
 
-    proc.on('close', (code) => {
+    proc.on("close", (code) => {
       if (settled) {
         if (killTimeout) clearTimeout(killTimeout);
         return;
@@ -168,7 +168,7 @@ function runProcess(
       });
     });
 
-    proc.on('error', (err: Error) => {
+    proc.on("error", (err: Error) => {
       if (settled) return;
       clearTimeout(timeout);
       if (killTimeout) clearTimeout(killTimeout);
@@ -176,7 +176,7 @@ function runProcess(
         ok: false,
         code: -1,
         stdout: readProcessOutput(stdoutChunks),
-        stderr: `${readProcessOutput(stderrChunks)}${readProcessOutput(stderrChunks) ? '\\n' : ''}${err.message}`,
+        stderr: `${readProcessOutput(stderrChunks)}${readProcessOutput(stderrChunks) ? "\\n" : ""}${err.message}`,
         timedOut: false,
       });
     });
@@ -192,10 +192,17 @@ interface FleetToolDeps {
   detectExistingSupervisor?: DetectExistingSupervisor;
 }
 
-async function detectExistingSupervisorDefault(spawnFn: SpawnFn): Promise<{ running: boolean; pid?: number }> {
-  const result = await runProcess(spawnFn, 'pgrep', ['-f', 'supervisor serve'], MAX_TIMEOUT_FOLLOWUP_MS);
+async function detectExistingSupervisorDefault(
+  spawnFn: SpawnFn,
+): Promise<{ running: boolean; pid?: number }> {
+  const result = await runProcess(
+    spawnFn,
+    "pgrep",
+    ["-f", "supervisor serve"],
+    MAX_TIMEOUT_FOLLOWUP_MS,
+  );
   if (!result.ok) return { running: false };
-  const first = result.stdout.trim().split('\\n')[0];
+  const first = result.stdout.trim().split("\\n")[0];
   if (!first) return { running: false };
   const pid = Number.parseInt(first, 10);
   if (Number.isNaN(pid)) return { running: false };
@@ -205,7 +212,7 @@ async function detectExistingSupervisorDefault(spawnFn: SpawnFn): Promise<{ runn
 const admitMeasureInFlight = new Set<string>();
 
 function snapshotInput(input: unknown): Record<string, unknown> {
-  if (input === null || typeof input !== 'object') return {};
+  if (input === null || typeof input !== "object") return {};
   return input as Record<string, unknown>;
 }
 
@@ -215,9 +222,15 @@ const pressureStatusInputSchema = {
   limit: z.number().optional(),
 };
 
-async function handleFleetPressureStatus(
-  { journalPath, node, limit }: { journalPath?: string; node?: string; limit?: number },
-): Promise<{ content: { type: 'text'; text: string }[] }> {
+async function handleFleetPressureStatus({
+  journalPath,
+  node,
+  limit,
+}: {
+  journalPath?: string;
+  node?: string;
+  limit?: number;
+}): Promise<{ content: { type: "text"; text: string }[] }> {
   const path = journalPath ?? defaultFleetJournalPath();
   const report = await readSupervisorStatus({ journalPath: path, node, limit });
   return toTextContent(report as any);
@@ -226,40 +239,39 @@ async function handleFleetPressureStatus(
 const auditInputSchema = {
   auditPath: z.string().optional(),
   tool: z.string().optional(),
-  outcome: z.enum(['denied', 'success', 'error']).optional(),
+  outcome: z.enum(["denied", "success", "error"]).optional(),
   since: z.string().optional(),
   limit: z.number().optional(),
 };
 
-async function handleFleetAudit(
-  {
-    auditPath,
-    tool,
-    outcome,
-    since,
-    limit,
-  }: {
-    auditPath?: string;
-    tool?: string;
-    outcome?: 'denied' | 'success' | 'error';
-    since?: string;
-    limit?: number;
-  },
-): Promise<{ content: { type: 'text'; text: string }[] }> {
+async function handleFleetAudit({
+  auditPath,
+  tool,
+  outcome,
+  since,
+  limit,
+}: {
+  auditPath?: string;
+  tool?: string;
+  outcome?: "denied" | "success" | "error";
+  since?: string;
+  limit?: number;
+}): Promise<{ content: { type: "text"; text: string }[] }> {
   const result = await readAuditEntries({ auditPath, tool, outcome, since, limit });
   return toTextContent(result as any);
 }
 
 export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): void {
   const spawnFn = deps?.spawn ?? spawn;
-  const detectExistingSupervisor = deps?.detectExistingSupervisor ?? (() => detectExistingSupervisorDefault(spawnFn));
+  const detectExistingSupervisor =
+    deps?.detectExistingSupervisor ?? (() => detectExistingSupervisorDefault(spawnFn));
 
   server.registerTool(
-    'llamactl_fleet_snapshot',
+    "llamactl_fleet_snapshot",
     {
-      title: 'Fleet snapshot',
+      title: "Fleet snapshot",
       description:
-        'Return the latest fleet snapshot per node from the fleet-supervisor journal. When node is set, returns at most one snapshot for that node.',
+        "Return the latest fleet snapshot per node from the fleet-supervisor journal. When node is set, returns at most one snapshot for that node.",
       inputSchema: {
         node: z.string().optional(),
         all: z.boolean().optional(),
@@ -283,11 +295,11 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
   );
 
   server.registerTool(
-    'llamactl_fleet_pressure',
+    "llamactl_fleet_pressure",
     {
-      title: 'Fleet pressure state',
+      title: "Fleet pressure state",
       description:
-        'Current pressure state (NORMAL | HIGH) per node, derived from fleet-transition entries where subjectKind=node and signal in (pressure, pressure-cleared). Nodes that never transitioned appear as NORMAL with lastTransitionAt: null.',
+        "Current pressure state (NORMAL | HIGH) per node, derived from fleet-transition entries where subjectKind=node and signal in (pressure, pressure-cleared). Nodes that never transitioned appear as NORMAL with lastTransitionAt: null.",
       inputSchema: {
         node: z.string().optional(),
         journalPath: z.string().optional(),
@@ -302,12 +314,12 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
 
       for (const e of entries) {
         if (node !== undefined && e.node !== node) continue;
-        if (e.kind === 'fleet-snapshot') {
+        if (e.kind === "fleet-snapshot") {
           knownNodes.add(e.node);
         } else if (
-          e.kind === 'fleet-transition' &&
-          e.subjectKind === 'node' &&
-          (e.signal === 'pressure' || e.signal === 'pressure-cleared')
+          e.kind === "fleet-transition" &&
+          e.subjectKind === "node" &&
+          (e.signal === "pressure" || e.signal === "pressure-cleared")
         ) {
           const cur = latestTransition.get(e.node);
           if (!cur || e.ts > cur.ts) {
@@ -321,7 +333,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         const t = latestTransition.get(nodeName);
         return {
           name: nodeName,
-          state: (t?.state === 'HIGH' ? 'HIGH' : 'NORMAL') as 'NORMAL' | 'HIGH',
+          state: (t?.state === "HIGH" ? "HIGH" : "NORMAL") as "NORMAL" | "HIGH",
           lastTransitionAt: t?.ts ?? null,
         };
       });
@@ -330,60 +342,62 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     },
   );
 
-
   server.registerTool(
-    'llamactl_fleet_audit',
+    "llamactl_fleet_audit",
     {
-      title: 'Fleet supervisor audit',
-      description: 'Read recent MCP write-tool audit entries from the fleet-supervisor audit log. Supports filters by tool name, outcome, and timestamp.',
+      title: "Fleet supervisor audit",
+      description:
+        "Read recent MCP write-tool audit entries from the fleet-supervisor audit log. Supports filters by tool name, outcome, and timestamp.",
       inputSchema: auditInputSchema,
     },
     handleFleetAudit,
   );
 
   server.registerTool(
-    'llamactl_fleet_supervisor_audit',
+    "llamactl_fleet_supervisor_audit",
     {
-      title: 'Fleet supervisor audit (deprecated)',
-      description: '[DEPRECATED — use llamactl_fleet_audit] Backward-compatible alias for llamactl_fleet_audit.',
+      title: "Fleet supervisor audit (deprecated)",
+      description:
+        "[DEPRECATED — use llamactl_fleet_audit] Backward-compatible alias for llamactl_fleet_audit.",
       inputSchema: auditInputSchema,
     },
     async (input) => {
-      warnDeprecatedToolAlias('llamactl_fleet_supervisor_audit', 'llamactl_fleet_audit');
+      warnDeprecatedToolAlias("llamactl_fleet_supervisor_audit", "llamactl_fleet_audit");
       return handleFleetAudit(input);
     },
   );
 
   server.registerTool(
-    'llamactl_fleet_pressure_status',
+    "llamactl_fleet_pressure_status",
     {
-      title: 'Fleet supervisor status',
-      description: 'Current pressure status per node derived from the fleet-supervisor journal: state, time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status entries. Complementary to llamactl_fleet_pressure (transition-derived current state). This tool returns richer periodic fields: time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status journal entries.',
+      title: "Fleet supervisor status",
+      description:
+        "Current pressure status per node derived from the fleet-supervisor journal: state, time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status entries. Complementary to llamactl_fleet_pressure (transition-derived current state). This tool returns richer periodic fields: time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status journal entries.",
       inputSchema: pressureStatusInputSchema,
     },
     handleFleetPressureStatus,
   );
 
   server.registerTool(
-    'llamactl_fleet_supervisor_status',
+    "llamactl_fleet_supervisor_status",
     {
-      title: 'Fleet supervisor status (deprecated)',
+      title: "Fleet supervisor status (deprecated)",
       description:
-        '[DEPRECATED — use llamactl_fleet_pressure_status] Backward-compatible alias for llamactl_fleet_pressure_status.',
+        "[DEPRECATED — use llamactl_fleet_pressure_status] Backward-compatible alias for llamactl_fleet_pressure_status.",
       inputSchema: pressureStatusInputSchema,
     },
     async (input) => {
-      warnDeprecatedToolAlias('llamactl_fleet_supervisor_status', 'llamactl_fleet_pressure_status');
+      warnDeprecatedToolAlias("llamactl_fleet_supervisor_status", "llamactl_fleet_pressure_status");
       return handleFleetPressureStatus(input);
     },
   );
 
   server.registerTool(
-    'llamactl_fleet_proposals',
+    "llamactl_fleet_proposals",
     {
-      title: 'Fleet proposals',
+      title: "Fleet proposals",
       description:
-        'List fleet proposals from the journal. pendingOnly=true (default) returns only proposals with no matching fleet-execution entry. Ordered most-recent-first; limit applied after filtering.',
+        "List fleet proposals from the journal. pendingOnly=true (default) returns only proposals with no matching fleet-execution entry. Ordered most-recent-first; limit applied after filtering.",
       inputSchema: {
         node: z.string().optional(),
         pendingOnly: z.boolean().optional(),
@@ -402,11 +416,11 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
   );
 
   server.registerTool(
-    'llamactl_fleet_executions',
+    "llamactl_fleet_executions",
     {
-      title: 'Fleet executions',
+      title: "Fleet executions",
       description:
-        'List fleet executor actions from the journal. Ordered most-recent-first; total is post-filter pre-limit count.',
+        "List fleet executor actions from the journal. Ordered most-recent-first; total is post-filter pre-limit count.",
       inputSchema: {
         node: z.string().optional(),
         sinceIsoTs: z.string().optional(),
@@ -420,7 +434,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
 
       const executions: FleetExecutionEntry[] = [];
       for (const e of entries) {
-        if (e.kind !== 'fleet-execution') continue;
+        if (e.kind !== "fleet-execution") continue;
         if (node !== undefined && e.node !== node) continue;
         if (sinceIsoTs !== undefined && e.ts < sinceIsoTs) continue;
         executions.push(e);
@@ -433,25 +447,25 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
   );
 
   server.registerTool(
-    'llamactl_fleet_journal_tail',
+    "llamactl_fleet_journal_tail",
     {
-      title: 'Fleet journal tail',
+      title: "Fleet journal tail",
       description:
-        'Return raw recent journal entries, optionally filtered by node and/or entry kind. Returns the last `limit` (default 20) matching entries in chronological order.',
+        "Return raw recent journal entries, optionally filtered by node and/or entry kind. Returns the last `limit` (default 20) matching entries in chronological order.",
       inputSchema: {
         node: z.string().optional(),
         kinds: z
           .array(
             z.enum([
-              'fleet-snapshot',
-              'fleet-heartbeat',
-              'fleet-transition',
-              'fleet-proposal',
-              'fleet-execution',
-              'fleet-pressure-status',
-              'fleet-placement',
-              'fleet-move',
-              'fleet-lease-election',
+              "fleet-snapshot",
+              "fleet-heartbeat",
+              "fleet-transition",
+              "fleet-proposal",
+              "fleet-execution",
+              "fleet-pressure-status",
+              "fleet-placement",
+              "fleet-move",
+              "fleet-lease-election",
             ]),
           )
           .optional(),
@@ -475,10 +489,10 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
   );
 
   server.registerTool(
-    'llamactl_admit_measure',
+    "llamactl_admit_measure",
     {
-      title: 'Admit Measure',
-      description: 'Probe peak RSS for a workload via `admit measure`.',
+      title: "Admit Measure",
+      description: "Probe peak RSS for a workload via `admit measure`.",
       inputSchema: {
         workload: z.string(),
         node: z.string().optional(),
@@ -487,30 +501,35 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     },
     async ({ workload, node, timeoutMs }) => {
       const input = snapshotInput({ workload, node });
-      const key = `${workload}:${node ?? ''}`;
+      const key = `${workload}:${node ?? ""}`;
       if (admitMeasureInFlight.has(key)) {
         const outcome = {
           ok: false,
-          error: 'admit measure already running for this workload',
+          error: "admit measure already running for this workload",
           preview: input,
         };
-        appendAudit('llamactl_admit_measure', input, 'denied', outcome);
+        appendAudit("llamactl_admit_measure", input, "denied", outcome);
         return toTextContent(outcome);
       }
       admitMeasureInFlight.add(key);
       const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_ADMIT);
       try {
         ensureCliBin();
-        const args = [CLI_BIN_PATH, 'admit', 'measure', workload];
+        const args = [CLI_BIN_PATH, "admit", "measure", workload];
         if (node) args.push(`--node=${node}`);
-        const result = await runProcess(spawnFn, 'bun', args, boundedTimeoutMs);
+        const result = await runProcess(spawnFn, "bun", args, boundedTimeoutMs);
         if (!result.ok) {
           const error = makeResultError(getRunProcessFailureMessage(result), result);
           const outcome = { ...error, preview: input };
-          appendAudit('llamactl_admit_measure', input, 'error', outcome);
+          appendAudit("llamactl_admit_measure", input, "error", outcome);
           return toTextContent(error);
         }
-        appendAudit('llamactl_admit_measure', input, 'success', result as unknown as Record<string, unknown>);
+        appendAudit(
+          "llamactl_admit_measure",
+          input,
+          "success",
+          result as unknown as Record<string, unknown>,
+        );
         return toTextContent(result);
       } finally {
         admitMeasureInFlight.delete(key);
@@ -519,10 +538,10 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
   );
 
   server.registerTool(
-    'llamactl_supervisor_execute',
+    "llamactl_supervisor_execute",
     {
-      title: 'Supervisor Execute',
-      description: 'Execute a supervisor proposal or run auto mode (single tick via --once).',
+      title: "Supervisor Execute",
+      description: "Execute a supervisor proposal or run auto mode (single tick via --once).",
       inputSchema: {
         proposalId: z.string().optional(),
         auto: z.boolean().optional(),
@@ -538,20 +557,25 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
       if (hasProposalId === hasAuto) {
         const outcome = {
           ok: false,
-          error: 'must specify exactly one of proposalId or auto',
+          error: "must specify exactly one of proposalId or auto",
           preview: snapshotInput({ proposalId, auto, severityThreshold, node }),
         };
-        appendAudit('llamactl_supervisor_execute', snapshotInput({ proposalId, auto, severityThreshold, node }), 'denied', outcome);
+        appendAudit(
+          "llamactl_supervisor_execute",
+          snapshotInput({ proposalId, auto, severityThreshold, node }),
+          "denied",
+          outcome,
+        );
         return toTextContent(outcome);
       }
       if (confirm !== true) {
         const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
         const outcome = {
           ok: false,
-          error: 'destructive operation requires confirm:true',
+          error: "destructive operation requires confirm:true",
           preview,
         };
-        appendAudit('llamactl_supervisor_execute', preview, 'denied', outcome);
+        appendAudit("llamactl_supervisor_execute", preview, "denied", outcome);
         return toTextContent(outcome);
       }
 
@@ -560,35 +584,40 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
         const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
         const outcome = {
           ok: false,
-          error: 'supervisor execute blocked by running supervisor',
+          error: "supervisor execute blocked by running supervisor",
           preview: { ...preview, runningPid: running.pid },
         };
-        appendAudit('llamactl_supervisor_execute', preview, 'denied', outcome);
+        appendAudit("llamactl_supervisor_execute", preview, "denied", outcome);
         return toTextContent(outcome);
       }
 
       ensureCliBin();
-      const args = [CLI_BIN_PATH, 'supervisor', 'tick'];
+      const args = [CLI_BIN_PATH, "supervisor", "tick"];
       if (node) args.push(`--node=${node}`);
       if (hasAuto) {
-        args.push('--auto');
+        args.push("--auto");
         if (severityThreshold != null) args.push(`--severity-threshold=${severityThreshold}`);
       } else {
         args.push(`--execute=${proposalId}`);
       }
       const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_EXECUTE);
-      const result = await runProcess(spawnFn, 'bun', args, boundedTimeoutMs);
+      const result = await runProcess(spawnFn, "bun", args, boundedTimeoutMs);
       const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
       if (!result.ok) {
         const outcome = makeResultError(getRunProcessFailureMessage(result), result);
-        appendAudit('llamactl_supervisor_execute', preview, 'error', outcome);
+        appendAudit("llamactl_supervisor_execute", preview, "error", outcome);
         return toTextContent({
           ...outcome,
           preview,
         });
       }
 
-      appendAudit('llamactl_supervisor_execute', preview, 'success', result as unknown as Record<string, unknown>);
+      appendAudit(
+        "llamactl_supervisor_execute",
+        preview,
+        "success",
+        result as unknown as Record<string, unknown>,
+      );
       return toTextContent({ ...result, preview });
     },
   );
@@ -596,15 +625,15 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
 
 function readJournal(journalPath: string): FleetJournalEntry[] {
   if (!existsSync(journalPath)) return [];
-  const raw = readFileSync(journalPath, 'utf8');
+  const raw = readFileSync(journalPath, "utf8");
   const entries: FleetJournalEntry[] = [];
-  for (const line of raw.split('\n')) {
+  for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       entries.push(JSON.parse(trimmed) as FleetJournalEntry);
     } catch {
-      console.warn('[fleet-tools] skipping malformed journal line:', trimmed.slice(0, 80));
+      console.warn("[fleet-tools] skipping malformed journal line:", trimmed.slice(0, 80));
     }
   }
   return entries;
@@ -616,7 +645,7 @@ export function collectLatestSnapshots(
 ): FleetSnapshotEntry[] {
   const latest = new Map<string, FleetSnapshotEntry>();
   for (const e of entries) {
-    if (e.kind !== 'fleet-snapshot') continue;
+    if (e.kind !== "fleet-snapshot") continue;
     if (node !== undefined && e.node !== node) continue;
     const cur = latest.get(e.node);
     if (!cur || e.ts > cur.ts) latest.set(e.node, e);
@@ -630,12 +659,12 @@ export function collectProposals(
 ): FleetProposalEntry[] {
   const executedIds = new Set<string>();
   for (const e of entries) {
-    if (e.kind === 'fleet-execution') executedIds.add(e.proposalId);
+    if (e.kind === "fleet-execution") executedIds.add(e.proposalId);
   }
 
   const out: FleetProposalEntry[] = [];
   for (const e of entries) {
-    if (e.kind !== 'fleet-proposal') continue;
+    if (e.kind !== "fleet-proposal") continue;
     if (opts.node !== undefined && e.node !== opts.node) continue;
     if (opts.sinceIsoTs !== undefined && e.ts < opts.sinceIsoTs) continue;
     if ((opts.pendingOnly ?? true) && executedIds.has(e.proposalId)) continue;

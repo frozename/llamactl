@@ -55,6 +55,7 @@
 ## Task 1: Schema additions
 
 **Files:**
+
 - Modify: `packages/remote/src/composite/schema.ts`
 - Modify: `packages/remote/src/rag/pipeline/schema.ts`
 - Test: `packages/remote/test/composite-schema-pipeline.test.ts`
@@ -63,62 +64,87 @@
 
 ```ts
 // packages/remote/test/composite-schema-pipeline.test.ts
-import { describe, expect, test } from 'bun:test';
-import { CompositeSchema, CompositeSpecSchema, PipelineCompositeEntrySchema } from '../src/composite/schema';
-import { RagPipelineManifestSchema } from '../src/rag/pipeline/schema';
+import { describe, expect, test } from "bun:test";
+import {
+  CompositeSchema,
+  CompositeSpecSchema,
+  PipelineCompositeEntrySchema,
+} from "../src/composite/schema";
+import { RagPipelineManifestSchema } from "../src/rag/pipeline/schema";
 
-describe('PipelineCompositeEntrySchema', () => {
-  test('accepts a valid entry', () => {
+describe("PipelineCompositeEntrySchema", () => {
+  test("accepts a valid entry", () => {
     const out = PipelineCompositeEntrySchema.safeParse({
-      name: 'docs-ingest',
+      name: "docs-ingest",
       spec: {
-        destination: { ragNode: 'kb-chroma', collection: 'docs' },
-        sources: [{ kind: 'filesystem', path: '/tmp/docs' }],
+        destination: { ragNode: "kb-chroma", collection: "docs" },
+        sources: [{ kind: "filesystem", path: "/tmp/docs" }],
       },
     });
     expect(out.success).toBe(true);
   });
 
-  test('rejects uppercase or invalid name', () => {
+  test("rejects uppercase or invalid name", () => {
     expect(
       PipelineCompositeEntrySchema.safeParse({
-        name: 'DocsIngest',
-        spec: { destination: { ragNode: 'kb', collection: 'd' }, sources: [{ kind: 'filesystem', path: '/x' }] },
+        name: "DocsIngest",
+        spec: {
+          destination: { ragNode: "kb", collection: "d" },
+          sources: [{ kind: "filesystem", path: "/x" }],
+        },
       }).success,
     ).toBe(false);
   });
 });
 
-describe('CompositeSpecSchema with pipelines', () => {
-  test('pipelines field defaults to []', () => {
+describe("CompositeSpecSchema with pipelines", () => {
+  test("pipelines field defaults to []", () => {
     const out = CompositeSpecSchema.parse({});
     expect(out.pipelines).toEqual([]);
   });
 
-  test('rejects duplicate pipeline names within a composite', () => {
+  test("rejects duplicate pipeline names within a composite", () => {
     const result = CompositeSchema.safeParse({
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'mc' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "mc" },
       spec: {
         pipelines: [
-          { name: 'docs', spec: { destination: { ragNode: 'kb', collection: 'd' }, sources: [{ kind: 'filesystem', path: '/x' }] } },
-          { name: 'docs', spec: { destination: { ragNode: 'kb', collection: 'd' }, sources: [{ kind: 'filesystem', path: '/x' }] } },
+          {
+            name: "docs",
+            spec: {
+              destination: { ragNode: "kb", collection: "d" },
+              sources: [{ kind: "filesystem", path: "/x" }],
+            },
+          },
+          {
+            name: "docs",
+            spec: {
+              destination: { ragNode: "kb", collection: "d" },
+              sources: [{ kind: "filesystem", path: "/x" }],
+            },
+          },
         ],
       },
     });
     expect(result.success).toBe(false);
   });
 
-  test('allows the same name across different kinds (per-kind namespace)', () => {
+  test("allows the same name across different kinds (per-kind namespace)", () => {
     const result = CompositeSchema.safeParse({
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'mc' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "mc" },
       spec: {
-        services: [{ name: 'docs', image: 'nginx' }],
+        services: [{ name: "docs", image: "nginx" }],
         pipelines: [
-          { name: 'docs', spec: { destination: { ragNode: 'kb', collection: 'd' }, sources: [{ kind: 'filesystem', path: '/x' }] } },
+          {
+            name: "docs",
+            spec: {
+              destination: { ragNode: "kb", collection: "d" },
+              sources: [{ kind: "filesystem", path: "/x" }],
+            },
+          },
         ],
       },
     });
@@ -126,28 +152,34 @@ describe('CompositeSpecSchema with pipelines', () => {
   });
 });
 
-describe('RagPipelineManifestSchema with ownership', () => {
-  test('round-trips ownership marker', () => {
+describe("RagPipelineManifestSchema with ownership", () => {
+  test("round-trips ownership marker", () => {
     const out = RagPipelineManifestSchema.parse({
-      apiVersion: 'llamactl/v1',
-      kind: 'RagPipeline',
-      metadata: { name: 'docs' },
-      spec: { destination: { ragNode: 'kb', collection: 'd' }, sources: [{ kind: 'filesystem', path: '/x' }] },
+      apiVersion: "llamactl/v1",
+      kind: "RagPipeline",
+      metadata: { name: "docs" },
+      spec: {
+        destination: { ragNode: "kb", collection: "d" },
+        sources: [{ kind: "filesystem", path: "/x" }],
+      },
       ownership: {
-        source: 'composite',
-        compositeNames: ['mc'],
-        specHash: 'abc',
+        source: "composite",
+        compositeNames: ["mc"],
+        specHash: "abc",
       },
     });
-    expect(out.ownership?.compositeNames).toEqual(['mc']);
+    expect(out.ownership?.compositeNames).toEqual(["mc"]);
   });
 
-  test('parses operator manifest without ownership marker', () => {
+  test("parses operator manifest without ownership marker", () => {
     const out = RagPipelineManifestSchema.parse({
-      apiVersion: 'llamactl/v1',
-      kind: 'RagPipeline',
-      metadata: { name: 'docs' },
-      spec: { destination: { ragNode: 'kb', collection: 'd' }, sources: [{ kind: 'filesystem', path: '/x' }] },
+      apiVersion: "llamactl/v1",
+      kind: "RagPipeline",
+      metadata: { name: "docs" },
+      spec: {
+        destination: { ragNode: "kb", collection: "d" },
+        sources: [{ kind: "filesystem", path: "/x" }],
+      },
     });
     expect(out.ownership).toBeUndefined();
   });
@@ -164,17 +196,17 @@ Expected: FAIL — `PipelineCompositeEntrySchema` not exported; `pipelines:` not
 Open `packages/remote/src/composite/schema.ts`. Add the import for `RagPipelineSpecSchema` near the existing imports:
 
 ```ts
-import { RagPipelineSpecSchema } from '../rag/pipeline/schema.js';
+import { RagPipelineSpecSchema } from "../rag/pipeline/schema.js";
 ```
 
 Near the existing `RagNodeCompositeEntrySchema` / `GatewayCompositeEntrySchema` definitions, add:
 
 ```ts
 export const PipelineCompositeEntrySchema = z.object({
-  name: z.string().min(1).regex(
-    /^[a-z0-9][a-z0-9-]*$/,
-    'pipeline name must be lowercase-alphanumeric-hyphens',
-  ),
+  name: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9][a-z0-9-]*$/, "pipeline name must be lowercase-alphanumeric-hyphens"),
   spec: RagPipelineSpecSchema,
 });
 export type PipelineCompositeEntry = z.infer<typeof PipelineCompositeEntrySchema>;
@@ -190,9 +222,9 @@ export const CompositeSpecSchema = z.object({
   workloads: z.array(ModelRunSpecSchema).default([]),
   ragNodes: z.array(RagNodeCompositeEntrySchema).default([]),
   gateways: z.array(GatewayCompositeEntrySchema).default([]),
-  pipelines: z.array(PipelineCompositeEntrySchema).default([]),  // NEW
+  pipelines: z.array(PipelineCompositeEntrySchema).default([]), // NEW
   dependencies: z.array(DependencyEdgeSchema).default([]),
-  onFailure: z.enum(['rollback', 'leave-partial']).default('rollback'),
+  onFailure: z.enum(["rollback", "leave-partial"]).default("rollback"),
   runtime: CompositeRuntimeSchema.optional(),
 });
 ```
@@ -207,14 +239,14 @@ function collectComponentNames(spec: CompositeSpec): {
   workload: Set<string>;
   rag: Set<string>;
   gateway: Set<string>;
-  pipeline: Set<string>;  // NEW
+  pipeline: Set<string>; // NEW
 } {
   return {
     service: new Set(spec.services.map((s) => s.name)),
     workload: new Set(spec.workloads.map((w) => w.node /* placeholder */)),
     rag: new Set(spec.ragNodes.map((r) => r.name)),
     gateway: new Set(spec.gateways.map((g) => g.name)),
-    pipeline: new Set(spec.pipelines.map((p) => p.name)),  // NEW
+    pipeline: new Set(spec.pipelines.map((p) => p.name)), // NEW
   };
 }
 ```
@@ -227,10 +259,11 @@ const seen = {
   workload: new Map<string, number>(),
   rag: new Map<string, number>(),
   gateway: new Map<string, number>(),
-  pipeline: new Map<string, number>(),  // NEW
+  pipeline: new Map<string, number>(), // NEW
 } as const;
 // ...existing per-kind seen.set loops...
-for (const p of spec.pipelines) {  // NEW
+for (const p of spec.pipelines) {
+  // NEW
   seen.pipeline.set(p.name, (seen.pipeline.get(p.name) ?? 0) + 1);
 }
 ```
@@ -241,8 +274,8 @@ Then add the duplicate-name issue path in the same style as the existing per-kin
 for (const [name, count] of seen.pipeline) {
   if (count > 1) {
     ctx.addIssue({
-      code: 'custom',
-      path: ['spec', 'pipelines'],
+      code: "custom",
+      path: ["spec", "pipelines"],
       message: `duplicate pipeline name '${name}' (${count} times)`,
     });
   }
@@ -256,7 +289,7 @@ In the same file (or wherever `DependencyEdgeSchema` is defined — search via `
 ```ts
 // Before:  z.enum(['service', 'workload', 'rag', 'gateway'])
 // After:
-z.enum(['service', 'workload', 'rag', 'gateway', 'pipeline'])
+z.enum(["service", "workload", "rag", "gateway", "pipeline"]);
 ```
 
 - [ ] **Step 7: Add `ownership` to `RagPipelineManifestSchema`**
@@ -264,18 +297,18 @@ z.enum(['service', 'workload', 'rag', 'gateway', 'pipeline'])
 Open `packages/remote/src/rag/pipeline/schema.ts`. Add the import near the top:
 
 ```ts
-import { CompositeOwnershipSchema } from '../../workload/gateway-catalog/schema.js';
+import { CompositeOwnershipSchema } from "../../workload/gateway-catalog/schema.js";
 ```
 
 Find `RagPipelineManifestSchema` (around line 146) and add the optional field:
 
 ```ts
 export const RagPipelineManifestSchema = z.object({
-  apiVersion: z.literal('llamactl/v1'),
-  kind: z.literal('RagPipeline'),
+  apiVersion: z.literal("llamactl/v1"),
+  kind: z.literal("RagPipeline"),
   metadata: z.object({ name: z.string().min(1) }),
   spec: RagPipelineSpecSchema,
-  ownership: CompositeOwnershipSchema.optional(),  // NEW
+  ownership: CompositeOwnershipSchema.optional(), // NEW
 });
 ```
 
@@ -314,6 +347,7 @@ service named 'docs' coexist."
 ## Task 2: DAG implicit-edge inference for pipelines
 
 **Files:**
+
 - Modify: `packages/remote/src/composite/dag.ts`
 - Test: `packages/remote/test/composite-dag-pipeline.test.ts`
 
@@ -327,8 +361,8 @@ Find where the existing gateway → upstream-workload edges are inferred. The ne
 
 ```ts
 // packages/remote/test/composite-dag-pipeline.test.ts
-import { describe, expect, test } from 'bun:test';
-import { topoOrder, inferEdges } from '../src/composite/dag';
+import { describe, expect, test } from "bun:test";
+import { topoOrder, inferEdges } from "../src/composite/dag";
 // (Adapt the import names to the actual exports — search:
 //  grep -n "export.*function\|export.*const" packages/remote/src/composite/dag.ts)
 
@@ -336,78 +370,99 @@ const baseSpec = {
   services: [],
   workloads: [],
   ragNodes: [
-    { name: 'kb-chroma', kind: 'rag' as const, rag: { provider: 'chroma' as const, endpoint: 'http://localhost:8000', collection: 'd' } },
+    {
+      name: "kb-chroma",
+      kind: "rag" as const,
+      rag: { provider: "chroma" as const, endpoint: "http://localhost:8000", collection: "d" },
+    },
   ],
   gateways: [],
   pipelines: [
     {
-      name: 'docs-ingest',
+      name: "docs-ingest",
       spec: {
-        destination: { ragNode: 'kb-chroma', collection: 'docs' },
-        sources: [{ kind: 'filesystem' as const, path: '/tmp/docs' }],
+        destination: { ragNode: "kb-chroma", collection: "docs" },
+        sources: [{ kind: "filesystem" as const, path: "/tmp/docs" }],
       },
     },
   ],
   dependencies: [],
-  onFailure: 'rollback' as const,
+  onFailure: "rollback" as const,
 };
 
-describe('composite DAG — pipeline edges', () => {
-  test('infers edge from pipeline.destination.ragNode to inline ragNodes[]', () => {
+describe("composite DAG — pipeline edges", () => {
+  test("infers edge from pipeline.destination.ragNode to inline ragNodes[]", () => {
     const edges = inferEdges(baseSpec);
     const found = edges.some(
-      (e) => e.from.kind === 'pipeline' && e.from.name === 'docs-ingest' &&
-             e.to.kind === 'rag' && e.to.name === 'kb-chroma',
+      (e) =>
+        e.from.kind === "pipeline" &&
+        e.from.name === "docs-ingest" &&
+        e.to.kind === "rag" &&
+        e.to.name === "kb-chroma",
     );
     expect(found).toBe(true);
   });
 
-  test('topo order places pipeline after its rag node', () => {
+  test("topo order places pipeline after its rag node", () => {
     const order = topoOrder(baseSpec);
-    const ragIdx = order.findIndex((c) => c.kind === 'rag' && c.name === 'kb-chroma');
-    const pipeIdx = order.findIndex((c) => c.kind === 'pipeline' && c.name === 'docs-ingest');
+    const ragIdx = order.findIndex((c) => c.kind === "rag" && c.name === "kb-chroma");
+    const pipeIdx = order.findIndex((c) => c.kind === "pipeline" && c.name === "docs-ingest");
     expect(ragIdx).toBeLessThan(pipeIdx);
   });
 
-  test('no edge when pipeline.destination.ragNode does not match any inline ragNode', () => {
-    const spec = { ...baseSpec, pipelines: [{
-      name: 'p',
-      spec: {
-        destination: { ragNode: 'external-kb', collection: 'd' },
-        sources: [{ kind: 'filesystem' as const, path: '/x' }],
-      },
-    }] };
+  test("no edge when pipeline.destination.ragNode does not match any inline ragNode", () => {
+    const spec = {
+      ...baseSpec,
+      pipelines: [
+        {
+          name: "p",
+          spec: {
+            destination: { ragNode: "external-kb", collection: "d" },
+            sources: [{ kind: "filesystem" as const, path: "/x" }],
+          },
+        },
+      ],
+    };
     const edges = inferEdges(spec);
-    const fromPipeline = edges.filter((e) => e.from.kind === 'pipeline');
+    const fromPipeline = edges.filter((e) => e.from.kind === "pipeline");
     expect(fromPipeline.length).toBe(0);
   });
 
-  test('explicit dependencies edges with pipeline kind merge with inferred ones', () => {
+  test("explicit dependencies edges with pipeline kind merge with inferred ones", () => {
     const spec = {
       ...baseSpec,
-      services: [{ name: 'preflight', image: 'busybox' }],
+      services: [{ name: "preflight", image: "busybox" }],
       dependencies: [
-        { from: { kind: 'pipeline' as const, name: 'docs-ingest' }, to: { kind: 'service' as const, name: 'preflight' } },
+        {
+          from: { kind: "pipeline" as const, name: "docs-ingest" },
+          to: { kind: "service" as const, name: "preflight" },
+        },
       ],
     };
     const edges = inferEdges(spec);
     const explicitFound = edges.some(
-      (e) => e.from.kind === 'pipeline' && e.to.kind === 'service' && e.to.name === 'preflight',
+      (e) => e.from.kind === "pipeline" && e.to.kind === "service" && e.to.name === "preflight",
     );
     const implicitFound = edges.some(
-      (e) => e.from.kind === 'pipeline' && e.to.kind === 'rag' && e.to.name === 'kb-chroma',
+      (e) => e.from.kind === "pipeline" && e.to.kind === "rag" && e.to.name === "kb-chroma",
     );
     expect(explicitFound).toBe(true);
     expect(implicitFound).toBe(true);
   });
 
-  test('cycle detection picks up pipeline → service → pipeline cycle', () => {
+  test("cycle detection picks up pipeline → service → pipeline cycle", () => {
     const spec = {
       ...baseSpec,
-      services: [{ name: 'preflight', image: 'busybox' }],
+      services: [{ name: "preflight", image: "busybox" }],
       dependencies: [
-        { from: { kind: 'pipeline' as const, name: 'docs-ingest' }, to: { kind: 'service' as const, name: 'preflight' } },
-        { from: { kind: 'service' as const, name: 'preflight' }, to: { kind: 'pipeline' as const, name: 'docs-ingest' } },
+        {
+          from: { kind: "pipeline" as const, name: "docs-ingest" },
+          to: { kind: "service" as const, name: "preflight" },
+        },
+        {
+          from: { kind: "service" as const, name: "preflight" },
+          to: { kind: "pipeline" as const, name: "docs-ingest" },
+        },
       ],
     };
     expect(() => topoOrder(spec)).toThrow(/cycle/i);
@@ -431,8 +486,8 @@ for (const p of spec.pipelines) {
   const destRagNode = p.spec.destination.ragNode;
   if (ragNodeNames.has(destRagNode)) {
     edges.push({
-      from: { kind: 'pipeline', name: p.name },
-      to:   { kind: 'rag',      name: destRagNode },
+      from: { kind: "pipeline", name: p.name },
+      to: { kind: "rag", name: destRagNode },
     });
   }
 }
@@ -477,6 +532,7 @@ git commit -m "feat(remote/composite/dag): infer implicit edge from pipeline.des
 ## Task 3: `applyPipeline` ownership-aware merge logic
 
 **Files:**
+
 - Modify: `packages/remote/src/rag/pipeline/store.ts`
 - Test: `packages/remote/test/pipeline-apply-ownership.test.ts`
 
@@ -486,32 +542,32 @@ The existing `applyPipeline(manifest, env?)` does a naive write. We change its s
 
 ```ts
 // packages/remote/test/pipeline-apply-ownership.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { applyPipeline, loadPipeline } from '../src/rag/pipeline/store';
-import type { RagPipelineManifest } from '../src/rag/pipeline/schema';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { applyPipeline, loadPipeline } from "../src/rag/pipeline/store";
+import type { RagPipelineManifest } from "../src/rag/pipeline/schema";
 
 const baseManifest: RagPipelineManifest = {
-  apiVersion: 'llamactl/v1',
-  kind: 'RagPipeline',
-  metadata: { name: 'docs-ingest' },
+  apiVersion: "llamactl/v1",
+  kind: "RagPipeline",
+  metadata: { name: "docs-ingest" },
   spec: {
-    destination: { ragNode: 'kb', collection: 'd' },
-    sources: [{ kind: 'filesystem', path: '/tmp/docs' }],
+    destination: { ragNode: "kb", collection: "d" },
+    sources: [{ kind: "filesystem", path: "/tmp/docs" }],
     transforms: [],
     concurrency: 4,
-    on_duplicate: 'skip',
+    on_duplicate: "skip",
   },
 };
 
-describe('applyPipeline with ownership', () => {
+describe("applyPipeline with ownership", () => {
   let tmp: string;
   let prev: string | undefined;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'pipeline-apply-'));
+    tmp = mkdtempSync(join(tmpdir(), "pipeline-apply-"));
     prev = process.env.DEV_STORAGE;
     process.env.DEV_STORAGE = tmp;
   });
@@ -521,97 +577,97 @@ describe('applyPipeline with ownership', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('brand-new write with ownership marker', () => {
+  test("brand-new write with ownership marker", () => {
     const r = applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h1' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "h1" },
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.changed).toBe(true);
-    const stored = loadPipeline('docs-ingest');
-    expect(stored?.ownership?.compositeNames).toEqual(['mc']);
+    const stored = loadPipeline("docs-ingest");
+    expect(stored?.ownership?.compositeNames).toEqual(["mc"]);
   });
 
-  test('idempotent re-apply — same composite, same shape', () => {
+  test("idempotent re-apply — same composite, same shape", () => {
     applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h1' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "h1" },
     });
     const r = applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h1' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "h1" },
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.changed).toBe(false);
   });
 
-  test('union compositeNames — same shape, different composite', () => {
+  test("union compositeNames — same shape, different composite", () => {
     applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h1' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "h1" },
     });
     const r = applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['other'], specHash: 'h1' },
+      ownership: { source: "composite", compositeNames: ["other"], specHash: "h1" },
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.changed).toBe(true);
-    const stored = loadPipeline('docs-ingest');
-    expect(stored?.ownership?.compositeNames.sort()).toEqual(['mc', 'other']);
+    const stored = loadPipeline("docs-ingest");
+    expect(stored?.ownership?.compositeNames.sort()).toEqual(["mc", "other"]);
   });
 
-  test('shape mismatch — same name, different specHash from another composite', () => {
+  test("shape mismatch — same name, different specHash from another composite", () => {
     applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h1' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "h1" },
     });
     const r = applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['other'], specHash: 'h2' },
+      ownership: { source: "composite", compositeNames: ["other"], specHash: "h2" },
     });
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.conflict.kind).toBe('shape');
-      expect(r.conflict.name).toBe('docs-ingest');
+      expect(r.conflict.kind).toBe("shape");
+      expect(r.conflict.name).toBe("docs-ingest");
     }
   });
 
-  test('composite trying to claim operator-owned pipeline → name collision', () => {
-    applyPipeline(baseManifest);  // operator path, no ownership param
+  test("composite trying to claim operator-owned pipeline → name collision", () => {
+    applyPipeline(baseManifest); // operator path, no ownership param
     const r = applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h1' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "h1" },
     });
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.conflict.kind).toBe('name');
-      if (r.conflict.kind === 'name') expect(r.conflict.existingOwner).toBe('operator');
+      expect(r.conflict.kind).toBe("name");
+      if (r.conflict.kind === "name") expect(r.conflict.existingOwner).toBe("operator");
     }
   });
 
-  test('operator trying to overwrite composite-managed pipeline → name collision', () => {
+  test("operator trying to overwrite composite-managed pipeline → name collision", () => {
     applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h1' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "h1" },
     });
-    const r = applyPipeline(baseManifest);  // operator path, no ownership param
+    const r = applyPipeline(baseManifest); // operator path, no ownership param
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.conflict.kind).toBe('name');
-      if (r.conflict.kind === 'name') expect(r.conflict.existingOwner).toBe('composite');
+      expect(r.conflict.kind).toBe("name");
+      if (r.conflict.kind === "name") expect(r.conflict.existingOwner).toBe("composite");
     }
   });
 
-  test('operator updating their own pipeline — no marker path unchanged', () => {
+  test("operator updating their own pipeline — no marker path unchanged", () => {
     applyPipeline(baseManifest);
     const next = { ...baseManifest, spec: { ...baseManifest.spec, concurrency: 8 } };
     const r = applyPipeline(next);
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.changed).toBe(true);
-    const stored = loadPipeline('docs-ingest');
+    const stored = loadPipeline("docs-ingest");
     expect(stored?.spec.concurrency).toBe(8);
     expect(stored?.ownership).toBeUndefined();
   });
 
-  test('shape compared via entrySpecHash — semantically equal manifests no-op', () => {
+  test("shape compared via entrySpecHash — semantically equal manifests no-op", () => {
     applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h-computed' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "h-computed" },
     });
     // Re-apply with the same logical shape but a freshly-computed hash; the
     // applyPipeline body should compute its own hash and treat this as no-op.
     const r = applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'doesnt-matter' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "doesnt-matter" },
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.changed).toBe(false);
@@ -629,16 +685,16 @@ Expected: FAIL — `applyPipeline` doesn't yet accept `ownership` opts; old sign
 Open `packages/remote/src/rag/pipeline/store.ts`. Add the imports near the top:
 
 ```ts
-import { entrySpecHash } from '../../workload/gateway-catalog/hash.js';
-import type { CompositeOwnership } from '../../workload/gateway-catalog/schema.js';
+import { entrySpecHash } from "../../workload/gateway-catalog/hash.js";
+import type { CompositeOwnership } from "../../workload/gateway-catalog/schema.js";
 ```
 
 Add result types near the top of the file (after the imports, before `applyPipeline`):
 
 ```ts
 export type ApplyConflict =
-  | { kind: 'name'; name: string; existingOwner: 'operator' | 'composite' }
-  | { kind: 'shape'; name: string; reason: string };
+  | { kind: "name"; name: string; existingOwner: "operator" | "composite" }
+  | { kind: "shape"; name: string; reason: string };
 
 export type ApplyResult =
   | { ok: true; changed: boolean; path: string }
@@ -679,7 +735,7 @@ export function applyPipeline(
       // Composite trying to claim an operator-owned pipeline.
       return {
         ok: false,
-        conflict: { kind: 'name', name: parsed.metadata.name, existingOwner: 'operator' },
+        conflict: { kind: "name", name: parsed.metadata.name, existingOwner: "operator" },
       };
     }
     // Operator updating their own pipeline.
@@ -694,7 +750,7 @@ export function applyPipeline(
     // Operator trying to overwrite composite-managed pipeline.
     return {
       ok: false,
-      conflict: { kind: 'name', name: parsed.metadata.name, existingOwner: 'composite' },
+      conflict: { kind: "name", name: parsed.metadata.name, existingOwner: "composite" },
     };
   }
 
@@ -704,7 +760,7 @@ export function applyPipeline(
     return {
       ok: false,
       conflict: {
-        kind: 'shape',
+        kind: "shape",
         name: parsed.metadata.name,
         reason: `existing specHash ${cur.ownership.specHash} != new ${newHash}`,
       },
@@ -720,12 +776,10 @@ export function applyPipeline(
   }
 
   // Same shape, additional composite owner → union and write.
-  const merged = Array.from(
-    new Set([...cur.ownership.compositeNames, ...claimingNames]),
-  ).sort();
+  const merged = Array.from(new Set([...cur.ownership.compositeNames, ...claimingNames])).sort();
   const persisted: RagPipelineManifest = {
     ...parsed,
-    ownership: { source: 'composite', compositeNames: merged, specHash: newHash },
+    ownership: { source: "composite", compositeNames: merged, specHash: newHash },
   };
   const path = writeManifest(persisted, env);
   return { ok: true, changed: true, path };
@@ -735,7 +789,7 @@ function writeManifest(manifest: RagPipelineManifest, env: NodeJS.ProcessEnv): s
   const dir = pipelineDir(manifest.metadata.name, env);
   const path = specPath(manifest.metadata.name, env);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path, stringifyYaml(manifest), 'utf8');
+  writeFileSync(path, stringifyYaml(manifest), "utf8");
   return path;
 }
 ```
@@ -756,6 +810,7 @@ grep -rn "applyPipeline(" packages/remote/src/ packages/cli/src/ --include="*.ts
 ```
 
 For each call site (most likely the `ragPipelineApply` proc and any project-indexing path that delegates to it):
+
 - Old: `const { path, created } = applyPipeline(parsed.data);`
 - New: `const result = applyPipeline(parsed.data); if (!result.ok) throw new TRPCError({ code: 'CONFLICT', message: ... }); const { path, changed } = result;`
 
@@ -798,6 +853,7 @@ manifest spec."
 ## Task 4: `removePipeline` ref-counted variant
 
 **Files:**
+
 - Modify: `packages/remote/src/rag/pipeline/store.ts`
 - Test: `packages/remote/test/pipeline-remove-refcounted.test.ts`
 
@@ -807,32 +863,32 @@ manifest spec."
 
 ```ts
 // packages/remote/test/pipeline-remove-refcounted.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { applyPipeline, loadPipeline, removePipeline } from '../src/rag/pipeline/store';
-import type { RagPipelineManifest } from '../src/rag/pipeline/schema';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { applyPipeline, loadPipeline, removePipeline } from "../src/rag/pipeline/store";
+import type { RagPipelineManifest } from "../src/rag/pipeline/schema";
 
 const baseManifest: RagPipelineManifest = {
-  apiVersion: 'llamactl/v1',
-  kind: 'RagPipeline',
-  metadata: { name: 'docs-ingest' },
+  apiVersion: "llamactl/v1",
+  kind: "RagPipeline",
+  metadata: { name: "docs-ingest" },
   spec: {
-    destination: { ragNode: 'kb', collection: 'd' },
-    sources: [{ kind: 'filesystem', path: '/tmp/docs' }],
+    destination: { ragNode: "kb", collection: "d" },
+    sources: [{ kind: "filesystem", path: "/tmp/docs" }],
     transforms: [],
     concurrency: 4,
-    on_duplicate: 'skip',
+    on_duplicate: "skip",
   },
 };
 
-describe('removePipeline ref-counted', () => {
+describe("removePipeline ref-counted", () => {
   let tmp: string;
   let prev: string | undefined;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'pipeline-rm-'));
+    tmp = mkdtempSync(join(tmpdir(), "pipeline-rm-"));
     prev = process.env.DEV_STORAGE;
     process.env.DEV_STORAGE = tmp;
   });
@@ -842,54 +898,54 @@ describe('removePipeline ref-counted', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('single-owner: composite removal deletes the pipeline', () => {
+  test("single-owner: composite removal deletes the pipeline", () => {
     applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "h" },
     });
-    const r = removePipeline('docs-ingest', { compositeName: 'mc' });
+    const r = removePipeline("docs-ingest", { compositeName: "mc" });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.deleted).toBe(true);
-    expect(loadPipeline('docs-ingest')).toBeNull();
+    expect(loadPipeline("docs-ingest")).toBeNull();
   });
 
-  test('multi-owner: removal of one composite strips its name; entry stays', () => {
+  test("multi-owner: removal of one composite strips its name; entry stays", () => {
     applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "h" },
     });
     applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['other'], specHash: 'h' },
+      ownership: { source: "composite", compositeNames: ["other"], specHash: "h" },
     });
-    const r = removePipeline('docs-ingest', { compositeName: 'mc' });
+    const r = removePipeline("docs-ingest", { compositeName: "mc" });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.deleted).toBe(false);
-    const stored = loadPipeline('docs-ingest');
-    expect(stored?.ownership?.compositeNames).toEqual(['other']);
+    const stored = loadPipeline("docs-ingest");
+    expect(stored?.ownership?.compositeNames).toEqual(["other"]);
   });
 
-  test('operator-owned protected from composite-driven removal', () => {
-    applyPipeline(baseManifest);  // operator path
-    const r = removePipeline('docs-ingest', { compositeName: 'mc' });
+  test("operator-owned protected from composite-driven removal", () => {
+    applyPipeline(baseManifest); // operator path
+    const r = removePipeline("docs-ingest", { compositeName: "mc" });
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.conflict.kind).toBe('name');
-      if (r.conflict.kind === 'name') expect(r.conflict.existingOwner).toBe('operator');
+      expect(r.conflict.kind).toBe("name");
+      if (r.conflict.kind === "name") expect(r.conflict.existingOwner).toBe("operator");
     }
-    expect(loadPipeline('docs-ingest')).not.toBeNull();
+    expect(loadPipeline("docs-ingest")).not.toBeNull();
   });
 
-  test('no-op when name not present', () => {
-    const r = removePipeline('does-not-exist', { compositeName: 'mc' });
+  test("no-op when name not present", () => {
+    const r = removePipeline("does-not-exist", { compositeName: "mc" });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.deleted).toBe(false);
   });
 
-  test('operator path preserved: removePipeline(name) deletes regardless of owner', () => {
+  test("operator path preserved: removePipeline(name) deletes regardless of owner", () => {
     applyPipeline(baseManifest, {
-      ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h' },
+      ownership: { source: "composite", compositeNames: ["mc"], specHash: "h" },
     });
-    const ok = removePipeline('docs-ingest');  // legacy operator-side delete
+    const ok = removePipeline("docs-ingest"); // legacy operator-side delete
     expect(ok).toBe(true);
-    expect(loadPipeline('docs-ingest')).toBeNull();
+    expect(loadPipeline("docs-ingest")).toBeNull();
   });
 });
 ```
@@ -904,12 +960,9 @@ Expected: FAIL — `removePipeline` doesn't accept the new options shape; legacy
 In `packages/remote/src/rag/pipeline/store.ts`, change the existing `removePipeline` from a single-shape function to an overloaded one:
 
 ```ts
-export type RemoveConflict =
-  | { kind: 'name'; name: string; existingOwner: 'operator' };
+export type RemoveConflict = { kind: "name"; name: string; existingOwner: "operator" };
 
-export type RemoveResult =
-  | { ok: true; deleted: boolean }
-  | { ok: false; conflict: RemoveConflict };
+export type RemoveResult = { ok: true; deleted: boolean } | { ok: false; conflict: RemoveConflict };
 
 export interface RemovePipelineOpts {
   compositeName?: string;
@@ -927,9 +980,9 @@ export function removePipeline(
   // Distinguish the two overloads. Legacy callers pass the env directly
   // (or nothing); composite callers pass an object with compositeName.
   const isOptsObject =
-    typeof envOrOpts === 'object' &&
+    typeof envOrOpts === "object" &&
     envOrOpts !== null &&
-    ('compositeName' in envOrOpts || 'env' in envOrOpts);
+    ("compositeName" in envOrOpts || "env" in envOrOpts);
 
   if (!isOptsObject) {
     // Legacy operator-side path — unchanged behavior.
@@ -950,7 +1003,7 @@ export function removePipeline(
     // Operator-owned — refuse composite-driven removal.
     return {
       ok: false,
-      conflict: { kind: 'name', name, existingOwner: 'operator' },
+      conflict: { kind: "name", name, existingOwner: "operator" },
     };
   }
 
@@ -973,7 +1026,7 @@ export function removePipeline(
     ownership: { ...cur.ownership, compositeNames: remaining },
   };
   const path = specPath(name, env);
-  writeFileSync(path, stringifyYaml(persisted), 'utf8');
+  writeFileSync(path, stringifyYaml(persisted), "utf8");
   return { ok: true, deleted: false };
 }
 ```
@@ -1013,6 +1066,7 @@ composite-aware overload accepts { compositeName } and:
 ## Task 5: `ragPipelineApply` + `ragPipelineRemove` proc augmentation
 
 **Files:**
+
 - Modify: `packages/remote/src/router.ts`
 
 The procs gain optional ownership-related fields and thread them into `applyPipeline` / `removePipeline`. Existing operator CLI/UI callers that don't pass the new fields are unchanged.
@@ -1078,7 +1132,7 @@ ragPipelineApply: t.procedure
 (The `z.lazy(() => require(...))` pattern is awkward; if the file already imports `CompositeOwnershipSchema` for other reasons, just use the named import directly. Otherwise add it to the existing import block at the top of `router.ts`:
 
 ```ts
-import { CompositeOwnershipSchema } from './workload/gateway-catalog/schema.js';
+import { CompositeOwnershipSchema } from "./workload/gateway-catalog/schema.js";
 ```
 
 and write the proc input as:
@@ -1152,6 +1206,7 @@ rather than throwing — composite handler translates to Pending."
 ## Task 6: Composite pipeline handler
 
 **Files:**
+
 - Create: `packages/remote/src/composite/handlers/pipeline.ts`
 
 The handler is what the composite applier calls for each `pipelines:[]` entry. It builds the manifest, computes the spec hash, calls `ragPipelineApply` via the in-process caller, translates conflicts to `Pending`, and fires-and-forgets the first run.
@@ -1172,10 +1227,10 @@ Adapt the new pipeline handler to whatever pattern the existing dispatch uses. T
 
 ```ts
 // packages/remote/src/composite/handlers/pipeline.ts
-import { stringify as stringifyYaml } from 'yaml';
-import { entrySpecHash } from '../../workload/gateway-catalog/hash.js';
-import type { PipelineCompositeEntry } from '../schema.js';
-import type { CompositeStatusComponent } from '../schema.js';
+import { stringify as stringifyYaml } from "yaml";
+import { entrySpecHash } from "../../workload/gateway-catalog/hash.js";
+import type { PipelineCompositeEntry } from "../schema.js";
+import type { CompositeStatusComponent } from "../schema.js";
 
 export interface PipelineHandlerCtx {
   /** The composite's metadata.name — used as the ownership.compositeNames entry. */
@@ -1184,10 +1239,18 @@ export interface PipelineHandlerCtx {
   caller: {
     ragPipelineApply: (input: {
       manifestYaml: string;
-      ownership?: { source: 'composite'; compositeNames: string[]; specHash: string };
+      ownership?: { source: "composite"; compositeNames: string[]; specHash: string };
     }) => Promise<
       | { ok: true; name: string; path: string; changed: boolean }
-      | { ok: false; conflict: { kind: 'name' | 'shape'; name: string; existingOwner?: 'operator' | 'composite'; reason?: string } }
+      | {
+          ok: false;
+          conflict: {
+            kind: "name" | "shape";
+            name: string;
+            existingOwner?: "operator" | "composite";
+            reason?: string;
+          };
+        }
     >;
     ragPipelineRun: (input: { name: string; dryRun?: boolean }) => Promise<unknown>;
   };
@@ -1215,8 +1278,8 @@ export async function applyPipelineComponent(
   ctx: PipelineHandlerCtx,
 ): Promise<PipelineHandlerResult> {
   const manifest = {
-    apiVersion: 'llamactl/v1' as const,
-    kind: 'RagPipeline' as const,
+    apiVersion: "llamactl/v1" as const,
+    kind: "RagPipeline" as const,
     metadata: { name: entry.name },
     spec: entry.spec,
   };
@@ -1226,7 +1289,7 @@ export async function applyPipelineComponent(
   const result = await ctx.caller.ragPipelineApply({
     manifestYaml,
     ownership: {
-      source: 'composite',
+      source: "composite",
       compositeNames: [ctx.compositeName],
       specHash,
     },
@@ -1234,19 +1297,19 @@ export async function applyPipelineComponent(
 
   if (!result.ok) {
     const reasonMap: Record<string, string> = {
-      name: 'PipelineNameCollision',
-      shape: 'PipelineShapeMismatch',
+      name: "PipelineNameCollision",
+      shape: "PipelineShapeMismatch",
     };
-    const reason = reasonMap[result.conflict.kind] ?? 'PipelineConflict';
+    const reason = reasonMap[result.conflict.kind] ?? "PipelineConflict";
     const detail =
-      result.conflict.kind === 'name'
+      result.conflict.kind === "name"
         ? `pipeline '${result.conflict.name}' already exists as ${result.conflict.existingOwner}-managed`
-        : `pipeline '${result.conflict.name}' shape disagrees with prior composite (${result.conflict.reason ?? 'specHash mismatch'})`;
+        : `pipeline '${result.conflict.name}' shape disagrees with prior composite (${result.conflict.reason ?? "specHash mismatch"})`;
     return {
       changed: false,
       status: {
-        ref: { kind: 'pipeline', name: entry.name },
-        state: 'Pending',
+        ref: { kind: "pipeline", name: entry.name },
+        state: "Pending",
         message: `${reason}: ${detail}`,
       },
     };
@@ -1264,8 +1327,8 @@ export async function applyPipelineComponent(
   return {
     changed: result.changed,
     status: {
-      ref: { kind: 'pipeline', name: entry.name },
-      state: 'Ready',
+      ref: { kind: "pipeline", name: entry.name },
+      state: "Ready",
     },
   };
 }
@@ -1279,9 +1342,12 @@ export async function removePipelineComponent(
   ctx: {
     compositeName: string;
     caller: {
-      ragPipelineRemove: (input: { name: string; compositeName?: string }) => Promise<
+      ragPipelineRemove: (input: {
+        name: string;
+        compositeName?: string;
+      }) => Promise<
         | { ok: true; deleted?: boolean; removed?: boolean }
-        | { ok: false; conflict: { kind: 'name'; name: string; existingOwner: 'operator' } }
+        | { ok: false; conflict: { kind: "name"; name: string; existingOwner: "operator" } }
       >;
     };
   },
@@ -1328,6 +1394,7 @@ ref-counted destroy via ragPipelineRemove."
 ## Task 7: Wire pipeline handler into composite/apply.ts
 
 **Files:**
+
 - Modify: `packages/remote/src/composite/apply.ts`
 - Test: `packages/remote/test/composite-pipeline-apply.test.ts`
 - Test: `packages/remote/test/composite-pipeline-destroy.test.ts`
@@ -1346,19 +1413,19 @@ Find the per-component dispatch. There are typically two paths — apply-time it
 
 ```ts
 // packages/remote/test/composite-pipeline-apply.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { applyComposite } from '../src/composite/apply';
-import { loadPipeline } from '../src/rag/pipeline/store';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { applyComposite } from "../src/composite/apply";
+import { loadPipeline } from "../src/rag/pipeline/store";
 
-describe('composite apply with pipelines', () => {
+describe("composite apply with pipelines", () => {
   let tmp: string;
   let prev: string | undefined;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'composite-pipeline-'));
+    tmp = mkdtempSync(join(tmpdir(), "composite-pipeline-"));
     prev = process.env.DEV_STORAGE;
     process.env.DEV_STORAGE = tmp;
   });
@@ -1368,77 +1435,83 @@ describe('composite apply with pipelines', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('a composite with one pipeline applies and registers it with ownership', async () => {
+  test("a composite with one pipeline applies and registers it with ownership", async () => {
     const manifest = {
-      apiVersion: 'llamactl/v1' as const,
-      kind: 'Composite' as const,
-      metadata: { name: 'mc' },
+      apiVersion: "llamactl/v1" as const,
+      kind: "Composite" as const,
+      metadata: { name: "mc" },
       spec: {
-        pipelines: [{
-          name: 'docs-ingest',
-          spec: {
-            destination: { ragNode: 'kb', collection: 'd' },
-            sources: [{ kind: 'filesystem' as const, path: '/tmp/docs' }],
-            transforms: [],
-            concurrency: 4,
-            on_duplicate: 'skip' as const,
+        pipelines: [
+          {
+            name: "docs-ingest",
+            spec: {
+              destination: { ragNode: "kb", collection: "d" },
+              sources: [{ kind: "filesystem" as const, path: "/tmp/docs" }],
+              transforms: [],
+              concurrency: 4,
+              on_duplicate: "skip" as const,
+            },
           },
-        }],
+        ],
       },
     };
     const status = await applyComposite(manifest);
-    const pipelineComp = status.components.find((c) => c.ref.kind === 'pipeline');
-    expect(pipelineComp?.state).toBe('Ready');
-    const stored = loadPipeline('docs-ingest');
-    expect(stored?.ownership?.compositeNames).toEqual(['mc']);
+    const pipelineComp = status.components.find((c) => c.ref.kind === "pipeline");
+    expect(pipelineComp?.state).toBe("Ready");
+    const stored = loadPipeline("docs-ingest");
+    expect(stored?.ownership?.compositeNames).toEqual(["mc"]);
   });
 
-  test('idempotent re-apply: second apply produces no new write', async () => {
+  test("idempotent re-apply: second apply produces no new write", async () => {
     const manifest = {
-      apiVersion: 'llamactl/v1' as const,
-      kind: 'Composite' as const,
-      metadata: { name: 'mc' },
+      apiVersion: "llamactl/v1" as const,
+      kind: "Composite" as const,
+      metadata: { name: "mc" },
       spec: {
-        pipelines: [{
-          name: 'docs-ingest',
-          spec: {
-            destination: { ragNode: 'kb', collection: 'd' },
-            sources: [{ kind: 'filesystem' as const, path: '/tmp/docs' }],
-            transforms: [],
-            concurrency: 4,
-            on_duplicate: 'skip' as const,
+        pipelines: [
+          {
+            name: "docs-ingest",
+            spec: {
+              destination: { ragNode: "kb", collection: "d" },
+              sources: [{ kind: "filesystem" as const, path: "/tmp/docs" }],
+              transforms: [],
+              concurrency: 4,
+              on_duplicate: "skip" as const,
+            },
           },
-        }],
+        ],
       },
     };
     await applyComposite(manifest);
-    const before = loadPipeline('docs-ingest');
+    const before = loadPipeline("docs-ingest");
     await applyComposite(manifest);
-    const after = loadPipeline('docs-ingest');
+    const after = loadPipeline("docs-ingest");
     expect(after).toEqual(before);
   });
 
-  test('shape conflict between two composites surfaces as Pending', async () => {
+  test("shape conflict between two composites surfaces as Pending", async () => {
     const baseSpec = {
-      destination: { ragNode: 'kb', collection: 'd' },
-      sources: [{ kind: 'filesystem' as const, path: '/tmp/docs' }],
+      destination: { ragNode: "kb", collection: "d" },
+      sources: [{ kind: "filesystem" as const, path: "/tmp/docs" }],
       transforms: [],
       concurrency: 4,
-      on_duplicate: 'skip' as const,
+      on_duplicate: "skip" as const,
     };
     await applyComposite({
-      apiVersion: 'llamactl/v1', kind: 'Composite',
-      metadata: { name: 'mc-a' },
-      spec: { pipelines: [{ name: 'docs-ingest', spec: baseSpec }] },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "mc-a" },
+      spec: { pipelines: [{ name: "docs-ingest", spec: baseSpec }] },
     });
     const status = await applyComposite({
-      apiVersion: 'llamactl/v1', kind: 'Composite',
-      metadata: { name: 'mc-b' },
-      spec: { pipelines: [{ name: 'docs-ingest', spec: { ...baseSpec, concurrency: 8 } }] },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "mc-b" },
+      spec: { pipelines: [{ name: "docs-ingest", spec: { ...baseSpec, concurrency: 8 } }] },
     });
-    const comp = status.components.find((c) => c.ref.kind === 'pipeline');
-    expect(comp?.state).toBe('Pending');
-    expect(comp?.message).toContain('PipelineShapeMismatch');
+    const comp = status.components.find((c) => c.ref.kind === "pipeline");
+    expect(comp?.state).toBe("Pending");
+    expect(comp?.message).toContain("PipelineShapeMismatch");
   });
 });
 ```
@@ -1518,37 +1591,39 @@ Expected: PASS — 3 tests pass.
 
 ```ts
 // packages/remote/test/composite-pipeline-destroy.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { applyComposite, destroyComposite } from '../src/composite/apply';
-import { loadPipeline } from '../src/rag/pipeline/store';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { applyComposite, destroyComposite } from "../src/composite/apply";
+import { loadPipeline } from "../src/rag/pipeline/store";
 
 const baseManifest = (name: string) => ({
-  apiVersion: 'llamactl/v1' as const,
-  kind: 'Composite' as const,
+  apiVersion: "llamactl/v1" as const,
+  kind: "Composite" as const,
   metadata: { name },
   spec: {
-    pipelines: [{
-      name: 'docs-ingest',
-      spec: {
-        destination: { ragNode: 'kb', collection: 'd' },
-        sources: [{ kind: 'filesystem' as const, path: '/tmp/docs' }],
-        transforms: [],
-        concurrency: 4,
-        on_duplicate: 'skip' as const,
+    pipelines: [
+      {
+        name: "docs-ingest",
+        spec: {
+          destination: { ragNode: "kb", collection: "d" },
+          sources: [{ kind: "filesystem" as const, path: "/tmp/docs" }],
+          transforms: [],
+          concurrency: 4,
+          on_duplicate: "skip" as const,
+        },
       },
-    }],
+    ],
   },
 });
 
-describe('compositeDestroy with pipelines', () => {
+describe("compositeDestroy with pipelines", () => {
   let tmp: string;
   let prev: string | undefined;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'composite-destroy-pipeline-'));
+    tmp = mkdtempSync(join(tmpdir(), "composite-destroy-pipeline-"));
     prev = process.env.DEV_STORAGE;
     process.env.DEV_STORAGE = tmp;
   });
@@ -1558,21 +1633,21 @@ describe('compositeDestroy with pipelines', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('single-owner: destroying the composite deletes the pipeline', async () => {
-    await applyComposite(baseManifest('mc'));
-    await destroyComposite('mc');
-    expect(loadPipeline('docs-ingest')).toBeNull();
+  test("single-owner: destroying the composite deletes the pipeline", async () => {
+    await applyComposite(baseManifest("mc"));
+    await destroyComposite("mc");
+    expect(loadPipeline("docs-ingest")).toBeNull();
   });
 
-  test('co-owned: destroying one composite leaves the pipeline; destroying both removes it', async () => {
-    await applyComposite(baseManifest('mc-a'));
-    await applyComposite(baseManifest('mc-b'));
-    await destroyComposite('mc-a');
-    let stored = loadPipeline('docs-ingest');
-    expect(stored?.ownership?.compositeNames).toEqual(['mc-b']);
+  test("co-owned: destroying one composite leaves the pipeline; destroying both removes it", async () => {
+    await applyComposite(baseManifest("mc-a"));
+    await applyComposite(baseManifest("mc-b"));
+    await destroyComposite("mc-a");
+    let stored = loadPipeline("docs-ingest");
+    expect(stored?.ownership?.compositeNames).toEqual(["mc-b"]);
 
-    await destroyComposite('mc-b');
-    stored = loadPipeline('docs-ingest');
+    await destroyComposite("mc-b");
+    stored = loadPipeline("docs-ingest");
     expect(stored).toBeNull();
   });
 });
@@ -1613,13 +1688,14 @@ produces no disk change; shape conflicts surface as Pending."
 ## Task 8: Docs + cross-repo regression sweep + tag
 
 **Files:**
+
 - Modify: `docs/composites.md`
 
 - [ ] **Step 1: Add the "Composite-managed RAG pipelines" section to docs**
 
 Find the existing structure in `docs/composites.md` (probably has sections for services, workloads, ragNodes, gateways). Add a parallel section near the end:
 
-```markdown
+````markdown
 ## Composite-managed RAG pipelines
 
 A composite can declare RAG pipelines as a fifth component kind. Each
@@ -1641,9 +1717,10 @@ spec:
       spec:
         destination: { ragNode: kb-chroma, collection: docs }
         sources: [{ kind: filesystem, path: /Users/me/docs }]
-        schedule: '@hourly'
+        schedule: "@hourly"
         on_duplicate: replace
 ```
+````
 
 The composite applier wires implicit DAG edges from `pipelines[].destination.ragNode`
 to inline `ragNodes[]` so apply order is `services → ragNodes → workloads
@@ -1659,17 +1736,18 @@ apply or destroy.
 
 Conflict reasons surface as `Pending` in `compositeStatus.components[]`:
 
-  - `PipelineNameCollision` — a pipeline with the same name already
-    exists, owned by either an operator or a different composite that
-    didn't co-own this name.
-  - `PipelineShapeMismatch` — two composites declare the same pipeline
-    name with different specs (different `specHash`).
+- `PipelineNameCollision` — a pipeline with the same name already
+  exists, owned by either an operator or a different composite that
+  didn't co-own this name.
+- `PipelineShapeMismatch` — two composites declare the same pipeline
+  name with different specs (different `specHash`).
 
 The first ingest run is fire-and-forget on apply: the composite reaches
 `Ready` once the pipeline is registered, not when the first ingest
 completes. First-run progress lives in the pipeline journal; surface
 it via `ragPipelineList` / `ragPipelineRunning`.
-```
+
+````
 
 - [ ] **Step 2: Cross-repo regression sweep**
 
@@ -1678,7 +1756,7 @@ cd /Volumes/WorkSSD/repos/personal/llamactl       && bun test 2>&1 | tail -3
 cd /Volumes/WorkSSD/repos/personal/sirius-gateway && bun test 2>&1 | tail -3
 cd /Volumes/WorkSSD/repos/personal/embersynth     && bun test 2>&1 | tail -3
 cd /Volumes/WorkSSD/repos/personal/nova           && bun test 2>&1 | tail -3
-```
+````
 
 Expected: llamactl rises with the new tests (~25 added); sirius/embersynth/nova counts unchanged.
 
@@ -1704,6 +1782,7 @@ Open a PR titled `feat(remote): pipelines→composite bridge` against `main`. Bo
 ## Self-review checklist
 
 **Spec coverage:**
+
 - D1 (inline `RagPipelineSpec` minus metadata) → Task 1 (`PipelineCompositeEntrySchema = { name, spec: RagPipelineSpecSchema }`)
 - D2 (implicit topo edge from pipeline.destination.ragNode → inline ragNodes) → Task 2 (`composite/dag.ts` + tests)
 - D3 (fire-and-forget async first-run) → Task 6 (`applyPipelineComponent` calls `ragPipelineRun` async on `result.changed`)

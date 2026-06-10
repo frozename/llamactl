@@ -1,7 +1,7 @@
-import { expect, test } from 'bun:test';
-import { SlotAllocator } from '../src/kvstore/index.js';
+import { expect, test } from "bun:test";
+import { SlotAllocator } from "../src/kvstore/index.js";
 
-test('single-slot mode acquires slot 0 and blocks until release', () => {
+test("single-slot mode acquires slot 0 and blocks until release", () => {
   const allocator = new SlotAllocator(1);
   const first = allocator.acquire();
   expect(first?.slotId).toBe(0);
@@ -17,7 +17,7 @@ test('single-slot mode acquires slot 0 and blocks until release', () => {
   expect(third?.slotId).toBe(0);
 });
 
-test('multi-slot mode uses lowest free slot and reuses released slots', () => {
+test("multi-slot mode uses lowest free slot and reuses released slots", () => {
   const allocator = new SlotAllocator(3);
   const a = allocator.acquire();
   const b = allocator.acquire();
@@ -38,7 +38,7 @@ test('multi-slot mode uses lowest free slot and reuses released slots', () => {
   expect(allocator.inUse()).toEqual([0, 1, 2]);
 });
 
-test('release callback is idempotent', () => {
+test("release callback is idempotent", () => {
   const allocator = new SlotAllocator(2);
   const first = allocator.acquire();
   const second = allocator.acquire();

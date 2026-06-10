@@ -1,10 +1,10 @@
-import * as React from 'react';
-import { useEffect } from 'react';
-import { useThemeStore } from '@/stores/theme-store';
-import { getTheme, type ThemeId } from '@/themes';
+import * as React from "react";
+import { useEffect } from "react";
+import { useThemeStore } from "@/stores/theme-store";
+import { getTheme, type ThemeId } from "@/themes";
 
 const SCANLINES_OVERLAY =
-  'repeating-linear-gradient(0deg, rgba(0,255,159,0.035) 0 1px, transparent 1px 3px)';
+  "repeating-linear-gradient(0deg, rgba(0,255,159,0.035) 0 1px, transparent 1px 3px)";
 
 /**
  * Mount at the root. Applies the active theme to <html>: sets
@@ -26,8 +26,8 @@ export function ThemeProvider({
   useEffect(() => {
     const root = document.documentElement;
     const theme = getTheme(effectiveId);
-    root.setAttribute('data-theme', theme.id);
-    root.style.setProperty('font-family', theme.fontFamily);
+    root.setAttribute("data-theme", theme.id);
+    root.style.setProperty("font-family", theme.fontFamily);
   }, [effectiveId]);
 
   return (
@@ -37,7 +37,7 @@ export function ThemeProvider({
         <div
           aria-hidden="true"
           className="pointer-events-none fixed inset-0"
-          style={{ zIndex: 1000, background: SCANLINES_OVERLAY, mixBlendMode: 'screen' }}
+          style={{ zIndex: 1000, background: SCANLINES_OVERLAY, mixBlendMode: "screen" }}
         />
       )}
     </>

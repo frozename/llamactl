@@ -13,6 +13,7 @@
 ## File Structure
 
 Create:
+
 - `packages/app/src/stores/tab-store.ts` — tab state: open set, active, pinned, closed LRU
 - `packages/app/src/stores/shell-flag.ts` — `beacon.shell.v3` boolean
 - `packages/app/src/shell/beacon/layout.tsx` — the new root layout (replaces `IDELayout` when flag is on)
@@ -30,6 +31,7 @@ Create:
 - `packages/app/test/shell/registry-view.test.ts` — tree-building unit tests
 
 Modify:
+
 - `packages/app/src/App.tsx` — pick between `IDELayout` and `BeaconLayout`
 - `packages/app/src/modules/registry.ts` — add optional `group` (already there) + `kind?: 'static' | 'dynamic-group'` (new) + `sortOrder?: number`
 - `packages/app/src/shell/command-palette.tsx` — add `⌘K` binding alongside `⌘⇧P`, add "Open in tab" section, route commands through `useTabStore.open(tabKey)`
@@ -41,6 +43,7 @@ Delete: none in P2.
 ## Task 1: Tab store — schema, operations, tests
 
 **Files:**
+
 - Create: `packages/app/src/stores/tab-store.ts`
 - Create: `packages/app/test/stores/tab-store.test.ts`
 
@@ -49,7 +52,7 @@ Delete: none in P2.
 Create `packages/app/test/stores/tab-store.test.ts`:
 
 ```typescript
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach } from "bun:test";
 import {
   addOrFocus,
   closeTab,
@@ -59,114 +62,116 @@ import {
   reopenClosed,
   type TabEntry,
   type TabState,
-} from '../../src/stores/tab-store';
+} from "../../src/stores/tab-store";
 
 function emptyState(): TabState {
   return { tabs: [], activeKey: null, closed: [] };
 }
 
 function entry(key: string, title = key): TabEntry {
-  return { tabKey: key, title, kind: 'module', openedAt: 1 };
+  return { tabKey: key, title, kind: "module", openedAt: 1 };
 }
 
-describe('tab-store ops', () => {
+describe("tab-store ops", () => {
   let s: TabState;
-  beforeEach(() => { s = emptyState(); });
+  beforeEach(() => {
+    s = emptyState();
+  });
 
-  test('addOrFocus adds a new tab and makes it active', () => {
-    const out = addOrFocus(s, entry('a'));
+  test("addOrFocus adds a new tab and makes it active", () => {
+    const out = addOrFocus(s, entry("a"));
     expect(out.tabs).toHaveLength(1);
-    expect(out.activeKey).toBe('a');
+    expect(out.activeKey).toBe("a");
   });
 
-  test('addOrFocus on existing key focuses without duplicating', () => {
-    s = addOrFocus(s, entry('a'));
-    s = addOrFocus(s, entry('b'));
-    s = addOrFocus(s, entry('a'));
+  test("addOrFocus on existing key focuses without duplicating", () => {
+    s = addOrFocus(s, entry("a"));
+    s = addOrFocus(s, entry("b"));
+    s = addOrFocus(s, entry("a"));
     expect(s.tabs).toHaveLength(2);
-    expect(s.activeKey).toBe('a');
+    expect(s.activeKey).toBe("a");
   });
 
-  test('closeTab removes the tab and pushes to closed LRU', () => {
-    s = addOrFocus(s, entry('a'));
-    s = closeTab(s, 'a');
+  test("closeTab removes the tab and pushes to closed LRU", () => {
+    s = addOrFocus(s, entry("a"));
+    s = closeTab(s, "a");
     expect(s.tabs).toHaveLength(0);
     expect(s.activeKey).toBeNull();
     expect(s.closed).toHaveLength(1);
-    expect(s.closed[0]?.tabKey).toBe('a');
+    expect(s.closed[0]?.tabKey).toBe("a");
   });
 
-  test('closeTab on active focuses the neighbour (prefers right)', () => {
-    s = addOrFocus(s, entry('a'));
-    s = addOrFocus(s, entry('b'));
-    s = addOrFocus(s, entry('c'));
+  test("closeTab on active focuses the neighbour (prefers right)", () => {
+    s = addOrFocus(s, entry("a"));
+    s = addOrFocus(s, entry("b"));
+    s = addOrFocus(s, entry("c"));
     // active is c; close b (non-active) — c stays active
-    s = closeTab(s, 'b');
-    expect(s.activeKey).toBe('c');
+    s = closeTab(s, "b");
+    expect(s.activeKey).toBe("c");
     // close c — neighbour a becomes active
-    s = closeTab(s, 'c');
-    expect(s.activeKey).toBe('a');
+    s = closeTab(s, "c");
+    expect(s.activeKey).toBe("a");
   });
 
-  test('closed LRU caps at 10', () => {
+  test("closed LRU caps at 10", () => {
     for (let i = 0; i < 15; i += 1) {
       s = addOrFocus(s, entry(`k${i}`));
       s = closeTab(s, `k${i}`);
     }
     expect(s.closed).toHaveLength(10);
-    expect(s.closed[0]?.tabKey).toBe('k14');
-    expect(s.closed[9]?.tabKey).toBe('k5');
+    expect(s.closed[0]?.tabKey).toBe("k14");
+    expect(s.closed[9]?.tabKey).toBe("k5");
   });
 
-  test('pinTab moves the tab leftmost among pinned', () => {
-    s = addOrFocus(s, entry('a'));
-    s = addOrFocus(s, entry('b'));
-    s = addOrFocus(s, entry('c'));
-    s = pinTab(s, 'c');
-    expect(s.tabs[0]?.tabKey).toBe('c');
+  test("pinTab moves the tab leftmost among pinned", () => {
+    s = addOrFocus(s, entry("a"));
+    s = addOrFocus(s, entry("b"));
+    s = addOrFocus(s, entry("c"));
+    s = pinTab(s, "c");
+    expect(s.tabs[0]?.tabKey).toBe("c");
     expect(s.tabs[0]?.pinned).toBe(true);
     // pin b — stays left of a but right of c (pin order is insert order)
-    s = pinTab(s, 'b');
-    expect(s.tabs.map((t) => t.tabKey)).toEqual(['c', 'b', 'a']);
+    s = pinTab(s, "b");
+    expect(s.tabs.map((t) => t.tabKey)).toEqual(["c", "b", "a"]);
   });
 
-  test('unpinTab drops pinned flag; pinned stays left but can be pinned again', () => {
-    s = addOrFocus(s, entry('a'));
-    s = pinTab(s, 'a');
-    s = unpinTab(s, 'a');
+  test("unpinTab drops pinned flag; pinned stays left but can be pinned again", () => {
+    s = addOrFocus(s, entry("a"));
+    s = pinTab(s, "a");
+    s = unpinTab(s, "a");
     expect(s.tabs[0]?.pinned).toBeFalsy();
   });
 
-  test('moveTab within unpinned range', () => {
-    s = addOrFocus(s, entry('a'));
-    s = addOrFocus(s, entry('b'));
-    s = addOrFocus(s, entry('c'));
-    s = moveTab(s, 'c', 0); // c → index 0
-    expect(s.tabs.map((t) => t.tabKey)).toEqual(['c', 'a', 'b']);
+  test("moveTab within unpinned range", () => {
+    s = addOrFocus(s, entry("a"));
+    s = addOrFocus(s, entry("b"));
+    s = addOrFocus(s, entry("c"));
+    s = moveTab(s, "c", 0); // c → index 0
+    expect(s.tabs.map((t) => t.tabKey)).toEqual(["c", "a", "b"]);
   });
 
-  test('moveTab cannot interleave pinned / unpinned', () => {
-    s = addOrFocus(s, entry('a'));
-    s = addOrFocus(s, entry('b'));
-    s = pinTab(s, 'a');
+  test("moveTab cannot interleave pinned / unpinned", () => {
+    s = addOrFocus(s, entry("a"));
+    s = addOrFocus(s, entry("b"));
+    s = pinTab(s, "a");
     // attempt to move unpinned b to index 0 (inside pinned range)
-    s = moveTab(s, 'b', 0);
+    s = moveTab(s, "b", 0);
     // b stays unpinned, so it lands at the first unpinned index (1), not 0
-    expect(s.tabs[0]?.tabKey).toBe('a');
-    expect(s.tabs[1]?.tabKey).toBe('b');
+    expect(s.tabs[0]?.tabKey).toBe("a");
+    expect(s.tabs[1]?.tabKey).toBe("b");
   });
 
-  test('reopenClosed restores the most recently closed tab as active', () => {
-    s = addOrFocus(s, entry('a'));
-    s = addOrFocus(s, entry('b'));
-    s = closeTab(s, 'b');
+  test("reopenClosed restores the most recently closed tab as active", () => {
+    s = addOrFocus(s, entry("a"));
+    s = addOrFocus(s, entry("b"));
+    s = closeTab(s, "b");
     const out = reopenClosed(s);
-    expect(out.activeKey).toBe('b');
-    expect(out.tabs.some((t) => t.tabKey === 'b')).toBe(true);
+    expect(out.activeKey).toBe("b");
+    expect(out.tabs.some((t) => t.tabKey === "b")).toBe(true);
     expect(out.closed).toHaveLength(0);
   });
 
-  test('reopenClosed on empty closed is a no-op', () => {
+  test("reopenClosed on empty closed is a no-op", () => {
     const out = reopenClosed(s);
     expect(out).toEqual(s);
   });
@@ -183,10 +188,10 @@ Expected: FAIL — module not found.
 Create `packages/app/src/stores/tab-store.ts`:
 
 ```typescript
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
-export type TabKind = 'module' | 'workload' | 'node' | 'ops-session' | 'settings';
+export type TabKind = "module" | "workload" | "node" | "ops-session" | "settings";
 
 export interface TabEntry {
   /** Stable identity: `module:chat`, `workload:wl-abc`, `node:atlas`, etc. */
@@ -332,27 +337,29 @@ export const useTabStore = create<Store>()(
       unpin: (key) => set((s) => unpinTab(s, key)),
       move: (key, to) => set((s) => moveTab(s, key, to)),
       reopen: () => set((s) => reopenClosed(s)),
-      closeOthers: (keepKey) => set((s) => {
-        const kept = s.tabs.filter((t) => t.tabKey === keepKey || t.pinned);
-        const dropped = s.tabs.filter((t) => t.tabKey !== keepKey && !t.pinned);
-        return {
-          tabs: kept,
-          activeKey: keepKey,
-          closed: [...dropped.reverse(), ...s.closed].slice(0, CLOSED_MAX),
-        };
-      }),
-      closeAll: (keepPinned = true) => set((s) => {
-        const kept = keepPinned ? s.tabs.filter((t) => t.pinned) : [];
-        const dropped = s.tabs.filter((t) => !t.pinned || !keepPinned);
-        return {
-          tabs: kept,
-          activeKey: kept[0]?.tabKey ?? null,
-          closed: [...dropped.reverse(), ...s.closed].slice(0, CLOSED_MAX),
-        };
-      }),
+      closeOthers: (keepKey) =>
+        set((s) => {
+          const kept = s.tabs.filter((t) => t.tabKey === keepKey || t.pinned);
+          const dropped = s.tabs.filter((t) => t.tabKey !== keepKey && !t.pinned);
+          return {
+            tabs: kept,
+            activeKey: keepKey,
+            closed: [...dropped.reverse(), ...s.closed].slice(0, CLOSED_MAX),
+          };
+        }),
+      closeAll: (keepPinned = true) =>
+        set((s) => {
+          const kept = keepPinned ? s.tabs.filter((t) => t.pinned) : [];
+          const dropped = s.tabs.filter((t) => !t.pinned || !keepPinned);
+          return {
+            tabs: kept,
+            activeKey: kept[0]?.tabKey ?? null,
+            closed: [...dropped.reverse(), ...s.closed].slice(0, CLOSED_MAX),
+          };
+        }),
     }),
     {
-      name: 'beacon-tabs',
+      name: "beacon-tabs",
       version: 1,
       partialize: (s) => ({ tabs: s.tabs, activeKey: s.activeKey, closed: s.closed }),
     },
@@ -383,6 +390,7 @@ git commit -m "feat(app): add tab-store (persistent tab set with pin/LRU/move op
 ## Task 2: Shell feature flag store
 
 **Files:**
+
 - Create: `packages/app/src/stores/shell-flag.ts`
 
 - [ ] **Step 1: Create the flag store**
@@ -390,8 +398,8 @@ git commit -m "feat(app): add tab-store (persistent tab set with pin/LRU/move op
 Create `packages/app/src/stores/shell-flag.ts`:
 
 ```typescript
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 /**
  * Gates the Beacon shell (P2) against the legacy IDELayout. Default
@@ -410,7 +418,7 @@ export const useShellFlag = create<ShellFlagStore>()(
       beaconShell: true,
       setBeaconShell: (on) => set({ beaconShell: on }),
     }),
-    { name: 'beacon-shell-flag' },
+    { name: "beacon-shell-flag" },
   ),
 );
 ```
@@ -427,6 +435,7 @@ git commit -m "feat(app): add beacon.shell.v3 feature flag store"
 ## Task 3: Registry — extend with `group` + `kind` (additive, backwards compatible)
 
 **Files:**
+
 - Modify: `packages/app/src/modules/registry.ts`
 
 - [ ] **Step 1: Extend the `AppModule` interface**
@@ -460,20 +469,20 @@ In `packages/app/src/modules/registry.ts`, add to the `AppModule` interface (bel
 
 In the same file, update each entry in `APP_MODULES` to include the new fields. Use this mapping:
 
-| id               | beaconGroup    | beaconKind        | beaconOrder |
-|------------------|----------------|-------------------|-------------|
-| dashboard        | workspace      | static            | 10          |
-| chat             | workspace      | static            | 20          |
-| ops-chat         | ops            | static            | 10          |
-| projects         | workspace      | static            | 30          |
-| knowledge        | knowledge      | static            | 10          |
-| workloads        | ops            | dynamic-group     | 20          |
-| models           | models         | static            | 10          |
-| nodes            | ops            | dynamic-group     | 30          |
-| logs             | observability  | static            | 10          |
-| cost             | hidden         | static            | —           |
-| settings         | hidden         | static            | —           |
-| ui-primitives    | hidden         | static            | —           |
+| id            | beaconGroup   | beaconKind    | beaconOrder |
+| ------------- | ------------- | ------------- | ----------- |
+| dashboard     | workspace     | static        | 10          |
+| chat          | workspace     | static        | 20          |
+| ops-chat      | ops           | static        | 10          |
+| projects      | workspace     | static        | 30          |
+| knowledge     | knowledge     | static        | 10          |
+| workloads     | ops           | dynamic-group | 20          |
+| models        | models        | static        | 10          |
+| nodes         | ops           | dynamic-group | 30          |
+| logs          | observability | static        | 10          |
+| cost          | hidden        | static        | —           |
+| settings      | hidden        | static        | —           |
+| ui-primitives | hidden        | static        | —           |
 
 Apply by adding the three fields to each entry in the array. Example for `dashboard`:
 
@@ -512,6 +521,7 @@ git commit -m "feat(app/registry): tag every module with beaconGroup/kind/order 
 ## Task 4: Explorer tree builder (pure) + tests
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/registry-view.ts`
 - Create: `packages/app/test/shell/registry-view.test.ts`
 
@@ -520,12 +530,21 @@ git commit -m "feat(app/registry): tag every module with beaconGroup/kind/order 
 Create `packages/app/test/shell/registry-view.test.ts`:
 
 ```typescript
-import { describe, test, expect } from 'bun:test';
-import { buildExplorerTree, type ExplorerLeaf, type DynamicInstance } from '../../src/shell/beacon/registry-view';
-import type { AppModule } from '../../src/modules/registry';
+import { describe, test, expect } from "bun:test";
+import {
+  buildExplorerTree,
+  type ExplorerLeaf,
+  type DynamicInstance,
+} from "../../src/shell/beacon/registry-view";
+import type { AppModule } from "../../src/modules/registry";
 
 // A minimal stand-in for AppModule without the lazy Component.
-function m(id: string, beaconGroup: string, beaconKind: 'static' | 'dynamic-group' = 'static', beaconOrder = 0): AppModule {
+function m(
+  id: string,
+  beaconGroup: string,
+  beaconKind: "static" | "dynamic-group" = "static",
+  beaconOrder = 0,
+): AppModule {
   return {
     id,
     labelKey: id.slice(0, 1).toUpperCase() + id.slice(1),
@@ -534,50 +553,56 @@ function m(id: string, beaconGroup: string, beaconKind: 'static' | 'dynamic-grou
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     Component: (() => null) as any,
     activityBar: false,
-    beaconGroup: beaconGroup as AppModule['beaconGroup'],
+    beaconGroup: beaconGroup as AppModule["beaconGroup"],
     beaconKind,
     beaconOrder,
   };
 }
 
-describe('buildExplorerTree', () => {
-  test('groups leaves by beaconGroup, sorted by beaconOrder', () => {
+describe("buildExplorerTree", () => {
+  test("groups leaves by beaconGroup, sorted by beaconOrder", () => {
     const modules = [
-      m('a', 'ops', 'static', 20),
-      m('b', 'workspace', 'static', 10),
-      m('c', 'workspace', 'static', 20),
-      m('d', 'ops', 'static', 10),
+      m("a", "ops", "static", 20),
+      m("b", "workspace", "static", 10),
+      m("c", "workspace", "static", 20),
+      m("d", "ops", "static", 10),
     ];
     const tree = buildExplorerTree(modules, { workloads: [], nodes: [] });
-    expect(tree.map((g) => g.id)).toEqual(['workspace', 'ops', 'models', 'knowledge', 'observability']);
-    expect(tree[0]?.leaves.map((l) => l.id)).toEqual(['b', 'c']);
-    expect(tree[1]?.leaves.map((l) => l.id)).toEqual(['d', 'a']);
+    expect(tree.map((g) => g.id)).toEqual([
+      "workspace",
+      "ops",
+      "models",
+      "knowledge",
+      "observability",
+    ]);
+    expect(tree[0]?.leaves.map((l) => l.id)).toEqual(["b", "c"]);
+    expect(tree[1]?.leaves.map((l) => l.id)).toEqual(["d", "a"]);
   });
 
-  test('dynamic-group leaves expand with live instances', () => {
-    const modules = [m('workloads', 'ops', 'dynamic-group', 20)];
+  test("dynamic-group leaves expand with live instances", () => {
+    const modules = [m("workloads", "ops", "dynamic-group", 20)];
     const tree = buildExplorerTree(modules, {
-      workloads: [{ id: 'wl-a', title: 'wl-a · qwen', tone: 'ok' }],
+      workloads: [{ id: "wl-a", title: "wl-a · qwen", tone: "ok" }],
       nodes: [],
     });
-    const opsGroup = tree.find((g) => g.id === 'ops');
+    const opsGroup = tree.find((g) => g.id === "ops");
     expect(opsGroup).toBeDefined();
-    const workloadsLeaf = opsGroup!.leaves.find((l) => l.id === 'workloads');
-    expect(workloadsLeaf?.kind).toBe('dynamic-group');
+    const workloadsLeaf = opsGroup!.leaves.find((l) => l.id === "workloads");
+    expect(workloadsLeaf?.kind).toBe("dynamic-group");
     expect(workloadsLeaf?.instances).toHaveLength(1);
-    expect(workloadsLeaf?.instances?.[0]?.id).toBe('wl-a');
+    expect(workloadsLeaf?.instances?.[0]?.id).toBe("wl-a");
   });
 
-  test('hidden leaves are excluded', () => {
-    const modules = [m('settings', 'hidden', 'static')];
+  test("hidden leaves are excluded", () => {
+    const modules = [m("settings", "hidden", "static")];
     const tree = buildExplorerTree(modules, { workloads: [], nodes: [] });
     for (const group of tree) {
       expect(group.leaves).toHaveLength(0);
     }
   });
 
-  test('groups with no leaves are dropped', () => {
-    const modules = [m('a', 'workspace', 'static')];
+  test("groups with no leaves are dropped", () => {
+    const modules = [m("a", "workspace", "static")];
     const tree = buildExplorerTree(modules, { workloads: [], nodes: [] });
     expect(tree.every((g) => g.leaves.length > 0)).toBe(true);
   });
@@ -594,21 +619,21 @@ Expected: FAIL — module not found.
 Create `packages/app/src/shell/beacon/registry-view.ts`:
 
 ```typescript
-import type { AppModule } from '@/modules/registry';
+import type { AppModule } from "@/modules/registry";
 
-export type ExplorerGroupId = 'workspace' | 'ops' | 'models' | 'knowledge' | 'observability';
+export type ExplorerGroupId = "workspace" | "ops" | "models" | "knowledge" | "observability";
 
 export interface DynamicInstance {
   id: string;
   title: string;
-  tone?: 'ok' | 'warn' | 'err' | 'idle';
+  tone?: "ok" | "warn" | "err" | "idle";
 }
 
 export interface ExplorerLeaf {
   /** Source module id (e.g. 'workloads'). */
   id: string;
   title: string;
-  kind: 'static' | 'dynamic-group';
+  kind: "static" | "dynamic-group";
   order: number;
   /** Populated when kind === 'dynamic-group' and the live data query
    *  yielded instances for this leaf. */
@@ -626,20 +651,20 @@ export interface DynamicSources {
   nodes: DynamicInstance[];
 }
 
-const GROUP_ORDER: ExplorerGroupId[] = ['workspace', 'ops', 'models', 'knowledge', 'observability'];
+const GROUP_ORDER: ExplorerGroupId[] = ["workspace", "ops", "models", "knowledge", "observability"];
 
 const GROUP_LABELS: Record<ExplorerGroupId, string> = {
-  workspace: 'Workspace',
-  ops: 'Ops',
-  models: 'Models',
-  knowledge: 'Knowledge',
-  observability: 'Observability',
+  workspace: "Workspace",
+  ops: "Ops",
+  models: "Models",
+  knowledge: "Knowledge",
+  observability: "Observability",
 };
 
 /** Map a dynamic-group leaf id to the sources key. */
 function dynamicSourceFor(leafId: string): keyof DynamicSources | undefined {
-  if (leafId === 'workloads') return 'workloads';
-  if (leafId === 'nodes') return 'nodes';
+  if (leafId === "workloads") return "workloads";
+  if (leafId === "nodes") return "nodes";
   return undefined;
 }
 
@@ -657,29 +682,27 @@ export function buildExplorerTree(
 
   for (const m of modules) {
     const g = m.beaconGroup;
-    if (!g || g === 'hidden' || g === 'settings') continue;
+    if (!g || g === "hidden" || g === "settings") continue;
     if (!GROUP_ORDER.includes(g as ExplorerGroupId)) continue;
     const leaf: ExplorerLeaf = {
       id: m.id,
       title: m.labelKey,
-      kind: m.beaconKind ?? 'static',
+      kind: m.beaconKind ?? "static",
       order: m.beaconOrder ?? 1000,
     };
-    if (leaf.kind === 'dynamic-group') {
+    if (leaf.kind === "dynamic-group") {
       const src = dynamicSourceFor(leaf.id);
       leaf.instances = src ? sources[src] : [];
     }
     byGroup.get(g as ExplorerGroupId)!.push(leaf);
   }
 
-  return GROUP_ORDER
-    .map((id) => {
-      const leaves = (byGroup.get(id) ?? [])
-        .slice()
-        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-      return { id, label: GROUP_LABELS[id], leaves };
-    })
-    .filter((g) => g.leaves.length > 0);
+  return GROUP_ORDER.map((id) => {
+    const leaves = (byGroup.get(id) ?? [])
+      .slice()
+      .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    return { id, label: GROUP_LABELS[id], leaves };
+  }).filter((g) => g.leaves.length > 0);
 }
 ```
 
@@ -700,6 +723,7 @@ git commit -m "feat(app/shell/beacon): add Explorer tree builder (static + dynam
 ## Task 5: Rail view descriptors
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/rail-views.ts`
 
 - [ ] **Step 1: Create the descriptors**
@@ -716,34 +740,34 @@ import {
   Search,
   Settings as SettingsIcon,
   type LucideIcon,
-} from 'lucide-react';
+} from "lucide-react";
 
 export type RailViewId =
-  | 'explorer'
-  | 'search'
-  | 'sessions'
-  | 'fleet'
-  | 'tokens'
-  | 'cost'
-  | 'settings';
+  | "explorer"
+  | "search"
+  | "sessions"
+  | "fleet"
+  | "tokens"
+  | "cost"
+  | "settings";
 
 export interface RailView {
   id: RailViewId;
   label: string;
   icon: LucideIcon;
-  position: 'top' | 'bottom';
+  position: "top" | "bottom";
   /** P2 stub views render a "coming in P3" placeholder. */
   stub?: boolean;
 }
 
 export const RAIL_VIEWS: readonly RailView[] = [
-  { id: 'explorer', label: 'Explorer', icon: Folder,  position: 'top' },
-  { id: 'search',   label: 'Search',   icon: Search,  position: 'top', stub: true },
-  { id: 'sessions', label: 'Sessions', icon: Layers3, position: 'top', stub: true },
-  { id: 'fleet',    label: 'Fleet',    icon: Compass, position: 'top', stub: true },
-  { id: 'tokens',   label: 'Tokens',   icon: Palette, position: 'top' },
-  { id: 'cost',     label: 'Cost',     icon: Coins,   position: 'bottom' },
-  { id: 'settings', label: 'Settings', icon: SettingsIcon, position: 'bottom' },
+  { id: "explorer", label: "Explorer", icon: Folder, position: "top" },
+  { id: "search", label: "Search", icon: Search, position: "top", stub: true },
+  { id: "sessions", label: "Sessions", icon: Layers3, position: "top", stub: true },
+  { id: "fleet", label: "Fleet", icon: Compass, position: "top", stub: true },
+  { id: "tokens", label: "Tokens", icon: Palette, position: "top" },
+  { id: "cost", label: "Cost", icon: Coins, position: "bottom" },
+  { id: "settings", label: "Settings", icon: SettingsIcon, position: "bottom" },
 ];
 
 export function getRailView(id: RailViewId): RailView {
@@ -763,6 +787,7 @@ git commit -m "feat(app/shell/beacon): add rail view descriptors (Explorer/Searc
 ## Task 6: ActivityRail (view-mode buttons)
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/activity-rail.tsx`
 
 - [ ] **Step 1: Create the component**
@@ -881,6 +906,7 @@ git commit -m "feat(app/shell/beacon): add ActivityRail (view-mode rail, 56 px)"
 ## Task 7: ExplorerTree (consumes the tree builder + live data)
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/explorer-tree.tsx`
 
 - [ ] **Step 1: Create the component**
@@ -1027,6 +1053,7 @@ git commit -m "feat(app/shell/beacon): add ExplorerTree (static + dynamic leaves
 ## Task 8: ExplorerPanel (rail-view-aware left panel)
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/explorer-panel.tsx`
 
 - [ ] **Step 1: Create the panel**
@@ -1152,6 +1179,7 @@ git commit -m "feat(app/shell/beacon): add ExplorerPanel (rail-aware left pane, 
 ## Task 9: TabBar
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/tab-bar.tsx`
 
 - [ ] **Step 1: Create the component**
@@ -1319,6 +1347,7 @@ git commit -m "feat(app/shell/beacon): add TabBar with pin/close/close-others/cl
 ## Task 10: TitleBar (Layout B)
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/title-bar.tsx`
 
 - [ ] **Step 1: Create the component**
@@ -1436,6 +1465,7 @@ git commit -m "feat(app/shell/beacon): add TitleBar Layout B (CommandBar + Theme
 ## Task 11: StatusBar (Beacon restyle)
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/status-bar.tsx`
 
 - [ ] **Step 1: Create the restyled status bar**
@@ -1566,6 +1596,7 @@ git commit -m "feat(app/shell/beacon): add Beacon StatusBar (restyle, shares con
 ## Task 12: TokensPanel (slide-in)
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/tokens-panel.tsx`
 
 - [ ] **Step 1: Create the panel**
@@ -1694,6 +1725,7 @@ git commit -m "feat(app/shell/beacon): add TokensPanel slide-in inspector"
 ## Task 13: First-run tip overlay
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/first-run-tip.tsx`
 
 - [ ] **Step 1: Create the overlay**
@@ -1788,6 +1820,7 @@ git commit -m "feat(app/shell/beacon): add FirstRunTip 3-step overlay"
 ## Task 14: BeaconLayout (wires everything together)
 
 **Files:**
+
 - Create: `packages/app/src/shell/beacon/layout.tsx`
 
 - [ ] **Step 1: Create the layout**
@@ -1956,6 +1989,7 @@ git commit -m "feat(app/shell/beacon): add BeaconLayout root (wires rail, panel,
 ## Task 15: Wire the feature flag into App.tsx
 
 **Files:**
+
 - Modify: `packages/app/src/App.tsx`
 
 - [ ] **Step 1: Switch between legacy IDELayout and BeaconLayout**
@@ -2005,6 +2039,7 @@ Expected: exits 0.
 Run: `bun run --cwd packages/app dev`
 
 Expected:
+
 - New title bar with theme orbs + node selector + command bar breadcrumb.
 - 56 px activity rail on the left with Explorer active.
 - 280 px Explorer panel showing Workspace/Ops/Models/Knowledge/Observability groups.
@@ -2031,6 +2066,7 @@ git commit -m "feat(app): mount BeaconLayout by default, keep IDELayout behind t
 ## Task 16: Command palette — add `⌘K` + "Open in tab" routing
 
 **Files:**
+
 - Modify: `packages/app/src/shell/command-palette.tsx`
 - Modify: `packages/app/src/shell/commands.ts`
 
@@ -2045,38 +2081,38 @@ Open `packages/app/src/shell/command-palette.tsx`. Locate `useCommandPaletteOpen
 Change the keydown handler body to:
 
 ```typescript
-      // Esc closes.
-      if (e.key === 'Escape' && open) {
-        setOpen(false);
-        return;
-      }
-      const meta = e.metaKey || e.ctrlKey;
-      if (!meta) return;
+// Esc closes.
+if (e.key === "Escape" && open) {
+  setOpen(false);
+  return;
+}
+const meta = e.metaKey || e.ctrlKey;
+if (!meta) return;
 
-      // ⌘⇧P: classic palette open.
-      if (e.key === 'P' && e.shiftKey) {
-        e.preventDefault();
-        setOpen(true);
-        return;
-      }
+// ⌘⇧P: classic palette open.
+if (e.key === "P" && e.shiftKey) {
+  e.preventDefault();
+  setOpen(true);
+  return;
+}
 
-      // ⌘K: same palette unless a theme-picker chord is already active
-      // (the theme picker's own handler swallows K when it's waiting).
-      if (e.key.toLowerCase() === 'k' && !e.shiftKey) {
-        // Don't preventDefault — theme picker owns K too. The theme
-        // picker's handler runs later via its own listener; it will
-        // open its dialog. Here we only open the palette if the
-        // theme-picker-chord isn't going to claim it.
-        //
-        // Simple disambiguation: if the shortcut is ⌘K alone (no
-        // follow-up), open the palette after a short debounce. If
-        // the follow-up key is T within 1.2s, the theme picker wins.
-        //
-        // Implementation: defer setOpen by 200 ms — the theme
-        // picker's timeout will clear first if the user was going
-        // for ⌘K⌘T.
-        setTimeout(() => setOpen(true), 220);
-      }
+// ⌘K: same palette unless a theme-picker chord is already active
+// (the theme picker's own handler swallows K when it's waiting).
+if (e.key.toLowerCase() === "k" && !e.shiftKey) {
+  // Don't preventDefault — theme picker owns K too. The theme
+  // picker's handler runs later via its own listener; it will
+  // open its dialog. Here we only open the palette if the
+  // theme-picker-chord isn't going to claim it.
+  //
+  // Simple disambiguation: if the shortcut is ⌘K alone (no
+  // follow-up), open the palette after a short debounce. If
+  // the follow-up key is T within 1.2s, the theme picker wins.
+  //
+  // Implementation: defer setOpen by 200 ms — the theme
+  // picker's timeout will clear first if the user was going
+  // for ⌘K⌘T.
+  setTimeout(() => setOpen(true), 220);
+}
 ```
 
 - [ ] **Step 3: Add "Open in tab" section — route module-go commands through `useTabStore.open`**
@@ -2084,8 +2120,8 @@ Change the keydown handler body to:
 Still inside `command-palette.tsx`, find `modulesToCommands`. Replace it with:
 
 ```typescript
-import { APP_MODULES } from '@/modules/registry';
-import { useTabStore } from '@/stores/tab-store';
+import { APP_MODULES } from "@/modules/registry";
+import { useTabStore } from "@/stores/tab-store";
 
 function modulesToCommands(): Command[] {
   const open = useTabStore.getState().open;
@@ -2099,7 +2135,7 @@ function modulesToCommands(): Command[] {
     keywords: m.aliases ?? [],
     run: () => {
       if (beaconShell) {
-        open({ tabKey: `module:${m.id}`, title: m.labelKey, kind: 'module', openedAt: Date.now() });
+        open({ tabKey: `module:${m.id}`, title: m.labelKey, kind: "module", openedAt: Date.now() });
       } else {
         setActiveModule(m.id);
       }
@@ -2118,6 +2154,7 @@ Run: `bun run --cwd packages/app typecheck`
 Expected: exits 0.
 
 Launch `bun run --cwd packages/app dev`. Verify:
+
 - `⌘⇧P` → palette opens, "Open Dashboard" etc. visible.
 - `⌘K` → same palette opens (after a short ~200 ms debounce).
 - `⌘K⌘T` → theme picker opens (the chord wins over the ⌘K debounce).
@@ -2135,6 +2172,7 @@ git commit -m "feat(app/palette): add ⌘K alongside ⌘⇧P, route Open command
 ## Task 17: Add a Settings toggle for the Beacon shell
 
 **Files:**
+
 - Modify: `packages/app/src/modules/settings/index.tsx` (if it exists — otherwise skip with a note)
 
 - [ ] **Step 1: Check whether Settings has an appropriate slot**
@@ -2146,7 +2184,7 @@ Read `packages/app/src/modules/settings/index.tsx`. Look for an "Appearance" or 
 Add near the top of the Settings module body (adjust to match the file's existing style):
 
 ```tsx
-import { useShellFlag } from '@/stores/shell-flag';
+import { useShellFlag } from "@/stores/shell-flag";
 
 // Inside the component:
 const beaconShell = useShellFlag((s) => s.beaconShell);
@@ -2154,12 +2192,25 @@ const setBeaconShell = useShellFlag((s) => s.setBeaconShell);
 
 // In JSX:
 <section style={{ padding: 24 }}>
-  <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Shell</h3>
-  <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-    <input type="checkbox" checked={beaconShell} onChange={(e) => setBeaconShell(e.target.checked)} />
-    Use the new Beacon shell (default). Uncheck to fall back to the legacy layout for one release cycle.
+  <h3 style={{ margin: "0 0 8px", fontSize: 14 }}>Shell</h3>
+  <label
+    style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      fontSize: 13,
+      color: "var(--color-text-secondary)",
+    }}
+  >
+    <input
+      type="checkbox"
+      checked={beaconShell}
+      onChange={(e) => setBeaconShell(e.target.checked)}
+    />
+    Use the new Beacon shell (default). Uncheck to fall back to the legacy layout for one release
+    cycle.
   </label>
-</section>
+</section>;
 ```
 
 - [ ] **Step 3: Commit**
@@ -2232,6 +2283,7 @@ git tag beacon-p2
 - §14 First-run tip overlay — Task 13 ✓
 
 Deferred to P3:
+
 - `beacon.explorer.collapsed` persistence (spec §10) — Explorer uses local state in P2; persist comes in P3 when the tree settles.
 - Real Search / Sessions / Fleet rail views — P2 ships stubs.
 - Dynamic instance tab bodies (workload/node/ops-session detail components) — P2 shows a placeholder; P3 builds the components.

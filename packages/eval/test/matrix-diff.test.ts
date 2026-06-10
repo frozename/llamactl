@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { Database } from 'bun:sqlite';
-import { loadCells, parseArgs, renderMd, renderCsv } from '../src/matrix/diff.js';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Database } from "bun:sqlite";
+import { loadCells, parseArgs, renderMd, renderCsv } from "../src/matrix/diff.js";
 
 let tmp: string;
 let dbPath: string;
@@ -34,97 +34,155 @@ function seedDb(path: string): void {
   const ins = db.prepare(
     `INSERT INTO matrix_runs VALUES (?, 0, ?, ?, '{}', ?, ?, ?, '{}', ?, ?, ?, ?, ?, ?, 'test')`,
   );
-  ins.run('run-1', 'mlx-4bit',    'tool-call',     50, 'mean_exact_match', 0.5, 100, 500, 30, 0, '2026-05-19T00:00:00Z', '2026-05-19T00:01:00Z');
-  ins.run('run-2', 'llamacpp-Q4', 'tool-call',     50, 'mean_exact_match', 0.7, 110, 550, 28, 1, '2026-05-19T01:00:00Z', '2026-05-19T01:01:00Z');
-  ins.run('run-0', 'mlx-4bit',    'tool-call',     50, 'mean_exact_match', 0.3, 120, 600, 25, 0, '2026-05-18T00:00:00Z', '2026-05-18T00:01:00Z');
-  ins.run('run-3', 'mlx-4bit',    'memory-recall', 105, 'mean_ndcg5',      0.56, 200, 800, 36, 0, '2026-05-19T02:00:00Z', '2026-05-19T02:01:00Z');
+  ins.run(
+    "run-1",
+    "mlx-4bit",
+    "tool-call",
+    50,
+    "mean_exact_match",
+    0.5,
+    100,
+    500,
+    30,
+    0,
+    "2026-05-19T00:00:00Z",
+    "2026-05-19T00:01:00Z",
+  );
+  ins.run(
+    "run-2",
+    "llamacpp-Q4",
+    "tool-call",
+    50,
+    "mean_exact_match",
+    0.7,
+    110,
+    550,
+    28,
+    1,
+    "2026-05-19T01:00:00Z",
+    "2026-05-19T01:01:00Z",
+  );
+  ins.run(
+    "run-0",
+    "mlx-4bit",
+    "tool-call",
+    50,
+    "mean_exact_match",
+    0.3,
+    120,
+    600,
+    25,
+    0,
+    "2026-05-18T00:00:00Z",
+    "2026-05-18T00:01:00Z",
+  );
+  ins.run(
+    "run-3",
+    "mlx-4bit",
+    "memory-recall",
+    105,
+    "mean_ndcg5",
+    0.56,
+    200,
+    800,
+    36,
+    0,
+    "2026-05-19T02:00:00Z",
+    "2026-05-19T02:01:00Z",
+  );
   db.close();
 }
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-diff-'));
-  dbPath = join(tmp, 'matrix.db');
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-diff-"));
+  dbPath = join(tmp, "matrix.db");
   seedDb(dbPath);
 });
 
 afterEach(() => {
-  try { rmSync(tmp, { recursive: true, force: true }); } catch {}
+  try {
+    rmSync(tmp, { recursive: true, force: true });
+  } catch {}
 });
 
-describe('matrix/diff parseArgs', () => {
-  test('parses --models and --workloads as comma-lists', () => {
-    const args = parseArgs(['--db', '/tmp/x.db', '--models', 'a,b', '--workloads', 'w1,w2']);
-    expect(args.models).toEqual(['a', 'b']);
-    expect(args.workloads).toEqual(['w1', 'w2']);
+describe("matrix/diff parseArgs", () => {
+  test("parses --models and --workloads as comma-lists", () => {
+    const args = parseArgs(["--db", "/tmp/x.db", "--models", "a,b", "--workloads", "w1,w2"]);
+    expect(args.models).toEqual(["a", "b"]);
+    expect(args.workloads).toEqual(["w1", "w2"]);
   });
 
-  test('defaults format to md and db path', () => {
+  test("defaults format to md and db path", () => {
     const args = parseArgs([]);
-    expect(args.format).toBe('md');
-    expect(args.db).toBe('packages/eval/results/matrix.db');
+    expect(args.format).toBe("md");
+    expect(args.db).toBe("packages/eval/results/matrix.db");
     expect(args.allRuns).toBe(false);
   });
 
-  test('--all-runs sets the flag', () => {
-    expect(parseArgs(['--all-runs']).allRuns).toBe(true);
+  test("--all-runs sets the flag", () => {
+    expect(parseArgs(["--all-runs"]).allRuns).toBe(true);
   });
 
-  test('rejects unknown --format', () => {
-    expect(() => parseArgs(['--format', 'xml'])).toThrow(/format/);
+  test("rejects unknown --format", () => {
+    expect(() => parseArgs(["--format", "xml"])).toThrow(/format/);
   });
 });
 
-describe('matrix/diff loadCells', () => {
-  test('default returns latest run per (model, workload)', () => {
+describe("matrix/diff loadCells", () => {
+  test("default returns latest run per (model, workload)", () => {
     const db = new Database(dbPath, { readonly: true });
     const cells = loadCells(db, { allRuns: false });
     db.close();
     expect(cells.length).toBe(3);
-    const mlxToolCall = cells.find((c) => c.model_name === 'mlx-4bit' && c.workload_name === 'tool-call');
-    expect(mlxToolCall?.run_id).toBe('run-1');
+    const mlxToolCall = cells.find(
+      (c) => c.model_name === "mlx-4bit" && c.workload_name === "tool-call",
+    );
+    expect(mlxToolCall?.run_id).toBe("run-1");
     expect(mlxToolCall?.primary_metric_value).toBe(0.5);
   });
 
-  test('--all-runs returns every row', () => {
+  test("--all-runs returns every row", () => {
     const db = new Database(dbPath, { readonly: true });
     const cells = loadCells(db, { allRuns: true });
     db.close();
     expect(cells.length).toBe(4);
   });
 
-  test('--models filter excludes other models', () => {
+  test("--models filter excludes other models", () => {
     const db = new Database(dbPath, { readonly: true });
-    const cells = loadCells(db, { allRuns: false, models: ['llamacpp-Q4'] });
+    const cells = loadCells(db, { allRuns: false, models: ["llamacpp-Q4"] });
     db.close();
     expect(cells.length).toBe(1);
-    expect(cells[0]?.model_name).toBe('llamacpp-Q4');
+    expect(cells[0]?.model_name).toBe("llamacpp-Q4");
   });
 
-  test('--workloads filter excludes other workloads', () => {
+  test("--workloads filter excludes other workloads", () => {
     const db = new Database(dbPath, { readonly: true });
-    const cells = loadCells(db, { allRuns: false, workloads: ['memory-recall'] });
+    const cells = loadCells(db, { allRuns: false, workloads: ["memory-recall"] });
     db.close();
     expect(cells.length).toBe(1);
-    expect(cells[0]?.workload_name).toBe('memory-recall');
+    expect(cells[0]?.workload_name).toBe("memory-recall");
   });
 });
 
-describe('matrix/diff renderers', () => {
-  test('renderMd produces a header + one row per cell', () => {
+describe("matrix/diff renderers", () => {
+  test("renderMd produces a header + one row per cell", () => {
     const db = new Database(dbPath, { readonly: true });
     const cells = loadCells(db, { allRuns: false });
     db.close();
     const md = renderMd(cells);
-    expect(md).toContain('| Workload | Model |');
-    expect(md.split('\n').filter((l) => l.startsWith('|')).length).toBe(2 + cells.length);
+    expect(md).toContain("| Workload | Model |");
+    expect(md.split("\n").filter((l) => l.startsWith("|")).length).toBe(2 + cells.length);
   });
 
-  test('renderCsv emits header row + cells', () => {
+  test("renderCsv emits header row + cells", () => {
     const db = new Database(dbPath, { readonly: true });
     const cells = loadCells(db, { allRuns: false });
     db.close();
     const csv = renderCsv(cells);
-    expect(csv.split('\n')[0]).toBe('workload,model,n,metric,value,tps,p50_ms,errors,run_id,started_at');
-    expect(csv.trim().split('\n').length).toBe(1 + cells.length);
+    expect(csv.split("\n")[0]).toBe(
+      "workload,model,n,metric,value,tps,p50_ms,errors,run_id,started_at",
+    );
+    expect(csv.trim().split("\n").length).toBe(1 + cells.length);
   });
 });

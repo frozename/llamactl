@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { parse as parseYaml } from 'yaml';
-import { z } from 'zod';
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
+import { z } from "zod";
 
 /**
  * Cost-guardian configuration. Lives at `~/.llamactl/cost-guardian.yaml`
@@ -38,8 +38,7 @@ export const CostGuardianThresholdsSchema = z
     deregister: z.number().min(0).max(1).default(0.95),
   })
   .refine((t) => t.warn <= t.force_private && t.force_private <= t.deregister, {
-    message:
-      'thresholds must be non-decreasing: warn ≤ force_private ≤ deregister',
+    message: "thresholds must be non-decreasing: warn ≤ force_private ≤ deregister",
   });
 
 export const CostGuardianConfigSchema = z.object({
@@ -55,20 +54,18 @@ export const CostGuardianConfigSchema = z.object({
   /** Provider names that must never be auto-deregistered, regardless of
    *  `auto_deregister` / `--auto-tier-3`. The denylist overrides the auto
    *  flag; matches here are always journaled as `deregister-refused`. */
-  protectedProviders: z.array(z.string()).default(['fleet-internal']),
+  protectedProviders: z.array(z.string()).default(["fleet-internal"]),
 });
 
 export type CostGuardianBudget = z.infer<typeof CostGuardianBudgetSchema>;
 export type CostGuardianThresholds = z.infer<typeof CostGuardianThresholdsSchema>;
 export type CostGuardianConfig = z.infer<typeof CostGuardianConfigSchema>;
 
-export function defaultCostGuardianConfigPath(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function defaultCostGuardianConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_COST_GUARDIAN_CONFIG?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'cost-guardian.yaml');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "cost-guardian.yaml");
 }
 
 export function emptyCostGuardianConfig(): CostGuardianConfig {
@@ -79,7 +76,7 @@ export function loadCostGuardianConfig(
   path: string = defaultCostGuardianConfigPath(),
 ): CostGuardianConfig {
   if (!existsSync(path)) return emptyCostGuardianConfig();
-  const raw = readFileSync(path, 'utf8');
+  const raw = readFileSync(path, "utf8");
   const parsed: unknown = parseYaml(raw);
   return CostGuardianConfigSchema.parse(parsed ?? {});
 }

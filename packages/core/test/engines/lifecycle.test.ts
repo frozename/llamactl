@@ -1,9 +1,9 @@
-import { describe, expect, test } from 'bun:test';
-import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { gracefulShutdown } from '../../src/engines/lifecycle.js';
+import { describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { gracefulShutdown } from "../../src/engines/lifecycle.js";
 
 function isAlive(pid: number): boolean {
   try {
@@ -28,23 +28,23 @@ async function waitUntil(pred: () => boolean, timeoutMs: number, stepMs = 50): P
 // parent its own process-group leader; detached:false leaves it in THIS test
 // runner's group.
 async function spawnParentWithGrandchild(detached: boolean, gpidFile: string) {
-  const proc = spawn('bash', ['-c', `sleep 600 & echo $! > "${gpidFile}"; wait`], {
-    stdio: 'ignore',
+  const proc = spawn("bash", ["-c", `sleep 600 & echo $! > "${gpidFile}"; wait`], {
+    stdio: "ignore",
     detached,
   });
   const ok = await waitUntil(
-    () => existsSync(gpidFile) && readFileSync(gpidFile, 'utf8').trim() !== '',
+    () => existsSync(gpidFile) && readFileSync(gpidFile, "utf8").trim() !== "",
     5000,
   );
-  if (!ok) throw new Error('grandchild pid file was not written');
-  const grandchildPid = Number.parseInt(readFileSync(gpidFile, 'utf8').trim(), 10);
+  if (!ok) throw new Error("grandchild pid file was not written");
+  const grandchildPid = Number.parseInt(readFileSync(gpidFile, "utf8").trim(), 10);
   return { proc, grandchildPid };
 }
 
-describe('gracefulShutdown process-group reaping', () => {
-  test('group-leader (detached) proc: signalling reaps the forked grandchild', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'llamactl-gshut-grp-'));
-    const gpidFile = join(dir, 'gc.pid');
+describe("gracefulShutdown process-group reaping", () => {
+  test("group-leader (detached) proc: signalling reaps the forked grandchild", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-gshut-grp-"));
+    const gpidFile = join(dir, "gc.pid");
     const { proc, grandchildPid } = await spawnParentWithGrandchild(true, gpidFile);
     try {
       expect(isAlive(grandchildPid)).toBe(true);
@@ -56,23 +56,23 @@ describe('gracefulShutdown process-group reaping', () => {
     } finally {
       if (proc.pid) {
         try {
-          process.kill(-proc.pid, 'SIGKILL');
+          process.kill(-proc.pid, "SIGKILL");
         } catch {}
       }
       try {
-        process.kill(grandchildPid, 'SIGKILL');
+        process.kill(grandchildPid, "SIGKILL");
       } catch {}
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test('non-leader proc (shares another group): only the direct child is signalled', async () => {
+  test("non-leader proc (shares another group): only the direct child is signalled", async () => {
     // A non-detached child shares THIS test runner's process group. The pgid
     // gate must fall back to a direct kill — a group-wide signal here would take
     // down the runner. Proof of safety: the sibling grandchild (also in the
     // runner's group) survives, and this test keeps executing.
-    const dir = mkdtempSync(join(tmpdir(), 'llamactl-gshut-direct-'));
-    const gpidFile = join(dir, 'gc.pid');
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-gshut-direct-"));
+    const gpidFile = join(dir, "gc.pid");
     const { proc, grandchildPid } = await spawnParentWithGrandchild(false, gpidFile);
     try {
       expect(isAlive(grandchildPid)).toBe(true);
@@ -83,11 +83,11 @@ describe('gracefulShutdown process-group reaping', () => {
       expect(isAlive(grandchildPid)).toBe(true);
     } finally {
       try {
-        process.kill(grandchildPid, 'SIGKILL');
+        process.kill(grandchildPid, "SIGKILL");
       } catch {}
       if (proc.pid) {
         try {
-          process.kill(proc.pid, 'SIGKILL');
+          process.kill(proc.pid, "SIGKILL");
         } catch {}
       }
       rmSync(dir, { recursive: true, force: true });

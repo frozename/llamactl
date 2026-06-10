@@ -11,7 +11,7 @@ name: cross-repo-smoke
 
 on:
   schedule:
-    - cron: '0 9 * * *'   # 09:00 UTC daily
+    - cron: "0 9 * * *" # 09:00 UTC daily
   workflow_dispatch:
 
 concurrency:
@@ -86,5 +86,5 @@ jobs:
           # GitHub's hosted macOS runners block multicast, so the
           # mDNS discovery tests time out there. The test suite has
           # a dedicated skip env var for exactly this case.
-          LLAMACTL_SKIP_MDNS_TESTS: '1'
+          LLAMACTL_SKIP_MDNS_TESTS: "1"
         run: bash scripts/smoke-cross-repo.sh

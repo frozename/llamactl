@@ -10,12 +10,12 @@
  * under `packages/remote/test/service-handlers-*.test.ts` are the
  * contract each new handler must satisfy.
  */
-import { ServiceError } from '../errors.js';
-import type { ServiceSpec } from '../schema.js';
-import { chromaHandler } from './chroma-handler.js';
-import { genericContainerHandler } from './generic-handler.js';
-import { pgvectorHandler } from './pgvector-handler.js';
-import type { ServiceHandler } from './types.js';
+import { ServiceError } from "../errors.js";
+import type { ServiceSpec } from "../schema.js";
+import { chromaHandler } from "./chroma-handler.js";
+import { genericContainerHandler } from "./generic-handler.js";
+import { pgvectorHandler } from "./pgvector-handler.js";
+import type { ServiceHandler } from "./types.js";
 
 export const DEFAULT_SERVICE_HANDLERS: readonly ServiceHandler[] = [
   chromaHandler as unknown as ServiceHandler,
@@ -35,7 +35,7 @@ export function findServiceHandler(spec: ServiceSpec): ServiceHandler {
   const handler = DEFAULT_SERVICE_HANDLERS.find((h) => h.kind === spec.kind);
   if (!handler) {
     throw new ServiceError(
-      'unknown-kind',
+      "unknown-kind",
       `no handler for service kind '${(spec as { kind: string }).kind}'`,
     );
   }

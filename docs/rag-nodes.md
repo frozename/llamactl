@@ -110,7 +110,7 @@ pipx install chroma-mcp          # or: pip install chroma-mcp
 Smoke-test the command separately first — if it can't boot, the RAG
 node fails fast with `connect-failed`, not a silent hang.
 
-Register the node. `endpoint` is the *full* command string the adapter
+Register the node. `endpoint` is the _full_ command string the adapter
 spawns over stdio; `collection` is the default collection name used
 when search/store requests omit it.
 
@@ -232,12 +232,12 @@ The operator console speaks the same tools natively:
 Every surface maps 1:1 to the underlying `RetrievalProvider`
 contract. The MCP tool names + tRPC procedures are:
 
-| MCP tool                          | tRPC procedure       | Method |
-| --------------------------------- | -------------------- | ------ |
-| `llamactl.rag.search`             | `ragSearch`          | query  |
-| `llamactl.rag.store`              | `ragStore`           | mutate |
-| `llamactl.rag.delete`             | `ragDelete`          | mutate |
-| `llamactl.rag.listCollections`    | `ragListCollections` | query  |
+| MCP tool                       | tRPC procedure       | Method |
+| ------------------------------ | -------------------- | ------ |
+| `llamactl.rag.search`          | `ragSearch`          | query  |
+| `llamactl.rag.store`           | `ragStore`           | mutate |
+| `llamactl.rag.delete`          | `ragDelete`          | mutate |
+| `llamactl.rag.listCollections` | `ragListCollections` | query  |
 
 The MCP inputs mirror the tRPC inputs exactly; callers always pass
 the target `node` name.
@@ -298,11 +298,12 @@ rag:
   endpoint: postgres://kb@db.local:5432/kb_main
   collection: documents
   embedder:
-    node: sirius                   # any cluster node with createEmbeddings
-    model: text-embedding-3-small  # model the embedder node speaks
+    node: sirius # any cluster node with createEmbeddings
+    model: text-embedding-3-small # model the embedder node speaks
 ```
 
 With `embedder` set:
+
 - `store({ documents: [{ id, content }] })` — missing vectors are
   computed in one batch call per store.
 - `search({ query: "…" })` without `filter.vector` — the query is
@@ -326,7 +327,7 @@ rag:
   endpoint: postgres://kb@db.local:5432/kb_main
   collection: documents
   embedder:
-    node: local                       # uses node.endpoint from kubeconfig
+    node: local # uses node.endpoint from kubeconfig
     model: nomic-embed-text-v1.5
 ```
 
@@ -345,9 +346,9 @@ rag:
   endpoint: postgres://kb@db.local:5432/kb_main
   collection: documents
   embedder:
-    node: nomic-local               # free-form label for error messages
+    node: nomic-local # free-form label for error messages
     model: nomic-embed-text-v1.5
-    baseUrl: http://127.0.0.1:8081/v1   # hits <baseUrl>/embeddings
+    baseUrl: http://127.0.0.1:8081/v1 # hits <baseUrl>/embeddings
 ```
 
 If the target requires bearer auth (a hosted embedding service, a
@@ -383,10 +384,10 @@ themselves — shell scripts, third-party SDKs, curl — the llamactl
 agent exposes a thin wrapper at `POST /v1/chat/completions` that
 accepts two extension fields on top of the standard OpenAI body:
 
-| field | type | required | meaning |
-|---|---|---|---|
-| `via` | string | yes | llamactl node to route chat through (gateway / cloud / agent name) |
-| `rag` | object | no | retrieval spec — `{ node, topK?, collection?, system_prompt_prefix? }` |
+| field | type   | required | meaning                                                                |
+| ----- | ------ | -------- | ---------------------------------------------------------------------- |
+| `via` | string | yes      | llamactl node to route chat through (gateway / cloud / agent name)     |
+| `rag` | object | no       | retrieval spec — `{ node, topK?, collection?, system_prompt_prefix? }` |
 
 When `rag` is present the agent retrieves the top-K docs from the
 named RAG node, prepends them as a `system` message, and forwards
@@ -452,7 +453,7 @@ Logs for each call capture `{ node, topK, received, elapsed_ms }`
   workflow engine alongside "synthesize".
 - **Adapter pooling** — cache provider instances between calls.
 - **Schema helpers** — `llamactl rag pgvector init --table <name>
-  --dim <d>` creates the table + HNSW index.
+--dim <d>` creates the table + HNSW index.
 - **CLI wrappers** — `llamactl rag {search,store,delete} --node ...`
   for operators who live in a shell.
 - **Backend expansion** — Qdrant, Weaviate, Milvus, LanceDB, Pinecone,

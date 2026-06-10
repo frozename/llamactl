@@ -1,4 +1,4 @@
-import type { KvEntry } from './registry.js';
+import type { KvEntry } from "./registry.js";
 
 const HALF_LIFE_MS = 6 * 3600 * 1000;
 const LIVE_PREFIX_BIAS = -1000;
@@ -19,7 +19,8 @@ export function evictionScore(
   const ageComponent = ageMs / AGE_SCALE_MS;
   const hitProtection = decayedHits * 25;
   const sizeComponent = entry.payloadBytes / PAYLOAD_SCALE_BYTES;
-  const liveOverlapPenalty = livePrefixSha !== null && entry.sha === livePrefixSha ? LIVE_PREFIX_BIAS : 0;
+  const liveOverlapPenalty =
+    livePrefixSha !== null && entry.sha === livePrefixSha ? LIVE_PREFIX_BIAS : 0;
   const liveTokenComponent = liveTokens > 0 ? liveTokens / 10_000 : 0;
 
   return ageComponent + sizeComponent - hitProtection + liveOverlapPenalty - liveTokenComponent;

@@ -1,15 +1,15 @@
 // packages/app/src/lib/global-search/hooks/use-global-search.ts
-import * as React from 'react';
-import { trpc, trpcUIClient } from '../../trpc.js';
-import { useTabStore } from '../../../stores/tab-store.js';
-import type { GroupedResults } from '../types';
-import { runClientPhase, mergeServerHits } from '../orchestrator';
-import { parseQuery } from '../query';
-import { mapSessionHits } from '../surfaces/sessions';
-import { mapLogHits } from '../surfaces/logs';
-import { mapSessionRagHits } from '../surfaces/sessions-rag';
-import { mapKnowledgeRagHits } from '../surfaces/knowledge-rag';
-import { mapLogRagHits } from '../surfaces/logs-rag';
+import * as React from "react";
+import { trpc, trpcUIClient } from "../../trpc.js";
+import { useTabStore } from "../../../stores/tab-store.js";
+import type { GroupedResults } from "../types";
+import { runClientPhase, mergeServerHits } from "../orchestrator";
+import { parseQuery } from "../query";
+import { mapSessionHits } from "../surfaces/sessions";
+import { mapLogHits } from "../surfaces/logs";
+import { mapSessionRagHits } from "../surfaces/sessions-rag";
+import { mapKnowledgeRagHits } from "../surfaces/knowledge-rag";
+import { mapLogRagHits } from "../surfaces/logs-rag";
 
 const TIER2_MS = 250;
 const TIER3_MS = 400;
@@ -26,10 +26,10 @@ export function computeNextSchedule(
 
 export function useGlobalSearch(input: string): {
   results: GroupedResults;
-  status: 'idle' | 'searching';
+  status: "idle" | "searching";
 } {
   const [results, setResults] = React.useState<GroupedResults>([]);
-  const [status, setStatus] = React.useState<'idle' | 'searching'>('idle');
+  const [status, setStatus] = React.useState<"idle" | "searching">("idle");
   const tabs = useTabStore((s) => s.tabs);
   const closed = useTabStore((s) => s.closed);
   const utils = trpc.useUtils();
@@ -40,7 +40,6 @@ export function useGlobalSearch(input: string): {
   // Cached client-side lists for client surfaces.
   const workloadsQ = trpc.workloadList.useQuery(undefined, { staleTime: 30_000 });
   const nodesQ = trpc.nodeList.useQuery(undefined, { staleTime: 30_000 });
-  
 
   const queryToken = React.useRef(0);
   const ctrlRef = React.useRef<AbortController | null>(null);
@@ -59,10 +58,10 @@ export function useGlobalSearch(input: string): {
     const parsed = parseQuery(input);
     if (!parsed.needle) {
       setResults([]);
-      setStatus('idle');
+      setStatus("idle");
       return;
     }
-    setStatus('searching');
+    setStatus("searching");
 
     const initial = runClientPhase({
       query: parsed,
@@ -73,19 +72,18 @@ export function useGlobalSearch(input: string): {
     });
     setResults(initial);
 
-    const allow = (s: string): boolean =>
-      !parsed.surfaceFilter || parsed.surfaceFilter === s;
+    const allow = (s: string): boolean => !parsed.surfaceFilter || parsed.surfaceFilter === s;
 
     tier2Timer.current = setTimeout(async () => {
       const tasks: Promise<unknown>[] = [];
-      if (allow('session')) {
+      if (allow("session")) {
         tasks.push(
           utils.opsSessionSearch
             .fetch({ query: parsed.needle })
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'session', mapSessionHits((res as any).hits ?? []), {
+                mergeServerHits(cur, "session", mapSessionHits((res as any).hits ?? []), {
                   append: true,
                 }),
               );
@@ -93,19 +91,19 @@ export function useGlobalSearch(input: string): {
             .catch((e: unknown) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'session', [], { error: String((e as Error).message) }),
+                mergeServerHits(cur, "session", [], { error: String((e as Error).message) }),
               );
             }),
         );
       }
-      if (allow('logs')) {
+      if (allow("logs")) {
         tasks.push(
           utils.logsSearch
             .fetch({ query: parsed.needle })
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'logs', mapLogHits((res as any).hits ?? []), { append: true }),
+                mergeServerHits(cur, "logs", mapLogHits((res as any).hits ?? []), { append: true }),
               );
             })
             .catch(() => {
@@ -114,7 +112,7 @@ export function useGlobalSearch(input: string): {
         );
       }
       await Promise.allSettled(tasks);
-      if (queryToken.current === token) setStatus('idle');
+      if (queryToken.current === token) setStatus("idle");
     }, TIER2_MS);
 
     tier3Timer.current = setTimeout(async () => {
@@ -122,16 +120,19 @@ export function useGlobalSearch(input: string): {
       const status = ragStatus.data;
       if (!status || !status.defaultNode) return;
       const tasks: Promise<unknown>[] = [];
-      if (allow('session') && status.sessions) {
+      if (allow("session") && status.sessions) {
         tasks.push(
           utils.ragSearch
-            .fetch(
-              { node: status.defaultNode, query: parsed.needle, collection: 'sessions', topK: 10 },
-            )
+            .fetch({
+              node: status.defaultNode,
+              query: parsed.needle,
+              collection: "sessions",
+              topK: 10,
+            })
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'session', mapSessionRagHits((res as any).hits ?? []), {
+                mergeServerHits(cur, "session", mapSessionRagHits((res as any).hits ?? []), {
                   append: true,
                 }),
               );
@@ -139,16 +140,19 @@ export function useGlobalSearch(input: string): {
             .catch(() => {}),
         );
       }
-      if (allow('knowledge') && status.knowledge) {
+      if (allow("knowledge") && status.knowledge) {
         tasks.push(
           utils.ragSearch
-            .fetch(
-              { node: status.defaultNode, query: parsed.needle, collection: 'knowledge', topK: 10 },
-            )
+            .fetch({
+              node: status.defaultNode,
+              query: parsed.needle,
+              collection: "knowledge",
+              topK: 10,
+            })
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'knowledge', mapKnowledgeRagHits((res as any).hits ?? []), {
+                mergeServerHits(cur, "knowledge", mapKnowledgeRagHits((res as any).hits ?? []), {
                   append: true,
                 }),
               );
@@ -156,16 +160,14 @@ export function useGlobalSearch(input: string): {
             .catch(() => {}),
         );
       }
-      if (allow('logs') && status.logs) {
+      if (allow("logs") && status.logs) {
         tasks.push(
           utils.ragSearch
-            .fetch(
-              { node: status.defaultNode, query: parsed.needle, collection: 'logs', topK: 10 },
-            )
+            .fetch({ node: status.defaultNode, query: parsed.needle, collection: "logs", topK: 10 })
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'logs', mapLogRagHits((res as any).hits ?? []), {
+                mergeServerHits(cur, "logs", mapLogRagHits((res as any).hits ?? []), {
                   append: true,
                 }),
               );

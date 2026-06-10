@@ -1,6 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from "bun:test";
 
-import { tierOf } from '../src/index.js';
+import { tierOf } from "../src/index.js";
 
 /**
  * Phase 5 of composite-infra.md — severity classifier entries for
@@ -21,21 +21,21 @@ import { tierOf } from '../src/index.js';
  * is strictly safer there.
  */
 
-describe('Composite severity tiers', () => {
-  test('llamactl.composite.list classifies as tier 1 (read)', () => {
-    expect(tierOf('llamactl.composite.list')).toBe(1);
+describe("Composite severity tiers", () => {
+  test("llamactl.composite.list classifies as tier 1 (read)", () => {
+    expect(tierOf("llamactl.composite.list")).toBe(1);
   });
 
-  test('llamactl.composite.apply classifies as tier 2 (mutation-dry-run-safe)', () => {
-    expect(tierOf('llamactl.composite.apply')).toBe(2);
+  test("llamactl.composite.apply classifies as tier 2 (mutation-dry-run-safe)", () => {
+    expect(tierOf("llamactl.composite.apply")).toBe(2);
   });
 
-  test('llamactl.composite.destroy classifies as tier 3 (destructive)', () => {
-    expect(tierOf('llamactl.composite.destroy')).toBe(3);
+  test("llamactl.composite.destroy classifies as tier 3 (destructive)", () => {
+    expect(tierOf("llamactl.composite.destroy")).toBe(3);
   });
 
-  test('generic *.destroy suffix stays tier 3 for any namespace', () => {
-    expect(tierOf('nova.cluster.destroy')).toBe(3);
-    expect(tierOf('custom.foo.destroy')).toBe(3);
+  test("generic *.destroy suffix stays tier 3 for any namespace", () => {
+    expect(tierOf("nova.cluster.destroy")).toBe(3);
+    expect(tierOf("custom.foo.destroy")).toBe(3);
   });
 });

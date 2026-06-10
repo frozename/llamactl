@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { runNode } from '../src/commands/node.js';
+import { runNode } from "../src/commands/node.js";
 
 /**
  * `llamactl node add-rag` registers a RAG-kind node. The parser
@@ -12,13 +12,13 @@ import { runNode } from '../src/commands/node.js';
  * underlying `ClusterNodeSchema.refine()`.
  */
 
-let tmp = '';
-let configPath = '';
+let tmp = "";
+let configPath = "";
 const originalEnv = { ...process.env };
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-node-add-rag-'));
-  configPath = join(tmp, 'config');
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-node-add-rag-"));
+  configPath = join(tmp, "config");
   process.env.LLAMACTL_CONFIG = configPath;
 });
 
@@ -33,11 +33,11 @@ function captureStderr<T>(fn: () => Promise<T>): Promise<{ result: T; err: strin
   const original = process.stderr.write.bind(process.stderr);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (process.stderr as any).write = (s: string | Uint8Array): boolean => {
-    chunks.push(typeof s === 'string' ? s : String(s));
+    chunks.push(typeof s === "string" ? s : String(s));
     return true;
   };
   return fn()
-    .then((result) => ({ result, err: chunks.join('') }))
+    .then((result) => ({ result, err: chunks.join("") }))
     .finally(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (process.stderr as any).write = original;
@@ -54,180 +54,165 @@ function silenceStdout<T>(fn: () => Promise<T>): Promise<T> {
   });
 }
 
-describe('node add-rag — pgvector with embedder + password-env', () => {
-  test('writes the rag binding + embedder + auth.tokenEnv to kubeconfig', async () => {
+describe("node add-rag — pgvector with embedder + password-env", () => {
+  test("writes the rag binding + embedder + auth.tokenEnv to kubeconfig", async () => {
     const rc = await silenceStdout(() =>
       runNode([
-        'add-rag',
-        'kb-pg',
-        '--provider',
-        'pgvector',
-        '--endpoint',
-        'postgres://kb@db.local:5432/kb',
-        '--collection',
-        'docs',
-        '--embedder-node',
-        'sirius',
-        '--embedder-model',
-        'text-embedding-3-small',
-        '--password-env',
-        'PG_PW',
+        "add-rag",
+        "kb-pg",
+        "--provider",
+        "pgvector",
+        "--endpoint",
+        "postgres://kb@db.local:5432/kb",
+        "--collection",
+        "docs",
+        "--embedder-node",
+        "sirius",
+        "--embedder-model",
+        "text-embedding-3-small",
+        "--password-env",
+        "PG_PW",
       ]),
     );
     expect(rc).toBe(0);
-    const yaml = readFileSync(configPath, 'utf8');
+    const yaml = readFileSync(configPath, "utf8");
     expect(yaml).toContain("name: kb-pg");
-    expect(yaml).toContain('kind: rag');
-    expect(yaml).toContain('provider: pgvector');
-    expect(yaml).toContain('collection: docs');
-    expect(yaml).toContain('tokenEnv: PG_PW');
-    expect(yaml).toContain('node: sirius');
-    expect(yaml).toContain('model: text-embedding-3-small');
+    expect(yaml).toContain("kind: rag");
+    expect(yaml).toContain("provider: pgvector");
+    expect(yaml).toContain("collection: docs");
+    expect(yaml).toContain("tokenEnv: PG_PW");
+    expect(yaml).toContain("node: sirius");
+    expect(yaml).toContain("model: text-embedding-3-small");
   });
 });
 
-describe('node add-rag — chroma with keychain password-ref', () => {
-  test('password-ref lands under auth.tokenRef', async () => {
+describe("node add-rag — chroma with keychain password-ref", () => {
+  test("password-ref lands under auth.tokenRef", async () => {
     const rc = await silenceStdout(() =>
       runNode([
-        'add-rag',
-        'kb-chroma',
-        '--provider',
-        'chroma',
-        '--endpoint',
-        'chroma-mcp run',
-        '--password-ref',
-        'keychain:llamactl/chroma-kb',
+        "add-rag",
+        "kb-chroma",
+        "--provider",
+        "chroma",
+        "--endpoint",
+        "chroma-mcp run",
+        "--password-ref",
+        "keychain:llamactl/chroma-kb",
       ]),
     );
     expect(rc).toBe(0);
-    const yaml = readFileSync(configPath, 'utf8');
-    expect(yaml).toContain('provider: chroma');
-    expect(yaml).toContain('tokenRef: keychain:llamactl/chroma-kb');
+    const yaml = readFileSync(configPath, "utf8");
+    expect(yaml).toContain("provider: chroma");
+    expect(yaml).toContain("tokenRef: keychain:llamactl/chroma-kb");
   });
 });
 
-describe('node add-rag — --key=value inline form works', () => {
-  test('inline = separator parses identically to space-separated', async () => {
+describe("node add-rag — --key=value inline form works", () => {
+  test("inline = separator parses identically to space-separated", async () => {
     const rc = await silenceStdout(() =>
       runNode([
-        'add-rag',
-        'kb-inline',
-        '--provider=chroma',
-        '--endpoint=chroma-mcp run --persist-directory /tmp/c',
+        "add-rag",
+        "kb-inline",
+        "--provider=chroma",
+        "--endpoint=chroma-mcp run --persist-directory /tmp/c",
       ]),
     );
     expect(rc).toBe(0);
-    const yaml = readFileSync(configPath, 'utf8');
-    expect(yaml).toContain('name: kb-inline');
-    expect(yaml).toContain('provider: chroma');
+    const yaml = readFileSync(configPath, "utf8");
+    expect(yaml).toContain("name: kb-inline");
+    expect(yaml).toContain("provider: chroma");
   });
 });
 
-describe('node add-rag — validation', () => {
-  test('missing --provider rejects', async () => {
+describe("node add-rag — validation", () => {
+  test("missing --provider rejects", async () => {
     const { result, err } = await captureStderr(() =>
-      runNode(['add-rag', 'kb', '--endpoint', 'x']),
+      runNode(["add-rag", "kb", "--endpoint", "x"]),
     );
     expect(result).toBe(1);
-    expect(err).toContain('--provider is required');
+    expect(err).toContain("--provider is required");
   });
 
-  test('missing --endpoint rejects', async () => {
+  test("missing --endpoint rejects", async () => {
     const { result, err } = await captureStderr(() =>
-      runNode(['add-rag', 'kb', '--provider', 'chroma']),
+      runNode(["add-rag", "kb", "--provider", "chroma"]),
     );
     expect(result).toBe(1);
-    expect(err).toContain('--endpoint is required');
+    expect(err).toContain("--endpoint is required");
   });
 
-  test('invalid --provider value rejects', async () => {
+  test("invalid --provider value rejects", async () => {
     const { result, err } = await captureStderr(() =>
-      runNode([
-        'add-rag',
-        'kb',
-        '--provider',
-        'milvus',
-        '--endpoint',
-        'x',
-      ]),
+      runNode(["add-rag", "kb", "--provider", "milvus", "--endpoint", "x"]),
     );
     expect(result).toBe(1);
     expect(err).toContain("--provider must be 'chroma' or 'pgvector'");
   });
 
-  test('embedder-node alone (no --embedder-model) rejects', async () => {
+  test("embedder-node alone (no --embedder-model) rejects", async () => {
     const { result, err } = await captureStderr(() =>
       runNode([
-        'add-rag',
-        'kb',
-        '--provider',
-        'pgvector',
-        '--endpoint',
-        'postgres://kb@db:5432/kb',
-        '--embedder-node',
-        'sirius',
+        "add-rag",
+        "kb",
+        "--provider",
+        "pgvector",
+        "--endpoint",
+        "postgres://kb@db:5432/kb",
+        "--embedder-node",
+        "sirius",
       ]),
     );
     expect(result).toBe(1);
-    expect(err).toContain('must be set together');
+    expect(err).toContain("must be set together");
   });
 
-  test('both --password-env and --password-ref rejects', async () => {
+  test("both --password-env and --password-ref rejects", async () => {
     const { result, err } = await captureStderr(() =>
       runNode([
-        'add-rag',
-        'kb',
-        '--provider',
-        'pgvector',
-        '--endpoint',
-        'postgres://kb@db:5432/kb',
-        '--password-env',
-        'PG',
-        '--password-ref',
-        'keychain:llamactl/pg',
+        "add-rag",
+        "kb",
+        "--provider",
+        "pgvector",
+        "--endpoint",
+        "postgres://kb@db:5432/kb",
+        "--password-env",
+        "PG",
+        "--password-ref",
+        "keychain:llamactl/pg",
       ]),
     );
     expect(result).toBe(1);
-    expect(err).toContain('only one of');
+    expect(err).toContain("only one of");
   });
 
-  test('unknown flag rejects', async () => {
+  test("unknown flag rejects", async () => {
     const { result, err } = await captureStderr(() =>
-      runNode([
-        'add-rag',
-        'kb',
-        '--provider',
-        'chroma',
-        '--endpoint',
-        'x',
-        '--fortune-cookie',
-      ]),
+      runNode(["add-rag", "kb", "--provider", "chroma", "--endpoint", "x", "--fortune-cookie"]),
     );
     expect(result).toBe(1);
-    expect(err).toContain('unknown flag --fortune-cookie');
+    expect(err).toContain("unknown flag --fortune-cookie");
   });
 });
 
-describe('node add-rag — repeated --extra-arg', () => {
-  test('each --extra-arg appends to extraArgs[]', async () => {
+describe("node add-rag — repeated --extra-arg", () => {
+  test("each --extra-arg appends to extraArgs[]", async () => {
     const rc = await silenceStdout(() =>
       runNode([
-        'add-rag',
-        'kb',
-        '--provider',
-        'chroma',
-        '--endpoint',
-        'chroma-mcp run',
-        '--extra-arg',
-        '--persist',
-        '--extra-arg',
-        '/tmp/c',
+        "add-rag",
+        "kb",
+        "--provider",
+        "chroma",
+        "--endpoint",
+        "chroma-mcp run",
+        "--extra-arg",
+        "--persist",
+        "--extra-arg",
+        "/tmp/c",
       ]),
     );
     expect(rc).toBe(0);
-    const yaml = readFileSync(configPath, 'utf8');
+    const yaml = readFileSync(configPath, "utf8");
     expect(yaml).toContain("- --persist");
-    expect(yaml).toContain('- /tmp/c');
+    expect(yaml).toContain("- /tmp/c");
   });
 });

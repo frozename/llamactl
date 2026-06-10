@@ -1,16 +1,13 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { runInit } from '../src/commands/init.js';
-import { runComposite } from '../src/commands/composite.js';
-import { runApply } from '../src/commands/workload.js';
-import { runGet } from '../src/commands/workload.js';
-import {
-  __resetWorkloadTestSeams,
-  __setWorkloadTestSeams,
-} from '../src/commands/workload.js';
+import { runInit } from "../src/commands/init.js";
+import { runComposite } from "../src/commands/composite.js";
+import { runApply } from "../src/commands/workload.js";
+import { runGet } from "../src/commands/workload.js";
+import { __resetWorkloadTestSeams, __setWorkloadTestSeams } from "../src/commands/workload.js";
 
 /**
  * Opt-in E2E covering the full onboarding round-trip:
@@ -26,11 +23,11 @@ import {
  * failure beyond whatever the composite-destroy cleanup missed.
  */
 
-const SHOULD_RUN = process.env.LLAMACTL_INIT_E2E === '1';
+const SHOULD_RUN = process.env.LLAMACTL_INIT_E2E === "1";
 
-let tmp = '';
-let compositesDir = '';
-let configPath = '';
+let tmp = "";
+let compositesDir = "";
+let configPath = "";
 const originalEnv = { ...process.env };
 let dockerReachable = false;
 
@@ -38,22 +35,28 @@ function makeModelHostClient() {
   return {
     serverStatus: {
       query: async () => ({
-        state: 'down',
+        state: "down",
         rel: null,
         extraArgs: [],
         pid: null,
         host: null,
         port: null,
         binary: null,
-        endpoint: '',
+        endpoint: "",
       }),
     },
     serverStop: { mutate: async () => ({ ok: true }) },
     serverStart: { subscribe: async () => ({ unsubscribe() {} }) },
     modelHostStart: {
-      subscribe: async (_input: unknown, callbacks: { onData: (data: unknown) => void; onComplete: () => void }) => {
+      subscribe: async (
+        _input: unknown,
+        callbacks: { onData: (data: unknown) => void; onComplete: () => void },
+      ) => {
         queueMicrotask(() => {
-          callbacks.onData({ type: 'done', result: { ok: true, pid: 3333, endpoint: 'http://127.0.0.1:8094' } });
+          callbacks.onData({
+            type: "done",
+            result: { ok: true, pid: 3333, endpoint: "http://127.0.0.1:8094" },
+          });
           callbacks.onComplete();
         });
         return { unsubscribe() {} };
@@ -61,7 +64,7 @@ function makeModelHostClient() {
     },
     modelHostStop: { mutate: async () => ({ ok: true }) },
     modelHostStatus: {
-      query: async () => ({ state: 'Running', pid: 3333 }),
+      query: async () => ({ state: "Running", pid: 3333 }),
     },
     rpcServerStart: { subscribe: async () => ({ unsubscribe() {} }) },
     rpcServerStop: { mutate: async () => ({ ok: true }) },
@@ -71,9 +74,9 @@ function makeModelHostClient() {
 
 beforeAll(async () => {
   if (!SHOULD_RUN) return;
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-init-e2e-'));
-  compositesDir = join(tmp, 'composites');
-  configPath = join(tmp, 'config');
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-init-e2e-"));
+  compositesDir = join(tmp, "composites");
+  configPath = join(tmp, "config");
   process.env.LLAMACTL_COMPOSITES_DIR = compositesDir;
   process.env.LLAMACTL_CONFIG = configPath;
   __setWorkloadTestSeams({
@@ -83,9 +86,7 @@ beforeAll(async () => {
   try {
     // Cheap docker-reachability probe without pulling the full
     // backend graph into the test harness.
-    const { createDockerBackend } = await import(
-      '@llamactl/remote'
-    );
+    const { createDockerBackend } = await import("@llamactl/remote");
     const backend = createDockerBackend();
     await backend.ping();
     dockerReachable = true;
@@ -117,120 +118,118 @@ function silence<T>(fn: () => Promise<T>): Promise<T> {
   });
 }
 
-describe.skipIf(!SHOULD_RUN)('init → apply → destroy round-trip', () => {
+describe.skipIf(!SHOULD_RUN)("init → apply → destroy round-trip", () => {
   test(
-    'chroma-only template writes, applies, lists, destroys',
+    "chroma-only template writes, applies, lists, destroys",
     async () => {
       if (!dockerReachable) {
-        console.warn(
-          '[init-e2e] skipping: docker daemon unreachable',
-        );
+        console.warn("[init-e2e] skipping: docker daemon unreachable");
         return;
       }
 
       // 1. Init — write the manifest.
       const initRc = await silence(() =>
         runInit([
-          '--yes',
-          '--no-apply',
-          '--runtime=docker',
-          '--template=chroma-only',
-          '--name=init-e2e',
+          "--yes",
+          "--no-apply",
+          "--runtime=docker",
+          "--template=chroma-only",
+          "--name=init-e2e",
         ]),
       );
       expect(initRc).toBe(0);
-      const manifestPath = join(compositesDir, 'init-e2e.yaml');
-      const yaml = readFileSync(manifestPath, 'utf8');
-      expect(yaml).toContain('name: init-e2e');
-      expect(yaml).toContain('runtime: docker');
+      const manifestPath = join(compositesDir, "init-e2e.yaml");
+      const yaml = readFileSync(manifestPath, "utf8");
+      expect(yaml).toContain("name: init-e2e");
+      expect(yaml).toContain("runtime: docker");
 
       // 2. Apply via the composite subcommand so we exercise the same
       //    path an operator would take.
-      const applyRc = await silence(() =>
-        runComposite(['apply', '-f', manifestPath]),
-      );
+      const applyRc = await silence(() => runComposite(["apply", "-f", manifestPath]));
       expect(applyRc).toBe(0);
 
       // 3. List — composite should be present.
-      let listed = '';
+      let listed = "";
       const stdoutOrig = process.stdout.write.bind(process.stdout);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (process.stdout as any).write = (s: string | Uint8Array): boolean => {
-        listed += typeof s === 'string' ? s : String(s);
+        listed += typeof s === "string" ? s : String(s);
         return true;
       };
       try {
-        const listRc = await runComposite(['list']);
+        const listRc = await runComposite(["list"]);
         expect(listRc).toBe(0);
       } finally {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (process.stdout as any).write = stdoutOrig;
       }
-      expect(listed).toContain('init-e2e');
+      expect(listed).toContain("init-e2e");
 
       // 4. Destroy — cleans up.
-      const destroyRc = await silence(() =>
-        runComposite(['destroy', 'init-e2e']),
-      );
+      const destroyRc = await silence(() => runComposite(["destroy", "init-e2e"]));
       expect(destroyRc).toBe(0);
     },
     10 * 60_000,
   );
 });
 
-describe.skipIf(!SHOULD_RUN)('modelhost workload round-trip', () => {
-  test('apply persists ModelHost and list renders it', async () => {
-    const workloadDir = join(tmp, 'workloads');
-    process.env.LLAMACTL_WORKLOADS_DIR = workloadDir;
-    process.env.LOCAL_AI_RUNTIME_DIR = join(tmp, 'runtime');
-    const fakeBinary = join(tmp, 'omlx');
-    await Bun.write(fakeBinary, '');
+describe.skipIf(!SHOULD_RUN)("modelhost workload round-trip", () => {
+  test(
+    "apply persists ModelHost and list renders it",
+    async () => {
+      const workloadDir = join(tmp, "workloads");
+      process.env.LLAMACTL_WORKLOADS_DIR = workloadDir;
+      process.env.LOCAL_AI_RUNTIME_DIR = join(tmp, "runtime");
+      const fakeBinary = join(tmp, "omlx");
+      await Bun.write(fakeBinary, "");
 
-    const manifestPath = join(tmp, 'mlx-host-local.yaml');
-    await Bun.write(
-      manifestPath,
-      [
-        'apiVersion: llamactl/v1',
-        'kind: ModelHost',
-        'metadata:',
-        '  name: mlx-host-local',
-        'spec:',
-        '  enabled: true',
-        '  node: local',
-        '  engine: omlx',
-        `  binary: ${fakeBinary}`,
-        '  endpoint:',
-        '    host: 127.0.0.1',
-        '    port: 8094',
-        '  hostedModels:',
-        '    - rel: mlx-community/Qwen3-8B-MLX-4bit',
-        '  resources:',
-        '    expectedMemoryGiB: 12',
-        '  extraArgs: []',
-        '  timeoutSeconds: 60',
-        '',
-      ].join('\n'),
-    );
+      const manifestPath = join(tmp, "mlx-host-local.yaml");
+      await Bun.write(
+        manifestPath,
+        [
+          "apiVersion: llamactl/v1",
+          "kind: ModelHost",
+          "metadata:",
+          "  name: mlx-host-local",
+          "spec:",
+          "  enabled: true",
+          "  node: local",
+          "  engine: omlx",
+          `  binary: ${fakeBinary}`,
+          "  endpoint:",
+          "    host: 127.0.0.1",
+          "    port: 8094",
+          "  hostedModels:",
+          "    - rel: mlx-community/Qwen3-8B-MLX-4bit",
+          "  resources:",
+          "    expectedMemoryGiB: 12",
+          "  extraArgs: []",
+          "  timeoutSeconds: 60",
+          "",
+        ].join("\n"),
+      );
 
-    let stdout = '';
-    const stdoutOrig = process.stdout.write.bind(process.stdout);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (process.stdout as any).write = (s: string | Uint8Array): boolean => {
-      stdout += typeof s === 'string' ? s : String(s);
-      return true;
-    };
-
-    try {
-      const applyRc = await runApply(['-f', manifestPath]);
-      expect(applyRc).toBe(0);
-      const listRc = await runGet(['workloads']);
-      expect(listRc).toBe(0);
-    } finally {
+      let stdout = "";
+      const stdoutOrig = process.stdout.write.bind(process.stdout);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (process.stdout as any).write = stdoutOrig;
-    }
+      (process.stdout as any).write = (s: string | Uint8Array): boolean => {
+        stdout += typeof s === "string" ? s : String(s);
+        return true;
+      };
 
-    expect(stdout).toContain('modelhost/mlx-host-local');
-    expect(stdout).toContain('ModelHost ready at http://127.0.0.1:8094');
-  }, 10 * 60_000);
+      try {
+        const applyRc = await runApply(["-f", manifestPath]);
+        expect(applyRc).toBe(0);
+        const listRc = await runGet(["workloads"]);
+        expect(listRc).toBe(0);
+      } finally {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (process.stdout as any).write = stdoutOrig;
+      }
+
+      expect(stdout).toContain("modelhost/mlx-host-local");
+      expect(stdout).toContain("ModelHost ready at http://127.0.0.1:8094");
+    },
+    10 * 60_000,
+  );
 });

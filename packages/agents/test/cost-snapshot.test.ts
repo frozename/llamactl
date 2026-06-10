@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { runRunbook, type RunbookToolClient, type ToolCallInput } from '../src/index.js';
+import { describe, expect, test } from "bun:test";
+import { runRunbook, type RunbookToolClient, type ToolCallInput } from "../src/index.js";
 
 /**
  * cost-snapshot is read-only; it invokes nova.ops.cost.snapshot once
@@ -7,23 +7,24 @@ import { runRunbook, type RunbookToolClient, type ToolCallInput } from '../src/i
  * routing + summary shape without booting MCP.
  */
 
-function makeClient(
-  responses: Record<string, unknown>,
-): { client: RunbookToolClient; calls: string[] } {
+function makeClient(responses: Record<string, unknown>): {
+  client: RunbookToolClient;
+  calls: string[];
+} {
   const calls: string[] = [];
   const client: RunbookToolClient = {
     async callTool(input: ToolCallInput) {
       calls.push(input.name);
       const payload = responses[input.name];
       if (payload === undefined) throw new Error(`unexpected tool call: ${input.name}`);
-      return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
+      return { content: [{ type: "text", text: JSON.stringify(payload) }] };
     },
   };
   return { client, calls };
 }
 
-describe('cost-snapshot runbook', () => {
-  test('passes days + topN through, trims groups to topN, composes summary', async () => {
+describe("cost-snapshot runbook", () => {
+  test("passes days + topN through, trims groups to topN, composes summary", async () => {
     const providerGroups = Array.from({ length: 10 }, (_, i) => ({
       key: `provider-${i}`,
       requestCount: 10 - i,
@@ -41,9 +42,9 @@ describe('cost-snapshot runbook', () => {
       avgLatencyMs: 120 + i,
     }));
     const { client, calls } = makeClient({
-      'nova.ops.cost.snapshot': {
-        windowSince: '2026-04-12T00:00:00Z',
-        windowUntil: '2026-04-19T00:00:00Z',
+      "nova.ops.cost.snapshot": {
+        windowSince: "2026-04-12T00:00:00Z",
+        windowUntil: "2026-04-19T00:00:00Z",
         filesScanned: 3,
         malformedLines: 0,
         totalRequests: 55,
@@ -53,12 +54,12 @@ describe('cost-snapshot runbook', () => {
       },
     });
     const result = await runRunbook<{ days: number; topN: number }>(
-      'cost-snapshot',
+      "cost-snapshot",
       { days: 7, topN: 3 },
       { toolClient: client },
     );
     expect(result.ok).toBe(true);
-    expect(calls).toEqual(['nova.ops.cost.snapshot']);
+    expect(calls).toEqual(["nova.ops.cost.snapshot"]);
     const summary = result.summary as {
       totalRequests: number;
       topProviders: Array<{ key: string }>;
@@ -66,18 +67,18 @@ describe('cost-snapshot runbook', () => {
     };
     expect(summary.totalRequests).toBe(55);
     expect(summary.topProviders.map((g) => g.key)).toEqual([
-      'provider-0',
-      'provider-1',
-      'provider-2',
+      "provider-0",
+      "provider-1",
+      "provider-2",
     ]);
     expect(summary.topModels).toHaveLength(3);
   });
 
-  test('applies default params when caller omits them', async () => {
+  test("applies default params when caller omits them", async () => {
     const { client } = makeClient({
-      'nova.ops.cost.snapshot': {
-        windowSince: 'x',
-        windowUntil: 'y',
+      "nova.ops.cost.snapshot": {
+        windowSince: "x",
+        windowUntil: "y",
         filesScanned: 0,
         malformedLines: 0,
         totalRequests: 0,
@@ -86,7 +87,7 @@ describe('cost-snapshot runbook', () => {
         byModel: [],
       },
     });
-    const result = await runRunbook('cost-snapshot', {}, { toolClient: client });
+    const result = await runRunbook("cost-snapshot", {}, { toolClient: client });
     expect(result.ok).toBe(true);
     const summary = result.summary as { topProviders: unknown[] };
     expect(summary.topProviders).toEqual([]);

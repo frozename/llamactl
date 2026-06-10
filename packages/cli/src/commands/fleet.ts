@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from "node:fs";
 import {
   DEFAULT_PRESSURE_THRESHOLDS,
   FleetAggregator,
@@ -10,11 +10,8 @@ import {
   writeSnapshot,
   type AggregatorPeer,
   type FleetSnapshotEntry,
-} from '../../../fleet-supervisor/src/index.js';
-import {
-  listPeers,
-  type PeerNode,
-} from '../../../remote/src/config/peers.js';
+} from "../../../fleet-supervisor/src/index.js";
+import { listPeers, type PeerNode } from "../../../remote/src/config/peers.js";
 
 const USAGE = `Usage: llamactl fleet <subcommand>
 
@@ -36,13 +33,13 @@ interface SnapshotRow {
   free_mb: number;
   compressor_mb: number;
   workloads: number;
-  pressure: 'NORMAL' | 'HIGH';
+  pressure: "NORMAL" | "HIGH";
 }
 
-function toPressure(s: FleetSnapshotEntry): 'NORMAL' | 'HIGH' {
-  if (s.node_mem.free_mb < DEFAULT_PRESSURE_THRESHOLDS.headroomMinMb) return 'HIGH';
-  if (s.node_mem.compressor_mb > DEFAULT_PRESSURE_THRESHOLDS.compressorWarnMb) return 'HIGH';
-  return 'NORMAL';
+function toPressure(s: FleetSnapshotEntry): "NORMAL" | "HIGH" {
+  if (s.node_mem.free_mb < DEFAULT_PRESSURE_THRESHOLDS.headroomMinMb) return "HIGH";
+  if (s.node_mem.compressor_mb > DEFAULT_PRESSURE_THRESHOLDS.compressorWarnMb) return "HIGH";
+  return "NORMAL";
 }
 
 function toRow(node: string, s: FleetSnapshotEntry): SnapshotRow {
@@ -61,9 +58,7 @@ function parseFlagValue(args: string[], name: string): string | undefined {
   return args[i + 1];
 }
 
-async function buildRows(
-  deps: Required<FleetDeps>,
-): Promise<SnapshotRow[]> {
+async function buildRows(deps: Required<FleetDeps>): Promise<SnapshotRow[]> {
   const rows: SnapshotRow[] = [];
   const local = await deps.readLocalSnapshot();
   if (local) rows.push(toRow(local.node, local));
@@ -80,7 +75,7 @@ async function buildRows(
 }
 
 function printRowsTable(rows: SnapshotRow[]): void {
-  console.log('node | free_mb | compressor_mb | workloads | pressure');
+  console.log("node | free_mb | compressor_mb | workloads | pressure");
   for (const row of rows) {
     console.log(
       `${row.node} | ${row.free_mb} | ${row.compressor_mb} | ${row.workloads} | ${row.pressure}`,
@@ -96,11 +91,13 @@ function printStatusRows(rows: SnapshotRow[]): void {
   }
 }
 
-function readJournalEntries(path: string): Array<{ ts?: string; kind?: string; node?: string; raw: string }> {
+function readJournalEntries(
+  path: string,
+): Array<{ ts?: string; kind?: string; node?: string; raw: string }> {
   if (!existsSync(path)) return [];
-  const raw = readFileSync(path, 'utf8');
+  const raw = readFileSync(path, "utf8");
   const entries: Array<{ ts?: string; kind?: string; node?: string; raw: string }> = [];
-  for (const line of raw.split('\n')) {
+  for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
@@ -114,8 +111,9 @@ function readJournalEntries(path: string): Array<{ ts?: string; kind?: string; n
 }
 
 export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<number> {
-  const readLocalSnapshot = deps.readLocalSnapshot ?? (async () =>
-    readLatestFleetSnapshotFromJournal(defaultFleetJournalPath()));
+  const readLocalSnapshot =
+    deps.readLocalSnapshot ??
+    (async () => readLatestFleetSnapshotFromJournal(defaultFleetJournalPath()));
   const readPeers = deps.readPeers ?? listPeers;
   const fetchPeerSnapshot =
     deps.fetchPeerSnapshot ??
@@ -130,17 +128,17 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
   };
 
   const [sub, ...rest] = args;
-  if (!sub || sub === '--help' || sub === '-h') {
+  if (!sub || sub === "--help" || sub === "-h") {
     console.log(USAGE);
     return sub ? 0 : 1;
   }
 
-  if (sub === 'snapshot') {
-    const all = rest.includes('--all');
+  if (sub === "snapshot") {
+    const all = rest.includes("--all");
     if (!all) {
       const local = await fullDeps.readLocalSnapshot();
       if (!local) {
-        console.error('fleet snapshot: no local fleet-snapshot entry found');
+        console.error("fleet snapshot: no local fleet-snapshot entry found");
         return 1;
       }
       console.log(JSON.stringify(local));
@@ -152,30 +150,30 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
     return 0;
   }
 
-  if (sub === 'status') {
+  if (sub === "status") {
     const rows = await buildRows(fullDeps);
     printStatusRows(rows);
     return 0;
   }
 
-  if (sub === 'journal-tail') {
-    const journalPath = parseFlagValue(rest, '--journal') ?? defaultFleetJournalPath();
-    const typeFilter = parseFlagValue(rest, '--type');
-    const limitRaw = parseFlagValue(rest, '--limit');
+  if (sub === "journal-tail") {
+    const journalPath = parseFlagValue(rest, "--journal") ?? defaultFleetJournalPath();
+    const typeFilter = parseFlagValue(rest, "--type");
+    const limitRaw = parseFlagValue(rest, "--limit");
     const limit = limitRaw ? Number.parseInt(limitRaw, 10) : 20;
     const entries = readJournalEntries(journalPath)
       .filter((entry) => (typeFilter ? entry.kind === typeFilter : true))
       .slice(-Math.max(1, limit));
     for (const entry of entries) {
-      const prefix = `${entry.ts ?? '-'} ${entry.kind ?? 'unknown'} ${entry.node ?? '-'}`;
+      const prefix = `${entry.ts ?? "-"} ${entry.kind ?? "unknown"} ${entry.node ?? "-"}`;
       console.log(`${prefix} ${entry.raw}`);
     }
     return 0;
   }
 
-  if (sub === 'aggregator' && rest[0] === 'serve') {
-    const once = rest.includes('--once');
-    const dbPath = parseFlagValue(rest, '--db') ?? defaultAggregatorDbPath();
+  if (sub === "aggregator" && rest[0] === "serve") {
+    const once = rest.includes("--once");
+    const dbPath = parseFlagValue(rest, "--db") ?? defaultAggregatorDbPath();
     const peers = readPeers();
     const db = openAggregatorDb(dbPath);
     const aggregator = new FleetAggregator({
@@ -208,8 +206,8 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
       db.close();
       process.exit(0);
     };
-    process.on('SIGINT', stop);
-    process.on('SIGTERM', stop);
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
     return await new Promise<number>(() => {
       // long-running
     });

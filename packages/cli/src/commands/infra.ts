@@ -1,30 +1,22 @@
-import { getGlobals, getNodeClient } from '../dispatcher.js';
-import {
-  infraSpec,
-  listPeers,
-  makeInfraClient,
-  type PeerNode,
-} from '@llamactl/remote';
-import { planRollout, runRollback, runRollout } from '@llamactl/fleet-supervisor';
+import { getGlobals, getNodeClient } from "../dispatcher.js";
+import { infraSpec, listPeers, makeInfraClient, type PeerNode } from "@llamactl/remote";
+import { planRollout, runRollback, runRollout } from "@llamactl/fleet-supervisor";
 
 type InfraPlatformKind = infraSpec.InfraPlatformKind;
 const ALLOWED_PLATFORMS: InfraPlatformKind[] = [
-  'darwin-arm64',
-  'darwin-x64',
-  'linux-x64',
-  'linux-arm64',
+  "darwin-arm64",
+  "darwin-x64",
+  "linux-x64",
+  "linux-arm64",
 ];
 
-function platformFromNodeFacts(facts: {
-  os?: string;
-  arch?: string;
-}): InfraPlatformKind | null {
+function platformFromNodeFacts(facts: { os?: string; arch?: string }): InfraPlatformKind | null {
   const os = facts.os;
   const arch = facts.arch;
-  if (os === 'darwin' && arch === 'arm64') return 'darwin-arm64';
-  if (os === 'darwin' && arch === 'x64') return 'darwin-x64';
-  if (os === 'linux' && arch === 'x64') return 'linux-x64';
-  if (os === 'linux' && arch === 'arm64') return 'linux-arm64';
+  if (os === "darwin" && arch === "arm64") return "darwin-arm64";
+  if (os === "darwin" && arch === "x64") return "darwin-x64";
+  if (os === "linux" && arch === "x64") return "linux-x64";
+  if (os === "linux" && arch === "arm64") return "linux-arm64";
   return null;
 }
 
@@ -71,11 +63,11 @@ EXAMPLES:
 function parseKv(argv: string[]): Map<string, string> {
   const out = new Map<string, string>();
   for (const arg of argv) {
-    if (!arg.startsWith('--')) continue;
-    const eq = arg.indexOf('=');
+    if (!arg.startsWith("--")) continue;
+    const eq = arg.indexOf("=");
     if (eq < 0) {
       // Boolean-style flag.
-      out.set(arg.slice(2), '');
+      out.set(arg.slice(2), "");
       continue;
     }
     out.set(arg.slice(2, eq), arg.slice(eq + 1));
@@ -84,20 +76,20 @@ function parseKv(argv: string[]): Map<string, string> {
 }
 
 function positionalArgs(argv: string[]): string[] {
-  return argv.filter((a) => !a.startsWith('--'));
+  return argv.filter((a) => !a.startsWith("--"));
 }
 
 async function runList(): Promise<number> {
   const client = getNodeClient();
   const rows = await client.infraList.query();
   if (rows.length === 0) {
-    process.stdout.write('no infra packages installed\n');
+    process.stdout.write("no infra packages installed\n");
     return 0;
   }
   for (const row of rows) {
-    const versions = row.versions.join(',');
-    const active = row.active ?? '—';
-    process.stdout.write(`${row.pkg}\tversions=${versions || '(none)'}\tactive=${active}\n`);
+    const versions = row.versions.join(",");
+    const active = row.active ?? "—";
+    process.stdout.write(`${row.pkg}\tversions=${versions || "(none)"}\tactive=${active}\n`);
   }
   return 0;
 }
@@ -139,13 +131,13 @@ async function resolveFromSpec(
 async function runInstall(argv: string[]): Promise<number> {
   const [pkg] = positionalArgs(argv);
   if (!pkg) {
-    process.stderr.write('infra install: pkg name required\n');
+    process.stderr.write("infra install: pkg name required\n");
     return 1;
   }
   const kv = parseKv(argv);
-  const version = kv.get('version');
+  const version = kv.get("version");
   if (!version) {
-    process.stderr.write('infra install: --version is required\n');
+    process.stderr.write("infra install: --version is required\n");
     return 1;
   }
   const client = getNodeClient();
@@ -154,17 +146,17 @@ async function runInstall(argv: string[]): Promise<number> {
   //   (a) explicit --tarball-url + --sha256 — legacy/ad-hoc path.
   //   (b) otherwise, resolve from ~/.llamactl/packages/<pkg>.yaml
   //       against the node's os/arch (or a --target-platform override).
-  let tarballUrl = kv.get('tarball-url');
-  let sha256 = kv.get('sha256');
+  let tarballUrl = kv.get("tarball-url");
+  let sha256 = kv.get("sha256");
   if (!tarballUrl || !sha256) {
-    const platformArg = kv.get('target-platform');
+    const platformArg = kv.get("target-platform");
     if (platformArg && !ALLOWED_PLATFORMS.includes(platformArg as InfraPlatformKind)) {
       process.stderr.write(
-        `infra install: --target-platform must be one of ${ALLOWED_PLATFORMS.join(', ')}\n`,
+        `infra install: --target-platform must be one of ${ALLOWED_PLATFORMS.join(", ")}\n`,
       );
       return 1;
     }
-    const packagesDir = kv.get('packages-dir');
+    const packagesDir = kv.get("packages-dir");
     const resolved = await resolveFromSpec(
       pkg,
       version,
@@ -172,7 +164,7 @@ async function runInstall(argv: string[]): Promise<number> {
       packagesDir,
       client,
     );
-    if ('error' in resolved) {
+    if ("error" in resolved) {
       process.stderr.write(`${resolved.error}\n`);
       return 1;
     }
@@ -180,8 +172,8 @@ async function runInstall(argv: string[]): Promise<number> {
     sha256 = resolved.sha256;
   }
 
-  const activate = !kv.has('no-activate');
-  const skipIfPresent = !kv.has('force');
+  const activate = !kv.has("no-activate");
+  const skipIfPresent = !kv.has("force");
   const result = await client.infraInstall.mutate({
     pkg,
     version,
@@ -197,13 +189,13 @@ async function runInstall(argv: string[]): Promise<number> {
 async function runActivate(argv: string[]): Promise<number> {
   const [pkg] = positionalArgs(argv);
   if (!pkg) {
-    process.stderr.write('infra activate: pkg name required\n');
+    process.stderr.write("infra activate: pkg name required\n");
     return 1;
   }
   const kv = parseKv(argv);
-  const version = kv.get('version');
+  const version = kv.get("version");
   if (!version) {
-    process.stderr.write('infra activate: --version is required\n');
+    process.stderr.write("infra activate: --version is required\n");
     return 1;
   }
   const client = getNodeClient();
@@ -215,15 +207,13 @@ async function runActivate(argv: string[]): Promise<number> {
 async function runUninstall(argv: string[]): Promise<number> {
   const [pkg] = positionalArgs(argv);
   if (!pkg) {
-    process.stderr.write('infra uninstall: pkg name required\n');
+    process.stderr.write("infra uninstall: pkg name required\n");
     return 1;
   }
   const kv = parseKv(argv);
-  const version = kv.get('version');
+  const version = kv.get("version");
   const client = getNodeClient();
-  const result = await client.infraUninstall.mutate(
-    version ? { pkg, version } : { pkg },
-  );
+  const result = await client.infraUninstall.mutate(version ? { pkg, version } : { pkg });
   process.stdout.write(`${JSON.stringify(result)}\n`);
   return 0;
 }
@@ -232,18 +222,18 @@ async function runService(argv: string[]): Promise<number> {
   const [action, pkg, ...rest] = argv;
   if (!action || !pkg) {
     process.stderr.write(
-      'infra service: usage: llamactl infra service <start|stop|reload|status|write-unit> <pkg> [--node <n>]\n',
+      "infra service: usage: llamactl infra service <start|stop|reload|status|write-unit> <pkg> [--node <n>]\n",
     );
     return 1;
   }
-  if (action === 'write-unit') {
+  if (action === "write-unit") {
     const kv = parseKv(rest);
     // --env=KEY=VALUE can be repeated; parseKv collapses to one. Use
     // positional repetition if operators need multiple — deferred.
     const envEntries: Record<string, string> = {};
-    if (kv.has('env')) {
-      const val = kv.get('env') ?? '';
-      const eq = val.indexOf('=');
+    if (kv.has("env")) {
+      const val = kv.get("env") ?? "";
+      const eq = val.indexOf("=");
       if (eq > 0) envEntries[val.slice(0, eq)] = val.slice(eq + 1);
     }
     const client = getNodeClient();
@@ -251,7 +241,7 @@ async function runService(argv: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return 0;
   }
-  if (action !== 'start' && action !== 'stop' && action !== 'reload' && action !== 'status') {
+  if (action !== "start" && action !== "stop" && action !== "reload" && action !== "status") {
     process.stderr.write(`infra service: unknown action ${action}\n`);
     return 1;
   }
@@ -266,7 +256,7 @@ async function runService(argv: string[]): Promise<number> {
 
 function runListSpecs(argv: string[]): number {
   const kv = parseKv(argv);
-  const dir = kv.get('packages-dir');
+  const dir = kv.get("packages-dir");
   const specs = infraSpec.listInfraPackageSpecs(dir);
   if (specs.length === 0) {
     const resolved = dir ?? infraSpec.defaultInfraPackagesDir();
@@ -274,8 +264,8 @@ function runListSpecs(argv: string[]): number {
     return 0;
   }
   for (const s of specs) {
-    const versions = s.versions.join(',');
-    const def = s.default ? `default=${s.default}` : 'default=(unset)';
+    const versions = s.versions.join(",");
+    const def = s.default ? `default=${s.default}` : "default=(unset)";
     process.stdout.write(`${s.name}\tversions=${versions}\t${def}\t${s.path}\n`);
   }
   return 0;
@@ -284,7 +274,7 @@ function runListSpecs(argv: string[]): number {
 async function runCurrent(argv: string[]): Promise<number> {
   const [pkg] = positionalArgs(argv);
   if (!pkg) {
-    process.stderr.write('infra current: pkg name required\n');
+    process.stderr.write("infra current: pkg name required\n");
     return 1;
   }
   const client = getNodeClient();
@@ -297,11 +287,16 @@ async function runCurrent(argv: string[]): Promise<number> {
   return 0;
 }
 
-
 export async function executeRollout(
   groups: PeerNode[][],
   clientFactory: (peer: PeerNode) => any,
-  opts: { pkg: string, version: string, tarballUrl: string, sha256: string, skipIfPresent: boolean }
+  opts: {
+    pkg: string;
+    version: string;
+    tarballUrl: string;
+    sha256: string;
+    skipIfPresent: boolean;
+  },
 ) {
   return runRollout(groups, clientFactory, opts);
 }
@@ -309,18 +304,18 @@ export async function executeRollout(
 export async function executeRollback(
   peers: PeerNode[],
   clientFactory: (peer: PeerNode) => any,
-  opts: { pkg: string, previousVersion: string }
+  opts: { pkg: string; previousVersion: string },
 ) {
   return runRollback(peers, clientFactory, opts);
 }
 
 function matchNodeGlob(name: string, glob: string): boolean {
-  if (glob === '*' || glob === '') return true;
-  if (!glob.includes('*')) return name === glob;
+  if (glob === "*" || glob === "") return true;
+  if (!glob.includes("*")) return name === glob;
   const escaped = glob
-    .split('*')
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
-    .join('.*');
+    .split("*")
+    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
   return new RegExp(`^${escaped}$`).test(name);
 }
 
@@ -339,7 +334,7 @@ async function runRolloutMain(argv: string[]): Promise<number> {
   const sha256 = kv.get("sha256");
   const strategy = kv.get("strategy") === "all" ? "all" : "one-at-a-time";
   const healthTimeoutMs = Number.parseInt(kv.get("health-timeout") ?? "60", 10) * 1000;
-  
+
   if (!pkg || !version || !tarballUrl || !sha256) {
     process.stderr.write("infra rollout: pkg, --version, --tarball-url, --sha256 required\n");
     return 1;

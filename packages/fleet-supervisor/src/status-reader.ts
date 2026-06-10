@@ -1,11 +1,11 @@
-import * as fs from 'fs';
-import * as readline from 'readline';
-import type { FleetJournalEntry, FleetPressureStatusEntry, FleetTransitionEntry } from './types.js';
-import { DEFAULT_PRESSURE_THRESHOLDS } from './loop.js';
+import * as fs from "fs";
+import * as readline from "readline";
+import type { FleetJournalEntry, FleetPressureStatusEntry, FleetTransitionEntry } from "./types.js";
+import { DEFAULT_PRESSURE_THRESHOLDS } from "./loop.js";
 
 export interface NodePressureStatus {
   name: string;
-  state: 'NORMAL' | 'HIGH';
+  state: "NORMAL" | "HIGH";
   enteredAt: string | null;
   durationMs: number;
   consecutiveClearTicks: number;
@@ -27,21 +27,26 @@ export interface ReadSupervisorStatusOptions {
   limit?: number;
 }
 
-export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): Promise<SupervisorStatusReport> {
+export async function readSupervisorStatus(
+  opts: ReadSupervisorStatusOptions,
+): Promise<SupervisorStatusReport> {
   const limit = opts.limit ?? 20;
 
-  const nodeStates = new Map<string, {
-    state: 'NORMAL' | 'HIGH';
-    enteredAt: string | null;
-    lastTransitionTs: string | null;
-    lastStatus: FleetPressureStatusEntry | null;
-    recent: FleetPressureStatusEntry[];
-  }>();
+  const nodeStates = new Map<
+    string,
+    {
+      state: "NORMAL" | "HIGH";
+      enteredAt: string | null;
+      lastTransitionTs: string | null;
+      lastStatus: FleetPressureStatusEntry | null;
+      recent: FleetPressureStatusEntry[];
+    }
+  >();
 
   const ensureNode = (node: string) => {
     if (!nodeStates.has(node)) {
       nodeStates.set(node, {
-        state: 'NORMAL',
+        state: "NORMAL",
         enteredAt: null,
         lastTransitionTs: null,
         lastStatus: null,
@@ -55,7 +60,7 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
     return { nodes: [] };
   }
 
-  const stream = fs.createReadStream(opts.journalPath, { encoding: 'utf8' });
+  const stream = fs.createReadStream(opts.journalPath, { encoding: "utf8" });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
   for await (const line of rl) {
@@ -64,20 +69,20 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
       const entry = JSON.parse(line) as FleetJournalEntry;
       if (opts.node && entry.node !== opts.node) continue;
 
-      if (entry.kind === 'fleet-transition' && entry.subjectKind === 'node') {
+      if (entry.kind === "fleet-transition" && entry.subjectKind === "node") {
         const trans = entry as FleetTransitionEntry;
-        if (trans.signal === 'pressure' && trans.to === 'HIGH') {
+        if (trans.signal === "pressure" && trans.to === "HIGH") {
           const state = ensureNode(entry.node);
-          state.state = 'HIGH';
+          state.state = "HIGH";
           state.enteredAt = trans.ts;
           state.lastTransitionTs = trans.ts;
-        } else if (trans.signal === 'pressure-cleared' && trans.to === 'NORMAL') {
+        } else if (trans.signal === "pressure-cleared" && trans.to === "NORMAL") {
           const state = ensureNode(entry.node);
-          state.state = 'NORMAL';
+          state.state = "NORMAL";
           state.enteredAt = null;
           state.lastTransitionTs = trans.ts;
         }
-      } else if (entry.kind === 'fleet-pressure-status') {
+      } else if (entry.kind === "fleet-pressure-status") {
         const status = entry as FleetPressureStatusEntry;
         const state = ensureNode(entry.node);
         state.lastStatus = status;
@@ -87,7 +92,7 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
         }
         if (state.lastTransitionTs === null || status.ts > state.lastTransitionTs) {
           state.state = status.state;
-          state.enteredAt = status.state === 'HIGH' ? status.enteredAt : null;
+          state.enteredAt = status.state === "HIGH" ? status.enteredAt : null;
         }
       }
     } catch (err) {
@@ -108,7 +113,9 @@ export async function readSupervisorStatus(opts: ReadSupervisorStatusOptions): P
       enteredAt: state.enteredAt,
       durationMs: state.enteredAt ? Math.max(0, now - new Date(state.enteredAt).getTime()) : 0,
       consecutiveClearTicks: state.lastStatus ? state.lastStatus.consecutiveClearTicks : 0,
-      clearTicksNeeded: state.lastStatus ? state.lastStatus.clearTicksNeeded : DEFAULT_PRESSURE_THRESHOLDS.clearTicks,
+      clearTicksNeeded: state.lastStatus
+        ? state.lastStatus.clearTicksNeeded
+        : DEFAULT_PRESSURE_THRESHOLDS.clearTicks,
       free_mb: state.lastStatus ? state.lastStatus.free_mb : 0,
       compressor_mb: state.lastStatus ? state.lastStatus.compressor_mb : 0,
       headroomBreach: state.lastStatus ? state.lastStatus.headroomBreach : false,

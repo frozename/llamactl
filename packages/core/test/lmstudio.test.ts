@@ -1,26 +1,21 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import {
-  applyImport,
-  detectLMStudioRoot,
-  planImport,
-  scanLMStudio,
-} from '../src/lmstudio.js';
-import { envForTemp, makeTempRuntime } from './helpers.js';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { applyImport, detectLMStudioRoot, planImport, scanLMStudio } from "../src/lmstudio.js";
+import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 function makeLMTree(root: string): void {
   // Pick repo + file names that aren't already in the BUILTIN catalog
   // so the import plan surfaces them as fresh rels rather than skips.
-  const acme = join(root, 'acme', 'ExampleLM-GGUF');
+  const acme = join(root, "acme", "ExampleLM-GGUF");
   mkdirSync(acme, { recursive: true });
-  writeFileSync(join(acme, 'ExampleLM-UD-Q4_K_M.gguf'), 'demo');
-  const widgets = join(root, 'widgets', 'TinyModel-GGUF', 'q8');
+  writeFileSync(join(acme, "ExampleLM-UD-Q4_K_M.gguf"), "demo");
+  const widgets = join(root, "widgets", "TinyModel-GGUF", "q8");
   mkdirSync(widgets, { recursive: true });
-  writeFileSync(join(widgets, 'TinyModel-Q8_0.gguf'), 'demo');
+  writeFileSync(join(widgets, "TinyModel-Q8_0.gguf"), "demo");
 }
 
-describe('lmstudio.scanLMStudio', () => {
+describe("lmstudio.scanLMStudio", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
 
   beforeEach(() => {
@@ -28,25 +23,25 @@ describe('lmstudio.scanLMStudio', () => {
   });
   afterEach(() => temp.cleanup());
 
-  test('returns null root when nothing matches', () => {
-    const scan = scanLMStudio({ root: join(temp.devStorage, 'missing') });
+  test("returns null root when nothing matches", () => {
+    const scan = scanLMStudio({ root: join(temp.devStorage, "missing") });
     expect(scan.models).toHaveLength(0);
   });
 
-  test('finds gguf files and derives repo + rel', () => {
-    const root = join(temp.devStorage, 'lmstudio', 'models');
+  test("finds gguf files and derives repo + rel", () => {
+    const root = join(temp.devStorage, "lmstudio", "models");
     makeLMTree(root);
     const scan = scanLMStudio({ root });
     expect(scan.root).toBe(root);
     expect(scan.models).toHaveLength(2);
-    const acmeEntry = scan.models.find((m) => m.publisher === 'acme');
-    expect(acmeEntry?.repo).toBe('acme/ExampleLM-GGUF');
-    expect(acmeEntry?.rel).toBe('ExampleLM-GGUF/ExampleLM-UD-Q4_K_M.gguf');
+    const acmeEntry = scan.models.find((m) => m.publisher === "acme");
+    expect(acmeEntry?.repo).toBe("acme/ExampleLM-GGUF");
+    expect(acmeEntry?.rel).toBe("ExampleLM-GGUF/ExampleLM-UD-Q4_K_M.gguf");
     expect(acmeEntry?.sizeBytes).toBeGreaterThan(0);
   });
 });
 
-describe('lmstudio.planImport', () => {
+describe("lmstudio.planImport", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
   let originalEnv: NodeJS.ProcessEnv;
 
@@ -62,23 +57,23 @@ describe('lmstudio.planImport', () => {
     temp.cleanup();
   });
 
-  test('builds link-and-add items for fresh rels', () => {
-    const root = join(temp.devStorage, 'lmstudio', 'models');
+  test("builds link-and-add items for fresh rels", () => {
+    const root = join(temp.devStorage, "lmstudio", "models");
     makeLMTree(root);
     const plan = planImport({ root });
     expect(plan.root).toBe(root);
-    expect(plan.items.every((i) => i.action === 'link-and-add')).toBe(true);
+    expect(plan.items.every((i) => i.action === "link-and-add")).toBe(true);
   });
 
-  test('respects --no-link by returning `add` action', () => {
-    const root = join(temp.devStorage, 'lmstudio', 'models');
+  test("respects --no-link by returning `add` action", () => {
+    const root = join(temp.devStorage, "lmstudio", "models");
     makeLMTree(root);
     const plan = planImport({ root, link: false });
-    expect(plan.items.every((i) => i.action === 'add')).toBe(true);
+    expect(plan.items.every((i) => i.action === "add")).toBe(true);
   });
 });
 
-describe('lmstudio.applyImport', () => {
+describe("lmstudio.applyImport", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
   let originalEnv: NodeJS.ProcessEnv;
 
@@ -95,33 +90,33 @@ describe('lmstudio.applyImport', () => {
     temp.cleanup();
   });
 
-  test('symlinks each new gguf into $LLAMA_CPP_MODELS and adds a catalog row', async () => {
-    const root = join(temp.devStorage, 'lmstudio', 'models');
+  test("symlinks each new gguf into $LLAMA_CPP_MODELS and adds a catalog row", async () => {
+    const root = join(temp.devStorage, "lmstudio", "models");
     makeLMTree(root);
     const result = await applyImport({ root, apply: true });
     expect(result.errors).toEqual([]);
     expect(result.applied.length).toBe(2);
 
-    const linkPath = join(temp.modelsDir, 'ExampleLM-GGUF', 'ExampleLM-UD-Q4_K_M.gguf');
+    const linkPath = join(temp.modelsDir, "ExampleLM-GGUF", "ExampleLM-UD-Q4_K_M.gguf");
     expect(existsSync(linkPath)).toBe(true);
     // Should be a symlink, not a copy.
     expect(statSync(linkPath).isFile()).toBe(true);
 
-    const catalogFile = join(temp.runtimeDir, 'curated-models.tsv');
+    const catalogFile = join(temp.runtimeDir, "curated-models.tsv");
     expect(existsSync(catalogFile)).toBe(true);
   });
 
-  test('skips models that already exist in the catalog', async () => {
-    const root = join(temp.devStorage, 'lmstudio', 'models');
+  test("skips models that already exist in the catalog", async () => {
+    const root = join(temp.devStorage, "lmstudio", "models");
     makeLMTree(root);
     await applyImport({ root, apply: true });
     const second = await applyImport({ root, apply: true });
     expect(second.applied).toHaveLength(0);
-    expect(second.skipped.every((s) => s.action === 'skip-already-catalogued')).toBe(true);
+    expect(second.skipped.every((s) => s.action === "skip-already-catalogued")).toBe(true);
   });
 });
 
-describe('lmstudio.detectLMStudioRoot — LLAMACTL_TEST_PROFILE', () => {
+describe("lmstudio.detectLMStudioRoot — LLAMACTL_TEST_PROFILE", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
 
   beforeEach(() => {
@@ -129,18 +124,18 @@ describe('lmstudio.detectLMStudioRoot — LLAMACTL_TEST_PROFILE', () => {
   });
   afterEach(() => temp.cleanup());
 
-  test('probes a profile-scoped dir instead of homedir when the test profile is set', () => {
+  test("probes a profile-scoped dir instead of homedir when the test profile is set", () => {
     const profile = temp.devStorage;
-    const profileRoot = join(profile, 'ai-models/lmstudio');
+    const profileRoot = join(profile, "ai-models/lmstudio");
     mkdirSync(profileRoot, { recursive: true });
     const env = { LLAMACTL_TEST_PROFILE: profile } as NodeJS.ProcessEnv;
     expect(detectLMStudioRoot(env)).toBe(profileRoot);
   });
 
-  test('LMSTUDIO_MODELS_DIR override still wins over the test profile', () => {
+  test("LMSTUDIO_MODELS_DIR override still wins over the test profile", () => {
     const profile = temp.devStorage;
-    mkdirSync(join(profile, 'ai-models/lmstudio'), { recursive: true });
-    const override = join(profile, 'custom-lm');
+    mkdirSync(join(profile, "ai-models/lmstudio"), { recursive: true });
+    const override = join(profile, "custom-lm");
     mkdirSync(override, { recursive: true });
     const env = {
       LLAMACTL_TEST_PROFILE: profile,
@@ -149,19 +144,19 @@ describe('lmstudio.detectLMStudioRoot — LLAMACTL_TEST_PROFILE', () => {
     expect(detectLMStudioRoot(env)).toBe(override);
   });
 
-  test('returns null when the profile dir does not exist', () => {
+  test("returns null when the profile dir does not exist", () => {
     const env = {
-      LLAMACTL_TEST_PROFILE: join(temp.devStorage, 'missing-profile'),
+      LLAMACTL_TEST_PROFILE: join(temp.devStorage, "missing-profile"),
     } as NodeJS.ProcessEnv;
     expect(detectLMStudioRoot(env)).toBe(null);
   });
 
-  test('test-profile mode does NOT probe the user homedir fallbacks', () => {
+  test("test-profile mode does NOT probe the user homedir fallbacks", () => {
     // The profile dir is absent → resolver returns null rather than
     // walking out to `~/.lmstudio/models`, which is exactly what keeps
     // hermetic audits from leaking the operator's real LM Studio tree.
     const env = {
-      LLAMACTL_TEST_PROFILE: join(temp.devStorage, 'empty-profile'),
+      LLAMACTL_TEST_PROFILE: join(temp.devStorage, "empty-profile"),
     } as NodeJS.ProcessEnv;
     expect(detectLMStudioRoot(env)).toBe(null);
   });

@@ -13,6 +13,7 @@
 ### Task 1: Prove the saturation case with a failing stress test
 
 **Files:**
+
 - Create: `tests/backend/metal/back_pressure_test.cpp`
 - Modify: `tests/backend/metal/CMakeLists.txt` or the upstream Metal test registration file that already lists backend tests
 
@@ -49,6 +50,7 @@ Expected: still failing until the back-pressure gate exists.
 ### Task 2: Add the per-stream in-flight gate in scheduler + eval
 
 **Files:**
+
 - Modify: `mlx/scheduler.h`
 - Modify: `mlx/backend/metal/eval.cpp`
 
@@ -74,6 +76,7 @@ Expected: fails because the gate is not implemented yet.
 Add a per-stream counter plus a condition variable/mutex pair in `Scheduler`. Increment before `encoder.commit()` only for committed command buffers. Decrement inside the completed-handler path after the existing asynchronous error stash is published. Keep the gate keyed by `stream.index` so it composes with existing stream reuse behavior.
 
 Add a small wait helper in `eval.cpp` before `encoder.commit()` that:
+
 - no-ops when the env var is unset or invalid
 - waits while the stream's in-flight count is at or above the threshold
 - uses a timeout fallback so a wedged GPU does not deadlock the caller
@@ -88,6 +91,7 @@ Expected: pass.
 ### Task 3: Wire the env var and keep the default path unchanged
 
 **Files:**
+
 - Modify: `mlx/backend/metal/eval.cpp`
 - Modify: `mlx/scheduler.h`
 - Modify: `docs/` upstream docs file for Metal back-pressure, if the upstream repo keeps runtime knobs documented there
@@ -125,6 +129,7 @@ Expected: both pass, with no new failures in existing Metal tests.
 ### Task 4: Verify shutdown, sync ordering, and stream reuse
 
 **Files:**
+
 - Modify: `tests/backend/metal/back_pressure_test.cpp`
 - Modify: `mlx/backend/metal/eval.cpp`
 - Modify: `mlx/scheduler.h`
@@ -167,6 +172,7 @@ Expected: pass.
 ### Task 5: Document the knob and upstream patch intent
 
 **Files:**
+
 - Modify: `docs/upstream-patches/back-pressure-design-prompt.md` or the upstream PR notes file
 - Modify: the upstream MLX docs page for Metal runtime knobs, if available
 
@@ -202,4 +208,3 @@ Expected: all pass, and the docs match the implemented behavior.
 3. Land Task 3 only after the default path is confirmed unchanged.
 4. Land Task 4 to prove the patch does not break shutdown, stream reuse, or sync ordering.
 5. Land Task 5 last so the upstream patch text stays aligned with the code.
-

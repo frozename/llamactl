@@ -53,7 +53,7 @@ A single parent (one session, one knowledge entity, one log file) can produce mu
 
 ### D6. Async behavior: client-instant, server-debounced, semantic-debounced-deeper
 
-Three tiers of latency, all measured from the *last* keystroke:
+Three tiers of latency, all measured from the _last_ keystroke:
 
 1. **Tier 1 — Client substring.** Synchronous on every keystroke. No network.
 2. **Tier 2 — Server lexical.** Debounced 250 ms after the last keystroke. Substring/word-boundary match in `opsSessionSearch`, `logsSearch`, `knowledgeSearch` (the lexical variant).
@@ -142,23 +142,28 @@ router.ts                    MODIFY — add procs:
 
 ```ts
 export type SurfaceKind =
-  | 'module' | 'session' | 'workload' | 'node'
-  | 'knowledge' | 'logs' | 'preset' | 'tab-history';
+  | "module"
+  | "session"
+  | "workload"
+  | "node"
+  | "knowledge"
+  | "logs"
+  | "preset"
+  | "tab-history";
 
 export interface Hit {
   surface: SurfaceKind;
   parentId: string;
   parentTitle: string;
   score: number;
-  matchKind: 'exact' | 'semantic';
+  matchKind: "exact" | "semantic";
   ragDistance?: number;
   match?: {
     where: string;
     snippet: string;
     spans: { start: number; end: number }[];
   };
-  action:
-    | { kind: 'open-tab'; tab: TabEntry };
+  action: { kind: "open-tab"; tab: TabEntry };
   // 'open-tab-and-scroll' with an anchor is a reserved schema variant for a
   // future phase (see "Out of scope: Highlight match in the destination tab");
   // not produced by any v1 surface.
@@ -180,14 +185,14 @@ export type GroupedResults = SurfaceGroup[];
 
 ```ts
 const SURFACE_BIAS: Record<SurfaceKind, number> = {
-  module: 0.20,
-  session: 0.10,
-  workload: 0.10,
-  node: 0.10,
+  module: 0.2,
+  session: 0.1,
+  workload: 0.1,
+  node: 0.1,
   preset: 0.05,
   knowledge: 0.05,
-  logs: 0.00,
-  'tab-history': -0.05,
+  logs: 0.0,
+  "tab-history": -0.05,
 };
 const SEMANTIC_TIE_PENALTY = -0.02;
 ```
@@ -255,31 +260,31 @@ Every `useGlobalSearch` hook instance is independent. Multiple sidebars / multip
 
 ### Server (`packages/remote`)
 
-| Test | Coverage |
-|---|---|
-| `search-text-match.test.ts` | Snippet extraction; word-boundary mode; multi-match dedupe; case sensitivity flag; span correctness |
-| `search-sessions.test.ts` | Walks fixture journal directory; respects per-session 5-match cap and 30-session cap; matches across goal/reasoning/args/outcome fields |
-| `search-knowledge.test.ts` (lexical) | Title vs body match scoring; cap respected |
-| `search-logs.test.ts` | Last-N-bytes window; multi-line match spans; multi-file fan-in |
-| `rag-bridge.test.ts` | Collection routing; topK parameter; normalization to SessionHit/KnowledgeHit/LogHit |
-| `rag-pipeline-sessions-fetcher.test.ts` | Subscribes to mock event bus; drafts correct records per event; flushes on terminal |
-| `rag-pipeline-logs-fetcher.test.ts` | Tail mode; rolling-window eviction; multi-file fan-in |
-| `router/global-search-procs.test.ts` | `opsSessionSearch`, `logsSearch`, `knowledgeSearch` (lexical), `globalSearchRagStatus` return well-formed payloads; abort propagates |
+| Test                                    | Coverage                                                                                                                                |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `search-text-match.test.ts`             | Snippet extraction; word-boundary mode; multi-match dedupe; case sensitivity flag; span correctness                                     |
+| `search-sessions.test.ts`               | Walks fixture journal directory; respects per-session 5-match cap and 30-session cap; matches across goal/reasoning/args/outcome fields |
+| `search-knowledge.test.ts` (lexical)    | Title vs body match scoring; cap respected                                                                                              |
+| `search-logs.test.ts`                   | Last-N-bytes window; multi-line match spans; multi-file fan-in                                                                          |
+| `rag-bridge.test.ts`                    | Collection routing; topK parameter; normalization to SessionHit/KnowledgeHit/LogHit                                                     |
+| `rag-pipeline-sessions-fetcher.test.ts` | Subscribes to mock event bus; drafts correct records per event; flushes on terminal                                                     |
+| `rag-pipeline-logs-fetcher.test.ts`     | Tail mode; rolling-window eviction; multi-file fan-in                                                                                   |
+| `router/global-search-procs.test.ts`    | `opsSessionSearch`, `logsSearch`, `knowledgeSearch` (lexical), `globalSearchRagStatus` return well-formed payloads; abort propagates    |
 
 All run under the existing hermetic `LLAMACTL_TEST_PROFILE` / `DEV_STORAGE` pattern.
 
 ### App (`packages/app`)
 
-| Test | Coverage |
-|---|---|
-| `lib/global-search/query.test.ts` | Surface prefixes, multi-word queries, alias resolution (`mod:` ≡ `module:`), trim/lowercase semantics |
-| `lib/global-search/ranking.test.ts` | Surface bias map applied; group topScore; group sort under various inputs; semantic-tie penalty |
-| `lib/global-search/orchestrator.test.ts` | Tier 1 sync, Tier 2 debounce, Tier 3 debounce, AbortSignal cancellation, race tolerance, same-parent collapse, RAG-status disables surface |
-| `lib/global-search/surfaces/modules.test.ts` | Wraps `searchModules`; produces well-formed `Hit`s |
-| `lib/global-search/surfaces/workloads.test.ts` | Matches name/model fields; correct action |
-| `lib/global-search/surfaces/tab-history.test.ts` | Includes both `tabs` and `closed`; deduplicates by `tabKey` |
-| `lib/global-search/surfaces/sessions-rag.test.ts` | Maps `ragSearch` response → `Hit` with `matchKind: 'semantic'` and `ragDistance` populated |
-| `lib/global-search/use-global-search.test.ts` | Hook timer/abort orchestration under sequenced inputs (pure logic; no React render) |
+| Test                                              | Coverage                                                                                                                                   |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `lib/global-search/query.test.ts`                 | Surface prefixes, multi-word queries, alias resolution (`mod:` ≡ `module:`), trim/lowercase semantics                                      |
+| `lib/global-search/ranking.test.ts`               | Surface bias map applied; group topScore; group sort under various inputs; semantic-tie penalty                                            |
+| `lib/global-search/orchestrator.test.ts`          | Tier 1 sync, Tier 2 debounce, Tier 3 debounce, AbortSignal cancellation, race tolerance, same-parent collapse, RAG-status disables surface |
+| `lib/global-search/surfaces/modules.test.ts`      | Wraps `searchModules`; produces well-formed `Hit`s                                                                                         |
+| `lib/global-search/surfaces/workloads.test.ts`    | Matches name/model fields; correct action                                                                                                  |
+| `lib/global-search/surfaces/tab-history.test.ts`  | Includes both `tabs` and `closed`; deduplicates by `tabKey`                                                                                |
+| `lib/global-search/surfaces/sessions-rag.test.ts` | Maps `ragSearch` response → `Hit` with `matchKind: 'semantic'` and `ragDistance` populated                                                 |
+| `lib/global-search/use-global-search.test.ts`     | Hook timer/abort orchestration under sequenced inputs (pure logic; no React render)                                                        |
 
 Component visual rendering (sidebar tree, palette row layout, snippet highlighting, semantic-tag pill) is verified via the two Tier C UI flows below — matching the testing posture from Phase 2.
 
@@ -297,6 +302,7 @@ Both follow the SKIP-guard pattern: any selector miss converts to graceful skip 
 Single PR, all-or-nothing — the architecture is genuinely entangled (orchestrator, surfaces, renderer, server procs, ingestion pipelines all touch each other). Tag `beacon-p3-global-search`.
 
 **Pre-merge sequence:**
+
 1. Server text-match + lexical search procs + fetchers + RAG bridge + new router procs.
 2. App types, query, ranking, orchestrator (no React), surfaces.
 3. App hook, renderer, SearchView wiring, palette wiring.

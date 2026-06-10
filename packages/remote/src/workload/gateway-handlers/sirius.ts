@@ -1,14 +1,14 @@
-import { resolveNodeKind, type ClusterNode } from '../../config/schema.js';
-import { loadSiriusProviders } from '../../config/sirius-providers.js';
-import { resolveToken, loadConfig, currentContext } from '../../config/kubeconfig.js';
-import type { ApplyResult } from '../apply.js';
-import type { GatewayApplyOptions, GatewayHandler } from './types.js';
+import { resolveNodeKind, type ClusterNode } from "../../config/schema.js";
+import { loadSiriusProviders } from "../../config/sirius-providers.js";
+import { resolveToken, loadConfig, currentContext } from "../../config/kubeconfig.js";
+import type { ApplyResult } from "../apply.js";
+import type { GatewayApplyOptions, GatewayHandler } from "./types.js";
 import {
   deriveSiriusEntries,
   applyCompositeEntries,
   readGatewayCatalog,
   writeGatewayCatalog,
-} from '../gateway-catalog/index.js';
+} from "../gateway-catalog/index.js";
 
 /**
  * Sirius gateway handler.
@@ -33,9 +33,9 @@ import {
  * sirius-providers.yaml shape today.
  */
 export const siriusHandler: GatewayHandler = {
-  kind: 'sirius',
+  kind: "sirius",
   canHandle(node: ClusterNode): boolean {
-    return resolveNodeKind(node) === 'gateway' && node.cloud?.provider === 'sirius';
+    return resolveNodeKind(node) === "gateway" && node.cloud?.provider === "sirius";
   },
   async apply(opts: GatewayApplyOptions): Promise<ApplyResult> {
     const now = new Date().toISOString();
@@ -43,30 +43,31 @@ export const siriusHandler: GatewayHandler = {
     let catalogChanged = false;
     if (opts.composite) {
       const derived = deriveSiriusEntries(opts.composite);
-      const current = readGatewayCatalog('sirius');
+      const current = readGatewayCatalog("sirius");
       const result = applyCompositeEntries({
-        kind: 'sirius',        compositeName: opts.composite.compositeName,
+        kind: "sirius",
+        compositeName: opts.composite.compositeName,
         derived,
         current,
       });
       if (result.conflicts.length > 0) {
         const c = result.conflicts[0]!;
         const reason =
-          c.kind === 'name' ? 'SiriusUpstreamNameCollision' : 'SiriusUpstreamShapeMismatch';
+          c.kind === "name" ? "SiriusUpstreamNameCollision" : "SiriusUpstreamShapeMismatch";
         const message =
-          c.kind === 'name'
+          c.kind === "name"
             ? `entry '${c.name}' already exists as an operator-authored provider; remove it or change composite spec`
             : `entry '${c.name}': ${c.detail}`;
         return pending(opts, reason, message, now);
       }
       if (result.changed) {
         try {
-          writeGatewayCatalog('sirius', result.next);
+          writeGatewayCatalog("sirius", result.next);
           catalogChanged = true;
         } catch (err) {
           return failure(
             opts,
-            'SiriusCatalogWriteFailed',
+            "SiriusCatalogWriteFailed",
             `could not write sirius-providers.yaml: ${(err as Error).message}`,
             now,
           );
@@ -75,11 +76,11 @@ export const siriusHandler: GatewayHandler = {
     }
 
     const targetValue = opts.manifest.spec.target.value;
-    const slash = targetValue.indexOf('/');
+    const slash = targetValue.indexOf("/");
     if (slash <= 0) {
       return failure(
         opts,
-        'SiriusTargetMalformed',
+        "SiriusTargetMalformed",
         `sirius gateway manifests require spec.target.value in '<upstream>/<model>' form; got '${targetValue}'`,
         now,
       );
@@ -103,14 +104,14 @@ export const siriusHandler: GatewayHandler = {
     } catch (err) {
       return failure(
         opts,
-        'SiriusProvidersUnreadable',
+        "SiriusProvidersUnreadable",
         `failed to read sirius-providers.yaml: ${(err as Error).message}`,
         now,
       );
     }
     if (providers.length === 0) {
       opts.onEvent?.({
-        type: 'gateway-pending',
+        type: "gateway-pending",
         message: `${opts.manifest.metadata.name}: host-side sirius-providers.yaml empty/absent — deferring upstream validation to sirius /providers/reload`,
       });
     } else {
@@ -118,7 +119,7 @@ export const siriusHandler: GatewayHandler = {
       if (!match) {
         return pending(
           opts,
-          'SiriusUpstreamMissing',
+          "SiriusUpstreamMissing",
           `upstream '${upstream}' not found in sirius-providers.yaml; run \`llamactl sirius add-provider ${upstream} …\` first`,
           now,
         );
@@ -129,7 +130,7 @@ export const siriusHandler: GatewayHandler = {
     if (!baseUrl) {
       return failure(
         opts,
-        'SiriusBaseUrlMissing',
+        "SiriusBaseUrlMissing",
         `gateway node '${opts.node.name}' has no cloud.baseUrl — edit kubeconfig`,
         now,
       );
@@ -137,7 +138,7 @@ export const siriusHandler: GatewayHandler = {
 
     // POST /providers/reload. Bearer-authed using the user resolved
     // from the current kubeconfig context.
-    const reloadUrl = normalizeBaseUrl(baseUrl) + '/providers/reload';
+    const reloadUrl = normalizeBaseUrl(baseUrl) + "/providers/reload";
     let token: string;
     try {
       const cfg = loadConfig();
@@ -148,7 +149,7 @@ export const siriusHandler: GatewayHandler = {
     } catch (err) {
       return failure(
         opts,
-        'SiriusTokenUnresolved',
+        "SiriusTokenUnresolved",
         `could not resolve bearer token for sirius reload: ${(err as Error).message}`,
         now,
       );
@@ -157,26 +158,26 @@ export const siriusHandler: GatewayHandler = {
     if (!opts.composite || catalogChanged) {
       try {
         const res = await fetch(reloadUrl, {
-          method: 'POST',
+          method: "POST",
           headers: {
             authorization: `Bearer ${token}`,
-            'content-type': 'application/json',
+            "content-type": "application/json",
           },
-          body: JSON.stringify({ source: 'llamactl-workload', name: opts.manifest.metadata.name }),
+          body: JSON.stringify({ source: "llamactl-workload", name: opts.manifest.metadata.name }),
         });
         if (!res.ok) {
-          const body = (await res.text().catch(() => '')).slice(0, 500);
+          const body = (await res.text().catch(() => "")).slice(0, 500);
           return failure(
             opts,
-            'SiriusReloadFailed',
-            `POST ${reloadUrl} returned ${res.status}${body ? `: ${body}` : ''}`,
+            "SiriusReloadFailed",
+            `POST ${reloadUrl} returned ${res.status}${body ? `: ${body}` : ""}`,
             now,
           );
         }
       } catch (err) {
         return failure(
           opts,
-          'SiriusReloadUnreachable',
+          "SiriusReloadUnreachable",
           `POST ${reloadUrl} failed: ${(err as Error).message}`,
           now,
         );
@@ -185,21 +186,21 @@ export const siriusHandler: GatewayHandler = {
 
     const endpoint = `${normalizeBaseUrl(baseUrl)}/v1/chat/completions`;
     opts.onEvent?.({
-      type: 'gateway-pending',
+      type: "gateway-pending",
       message: `${opts.manifest.metadata.name}: sirius reloaded — '${modelId}' via upstream '${upstream}' now routable at ${endpoint}`,
     });
     return {
-      action: 'started',
+      action: "started",
       statusSection: {
-        phase: 'Running',
+        phase: "Running",
         serverPid: null,
         endpoint,
         lastTransitionTime: now,
         conditions: [
           {
-            type: 'Applied',
-            status: 'True',
-            reason: 'SiriusReloaded',
+            type: "Applied",
+            status: "True",
+            reason: "SiriusReloaded",
             message: `sirius reloaded providers/${upstream}; model '${modelId}' is routable`,
             lastTransitionTime: now,
           },
@@ -212,7 +213,7 @@ export const siriusHandler: GatewayHandler = {
 function normalizeBaseUrl(url: string): string {
   // Strip a trailing /v1 or /v1/ so we can construct paths off the
   // root consistently. Sirius serves both /providers/reload and /v1.
-  return url.replace(/\/v1\/?$/, '').replace(/\/$/, '');
+  return url.replace(/\/v1\/?$/, "").replace(/\/$/, "");
 }
 
 function pending(
@@ -222,20 +223,20 @@ function pending(
   now: string,
 ): ApplyResult {
   opts.onEvent?.({
-    type: 'gateway-pending',
+    type: "gateway-pending",
     message: `${opts.manifest.metadata.name}: ${message}`,
   });
   return {
-    action: 'pending',
+    action: "pending",
     statusSection: {
-      phase: 'Pending',
+      phase: "Pending",
       serverPid: null,
       endpoint: null,
       lastTransitionTime: now,
       conditions: [
         {
-          type: 'Applied',
-          status: 'False',
+          type: "Applied",
+          status: "False",
           reason,
           message,
           lastTransitionTime: now,
@@ -252,20 +253,20 @@ function failure(
   now: string,
 ): ApplyResult {
   opts.onEvent?.({
-    type: 'gateway-pending',
+    type: "gateway-pending",
     message: `${opts.manifest.metadata.name}: ${message}`,
   });
   return {
-    action: 'pending',
+    action: "pending",
     statusSection: {
-      phase: 'Failed',
+      phase: "Failed",
       serverPid: null,
       endpoint: null,
       lastTransitionTime: now,
       conditions: [
         {
-          type: 'Applied',
-          status: 'False',
+          type: "Applied",
+          status: "False",
           reason,
           message,
           lastTransitionTime: now,

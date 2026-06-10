@@ -11,14 +11,14 @@
  * ThemeProvider can't get from CSS alone.
  */
 
-export type ThemeId = 'sirius' | 'ember' | 'clinical' | 'scrubs';
+export type ThemeId = "sirius" | "ember" | "clinical" | "scrubs";
 
 export interface Theme {
   id: ThemeId;
   label: string;
   tagline: string;
   /** NodeMap variant paired with this theme. */
-  mapVariant: 'glass' | 'neon' | 'hex';
+  mapVariant: "glass" | "neon" | "hex";
   /** Root font-family override. */
   fontFamily: string;
   /** CSS custom properties applied at runtime. Kept for backwards
@@ -35,40 +35,40 @@ const MONO_STACK = "'JetBrains Mono', ui-monospace, Menlo, monospace";
 
 export const THEMES: readonly Theme[] = [
   {
-    id: 'sirius',
-    label: 'Sirius',
-    tagline: 'Indigo calm. Default operator-night dark.',
-    mapVariant: 'glass',
+    id: "sirius",
+    label: "Sirius",
+    tagline: "Indigo calm. Default operator-night dark.",
+    mapVariant: "glass",
     fontFamily: SANS_STACK,
     vars: {},
   },
   {
-    id: 'ember',
-    label: 'Ember',
-    tagline: 'Warm amber dark. Workshop mood.',
-    mapVariant: 'glass',
+    id: "ember",
+    label: "Ember",
+    tagline: "Warm amber dark. Workshop mood.",
+    mapVariant: "glass",
     fontFamily: SANS_STACK,
     vars: {},
   },
   {
-    id: 'clinical',
-    label: 'Clinical',
-    tagline: 'Bright, high-contrast, morning light.',
-    mapVariant: 'hex',
+    id: "clinical",
+    label: "Clinical",
+    tagline: "Bright, high-contrast, morning light.",
+    mapVariant: "hex",
     fontFamily: SANS_STACK,
     vars: {},
   },
   {
-    id: 'scrubs',
-    label: 'Scrubs',
-    tagline: 'Teal-dark. Hospital-quiet precision.',
-    mapVariant: 'hex',
+    id: "scrubs",
+    label: "Scrubs",
+    tagline: "Teal-dark. Hospital-quiet precision.",
+    mapVariant: "hex",
     fontFamily: SANS_STACK,
     vars: {},
   },
 ];
 
-export const DEFAULT_THEME: ThemeId = 'sirius';
+export const DEFAULT_THEME: ThemeId = "sirius";
 
 export function getTheme(id: ThemeId): Theme {
   return THEMES.find((t) => t.id === id) ?? THEMES[0]!;
@@ -78,7 +78,7 @@ export function getTheme(id: ThemeId): Theme {
  *  been migrated yet) and returns the closest match. Callers that
  *  know they already have a valid id should use `getTheme` instead. */
 export function coerceThemeId(id: string | null | undefined): ThemeId {
-  if (id === 'sirius' || id === 'ember' || id === 'clinical' || id === 'scrubs') return id;
+  if (id === "sirius" || id === "ember" || id === "clinical" || id === "scrubs") return id;
   return DEFAULT_THEME;
 }
 

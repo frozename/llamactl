@@ -1,9 +1,9 @@
-import * as React from 'react';
-import { useMemo, useState } from 'react';
-import { trpc } from '@/lib/trpc';
-import { Badge, Button, StatusDot, Input, Kbd } from '@/ui';
-import { PipelinesTab } from './pipelines-tab';
-import { QualityTab } from './quality-tab';
+import * as React from "react";
+import { useMemo, useState } from "react";
+import { trpc } from "@/lib/trpc";
+import { Badge, Button, StatusDot, Input, Kbd } from "@/ui";
+import { PipelinesTab } from "./pipelines-tab";
+import { QualityTab } from "./quality-tab";
 
 /**
  * Knowledge module. First UI consumer of the RAG stack shipped in
@@ -21,7 +21,7 @@ import { QualityTab } from './quality-tab';
  * JSON / paragraph text area.
  */
 
-type RagProviderKind = 'chroma' | 'pgvector';
+type RagProviderKind = "chroma" | "pgvector";
 
 interface EmbedderBinding {
   node: string;
@@ -31,7 +31,7 @@ interface EmbedderBinding {
 type RagNodeSummary = {
   name: string;
   provider: RagProviderKind | null;
-  kind: 'rag';
+  kind: "rag";
   embedder: EmbedderBinding | null;
 };
 
@@ -40,7 +40,7 @@ interface AgentNodeSummary {
   endpoint: string;
 }
 
-type TabId = 'query' | 'collections' | 'indexing' | 'pipelines' | 'quality';
+type TabId = "query" | "collections" | "indexing" | "pipelines" | "quality";
 
 interface SearchResultDoc {
   id: string;
@@ -90,15 +90,15 @@ function formatScore(score: number): string {
 /** Classify score into a Tailwind badge palette matching the project conventions. */
 function scoreBadgeClass(score: number): string {
   if (!Number.isFinite(score)) {
-    return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
+    return "bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]";
   }
   if (score >= 0.75) {
-    return 'bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]';
+    return "bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]";
   }
   if (score >= 0.45) {
-    return 'bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]';
+    return "bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]";
   }
-  return 'bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]';
+  return "bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]";
 }
 
 function truncateContent(content: string, max = 300): string {
@@ -119,9 +119,9 @@ function parseIndexInput(raw: string): {
   error: string | null;
 } {
   const trimmed = raw.trim();
-  if (!trimmed) return { documents: [], error: 'Input is empty.' };
+  if (!trimmed) return { documents: [], error: "Input is empty." };
 
-  if (trimmed.startsWith('[')) {
+  if (trimmed.startsWith("[")) {
     let parsed: unknown;
     try {
       parsed = JSON.parse(trimmed);
@@ -134,7 +134,7 @@ function parseIndexInput(raw: string): {
     if (!Array.isArray(parsed)) {
       return {
         documents: [],
-        error: 'JSON input must be an array of {id, content, metadata?} objects.',
+        error: "JSON input must be an array of {id, content, metadata?} objects.",
       };
     }
     const docs: IndexDocumentInput[] = [];
@@ -142,9 +142,9 @@ function parseIndexInput(raw: string): {
       const entry = parsed[i];
       if (
         !entry ||
-        typeof entry !== 'object' ||
-        typeof (entry as { id?: unknown }).id !== 'string' ||
-        typeof (entry as { content?: unknown }).content !== 'string'
+        typeof entry !== "object" ||
+        typeof (entry as { id?: unknown }).id !== "string" ||
+        typeof (entry as { content?: unknown }).content !== "string"
       ) {
         return {
           documents: [],
@@ -159,12 +159,11 @@ function parseIndexInput(raw: string): {
       docs.push({
         id: e.id,
         content: e.content,
-        metadata:
-          e.metadata && typeof e.metadata === 'object' ? e.metadata : undefined,
+        metadata: e.metadata && typeof e.metadata === "object" ? e.metadata : undefined,
       });
     }
     if (docs.length === 0) {
-      return { documents: [], error: 'JSON array is empty.' };
+      return { documents: [], error: "JSON array is empty." };
     }
     return { documents: docs, error: null };
   }
@@ -174,11 +173,11 @@ function parseIndexInput(raw: string): {
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
   if (paragraphs.length === 0) {
-    return { documents: [], error: 'No paragraphs found.' };
+    return { documents: [], error: "No paragraphs found." };
   }
   const docs: IndexDocumentInput[] = paragraphs.map((content) => {
     const uuid =
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID().slice(0, 8)
         : Math.random().toString(36).slice(2, 10);
     return { id: `doc-${uuid}`, content };
@@ -219,12 +218,24 @@ function CollectionHeader(props: {
   // the first collection the node reports (matches the node-default
   // adapters fall back to on search).
   const targeted = collection.trim()
-    ? rows.find((c) => c.name === collection.trim()) ?? null
-    : rows[0] ?? null;
+    ? (rows.find((c) => c.name === collection.trim()) ?? null)
+    : (rows[0] ?? null);
   if (list.isLoading) {
     return (
       <div
-        style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderStyle: 'dashed', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-text-secondary)', fontSize: 12 }}
+        style={{
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderStyle: "dashed",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-1)",
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          color: "var(--color-text-secondary)",
+          fontSize: 12,
+        }}
         data-testid="knowledge-collection-header"
       >
         Loading collection info…
@@ -237,25 +248,38 @@ function CollectionHeader(props: {
   if (!targeted) {
     return (
       <div
-        style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderStyle: 'dashed', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-text-secondary)', fontSize: 12 }}
+        style={{
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderStyle: "dashed",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-1)",
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          color: "var(--color-text-secondary)",
+          fontSize: 12,
+        }}
         data-testid="knowledge-collection-header"
       >
-        No collection picked yet — switch to the Collections tab to see what's
-        available on <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>{nodeName}</Badge>.
+        No collection picked yet — switch to the Collections tab to see what's available on{" "}
+        <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+          {nodeName}
+        </Badge>
+        .
       </div>
     );
   }
-  const count = typeof targeted.count === 'number' ? targeted.count : null;
-  const dims = typeof targeted.dimensions === 'number' ? targeted.dimensions : null;
+  const count = typeof targeted.count === "number" ? targeted.count : null;
+  const dims = typeof targeted.dimensions === "number" ? targeted.dimensions : null;
   const warnings: string[] = [];
   if (count === 0) {
-    warnings.push(
-      'collection is empty — index documents in the Indexing tab before querying',
-    );
+    warnings.push("collection is empty — index documents in the Indexing tab before querying");
   }
-  if (!embedder && provider === 'pgvector') {
+  if (!embedder && provider === "pgvector") {
     warnings.push(
-      'no embedder bound on this pgvector node — queries will fail. Bind one in the panel above.',
+      "no embedder bound on this pgvector node — queries will fail. Bind one in the panel above.",
     );
   }
   const metaEntries = targeted.metadata
@@ -263,49 +287,66 @@ function CollectionHeader(props: {
     : [];
   return (
     <div
-      style={{ marginTop: 8, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 12 }}
+      style={{
+        marginTop: 8,
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-1)",
+        padding: 12,
+      }}
       data-testid="knowledge-collection-header"
     >
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 16, rowGap: 4, color: 'var(--color-text-secondary)', fontSize: 12 }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "baseline",
+          columnGap: 16,
+          rowGap: 4,
+          color: "var(--color-text-secondary)",
+          fontSize: 12,
+        }}
+      >
         <span>
-          collection{' '}
+          collection{" "}
           <span
-            style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
+            style={{ fontFamily: "var(--font-mono)", color: "var(--color-text)" }}
             data-testid="knowledge-collection-name"
           >
             {targeted.name}
           </span>
         </span>
         <span>
-          count{' '}
+          count{" "}
           <span
-            style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
+            style={{ fontFamily: "var(--font-mono)", color: "var(--color-text)" }}
             data-testid="knowledge-collection-count"
           >
-            {count !== null ? count.toLocaleString() : '—'}
+            {count !== null ? count.toLocaleString() : "—"}
           </span>
         </span>
         <span>
-          dims{' '}
+          dims{" "}
           <span
-            style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
+            style={{ fontFamily: "var(--font-mono)", color: "var(--color-text)" }}
             data-testid="knowledge-collection-dims"
           >
-            {dims !== null ? dims : '—'}
+            {dims !== null ? dims : "—"}
           </span>
         </span>
         <span>
-          embedder{' '}
+          embedder{" "}
           {embedder ? (
             <span
-              style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
+              style={{ fontFamily: "var(--font-mono)", color: "var(--color-text)" }}
               data-testid="knowledge-collection-embedder"
             >
               {embedder.node}/{embedder.model}
             </span>
           ) : (
             <span
-              style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)' }}
+              style={{ fontFamily: "var(--font-mono)", color: "var(--color-text-secondary)" }}
               data-testid="knowledge-collection-embedder"
             >
               none
@@ -314,20 +355,32 @@ function CollectionHeader(props: {
         </span>
       </div>
       {metaEntries.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
           {metaEntries.map(([k, v]) => (
             <span
               key={k}
-              style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 6, paddingRight: 6, paddingTop: 2, paddingBottom: 2, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text-secondary)' }}
+              style={{
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingLeft: 6,
+                paddingRight: 6,
+                paddingTop: 2,
+                paddingBottom: 2,
+                fontFamily: "var(--font-mono)",
+                fontSize: 10,
+                color: "var(--color-text-secondary)",
+              }}
             >
-              {k}: {typeof v === 'string' ? v : JSON.stringify(v)}
+              {k}: {typeof v === "string" ? v : JSON.stringify(v)}
             </span>
           ))}
         </div>
       )}
       {warnings.length > 0 && (
         <ul
-          style={{ marginTop: 2, color: 'var(--color-warn,var(--color-ok))', fontSize: 12 }}
+          style={{ marginTop: 2, color: "var(--color-warn,var(--color-ok))", fontSize: 12 }}
           data-testid="knowledge-collection-warnings"
         >
           {warnings.map((w, i) => (
@@ -348,9 +401,9 @@ function QueryTab(props: {
 }): React.JSX.Element {
   const { nodeName, collection, onCollectionChange, embedder, provider } = props;
   const utils = trpc.useUtils();
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState("");
   const [topK, setTopK] = useState(10);
-  const [filterText, setFilterText] = useState('');
+  const [filterText, setFilterText] = useState("");
   const [filterError, setFilterError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [openResult, setOpenResult] = useState<string | null>(null);
@@ -362,7 +415,7 @@ function QueryTab(props: {
     setFilterError(null);
     const q = query.trim();
     if (!q) {
-      setSubmitError('Query text is required.');
+      setSubmitError("Query text is required.");
       return;
     }
 
@@ -370,8 +423,8 @@ function QueryTab(props: {
     if (filterText.trim()) {
       try {
         const value: unknown = JSON.parse(filterText);
-        if (!value || typeof value !== 'object' || Array.isArray(value)) {
-          setFilterError('Filter must be a JSON object.');
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          setFilterError("Filter must be a JSON object.");
           return;
         }
         parsedFilter = value as Record<string, unknown>;
@@ -418,11 +471,25 @@ function QueryTab(props: {
           e.preventDefault();
           void onSubmit();
         }}
-        style={{ marginTop: 12, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 16 }}
+        style={{
+          marginTop: 12,
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-1)",
+          padding: 16,
+        }}
         data-testid="knowledge-query-form"
       >
-        <label style={{ display: 'block', fontSize: 14 }}>
-          <span style={{ marginBottom: 4, display: 'block', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+        <label style={{ display: "block", fontSize: 14 }}>
+          <span
+            style={{
+              marginBottom: 4,
+              display: "block",
+              color: "var(--color-text-secondary)",
+              fontSize: 12,
+            }}
+          >
             Query
           </span>
           <textarea
@@ -430,12 +497,33 @@ function QueryTab(props: {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Ask the knowledge base…"
             rows={3}
-            style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
+            style={{
+              width: "100%",
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-2)",
+              paddingLeft: 8,
+              paddingRight: 8,
+              paddingTop: 4,
+              paddingBottom: 4,
+              fontFamily: "var(--font-mono)",
+              color: "var(--color-text)",
+            }}
           />
         </label>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 12 }}>
-          <label style={{ gridColumn: 'span 4 / span 4', fontSize: 14 }}>
-            <span style={{ marginBottom: 4, display: 'block', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+        <div
+          style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}
+        >
+          <label style={{ gridColumn: "span 4 / span 4", fontSize: 14 }}>
+            <span
+              style={{
+                marginBottom: 4,
+                display: "block",
+                color: "var(--color-text-secondary)",
+                fontSize: 12,
+              }}
+            >
               topK ({topK})
             </span>
             <Input
@@ -444,11 +532,18 @@ function QueryTab(props: {
               max={100}
               value={topK}
               onChange={(e) => setTopK(Math.max(1, Number(e.target.value) || 10))}
-              style={{ width: '100%' }}
+              style={{ width: "100%" }}
             />
           </label>
-          <label style={{ gridColumn: 'span 4 / span 4', fontSize: 14 }}>
-            <span style={{ marginBottom: 4, display: 'block', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+          <label style={{ gridColumn: "span 4 / span 4", fontSize: 14 }}>
+            <span
+              style={{
+                marginBottom: 4,
+                display: "block",
+                color: "var(--color-text-secondary)",
+                fontSize: 12,
+              }}
+            >
               Collection (optional)
             </span>
             <Input
@@ -456,22 +551,42 @@ function QueryTab(props: {
               value={collection}
               onChange={(e) => onCollectionChange(e.target.value)}
               placeholder="defaults to node's collection"
-              style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
+              style={{
+                width: "100%",
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 4,
+                paddingBottom: 4,
+                fontFamily: "var(--font-mono)",
+                color: "var(--color-text)",
+              }}
             />
           </label>
-          <div style={{ gridColumn: 'span 4 / span 4', display: 'flex', alignItems: 'flex-end' }}>
-            <Button variant="primary" size="sm"
+          <div style={{ gridColumn: "span 4 / span 4", display: "flex", alignItems: "flex-end" }}>
+            <Button
+              variant="primary"
+              size="sm"
               type="submit"
               disabled={isSearching}
               data-testid="knowledge-query-submit"
-              
             >
-              {isSearching ? 'Searching…' : 'Search'}
+              {isSearching ? "Searching…" : "Search"}
             </Button>
           </div>
         </div>
-        <label style={{ display: 'block', fontSize: 14 }}>
-          <span style={{ marginBottom: 4, display: 'block', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+        <label style={{ display: "block", fontSize: 14 }}>
+          <span
+            style={{
+              marginBottom: 4,
+              display: "block",
+              color: "var(--color-text-secondary)",
+              fontSize: 12,
+            }}
+          >
             Filter (metadata JSON, optional)
           </span>
           <Input
@@ -482,10 +597,24 @@ function QueryTab(props: {
               setFilterError(null);
             }}
             placeholder='e.g. {"source":"docs","lang":"en"}'
-            style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
+            style={{
+              width: "100%",
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-2)",
+              paddingLeft: 8,
+              paddingRight: 8,
+              paddingTop: 4,
+              paddingBottom: 4,
+              fontFamily: "var(--font-mono)",
+              color: "var(--color-text)",
+            }}
           />
           {filterError && (
-            <span style={{ marginTop: 4, display: 'block', color: 'var(--color-err)', fontSize: 12 }}>
+            <span
+              style={{ marginTop: 4, display: "block", color: "var(--color-err)", fontSize: 12 }}
+            >
               {filterError}
             </span>
           )}
@@ -494,53 +623,111 @@ function QueryTab(props: {
 
       {submitError && (
         <div
-          style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-err)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-err)', fontSize: 14 }}
+          style={{
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "var(--color-err)",
+            background: "var(--color-surface-1)",
+            paddingLeft: 12,
+            paddingRight: 12,
+            paddingTop: 8,
+            paddingBottom: 8,
+            color: "var(--color-err)",
+            fontSize: 14,
+          }}
           data-testid="knowledge-query-error"
         >
-          Failed to reach <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>{nodeName}</Badge>: {submitError}
+          Failed to reach{" "}
+          <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+            {nodeName}
+          </Badge>
+          : {submitError}
         </div>
       )}
 
       {lastResponse && !submitError && (
-        <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 12, color: 'var(--color-text-secondary)', fontSize: 12 }}>
+        <div
+          style={{
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "var(--color-border)",
+            background: "var(--color-surface-1)",
+            padding: 12,
+            color: "var(--color-text-secondary)",
+            fontSize: 12,
+          }}
+        >
           <span>
-            {results.length} result{results.length === 1 ? '' : 's'}
+            {results.length} result{results.length === 1 ? "" : "s"}
           </span>
           <span> · collection </span>
-          <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>{lastResponse.collection}
+          <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+            {lastResponse.collection}
           </Badge>
         </div>
       )}
 
       <div style={{ marginTop: 8 }} data-testid="knowledge-query-results">
         {results.length === 0 && lastResponse && (
-          <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderStyle: 'dashed', borderColor: 'var(--color-border)', padding: 16, color: 'var(--color-text-secondary)', fontSize: 14 }}>
+          <div
+            style={{
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderStyle: "dashed",
+              borderColor: "var(--color-border)",
+              padding: 16,
+              color: "var(--color-text-secondary)",
+              fontSize: 14,
+            }}
+          >
             No results. Try lowering the similarity threshold or widening the query.
           </div>
         )}
         {results.map((r, i) => {
           const key = `${r.document.id}-${i}`;
           const isOpen = openResult === key;
-          const hasMeta =
-            !!r.document.metadata &&
-            Object.keys(r.document.metadata).length > 0;
+          const hasMeta = !!r.document.metadata && Object.keys(r.document.metadata).length > 0;
           return (
             <div
               key={key}
-              style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 12 }}
+              style={{
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-1)",
+                padding: 12,
+              }}
             >
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  justifyContent: "space-between",
+                  gap: 12,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
                   <span
-                    style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', paddingLeft: 6, paddingRight: 6, paddingTop: 2, paddingBottom: 2, fontSize: 10, background: r.score > 0.8 ? "var(--color-ok)" : "var(--color-surface-2)", color: "var(--color-text-inverse)" }}
-                    title={`score ${r.score.toFixed(6)}${typeof r.distance === 'number' ? ` · distance ${r.distance.toFixed(6)}` : ''}`}
+                    style={{
+                      borderRadius: "var(--r-md)",
+                      border: "1px solid var(--color-border)",
+                      paddingLeft: 6,
+                      paddingRight: 6,
+                      paddingTop: 2,
+                      paddingBottom: 2,
+                      fontSize: 10,
+                      background: r.score > 0.8 ? "var(--color-ok)" : "var(--color-surface-2)",
+                      color: "var(--color-text-inverse)",
+                    }}
+                    title={`score ${r.score.toFixed(6)}${typeof r.distance === "number" ? ` · distance ${r.distance.toFixed(6)}` : ""}`}
                   >
                     {formatScore(r.score)}
                   </span>
-                  <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>{r.document.id}
+                  <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+                    {r.document.id}
                   </Badge>
-                  {typeof r.distance === 'number' && (
-                    <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
+                  {typeof r.distance === "number" && (
+                    <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
                       distance {r.distance.toFixed(4)}
                     </span>
                   )}
@@ -549,17 +736,48 @@ function QueryTab(props: {
                   <Button
                     type="button"
                     onClick={() => setOpenResult(isOpen ? null : key)}
-                    style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontSize: 10, color: 'var(--color-text-secondary)' }}
+                    style={{
+                      borderRadius: "var(--r-md)",
+                      border: "1px solid var(--color-border)",
+                      borderColor: "var(--color-border)",
+                      background: "var(--color-surface-2)",
+                      paddingLeft: 8,
+                      paddingRight: 8,
+                      paddingTop: 2,
+                      paddingBottom: 2,
+                      fontSize: 10,
+                      color: "var(--color-text-secondary)",
+                    }}
                   >
-                    {isOpen ? 'Hide metadata' : 'Show metadata'}
+                    {isOpen ? "Hide metadata" : "Show metadata"}
                   </Button>
                 )}
               </div>
-              <div style={{ marginTop: 8, whiteSpace: 'pre-wrap', color: 'var(--color-text)', fontSize: 14 }}>
+              <div
+                style={{
+                  marginTop: 8,
+                  whiteSpace: "pre-wrap",
+                  color: "var(--color-text)",
+                  fontSize: 14,
+                }}
+              >
                 {truncateContent(r.document.content)}
               </div>
               {isOpen && hasMeta && (
-                <pre style={{ marginTop: 8, overflowX: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', padding: 8, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text)' }}>
+                <pre
+                  style={{
+                    marginTop: 8,
+                    overflowX: "auto",
+                    borderRadius: "var(--r-md)",
+                    border: "1px solid var(--color-border)",
+                    borderColor: "var(--color-border)",
+                    background: "var(--color-surface-2)",
+                    padding: 8,
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 10,
+                    color: "var(--color-text)",
+                  }}
+                >
                   {JSON.stringify(r.document.metadata, null, 2)}
                 </pre>
               )}
@@ -587,16 +805,42 @@ function CollectionsTab(props: {
 
   if (list.isLoading) {
     return (
-      <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 16, color: 'var(--color-text-secondary)', fontSize: 14 }}>
+      <div
+        style={{
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-1)",
+          padding: 16,
+          color: "var(--color-text-secondary)",
+          fontSize: 14,
+        }}
+      >
         Loading collections…
       </div>
     );
   }
   if (list.error) {
     return (
-      <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-err)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-err)', fontSize: 14 }}>
-        Failed to reach <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>{nodeName}</Badge>:{' '}
-        {list.error.message}
+      <div
+        style={{
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-err)",
+          background: "var(--color-surface-1)",
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          color: "var(--color-err)",
+          fontSize: 14,
+        }}
+      >
+        Failed to reach{" "}
+        <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+          {nodeName}
+        </Badge>
+        : {list.error.message}
       </div>
     );
   }
@@ -605,47 +849,159 @@ function CollectionsTab(props: {
 
   if (rows.length === 0) {
     return (
-      <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderStyle: 'dashed', borderColor: 'var(--color-border)', padding: 16, color: 'var(--color-text-secondary)', fontSize: 14 }}>
-        No collections yet on <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>{nodeName}</Badge>. Index a
-        document in the Indexing tab to create one.
+      <div
+        style={{
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderStyle: "dashed",
+          borderColor: "var(--color-border)",
+          padding: 16,
+          color: "var(--color-text-secondary)",
+          fontSize: 14,
+        }}
+      >
+        No collections yet on{" "}
+        <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+          {nodeName}
+        </Badge>
+        . Index a document in the Indexing tab to create one.
       </div>
     );
   }
 
   return (
     <div
-      style={{ overflow: 'hidden', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)' }}
+      style={{
+        overflow: "hidden",
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+      }}
       data-testid="knowledge-collections-table"
     >
-      <table style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 14 }}>
-        <thead style={{ background: 'var(--color-surface-1)', textAlign: 'left', color: 'var(--color-text-secondary)' }}>
+      <table style={{ width: "100%", fontFamily: "var(--font-mono)", fontSize: 14 }}>
+        <thead
+          style={{
+            background: "var(--color-surface-1)",
+            textAlign: "left",
+            color: "var(--color-text-secondary)",
+          }}
+        >
           <tr>
-            <th style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500 }}>Name</th>
-            <th style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500 }}>Count</th>
-            <th style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500 }}>Dimensions</th>
-            <th style={{ width: 112, paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontWeight: 500, textAlign: 'right' }}></th>
+            <th
+              style={{
+                paddingLeft: 12,
+                paddingRight: 12,
+                paddingTop: 8,
+                paddingBottom: 8,
+                fontWeight: 500,
+              }}
+            >
+              Name
+            </th>
+            <th
+              style={{
+                paddingLeft: 12,
+                paddingRight: 12,
+                paddingTop: 8,
+                paddingBottom: 8,
+                fontWeight: 500,
+              }}
+            >
+              Count
+            </th>
+            <th
+              style={{
+                paddingLeft: 12,
+                paddingRight: 12,
+                paddingTop: 8,
+                paddingBottom: 8,
+                fontWeight: 500,
+              }}
+            >
+              Dimensions
+            </th>
+            <th
+              style={{
+                width: 112,
+                paddingLeft: 12,
+                paddingRight: 12,
+                paddingTop: 8,
+                paddingBottom: 8,
+                fontWeight: 500,
+                textAlign: "right",
+              }}
+            ></th>
           </tr>
         </thead>
         <tbody>
           {rows.map((c) => (
             <tr
               key={c.name}
-              style={{ borderTop: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)' }}
+              style={{
+                borderTop: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-1)",
+              }}
             >
-              <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-ok)', wordBreak: 'break-all' }}>
+              <td
+                style={{
+                  paddingLeft: 12,
+                  paddingRight: 12,
+                  paddingTop: 8,
+                  paddingBottom: 8,
+                  color: "var(--color-ok)",
+                  wordBreak: "break-all",
+                }}
+              >
                 {c.name}
               </td>
-              <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-text)' }}>
-                {typeof c.count === 'number' ? c.count : '—'}
+              <td
+                style={{
+                  paddingLeft: 12,
+                  paddingRight: 12,
+                  paddingTop: 8,
+                  paddingBottom: 8,
+                  color: "var(--color-text)",
+                }}
+              >
+                {typeof c.count === "number" ? c.count : "—"}
               </td>
-              <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-text)' }}>
-                {typeof c.dimensions === 'number' ? c.dimensions : '—'}
+              <td
+                style={{
+                  paddingLeft: 12,
+                  paddingRight: 12,
+                  paddingTop: 8,
+                  paddingBottom: 8,
+                  color: "var(--color-text)",
+                }}
+              >
+                {typeof c.dimensions === "number" ? c.dimensions : "—"}
               </td>
-              <td style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, textAlign: 'right' }}>
+              <td
+                style={{
+                  paddingLeft: 12,
+                  paddingRight: 12,
+                  paddingTop: 8,
+                  paddingBottom: 8,
+                  textAlign: "right",
+                }}
+              >
                 <Button
                   type="button"
                   onClick={() => onPick(c.name)}
-                  style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontSize: 10, color: 'var(--color-text-secondary)' }}
+                  style={{
+                    borderRadius: "var(--r-md)",
+                    border: "1px solid var(--color-border)",
+                    borderColor: "var(--color-border)",
+                    background: "var(--color-surface-2)",
+                    paddingLeft: 8,
+                    paddingRight: 8,
+                    paddingTop: 2,
+                    paddingBottom: 2,
+                    fontSize: 10,
+                    color: "var(--color-text-secondary)",
+                  }}
                 >
                   Use in Query
                 </Button>
@@ -665,8 +1021,8 @@ function CollectionsTab(props: {
  */
 function IndexingTab(props: { nodeName: string }): React.JSX.Element {
   const { nodeName } = props;
-  const [text, setText] = useState('');
-  const [collection, setCollection] = useState('');
+  const [text, setText] = useState("");
+  const [collection, setCollection] = useState("");
   const [parseError, setParseError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<StoreResponse | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -675,7 +1031,7 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
     onSuccess: (data) => {
       setLastResult(data as StoreResponse);
       setSubmitError(null);
-      setText('');
+      setText("");
     },
     onError: (err) => {
       setLastResult(null);
@@ -716,11 +1072,25 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
           e.preventDefault();
           onSubmit();
         }}
-        style={{ marginTop: 12, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 16 }}
+        style={{
+          marginTop: 12,
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-1)",
+          padding: 16,
+        }}
         data-testid="knowledge-indexing-form"
       >
-        <label style={{ display: 'block', fontSize: 14 }}>
-          <span style={{ marginBottom: 4, display: 'block', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+        <label style={{ display: "block", fontSize: 14 }}>
+          <span
+            style={{
+              marginBottom: 4,
+              display: "block",
+              color: "var(--color-text-secondary)",
+              fontSize: 12,
+            }}
+          >
             Documents to index (JSON array or plain text paragraphs)
           </span>
           <textarea
@@ -731,17 +1101,46 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
             }}
             rows={10}
             placeholder={`Paragraph-per-document:\n\nFirst paragraph becomes one doc.\n\nBlank lines separate documents.\n\nOr JSON:\n[{"id":"note-1","content":"…","metadata":{"source":"runbook"}}]`}
-            style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', color: 'var(--color-text)', fontSize: 12 }}
+            style={{
+              width: "100%",
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-2)",
+              paddingLeft: 8,
+              paddingRight: 8,
+              paddingTop: 4,
+              paddingBottom: 4,
+              fontFamily: "var(--font-mono)",
+              color: "var(--color-text)",
+              fontSize: 12,
+            }}
           />
-          <span style={{ marginTop: 4, display: 'block', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+          <span
+            style={{
+              marginTop: 4,
+              display: "block",
+              color: "var(--color-text-secondary)",
+              fontSize: 12,
+            }}
+          >
             {previewCount != null
-              ? `${previewCount} document${previewCount === 1 ? '' : 's'} will be stored.`
-              : 'Starts with [ to parse as JSON; otherwise split on blank lines.'}
+              ? `${previewCount} document${previewCount === 1 ? "" : "s"} will be stored.`
+              : "Starts with [ to parse as JSON; otherwise split on blank lines."}
           </span>
         </label>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 12 }}>
-          <label style={{ gridColumn: 'span 8 / span 8', fontSize: 14 }}>
-            <span style={{ marginBottom: 4, display: 'block', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+        <div
+          style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}
+        >
+          <label style={{ gridColumn: "span 8 / span 8", fontSize: 14 }}>
+            <span
+              style={{
+                marginBottom: 4,
+                display: "block",
+                color: "var(--color-text-secondary)",
+                fontSize: 12,
+              }}
+            >
               Collection (optional)
             </span>
             <Input
@@ -749,48 +1148,102 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
               value={collection}
               onChange={(e) => setCollection(e.target.value)}
               placeholder="defaults to node's collection"
-              style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
+              style={{
+                width: "100%",
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 4,
+                paddingBottom: 4,
+                fontFamily: "var(--font-mono)",
+                color: "var(--color-text)",
+              }}
             />
           </label>
-          <div style={{ gridColumn: 'span 4 / span 4', display: 'flex', alignItems: 'flex-end' }}>
-            <Button variant="primary" size="sm"
+          <div style={{ gridColumn: "span 4 / span 4", display: "flex", alignItems: "flex-end" }}>
+            <Button
+              variant="primary"
+              size="sm"
               type="submit"
               disabled={store.isPending}
               data-testid="knowledge-indexing-submit"
-              
             >
-              {store.isPending ? 'Storing…' : 'Store documents'}
+              {store.isPending ? "Storing…" : "Store documents"}
             </Button>
           </div>
         </div>
-        {parseError && (
-          <div style={{ color: 'var(--color-err)', fontSize: 12 }}>
-            {parseError}
-          </div>
-        )}
+        {parseError && <div style={{ color: "var(--color-err)", fontSize: 12 }}>{parseError}</div>}
       </form>
 
       {submitError && (
-        <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-err)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, color: 'var(--color-err)', fontSize: 14 }}>
-          Failed to reach <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>{nodeName}</Badge>: {submitError}
+        <div
+          style={{
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "var(--color-err)",
+            background: "var(--color-surface-1)",
+            paddingLeft: 12,
+            paddingRight: 12,
+            paddingTop: 8,
+            paddingBottom: 8,
+            color: "var(--color-err)",
+            fontSize: 14,
+          }}
+        >
+          Failed to reach{" "}
+          <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+            {nodeName}
+          </Badge>
+          : {submitError}
         </div>
       )}
 
       {lastResult && (
         <div
-          style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-ok)', background: 'var(--color-surface-1)', padding: 12 }}
+          style={{
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "var(--color-ok)",
+            background: "var(--color-surface-1)",
+            padding: 12,
+          }}
           data-testid="knowledge-indexing-result"
         >
-          <div style={{ color: 'var(--color-text)', fontSize: 14 }}>
+          <div style={{ color: "var(--color-text)", fontSize: 14 }}>
             Stored {lastResult.ids.length} document
-            {lastResult.ids.length === 1 ? '' : 's'} in{' '}
-            <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>{lastResult.collection}</Badge>.
+            {lastResult.ids.length === 1 ? "" : "s"} in{" "}
+            <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+              {lastResult.collection}
+            </Badge>
+            .
           </div>
-          <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text-secondary)' }}>
+          <div
+            style={{
+              marginTop: 8,
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 4,
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              color: "var(--color-text-secondary)",
+            }}
+          >
             {lastResult.ids.map((id) => (
               <span
                 key={id}
-                style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 6, paddingRight: 6, paddingTop: 2, paddingBottom: 2 }}
+                style={{
+                  borderRadius: "var(--r-md)",
+                  border: "1px solid var(--color-border)",
+                  borderColor: "var(--color-border)",
+                  background: "var(--color-surface-2)",
+                  paddingLeft: 6,
+                  paddingRight: 6,
+                  paddingTop: 2,
+                  paddingBottom: 2,
+                }}
               >
                 {id}
               </span>
@@ -820,18 +1273,16 @@ function EmbedderPanel(props: {
   const { node, agentNodes } = props;
   const utils = trpc.useUtils();
   const [editing, setEditing] = useState(false);
-  const [draftNode, setDraftNode] = useState(node.embedder?.node ?? '');
-  const [draftModel, setDraftModel] = useState(node.embedder?.model ?? '');
-  const [optimistic, setOptimistic] = useState<EmbedderBinding | null | undefined>(
-    undefined,
-  );
+  const [draftNode, setDraftNode] = useState(node.embedder?.node ?? "");
+  const [draftModel, setDraftModel] = useState(node.embedder?.model ?? "");
+  const [optimistic, setOptimistic] = useState<EmbedderBinding | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
   React.useEffect(() => {
     // Reset drafts when the selected node changes. The fresh selection
     // is the source of truth; keep the form hydrated from it.
-    setDraftNode(node.embedder?.node ?? '');
-    setDraftModel(node.embedder?.model ?? '');
+    setDraftNode(node.embedder?.node ?? "");
+    setDraftModel(node.embedder?.model ?? "");
     setOptimistic(undefined);
     setEditing(false);
     setError(null);
@@ -856,7 +1307,7 @@ function EmbedderPanel(props: {
     const n = draftNode.trim();
     const m = draftModel.trim();
     if (!n || !m) {
-      setError('Embedder node and model are both required.');
+      setError("Embedder node and model are both required.");
       return;
     }
     setError(null);
@@ -873,51 +1324,79 @@ function EmbedderPanel(props: {
 
   return (
     <div
-      style={{ marginBottom: 16, borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 12 }}
+      style={{
+        marginBottom: 16,
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-1)",
+        padding: 12,
+      }}
       data-testid="knowledge-embedder-panel"
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-        <div style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
-          <div style={{ marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Embedder</div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
+        <div style={{ color: "var(--color-text-secondary)", fontSize: 12 }}>
+          <div style={{ marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Embedder
+          </div>
           {shown ? (
-            <div
-              style={{ color: 'var(--color-text)' }}
-              data-testid="knowledge-embedder-current"
-            >
-              node{' '}
-              <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>{shown.node}
+            <div style={{ color: "var(--color-text)" }} data-testid="knowledge-embedder-current">
+              node{" "}
+              <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+                {shown.node}
               </Badge>
               <span> · model </span>
-              <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>{shown.model}
+              <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+                {shown.model}
               </Badge>
             </div>
           ) : (
             <div
-              style={{ color: 'var(--color-text-secondary)' }}
+              style={{ color: "var(--color-text-secondary)" }}
               data-testid="knowledge-embedder-current"
             >
               none
             </div>
           )}
-          {node.provider === 'chroma' && (
-            <div style={{ marginTop: 4, fontSize: 10, color: 'var(--color-text-secondary)' }}>
-              Chroma embeds internally — this binding is ignored by chroma
-              nodes, but persists for operator visibility.
+          {node.provider === "chroma" && (
+            <div style={{ marginTop: 4, fontSize: 10, color: "var(--color-text-secondary)" }}>
+              Chroma embeds internally — this binding is ignored by chroma nodes, but persists for
+              operator visibility.
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div style={{ display: "flex", gap: 4 }}>
           {!editing ? (
             <Button
               type="button"
               onClick={() => {
-                setDraftNode(shown?.node ?? '');
-                setDraftModel(shown?.model ?? '');
+                setDraftNode(shown?.node ?? "");
+                setDraftModel(shown?.model ?? "");
                 setEditing(true);
               }}
               disabled={mutation.isPending}
               data-testid="knowledge-embedder-edit"
-              style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontSize: 10, color: 'var(--color-text-secondary)', cursor: 'not-allowed', opacity: 0.5 }}
+              style={{
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 2,
+                paddingBottom: 2,
+                fontSize: 10,
+                color: "var(--color-text-secondary)",
+                cursor: "not-allowed",
+                opacity: 0.5,
+              }}
             >
               Edit embedder
             </Button>
@@ -929,18 +1408,32 @@ function EmbedderPanel(props: {
                 setError(null);
               }}
               disabled={mutation.isPending}
-              style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontSize: 10, color: 'var(--color-text-secondary)', cursor: 'not-allowed', opacity: 0.5 }}
+              style={{
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 2,
+                paddingBottom: 2,
+                fontSize: 10,
+                color: "var(--color-text-secondary)",
+                cursor: "not-allowed",
+                opacity: 0.5,
+              }}
             >
               Cancel
             </Button>
           )}
           {shown && !editing && (
-            <Button variant="secondary" size="sm"
+            <Button
+              variant="secondary"
+              size="sm"
               type="button"
               onClick={onClear}
               disabled={mutation.isPending}
               data-testid="knowledge-embedder-clear"
-              
             >
               Clear embedder
             </Button>
@@ -954,24 +1447,47 @@ function EmbedderPanel(props: {
             e.preventDefault();
             onSave();
           }}
-          style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 12 }}
+          style={{
+            marginTop: 12,
+            display: "grid",
+            gridTemplateColumns: "repeat(12, minmax(0, 1fr))",
+            gap: 12,
+          }}
           data-testid="knowledge-embedder-form"
         >
-          <label style={{ gridColumn: 'span 5 / span 5', fontSize: 14 }}>
-            <span style={{ marginBottom: 4, display: 'block', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+          <label style={{ gridColumn: "span 5 / span 5", fontSize: 14 }}>
+            <span
+              style={{
+                marginBottom: 4,
+                display: "block",
+                color: "var(--color-text-secondary)",
+                fontSize: 12,
+              }}
+            >
               Node
             </span>
             <select
               value={draftNode}
               onChange={(e) => setDraftNode(e.target.value)}
               data-testid="knowledge-embedder-node-select"
-              style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
+              style={{
+                width: "100%",
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 4,
+                paddingBottom: 4,
+                fontFamily: "var(--font-mono)",
+                color: "var(--color-text)",
+              }}
             >
               <option value="">(pick a node)</option>
-              {draftNode &&
-                !agentNodes.some((n) => n.name === draftNode) && (
-                  <option value={draftNode}>{draftNode} (current)</option>
-                )}
+              {draftNode && !agentNodes.some((n) => n.name === draftNode) && (
+                <option value={draftNode}>{draftNode} (current)</option>
+              )}
               {agentNodes.map((n) => (
                 <option key={n.name} value={n.name}>
                   {n.name}
@@ -979,8 +1495,15 @@ function EmbedderPanel(props: {
               ))}
             </select>
           </label>
-          <label style={{ gridColumn: 'span 5 / span 5', fontSize: 14 }}>
-            <span style={{ marginBottom: 4, display: 'block', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+          <label style={{ gridColumn: "span 5 / span 5", fontSize: 14 }}>
+            <span
+              style={{
+                marginBottom: 4,
+                display: "block",
+                color: "var(--color-text-secondary)",
+                fontSize: 12,
+              }}
+            >
               Model
             </span>
             <Input
@@ -989,17 +1512,30 @@ function EmbedderPanel(props: {
               onChange={(e) => setDraftModel(e.target.value)}
               placeholder="e.g. nomic-embed-text-v1.5"
               data-testid="knowledge-embedder-model-input"
-              style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
+              style={{
+                width: "100%",
+                borderRadius: "var(--r-md)",
+                border: "1px solid var(--color-border)",
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-2)",
+                paddingLeft: 8,
+                paddingRight: 8,
+                paddingTop: 4,
+                paddingBottom: 4,
+                fontFamily: "var(--font-mono)",
+                color: "var(--color-text)",
+              }}
             />
           </label>
-          <div style={{ gridColumn: 'span 2 / span 2', display: 'flex', alignItems: 'flex-end' }}>
-            <Button variant="primary" size="sm"
+          <div style={{ gridColumn: "span 2 / span 2", display: "flex", alignItems: "flex-end" }}>
+            <Button
+              variant="primary"
+              size="sm"
               type="submit"
               disabled={mutation.isPending}
               data-testid="knowledge-embedder-save"
-              
             >
-              {mutation.isPending ? 'Saving…' : 'Save'}
+              {mutation.isPending ? "Saving…" : "Save"}
             </Button>
           </div>
         </form>
@@ -1007,7 +1543,7 @@ function EmbedderPanel(props: {
 
       {error && (
         <div
-          style={{ marginTop: 8, color: 'var(--color-err)', fontSize: 12 }}
+          style={{ marginTop: 8, color: "var(--color-err)", fontSize: 12 }}
           data-testid="knowledge-embedder-error"
         >
           {error}
@@ -1024,17 +1560,16 @@ export default function Knowledge(): React.JSX.Element {
     return rows
       .filter((n) => {
         const eff = (n as { effectiveKind?: string }).effectiveKind;
-        return eff === 'rag';
+        return eff === "rag";
       })
       .map((n) => {
         const embedder = n.rag?.embedder;
         return {
           name: n.name,
-          provider:
-            (n.rag?.provider as RagProviderKind | undefined) ?? null,
-          kind: 'rag' as const,
+          provider: (n.rag?.provider as RagProviderKind | undefined) ?? null,
+          kind: "rag" as const,
           embedder:
-            embedder && typeof embedder === 'object'
+            embedder && typeof embedder === "object"
               ? {
                   node: String((embedder as EmbedderBinding).node),
                   model: String((embedder as EmbedderBinding).model),
@@ -1048,14 +1583,14 @@ export default function Knowledge(): React.JSX.Element {
     return rows
       .filter((n) => {
         const eff = (n as { effectiveKind?: string }).effectiveKind;
-        return eff === 'agent';
+        return eff === "agent";
       })
       .map((n) => ({ name: n.name, endpoint: n.endpoint }));
   }, [nodes.data]);
 
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabId>('query');
-  const [queryCollection, setQueryCollection] = useState('');
+  const [activeTab, setActiveTab] = useState<TabId>("query");
+  const [queryCollection, setQueryCollection] = useState("");
 
   // Auto-select the first RAG node once the list loads.
   React.useEffect(() => {
@@ -1072,46 +1607,112 @@ export default function Knowledge(): React.JSX.Element {
   const selected = ragNodes.find((n) => n.name === selectedNode) ?? null;
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', padding: 24 }} data-testid="knowledge-retrieval-root">
-      <div style={{ marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+    <div
+      style={{ height: "100%", overflow: "auto", padding: 24 }}
+      data-testid="knowledge-retrieval-root"
+    >
+      <div
+        style={{
+          marginBottom: 4,
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          color: "var(--color-text-secondary)",
+          fontSize: 12,
+        }}
+      >
         Knowledge
       </div>
-      <h1 style={{ marginBottom: 8, fontSize: 24, fontWeight: 600, color: 'var(--color-text)' }}>
+      <h1 style={{ marginBottom: 8, fontSize: 24, fontWeight: 600, color: "var(--color-text)" }}>
         Retrieval-Augmented Generation
       </h1>
-      <p style={{ marginBottom: 24, color: 'var(--color-text-secondary)', fontSize: 12 }}>
-        Query, browse, and index documents against the RAG nodes registered in
-        your kubeconfig. Supported providers:{' '}
-        <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>chroma</Badge> and{' '}
-        <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>pgvector</Badge>.
+      <p style={{ marginBottom: 24, color: "var(--color-text-secondary)", fontSize: 12 }}>
+        Query, browse, and index documents against the RAG nodes registered in your kubeconfig.
+        Supported providers:{" "}
+        <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+          chroma
+        </Badge>{" "}
+        and{" "}
+        <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+          pgvector
+        </Badge>
+        .
       </p>
 
       {nodes.isLoading && (
-        <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 16, color: 'var(--color-text-secondary)', fontSize: 14 }}>
+        <div
+          style={{
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "var(--color-border)",
+            background: "var(--color-surface-1)",
+            padding: 16,
+            color: "var(--color-text-secondary)",
+            fontSize: 14,
+          }}
+        >
           Loading nodes…
         </div>
       )}
 
       {!nodes.isLoading && ragNodes.length === 0 && (
         <div
-          style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderStyle: 'dashed', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 24 }}
+          style={{
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderStyle: "dashed",
+            borderColor: "var(--color-border)",
+            background: "var(--color-surface-1)",
+            padding: 24,
+          }}
           data-testid="knowledge-empty-state"
         >
-          <div style={{ color: 'var(--color-text)', fontSize: 14 }}>
-            No knowledge bases yet — register one with{' '}
-            <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>llamactl node add …</Badge>.
+          <div style={{ color: "var(--color-text)", fontSize: 14 }}>
+            No knowledge bases yet — register one with{" "}
+            <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+              llamactl node add …
+            </Badge>
+            .
           </div>
-          <p style={{ marginTop: 8, color: 'var(--color-text-secondary)', fontSize: 12 }}>
+          <p style={{ marginTop: 8, color: "var(--color-text-secondary)", fontSize: 12 }}>
             Example for a Chroma node backed by the chroma-mcp server:
           </p>
-          <pre style={{ marginTop: 4, overflowX: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', padding: 8, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text)' }}>{`llamactl node add kb-chroma \\
+          <pre
+            style={{
+              marginTop: 4,
+              overflowX: "auto",
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-2)",
+              padding: 8,
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              color: "var(--color-text)",
+            }}
+          >{`llamactl node add kb-chroma \\
   --rag=chroma \\
   --endpoint="chroma-mcp run --persist-directory /path/to/chroma-data"`}</pre>
-          <p style={{ marginTop: 8, color: 'var(--color-text-secondary)', fontSize: 12 }}>
-            Or a pgvector node against a running Postgres with the{' '}
-            <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>vector</Badge> extension:
+          <p style={{ marginTop: 8, color: "var(--color-text-secondary)", fontSize: 12 }}>
+            Or a pgvector node against a running Postgres with the{" "}
+            <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+              vector
+            </Badge>{" "}
+            extension:
           </p>
-          <pre style={{ marginTop: 4, overflowX: 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', padding: 8, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text)' }}>{`llamactl node add kb-pg \\
+          <pre
+            style={{
+              marginTop: 4,
+              overflowX: "auto",
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-2)",
+              padding: 8,
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              color: "var(--color-text)",
+            }}
+          >{`llamactl node add kb-pg \\
   --rag=pgvector \\
   --endpoint="postgres://kb_user:$PG_PASSWORD@db.local:5432/kb_main"`}</pre>
         </div>
@@ -1119,33 +1720,72 @@ export default function Knowledge(): React.JSX.Element {
 
       {ragNodes.length > 0 && selected && (
         <>
-          <div style={{ marginBottom: 16, display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: 12 }}>
-            <label style={{ gridColumn: 'span 6 / span 6', fontSize: 14 }}>
-              <span style={{ marginBottom: 4, display: 'block', color: 'var(--color-text-secondary)', fontSize: 12 }}>
+          <div
+            style={{
+              marginBottom: 16,
+              display: "grid",
+              gridTemplateColumns: "repeat(12, minmax(0, 1fr))",
+              gap: 12,
+            }}
+          >
+            <label style={{ gridColumn: "span 6 / span 6", fontSize: 14 }}>
+              <span
+                style={{
+                  marginBottom: 4,
+                  display: "block",
+                  color: "var(--color-text-secondary)",
+                  fontSize: 12,
+                }}
+              >
                 RAG node
               </span>
               <select
                 value={selected.name}
                 onChange={(e) => setSelectedNode(e.target.value)}
                 data-testid="knowledge-node-select"
-                style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}
+                style={{
+                  width: "100%",
+                  borderRadius: "var(--r-md)",
+                  border: "1px solid var(--color-border)",
+                  borderColor: "var(--color-border)",
+                  background: "var(--color-surface-2)",
+                  paddingLeft: 8,
+                  paddingRight: 8,
+                  paddingTop: 4,
+                  paddingBottom: 4,
+                  fontFamily: "var(--font-mono)",
+                  color: "var(--color-text)",
+                }}
               >
                 {ragNodes.map((n) => (
                   <option key={n.name} value={n.name}>
                     {n.name}
-                    {n.provider ? ` — ${n.provider}` : ''}
+                    {n.provider ? ` — ${n.provider}` : ""}
                   </option>
                 ))}
               </select>
             </label>
-            <div style={{ gridColumn: 'span 6 / span 6', display: 'flex', alignItems: 'flex-end', gap: 8, color: 'var(--color-text-secondary)', fontSize: 12 }}>
+            <div
+              style={{
+                gridColumn: "span 6 / span 6",
+                display: "flex",
+                alignItems: "flex-end",
+                gap: 8,
+                color: "var(--color-text-secondary)",
+                fontSize: 12,
+              }}
+            >
               <span>
-                kind <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>rag</Badge>
+                kind{" "}
+                <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+                  rag
+                </Badge>
               </span>
               {selected.provider && (
                 <span>
-                  · provider{' '}
-                  <Badge variant="default" style={{ fontFamily: 'var(--font-mono)' }}>{selected.provider}
+                  · provider{" "}
+                  <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+                    {selected.provider}
                   </Badge>
                 </span>
               )}
@@ -1155,16 +1795,22 @@ export default function Knowledge(): React.JSX.Element {
           <EmbedderPanel node={selected} agentNodes={agentNodes} />
 
           <div
-            style={{ marginBottom: 16, display: 'flex', gap: 4, borderBottom: '1px solid var(--color-border)', borderColor: 'var(--color-border)' }}
+            style={{
+              marginBottom: 16,
+              display: "flex",
+              gap: 4,
+              borderBottom: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+            }}
             data-testid="knowledge-tabs"
           >
             {(
               [
-                { id: 'query', label: 'Query' },
-                { id: 'collections', label: 'Collections' },
-                { id: 'indexing', label: 'Indexing' },
-                { id: 'pipelines', label: 'Pipelines' },
-                { id: 'quality', label: 'Quality' },
+                { id: "query", label: "Query" },
+                { id: "collections", label: "Collections" },
+                { id: "indexing", label: "Indexing" },
+                { id: "pipelines", label: "Pipelines" },
+                { id: "quality", label: "Quality" },
               ] as { id: TabId; label: string }[]
             ).map((tab) => {
               const active = tab.id === activeTab;
@@ -1174,7 +1820,30 @@ export default function Knowledge(): React.JSX.Element {
                   type="button"
                   onClick={() => setActiveTab(tab.id)}
                   data-testid={`knowledge-tab-${tab.id}`}
-                  style={{ ...( active ? { borderBottom: '2px solid var(--color-border)', borderColor: 'var(--color-brand)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 14, fontWeight: 500, color: 'var(--color-text)' } : { borderBottom: '2px solid var(--color-border)', borderColor: 'transparent', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 14, color: 'var(--color-text-secondary)' } ) }}
+                  style={{
+                    ...(active
+                      ? {
+                          borderBottom: "2px solid var(--color-border)",
+                          borderColor: "var(--color-brand)",
+                          paddingLeft: 12,
+                          paddingRight: 12,
+                          paddingTop: 8,
+                          paddingBottom: 8,
+                          fontSize: 14,
+                          fontWeight: 500,
+                          color: "var(--color-text)",
+                        }
+                      : {
+                          borderBottom: "2px solid var(--color-border)",
+                          borderColor: "transparent",
+                          paddingLeft: 12,
+                          paddingRight: 12,
+                          paddingTop: 8,
+                          paddingBottom: 8,
+                          fontSize: 14,
+                          color: "var(--color-text-secondary)",
+                        }),
+                  }}
                 >
                   {tab.label}
                 </Button>
@@ -1183,7 +1852,7 @@ export default function Knowledge(): React.JSX.Element {
           </div>
 
           <div data-testid={`knowledge-panel-${activeTab}`}>
-            {activeTab === 'query' && (
+            {activeTab === "query" && (
               <QueryTab
                 nodeName={selected.name}
                 collection={queryCollection}
@@ -1192,24 +1861,21 @@ export default function Knowledge(): React.JSX.Element {
                 provider={selected.provider}
               />
             )}
-            {activeTab === 'collections' && (
+            {activeTab === "collections" && (
               <CollectionsTab
                 nodeName={selected.name}
                 onPick={(collection) => {
                   setQueryCollection(collection);
-                  setActiveTab('query');
+                  setActiveTab("query");
                 }}
               />
             )}
-            {activeTab === 'indexing' && <IndexingTab nodeName={selected.name} />}
-            {activeTab === 'quality' && (
+            {activeTab === "indexing" && <IndexingTab nodeName={selected.name} />}
+            {activeTab === "quality" && (
               <QualityTab nodeName={selected.name} collection={queryCollection} />
             )}
-            {activeTab === 'pipelines' && (
-              <PipelinesTab
-                nodeName={selected.name}
-                availableNodes={ragNodes.map((n) => n.name)}
-              />
+            {activeTab === "pipelines" && (
+              <PipelinesTab nodeName={selected.name} availableNodes={ragNodes.map((n) => n.name)} />
             )}
           </div>
         </>

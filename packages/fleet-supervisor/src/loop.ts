@@ -1,11 +1,24 @@
-import { probeNodeMem as defaultProbeNodeMem } from './node-probe.js';
-import { probeWorkload as defaultProbeWorkload, redactEndpoint, type WorkloadTarget } from './workload-probe.js';
-import { appendFleetJournal, defaultFleetJournalPath } from './journal.js';
-import { MigrationController, type MigrationWorkload, type NodeSnapshot } from './migration-controller.js';
+import { probeNodeMem as defaultProbeNodeMem } from "./node-probe.js";
 import {
-  PressureWindow, detectPressure, detectDegradation, isPressureHot,
-  type PressureThresholds, type DegradationThresholds, type WorkloadHealthState,
-} from './policy.js';
+  probeWorkload as defaultProbeWorkload,
+  redactEndpoint,
+  type WorkloadTarget,
+} from "./workload-probe.js";
+import { appendFleetJournal, defaultFleetJournalPath } from "./journal.js";
+import {
+  MigrationController,
+  type MigrationWorkload,
+  type NodeSnapshot,
+} from "./migration-controller.js";
+import {
+  PressureWindow,
+  detectPressure,
+  detectDegradation,
+  isPressureHot,
+  type PressureThresholds,
+  type DegradationThresholds,
+  type WorkloadHealthState,
+} from "./policy.js";
 import type {
   FleetHeartbeatEntry,
   FleetJournalEntry,
@@ -14,7 +27,7 @@ import type {
   FleetTransitionEntry,
   NodeMemSnapshot,
   WorkloadSnapshot,
-} from './types.js';
+} from "./types.js";
 
 export const DEFAULT_PRESSURE_THRESHOLDS: PressureThresholds = {
   headroomMinMb: 512,
@@ -69,11 +82,12 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const probeTimeoutMs = opts.probeTimeoutMs ?? 5_000;
   const probeNodeMem = opts.probeNodeMem ?? defaultProbeNodeMem;
   const journalPath = opts.journalPath ?? defaultFleetJournalPath();
-  const writeJournal = opts.writeJournal ?? ((entry: FleetJournalEntry) => appendFleetJournal(entry, journalPath));
+  const writeJournal =
+    opts.writeJournal ?? ((entry: FleetJournalEntry) => appendFleetJournal(entry, journalPath));
   const consecutiveErrors = new Map<string, number>();
   const pressureThresholds = opts.pressureThresholds ?? DEFAULT_PRESSURE_THRESHOLDS;
   const pressureWindow = new PressureWindow(pressureThresholds.consecutiveTicks);
-  let lastPressureLevel: 'NORMAL' | 'HIGH' = 'NORMAL';
+  let lastPressureLevel: "NORMAL" | "HIGH" = "NORMAL";
   let consecutiveClearTicks = 0;
   let enteredHighAt: string | null = null;
   let ticksInHigh = 0;
@@ -84,40 +98,44 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const seenProposalIds = new Set<string>();
 
   const writeJournalEntry = (entry: FleetJournalEntry): void => {
-    if (entry.kind === 'fleet-proposal' && seenProposalIds.has(entry.proposalId)) return;
-    if (entry.kind === 'fleet-proposal') {
+    if (entry.kind === "fleet-proposal" && seenProposalIds.has(entry.proposalId)) return;
+    if (entry.kind === "fleet-proposal") {
       seenProposalIds.add(entry.proposalId);
     }
     writeJournal(entry);
   };
 
-  const probeWorkloadFn = opts.probeWorkload ?? (async (target) => {
-    const result = await defaultProbeWorkload(target, {
-      fetch: opts.fetch,
-      timeoutMs: probeTimeoutMs,
-      priorConsecutiveErrors: consecutiveErrors.get(target.name) ?? 0,
+  const probeWorkloadFn =
+    opts.probeWorkload ??
+    (async (target) => {
+      const result = await defaultProbeWorkload(target, {
+        fetch: opts.fetch,
+        timeoutMs: probeTimeoutMs,
+        priorConsecutiveErrors: consecutiveErrors.get(target.name) ?? 0,
+      });
+      consecutiveErrors.set(target.name, result.consecutiveErrors);
+      return {
+        name: target.name,
+        kind: target.kind,
+        endpoint: redactEndpoint(target.endpoint),
+        priority: target.priority ?? 50,
+        rss_mb: null,
+        request_rate_5m: null,
+        error_rate_5m: 0,
+        p50_ms: result.healthLatencyMs,
+        p95_ms: result.healthLatencyMs,
+        models: result.models,
+        reachable: result.reachable,
+        consecutiveErrors: result.consecutiveErrors,
+        revision: result.revision,
+      } satisfies WorkloadSnapshot;
     });
-    consecutiveErrors.set(target.name, result.consecutiveErrors);
-    return {
-      name: target.name,
-      kind: target.kind,
-      endpoint: redactEndpoint(target.endpoint),
-      priority: target.priority ?? 50,
-      rss_mb: null,
-      request_rate_5m: null,
-      error_rate_5m: 0,
-      p50_ms: result.healthLatencyMs,
-      p95_ms: result.healthLatencyMs,
-      models: result.models,
-      reachable: result.reachable,
-      consecutiveErrors: result.consecutiveErrors,
-      revision: result.revision,
-    } satisfies WorkloadSnapshot;
-  });
 
   let stopped = false;
   let resolveDone: () => void = () => {};
-  const done = new Promise<void>((res) => { resolveDone = res; });
+  const done = new Promise<void>((res) => {
+    resolveDone = res;
+  });
 
   const unreachableFallback = (target: WorkloadTarget): WorkloadSnapshot => ({
     name: target.name,
@@ -145,14 +163,14 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     );
 
     const snapshot: FleetSnapshotEntry = {
-      kind: 'fleet-snapshot',
+      kind: "fleet-snapshot",
       ts,
       node: opts.node,
       node_mem,
       workloads,
     };
     const heartbeat: FleetHeartbeatEntry = {
-      kind: 'fleet-heartbeat',
+      kind: "fleet-heartbeat",
       ts,
       node: opts.node,
     };
@@ -160,20 +178,20 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     writeJournalEntry(heartbeat);
     pressureWindow.push(node_mem, workloads);
     const pressure = detectPressure(pressureWindow, pressureThresholds);
-    if (pressure && lastPressureLevel === 'NORMAL') {
+    if (pressure && lastPressureLevel === "NORMAL") {
       const transition: FleetTransitionEntry = {
-        kind: 'fleet-transition',
+        kind: "fleet-transition",
         ts,
         node: opts.node,
-        subject: 'node',
-        subjectKind: 'node',
-        signal: 'pressure',
-        from: 'NORMAL',
-        to: 'HIGH',
+        subject: "node",
+        subjectKind: "node",
+        signal: "pressure",
+        from: "NORMAL",
+        to: "HIGH",
       };
       writeJournalEntry(transition);
       const proposal: FleetProposalEntry = {
-        kind: 'fleet-proposal',
+        kind: "fleet-proposal",
         ts,
         node: opts.node,
         proposalId: `pressure-${opts.node}-${ts}`,
@@ -181,16 +199,16 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
         action: pressure.proposal.action,
       };
       writeJournalEntry(proposal);
-      lastPressureLevel = 'HIGH';
+      lastPressureLevel = "HIGH";
       consecutiveClearTicks = 0;
       enteredHighAt = ts;
       ticksInHigh = 0;
 
-      const statusEntry: import('./types.js').FleetPressureStatusEntry = {
-        kind: 'fleet-pressure-status',
+      const statusEntry: import("./types.js").FleetPressureStatusEntry = {
+        kind: "fleet-pressure-status",
         ts,
         node: opts.node,
-        state: 'HIGH',
+        state: "HIGH",
         enteredAt: enteredHighAt,
         durationMs: 0,
         consecutiveClearTicks,
@@ -201,7 +219,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
         compressorBreach: node_mem.compressor_mb > pressureThresholds.compressorWarnMb,
       };
       writeJournalEntry(statusEntry);
-    } else if (lastPressureLevel === 'HIGH') {
+    } else if (lastPressureLevel === "HIGH") {
       ticksInHigh++;
       const latestWindowEntry = pressureWindow.tail(1)[0];
       if (latestWindowEntry && isPressureHot(latestWindowEntry, pressureThresholds)) {
@@ -211,17 +229,17 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
         const clearTicks = pressureThresholds.clearTicks;
         if (consecutiveClearTicks >= clearTicks) {
           const transition: FleetTransitionEntry = {
-            kind: 'fleet-transition',
+            kind: "fleet-transition",
             ts,
             node: opts.node,
-            subject: 'node',
-            subjectKind: 'node',
-            signal: 'pressure-cleared',
-            from: 'HIGH',
-            to: 'NORMAL',
+            subject: "node",
+            subjectKind: "node",
+            signal: "pressure-cleared",
+            from: "HIGH",
+            to: "NORMAL",
           };
           writeJournalEntry(transition);
-          lastPressureLevel = 'NORMAL';
+          lastPressureLevel = "NORMAL";
           consecutiveClearTicks = 0;
           enteredHighAt = null;
           ticksInHigh = 0;
@@ -229,12 +247,16 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       }
     }
 
-    if (lastPressureLevel === 'HIGH' && pressureStatusEveryTicks > 0 && ticksInHigh % pressureStatusEveryTicks === 0) {
-      const statusEntry: import('./types.js').FleetPressureStatusEntry = {
-        kind: 'fleet-pressure-status',
+    if (
+      lastPressureLevel === "HIGH" &&
+      pressureStatusEveryTicks > 0 &&
+      ticksInHigh % pressureStatusEveryTicks === 0
+    ) {
+      const statusEntry: import("./types.js").FleetPressureStatusEntry = {
+        kind: "fleet-pressure-status",
         ts,
         node: opts.node,
-        state: 'HIGH',
+        state: "HIGH",
         enteredAt: enteredHighAt!,
         durationMs: new Date(ts).getTime() - new Date(enteredHighAt!).getTime(),
         consecutiveClearTicks,
@@ -248,11 +270,11 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     }
 
     for (const workload of workloads) {
-      const prior = workloadHealth.get(workload.name) ?? 'healthy';
+      const prior = workloadHealth.get(workload.name) ?? "healthy";
       const result = detectDegradation(workload, prior, degradationThresholds);
       if (result) {
         const transition: FleetTransitionEntry = {
-          kind: 'fleet-transition',
+          kind: "fleet-transition",
           ts,
           node: opts.node,
           subject: result.transition.subject,
@@ -264,7 +286,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
         writeJournalEntry(transition);
         if (result.proposal) {
           const proposal: FleetProposalEntry = {
-            kind: 'fleet-proposal',
+            kind: "fleet-proposal",
             ts,
             node: opts.node,
             proposalId: `degradation-${workload.name}-${ts}`,
@@ -281,7 +303,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       const nodeSnapshot: NodeSnapshot = {
         node: opts.node,
         schedulerLeaseHolder: opts.node,
-        pressureState: pressure ? 'HIGH' : 'NORMAL',
+        pressureState: pressure ? "HIGH" : "NORMAL",
         nodeMem: { freeMb: node_mem.free_mb },
         workloads,
       };
@@ -289,7 +311,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
         const migrationWorkload: MigrationWorkload = {
           name: workload.name,
           node: opts.node,
-          spec: { placement: 'auto' },
+          spec: { placement: "auto" },
           evictProposalId: `evict-${workload.name}-${ts}`,
         };
         const proposal = await migrationController.evaluateMove(migrationWorkload, nodeSnapshot);
@@ -319,7 +341,9 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   void run();
 
   return {
-    stop() { stopped = true; },
+    stop() {
+      stopped = true;
+    },
     done,
   };
 }

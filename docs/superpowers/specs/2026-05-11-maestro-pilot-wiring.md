@@ -63,13 +63,13 @@ config needs an entry for it, marked maestro-capable.
 
 ### Endpoint
 
-| Field | Value |
-|---|---|
-| Base URL | `http://127.0.0.1:8181` |
+| Field            | Value                       |
+| ---------------- | --------------------------- |
+| Base URL         | `http://127.0.0.1:8181`     |
 | Chat completions | `POST /v1/chat/completions` |
-| Models list | `GET /v1/models` |
-| Health | `GET /health` |
-| Model alias | `gemma4-26b-a4b-mtp` |
+| Models list      | `GET /v1/models`            |
+| Health           | `GET /health`               |
+| Model alias      | `gemma4-26b-a4b-mtp`        |
 
 ### Required request shape
 
@@ -167,12 +167,12 @@ penumbra maestro session start --maestro local-gemma4-26b-a4b-mtp \
 
 ## Memory & resource budget
 
-| Resource | Cost | Notes |
-|---|---|---|
-| Metal working set | ~17 GB | Out of 38 GB cap on M4 Pro 48 GB; ~21 GB headroom |
-| RSS | ~16 GB | Mostly the model file via mmap |
-| Cold start | ~10 s | `--no-warmup`; first request adds prompt-eval time |
-| Decode | 40.6 tok/s aggregate | MTP enabled, accept rate 0.71 |
+| Resource          | Cost                 | Notes                                              |
+| ----------------- | -------------------- | -------------------------------------------------- |
+| Metal working set | ~17 GB               | Out of 38 GB cap on M4 Pro 48 GB; ~21 GB headroom  |
+| RSS               | ~16 GB               | Mostly the model file via mmap                     |
+| Cold start        | ~10 s                | `--no-warmup`; first request adds prompt-eval time |
+| Decode            | 40.6 tok/s aggregate | MTP enabled, accept rate 0.71                      |
 
 Granite stays on mac-mini per the earlier decision; codex-acp on M4 Pro
 is capped now via the upstream-PR-suggested fix. No other always-on
@@ -184,6 +184,7 @@ local llama-servers — so the budget here is generous.
    override to `ModelRunSpec`, update `packages/core/src/server.ts` to
    honor it, then migrate this pilot from launchd to a proper workload
    manifest. Roughly:
+
    ```ts
    // packages/remote/src/workload/schema.ts
    export const ModelRunSpecSchema = z.object({
@@ -191,12 +192,14 @@ local llama-servers — so the budget here is generous.
      binary: z.string().optional(),
    });
    ```
+
    ```ts
    // packages/core/src/server.ts ~line 447
    const bin = spec.binary
      ? resolveAbsolute(spec.binary)
-     : join(resolved.LLAMA_CPP_BIN, 'llama-server');
+     : join(resolved.LLAMA_CPP_BIN, "llama-server");
    ```
+
    Tests touch `packages/core/test/server.test.ts` and any workload
    manifest fixture.
 

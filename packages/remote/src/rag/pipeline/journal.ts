@@ -12,21 +12,21 @@
  * available, and fall back to `node:fs/promises` otherwise — the
  * journal format itself is just newline-delimited JSON either way.
  */
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 
 export type JournalEntry =
-  | { kind: 'run-started'; ts: string; spec_hash: string; sources: string[] }
-  | { kind: 'source-started'; ts: string; source: string }
+  | { kind: "run-started"; ts: string; spec_hash: string; sources: string[] }
+  | { kind: "source-started"; ts: string; source: string }
   | {
-      kind: 'doc-skipped';
+      kind: "doc-skipped";
       ts: string;
       source: string;
       doc_id: string;
-      reason: 'duplicate';
+      reason: "duplicate";
     }
   | {
-      kind: 'doc-ingested';
+      kind: "doc-ingested";
       ts: string;
       source: string;
       doc_id: string;
@@ -47,7 +47,7 @@ export type JournalEntry =
       // so a single `grep kind=doc-ingested` counts only wet writes and
       // downstream tooling (dedupe, retrieval-backfill) doesn't
       // accidentally treat dry-run entries as source of truth.
-      kind: 'doc-would-ingest';
+      kind: "doc-would-ingest";
       ts: string;
       source: string;
       doc_id: string;
@@ -56,7 +56,7 @@ export type JournalEntry =
       chunk_ids?: string[];
     }
   | {
-      kind: 'source-complete';
+      kind: "source-complete";
       ts: string;
       source: string;
       docs: number;
@@ -64,7 +64,7 @@ export type JournalEntry =
       errors: number;
     }
   | {
-      kind: 'run-complete';
+      kind: "run-complete";
       ts: string;
       total_docs: number;
       total_chunks: number;
@@ -77,11 +77,11 @@ export type JournalEntry =
       estimated_cost?: {
         usd: number;
         currency: string;
-        source: 'per_chunk' | 'per_doc' | 'combined';
+        source: "per_chunk" | "per_doc" | "combined";
       };
     }
   | {
-      kind: 'error';
+      kind: "error";
       ts: string;
       source?: string;
       doc_id?: string;
@@ -135,8 +135,8 @@ export async function openJournal(path: string): Promise<Journal> {
       // our per-doc cadence. We re-open on each append to keep the
       // code dead-simple — the pipeline's write rate is bounded by
       // embed + store round-trips, not by disk syscalls.
-      await appendFile(path, line, 'utf8');
-      if (entry.kind === 'doc-ingested') {
+      await appendFile(path, line, "utf8");
+      if (entry.kind === "doc-ingested") {
         seenSet.add(key(entry.source, entry.doc_id, entry.sha));
         const pk = docKey(entry.source, entry.doc_id);
         const list = prior.get(pk) ?? [];
@@ -171,20 +171,20 @@ interface JournalIndexes {
 async function loadIndexes(path: string): Promise<JournalIndexes> {
   let raw: string;
   try {
-    raw = await readFile(path, 'utf8');
+    raw = await readFile(path, "utf8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       // First run — ensure the file exists so subsequent open() calls
       // take the happy path and the file shows up in `ls` for the
       // operator.
-      await writeFile(path, '', 'utf8');
+      await writeFile(path, "", "utf8");
       return { seen: new Set(), prior: new Map() };
     }
     throw err;
   }
   const seen = new Set<string>();
   const prior = new Map<string, PriorIngestion[]>();
-  for (const line of raw.split('\n')) {
+  for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
     let parsed: unknown;
@@ -197,15 +197,11 @@ async function loadIndexes(path: string): Promise<JournalIndexes> {
       // not a correctness bug).
       continue;
     }
-    if (!parsed || typeof parsed !== 'object') continue;
+    if (!parsed || typeof parsed !== "object") continue;
     const entry = parsed as Partial<JournalEntry>;
-    if (entry.kind !== 'doc-ingested') continue;
-    const e = entry as Extract<JournalEntry, { kind: 'doc-ingested' }>;
-    if (
-      typeof e.source !== 'string' ||
-      typeof e.doc_id !== 'string' ||
-      typeof e.sha !== 'string'
-    ) {
+    if (entry.kind !== "doc-ingested") continue;
+    const e = entry as Extract<JournalEntry, { kind: "doc-ingested" }>;
+    if (typeof e.source !== "string" || typeof e.doc_id !== "string" || typeof e.sha !== "string") {
       continue;
     }
     seen.add(key(e.source, e.doc_id, e.sha));

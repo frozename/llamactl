@@ -1,4 +1,4 @@
-import type { SessionStatus } from '../ops-chat/sessions/list.js';
+import type { SessionStatus } from "../ops-chat/sessions/list.js";
 
 export interface MatchExcerpt {
   where: string;
@@ -24,7 +24,7 @@ export interface KnowledgeHit {
 }
 
 export interface LogHit {
-  fileLabel: string;     // e.g. 'ops-chat-audit', 'electron-main'
+  fileLabel: string; // e.g. 'ops-chat-audit', 'electron-main'
   filePath: string;
   matches: (MatchExcerpt & { lineNumber: number })[];
   score: number;

@@ -3,7 +3,7 @@
 When a composite spec routes upstream workloads through a sirius or
 embersynth gateway, llamactl writes the corresponding catalog entries
 into `sirius-providers.yaml` / `embersynth.yaml` (the `nodes:` list)
-*before* calling the gateway's reload endpoint. Operators no longer
+_before_ calling the gateway's reload endpoint. Operators no longer
 need to run `llamactl sirius add-provider` or `llamactl embersynth
 sync` as a precondition for `llamactl composite apply`.
 
@@ -52,7 +52,7 @@ spec:
       spec:
         destination: { ragNode: kb-chroma, collection: docs }
         sources: [{ kind: filesystem, root: /Users/me/docs }]
-        schedule: '@hourly'
+        schedule: "@hourly"
         on_duplicate: replace
 ```
 
@@ -70,11 +70,11 @@ apply or destroy.
 
 Conflict reasons surface as `Pending` in `compositeStatus.components[]`:
 
-  - `PipelineNameCollision` — a pipeline with the same name already
-    exists, owned by either an operator or a different composite that
-    didn't co-own this name.
-  - `PipelineShapeMismatch` — two composites declare the same pipeline
-    name with different specs (different `specHash`).
+- `PipelineNameCollision` — a pipeline with the same name already
+  exists, owned by either an operator or a different composite that
+  didn't co-own this name.
+- `PipelineShapeMismatch` — two composites declare the same pipeline
+  name with different specs (different `specHash`).
 
 The first ingest run is fire-and-forget on apply: the composite reaches
 `Ready` once the pipeline is registered, not when the first ingest

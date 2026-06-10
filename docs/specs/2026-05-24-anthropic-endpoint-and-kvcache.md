@@ -35,6 +35,7 @@ only the metadata + slot orchestration — llama-server's
 `--slot-save-path` + `POST /slots/{id}?action=save|restore` owns the blob.
 
 User-confirmed choices going into this fan-out:
+
 - Both slices land in parallel (subagent fan-out on disjoint files)
 - Registry storage: SQLite (consistent with fleet/lane/audit DBs)
 - Anthropic endpoint streams SSE from day 1 (Claude Code is streaming-only
@@ -49,6 +50,7 @@ allows it (codex/copilot/gemini/local Gemma-26B-A4B at :8181).
 ## Slice 1 — `/v1/messages` Anthropic endpoint
 
 ### Surface
+
 New branch in `proxyOpenAI` when `url.pathname === '/v1/messages'`.
 Translator owns request body rewrite, response body rewrite, and SSE event
 stream rewrite. Forwarding (route map lookup, fetch, header strip,
@@ -56,20 +58,21 @@ ReadableStream re-wrap) reuses the existing OpenAI path.
 
 ### Translation matrix (request)
 
-| Anthropic shape | OpenAI shape | Notes |
-|---|---|---|
-| `system` (string or `content[]`) | `messages[0]{role:"system"}` | block array → join text blocks |
-| `messages[].content` string | `messages[].content` string | identity |
-| `messages[].content[]{type:"text"}` | string | join |
-| `messages[].content[]{type:"image",source}` | `messages[].content[]{type:"image_url"}` | base64 → data URL |
-| `messages[].content[]{type:"tool_use",id,name,input}` | `assistant.tool_calls[]{id,function:{name,arguments}}` | `input` object → `arguments` JSON string |
-| `messages[].content[]{type:"tool_result",tool_use_id,content}` | `messages[]{role:"tool",tool_call_id,content}` | one Anthropic user msg with N tool_results → N OpenAI tool msgs |
-| `tools[]{name,description,input_schema}` | `tools[]{type:"function",function:{name,description,parameters}}` | wrap |
-| `tool_choice` (`auto`/`any`/`tool`/`none`) | `tool_choice` (`auto`/`required`/`{type:"function",function:{name}}`/`none`) | enum map |
-| `stop_sequences[]` | `stop[]` | identity |
-| `max_tokens` | `max_tokens` | identity |
+| Anthropic shape                                                | OpenAI shape                                                                 | Notes                                                           |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `system` (string or `content[]`)                               | `messages[0]{role:"system"}`                                                 | block array → join text blocks                                  |
+| `messages[].content` string                                    | `messages[].content` string                                                  | identity                                                        |
+| `messages[].content[]{type:"text"}`                            | string                                                                       | join                                                            |
+| `messages[].content[]{type:"image",source}`                    | `messages[].content[]{type:"image_url"}`                                     | base64 → data URL                                               |
+| `messages[].content[]{type:"tool_use",id,name,input}`          | `assistant.tool_calls[]{id,function:{name,arguments}}`                       | `input` object → `arguments` JSON string                        |
+| `messages[].content[]{type:"tool_result",tool_use_id,content}` | `messages[]{role:"tool",tool_call_id,content}`                               | one Anthropic user msg with N tool_results → N OpenAI tool msgs |
+| `tools[]{name,description,input_schema}`                       | `tools[]{type:"function",function:{name,description,parameters}}`            | wrap                                                            |
+| `tool_choice` (`auto`/`any`/`tool`/`none`)                     | `tool_choice` (`auto`/`required`/`{type:"function",function:{name}}`/`none`) | enum map                                                        |
+| `stop_sequences[]`                                             | `stop[]`                                                                     | identity                                                        |
+| `max_tokens`                                                   | `max_tokens`                                                                 | identity                                                        |
 
 Reverse for response. Stop reason map:
+
 - OpenAI `stop` → Anthropic `end_turn`
 - OpenAI `length` → Anthropic `max_tokens`
 - OpenAI `tool_calls` → Anthropic `tool_use`
@@ -94,6 +97,7 @@ deltas into `input_json_delta` keyed by `tool_calls[].index`, emit
 `message_delta`.
 
 ### Out of scope (v1)
+
 - `thinking` / `reasoning` blocks
 - Prompt-caching `cache_control` markers (KV slice handles the underlying
   cache; v1 ignores the marker, doesn't error)
@@ -102,6 +106,7 @@ deltas into `input_json_delta` keyed by `tool_calls[].index`, emit
 - Multi-modal output (text only)
 
 ### File layout
+
 ```
 packages/core/src/anthropic/
   translateRequest.ts      # AnthropicMessagesRequest → OpenAIChatRequest
@@ -115,6 +120,7 @@ Wire into `proxyOpenAI` as one extra branch — translator owns body rewrite +
 response wrap, then re-enters the existing fetch path.
 
 ### Tests (TDD shape)
+
 - Fixture-based request/response pairs (12 golden cases recorded once)
 - SSE replay test: feed a recorded llama-server SSE stream through
   `translateStream`, assert event order matches an Anthropic fixture
@@ -124,6 +130,7 @@ response wrap, then re-enters the existing fetch path.
   including a tool call
 
 ### Open questions
+
 - Model name routing: require exact workload-model match (`qwen3-8b`) or
   add an optional alias map (`claude-sonnet-4-5` → local default)? Draft
   position: exact-match only; we don't pretend to be Claude.
@@ -136,12 +143,14 @@ response wrap, then re-enters the existing fetch path.
 ## Slice 2 — Disk-backed KV cache
 
 ### Architectural revelation
+
 The proxy does **not** own the KV blobs. llama-server does, via
 `--slot-save-path` + `POST /slots/{id}?action=save|restore`. oMLX may need
 its own slot endpoint (followup phase; may require engine-side work in
 `packages/remote/src/server/modelhost.ts`).
 
 The proxy owns:
+
 - The **metadata catalog** (which prompt prefixes have been checkpointed,
   for which workload, at what quant, with what hits/recency)
 - The **policy** (when to write, when to evict, when to refuse a hit)
@@ -156,6 +165,7 @@ The DS4 design ports cleanly because metadata + policy is most of the value
 even when we don't own the bytes.
 
 ### File layout
+
 ```
 packages/core/src/kvstore/
   registry.ts              # Entry shape, byte-prefix SHA, lookup
@@ -168,25 +178,27 @@ packages/core/src/kvstore/
 ```
 
 ### Registry entry shape (lifted from `ds4_kvstore_entry`)
+
 ```ts
 type KvEntry = {
-  sha: string;              // SHA-1 of rendered byte prefix
+  sha: string; // SHA-1 of rendered byte prefix
   workload: string;
   upstreamSlotFile: string; // absolute path passed to llama-server slot/save
-  quantBits: number;        // reject-different-quant guard
+  quantBits: number; // reject-different-quant guard
   tokens: number;
   ctxSize: number;
   hits: number;
-  createdAt: number;        // unix ms
+  createdAt: number; // unix ms
   lastUsed: number;
   payloadBytes: number;
   textBytes: number;
-  extFlags: number;         // TOOL_MAP|SESSION_TITLE|RESPONSES_VISIBLE|THINKING_VISIBLE
-  reason: 'cold'|'continued'|'evict'|'shutdown'|'agent_session';
+  extFlags: number; // TOOL_MAP|SESSION_TITLE|RESPONSES_VISIBLE|THINKING_VISIBLE
+  reason: "cold" | "continued" | "evict" | "shutdown" | "agent_session";
 };
 ```
 
 ### Lookup flow on incoming request
+
 1. Render full prompt to bytes (already happens in the Anthropic translator
    or the existing OpenAI path)
 2. Walk known boundary positions (chat-anchor token IDs for the workload's
@@ -199,24 +211,30 @@ type KvEntry = {
    slot + register
 
 ### Eviction
+
 Port DS4's `entry_eviction_score(entry, live_tokens, protected_sha, now)`:
+
 - Decay `hits` by a 6 h half-life
 - Penalize entries whose prefix overlaps the live request (in use)
 - Hard-protect entries with `sha === protected_sha`
 - Drop lowest score until under per-workload byte budget
 
 ### Continued-store cadence
+
 Configurable `continued_interval_tokens`; only write at chat-anchor
 boundaries; suppressible API for "mid tool-call burst, hold off, resume
 when stable."
 
 ### Quant guard
+
 First-class. Entry carries `quantBits`. Reload workload → bump a
 `workload_epoch`, soft-reject entries with stale epoch. Mismatched quant
 treated as a hard miss.
 
 ### Trailer / ext-flag surface
+
 JSON sidecar next to each slot file:
+
 - `tool_map`: `{tool_id → exact bytes upstream emitted}` for exact-replay
   on the next turn (closes the Qwen3-tool_call canonicalization gap)
 - `session_title`: derived from first user message
@@ -224,6 +242,7 @@ JSON sidecar next to each slot file:
   Responses endpoints
 
 ### Phasing
+
 - **B1**: Registry + SQLite storage + eviction score + tests (pure unit, no
   upstream)
 - **B2**: llama-server slot save/restore client + smoke test against the
@@ -239,6 +258,7 @@ JSON sidecar next to each slot file:
   `tool_map` trailer)
 
 ### Open questions
+
 - Slot persistence scope: workload-local
   (`<workloadRuntimeDir>/kvcache/`) — cleans with workload, no
   cross-workload sharing — vs node-global (`~/.llamactl/kvcache/`) —
@@ -278,6 +298,7 @@ JSON sidecar next to each slot file:
   re-prefill path
 
 ## Success metrics
+
 - Slice 1: `@anthropic-ai/sdk` against the proxy completes a 3-turn
   tool-using session against a local llama-server workload, matching the
   same conversation against `https://api.anthropic.com` for response shape
@@ -287,6 +308,7 @@ JSON sidecar next to each slot file:
   per-frontier methodology added to `packages/eval/matrix`
 
 ## Non-goals
+
 - Cross-node KV sharing
 - KV blob compression beyond what llama-server already does
 - Migrating off llama-server's slot API (we're a thin orchestrator on it)

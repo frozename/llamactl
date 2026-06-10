@@ -23,14 +23,14 @@ Full mechanics in `docs/superpowers/specs/2026-05-11-maestro-pilot-wiring.md`
 
 ## Endpoint contract
 
-| Field | Value |
-|---|---|
-| Base URL | `http://127.0.0.1:8181` |
+| Field            | Value                       |
+| ---------------- | --------------------------- |
+| Base URL         | `http://127.0.0.1:8181`     |
 | Chat completions | `POST /v1/chat/completions` |
-| Models | `GET /v1/models` |
-| Health | `GET /health` |
-| Model alias | `gemma4-26b-a4b-mtp` |
-| Auth | none (loopback only) |
+| Models           | `GET /v1/models`            |
+| Health           | `GET /health`               |
+| Model alias      | `gemma4-26b-a4b-mtp`        |
+| Auth             | none (loopback only)        |
 
 **Mandatory request shape**: every chat completion must include
 `chat_template_kwargs.enable_thinking=false`. Without it, the model emits
@@ -93,14 +93,14 @@ penumbra maestro session start --maestro local-gemma4-26b-a4b-mtp \
 
 ## Open follow-ups (unchanged from prior handoff)
 
-| Ask | Owner | Status |
-|---|---|---|
-| 1 — output redactor | penumbra | needs brainstorm (placement decision) |
-| 2 — `maestro_capabilities` MCP tool | penumbra | carry forward |
-| 3 — `acting_on` id envelope | penumbra | deferred |
-| 4 — brainstorm/plan workflow shims | penumbra | carry forward |
-| 5 — bench-maestro as periodic regression | **llamactl** | pending llamactl roadmap call |
-| 6 — per-session maestro selection flag | penumbra | answered — writers exist |
+| Ask                                      | Owner        | Status                                |
+| ---------------------------------------- | ------------ | ------------------------------------- |
+| 1 — output redactor                      | penumbra     | needs brainstorm (placement decision) |
+| 2 — `maestro_capabilities` MCP tool      | penumbra     | carry forward                         |
+| 3 — `acting_on` id envelope              | penumbra     | deferred                              |
+| 4 — brainstorm/plan workflow shims       | penumbra     | carry forward                         |
+| 5 — bench-maestro as periodic regression | **llamactl** | pending llamactl roadmap call         |
+| 6 — per-session maestro selection flag   | penumbra     | answered — writers exist              |
 
 ## Llamactl-side notes you might want to know
 

@@ -17,6 +17,7 @@
 ### Server (`packages/remote/src`)
 
 **Created:**
+
 - `search/text-match.ts` — pure `findTextMatches({ needle, text, ... }): TextMatch[]`
 - `search/sessions.ts` — walks every `journal.jsonl`, runs `findTextMatches`, caps results
 - `search/logs.ts` — last-N-bytes lexical scan over configured log files
@@ -29,10 +30,12 @@
 - `search/ingest/lifecycle.ts` — start/stop hooks; called from server bootstrap
 
 **Modified:**
+
 - `router.ts` — add `opsSessionSearch`, `logsSearch`, `knowledgeSearch`, `globalSearchRagStatus` queries
 - `index.ts` (or wherever the server boots) — wire `search/ingest/lifecycle.ts` start/stop
 
 **Tests (`packages/remote/test/`):**
+
 - `search-text-match.test.ts`
 - `search-sessions.test.ts`
 - `search-logs.test.ts`
@@ -46,6 +49,7 @@
 ### App (`packages/app/src`)
 
 **Created:**
+
 - `lib/global-search/types.ts`
 - `lib/global-search/query.ts`
 - `lib/global-search/ranking.ts`
@@ -66,10 +70,12 @@
 - `shell/beacon/search-results-tree.tsx`
 
 **Modified:**
+
 - `shell/beacon/search-view.tsx` — replace module-only logic with the orchestrator hook
 - `shell/command-palette.tsx` — call the same hook, render results below curated commands
 
 **Tests (`packages/app/test/`):**
+
 - `lib/global-search/query.test.ts`
 - `lib/global-search/ranking.test.ts`
 - `lib/global-search/orchestrator.test.ts`
@@ -82,6 +88,7 @@
 ### UI flow tests (`tests/ui-flows/`)
 
 **Created:**
+
 - `global-search-flow.ts`
 - `palette-search-flow.ts`
 
@@ -98,6 +105,7 @@
 **Component testing posture.** No React render tests exist (`@testing-library/react`, jsdom, happy-dom are not deps). Pure helper logic gets unit tests; component visual behaviour is verified via Tier C UI flows.
 
 **`@/ui` variants** (verified in `packages/app/src/ui/`):
+
 - `Button`: `'primary' | 'secondary' | 'ghost' | 'outline' | 'destructive'`
 - `Badge`: `'default' | 'brand' | 'ok' | 'warn' | 'err'`
 - `EditorialHero` props: `eyebrow / title / titleAccent / lede / pills / actions / className / style`
@@ -111,6 +119,7 @@
 ## Task 1: Server — `findTextMatches` utility
 
 **Files:**
+
 - Create: `packages/remote/src/search/text-match.ts`
 - Test: `packages/remote/test/search-text-match.test.ts`
 
@@ -118,51 +127,51 @@
 
 ```ts
 // packages/remote/test/search-text-match.test.ts
-import { describe, expect, test } from 'bun:test';
-import { findTextMatches } from '../src/search/text-match';
+import { describe, expect, test } from "bun:test";
+import { findTextMatches } from "../src/search/text-match";
 
-describe('findTextMatches', () => {
-  test('returns empty array on no match', () => {
-    expect(findTextMatches({ needle: 'zzz', text: 'foo bar baz' })).toEqual([]);
+describe("findTextMatches", () => {
+  test("returns empty array on no match", () => {
+    expect(findTextMatches({ needle: "zzz", text: "foo bar baz" })).toEqual([]);
   });
 
-  test('case-insensitive by default', () => {
-    const out = findTextMatches({ needle: 'foo', text: 'FOO bar' });
+  test("case-insensitive by default", () => {
+    const out = findTextMatches({ needle: "foo", text: "FOO bar" });
     expect(out.length).toBe(1);
-    expect(out[0]!.snippet).toContain('FOO');
+    expect(out[0]!.snippet).toContain("FOO");
   });
 
-  test('multiple matches in same text', () => {
-    const out = findTextMatches({ needle: 'foo', text: 'foo bar foo baz foo' });
+  test("multiple matches in same text", () => {
+    const out = findTextMatches({ needle: "foo", text: "foo bar foo baz foo" });
     expect(out.length).toBe(3);
   });
 
-  test('snippet length bounded by snippetChars', () => {
-    const big = 'x'.repeat(200) + 'needle' + 'y'.repeat(200);
-    const out = findTextMatches({ needle: 'needle', text: big, snippetChars: 60 });
+  test("snippet length bounded by snippetChars", () => {
+    const big = "x".repeat(200) + "needle" + "y".repeat(200);
+    const out = findTextMatches({ needle: "needle", text: big, snippetChars: 60 });
     expect(out.length).toBe(1);
     expect(out[0]!.snippet.length).toBeLessThanOrEqual(70);
   });
 
-  test('spans index into snippet, not original text', () => {
-    const out = findTextMatches({ needle: 'cat', text: 'a cat sat on the mat' });
+  test("spans index into snippet, not original text", () => {
+    const out = findTextMatches({ needle: "cat", text: "a cat sat on the mat" });
     const m = out[0]!;
-    expect(m.snippet.slice(m.spans[0]!.start, m.spans[0]!.end).toLowerCase()).toBe('cat');
+    expect(m.snippet.slice(m.spans[0]!.start, m.spans[0]!.end).toLowerCase()).toBe("cat");
   });
 
-  test('word-boundary mode rejects mid-word match', () => {
-    const out = findTextMatches({ needle: 'cat', text: 'concatenate', wordBoundary: true });
+  test("word-boundary mode rejects mid-word match", () => {
+    const out = findTextMatches({ needle: "cat", text: "concatenate", wordBoundary: true });
     expect(out).toEqual([]);
   });
 
-  test('case-sensitive mode rejects different case', () => {
-    const out = findTextMatches({ needle: 'Foo', text: 'foo bar', caseSensitive: true });
+  test("case-sensitive mode rejects different case", () => {
+    const out = findTextMatches({ needle: "Foo", text: "foo bar", caseSensitive: true });
     expect(out).toEqual([]);
   });
 
-  test('word-boundary score > substring score', () => {
-    const wb = findTextMatches({ needle: 'cat', text: 'a cat sat', wordBoundary: false });
-    const sub = findTextMatches({ needle: 'cat', text: 'concatenate', wordBoundary: false });
+  test("word-boundary score > substring score", () => {
+    const wb = findTextMatches({ needle: "cat", text: "a cat sat", wordBoundary: false });
+    const sub = findTextMatches({ needle: "cat", text: "concatenate", wordBoundary: false });
     expect(wb[0]!.score).toBeGreaterThan(sub[0]!.score);
   });
 });
@@ -194,8 +203,8 @@ export interface TextMatch {
 const DEFAULT_SNIPPET = 120;
 
 function isWordBoundary(text: string, idx: number, len: number): boolean {
-  const before = idx === 0 ? ' ' : text[idx - 1] ?? ' ';
-  const after = idx + len >= text.length ? ' ' : text[idx + len] ?? ' ';
+  const before = idx === 0 ? " " : (text[idx - 1] ?? " ");
+  const after = idx + len >= text.length ? " " : (text[idx + len] ?? " ");
   return !/\w/.test(before) && !/\w/.test(after);
 }
 
@@ -254,13 +263,14 @@ git commit -m "feat(remote/search): add findTextMatches utility"
 ## Task 2: Server — `SessionHit`/`KnowledgeHit`/`LogHit` types
 
 **Files:**
+
 - Create: `packages/remote/src/search/types.ts`
 
 - [ ] **Step 1: Define the types**
 
 ```ts
 // packages/remote/src/search/types.ts
-import type { SessionStatus } from '../ops-chat/sessions/list.js';
+import type { SessionStatus } from "../ops-chat/sessions/list.js";
 
 export interface MatchExcerpt {
   where: string;
@@ -286,7 +296,7 @@ export interface KnowledgeHit {
 }
 
 export interface LogHit {
-  fileLabel: string;     // e.g. 'ops-chat-audit', 'electron-main'
+  fileLabel: string; // e.g. 'ops-chat-audit', 'electron-main'
   filePath: string;
   matches: (MatchExcerpt & { lineNumber: number })[];
   score: number;
@@ -319,6 +329,7 @@ git commit -m "feat(remote/search): add hit + status types"
 ## Task 3: Server — `searchSessions` lexical scanner
 
 **Files:**
+
 - Create: `packages/remote/src/search/sessions.ts`
 - Test: `packages/remote/test/search-sessions.test.ts`
 
@@ -326,19 +337,19 @@ git commit -m "feat(remote/search): add hit + status types"
 
 ```ts
 // packages/remote/test/search-sessions.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { appendJournalEvent } from '../src/ops-chat/sessions/journal';
-import { searchSessions } from '../src/search/sessions';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appendJournalEvent } from "../src/ops-chat/sessions/journal";
+import { searchSessions } from "../src/search/sessions";
 
-describe('searchSessions', () => {
+describe("searchSessions", () => {
   let tmp: string;
   let prev: string | undefined;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'search-sessions-'));
+    tmp = mkdtempSync(join(tmpdir(), "search-sessions-"));
     prev = process.env.DEV_STORAGE;
     process.env.DEV_STORAGE = tmp;
   });
@@ -349,64 +360,88 @@ describe('searchSessions', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('matches goal text', async () => {
-    await appendJournalEvent('s1', {
-      type: 'session_started', ts: '2026-04-25T00:00:00.000Z', sessionId: 's1',
-      goal: 'audit fleet for unhealthy providers', historyLen: 0, toolCount: 0,
+  test("matches goal text", async () => {
+    await appendJournalEvent("s1", {
+      type: "session_started",
+      ts: "2026-04-25T00:00:00.000Z",
+      sessionId: "s1",
+      goal: "audit fleet for unhealthy providers",
+      historyLen: 0,
+      toolCount: 0,
     });
-    const out = await searchSessions({ query: 'fleet', limit: 30 });
+    const out = await searchSessions({ query: "fleet", limit: 30 });
     expect(out.length).toBe(1);
-    expect(out[0]!.sessionId).toBe('s1');
+    expect(out[0]!.sessionId).toBe("s1");
     expect(out[0]!.matches.length).toBeGreaterThan(0);
   });
 
-  test('matches reasoning text inside plan_proposed', async () => {
-    await appendJournalEvent('s2', {
-      type: 'session_started', ts: '2026-04-25T00:00:00.000Z', sessionId: 's2',
-      goal: 'g', historyLen: 0, toolCount: 0,
+  test("matches reasoning text inside plan_proposed", async () => {
+    await appendJournalEvent("s2", {
+      type: "session_started",
+      ts: "2026-04-25T00:00:00.000Z",
+      sessionId: "s2",
+      goal: "g",
+      historyLen: 0,
+      toolCount: 0,
     });
-    await appendJournalEvent('s2', {
-      type: 'plan_proposed', ts: '2026-04-25T00:00:01.000Z', stepId: 'sp-1',
-      iteration: 0, tier: 'read', reasoning: 'enumerate the rebellious cluster',
-      step: { tool: 't', annotation: 'a' } as any,
+    await appendJournalEvent("s2", {
+      type: "plan_proposed",
+      ts: "2026-04-25T00:00:01.000Z",
+      stepId: "sp-1",
+      iteration: 0,
+      tier: "read",
+      reasoning: "enumerate the rebellious cluster",
+      step: { tool: "t", annotation: "a" } as any,
     });
-    const out = await searchSessions({ query: 'rebellious', limit: 30 });
+    const out = await searchSessions({ query: "rebellious", limit: 30 });
     expect(out.length).toBe(1);
-    expect(out[0]!.matches[0]!.where).toContain('reasoning');
+    expect(out[0]!.matches[0]!.where).toContain("reasoning");
   });
 
-  test('caps matches per session', async () => {
-    await appendJournalEvent('s3', {
-      type: 'session_started', ts: '2026-04-25T00:00:00.000Z', sessionId: 's3',
-      goal: 'fleet fleet fleet fleet fleet fleet fleet fleet',
-      historyLen: 0, toolCount: 0,
+  test("caps matches per session", async () => {
+    await appendJournalEvent("s3", {
+      type: "session_started",
+      ts: "2026-04-25T00:00:00.000Z",
+      sessionId: "s3",
+      goal: "fleet fleet fleet fleet fleet fleet fleet fleet",
+      historyLen: 0,
+      toolCount: 0,
     });
-    const out = await searchSessions({ query: 'fleet', limit: 30, perSessionCap: 3 });
+    const out = await searchSessions({ query: "fleet", limit: 30, perSessionCap: 3 });
     expect(out[0]!.matches.length).toBeLessThanOrEqual(3);
   });
 
-  test('caps total sessions', async () => {
-    for (const id of ['a', 'b', 'c', 'd', 'e']) {
+  test("caps total sessions", async () => {
+    for (const id of ["a", "b", "c", "d", "e"]) {
       await appendJournalEvent(id, {
-        type: 'session_started', ts: '2026-04-25T00:00:00.000Z', sessionId: id,
-        goal: 'fleet check', historyLen: 0, toolCount: 0,
+        type: "session_started",
+        ts: "2026-04-25T00:00:00.000Z",
+        sessionId: id,
+        goal: "fleet check",
+        historyLen: 0,
+        toolCount: 0,
       });
     }
-    const out = await searchSessions({ query: 'fleet', limit: 3 });
+    const out = await searchSessions({ query: "fleet", limit: 3 });
     expect(out.length).toBe(3);
   });
 
-  test('signal abort cuts off mid-walk', async () => {
-    for (const id of ['a', 'b', 'c']) {
+  test("signal abort cuts off mid-walk", async () => {
+    for (const id of ["a", "b", "c"]) {
       await appendJournalEvent(id, {
-        type: 'session_started', ts: '2026-04-25T00:00:00.000Z', sessionId: id,
-        goal: 'fleet', historyLen: 0, toolCount: 0,
+        type: "session_started",
+        ts: "2026-04-25T00:00:00.000Z",
+        sessionId: id,
+        goal: "fleet",
+        historyLen: 0,
+        toolCount: 0,
       });
     }
     const ctrl = new AbortController();
     ctrl.abort();
-    await expect(searchSessions({ query: 'fleet', limit: 30, signal: ctrl.signal }))
-      .rejects.toThrow();
+    await expect(
+      searchSessions({ query: "fleet", limit: 30, signal: ctrl.signal }),
+    ).rejects.toThrow();
   });
 });
 ```
@@ -420,13 +455,13 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/remote/src/search/sessions.ts
-import { existsSync } from 'node:fs';
-import { readdir } from 'node:fs/promises';
-import { defaultSessionsDir } from '../ops-chat/paths.js';
-import { readJournal } from '../ops-chat/sessions/journal.js';
-import { getSessionSummary } from '../ops-chat/sessions/list.js';
-import { findTextMatches } from './text-match.js';
-import type { SessionHit, MatchExcerpt } from './types.js';
+import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { defaultSessionsDir } from "../ops-chat/paths.js";
+import { readJournal } from "../ops-chat/sessions/journal.js";
+import { getSessionSummary } from "../ops-chat/sessions/list.js";
+import { findTextMatches } from "./text-match.js";
+import type { SessionHit, MatchExcerpt } from "./types.js";
 
 export interface SearchSessionsOpts {
   query: string;
@@ -438,14 +473,14 @@ export interface SearchSessionsOpts {
 export async function searchSessions(opts: SearchSessionsOpts): Promise<SessionHit[]> {
   const root = defaultSessionsDir();
   if (!existsSync(root)) return [];
-  if (opts.signal?.aborted) throw new Error('aborted');
+  if (opts.signal?.aborted) throw new Error("aborted");
   const ids = (await readdir(root, { withFileTypes: true }))
     .filter((d) => d.isDirectory())
     .map((d) => d.name);
   const perCap = opts.perSessionCap ?? 5;
   const hits: SessionHit[] = [];
   for (const id of ids) {
-    if (opts.signal?.aborted) throw new Error('aborted');
+    if (opts.signal?.aborted) throw new Error("aborted");
     let summary;
     try {
       summary = await getSessionSummary(id);
@@ -457,12 +492,12 @@ export async function searchSessions(opts: SearchSessionsOpts): Promise<SessionH
     let bestScore = 0;
     const goalMatches = findTextMatches({ needle: opts.query, text: summary.goal });
     for (const m of goalMatches.slice(0, perCap)) {
-      matches.push({ where: 'goal', snippet: m.snippet, spans: m.spans });
+      matches.push({ where: "goal", snippet: m.snippet, spans: m.spans });
       bestScore = Math.max(bestScore, m.score);
     }
     for (const e of events) {
       if (matches.length >= perCap) break;
-      if (e.type === 'plan_proposed') {
+      if (e.type === "plan_proposed") {
         const r = findTextMatches({ needle: opts.query, text: e.reasoning });
         for (const m of r) {
           if (matches.length >= perCap) break;
@@ -519,6 +554,7 @@ git commit -m "feat(remote/search): add searchSessions lexical scanner"
 ## Task 4: Server — `searchKnowledge` lexical scanner
 
 **Files:**
+
 - Create: `packages/remote/src/search/knowledge.ts`
 - Test: `packages/remote/test/search-knowledge.test.ts`
 
@@ -542,29 +578,29 @@ Use the actual entity shape you found. Pattern (adapt field names):
 
 ```ts
 // packages/remote/test/search-knowledge.test.ts
-import { describe, expect, test } from 'bun:test';
-import { searchKnowledge } from '../src/search/knowledge';
+import { describe, expect, test } from "bun:test";
+import { searchKnowledge } from "../src/search/knowledge";
 
 const entities = [
-  { id: 'e1', title: 'Retrieval Pipeline', body: 'walks files and embeds chunks' },
-  { id: 'e2', title: 'Embedding Model', body: 'bge-small for fast retrieval' },
-  { id: 'e3', title: 'Other', body: 'unrelated content' },
+  { id: "e1", title: "Retrieval Pipeline", body: "walks files and embeds chunks" },
+  { id: "e2", title: "Embedding Model", body: "bge-small for fast retrieval" },
+  { id: "e3", title: "Other", body: "unrelated content" },
 ];
 
-describe('searchKnowledge', () => {
-  test('returns title + body matches', () => {
-    const out = searchKnowledge({ query: 'retrieval', entities, limit: 30 });
-    expect(out.map((h) => h.entityId).sort()).toEqual(['e1', 'e2']);
+describe("searchKnowledge", () => {
+  test("returns title + body matches", () => {
+    const out = searchKnowledge({ query: "retrieval", entities, limit: 30 });
+    expect(out.map((h) => h.entityId).sort()).toEqual(["e1", "e2"]);
   });
 
-  test('title match scores higher than body match', () => {
-    const out = searchKnowledge({ query: 'retrieval', entities, limit: 30 });
-    expect(out[0]!.entityId).toBe('e1'); // title match wins
+  test("title match scores higher than body match", () => {
+    const out = searchKnowledge({ query: "retrieval", entities, limit: 30 });
+    expect(out[0]!.entityId).toBe("e1"); // title match wins
   });
 
-  test('respects per-entity match cap', () => {
-    const big = [{ id: 'e', title: 't', body: 'foo foo foo foo foo foo' }];
-    const out = searchKnowledge({ query: 'foo', entities: big, limit: 30, perEntityCap: 2 });
+  test("respects per-entity match cap", () => {
+    const big = [{ id: "e", title: "t", body: "foo foo foo foo foo foo" }];
+    const out = searchKnowledge({ query: "foo", entities: big, limit: 30, perEntityCap: 2 });
     expect(out[0]!.matches.length).toBeLessThanOrEqual(2);
   });
 });
@@ -579,8 +615,8 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/remote/src/search/knowledge.ts
-import { findTextMatches } from './text-match.js';
-import type { KnowledgeHit, MatchExcerpt } from './types.js';
+import { findTextMatches } from "./text-match.js";
+import type { KnowledgeHit, MatchExcerpt } from "./types.js";
 
 export interface KnowledgeEntity {
   id: string;
@@ -605,14 +641,14 @@ export function searchKnowledge(opts: SearchKnowledgeOpts): KnowledgeHit[] {
     let score = 0;
     const titleM = findTextMatches({ needle: opts.query, text: e.title });
     for (const m of titleM.slice(0, cap)) {
-      matches.push({ where: 'title', snippet: m.snippet, spans: m.spans });
+      matches.push({ where: "title", snippet: m.snippet, spans: m.spans });
       score = Math.max(score, m.score + TITLE_BOOST);
     }
     if (e.body && matches.length < cap) {
       const bodyM = findTextMatches({ needle: opts.query, text: e.body });
       for (const m of bodyM) {
         if (matches.length >= cap) break;
-        matches.push({ where: 'body', snippet: m.snippet, spans: m.spans });
+        matches.push({ where: "body", snippet: m.snippet, spans: m.spans });
         score = Math.max(score, m.score);
       }
     }
@@ -642,6 +678,7 @@ git commit -m "feat(remote/search): add searchKnowledge lexical scanner"
 ## Task 5: Server — `searchLogs` rolling-window scanner
 
 **Files:**
+
 - Create: `packages/remote/src/search/logs.ts`
 - Test: `packages/remote/test/search-logs.test.ts`
 
@@ -651,59 +688,67 @@ The function takes `{ query, files, limit, windowBytes? }`. `files` is an array 
 
 ```ts
 // packages/remote/test/search-logs.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { searchLogs } from '../src/search/logs';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { searchLogs } from "../src/search/logs";
 
-describe('searchLogs', () => {
+describe("searchLogs", () => {
   let tmp: string;
-  beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), 'search-logs-')); });
-  afterEach(() => { rmSync(tmp, { recursive: true, force: true }); });
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "search-logs-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
 
-  test('matches line content with line numbers', async () => {
-    const path = join(tmp, 'a.log');
-    writeFileSync(path, ['line one', 'error: boom', 'line three'].join('\n'), 'utf8');
+  test("matches line content with line numbers", async () => {
+    const path = join(tmp, "a.log");
+    writeFileSync(path, ["line one", "error: boom", "line three"].join("\n"), "utf8");
     const out = await searchLogs({
-      query: 'boom',
-      files: [{ label: 'a', path }],
+      query: "boom",
+      files: [{ label: "a", path }],
       limit: 30,
     });
     expect(out.length).toBe(1);
     expect(out[0]!.matches[0]!.lineNumber).toBe(2);
   });
 
-  test('rolling window drops content beyond windowBytes', async () => {
-    const path = join(tmp, 'b.log');
-    const head = 'noise\n'.repeat(2000);  // ~12 KB
-    const tail = 'needle line\n';
-    writeFileSync(path, head + tail, 'utf8');
+  test("rolling window drops content beyond windowBytes", async () => {
+    const path = join(tmp, "b.log");
+    const head = "noise\n".repeat(2000); // ~12 KB
+    const tail = "needle line\n";
+    writeFileSync(path, head + tail, "utf8");
     const out = await searchLogs({
-      query: 'needle',
-      files: [{ label: 'b', path }],
+      query: "needle",
+      files: [{ label: "b", path }],
       limit: 30,
       windowBytes: 64,
     });
     expect(out.length).toBe(1);
   });
 
-  test('multi-file fan-in', async () => {
-    const a = join(tmp, 'a.log'); const b = join(tmp, 'b.log');
-    writeFileSync(a, 'foo here', 'utf8');
-    writeFileSync(b, 'foo there', 'utf8');
+  test("multi-file fan-in", async () => {
+    const a = join(tmp, "a.log");
+    const b = join(tmp, "b.log");
+    writeFileSync(a, "foo here", "utf8");
+    writeFileSync(b, "foo there", "utf8");
     const out = await searchLogs({
-      query: 'foo',
-      files: [{ label: 'a', path: a }, { label: 'b', path: b }],
+      query: "foo",
+      files: [
+        { label: "a", path: a },
+        { label: "b", path: b },
+      ],
       limit: 30,
     });
-    expect(out.map((h) => h.fileLabel).sort()).toEqual(['a', 'b']);
+    expect(out.map((h) => h.fileLabel).sort()).toEqual(["a", "b"]);
   });
 
-  test('missing file is skipped, no throw', async () => {
+  test("missing file is skipped, no throw", async () => {
     const out = await searchLogs({
-      query: 'foo',
-      files: [{ label: 'missing', path: join(tmp, 'nope.log') }],
+      query: "foo",
+      files: [{ label: "missing", path: join(tmp, "nope.log") }],
       limit: 30,
     });
     expect(out).toEqual([]);
@@ -720,9 +765,9 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/remote/src/search/logs.ts
-import { existsSync, statSync, openSync, readSync, closeSync } from 'node:fs';
-import { findTextMatches } from './text-match.js';
-import type { LogHit, MatchExcerpt } from './types.js';
+import { existsSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { findTextMatches } from "./text-match.js";
+import type { LogHit, MatchExcerpt } from "./types.js";
 
 const DEFAULT_WINDOW = 5 * 1024 * 1024;
 
@@ -742,13 +787,13 @@ export interface SearchLogsOpts {
 function tailFile(path: string, windowBytes: number): { text: string; lineOffset: number } {
   const size = statSync(path).size;
   const start = Math.max(0, size - windowBytes);
-  const fd = openSync(path, 'r');
+  const fd = openSync(path, "r");
   try {
     const buf = Buffer.alloc(size - start);
     readSync(fd, buf, 0, buf.length, start);
-    const text = buf.toString('utf8');
+    const text = buf.toString("utf8");
     if (start === 0) return { text, lineOffset: 0 };
-    const firstNl = text.indexOf('\n');
+    const firstNl = text.indexOf("\n");
     if (firstNl < 0) return { text, lineOffset: 0 };
     return { text: text.slice(firstNl + 1), lineOffset: 0 };
   } finally {
@@ -763,7 +808,7 @@ export async function searchLogs(opts: SearchLogsOpts): Promise<LogHit[]> {
   for (const f of opts.files) {
     if (!existsSync(f.path)) continue;
     const { text } = tailFile(f.path, window);
-    const lines = text.split('\n');
+    const lines = text.split("\n");
     const matches: (MatchExcerpt & { lineNumber: number })[] = [];
     let score = 0;
     for (let i = 0; i < lines.length; i++) {
@@ -811,6 +856,7 @@ git commit -m "feat(remote/search): add searchLogs rolling-window scanner"
 ## Task 6: Server — default RAG node resolver + RAG bridge
 
 **Files:**
+
 - Create: `packages/remote/src/search/rag-node.ts`
 - Create: `packages/remote/src/search/rag-bridge.ts`
 - Test: `packages/remote/test/search-rag-node.test.ts`
@@ -822,27 +868,27 @@ git commit -m "feat(remote/search): add searchLogs rolling-window scanner"
 grep -rn "kind:.*'rag'\|node.rag\b\|rag-config\|listRagNodes" packages/remote/src --include="*.ts" | head -10
 ```
 
-The repo's existing pattern is `resolveRagNode(nodeId)` (router.ts) which reads from a config. Find the function or fallback path that lists *all* configured nodes (probably `loadConfig()` returning `{ nodes: [...] }`). Use that.
+The repo's existing pattern is `resolveRagNode(nodeId)` (router.ts) which reads from a config. Find the function or fallback path that lists _all_ configured nodes (probably `loadConfig()` returning `{ nodes: [...] }`). Use that.
 
 - [ ] **Step 2: Write the failing test for `rag-node.ts`**
 
 ```ts
 // packages/remote/test/search-rag-node.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { resolveDefaultRagNode } from '../src/search/rag-node';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { resolveDefaultRagNode } from "../src/search/rag-node";
 
-describe('resolveDefaultRagNode', () => {
+describe("resolveDefaultRagNode", () => {
   let tmp: string;
   let prev: string | undefined;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'rag-node-'));
+    tmp = mkdtempSync(join(tmpdir(), "rag-node-"));
     prev = process.env.LLAMACTL_TEST_PROFILE;
     process.env.LLAMACTL_TEST_PROFILE = tmp;
-    mkdirSync(join(tmp, 'config'), { recursive: true });
+    mkdirSync(join(tmp, "config"), { recursive: true });
   });
 
   afterEach(() => {
@@ -851,38 +897,38 @@ describe('resolveDefaultRagNode', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('returns null when no RAG node configured', async () => {
+  test("returns null when no RAG node configured", async () => {
     writeFileSync(
-      join(tmp, 'config', 'config.yaml'),
-      'nodes:\n  - name: local\n    kind: agent\n',
-      'utf8',
+      join(tmp, "config", "config.yaml"),
+      "nodes:\n  - name: local\n    kind: agent\n",
+      "utf8",
     );
     const out = await resolveDefaultRagNode();
     expect(out).toBeNull();
   });
 
-  test('returns first node with kind=rag', async () => {
+  test("returns first node with kind=rag", async () => {
     writeFileSync(
-      join(tmp, 'config', 'config.yaml'),
+      join(tmp, "config", "config.yaml"),
       [
-        'nodes:',
-        '  - name: local',
-        '    kind: agent',
-        '  - name: chroma-1',
-        '    kind: rag',
-        '    rag:',
-        '      provider: chroma',
-        '      url: http://localhost:8000',
-        '  - name: chroma-2',
-        '    kind: rag',
-        '    rag:',
-        '      provider: chroma',
-        '      url: http://localhost:8001',
-      ].join('\n'),
-      'utf8',
+        "nodes:",
+        "  - name: local",
+        "    kind: agent",
+        "  - name: chroma-1",
+        "    kind: rag",
+        "    rag:",
+        "      provider: chroma",
+        "      url: http://localhost:8000",
+        "  - name: chroma-2",
+        "    kind: rag",
+        "    rag:",
+        "      provider: chroma",
+        "      url: http://localhost:8001",
+      ].join("\n"),
+      "utf8",
     );
     const out = await resolveDefaultRagNode();
-    expect(out).toBe('chroma-1');
+    expect(out).toBe("chroma-1");
   });
 });
 ```
@@ -900,12 +946,12 @@ Match the actual config-load entrypoint you found in Step 1. Pattern:
 // packages/remote/src/search/rag-node.ts
 // Adapt loadConfig() import to whatever the repo uses
 // (search for "loadConfig" or "readConfig" in packages/remote/src/config/).
-import { loadConfig } from '../config/load.js';
+import { loadConfig } from "../config/load.js";
 
 export async function resolveDefaultRagNode(): Promise<string | null> {
   const cfg = await loadConfig();
   for (const node of cfg.nodes ?? []) {
-    if ((node as any).kind === 'rag' && (node as any).rag) {
+    if ((node as any).kind === "rag" && (node as any).rag) {
       return (node as any).name as string;
     }
   }
@@ -922,11 +968,11 @@ Expected: PASS — 2 tests pass.
 
 ```ts
 // packages/remote/src/search/rag-bridge.ts
-import type { SessionHit, KnowledgeHit, LogHit } from './types.js';
-import { resolveRagNode } from '../router.js';   // adapt path; or expose in config/secret.js
-import { createRagAdapter } from '../rag/index.js';
+import type { SessionHit, KnowledgeHit, LogHit } from "./types.js";
+import { resolveRagNode } from "../router.js"; // adapt path; or expose in config/secret.js
+import { createRagAdapter } from "../rag/index.js";
 
-export type RagCollection = 'sessions' | 'knowledge' | 'logs';
+export type RagCollection = "sessions" | "knowledge" | "logs";
 
 export interface RagBridgeOpts {
   node: string;
@@ -939,7 +985,7 @@ export interface RagBridgeOpts {
 export async function ragBridgeSearch(
   opts: RagBridgeOpts,
 ): Promise<Array<SessionHit | KnowledgeHit | LogHit>> {
-  if (opts.signal?.aborted) throw new Error('aborted');
+  if (opts.signal?.aborted) throw new Error("aborted");
   const { node, cfg } = resolveRagNode(opts.node);
   const adapter = await createRagAdapter(node, { config: cfg });
   try {
@@ -960,42 +1006,48 @@ function normalizeHits(
 ): Array<SessionHit | KnowledgeHit | LogHit> {
   // res shape per existing adapter: { hits: Array<{id, score, content, metadata}> }
   const hits = (res as { hits?: Array<any> }).hits ?? [];
-  if (collection === 'sessions') {
+  if (collection === "sessions") {
     return hits.map((h) => ({
       sessionId: h.metadata?.sessionId ?? h.id,
-      goal: h.metadata?.goal ?? '',
-      status: h.metadata?.status ?? 'live',
-      startedAt: h.metadata?.startedAt ?? '',
-      matches: [{
-        where: h.metadata?.where ?? 'session content',
-        snippet: String(h.content ?? '').slice(0, 200),
-        spans: [],
-      }],
-      score: typeof h.score === 'number' ? h.score : 0,
+      goal: h.metadata?.goal ?? "",
+      status: h.metadata?.status ?? "live",
+      startedAt: h.metadata?.startedAt ?? "",
+      matches: [
+        {
+          where: h.metadata?.where ?? "session content",
+          snippet: String(h.content ?? "").slice(0, 200),
+          spans: [],
+        },
+      ],
+      score: typeof h.score === "number" ? h.score : 0,
     }));
   }
-  if (collection === 'knowledge') {
+  if (collection === "knowledge") {
     return hits.map((h) => ({
       entityId: h.metadata?.entityId ?? h.id,
       title: h.metadata?.title ?? h.id,
-      matches: [{
-        where: 'body',
-        snippet: String(h.content ?? '').slice(0, 200),
-        spans: [],
-      }],
-      score: typeof h.score === 'number' ? h.score : 0,
+      matches: [
+        {
+          where: "body",
+          snippet: String(h.content ?? "").slice(0, 200),
+          spans: [],
+        },
+      ],
+      score: typeof h.score === "number" ? h.score : 0,
     }));
   }
   return hits.map((h) => ({
-    fileLabel: h.metadata?.fileLabel ?? 'unknown',
-    filePath: h.metadata?.filePath ?? '',
-    matches: [{
-      lineNumber: h.metadata?.lineNumber ?? 0,
-      where: h.metadata?.where ?? '',
-      snippet: String(h.content ?? '').slice(0, 200),
-      spans: [],
-    }],
-    score: typeof h.score === 'number' ? h.score : 0,
+    fileLabel: h.metadata?.fileLabel ?? "unknown",
+    filePath: h.metadata?.filePath ?? "",
+    matches: [
+      {
+        lineNumber: h.metadata?.lineNumber ?? 0,
+        where: h.metadata?.where ?? "",
+        snippet: String(h.content ?? "").slice(0, 200),
+        spans: [],
+      },
+    ],
+    score: typeof h.score === "number" ? h.score : 0,
   }));
 }
 ```
@@ -1006,7 +1058,7 @@ If `resolveRagNode` is not exported from `router.ts` (likely module-private), re
 
 ```ts
 // packages/remote/test/search-rag-bridge.test.ts
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from "bun:test";
 // Mock the adapter; verify that ragBridgeSearch normalizes hits per collection.
 // Use Bun's mock.module if available; otherwise stub via dependency-injection refactor.
 // (If injection is needed, accept an optional `adapter` param on ragBridgeSearch
@@ -1033,6 +1085,7 @@ git commit -m "feat(remote/search): add default RAG node resolver and rag-bridge
 ## Task 7: Server — sessions ingestion (event-driven)
 
 **Files:**
+
 - Create: `packages/remote/src/search/ingest/sessions.ts`
 - Create: `packages/remote/src/search/ingest/lifecycle.ts`
 - Test: `packages/remote/test/search-ingest-sessions.test.ts`
@@ -1043,47 +1096,61 @@ The ingester subscribes to `sessionEventBus`. On every relevant event, it shapes
 
 ```ts
 // packages/remote/test/search-ingest-sessions.test.ts
-import { describe, expect, test } from 'bun:test';
-import { sessionEventBus } from '../src/ops-chat/sessions/event-bus';
-import { startSessionsIngest } from '../src/search/ingest/sessions';
+import { describe, expect, test } from "bun:test";
+import { sessionEventBus } from "../src/ops-chat/sessions/event-bus";
+import { startSessionsIngest } from "../src/search/ingest/sessions";
 
-describe('sessions ingest', () => {
-  test('subscribes to event bus and forwards records to a sink', async () => {
-    sessionEventBus.create('s-ing-1');
+describe("sessions ingest", () => {
+  test("subscribes to event bus and forwards records to a sink", async () => {
+    sessionEventBus.create("s-ing-1");
     const seen: any[] = [];
     const stop = startSessionsIngest({
-      sink: async (records) => { seen.push(...records); },
+      sink: async (records) => {
+        seen.push(...records);
+      },
       flushMs: 30,
     });
-    sessionEventBus.publish('s-ing-1', {
-      type: 'session_started', ts: '2026-04-25T00:00:00.000Z',
-      sessionId: 's-ing-1', goal: 'do thing', historyLen: 0, toolCount: 0,
+    sessionEventBus.publish("s-ing-1", {
+      type: "session_started",
+      ts: "2026-04-25T00:00:00.000Z",
+      sessionId: "s-ing-1",
+      goal: "do thing",
+      historyLen: 0,
+      toolCount: 0,
     } as any);
-    sessionEventBus.publish('s-ing-1', {
-      type: 'plan_proposed', ts: '2026-04-25T00:00:01.000Z', stepId: 'sp1',
-      iteration: 0, tier: 'read', reasoning: 'because',
-      step: { tool: 't', annotation: 'a' },
+    sessionEventBus.publish("s-ing-1", {
+      type: "plan_proposed",
+      ts: "2026-04-25T00:00:01.000Z",
+      stepId: "sp1",
+      iteration: 0,
+      tier: "read",
+      reasoning: "because",
+      step: { tool: "t", annotation: "a" },
     } as any);
     await new Promise((r) => setTimeout(r, 80));
     stop();
-    sessionEventBus.close('s-ing-1');
+    sessionEventBus.close("s-ing-1");
     expect(seen.length).toBeGreaterThanOrEqual(2);
-    expect(seen[0]!.metadata.sessionId).toBe('s-ing-1');
+    expect(seen[0]!.metadata.sessionId).toBe("s-ing-1");
   });
 
-  test('skips events with no embeddable text', async () => {
-    sessionEventBus.create('s-ing-2');
+  test("skips events with no embeddable text", async () => {
+    sessionEventBus.create("s-ing-2");
     const seen: any[] = [];
     const stop = startSessionsIngest({
-      sink: async (records) => { seen.push(...records); },
+      sink: async (records) => {
+        seen.push(...records);
+      },
       flushMs: 20,
     });
-    sessionEventBus.publish('s-ing-2', {
-      type: 'done', ts: '2026-04-25T00:00:00.000Z', iterations: 0,
+    sessionEventBus.publish("s-ing-2", {
+      type: "done",
+      ts: "2026-04-25T00:00:00.000Z",
+      iterations: 0,
     } as any);
     await new Promise((r) => setTimeout(r, 50));
     stop();
-    sessionEventBus.close('s-ing-2');
+    sessionEventBus.close("s-ing-2");
     expect(seen.length).toBe(0);
   });
 });
@@ -1098,8 +1165,8 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/remote/src/search/ingest/sessions.ts
-import { sessionEventBus } from '../../ops-chat/sessions/event-bus.js';
-import type { JournalEvent } from '../../ops-chat/sessions/journal-schema.js';
+import { sessionEventBus } from "../../ops-chat/sessions/event-bus.js";
+import type { JournalEvent } from "../../ops-chat/sessions/journal-schema.js";
 
 export interface IngestRecord {
   id: string;
@@ -1115,7 +1182,7 @@ export interface SessionsIngestOpts {
 }
 
 function recordFor(event: JournalEvent): IngestRecord | null {
-  if (event.type === 'session_started') {
+  if (event.type === "session_started") {
     if (!event.goal) return null;
     return {
       id: `${event.sessionId}::start`,
@@ -1124,19 +1191,19 @@ function recordFor(event: JournalEvent): IngestRecord | null {
         sessionId: event.sessionId,
         goal: event.goal,
         startedAt: event.ts,
-        where: 'goal',
+        where: "goal",
       },
     };
   }
-  if (event.type === 'plan_proposed') {
+  if (event.type === "plan_proposed") {
     const argsText = JSON.stringify((event.step as any).args ?? {});
-    const text = [event.reasoning, argsText].filter(Boolean).join('\n');
+    const text = [event.reasoning, argsText].filter(Boolean).join("\n");
     if (!text.trim()) return null;
     return {
-      id: `${(event as any).sessionId ?? '?'}::${event.stepId}`,
+      id: `${(event as any).sessionId ?? "?"}::${event.stepId}`,
       content: text,
       metadata: {
-        sessionId: (event as any).sessionId ?? '?',
+        sessionId: (event as any).sessionId ?? "?",
         stepId: event.stepId,
         iteration: event.iteration,
         where: `iteration #${event.iteration + 1}`,
@@ -1203,18 +1270,23 @@ If a wildcard subscribe exists, refactor `startSessionsIngest` to use it; drop t
 
 ```ts
 // packages/remote/src/search/ingest/lifecycle.ts
-import { startSessionsIngest } from './sessions.js';
-import { startLogsIngest } from './logs.js';
-import { resolveDefaultRagNode } from '../rag-node.js';
-import { resolveRagNode } from '../../rag/resolve.js';
-import { createRagAdapter } from '../../rag/index.js';
-import type { IngestRecord } from './sessions.js';
+import { startSessionsIngest } from "./sessions.js";
+import { startLogsIngest } from "./logs.js";
+import { resolveDefaultRagNode } from "../rag-node.js";
+import { resolveRagNode } from "../../rag/resolve.js";
+import { createRagAdapter } from "../../rag/index.js";
+import type { IngestRecord } from "./sessions.js";
 
 let stopFns: (() => void)[] = [];
 
-async function makeSink(collection: 'sessions' | 'logs'): Promise<(records: IngestRecord[]) => Promise<void>> {
+async function makeSink(
+  collection: "sessions" | "logs",
+): Promise<(records: IngestRecord[]) => Promise<void>> {
   const nodeName = await resolveDefaultRagNode();
-  if (!nodeName) return async () => { /* no-op when no RAG node */ };
+  if (!nodeName)
+    return async () => {
+      /* no-op when no RAG node */
+    };
   return async (records) => {
     const { node, cfg } = resolveRagNode(nodeName);
     const adapter = await createRagAdapter(node, { config: cfg });
@@ -1234,15 +1306,19 @@ async function makeSink(collection: 'sessions' | 'logs'): Promise<(records: Inge
 }
 
 export async function startSearchIngest(): Promise<void> {
-  const sessionsSink = await makeSink('sessions');
-  const logsSink = await makeSink('logs');
+  const sessionsSink = await makeSink("sessions");
+  const logsSink = await makeSink("logs");
   stopFns.push(startSessionsIngest({ sink: sessionsSink }));
   stopFns.push(startLogsIngest({ sink: logsSink }));
 }
 
 export function stopSearchIngest(): void {
   for (const stop of stopFns) {
-    try { stop(); } catch { /* swallow */ }
+    try {
+      stop();
+    } catch {
+      /* swallow */
+    }
   }
   stopFns = [];
 }
@@ -1276,6 +1352,7 @@ git commit -m "feat(remote/search/ingest): event-driven ingestion of ops session
 ## Task 8: Server — logs ingestion (tail-and-window)
 
 **Files:**
+
 - Create: `packages/remote/src/search/ingest/logs.ts`
 - Test: `packages/remote/test/search-ingest-logs.test.ts`
 
@@ -1283,24 +1360,30 @@ git commit -m "feat(remote/search/ingest): event-driven ingestion of ops session
 
 ```ts
 // packages/remote/test/search-ingest-logs.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { startLogsIngest } from '../src/search/ingest/logs';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { startLogsIngest } from "../src/search/ingest/logs";
 
-describe('logs ingest', () => {
+describe("logs ingest", () => {
   let tmp: string;
-  beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), 'logs-ingest-')); });
-  afterEach(() => { rmSync(tmp, { recursive: true, force: true }); });
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "logs-ingest-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
 
-  test('emits one record per non-empty line', async () => {
-    const path = join(tmp, 'a.log');
-    writeFileSync(path, 'line one\nline two\nline three\n', 'utf8');
+  test("emits one record per non-empty line", async () => {
+    const path = join(tmp, "a.log");
+    writeFileSync(path, "line one\nline two\nline three\n", "utf8");
     const seen: any[] = [];
     const stop = startLogsIngest({
-      files: [{ label: 'a', path }],
-      sink: async (records) => { seen.push(...records); },
+      files: [{ label: "a", path }],
+      sink: async (records) => {
+        seen.push(...records);
+      },
       pollMs: 30,
     });
     await new Promise((r) => setTimeout(r, 80));
@@ -1308,21 +1391,23 @@ describe('logs ingest', () => {
     expect(seen.length).toBe(3);
   });
 
-  test('tails appended content on next poll', async () => {
-    const path = join(tmp, 'b.log');
-    writeFileSync(path, 'first\n', 'utf8');
+  test("tails appended content on next poll", async () => {
+    const path = join(tmp, "b.log");
+    writeFileSync(path, "first\n", "utf8");
     const seen: any[] = [];
     const stop = startLogsIngest({
-      files: [{ label: 'b', path }],
-      sink: async (records) => { seen.push(...records); },
+      files: [{ label: "b", path }],
+      sink: async (records) => {
+        seen.push(...records);
+      },
       pollMs: 20,
     });
     await new Promise((r) => setTimeout(r, 50));
-    appendFileSync(path, 'second\n', 'utf8');
+    appendFileSync(path, "second\n", "utf8");
     await new Promise((r) => setTimeout(r, 50));
     stop();
-    expect(seen.map((r) => r.content)).toContain('second');
-    expect(seen.map((r) => r.content)).toContain('first');
+    expect(seen.map((r) => r.content)).toContain("second");
+    expect(seen.map((r) => r.content)).toContain("first");
   });
 });
 ```
@@ -1336,8 +1421,8 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/remote/src/search/ingest/logs.ts
-import { existsSync, statSync, openSync, readSync, closeSync } from 'node:fs';
-import type { IngestRecord } from './sessions.js';
+import { existsSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import type { IngestRecord } from "./sessions.js";
 
 export interface LogsIngestOpts {
   files: { label: string; path: string }[];
@@ -1347,7 +1432,9 @@ export interface LogsIngestOpts {
   windowBytes?: number;
 }
 
-interface FileCursor { offset: number }
+interface FileCursor {
+  offset: number;
+}
 
 export function startLogsIngest(opts: LogsIngestOpts): () => void {
   const pollMs = opts.pollMs ?? 30_000;
@@ -1364,19 +1451,23 @@ export function startLogsIngest(opts: LogsIngestOpts): () => void {
         cursors.set(f.path, cur);
         continue;
       }
-      const fd = openSync(f.path, 'r');
+      const fd = openSync(f.path, "r");
       try {
         const buf = Buffer.alloc(size - cur.offset);
         readSync(fd, buf, 0, buf.length, cur.offset);
-        const text = buf.toString('utf8');
-        const lines = text.split('\n').filter((l) => l.length > 0);
+        const text = buf.toString("utf8");
+        const lines = text.split("\n").filter((l) => l.length > 0);
         const records: IngestRecord[] = lines.map((line, idx) => ({
           id: `${f.label}::${cur.offset}::${idx}`,
           content: line,
           metadata: { fileLabel: f.label, filePath: f.path, where: f.label },
         }));
         if (records.length > 0) {
-          try { await opts.sink(records); } catch { /* swallow */ }
+          try {
+            await opts.sink(records);
+          } catch {
+            /* swallow */
+          }
         }
         cur.offset = size;
         cursors.set(f.path, cur);
@@ -1417,6 +1508,7 @@ git commit -m "feat(remote/search/ingest): tail-and-window log ingestion into RA
 ## Task 9: Server — four new tRPC procedures
 
 **Files:**
+
 - Modify: `packages/remote/src/router.ts`
 - Test: `packages/remote/test/router-global-search-procs.test.ts`
 
@@ -1426,20 +1518,20 @@ Add `opsSessionSearch`, `logsSearch`, `knowledgeSearch`, `globalSearchRagStatus`
 
 ```ts
 // packages/remote/test/router-global-search-procs.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { appRouter } from '../src/router';
-import { appendJournalEvent } from '../src/ops-chat/sessions/journal';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appRouter } from "../src/router";
+import { appendJournalEvent } from "../src/ops-chat/sessions/journal";
 
-describe('global-search router procs', () => {
+describe("global-search router procs", () => {
   let tmp: string;
   let prev: string | undefined;
   let caller: ReturnType<typeof appRouter.createCaller>;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'gs-procs-'));
+    tmp = mkdtempSync(join(tmpdir(), "gs-procs-"));
     prev = process.env.DEV_STORAGE;
     process.env.DEV_STORAGE = tmp;
     caller = appRouter.createCaller({} as any);
@@ -1451,22 +1543,26 @@ describe('global-search router procs', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('opsSessionSearch returns hits from journal goal text', async () => {
-    await appendJournalEvent('s1', {
-      type: 'session_started', ts: '2026-04-25T00:00:00.000Z', sessionId: 's1',
-      goal: 'audit fleet', historyLen: 0, toolCount: 0,
+  test("opsSessionSearch returns hits from journal goal text", async () => {
+    await appendJournalEvent("s1", {
+      type: "session_started",
+      ts: "2026-04-25T00:00:00.000Z",
+      sessionId: "s1",
+      goal: "audit fleet",
+      historyLen: 0,
+      toolCount: 0,
     });
-    const out = await caller.opsSessionSearch({ query: 'fleet' });
+    const out = await caller.opsSessionSearch({ query: "fleet" });
     expect(out.hits.length).toBe(1);
-    expect(out.hits[0]!.sessionId).toBe('s1');
+    expect(out.hits[0]!.sessionId).toBe("s1");
   });
 
-  test('logsSearch returns empty when no log files configured', async () => {
-    const out = await caller.logsSearch({ query: 'foo' });
+  test("logsSearch returns empty when no log files configured", async () => {
+    const out = await caller.logsSearch({ query: "foo" });
     expect(out.hits).toEqual([]);
   });
 
-  test('globalSearchRagStatus returns defaultNode null when no RAG node configured', async () => {
+  test("globalSearchRagStatus returns defaultNode null when no RAG node configured", async () => {
     const out = await caller.globalSearchRagStatus();
     expect(out.defaultNode).toBeNull();
     expect(out.sessions).toBe(false);
@@ -1486,11 +1582,11 @@ Expected: FAIL — procs not yet defined.
 Imports near the top:
 
 ```ts
-import { searchSessions } from './search/sessions.js';
-import { searchLogs } from './search/logs.js';
-import { searchKnowledge } from './search/knowledge.js';
-import { resolveDefaultRagNode } from './search/rag-node.js';
-import { defaultOpsChatAuditPath } from './ops-chat/paths.js';
+import { searchSessions } from "./search/sessions.js";
+import { searchLogs } from "./search/logs.js";
+import { searchKnowledge } from "./search/knowledge.js";
+import { resolveDefaultRagNode } from "./search/rag-node.js";
+import { defaultOpsChatAuditPath } from "./ops-chat/paths.js";
 ```
 
 Inside `appRouter`, near `opsChatAuditTail`:
@@ -1592,6 +1688,7 @@ git commit -m "feat(remote/router): add opsSessionSearch, logsSearch, knowledgeS
 ## Task 10: App — types, query parser, ranking
 
 **Files:**
+
 - Create: `packages/app/src/lib/global-search/types.ts`
 - Create: `packages/app/src/lib/global-search/query.ts`
 - Create: `packages/app/src/lib/global-search/ranking.ts`
@@ -1602,11 +1699,17 @@ git commit -m "feat(remote/router): add opsSessionSearch, logsSearch, knowledgeS
 
 ```ts
 // packages/app/src/lib/global-search/types.ts
-import type { TabEntry } from '@/stores/tab-store';
+import type { TabEntry } from "@/stores/tab-store";
 
 export type SurfaceKind =
-  | 'module' | 'session' | 'workload' | 'node'
-  | 'knowledge' | 'logs' | 'preset' | 'tab-history';
+  | "module"
+  | "session"
+  | "workload"
+  | "node"
+  | "knowledge"
+  | "logs"
+  | "preset"
+  | "tab-history";
 
 export interface MatchExcerpt {
   where: string;
@@ -1619,10 +1722,10 @@ export interface Hit {
   parentId: string;
   parentTitle: string;
   score: number;
-  matchKind: 'exact' | 'semantic';
+  matchKind: "exact" | "semantic";
   ragDistance?: number;
   match?: MatchExcerpt;
-  action: { kind: 'open-tab'; tab: TabEntry };
+  action: { kind: "open-tab"; tab: TabEntry };
 }
 
 export interface SurfaceGroup {
@@ -1645,46 +1748,47 @@ export interface ParsedQuery {
 
 ```ts
 // packages/app/test/lib/global-search/query.test.ts
-import { describe, expect, test } from 'bun:test';
-import { parseQuery } from '@/lib/global-search/query';
+import { describe, expect, test } from "bun:test";
+import { parseQuery } from "@/lib/global-search/query";
 
-describe('parseQuery', () => {
-  test('plain query has no surface filter', () => {
-    expect(parseQuery('hello world')).toEqual({ needle: 'hello world' });
+describe("parseQuery", () => {
+  test("plain query has no surface filter", () => {
+    expect(parseQuery("hello world")).toEqual({ needle: "hello world" });
   });
 
-  test('module: prefix narrows surface', () => {
-    expect(parseQuery('module:dash')).toEqual({ needle: 'dash', surfaceFilter: 'module' });
+  test("module: prefix narrows surface", () => {
+    expect(parseQuery("module:dash")).toEqual({ needle: "dash", surfaceFilter: "module" });
   });
 
-  test('mod: alias maps to module', () => {
-    expect(parseQuery('mod:dash')).toEqual({ needle: 'dash', surfaceFilter: 'module' });
+  test("mod: alias maps to module", () => {
+    expect(parseQuery("mod:dash")).toEqual({ needle: "dash", surfaceFilter: "module" });
   });
 
-  test('sess: alias maps to session', () => {
-    expect(parseQuery('sess:audit')).toEqual({ needle: 'audit', surfaceFilter: 'session' });
+  test("sess: alias maps to session", () => {
+    expect(parseQuery("sess:audit")).toEqual({ needle: "audit", surfaceFilter: "session" });
   });
 
-  test('wl: alias maps to workload', () => {
-    expect(parseQuery('wl:llama')).toEqual({ needle: 'llama', surfaceFilter: 'workload' });
+  test("wl: alias maps to workload", () => {
+    expect(parseQuery("wl:llama")).toEqual({ needle: "llama", surfaceFilter: "workload" });
   });
 
-  test('multi-word needle with prefix', () => {
-    expect(parseQuery('session:audit fleet')).toEqual({
-      needle: 'audit fleet', surfaceFilter: 'session',
+  test("multi-word needle with prefix", () => {
+    expect(parseQuery("session:audit fleet")).toEqual({
+      needle: "audit fleet",
+      surfaceFilter: "session",
     });
   });
 
-  test('unknown prefix is treated as part of the needle', () => {
-    expect(parseQuery('foo:bar')).toEqual({ needle: 'foo:bar' });
+  test("unknown prefix is treated as part of the needle", () => {
+    expect(parseQuery("foo:bar")).toEqual({ needle: "foo:bar" });
   });
 
-  test('empty input returns empty needle', () => {
-    expect(parseQuery('')).toEqual({ needle: '' });
+  test("empty input returns empty needle", () => {
+    expect(parseQuery("")).toEqual({ needle: "" });
   });
 
-  test('trims whitespace', () => {
-    expect(parseQuery('   audit   fleet  ')).toEqual({ needle: 'audit   fleet' });
+  test("trims whitespace", () => {
+    expect(parseQuery("   audit   fleet  ")).toEqual({ needle: "audit   fleet" });
   });
 });
 ```
@@ -1698,17 +1802,25 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/app/src/lib/global-search/query.ts
-import type { SurfaceKind, ParsedQuery } from './types';
+import type { SurfaceKind, ParsedQuery } from "./types";
 
 const ALIASES: Record<string, SurfaceKind> = {
-  module: 'module', mod: 'module',
-  session: 'session', sess: 'session',
-  workload: 'workload', wl: 'workload',
-  node: 'node', n: 'node',
-  knowledge: 'knowledge', kb: 'knowledge',
-  logs: 'logs', log: 'logs',
-  preset: 'preset', presets: 'preset',
-  'tab-history': 'tab-history', history: 'tab-history',
+  module: "module",
+  mod: "module",
+  session: "session",
+  sess: "session",
+  workload: "workload",
+  wl: "workload",
+  node: "node",
+  n: "node",
+  knowledge: "knowledge",
+  kb: "knowledge",
+  logs: "logs",
+  log: "logs",
+  preset: "preset",
+  presets: "preset",
+  "tab-history": "tab-history",
+  history: "tab-history",
 };
 
 export function parseQuery(input: string): ParsedQuery {
@@ -1732,40 +1844,40 @@ Expected: PASS — 9 tests pass.
 
 ```ts
 // packages/app/test/lib/global-search/ranking.test.ts
-import { describe, expect, test } from 'bun:test';
-import { applySurfaceBias, sortGroups, SEMANTIC_TIE_PENALTY } from '@/lib/global-search/ranking';
-import type { Hit, SurfaceGroup } from '@/lib/global-search/types';
+import { describe, expect, test } from "bun:test";
+import { applySurfaceBias, sortGroups, SEMANTIC_TIE_PENALTY } from "@/lib/global-search/ranking";
+import type { Hit, SurfaceGroup } from "@/lib/global-search/types";
 
 const makeHit = (h: Partial<Hit> = {}): Hit => ({
-  surface: 'module',
-  parentId: 'p',
-  parentTitle: 'P',
+  surface: "module",
+  parentId: "p",
+  parentTitle: "P",
   score: 0.5,
-  matchKind: 'exact',
-  action: { kind: 'open-tab', tab: { tabKey: 'p', title: 'P', kind: 'module', openedAt: 0 } },
+  matchKind: "exact",
+  action: { kind: "open-tab", tab: { tabKey: "p", title: "P", kind: "module", openedAt: 0 } },
   ...h,
 });
 
-describe('applySurfaceBias', () => {
-  test('module hit gets +0.20', () => {
-    expect(applySurfaceBias(makeHit({ surface: 'module', score: 0.5 }))).toBeCloseTo(0.70);
+describe("applySurfaceBias", () => {
+  test("module hit gets +0.20", () => {
+    expect(applySurfaceBias(makeHit({ surface: "module", score: 0.5 }))).toBeCloseTo(0.7);
   });
 
-  test('semantic match gets penalty', () => {
-    const out = applySurfaceBias(makeHit({ surface: 'module', score: 0.5, matchKind: 'semantic' }));
-    expect(out).toBeCloseTo(0.70 + SEMANTIC_TIE_PENALTY);
+  test("semantic match gets penalty", () => {
+    const out = applySurfaceBias(makeHit({ surface: "module", score: 0.5, matchKind: "semantic" }));
+    expect(out).toBeCloseTo(0.7 + SEMANTIC_TIE_PENALTY);
   });
 });
 
-describe('sortGroups', () => {
-  test('groups order by topScore desc', () => {
+describe("sortGroups", () => {
+  test("groups order by topScore desc", () => {
     const groups: SurfaceGroup[] = [
-      { surface: 'workload', hits: [], topScore: 0.4 },
-      { surface: 'module', hits: [], topScore: 0.7 },
-      { surface: 'session', hits: [], topScore: 0.6 },
+      { surface: "workload", hits: [], topScore: 0.4 },
+      { surface: "module", hits: [], topScore: 0.7 },
+      { surface: "session", hits: [], topScore: 0.6 },
     ];
     const out = sortGroups(groups);
-    expect(out.map((g) => g.surface)).toEqual(['module', 'session', 'workload']);
+    expect(out.map((g) => g.surface)).toEqual(["module", "session", "workload"]);
   });
 });
 ```
@@ -1779,24 +1891,24 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/app/src/lib/global-search/ranking.ts
-import type { Hit, SurfaceGroup, SurfaceKind } from './types';
+import type { Hit, SurfaceGroup, SurfaceKind } from "./types";
 
 export const SURFACE_BIAS: Record<SurfaceKind, number> = {
-  module: 0.20,
-  session: 0.10,
-  workload: 0.10,
-  node: 0.10,
+  module: 0.2,
+  session: 0.1,
+  workload: 0.1,
+  node: 0.1,
   preset: 0.05,
   knowledge: 0.05,
-  logs: 0.00,
-  'tab-history': -0.05,
+  logs: 0.0,
+  "tab-history": -0.05,
 };
 
 export const SEMANTIC_TIE_PENALTY = -0.02;
 
 export function applySurfaceBias(hit: Hit): number {
   const base = hit.score + SURFACE_BIAS[hit.surface];
-  return hit.matchKind === 'semantic' ? base + SEMANTIC_TIE_PENALTY : base;
+  return hit.matchKind === "semantic" ? base + SEMANTIC_TIE_PENALTY : base;
 }
 
 export function sortGroups(groups: SurfaceGroup[]): SurfaceGroup[] {
@@ -1825,6 +1937,7 @@ git commit -m "feat(app/lib/global-search): add types, query parser, ranking"
 ## Task 11: App — client surfaces (modules, tab-history)
 
 **Files:**
+
 - Create: `packages/app/src/lib/global-search/surfaces/modules.ts`
 - Create: `packages/app/src/lib/global-search/surfaces/tab-history.ts`
 - Test: `packages/app/test/lib/global-search/surfaces/modules.test.ts`
@@ -1834,50 +1947,53 @@ git commit -m "feat(app/lib/global-search): add types, query parser, ranking"
 
 ```ts
 // packages/app/test/lib/global-search/surfaces/modules.test.ts
-import { describe, expect, test } from 'bun:test';
-import { matchModules } from '@/lib/global-search/surfaces/modules';
+import { describe, expect, test } from "bun:test";
+import { matchModules } from "@/lib/global-search/surfaces/modules";
 
-describe('matchModules', () => {
-  test('returns hits with matchKind exact and surface module', () => {
-    const out = matchModules('dash');
+describe("matchModules", () => {
+  test("returns hits with matchKind exact and surface module", () => {
+    const out = matchModules("dash");
     expect(out.length).toBeGreaterThan(0);
-    expect(out.every((h) => h.surface === 'module' && h.matchKind === 'exact')).toBe(true);
+    expect(out.every((h) => h.surface === "module" && h.matchKind === "exact")).toBe(true);
   });
 
-  test('empty needle returns []', () => {
-    expect(matchModules('')).toEqual([]);
+  test("empty needle returns []", () => {
+    expect(matchModules("")).toEqual([]);
   });
 });
 ```
 
 ```ts
 // packages/app/test/lib/global-search/surfaces/tab-history.test.ts
-import { describe, expect, test } from 'bun:test';
-import { matchTabHistory } from '@/lib/global-search/surfaces/tab-history';
-import type { TabEntry } from '@/stores/tab-store';
+import { describe, expect, test } from "bun:test";
+import { matchTabHistory } from "@/lib/global-search/surfaces/tab-history";
+import type { TabEntry } from "@/stores/tab-store";
 
 const tabs: TabEntry[] = [
-  { tabKey: 'module:dash', title: 'Dashboard', kind: 'module', openedAt: 1 },
+  { tabKey: "module:dash", title: "Dashboard", kind: "module", openedAt: 1 },
 ];
-const closed: TabEntry[] = [
-  { tabKey: 'module:cost', title: 'Cost', kind: 'module', openedAt: 0 },
-];
+const closed: TabEntry[] = [{ tabKey: "module:cost", title: "Cost", kind: "module", openedAt: 0 }];
 
-describe('matchTabHistory', () => {
-  test('matches both open and closed tabs', () => {
-    const out = matchTabHistory('dash', { tabs, closed });
+describe("matchTabHistory", () => {
+  test("matches both open and closed tabs", () => {
+    const out = matchTabHistory("dash", { tabs, closed });
     expect(out.length).toBe(1);
-    expect(out[0]!.parentId).toBe('module:dash');
+    expect(out[0]!.parentId).toBe("module:dash");
   });
 
-  test('dedupes by tabKey when same key appears in both lists', () => {
-    const dup: TabEntry = { tabKey: 'module:dash', title: 'Dashboard', kind: 'module', openedAt: 0 };
-    const out = matchTabHistory('dash', { tabs, closed: [dup] });
+  test("dedupes by tabKey when same key appears in both lists", () => {
+    const dup: TabEntry = {
+      tabKey: "module:dash",
+      title: "Dashboard",
+      kind: "module",
+      openedAt: 0,
+    };
+    const out = matchTabHistory("dash", { tabs, closed: [dup] });
     expect(out.length).toBe(1);
   });
 
-  test('empty needle returns []', () => {
-    expect(matchTabHistory('', { tabs, closed })).toEqual([]);
+  test("empty needle returns []", () => {
+    expect(matchTabHistory("", { tabs, closed })).toEqual([]);
   });
 });
 ```
@@ -1891,24 +2007,24 @@ Expected: FAIL — modules not found.
 
 ```ts
 // packages/app/src/lib/global-search/surfaces/modules.ts
-import { APP_MODULES } from '@/modules/registry';
-import { searchModules } from '@/shell/beacon/search-modules';
-import type { Hit } from '../types';
+import { APP_MODULES } from "@/modules/registry";
+import { searchModules } from "@/shell/beacon/search-modules";
+import type { Hit } from "../types";
 
 export function matchModules(needle: string): Hit[] {
   if (!needle) return [];
   return searchModules(APP_MODULES, needle).map(({ m, score }) => ({
-    surface: 'module' as const,
+    surface: "module" as const,
     parentId: m.id,
     parentTitle: m.labelKey,
     score: score === 2 ? 0.9 : 0.5,
-    matchKind: 'exact' as const,
+    matchKind: "exact" as const,
     action: {
-      kind: 'open-tab' as const,
+      kind: "open-tab" as const,
       tab: {
         tabKey: `module:${m.id}`,
         title: m.labelKey,
-        kind: 'module' as const,
+        kind: "module" as const,
         openedAt: Date.now(),
       },
     },
@@ -1920,8 +2036,8 @@ export function matchModules(needle: string): Hit[] {
 
 ```ts
 // packages/app/src/lib/global-search/surfaces/tab-history.ts
-import type { TabEntry } from '@/stores/tab-store';
-import type { Hit } from '../types';
+import type { TabEntry } from "@/stores/tab-store";
+import type { Hit } from "../types";
 
 export interface TabHistoryState {
   tabs: TabEntry[];
@@ -1939,12 +2055,12 @@ export function matchTabHistory(needle: string, state: TabHistoryState): Hit[] {
     if (!t.title.toLowerCase().includes(lowered)) continue;
     const startsWith = t.title.toLowerCase().startsWith(lowered);
     out.push({
-      surface: 'tab-history',
+      surface: "tab-history",
       parentId: t.tabKey,
       parentTitle: t.title,
       score: startsWith ? 0.7 : 0.4,
-      matchKind: 'exact',
-      action: { kind: 'open-tab', tab: { ...t, openedAt: Date.now() } },
+      matchKind: "exact",
+      action: { kind: "open-tab", tab: { ...t, openedAt: Date.now() } },
     });
   }
   return out;
@@ -1970,6 +2086,7 @@ git commit -m "feat(app/lib/global-search): add modules + tab-history client sur
 ## Task 12: App — client surfaces (workloads, nodes, presets)
 
 **Files:**
+
 - Create: `packages/app/src/lib/global-search/surfaces/workloads.ts`
 - Create: `packages/app/src/lib/global-search/surfaces/nodes.ts`
 - Create: `packages/app/src/lib/global-search/surfaces/presets.ts`
@@ -1981,40 +2098,40 @@ Each takes a list of items + a needle and returns `Hit[]`. The list-shapes mirro
 
 ```ts
 // packages/app/test/lib/global-search/surfaces/workloads.test.ts
-import { describe, expect, test } from 'bun:test';
-import { matchWorkloads } from '@/lib/global-search/surfaces/workloads';
+import { describe, expect, test } from "bun:test";
+import { matchWorkloads } from "@/lib/global-search/surfaces/workloads";
 
 const items = [
-  { name: 'llama-31-8b', model: 'llama-3.1-8b-instruct', node: 'macbook-pro' },
-  { name: 'qwen-72b', model: 'qwen-2.5-72b-instruct', node: 'atlas' },
-  { name: 'embed-bge', model: 'bge-small-en', node: 'macbook-pro' },
+  { name: "llama-31-8b", model: "llama-3.1-8b-instruct", node: "macbook-pro" },
+  { name: "qwen-72b", model: "qwen-2.5-72b-instruct", node: "atlas" },
+  { name: "embed-bge", model: "bge-small-en", node: "macbook-pro" },
 ];
 
-describe('matchWorkloads', () => {
-  test('matches by workload name', () => {
-    const out = matchWorkloads('qwen', items);
+describe("matchWorkloads", () => {
+  test("matches by workload name", () => {
+    const out = matchWorkloads("qwen", items);
     expect(out.length).toBe(1);
-    expect(out[0]!.parentId).toBe('qwen-72b');
+    expect(out[0]!.parentId).toBe("qwen-72b");
   });
 
-  test('matches by model field', () => {
-    const out = matchWorkloads('bge', items);
+  test("matches by model field", () => {
+    const out = matchWorkloads("bge", items);
     expect(out.length).toBe(1);
-    expect(out[0]!.parentId).toBe('embed-bge');
+    expect(out[0]!.parentId).toBe("embed-bge");
   });
 
-  test('matches by node field', () => {
-    const out = matchWorkloads('atlas', items);
+  test("matches by node field", () => {
+    const out = matchWorkloads("atlas", items);
     expect(out.length).toBe(1);
   });
 
-  test('action opens workload tab', () => {
-    const out = matchWorkloads('qwen', items);
+  test("action opens workload tab", () => {
+    const out = matchWorkloads("qwen", items);
     const a = out[0]!.action;
-    expect(a.kind).toBe('open-tab');
-    if (a.kind === 'open-tab') {
-      expect(a.tab.kind).toBe('workload');
-      expect(a.tab.instanceId).toBe('qwen-72b');
+    expect(a.kind).toBe("open-tab");
+    if (a.kind === "open-tab") {
+      expect(a.tab.kind).toBe("workload");
+      expect(a.tab.instanceId).toBe("qwen-72b");
     }
   });
 });
@@ -2029,7 +2146,7 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/app/src/lib/global-search/surfaces/workloads.ts
-import type { Hit } from '../types';
+import type { Hit } from "../types";
 
 export interface WorkloadItem {
   name: string;
@@ -2043,21 +2160,21 @@ export function matchWorkloads(needle: string, items: WorkloadItem[]): Hit[] {
   const out: Hit[] = [];
   for (const w of items) {
     const fields = [w.name, w.model, w.node].filter(Boolean) as string[];
-    const blob = fields.join(' ').toLowerCase();
+    const blob = fields.join(" ").toLowerCase();
     if (!blob.includes(lowered)) continue;
     const startsWith = w.name.toLowerCase().startsWith(lowered);
     out.push({
-      surface: 'workload',
+      surface: "workload",
       parentId: w.name,
       parentTitle: w.name,
       score: startsWith ? 0.8 : 0.5,
-      matchKind: 'exact',
+      matchKind: "exact",
       action: {
-        kind: 'open-tab',
+        kind: "open-tab",
         tab: {
           tabKey: `workload:${w.name}`,
           title: w.name,
-          kind: 'workload',
+          kind: "workload",
           instanceId: w.name,
           openedAt: Date.now(),
         },
@@ -2070,7 +2187,7 @@ export function matchWorkloads(needle: string, items: WorkloadItem[]): Hit[] {
 
 ```ts
 // packages/app/src/lib/global-search/surfaces/nodes.ts
-import type { Hit } from '../types';
+import type { Hit } from "../types";
 
 export interface NodeItem {
   name: string;
@@ -2085,17 +2202,17 @@ export function matchNodes(needle: string, items: NodeItem[]): Hit[] {
     if (!n.name.toLowerCase().includes(lowered)) continue;
     const startsWith = n.name.toLowerCase().startsWith(lowered);
     out.push({
-      surface: 'node',
+      surface: "node",
       parentId: n.name,
       parentTitle: n.name,
       score: startsWith ? 0.8 : 0.5,
-      matchKind: 'exact',
+      matchKind: "exact",
       action: {
-        kind: 'open-tab',
+        kind: "open-tab",
         tab: {
           tabKey: `node:${n.name}`,
           title: n.name,
-          kind: 'node',
+          kind: "node",
           instanceId: n.name,
           openedAt: Date.now(),
         },
@@ -2108,7 +2225,7 @@ export function matchNodes(needle: string, items: NodeItem[]): Hit[] {
 
 ```ts
 // packages/app/src/lib/global-search/surfaces/presets.ts
-import type { Hit } from '../types';
+import type { Hit } from "../types";
 
 export interface PresetItem {
   name: string;
@@ -2120,21 +2237,21 @@ export function matchPresets(needle: string, items: PresetItem[]): Hit[] {
   const lowered = needle.toLowerCase();
   const out: Hit[] = [];
   for (const p of items) {
-    const blob = [p.name, p.description].filter(Boolean).join(' ').toLowerCase();
+    const blob = [p.name, p.description].filter(Boolean).join(" ").toLowerCase();
     if (!blob.includes(lowered)) continue;
     const startsWith = p.name.toLowerCase().startsWith(lowered);
     out.push({
-      surface: 'preset',
+      surface: "preset",
       parentId: p.name,
       parentTitle: p.name,
       score: startsWith ? 0.8 : 0.5,
-      matchKind: 'exact',
+      matchKind: "exact",
       action: {
-        kind: 'open-tab',
+        kind: "open-tab",
         tab: {
-          tabKey: 'module:presets',
-          title: 'Presets',
-          kind: 'module',
+          tabKey: "module:presets",
+          title: "Presets",
+          kind: "module",
           openedAt: Date.now(),
         },
       },
@@ -2164,6 +2281,7 @@ git commit -m "feat(app/lib/global-search): add workloads, nodes, presets client
 ## Task 13: App — server lexical surfaces (sessions, knowledge, logs)
 
 **Files:**
+
 - Create: `packages/app/src/lib/global-search/surfaces/sessions.ts`
 - Create: `packages/app/src/lib/global-search/surfaces/knowledge.ts`
 - Create: `packages/app/src/lib/global-search/surfaces/logs.ts`
@@ -2174,12 +2292,12 @@ Each calls a tRPC `*.fetch` and maps the server hit shape to the client `Hit`. T
 
 ```ts
 // packages/app/src/lib/global-search/surfaces/sessions.ts
-import type { Hit, MatchExcerpt } from '../types';
+import type { Hit, MatchExcerpt } from "../types";
 
 export interface SessionServerHit {
   sessionId: string;
   goal: string;
-  status: 'live' | 'done' | 'refused' | 'aborted';
+  status: "live" | "done" | "refused" | "aborted";
   startedAt: string;
   matches: MatchExcerpt[];
   score: number;
@@ -2191,18 +2309,18 @@ export function mapSessionHits(hits: SessionServerHit[]): Hit[] {
     if (h.matches.length === 0) continue;
     for (const m of h.matches) {
       out.push({
-        surface: 'session',
+        surface: "session",
         parentId: h.sessionId,
         parentTitle: h.goal || h.sessionId,
         score: h.score,
-        matchKind: 'exact',
+        matchKind: "exact",
         match: m,
         action: {
-          kind: 'open-tab',
+          kind: "open-tab",
           tab: {
             tabKey: `ops-session:${h.sessionId}`,
             title: `Session ${h.sessionId.slice(0, 8)}`,
-            kind: 'ops-session',
+            kind: "ops-session",
             instanceId: h.sessionId,
             openedAt: Date.now(),
           },
@@ -2218,7 +2336,7 @@ export function mapSessionHits(hits: SessionServerHit[]): Hit[] {
 
 ```ts
 // packages/app/src/lib/global-search/surfaces/knowledge.ts
-import type { Hit, MatchExcerpt } from '../types';
+import type { Hit, MatchExcerpt } from "../types";
 
 export interface KnowledgeServerHit {
   entityId: string;
@@ -2232,18 +2350,18 @@ export function mapKnowledgeHits(hits: KnowledgeServerHit[]): Hit[] {
   for (const h of hits) {
     for (const m of h.matches) {
       out.push({
-        surface: 'knowledge',
+        surface: "knowledge",
         parentId: h.entityId,
         parentTitle: h.title,
         score: h.score,
-        matchKind: 'exact',
+        matchKind: "exact",
         match: m,
         action: {
-          kind: 'open-tab',
+          kind: "open-tab",
           tab: {
-            tabKey: 'module:knowledge',
-            title: 'Knowledge',
-            kind: 'module',
+            tabKey: "module:knowledge",
+            title: "Knowledge",
+            kind: "module",
             openedAt: Date.now(),
           },
         },
@@ -2258,12 +2376,17 @@ export function mapKnowledgeHits(hits: KnowledgeServerHit[]): Hit[] {
 
 ```ts
 // packages/app/src/lib/global-search/surfaces/logs.ts
-import type { Hit } from '../types';
+import type { Hit } from "../types";
 
 export interface LogServerHit {
   fileLabel: string;
   filePath: string;
-  matches: { lineNumber: number; where: string; snippet: string; spans: { start: number; end: number }[] }[];
+  matches: {
+    lineNumber: number;
+    where: string;
+    snippet: string;
+    spans: { start: number; end: number }[];
+  }[];
   score: number;
 }
 
@@ -2272,18 +2395,18 @@ export function mapLogHits(hits: LogServerHit[]): Hit[] {
   for (const h of hits) {
     for (const m of h.matches) {
       out.push({
-        surface: 'logs',
+        surface: "logs",
         parentId: `${h.fileLabel}:${m.lineNumber}`,
         parentTitle: `${h.fileLabel}:${m.lineNumber}`,
         score: h.score,
-        matchKind: 'exact',
+        matchKind: "exact",
         match: { where: m.where, snippet: m.snippet, spans: m.spans },
         action: {
-          kind: 'open-tab',
+          kind: "open-tab",
           tab: {
-            tabKey: 'module:logs',
-            title: 'Logs',
-            kind: 'module',
+            tabKey: "module:logs",
+            title: "Logs",
+            kind: "module",
             openedAt: Date.now(),
           },
         },
@@ -2313,6 +2436,7 @@ git commit -m "feat(app/lib/global-search): add server-lexical surface mappers"
 ## Task 14: App — server semantic surfaces (sessions-rag, knowledge-rag, logs-rag)
 
 **Files:**
+
 - Create: `packages/app/src/lib/global-search/surfaces/sessions-rag.ts`
 - Create: `packages/app/src/lib/global-search/surfaces/knowledge-rag.ts`
 - Create: `packages/app/src/lib/global-search/surfaces/logs-rag.ts`
@@ -2324,22 +2448,27 @@ The semantic surfaces consume `ragSearch` results. The server-side `rag-bridge.t
 
 ```ts
 // packages/app/test/lib/global-search/surfaces/sessions-rag.test.ts
-import { describe, expect, test } from 'bun:test';
-import { mapSessionRagHits, type SessionRagServerHit } from '@/lib/global-search/surfaces/sessions-rag';
+import { describe, expect, test } from "bun:test";
+import {
+  mapSessionRagHits,
+  type SessionRagServerHit,
+} from "@/lib/global-search/surfaces/sessions-rag";
 
-describe('mapSessionRagHits', () => {
-  test('produces matchKind semantic and copies ragDistance', () => {
-    const server: SessionRagServerHit[] = [{
-      sessionId: 's1',
-      goal: 'audit fleet',
-      status: 'done',
-      startedAt: '2026-04-25T00:00:00.000Z',
-      matches: [{ where: 'goal', snippet: 'audit fleet', spans: [] }],
-      score: 0.83,
-    }];
+describe("mapSessionRagHits", () => {
+  test("produces matchKind semantic and copies ragDistance", () => {
+    const server: SessionRagServerHit[] = [
+      {
+        sessionId: "s1",
+        goal: "audit fleet",
+        status: "done",
+        startedAt: "2026-04-25T00:00:00.000Z",
+        matches: [{ where: "goal", snippet: "audit fleet", spans: [] }],
+        score: 0.83,
+      },
+    ];
     const out = mapSessionRagHits(server);
     expect(out.length).toBe(1);
-    expect(out[0]!.matchKind).toBe('semantic');
+    expect(out[0]!.matchKind).toBe("semantic");
     expect(out[0]!.score).toBeCloseTo(0.83);
   });
 });
@@ -2354,12 +2483,12 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/app/src/lib/global-search/surfaces/sessions-rag.ts
-import type { Hit, MatchExcerpt } from '../types';
+import type { Hit, MatchExcerpt } from "../types";
 
 export interface SessionRagServerHit {
   sessionId: string;
   goal: string;
-  status: 'live' | 'done' | 'refused' | 'aborted';
+  status: "live" | "done" | "refused" | "aborted";
   startedAt: string;
   matches: MatchExcerpt[];
   score: number;
@@ -2371,19 +2500,19 @@ export function mapSessionRagHits(hits: SessionRagServerHit[]): Hit[] {
   for (const h of hits) {
     for (const m of h.matches) {
       out.push({
-        surface: 'session',
+        surface: "session",
         parentId: h.sessionId,
         parentTitle: h.goal || h.sessionId,
         score: h.score,
-        matchKind: 'semantic',
+        matchKind: "semantic",
         ragDistance: h.ragDistance,
         match: m,
         action: {
-          kind: 'open-tab',
+          kind: "open-tab",
           tab: {
             tabKey: `ops-session:${h.sessionId}`,
             title: `Session ${h.sessionId.slice(0, 8)}`,
-            kind: 'ops-session',
+            kind: "ops-session",
             instanceId: h.sessionId,
             openedAt: Date.now(),
           },
@@ -2397,7 +2526,7 @@ export function mapSessionRagHits(hits: SessionRagServerHit[]): Hit[] {
 
 ```ts
 // packages/app/src/lib/global-search/surfaces/knowledge-rag.ts
-import type { Hit, MatchExcerpt } from '../types';
+import type { Hit, MatchExcerpt } from "../types";
 
 export interface KnowledgeRagServerHit {
   entityId: string;
@@ -2412,16 +2541,21 @@ export function mapKnowledgeRagHits(hits: KnowledgeRagServerHit[]): Hit[] {
   for (const h of hits) {
     for (const m of h.matches) {
       out.push({
-        surface: 'knowledge',
+        surface: "knowledge",
         parentId: h.entityId,
         parentTitle: h.title,
         score: h.score,
-        matchKind: 'semantic',
+        matchKind: "semantic",
         ragDistance: h.ragDistance,
         match: m,
         action: {
-          kind: 'open-tab',
-          tab: { tabKey: 'module:knowledge', title: 'Knowledge', kind: 'module', openedAt: Date.now() },
+          kind: "open-tab",
+          tab: {
+            tabKey: "module:knowledge",
+            title: "Knowledge",
+            kind: "module",
+            openedAt: Date.now(),
+          },
         },
       });
     }
@@ -2432,12 +2566,17 @@ export function mapKnowledgeRagHits(hits: KnowledgeRagServerHit[]): Hit[] {
 
 ```ts
 // packages/app/src/lib/global-search/surfaces/logs-rag.ts
-import type { Hit } from '../types';
+import type { Hit } from "../types";
 
 export interface LogRagServerHit {
   fileLabel: string;
   filePath: string;
-  matches: { lineNumber: number; where: string; snippet: string; spans: { start: number; end: number }[] }[];
+  matches: {
+    lineNumber: number;
+    where: string;
+    snippet: string;
+    spans: { start: number; end: number }[];
+  }[];
   score: number;
   ragDistance?: number;
 }
@@ -2447,16 +2586,16 @@ export function mapLogRagHits(hits: LogRagServerHit[]): Hit[] {
   for (const h of hits) {
     for (const m of h.matches) {
       out.push({
-        surface: 'logs',
+        surface: "logs",
         parentId: `${h.fileLabel}:${m.lineNumber}`,
         parentTitle: `${h.fileLabel}:${m.lineNumber}`,
         score: h.score,
-        matchKind: 'semantic',
+        matchKind: "semantic",
         ragDistance: h.ragDistance,
         match: { where: m.where, snippet: m.snippet, spans: m.spans },
         action: {
-          kind: 'open-tab',
-          tab: { tabKey: 'module:logs', title: 'Logs', kind: 'module', openedAt: Date.now() },
+          kind: "open-tab",
+          tab: { tabKey: "module:logs", title: "Logs", kind: "module", openedAt: Date.now() },
         },
       });
     }
@@ -2485,25 +2624,26 @@ git commit -m "feat(app/lib/global-search): add server-semantic surface mappers"
 ## Task 15: App — orchestrator + collapse
 
 **Files:**
+
 - Create: `packages/app/src/lib/global-search/orchestrator.ts`
 - Test: `packages/app/test/lib/global-search/orchestrator.test.ts`
 
-The orchestrator's job: take parsed query + a context object (cached lists + tRPC utils + signal), run client surfaces synchronously, return `GroupedResults`. Server-side hits are merged by the *hook* (Task 16) — keep the orchestrator pure-sync for testability.
+The orchestrator's job: take parsed query + a context object (cached lists + tRPC utils + signal), run client surfaces synchronously, return `GroupedResults`. Server-side hits are merged by the _hook_ (Task 16) — keep the orchestrator pure-sync for testability.
 
-The collapse rule (D9): same `parentId` across matchKinds collapses to one parent row in the renderer; the orchestrator does *not* deduplicate at this layer — it returns the raw hit list, the renderer collapses visually. Keep the data flat.
+The collapse rule (D9): same `parentId` across matchKinds collapses to one parent row in the renderer; the orchestrator does _not_ deduplicate at this layer — it returns the raw hit list, the renderer collapses visually. Keep the data flat.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 // packages/app/test/lib/global-search/orchestrator.test.ts
-import { describe, expect, test } from 'bun:test';
-import { runClientPhase, mergeServerHits } from '@/lib/global-search/orchestrator';
-import type { Hit } from '@/lib/global-search/types';
+import { describe, expect, test } from "bun:test";
+import { runClientPhase, mergeServerHits } from "@/lib/global-search/orchestrator";
+import type { Hit } from "@/lib/global-search/types";
 
-describe('runClientPhase', () => {
-  test('returns GroupedResults sorted by topScore', () => {
+describe("runClientPhase", () => {
+  test("returns GroupedResults sorted by topScore", () => {
     const out = runClientPhase({
-      query: { needle: 'dash' },
+      query: { needle: "dash" },
       tabState: { tabs: [], closed: [] },
       workloads: [],
       nodes: [],
@@ -2512,51 +2652,78 @@ describe('runClientPhase', () => {
     expect(Array.isArray(out)).toBe(true);
   });
 
-  test('surface filter restricts to one group', () => {
+  test("surface filter restricts to one group", () => {
     const out = runClientPhase({
-      query: { needle: 'dash', surfaceFilter: 'module' },
+      query: { needle: "dash", surfaceFilter: "module" },
       tabState: { tabs: [], closed: [] },
       workloads: [],
       nodes: [],
       presets: [],
     });
-    expect(out.every((g) => g.surface === 'module')).toBe(true);
+    expect(out.every((g) => g.surface === "module")).toBe(true);
   });
 });
 
-describe('mergeServerHits', () => {
-  test('replaces a pending group with hits + clears pending', () => {
-    const initial = [
-      { surface: 'session' as const, hits: [], topScore: 0, pending: true },
+describe("mergeServerHits", () => {
+  test("replaces a pending group with hits + clears pending", () => {
+    const initial = [{ surface: "session" as const, hits: [], topScore: 0, pending: true }];
+    const newHits: Hit[] = [
+      {
+        surface: "session",
+        parentId: "s1",
+        parentTitle: "g",
+        score: 0.5,
+        matchKind: "exact",
+        action: {
+          kind: "open-tab",
+          tab: {
+            tabKey: "ops-session:s1",
+            title: "s1",
+            kind: "ops-session",
+            instanceId: "s1",
+            openedAt: 0,
+          },
+        },
+      },
     ];
-    const newHits: Hit[] = [{
-      surface: 'session', parentId: 's1', parentTitle: 'g',
-      score: 0.5, matchKind: 'exact',
-      action: { kind: 'open-tab', tab: { tabKey: 'ops-session:s1', title: 's1', kind: 'ops-session', instanceId: 's1', openedAt: 0 } },
-    }];
-    const out = mergeServerHits(initial, 'session', newHits);
-    const sess = out.find((g) => g.surface === 'session')!;
+    const out = mergeServerHits(initial, "session", newHits);
+    const sess = out.find((g) => g.surface === "session")!;
     expect(sess.pending).toBeFalsy();
     expect(sess.hits.length).toBe(1);
   });
 
-  test('appends to existing hits when merging from different tier', () => {
-    const initial = [{
-      surface: 'session' as const,
-      hits: [{
-        surface: 'session' as const, parentId: 's1', parentTitle: 'g',
-        score: 0.4, matchKind: 'exact' as const,
-        action: { kind: 'open-tab' as const, tab: { tabKey: 't', title: 't', kind: 'module' as const, openedAt: 0 } },
-      }],
-      topScore: 0.4,
-    }];
-    const semantic: Hit[] = [{
-      surface: 'session', parentId: 's1', parentTitle: 'g',
-      score: 0.6, matchKind: 'semantic',
-      action: { kind: 'open-tab', tab: { tabKey: 't', title: 't', kind: 'module', openedAt: 0 } },
-    }];
-    const out = mergeServerHits(initial, 'session', semantic, { append: true });
-    const sess = out.find((g) => g.surface === 'session')!;
+  test("appends to existing hits when merging from different tier", () => {
+    const initial = [
+      {
+        surface: "session" as const,
+        hits: [
+          {
+            surface: "session" as const,
+            parentId: "s1",
+            parentTitle: "g",
+            score: 0.4,
+            matchKind: "exact" as const,
+            action: {
+              kind: "open-tab" as const,
+              tab: { tabKey: "t", title: "t", kind: "module" as const, openedAt: 0 },
+            },
+          },
+        ],
+        topScore: 0.4,
+      },
+    ];
+    const semantic: Hit[] = [
+      {
+        surface: "session",
+        parentId: "s1",
+        parentTitle: "g",
+        score: 0.6,
+        matchKind: "semantic",
+        action: { kind: "open-tab", tab: { tabKey: "t", title: "t", kind: "module", openedAt: 0 } },
+      },
+    ];
+    const out = mergeServerHits(initial, "session", semantic, { append: true });
+    const sess = out.find((g) => g.surface === "session")!;
     expect(sess.hits.length).toBe(2);
     expect(sess.topScore).toBeCloseTo(0.6);
   });
@@ -2572,23 +2739,17 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/app/src/lib/global-search/orchestrator.ts
-import type {
-  GroupedResults,
-  Hit,
-  ParsedQuery,
-  SurfaceGroup,
-  SurfaceKind,
-} from './types';
-import type { TabHistoryState } from './surfaces/tab-history';
-import type { WorkloadItem } from './surfaces/workloads';
-import type { NodeItem } from './surfaces/nodes';
-import type { PresetItem } from './surfaces/presets';
-import { matchModules } from './surfaces/modules';
-import { matchTabHistory } from './surfaces/tab-history';
-import { matchWorkloads } from './surfaces/workloads';
-import { matchNodes } from './surfaces/nodes';
-import { matchPresets } from './surfaces/presets';
-import { applySurfaceBias, sortGroups } from './ranking';
+import type { GroupedResults, Hit, ParsedQuery, SurfaceGroup, SurfaceKind } from "./types";
+import type { TabHistoryState } from "./surfaces/tab-history";
+import type { WorkloadItem } from "./surfaces/workloads";
+import type { NodeItem } from "./surfaces/nodes";
+import type { PresetItem } from "./surfaces/presets";
+import { matchModules } from "./surfaces/modules";
+import { matchTabHistory } from "./surfaces/tab-history";
+import { matchWorkloads } from "./surfaces/workloads";
+import { matchNodes } from "./surfaces/nodes";
+import { matchPresets } from "./surfaces/presets";
+import { applySurfaceBias, sortGroups } from "./ranking";
 
 export interface ClientPhaseInput {
   query: ParsedQuery;
@@ -2598,7 +2759,7 @@ export interface ClientPhaseInput {
   presets: PresetItem[];
 }
 
-const SERVER_SURFACES: SurfaceKind[] = ['session', 'knowledge', 'logs'];
+const SERVER_SURFACES: SurfaceKind[] = ["session", "knowledge", "logs"];
 
 function groupHits(hits: Hit[]): SurfaceGroup[] {
   const groups = new Map<SurfaceKind, SurfaceGroup>();
@@ -2625,11 +2786,11 @@ export function runClientPhase(input: ClientPhaseInput): GroupedResults {
   if (!needle) return [];
   const allow = (s: SurfaceKind) => !surfaceFilter || surfaceFilter === s;
   const hits: Hit[] = [];
-  if (allow('module')) hits.push(...matchModules(needle));
-  if (allow('tab-history')) hits.push(...matchTabHistory(needle, input.tabState));
-  if (allow('workload')) hits.push(...matchWorkloads(needle, input.workloads));
-  if (allow('node')) hits.push(...matchNodes(needle, input.nodes));
-  if (allow('preset')) hits.push(...matchPresets(needle, input.presets));
+  if (allow("module")) hits.push(...matchModules(needle));
+  if (allow("tab-history")) hits.push(...matchTabHistory(needle, input.tabState));
+  if (allow("workload")) hits.push(...matchWorkloads(needle, input.workloads));
+  if (allow("node")) hits.push(...matchNodes(needle, input.nodes));
+  if (allow("preset")) hits.push(...matchPresets(needle, input.presets));
   const groups = groupHits(hits);
   if (surfaceFilter) return groups.filter((g) => g.surface === surfaceFilter);
   return groups;
@@ -2687,10 +2848,12 @@ git commit -m "feat(app/lib/global-search): add client-phase orchestrator + serv
 ## Task 16: App — `useGlobalSearch` hook
 
 **Files:**
+
 - Create: `packages/app/src/lib/global-search/hooks/use-global-search.ts`
 - Test: `packages/app/test/lib/global-search/use-global-search.test.ts`
 
 The hook owns:
+
 - a single AbortController for in-flight server fetches
 - two debounce timers (Tier 2: 250 ms; Tier 3: 400 ms) keyed off the last keystroke
 - a query token to drop stale responses
@@ -2701,17 +2864,17 @@ Test the timing logic with fake timers; the hook itself uses real timers in prod
 
 ```ts
 // packages/app/test/lib/global-search/use-global-search.test.ts
-import { describe, expect, test } from 'bun:test';
-import { computeNextSchedule } from '@/lib/global-search/hooks/use-global-search';
+import { describe, expect, test } from "bun:test";
+import { computeNextSchedule } from "@/lib/global-search/hooks/use-global-search";
 
-describe('computeNextSchedule', () => {
-  test('schedules tier2 at 250ms and tier3 at 400ms from now', () => {
+describe("computeNextSchedule", () => {
+  test("schedules tier2 at 250ms and tier3 at 400ms from now", () => {
     const out = computeNextSchedule(1000);
     expect(out.tier2At).toBe(1250);
     expect(out.tier3At).toBe(1400);
   });
 
-  test('respects custom debounce overrides', () => {
+  test("respects custom debounce overrides", () => {
     const out = computeNextSchedule(1000, { tier2Ms: 100, tier3Ms: 200 });
     expect(out.tier2At).toBe(1100);
     expect(out.tier3At).toBe(1200);
@@ -2728,18 +2891,18 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/app/src/lib/global-search/hooks/use-global-search.ts
-import * as React from 'react';
-import { trpc } from '@/lib/trpc';
-import { useTabStore } from '@/stores/tab-store';
-import type { GroupedResults } from '../types';
-import { runClientPhase, mergeServerHits } from '../orchestrator';
-import { parseQuery } from '../query';
-import { mapSessionHits } from '../surfaces/sessions';
-import { mapKnowledgeHits } from '../surfaces/knowledge';
-import { mapLogHits } from '../surfaces/logs';
-import { mapSessionRagHits } from '../surfaces/sessions-rag';
-import { mapKnowledgeRagHits } from '../surfaces/knowledge-rag';
-import { mapLogRagHits } from '../surfaces/logs-rag';
+import * as React from "react";
+import { trpc } from "@/lib/trpc";
+import { useTabStore } from "@/stores/tab-store";
+import type { GroupedResults } from "../types";
+import { runClientPhase, mergeServerHits } from "../orchestrator";
+import { parseQuery } from "../query";
+import { mapSessionHits } from "../surfaces/sessions";
+import { mapKnowledgeHits } from "../surfaces/knowledge";
+import { mapLogHits } from "../surfaces/logs";
+import { mapSessionRagHits } from "../surfaces/sessions-rag";
+import { mapKnowledgeRagHits } from "../surfaces/knowledge-rag";
+import { mapLogRagHits } from "../surfaces/logs-rag";
 
 const TIER2_MS = 250;
 const TIER3_MS = 400;
@@ -2756,10 +2919,10 @@ export function computeNextSchedule(
 
 export function useGlobalSearch(input: string): {
   results: GroupedResults;
-  status: 'idle' | 'searching';
+  status: "idle" | "searching";
 } {
   const [results, setResults] = React.useState<GroupedResults>([]);
-  const [status, setStatus] = React.useState<'idle' | 'searching'>('idle');
+  const [status, setStatus] = React.useState<"idle" | "searching">("idle");
   const tabs = useTabStore((s) => s.tabs);
   const closed = useTabStore((s) => s.closed);
   const utils = trpc.useUtils();
@@ -2789,10 +2952,10 @@ export function useGlobalSearch(input: string): {
     const parsed = parseQuery(input);
     if (!parsed.needle) {
       setResults([]);
-      setStatus('idle');
+      setStatus("idle");
       return;
     }
-    setStatus('searching');
+    setStatus("searching");
 
     const initial = runClientPhase({
       query: parsed,
@@ -2803,19 +2966,18 @@ export function useGlobalSearch(input: string): {
     });
     setResults(initial);
 
-    const allow = (s: string): boolean =>
-      !parsed.surfaceFilter || parsed.surfaceFilter === s;
+    const allow = (s: string): boolean => !parsed.surfaceFilter || parsed.surfaceFilter === s;
 
     tier2Timer.current = setTimeout(async () => {
       const tasks: Promise<unknown>[] = [];
-      if (allow('session')) {
+      if (allow("session")) {
         tasks.push(
           utils.opsSessionSearch
             .fetch({ query: parsed.needle }, { signal: ctrl.signal })
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'session', mapSessionHits((res as any).hits ?? []), {
+                mergeServerHits(cur, "session", mapSessionHits((res as any).hits ?? []), {
                   append: true,
                 }),
               );
@@ -2823,19 +2985,19 @@ export function useGlobalSearch(input: string): {
             .catch((e) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'session', [], { error: String((e as Error).message) }),
+                mergeServerHits(cur, "session", [], { error: String((e as Error).message) }),
               );
             }),
         );
       }
-      if (allow('logs')) {
+      if (allow("logs")) {
         tasks.push(
           utils.logsSearch
             .fetch({ query: parsed.needle }, { signal: ctrl.signal })
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'logs', mapLogHits((res as any).hits ?? []), { append: true }),
+                mergeServerHits(cur, "logs", mapLogHits((res as any).hits ?? []), { append: true }),
               );
             })
             .catch(() => {
@@ -2843,14 +3005,14 @@ export function useGlobalSearch(input: string): {
             }),
         );
       }
-      if (allow('knowledge')) {
+      if (allow("knowledge")) {
         tasks.push(
           utils.knowledgeSearch
             .fetch({ query: parsed.needle }, { signal: ctrl.signal })
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'knowledge', mapKnowledgeHits((res as any).hits ?? []), {
+                mergeServerHits(cur, "knowledge", mapKnowledgeHits((res as any).hits ?? []), {
                   append: true,
                 }),
               );
@@ -2859,7 +3021,7 @@ export function useGlobalSearch(input: string): {
         );
       }
       await Promise.allSettled(tasks);
-      if (queryToken.current === token) setStatus('idle');
+      if (queryToken.current === token) setStatus("idle");
     }, TIER2_MS);
 
     tier3Timer.current = setTimeout(async () => {
@@ -2867,17 +3029,17 @@ export function useGlobalSearch(input: string): {
       const status = ragStatus.data;
       if (!status || !status.defaultNode) return;
       const tasks: Promise<unknown>[] = [];
-      if (allow('session') && status.sessions) {
+      if (allow("session") && status.sessions) {
         tasks.push(
           utils.ragSearch
             .fetch(
-              { node: status.defaultNode, query: parsed.needle, collection: 'sessions', topK: 10 },
+              { node: status.defaultNode, query: parsed.needle, collection: "sessions", topK: 10 },
               { signal: ctrl.signal },
             )
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'session', mapSessionRagHits((res as any).hits ?? []), {
+                mergeServerHits(cur, "session", mapSessionRagHits((res as any).hits ?? []), {
                   append: true,
                 }),
               );
@@ -2885,17 +3047,17 @@ export function useGlobalSearch(input: string): {
             .catch(() => {}),
         );
       }
-      if (allow('knowledge') && status.knowledge) {
+      if (allow("knowledge") && status.knowledge) {
         tasks.push(
           utils.ragSearch
             .fetch(
-              { node: status.defaultNode, query: parsed.needle, collection: 'knowledge', topK: 10 },
+              { node: status.defaultNode, query: parsed.needle, collection: "knowledge", topK: 10 },
               { signal: ctrl.signal },
             )
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'knowledge', mapKnowledgeRagHits((res as any).hits ?? []), {
+                mergeServerHits(cur, "knowledge", mapKnowledgeRagHits((res as any).hits ?? []), {
                   append: true,
                 }),
               );
@@ -2903,17 +3065,17 @@ export function useGlobalSearch(input: string): {
             .catch(() => {}),
         );
       }
-      if (allow('logs') && status.logs) {
+      if (allow("logs") && status.logs) {
         tasks.push(
           utils.ragSearch
             .fetch(
-              { node: status.defaultNode, query: parsed.needle, collection: 'logs', topK: 10 },
+              { node: status.defaultNode, query: parsed.needle, collection: "logs", topK: 10 },
               { signal: ctrl.signal },
             )
             .then((res) => {
               if (queryToken.current !== token) return;
               setResults((cur) =>
-                mergeServerHits(cur, 'logs', mapLogRagHits((res as any).hits ?? []), {
+                mergeServerHits(cur, "logs", mapLogRagHits((res as any).hits ?? []), {
                   append: true,
                 }),
               );
@@ -2958,6 +3120,7 @@ git commit -m "feat(app/lib/global-search): add useGlobalSearch hook"
 ## Task 17: App — `match-snippet.tsx` and `search-results-tree.tsx`
 
 **Files:**
+
 - Create: `packages/app/src/shell/match-snippet.tsx`
 - Create: `packages/app/src/shell/beacon/search-results-tree.tsx`
 
@@ -2967,8 +3130,8 @@ Presentational only. No render tests (none exist in repo); UI flows in Tasks 19�
 
 ```tsx
 // packages/app/src/shell/match-snippet.tsx
-import * as React from 'react';
-import type { MatchExcerpt } from '@/lib/global-search/types';
+import * as React from "react";
+import type { MatchExcerpt } from "@/lib/global-search/types";
 
 interface Props {
   match: MatchExcerpt;
@@ -2981,7 +3144,7 @@ export function MatchSnippet({ match }: Props): React.JSX.Element {
     const sp = match.spans[i]!;
     if (sp.start > cursor) parts.push(match.snippet.slice(cursor, sp.start));
     parts.push(
-      <strong key={i} style={{ color: 'var(--color-brand)' }}>
+      <strong key={i} style={{ color: "var(--color-brand)" }}>
         {match.snippet.slice(sp.start, sp.end)}
       </strong>,
     );
@@ -2989,7 +3152,7 @@ export function MatchSnippet({ match }: Props): React.JSX.Element {
   }
   if (cursor < match.snippet.length) parts.push(match.snippet.slice(cursor));
   return (
-    <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+    <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.5 }}>
       {parts.map((p, i) => (
         <React.Fragment key={i}>{p}</React.Fragment>
       ))}
@@ -3002,10 +3165,10 @@ export function MatchSnippet({ match }: Props): React.JSX.Element {
 
 ```tsx
 // packages/app/src/shell/beacon/search-results-tree.tsx
-import * as React from 'react';
-import { TreeItem, Badge } from '@/ui';
-import type { GroupedResults, Hit, SurfaceGroup, SurfaceKind } from '@/lib/global-search/types';
-import { MatchSnippet } from '@/shell/match-snippet';
+import * as React from "react";
+import { TreeItem, Badge } from "@/ui";
+import type { GroupedResults, Hit, SurfaceGroup, SurfaceKind } from "@/lib/global-search/types";
+import { MatchSnippet } from "@/shell/match-snippet";
 
 interface Props {
   results: GroupedResults;
@@ -3013,14 +3176,14 @@ interface Props {
 }
 
 const SURFACE_LABEL: Record<SurfaceKind, string> = {
-  module: 'Modules',
-  session: 'Ops Sessions',
-  workload: 'Workloads',
-  node: 'Nodes',
-  knowledge: 'Knowledge',
-  logs: 'Logs',
-  preset: 'Presets',
-  'tab-history': 'Recent tabs',
+  module: "Modules",
+  session: "Ops Sessions",
+  workload: "Workloads",
+  node: "Nodes",
+  knowledge: "Knowledge",
+  logs: "Logs",
+  preset: "Presets",
+  "tab-history": "Recent tabs",
 };
 
 interface CollapsedParent {
@@ -3051,29 +3214,27 @@ export function SearchResultsTree({ results, onActivate }: Props): React.JSX.Ele
         if (g.hits.length === 0 && !g.pending && !g.error) return null;
         const parents = collapse(g);
         return (
-          <div key={g.surface} style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+          <div key={g.surface} style={{ borderTop: "1px solid var(--color-border-subtle)" }}>
             <div
               style={{
-                display: 'flex',
-                alignItems: 'center',
+                display: "flex",
+                alignItems: "center",
                 gap: 6,
-                padding: '8px 12px',
+                padding: "8px 12px",
                 fontSize: 11,
-                textTransform: 'uppercase',
-                letterSpacing: '0.06em',
-                color: 'var(--color-text-tertiary)',
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                color: "var(--color-text-tertiary)",
               }}
             >
               <span>{SURFACE_LABEL[g.surface]}</span>
-              <span style={{ color: 'var(--color-text-tertiary)' }}>· {g.hits.length}</span>
+              <span style={{ color: "var(--color-text-tertiary)" }}>· {g.hits.length}</span>
               {g.pending && (
-                <span style={{ color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
+                <span style={{ color: "var(--color-text-tertiary)", fontStyle: "italic" }}>
                   loading…
                 </span>
               )}
-              {g.error && (
-                <span style={{ color: 'var(--color-err)' }}>error: {g.error}</span>
-              )}
+              {g.error && <span style={{ color: "var(--color-err)" }}>error: {g.error}</span>}
             </div>
             {parents.map((p) => (
               <div key={p.parentId} data-testid={`search-parent-${g.surface}-${p.parentId}`}>
@@ -3081,7 +3242,7 @@ export function SearchResultsTree({ results, onActivate }: Props): React.JSX.Ele
                   label={p.parentTitle}
                   onClick={() => onActivate(p.topHit)}
                   trailing={
-                    p.hits.some((h) => h.matchKind === 'semantic') ? (
+                    p.hits.some((h) => h.matchKind === "semantic") ? (
                       <Badge variant="brand">semantic</Badge>
                     ) : undefined
                   }
@@ -3091,18 +3252,18 @@ export function SearchResultsTree({ results, onActivate }: Props): React.JSX.Ele
                     h.match && (
                       <div
                         key={i}
-                        style={{ padding: '0 14px 6px 28px', cursor: 'pointer' }}
+                        style={{ padding: "0 14px 6px 28px", cursor: "pointer" }}
                         onClick={() => onActivate(h)}
                       >
                         <div
                           style={{
                             fontSize: 11,
-                            color: 'var(--color-text-tertiary)',
+                            color: "var(--color-text-tertiary)",
                             marginBottom: 2,
                           }}
                         >
                           {h.match.where}
-                          {h.matchKind === 'semantic' && ' · semantic'}
+                          {h.matchKind === "semantic" && " · semantic"}
                         </div>
                         <MatchSnippet match={h.match} />
                       </div>
@@ -3136,6 +3297,7 @@ git commit -m "feat(app/shell): add MatchSnippet and SearchResultsTree presentat
 ## Task 18: App — wire SearchView and command palette
 
 **Files:**
+
 - Modify: `packages/app/src/shell/beacon/search-view.tsx`
 - Modify: `packages/app/src/shell/command-palette.tsx`
 
@@ -3143,22 +3305,22 @@ git commit -m "feat(app/shell): add MatchSnippet and SearchResultsTree presentat
 
 ```tsx
 // packages/app/src/shell/beacon/search-view.tsx
-import * as React from 'react';
-import { Input, Kbd } from '@/ui';
-import { Search as SearchIcon } from 'lucide-react';
-import { useTabStore } from '@/stores/tab-store';
-import { useGlobalSearch } from '@/lib/global-search/hooks/use-global-search';
-import { SearchResultsTree } from './search-results-tree';
-import type { Hit } from '@/lib/global-search/types';
+import * as React from "react";
+import { Input, Kbd } from "@/ui";
+import { Search as SearchIcon } from "lucide-react";
+import { useTabStore } from "@/stores/tab-store";
+import { useGlobalSearch } from "@/lib/global-search/hooks/use-global-search";
+import { SearchResultsTree } from "./search-results-tree";
+import type { Hit } from "@/lib/global-search/types";
 
 export function SearchView(): React.JSX.Element {
-  const [q, setQ] = React.useState('');
+  const [q, setQ] = React.useState("");
   const open = useTabStore((s) => s.open);
   const { results, status } = useGlobalSearch(q);
 
   const onActivate = React.useCallback(
     (hit: Hit) => {
-      if (hit.action.kind === 'open-tab') open(hit.action.tab);
+      if (hit.action.kind === "open-tab") open(hit.action.tab);
     },
     [open],
   );
@@ -3166,13 +3328,13 @@ export function SearchView(): React.JSX.Element {
   return (
     <div
       style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        overflow: 'hidden',
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        overflow: "hidden",
       }}
     >
-      <div style={{ padding: '10px 14px' }}>
+      <div style={{ padding: "10px 14px" }}>
         <Input
           leadingSlot={<SearchIcon size={12} />}
           placeholder="Search everything…"
@@ -3181,27 +3343,27 @@ export function SearchView(): React.JSX.Element {
           autoFocus
         />
       </div>
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        {q.trim() === '' ? (
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        {q.trim() === "" ? (
           <div
             style={{
-              padding: '12px 18px',
-              color: 'var(--color-text-tertiary)',
+              padding: "12px 18px",
+              color: "var(--color-text-tertiary)",
               fontSize: 12,
               lineHeight: 1.6,
             }}
           >
-            Type to search across modules, ops sessions, workloads, knowledge, logs, and more. Use{' '}
-            <code style={{ fontFamily: 'var(--font-mono)' }}>session:</code>,{' '}
-            <code style={{ fontFamily: 'var(--font-mono)' }}>module:</code>, or{' '}
-            <code style={{ fontFamily: 'var(--font-mono)' }}>kb:</code> to filter to one surface. Or use
-            the palette (<Kbd compact>⌘⇧P</Kbd>) for quick jumps.
+            Type to search across modules, ops sessions, workloads, knowledge, logs, and more. Use{" "}
+            <code style={{ fontFamily: "var(--font-mono)" }}>session:</code>,{" "}
+            <code style={{ fontFamily: "var(--font-mono)" }}>module:</code>, or{" "}
+            <code style={{ fontFamily: "var(--font-mono)" }}>kb:</code> to filter to one surface. Or
+            use the palette (<Kbd compact>⌘⇧P</Kbd>) for quick jumps.
           </div>
-        ) : results.length === 0 && status === 'idle' ? (
+        ) : results.length === 0 && status === "idle" ? (
           <div
             style={{
-              padding: '12px 18px',
-              color: 'var(--color-text-tertiary)',
+              padding: "12px 18px",
+              color: "var(--color-text-tertiary)",
               fontSize: 12,
             }}
           >
@@ -3218,28 +3380,30 @@ export function SearchView(): React.JSX.Element {
 
 - [ ] **Step 2: Wire palette**
 
-In `packages/app/src/shell/command-palette.tsx`, find the section that renders curated commands. Add a new section *below* the curated list that renders global search hits when the user's input doesn't match a curated command. Pattern:
+In `packages/app/src/shell/command-palette.tsx`, find the section that renders curated commands. Add a new section _below_ the curated list that renders global search hits when the user's input doesn't match a curated command. Pattern:
 
 ```tsx
 // Inside command-palette.tsx, near the existing renderer:
-import { useGlobalSearch } from '@/lib/global-search/hooks/use-global-search';
-import { SearchResultsTree } from './beacon/search-results-tree';
+import { useGlobalSearch } from "@/lib/global-search/hooks/use-global-search";
+import { SearchResultsTree } from "./beacon/search-results-tree";
 
 // In the component:
 const { results } = useGlobalSearch(input);
 
 // Render after the curated commands list, only if curated yields nothing:
-{curatedHits.length === 0 && results.length > 0 && (
-  <SearchResultsTree
-    results={results}
-    onActivate={(hit) => {
-      if (hit.action.kind === 'open-tab') {
-        useTabStore.getState().open(hit.action.tab);
-        onClose(); // existing palette-close handler
-      }
-    }}
-  />
-)}
+{
+  curatedHits.length === 0 && results.length > 0 && (
+    <SearchResultsTree
+      results={results}
+      onActivate={(hit) => {
+        if (hit.action.kind === "open-tab") {
+          useTabStore.getState().open(hit.action.tab);
+          onClose(); // existing palette-close handler
+        }
+      }}
+    />
+  );
+}
 ```
 
 Adapt to the actual variable names in `command-palette.tsx`. The principle: curated commands always win; global search fills the rest of the space.
@@ -3267,6 +3431,7 @@ git commit -m "feat(app/shell): wire SearchView and palette to useGlobalSearch"
 ## Task 19: UI flow — `global-search-flow`
 
 **Files:**
+
 - Create: `tests/ui-flows/global-search-flow.ts`
 - Modify: `scripts/smoke-ui-flows.sh`
 
@@ -3276,25 +3441,29 @@ Use `tests/ui-flows/chat-compare-flow.ts` as the structural template. Seed a jou
 
 ```ts
 // tests/ui-flows/global-search-flow.ts
-import { defineFlow } from './flow-runtime';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { defineFlow } from "./flow-runtime";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 export default defineFlow({
-  id: 'global-search',
-  tier: 'C',
-  description: 'Type into SearchView, verify cross-surface results render and activate.',
+  id: "global-search",
+  tier: "C",
+  description: "Type into SearchView, verify cross-surface results render and activate.",
   async run({ driver, profileDir, electron }) {
-    const sessionId = 'flow-search-fixture';
-    const dir = join(profileDir, 'ops-chat', 'sessions', sessionId);
+    const sessionId = "flow-search-fixture";
+    const dir = join(profileDir, "ops-chat", "sessions", sessionId);
     mkdirSync(dir, { recursive: true });
     writeFileSync(
-      join(dir, 'journal.jsonl'),
+      join(dir, "journal.jsonl"),
       JSON.stringify({
-        type: 'session_started', ts: '2026-04-25T00:00:00.000Z', sessionId,
-        goal: 'fixture-search-needle audit', historyLen: 0, toolCount: 0,
-      }) + '\n',
-      'utf8',
+        type: "session_started",
+        ts: "2026-04-25T00:00:00.000Z",
+        sessionId,
+        goal: "fixture-search-needle audit",
+        historyLen: 0,
+        toolCount: 0,
+      }) + "\n",
+      "utf8",
     );
 
     await electron.evaluate(async (win) => {
@@ -3305,17 +3474,16 @@ export default defineFlow({
     });
 
     const input = await driver.find('input[placeholder*="Search"]', { timeout: 5_000 });
-    if (!input) return driver.skip('search input not visible');
-    await driver.type('input[placeholder*="Search"]', 'fixture-search-needle', { force: true });
+    if (!input) return driver.skip("search input not visible");
+    await driver.type('input[placeholder*="Search"]', "fixture-search-needle", { force: true });
 
     const results = await driver.find('[data-testid="global-search-results"]', { timeout: 3_000 });
-    if (!results) return driver.skip('results panel did not mount');
+    if (!results) return driver.skip("results panel did not mount");
 
-    const sessionRow = await driver.find(
-      `[data-testid="search-parent-session-${sessionId}"]`,
-      { timeout: 3_000 },
-    );
-    if (!sessionRow) return driver.skip('session result row not found');
+    const sessionRow = await driver.find(`[data-testid="search-parent-session-${sessionId}"]`, {
+      timeout: 3_000,
+    });
+    if (!sessionRow) return driver.skip("session result row not found");
 
     return driver.pass();
   },
@@ -3343,6 +3511,7 @@ git commit -m "feat(tests/ui-flows): add global-search-flow (Tier C)"
 ## Task 20: UI flow — `palette-search-flow`
 
 **Files:**
+
 - Create: `tests/ui-flows/palette-search-flow.ts`
 - Modify: `scripts/smoke-ui-flows.sh`
 
@@ -3352,42 +3521,49 @@ Same fixture as Task 19 (or seed an additional one). Open palette via keyboard s
 
 ```ts
 // tests/ui-flows/palette-search-flow.ts
-import { defineFlow } from './flow-runtime';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { defineFlow } from "./flow-runtime";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 export default defineFlow({
-  id: 'palette-search',
-  tier: 'C',
-  description: 'Type session: prefix in palette, verify scoped result appears.',
+  id: "palette-search",
+  tier: "C",
+  description: "Type session: prefix in palette, verify scoped result appears.",
   async run({ driver, profileDir, electron }) {
-    const sessionId = 'flow-palette-fixture';
-    const dir = join(profileDir, 'ops-chat', 'sessions', sessionId);
+    const sessionId = "flow-palette-fixture";
+    const dir = join(profileDir, "ops-chat", "sessions", sessionId);
     mkdirSync(dir, { recursive: true });
     writeFileSync(
-      join(dir, 'journal.jsonl'),
+      join(dir, "journal.jsonl"),
       JSON.stringify({
-        type: 'session_started', ts: '2026-04-25T00:00:00.000Z', sessionId,
-        goal: 'palette-fixture-needle', historyLen: 0, toolCount: 0,
-      }) + '\n',
-      'utf8',
+        type: "session_started",
+        ts: "2026-04-25T00:00:00.000Z",
+        sessionId,
+        goal: "palette-fixture-needle",
+        historyLen: 0,
+        toolCount: 0,
+      }) + "\n",
+      "utf8",
     );
 
-    await driver.pressShortcut('CommandOrControl+Shift+P');
+    await driver.pressShortcut("CommandOrControl+Shift+P");
 
     const input = await driver.find('[role="combobox"], input[placeholder*="palette"]', {
       timeout: 3_000,
     });
-    if (!input) return driver.skip('palette input not visible');
-    await driver.type('[role="combobox"], input[placeholder*="palette"]', 'session:palette-fixture-needle', {
-      force: true,
-    });
-
-    const sessionRow = await driver.find(
-      `[data-testid="search-parent-session-${sessionId}"]`,
-      { timeout: 3_000 },
+    if (!input) return driver.skip("palette input not visible");
+    await driver.type(
+      '[role="combobox"], input[placeholder*="palette"]',
+      "session:palette-fixture-needle",
+      {
+        force: true,
+      },
     );
-    if (!sessionRow) return driver.skip('palette session row not visible');
+
+    const sessionRow = await driver.find(`[data-testid="search-parent-session-${sessionId}"]`, {
+      timeout: 3_000,
+    });
+    if (!sessionRow) return driver.skip("palette session row not visible");
 
     return driver.pass();
   },
@@ -3454,6 +3630,7 @@ Open a PR titled `feat(app, remote): global search (Phase 3)` against `main`. Bo
 ## Self-review checklist
 
 **Spec coverage:**
+
 - D1 (8 surfaces) → Tasks 11, 12, 13, 14
 - D2 (hybrid by surface size) → Task 11/12 client; Tasks 3/4/5 server lexical; Task 6 RAG bridge
 - D3 (sidebar + palette) → Task 18

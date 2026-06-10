@@ -1,5 +1,5 @@
 // packages/remote/src/search/rag-node.ts
-import { loadConfig, currentContext } from '../config/kubeconfig.js';
+import { loadConfig, currentContext } from "../config/kubeconfig.js";
 
 export async function resolveDefaultRagNode(): Promise<string | null> {
   const cfg = loadConfig();
@@ -13,7 +13,7 @@ export async function resolveDefaultRagNode(): Promise<string | null> {
   if (!cluster) return null;
 
   for (const node of cluster.nodes ?? []) {
-    if ((node as any).kind === 'rag' && (node as any).rag) {
+    if ((node as any).kind === "rag" && (node as any).rag) {
       return (node as any).name as string;
     }
   }

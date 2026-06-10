@@ -1,137 +1,128 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { makeTempRuntime, runCli } from './helpers.js';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { makeTempRuntime, runCli } from "./helpers.js";
 
-describe('llamactl catalog', () => {
+describe("llamactl catalog", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
   beforeEach(() => {
     temp = makeTempRuntime();
   });
   afterEach(() => temp.cleanup());
 
-  test('catalog list (no custom file) returns just builtin', () => {
-    const r = runCli(['catalog', 'list'], temp.env);
+  test("catalog list (no custom file) returns just builtin", () => {
+    const r = runCli(["catalog", "list"], temp.env);
     expect(r.code).toBe(0);
-    const lines = r.stdout.trim().split('\n');
+    const lines = r.stdout.trim().split("\n");
     expect(lines.length).toBe(12);
-    expect(lines[0]).toContain('gemma4-e4b-q8');
-    expect(lines.at(-2)).toContain('granite41-8b-q4');
-    expect(lines.at(-1)).toContain('granite41-3b-q4');
+    expect(lines[0]).toContain("gemma4-e4b-q8");
+    expect(lines.at(-2)).toContain("granite41-8b-q4");
+    expect(lines.at(-1)).toContain("granite41-3b-q4");
   });
 
-  test('catalog list --json returns a JSON array', () => {
-    const r = runCli(['catalog', 'list', '--json'], temp.env);
+  test("catalog list --json returns a JSON array", () => {
+    const r = runCli(["catalog", "list", "--json"], temp.env);
     expect(r.code).toBe(0);
     const parsed = JSON.parse(r.stdout);
     expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed[0].rel).toContain('.gguf');
+    expect(parsed[0].rel).toContain(".gguf");
   });
 
-  test('catalog list bogus scope exits non-zero', () => {
-    const r = runCli(['catalog', 'list', 'bogus-scope'], temp.env);
+  test("catalog list bogus scope exits non-zero", () => {
+    const r = runCli(["catalog", "list", "bogus-scope"], temp.env);
     expect(r.code).not.toBe(0);
   });
 
-  test('catalog status on curated rel reports class_source=catalog', () => {
+  test("catalog status on curated rel reports class_source=catalog", () => {
     const r = runCli(
-      ['catalog', 'status', 'gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf'],
+      ["catalog", "status", "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"],
       temp.env,
     );
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain('class_source=catalog');
-    expect(r.stdout).toContain('quant=q4');
+    expect(r.stdout).toContain("class_source=catalog");
+    expect(r.stdout).toContain("quant=q4");
   });
 
-  test('catalog status missing rel exits non-zero', () => {
-    const r = runCli(['catalog', 'status'], temp.env);
+  test("catalog status missing rel exits non-zero", () => {
+    const r = runCli(["catalog", "status"], temp.env);
     expect(r.code).not.toBe(0);
   });
 
-  test('catalog add -> list round-trip', () => {
+  test("catalog add -> list round-trip", () => {
     const add = runCli(
       [
-        'catalog',
-        'add',
-        'unsloth/E2E-Test-GGUF',
-        'e2e-test-Q4.gguf',
-        'E2E Test',
-        'custom',
-        'general',
-        'candidate',
+        "catalog",
+        "add",
+        "unsloth/E2E-Test-GGUF",
+        "e2e-test-Q4.gguf",
+        "E2E Test",
+        "custom",
+        "general",
+        "candidate",
       ],
       temp.env,
     );
     expect(add.code).toBe(0);
-    expect(add.stdout).toContain('Added curated entry');
+    expect(add.stdout).toContain("Added curated entry");
 
-    const list = runCli(['catalog', 'list', 'custom'], temp.env);
+    const list = runCli(["catalog", "list", "custom"], temp.env);
     expect(list.code).toBe(0);
-    expect(list.stdout).toContain('E2E-Test-GGUF/e2e-test-Q4.gguf');
+    expect(list.stdout).toContain("E2E-Test-GGUF/e2e-test-Q4.gguf");
   });
 
-  test('catalog add with an existing rel fails', () => {
+  test("catalog add with an existing rel fails", () => {
     const args = [
-      'catalog',
-      'add',
-      'unsloth/Dupe-E2E-GGUF',
-      'dupe.gguf',
-      'Dupe',
-      'custom',
-      'general',
-      'candidate',
+      "catalog",
+      "add",
+      "unsloth/Dupe-E2E-GGUF",
+      "dupe.gguf",
+      "Dupe",
+      "custom",
+      "general",
+      "candidate",
     ];
     runCli(args, temp.env);
     const r = runCli(args, temp.env);
     expect(r.code).not.toBe(0);
-    expect(r.stderr).toContain('already contains');
+    expect(r.stderr).toContain("already contains");
   });
 
-  test('catalog promote + promotions round-trip', () => {
+  test("catalog promote + promotions round-trip", () => {
     // Need a rel to promote — add one first
     runCli(
       [
-        'catalog',
-        'add',
-        'unsloth/Promote-E2E-GGUF',
-        'promote-e2e.gguf',
-        'Promote',
-        'custom',
-        'general',
-        'candidate',
+        "catalog",
+        "add",
+        "unsloth/Promote-E2E-GGUF",
+        "promote-e2e.gguf",
+        "Promote",
+        "custom",
+        "general",
+        "candidate",
       ],
       temp.env,
     );
 
     const promote = runCli(
-      [
-        'catalog',
-        'promote',
-        'balanced',
-        'fast',
-        'Promote-E2E-GGUF/promote-e2e.gguf',
-      ],
+      ["catalog", "promote", "balanced", "fast", "Promote-E2E-GGUF/promote-e2e.gguf"],
       temp.env,
     );
     expect(promote.code).toBe(0);
-    expect(promote.stdout).toContain('Promoted Promote-E2E-GGUF/promote-e2e.gguf');
-    expect(promote.stdout).toContain('profile=balanced preset=fast');
+    expect(promote.stdout).toContain("Promoted Promote-E2E-GGUF/promote-e2e.gguf");
+    expect(promote.stdout).toContain("profile=balanced preset=fast");
 
-    const promotions = runCli(['catalog', 'promotions'], temp.env);
+    const promotions = runCli(["catalog", "promotions"], temp.env);
     expect(promotions.code).toBe(0);
-    expect(promotions.stdout).toContain('profile=balanced preset=fast');
+    expect(promotions.stdout).toContain("profile=balanced preset=fast");
   });
 
-  test('catalog promote rejects unknown preset name', () => {
-    const r = runCli(
-      ['catalog', 'promote', 'balanced', 'super-fast', 'some/rel.gguf'],
-      temp.env,
-    );
+  test("catalog promote rejects unknown preset name", () => {
+    const r = runCli(["catalog", "promote", "balanced", "super-fast", "some/rel.gguf"], temp.env);
     expect(r.code).not.toBe(0);
-    expect(r.stderr).toContain('Unknown preset');
+    expect(r.stderr).toContain("Unknown preset");
   });
 
-  test('catalog promotions on empty file prints message + exits 1', () => {
-    const r = runCli(['catalog', 'promotions'], temp.env);
+  test("catalog promotions on empty file prints message + exits 1", () => {
+    const r = runCli(["catalog", "promotions"], temp.env);
     expect(r.code).not.toBe(0);
-    expect(r.stdout).toContain('No preset promotions recorded');
+    expect(r.stdout).toContain("No preset promotions recorded");
   });
 });

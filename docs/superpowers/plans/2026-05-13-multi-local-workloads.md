@@ -11,6 +11,7 @@
 **Spec:** `docs/superpowers/specs/2026-05-13-multi-local-workloads-design.md`
 
 **Success criteria:**
+
 - Applying a Granite manifest while Gemma is running on a different port leaves Gemma untouched.
 - `bun test` green across `packages/core`, `packages/remote`, `packages/cli`.
 - `bun run --cwd packages/remote tsc --noEmit` green; same for `core`, `cli`, `app`.
@@ -26,6 +27,7 @@
 ### Task 1: Manifest schema additions
 
 **Files:**
+
 - Modify: `packages/remote/src/workload/schema.ts`
 - Modify: `packages/remote/src/workload/noderun-schema.ts`
 - Test: `packages/remote/src/workload/schema.test.ts`
@@ -35,64 +37,64 @@
 Append to `packages/remote/src/workload/schema.test.ts` (or create if absent):
 
 ```typescript
-import { expect, test } from 'bun:test';
-import { ModelRunSchema } from './schema.js';
-import { NodeRunSchema } from './noderun-schema.js';
+import { expect, test } from "bun:test";
+import { ModelRunSchema } from "./schema.js";
+import { NodeRunSchema } from "./noderun-schema.js";
 
-test('ModelRun parses spec.enabled defaulting to true', () => {
+test("ModelRun parses spec.enabled defaulting to true", () => {
   const m = ModelRunSchema.parse({
-    apiVersion: 'llamactl/v1',
-    kind: 'ModelRun',
-    metadata: { name: 'a' },
-    spec: { node: 'local', target: { kind: 'rel', value: 'm.gguf' } },
+    apiVersion: "llamactl/v1",
+    kind: "ModelRun",
+    metadata: { name: "a" },
+    spec: { node: "local", target: { kind: "rel", value: "m.gguf" } },
   });
   expect(m.spec.enabled).toBe(true);
 });
 
-test('ModelRun accepts spec.enabled=false', () => {
+test("ModelRun accepts spec.enabled=false", () => {
   const m = ModelRunSchema.parse({
-    apiVersion: 'llamactl/v1',
-    kind: 'ModelRun',
-    metadata: { name: 'a' },
+    apiVersion: "llamactl/v1",
+    kind: "ModelRun",
+    metadata: { name: "a" },
     spec: {
-      node: 'local',
-      target: { kind: 'rel', value: 'm.gguf' },
+      node: "local",
+      target: { kind: "rel", value: "m.gguf" },
       enabled: false,
     },
   });
   expect(m.spec.enabled).toBe(false);
 });
 
-test('ModelRun parses spec.resources.expectedMemoryGiB', () => {
+test("ModelRun parses spec.resources.expectedMemoryGiB", () => {
   const m = ModelRunSchema.parse({
-    apiVersion: 'llamactl/v1',
-    kind: 'ModelRun',
-    metadata: { name: 'a' },
+    apiVersion: "llamactl/v1",
+    kind: "ModelRun",
+    metadata: { name: "a" },
     spec: {
-      node: 'local',
-      target: { kind: 'rel', value: 'm.gguf' },
+      node: "local",
+      target: { kind: "rel", value: "m.gguf" },
       resources: { expectedMemoryGiB: 8.5 },
     },
   });
   expect(m.spec.resources?.expectedMemoryGiB).toBe(8.5);
 });
 
-test('ModelRun parses metadata.annotations defaulting to {}', () => {
+test("ModelRun parses metadata.annotations defaulting to {}", () => {
   const m = ModelRunSchema.parse({
-    apiVersion: 'llamactl/v1',
-    kind: 'ModelRun',
-    metadata: { name: 'a', annotations: { 'llamactl.io/evict': 'old' } },
-    spec: { node: 'local', target: { kind: 'rel', value: 'm.gguf' } },
+    apiVersion: "llamactl/v1",
+    kind: "ModelRun",
+    metadata: { name: "a", annotations: { "llamactl.io/evict": "old" } },
+    spec: { node: "local", target: { kind: "rel", value: "m.gguf" } },
   });
-  expect(m.metadata.annotations).toEqual({ 'llamactl.io/evict': 'old' });
+  expect(m.metadata.annotations).toEqual({ "llamactl.io/evict": "old" });
 });
 
-test('NodeRun parses spec.budget.memoryGiB', () => {
+test("NodeRun parses spec.budget.memoryGiB", () => {
   const n = NodeRunSchema.parse({
-    apiVersion: 'llamactl/v1',
-    kind: 'NodeRun',
-    metadata: { name: 'local' },
-    spec: { kind: 'agent', endpoint: 'http://127.0.0.1:7878', budget: { memoryGiB: 36 } },
+    apiVersion: "llamactl/v1",
+    kind: "NodeRun",
+    metadata: { name: "local" },
+    spec: { kind: "agent", endpoint: "http://127.0.0.1:7878", budget: { memoryGiB: 36 } },
   });
   expect(n.spec.budget?.memoryGiB).toBe(36);
 });
@@ -109,8 +111,12 @@ In `packages/remote/src/workload/schema.ts`, extend `ModelRunMetadataSchema`:
 
 ```typescript
 export const ModelRunMetadataSchema = z.object({
-  name: z.string().regex(/^[a-z0-9][-a-z0-9]{0,62}$/,
-    'name must be lowercase alphanumeric with dashes, max 63 chars'),
+  name: z
+    .string()
+    .regex(
+      /^[a-z0-9][-a-z0-9]{0,62}$/,
+      "name must be lowercase alphanumeric with dashes, max 63 chars",
+    ),
   labels: z.record(z.string(), z.string()).default({}),
   annotations: z.record(z.string(), z.string()).default({}),
 });
@@ -148,6 +154,7 @@ Expected: PASS.
 bun run --cwd packages/remote tsc --noEmit
 bun test
 ```
+
 Expected: green. If a downstream consumer of `ModelRun`/`NodeRun` types fails to typecheck, that's the next task — note it and proceed; the new fields are additive and optional/defaulted so this should compile.
 
 - [ ] **Step 7: Commit**
@@ -162,6 +169,7 @@ git commit -m "feat(workload): add spec.enabled, spec.resources, metadata.annota
 ### Task 2: Workload runtime directory helpers
 
 **Files:**
+
 - Create: `packages/core/src/workloadRuntime.ts`
 - Test: `packages/core/test/workloadRuntime.test.ts`
 
@@ -172,19 +180,19 @@ This is the "key by workload name" abstraction the rest of the refactor stands o
 Create `packages/core/test/workloadRuntime.test.ts`:
 
 ```typescript
-import { expect, test } from 'bun:test';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { expect, test } from "bun:test";
+import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import {
   workloadRuntimeDir,
   listLocalWorkloads,
   ensureWorkloadRuntimeDir,
-} from '../src/workloadRuntime.js';
+} from "../src/workloadRuntime.js";
 
 const tempEnv = () => {
-  const dir = mkdtempSync(join(tmpdir(), 'workloadrt-'));
+  const dir = mkdtempSync(join(tmpdir(), "workloadrt-"));
   return {
     runtimeDir: dir,
     resolved: { LOCAL_AI_RUNTIME_DIR: dir } as any,
@@ -192,37 +200,37 @@ const tempEnv = () => {
   };
 };
 
-test('workloadRuntimeDir composes the expected path', () => {
+test("workloadRuntimeDir composes the expected path", () => {
   const t = tempEnv();
   try {
-    expect(workloadRuntimeDir(t.resolved, { name: 'gemma' })).toBe(
-      join(t.runtimeDir, 'workloads', 'gemma'),
+    expect(workloadRuntimeDir(t.resolved, { name: "gemma" })).toBe(
+      join(t.runtimeDir, "workloads", "gemma"),
     );
   } finally {
     t.cleanup();
   }
 });
 
-test('ensureWorkloadRuntimeDir creates the directory', () => {
+test("ensureWorkloadRuntimeDir creates the directory", () => {
   const t = tempEnv();
   try {
-    const d = ensureWorkloadRuntimeDir(t.resolved, { name: 'gemma' });
+    const d = ensureWorkloadRuntimeDir(t.resolved, { name: "gemma" });
     expect(existsSync(d)).toBe(true);
   } finally {
     t.cleanup();
   }
 });
 
-test('listLocalWorkloads returns names of workload subdirs with pidfiles', () => {
+test("listLocalWorkloads returns names of workload subdirs with pidfiles", () => {
   const t = tempEnv();
   try {
-    const a = join(t.runtimeDir, 'workloads', 'a');
+    const a = join(t.runtimeDir, "workloads", "a");
     mkdirSync(a, { recursive: true });
-    writeFileSync(join(a, 'llama-server.pid'), '99999\n');
-    mkdirSync(join(t.runtimeDir, 'workloads', 'b'), { recursive: true });
+    writeFileSync(join(a, "llama-server.pid"), "99999\n");
+    mkdirSync(join(t.runtimeDir, "workloads", "b"), { recursive: true });
     const entries = listLocalWorkloads(t.resolved);
     const names = entries.map((e) => e.name).sort();
-    expect(names).toEqual(['a']); // b has no pidfile → excluded
+    expect(names).toEqual(["a"]); // b has no pidfile → excluded
     expect(entries[0].pid).toBe(99999);
     expect(entries[0].alive).toBe(false); // pid 99999 won't exist
   } finally {
@@ -241,10 +249,10 @@ Expected: FAIL — module not found.
 Create `packages/core/src/workloadRuntime.ts`:
 
 ```typescript
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import type { ResolvedEnv } from './types.js';
-import { resolveEnv } from './env.js';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { ResolvedEnv } from "./types.js";
+import { resolveEnv } from "./env.js";
 
 export interface WorkloadKey {
   name: string;
@@ -256,23 +264,15 @@ export interface WorkloadRuntimeEntry {
   alive: boolean;
 }
 
-export function workloadRuntimeRoot(
-  resolved: ResolvedEnv = resolveEnv(),
-): string {
-  return join(resolved.LOCAL_AI_RUNTIME_DIR, 'workloads');
+export function workloadRuntimeRoot(resolved: ResolvedEnv = resolveEnv()): string {
+  return join(resolved.LOCAL_AI_RUNTIME_DIR, "workloads");
 }
 
-export function workloadRuntimeDir(
-  resolved: ResolvedEnv,
-  key: WorkloadKey,
-): string {
+export function workloadRuntimeDir(resolved: ResolvedEnv, key: WorkloadKey): string {
   return join(workloadRuntimeRoot(resolved), key.name);
 }
 
-export function ensureWorkloadRuntimeDir(
-  resolved: ResolvedEnv,
-  key: WorkloadKey,
-): string {
+export function ensureWorkloadRuntimeDir(resolved: ResolvedEnv, key: WorkloadKey): string {
   const dir = workloadRuntimeDir(resolved, key);
   mkdirSync(dir, { recursive: true });
   return dir;
@@ -287,19 +287,17 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-export function listLocalWorkloads(
-  resolved: ResolvedEnv = resolveEnv(),
-): WorkloadRuntimeEntry[] {
+export function listLocalWorkloads(resolved: ResolvedEnv = resolveEnv()): WorkloadRuntimeEntry[] {
   const root = workloadRuntimeRoot(resolved);
   if (!existsSync(root)) return [];
   const entries: WorkloadRuntimeEntry[] = [];
   for (const dirent of readdirSync(root, { withFileTypes: true })) {
     if (!dirent.isDirectory()) continue;
-    const pidPath = join(root, dirent.name, 'llama-server.pid');
+    const pidPath = join(root, dirent.name, "llama-server.pid");
     if (!existsSync(pidPath)) continue;
     let pid: number | null = null;
     try {
-      const raw = readFileSync(pidPath, 'utf8').trim();
+      const raw = readFileSync(pidPath, "utf8").trim();
       const n = Number.parseInt(raw, 10);
       if (Number.isFinite(n) && n > 0) pid = n;
     } catch {
@@ -334,6 +332,7 @@ git commit -m "feat(core): add workload runtime dir helpers + listLocalWorkloads
 This is the structural refactor. All public APIs that today take `resolved?: ResolvedEnv` gain a required first parameter `key: WorkloadKey`. PID/state/log paths derive from `workloadRuntimeDir(resolved, key)`.
 
 **Files:**
+
 - Modify: `packages/core/src/server.ts`
 - Modify: `packages/core/test/server.test.ts`
 
@@ -342,19 +341,19 @@ This is the structural refactor. All public APIs that today take `resolved?: Res
 Replace the path helpers at the top of `packages/core/src/server.ts`:
 
 ```typescript
-import type { WorkloadKey } from './workloadRuntime.js';
-import { workloadRuntimeDir, ensureWorkloadRuntimeDir } from './workloadRuntime.js';
+import type { WorkloadKey } from "./workloadRuntime.js";
+import { workloadRuntimeDir, ensureWorkloadRuntimeDir } from "./workloadRuntime.js";
 
 function pidFile(resolved: ResolvedEnv, key: WorkloadKey): string {
-  return join(workloadRuntimeDir(resolved, key), 'llama-server.pid');
+  return join(workloadRuntimeDir(resolved, key), "llama-server.pid");
 }
 
 function serverLog(resolved: ResolvedEnv, key: WorkloadKey): string {
-  return join(workloadRuntimeDir(resolved, key), 'llama-server.log');
+  return join(workloadRuntimeDir(resolved, key), "llama-server.log");
 }
 
 function serverStateFile(resolved: ResolvedEnv, key: WorkloadKey): string {
-  return join(workloadRuntimeDir(resolved, key), 'llama-server.state');
+  return join(workloadRuntimeDir(resolved, key), "llama-server.state");
 }
 ```
 
@@ -382,7 +381,11 @@ function writeServerPid(resolved: ResolvedEnv, key: WorkloadKey, pid: number): v
 }
 
 function removeServerPid(resolved: ResolvedEnv, key: WorkloadKey): void {
-  try { unlinkSync(pidFile(resolved, key)); } catch { /* no-op */ }
+  try {
+    unlinkSync(pidFile(resolved, key));
+  } catch {
+    /* no-op */
+  }
 }
 
 function writeServerState(resolved: ResolvedEnv, key: WorkloadKey, state: ServerState): void {
@@ -391,7 +394,11 @@ function writeServerState(resolved: ResolvedEnv, key: WorkloadKey, state: Server
 }
 
 function removeServerState(resolved: ResolvedEnv, key: WorkloadKey): void {
-  try { unlinkSync(serverStateFile(resolved, key)); } catch { /* no-op */ }
+  try {
+    unlinkSync(serverStateFile(resolved, key));
+  } catch {
+    /* no-op */
+  }
 }
 ```
 
@@ -399,7 +406,7 @@ function removeServerState(resolved: ResolvedEnv, key: WorkloadKey): void {
 
 ```typescript
 export interface StartServerOptions {
-  key: WorkloadKey;       // required
+  key: WorkloadKey; // required
   resolved?: ResolvedEnv; // optional
   // ...existing fields
 }
@@ -422,13 +429,13 @@ export interface StopServerOptions {
 `packages/core/test/server.test.ts` writes to `temp.runtimeDir/llama-server.pid` directly. Move those writes to per-workload subdirs. Example:
 
 ```typescript
-import { workloadRuntimeDir } from '../src/workloadRuntime.js';
-import { mkdirSync } from 'node:fs';
+import { workloadRuntimeDir } from "../src/workloadRuntime.js";
+import { mkdirSync } from "node:fs";
 
-const KEY = { name: 'test-wl' };
+const KEY = { name: "test-wl" };
 const wlDir = workloadRuntimeDir(temp.resolved, KEY);
 mkdirSync(wlDir, { recursive: true });
-writeFileSync(join(wlDir, 'llama-server.pid'), '42\n');
+writeFileSync(join(wlDir, "llama-server.pid"), "42\n");
 
 expect(readServerPid(KEY, temp.resolved)).toBe(42);
 ```
@@ -440,21 +447,27 @@ Apply the same pattern to every call site in `server.test.ts`. Helper `temp` alr
 Append to `packages/core/test/server.test.ts`:
 
 ```typescript
-test('writeServerState for workload A does not affect workload B', () => {
+test("writeServerState for workload A does not affect workload B", () => {
   const temp = createTempEnv();
-  const A = { name: 'a' };
-  const B = { name: 'b' };
+  const A = { name: "a" };
+  const B = { name: "b" };
   // Write A only
   const state: ServerState = {
-    rel: 'a.gguf', extraArgs: [], host: '127.0.0.1', port: '8181',
-    binary: '/bin/llama-server', pid: 1, startedAt: 'now', tunedProfile: null,
+    rel: "a.gguf",
+    extraArgs: [],
+    host: "127.0.0.1",
+    port: "8181",
+    binary: "/bin/llama-server",
+    pid: 1,
+    startedAt: "now",
+    tunedProfile: null,
   };
   // Use the test seam (or a small writeServerStateForTest helper if private)
   // Quickest path: just call startServer with a mock spawn — see existing tests.
   // For unit-level: write directly via fs to the workload dir.
   const aDir = ensureWorkloadRuntimeDir(temp.resolved, A);
-  writeFileSync(join(aDir, 'llama-server.state'), JSON.stringify(state));
-  writeFileSync(join(aDir, 'llama-server.pid'), '1\n');
+  writeFileSync(join(aDir, "llama-server.state"), JSON.stringify(state));
+  writeFileSync(join(aDir, "llama-server.pid"), "1\n");
 
   expect(readServerState(A, temp.resolved)).toBeTruthy();
   expect(readServerState(B, temp.resolved)).toBe(null);
@@ -487,6 +500,7 @@ git commit -m "refactor(core): re-key server lifecycle APIs by WorkloadKey"
 ### Task 4: Migration helper for legacy singleton runtime state
 
 **Files:**
+
 - Modify: `packages/core/src/workloadRuntime.ts`
 - Test: `packages/core/test/workloadRuntime.test.ts`
 
@@ -495,61 +509,85 @@ git commit -m "refactor(core): re-key server lifecycle APIs by WorkloadKey"
 Append to `packages/core/test/workloadRuntime.test.ts`:
 
 ```typescript
-import { migrateLegacySingletonRuntime } from '../src/workloadRuntime.js';
+import { migrateLegacySingletonRuntime } from "../src/workloadRuntime.js";
 
-test('migrateLegacySingletonRuntime moves files under a matching workload dir', () => {
+test("migrateLegacySingletonRuntime moves files under a matching workload dir", () => {
   const t = tempEnv();
   try {
     // Legacy paths
-    writeFileSync(join(t.runtimeDir, 'llama-server.pid'), '999999\n');
-    writeFileSync(join(t.runtimeDir, 'llama-server.state'), JSON.stringify({
-      rel: 'granite/granite-4.1-8b-Q4_K_M.gguf', extraArgs: ['--ctx-size','4096'],
-      host: '127.0.0.1', port: '8181', binary: '/x/llama-server',
-      pid: 999999, startedAt: 't', tunedProfile: null,
-    }));
-    writeFileSync(join(t.runtimeDir, 'llama-server.log'), 'old log');
+    writeFileSync(join(t.runtimeDir, "llama-server.pid"), "999999\n");
+    writeFileSync(
+      join(t.runtimeDir, "llama-server.state"),
+      JSON.stringify({
+        rel: "granite/granite-4.1-8b-Q4_K_M.gguf",
+        extraArgs: ["--ctx-size", "4096"],
+        host: "127.0.0.1",
+        port: "8181",
+        binary: "/x/llama-server",
+        pid: 999999,
+        startedAt: "t",
+        tunedProfile: null,
+      }),
+    );
+    writeFileSync(join(t.runtimeDir, "llama-server.log"), "old log");
 
     const out = migrateLegacySingletonRuntime(t.resolved, [
-      { name: 'granite-8b', spec: { node: 'local', target: { kind: 'rel', value: 'granite/granite-4.1-8b-Q4_K_M.gguf' }, endpoint: { port: 8181 } } } as any,
+      {
+        name: "granite-8b",
+        spec: {
+          node: "local",
+          target: { kind: "rel", value: "granite/granite-4.1-8b-Q4_K_M.gguf" },
+          endpoint: { port: 8181 },
+        },
+      } as any,
     ]);
 
-    expect(out.kind).toBe('migrated');
-    if (out.kind === 'migrated') expect(out.workload).toBe('granite-8b');
+    expect(out.kind).toBe("migrated");
+    if (out.kind === "migrated") expect(out.workload).toBe("granite-8b");
 
-    const dest = join(t.runtimeDir, 'workloads', 'granite-8b');
-    expect(existsSync(join(dest, 'llama-server.pid'))).toBe(true);
-    expect(existsSync(join(dest, 'llama-server.state'))).toBe(true);
-    expect(existsSync(join(dest, 'llama-server.log'))).toBe(true);
-    expect(existsSync(join(t.runtimeDir, 'llama-server.pid'))).toBe(false);
-    expect(existsSync(join(t.runtimeDir, '.migrated-v2'))).toBe(true);
+    const dest = join(t.runtimeDir, "workloads", "granite-8b");
+    expect(existsSync(join(dest, "llama-server.pid"))).toBe(true);
+    expect(existsSync(join(dest, "llama-server.state"))).toBe(true);
+    expect(existsSync(join(dest, "llama-server.log"))).toBe(true);
+    expect(existsSync(join(t.runtimeDir, "llama-server.pid"))).toBe(false);
+    expect(existsSync(join(t.runtimeDir, ".migrated-v2"))).toBe(true);
   } finally {
     t.cleanup();
   }
 });
 
-test('migrateLegacySingletonRuntime synthesizes an imperative workload when no manifest matches', () => {
+test("migrateLegacySingletonRuntime synthesizes an imperative workload when no manifest matches", () => {
   const t = tempEnv();
   try {
-    writeFileSync(join(t.runtimeDir, 'llama-server.pid'), '999999\n');
-    writeFileSync(join(t.runtimeDir, 'llama-server.state'), JSON.stringify({
-      rel: 'orphan/orphan.gguf', extraArgs: [], host: '127.0.0.1', port: '9999',
-      binary: '/x/llama-server', pid: 999999, startedAt: 't', tunedProfile: null,
-    }));
+    writeFileSync(join(t.runtimeDir, "llama-server.pid"), "999999\n");
+    writeFileSync(
+      join(t.runtimeDir, "llama-server.state"),
+      JSON.stringify({
+        rel: "orphan/orphan.gguf",
+        extraArgs: [],
+        host: "127.0.0.1",
+        port: "9999",
+        binary: "/x/llama-server",
+        pid: 999999,
+        startedAt: "t",
+        tunedProfile: null,
+      }),
+    );
     const out = migrateLegacySingletonRuntime(t.resolved, []);
-    expect(out.kind).toBe('synthesized');
-    if (out.kind === 'synthesized') expect(out.workload).toMatch(/^imperative-\d+$/);
+    expect(out.kind).toBe("synthesized");
+    if (out.kind === "synthesized") expect(out.workload).toMatch(/^imperative-\d+$/);
   } finally {
     t.cleanup();
   }
 });
 
-test('migrateLegacySingletonRuntime is a no-op on second invocation (.migrated-v2)', () => {
+test("migrateLegacySingletonRuntime is a no-op on second invocation (.migrated-v2)", () => {
   const t = tempEnv();
   try {
-    writeFileSync(join(t.runtimeDir, '.migrated-v2'), '');
-    writeFileSync(join(t.runtimeDir, 'llama-server.pid'), '1\n'); // pretend leftover
+    writeFileSync(join(t.runtimeDir, ".migrated-v2"), "");
+    writeFileSync(join(t.runtimeDir, "llama-server.pid"), "1\n"); // pretend leftover
     const out = migrateLegacySingletonRuntime(t.resolved, []);
-    expect(out.kind).toBe('skipped');
+    expect(out.kind).toBe("skipped");
   } finally {
     t.cleanup();
   }
@@ -566,19 +604,19 @@ Expected: FAIL — `migrateLegacySingletonRuntime` not exported.
 Append to `packages/core/src/workloadRuntime.ts`:
 
 ```typescript
-import { renameSync, unlinkSync } from 'node:fs';
+import { renameSync, unlinkSync } from "node:fs";
 
 export type MigrationResult =
-  | { kind: 'skipped' }                              // .migrated-v2 already exists
-  | { kind: 'no-legacy' }                            // no legacy pid present
-  | { kind: 'migrated'; workload: string }
-  | { kind: 'synthesized'; workload: string };
+  | { kind: "skipped" } // .migrated-v2 already exists
+  | { kind: "no-legacy" } // no legacy pid present
+  | { kind: "migrated"; workload: string }
+  | { kind: "synthesized"; workload: string };
 
 interface MinimalManifestForMigration {
   metadata: { name: string };
   spec: {
     node: string;
-    target: { kind: 'rel' | 'alias'; value: string };
+    target: { kind: "rel" | "alias"; value: string };
     endpoint?: { host?: string; port?: number };
   };
 }
@@ -588,30 +626,33 @@ export function migrateLegacySingletonRuntime(
   manifests: MinimalManifestForMigration[],
 ): MigrationResult {
   const root = resolved.LOCAL_AI_RUNTIME_DIR;
-  const flag = join(root, '.migrated-v2');
-  if (existsSync(flag)) return { kind: 'skipped' };
+  const flag = join(root, ".migrated-v2");
+  if (existsSync(flag)) return { kind: "skipped" };
 
-  const legacyPid = join(root, 'llama-server.pid');
-  const legacyState = join(root, 'llama-server.state');
-  const legacyLog = join(root, 'llama-server.log');
+  const legacyPid = join(root, "llama-server.pid");
+  const legacyState = join(root, "llama-server.state");
+  const legacyLog = join(root, "llama-server.log");
   if (!existsSync(legacyPid) && !existsSync(legacyState)) {
-    writeFileSync(flag, '');
-    return { kind: 'no-legacy' };
+    writeFileSync(flag, "");
+    return { kind: "no-legacy" };
   }
 
   let stateRel: string | null = null;
   let statePort: number | null = null;
   try {
-    const raw = readFileSync(legacyState, 'utf8');
+    const raw = readFileSync(legacyState, "utf8");
     const parsed = JSON.parse(raw);
-    if (typeof parsed.rel === 'string') stateRel = parsed.rel;
-    if (typeof parsed.port === 'string') statePort = Number.parseInt(parsed.port, 10);
-  } catch { /* leave nulls */ }
+    if (typeof parsed.rel === "string") stateRel = parsed.rel;
+    if (typeof parsed.port === "string") statePort = Number.parseInt(parsed.port, 10);
+  } catch {
+    /* leave nulls */
+  }
 
   // Match: same target.value, and (port matches OR no port declared on manifest)
-  const match = manifests.find((m) =>
-    m.spec.target.value === stateRel &&
-    (m.spec.endpoint?.port === undefined || m.spec.endpoint.port === statePort),
+  const match = manifests.find(
+    (m) =>
+      m.spec.target.value === stateRel &&
+      (m.spec.endpoint?.port === undefined || m.spec.endpoint.port === statePort),
   );
 
   const workloadName = match?.metadata.name ?? `imperative-${Date.now()}`;
@@ -619,18 +660,21 @@ export function migrateLegacySingletonRuntime(
 
   const moveIfExists = (src: string, dstName: string) => {
     if (existsSync(src)) {
-      try { renameSync(src, join(destDir, dstName)); }
-      catch { /* leave it; operator can clean up */ }
+      try {
+        renameSync(src, join(destDir, dstName));
+      } catch {
+        /* leave it; operator can clean up */
+      }
     }
   };
-  moveIfExists(legacyPid, 'llama-server.pid');
-  moveIfExists(legacyState, 'llama-server.state');
-  moveIfExists(legacyLog, 'llama-server.log');
+  moveIfExists(legacyPid, "llama-server.pid");
+  moveIfExists(legacyState, "llama-server.state");
+  moveIfExists(legacyLog, "llama-server.log");
 
-  writeFileSync(flag, '');
+  writeFileSync(flag, "");
   return match
-    ? { kind: 'migrated', workload: workloadName }
-    : { kind: 'synthesized', workload: workloadName };
+    ? { kind: "migrated", workload: workloadName }
+    : { kind: "synthesized", workload: workloadName };
 }
 ```
 
@@ -653,6 +697,7 @@ git commit -m "feat(core): legacy singleton → per-workload runtime migration h
 ### Task 5: Update tRPC procedures to take a workload argument
 
 **Files:**
+
 - Modify: `packages/remote/src/router.ts`
 - Test: `packages/remote/src/router.test.ts` (or whichever file exercises router procedures — check first)
 
@@ -703,15 +748,14 @@ Find the existing `serverStart`/`serverStop`/`serverStatus` procedures in `route
 Implementation sketch — wrap the calls in a helper:
 
 ```typescript
-async function pickWorkloadForChat(
-  client: WorkloadClient,
-  nodeName: string,
-): Promise<string> {
-  const manifests = listWorkloads().filter((m) => m.spec.node === nodeName && m.spec.enabled !== false);
+async function pickWorkloadForChat(client: WorkloadClient, nodeName: string): Promise<string> {
+  const manifests = listWorkloads().filter(
+    (m) => m.spec.node === nodeName && m.spec.enabled !== false,
+  );
   if (manifests.length === 1) return manifests[0].metadata.name;
   // Multiple live → caller must specify; throw a typed error the chat code surfaces.
   throw new TRPCError({
-    code: 'PRECONDITION_FAILED',
+    code: "PRECONDITION_FAILED",
     message: `node ${nodeName} has ${manifests.length} workloads; specify which to chat with`,
   });
 }
@@ -731,7 +775,7 @@ In `packages/remote/src/workload/apply.ts:17-31`, change `WorkloadClient`:
 export interface WorkloadClient {
   serverStatus: {
     query(input: { workload: string }): Promise<{
-      state: 'up' | 'down';
+      state: "up" | "down";
       pid: number | null;
       rel: string | null;
       extraArgs: string[];
@@ -752,7 +796,9 @@ export interface WorkloadClient {
       endpoint?: { host?: string; port?: number };
       binary?: string;
       timeoutSeconds?: number;
-    }): Promise<{ /* existing shape */ }>;
+    }): Promise<{
+      /* existing shape */
+    }>;
   };
   // ...existing rpcServerStart, rpcServerStop, rpcServerStatus, rpcServerDoctor unchanged
 }
@@ -781,6 +827,7 @@ git commit -m "feat(remote): workload param on serverStatus/Start/Stop tRPC proc
 ### Task 6: Update CLI imperative server callers
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/server.ts` (or wherever imperative `server start/stop/status` lives — `grep -rn "serverMod\." packages/cli/src/`)
 - Modify: `packages/cli/src/commands/expose.ts`
 - Modify: `packages/cli/src/commands/workload.ts` (calls `serverStatus.query()` at lines 274, 382, 444)
@@ -792,6 +839,7 @@ grep -rn "serverMod\.\|llamactl server" packages/cli/src/
 ```
 
 For each call to `serverStatus.query()` / `serverStop.mutate(...)` / `serverStart.mutate(...)`, the workload identity comes from one of:
+
 - A manifest in scope (`packages/cli/src/commands/workload.ts` already has `manifest.metadata.name`).
 - A `--name <workload>` flag for imperative server commands.
 
@@ -806,7 +854,7 @@ const NAME_HELP = `--name=<workload>  workload identity (required when more than
 Resolve the workload:
 
 ```typescript
-import { listLocalWorkloads } from '@llamactl/core';
+import { listLocalWorkloads } from "@llamactl/core";
 
 function resolveWorkloadName(explicit: string | undefined, resolved: ResolvedEnv): string {
   if (explicit) return explicit;
@@ -817,7 +865,7 @@ function resolveWorkloadName(explicit: string | undefined, resolved: ResolvedEnv
     return `imperative-${Date.now()}`;
   }
   throw new Error(
-    `multiple workloads live (${live.map(w => w.name).join(', ')}); pass --name <workload>`,
+    `multiple workloads live (${live.map((w) => w.name).join(", ")}); pass --name <workload>`,
   );
 }
 ```
@@ -849,6 +897,7 @@ git commit -m "feat(cli): thread workload identity through imperative + workload
 ### Task 7: Update Electron app + MCP callers
 
 **Files:**
+
 - Modify: `packages/app/src/` (search for `serverStatus`)
 - Modify: `packages/mcp/` (search for `serverStatus|serverStart|serverStop`)
 - Modify: `packages/remote/src/ops-chat/dispatch.ts:178`
@@ -862,6 +911,7 @@ grep -rn "serverStatus\.\|serverStop\.\|serverStart\." packages/app/src/ package
 - [ ] **Step 2: Thread workload identity**
 
 For each call site, derive the workload name from the nearest context:
+
 - Chat panel: the workload the user picked in the dropdown (Task 13 adds the UI; for this task just take it from a prop/arg, default to the single live workload if exactly one).
 - MCP `llamactl.server.status` tool: add a required `workload` argument. (Zod schema in the tool registration.)
 - Ops-chat dispatch (`dispatch.ts:178`): take from the surrounding chat state.
@@ -889,6 +939,7 @@ git commit -m "feat: thread workload identity through app/mcp/ops-chat callers"
 ### Task 8: Wire migration into agent daemon boot
 
 **Files:**
+
 - Modify: `packages/remote/src/server/serve.ts` (or whichever bootstraps the agent HTTPS server — `grep -n "agent\|listen\|serve" packages/remote/src/server/*.ts | head`)
 
 - [ ] **Step 1: Add migration call to boot path**
@@ -896,17 +947,17 @@ git commit -m "feat: thread workload identity through app/mcp/ops-chat callers"
 In the agent daemon's startup function (right before it begins reconciling workloads):
 
 ```typescript
-import { migrateLegacySingletonRuntime } from '@llamactl/core';
-import { listWorkloads } from '../workload/store.js';
-import { resolveEnv } from '@llamactl/core';
+import { migrateLegacySingletonRuntime } from "@llamactl/core";
+import { listWorkloads } from "../workload/store.js";
+import { resolveEnv } from "@llamactl/core";
 
 // ...inside boot
 const resolved = resolveEnv();
 const manifests = listWorkloads();
 const result = migrateLegacySingletonRuntime(resolved, manifests);
-if (result.kind === 'migrated') {
+if (result.kind === "migrated") {
   console.log(`[migration] re-homed legacy runtime under workload '${result.workload}'`);
-} else if (result.kind === 'synthesized') {
+} else if (result.kind === "synthesized") {
   console.log(`[migration] no manifest matched legacy state; synthesized '${result.workload}'`);
 }
 ```
@@ -918,7 +969,7 @@ For the `synthesized` case, also write a transient manifest via `store.writeWork
 Create or extend `packages/remote/src/server/serve.test.ts`:
 
 ```typescript
-test('agent boot migrates legacy singleton runtime when present', async () => {
+test("agent boot migrates legacy singleton runtime when present", async () => {
   // Set up a temp env, write legacy pid+state, boot the daemon, assert files moved.
   // ...follow existing patterns in serve.test.ts for env mocking + temp dirs.
 });
@@ -957,61 +1008,66 @@ All green. Stop and let the user verify a real Granite manifest can still apply 
 ### Task 9: Admission helper + memory estimator
 
 **Files:**
+
 - Create: `packages/remote/src/workload/admission.ts`
 - Test: `packages/remote/src/workload/admission.test.ts`
 
 - [ ] **Step 1: Write failing test**
 
 ```typescript
-import { expect, test } from 'bun:test';
-import { computeNodeBudget, sumReservedForNode, type AdmissionInput } from './admission.js';
+import { expect, test } from "bun:test";
+import { computeNodeBudget, sumReservedForNode, type AdmissionInput } from "./admission.js";
 
-const mkManifest = (name: string, opts: Partial<{ enabled: boolean; expectedMemoryGiB: number; node: string }> = {}) => ({
-  apiVersion: 'llamactl/v1' as const,
-  kind: 'ModelRun' as const,
+const mkManifest = (
+  name: string,
+  opts: Partial<{ enabled: boolean; expectedMemoryGiB: number; node: string }> = {},
+) => ({
+  apiVersion: "llamactl/v1" as const,
+  kind: "ModelRun" as const,
   metadata: { name, labels: {}, annotations: {} },
   spec: {
-    node: opts.node ?? 'local',
-    target: { kind: 'rel' as const, value: 'x.gguf' },
+    node: opts.node ?? "local",
+    target: { kind: "rel" as const, value: "x.gguf" },
     extraArgs: [],
     workers: [],
-    restartPolicy: 'Always' as const,
+    restartPolicy: "Always" as const,
     gateway: false,
     enabled: opts.enabled ?? true,
     timeoutSeconds: 60,
-    resources: opts.expectedMemoryGiB !== undefined
-      ? { expectedMemoryGiB: opts.expectedMemoryGiB }
-      : undefined,
+    resources:
+      opts.expectedMemoryGiB !== undefined
+        ? { expectedMemoryGiB: opts.expectedMemoryGiB }
+        : undefined,
   },
 });
 
-test('sumReservedForNode sums expectedMemoryGiB for enabled manifests on the node', () => {
+test("sumReservedForNode sums expectedMemoryGiB for enabled manifests on the node", () => {
   const all = [
-    mkManifest('a', { expectedMemoryGiB: 8 }),
-    mkManifest('b', { expectedMemoryGiB: 16 }),
-    mkManifest('c', { expectedMemoryGiB: 4, enabled: false }), // excluded
-    mkManifest('d', { expectedMemoryGiB: 2, node: 'mac-mini' }), // excluded
+    mkManifest("a", { expectedMemoryGiB: 8 }),
+    mkManifest("b", { expectedMemoryGiB: 16 }),
+    mkManifest("c", { expectedMemoryGiB: 4, enabled: false }), // excluded
+    mkManifest("d", { expectedMemoryGiB: 2, node: "mac-mini" }), // excluded
   ];
-  expect(sumReservedForNode(all, 'local')).toBe(24);
+  expect(sumReservedForNode(all, "local")).toBe(24);
 });
 
-test('admission returns ok when within budget', () => {
+test("admission returns ok when within budget", () => {
   const input: AdmissionInput = {
-    nodeName: 'local',
+    nodeName: "local",
     nodeBudgetGiB: 36,
-    livingManifests: [mkManifest('a', { expectedMemoryGiB: 8 })],
-    incoming: mkManifest('b', { expectedMemoryGiB: 16 }),
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: 8 })],
+    incoming: mkManifest("b", { expectedMemoryGiB: 16 }),
     forceAdmit: false,
   };
   expect(computeNodeBudget(input)).toEqual({ ok: true, reservedAfter: 24, budget: 36 });
 });
 
-test('admission returns over-budget when sum exceeds budget without force', () => {
+test("admission returns over-budget when sum exceeds budget without force", () => {
   const input: AdmissionInput = {
-    nodeName: 'local',
+    nodeName: "local",
     nodeBudgetGiB: 20,
-    livingManifests: [mkManifest('a', { expectedMemoryGiB: 16 })],
-    incoming: mkManifest('b', { expectedMemoryGiB: 8 }),
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: 16 })],
+    incoming: mkManifest("b", { expectedMemoryGiB: 8 }),
     forceAdmit: false,
   };
   const r = computeNodeBudget(input);
@@ -1019,12 +1075,12 @@ test('admission returns over-budget when sum exceeds budget without force', () =
   if (!r.ok) expect(r.reservedAfter).toBe(24);
 });
 
-test('admission ok when force-admit set even if over budget', () => {
+test("admission ok when force-admit set even if over budget", () => {
   const input: AdmissionInput = {
-    nodeName: 'local',
+    nodeName: "local",
     nodeBudgetGiB: 10,
     livingManifests: [],
-    incoming: mkManifest('a', { expectedMemoryGiB: 30 }),
+    incoming: mkManifest("a", { expectedMemoryGiB: 30 }),
     forceAdmit: true,
   };
   expect(computeNodeBudget(input).ok).toBe(true);
@@ -1039,7 +1095,7 @@ Expected: FAIL — module missing.
 - [ ] **Step 3: Implement admission.ts**
 
 ```typescript
-import type { ModelRun } from './schema.js';
+import type { ModelRun } from "./schema.js";
 
 export interface AdmissionInput {
   nodeName: string;
@@ -1086,20 +1142,20 @@ export function computeNodeBudget(input: AdmissionInput): AdmissionResult {
 Append to `admission.ts`:
 
 ```typescript
-import { statSync } from 'node:fs';
-import { join } from 'node:path';
-import type { ResolvedEnv } from '@llamactl/core';
+import { statSync } from "node:fs";
+import { join } from "node:path";
+import type { ResolvedEnv } from "@llamactl/core";
 
 export function estimateWorkloadMemoryGiB(
   manifest: ModelRun,
   resolved: ResolvedEnv,
 ): number | null {
   if (manifest.spec.gateway) return null;
-  if (manifest.spec.target.kind !== 'rel') return null;
+  if (manifest.spec.target.kind !== "rel") return null;
   const ggufPath = join(resolved.LLAMA_CPP_MODELS, manifest.spec.target.value);
   try {
     const sz = statSync(ggufPath).size;
-    return (sz * 1.1) / (1024 ** 3); // GGUF size + 10% headroom
+    return (sz * 1.1) / 1024 ** 3; // GGUF size + 10% headroom
   } catch {
     return null;
   }
@@ -1111,15 +1167,15 @@ A more sophisticated KV-cache estimate is out of scope (see spec).
 - [ ] **Step 5: Tests for estimator** — keep it light, but cover at minimum:
 
 ```typescript
-test('estimateWorkloadMemoryGiB returns null for gateway workloads', () => {
-  const m = mkManifest('a');
+test("estimateWorkloadMemoryGiB returns null for gateway workloads", () => {
+  const m = mkManifest("a");
   m.spec.gateway = true;
-  expect(estimateWorkloadMemoryGiB(m, { LLAMA_CPP_MODELS: '/nonexistent' } as any)).toBe(null);
+  expect(estimateWorkloadMemoryGiB(m, { LLAMA_CPP_MODELS: "/nonexistent" } as any)).toBe(null);
 });
 
-test('estimateWorkloadMemoryGiB returns null when file is missing', () => {
+test("estimateWorkloadMemoryGiB returns null when file is missing", () => {
   expect(
-    estimateWorkloadMemoryGiB(mkManifest('a'), { LLAMA_CPP_MODELS: '/nonexistent' } as any),
+    estimateWorkloadMemoryGiB(mkManifest("a"), { LLAMA_CPP_MODELS: "/nonexistent" } as any),
   ).toBe(null);
 });
 ```
@@ -1143,6 +1199,7 @@ git commit -m "feat(workload): admission helper + GGUF-size memory estimator"
 ### Task 10: Rewrite `applyOne()` with new semantics
 
 **Files:**
+
 - Modify: `packages/remote/src/workload/apply.ts`
 - Test: `packages/remote/src/workload/apply.test.ts` (or new file `apply.multi.test.ts`)
 
@@ -1153,105 +1210,137 @@ This is the heart of the change. Read `applyOne()` in full first (currently `pac
 Create `packages/remote/src/workload/apply.multi.test.ts`:
 
 ```typescript
-import { expect, test, mock } from 'bun:test';
-import { applyOne } from './apply.js';
-import type { ModelRun } from './schema.js';
+import { expect, test, mock } from "bun:test";
+import { applyOne } from "./apply.js";
+import type { ModelRun } from "./schema.js";
 
 // Helper: build a fake WorkloadClient backed by a per-workload in-memory state map.
 function makeClient(state: Map<string, { up: boolean; rel: string; args: string[] }>): any {
   return {
-    serverStatus: { query: async ({ workload }: { workload: string }) => {
-      const s = state.get(workload);
-      return s
-        ? { state: 'up', pid: 1, rel: s.rel, extraArgs: s.args, host: '127.0.0.1', port: 8181, binary: null, endpoint: 'http://127.0.0.1:8181' }
-        : { state: 'down', pid: null, rel: null, extraArgs: [], host: null, port: null, binary: null, endpoint: 'http://127.0.0.1:8181' };
-    }},
-    serverStop: { mutate: async ({ workload }: any) => { state.delete(workload); return { stopped: true }; }},
-    serverStart: { mutate: async ({ workload, target, extraArgs }: any) => {
-      state.set(workload, { up: true, rel: target, args: extraArgs ?? [] });
-      return { pid: 100, endpoint: 'http://127.0.0.1:8181' };
-    }},
+    serverStatus: {
+      query: async ({ workload }: { workload: string }) => {
+        const s = state.get(workload);
+        return s
+          ? {
+              state: "up",
+              pid: 1,
+              rel: s.rel,
+              extraArgs: s.args,
+              host: "127.0.0.1",
+              port: 8181,
+              binary: null,
+              endpoint: "http://127.0.0.1:8181",
+            }
+          : {
+              state: "down",
+              pid: null,
+              rel: null,
+              extraArgs: [],
+              host: null,
+              port: null,
+              binary: null,
+              endpoint: "http://127.0.0.1:8181",
+            };
+      },
+    },
+    serverStop: {
+      mutate: async ({ workload }: any) => {
+        state.delete(workload);
+        return { stopped: true };
+      },
+    },
+    serverStart: {
+      mutate: async ({ workload, target, extraArgs }: any) => {
+        state.set(workload, { up: true, rel: target, args: extraArgs ?? [] });
+        return { pid: 100, endpoint: "http://127.0.0.1:8181" };
+      },
+    },
   };
 }
 
-const mkManifest = (name: string, overrides: Partial<ModelRun['spec'] & { annotations?: Record<string,string>; enabled?: boolean }> = {}): ModelRun => ({
-  apiVersion: 'llamactl/v1',
-  kind: 'ModelRun',
+const mkManifest = (
+  name: string,
+  overrides: Partial<
+    ModelRun["spec"] & { annotations?: Record<string, string>; enabled?: boolean }
+  > = {},
+): ModelRun => ({
+  apiVersion: "llamactl/v1",
+  kind: "ModelRun",
   metadata: { name, labels: {}, annotations: overrides.annotations ?? {} },
   spec: {
-    node: 'local',
-    target: { kind: 'rel', value: overrides.target ? (overrides.target as any).value : `${name}.gguf` },
-    extraArgs: [], workers: [], restartPolicy: 'Always', gateway: false,
-    enabled: overrides.enabled ?? true, timeoutSeconds: 60,
-    endpoint: { host: '127.0.0.1', port: 8181 },
+    node: "local",
+    target: {
+      kind: "rel",
+      value: overrides.target ? (overrides.target as any).value : `${name}.gguf`,
+    },
+    extraArgs: [],
+    workers: [],
+    restartPolicy: "Always",
+    gateway: false,
+    enabled: overrides.enabled ?? true,
+    timeoutSeconds: 60,
+    endpoint: { host: "127.0.0.1", port: 8181 },
     resources: { expectedMemoryGiB: 8 },
     ...(overrides as any),
   } as any,
 });
 
-test('disabled manifest stops the server if running and reports Disabled', async () => {
-  const state = new Map([['a', { up: true, rel: 'a.gguf', args: [] }]]);
-  const result = await applyOne(
-    mkManifest('a', { enabled: false, endpoint: { port: 8181 } }),
-    () => makeClient(state),
+test("disabled manifest stops the server if running and reports Disabled", async () => {
+  const state = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const result = await applyOne(mkManifest("a", { enabled: false, endpoint: { port: 8181 } }), () =>
+    makeClient(state),
   );
-  expect(result.statusSection.phase).toBe('Stopped');
-  expect(result.statusSection.conditions[0].reason).toBe('Disabled');
-  expect(state.has('a')).toBe(false);
+  expect(result.statusSection.phase).toBe("Stopped");
+  expect(result.statusSection.conditions[0].reason).toBe("Disabled");
+  expect(state.has("a")).toBe(false);
 });
 
-test('parallel apply does not stop other workloads on the node', async () => {
-  const state = new Map([['a', { up: true, rel: 'a.gguf', args: [] }]]);
+test("parallel apply does not stop other workloads on the node", async () => {
+  const state = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
   const result = await applyOne(
-    mkManifest('b', { endpoint: { port: 8090 } }), // different port
+    mkManifest("b", { endpoint: { port: 8090 } }), // different port
     () => makeClient(state),
   );
-  expect(state.has('a')).toBe(true);  // not touched
-  expect(state.has('b')).toBe(true);  // started
-  expect(result.action).toBe('started');
+  expect(state.has("a")).toBe(true); // not touched
+  expect(state.has("b")).toBe(true); // started
+  expect(result.action).toBe("started");
 });
 
-test('evict annotation stops named workload before starting incoming', async () => {
-  const state = new Map([['a', { up: true, rel: 'a.gguf', args: [] }]]);
+test("evict annotation stops named workload before starting incoming", async () => {
+  const state = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
   const result = await applyOne(
-    mkManifest('b', { annotations: { 'llamactl.io/evict': 'a' }, endpoint: { port: 8181 } }),
+    mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, endpoint: { port: 8181 } }),
     () => makeClient(state),
   );
-  expect(state.has('a')).toBe(false);
-  expect(state.has('b')).toBe(true);
-  expect(result.action).toBe('started');
+  expect(state.has("a")).toBe(false);
+  expect(state.has("b")).toBe(true);
+  expect(result.action).toBe("started");
 });
 
-test('budget overflow returns pending with BudgetExceeded unless force-admit', async () => {
-  const state = new Map([['a', { up: true, rel: 'a.gguf', args: [] }]]);
+test("budget overflow returns pending with BudgetExceeded unless force-admit", async () => {
+  const state = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
   // Build incoming whose RAM would push over a small budget.
-  const incoming = mkManifest('b', { endpoint: { port: 8090 } });
+  const incoming = mkManifest("b", { endpoint: { port: 8090 } });
   // Inject node budget via the new opts.getNodeBudget hook (introduced in this task).
-  const result = await applyOne(
-    incoming,
-    () => makeClient(state),
-    undefined,
-    undefined,
-    { getNodeBudgetGiB: () => 10, listManifests: () => [mkManifest('a')] },
-  );
-  expect(result.action).toBe('pending');
-  expect(result.statusSection.conditions[0].reason).toBe('BudgetExceeded');
+  const result = await applyOne(incoming, () => makeClient(state), undefined, undefined, {
+    getNodeBudgetGiB: () => 10,
+    listManifests: () => [mkManifest("a")],
+  });
+  expect(result.action).toBe("pending");
+  expect(result.statusSection.conditions[0].reason).toBe("BudgetExceeded");
 });
 
-test('force-admit annotation bypasses the budget check', async () => {
+test("force-admit annotation bypasses the budget check", async () => {
   const state = new Map();
-  const incoming = mkManifest('b', {
-    annotations: { 'llamactl.io/force-admit': 'true' },
+  const incoming = mkManifest("b", {
+    annotations: { "llamactl.io/force-admit": "true" },
     endpoint: { port: 8090 },
   });
-  const result = await applyOne(
-    incoming,
-    () => makeClient(state),
-    undefined,
-    undefined,
-    { getNodeBudgetGiB: () => 1, listManifests: () => [] },
-  );
-  expect(result.action).toBe('started');
+  const result = await applyOne(incoming, () => makeClient(state), undefined, undefined, {
+    getNodeBudgetGiB: () => 1,
+    listManifests: () => [],
+  });
+  expect(result.action).toBe("started");
 });
 ```
 
@@ -1282,19 +1371,21 @@ if (!manifest.spec.enabled) {
   const wlName = manifest.metadata.name;
   const client = getClient(manifest.spec.node);
   const status = await client.serverStatus.query({ workload: wlName });
-  if (status.state === 'up') {
-    onEvent?.({ type: 'stop', message: `${wlName}: disabling — stopping server` });
+  if (status.state === "up") {
+    onEvent?.({ type: "stop", message: `${wlName}: disabling — stopping server` });
     await client.serverStop.mutate({ workload: wlName, graceSeconds: 5 });
   }
   const now = new Date().toISOString();
   return {
-    action: 'unchanged',
+    action: "unchanged",
     statusSection: {
-      phase: 'Stopped',
+      phase: "Stopped",
       serverPid: null,
       endpoint: null,
       lastTransitionTime: now,
-      conditions: [{ type: 'Applied', status: 'True', reason: 'Disabled', lastTransitionTime: now }],
+      conditions: [
+        { type: "Applied", status: "True", reason: "Disabled", lastTransitionTime: now },
+      ],
     },
   };
 }
@@ -1305,23 +1396,29 @@ if (!manifest.spec.enabled) {
 ```typescript
 const others = listWorkloads(workloadsDir)
   .filter((m) => m.metadata.name !== manifest.metadata.name)
-  .filter((m) => m.spec.enabled !== false)            // NEW
+  .filter((m) => m.spec.enabled !== false) // NEW
   .filter((m) => sameNode(m.spec.node));
 ```
 
 3. **Evict step** (new):
 
 ```typescript
-const evictRaw = manifest.metadata.annotations['llamactl.io/evict'] ?? '';
-const evictTargets = evictRaw.split(',').map((s) => s.trim()).filter(Boolean);
+const evictRaw = manifest.metadata.annotations["llamactl.io/evict"] ?? "";
+const evictTargets = evictRaw
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 for (const target of evictTargets) {
   const client = getClient(manifest.spec.node);
   const status = await client.serverStatus.query({ workload: target });
-  if (status.state === 'up') {
-    onEvent?.({ type: 'stop', message: `${manifest.metadata.name}: evicting '${target}'` });
+  if (status.state === "up") {
+    onEvent?.({ type: "stop", message: `${manifest.metadata.name}: evicting '${target}'` });
     await client.serverStop.mutate({ workload: target, graceSeconds: 5 });
   } else {
-    onEvent?.({ type: 'stop', message: `${manifest.metadata.name}: evict target '${target}' was already down` });
+    onEvent?.({
+      type: "stop",
+      message: `${manifest.metadata.name}: evict target '${target}' was already down`,
+    });
   }
 }
 ```
@@ -1331,7 +1428,7 @@ for (const target of evictTargets) {
 ```typescript
 const listMs = opts?.listManifests ?? (() => listWorkloads(opts?.workloadsDir));
 const getBudget = opts?.getNodeBudgetGiB ?? (() => Number.POSITIVE_INFINITY);
-const forceAdmit = manifest.metadata.annotations['llamactl.io/force-admit'] === 'true';
+const forceAdmit = manifest.metadata.annotations["llamactl.io/force-admit"] === "true";
 const living = listMs()
   .filter((m) => m.metadata.name !== manifest.metadata.name)
   .filter((m) => m.spec.node === manifest.spec.node)
@@ -1346,17 +1443,22 @@ const adm = computeNodeBudget({
 if (!adm.ok) {
   const now = new Date().toISOString();
   return {
-    action: 'pending',
+    action: "pending",
     error: adm.reason,
     statusSection: {
-      phase: 'Failed',
+      phase: "Failed",
       serverPid: null,
       endpoint: null,
       lastTransitionTime: now,
-      conditions: [{
-        type: 'Applied', status: 'False', reason: 'BudgetExceeded',
-        message: adm.reason, lastTransitionTime: now,
-      }],
+      conditions: [
+        {
+          type: "Applied",
+          status: "False",
+          reason: "BudgetExceeded",
+          message: adm.reason,
+          lastTransitionTime: now,
+        },
+      ],
     },
   };
 }
@@ -1407,6 +1509,7 @@ git commit -m "feat(workload): apply supports parallel + evict + admission + dis
 ### Task 11: Wire the node budget default + reconciler iteration
 
 **Files:**
+
 - Modify: `packages/remote/src/workload/reconcileLoop.ts`
 - Modify: `packages/remote/src/workload/reconciler.ts`
 
@@ -1415,11 +1518,11 @@ git commit -m "feat(workload): apply supports parallel + evict + admission + dis
 In `packages/remote/src/workload/admission.ts`:
 
 ```typescript
-import { totalmem } from 'node:os';
+import { totalmem } from "node:os";
 
 /** Default to NodeRun.spec.budget.memoryGiB when present, else physical RAM × 0.75. */
 export function defaultNodeBudgetGiB(nodeBudgetFromManifest?: number): number {
-  if (typeof nodeBudgetFromManifest === 'number') return nodeBudgetFromManifest;
+  if (typeof nodeBudgetFromManifest === "number") return nodeBudgetFromManifest;
   return (totalmem() / 1024 ** 3) * 0.75;
 }
 ```
@@ -1429,8 +1532,8 @@ export function defaultNodeBudgetGiB(nodeBudgetFromManifest?: number): number {
 In `reconcileLoop.ts` (or wherever `applyOne` is invoked at the reconciler tick), thread the manifest list + budget through:
 
 ```typescript
-import { defaultNodeBudgetGiB } from './admission.js';
-import { listNodeRuns } from './noderun-store.js';
+import { defaultNodeBudgetGiB } from "./admission.js";
+import { listNodeRuns } from "./noderun-store.js";
 
 const nodeManifests = listNodeRuns();
 const nodeBudgetByName = new Map<string, number>(
@@ -1477,6 +1580,7 @@ Manual smoke: apply two workloads on `node: local` with different ports — both
 ### Task 12: `--evict` and `--force` flags on `apply`
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/apply.ts` (or wherever apply lives — `grep -rn "ApplyCommand\|apply'" packages/cli/src/`)
 - Test: existing apply test file or new `apply.cli.test.ts`
 
@@ -1495,17 +1599,17 @@ Before `store.writeWorkload(manifest)`:
 
 ```typescript
 if (parsed.evict && parsed.evict.length > 0) {
-  manifest.metadata.annotations['llamactl.io/evict'] = parsed.evict.join(',');
+  manifest.metadata.annotations["llamactl.io/evict"] = parsed.evict.join(",");
 }
 if (parsed.force) {
-  manifest.metadata.annotations['llamactl.io/force-admit'] = 'true';
+  manifest.metadata.annotations["llamactl.io/force-admit"] = "true";
 }
 ```
 
 - [ ] **Step 3: Test**
 
 ```typescript
-test('apply --evict stamps the annotation onto the persisted manifest', async () => {
+test("apply --evict stamps the annotation onto the persisted manifest", async () => {
   // Existing test patterns in packages/cli/test/apply.test.ts apply.
 });
 ```
@@ -1528,6 +1632,7 @@ git commit -m "feat(cli): apply --evict and --force flags stamp annotations"
 ### Task 13: `llamactl enable` and `llamactl disable`
 
 **Files:**
+
 - Create: `packages/cli/src/commands/enable.ts`
 - Create: `packages/cli/src/commands/disable.ts`
 - Modify: `packages/cli/src/bin.ts` (register the verbs)
@@ -1537,8 +1642,8 @@ git commit -m "feat(cli): apply --evict and --force flags stamp annotations"
 
 ```typescript
 // packages/cli/src/commands/disable.ts
-import { readWorkload, writeWorkload } from '@llamactl/remote/workload/store';
-import { applyOne } from '@llamactl/remote/workload/apply';
+import { readWorkload, writeWorkload } from "@llamactl/remote/workload/store";
+import { applyOne } from "@llamactl/remote/workload/apply";
 
 export async function disableCommand(args: { workload: string }): Promise<void> {
   const m = readWorkload(args.workload);
@@ -1546,7 +1651,7 @@ export async function disableCommand(args: { workload: string }): Promise<void> 
   m.spec.enabled = false;
   writeWorkload(m);
   // Trigger reconciliation immediately
-  await applyOne(m, /* the existing getClient factory */);
+  await applyOne(m /* the existing getClient factory */);
 }
 ```
 
@@ -1559,12 +1664,12 @@ In `packages/cli/src/bin.ts`, route `enable`/`disable` to these handlers.
 - [ ] **Step 3: Test**
 
 ```typescript
-test('disable flips spec.enabled and stops the running server', async () => {
+test("disable flips spec.enabled and stops the running server", async () => {
   // Set up a workload, apply, disable, assert spec.enabled === false on disk
   // AND the mock client received serverStop({ workload }).
 });
 
-test('enable flips spec.enabled back and re-applies', async () => {
+test("enable flips spec.enabled back and re-applies", async () => {
   // ...
 });
 ```
@@ -1587,6 +1692,7 @@ git commit -m "feat(cli): llamactl enable / disable verbs"
 ### Task 14: `describe node` budget output + MCP `llamactl.node.budget`
 
 **Files:**
+
 - Modify: `packages/cli/src/commands/describe.ts` (or wherever `describe node` formats output)
 - Modify: `packages/remote/src/router.ts` (add `nodeBudget` procedure)
 - Modify: `packages/mcp/src/` (register `llamactl.node.budget`)
@@ -1639,8 +1745,12 @@ WARNING: budget exceeded (24.0 > 20.0 GiB) — applies will require --force
 - [ ] **Step 4: Tests**
 
 ```typescript
-test('node.budget returns reserved sum + per-workload entries', async () => { /* ... */ });
-test('describe node renders warning when reserved > budget', async () => { /* ... */ });
+test("node.budget returns reserved sum + per-workload entries", async () => {
+  /* ... */
+});
+test("describe node renders warning when reserved > budget", async () => {
+  /* ... */
+});
 ```
 
 - [ ] **Step 5: Verify + commit**
@@ -1668,6 +1778,7 @@ zsh test/run-all.zsh
 ### Task 15: Shell integration smoke
 
 **Files:**
+
 - Create: `test/multi-workload.zsh`
 - Modify: `test/run-all.zsh` (call the new script)
 
@@ -1805,6 +1916,7 @@ git commit -m "docs(notes): multi-workload cross-repo smoke verified"
 ### Task 17: Final cleanup
 
 **Files:**
+
 - Modify: `AGENTS.md` if any of the new flags / commands deserve a callout
 - Modify: `README.md` if there's a "feature" section that mentions single-workload constraints
 

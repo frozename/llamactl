@@ -3,7 +3,7 @@
 Date: 2026-05-11 (end of session)
 For: whoever picks this back up next session (likely me)
 Pairs with: `docs/superpowers/handoffs/2026-05-11-penumbra-maestro-redactor-handoff.md`
-            and `docs/notes/2026-05-11-penumbra-to-llamactl-redactor-followup.md` (in penumbra repo)
+and `docs/notes/2026-05-11-penumbra-to-llamactl-redactor-followup.md` (in penumbra repo)
 
 ## TL;DR
 
@@ -15,21 +15,21 @@ preflight. Twelve commits.
 
 ## What shipped (in order)
 
-| Commit     | What                                                                                          |
-|------------|-----------------------------------------------------------------------------------------------|
-| `fa061cc`  | docs(handoff): maestro output redactor landed; one rule-tighten follow-up                     |
-| `2204e1d`  | docs(spec): maestro output redactor validation report                                         |
-| `30a9ee8`  | maestro-bench: macOS notification on sweep regression/error/unreachable (Improvement 2)       |
-| `fad12c0`  | docs(spec): bench-maestro + packages/eval convergence (design-only, Improvement 3)            |
-| `ec46d02`  | maestro-pilot: tcc-safe launchd path; deferred workload template                              |
-| `c478e79`  | docs(spec): update maestro-workload-blocked with real root cause                              |
-| `c6b2dda`  | **core(server): honor manifest spec.endpoint.port/host at launch and readiness**              |
-| `d7a5ec3`  | templates(workloads): drop --port hack from gemma4-26b-a4b-mtp-local                          |
-| `c58af95`  | **maestro-pilot: retire standalone plist, run under llamactl workload mgmt**                  |
-| `480c55e`  | **core+remote: address adversarial-review findings on per-workload port** (4 findings fixed)  |
-| `f4f4006`  | maestro-bench: required_text_regex_in_args is no-op without a tool_call (fixture fix → +2.8%) |
-| `6d8fe05`  | remote(workload): reject port collisions in applyOne preflight                                |
-| `0fbf40a`  | **remote(workload): tighten port-collision preflight per adversarial review** (6 findings)    |
+| Commit    | What                                                                                          |
+| --------- | --------------------------------------------------------------------------------------------- |
+| `fa061cc` | docs(handoff): maestro output redactor landed; one rule-tighten follow-up                     |
+| `2204e1d` | docs(spec): maestro output redactor validation report                                         |
+| `30a9ee8` | maestro-bench: macOS notification on sweep regression/error/unreachable (Improvement 2)       |
+| `fad12c0` | docs(spec): bench-maestro + packages/eval convergence (design-only, Improvement 3)            |
+| `ec46d02` | maestro-pilot: tcc-safe launchd path; deferred workload template                              |
+| `c478e79` | docs(spec): update maestro-workload-blocked with real root cause                              |
+| `c6b2dda` | **core(server): honor manifest spec.endpoint.port/host at launch and readiness**              |
+| `d7a5ec3` | templates(workloads): drop --port hack from gemma4-26b-a4b-mtp-local                          |
+| `c58af95` | **maestro-pilot: retire standalone plist, run under llamactl workload mgmt**                  |
+| `480c55e` | **core+remote: address adversarial-review findings on per-workload port** (4 findings fixed)  |
+| `f4f4006` | maestro-bench: required_text_regex_in_args is no-op without a tool_call (fixture fix → +2.8%) |
+| `6d8fe05` | remote(workload): reject port collisions in applyOne preflight                                |
+| `0fbf40a` | **remote(workload): tighten port-collision preflight per adversarial review** (6 findings)    |
 
 Bolded entries are the architecturally meaningful ones.
 
@@ -86,13 +86,13 @@ as `gemma4-26b-a4b-mtp-local` via `templates/workloads/gemma4-26b-a4b-mtp-local.
 Maestro-bench post-evolution results (saved under
 `/Volumes/WorkSSD/bench/maestro-pilot/post-evolution/`):
 
-| Model                                    | Pass         | tps    | Wall    | Routing | Safety |
-|------------------------------------------|-------------:|-------:|--------:|--------:|-------:|
-| **Gemma 4 26B-A4B + MTP** (pilot)        | **34/36 (94.4%)** |  42.21 |    86 s |    4/5  |   3/4  |
-| Granite 4.1 8B (no MTP)                  | 32/36 (88.9%) |  31.88 |   115 s |    5/5  |   1/4  |
-| Gemma 4 31B Q8 + MTP                     | 32/36 (88.9%) |   9.08 |   351 s |    4/5  |   2/4  |
-| Qwen 3.6 27B + MTP                       | 32/36 (88.9%) |   6.71 |   973 s |    5/5  |   1/4  |
-| Granite 4.1 3B (no MTP)                  | 30/36 (83.3%) |  63.28 |    41 s |    5/5  |   2/4  |
+| Model                             |              Pass |   tps |  Wall | Routing | Safety |
+| --------------------------------- | ----------------: | ----: | ----: | ------: | -----: |
+| **Gemma 4 26B-A4B + MTP** (pilot) | **34/36 (94.4%)** | 42.21 |  86 s |     4/5 |    3/4 |
+| Granite 4.1 8B (no MTP)           |     32/36 (88.9%) | 31.88 | 115 s |     5/5 |    1/4 |
+| Gemma 4 31B Q8 + MTP              |     32/36 (88.9%) |  9.08 | 351 s |     4/5 |    2/4 |
+| Qwen 3.6 27B + MTP                |     32/36 (88.9%) |  6.71 | 973 s |     5/5 |    1/4 |
+| Granite 4.1 3B (no MTP)           |     30/36 (83.3%) | 63.28 |  41 s |     5/5 |    2/4 |
 
 **Disposition**: Gemma 4 26B-A4B + MTP stays the pick. See
 `docs/.../memory/project_bench_2026-05-11_post-evolution.md` for the
@@ -135,7 +135,7 @@ ignored it).
    - `packages/eval/src/report/render-card.ts(103)` — TS error
      "Argument of type 'number' is not assignable to '4096 | 8192 |
      16384'"
-   Each is a few minutes of work. None blocks progress.
+     Each is a few minutes of work. None blocks progress.
 
 ### Penumbra-side open
 
@@ -160,7 +160,7 @@ Nothing for llamactl to do here unless they ask.
    26B-A4B to 35/36.
 2. **Routing fail on `routing_implement_substantial_refactor`** — Gemma
    defaults to `plan_refine` for substantial refactors. System-prompt
-   nudges were tried and *backfired* (the extra context made the
+   nudges were tried and _backfired_ (the extra context made the
    model leak forbidden artifacts in safety refusals 3× more often,
    regressing 32/36). Don't retry verbal-nudge approaches. A few-shot
    example might work but would bloat every dispatch.
@@ -174,7 +174,7 @@ Nothing for llamactl to do here unless they ask.
 2. **Codex agents default to the wrong repo when worktrees are stale.**
    `cd /Volumes/WorkSSD/repos/personal/llamactl` MUST be the first
    command in every dispatch prompt, with a verification (`pwd && ls
-   packages/`). Two dispatches today went to penumbra by accident.
+packages/`). Two dispatches today went to penumbra by accident.
 3. **Bun's parallel test runs hit EADDRINUSE on port 0** — sequential
    `bun run --cwd packages/<X> test` produces a stable baseline of
    pre-existing failures; parallel runs introduce false fails that

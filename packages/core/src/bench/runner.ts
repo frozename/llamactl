@@ -1,37 +1,31 @@
-import { spawn } from 'node:child_process';
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname, join } from 'node:path';
-import { resolveBuildId } from '../build.js';
-import { ctxForModel } from '../ctx.js';
-import { resolveEnv } from '../env.js';
-import { findLocalMmproj } from '../mmproj.js';
-import { resolveTarget } from '../target.js';
-import type { ResolvedEnv } from '../types.js';
-import { defaultModeForRel, machineLabel } from './mode.js';
-import { benchProfileArgs, serverProfileArgs } from './launchArgs.js';
-import { benchHistoryFile, benchProfileFile, benchVisionFile } from './store.js';
-import type { BenchMode } from '../types.js';
+import { spawn } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { resolveBuildId } from "../build.js";
+import { ctxForModel } from "../ctx.js";
+import { resolveEnv } from "../env.js";
+import { findLocalMmproj } from "../mmproj.js";
+import { resolveTarget } from "../target.js";
+import type { ResolvedEnv } from "../types.js";
+import { defaultModeForRel, machineLabel } from "./mode.js";
+import { benchProfileArgs, serverProfileArgs } from "./launchArgs.js";
+import { benchHistoryFile, benchProfileFile, benchVisionFile } from "./store.js";
+import type { BenchMode } from "../types.js";
 
-const DEFAULT_PROFILES = ['default', 'throughput', 'conservative'] as const;
-const DEFAULT_PROMPT = 'Describe the image in one sentence.';
+const DEFAULT_PROFILES = ["default", "throughput", "conservative"] as const;
+const DEFAULT_PROMPT = "Describe the image in one sentence.";
 const REFERENCE_IMAGE_BASE64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgGAWDHAAAEAABSsRJZwAAAABJRU5ErkJggg==';
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgGAWDHAAAEAABSsRJZwAAAABJRU5ErkJggg==";
 
 /** Lifecycle event emitted from bench runs. Mirrors `pull.PullEvent`. */
 export type BenchEvent =
-  | { type: 'start'; command: string; args: string[] }
-  | { type: 'stdout'; line: string }
-  | { type: 'stderr'; line: string }
-  | { type: 'exit'; code: number }
-  | { type: 'profile-start'; profile: string }
-  | { type: 'profile-done'; profile: string; gen_ts: string; prompt_ts: string }
-  | { type: 'profile-fail'; profile: string; code: number };
+  | { type: "start"; command: string; args: string[] }
+  | { type: "stdout"; line: string }
+  | { type: "stderr"; line: string }
+  | { type: "exit"; code: number }
+  | { type: "profile-start"; profile: string }
+  | { type: "profile-done"; profile: string; gen_ts: string; prompt_ts: string }
+  | { type: "profile-fail"; profile: string; code: number };
 
 export interface SpawnResult {
   code: number;
@@ -55,8 +49,8 @@ export type RunCli = (
 function drainLines(buf: string, onLine: (line: string) => void): string {
   let remaining = buf;
   while (true) {
-    const nl = remaining.indexOf('\n');
-    const cr = remaining.indexOf('\r');
+    const nl = remaining.indexOf("\n");
+    const cr = remaining.indexOf("\r");
     let idx: number;
     if (nl === -1 && cr === -1) break;
     else if (nl === -1) idx = cr;
@@ -71,46 +65,52 @@ function drainLines(buf: string, onLine: (line: string) => void): string {
 
 export const defaultRunCli: RunCli = (bin, args, onEvent, signal) => {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
+    const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
     const attach = (
       stream: NodeJS.ReadableStream,
-      kind: 'stdout' | 'stderr',
+      kind: "stdout" | "stderr",
       bucket: (chunk: string) => void,
     ) => {
-      let buf = '';
-      stream.on('data', (chunk: Buffer) => {
-        const text = chunk.toString('utf8');
+      let buf = "";
+      stream.on("data", (chunk: Buffer) => {
+        const text = chunk.toString("utf8");
         bucket(text);
         buf += text;
         buf = drainLines(buf, (line) => onEvent?.({ type: kind, line }));
       });
-      stream.on('end', () => {
+      stream.on("end", () => {
         if (buf.length > 0) onEvent?.({ type: kind, line: buf });
       });
     };
-    if (child.stdout) attach(child.stdout, 'stdout', (t) => { stdout += t; });
-    if (child.stderr) attach(child.stderr, 'stderr', (t) => { stderr += t; });
+    if (child.stdout)
+      attach(child.stdout, "stdout", (t) => {
+        stdout += t;
+      });
+    if (child.stderr)
+      attach(child.stderr, "stderr", (t) => {
+        stderr += t;
+      });
     const onAbort = () => {
       try {
-        child.kill('SIGTERM');
+        child.kill("SIGTERM");
       } catch {
         // child may already be gone
       }
     };
     if (signal) {
       if (signal.aborted) onAbort();
-      else signal.addEventListener('abort', onAbort, { once: true });
+      else signal.addEventListener("abort", onAbort, { once: true });
     }
-    child.once('error', (err) => {
-      signal?.removeEventListener('abort', onAbort);
+    child.once("error", (err) => {
+      signal?.removeEventListener("abort", onAbort);
       reject(err);
     });
-    child.once('exit', (code) => {
-      signal?.removeEventListener('abort', onAbort);
+    child.once("exit", (code) => {
+      signal?.removeEventListener("abort", onAbort);
       const c = code ?? 1;
-      onEvent?.({ type: 'exit', code: c });
+      onEvent?.({ type: "exit", code: c });
       resolve({ code: c, stdout, stderr });
     });
   });
@@ -123,7 +123,7 @@ export const defaultRunCli: RunCli = (bin, args, onEvent, signal) => {
  * `YYYY-MM-DDTHH:MM:SS±HHMM`, local time, no colon in the offset.
  */
 export function formatBenchTimestamp(date: Date = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
+  const pad = (n: number) => String(n).padStart(2, "0");
   const y = date.getFullYear();
   const mo = pad(date.getMonth() + 1);
   const d = pad(date.getDate());
@@ -131,7 +131,7 @@ export function formatBenchTimestamp(date: Date = new Date()): string {
   const mi = pad(date.getMinutes());
   const s = pad(date.getSeconds());
   const off = -date.getTimezoneOffset();
-  const sign = off >= 0 ? '+' : '-';
+  const sign = off >= 0 ? "+" : "-";
   const abs = Math.abs(off);
   return `${y}-${mo}-${d}T${h}:${mi}:${s}${sign}${pad(Math.floor(abs / 60))}${pad(abs % 60)}`;
 }
@@ -152,9 +152,9 @@ export function parseBenchJsonlStats(output: string): {
 } {
   let gen: number | null = null;
   let prompt: number | null = null;
-  for (const line of output.split('\n')) {
+  for (const line of output.split("\n")) {
     const trimmed = line.trim();
-    if (trimmed === '') continue;
+    if (trimmed === "") continue;
     let row: { n_gen?: number; n_prompt?: number; avg_ts?: number };
     try {
       row = JSON.parse(trimmed) as typeof row;
@@ -169,8 +169,8 @@ export function parseBenchJsonlStats(output: string): {
     if (prompt === null && nPrompt > 0 && nGen === 0) prompt = avg;
   }
   return {
-    gen_ts: gen === null ? '-1' : String(gen),
-    prompt_ts: prompt === null ? '-1' : String(prompt),
+    gen_ts: gen === null ? "-1" : String(gen),
+    prompt_ts: prompt === null ? "-1" : String(prompt),
   };
 }
 
@@ -190,7 +190,7 @@ export function parseMtmdCliStats(stderr: string): {
   let encode: string | null = null;
   let prompt: string | null = null;
   let gen: string | null = null;
-  for (const raw of stderr.split('\n')) {
+  for (const raw of stderr.split("\n")) {
     if (load === null && /load time =/.test(raw)) {
       const m = /([0-9]+(?:\.[0-9]+)?)\s+ms/.exec(raw);
       if (m?.[1]) load = m[1];
@@ -209,10 +209,10 @@ export function parseMtmdCliStats(stderr: string): {
     }
   }
   return {
-    load_ms: load ?? '0',
-    image_encode_ms: encode ?? '0',
-    prompt_tps: prompt ?? '',
-    gen_tps: gen ?? '',
+    load_ms: load ?? "0",
+    image_encode_ms: encode ?? "0",
+    prompt_tps: prompt ?? "",
+    gen_tps: gen ?? "",
   };
 }
 
@@ -222,7 +222,7 @@ function atomicRewrite(file: string, body: string): void {
   mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
   writeFileSync(tmp, body);
-  const { renameSync } = require('node:fs') as typeof import('node:fs');
+  const { renameSync } = require("node:fs") as typeof import("node:fs");
   renameSync(tmp, file);
 }
 
@@ -250,10 +250,10 @@ export function writeBenchProfile(
   const updated = formatBenchTimestamp();
   const kept: string[] = [];
   if (existsSync(profileFile)) {
-    const raw = readFileSync(profileFile, 'utf8');
-    for (const line of raw.split('\n')) {
-      if (line === '') continue;
-      const cols = line.split('\t');
+    const raw = readFileSync(profileFile, "utf8");
+    for (const line of raw.split("\n")) {
+      if (line === "") continue;
+      const cols = line.split("\t");
       const drop =
         cols.length >= 9 &&
         cols[0] === row.machine &&
@@ -275,9 +275,9 @@ export function writeBenchProfile(
       row.gen_ts,
       row.prompt_ts,
       updated,
-    ].join('\t'),
+    ].join("\t"),
   );
-  atomicRewrite(profileFile, `${kept.join('\n')}\n`);
+  atomicRewrite(profileFile, `${kept.join("\n")}\n`);
 
   const historyFile = benchHistoryFile(resolved);
   mkdirSync(dirname(historyFile), { recursive: true });
@@ -292,7 +292,7 @@ export function writeBenchProfile(
     row.gen_ts,
     row.prompt_ts,
     serverProfileArgs(row.profile),
-  ].join('\t');
+  ].join("\t");
   appendFileSync(historyFile, `${historyLine}\n`);
 }
 
@@ -321,15 +321,12 @@ export function writeBenchVision(
   const updated = formatBenchTimestamp();
   const kept: string[] = [];
   if (existsSync(file)) {
-    const raw = readFileSync(file, 'utf8');
-    for (const line of raw.split('\n')) {
-      if (line === '') continue;
-      const cols = line.split('\t');
+    const raw = readFileSync(file, "utf8");
+    for (const line of raw.split("\n")) {
+      if (line === "") continue;
+      const cols = line.split("\t");
       const drop =
-        cols.length >= 9 &&
-        cols[0] === row.machine &&
-        cols[1] === row.rel &&
-        cols[3] === row.build;
+        cols.length >= 9 && cols[0] === row.machine && cols[1] === row.rel && cols[3] === row.build;
       if (!drop) kept.push(line);
     }
   }
@@ -344,9 +341,9 @@ export function writeBenchVision(
       row.prompt_tps,
       row.gen_tps,
       updated,
-    ].join('\t'),
+    ].join("\t"),
   );
-  atomicRewrite(file, `${kept.join('\n')}\n`);
+  atomicRewrite(file, `${kept.join("\n")}\n`);
 }
 
 // ---- reference image -------------------------------------------------
@@ -357,9 +354,7 @@ export function writeBenchVision(
  * choice; otherwise we materialise a 1×1 PNG next to the runtime dir
  * so the bench has something valid to encode.
  */
-export function resolveReferenceImage(
-  resolved: ResolvedEnv = resolveEnv(),
-): string {
+export function resolveReferenceImage(resolved: ResolvedEnv = resolveEnv()): string {
   const override = resolved.LOCAL_AI_BENCH_IMAGE;
   if (override && override.length > 0) {
     if (!existsSync(override)) {
@@ -367,14 +362,10 @@ export function resolveReferenceImage(
     }
     return override;
   }
-  const imagePath = join(
-    resolved.LOCAL_AI_RUNTIME_DIR,
-    'bench-assets',
-    'reference-1x1.png',
-  );
+  const imagePath = join(resolved.LOCAL_AI_RUNTIME_DIR, "bench-assets", "reference-1x1.png");
   if (!existsSync(imagePath)) {
     mkdirSync(dirname(imagePath), { recursive: true });
-    writeFileSync(imagePath, Buffer.from(REFERENCE_IMAGE_BASE64, 'base64'));
+    writeFileSync(imagePath, Buffer.from(REFERENCE_IMAGE_BASE64, "base64"));
   }
   return imagePath;
 }
@@ -383,7 +374,7 @@ export function resolveReferenceImage(
 
 export interface BenchPresetOptions {
   target: string;
-  mode?: 'auto' | BenchMode;
+  mode?: "auto" | BenchMode;
   onEvent?: (e: BenchEvent) => void;
   runCli?: RunCli;
   resolved?: ResolvedEnv;
@@ -438,15 +429,15 @@ export async function benchPreset(
     return { error: `Model file not found: ${modelPath}` };
   }
 
-  const bin = join(resolved.LLAMA_CPP_BIN, 'llama-bench');
+  const bin = join(resolved.LLAMA_CPP_BIN, "llama-bench");
   if (!existsSync(bin)) {
     return { error: `llama-bench binary not found: ${bin}` };
   }
 
-  const modeArg = opts.mode ?? 'auto';
+  const modeArg = opts.mode ?? "auto";
   let mode: BenchMode;
-  if (modeArg === 'auto') mode = defaultModeForRel(rel, resolved);
-  else if (modeArg === 'text' || modeArg === 'vision') mode = modeArg;
+  if (modeArg === "auto") mode = defaultModeForRel(rel, resolved);
+  else if (modeArg === "text" || modeArg === "vision") mode = modeArg;
   else return { error: `Unknown bench mode: ${String(modeArg)}` };
 
   const ctx = ctxForModel(rel, resolved);
@@ -458,24 +449,29 @@ export async function benchPreset(
   let best: BenchPresetAttempt | null = null;
 
   for (const profile of DEFAULT_PROFILES) {
-    opts.onEvent?.({ type: 'profile-start', profile });
+    opts.onEvent?.({ type: "profile-start", profile });
     const extra = benchProfileArgs(profile).split(/\s+/).filter(Boolean);
     const args = [
-      '-m', modelPath,
-      '-pg', '256,64',
-      '-r', '1',
-      '-ngl', '999',
+      "-m",
+      modelPath,
+      "-pg",
+      "256,64",
+      "-r",
+      "1",
+      "-ngl",
+      "999",
       ...extra,
-      '-o', 'jsonl',
+      "-o",
+      "jsonl",
     ];
-    opts.onEvent?.({ type: 'start', command: bin, args });
+    opts.onEvent?.({ type: "start", command: bin, args });
     if (opts.signal?.aborted) {
-      return { error: 'Bench preset aborted' };
+      return { error: "Bench preset aborted" };
     }
     const result = await run(bin, args, opts.onEvent, opts.signal);
     if (result.code !== 0) {
-      attempts.push({ profile, gen_ts: '-1', prompt_ts: '-1', code: result.code, success: false });
-      opts.onEvent?.({ type: 'profile-fail', profile, code: result.code });
+      attempts.push({ profile, gen_ts: "-1", prompt_ts: "-1", code: result.code, success: false });
+      opts.onEvent?.({ type: "profile-fail", profile, code: result.code });
       continue;
     }
     const { gen_ts, prompt_ts } = parseBenchJsonlStats(result.stdout);
@@ -487,7 +483,7 @@ export async function benchPreset(
       success: true,
     };
     attempts.push(attempt);
-    opts.onEvent?.({ type: 'profile-done', profile, gen_ts, prompt_ts });
+    opts.onEvent?.({ type: "profile-done", profile, gen_ts, prompt_ts });
 
     if (!best) {
       best = attempt;
@@ -567,7 +563,7 @@ export async function benchVision(
   const rel = resolveTarget(opts.target);
   if (!rel) return { error: `Unknown bench target: ${opts.target}` };
 
-  const bin = join(resolved.LLAMA_CPP_BIN, 'llama-mtmd-cli');
+  const bin = join(resolved.LLAMA_CPP_BIN, "llama-mtmd-cli");
   if (!existsSync(bin)) {
     return { error: `llama-mtmd-cli binary not found: ${bin}` };
   }
@@ -577,7 +573,7 @@ export async function benchVision(
     return { error: `Model file not found: ${modelPath}` };
   }
 
-  const sep = rel.lastIndexOf('/');
+  const sep = rel.lastIndexOf("/");
   if (sep < 0) return { error: `Invalid rel: ${rel}` };
   const modelDir = join(resolved.LLAMA_CPP_MODELS, rel.slice(0, sep));
   const mmproj = findLocalMmproj(modelDir);
@@ -600,21 +596,27 @@ export async function benchVision(
   const run = opts.runCli ?? defaultRunCli;
 
   const args = [
-    '-m', modelPath,
-    '--mmproj', mmproj,
-    '--image', image,
-    '-p', DEFAULT_PROMPT,
-    '-n', '32',
-    '-ngl', '999',
-    '--no-warmup',
+    "-m",
+    modelPath,
+    "--mmproj",
+    mmproj,
+    "--image",
+    image,
+    "-p",
+    DEFAULT_PROMPT,
+    "-n",
+    "32",
+    "-ngl",
+    "999",
+    "--no-warmup",
   ];
-  opts.onEvent?.({ type: 'start', command: bin, args });
+  opts.onEvent?.({ type: "start", command: bin, args });
   if (opts.signal?.aborted) {
-    return { error: 'Bench vision aborted' };
+    return { error: "Bench vision aborted" };
   }
   const result = await run(bin, args, opts.onEvent, opts.signal);
   if (result.code !== 0) {
-    const tail = result.stderr.split('\n').slice(-20).join('\n');
+    const tail = result.stderr.split("\n").slice(-20).join("\n");
     return { error: `llama-mtmd-cli failed (code=${result.code})\n${tail}` };
   }
 

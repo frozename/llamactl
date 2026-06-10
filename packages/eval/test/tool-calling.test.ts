@@ -1,40 +1,46 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test } from "bun:test";
 import {
   evaluateArgsPredicate,
   scoreToolCallingPrompt,
   scoreToolCallResponse,
-} from '../src/runners/tool-calling.js';
+} from "../src/runners/tool-calling.js";
 
-describe('evaluateArgsPredicate', () => {
-  test('matches string_eq', () => {
-    expect(evaluateArgsPredicate({ kind: 'string_eq', field: 'task_id', value: '5' }, { task_id: '5' })).toBe(true);
+describe("evaluateArgsPredicate", () => {
+  test("matches string_eq", () => {
+    expect(
+      evaluateArgsPredicate({ kind: "string_eq", field: "task_id", value: "5" }, { task_id: "5" }),
+    ).toBe(true);
   });
 
-  test('matches string_contains', () => {
+  test("matches string_contains", () => {
     expect(
       evaluateArgsPredicate(
-        { kind: 'string_contains', field: 'pattern', value: 'LLAMA_CPP_BIN_MTP' },
-        { pattern: 'grep LLAMA_CPP_BIN_MTP here' },
+        { kind: "string_contains", field: "pattern", value: "LLAMA_CPP_BIN_MTP" },
+        { pattern: "grep LLAMA_CPP_BIN_MTP here" },
       ),
     ).toBe(true);
   });
 
-  test('matches int_eq', () => {
-    expect(evaluateArgsPredicate({ kind: 'int_eq', field: 'limit', value: 3 }, { limit: 3 })).toBe(true);
+  test("matches int_eq", () => {
+    expect(evaluateArgsPredicate({ kind: "int_eq", field: "limit", value: 3 }, { limit: 3 })).toBe(
+      true,
+    );
   });
 
-  test('fails when a required field is missing', () => {
-    expect(evaluateArgsPredicate({ kind: 'string_eq', field: 'message', value: 'hello' }, {})).toBe(false);
+  test("fails when a required field is missing", () => {
+    expect(evaluateArgsPredicate({ kind: "string_eq", field: "message", value: "hello" }, {})).toBe(
+      false,
+    );
   });
 });
 
-describe('scoreToolCallResponse', () => {
-  test('scores should_call false as correct when the model does not call a tool', () => {
+describe("scoreToolCallResponse", () => {
+  test("scores should_call false as correct when the model does not call a tool", () => {
     const result = scoreToolCallResponse({
       shouldCall: false,
       expectedTool: null,
       expectedArgsPredicate: null,
-      response: { content: 'plain answer', toolCalls: [] },
+      response: { content: "plain answer", toolCalls: [] },
     });
 
     expect(result).toEqual({
@@ -46,16 +52,20 @@ describe('scoreToolCallResponse', () => {
     });
   });
 
-  test('scores should_call true with matching tool and args as all ones', () => {
+  test("scores should_call true with matching tool and args as all ones", () => {
     const result = scoreToolCallResponse({
       shouldCall: true,
-      expectedTool: 'fs_grep',
-      expectedArgsPredicate: { kind: 'string_contains', field: 'pattern', value: 'LLAMA_CPP_BIN_MTP' },
+      expectedTool: "fs_grep",
+      expectedArgsPredicate: {
+        kind: "string_contains",
+        field: "pattern",
+        value: "LLAMA_CPP_BIN_MTP",
+      },
       response: {
         content: null,
         toolCalls: [
           {
-            name: 'fs_grep',
+            name: "fs_grep",
             arguments: '{"pattern":"grep LLAMA_CPP_BIN_MTP"}',
           },
         ],
@@ -71,17 +81,17 @@ describe('scoreToolCallResponse', () => {
     });
   });
 
-  test('scores invalid json as zero', () => {
+  test("scores invalid json as zero", () => {
     const result = scoreToolCallResponse({
       shouldCall: true,
-      expectedTool: 'task_get',
-      expectedArgsPredicate: { kind: 'string_eq', field: 'task_id', value: '5' },
+      expectedTool: "task_get",
+      expectedArgsPredicate: { kind: "string_eq", field: "task_id", value: "5" },
       response: {
         content: null,
         toolCalls: [
           {
-            name: 'task_get',
-            arguments: '{not-json',
+            name: "task_get",
+            arguments: "{not-json",
           },
         ],
       },
@@ -92,17 +102,17 @@ describe('scoreToolCallResponse', () => {
   });
 });
 
-describe('scoreToolCallingPrompt', () => {
-  test('aggregates the four binary fields across a prompt', () => {
+describe("scoreToolCallingPrompt", () => {
+  test("aggregates the four binary fields across a prompt", () => {
     const result = scoreToolCallingPrompt({
       shouldCall: true,
-      expectedTool: 'memory_search',
-      expectedArgsPredicate: { kind: 'string_contains', field: 'query', value: 'gate criteria' },
+      expectedTool: "memory_search",
+      expectedArgsPredicate: { kind: "string_contains", field: "query", value: "gate criteria" },
       response: {
         content: null,
         toolCalls: [
           {
-            name: 'memory_search',
+            name: "memory_search",
             arguments: '{"query":"What did we decide about MTP gate criteria?"}',
           },
         ],

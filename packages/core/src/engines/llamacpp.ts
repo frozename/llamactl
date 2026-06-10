@@ -1,24 +1,27 @@
-import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from './types.js';
-import { gracefulShutdown, pollUntilModelIds } from './lifecycle.js';
-import { resolve, sep } from 'node:path';
+import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from "./types.js";
+import { gracefulShutdown, pollUntilModelIds } from "./lifecycle.js";
+import { resolve, sep } from "node:path";
 
-const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost', '0.0.0.0']);
+const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost", "0.0.0.0"]);
 
 export const llamacppEngine: EngineAdapter = {
-  name: 'llamacpp',
+  name: "llamacpp",
 
   validateSpec(spec) {
-    if (!spec.binary || spec.binary.trim() === '') {
-      return { ok: false, error: 'llamacpp engine requires spec.binary' };
+    if (!spec.binary || spec.binary.trim() === "") {
+      return { ok: false, error: "llamacpp engine requires spec.binary" };
     }
-    if (!spec.endpoint || typeof spec.endpoint.port !== 'number') {
-      return { ok: false, error: 'llamacpp engine requires spec.endpoint.port' };
+    if (!spec.endpoint || typeof spec.endpoint.port !== "number") {
+      return { ok: false, error: "llamacpp engine requires spec.endpoint.port" };
     }
     if (!LOOPBACK.has(spec.endpoint.host)) {
-      return { ok: false, error: `endpoint.host must be loopback or 0.0.0.0; got ${spec.endpoint.host}` };
+      return {
+        ok: false,
+        error: `endpoint.host must be loopback or 0.0.0.0; got ${spec.endpoint.host}`,
+      };
     }
     if (!Array.isArray(spec.hostedModels) || spec.hostedModels.length !== 1) {
-      return { ok: false, error: 'hostedModels must have exactly one entry' };
+      return { ok: false, error: "hostedModels must have exactly one entry" };
     }
     return { ok: true };
   },
@@ -28,20 +31,20 @@ export const llamacppEngine: EngineAdapter = {
   buildBootCommand(spec: ModelHostSpecForEngine, env: EngineBootEnv) {
     const hostedModel = spec.hostedModels[0];
     if (!hostedModel) {
-      throw new Error('hostedModels must have exactly one entry');
+      throw new Error("hostedModels must have exactly one entry");
     }
     const modelRel = hostedModel.rel;
-    const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS ?? '/tmp/models';
+    const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS ?? "/tmp/models";
     const fullModelPath = resolve(modelsDir, modelRel);
     if (!fullModelPath.startsWith(`${resolve(modelsDir)}${sep}`)) {
       throw new Error(`hostedModel rel escapes models dir: ${modelRel}`);
     }
     const args: string[] = [
-      '--host',
+      "--host",
       spec.endpoint.host,
-      '--port',
+      "--port",
       String(spec.endpoint.port),
-      '-m',
+      "-m",
       fullModelPath,
       ...spec.extraArgs,
     ];

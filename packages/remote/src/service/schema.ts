@@ -16,7 +16,7 @@
  *   - Schemas stay runtime-agnostic. No Docker-specific fields
  *     (privileged, host-network, …) leak into v1.
  */
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * Spec-level secret declaration. Keys are container env-var names;
@@ -51,8 +51,8 @@ export type ServiceSpecSecrets = z.infer<typeof ServiceSpecSecretsSchema>;
  *     Docker Desktop K8s this transparently binds `localhost:<port>`.
  */
 export const ServiceTypeSchema = z
-  .enum(['ClusterIP', 'NodePort', 'LoadBalancer'])
-  .default('ClusterIP');
+  .enum(["ClusterIP", "NodePort", "LoadBalancer"])
+  .default("ClusterIP");
 export type ServiceType = z.infer<typeof ServiceTypeSchema>;
 
 /**
@@ -61,20 +61,20 @@ export type ServiceType = z.infer<typeof ServiceTypeSchema>;
  * spec if reproducibility across hosts matters.
  */
 export const ChromaServiceSpecSchema = z.object({
-  kind: z.literal('chroma'),
+  kind: z.literal("chroma"),
   name: z.string().min(1),
   node: z.string().min(1),
-  runtime: z.enum(['docker', 'external']).default('docker'),
+  runtime: z.enum(["docker", "external"]).default("docker"),
   image: z
     .object({
-      repository: z.string().default('chromadb/chroma'),
-      tag: z.string().default('1.5.8'),
+      repository: z.string().default("chromadb/chroma"),
+      tag: z.string().default("1.5.8"),
     })
     .optional(),
   persistence: z
     .object({
       volume: z.string().optional(),
-      mountPath: z.string().default('/data'),
+      mountPath: z.string().default("/data"),
     })
     .optional(),
   port: z.number().int().positive().default(8000),
@@ -97,23 +97,23 @@ export const ChromaServiceSpecSchema = z.object({
  * `persistence.mountPath` explicitly when pinning an older major.
  */
 export const PgvectorServiceSpecSchema = z.object({
-  kind: z.literal('pgvector'),
+  kind: z.literal("pgvector"),
   name: z.string().min(1),
   node: z.string().min(1),
-  runtime: z.enum(['docker', 'external']).default('docker'),
+  runtime: z.enum(["docker", "external"]).default("docker"),
   image: z
     .object({
-      repository: z.string().default('pgvector/pgvector'),
-      tag: z.string().default('0.8.2-pg18-trixie'),
+      repository: z.string().default("pgvector/pgvector"),
+      tag: z.string().default("0.8.2-pg18-trixie"),
     })
     .optional(),
-  database: z.string().default('postgres'),
-  user: z.string().default('postgres'),
+  database: z.string().default("postgres"),
+  user: z.string().default("postgres"),
   passwordEnv: z.string().optional(),
   persistence: z
     .object({
       volume: z.string().optional(),
-      mountPath: z.string().default('/var/lib/postgresql'),
+      mountPath: z.string().default("/var/lib/postgresql"),
     })
     .optional(),
   port: z.number().int().positive().default(5432),
@@ -136,7 +136,7 @@ export const PgvectorServiceSpecSchema = z.object({
  * requires an explicit field added to the schema in a later phase.
  */
 export const GenericContainerServiceSpecSchema = z.object({
-  kind: z.literal('container'),
+  kind: z.literal("container"),
   name: z.string().min(1),
   node: z.string().min(1),
   image: z.object({ repository: z.string().min(1), tag: z.string().min(1) }),
@@ -146,7 +146,7 @@ export const GenericContainerServiceSpecSchema = z.object({
       z.object({
         containerPort: z.number().int().positive(),
         hostPort: z.number().int().positive().optional(),
-        protocol: z.enum(['tcp', 'udp']).default('tcp'),
+        protocol: z.enum(["tcp", "udp"]).default("tcp"),
       }),
     )
     .default([]),
@@ -176,11 +176,10 @@ export const GenericContainerServiceSpecSchema = z.object({
         .refine(
           (v) =>
             [v.hostPath, v.name, v.configMap].filter(
-              (x) => x !== undefined && x !== null && x !== '',
+              (x) => x !== undefined && x !== null && x !== "",
             ).length === 1,
           {
-            message:
-              'volumes[N]: exactly one of { hostPath, name, configMap } is required',
+            message: "volumes[N]: exactly one of { hostPath, name, configMap } is required",
           },
         ),
     )
@@ -198,7 +197,7 @@ export const GenericContainerServiceSpecSchema = z.object({
   serviceType: ServiceTypeSchema.optional(),
 });
 
-export const ServiceSpecSchema = z.discriminatedUnion('kind', [
+export const ServiceSpecSchema = z.discriminatedUnion("kind", [
   ChromaServiceSpecSchema,
   PgvectorServiceSpecSchema,
   GenericContainerServiceSpecSchema,
@@ -206,7 +205,5 @@ export const ServiceSpecSchema = z.discriminatedUnion('kind', [
 
 export type ChromaServiceSpec = z.infer<typeof ChromaServiceSpecSchema>;
 export type PgvectorServiceSpec = z.infer<typeof PgvectorServiceSpecSchema>;
-export type GenericContainerServiceSpec = z.infer<
-  typeof GenericContainerServiceSpecSchema
->;
+export type GenericContainerServiceSpec = z.infer<typeof GenericContainerServiceSpecSchema>;
 export type ServiceSpec = z.infer<typeof ServiceSpecSchema>;

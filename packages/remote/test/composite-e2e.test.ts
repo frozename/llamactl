@@ -1,15 +1,15 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { applyComposite, destroyComposite } from '../src/composite/apply.js';
-import type { Composite } from '../src/composite/schema.js';
-import { saveConfig } from '../src/config/kubeconfig.js';
-import { freshConfig } from '../src/config/schema.js';
-import { createDockerBackend } from '../src/runtime/docker/backend.js';
-import { createKubernetesBackend } from '../src/runtime/kubernetes/backend.js';
-import type { WorkloadClient } from '../src/workload/apply.js';
+import { applyComposite, destroyComposite } from "../src/composite/apply.js";
+import type { Composite } from "../src/composite/schema.js";
+import { saveConfig } from "../src/config/kubeconfig.js";
+import { freshConfig } from "../src/config/schema.js";
+import { createDockerBackend } from "../src/runtime/docker/backend.js";
+import { createKubernetesBackend } from "../src/runtime/kubernetes/backend.js";
+import type { WorkloadClient } from "../src/workload/apply.js";
 
 /**
  * Phase 8 — composite E2E smoke. Opt-in; CI skips by default.
@@ -32,15 +32,15 @@ import type { WorkloadClient } from '../src/workload/apply.js';
  * of the service + runtime surface.
  */
 
-const RUN_GATE = process.env.LLAMACTL_COMPOSITE_E2E === '1';
+const RUN_GATE = process.env.LLAMACTL_COMPOSITE_E2E === "1";
 
 // Defer the Docker ping to a beforeAll so the skipIf check below is
 // fast. If RUN_GATE is false we never ping.
 let dockerReachable = false;
 
-let tmp = '';
-let configPath = '';
-let compositesDir = '';
+let tmp = "";
+let configPath = "";
+let compositesDir = "";
 const originalEnv = { ...process.env };
 
 beforeAll(async () => {
@@ -52,9 +52,9 @@ beforeAll(async () => {
   } catch {
     dockerReachable = false;
   }
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-composite-e2e-'));
-  configPath = join(tmp, 'config');
-  compositesDir = join(tmp, 'composites');
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-composite-e2e-"));
+  configPath = join(tmp, "config");
+  compositesDir = join(tmp, "composites");
   saveConfig(freshConfig(), configPath);
   process.env.LLAMACTL_CONFIG = configPath;
   process.env.LLAMACTL_COMPOSITES_DIR = compositesDir;
@@ -74,7 +74,7 @@ function failingWorkloadClient(): WorkloadClient {
   // never actually called. We supply it anyway to satisfy the
   // applier's signature.
   const err = (): never => {
-    throw new Error('workload client should not be called in the service-only composite E2E');
+    throw new Error("workload client should not be called in the service-only composite E2E");
   };
   return {
     serverStatus: { query: err as never },
@@ -89,7 +89,7 @@ function failingWorkloadClient(): WorkloadClient {
   };
 }
 
-const K8S_RUN_GATE = process.env.LLAMACTL_COMPOSITE_E2E_K8S === '1';
+const K8S_RUN_GATE = process.env.LLAMACTL_COMPOSITE_E2E_K8S === "1";
 let k8sReachable = false;
 
 beforeAll(async () => {
@@ -103,28 +103,28 @@ beforeAll(async () => {
   }
 });
 
-describe.skipIf(!SHOULD_RUN)('Composite E2E — docker round-trip', () => {
+describe.skipIf(!SHOULD_RUN)("Composite E2E — docker round-trip", () => {
   test(
-    'apply + inspect + destroy against a real chroma container',
+    "apply + inspect + destroy against a real chroma container",
     async () => {
       if (!dockerReachable) {
-        console.warn('[composite-e2e] skipping: docker daemon unreachable');
+        console.warn("[composite-e2e] skipping: docker daemon unreachable");
         return;
       }
       const backend = createDockerBackend();
       const manifest: Composite = {
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'composite-e2e-smoke' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "composite-e2e-smoke" },
         spec: {
           services: [
             {
-              kind: 'chroma',
-              name: 'chroma-smoke',
-              node: 'local',
-              runtime: 'docker',
+              kind: "chroma",
+              name: "chroma-smoke",
+              node: "local",
+              runtime: "docker",
               port: 18001, // non-default to dodge any local chroma
-              image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+              image: { repository: "chromadb/chroma", tag: "1.5.8" },
             },
           ],
           workloads: [],
@@ -132,7 +132,7 @@ describe.skipIf(!SHOULD_RUN)('Composite E2E — docker round-trip', () => {
           gateways: [],
           pipelines: [],
           dependencies: [],
-          onFailure: 'rollback',
+          onFailure: "rollback",
         },
       };
 
@@ -144,11 +144,11 @@ describe.skipIf(!SHOULD_RUN)('Composite E2E — docker round-trip', () => {
         compositesDir,
       });
       expect(applyResult.ok).toBe(true);
-      expect(applyResult.status.phase).toBe('Ready');
+      expect(applyResult.status.phase).toBe("Ready");
 
       // Container must be live + labelled.
       const instance = await backend.inspectService({
-        name: 'llamactl-chroma-composite-e2e-smoke-chroma-smoke',
+        name: "llamactl-chroma-composite-e2e-smoke-chroma-smoke",
       });
       expect(instance).not.toBeNull();
       expect(instance?.running).toBe(true);
@@ -163,7 +163,7 @@ describe.skipIf(!SHOULD_RUN)('Composite E2E — docker round-trip', () => {
       expect(destroyResult.ok).toBe(true);
 
       const afterDestroy = await backend.inspectService({
-        name: 'llamactl-chroma-composite-e2e-smoke-chroma-smoke',
+        name: "llamactl-chroma-composite-e2e-smoke-chroma-smoke",
       });
       expect(afterDestroy).toBeNull();
     },
@@ -172,12 +172,12 @@ describe.skipIf(!SHOULD_RUN)('Composite E2E — docker round-trip', () => {
   );
 });
 
-describe.skipIf(!K8S_RUN_GATE)('Composite E2E — kubernetes round-trip', () => {
+describe.skipIf(!K8S_RUN_GATE)("Composite E2E — kubernetes round-trip", () => {
   test(
-    'apply + list + inspect + destroy against a real cluster',
+    "apply + list + inspect + destroy against a real cluster",
     async () => {
       if (!k8sReachable) {
-        console.warn('[composite-e2e] skipping k8s: cluster unreachable');
+        console.warn("[composite-e2e] skipping k8s: cluster unreachable");
         return;
       }
       const backend = createKubernetesBackend({
@@ -185,19 +185,19 @@ describe.skipIf(!K8S_RUN_GATE)('Composite E2E — kubernetes round-trip', () => 
         readinessTimeoutMs: 5 * 60_000,
       });
       const manifest: Composite = {
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'composite-e2e-k8s' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "composite-e2e-k8s" },
         spec: {
-          runtime: 'kubernetes',
+          runtime: "kubernetes",
           services: [
             {
-              kind: 'chroma',
-              name: 'chroma-smoke',
-              node: 'local',
-              runtime: 'docker',       // image runtime — k8s emits a Pod regardless
+              kind: "chroma",
+              name: "chroma-smoke",
+              node: "local",
+              runtime: "docker", // image runtime — k8s emits a Pod regardless
               port: 8000,
-              image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+              image: { repository: "chromadb/chroma", tag: "1.5.8" },
             },
           ],
           workloads: [],
@@ -205,7 +205,7 @@ describe.skipIf(!K8S_RUN_GATE)('Composite E2E — kubernetes round-trip', () => 
           gateways: [],
           pipelines: [],
           dependencies: [],
-          onFailure: 'rollback',
+          onFailure: "rollback",
         },
       };
 
@@ -218,11 +218,11 @@ describe.skipIf(!K8S_RUN_GATE)('Composite E2E — kubernetes round-trip', () => 
       });
       expect(applyResult.ok).toBe(true);
 
-      const listed = await backend.listServices({ composite: 'composite-e2e-k8s' });
+      const listed = await backend.listServices({ composite: "composite-e2e-k8s" });
       expect(listed.length).toBeGreaterThan(0);
 
       const instance = await backend.inspectService({
-        name: 'llamactl-chroma-composite-e2e-k8s-chroma-smoke',
+        name: "llamactl-chroma-composite-e2e-k8s-chroma-smoke",
       });
       expect(instance).not.toBeNull();
       expect(instance?.running).toBe(true);
@@ -243,7 +243,7 @@ describe.skipIf(!K8S_RUN_GATE)('Composite E2E — kubernetes round-trip', () => 
       let stillThere = true;
       while (Date.now() < deadline) {
         const after = await backend.inspectService({
-          name: 'llamactl-chroma-composite-e2e-k8s-chroma-smoke',
+          name: "llamactl-chroma-composite-e2e-k8s-chroma-smoke",
         });
         if (after === null) {
           stillThere = false;
@@ -257,10 +257,10 @@ describe.skipIf(!K8S_RUN_GATE)('Composite E2E — kubernetes round-trip', () => 
   );
 
   test(
-    'composite with ServiceSpec.secrets materializes v1.Secret + secretKeyRef',
+    "composite with ServiceSpec.secrets materializes v1.Secret + secretKeyRef",
     async () => {
       if (!k8sReachable) {
-        console.warn('[composite-e2e] skipping k8s secrets: cluster unreachable');
+        console.warn("[composite-e2e] skipping k8s secrets: cluster unreachable");
         return;
       }
       // The test sets an env var the composite references via
@@ -270,27 +270,27 @@ describe.skipIf(!K8S_RUN_GATE)('Composite E2E — kubernetes round-trip', () => 
       // the same key. We don't need to READ the value back — the
       // assertion is structural: the Secret exists with the right
       // key + the Deployment's env references it.
-      process.env.TEST_E2E_SECRET = 'structural-only';
+      process.env.TEST_E2E_SECRET = "structural-only";
       const backend = createKubernetesBackend({
         readinessPollMs: 2_000,
         readinessTimeoutMs: 5 * 60_000,
       });
       const manifest: Composite = {
-        apiVersion: 'llamactl/v1',
-        kind: 'Composite',
-        metadata: { name: 'composite-e2e-k8s-secrets' },
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "composite-e2e-k8s-secrets" },
         spec: {
-          runtime: 'kubernetes',
+          runtime: "kubernetes",
           services: [
             {
-              kind: 'chroma',
-              name: 'chroma-secret',
-              node: 'local',
-              runtime: 'docker',
+              kind: "chroma",
+              name: "chroma-secret",
+              node: "local",
+              runtime: "docker",
               port: 8000,
-              image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+              image: { repository: "chromadb/chroma", tag: "1.5.8" },
               secrets: {
-                SIDEBAND_TOKEN: { ref: 'env:TEST_E2E_SECRET' },
+                SIDEBAND_TOKEN: { ref: "env:TEST_E2E_SECRET" },
               },
             },
           ],
@@ -299,7 +299,7 @@ describe.skipIf(!K8S_RUN_GATE)('Composite E2E — kubernetes round-trip', () => 
           gateways: [],
           pipelines: [],
           dependencies: [],
-          onFailure: 'rollback',
+          onFailure: "rollback",
         },
       };
 
@@ -316,43 +316,36 @@ describe.skipIf(!K8S_RUN_GATE)('Composite E2E — kubernetes round-trip', () => 
       // call (the backend surface doesn't expose a "read Secret"
       // method — by design, callers shouldn't round-trip secret
       // values through llamactl).
-      const { createKubernetesClient } = await import(
-        '../src/runtime/kubernetes/client.js'
-      );
+      const { createKubernetesClient } = await import("../src/runtime/kubernetes/client.js");
       const client = createKubernetesClient();
-      const namespace = 'llamactl-composite-e2e-k8s-secrets';
+      const namespace = "llamactl-composite-e2e-k8s-secrets";
       const secret = await client.core.readNamespacedSecret({
-        name: 'chroma-secret-secrets',
+        name: "chroma-secret-secrets",
         namespace,
       });
       expect(secret.data?.SIDEBAND_TOKEN).toBeDefined();
       // Base64 decode matches the env var we set.
-      const decoded = Buffer.from(
-        secret.data!.SIDEBAND_TOKEN!,
-        'base64',
-      ).toString('utf8');
-      expect(decoded).toBe('structural-only');
+      const decoded = Buffer.from(secret.data!.SIDEBAND_TOKEN!, "base64").toString("utf8");
+      expect(decoded).toBe("structural-only");
 
       const dep = await client.apps.readNamespacedDeployment({
-        name: 'chroma-secret',
+        name: "chroma-secret",
         namespace,
       });
       const env = dep.spec?.template?.spec?.containers?.[0]?.env ?? [];
-      const secretEnv = env.find(
-        (e: { name: string }) => e.name === 'SIDEBAND_TOKEN',
-      );
+      const secretEnv = env.find((e: { name: string }) => e.name === "SIDEBAND_TOKEN");
       expect(secretEnv).toBeDefined();
       // Important: the plain `value` field must NOT be set — we want
       // secretKeyRef only so the cluster audit log never sees the
       // value.
+      expect((secretEnv as { value?: string }).value).toBeUndefined();
       expect(
-        (secretEnv as { value?: string }).value,
-      ).toBeUndefined();
-      expect(
-        (secretEnv as {
-          valueFrom?: { secretKeyRef?: { name: string; key: string } };
-        }).valueFrom?.secretKeyRef,
-      ).toEqual({ name: 'chroma-secret-secrets', key: 'SIDEBAND_TOKEN' });
+        (
+          secretEnv as {
+            valueFrom?: { secretKeyRef?: { name: string; key: string } };
+          }
+        ).valueFrom?.secretKeyRef,
+      ).toEqual({ name: "chroma-secret-secrets", key: "SIDEBAND_TOKEN" });
 
       // Destroy — namespace cascade reaps the Secret, Deployment, Service.
       const destroyResult = await destroyComposite({

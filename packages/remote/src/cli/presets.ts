@@ -17,12 +17,12 @@
  * Custom CLIs that don't fit a preset use `preset: 'custom'` with
  * operator-supplied `command` + `args`.
  */
-import type { CliBinding, CliPreset } from '../config/schema.js';
+import type { CliBinding, CliPreset } from "../config/schema.js";
 
 export interface ResolvedCliInvocation {
   command: string;
   args: string[];
-  format: 'text' | 'json';
+  format: "text" | "json";
   /**
    * True when the preset emits output progressively and the
    * adapter should expose a streaming `streamResponse`. False =
@@ -43,7 +43,7 @@ export interface ResolvedCliInvocation {
 interface PresetDef {
   command: string;
   args: string[];
-  format: 'text' | 'json';
+  format: "text" | "json";
   stream: boolean;
   versionProbe: string[];
 }
@@ -60,31 +60,31 @@ interface PresetDef {
  * placeholder; the adapter falls back to piping on stdin when it
  * sees no `{{prompt}}` token.
  */
-export const CLI_PRESETS: Record<Exclude<CliPreset, 'custom'>, PresetDef> = {
+export const CLI_PRESETS: Record<Exclude<CliPreset, "custom">, PresetDef> = {
   claude: {
-    command: 'claude',
-    args: ['-p', '{{prompt}}', '--output-format', 'text'],
-    format: 'text',
+    command: "claude",
+    args: ["-p", "{{prompt}}", "--output-format", "text"],
+    format: "text",
     // `claude -p` prints tokens as they arrive when stdout is a
     // pipe — the adapter line-buffers stdout and forwards each
     // line as a streaming chunk so CLI-backed chat feels
     // interactive, not batch.
     stream: true,
-    versionProbe: ['--version'],
+    versionProbe: ["--version"],
   },
   codex: {
-    command: 'codex',
-    args: ['exec', '{{prompt}}'],
-    format: 'text',
+    command: "codex",
+    args: ["exec", "{{prompt}}"],
+    format: "text",
     stream: false,
-    versionProbe: ['--version'],
+    versionProbe: ["--version"],
   },
   gemini: {
-    command: 'gemini',
-    args: ['-p', '{{prompt}}'],
-    format: 'text',
+    command: "gemini",
+    args: ["-p", "{{prompt}}"],
+    format: "text",
     stream: false,
-    versionProbe: ['--version'],
+    versionProbe: ["--version"],
   },
 };
 
@@ -95,11 +95,9 @@ export const CLI_PRESETS: Record<Exclude<CliPreset, 'custom'>, PresetDef> = {
  * adapter-construction time, not on first call.
  */
 export function resolvePreset(binding: CliBinding): ResolvedCliInvocation {
-  if (binding.preset === 'custom') {
+  if (binding.preset === "custom") {
     if (!binding.command || !binding.args) {
-      throw new Error(
-        `cli binding '${binding.name}': preset='custom' requires command and args`,
-      );
+      throw new Error(`cli binding '${binding.name}': preset='custom' requires command and args`);
     }
     return {
       command: binding.command,
@@ -109,7 +107,7 @@ export function resolvePreset(binding: CliBinding): ResolvedCliInvocation {
       // know their CLI streams can wrap it in a fork of the
       // adapter; the default stays conservative.
       stream: false,
-      versionProbe: ['--version'],
+      versionProbe: ["--version"],
     };
   }
   const preset = CLI_PRESETS[binding.preset];
@@ -130,15 +128,18 @@ export function resolvePreset(binding: CliBinding): ResolvedCliInvocation {
  * If `{{prompt}}` isn't present the prompt will be sent via stdin —
  * adapters detect this and route accordingly.
  */
-export function expandArgs(args: string[], prompt: string): {
+export function expandArgs(
+  args: string[],
+  prompt: string,
+): {
   args: string[];
   promptOnStdin: boolean;
 } {
   let substituted = false;
   const out = args.map((a) => {
-    if (!a.includes('{{prompt}}')) return a;
+    if (!a.includes("{{prompt}}")) return a;
     substituted = true;
-    return a.replace('{{prompt}}', prompt);
+    return a.replace("{{prompt}}", prompt);
   });
   return { args: out, promptOnStdin: !substituted };
 }

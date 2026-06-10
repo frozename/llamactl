@@ -1,10 +1,6 @@
-import { readFileSync, existsSync } from 'node:fs';
-import type {
-  FleetExecutionEntry,
-  FleetJournalEntry,
-  FleetProposalEntry,
-} from './types.js';
-import { actionTier } from './types.js';
+import { readFileSync, existsSync } from "node:fs";
+import type { FleetExecutionEntry, FleetJournalEntry, FleetProposalEntry } from "./types.js";
+import { actionTier } from "./types.js";
 
 export type { FleetExecutionEntry };
 export { actionTier };
@@ -27,12 +23,15 @@ export interface ExecutorOptions {
 
 function defaultReadJournal(path: string): FleetJournalEntry[] {
   if (!existsSync(path)) return [];
-  return readFileSync(path, 'utf8')
-    .split('\n')
+  return readFileSync(path, "utf8")
+    .split("\n")
     .filter(Boolean)
     .flatMap((line) => {
-      try { return [JSON.parse(line) as FleetJournalEntry]; }
-      catch { return []; }
+      try {
+        return [JSON.parse(line) as FleetJournalEntry];
+      } catch {
+        return [];
+      }
     });
 }
 
@@ -41,12 +40,12 @@ export async function runExecutor(opts: ExecutorOptions): Promise<FleetExecution
   const entries = read(opts.journalPath);
 
   const proposals = entries.filter(
-    (e): e is FleetProposalEntry => e.kind === 'fleet-proposal' && e.node === opts.node,
+    (e): e is FleetProposalEntry => e.kind === "fleet-proposal" && e.node === opts.node,
   );
 
   const executedIds = new Set(
     entries
-      .filter((e): e is FleetExecutionEntry => e.kind === 'fleet-execution')
+      .filter((e): e is FleetExecutionEntry => e.kind === "fleet-execution")
       .map((e) => e.proposalId),
   );
 
@@ -55,17 +54,17 @@ export async function runExecutor(opts: ExecutorOptions): Promise<FleetExecution
   const nowMs = Date.now();
   const results: FleetExecutionEntry[] = [];
   for (const proposal of pending) {
-    if (typeof proposal.expiresAt === 'string') {
+    if (typeof proposal.expiresAt === "string") {
       const expiresAtMs = Date.parse(proposal.expiresAt);
       if (Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) {
         const entry: FleetExecutionEntry = {
-          kind: 'fleet-execution',
+          kind: "fleet-execution",
           ts: new Date(nowMs).toISOString(),
           node: opts.node,
           proposalId: proposal.proposalId,
           action: proposal.action,
-          status: 'skipped',
-          reason: 'expired',
+          status: "skipped",
+          reason: "expired",
         };
         opts.writeJournal(entry);
         results.push(entry);
@@ -87,7 +86,7 @@ async function executeOne(
   const shouldExecute = isManualOverride || (opts.auto && tier <= opts.severityThreshold);
 
   const base = {
-    kind: 'fleet-execution' as const,
+    kind: "fleet-execution" as const,
     ts,
     node: opts.node,
     proposalId: proposal.proposalId,
@@ -96,39 +95,39 @@ async function executeOne(
 
   if (!shouldExecute) {
     const reason = !opts.auto
-      ? '--auto not set'
+      ? "--auto not set"
       : `tier ${tier} exceeds threshold ${opts.severityThreshold}`;
-    const entry: FleetExecutionEntry = { ...base, status: 'skipped', reason };
+    const entry: FleetExecutionEntry = { ...base, status: "skipped", reason };
     opts.writeJournal(entry);
     return entry;
   }
 
   try {
-    if (proposal.action.type === 'mark-degraded') {
-      const entry: FleetExecutionEntry = { ...base, status: 'executed' };
+    if (proposal.action.type === "mark-degraded") {
+      const entry: FleetExecutionEntry = { ...base, status: "executed" };
       opts.writeJournal(entry);
       return entry;
     }
 
-    if (proposal.action.type === 'evict') {
+    if (proposal.action.type === "evict") {
       const exitCode = await opts.disable(proposal.action.workload);
       const entry: FleetExecutionEntry = {
         ...base,
-        status: exitCode === 0 ? 'executed' : 'failed',
+        status: exitCode === 0 ? "executed" : "failed",
         exitCode,
       };
       opts.writeJournal(entry);
       return entry;
     }
 
-    if (proposal.action.type === 'restart') {
+    if (proposal.action.type === "restart") {
       const disableCode = await opts.disable(proposal.action.workload);
       if (disableCode !== 0) {
         const entry: FleetExecutionEntry = {
           ...base,
-          status: 'failed',
+          status: "failed",
           exitCode: disableCode,
-          reason: 'disable phase failed',
+          reason: "disable phase failed",
         };
         opts.writeJournal(entry);
         return entry;
@@ -136,7 +135,7 @@ async function executeOne(
       const enableCode = await opts.enable(proposal.action.workload);
       const entry: FleetExecutionEntry = {
         ...base,
-        status: enableCode === 0 ? 'executed' : 'failed',
+        status: enableCode === 0 ? "executed" : "failed",
         exitCode: enableCode,
       };
       opts.writeJournal(entry);
@@ -145,7 +144,7 @@ async function executeOne(
   } catch (err) {
     const entry: FleetExecutionEntry = {
       ...base,
-      status: 'failed',
+      status: "failed",
       reason: (err as Error).message,
     };
     opts.writeJournal(entry);
@@ -153,7 +152,7 @@ async function executeOne(
   }
 
   // TypeScript exhaustive guard — unreachable with current action union
-  const entry: FleetExecutionEntry = { ...base, status: 'skipped', reason: 'unknown action type' };
+  const entry: FleetExecutionEntry = { ...base, status: "skipped", reason: "unknown action type" };
   opts.writeJournal(entry);
   return entry;
 }

@@ -1,9 +1,9 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import type { ProbeReport } from './probe.js';
-import type { PlanLike } from './severity.js';
-import type { StepOutcome } from './execute.js';
+import { appendFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import type { ProbeReport } from "./probe.js";
+import type { PlanLike } from "./severity.js";
+import type { StepOutcome } from "./execute.js";
 
 /**
  * Append-only JSONL journal for the healer loop. One record per tick
@@ -14,7 +14,7 @@ import type { StepOutcome } from './execute.js';
  */
 
 export interface JournalTickEntry {
-  kind: 'tick';
+  kind: "tick";
   ts: string;
   report: ProbeReport;
   /**
@@ -22,20 +22,20 @@ export interface JournalTickEntry {
    * `nova.ops.healthcheck` facade; `'direct'` means raw `probeFleet`
    * (either the legacy path or a fallback after the facade failed).
    */
-  source: 'nova' | 'direct';
+  source: "nova" | "direct";
 }
 
 export interface JournalTransitionEntry {
-  kind: 'transition';
+  kind: "transition";
   ts: string;
   name: string;
-  resourceKind: 'gateway' | 'provider' | 'composite';
+  resourceKind: "gateway" | "provider" | "composite";
   from: string;
   to: string;
 }
 
 export interface JournalErrorEntry {
-  kind: 'error';
+  kind: "error";
   ts: string;
   message: string;
 }
@@ -59,24 +59,24 @@ export interface JournalErrorEntry {
  */
 export interface JournalTransitionSnapshot {
   name: string;
-  resourceKind: 'gateway' | 'provider' | 'composite';
+  resourceKind: "gateway" | "provider" | "composite";
   from: string;
   to: string;
 }
 
 export interface JournalProposalEntry {
-  kind: 'proposal';
+  kind: "proposal";
   ts: string;
   transition: JournalTransitionSnapshot;
   plan: PlanLike;
   proposalId: string;
   /** Which probe path surfaced the transition — matches the tick
    *  entry's `source` field so operators can correlate. */
-  source: 'nova' | 'direct';
+  source: "nova" | "direct";
 }
 
 export interface JournalExecutedEntry {
-  kind: 'executed';
+  kind: "executed";
   ts: string;
   proposalId: string;
   steps: Array<{ index: number; tool: string; outcome: StepOutcome }>;
@@ -84,12 +84,12 @@ export interface JournalExecutedEntry {
 }
 
 export type RefusedReason =
-  | 'destructive-requires-manual-approval'
-  | 'planner-requires-confirmation'
-  | 'severity-exceeded';
+  | "destructive-requires-manual-approval"
+  | "planner-requires-confirmation"
+  | "severity-exceeded";
 
 export interface JournalRefusedEntry {
-  kind: 'refused';
+  kind: "refused";
   ts: string;
   proposalId: string;
   reason: RefusedReason;
@@ -98,7 +98,7 @@ export interface JournalRefusedEntry {
 }
 
 export interface JournalPlanFailedEntry {
-  kind: 'plan-failed';
+  kind: "plan-failed";
   ts: string;
   transition: JournalTransitionSnapshot;
   reason: string;
@@ -117,8 +117,8 @@ export type JournalEntry =
 export function defaultHealerJournalPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_HEALER_JOURNAL?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() || join(homedir(), '.llamactl');
-  return join(base, 'healer', 'journal.jsonl');
+  const base = env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  return join(base, "healer", "journal.jsonl");
 }
 
 export function appendHealerJournal(
@@ -126,5 +126,5 @@ export function appendHealerJournal(
   path: string = defaultHealerJournalPath(),
 ): void {
   mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, `${JSON.stringify(entry)}\n`, 'utf8');
+  appendFileSync(path, `${JSON.stringify(entry)}\n`, "utf8");
 }

@@ -1,6 +1,6 @@
-import { Database } from 'bun:sqlite';
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 const SCHEMA_VERSION = 2;
 
@@ -9,15 +9,15 @@ export interface ResponseCacheStorage {
   response_cache_hit_total: number;
   response_cache_miss_total: number;
   response_cache_evict_total: number;
-  safeWrite(fn: () => void): { ok: true } | { ok: false; reason: 'enospc' | 'other'; error: Error };
+  safeWrite(fn: () => void): { ok: true } | { ok: false; reason: "enospc" | "other"; error: Error };
   close(): void;
 }
 
 export function openResponseCacheStorage(dataRoot: string): ResponseCacheStorage {
-  const cacheDir = join(dataRoot, 'responsecache');
+  const cacheDir = join(dataRoot, "responsecache");
   mkdirSync(cacheDir, { recursive: true });
-  const db = new Database(join(cacheDir, 'responses.db'));
-  db.run('PRAGMA journal_mode = WAL');
+  const db = new Database(join(cacheDir, "responses.db"));
+  db.run("PRAGMA journal_mode = WAL");
   migrate(db);
   const storage: ResponseCacheStorage = {
     db,
@@ -33,14 +33,14 @@ export function openResponseCacheStorage(dataRoot: string): ResponseCacheStorage
 export function safeWrite(
   storage: ResponseCacheStorage,
   fn: () => void,
-): { ok: true } | { ok: false; reason: 'enospc' | 'other'; error: Error } {
+): { ok: true } | { ok: false; reason: "enospc" | "other"; error: Error } {
   try {
     fn();
     return { ok: true };
   } catch (error: unknown) {
     const normalized = toError(error);
-    if (isEnospcError(normalized)) return { ok: false, reason: 'enospc', error: normalized };
-    return { ok: false, reason: 'other', error: normalized };
+    if (isEnospcError(normalized)) return { ok: false, reason: "enospc", error: normalized };
+    return { ok: false, reason: "other", error: normalized };
   }
 }
 
@@ -50,11 +50,15 @@ function migrate(db: Database): void {
       version INTEGER NOT NULL
     )
   `);
-  const versionRow = db.query('SELECT version FROM schema_version LIMIT 1').get() as { version: number } | null;
-  if (!versionRow) db.query('INSERT INTO schema_version (version) VALUES (0)').run();
+  const versionRow = db.query("SELECT version FROM schema_version LIMIT 1").get() as {
+    version: number;
+  } | null;
+  if (!versionRow) db.query("INSERT INTO schema_version (version) VALUES (0)").run();
   const fromVersion = versionRow?.version ?? 0;
   if (fromVersion > SCHEMA_VERSION) {
-    throw new Error(`responsecache schema_version ${fromVersion} is newer than supported ${SCHEMA_VERSION}`);
+    throw new Error(
+      `responsecache schema_version ${fromVersion} is newer than supported ${SCHEMA_VERSION}`,
+    );
   }
   runMigrations(db, fromVersion, SCHEMA_VERSION);
 }
@@ -64,22 +68,22 @@ export function runMigrations(db: Database, fromVersion: number, toVersion: numb
   for (let next = fromVersion + 1; next <= toVersion; next += 1) {
     switch (next) {
       case 1:
-        db.run('BEGIN IMMEDIATE');
+        db.run("BEGIN IMMEDIATE");
         try {
-          createResponseEntriesV2Table(db, 'response_entries');
-          db.run('CREATE INDEX IF NOT EXISTS idx_resp_model ON response_entries (model)');
-          db.run('CREATE INDEX IF NOT EXISTS idx_resp_last_used ON response_entries (last_used)');
-          db.query('UPDATE schema_version SET version = 1').run();
-          db.run('COMMIT');
+          createResponseEntriesV2Table(db, "response_entries");
+          db.run("CREATE INDEX IF NOT EXISTS idx_resp_model ON response_entries (model)");
+          db.run("CREATE INDEX IF NOT EXISTS idx_resp_last_used ON response_entries (last_used)");
+          db.query("UPDATE schema_version SET version = 1").run();
+          db.run("COMMIT");
         } catch (error) {
-          db.run('ROLLBACK');
+          db.run("ROLLBACK");
           throw error;
         }
         break;
       case 2:
-        db.run('BEGIN IMMEDIATE');
+        db.run("BEGIN IMMEDIATE");
         try {
-          createResponseEntriesV2Table(db, 'response_entries_v2');
+          createResponseEntriesV2Table(db, "response_entries_v2");
           db.run(`
             INSERT INTO response_entries_v2 (
               sha,
@@ -112,15 +116,17 @@ export function runMigrations(db: Database, fromVersion: number, toVersion: numb
               hits
             FROM response_entries
           `);
-          db.run('DROP TABLE response_entries');
-          db.run('ALTER TABLE response_entries_v2 RENAME TO response_entries');
-          db.run('DROP INDEX IF EXISTS idx_resp_model');
-          db.run('CREATE INDEX IF NOT EXISTS idx_resp_model_scope ON response_entries (model, workload, workload_epoch)');
-          db.run('CREATE INDEX IF NOT EXISTS idx_resp_last_used ON response_entries (last_used)');
-          db.query('UPDATE schema_version SET version = 2').run();
-          db.run('COMMIT');
+          db.run("DROP TABLE response_entries");
+          db.run("ALTER TABLE response_entries_v2 RENAME TO response_entries");
+          db.run("DROP INDEX IF EXISTS idx_resp_model");
+          db.run(
+            "CREATE INDEX IF NOT EXISTS idx_resp_model_scope ON response_entries (model, workload, workload_epoch)",
+          );
+          db.run("CREATE INDEX IF NOT EXISTS idx_resp_last_used ON response_entries (last_used)");
+          db.query("UPDATE schema_version SET version = 2").run();
+          db.run("COMMIT");
         } catch (error) {
-          db.run('ROLLBACK');
+          db.run("ROLLBACK");
           throw error;
         }
         break;
@@ -152,10 +158,10 @@ function createResponseEntriesV2Table(db: Database, tableName: string): void {
 }
 
 function isEnospcError(error: Error & { code?: unknown }): boolean {
-  return error.code === 'ENOSPC';
+  return error.code === "ENOSPC";
 }
 
 function toError(error: unknown): Error & { code?: unknown } {
   if (error instanceof Error) return error;
-  return new Error(typeof error === 'string' ? error : 'Unknown error');
+  return new Error(typeof error === "string" ? error : "Unknown error");
 }

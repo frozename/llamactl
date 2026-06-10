@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { CuratedModel, curatedTsvFields, formatTsvRow, splitTsvRow } from './schemas.js';
+import { readFileSync } from "node:fs";
+import { CuratedModel, curatedTsvFields, formatTsvRow, splitTsvRow } from "./schemas.js";
 
 /**
  * Built-in curated catalog. Mirrors `_llama_curated_catalog()` in the
@@ -13,140 +13,140 @@ import { CuratedModel, curatedTsvFields, formatTsvRow, splitTsvRow } from './sch
  */
 export const BUILTIN_CATALOG: readonly CuratedModel[] = [
   {
-    id: 'gemma4-e4b-q8',
-    label: 'Gemma 4 E4B Q8',
-    family: 'gemma4',
-    class: 'multimodal',
-    scope: 'fast',
-    rel: 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf',
-    repo: 'unsloth/gemma-4-E4B-it-GGUF',
-    format: 'gguf',
+    id: "gemma4-e4b-q8",
+    label: "Gemma 4 E4B Q8",
+    family: "gemma4",
+    class: "multimodal",
+    scope: "fast",
+    rel: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
+    repo: "unsloth/gemma-4-E4B-it-GGUF",
+    format: "gguf",
   },
   {
-    id: 'gemma4-e4b-q4',
-    label: 'Gemma 4 E4B Q4',
-    family: 'gemma4',
-    class: 'multimodal',
-    scope: 'compact',
-    rel: 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf',
-    repo: 'unsloth/gemma-4-E4B-it-GGUF',
-    format: 'gguf',
+    id: "gemma4-e4b-q4",
+    label: "Gemma 4 E4B Q4",
+    family: "gemma4",
+    class: "multimodal",
+    scope: "compact",
+    rel: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf",
+    repo: "unsloth/gemma-4-E4B-it-GGUF",
+    format: "gguf",
   },
   {
-    id: 'gemma4-26b-q4',
-    label: 'Gemma 4 26B Q4',
-    family: 'gemma4',
-    class: 'multimodal',
-    scope: 'balanced',
-    rel: 'gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
-    repo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
-    format: 'gguf',
+    id: "gemma4-26b-q4",
+    label: "Gemma 4 26B Q4",
+    family: "gemma4",
+    class: "multimodal",
+    scope: "balanced",
+    rel: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    repo: "unsloth/gemma-4-26B-A4B-it-GGUF",
+    format: "gguf",
   },
   {
-    id: 'gemma4-31b-q4',
-    label: 'Gemma 4 31B Q4',
-    family: 'gemma4',
-    class: 'multimodal',
-    scope: 'quality',
-    rel: 'gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf',
-    repo: 'unsloth/gemma-4-31B-it-GGUF',
-    format: 'gguf',
+    id: "gemma4-31b-q4",
+    label: "Gemma 4 31B Q4",
+    family: "gemma4",
+    class: "multimodal",
+    scope: "quality",
+    rel: "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+    repo: "unsloth/gemma-4-31B-it-GGUF",
+    format: "gguf",
   },
   {
     // Tightest fit on 16 GiB unified memory (M4-class). 35B-A3B at
     // IQ2_M is ~11.5 GB; with KV-cache headroom under Metal's
     // 12.7 GB working-set cap the workload runs reliably with
     // operator-set `-c 4096 -ctk q4_0 -ctv q4_0`.
-    id: 'qwen36-iq2m',
-    label: 'Qwen 3.6 35B-A3B IQ2_M',
-    family: 'qwen36',
-    class: 'reasoning',
-    scope: 'compact-fit-16g',
-    rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ2_M.gguf',
-    repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
-    format: 'gguf',
+    id: "qwen36-iq2m",
+    label: "Qwen 3.6 35B-A3B IQ2_M",
+    family: "qwen36",
+    class: "reasoning",
+    scope: "compact-fit-16g",
+    rel: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ2_M.gguf",
+    repo: "unsloth/Qwen3.6-35B-A3B-GGUF",
+    format: "gguf",
   },
   {
-    id: 'qwen36-q3s',
-    label: 'Qwen 3.6 35B-A3B Q3_K_S',
-    family: 'qwen36',
-    class: 'reasoning',
-    scope: 'compact',
-    rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q3_K_S.gguf',
-    repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
-    format: 'gguf',
+    id: "qwen36-q3s",
+    label: "Qwen 3.6 35B-A3B Q3_K_S",
+    family: "qwen36",
+    class: "reasoning",
+    scope: "compact",
+    rel: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q3_K_S.gguf",
+    repo: "unsloth/Qwen3.6-35B-A3B-GGUF",
+    format: "gguf",
   },
   {
-    id: 'qwen36-q4m',
-    label: 'Qwen 3.6 35B-A3B Q4_K_M',
-    family: 'qwen36',
-    class: 'reasoning',
-    scope: 'balanced',
-    rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf',
-    repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
-    format: 'gguf',
+    id: "qwen36-q4m",
+    label: "Qwen 3.6 35B-A3B Q4_K_M",
+    family: "qwen36",
+    class: "reasoning",
+    scope: "balanced",
+    rel: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+    repo: "unsloth/Qwen3.6-35B-A3B-GGUF",
+    format: "gguf",
   },
   {
-    id: 'qwen36-q4',
-    label: 'Qwen 3.6 35B-A3B Q4_K_XL',
-    family: 'qwen36',
-    class: 'reasoning',
-    scope: 'quality',
-    rel: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf',
-    repo: 'unsloth/Qwen3.6-35B-A3B-GGUF',
-    format: 'gguf',
+    id: "qwen36-q4",
+    label: "Qwen 3.6 35B-A3B Q4_K_XL",
+    family: "qwen36",
+    class: "reasoning",
+    scope: "quality",
+    rel: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+    repo: "unsloth/Qwen3.6-35B-A3B-GGUF",
+    format: "gguf",
   },
   {
     // 27B at IQ2_M is ~10.2 GB; the smallest fit-on-16g rel for
     // the qwen35 family. Same KV-quant guidance as qwen36-iq2m.
-    id: 'qwen27-iq2m',
-    label: 'Qwen 3.5 27B IQ2_M',
-    family: 'qwen35',
-    class: 'reasoning',
-    scope: 'compact-fit-16g',
-    rel: 'Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf',
-    repo: 'unsloth/Qwen3.5-27B-GGUF',
-    format: 'gguf',
+    id: "qwen27-iq2m",
+    label: "Qwen 3.5 27B IQ2_M",
+    family: "qwen35",
+    class: "reasoning",
+    scope: "compact-fit-16g",
+    rel: "Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf",
+    repo: "unsloth/Qwen3.5-27B-GGUF",
+    format: "gguf",
   },
   {
-    id: 'qwen27-q5',
-    label: 'Qwen 3.5 27B Q5',
-    family: 'qwen35',
-    class: 'reasoning',
-    scope: 'legacy-balanced',
-    rel: 'Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf',
-    repo: 'unsloth/Qwen3.5-27B-GGUF',
-    format: 'gguf',
+    id: "qwen27-q5",
+    label: "Qwen 3.5 27B Q5",
+    family: "qwen35",
+    class: "reasoning",
+    scope: "legacy-balanced",
+    rel: "Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf",
+    repo: "unsloth/Qwen3.5-27B-GGUF",
+    format: "gguf",
   },
   {
     // Granite 4.1 8b at Q4_K_M — top agentic candidate per the
     // 2026-05-06 fleet eval (composite 1.000 on M4 Pro, 0.896 on
     // mac-mini; perfect 12/12 on penumbra-shaped tool-calling).
-    id: 'granite41-8b-q4',
-    label: 'Granite 4.1 8B Q4',
-    family: 'granite41',
-    class: 'general',
-    scope: 'compact-fit-16g',
-    rel: 'granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf',
-    repo: 'unsloth/granite-4.1-8b-GGUF',
-    format: 'gguf',
+    id: "granite41-8b-q4",
+    label: "Granite 4.1 8B Q4",
+    family: "granite41",
+    class: "general",
+    scope: "compact-fit-16g",
+    rel: "granite-4.1-8b-GGUF/granite-4.1-8b-Q4_K_M.gguf",
+    repo: "unsloth/granite-4.1-8b-GGUF",
+    format: "gguf",
   },
   {
     // Granite 4.1 3b at Q4_K_M — best small-model agentic candidate
     // per the 2026-05-06 fleet eval (composite 1.000 on both M4 Pro
     // and mac-mini; ~88 tps on M4 Pro, ~44 tps on mac-mini).
-    id: 'granite41-3b-q4',
-    label: 'Granite 4.1 3B Q4',
-    family: 'granite41',
-    class: 'general',
-    scope: 'fast',
-    rel: 'granite-4.1-3b-GGUF/granite-4.1-3b-Q4_K_M.gguf',
-    repo: 'unsloth/granite-4.1-3b-GGUF',
-    format: 'gguf',
+    id: "granite41-3b-q4",
+    label: "Granite 4.1 3B Q4",
+    family: "granite41",
+    class: "general",
+    scope: "fast",
+    rel: "granite-4.1-3b-GGUF/granite-4.1-3b-Q4_K_M.gguf",
+    repo: "unsloth/granite-4.1-3b-GGUF",
+    format: "gguf",
   },
 ] as const;
 
-export type CatalogScope = 'all' | 'builtin' | 'custom';
+export type CatalogScope = "all" | "builtin" | "custom";
 
 export interface CatalogLoadOptions {
   customCatalogFile?: string;
@@ -163,18 +163,18 @@ export interface CatalogLoadOptions {
 export function readCustomCatalog(file: string): CuratedModel[] {
   let raw: string;
   try {
-    raw = readFileSync(file, 'utf8');
+    raw = readFileSync(file, "utf8");
   } catch {
     return [];
   }
 
   const out: CuratedModel[] = [];
-  const lines = raw.split('\n');
+  const lines = raw.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     if (line === undefined) continue;
     const trimmed = line.trim();
-    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
 
     const cols = splitTsvRow(line);
     if (cols.length < curatedTsvFields.length - 1) continue;
@@ -183,17 +183,17 @@ export function readCustomCatalog(file: string): CuratedModel[] {
     for (let j = 0; j < curatedTsvFields.length; j += 1) {
       const field = curatedTsvFields[j];
       if (field === undefined) continue;
-      if (field === 'format' && (cols[j] === undefined || cols[j] === '')) {
-        record[field] = 'gguf';
+      if (field === "format" && (cols[j] === undefined || cols[j] === "")) {
+        record[field] = "gguf";
         continue;
       }
-      record[field] = cols[j] ?? '';
+      record[field] = cols[j] ?? "";
     }
 
     const parsed = CuratedModel.safeParse(record);
     if (!parsed.success) {
       process.stderr.write(
-        `llamactl: skipping invalid catalog row in ${file}:${i + 1} (${parsed.error.issues.map((i) => i.message).join('; ')})\n`,
+        `llamactl: skipping invalid catalog row in ${file}:${i + 1} (${parsed.error.issues.map((i) => i.message).join("; ")})\n`,
       );
       continue;
     }
@@ -208,18 +208,14 @@ export function readCustomCatalog(file: string): CuratedModel[] {
  * first for consumers that pick the first matching row (e.g. preset
  * resolution). `builtin` and `custom` are self-descriptive.
  */
-export function listCatalog(
-  scope: CatalogScope,
-  opts: CatalogLoadOptions = {},
-): CuratedModel[] {
-  const customFile =
-    opts.customCatalogFile ?? process.env.LOCAL_AI_CUSTOM_CATALOG_FILE;
+export function listCatalog(scope: CatalogScope, opts: CatalogLoadOptions = {}): CuratedModel[] {
+  const customFile = opts.customCatalogFile ?? process.env.LOCAL_AI_CUSTOM_CATALOG_FILE;
   switch (scope) {
-    case 'builtin':
+    case "builtin":
       return [...BUILTIN_CATALOG];
-    case 'custom':
+    case "custom":
       return customFile ? readCustomCatalog(customFile) : [];
-    case 'all':
+    case "all":
     default: {
       const custom = customFile ? readCustomCatalog(customFile) : [];
       return [...BUILTIN_CATALOG, ...custom];
@@ -229,13 +225,13 @@ export function listCatalog(
 
 /** Serialise an entry as a TSV row using the canonical column order. */
 export function formatCatalogRow(entry: CuratedModel): string {
-  const normalized = { ...entry, format: entry.format ?? 'gguf' };
+  const normalized = { ...entry, format: entry.format ?? "gguf" };
   return formatTsvRow(curatedTsvFields, normalized as unknown as Record<string, unknown>);
 }
 
 /** Serialise a list of entries as a TSV block (one row per line). */
 export function formatCatalogTsv(entries: readonly CuratedModel[]): string {
-  return entries.map(formatCatalogRow).join('\n');
+  return entries.map(formatCatalogRow).join("\n");
 }
 
 /**
@@ -247,7 +243,7 @@ export function findByRel(
   rel: string,
   opts: CatalogLoadOptions & { scope?: CatalogScope } = {},
 ): CuratedModel | null {
-  const entries = listCatalog(opts.scope ?? 'all', opts);
+  const entries = listCatalog(opts.scope ?? "all", opts);
   for (const entry of entries) {
     if (entry.rel === rel) return entry;
   }
@@ -260,7 +256,7 @@ export function findByRepoFile(
   file: string,
   opts: CatalogLoadOptions & { scope?: CatalogScope } = {},
 ): CuratedModel | null {
-  const entries = listCatalog(opts.scope ?? 'all', opts);
+  const entries = listCatalog(opts.scope ?? "all", opts);
   for (const entry of entries) {
     if (entry.repo !== repo) continue;
     if (entry.rel === file) return entry;
@@ -274,7 +270,7 @@ export function repoKnown(
   repo: string,
   opts: CatalogLoadOptions & { scope?: CatalogScope } = {},
 ): boolean {
-  for (const entry of listCatalog(opts.scope ?? 'all', opts)) {
+  for (const entry of listCatalog(opts.scope ?? "all", opts)) {
     if (entry.repo === repo) return true;
   }
   return false;
@@ -295,8 +291,8 @@ export function relKnown(
  * in the shell library).
  */
 export function relFromRepoAndFile(repo: string, file: string): string {
-  if (file.includes('/')) return file;
-  const basename = repo.includes('/') ? repo.slice(repo.lastIndexOf('/') + 1) : repo;
+  if (file.includes("/")) return file;
+  const basename = repo.includes("/") ? repo.slice(repo.lastIndexOf("/") + 1) : repo;
   return `${basename}/${file}`;
 }
 
@@ -306,7 +302,7 @@ export function relFromRepoAndFile(repo: string, file: string): string {
  * but this specific rel isn't, and `new` otherwise. Used by discovery
  * to annotate rows with their catalog provenance.
  */
-export type CuratedStatus = 'curated' | 'family-known' | 'new';
+export type CuratedStatus = "curated" | "family-known" | "new";
 
 export function curatedStatusForRepoFile(
   repo: string,
@@ -314,7 +310,7 @@ export function curatedStatusForRepoFile(
   opts: CatalogLoadOptions = {},
 ): CuratedStatus {
   const rel = relFromRepoAndFile(repo, file);
-  if (relKnown(rel, opts)) return 'curated';
-  if (repoKnown(repo, opts)) return 'family-known';
-  return 'new';
+  if (relKnown(rel, opts)) return "curated";
+  if (repoKnown(repo, opts)) return "family-known";
+  return "new";
 }

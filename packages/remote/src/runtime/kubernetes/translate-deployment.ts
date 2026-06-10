@@ -36,13 +36,9 @@ import type {
   V1ContainerPort,
   V1ServicePort,
   V1Probe,
-} from '@kubernetes/client-node';
-import type { ServiceDeployment } from '../backend.js';
-import {
-  K8S_ANNOTATION_KEYS,
-  K8S_LABEL_KEYS,
-  MANAGED_BY_VALUE,
-} from './labels.js';
+} from "@kubernetes/client-node";
+import type { ServiceDeployment } from "../backend.js";
+import { K8S_ANNOTATION_KEYS, K8S_LABEL_KEYS, MANAGED_BY_VALUE } from "./labels.js";
 
 export interface TranslateDeploymentOptions {
   namespace: string;
@@ -76,8 +72,8 @@ export interface TranslatedDeployment {
   secret: V1Secret | null;
 }
 
-const PVC_DEFAULT_STORAGE = '10Gi';
-const CONTAINER_NAME = 'container';
+const PVC_DEFAULT_STORAGE = "10Gi";
+const CONTAINER_NAME = "container";
 
 export function translateToDeployment(
   spec: ServiceDeployment,
@@ -96,8 +92,8 @@ export function translateToDeployment(
   const podVolumes = buildPodVolumes(spec);
 
   const deployment: V1Deployment = {
-    apiVersion: 'apps/v1',
-    kind: 'Deployment',
+    apiVersion: "apps/v1",
+    kind: "Deployment",
     metadata: {
       name: spec.name,
       namespace: opts.namespace,
@@ -112,7 +108,7 @@ export function translateToDeployment(
       // still use Recreate (a stop-the-world blip) because the
       // downtime trade-off is trivial vs. the cost of getting the
       // two-modes-branch wrong per service.
-      strategy: { type: 'Recreate' },
+      strategy: { type: "Recreate" },
       selector: { matchLabels: { app: spec.name } },
       template: {
         metadata: {
@@ -139,7 +135,7 @@ function buildLabels(
     [K8S_LABEL_KEYS.instance]: `${opts.compositeName}-${spec.name}`,
     [K8S_LABEL_KEYS.partOf]: opts.compositeName,
     [K8S_LABEL_KEYS.composite]: opts.compositeName,
-    [K8S_LABEL_KEYS.component]: 'service',
+    [K8S_LABEL_KEYS.component]: "service",
   };
   if (spec.labels) {
     for (const [k, v] of Object.entries(spec.labels)) {
@@ -249,7 +245,7 @@ function buildPodVolumes(spec: ServiceDeployment): V1Volume[] {
       // missing so fresh nodes don't fail the first apply.
       return {
         name,
-        hostPath: { path: v.hostPath, type: 'DirectoryOrCreate' },
+        hostPath: { path: v.hostPath, type: "DirectoryOrCreate" },
       };
     }
     // Named volume → back with the PVC. Multi-PVC-per-service is
@@ -295,11 +291,11 @@ function buildService(
   const ports: V1ServicePort[] = spec.ports.map((p) => ({
     port: p.hostPort ?? p.containerPort,
     targetPort: p.containerPort,
-    protocol: (p.protocol ?? 'tcp').toUpperCase(),
+    protocol: (p.protocol ?? "tcp").toUpperCase(),
   }));
   return {
-    apiVersion: 'v1',
-    kind: 'Service',
+    apiVersion: "v1",
+    kind: "Service",
     metadata: {
       name: spec.name,
       namespace: opts.namespace,
@@ -309,7 +305,7 @@ function buildService(
     spec: {
       // `spec.serviceType` overrides the default for
       // NodePort / LoadBalancer exposure. Absence → ClusterIP.
-      type: spec.serviceType ?? 'ClusterIP',
+      type: spec.serviceType ?? "ClusterIP",
       selector: { app: podLabels.app ?? spec.name },
       ports,
     },
@@ -331,8 +327,8 @@ function buildPvc(
   // `spec.volumes[]` entries there are. Mixed bind + named volumes
   // bind to the same PVC's claim; follow-up slice will split per
   // distinct logical volume when a real use case hits.
-  const pvcSpec: V1PersistentVolumeClaim['spec'] = {
-    accessModes: ['ReadWriteOnce'],
+  const pvcSpec: V1PersistentVolumeClaim["spec"] = {
+    accessModes: ["ReadWriteOnce"],
     resources: { requests: { storage: PVC_DEFAULT_STORAGE } },
   };
   // NEVER emit `storageClassName: ''` — the empty string means
@@ -342,8 +338,8 @@ function buildPvc(
     pvcSpec.storageClassName = opts.storageClassName;
   }
   return {
-    apiVersion: 'v1',
-    kind: 'PersistentVolumeClaim',
+    apiVersion: "v1",
+    kind: "PersistentVolumeClaim",
     metadata: {
       name: pvcNameFor(spec),
       namespace: opts.namespace,
@@ -364,13 +360,13 @@ function buildSecret(
   for (const envName of Object.keys(spec.secrets)) {
     // The caller (`backend.resolveSecrets`) guarantees a value for
     // every declared key; a missing one is a caller bug.
-    const value = opts.resolvedSecrets[envName] ?? '';
-    data[envName] = Buffer.from(value, 'utf8').toString('base64');
+    const value = opts.resolvedSecrets[envName] ?? "";
+    data[envName] = Buffer.from(value, "utf8").toString("base64");
   }
   return {
-    apiVersion: 'v1',
-    kind: 'Secret',
-    type: 'Opaque',
+    apiVersion: "v1",
+    kind: "Secret",
+    type: "Opaque",
     metadata: {
       name: secretNameFor(spec),
       namespace: opts.namespace,

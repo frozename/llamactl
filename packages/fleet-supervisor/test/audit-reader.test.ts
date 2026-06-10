@@ -29,9 +29,30 @@ describe("audit-reader", () => {
 
   test("returns all entries when no filters, most-recent-first", async () => {
     const lines = [
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-01T00:00:00.000Z", tool: "A", input: {}, outcome: "success", detail: {} }),
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-03T00:00:00.000Z", tool: "B", input: {}, outcome: "success", detail: {} }),
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-02T00:00:00.000Z", tool: "C", input: {}, outcome: "success", detail: {} })
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-01T00:00:00.000Z",
+        tool: "A",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-03T00:00:00.000Z",
+        tool: "B",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-02T00:00:00.000Z",
+        tool: "C",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
     ].join("\n");
     await withTempAudit(lines, async (auditPath) => {
       const res = await readAuditEntries({ auditPath });
@@ -44,8 +65,22 @@ describe("audit-reader", () => {
 
   test("tool filter exact-match", async () => {
     const lines = [
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-01T00:00:00.000Z", tool: "A", input: {}, outcome: "success", detail: {} }),
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-02T00:00:00.000Z", tool: "B", input: {}, outcome: "success", detail: {} })
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-01T00:00:00.000Z",
+        tool: "A",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-02T00:00:00.000Z",
+        tool: "B",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
     ].join("\n");
     await withTempAudit(lines, async (auditPath) => {
       const res = await readAuditEntries({ auditPath, tool: "B" });
@@ -56,8 +91,22 @@ describe("audit-reader", () => {
 
   test("outcome filter", async () => {
     const lines = [
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-01T00:00:00.000Z", tool: "A", input: {}, outcome: "success", detail: {} }),
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-02T00:00:00.000Z", tool: "A", input: {}, outcome: "error", detail: {} })
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-01T00:00:00.000Z",
+        tool: "A",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-02T00:00:00.000Z",
+        tool: "A",
+        input: {},
+        outcome: "error",
+        detail: {},
+      }),
     ].join("\n");
     await withTempAudit(lines, async (auditPath) => {
       const res = await readAuditEntries({ auditPath, outcome: "error" });
@@ -68,8 +117,22 @@ describe("audit-reader", () => {
 
   test("since filter (post-rename) works", async () => {
     const lines = [
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-01T00:00:00.000Z", tool: "A", input: {}, outcome: "success", detail: {} }),
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-03T00:00:00.000Z", tool: "B", input: {}, outcome: "success", detail: {} })
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-01T00:00:00.000Z",
+        tool: "A",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-03T00:00:00.000Z",
+        tool: "B",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
     ].join("\n");
     await withTempAudit(lines, async (auditPath) => {
       const res = await readAuditEntries({ auditPath, since: "2026-05-02T00:00:00.000Z" });
@@ -79,7 +142,14 @@ describe("audit-reader", () => {
   });
 
   test("limit cap (input>500 => 500)", async () => {
-    const line = JSON.stringify({ kind: "mcp-audit", ts: "2026-05-01T00:00:00.000Z", tool: "A", input: {}, outcome: "success", detail: {} });
+    const line = JSON.stringify({
+      kind: "mcp-audit",
+      ts: "2026-05-01T00:00:00.000Z",
+      tool: "A",
+      input: {},
+      outcome: "success",
+      detail: {},
+    });
     const linesArr = Array(600).fill(line).join("\n");
     await withTempAudit(linesArr, async (auditPath) => {
       const res = await readAuditEntries({ auditPath, limit: 1000 });
@@ -90,13 +160,27 @@ describe("audit-reader", () => {
 
   test("limit is clamped at 1 floor (negative/zero inputs)", async () => {
     const lines = [
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-01T00:00:00.000Z", tool: "A", input: {}, outcome: "success", detail: {} }),
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-02T00:00:00.000Z", tool: "B", input: {}, outcome: "success", detail: {} })
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-01T00:00:00.000Z",
+        tool: "A",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-02T00:00:00.000Z",
+        tool: "B",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
     ].join("\n");
     await withTempAudit(lines, async (auditPath) => {
       const res1 = await readAuditEntries({ auditPath, limit: 0 });
       expect(res1.entries.length).toBe(1);
-      
+
       const res2 = await readAuditEntries({ auditPath, limit: -5 });
       expect(res2.entries.length).toBe(1);
     });
@@ -104,11 +188,32 @@ describe("audit-reader", () => {
 
   test("malformedLines counter increments per bad line, reader does not log", async () => {
     const lines = [
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-01T00:00:00.000Z", tool: "A", input: {}, outcome: "success", detail: {} }),
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-01T00:00:00.000Z",
+        tool: "A",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
       "not a json",
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-02T00:00:00.000Z", tool: "B", input: {}, outcome: "success", detail: {} }),
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-02T00:00:00.000Z",
+        tool: "B",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
       "{ also not json",
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-03T00:00:00.000Z", tool: "C", input: {}, outcome: "success", detail: {} })
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-03T00:00:00.000Z",
+        tool: "C",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
     ].join("\n");
     await withTempAudit(lines, async (auditPath) => {
       const consoleErrorSpy = spyOn(console, "error");
@@ -122,9 +227,23 @@ describe("audit-reader", () => {
 
   test("malformed-line skip", async () => {
     const lines = [
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-01T00:00:00.000Z", tool: "A", input: {}, outcome: "success", detail: {} }),
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-01T00:00:00.000Z",
+        tool: "A",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
       "not a json",
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-02T00:00:00.000Z", tool: "B", input: {}, outcome: "success", detail: {} })
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-02T00:00:00.000Z",
+        tool: "B",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
     ].join("\n");
     await withTempAudit(lines, async (auditPath) => {
       const res = await readAuditEntries({ auditPath });
@@ -133,7 +252,14 @@ describe("audit-reader", () => {
   });
 
   test("streams large journals without buffering full file", async () => {
-    const line = JSON.stringify({ kind: "mcp-audit", ts: "2026-05-01T00:00:00.000Z", tool: "A", input: {}, outcome: "success", detail: {} });
+    const line = JSON.stringify({
+      kind: "mcp-audit",
+      ts: "2026-05-01T00:00:00.000Z",
+      tool: "A",
+      input: {},
+      outcome: "success",
+      detail: {},
+    });
     const linesArr = Array(1500).fill(line).join("\n");
     await withTempAudit(linesArr, async (auditPath) => {
       const res = await readAuditEntries({ auditPath, limit: 10 });
@@ -144,9 +270,23 @@ describe("audit-reader", () => {
 
   test("entry without kind:mcp-audit is skipped", async () => {
     const lines = [
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-01T00:00:00.000Z", tool: "A", input: {}, outcome: "success", detail: {} }),
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-01T00:00:00.000Z",
+        tool: "A",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
       JSON.stringify({ kind: "fleet-snapshot", ts: "2026-05-02T00:00:00.000Z" }),
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-03T00:00:00.000Z", tool: "B", input: {}, outcome: "success", detail: {} })
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-03T00:00:00.000Z",
+        tool: "B",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
     ].join("\n");
     await withTempAudit(lines, async (auditPath) => {
       const res = await readAuditEntries({ auditPath });
@@ -158,8 +298,22 @@ describe("audit-reader", () => {
 
   test("since filter handles mixed offsets robustly using Date.parse", async () => {
     const lines = [
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-22T23:00:00Z", tool: "A", input: {}, outcome: "success", detail: {} }),
-      JSON.stringify({ kind: "mcp-audit", ts: "2026-05-22T23:00:01Z", tool: "B", input: {}, outcome: "success", detail: {} })
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-22T23:00:00Z",
+        tool: "A",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
+      JSON.stringify({
+        kind: "mcp-audit",
+        ts: "2026-05-22T23:00:01Z",
+        tool: "B",
+        input: {},
+        outcome: "success",
+        detail: {},
+      }),
     ].join("\n");
     await withTempAudit(lines, async (auditPath) => {
       // 2026-05-23T00:00:00+02:00 is exactly 2026-05-22T22:00:00Z

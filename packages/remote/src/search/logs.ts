@@ -1,6 +1,6 @@
-import { existsSync, statSync, openSync, readSync, closeSync } from 'node:fs';
-import { findTextMatches } from './text-match.js';
-import type { LogHit, MatchExcerpt } from './types.js';
+import { existsSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { findTextMatches } from "./text-match.js";
+import type { LogHit, MatchExcerpt } from "./types.js";
 
 const DEFAULT_WINDOW = 5 * 1024 * 1024;
 
@@ -20,13 +20,13 @@ export interface SearchLogsOpts {
 function tailFile(path: string, windowBytes: number): { text: string; lineOffset: number } {
   const size = statSync(path).size;
   const start = Math.max(0, size - windowBytes);
-  const fd = openSync(path, 'r');
+  const fd = openSync(path, "r");
   try {
     const buf = Buffer.alloc(size - start);
     readSync(fd, buf, 0, buf.length, start);
-    const text = buf.toString('utf8');
+    const text = buf.toString("utf8");
     if (start === 0) return { text, lineOffset: 0 };
-    const firstNl = text.indexOf('\n');
+    const firstNl = text.indexOf("\n");
     if (firstNl < 0) return { text, lineOffset: 0 };
     return { text: text.slice(firstNl + 1), lineOffset: 0 };
   } finally {
@@ -41,7 +41,7 @@ export async function searchLogs(opts: SearchLogsOpts): Promise<LogHit[]> {
   for (const f of opts.files) {
     if (!existsSync(f.path)) continue;
     const { text } = tailFile(f.path, window);
-    const lines = text.split('\n');
+    const lines = text.split("\n");
     const matches: (MatchExcerpt & { lineNumber: number })[] = [];
     let score = 0;
     for (let i = 0; i < lines.length; i++) {

@@ -1,7 +1,7 @@
-import postgres from 'postgres';
-import type { RagBinding } from '../../config/schema.js';
-import { resolveSecret } from '../../config/secret.js';
-import { RagError } from '../errors.js';
+import postgres from "postgres";
+import type { RagBinding } from "../../config/schema.js";
+import { resolveSecret } from "../../config/secret.js";
+import { RagError } from "../errors.js";
 
 /**
  * Resolves the caller-declared Postgres credentials into a ready-to-
@@ -26,12 +26,12 @@ export interface PgvectorClient {
 export function redactPostgresUrl(url: string): string {
   try {
     const u = new URL(url);
-    const host = u.hostname || 'unknown-host';
-    const port = u.port || '5432';
-    const db = u.pathname.replace(/^\//, '') || 'postgres';
+    const host = u.hostname || "unknown-host";
+    const port = u.port || "5432";
+    const db = u.pathname.replace(/^\//, "") || "postgres";
     return `${host}:${port}/${db}`;
   } catch {
-    return 'postgres://[redacted]';
+    return "postgres://[redacted]";
   }
 }
 
@@ -42,10 +42,7 @@ export function redactPostgresUrl(url: string): string {
  * and legacy bare paths all work. We prefer `tokenEnv` when set so
  * that legacy configs continue resolving identically.
  */
-function resolveToken(
-  binding: RagBinding,
-  env: NodeJS.ProcessEnv,
-): string | undefined {
+function resolveToken(binding: RagBinding, env: NodeJS.ProcessEnv): string | undefined {
   const auth = binding.auth;
   if (!auth) return undefined;
   if (auth.tokenEnv) {
@@ -57,7 +54,7 @@ function resolveToken(
       return resolveSecret(auth.tokenRef, env);
     } catch (cause) {
       throw new RagError(
-        'connect-failed',
+        "connect-failed",
         `pgvector: unable to resolve auth.tokenRef (${auth.tokenRef})`,
         cause,
       );
@@ -89,7 +86,7 @@ export function connectPgvector(
     sql = postgres(binding.endpoint, options);
   } catch (cause) {
     throw new RagError(
-      'connect-failed',
+      "connect-failed",
       `pgvector: failed to initialize connection to ${safeLabel}`,
       cause,
     );

@@ -21,10 +21,7 @@
  */
 
 function xmlEscape(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export interface ServiceTemplateOptions {
@@ -36,9 +33,9 @@ export interface ServiceTemplateOptions {
   logDir: string;
 }
 
-export const LAUNCHD_LABEL = 'com.llamactl.agent';
-export const LAUNCHD_PLIST_PATH_DEFAULT = '~/Library/LaunchAgents/com.llamactl.agent.plist';
-export const SYSTEMD_UNIT_PATH_DEFAULT = '~/.config/systemd/user/llamactl-agent.service';
+export const LAUNCHD_LABEL = "com.llamactl.agent";
+export const LAUNCHD_PLIST_PATH_DEFAULT = "~/Library/LaunchAgents/com.llamactl.agent.plist";
+export const SYSTEMD_UNIT_PATH_DEFAULT = "~/.config/systemd/user/llamactl-agent.service";
 
 /**
  * macOS LaunchAgent plist. The user-scoped install (`~/Library/

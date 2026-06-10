@@ -1,6 +1,6 @@
-import * as fs from 'node:fs';
-import { dirname } from 'node:path';
-import { safeWrite, type KvStorage } from './storage.js';
+import * as fs from "node:fs";
+import { dirname } from "node:path";
+import { safeWrite, type KvStorage } from "./storage.js";
 
 export const EXT_FLAG_TOOL_MAP = 1 << 0;
 export const EXT_FLAG_SESSION_TITLE = 1 << 1;
@@ -20,7 +20,7 @@ function trailerPath(slotFile: string): string {
 export function readTrailer(slotFile: string): KvTrailer | null {
   const file = trailerPath(slotFile);
   if (!fs.existsSync(file)) return null;
-  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as KvTrailer;
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as KvTrailer;
   return parsed;
 }
 
@@ -28,7 +28,7 @@ export function writeTrailer(
   slotFile: string,
   trailer: KvTrailer,
   storage?: KvStorage,
-): { ok: true } | { ok: false; reason: 'enospc' | 'other'; error: Error } {
+): { ok: true } | { ok: false; reason: "enospc" | "other"; error: Error } {
   const target = trailerPath(slotFile);
   const body = JSON.stringify(trailer);
   const fallback = { registry_write_fail_total: 0 } as KvStorage;

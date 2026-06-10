@@ -15,9 +15,11 @@ as an opt-in workload mode if Slice A passes.
 ## File structure
 
 **Create:**
+
 - `tools/llama-cpp-mtp/download.sh` — idempotent pre-built MTP GGUF fetch.
 
 **Modify (Slice B if gated-in):**
+
 - `packages/core/src/types.ts`
 - `packages/core/src/env.ts`
 - `packages/core/src/schemas.ts`
@@ -49,9 +51,7 @@ eval "$(bun packages/cli/src/bin.ts env --eval)"
 
 - [ ] Implement idempotent download by catalog id (direct `hf download` of a
       known `(repo, file)` pair per id — no quant-probing logic).
-- [ ] Supported ids:
-      - `qwen36-27b-q4m` → `unsloth/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf`
-      - `qwen36-27b-mtp` → `RDson/Qwen3.6-27B-MTP-Q4_K_M-GGUF/Qwen3.6-27B-MTP-Q4_K_M.gguf`
+- [ ] Supported ids: - `qwen36-27b-q4m` → `unsloth/Qwen3.6-27B-GGUF/Qwen3.6-27B-Q4_K_M.gguf` - `qwen36-27b-mtp` → `RDson/Qwen3.6-27B-MTP-Q4_K_M-GGUF/Qwen3.6-27B-MTP-Q4_K_M.gguf`
 - [ ] Output to `$LLAMA_CPP_MODELS/Qwen3.6-27B-GGUF/` and
       `$LLAMA_CPP_MODELS/Qwen3.6-27B-MTP-GGUF/` respectively.
 
@@ -85,6 +85,7 @@ bash tools/llama-cpp-mtp/download.sh qwen36-27b-mtp
   - Go/no-go recommendation
 
 Gate to Slice B:
+
 - [ ] Short-chat decode >= 1.4x vs vanilla
 - [ ] Long-prompt wall-clock <= 1.1x vs vanilla
 - [ ] Memory fits M4 Pro envelope

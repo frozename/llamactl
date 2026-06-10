@@ -1,14 +1,14 @@
-import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   listModelHosts,
   parseModelHost,
   saveModelHost,
   loadModelHostByName,
   deleteModelHost,
-} from '../../src/workload/modelhost-store.js';
+} from "../../src/workload/modelhost-store.js";
 
 const manifest = parseModelHost(`
 kind: ModelHost
@@ -31,49 +31,58 @@ spec:
   timeoutSeconds: 60
 `);
 
-describe('modelhost-store', () => {
-  test('save/load round-trips a ModelHost manifest by name', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-store-'));
+describe("modelhost-store", () => {
+  test("save/load round-trips a ModelHost manifest by name", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-modelhost-store-"));
     try {
       const path = saveModelHost(manifest, dir);
-      expect(path.endsWith('mlx-host-local.yaml')).toBe(true);
-      const loaded = loadModelHostByName('mlx-host-local', dir);
-      expect(loaded.metadata.name).toBe('mlx-host-local');
-      expect(loaded.kind).toBe('ModelHost');
-      expect('status' in loaded).toBe(false);
+      expect(path.endsWith("mlx-host-local.yaml")).toBe(true);
+      const loaded = loadModelHostByName("mlx-host-local", dir);
+      expect(loaded.metadata.name).toBe("mlx-host-local");
+      expect(loaded.kind).toBe("ModelHost");
+      expect("status" in loaded).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test('saveModelHost strips status before writing', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-status-'));
+  test("saveModelHost strips status before writing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-modelhost-status-"));
     try {
       saveModelHost(manifest, dir);
-      const loaded = loadModelHostByName('mlx-host-local', dir);
-      expect('status' in loaded).toBe(false);
+      const loaded = loadModelHostByName("mlx-host-local", dir);
+      expect("status" in loaded).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test('listModelHosts skips ModelRun and NodeRun files', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-list-'));
+  test("listModelHosts skips ModelRun and NodeRun files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-modelhost-list-"));
     try {
-      writeFileSync(join(dir, 'run.yaml'), 'kind: ModelRun\napiVersion: llamactl.io/v1\nmetadata: {name: run}\nspec: {enabled: true, node: local, rel: x, extraArgs: []}\n');
-      writeFileSync(join(dir, 'node.yaml'), 'kind: NodeRun\napiVersion: llamactl.io/v1\nmetadata: {name: node}\nspec: {enabled: true}\n');
+      writeFileSync(
+        join(dir, "run.yaml"),
+        "kind: ModelRun\napiVersion: llamactl.io/v1\nmetadata: {name: run}\nspec: {enabled: true, node: local, rel: x, extraArgs: []}\n",
+      );
+      writeFileSync(
+        join(dir, "node.yaml"),
+        "kind: NodeRun\napiVersion: llamactl.io/v1\nmetadata: {name: node}\nspec: {enabled: true}\n",
+      );
       saveModelHost(manifest, dir);
-      expect(listModelHosts(dir).map((m) => m.metadata.name)).toEqual(['mlx-host-local']);
+      expect(listModelHosts(dir).map((m) => m.metadata.name)).toEqual(["mlx-host-local"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test('listModelHosts reports malformed YAML skips', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-skip-'));
+  test("listModelHosts reports malformed YAML skips", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-modelhost-skip-"));
     try {
-      const bad = join(dir, 'broken.yaml');
-      writeFileSync(bad, 'kind: ModelHost\napiVersion: llamactl/v1\nmetadata: {name: broken}\nspec: {');
+      const bad = join(dir, "broken.yaml");
+      writeFileSync(
+        bad,
+        "kind: ModelHost\napiVersion: llamactl/v1\nmetadata: {name: broken}\nspec: {",
+      );
       const onSkip = (file: string, err: Error) => {
         expect(file).toBe(bad);
         expect(err.message.length).toBeGreaterThan(0);
@@ -84,12 +93,12 @@ describe('modelhost-store', () => {
     }
   });
 
-  test('deleteModelHost removes the stored yaml file', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'llamactl-modelhost-delete-'));
+  test("deleteModelHost removes the stored yaml file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-modelhost-delete-"));
     try {
       saveModelHost(manifest, dir);
-      expect(deleteModelHost('mlx-host-local', dir)).toBe(true);
-      expect(deleteModelHost('mlx-host-local', dir)).toBe(false);
+      expect(deleteModelHost("mlx-host-local", dir)).toBe(true);
+      expect(deleteModelHost("mlx-host-local", dir)).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

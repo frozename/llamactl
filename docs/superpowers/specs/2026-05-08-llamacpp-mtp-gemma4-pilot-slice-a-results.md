@@ -10,10 +10,10 @@ Plan: `docs/superpowers/plans/2026-05-08-llamacpp-mtp-gemma4-pilot.md`
 - Fork: `AtomicBot-ai/atomic-llama-cpp-turboquant` pinned at
   `2e81dc5f634501c744b69a65a8eeb84ba42e82ee` (HEAD of
   `feature/turboquant-kv-cache` 2026-05-07). Built `cmake -DGGML_METAL=ON
-  -DGGML_METAL_EMBED_LIBRARY=ON -DLLAMA_CURL=ON -DCMAKE_BUILD_TYPE=Release`.
+-DGGML_METAL_EMBED_LIBRARY=ON -DLLAMA_CURL=ON -DCMAKE_BUILD_TYPE=Release`.
   Metal init log notes: `tensor API disabled for pre-M5 and pre-A19
-  devices`, `turbo3 using 4-mag LUT (pre-M5 hardware)`, `turbo3 sparse V
-  dequant enabled`.
+devices`, `turbo3 using 4-mag LUT (pre-M5 hardware)`, `turbo3 sparse V
+dequant enabled`.
 - Base GGUF: `gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf` (already on disk —
   spec deviation explained inline; UD-Q4_K_XL is one tier above the
   fork's published Q4_K_M, MTP/vanilla ratio is invariant to that tier).
@@ -33,29 +33,29 @@ Plan: `docs/superpowers/plans/2026-05-08-llamacpp-mtp-gemma4-pilot.md`
 
 ### Per-prompt decode tok/s
 
-| Prompt              | vanilla |   MTP | ratio | accept |
-|---------------------|--------:|------:|------:|-------:|
-| code_python         |   39.0  | 56.8  | 1.46× | 0.819  |
-| code_cpp            |   38.3  | 53.2  | 1.39× | 0.718  |
-| qa_factual          |   39.0  | 55.3  | 1.42× | 0.757  |
-| stepwise_math       |   38.9  | 57.7  | 1.48× | 0.819  |
-| translation         |   38.7  | 52.8  | 1.36× | 0.694  |
-| summarize           |   38.4  | 47.8  | 1.24× | 0.580  |
-| explain_concept     |   38.1  | 46.8  | 1.23× | 0.567  |
-| long_code_review    |   39.3  | 39.7  | 1.01× | 0.420  |
-| creative_short      |   39.8  | 36.7  | 0.92× | 0.312  |
+| Prompt           | vanilla |  MTP | ratio | accept |
+| ---------------- | ------: | ---: | ----: | -----: |
+| code_python      |    39.0 | 56.8 | 1.46× |  0.819 |
+| code_cpp         |    38.3 | 53.2 | 1.39× |  0.718 |
+| qa_factual       |    39.0 | 55.3 | 1.42× |  0.757 |
+| stepwise_math    |    38.9 | 57.7 | 1.48× |  0.819 |
+| translation      |    38.7 | 52.8 | 1.36× |  0.694 |
+| summarize        |    38.4 | 47.8 | 1.24× |  0.580 |
+| explain_concept  |    38.1 | 46.8 | 1.23× |  0.567 |
+| long_code_review |    39.3 | 39.7 | 1.01× |  0.420 |
+| creative_short   |    39.8 | 36.7 | 0.92× |  0.312 |
 
 ### Aggregate
 
-| metric | vanilla | MTP |
-|---|---:|---:|
-| total_predicted | 1590 | 1576 |
-| total_draft | 0 | 1365 |
-| total_draft_accepted | 0 | 879 |
-| aggregate_accept_rate | n/a | 0.644 |
-| wall_s_total | 43.02 | 33.50 |
-| **aggregate decode tok/s** (predicted/wall) | **37.0** | **47.0** |
-| **aggregate ratio** | — | **1.27×** |
+| metric                                      |  vanilla |       MTP |
+| ------------------------------------------- | -------: | --------: |
+| total_predicted                             |     1590 |      1576 |
+| total_draft                                 |        0 |      1365 |
+| total_draft_accepted                        |        0 |       879 |
+| aggregate_accept_rate                       |      n/a |     0.644 |
+| wall_s_total                                |    43.02 |     33.50 |
+| **aggregate decode tok/s** (predicted/wall) | **37.0** |  **47.0** |
+| **aggregate ratio**                         |        — | **1.27×** |
 
 Wall time savings: 22%.
 
@@ -137,6 +137,7 @@ to free RAM (~11 GB free during runs), then restored via
 `llamactl --node mac-mini apply -f templates/workloads/granite41-8b-mac-mini.yaml`.
 
 Models:
+
 - Base: `gemma-4-E4B-it-UD-Q4_K_XL.gguf` (4.7 GB, on disk).
 - Head: `AtomicChat/gemma-4-E4B-it-assistant-GGUF`
   `gemma-4-E4B-it-assistant.Q4_K_M.gguf` (75 MB, downloaded via curl).
@@ -146,30 +147,30 @@ Same atomic-fork SHA + same flags as the M4 Pro runs. Bench JSONs:
 - `/tmp/mtp-gemma4-pilot-macmini/20260508T174038Z-vanilla-…UD-Q4_K_XL.gguf.json`
 - `/tmp/mtp-gemma4-pilot-macmini/20260508T174139Z-mtp-…UD-Q4_K_XL.gguf.json`
 
-| Prompt              | vanilla | MTP   | ratio | accept |
-|---------------------|--------:|------:|------:|-------:|
-| code_python         |   24.1  | 27.6  | 1.15× | 0.694  |
-| code_cpp            |   24.2  | 28.8  | 1.19× | 0.732  |
-| stepwise_math       |   24.2  | 28.1  | 1.16× | 0.709  |
-| summarize           |   24.5  | 22.8  | 0.93× | 0.463  |
-| explain_concept     |   24.2  | 22.3  | 0.92× | 0.455  |
-| qa_factual          |   24.3  | 21.8  | 0.90× | 0.436  |
-| translation         |   25.2  | 19.6  | 0.78× | 0.308  |
-| creative_short      |   24.7  | 18.0  | 0.73× | 0.250  |
-| long_code_review    |   *outlier* | *outlier* | — | — |
+| Prompt           |   vanilla |       MTP | ratio | accept |
+| ---------------- | --------: | --------: | ----: | -----: |
+| code_python      |      24.1 |      27.6 | 1.15× |  0.694 |
+| code_cpp         |      24.2 |      28.8 | 1.19× |  0.732 |
+| stepwise_math    |      24.2 |      28.1 | 1.16× |  0.709 |
+| summarize        |      24.5 |      22.8 | 0.93× |  0.463 |
+| explain_concept  |      24.2 |      22.3 | 0.92× |  0.455 |
+| qa_factual       |      24.3 |      21.8 | 0.90× |  0.436 |
+| translation      |      25.2 |      19.6 | 0.78× |  0.308 |
+| creative_short   |      24.7 |      18.0 | 0.73× |  0.250 |
+| long_code_review | _outlier_ | _outlier_ |     — |      — |
 
 `long_code_review` returned `predicted_n=1` on both runs — the E4B
 model emits its EOS right after the prompt at temperature=0. Not a
 server or fork issue; the prompt is too prescriptive for the 4B base
 to engage with at deterministic sampling. Excluded from aggregate.
 
-| metric | vanilla | MTP |
-|---|---:|---:|
-| total_predicted (8 valid) | 923 | 980 |
-| wall_s_total (8 valid) | ~40 | ~43 |
-| **aggregate decode tok/s** | **~22.7** | **~22.7** |
-| **aggregate ratio** | — | **~1.00×** |
-| aggregate_accept_rate | n/a | 0.547 |
+| metric                     |   vanilla |        MTP |
+| -------------------------- | --------: | ---------: |
+| total_predicted (8 valid)  |       923 |        980 |
+| wall_s_total (8 valid)     |       ~40 |        ~43 |
+| **aggregate decode tok/s** | **~22.7** |  **~22.7** |
+| **aggregate ratio**        |         — | **~1.00×** |
+| aggregate_accept_rate      |       n/a |      0.547 |
 
 **E4B verdict: net wash on aggregate.** MTP only wins on
 code/structured prompts (1.15–1.19×, well below the 1.4× gate);
@@ -180,11 +181,11 @@ because each main-pass is already cheap.
 
 ## Cross-cut summary
 
-| Run | Aggregate ratio | Code/QA range | Conversational | Creative | Notes |
-|---|---:|---:|---:|---:|---|
-| M4 Pro · 26B-A4B · UD-Q4_K_XL | **1.27×** | 1.39–1.48× | 1.23–1.36× | 0.92–1.01× | clean, primary dataset |
-| M4 Pro · 26B-A4B · UD-Q4_K_M | (crash) / MTP-only 41.7 tps | n/a | n/a | n/a | vanilla deterministic crash; fork instability |
-| mac-mini · E4B · UD-Q4_K_XL | **~1.00×** | 1.15–1.19× | 0.90–0.93× | 0.73–0.78× | MTP gain too small to clear gate |
+| Run                           |             Aggregate ratio | Code/QA range | Conversational |   Creative | Notes                                         |
+| ----------------------------- | --------------------------: | ------------: | -------------: | ---------: | --------------------------------------------- |
+| M4 Pro · 26B-A4B · UD-Q4_K_XL |                   **1.27×** |    1.39–1.48× |     1.23–1.36× | 0.92–1.01× | clean, primary dataset                        |
+| M4 Pro · 26B-A4B · UD-Q4_K_M  | (crash) / MTP-only 41.7 tps |           n/a |            n/a |        n/a | vanilla deterministic crash; fork instability |
+| mac-mini · E4B · UD-Q4_K_XL   |                  **~1.00×** |    1.15–1.19× |     0.90–0.93× | 0.73–0.78× | MTP gain too small to clear gate              |
 
 Across all three configurations the **aggregate gate (1.4×) is missed**.
 The 26B-A4B + UD-Q4_K_XL config is the strongest case for opt-in MTP
@@ -197,7 +198,7 @@ on M4 Pro.
 1. **File an upstream issue** with AtomicBot-ai for the UD-Q4_K_M +
    `turbo3` KV deterministic crash on M4 Pro (Apple10 / pre-M5 LUT
    path). Repro: `bench.sh vanilla
-   gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf` against
+gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf` against
    pinned `2e81dc5f`.
 2. **Workload-aware gate.** The 1.4× aggregate gate is too coarse for
    spec-decoding evaluation: it averages over workloads where MTP is

@@ -7,11 +7,11 @@
  * built electron-mcp-server checkout pointed at by ELECTRON_MCP_DIR
  * (or ../electron-mcp-server relative to the llamactl repo root).
  */
-import { spawn, type ChildProcessByStdio } from 'node:child_process';
-import { createInterface } from 'node:readline';
-import type { Readable, Writable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { createInterface } from "node:readline";
+import type { Readable, Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 interface JsonRpcResponse {
   id?: number;
@@ -26,7 +26,7 @@ class McpClient {
   constructor(proc: ChildProcessByStdio<Writable, Readable, null>) {
     this.proc = proc;
     const rl = createInterface({ input: proc.stdout });
-    rl.on('line', (line) => {
+    rl.on("line", (line) => {
       if (!line.trim()) return;
       try {
         const frame = JSON.parse(line) as JsonRpcResponse;
@@ -53,11 +53,11 @@ class McpClient {
       });
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'tools/call',
+          method: "tools/call",
           params: { name: tool, arguments: args },
-        }) + '\n',
+        }) + "\n",
       );
     });
     if (res.error) throw new Error(`${tool} → ${res.error.message}`);
@@ -65,7 +65,7 @@ class McpClient {
       isError?: boolean;
       content?: Array<{ text?: string }>;
     };
-    const text = envelope?.content?.[0]?.text ?? '';
+    const text = envelope?.content?.[0]?.text ?? "";
     if (envelope?.isError) throw new Error(`${tool} → ${text}`);
     try {
       return JSON.parse(text);
@@ -79,15 +79,15 @@ class McpClient {
       this.pending.set(id, (r) => resolveP(r));
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'initialize',
+          method: "initialize",
           params: {
-            protocolVersion: '2024-11-05',
+            protocolVersion: "2024-11-05",
             capabilities: {},
-            clientInfo: { name: 'ops-chat-flow', version: '0.0.1' },
+            clientInfo: { name: "ops-chat-flow", version: "0.0.1" },
           },
-        }) + '\n',
+        }) + "\n",
       );
     });
   }
@@ -113,25 +113,26 @@ function parseArgs(argv: string[]): DriverArgs {
   const env: Record<string, string> = {};
   let userDataDir: string | undefined;
   for (const a of argv.slice(2)) {
-    if (a.startsWith('--executable=')) executable = a.slice('--executable='.length);
-    else if (a.startsWith('--args=')) execArgs = a.slice('--args='.length).split(' ').filter(Boolean);
-    else if (a.startsWith('--env=')) {
-      const kv = a.slice('--env='.length);
-      const eq = kv.indexOf('=');
+    if (a.startsWith("--executable=")) executable = a.slice("--executable=".length);
+    else if (a.startsWith("--args="))
+      execArgs = a.slice("--args=".length).split(" ").filter(Boolean);
+    else if (a.startsWith("--env=")) {
+      const kv = a.slice("--env=".length);
+      const eq = kv.indexOf("=");
       if (eq > 0) env[kv.slice(0, eq)] = kv.slice(eq + 1);
-    } else if (a.startsWith('--userDataDir=')) {
-      userDataDir = a.slice('--userDataDir='.length);
+    } else if (a.startsWith("--userDataDir=")) {
+      userDataDir = a.slice("--userDataDir=".length);
     }
   }
-  if (!executable) throw new Error('--executable required');
+  if (!executable) throw new Error("--executable required");
   const out: DriverArgs = { executable, execArgs, env };
   if (userDataDir !== undefined) out.userDataDir = userDataDir;
   return out;
 }
 
-function check(label: string, cond: boolean, detail = ''): void {
-  const mark = cond ? 'PASS' : 'FAIL';
-  console.log(`[${mark}] ${label}${detail ? ' — ' + detail : ''}`);
+function check(label: string, cond: boolean, detail = ""): void {
+  const mark = cond ? "PASS" : "FAIL";
+  console.log(`[${mark}] ${label}${detail ? " — " + detail : ""}`);
   if (!cond) process.exitCode = 1;
 }
 
@@ -151,10 +152,10 @@ async function waitForPlannerOutcome(
   client: McpClient,
   sessionId: string,
   timeoutMs: number,
-): Promise<'step' | 'no-backend'> {
+): Promise<"step" | "no-backend"> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const probe = (await client.call('electron_evaluate_renderer', {
+    const probe = (await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `(() => {
         const step = document.querySelector('[data-testid="ops-chat-step-0"]');
@@ -163,19 +164,19 @@ async function waitForPlannerOutcome(
         return { hasStep: !!step, hasErr: !!err, hasRefusal: !!refusal };
       })()`,
     })) as { result: { hasStep: boolean; hasErr: boolean; hasRefusal: boolean } };
-    if (probe.result.hasStep) return 'step';
-    if (probe.result.hasErr || probe.result.hasRefusal) return 'no-backend';
+    if (probe.result.hasStep) return "step";
+    if (probe.result.hasErr || probe.result.hasRefusal) return "no-backend";
     await new Promise((r) => setTimeout(r, 250));
   }
-  return 'no-backend';
+  return "no-backend";
 }
 
 function resolveServerScript(here: string): string {
   const explicit = process.env.ELECTRON_MCP_DIR;
   if (explicit && explicit.length > 0) {
-    return resolve(explicit, 'dist', 'server', 'index.js');
+    return resolve(explicit, "dist", "server", "index.js");
   }
-  return resolve(here, '..', '..', '..', 'electron-mcp-server', 'dist', 'server', 'index.js');
+  return resolve(here, "..", "..", "..", "electron-mcp-server", "dist", "server", "index.js");
 }
 
 async function main(): Promise<void> {
@@ -183,9 +184,9 @@ async function main(): Promise<void> {
   const here = dirname(fileURLToPath(import.meta.url));
   const serverScript = resolveServerScript(here);
   const env: NodeJS.ProcessEnv = { ...process.env };
-  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? 'warn';
-  const nodeBin = process.env.MCP_NODE ?? 'node';
-  const proc = spawn(nodeBin, [serverScript], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "warn";
+  const nodeBin = process.env.MCP_NODE ?? "node";
+  const proc = spawn(nodeBin, [serverScript], { env, stdio: ["pipe", "pipe", "inherit"] });
   const client = new McpClient(proc);
 
   try {
@@ -196,21 +197,21 @@ async function main(): Promise<void> {
     };
     if (Object.keys(args.env).length > 0) launchArgs.env = args.env;
     if (args.userDataDir !== undefined) launchArgs.userDataDir = args.userDataDir;
-    const launch = (await client.call('electron_launch', launchArgs, 60_000)) as {
+    const launch = (await client.call("electron_launch", launchArgs, 60_000)) as {
       sessionId?: string;
     };
     const sessionId = launch.sessionId;
-    if (!sessionId) throw new Error('launch failed');
-    await client.call('electron_wait_for_window', { sessionId, index: 0, timeoutMs: 30_000 });
-    await client.call('electron_wait_for_selector', {
+    if (!sessionId) throw new Error("launch failed");
+    await client.call("electron_wait_for_window", { sessionId, index: 0, timeoutMs: 30_000 });
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="dashboard-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 10_000,
     });
 
     // Navigate to Ops Chat via the command palette (Beacon shell).
-    await client.call('electron_evaluate_renderer', {
+    await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `(() => {
         const e = new KeyboardEvent('keydown', {
@@ -224,18 +225,18 @@ async function main(): Promise<void> {
         document.dispatchEvent(e);
       })()`,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="command-palette"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    await client.call('electron_fill', {
+    await client.call("electron_fill", {
       sessionId,
       selector: '[data-testid="command-palette-input"]',
-      value: 'Ops Chat',
+      value: "Ops Chat",
     });
-    await client.call('electron_evaluate_renderer', {
+    await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `(() => {
         const e = new KeyboardEvent('keydown', {
@@ -250,36 +251,36 @@ async function main(): Promise<void> {
         target.dispatchEvent(e);
       })()`,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="ops-chat-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 8_000,
     });
-    check('ops-chat-root visible after palette navigation', true);
+    check("ops-chat-root visible after palette navigation", true);
 
     // Empty state on fresh open.
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="ops-chat-empty"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    check('ops-chat-empty card shows on fresh open', true);
+    check("ops-chat-empty card shows on fresh open", true);
 
     // Plan a goal. Use one the stub catalog definitely satisfies:
     // the default catalog includes llamactl.catalog.list.
-    await client.call('electron_fill', {
+    await client.call("electron_fill", {
       sessionId,
       selector: '[data-testid="ops-chat-goal"]',
-      value: 'list installed models on the control plane',
+      value: "list installed models on the control plane",
     });
     // Submit via Cmd+Enter on the textarea — clicking the submit button
     // races with React's controlled-component state update (the button is
     // disabled until draft is non-empty in store-state, and electron_click
     // can fire before the state propagates). The textarea's onKeyDown
     // handler reaches onSubmit() directly.
-    await client.call('electron_evaluate_renderer', {
+    await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `(() => {
         const ta = document.querySelector('[data-testid="ops-chat-goal"]');
@@ -295,53 +296,52 @@ async function main(): Promise<void> {
     // CI without an ops-executor). If the latter, SKIP gracefully —
     // ops-chat-flow's E2E arc requires a real planner.
     const outcome = await waitForPlannerOutcome(client, sessionId, 10_000);
-    if (outcome === 'no-backend') {
-      console.log('SKIP — no planner backend available; ops-chat E2E requires one.');
-      await client.call('electron_close', { sessionId });
+    if (outcome === "no-backend") {
+      console.log("SKIP — no planner backend available; ops-chat E2E requires one.");
+      await client.call("electron_close", { sessionId });
       return;
     }
-    check('first proposal bubble streams in inline (iteration 0)', true);
+    check("first proposal bubble streams in inline (iteration 0)", true);
 
     // N.4 Phase 2 guarantee: proposal bubbles render inline in the
     // transcript (not as a separate StepCard-at-the-bottom layout).
     // The new Reject button is proposal-only — its presence proves
     // we're on the streaming-loop architecture.
-    const rejectExists = (await client.call('electron_evaluate_renderer', {
+    const rejectExists = (await client.call("electron_evaluate_renderer", {
       sessionId,
-      expression:
-        '!!document.querySelector(\'[data-testid="ops-chat-step-0-reject"]\')',
+      expression: "!!document.querySelector('[data-testid=\"ops-chat-step-0-reject\"]')",
     })) as { result: boolean };
     check(
-      'inline proposal bubble exposes Reject button (new architecture)',
+      "inline proposal bubble exposes Reject button (new architecture)",
       rejectExists.result === true,
     );
 
     // Stub planner picks the first catalog entry — `llamactl.catalog.list`
     // on this layout. Confirm the tier badge shows it rendered as
     // `read` so the Run (not Preview) path applies.
-    const tierEl = (await client.call('electron_evaluate_renderer', {
+    const tierEl = (await client.call("electron_evaluate_renderer", {
       sessionId,
       expression:
-        'document.querySelector(\'[data-testid="ops-chat-step-0-tier"]\')?.textContent ?? null',
+        "document.querySelector('[data-testid=\"ops-chat-step-0-tier\"]')?.textContent ?? null",
     })) as { result: string | null };
     check(
-      'tier badge present on proposal 0',
-      typeof tierEl.result === 'string' && tierEl.result.length > 0,
+      "tier badge present on proposal 0",
+      typeof tierEl.result === "string" && tierEl.result.length > 0,
       `tier=${String(tierEl.result)}`,
     );
 
     // Run the step so the audit journal captures an entry.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="ops-chat-step-0-run"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="ops-chat-step-0-result"]',
-      state: 'visible',
+      state: "visible",
       timeout: 8_000,
     });
-    const stepOk = (await client.call('electron_evaluate_renderer', {
+    const stepOk = (await client.call("electron_evaluate_renderer", {
       sessionId,
       expression:
         'document.querySelector(\'[data-testid="ops-chat-step-0-result"]\')?.getAttribute("data-ok")',
@@ -350,41 +350,43 @@ async function main(): Promise<void> {
     // return a structured envelope — either way the card should
     // resolve. We assert the attribute is set.
     check(
-      'step 0 result card has data-ok',
-      stepOk.result === 'true' || stepOk.result === 'false',
+      "step 0 result card has data-ok",
+      stepOk.result === "true" || stepOk.result === "false",
       `data-ok=${String(stepOk.result)}`,
     );
 
     // Audit panel reports at least one entry after the run.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="ops-chat-audit-details"] summary',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="ops-chat-audit-entry-0"]',
-      state: 'visible',
+      state: "visible",
       timeout: 8_000,
     });
-    check('audit panel shows at least one entry after the run', true);
+    check("audit panel shows at least one entry after the run", true);
 
     // Reset clears the transcript.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="ops-chat-reset"]',
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="ops-chat-empty"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    check('reset returns to empty state', true);
+    check("reset returns to empty state", true);
 
-    await client.call('electron_close', { sessionId });
-    console.log(process.exitCode === 1 ? 'FAIL — see above' : 'PASS — all ops-chat flow checks green');
+    await client.call("electron_close", { sessionId });
+    console.log(
+      process.exitCode === 1 ? "FAIL — see above" : "PASS — all ops-chat flow checks green",
+    );
   } catch (err) {
-    console.error('flow crashed:', err);
+    console.error("flow crashed:", err);
     process.exitCode = 1;
   } finally {
     client.kill();

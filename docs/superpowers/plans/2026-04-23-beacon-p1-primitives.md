@@ -13,6 +13,7 @@
 ## File Structure
 
 Create (all under `packages/app/src/ui/`):
+
 - `index.ts` — barrel export
 - `classes.ts` — `cx()` utility for conditional class-name join + unit tests
 - `button.tsx` — Button (primary/secondary/ghost/outline × sm/md/lg)
@@ -30,12 +31,14 @@ Create (all under `packages/app/src/ui/`):
 - `theme-orbs.tsx` — four-dot theme picker
 
 Also create:
+
 - `packages/app/src/modules/ui-primitives/index.tsx` — the sandbox page (palette-only module)
 - `packages/app/test/ui/classes.test.ts` — tests for the `cx()` helper
 - `packages/app/test/ui/button.test.ts` — logic-only variant-class mapping test
 - `packages/app/test/ui/stat-card.test.ts` — sparkline scaling math
 
 Modify:
+
 - `packages/app/src/modules/registry.ts` — add the sandbox entry (palette-only, hidden from activity bar)
 
 ---
@@ -43,6 +46,7 @@ Modify:
 ## Task 1: Scaffolding + `cx()` helper with tests
 
 **Files:**
+
 - Create: `packages/app/src/ui/classes.ts`
 - Create: `packages/app/src/ui/index.ts`
 - Create: `packages/app/test/ui/classes.test.ts`
@@ -52,28 +56,28 @@ Modify:
 Create `packages/app/test/ui/classes.test.ts`:
 
 ```typescript
-import { describe, test, expect } from 'bun:test';
-import { cx } from '../../src/ui/classes';
+import { describe, test, expect } from "bun:test";
+import { cx } from "../../src/ui/classes";
 
-describe('cx', () => {
-  test('joins strings with a space', () => {
-    expect(cx('a', 'b')).toBe('a b');
+describe("cx", () => {
+  test("joins strings with a space", () => {
+    expect(cx("a", "b")).toBe("a b");
   });
 
-  test('skips falsy values', () => {
-    expect(cx('a', false, null, undefined, '', 'b')).toBe('a b');
+  test("skips falsy values", () => {
+    expect(cx("a", false, null, undefined, "", "b")).toBe("a b");
   });
 
-  test('handles the record form — truthy key → include', () => {
-    expect(cx('a', { b: true, c: false, d: true })).toBe('a b d');
+  test("handles the record form — truthy key → include", () => {
+    expect(cx("a", { b: true, c: false, d: true })).toBe("a b d");
   });
 
-  test('empty input returns empty string', () => {
-    expect(cx()).toBe('');
+  test("empty input returns empty string", () => {
+    expect(cx()).toBe("");
   });
 
-  test('no trailing or double spaces', () => {
-    expect(cx('a', '', 'b', null, 'c')).toBe('a b c');
+  test("no trailing or double spaces", () => {
+    expect(cx("a", "", "b", null, "c")).toBe("a b c");
   });
 });
 ```
@@ -101,7 +105,7 @@ export function cx(...values: Value[]): string {
   const out: string[] = [];
   for (const v of values) {
     if (!v) continue;
-    if (typeof v === 'string') {
+    if (typeof v === "string") {
       if (v.length > 0) out.push(v);
       continue;
     }
@@ -109,7 +113,7 @@ export function cx(...values: Value[]): string {
       if (flag) out.push(key);
     }
   }
-  return out.join(' ');
+  return out.join(" ");
 }
 ```
 
@@ -123,7 +127,7 @@ Expected: PASS, 5 tests.
 Create `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { cx } from './classes';
+export { cx } from "./classes";
 ```
 
 Future primitives append their exports here.
@@ -140,6 +144,7 @@ git commit -m "feat(app/ui): add @/ui barrel + cx() class-name helper"
 ## Task 2: Button primitive
 
 **Files:**
+
 - Create: `packages/app/src/ui/button.tsx`
 - Create: `packages/app/test/ui/button.test.ts`
 - Modify: `packages/app/src/ui/index.ts`
@@ -149,27 +154,27 @@ git commit -m "feat(app/ui): add @/ui barrel + cx() class-name helper"
 Create `packages/app/test/ui/button.test.ts`:
 
 ```typescript
-import { describe, test, expect } from 'bun:test';
-import { buttonClasses, type ButtonVariant, type ButtonSize } from '../../src/ui/button';
+import { describe, test, expect } from "bun:test";
+import { buttonClasses, type ButtonVariant, type ButtonSize } from "../../src/ui/button";
 
-describe('buttonClasses', () => {
-  const variants: ButtonVariant[] = ['primary', 'secondary', 'ghost', 'outline'];
-  const sizes: ButtonSize[] = ['sm', 'md', 'lg'];
+describe("buttonClasses", () => {
+  const variants: ButtonVariant[] = ["primary", "secondary", "ghost", "outline"];
+  const sizes: ButtonSize[] = ["sm", "md", "lg"];
 
-  test('every variant × size combination returns a non-empty class list', () => {
+  test("every variant × size combination returns a non-empty class list", () => {
     for (const v of variants) {
       for (const s of sizes) {
         const out = buttonClasses(v, s);
         expect(out.length).toBeGreaterThan(10);
-        expect(out).toContain('bcn-btn');
+        expect(out).toContain("bcn-btn");
         expect(out).toContain(`bcn-btn--${v}`);
         expect(out).toContain(`bcn-btn--${s}`);
       }
     }
   });
 
-  test('unknown variant falls back to primary', () => {
-    expect(buttonClasses('nope' as ButtonVariant, 'md')).toContain('bcn-btn--primary');
+  test("unknown variant falls back to primary", () => {
+    expect(buttonClasses("nope" as ButtonVariant, "md")).toContain("bcn-btn--primary");
   });
 });
 ```
@@ -282,8 +287,8 @@ Expected: PASS.
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { Button, buttonClasses } from './button';
-export type { ButtonProps, ButtonVariant, ButtonSize } from './button';
+export { Button, buttonClasses } from "./button";
+export type { ButtonProps, ButtonVariant, ButtonSize } from "./button";
 ```
 
 - [ ] **Step 6: Commit**
@@ -298,6 +303,7 @@ git commit -m "feat(app/ui): add Button primitive (primary/secondary/ghost/outli
 ## Task 3: Badge primitive
 
 **Files:**
+
 - Create: `packages/app/src/ui/badge.tsx`
 - Modify: `packages/app/src/ui/index.ts`
 
@@ -359,8 +365,8 @@ export function Badge({
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { Badge } from './badge';
-export type { BadgeProps, BadgeVariant } from './badge';
+export { Badge } from "./badge";
+export type { BadgeProps, BadgeVariant } from "./badge";
 ```
 
 - [ ] **Step 3: Typecheck**
@@ -380,6 +386,7 @@ git commit -m "feat(app/ui): add Badge primitive (default/brand/ok/warn/err)"
 ## Task 4: StatusDot primitive
 
 **Files:**
+
 - Create: `packages/app/src/ui/status-dot.tsx`
 - Modify: `packages/app/src/ui/index.ts`
 
@@ -454,8 +461,15 @@ Append to `packages/app/src/themes/tokens.css`:
 
 ```css
 @keyframes bcn-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(1.3); }
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.3);
+  }
 }
 ```
 
@@ -464,8 +478,8 @@ Append to `packages/app/src/themes/tokens.css`:
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { StatusDot } from './status-dot';
-export type { StatusDotProps, StatusDotTone } from './status-dot';
+export { StatusDot } from "./status-dot";
+export type { StatusDotProps, StatusDotTone } from "./status-dot";
 ```
 
 - [ ] **Step 4: Commit**
@@ -480,6 +494,7 @@ git commit -m "feat(app/ui): add StatusDot primitive with pulse animation"
 ## Task 5: Kbd primitive
 
 **Files:**
+
 - Create: `packages/app/src/ui/kbd.tsx`
 - Modify: `packages/app/src/ui/index.ts`
 
@@ -532,8 +547,8 @@ export function Kbd({ compact, className, style, children, ...rest }: KbdProps):
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { Kbd } from './kbd';
-export type { KbdProps } from './kbd';
+export { Kbd } from "./kbd";
+export type { KbdProps } from "./kbd";
 ```
 
 - [ ] **Step 3: Commit**
@@ -548,6 +563,7 @@ git commit -m "feat(app/ui): add Kbd primitive"
 ## Task 6: Input primitive
 
 **Files:**
+
 - Create: `packages/app/src/ui/input.tsx`
 - Modify: `packages/app/src/ui/index.ts`
 
@@ -632,8 +648,8 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(function Inp
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { Input } from './input';
-export type { InputProps } from './input';
+export { Input } from "./input";
+export type { InputProps } from "./input";
 ```
 
 - [ ] **Step 3: Commit**
@@ -648,6 +664,7 @@ git commit -m "feat(app/ui): add Input primitive with brand focus ring + slots"
 ## Task 7: Tabs primitive
 
 **Files:**
+
 - Create: `packages/app/src/ui/tabs.tsx`
 - Modify: `packages/app/src/ui/index.ts`
 
@@ -732,8 +749,8 @@ export function Tab({ value, className, children, ...rest }: TabProps): React.JS
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { Tabs, Tab } from './tabs';
-export type { TabsProps, TabProps } from './tabs';
+export { Tabs, Tab } from "./tabs";
+export type { TabsProps, TabProps } from "./tabs";
 ```
 
 - [ ] **Step 3: Commit**
@@ -748,6 +765,7 @@ git commit -m "feat(app/ui): add controlled Tabs primitive"
 ## Task 8: TreeItem primitive
 
 **Files:**
+
 - Create: `packages/app/src/ui/tree-item.tsx`
 - Modify: `packages/app/src/ui/index.ts`
 
@@ -861,8 +879,8 @@ export function TreeItem({
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { TreeItem } from './tree-item';
-export type { TreeItemProps } from './tree-item';
+export { TreeItem } from "./tree-item";
+export type { TreeItemProps } from "./tree-item";
 ```
 
 - [ ] **Step 3: Commit**
@@ -877,6 +895,7 @@ git commit -m "feat(app/ui): add TreeItem primitive for Explorer rows"
 ## Task 9: Card, Panel, AtmosphericPanel
 
 **Files:**
+
 - Create: `packages/app/src/ui/card.tsx`
 - Create: `packages/app/src/ui/atmospheric-panel.tsx`
 - Modify: `packages/app/src/ui/index.ts`
@@ -1017,10 +1036,10 @@ export function AtmosphericPanel({
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { Card, Panel } from './card';
-export type { CardProps } from './card';
-export { AtmosphericPanel } from './atmospheric-panel';
-export type { AtmosphericPanelProps } from './atmospheric-panel';
+export { Card, Panel } from "./card";
+export type { CardProps } from "./card";
+export { AtmosphericPanel } from "./atmospheric-panel";
+export type { AtmosphericPanelProps } from "./atmospheric-panel";
 ```
 
 - [ ] **Step 4: Commit**
@@ -1035,6 +1054,7 @@ git commit -m "feat(app/ui): add Card, Panel, AtmosphericPanel"
 ## Task 10: StatCard (with sparkline math)
 
 **Files:**
+
 - Create: `packages/app/src/ui/stat-card.tsx`
 - Create: `packages/app/test/ui/stat-card.test.ts`
 - Modify: `packages/app/src/ui/index.ts`
@@ -1044,29 +1064,29 @@ git commit -m "feat(app/ui): add Card, Panel, AtmosphericPanel"
 Create `packages/app/test/ui/stat-card.test.ts`:
 
 ```typescript
-import { describe, test, expect } from 'bun:test';
-import { sparklineHeights } from '../../src/ui/stat-card';
+import { describe, test, expect } from "bun:test";
+import { sparklineHeights } from "../../src/ui/stat-card";
 
-describe('sparklineHeights', () => {
-  test('maps the max value to full height', () => {
+describe("sparklineHeights", () => {
+  test("maps the max value to full height", () => {
     const out = sparklineHeights([1, 2, 4, 8], 32);
     expect(out[3]).toBe(32);
   });
 
-  test('maps the min value to at least 2 px for visibility', () => {
+  test("maps the min value to at least 2 px for visibility", () => {
     const out = sparklineHeights([0, 10], 32);
     expect(out[0]).toBeGreaterThanOrEqual(2);
   });
 
-  test('empty input returns empty array', () => {
+  test("empty input returns empty array", () => {
     expect(sparklineHeights([], 32)).toEqual([]);
   });
 
-  test('all-equal values render at full height each', () => {
+  test("all-equal values render at full height each", () => {
     expect(sparklineHeights([5, 5, 5], 20)).toEqual([20, 20, 20]);
   });
 
-  test('respects the max-height argument', () => {
+  test("respects the max-height argument", () => {
     const out = sparklineHeights([1, 10], 10);
     expect(out[1]).toBe(10);
     expect(out[0]).toBeLessThanOrEqual(10);
@@ -1215,8 +1235,8 @@ Expected: PASS, 5 tests.
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { StatCard, sparklineHeights } from './stat-card';
-export type { StatCardProps } from './stat-card';
+export { StatCard, sparklineHeights } from "./stat-card";
+export type { StatCardProps } from "./stat-card";
 ```
 
 - [ ] **Step 6: Commit**
@@ -1231,6 +1251,7 @@ git commit -m "feat(app/ui): add StatCard with sparkline (+ sparklineHeights sca
 ## Task 11: EditorialHero
 
 **Files:**
+
 - Create: `packages/app/src/ui/editorial-hero.tsx`
 - Modify: `packages/app/src/ui/index.ts`
 
@@ -1383,8 +1404,8 @@ export function EditorialHero({
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { EditorialHero } from './editorial-hero';
-export type { EditorialHeroProps } from './editorial-hero';
+export { EditorialHero } from "./editorial-hero";
+export type { EditorialHeroProps } from "./editorial-hero";
 ```
 
 - [ ] **Step 3: Commit**
@@ -1399,6 +1420,7 @@ git commit -m "feat(app/ui): add EditorialHero"
 ## Task 12: CommandBar (title-bar breadcrumb)
 
 **Files:**
+
 - Create: `packages/app/src/ui/command-bar.tsx`
 - Modify: `packages/app/src/ui/index.ts`
 
@@ -1495,8 +1517,8 @@ export function CommandBar({
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { CommandBar } from './command-bar';
-export type { CommandBarProps, CommandBarCrumb } from './command-bar';
+export { CommandBar } from "./command-bar";
+export type { CommandBarProps, CommandBarCrumb } from "./command-bar";
 ```
 
 - [ ] **Step 3: Commit**
@@ -1511,6 +1533,7 @@ git commit -m "feat(app/ui): add CommandBar breadcrumb primitive"
 ## Task 13: ThemeOrbs
 
 **Files:**
+
 - Create: `packages/app/src/ui/theme-orbs.tsx`
 - Modify: `packages/app/src/ui/index.ts`
 
@@ -1601,8 +1624,8 @@ function orbBackground(id: ThemeId): string {
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { ThemeOrbs } from './theme-orbs';
-export type { ThemeOrbsProps } from './theme-orbs';
+export { ThemeOrbs } from "./theme-orbs";
+export type { ThemeOrbsProps } from "./theme-orbs";
 ```
 
 - [ ] **Step 3: Commit**
@@ -1617,6 +1640,7 @@ git commit -m "feat(app/ui): add ThemeOrbs title-bar picker"
 ## Task 14: Lockup (beacon wordmark)
 
 **Files:**
+
 - Create: `packages/app/src/ui/lockup.tsx`
 - Modify: `packages/app/src/ui/index.ts`
 
@@ -1682,8 +1706,8 @@ export function Lockup({ size = 'md', className, style, ...rest }: LockupProps):
 Append to `packages/app/src/ui/index.ts`:
 
 ```typescript
-export { Lockup } from './lockup';
-export type { LockupProps } from './lockup';
+export { Lockup } from "./lockup";
+export type { LockupProps } from "./lockup";
 ```
 
 - [ ] **Step 3: Commit**
@@ -1698,6 +1722,7 @@ git commit -m "feat(app/ui): add Lockup (beacon wordmark + brand orb)"
 ## Task 15: Primitives sandbox module + palette entry
 
 **Files:**
+
 - Create: `packages/app/src/modules/ui-primitives/index.tsx`
 - Modify: `packages/app/src/modules/registry.ts`
 
@@ -1879,7 +1904,7 @@ function DotIcon(): React.JSX.Element {
 Edit `packages/app/src/modules/registry.ts`. Add next to the other `lazy(() => …)` statements near the top:
 
 ```typescript
-const LazyUIPrimitives = lazy(() => import('./ui-primitives/index'));
+const LazyUIPrimitives = lazy(() => import("./ui-primitives/index"));
 ```
 
 Then append to the `APP_MODULES` array (below the Settings entry, or anywhere in the list — position doesn't matter for palette-only modules):
@@ -1936,6 +1961,7 @@ Expected: green. Note any pre-existing unrelated failures and move on.
 
 Run: `bun run --cwd packages/app dev`
 For each theme (Sirius, Ember, Clinical, Scrubs):
+
 - Open UI Primitives sandbox.
 - Visually confirm every section paints correctly (no broken colors, no `#000000` fallback on surfaces, no clipped heroes, no missing borders where they should exist).
 - Clinical especially — status colors need to read on a light background.
@@ -1962,6 +1988,7 @@ git tag beacon-p1
 - No module is forced to migrate in P1 — the library ships standalone and P3 will migrate callers.
 
 Deferred:
+
 - Actual wiring of CommandBar + ThemeOrbs in the TitleBar → P2.
 - Replacing existing inline button/badge/input markup across modules → P3.
 - Removal of legacy `--color-fg`, `--color-accent`, etc. aliases → end of P3.

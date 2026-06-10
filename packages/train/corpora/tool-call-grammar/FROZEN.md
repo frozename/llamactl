@@ -26,6 +26,7 @@ Decomposition of 19 K.4 base failures revealed:
 **Root cause: the corpus is grading the model on the labeler's stylistic choices, not on objectively-correct outputs.** Neither LoRA nor grammar-constrained decoding can lift this. The decision contract's retire criteria #1 (5 consecutive runs at < +1pp) and #4 (cumulative budget exceeded) are triggered.
 
 See:
+
 - `docs/notes/tool-call-k4-2026-05-16.md` — K.4 dataset + scoring results
 - `docs/notes/tool-call-k5-2026-05-16.md` — K.5 LoRA training + held-out eval
 - `docs/notes/k-track-grammar-control-2026-05-16.md` — failure-mode decomposition + grammar control analysis
@@ -42,7 +43,7 @@ Re-open the K-track only when ALL of the following are in place:
 
 1. **Production-trace gold-labeling pipeline** — replace synthetic gold with real penumbra dispatches where tool-call correctness is retroactively confirmed by user/agent behavior. Removes labeler subjectivity.
 2. **Quantified production failure rate** — measured tool-call success rate on the prior 7-day `agent_performance` sample. If > 95%, there is no problem to fix.
-3. **Either**: a non-LoRA alternative (grammar-constrained decoding, response_format, prompt eng) has been tested *on production-trace data* and missed the +5pp bar; **or** the LoRA hypothesis is reformulated for a different failure mode (e.g. multi-turn rollout shape, larger rank).
+3. **Either**: a non-LoRA alternative (grammar-constrained decoding, response*format, prompt eng) has been tested \_on production-trace data* and missed the +5pp bar; **or** the LoRA hypothesis is reformulated for a different failure mode (e.g. multi-turn rollout shape, larger rank).
 
 ## Don't delete
 

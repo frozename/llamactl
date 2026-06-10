@@ -12,19 +12,19 @@ export interface AuditEntry {
 }
 
 export interface AuditReadOptions {
-  auditPath?: string;     // default defaultFleetAuditPath()
-  tool?: string;          // exact-match filter on `tool`
+  auditPath?: string; // default defaultFleetAuditPath()
+  tool?: string; // exact-match filter on `tool`
   outcome?: "denied" | "success" | "error";
   /** ISO 8601 timestamp; entries with ts >= since are included. Compared via Date.parse (timezone-aware). */
-  since?: string;    // entries with ts >= since
+  since?: string; // entries with ts >= since
   /** Values <1 are clamped to 1 (no count-only mode). */
-  limit?: number;         // most-recent-first; default 50, cap 500
+  limit?: number; // most-recent-first; default 50, cap 500
 }
 
 export interface AuditReadResult {
-  entries: AuditEntry[];  // most-recent-first
-  total: number;          // count BEFORE limit (post-filter)
-  auditPath: string;      // resolved path used
+  entries: AuditEntry[]; // most-recent-first
+  total: number; // count BEFORE limit (post-filter)
+  auditPath: string; // resolved path used
   malformedLines: number;
 }
 
@@ -42,20 +42,20 @@ export async function readAuditEntries(opts?: AuditReadOptions): Promise<AuditRe
   const filtered: AuditEntry[] = [];
   let malformedLines = 0;
   const sinceMs = opts?.since ? Date.parse(opts.since) : NaN;
-  
+
   try {
     for await (const line of rl) {
       if (!line.trim()) continue;
       try {
         const entry = JSON.parse(line) as AuditEntry;
         if (entry.kind !== "mcp-audit") continue;
-        
+
         if (opts?.tool && entry.tool !== opts.tool) continue;
         if (opts?.outcome && entry.outcome !== opts.outcome) continue;
-        
+
         const entryMs = Date.parse(entry.ts);
         if (!Number.isNaN(sinceMs) && !Number.isNaN(entryMs) && entryMs < sinceMs) continue;
-        
+
         filtered.push(entry);
       } catch (err) {
         malformedLines++;

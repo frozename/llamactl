@@ -1,19 +1,12 @@
-import { parseToolJson, type RunbookToolClient } from '../types.js';
-import type { CostGuardianConfig } from './config.js';
+import { parseToolJson, type RunbookToolClient } from "../types.js";
+import type { CostGuardianConfig } from "./config.js";
 import {
   appendCostJournal,
   type CostJournalActionEntry,
   type CostJournalTickEntry,
-} from './journal.js';
-import {
-  decideGuardianAction,
-  type CostSnapshotSubset,
-  type GuardianDecision,
-} from './state.js';
-import {
-  postGuardianWebhook,
-  type WebhookFetcher,
-} from './webhook.js';
+} from "./journal.js";
+import { decideGuardianAction, type CostSnapshotSubset, type GuardianDecision } from "./state.js";
+import { postGuardianWebhook, type WebhookFetcher } from "./webhook.js";
 
 /**
  * One-shot cost-guardian tick. Fetches the daily + (optional)
@@ -99,7 +92,7 @@ export async function runCostGuardianTick(
 ): Promise<GuardianDecision> {
   const daily = parseToolJson<GuardianSnapshotPayload>(
     await opts.tools.callTool({
-      name: 'nova.ops.cost.snapshot',
+      name: "nova.ops.cost.snapshot",
       arguments: { days: 1 },
     }),
   );
@@ -107,7 +100,7 @@ export async function runCostGuardianTick(
   const weekly = hasWeekly
     ? parseToolJson<GuardianSnapshotPayload>(
         await opts.tools.callTool({
-          name: 'nova.ops.cost.snapshot',
+          name: "nova.ops.cost.snapshot",
           arguments: { days: 7 },
         }),
       )
@@ -119,14 +112,10 @@ export async function runCostGuardianTick(
     ...(opts.now ? { now: opts.now } : {}),
   });
   if (!opts.skipJournal) {
-    const entry: CostJournalTickEntry = { kind: 'tick', decision };
+    const entry: CostJournalTickEntry = { kind: "tick", decision };
     appendCostJournal(entry, opts.journalPath);
   }
-  if (
-    !opts.disableWebhook &&
-    decision.tier !== 'noop' &&
-    opts.config.webhook_url
-  ) {
+  if (!opts.disableWebhook && decision.tier !== "noop" && opts.config.webhook_url) {
     const webhookResult = await postGuardianWebhook({
       url: opts.config.webhook_url,
       decision,
@@ -136,16 +125,16 @@ export async function runCostGuardianTick(
     if (!opts.skipJournal) {
       const action: CostJournalActionEntry = webhookResult.ok
         ? {
-            kind: 'action',
+            kind: "action",
             ts: decision.ts,
-            action: 'webhook',
+            action: "webhook",
             ok: true,
             detail: { status: webhookResult.status },
           }
         : {
-            kind: 'action',
+            kind: "action",
             ts: decision.ts,
-            action: 'webhook',
+            action: "webhook",
             ok: false,
             detail: { status: webhookResult.status },
             error: webhookResult.error,
@@ -164,23 +153,20 @@ export async function runCostGuardianTick(
   // journaled. When `config.auto_force_private` is true AND the
   // preview reported `ok !== false`, a wet-run (`dryRun: false`)
   // follows and is journaled separately as `force-private-wet`.
-  if (
-    !opts.skipJournal &&
-    (decision.tier === 'force_private' || decision.tier === 'deregister')
-  ) {
+  if (!opts.skipJournal && (decision.tier === "force_private" || decision.tier === "deregister")) {
     let detail: Record<string, unknown> = {
       autoForcePrivateEnabled: opts.config.auto_force_private === true,
-      targetProfile: 'private-first',
-      syntheticModel: 'fusion-auto',
+      targetProfile: "private-first",
+      syntheticModel: "fusion-auto",
     };
     let ok = true;
     let error: string | undefined;
     try {
       const raw = await opts.tools.callTool({
-        name: 'llamactl.embersynth.set-default-profile',
+        name: "llamactl.embersynth.set-default-profile",
         arguments: {
-          profile: 'private-first',
-          syntheticModel: 'fusion-auto',
+          profile: "private-first",
+          syntheticModel: "fusion-auto",
           dryRun: true,
         },
       });
@@ -204,7 +190,7 @@ export async function runCostGuardianTick(
       };
       if (parsed.ok === false) {
         ok = false;
-        error = `${parsed.reason ?? 'unknown'}: ${parsed.message ?? 'no message'}`;
+        error = `${parsed.reason ?? "unknown"}: ${parsed.message ?? "no message"}`;
         if (parsed.availableProfiles) {
           detail.availableProfiles = parsed.availableProfiles;
         }
@@ -216,14 +202,14 @@ export async function runCostGuardianTick(
         ...detail,
         toolInvoked: false,
         note: opts.config.auto_force_private
-          ? 'auto_force_private set but harness has no llamactl MCP client — no upstream mutation performed'
-          : 'manual operator action required — flip embersynth.yaml fusion-auto to private-first and re-sync',
+          ? "auto_force_private set but harness has no llamactl MCP client — no upstream mutation performed"
+          : "manual operator action required — flip embersynth.yaml fusion-auto to private-first and re-sync",
       };
     }
     const entry: CostJournalActionEntry = {
-      kind: 'action',
+      kind: "action",
       ts: decision.ts,
-      action: 'force-private',
+      action: "force-private",
       ok,
       detail,
       ...(error ? { error } : {}),
@@ -234,17 +220,17 @@ export async function runCostGuardianTick(
     if (ok && opts.config.auto_force_private === true) {
       let wetDetail: Record<string, unknown> = {
         autoForcePrivateEnabled: true,
-        targetProfile: 'private-first',
-        syntheticModel: 'fusion-auto',
+        targetProfile: "private-first",
+        syntheticModel: "fusion-auto",
       };
       let wetOk = true;
       let wetError: string | undefined;
       try {
         const raw = await opts.tools.callTool({
-          name: 'llamactl.embersynth.set-default-profile',
+          name: "llamactl.embersynth.set-default-profile",
           arguments: {
-            profile: 'private-first',
-            syntheticModel: 'fusion-auto',
+            profile: "private-first",
+            syntheticModel: "fusion-auto",
             dryRun: false,
           },
         });
@@ -268,7 +254,7 @@ export async function runCostGuardianTick(
         };
         if (parsed.ok === false) {
           wetOk = false;
-          wetError = `${parsed.reason ?? 'unknown'}: ${parsed.message ?? 'no message'}`;
+          wetError = `${parsed.reason ?? "unknown"}: ${parsed.message ?? "no message"}`;
           if (parsed.availableProfiles) {
             wetDetail.availableProfiles = parsed.availableProfiles;
           }
@@ -280,9 +266,9 @@ export async function runCostGuardianTick(
       }
       if (!wetOk) tier2WetRunFailed = true;
       const wetEntry: CostJournalActionEntry = {
-        kind: 'action',
+        kind: "action",
         ts: decision.ts,
-        action: 'force-private-wet',
+        action: "force-private-wet",
         ok: wetOk,
         detail: wetDetail,
         ...(wetError ? { error: wetError } : {}),
@@ -300,11 +286,7 @@ export async function runCostGuardianTick(
   // tier-2 wet-run not having failed this tick. Protected names in
   // `config.protectedProviders` are journaled as `deregister-refused`
   // and never auto-deregistered, regardless of the auto flag.
-  if (
-    !opts.skipJournal &&
-    decision.tier === 'deregister' &&
-    decision.deregisterTarget
-  ) {
+  if (!opts.skipJournal && decision.tier === "deregister" && decision.deregisterTarget) {
     const provider = decision.deregisterTarget;
     let detail: Record<string, unknown> = {
       provider,
@@ -314,7 +296,7 @@ export async function runCostGuardianTick(
     let error: string | undefined;
     try {
       const raw = await opts.tools.callTool({
-        name: 'sirius.providers.deregister',
+        name: "sirius.providers.deregister",
         arguments: { name: provider, dryRun: true },
       });
       const parsed = parseToolJson<{
@@ -334,7 +316,7 @@ export async function runCostGuardianTick(
       };
       if (parsed.ok === false) {
         ok = false;
-        error = `${parsed.reason ?? 'unknown'}: ${parsed.message ?? 'no message'}`;
+        error = `${parsed.reason ?? "unknown"}: ${parsed.message ?? "no message"}`;
       }
     } catch (err) {
       ok = false;
@@ -343,14 +325,14 @@ export async function runCostGuardianTick(
         ...detail,
         toolInvoked: false,
         note: opts.config.auto_deregister
-          ? 'auto_deregister set but the harness has no sirius MCP client — no upstream mutation performed'
-          : 'manual operator action required — review journal + run the deregister verb yourself',
+          ? "auto_deregister set but the harness has no sirius MCP client — no upstream mutation performed"
+          : "manual operator action required — review journal + run the deregister verb yourself",
       };
     }
     const entry: CostJournalActionEntry = {
-      kind: 'action',
+      kind: "action",
       ts: decision.ts,
-      action: 'deregister-dry-run',
+      action: "deregister-dry-run",
       ok,
       detail,
       ...(error ? { error } : {}),
@@ -363,12 +345,12 @@ export async function runCostGuardianTick(
       const protectedProviders = opts.config.protectedProviders ?? [];
       if (protectedProviders.includes(provider)) {
         const refused: CostJournalActionEntry = {
-          kind: 'action',
+          kind: "action",
           ts: decision.ts,
-          action: 'deregister-refused',
+          action: "deregister-refused",
           ok: true,
           detail: {
-            reason: 'provider-protected',
+            reason: "provider-protected",
             provider,
             protectedProviders,
           },
@@ -383,7 +365,7 @@ export async function runCostGuardianTick(
         let wetError: string | undefined;
         try {
           const raw = await opts.tools.callTool({
-            name: 'sirius.providers.deregister',
+            name: "sirius.providers.deregister",
             arguments: { name: provider, dryRun: false },
           });
           const parsed = parseToolJson<{
@@ -403,7 +385,7 @@ export async function runCostGuardianTick(
           };
           if (parsed.ok === false) {
             wetOk = false;
-            wetError = `${parsed.reason ?? 'unknown'}: ${parsed.message ?? 'no message'}`;
+            wetError = `${parsed.reason ?? "unknown"}: ${parsed.message ?? "no message"}`;
           }
         } catch (err) {
           wetOk = false;
@@ -411,9 +393,9 @@ export async function runCostGuardianTick(
           wetDetail = { ...wetDetail, toolInvoked: false };
         }
         const wetEntry: CostJournalActionEntry = {
-          kind: 'action',
+          kind: "action",
           ts: decision.ts,
-          action: 'deregister-wet',
+          action: "deregister-wet",
           ok: wetOk,
           detail: wetDetail,
           ...(wetError ? { error: wetError } : {}),

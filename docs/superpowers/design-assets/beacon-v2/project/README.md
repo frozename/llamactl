@@ -6,23 +6,23 @@ The system's pitch: **theme as a variable, not an identity.** Swap `data-theme` 
 
 ## At a glance
 
-| | |
-|---|---|
-| **Themes** | 4 families · one DNA (Sirius, Ember, Clinical, Scrubs) |
-| **Tokens** | 108 primitive · 42 semantic |
+|                |                                                                 |
+| -------------- | --------------------------------------------------------------- |
+| **Themes**     | 4 families · one DNA (Sirius, Ember, Clinical, Scrubs)          |
+| **Tokens**     | 108 primitive · 42 semantic                                     |
 | **Primitives** | 9 (Button, Badge, Status, Keys, Input, Tabs, Tree, Panel, Card) |
-| **Patterns** | 6 (Stat cards, Data table, Command palette, Filter bar, etc.) |
-| **Type** | Inter (UI) · JetBrains Mono (data) |
-| **Status** | v2.0 · frozen · shipping |
+| **Patterns**   | 6 (Stat cards, Data table, Command palette, Filter bar, etc.)   |
+| **Type**       | Inter (UI) · JetBrains Mono (data)                              |
+| **Status**     | v2.0 · frozen · shipping                                        |
 
 ## Products it serves
 
-| Surface | Mode | Theme baseline | Notes |
-|---|---|---|---|
-| **llamactl** | Dense web dashboard | Sirius (indigo, dark) | Fleet control plane. Tight tables, long telemetry, disciplined terminal aesthetic. |
-| **novaflow** | Creative desktop workspace | Ember (amber, dark) | Canvas-first flow composition. Warm palettes, editorial breathing room. |
-| **Clinical (bridge)** | Print, docs, daylight | Clinical (blue, light) | Light paper-toned surfaces for exports, printed runbooks, daylight use. |
-| **Scrubs (bridge)** | On-call / monitoring | Scrubs (teal, dark) | Oceanic calm for long-shift operations review. |
+| Surface               | Mode                       | Theme baseline         | Notes                                                                              |
+| --------------------- | -------------------------- | ---------------------- | ---------------------------------------------------------------------------------- |
+| **llamactl**          | Dense web dashboard        | Sirius (indigo, dark)  | Fleet control plane. Tight tables, long telemetry, disciplined terminal aesthetic. |
+| **novaflow**          | Creative desktop workspace | Ember (amber, dark)    | Canvas-first flow composition. Warm palettes, editorial breathing room.            |
+| **Clinical (bridge)** | Print, docs, daylight      | Clinical (blue, light) | Light paper-toned surfaces for exports, printed runbooks, daylight use.            |
+| **Scrubs (bridge)**   | On-call / monitoring       | Scrubs (teal, dark)    | Oceanic calm for long-shift operations review.                                     |
 
 ## Sources
 
@@ -50,18 +50,18 @@ Beacon writes like an **operator's notebook** — precise, terse, confidence wit
 
 ### Rules
 
-| | |
-|---|---|
-| **Person** | Third person or imperative. Rarely "we," almost never "you." Docs instruct ("Drop this in"), specs describe ("Every primitive resolves to a token"). |
-| **Tense** | Present. The system *is*, does, runs. Avoid future ("will support") and passive ("is supported by"). |
-| **Casing** | **Sentence case** for everything — headings, labels, buttons. Title Case only for proper nouns (Sirius, Ember, Clinical, Scrubs, Inter, JetBrains Mono). |
-| **Punctuation** | Em-dashes ( — ) connect clauses; never " - ". Periods in headlines are allowed when the line is a complete statement ("Two tools. One system."). No exclamation marks. |
-| **Numbers** | Digits always (`4 themes`, `108 tokens`), units compact (`842ms`, `1.24M`, `99.98%`). Prefer SI shorthand. |
-| **Emphasis** | One brand color, used sparingly, on a single word or count inside a line. Rendered as inline `<em>` (styled, not italic). Example: _"108 primitive · 42 semantic"_ with `108` and `42` in brand color. |
-| **Terminal-ese** | Monospace is reserved for identifiers, commands, and telemetry values — never prose. `svc.llamactl.gateway`, `v2.1.4`, `⌘K`. |
-| **Emoji** | **No.** Beacon uses unicode glyphs (`▸ ▾ ▲ ▼ ● ◉ ◎ ↗ ✓ ×`), keyboard symbols (`⌘ ⇧ ⌥`), and bullets (`·`) instead. No emoji anywhere — not in UI, not in docs. |
-| **Ellipses** | Use `…` (single char) for progress/pending states. Never three dots. |
-| **Separators** | Middle dots (`·`) between related fragments: `v2.0 · frozen · shipping`. Slashes (`/`) for paths. |
+|                  |                                                                                                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Person**       | Third person or imperative. Rarely "we," almost never "you." Docs instruct ("Drop this in"), specs describe ("Every primitive resolves to a token").                                                   |
+| **Tense**        | Present. The system _is_, does, runs. Avoid future ("will support") and passive ("is supported by").                                                                                                   |
+| **Casing**       | **Sentence case** for everything — headings, labels, buttons. Title Case only for proper nouns (Sirius, Ember, Clinical, Scrubs, Inter, JetBrains Mono).                                               |
+| **Punctuation**  | Em-dashes ( — ) connect clauses; never " - ". Periods in headlines are allowed when the line is a complete statement ("Two tools. One system."). No exclamation marks.                                 |
+| **Numbers**      | Digits always (`4 themes`, `108 tokens`), units compact (`842ms`, `1.24M`, `99.98%`). Prefer SI shorthand.                                                                                             |
+| **Emphasis**     | One brand color, used sparingly, on a single word or count inside a line. Rendered as inline `<em>` (styled, not italic). Example: _"108 primitive · 42 semantic"_ with `108` and `42` in brand color. |
+| **Terminal-ese** | Monospace is reserved for identifiers, commands, and telemetry values — never prose. `svc.llamactl.gateway`, `v2.1.4`, `⌘K`.                                                                           |
+| **Emoji**        | **No.** Beacon uses unicode glyphs (`▸ ▾ ▲ ▼ ● ◉ ◎ ↗ ✓ ×`), keyboard symbols (`⌘ ⇧ ⌥`), and bullets (`·`) instead. No emoji anywhere — not in UI, not in docs.                                         |
+| **Ellipses**     | Use `…` (single char) for progress/pending states. Never three dots.                                                                                                                                   |
+| **Separators**   | Middle dots (`·`) between related fragments: `v2.0 · frozen · shipping`. Slashes (`/`) for paths.                                                                                                      |
 
 ### Vibe
 
@@ -171,16 +171,16 @@ Written by someone who's been on-call at 3am. Warm, but not chatty. Informed, bu
 
 Beacon uses **no icon font and no SVG icon set of its own.** It deliberately ships with a vocabulary of **unicode glyphs** and **geometric symbols** used as single characters in mono type:
 
-| Usage | Glyph(s) |
-|---|---|
-| Folder / disclosure | `▸ ▾` |
-| Sort / arrows | `▲ ▼ ↗ ↑ ↓` |
-| Status dot | `●` (paired with color) |
-| Orb / bullet | `◉ ◎ ●` |
-| Check / close | `✓ ×` |
-| Separators | `/ · › —` |
-| Menu / settings | `☰ ⌕ ◐ ↺ ⎇ ⚙` |
-| Keys | `⌘ ⇧ ⌥ ⌃ ↵ ⇥` |
+| Usage               | Glyph(s)                |
+| ------------------- | ----------------------- |
+| Folder / disclosure | `▸ ▾`                   |
+| Sort / arrows       | `▲ ▼ ↗ ↑ ↓`             |
+| Status dot          | `●` (paired with color) |
+| Orb / bullet        | `◉ ◎ ●`                 |
+| Check / close       | `✓ ×`                   |
+| Separators          | `/ · › —`               |
+| Menu / settings     | `☰ ⌕ ◐ ↺ ⎇ ⚙`          |
+| Keys                | `⌘ ⇧ ⌥ ⌃ ↵ ⇥`           |
 
 **Beacon does not use emoji, ever.** It avoids decorative pictograms. Where a surface needs "iconography," Beacon uses:
 
@@ -245,7 +245,9 @@ This system packages everything needed to design for Beacon:
 
 ```html
 <link rel="stylesheet" href="colors_and_type.css" />
-<html data-theme="sirius"> <!-- or ember | clinical | scrubs -->
+<html data-theme="sirius">
+  <!-- or ember | clinical | scrubs -->
+</html>
 ```
 
 That's it — every token resolves immediately. Switch themes by mutating `data-theme`.

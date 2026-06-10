@@ -4,7 +4,7 @@ import {
   defaultCostJournalPath,
   loadCostGuardianConfig,
   runCostGuardianTick,
-} from '@llamactl/agents';
+} from "@llamactl/agents";
 
 const USAGE = `llamactl cost-guardian — periodic spend checks with tiered intents
 
@@ -68,39 +68,39 @@ function parseFlags(argv: string[]): TickFlags | null {
     autoTier3: false,
   };
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') {
+    if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
       return null;
     }
-    if (arg === '--skip-journal') {
+    if (arg === "--skip-journal") {
       flags.skipJournal = true;
       continue;
     }
-    if (arg === '--auto') {
+    if (arg === "--auto") {
       flags.autoTier2 = true;
       flags.autoTier3 = true;
       continue;
     }
-    if (arg === '--auto-tier-2') {
+    if (arg === "--auto-tier-2") {
       flags.autoTier2 = true;
       continue;
     }
-    if (arg === '--auto-tier-3') {
+    if (arg === "--auto-tier-3") {
       flags.autoTier3 = true;
       continue;
     }
-    const eq = arg.indexOf('=');
-    if (!arg.startsWith('--') || eq < 0) {
+    const eq = arg.indexOf("=");
+    if (!arg.startsWith("--") || eq < 0) {
       process.stderr.write(`cost-guardian: unknown arg ${arg}\n\n${USAGE}`);
       return null;
     }
     const key = arg.slice(2, eq);
     const value = arg.slice(eq + 1);
     switch (key) {
-      case 'config':
+      case "config":
         flags.configPath = value;
         break;
-      case 'journal':
+      case "journal":
         flags.journalPath = value;
         break;
       default:
@@ -134,7 +134,7 @@ async function runTick(argv: string[]): Promise<number> {
       skipJournal: flags.skipJournal,
     });
     process.stdout.write(`${JSON.stringify(decision, null, 2)}\n`);
-    return decision.tier === 'noop' ? 0 : 2;
+    return decision.tier === "noop" ? 0 : 2;
   } finally {
     await dispose();
   }
@@ -143,12 +143,12 @@ async function runTick(argv: string[]): Promise<number> {
 export async function runCostGuardian(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
-    case 'tick':
+    case "tick":
       return runTick(rest);
     case undefined:
-    case '--help':
-    case '-h':
-    case 'help':
+    case "--help":
+    case "-h":
+    case "help":
       process.stdout.write(USAGE);
       return 0;
     default:

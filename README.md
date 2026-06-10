@@ -14,7 +14,7 @@ escape hatches that one-off operations stay trivial.
 ## Highlights
 
 - **Single-machine workflow unchanged.** `llamactl bench`, `llamactl
-  server start`, `llamactl catalog list` all still work against the
+server start`, `llamactl catalog list` all still work against the
   local node without any configuration.
 - **Remote agents.** Any machine on the LAN can run
   `llamactl agent serve`, and the control plane drives it via
@@ -36,7 +36,7 @@ escape hatches that one-off operations stay trivial.
 - **Artifact pipeline** (I.5). Signed, per-platform pre-built
   `llamactl-agent` binaries attached to GitHub Releases; operators
   bootstrap a fresh Mac mini via `llamactl artifacts fetch
-  --verify-sig`.
+--verify-sig`.
 - **Reverse tunnel** (I.3). WebSocket tunnel from NAT'd agents back
   to central with jittered-backoff reconnect + heartbeat. Lets a
   home-lab node participate in a fleet without port-forwarding.
@@ -45,7 +45,7 @@ escape hatches that one-off operations stay trivial.
   drives the fleet the same way the CLI does.
 - **Agentic harnesses.** Self-healing probe loop writes a journal;
   runbooks (`audit-fleet`, `drain-node`, `promote-fastest-vision-
-  model`, `onboard-new-gpu-node`) are deterministic, LLM-driven
+model`, `onboard-new-gpu-node`) are deterministic, LLM-driven
   scripts over the MCP surface.
 
 ## Architecture
@@ -155,26 +155,26 @@ bun packages/cli/src/bin.ts artifacts fetch --verify-sig
 
 ## CLI surface (selected)
 
-| Verb | Purpose |
-|---|---|
-| `catalog list / status / promote` | Curated-model registry on the target node. |
-| `pull file / candidate` | Stream HuggingFace downloads via the node. |
-| `server start / stop / logs / status` | Launch + supervise `llama-server`. |
-| `bench preset / vision / compare / show` | Tuning + regression benchmarks. |
-| `candidate test` | Evaluate a model against a fixed prompt suite. |
-| `recommendations` | Size- and capability-aware suggestions. |
-| `apply / get / describe / delete` | Declarative `ModelRun` + `NodeRun` manifests. |
-| `controller serve` | Optional reconciler daemon. |
-| `agent init / serve / rotate-token` | Node-agent lifecycle. |
-| `node add / ls / rm / refresh / test` | Kubeconfig management. |
-| `ctx use / current / get` | Context switching. |
-| `artifacts list / build-agent / fetch / show-path` | Agent binary distribution with cosign-keyless verification. |
-| `infra install / uninstall / list / status / activate` | Versioned package manager for llama.cpp + sidecars. |
-| `deploy-node` | One-shot bootstrap: install infra + start agent + print bootstrap blob. |
-| `heal tick / serve` | Probe loop + journal for fleet health. |
-| `runbook list / run` | Deterministic operator automation. |
-| `sirius providers list / add / remove` | Sirius-gateway config edits. |
-| `embersynth sync` | Push llamactl-derived config to embersynth. |
+| Verb                                                   | Purpose                                                                 |
+| ------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `catalog list / status / promote`                      | Curated-model registry on the target node.                              |
+| `pull file / candidate`                                | Stream HuggingFace downloads via the node.                              |
+| `server start / stop / logs / status`                  | Launch + supervise `llama-server`.                                      |
+| `bench preset / vision / compare / show`               | Tuning + regression benchmarks.                                         |
+| `candidate test`                                       | Evaluate a model against a fixed prompt suite.                          |
+| `recommendations`                                      | Size- and capability-aware suggestions.                                 |
+| `apply / get / describe / delete`                      | Declarative `ModelRun` + `NodeRun` manifests.                           |
+| `controller serve`                                     | Optional reconciler daemon.                                             |
+| `agent init / serve / rotate-token`                    | Node-agent lifecycle.                                                   |
+| `node add / ls / rm / refresh / test`                  | Kubeconfig management.                                                  |
+| `ctx use / current / get`                              | Context switching.                                                      |
+| `artifacts list / build-agent / fetch / show-path`     | Agent binary distribution with cosign-keyless verification.             |
+| `infra install / uninstall / list / status / activate` | Versioned package manager for llama.cpp + sidecars.                     |
+| `deploy-node`                                          | One-shot bootstrap: install infra + start agent + print bootstrap blob. |
+| `heal tick / serve`                                    | Probe loop + journal for fleet health.                                  |
+| `runbook list / run`                                   | Deterministic operator automation.                                      |
+| `sirius providers list / add / remove`                 | Sirius-gateway config edits.                                            |
+| `embersynth sync`                                      | Push llamactl-derived config to embersynth.                             |
 
 Run `llamactl <verb> --help` for the full flag surface.
 

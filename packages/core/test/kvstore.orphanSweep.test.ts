@@ -1,20 +1,25 @@
-import { expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { KvRegistry, openKvStorage, sweepOrphanSlotFiles, type KvEntry } from '../src/kvstore/index.js';
+import { expect, test } from "bun:test";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  KvRegistry,
+  openKvStorage,
+  sweepOrphanSlotFiles,
+  type KvEntry,
+} from "../src/kvstore/index.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
-  const root = mkdtempSync(join(tmpdir(), 'llamactl-kvstore-orphans-'));
+  const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-orphans-"));
   return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
   return {
-    sha: 'sha-base',
-    workload: 'foo',
+    sha: "sha-base",
+    workload: "foo",
     model: null,
-    upstreamSlotFile: '/tmp/slot.bin',
+    upstreamSlotFile: "/tmp/slot.bin",
     quantBits: 4,
     tokens: 128,
     ctxSize: 32768,
@@ -23,24 +28,24 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
     lastUsed: 1716576000,
     payloadBytes: 1024,
     textBytes: 512,
-    reason: 'cold',
+    reason: "cold",
     prefixByteLength: 16,
-    workloadEpoch: 'epoch-1',
+    workloadEpoch: "epoch-1",
     quarantined: 0,
-    state: 'idle',
+    state: "idle",
     firstResponseToken: null,
     extFlags: 0,
     ...overrides,
   };
 }
 
-test('old orphan slot file is deleted', () => {
+test("old orphan slot file is deleted", () => {
   const t = makeTempRoot();
   try {
-    const slotDir = join(t.root, 'slots');
+    const slotDir = join(t.root, "slots");
     mkdirSync(slotDir, { recursive: true });
-    const orphanPath = join(slotDir, 'orphan-sha.kvslot');
-    writeFileSync(orphanPath, 'old-orphan');
+    const orphanPath = join(slotDir, "orphan-sha.kvslot");
+    writeFileSync(orphanPath, "old-orphan");
     const now = Date.now();
     utimesSync(orphanPath, new Date(now - 20_000), new Date(now - 20_000));
 
@@ -55,19 +60,19 @@ test('old orphan slot file is deleted', () => {
   }
 });
 
-test('slot file with registry entry is preserved', () => {
+test("slot file with registry entry is preserved", () => {
   const t = makeTempRoot();
   try {
-    const slotDir = join(t.root, 'slots');
+    const slotDir = join(t.root, "slots");
     mkdirSync(slotDir, { recursive: true });
-    const slotPath = join(slotDir, 'keep-sha.kvslot');
-    writeFileSync(slotPath, 'in-registry');
+    const slotPath = join(slotDir, "keep-sha.kvslot");
+    writeFileSync(slotPath, "in-registry");
     const now = Date.now();
     utimesSync(slotPath, new Date(now - 20_000), new Date(now - 20_000));
 
     const storage = openKvStorage(t.root);
     const registry = new KvRegistry(storage);
-    registry.insert(baseEntry({ sha: 'keep-sha', upstreamSlotFile: slotPath }));
+    registry.insert(baseEntry({ sha: "keep-sha", upstreamSlotFile: slotPath }));
 
     const result = sweepOrphanSlotFiles({ slotDir, registry, ttlMs: 10_000, now });
     expect(result).toEqual({ orphansFound: 0, orphansDeleted: 0 });
@@ -78,13 +83,13 @@ test('slot file with registry entry is preserved', () => {
   }
 });
 
-test('recent orphan slot file is not deleted', () => {
+test("recent orphan slot file is not deleted", () => {
   const t = makeTempRoot();
   try {
-    const slotDir = join(t.root, 'slots');
+    const slotDir = join(t.root, "slots");
     mkdirSync(slotDir, { recursive: true });
-    const orphanPath = join(slotDir, 'recent-orphan.kvslot');
-    writeFileSync(orphanPath, 'recent');
+    const orphanPath = join(slotDir, "recent-orphan.kvslot");
+    writeFileSync(orphanPath, "recent");
     const now = Date.now();
     utimesSync(orphanPath, new Date(now - 1_000), new Date(now - 1_000));
 

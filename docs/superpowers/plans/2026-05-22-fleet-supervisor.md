@@ -23,14 +23,14 @@ and `packages/cli/src/commands/admit.ts`.
 
 ## Design decisions (resolved for plan execution)
 
-| Question | Decision |
-|---|---|
-| Pressure threshold | Dual-condition: `free_mb < 400 AND compressor_mb > 2000` for N consecutive ticks. Single-threshold misfire rate too high on macOS under normal compressor activity. |
-| Request/error rate source | `/health` probe failure counts as error in the rolling window. No log-tailing or proxy instrumentation for v1 (coupling cost too high). |
-| Eviction tie-break | Priority asc → RSS desc (highest consumer on a priority tie). |
-| mcr reshape | Propose-only restart with new args. No live-config for v1. |
-| Admission overhead | 1.25× `expectedMemoryGiB` configurable via `--overhead-factor`. |
-| Supervisor stall | Heartbeat journal entry every tick; missing heartbeat = detectable stall. |
+| Question                  | Decision                                                                                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pressure threshold        | Dual-condition: `free_mb < 400 AND compressor_mb > 2000` for N consecutive ticks. Single-threshold misfire rate too high on macOS under normal compressor activity. |
+| Request/error rate source | `/health` probe failure counts as error in the rolling window. No log-tailing or proxy instrumentation for v1 (coupling cost too high).                             |
+| Eviction tie-break        | Priority asc → RSS desc (highest consumer on a priority tie).                                                                                                       |
+| mcr reshape               | Propose-only restart with new args. No live-config for v1.                                                                                                          |
+| Admission overhead        | 1.25× `expectedMemoryGiB` configurable via `--overhead-factor`.                                                                                                     |
+| Supervisor stall          | Heartbeat journal entry every tick; missing heartbeat = detectable stall.                                                                                           |
 
 ---
 
@@ -57,18 +57,28 @@ risk_class: paste-ready
 
 ```ts
 // test: FleetSnapshotSchema_roundtrips_valid_snapshot
-import { FleetSnapshotSchema, SupervisorConfigSchema } from '../src/fleet-supervisor/types.js';
+import { FleetSnapshotSchema, SupervisorConfigSchema } from "../src/fleet-supervisor/types.js";
 
 const snap = {
-  ts: '2026-05-22T17:00:00Z', kind: 'fleet-snapshot', node: 'local',
+  ts: "2026-05-22T17:00:00Z",
+  kind: "fleet-snapshot",
+  node: "local",
   node_mem: { free_mb: 122, compressor_mb: 4045, active_mb: 912, inactive_mb: 839, wired_mb: 320 },
-  workloads: [{
-    name: 'gains-host-35b-local', kind: 'ModelHost',
-    endpoint: 'http://127.0.0.1:8096', rss_mb: null,
-    request_rate_5m: 2.3, error_rate_5m: 0,
-    p50_ms: 240, p95_ms: 480, models: ['Qwen3.6-35B-A3B-4bit'],
-    reachable: true, health: 'healthy',
-  }],
+  workloads: [
+    {
+      name: "gains-host-35b-local",
+      kind: "ModelHost",
+      endpoint: "http://127.0.0.1:8096",
+      rss_mb: null,
+      request_rate_5m: 2.3,
+      error_rate_5m: 0,
+      p50_ms: 240,
+      p95_ms: 480,
+      models: ["Qwen3.6-35B-A3B-4bit"],
+      reachable: true,
+      health: "healthy",
+    },
+  ],
 };
 expect(() => FleetSnapshotSchema.parse(snap)).not.toThrow();
 expect(() => SupervisorConfigSchema.parse({})).not.toThrow(); // defaults only
@@ -123,7 +133,7 @@ risk_class: paste-ready
 
 ```ts
 // test: parseVmStat_converts_pages_to_mb_correctly
-import { parseVmStat } from '../src/fleet-supervisor/node-mem.js';
+import { parseVmStat } from "../src/fleet-supervisor/node-mem.js";
 const fakeOutput = `Pages free:                             500.
 Pages active:                          1000.
 Pages inactive:                         800.
@@ -132,14 +142,14 @@ Pages occupied by compressor:          4000.
 `;
 const result = parseVmStat(fakeOutput, 4096);
 // 500 pages * 4096 bytes / 1024^2 = 1.953 MB
-expect(result.free_mb).toBeCloseTo(500 * 4096 / 1024 / 1024, 1);
-expect(result.compressor_mb).toBeCloseTo(4000 * 4096 / 1024 / 1024, 1);
-expect(result.active_mb).toBeCloseTo(1000 * 4096 / 1024 / 1024, 1);
+expect(result.free_mb).toBeCloseTo((500 * 4096) / 1024 / 1024, 1);
+expect(result.compressor_mb).toBeCloseTo((4000 * 4096) / 1024 / 1024, 1);
+expect(result.active_mb).toBeCloseTo((1000 * 4096) / 1024 / 1024, 1);
 
 // test: readNodeMem_returns_zeros_on_non_darwin
-import { readNodeMem } from '../src/fleet-supervisor/node-mem.js';
+import { readNodeMem } from "../src/fleet-supervisor/node-mem.js";
 // pass fake exec that throws to simulate non-darwin / vm_stat missing
-const fakeExec = () => Promise.reject(new Error('command not found'));
+const fakeExec = () => Promise.reject(new Error("command not found"));
 const fallback = await readNodeMem({ exec: fakeExec, warnOnFallback: false });
 expect(fallback.free_mb).toBe(0);
 ```
@@ -180,17 +190,22 @@ risk_class: paste-ready
 
 ```ts
 // test: appendFleetJournal_writes_parseable_jsonl
-import { appendFleetJournal, defaultFleetJournalPath } from '../src/fleet-supervisor/journal.js';
-import { readFileSync } from 'node:fs';
+import { appendFleetJournal, defaultFleetJournalPath } from "../src/fleet-supervisor/journal.js";
+import { readFileSync } from "node:fs";
 const tmpPath = `/tmp/fleet-test-${Date.now()}.jsonl`;
-const entry = { kind: 'fleet-heartbeat' as const, ts: new Date().toISOString(), node: 'local', tick: 1 };
+const entry = {
+  kind: "fleet-heartbeat" as const,
+  ts: new Date().toISOString(),
+  node: "local",
+  tick: 1,
+};
 appendFleetJournal(entry, tmpPath);
-const line = readFileSync(tmpPath, 'utf8').trim();
-expect(JSON.parse(line)).toMatchObject({ kind: 'fleet-heartbeat', node: 'local', tick: 1 });
+const line = readFileSync(tmpPath, "utf8").trim();
+expect(JSON.parse(line)).toMatchObject({ kind: "fleet-heartbeat", node: "local", tick: 1 });
 
 // test: defaultFleetJournalPath_uses_home_llamactl
 const p = defaultFleetJournalPath({});
-expect(p).toContain('.llamactl/fleet-supervisor/journal.jsonl');
+expect(p).toContain(".llamactl/fleet-supervisor/journal.jsonl");
 ```
 
 **Implementation**: mirrors `packages/agents/src/healer/journal.ts`:
@@ -276,21 +291,36 @@ risk_class: paste-ready
 
 ```ts
 // test: admitWorkload_rejects_when_projected_free_below_headroom
-import { admitWorkload } from '../src/fleet-supervisor/admission.js';
+import { admitWorkload } from "../src/fleet-supervisor/admission.js";
 // projected = 500 - (1.0 * 1024 * 1.25) = -780 < headroom 400
-const r = admitWorkload({ currentFreeMb: 500, expectedGiB: 1.0, overheadFactor: 1.25, headroomMinMb: 400 });
+const r = admitWorkload({
+  currentFreeMb: 500,
+  expectedGiB: 1.0,
+  overheadFactor: 1.25,
+  headroomMinMb: 400,
+});
 expect(r.ok).toBe(false);
 expect(r.reason).toMatch(/insufficient memory/i);
 expect(r.projectedFreeMb).toBeCloseTo(-780, 0);
 
 // test: admitWorkload_accepts_when_projected_above_headroom
 // projected = 8000 - (2.0 * 1024 * 1.25) = 8000 - 2560 = 5440 > 400
-const ok = admitWorkload({ currentFreeMb: 8000, expectedGiB: 2.0, overheadFactor: 1.25, headroomMinMb: 400 });
+const ok = admitWorkload({
+  currentFreeMb: 8000,
+  expectedGiB: 2.0,
+  overheadFactor: 1.25,
+  headroomMinMb: 400,
+});
 expect(ok.ok).toBe(true);
 expect(ok.projectedFreeMb).toBeCloseTo(5440, 0);
 
 // test: admitWorkload_skips_check_when_expectedGiB_undefined
-const skip = admitWorkload({ currentFreeMb: 10, expectedGiB: undefined, overheadFactor: 1.25, headroomMinMb: 400 });
+const skip = admitWorkload({
+  currentFreeMb: 10,
+  expectedGiB: undefined,
+  overheadFactor: 1.25,
+  headroomMinMb: 400,
+});
 expect(skip.ok).toBe(true);
 expect(skip.skipped).toBe(true);
 ```
@@ -315,8 +345,11 @@ export function admitWorkload(opts: AdmitOptions): AdmitResult {
   const requiredMb = opts.expectedGiB * 1024 * opts.overheadFactor;
   const projectedFreeMb = opts.currentFreeMb - requiredMb;
   if (projectedFreeMb < opts.headroomMinMb) {
-    return { ok: false, projectedFreeMb,
-      reason: `insufficient memory: projected free ${projectedFreeMb.toFixed(0)} MB < headroom ${opts.headroomMinMb} MB` };
+    return {
+      ok: false,
+      projectedFreeMb,
+      reason: `insufficient memory: projected free ${projectedFreeMb.toFixed(0)} MB < headroom ${opts.headroomMinMb} MB`,
+    };
   }
   return { ok: true, projectedFreeMb };
 }
@@ -348,16 +381,25 @@ risk_class: schema-aware
 // Stub readNodeMem to return { free_mb: 100, ... }
 // Load a workload with spec.expectedMemoryGiB = 24 (granite-26B class)
 // Expect enableWorkload() (or equivalent) to throw with /insufficient memory/
-import { enableWorkload } from '../src/commands/noderun-helpers.js'; // adjust to real export
-await expect(enableWorkload('some-26b-workload', {
-  readNodeMem: async () => ({ free_mb: 100, compressor_mb: 5000, active_mb: 200, inactive_mb: 100, wired_mb: 100 }),
-})).rejects.toThrow(/insufficient memory/);
+import { enableWorkload } from "../src/commands/noderun-helpers.js"; // adjust to real export
+await expect(
+  enableWorkload("some-26b-workload", {
+    readNodeMem: async () => ({
+      free_mb: 100,
+      compressor_mb: 5000,
+      active_mb: 200,
+      inactive_mb: 100,
+      wired_mb: 100,
+    }),
+  }),
+).rejects.toThrow(/insufficient memory/);
 
 // test: enable_succeeds_when_expectedMemoryGiB_not_set
 // Workload without expectedMemoryGiB → admission skipped, no throw
 ```
 
 **Implementation**: in the enable path of `packages/cli/src/commands/noderun-helpers.ts`:
+
 1. Load the manifest to get `spec.expectedMemoryGiB` and `spec.priority`.
 2. If `expectedMemoryGiB` is set, call `readNodeMem()` (or injectable override) and `admitWorkload()`.
 3. On `admit.ok === false`: throw `new Error(admit.reason)`. CLI surfaces this as a fatal error with
@@ -366,6 +408,7 @@ await expect(enableWorkload('some-26b-workload', {
 5. Accept an optional `opts.readNodeMem` for test injection.
 
 **Verify**:
+
 ```
 cd packages/cli && bun test test/noderun-helpers-admission.test.ts
 cd packages/cli && bun test   # full suite — no regressions
@@ -402,6 +445,7 @@ risk_class: paste-ready
 ```
 
 **Implementation**: `packages/cli/src/commands/admit.ts`
+
 - Positional arg: `<workload-name>`.
 - Options: `--node=local|macmini` (default local), `--overhead-factor=1.25`,
   `--headroom-min-mb=400`.
@@ -444,29 +488,40 @@ risk_class: paste-ready
 
 ```ts
 // test: probeWorkload_marks_unreachable_on_fetch_error
-import { probeWorkload } from '../src/fleet-supervisor/workload-probe.js';
+import { probeWorkload } from "../src/fleet-supervisor/workload-probe.js";
 const result = await probeWorkload({
-  name: 'w1', endpoint: 'http://127.0.0.1:9999', kind: 'ModelHost',
-  fetch: () => Promise.reject(new Error('ECONNREFUSED')),
-  now: () => 0, timeoutMs: 100,
+  name: "w1",
+  endpoint: "http://127.0.0.1:9999",
+  kind: "ModelHost",
+  fetch: () => Promise.reject(new Error("ECONNREFUSED")),
+  now: () => 0,
+  timeoutMs: 100,
 });
 expect(result.reachable).toBe(false);
-expect(result.health).toBe('unreachable');
+expect(result.health).toBe("unreachable");
 expect(result.p50_ms).toBe(0);
 
 // test: probeWorkload_returns_healthy_with_models_on_200
 const fakeFetch = async (url: string) => {
-  if (url.includes('/health'))  return new Response('ok', { status: 200 });
-  if (url.includes('/v1/models')) return new Response(
-    JSON.stringify({ data: [{ id: 'Qwen3.6-35B-A3B-4bit' }] }), { status: 200 });
-  return new Response('', { status: 404 });
+  if (url.includes("/health")) return new Response("ok", { status: 200 });
+  if (url.includes("/v1/models"))
+    return new Response(JSON.stringify({ data: [{ id: "Qwen3.6-35B-A3B-4bit" }] }), {
+      status: 200,
+    });
+  return new Response("", { status: 404 });
 };
 let t = 0;
-const r = await probeWorkload({ name: 'w1', endpoint: 'http://127.0.0.1:8096',
-  kind: 'ModelHost', fetch: fakeFetch, now: () => t += 50, timeoutMs: 1000 });
+const r = await probeWorkload({
+  name: "w1",
+  endpoint: "http://127.0.0.1:8096",
+  kind: "ModelHost",
+  fetch: fakeFetch,
+  now: () => (t += 50),
+  timeoutMs: 1000,
+});
 expect(r.reachable).toBe(true);
-expect(r.health).toBe('healthy');
-expect(r.models).toContain('Qwen3.6-35B-A3B-4bit');
+expect(r.health).toBe("healthy");
+expect(r.models).toContain("Qwen3.6-35B-A3B-4bit");
 expect(r.latency_ms).toBeGreaterThan(0);
 ```
 
@@ -474,17 +529,23 @@ expect(r.latency_ms).toBeGreaterThan(0);
 
 ```ts
 export interface WorkloadTarget {
-  name: string; kind: 'ModelHost' | 'ModelRun';
-  endpoint: string; pid?: number;
+  name: string;
+  kind: "ModelHost" | "ModelRun";
+  endpoint: string;
+  pid?: number;
 }
 export interface WorkloadProbeResult extends WorkloadTarget {
-  reachable: boolean; health: WorkloadHealthState;
-  latency_ms: number; models: string[];
+  reachable: boolean;
+  health: WorkloadHealthState;
+  latency_ms: number;
+  models: string[];
   rss_mb: number | null;
 }
 export interface WorkloadProbeOptions extends WorkloadTarget {
-  fetch?: typeof globalThis.fetch; now?: () => number;
-  timeoutMs?: number; exec?: (cmd: string) => Promise<string>;
+  fetch?: typeof globalThis.fetch;
+  now?: () => number;
+  timeoutMs?: number;
+  exec?: (cmd: string) => Promise<string>;
 }
 ```
 
@@ -519,7 +580,7 @@ risk_class: paste-ready
 
 ```ts
 // test: RingBuffer_percentile_p95_of_ten_items
-import { RingBuffer } from '../src/fleet-supervisor/ring-buffer.js';
+import { RingBuffer } from "../src/fleet-supervisor/ring-buffer.js";
 const rb = new RingBuffer<number>(10);
 for (let i = 1; i <= 10; i++) rb.push(i * 100); // 100..1000
 // nearest-rank p95: ceil(0.95 * 10) = 10 → sorted[9] = 1000
@@ -527,12 +588,12 @@ expect(rb.percentile(0.95)).toBe(1000);
 
 // test: RingBuffer_overwrites_oldest_at_capacity
 const small = new RingBuffer<number>(3);
-[1, 2, 3, 4].forEach(v => small.push(v));
+[1, 2, 3, 4].forEach((v) => small.push(v));
 expect(small.values()).toEqual([2, 3, 4]);
 
 // test: RingBuffer_sma_returns_mean
 const rb2 = new RingBuffer<number>(4);
-[10, 20, 30, 40].forEach(v => rb2.push(v));
+[10, 20, 30, 40].forEach((v) => rb2.push(v));
 expect(rb2.sma()).toBe(25);
 ```
 
@@ -541,13 +602,28 @@ expect(rb2.sma()).toBe(25);
 ```ts
 export class RingBuffer<T> {
   private buf: Array<T | undefined>;
-  private head = 0; private count = 0;
-  constructor(public readonly capacity: number) { this.buf = new Array(capacity); }
-  push(v: T): void { this.buf[this.head] = v; this.head = (this.head + 1) % this.capacity; this.count = Math.min(this.count + 1, this.capacity); }
-  values(): T[] { /* oldest-first reconstruction */ }
-  get size(): number { return this.count; }
-  percentile(p: number): number { /* nearest-rank on sorted values() cast to number */ }
-  sma(): number { /* sum / count */ }
+  private head = 0;
+  private count = 0;
+  constructor(public readonly capacity: number) {
+    this.buf = new Array(capacity);
+  }
+  push(v: T): void {
+    this.buf[this.head] = v;
+    this.head = (this.head + 1) % this.capacity;
+    this.count = Math.min(this.count + 1, this.capacity);
+  }
+  values(): T[] {
+    /* oldest-first reconstruction */
+  }
+  get size(): number {
+    return this.count;
+  }
+  percentile(p: number): number {
+    /* nearest-rank on sorted values() cast to number */
+  }
+  sma(): number {
+    /* sum / count */
+  }
 }
 ```
 
@@ -574,16 +650,41 @@ risk_class: paste-ready
 
 ```ts
 // test: assembleSnapshot_produces_valid_FleetSnapshot
-import { assembleSnapshot } from '../src/fleet-supervisor/snapshot.js';
-const nodeMem = { free_mb: 500, compressor_mb: 1000, active_mb: 800, inactive_mb: 300, wired_mb: 200 };
-const probes = [{ name: 'w1', kind: 'ModelHost' as const, endpoint: 'http://127.0.0.1:8096',
-  reachable: true, health: 'healthy' as const, latency_ms: 200, models: ['M1'],
-  rss_mb: null, p50_ms: 0, p95_ms: 0, request_rate_5m: 0, error_rate_5m: 0 }];
-const snap = assembleSnapshot({ node: 'local', nodeMem, probes, latencyRings: new Map(),
-  errorRings: new Map(), ts: '2026-05-22T17:00:00Z' });
-expect(snap.kind).toBe('fleet-snapshot');
+import { assembleSnapshot } from "../src/fleet-supervisor/snapshot.js";
+const nodeMem = {
+  free_mb: 500,
+  compressor_mb: 1000,
+  active_mb: 800,
+  inactive_mb: 300,
+  wired_mb: 200,
+};
+const probes = [
+  {
+    name: "w1",
+    kind: "ModelHost" as const,
+    endpoint: "http://127.0.0.1:8096",
+    reachable: true,
+    health: "healthy" as const,
+    latency_ms: 200,
+    models: ["M1"],
+    rss_mb: null,
+    p50_ms: 0,
+    p95_ms: 0,
+    request_rate_5m: 0,
+    error_rate_5m: 0,
+  },
+];
+const snap = assembleSnapshot({
+  node: "local",
+  nodeMem,
+  probes,
+  latencyRings: new Map(),
+  errorRings: new Map(),
+  ts: "2026-05-22T17:00:00Z",
+});
+expect(snap.kind).toBe("fleet-snapshot");
 expect(snap.node_mem.free_mb).toBe(500);
-expect(snap.workloads[0].name).toBe('w1');
+expect(snap.workloads[0].name).toBe("w1");
 // p50/p95 from empty rings = 0
 expect(snap.workloads[0].p95_ms).toBe(0);
 ```
@@ -622,21 +723,28 @@ risk_class: paste-ready
 
 ```ts
 // test: startSupervisorLoop_once_journals_snapshot_and_heartbeat
-import { startSupervisorLoop } from '../src/fleet-supervisor/loop.js';
+import { startSupervisorLoop } from "../src/fleet-supervisor/loop.js";
 const entries: unknown[] = [];
 const handle = startSupervisorLoop({
-  node: 'local', once: true,
-  workloadTargets: [{ name: 'w1', endpoint: 'http://127.0.0.1:9999', kind: 'ModelHost' }],
-  readNodeMem: async () => ({ free_mb: 500, compressor_mb: 100, active_mb: 200, inactive_mb: 100, wired_mb: 100 }),
-  probeFetch: () => Promise.reject(new Error('offline')),
+  node: "local",
+  once: true,
+  workloadTargets: [{ name: "w1", endpoint: "http://127.0.0.1:9999", kind: "ModelHost" }],
+  readNodeMem: async () => ({
+    free_mb: 500,
+    compressor_mb: 100,
+    active_mb: 200,
+    inactive_mb: 100,
+    wired_mb: 100,
+  }),
+  probeFetch: () => Promise.reject(new Error("offline")),
   writeJournal: (e) => entries.push(e),
 });
 await handle.done;
-expect(entries.some(e => (e as any).kind === 'fleet-snapshot')).toBe(true);
-expect(entries.some(e => (e as any).kind === 'fleet-heartbeat')).toBe(true);
+expect(entries.some((e) => (e as any).kind === "fleet-snapshot")).toBe(true);
+expect(entries.some((e) => (e as any).kind === "fleet-heartbeat")).toBe(true);
 
 // test: startSupervisorLoop_stop_halts_before_next_tick
-const looping = startSupervisorLoop({ node: 'local', intervalMs: 10_000, /* ... */ });
+const looping = startSupervisorLoop({ node: "local", intervalMs: 10_000 /* ... */ });
 looping.stop();
 await looping.done;
 // done resolves without running a second tick
@@ -645,9 +753,11 @@ await looping.done;
 **Implementation**:
 
 `packages/agents/src/fleet-supervisor/config.ts`:
+
 - `defaultSupervisorConfig(): SupervisorConfig` — returns `SupervisorConfigSchema.parse({})`.
 
 `packages/agents/src/fleet-supervisor/loop.ts`:
+
 - `SupervisorLoopOptions`: node, workloadTargets, intervalMs, once, journalPath, writeJournal,
   readNodeMem (injectable), probeFetch (injectable `typeof fetch`), onSnapshot, config.
 - `SupervisorLoopHandle`: `{ stop(): void; done: Promise<void> }`.
@@ -693,58 +803,95 @@ risk_class: paste-ready
 
 ```ts
 // test: PressureClassifier_emits_HIGH_after_n_consecutive_ticks_dual_condition
-import { PressureClassifier, DegradationClassifier } from '../src/fleet-supervisor/policy.js';
+import { PressureClassifier, DegradationClassifier } from "../src/fleet-supervisor/policy.js";
 const cfg = { freeThresholdMb: 400, compressorThresholdMb: 2000, consecutiveTicks: 3 };
 const clf = new PressureClassifier(cfg);
-const badMem = { free_mb: 30, compressor_mb: 5000, active_mb: 200, inactive_mb: 100, wired_mb: 100 };
-expect(clf.ingest(badMem).level).toBe('NORMAL'); // tick 1
-expect(clf.ingest(badMem).level).toBe('NORMAL'); // tick 2
-expect(clf.ingest(badMem).level).toBe('HIGH');   // tick 3
+const badMem = {
+  free_mb: 30,
+  compressor_mb: 5000,
+  active_mb: 200,
+  inactive_mb: 100,
+  wired_mb: 100,
+};
+expect(clf.ingest(badMem).level).toBe("NORMAL"); // tick 1
+expect(clf.ingest(badMem).level).toBe("NORMAL"); // tick 2
+expect(clf.ingest(badMem).level).toBe("HIGH"); // tick 3
 // recovery — resets immediately
-const goodMem = { free_mb: 2000, compressor_mb: 50, active_mb: 500, inactive_mb: 200, wired_mb: 100 };
-expect(clf.ingest(goodMem).level).toBe('NORMAL');
+const goodMem = {
+  free_mb: 2000,
+  compressor_mb: 50,
+  active_mb: 500,
+  inactive_mb: 200,
+  wired_mb: 100,
+};
+expect(clf.ingest(goodMem).level).toBe("NORMAL");
 
 // test: PressureClassifier_stays_NORMAL_when_only_one_threshold_breached
 const clf2 = new PressureClassifier(cfg);
 const halfBad = { free_mb: 30, compressor_mb: 50, ...rest }; // low free, low compressor
-for (let i = 0; i < 3; i++) expect(clf2.ingest(halfBad).level).toBe('NORMAL');
+for (let i = 0; i < 3; i++) expect(clf2.ingest(halfBad).level).toBe("NORMAL");
 
 // test: DegradationClassifier_marks_degraded_when_p95_exceeds_threshold
 const dc = new DegradationClassifier({ p95ThresholdMs: 3000, consecutiveTicks: 3 });
-const ws = { name: 'w1', p95_ms: 5000, error_rate_5m: 0, reachable: true, health: 'healthy' as const };
-expect(dc.ingest(ws).state).toBe('healthy'); // tick 1
-expect(dc.ingest(ws).state).toBe('healthy'); // tick 2
-expect(dc.ingest(ws).state).toBe('degraded'); // tick 3
+const ws = {
+  name: "w1",
+  p95_ms: 5000,
+  error_rate_5m: 0,
+  reachable: true,
+  health: "healthy" as const,
+};
+expect(dc.ingest(ws).state).toBe("healthy"); // tick 1
+expect(dc.ingest(ws).state).toBe("healthy"); // tick 2
+expect(dc.ingest(ws).state).toBe("degraded"); // tick 3
 
 // test: DegradationClassifier_marks_unreachable_immediately
 const dc2 = new DegradationClassifier({ p95ThresholdMs: 3000, consecutiveTicks: 3 });
-expect(dc2.ingest({ ...ws, reachable: false, health: 'unreachable' }).state).toBe('unreachable');
+expect(dc2.ingest({ ...ws, reachable: false, health: "unreachable" }).state).toBe("unreachable");
 ```
 
 **Implementation**: `packages/agents/src/fleet-supervisor/policy.ts`
 
 ```ts
-export type PressureLevel = 'NORMAL' | 'HIGH';
+export type PressureLevel = "NORMAL" | "HIGH";
 
 export class PressureClassifier {
   private count = 0;
-  constructor(private cfg: { freeThresholdMb: number; compressorThresholdMb: number; consecutiveTicks: number }) {}
+  constructor(
+    private cfg: {
+      freeThresholdMb: number;
+      compressorThresholdMb: number;
+      consecutiveTicks: number;
+    },
+  ) {}
   ingest(mem: NodeMemSnapshot): { level: PressureLevel; consecutiveCount: number } {
-    const breached = mem.free_mb < this.cfg.freeThresholdMb && mem.compressor_mb > this.cfg.compressorThresholdMb;
+    const breached =
+      mem.free_mb < this.cfg.freeThresholdMb && mem.compressor_mb > this.cfg.compressorThresholdMb;
     this.count = breached ? this.count + 1 : 0;
-    return { level: this.count >= this.cfg.consecutiveTicks ? 'HIGH' : 'NORMAL', consecutiveCount: this.count };
+    return {
+      level: this.count >= this.cfg.consecutiveTicks ? "HIGH" : "NORMAL",
+      consecutiveCount: this.count,
+    };
   }
 }
 
 export class DegradationClassifier {
   private count = 0;
   constructor(private cfg: { p95ThresholdMs: number; consecutiveTicks: number }) {}
-  ingest(ws: { reachable: boolean; health: WorkloadHealthState; p95_ms: number; error_rate_5m: number }): { state: WorkloadHealthState; reason?: string } {
-    if (!ws.reachable) { this.count = 0; return { state: 'unreachable' }; }
+  ingest(ws: {
+    reachable: boolean;
+    health: WorkloadHealthState;
+    p95_ms: number;
+    error_rate_5m: number;
+  }): { state: WorkloadHealthState; reason?: string } {
+    if (!ws.reachable) {
+      this.count = 0;
+      return { state: "unreachable" };
+    }
     const slow = ws.p95_ms > this.cfg.p95ThresholdMs;
     this.count = slow ? this.count + 1 : 0;
-    if (this.count >= this.cfg.consecutiveTicks) return { state: 'degraded', reason: `p95 ${ws.p95_ms}ms > ${this.cfg.p95ThresholdMs}ms` };
-    return { state: 'healthy' };
+    if (this.count >= this.cfg.consecutiveTicks)
+      return { state: "degraded", reason: `p95 ${ws.p95_ms}ms > ${this.cfg.p95ThresholdMs}ms` };
+    return { state: "healthy" };
   }
 }
 ```
@@ -772,28 +919,32 @@ risk_class: paste-ready
 
 ```ts
 // test: pickEvictionTarget_returns_lowest_priority_workload
-import { pickEvictionTarget, buildEvictionProposal, buildRestartProposal } from '../src/fleet-supervisor/proposals.js';
+import {
+  pickEvictionTarget,
+  buildEvictionProposal,
+  buildRestartProposal,
+} from "../src/fleet-supervisor/proposals.js";
 const ws = [
-  { name: 'w1', priority: 80, rss_mb: 10000 },
-  { name: 'w2', priority: 20, rss_mb: 5000 },  // evict first (lowest priority)
-  { name: 'w3', priority: 50, rss_mb: 8000 },
+  { name: "w1", priority: 80, rss_mb: 10000 },
+  { name: "w2", priority: 20, rss_mb: 5000 }, // evict first (lowest priority)
+  { name: "w3", priority: 50, rss_mb: 8000 },
 ];
-expect(pickEvictionTarget(ws)).toBe('w2');
+expect(pickEvictionTarget(ws)).toBe("w2");
 
 // test: pickEvictionTarget_breaks_tie_by_rss_descending
 const tied = [
-  { name: 'a', priority: 50, rss_mb: 20000 }, // higher RSS → evict first
-  { name: 'b', priority: 50, rss_mb: 5000 },
+  { name: "a", priority: 50, rss_mb: 20000 }, // higher RSS → evict first
+  { name: "b", priority: 50, rss_mb: 5000 },
 ];
-expect(pickEvictionTarget(tied)).toBe('a');
+expect(pickEvictionTarget(tied)).toBe("a");
 
 // test: pickEvictionTarget_returns_null_for_empty_list
 expect(pickEvictionTarget([])).toBeNull();
 
 // test: buildEvictionProposal_produces_tier3_fleet_proposal
-const p = buildEvictionProposal('w2', 'HIGH', 30, 5000);
-expect(p.kind).toBe('fleet-proposal');
-expect(p.action.type).toBe('evict');
+const p = buildEvictionProposal("w2", "HIGH", 30, 5000);
+expect(p.kind).toBe("fleet-proposal");
+expect(p.action.type).toBe("evict");
 expect(p.action.tier).toBe(3);
 expect(p.proposalId).toMatch(/^[0-9a-f]{8}/);
 ```
@@ -835,21 +986,30 @@ risk_class: schema-aware
 // test: loop_emits_eviction_proposal_on_pressure_HIGH
 const entries: unknown[] = [];
 const handle = startSupervisorLoop({
-  node: 'local', once: true,
+  node: "local",
+  once: true,
   workloadTargets: [
-    { name: 'w1', endpoint: 'http://127.0.0.1:8001', kind: 'ModelHost', priority: 80 },
-    { name: 'w2', endpoint: 'http://127.0.0.1:8002', kind: 'ModelHost', priority: 20 },
+    { name: "w1", endpoint: "http://127.0.0.1:8001", kind: "ModelHost", priority: 80 },
+    { name: "w2", endpoint: "http://127.0.0.1:8002", kind: "ModelHost", priority: 20 },
   ],
-  readNodeMem: async () => ({ free_mb: 30, compressor_mb: 5000, active_mb: 200, inactive_mb: 100, wired_mb: 100 }),
-  probeFetch: () => Promise.reject(new Error('offline')),
+  readNodeMem: async () => ({
+    free_mb: 30,
+    compressor_mb: 5000,
+    active_mb: 200,
+    inactive_mb: 100,
+    wired_mb: 100,
+  }),
+  probeFetch: () => Promise.reject(new Error("offline")),
   writeJournal: (e) => entries.push(e),
   // 1-tick window so once-mode triggers immediately
   config: { ...defaultSupervisorConfig(), pressure_consecutive_ticks: 1 },
 });
 await handle.done;
-const proposal = entries.find(e => (e as any).kind === 'fleet-proposal' && (e as any).action?.type === 'evict');
+const proposal = entries.find(
+  (e) => (e as any).kind === "fleet-proposal" && (e as any).action?.type === "evict",
+);
 expect(proposal).toBeDefined();
-expect((proposal as any).action.workloadName).toBe('w2'); // lowest priority
+expect((proposal as any).action.workloadName).toBe("w2"); // lowest priority
 
 // test: loop_emits_degraded_proposal_after_n_slow_ticks
 // Run loop twice (interval=0ms) with fake fetch returning 200 but slow (p95 > threshold)
@@ -915,6 +1075,7 @@ risk_class: paste-ready
 **Implementation**: `packages/cli/src/commands/supervisor.ts`
 
 `supervisor serve` subcommand:
+
 - Options: `--node`, `--interval=60s`, `--once`, `--auto`, `--severity-threshold=2`,
   `--journal=<path>`, `--config=<yaml-path>`.
 - Loads workload list from `listNodeRuns()` (and ModelHost equivalents from daemon state or
@@ -925,6 +1086,7 @@ risk_class: paste-ready
 - Prints proposals inline with `[PROPOSAL]` prefix.
 
 `supervisor status` subcommand:
+
 - Options: `--journal=<path>`, `--tail=N` (default 20), `--proposals-only`.
 - Reads journal JSONL tail, formats as table.
 - `--proposals-only` filters to `fleet-proposal` entries only.
@@ -958,11 +1120,13 @@ risk_class: schema-aware
 ```
 
 **Implementation**:
+
 - Import and register `supervisorCommand` from `./commands/supervisor.js` under the root CLI.
 - Import and register `admitCommand` from `./commands/admit.js`.
 - Ensure `bun run build` (or equivalent) produces updated CLI bundle.
 
 **Verify**:
+
 ```
 cd packages/cli && bun test test/cli-registration.test.ts
 llamactl supervisor --help   # smoke: shows serve + status
@@ -978,24 +1142,26 @@ point and a `llamactl supervisor status` read path. Full cross-package check:
 
 ## Open items — deferred to follow-on plan
 
-| Item | Reason deferred |
-|---|---|
-| L3: dynamic mcr/max-model-memory reshape | oMLX requires restart; no live-config primitive yet. Propose-only journaling of reshape recommendations is Phase 4's `buildRestartProposal`. Revisit when engine gains `/admin/reconfigure`. |
-| L4: `spec.priority` eviction ordering in controller | Phase 2.1 adds the field; the controller's `noderun-reconciler.ts` doesn't yet consult it for eviction ordering. Depends on having a running supervisor producing pressure signals. |
-| L4: Cross-node role failover proposal | Requires tRPC surface on agentchat pool to swap members at runtime. Out of scope for v1. |
-| Prometheus metrics endpoint | `llamactl supervisor serve --metrics-port=9100` emitting node_mem + workload health gauges. One-file addition after Phase 5 stabilizes. |
-| Retention policy for journal | Capped ring-buffer flush is clean enough for v1; a `--retention-days=7` pruner is a one-shot cron addition. |
+| Item                                                | Reason deferred                                                                                                                                                                              |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| L3: dynamic mcr/max-model-memory reshape            | oMLX requires restart; no live-config primitive yet. Propose-only journaling of reshape recommendations is Phase 4's `buildRestartProposal`. Revisit when engine gains `/admin/reconfigure`. |
+| L4: `spec.priority` eviction ordering in controller | Phase 2.1 adds the field; the controller's `noderun-reconciler.ts` doesn't yet consult it for eviction ordering. Depends on having a running supervisor producing pressure signals.          |
+| L4: Cross-node role failover proposal               | Requires tRPC surface on agentchat pool to swap members at runtime. Out of scope for v1.                                                                                                     |
+| Prometheus metrics endpoint                         | `llamactl supervisor serve --metrics-port=9100` emitting node_mem + workload health gauges. One-file addition after Phase 5 stabilizes.                                                      |
+| Retention policy for journal                        | Capped ring-buffer flush is clean enough for v1; a `--retention-days=7` pruner is a one-shot cron addition.                                                                                  |
 
 ---
 
 ## Validation
 
 After writing, run:
+
 ```
 penumbra plan validate docs/superpowers/plans/2026-05-22-fleet-supervisor.md
 ```
 
 Expected passes:
+
 - `parallel_with` reciprocity: (1.1↔1.2), (2.3↔2.4), (3.1↔3.2), (4.1↔4.2). ✓
 - No `depends_on` cycles. ✓
 - No `file_scope: new` collisions — each new file appears in exactly one task. ✓

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * On-disk wire formats for the TSV state files that the shell library
@@ -16,23 +16,23 @@ export const CuratedModel = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   family: z.string().min(1),
-  class: z.enum(['multimodal', 'reasoning', 'general', 'custom']),
+  class: z.enum(["multimodal", "reasoning", "general", "custom"]),
   scope: z.string().min(1),
   rel: z.string().min(1),
   repo: z.string().min(1),
-  format: z.enum(['gguf', 'mlx']).optional().default('gguf'),
+  format: z.enum(["gguf", "mlx"]).optional().default("gguf"),
 });
 export type CuratedModel = z.infer<typeof CuratedModel>;
 
 export const curatedTsvFields = [
-  'id',
-  'label',
-  'family',
-  'class',
-  'scope',
-  'rel',
-  'repo',
-  'format',
+  "id",
+  "label",
+  "family",
+  "class",
+  "scope",
+  "rel",
+  "repo",
+  "format",
 ] as const;
 
 // ---- preset-overrides.tsv ----------------------------------------------
@@ -42,14 +42,14 @@ export const curatedTsvFields = [
  * briefly before `updated_at` was added.
  */
 export const PresetOverride = z.object({
-  profile: z.enum(['mac-mini-16g', 'balanced', 'macbook-pro-48g']),
-  preset: z.enum(['best', 'vision', 'balanced', 'fast']),
+  profile: z.enum(["mac-mini-16g", "balanced", "macbook-pro-48g"]),
+  preset: z.enum(["best", "vision", "balanced", "fast"]),
   rel: z.string().min(1),
-  updated_at: z.string().optional().default(''),
+  updated_at: z.string().optional().default(""),
 });
 export type PresetOverride = z.infer<typeof PresetOverride>;
 
-export const presetOverrideFields = ['profile', 'preset', 'rel', 'updated_at'] as const;
+export const presetOverrideFields = ["profile", "preset", "rel", "updated_at"] as const;
 
 // ---- bench-profiles.tsv ------------------------------------------------
 /**
@@ -67,7 +67,7 @@ export const presetOverrideFields = ['profile', 'preset', 'rel', 'updated_at'] a
 export const BenchProfile = z.object({
   machine: z.string().min(1),
   rel: z.string().min(1),
-  mode: z.enum(['text', 'vision']),
+  mode: z.enum(["text", "vision"]),
   ctx: z.string().min(1),
   build: z.string().min(1),
   profile: z.string().min(1),
@@ -78,15 +78,15 @@ export const BenchProfile = z.object({
 export type BenchProfile = z.infer<typeof BenchProfile>;
 
 export const benchProfileFields = [
-  'machine',
-  'rel',
-  'mode',
-  'ctx',
-  'build',
-  'profile',
-  'gen_ts',
-  'prompt_ts',
-  'updated_at',
+  "machine",
+  "rel",
+  "mode",
+  "ctx",
+  "build",
+  "profile",
+  "gen_ts",
+  "prompt_ts",
+  "updated_at",
 ] as const;
 
 export const BenchProfileLegacy = z.object({
@@ -107,7 +107,7 @@ export const BenchHistoryEntry = z.object({
   updated_at: z.string().min(1),
   machine: z.string().min(1),
   rel: z.string().min(1),
-  mode: z.enum(['text', 'vision']),
+  mode: z.enum(["text", "vision"]),
   ctx: z.string().min(1),
   build: z.string().min(1),
   profile: z.string().min(1),
@@ -118,16 +118,16 @@ export const BenchHistoryEntry = z.object({
 export type BenchHistoryEntry = z.infer<typeof BenchHistoryEntry>;
 
 export const benchHistoryFields = [
-  'updated_at',
-  'machine',
-  'rel',
-  'mode',
-  'ctx',
-  'build',
-  'profile',
-  'gen_ts',
-  'prompt_ts',
-  'launch_args',
+  "updated_at",
+  "machine",
+  "rel",
+  "mode",
+  "ctx",
+  "build",
+  "profile",
+  "gen_ts",
+  "prompt_ts",
+  "launch_args",
 ] as const;
 
 // ---- bench-vision.tsv --------------------------------------------------
@@ -151,15 +151,15 @@ export const BenchVision = z.object({
 export type BenchVision = z.infer<typeof BenchVision>;
 
 export const benchVisionFields = [
-  'machine',
-  'rel',
-  'ctx',
-  'build',
-  'load_ms',
-  'image_encode_ms',
-  'prompt_tps',
-  'gen_tps',
-  'updated_at',
+  "machine",
+  "rel",
+  "ctx",
+  "build",
+  "load_ms",
+  "image_encode_ms",
+  "prompt_tps",
+  "gen_tps",
+  "updated_at",
 ] as const;
 
 // ---- Hugging Face API responses ----------------------------------------
@@ -169,31 +169,37 @@ export const benchVisionFields = [
  * so caching preserves the full document byte-for-byte even if zod rejects
  * a future field rename on the fields we do care about.
  */
-export const HFModelSibling = z.object({
-  rfilename: z.string(),
-  size: z.number().optional(),
-  lfs: z.object({ size: z.number().optional() }).passthrough().optional(),
-}).passthrough();
+export const HFModelSibling = z
+  .object({
+    rfilename: z.string(),
+    size: z.number().optional(),
+    lfs: z.object({ size: z.number().optional() }).passthrough().optional(),
+  })
+  .passthrough();
 export type HFModelSibling = z.infer<typeof HFModelSibling>;
 
-export const HFModelInfo = z.object({
-  id: z.string(),
-  downloads: z.number().optional(),
-  likes: z.number().optional(),
-  lastModified: z.string().optional(),
-  pipeline_tag: z.string().nullable().optional(),
-  pipelineTag: z.string().nullable().optional(),
-  tags: z.array(z.string()).optional(),
-  siblings: z.array(HFModelSibling).optional(),
-}).passthrough();
+export const HFModelInfo = z
+  .object({
+    id: z.string(),
+    downloads: z.number().optional(),
+    likes: z.number().optional(),
+    lastModified: z.string().optional(),
+    pipeline_tag: z.string().nullable().optional(),
+    pipelineTag: z.string().nullable().optional(),
+    tags: z.array(z.string()).optional(),
+    siblings: z.array(HFModelSibling).optional(),
+  })
+  .passthrough();
 export type HFModelInfo = z.infer<typeof HFModelInfo>;
 
-export const HFTreeEntry = z.object({
-  path: z.string(),
-  type: z.enum(['file', 'directory']).optional(),
-  size: z.number().optional(),
-  lfs: z.object({ size: z.number().optional() }).passthrough().optional(),
-}).passthrough();
+export const HFTreeEntry = z
+  .object({
+    path: z.string(),
+    type: z.enum(["file", "directory"]).optional(),
+    size: z.number().optional(),
+    lfs: z.object({ size: z.number().optional() }).passthrough().optional(),
+  })
+  .passthrough();
 export type HFTreeEntry = z.infer<typeof HFTreeEntry>;
 
 export const HFTree = z.array(HFTreeEntry);
@@ -206,7 +212,7 @@ export type HFDiscoveryFeed = z.infer<typeof HFDiscoveryFeed>;
 
 /** Split a TSV row into columns without mangling empty trailing fields. */
 export function splitTsvRow(line: string): string[] {
-  return line.split('\t');
+  return line.split("\t");
 }
 
 /** Join a record in canonical column order into a TSV row. */
@@ -214,5 +220,5 @@ export function formatTsvRow<T extends Record<string, unknown>>(
   fields: readonly (keyof T & string)[],
   record: T,
 ): string {
-  return fields.map((f) => String(record[f] ?? '')).join('\t');
+  return fields.map((f) => String(record[f] ?? "")).join("\t");
 }

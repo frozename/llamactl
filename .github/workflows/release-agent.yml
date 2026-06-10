@@ -27,7 +27,7 @@ name: release-agent
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
   workflow_dispatch: {}
 
 jobs:

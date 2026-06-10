@@ -1,6 +1,6 @@
-import { z } from 'zod';
-import type { Runbook, RunbookStep } from '../types.js';
-import { parseToolJson } from '../types.js';
+import { z } from "zod";
+import type { Runbook, RunbookStep } from "../types.js";
+import { parseToolJson } from "../types.js";
 
 /**
  * Register a freshly-bootstrapped agent node with the current cluster.
@@ -25,11 +25,11 @@ import { parseToolJson } from '../types.js';
  */
 
 const ParamsSchema = z.object({
-  name: z.string().min(1).describe('kubeconfig name for the new node'),
+  name: z.string().min(1).describe("kubeconfig name for the new node"),
   bootstrap: z
     .string()
     .min(1)
-    .describe('base64 blob emitted by `llamactl agent init` on the new host'),
+    .describe("base64 blob emitted by `llamactl agent init` on the new host"),
 });
 type Params = z.infer<typeof ParamsSchema>;
 
@@ -40,22 +40,27 @@ interface NodesLsPayload {
 }
 
 export const onboardNewGpuNode: Runbook<Params> = {
-  name: 'onboard-new-gpu-node',
+  name: "onboard-new-gpu-node",
   description:
-    'Add a bootstrapped agent node to kubeconfig and refresh embersynth.yaml so the new agent joins the routing pool. Does NOT install infra or run bench — those are separate operator steps.',
+    "Add a bootstrapped agent node to kubeconfig and refresh embersynth.yaml so the new agent joins the routing pool. Does NOT install infra or run bench — those are separate operator steps.",
   paramsSchema: ParamsSchema,
   async execute(ctx, params) {
     const steps: RunbookStep[] = [];
 
     // Validate the bootstrap + preview the add in dry-run first. Any
     // issue with the blob surfaces here instead of after a write.
-    const preview = parseToolJson<{ dryRun: boolean; message: string; node?: unknown; error?: string }>(
+    const preview = parseToolJson<{
+      dryRun: boolean;
+      message: string;
+      node?: unknown;
+      error?: string;
+    }>(
       await ctx.tools.callTool({
-        name: 'llamactl.node.add',
+        name: "llamactl.node.add",
         arguments: { name: params.name, bootstrap: params.bootstrap, dryRun: true },
       }),
     );
-    steps.push({ tool: 'llamactl.node.add', dryRun: true, result: preview });
+    steps.push({ tool: "llamactl.node.add", dryRun: true, result: preview });
     if (preview.error) {
       return { ok: false, steps, error: `bootstrap blob rejected: ${preview.error}` };
     }
@@ -73,23 +78,28 @@ export const onboardNewGpuNode: Runbook<Params> = {
       };
     }
 
-    const addResult = parseToolJson<{ ok: boolean; name?: string; endpoint?: string; error?: string }>(
+    const addResult = parseToolJson<{
+      ok: boolean;
+      name?: string;
+      endpoint?: string;
+      error?: string;
+    }>(
       await ctx.tools.callTool({
-        name: 'llamactl.node.add',
+        name: "llamactl.node.add",
         arguments: { name: params.name, bootstrap: params.bootstrap, dryRun: false },
       }),
     );
-    steps.push({ tool: 'llamactl.node.add', dryRun: false, result: addResult });
+    steps.push({ tool: "llamactl.node.add", dryRun: false, result: addResult });
     if (!addResult.ok) {
-      return { ok: false, steps, error: addResult.error ?? 'node.add failed' };
+      return { ok: false, steps, error: addResult.error ?? "node.add failed" };
     }
 
     const nodeList = parseToolJson<NodesLsPayload>(
-      await ctx.tools.callTool({ name: 'llamactl.node.ls', arguments: {} }),
+      await ctx.tools.callTool({ name: "llamactl.node.ls", arguments: {} }),
     );
     const confirmed = nodeList.nodes.some((n) => n.name === params.name);
     steps.push({
-      tool: 'llamactl.node.ls',
+      tool: "llamactl.node.ls",
       dryRun: false,
       result: { confirmed, totalNodes: nodeList.nodes.length },
     });
@@ -103,14 +113,14 @@ export const onboardNewGpuNode: Runbook<Params> = {
 
     const sync = parseToolJson(
       await ctx.tools.callTool({
-        name: 'llamactl.embersynth.sync',
+        name: "llamactl.embersynth.sync",
         arguments: { dryRun: false },
       }),
     );
-    steps.push({ tool: 'llamactl.embersynth.sync', dryRun: false, result: sync });
+    steps.push({ tool: "llamactl.embersynth.sync", dryRun: false, result: sync });
 
     ctx.log(
-      `onboard-new-gpu-node: ${params.name} joined cluster ${nodeList.cluster ?? '?'} (${nodeList.nodes.length} total nodes)`,
+      `onboard-new-gpu-node: ${params.name} joined cluster ${nodeList.cluster ?? "?"} (${nodeList.nodes.length} total nodes)`,
     );
 
     return {

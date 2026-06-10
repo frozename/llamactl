@@ -1,10 +1,17 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import type { ResolvedEnv } from './types.js';
-import { resolveEnv } from './env.js';
-import { readModelHostState, modelhostPidFile } from './engines/state.js';
-import { readServerState } from './server.js';
-import type { EngineName } from './engines/index.js';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import type { ResolvedEnv } from "./types.js";
+import { resolveEnv } from "./env.js";
+import { readModelHostState, modelhostPidFile } from "./engines/state.js";
+import { readServerState } from "./server.js";
+import type { EngineName } from "./engines/index.js";
 
 export interface WorkloadKey {
   name: string;
@@ -22,7 +29,7 @@ export interface LocalRoute {
   host: string;
   port: number;
   engine: EngineName;
-  kind: 'ModelRun' | 'ModelHost';
+  kind: "ModelRun" | "ModelHost";
   pid: number;
 }
 
@@ -31,13 +38,13 @@ export interface PeerSnapshot {
    *  invalidate cross-node response caches on a peer restart/swap. Optional for
    *  back-compat with peers that don't advertise it. */
   workloads: Array<{ modelId: string; port: number; revision?: string | null }>;
-  pressure: 'NORMAL' | 'HIGH';
+  pressure: "NORMAL" | "HIGH";
   fetchedAt: number;
 }
 
 export type ClusterRoute =
   | LocalRoute
-  | (Omit<LocalRoute, 'pid'> & {
+  | (Omit<LocalRoute, "pid"> & {
       isPeer: true;
       peerEndpoint: string;
       certificate?: string;
@@ -66,7 +73,7 @@ function endpointPortForUrl(url: URL): number {
     const parsed = Number.parseInt(url.port, 10);
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
-  return url.protocol === 'https:' ? 443 : 80;
+  return url.protocol === "https:" ? 443 : 80;
 }
 
 export function listClusterRoutes(
@@ -81,7 +88,7 @@ export function listClusterRoutes(
   for (const peer of config.peers) {
     const snapshot = peerSnapshots.get(peer.id);
     if (!snapshot) continue;
-    if (snapshot.pressure === 'HIGH') continue;
+    if (snapshot.pressure === "HIGH") continue;
     if (now - snapshot.fetchedAt > PEER_ROUTE_STALE_MS) continue;
 
     let endpoint: URL;
@@ -99,8 +106,8 @@ export function listClusterRoutes(
         model: workload.modelId,
         host: endpoint.hostname,
         port: endpointPortForUrl(endpoint),
-        engine: 'llamacpp',
-        kind: 'ModelRun',
+        engine: "llamacpp",
+        kind: "ModelRun",
         isPeer: true,
         peerEndpoint: peer.endpoint,
         certificate: peer.certificate,
@@ -115,7 +122,7 @@ export function listClusterRoutes(
 }
 
 export function workloadRuntimeRoot(resolved: ResolvedEnv = resolveEnv()): string {
-  return join(resolved.LOCAL_AI_RUNTIME_DIR, 'workloads');
+  return join(resolved.LOCAL_AI_RUNTIME_DIR, "workloads");
 }
 
 export function workloadRuntimeDir(resolved: ResolvedEnv, key: WorkloadKey): string {
@@ -129,13 +136,18 @@ export function ensureWorkloadRuntimeDir(resolved: ResolvedEnv, key: WorkloadKey
 }
 
 function isProcessAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readPidFile(path: string): number | null {
   if (!existsSync(path)) return null;
   try {
-    const raw = readFileSync(path, 'utf8').trim();
+    const raw = readFileSync(path, "utf8").trim();
     const n = Number.parseInt(raw, 10);
     return Number.isFinite(n) && n > 0 ? n : null;
   } catch {
@@ -149,8 +161,8 @@ export function listLocalWorkloads(resolved: ResolvedEnv = resolveEnv()): Worklo
   const entries: WorkloadRuntimeEntry[] = [];
   for (const dirent of readdirSync(root, { withFileTypes: true })) {
     if (!dirent.isDirectory()) continue;
-    const pidPath = join(root, dirent.name, 'llama-server.pid');
-    const modelhostPidPath = join(root, dirent.name, 'modelhost.pid');
+    const pidPath = join(root, dirent.name, "llama-server.pid");
+    const modelhostPidPath = join(root, dirent.name, "modelhost.pid");
     const activePidPath = existsSync(pidPath) ? pidPath : modelhostPidPath;
     if (!existsSync(activePidPath)) continue;
     const pid = readPidFile(activePidPath);
@@ -165,7 +177,7 @@ function aliasesFromExtraArgs(extraArgs: readonly string[] | undefined): string[
   if (!extraArgs) return [];
   const out: string[] = [];
   for (let i = 0; i + 1 < extraArgs.length; i += 1) {
-    if (extraArgs[i] === '--alias' || extraArgs[i] === '-a') out.push(extraArgs[i + 1]!);
+    if (extraArgs[i] === "--alias" || extraArgs[i] === "-a") out.push(extraArgs[i + 1]!);
   }
   return out;
 }
@@ -189,7 +201,7 @@ export function listLocalRoutes(resolved: ResolvedEnv = resolveEnv()): LocalRout
             host: state.host,
             port: state.port,
             engine: state.engine,
-            kind: 'ModelHost',
+            kind: "ModelHost",
             pid: hostPid,
           });
         }
@@ -197,7 +209,7 @@ export function listLocalRoutes(resolved: ResolvedEnv = resolveEnv()): LocalRout
       }
     }
 
-    const runPid = readPidFile(join(root, dirent.name, 'llama-server.pid'));
+    const runPid = readPidFile(join(root, dirent.name, "llama-server.pid"));
     if (runPid === null || !isProcessAlive(runPid)) continue;
     const state = readServerState(key, resolved);
     if (!state?.rel || !state.host || state.port == null) continue;
@@ -215,8 +227,8 @@ export function listLocalRoutes(resolved: ResolvedEnv = resolveEnv()): LocalRout
         model,
         host: state.host,
         port: Number(state.port),
-        engine: 'llamacpp',
-        kind: 'ModelRun',
+        engine: "llamacpp",
+        kind: "ModelRun",
         pid: runPid,
       });
     }
@@ -235,16 +247,16 @@ export function listWorkloadDirs(resolved: ResolvedEnv = resolveEnv()): string[]
 }
 
 export type MigrationResult =
-  | { kind: 'skipped' }
-  | { kind: 'no-legacy' }
-  | { kind: 'migrated'; workload: string }
-  | { kind: 'synthesized'; workload: string };
+  | { kind: "skipped" }
+  | { kind: "no-legacy" }
+  | { kind: "migrated"; workload: string }
+  | { kind: "synthesized"; workload: string };
 
 interface MinimalManifestForMigration {
   metadata: { name: string };
   spec: {
     node: string;
-    target: { kind: 'rel' | 'alias'; value: string };
+    target: { kind: "rel" | "alias"; value: string };
     endpoint?: { host?: string; port?: number };
   };
 }
@@ -254,30 +266,31 @@ export function migrateLegacySingletonRuntime(
   manifests: MinimalManifestForMigration[],
 ): MigrationResult {
   const root = resolved.LOCAL_AI_RUNTIME_DIR;
-  const flag = join(root, '.migrated-v2');
-  if (existsSync(flag)) return { kind: 'skipped' };
+  const flag = join(root, ".migrated-v2");
+  if (existsSync(flag)) return { kind: "skipped" };
 
-  const legacyPid = join(root, 'llama-server.pid');
-  const legacyState = join(root, 'llama-server.state');
-  const legacyLog = join(root, 'llama-server.log');
+  const legacyPid = join(root, "llama-server.pid");
+  const legacyState = join(root, "llama-server.state");
+  const legacyLog = join(root, "llama-server.log");
   if (!existsSync(legacyPid) && !existsSync(legacyState)) {
-    writeFileSync(flag, '');
-    return { kind: 'no-legacy' };
+    writeFileSync(flag, "");
+    return { kind: "no-legacy" };
   }
 
   let stateRel: string | null = null;
   let statePort: number | null = null;
   try {
-    const raw = readFileSync(legacyState, 'utf8');
+    const raw = readFileSync(legacyState, "utf8");
     const parsed = JSON.parse(raw);
-    if (typeof parsed.rel === 'string') stateRel = parsed.rel;
-    if (typeof parsed.port === 'string') statePort = Number.parseInt(parsed.port, 10);
-    if (typeof parsed.port === 'number') statePort = parsed.port;
+    if (typeof parsed.rel === "string") stateRel = parsed.rel;
+    if (typeof parsed.port === "string") statePort = Number.parseInt(parsed.port, 10);
+    if (typeof parsed.port === "number") statePort = parsed.port;
   } catch {}
 
-  const match = manifests.find((manifest) =>
-    manifest.spec.target.value === stateRel &&
-    (manifest.spec.endpoint?.port === undefined || manifest.spec.endpoint.port === statePort),
+  const match = manifests.find(
+    (manifest) =>
+      manifest.spec.target.value === stateRel &&
+      (manifest.spec.endpoint?.port === undefined || manifest.spec.endpoint.port === statePort),
   );
 
   const workloadName = match?.metadata.name ?? `imperative-${Date.now()}`;
@@ -290,10 +303,12 @@ export function migrateLegacySingletonRuntime(
       } catch {}
     }
   };
-  moveIfExists(legacyPid, 'llama-server.pid');
-  moveIfExists(legacyState, 'llama-server.state');
-  moveIfExists(legacyLog, 'llama-server.log');
+  moveIfExists(legacyPid, "llama-server.pid");
+  moveIfExists(legacyState, "llama-server.state");
+  moveIfExists(legacyLog, "llama-server.log");
 
-  writeFileSync(flag, '');
-  return match ? { kind: 'migrated', workload: workloadName } : { kind: 'synthesized', workload: workloadName };
+  writeFileSync(flag, "");
+  return match
+    ? { kind: "migrated", workload: workloadName }
+    : { kind: "synthesized", workload: workloadName };
 }

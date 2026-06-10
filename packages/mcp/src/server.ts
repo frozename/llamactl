@@ -1,5 +1,5 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { z } from 'zod';
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 import {
   bench,
   catalog,
@@ -7,7 +7,7 @@ import {
   nodeFacts as nodeFactsMod,
   presets,
   server as serverMod,
-} from '@llamactl/core';
+} from "@llamactl/core";
 import {
   agentConfig,
   config as kubecfg,
@@ -17,7 +17,7 @@ import {
   workloadStore,
   modelHostStore,
   type ClusterNode,
-} from '@llamactl/remote';
+} from "@llamactl/remote";
 import {
   computeCostSnapshot,
   runPlanner,
@@ -26,12 +26,12 @@ import {
   DEFAULT_ALLOWLIST,
   type PlannerExecutor,
   type PlannerToolDescriptor,
-} from '@nova/mcp';
-import { createOpenAICompatProvider } from '@nova/contracts';
-import { appendAudit, toTextContent } from '@nova/mcp-shared';
-import { registerPipelineTools } from './pipelines.js';
-import { registerFleetTools } from './tools/fleet.js';
-import { registerModelsLeaderboardTool } from './tools/models-leaderboard.js';
+} from "@nova/mcp";
+import { createOpenAICompatProvider } from "@nova/contracts";
+import { appendAudit, toTextContent } from "@nova/mcp-shared";
+import { registerPipelineTools } from "./pipelines.js";
+import { registerFleetTools } from "./tools/fleet.js";
+import { registerModelsLeaderboardTool } from "./tools/models-leaderboard.js";
 
 /**
  * `@llamactl/mcp` — Model Context Protocol server exposing llamactl's
@@ -46,15 +46,15 @@ import { registerModelsLeaderboardTool } from './tools/models-leaderboard.js';
  * to the audit sink, so operators can reconstruct what an agent did.
  */
 
-const SERVER_SLUG = 'llamactl';
+const SERVER_SLUG = "llamactl";
 
-const PROFILE_ENUM = z.enum(['mac-mini-16g', 'balanced', 'macbook-pro-48g']);
-const PRESET_ENUM = z.enum(['best', 'vision', 'balanced', 'fast']);
+const PROFILE_ENUM = z.enum(["mac-mini-16g", "balanced", "macbook-pro-48g"]);
+const PRESET_ENUM = z.enum(["best", "vision", "balanced", "fast"]);
 
 export type WorkloadDeleteDryRunResult = {
   dryRun: true;
   found: boolean;
-  kind: 'ModelRun' | 'ModelHost' | null;
+  kind: "ModelRun" | "ModelHost" | null;
   node: string | null;
   rel: string | null;
   message: string;
@@ -62,8 +62,8 @@ export type WorkloadDeleteDryRunResult = {
 
 export function buildMcpServer(opts?: { name?: string; version?: string }): McpServer {
   const server = new McpServer({
-    name: opts?.name ?? 'llamactl',
-    version: opts?.version ?? '0.0.0',
+    name: opts?.name ?? "llamactl",
+    version: opts?.version ?? "0.0.0",
   });
 
   registerModelsLeaderboardTool(server);
@@ -71,27 +71,27 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   // ---- Reads -----------------------------------------------------
 
   server.registerTool(
-    'llamactl.catalog.list',
+    "llamactl.catalog.list",
     {
-      title: 'List curated models',
+      title: "List curated models",
       description:
-        'Read the llamactl curated-models catalog on the control plane. Returns one entry per (rel, scope).',
+        "Read the llamactl curated-models catalog on the control plane. Returns one entry per (rel, scope).",
       inputSchema: {
         scope: z
-          .enum(['all', 'builtin', 'custom'])
-          .default('all')
-          .describe('Which catalog tier to include.'),
+          .enum(["all", "builtin", "custom"])
+          .default("all")
+          .describe("Which catalog tier to include."),
       },
     },
-    async ({ scope }) => toTextContent(catalog.listCatalog(scope ?? 'all')),
+    async ({ scope }) => toTextContent(catalog.listCatalog(scope ?? "all")),
   );
 
   server.registerTool(
-    'llamactl.node.ls',
+    "llamactl.node.ls",
     {
-      title: 'List cluster nodes',
+      title: "List cluster nodes",
       description:
-        'Read the kubeconfig (`~/.llamactl/config`) and return every node in the current cluster with its resolved kind (agent | gateway | provider).',
+        "Read the kubeconfig (`~/.llamactl/config`) and return every node in the current cluster with its resolved kind (agent | gateway | provider).",
       inputSchema: {},
     },
     async () => {
@@ -114,20 +114,20 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.bench.compare',
+    "llamactl.bench.compare",
     {
-      title: 'Bench comparison table',
+      title: "Bench comparison table",
       description:
-        'Return the bench comparison table joining curated catalog, preset tunings, and recorded runs. Filters mirror the `llamactl bench compare` CLI.',
+        "Return the bench comparison table joining curated catalog, preset tunings, and recorded runs. Filters mirror the `llamactl bench compare` CLI.",
       inputSchema: {
         classFilter: z
-          .enum(['all', 'reasoning', 'multimodal', 'general', 'custom'])
-          .default('all')
-          .describe('Model class to include.'),
+          .enum(["all", "reasoning", "multimodal", "general", "custom"])
+          .default("all")
+          .describe("Model class to include."),
         scopeFilter: z
           .string()
-          .default('all')
-          .describe('Catalog scope (all | builtin | custom | candidate | …).'),
+          .default("all")
+          .describe("Catalog scope (all | builtin | custom | candidate | …)."),
       },
     },
     async ({ classFilter, scopeFilter }) => {
@@ -135,42 +135,38 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       void resolved;
       return toTextContent(
         bench.benchCompare({
-          classFilter: classFilter ?? 'all',
-          scopeFilter: scopeFilter ?? 'all',
+          classFilter: classFilter ?? "all",
+          scopeFilter: scopeFilter ?? "all",
         }),
       );
     },
   );
 
   server.registerTool(
-    'llamactl.server.status',
+    "llamactl.server.status",
     {
-      title: 'Local llama-server status',
+      title: "Local llama-server status",
       description:
         'Return the control plane\'s local llama-server state: up/down, running rel, PID, endpoint, and extraArgs. Operators use this alongside workload.list to reconcile "what the manifest wants" against "what is actually serving".',
       inputSchema: {
-        workload: z
-          .string()
-          .min(1)
-          .describe('Name of the ModelRun workload to inspect.'),
+        workload: z.string().min(1).describe("Name of the ModelRun workload to inspect."),
       },
     },
-    async ({ workload }) =>
-      toTextContent(await serverMod.serverStatus({ name: workload })),
+    async ({ workload }) => toTextContent(await serverMod.serverStatus({ name: workload })),
   );
 
   server.registerTool(
-    'llamactl.workload.list',
+    "llamactl.workload.list",
     {
-      title: 'List persisted ModelRun + ModelHost manifests',
+      title: "List persisted ModelRun + ModelHost manifests",
       description:
-        'Return every ModelRun and ModelHost manifest under ~/.llamactl/workloads/, each tagged with `kind` and its last-recorded status field. ModelHosts (oMLX etc.) are charged against the same node budget as ModelRuns, so they are listed here too. Live runtime phase (per-node server probing) is a CLI-only operation — callers chaining several steps should cross-reference llamactl.server.status for the control plane\'s node.',
+        "Return every ModelRun and ModelHost manifest under ~/.llamactl/workloads/, each tagged with `kind` and its last-recorded status field. ModelHosts (oMLX etc.) are charged against the same node budget as ModelRuns, so they are listed here too. Live runtime phase (per-node server probing) is a CLI-only operation — callers chaining several steps should cross-reference llamactl.server.status for the control plane's node.",
       inputSchema: {},
     },
     async () => {
       const rows = workloadStore.listWorkloads().map((m) => ({
         name: m.metadata.name,
-        kind: 'ModelRun' as const,
+        kind: "ModelRun" as const,
         node: m.spec.node,
         rel: m.spec.target.value,
         gateway: m.spec.gateway,
@@ -179,7 +175,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       }));
       const hostRows = modelHostStore.listModelHosts().map((h) => ({
         name: h.metadata.name,
-        kind: 'ModelHost' as const,
+        kind: "ModelHost" as const,
         node: h.spec.node,
         rel: h.spec.hostedModels[0]!.rel,
         gateway: false,
@@ -192,24 +188,24 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.node.facts',
+    "llamactl.node.facts",
     {
-      title: 'Local node hardware facts',
+      title: "Local node hardware facts",
       description:
-        'Return the control plane\'s own hardware inventory — profile (mac-mini-16g | balanced | macbook-pro-48g), memory bytes, OS/arch, GPU kind, llama.cpp build id, versions. Remote-node facts need the dispatcher; this tool covers the control-plane case.',
+        "Return the control plane's own hardware inventory — profile (mac-mini-16g | balanced | macbook-pro-48g), memory bytes, OS/arch, GPU kind, llama.cpp build id, versions. Remote-node facts need the dispatcher; this tool covers the control-plane case.",
       inputSchema: {},
     },
     async () => toTextContent(nodeFactsMod.collectNodeFacts()),
   );
 
   server.registerTool(
-    'llamactl.node.budget',
+    "llamactl.node.budget",
     {
-      title: 'Node workload budget rollup',
+      title: "Node workload budget rollup",
       description:
-        'Return the current budget, reserved GiB, and declared workloads for a node. Mirrors the node budget rollup used by `llamactl describe node` and the remote nodeBudget procedure. Read-only.',
+        "Return the current budget, reserved GiB, and declared workloads for a node. Mirrors the node budget rollup used by `llamactl describe node` and the remote nodeBudget procedure. Read-only.",
       inputSchema: {
-        node: z.string().min(1).describe('Name of the node to inspect.'),
+        node: z.string().min(1).describe("Name of the node to inspect."),
       },
     },
     async (input) => {
@@ -219,14 +215,14 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.node.add',
+    "llamactl.node.add",
     {
-      title: 'Add a node from a bootstrap blob',
+      title: "Add a node from a bootstrap blob",
       description:
-        'Ingest a `llamactl agent init` bootstrap blob and register the new node in the current cluster\'s kubeconfig. `dryRun: true` decodes the blob and previews the resulting node entry without writing. Does NOT probe reachability — chain with nova.ops.healthcheck after a wet-run to confirm.',
+        "Ingest a `llamactl agent init` bootstrap blob and register the new node in the current cluster's kubeconfig. `dryRun: true` decodes the blob and previews the resulting node entry without writing. Does NOT probe reachability — chain with nova.ops.healthcheck after a wet-run to confirm.",
       inputSchema: {
         name: z.string().min(1),
-        bootstrap: z.string().min(1).describe('base64 blob emitted by `llamactl agent init`'),
+        bootstrap: z.string().min(1).describe("base64 blob emitted by `llamactl agent init`"),
         dryRun: z.boolean().default(false),
       },
     },
@@ -238,7 +234,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       } catch (err) {
         appendAudit({
           server: SERVER_SLUG,
-          tool: 'llamactl.node.add',
+          tool: "llamactl.node.add",
           input: { name, dryRun },
           dryRun,
           result: { error: (err as Error).message },
@@ -257,7 +253,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       if (dryRun) {
         appendAudit({
           server: SERVER_SLUG,
-          tool: 'llamactl.node.add',
+          tool: "llamactl.node.add",
           input: { name, dryRun },
           dryRun: true,
         });
@@ -274,19 +270,17 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       let cfg = kubecfg.loadConfig();
       const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
       if (!ctx) {
-        return toTextContent({ ok: false, error: 'no current context in kubeconfig' });
+        return toTextContent({ ok: false, error: "no current context in kubeconfig" });
       }
       cfg = {
         ...cfg,
-        users: cfg.users.map((u) =>
-          u.name === ctx.user ? { ...u, token: decoded.token } : u,
-        ),
+        users: cfg.users.map((u) => (u.name === ctx.user ? { ...u, token: decoded.token } : u)),
       };
       cfg = kubecfg.upsertNode(cfg, ctx.cluster, entry);
       kubecfg.saveConfig(cfg);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.node.add',
+        tool: "llamactl.node.add",
         input: { name, dryRun },
         dryRun: false,
         result: { ok: true, name, endpoint: decoded.url },
@@ -301,11 +295,11 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.node.remove',
+    "llamactl.node.remove",
     {
-      title: 'Remove a node from the current cluster',
+      title: "Remove a node from the current cluster",
       description:
-        'Drop a node from kubeconfig (`~/.llamactl/config`). No-op if absent. Does NOT stop running workloads on that node — chain with workload.delete or drain-node. `dryRun: true` previews without writing.',
+        "Drop a node from kubeconfig (`~/.llamactl/config`). No-op if absent. Does NOT stop running workloads on that node — chain with workload.delete or drain-node. `dryRun: true` previews without writing.",
       inputSchema: {
         name: z.string().min(1),
         dryRun: z.boolean().default(false),
@@ -318,20 +312,20 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
       const match = cluster?.nodes.find((n) => n.name === name);
       if (dryRun) {
-        appendAudit({ server: SERVER_SLUG, tool: 'llamactl.node.remove', input, dryRun: true });
+        appendAudit({ server: SERVER_SLUG, tool: "llamactl.node.remove", input, dryRun: true });
         return toTextContent({
           dryRun: true,
           found: !!match,
           node: match ?? null,
           message: match
-            ? `would remove node ${name} from cluster ${cluster?.name ?? '?'}`
+            ? `would remove node ${name} from cluster ${cluster?.name ?? "?"}`
             : `no node named ${name} in the current cluster`,
         });
       }
       if (!match || !cluster) {
         appendAudit({
           server: SERVER_SLUG,
-          tool: 'llamactl.node.remove',
+          tool: "llamactl.node.remove",
           input,
           dryRun: false,
           result: { removed: false },
@@ -342,7 +336,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       kubecfg.saveConfig(next);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.node.remove',
+        tool: "llamactl.node.remove",
         input,
         dryRun: false,
         result: { removed: true },
@@ -352,13 +346,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.workload.delete',
+    "llamactl.workload.delete",
     {
-      title: 'Remove a workload manifest',
+      title: "Remove a workload manifest",
       description:
-        'Delete the persisted workload manifest from the configured workloads directory (LLAMACTL_WORKLOADS_DIR, else $DEV_STORAGE/workloads, else ~/.llamactl/workloads). Does NOT stop the server — that\'s a separate imperative operation. Dry-run reports what the wet-run would have removed.',
+        "Delete the persisted workload manifest from the configured workloads directory (LLAMACTL_WORKLOADS_DIR, else $DEV_STORAGE/workloads, else ~/.llamactl/workloads). Does NOT stop the server — that's a separate imperative operation. Dry-run reports what the wet-run would have removed.",
       inputSchema: {
-        name: z.string().min(1).describe('metadata.name of the manifest'),
+        name: z.string().min(1).describe("metadata.name of the manifest"),
         dryRun: z.boolean().default(false),
       },
     },
@@ -368,7 +362,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const match = manifests.find((m) => m.metadata.name === name);
       const manifest = match ? workloadStore.loadWorkloadByNameAny(name) : null;
       if (dryRun) {
-        appendAudit({ server: SERVER_SLUG, tool: 'llamactl.workload.delete', input, dryRun: true });
+        appendAudit({ server: SERVER_SLUG, tool: "llamactl.workload.delete", input, dryRun: true });
         const result = {
           dryRun: true,
           found: !!match,
@@ -376,7 +370,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
           node: match?.spec.node ?? null,
           rel: match?.spec.target.value ?? null,
           message: match
-            ? `would remove manifest ${name} (kind=${manifest?.kind ?? 'unknown'}, node=${match.spec.node}, rel=${match.spec.target.value})`
+            ? `would remove manifest ${name} (kind=${manifest?.kind ?? "unknown"}, node=${match.spec.node}, rel=${match.spec.target.value})`
             : `no manifest named ${name}`,
         } satisfies WorkloadDeleteDryRunResult;
         return toTextContent(result);
@@ -384,7 +378,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const removed = workloadStore.deleteWorkload(name);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.workload.delete',
+        tool: "llamactl.workload.delete",
         input,
         dryRun: false,
         result: { removed, found: !!match },
@@ -394,11 +388,11 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.promotions.list',
+    "llamactl.promotions.list",
     {
-      title: 'List preset promotions',
+      title: "List preset promotions",
       description:
-        'Read the current preset-overrides.tsv rows — the active (profile, preset) → rel bindings the control plane will resolve.',
+        "Read the current preset-overrides.tsv rows — the active (profile, preset) → rel bindings the control plane will resolve.",
       inputSchema: {},
     },
     async () => {
@@ -410,15 +404,15 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   // ---- Mutations -------------------------------------------------
 
   server.registerTool(
-    'llamactl.catalog.promote',
+    "llamactl.catalog.promote",
     {
-      title: 'Promote a rel to a (profile, preset) slot',
+      title: "Promote a rel to a (profile, preset) slot",
       description:
-        'Write a preset override so `llamactl resolve --preset <preset>` on `--profile <profile>` picks this rel. Accepts `dryRun: true` to preview without writing.',
+        "Write a preset override so `llamactl resolve --preset <preset>` on `--profile <profile>` picks this rel. Accepts `dryRun: true` to preview without writing.",
       inputSchema: {
         profile: PROFILE_ENUM,
         preset: PRESET_ENUM,
-        rel: z.string().min(1).describe('repo/file.gguf path the preset should resolve to'),
+        rel: z.string().min(1).describe("repo/file.gguf path the preset should resolve to"),
         dryRun: z.boolean().default(false),
       },
     },
@@ -438,14 +432,14 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
             ? `would replace ${prior.rel} with ${rel} for (${profile}, ${preset})`
             : `would add (${profile}, ${preset}) → ${rel}`,
         };
-        appendAudit({ server: SERVER_SLUG, tool: 'llamactl.catalog.promote', input, dryRun: true });
+        appendAudit({ server: SERVER_SLUG, tool: "llamactl.catalog.promote", input, dryRun: true });
         return toTextContent(payload);
       }
       presets.writePresetOverride(profile, preset, rel);
       const after = presets.readPresetOverrides(file);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.catalog.promote',
+        tool: "llamactl.catalog.promote",
         input,
         dryRun: false,
         result: { ok: true, rows: after.length },
@@ -455,11 +449,11 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.catalog.promoteDelete',
+    "llamactl.catalog.promoteDelete",
     {
-      title: 'Clear a (profile, preset) promotion',
+      title: "Clear a (profile, preset) promotion",
       description:
-        'Remove the override row at (profile, preset). No-op if absent. Accepts `dryRun: true`.',
+        "Remove the override row at (profile, preset). No-op if absent. Accepts `dryRun: true`.",
       inputSchema: {
         profile: PROFILE_ENUM,
         preset: PRESET_ENUM,
@@ -475,7 +469,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       if (dryRun) {
         appendAudit({
           server: SERVER_SLUG,
-          tool: 'llamactl.catalog.promoteDelete',
+          tool: "llamactl.catalog.promoteDelete",
           input,
           dryRun: true,
         });
@@ -491,7 +485,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const after = presets.readPresetOverrides(file);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.catalog.promoteDelete',
+        tool: "llamactl.catalog.promoteDelete",
         input,
         dryRun: false,
         result: { removed, rows: after.length },
@@ -501,13 +495,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.embersynth.sync',
+    "llamactl.embersynth.sync",
     {
-      title: 'Regenerate embersynth.yaml',
+      title: "Regenerate embersynth.yaml",
       description:
-        'Project the current kubeconfig + sirius-providers + bench history into `embersynth.yaml`. Preserves hand-edited profiles/syntheticModels when a prior file exists. `dryRun: true` returns the would-be YAML without writing.',
+        "Project the current kubeconfig + sirius-providers + bench history into `embersynth.yaml`. Preserves hand-edited profiles/syntheticModels when a prior file exists. `dryRun: true` returns the would-be YAML without writing.",
       inputSchema: {
-        path: z.string().optional().describe('Override the default embersynth.yaml path.'),
+        path: z.string().optional().describe("Override the default embersynth.yaml path."),
         dryRun: z.boolean().default(false),
       },
     },
@@ -517,7 +511,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const existing = embersynth.loadEmbersynthConfig(path);
       const next = embersynth.generateEmbersynthConfig({ existing });
       if (dryRun) {
-        appendAudit({ server: SERVER_SLUG, tool: 'llamactl.embersynth.sync', input, dryRun: true });
+        appendAudit({ server: SERVER_SLUG, tool: "llamactl.embersynth.sync", input, dryRun: true });
         return toTextContent({
           dryRun: true,
           path,
@@ -530,7 +524,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       embersynth.saveEmbersynthConfig(next, path);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.embersynth.sync',
+        tool: "llamactl.embersynth.sync",
         input,
         dryRun: false,
         result: { path, nodes: next.nodes.length, profiles: next.profiles.length },
@@ -546,41 +540,41 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.embersynth.set-default-profile',
+    "llamactl.embersynth.set-default-profile",
     {
-      title: 'Remap a synthetic model to a different profile',
+      title: "Remap a synthetic model to a different profile",
       description:
-        'Update `syntheticModels[<syntheticModel>]` in embersynth.yaml so the named synthetic model routes to a different profile. Primary use case: the cost-guardian tier-2 action that flips `fusion-auto` (or another default) to `private-first` when spend crosses the force-private threshold. `dryRun: true` reports the diff without writing. Wet mode validates that the target profile exists, atomically rewrites the YAML, and returns the old + new mapping. Does NOT touch live embersynth processes — the gateway picks up the change on next config reload.',
+        "Update `syntheticModels[<syntheticModel>]` in embersynth.yaml so the named synthetic model routes to a different profile. Primary use case: the cost-guardian tier-2 action that flips `fusion-auto` (or another default) to `private-first` when spend crosses the force-private threshold. `dryRun: true` reports the diff without writing. Wet mode validates that the target profile exists, atomically rewrites the YAML, and returns the old + new mapping. Does NOT touch live embersynth processes — the gateway picks up the change on next config reload.",
       inputSchema: {
         profile: z
           .string()
           .min(1)
-          .describe('Profile id to route to (must exist in config.profiles).'),
+          .describe("Profile id to route to (must exist in config.profiles)."),
         syntheticModel: z
           .string()
           .min(1)
-          .default('fusion-auto')
-          .describe('Synthetic model key to remap. Default: fusion-auto.'),
+          .default("fusion-auto")
+          .describe("Synthetic model key to remap. Default: fusion-auto."),
         dryRun: z.boolean().default(true),
-        path: z.string().optional().describe('Override the default embersynth.yaml path.'),
+        path: z.string().optional().describe("Override the default embersynth.yaml path."),
       },
     },
     async (input) => {
       const dryRun = input.dryRun ?? true;
-      const syntheticModel = input.syntheticModel ?? 'fusion-auto';
+      const syntheticModel = input.syntheticModel ?? "fusion-auto";
       const path = input.path ?? embersynth.defaultEmbersynthConfigPath();
       const existing = embersynth.loadEmbersynthConfig(path);
       if (!existing) {
         appendAudit({
           server: SERVER_SLUG,
-          tool: 'llamactl.embersynth.set-default-profile',
+          tool: "llamactl.embersynth.set-default-profile",
           input,
           dryRun,
           result: { path, found: false },
         });
         return toTextContent({
           ok: false,
-          reason: 'config-missing',
+          reason: "config-missing",
           message: `${path} not found — run llamactl embersynth init first`,
           path,
         });
@@ -589,14 +583,18 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       if (!profileExists) {
         appendAudit({
           server: SERVER_SLUG,
-          tool: 'llamactl.embersynth.set-default-profile',
+          tool: "llamactl.embersynth.set-default-profile",
           input,
           dryRun,
-          result: { path, profileExists: false, availableProfiles: existing.profiles.map((p) => p.id) },
+          result: {
+            path,
+            profileExists: false,
+            availableProfiles: existing.profiles.map((p) => p.id),
+          },
         });
         return toTextContent({
           ok: false,
-          reason: 'unknown-profile',
+          reason: "unknown-profile",
           message: `profile '${input.profile}' not found in ${path}`,
           path,
           availableProfiles: existing.profiles.map((p) => p.id),
@@ -607,22 +605,22 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       if (dryRun) {
         appendAudit({
           server: SERVER_SLUG,
-          tool: 'llamactl.embersynth.set-default-profile',
+          tool: "llamactl.embersynth.set-default-profile",
           input,
           dryRun: true,
           result: { path, unchanged, previous, next: input.profile },
         });
         return toTextContent({
           ok: true,
-          mode: 'dry-run',
+          mode: "dry-run",
           path,
           syntheticModel,
           previous,
           next: input.profile,
           unchanged,
           note: unchanged
-            ? 'syntheticModel already routes to the target profile — wet run would be a no-op'
-            : 'embersynth.yaml not modified; wet run would atomically rewrite syntheticModels',
+            ? "syntheticModel already routes to the target profile — wet run would be a no-op"
+            : "embersynth.yaml not modified; wet run would atomically rewrite syntheticModels",
         });
       }
       const updated: embersynth.EmbersynthConfig = {
@@ -635,20 +633,20 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       embersynth.saveEmbersynthConfig(updated, path);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.embersynth.set-default-profile',
+        tool: "llamactl.embersynth.set-default-profile",
         input,
         dryRun: false,
         result: { path, syntheticModel, previous, next: input.profile },
       });
       return toTextContent({
         ok: true,
-        mode: 'wet',
+        mode: "wet",
         path,
         syntheticModel,
         previous,
         next: input.profile,
         unchanged,
-        note: 'embersynth.yaml rewritten — operator should reload embersynth for the change to take effect',
+        note: "embersynth.yaml rewritten — operator should reload embersynth for the change to take effect",
       });
     },
   );
@@ -656,31 +654,31 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   // ---- Additional reads ------------------------------------------
 
   server.registerTool(
-    'llamactl.env',
+    "llamactl.env",
     {
-      title: 'Environment snapshot',
+      title: "Environment snapshot",
       description:
-        'Return the shell environment llamactl is running under — paths, machine profile, provider config. Shows which values are explicitly set vs defaulted. Read-only.',
+        "Return the shell environment llamactl is running under — paths, machine profile, provider config. Shows which values are explicitly set vs defaulted. Read-only.",
       inputSchema: {},
     },
     async () => toTextContent(envMod.resolveEnv()),
   );
 
   server.registerTool(
-    'llamactl.bench.history',
+    "llamactl.bench.history",
     {
-      title: 'Recent bench runs',
+      title: "Recent bench runs",
       description:
-        'Return merged bench-history rows (current + legacy) for the local machine. Optional rel filter narrows to a single model; limit defaults to 50 most recent.',
+        "Return merged bench-history rows (current + legacy) for the local machine. Optional rel filter narrows to a single model; limit defaults to 50 most recent.",
       inputSchema: {
-        rel: z.string().optional().describe('Filter to a single rel path.'),
+        rel: z.string().optional().describe("Filter to a single rel path."),
         limit: z
           .number()
           .int()
           .positive()
           .max(500)
           .default(50)
-          .describe('Max rows to return, newest first.'),
+          .describe("Max rows to return, newest first."),
       },
     },
     async ({ rel, limit }) => {
@@ -709,11 +707,11 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.cost.snapshot',
+    "llamactl.cost.snapshot",
     {
-      title: 'Pricing-aware spend rollup',
+      title: "Pricing-aware spend rollup",
       description:
-        'Aggregate the local ~/.llamactl/usage/*.jsonl corpus over the last N days. Returns per-provider, per-model, and per-day rollups plus the same top-level totals the Cost dashboard polls.',
+        "Aggregate the local ~/.llamactl/usage/*.jsonl corpus over the last N days. Returns per-provider, per-model, and per-day rollups plus the same top-level totals the Cost dashboard polls.",
       inputSchema: {
         days: z
           .number()
@@ -721,32 +719,32 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
           .positive()
           .max(90)
           .default(7)
-          .describe('Window size in days (max 90).'),
+          .describe("Window size in days (max 90)."),
       },
     },
     async ({ days }) => toTextContent(computeCostSnapshot({ days: days ?? 7 })),
   );
 
   server.registerTool(
-    'llamactl.operator.plan',
+    "llamactl.operator.plan",
     {
-      title: 'Operator planner (stub or LLM)',
+      title: "Operator planner (stub or LLM)",
       description:
-        'Translate a natural-language operational goal into a validated sequence of MCP tool calls. Stub mode returns a canned plan (no tokens burned); LLM mode drives an OpenAI-compatible model. Optional history carries prior turns so callers can chain refinements. Approval + execution stay CLI-side — this tool only produces the plan.',
+        "Translate a natural-language operational goal into a validated sequence of MCP tool calls. Stub mode returns a canned plan (no tokens burned); LLM mode drives an OpenAI-compatible model. Optional history carries prior turns so callers can chain refinements. Approval + execution stay CLI-side — this tool only produces the plan.",
       inputSchema: {
         goal: z.string().min(1),
         context: z.string().optional(),
-        mode: z.enum(['stub', 'llm']).default('stub'),
-        model: z.string().optional().describe('Required when mode=llm.'),
+        mode: z.enum(["stub", "llm"]).default("stub"),
+        model: z.string().optional().describe("Required when mode=llm."),
         baseUrl: z.string().optional(),
         apiKeyEnv: z
           .string()
           .optional()
-          .describe('Env var holding the API key (default: OPENAI_API_KEY).'),
+          .describe("Env var holding the API key (default: OPENAI_API_KEY)."),
         history: z
           .array(
             z.object({
-              role: z.enum(['user', 'assistant']),
+              role: z.enum(["user", "assistant"]),
               text: z.string(),
             }),
           )
@@ -756,35 +754,35 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
             z.object({
               name: z.string().min(1),
               description: z.string(),
-              tier: z.enum(['read', 'mutation-dry-run-safe', 'mutation-destructive']),
+              tier: z.enum(["read", "mutation-dry-run-safe", "mutation-destructive"]),
             }),
           )
           .optional(),
       },
     },
     async (input) => {
-      const mode = input.mode ?? 'stub';
+      const mode = input.mode ?? "stub";
       let executor: PlannerExecutor = stubPlannerExecutor;
-      if (mode === 'llm') {
+      if (mode === "llm") {
         if (!input.model) {
           return toTextContent({
             ok: false,
-            reason: 'config',
-            message: 'model is required when mode=llm',
+            reason: "config",
+            message: "model is required when mode=llm",
           });
         }
-        const envName = input.apiKeyEnv ?? 'OPENAI_API_KEY';
+        const envName = input.apiKeyEnv ?? "OPENAI_API_KEY";
         const apiKey = process.env[envName];
         if (!apiKey) {
           return toTextContent({
             ok: false,
-            reason: 'config',
+            reason: "config",
             message: `env var ${envName} is empty — set it or switch to mode=stub`,
           });
         }
         const provider = createOpenAICompatProvider({
-          name: 'planner-llm',
-          baseUrl: input.baseUrl ?? 'https://api.openai.com/v1',
+          name: "planner-llm",
+          baseUrl: input.baseUrl ?? "https://api.openai.com/v1",
           apiKey,
         });
         executor = createLlmExecutor({ provider, model: input.model });
@@ -792,16 +790,16 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const plannerTools: PlannerToolDescriptor[] = (input.tools ?? []).map((t) => ({
         name: t.name,
         description: t.description,
-        inputSchema: { type: 'object' },
+        inputSchema: { type: "object" },
         tier: t.tier,
       }));
       const history = input.history ?? [];
       const transcript = history
         .map((turn) => `${turn.role}: ${turn.text.trim()}`)
-        .filter((line) => line.length > 'user:'.length)
-        .join('\n');
-      const userContext = input.context?.trim() ?? '';
-      const mergedContext = [transcript, userContext].filter((s) => s.length > 0).join('\n\n');
+        .filter((line) => line.length > "user:".length)
+        .join("\n");
+      const userContext = input.context?.trim() ?? "";
+      const mergedContext = [transcript, userContext].filter((s) => s.length > 0).join("\n\n");
       const result = await runPlanner({
         goal: input.goal,
         context: mergedContext,
@@ -823,13 +821,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   // 1:1 so future API changes cascade cleanly.
 
   server.registerTool(
-    'llamactl.rag.search',
+    "llamactl.rag.search",
     {
-      title: 'Search a RAG node',
+      title: "Search a RAG node",
       description:
-        'Run a vector search against a configured RAG node. Returns up to topK results with normalized scores (0..1, higher = more relevant). Read-only.',
+        "Run a vector search against a configured RAG node. Returns up to topK results with normalized scores (0..1, higher = more relevant). Read-only.",
       inputSchema: {
-        node: z.string().min(1).describe('Name of the RAG node in kubeconfig.'),
+        node: z.string().min(1).describe("Name of the RAG node in kubeconfig."),
         query: z.string().min(1),
         topK: z.number().int().positive().max(100).default(10),
         filter: z.record(z.string(), z.unknown()).optional(),
@@ -841,7 +839,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.ragSearch(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.rag.search',
+        tool: "llamactl.rag.search",
         input,
         dryRun: false,
         result: { collection: result.collection, count: result.results.length },
@@ -851,13 +849,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.rag.store',
+    "llamactl.rag.store",
     {
-      title: 'Store documents in a RAG node',
+      title: "Store documents in a RAG node",
       description:
-        'Upsert one or more documents into a configured RAG node. Backends embed internally (Chroma) or require caller-supplied vectors (pgvector).',
+        "Upsert one or more documents into a configured RAG node. Backends embed internally (Chroma) or require caller-supplied vectors (pgvector).",
       inputSchema: {
-        node: z.string().min(1).describe('Name of the RAG node in kubeconfig.'),
+        node: z.string().min(1).describe("Name of the RAG node in kubeconfig."),
         documents: z
           .array(
             z.object({
@@ -876,7 +874,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.ragStore(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.rag.store',
+        tool: "llamactl.rag.store",
         input: { node: input.node, collection: input.collection, count: input.documents.length },
         dryRun: false,
         result: { collection: result.collection, ids: result.ids.length },
@@ -886,13 +884,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.rag.delete',
+    "llamactl.rag.delete",
     {
-      title: 'Delete documents from a RAG node',
+      title: "Delete documents from a RAG node",
       description:
-        'Remove one or more documents (by id) from a configured RAG node. Destructive — verify the ids before calling.',
+        "Remove one or more documents (by id) from a configured RAG node. Destructive — verify the ids before calling.",
       inputSchema: {
-        node: z.string().min(1).describe('Name of the RAG node in kubeconfig.'),
+        node: z.string().min(1).describe("Name of the RAG node in kubeconfig."),
         ids: z.array(z.string().min(1)).min(1),
         collection: z.string().optional(),
       },
@@ -902,7 +900,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.ragDelete(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.rag.delete',
+        tool: "llamactl.rag.delete",
         input,
         dryRun: false,
         result: { collection: result.collection, deleted: result.deleted },
@@ -912,13 +910,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.rag.listCollections',
+    "llamactl.rag.listCollections",
     {
-      title: 'List collections on a RAG node',
+      title: "List collections on a RAG node",
       description:
-        'Return every collection registered on a RAG node with (when the backend exposes them) counts + dimensions. Read-only.',
+        "Return every collection registered on a RAG node with (when the backend exposes them) counts + dimensions. Read-only.",
       inputSchema: {
-        node: z.string().min(1).describe('Name of the RAG node in kubeconfig.'),
+        node: z.string().min(1).describe("Name of the RAG node in kubeconfig."),
       },
     },
     async (input) => {
@@ -926,7 +924,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.ragListCollections(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.rag.listCollections',
+        tool: "llamactl.rag.listCollections",
         input,
         dryRun: false,
         result: { count: result.collections.length },
@@ -946,16 +944,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   // tier-2 (dry-run-safe).
 
   server.registerTool(
-    'llamactl.composite.apply',
+    "llamactl.composite.apply",
     {
-      title: 'Apply a Composite manifest',
+      title: "Apply a Composite manifest",
       description:
-        'Apply a multi-component Composite manifest (services + workloads + ragNodes + gateways, ordered by an explicit dependency DAG). `dryRun: true` returns the topological order + implied edges without spawning anything. Wet-run drives the Docker runtime backend, rolls back on failure when `onFailure: rollback`.',
+        "Apply a multi-component Composite manifest (services + workloads + ragNodes + gateways, ordered by an explicit dependency DAG). `dryRun: true` returns the topological order + implied edges without spawning anything. Wet-run drives the Docker runtime backend, rolls back on failure when `onFailure: rollback`.",
       inputSchema: {
-        manifestYaml: z
-          .string()
-          .min(1)
-          .describe('Raw YAML body of the Composite manifest.'),
+        manifestYaml: z.string().min(1).describe("Raw YAML body of the Composite manifest."),
         dryRun: z.boolean().default(false),
       },
     },
@@ -964,11 +959,11 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.compositeApply(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.composite.apply',
+        tool: "llamactl.composite.apply",
         input: { dryRun: input.dryRun, manifestBytes: input.manifestYaml.length },
         dryRun: input.dryRun,
         result:
-          'dryRun' in result && result.dryRun
+          "dryRun" in result && result.dryRun
             ? { dryRun: true, orderCount: result.order.length }
             : { ok: (result as { ok: boolean }).ok },
       });
@@ -977,19 +972,19 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.composite.destroy',
+    "llamactl.composite.destroy",
     {
-      title: 'Destroy a Composite',
+      title: "Destroy a Composite",
       description:
-        'Tear down every component of a previously-applied Composite, walking the dependency DAG in reverse. `dryRun: true` returns the teardown order without touching the runtime. Wet-run removes containers + rag-node kubeconfig entries and deletes the on-disk composite YAML. Destructive. Pass `purgeVolumes: true` for a full reset that also reaps anonymous docker volumes — storage is preserved by default.',
+        "Tear down every component of a previously-applied Composite, walking the dependency DAG in reverse. `dryRun: true` returns the teardown order without touching the runtime. Wet-run removes containers + rag-node kubeconfig entries and deletes the on-disk composite YAML. Destructive. Pass `purgeVolumes: true` for a full reset that also reaps anonymous docker volumes — storage is preserved by default.",
       inputSchema: {
-        name: z.string().min(1).describe('metadata.name of the composite.'),
+        name: z.string().min(1).describe("metadata.name of the composite."),
         dryRun: z.boolean().default(false),
         purgeVolumes: z
           .boolean()
           .default(false)
           .describe(
-            'Also remove anonymous docker volumes tied to the containers (default: preserve storage). Named volumes + bind mounts are not touched.',
+            "Also remove anonymous docker volumes tied to the containers (default: preserve storage). Named volumes + bind mounts are not touched.",
           ),
       },
     },
@@ -998,11 +993,11 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.compositeDestroy(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.composite.destroy',
+        tool: "llamactl.composite.destroy",
         input,
         dryRun: input.dryRun,
         result:
-          'dryRun' in result && result.dryRun
+          "dryRun" in result && result.dryRun
             ? {
                 dryRun: true,
                 wouldRemoveCount: result.wouldRemove.length,
@@ -1018,11 +1013,11 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.composite.list',
+    "llamactl.composite.list",
     {
-      title: 'List Composites',
+      title: "List Composites",
       description:
-        'Enumerate every Composite manifest stored under ~/.llamactl/composites/. Read-only.',
+        "Enumerate every Composite manifest stored under ~/.llamactl/composites/. Read-only.",
       inputSchema: {},
     },
     async () => {
@@ -1030,7 +1025,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.compositeList();
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.composite.list',
+        tool: "llamactl.composite.list",
         input: {},
         dryRun: false,
         result: { count: result.length },
@@ -1040,13 +1035,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.composite.get',
+    "llamactl.composite.get",
     {
-      title: 'Get one Composite',
+      title: "Get one Composite",
       description:
-        'Return a single Composite manifest (spec + last-known status) by name, or null when absent. Read-only.',
+        "Return a single Composite manifest (spec + last-known status) by name, or null when absent. Read-only.",
       inputSchema: {
-        name: z.string().min(1).describe('metadata.name of the composite.'),
+        name: z.string().min(1).describe("metadata.name of the composite."),
       },
     },
     async (input) => {
@@ -1054,7 +1049,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.compositeGet(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.composite.get',
+        tool: "llamactl.composite.get",
         input,
         dryRun: false,
         result: { found: result !== null },
@@ -1071,16 +1066,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   // read-only.
 
   server.registerTool(
-    'llamactl.rag.pipeline.apply',
+    "llamactl.rag.pipeline.apply",
     {
-      title: 'Apply a RagPipeline manifest',
+      title: "Apply a RagPipeline manifest",
       description:
-        'Persist a RagPipeline manifest to disk under $DEV_STORAGE/rag-pipelines/<name>/spec.yaml. Does NOT execute — pair with llamactl.rag.pipeline.run. Input is the full YAML body (apiVersion: llamactl/v1, kind: RagPipeline).',
+        "Persist a RagPipeline manifest to disk under $DEV_STORAGE/rag-pipelines/<name>/spec.yaml. Does NOT execute — pair with llamactl.rag.pipeline.run. Input is the full YAML body (apiVersion: llamactl/v1, kind: RagPipeline).",
       inputSchema: {
-        manifestYaml: z
-          .string()
-          .min(1)
-          .describe('Raw YAML body of the RagPipeline manifest.'),
+        manifestYaml: z.string().min(1).describe("Raw YAML body of the RagPipeline manifest."),
       },
     },
     async (input) => {
@@ -1088,7 +1080,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.ragPipelineApply(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.rag.pipeline.apply',
+        tool: "llamactl.rag.pipeline.apply",
         input: { manifestBytes: input.manifestYaml.length },
         dryRun: false,
         result: { name: result.name, created: result.created },
@@ -1098,13 +1090,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.rag.pipeline.run',
+    "llamactl.rag.pipeline.run",
     {
-      title: 'Execute a RagPipeline',
+      title: "Execute a RagPipeline",
       description:
-        'Run an applied RagPipeline: fetch sources, chunk, embed, store into the destination rag node. `dryRun: true` walks fetch + chunk without calling adapter.store — useful for previewing ingestion.',
+        "Run an applied RagPipeline: fetch sources, chunk, embed, store into the destination rag node. `dryRun: true` walks fetch + chunk without calling adapter.store — useful for previewing ingestion.",
       inputSchema: {
-        name: z.string().min(1).describe('metadata.name of the pipeline.'),
+        name: z.string().min(1).describe("metadata.name of the pipeline."),
         dryRun: z.boolean().default(false),
       },
     },
@@ -1113,7 +1105,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.ragPipelineRun(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.rag.pipeline.run',
+        tool: "llamactl.rag.pipeline.run",
         input,
         dryRun: input.dryRun,
         result: {
@@ -1127,11 +1119,11 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.rag.pipeline.list',
+    "llamactl.rag.pipeline.list",
     {
-      title: 'List RagPipelines',
+      title: "List RagPipelines",
       description:
-        'Enumerate every applied RagPipeline with its manifest + last-run summary (when available). Read-only.',
+        "Enumerate every applied RagPipeline with its manifest + last-run summary (when available). Read-only.",
       inputSchema: {},
     },
     async () => {
@@ -1139,7 +1131,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.ragPipelineList();
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.rag.pipeline.list',
+        tool: "llamactl.rag.pipeline.list",
         input: {},
         dryRun: false,
         result: { count: result.pipelines.length },
@@ -1149,11 +1141,11 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.rag.pipeline.get',
+    "llamactl.rag.pipeline.get",
     {
-      title: 'Get one RagPipeline manifest',
+      title: "Get one RagPipeline manifest",
       description:
-        'Return a single RagPipeline manifest by name. Throws NOT_FOUND when absent. Read-only.',
+        "Return a single RagPipeline manifest by name. Throws NOT_FOUND when absent. Read-only.",
       inputSchema: {
         name: z.string().min(1),
       },
@@ -1163,7 +1155,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.ragPipelineGet(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.rag.pipeline.get',
+        tool: "llamactl.rag.pipeline.get",
         input,
         dryRun: false,
         result: { found: true },
@@ -1173,11 +1165,11 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.rag.pipeline.remove',
+    "llamactl.rag.pipeline.remove",
     {
-      title: 'Remove a RagPipeline',
+      title: "Remove a RagPipeline",
       description:
-        'Delete the pipeline spec + journal + state. Does not touch already-stored documents in the destination rag node.',
+        "Delete the pipeline spec + journal + state. Does not touch already-stored documents in the destination rag node.",
       inputSchema: {
         name: z.string().min(1),
       },
@@ -1187,7 +1179,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.ragPipelineRemove(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.rag.pipeline.remove',
+        tool: "llamactl.rag.pipeline.remove",
         input,
         dryRun: false,
         result,
@@ -1197,11 +1189,11 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.rag.bench',
+    "llamactl.rag.bench",
     {
-      title: 'Run a RagBench quality gate',
+      title: "Run a RagBench quality gate",
       description:
-        'Run an operator-supplied RagBench manifest (query set + expected hits) against a rag node and return a hit-rate + mean reciprocal rank report. Each query must set expected_doc_id or expected_substring (or both); a hit = any top-k result matches. No writes — the report is the whole product.',
+        "Run an operator-supplied RagBench manifest (query set + expected hits) against a rag node and return a hit-rate + mean reciprocal rank report. Each query must set expected_doc_id or expected_substring (or both); a hit = any top-k result matches. No writes — the report is the whole product.",
       inputSchema: {
         manifestYaml: z.string().min(1),
       },
@@ -1211,7 +1203,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.ragBench(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.rag.bench',
+        tool: "llamactl.rag.bench",
         input,
         dryRun: false,
         // Keep the audit line tight — name + top-line metrics only.
@@ -1229,13 +1221,13 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   );
 
   server.registerTool(
-    'llamactl.rag.pipeline.draft',
+    "llamactl.rag.pipeline.draft",
     {
-      title: 'Draft a RagPipeline from a description',
+      title: "Draft a RagPipeline from a description",
       description:
-        'Scaffold a schema-valid RagPipeline YAML from a natural-language description. Deterministic: extracts URLs / filesystem paths / schedule aliases / rag node hints and emits a manifest the operator can review before `rag pipeline apply`. Returns `{ yaml, manifest, warnings }`. Read-only (no disk writes).',
+        "Scaffold a schema-valid RagPipeline YAML from a natural-language description. Deterministic: extracts URLs / filesystem paths / schedule aliases / rag node hints and emits a manifest the operator can review before `rag pipeline apply`. Returns `{ yaml, manifest, warnings }`. Read-only (no disk writes).",
       inputSchema: {
-        description: z.string().default(''),
+        description: z.string().default(""),
         availableRagNodes: z.array(z.string()).optional(),
         defaultRagNode: z.string().optional(),
         nameOverride: z.string().optional(),
@@ -1246,7 +1238,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
       const result = await caller.ragPipelineDraft(input);
       appendAudit({
         server: SERVER_SLUG,
-        tool: 'llamactl.rag.pipeline.draft',
+        tool: "llamactl.rag.pipeline.draft",
         input,
         dryRun: false,
         // Don't log the full YAML — it can be long. A pointer to

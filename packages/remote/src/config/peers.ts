@@ -1,11 +1,6 @@
-import { currentContext, loadConfig, resolveToken } from './kubeconfig.js';
-import { readCurrentLeaseHolder } from '../../../fleet-supervisor/src/journal.js';
-import {
-  LOCAL_NODE_ENDPOINT,
-  LOCAL_NODE_NAME,
-  type ClusterNode,
-  type Config,
-} from './schema.js';
+import { currentContext, loadConfig, resolveToken } from "./kubeconfig.js";
+import { readCurrentLeaseHolder } from "../../../fleet-supervisor/src/journal.js";
+import { LOCAL_NODE_ENDPOINT, LOCAL_NODE_NAME, type ClusterNode, type Config } from "./schema.js";
 
 export interface PeerNode {
   id: string;
@@ -17,14 +12,14 @@ export interface PeerNode {
 }
 
 function isAgentNode(node: ClusterNode): boolean {
-  return (node.kind ?? 'agent') === 'agent';
+  return (node.kind ?? "agent") === "agent";
 }
 
 function isHttpsEndpoint(endpoint: string): boolean {
   if (!endpoint.trim()) return false;
   try {
     const url = new URL(endpoint);
-    return url.protocol === 'https:';
+    return url.protocol === "https:";
   } catch {
     return false;
   }

@@ -13,10 +13,10 @@
  * to leave-alone, restart, or recreate.
  */
 export const LABEL_KEYS = {
-  managedBy: 'llamactl.managed-by',
-  composite: 'llamactl.composite',
-  service: 'llamactl.service',
-  specHash: 'llamactl.spec.hash',
+  managedBy: "llamactl.managed-by",
+  composite: "llamactl.composite",
+  service: "llamactl.service",
+  specHash: "llamactl.spec.hash",
 } as const;
 
-export const MANAGED_BY_VALUE = 'llamactl';
+export const MANAGED_BY_VALUE = "llamactl";

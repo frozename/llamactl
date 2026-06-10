@@ -1,8 +1,8 @@
-import { Database } from 'bun:sqlite';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { mkdirSync } from 'node:fs';
-import type { FleetSnapshotEntry } from './types.js';
+import { Database } from "bun:sqlite";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { mkdirSync } from "node:fs";
+import type { FleetSnapshotEntry } from "./types.js";
 
 export interface SnapshotRow {
   node: string;
@@ -22,7 +22,7 @@ function ensureSchema(db: Database): void {
 }
 
 export function defaultAggregatorDbPath(): string {
-  return join(homedir(), '.llamactl', 'fleet', 'cluster.db');
+  return join(homedir(), ".llamactl", "fleet", "cluster.db");
 }
 
 export function openAggregatorDb(path: string = defaultAggregatorDbPath()): Database {
@@ -32,11 +32,7 @@ export function openAggregatorDb(path: string = defaultAggregatorDbPath()): Data
   return db;
 }
 
-export function writeSnapshot(
-  db: Database,
-  node: string,
-  snapshot: FleetSnapshotEntry,
-): void {
+export function writeSnapshot(db: Database, node: string, snapshot: FleetSnapshotEntry): void {
   ensureSchema(db);
   db.query(
     `
@@ -54,8 +50,9 @@ export function writeSnapshot(
 
 export function getLatestPerNode(db: Database): SnapshotRow[] {
   ensureSchema(db);
-  const rows = db.query(
-    `
+  const rows = db
+    .query(
+      `
       SELECT node, ts, snapshot_json
       FROM node_snapshots
       WHERE (node, ts) IN (
@@ -65,7 +62,8 @@ export function getLatestPerNode(db: Database): SnapshotRow[] {
       )
       ORDER BY node ASC
     `,
-  ).all() as Array<{ node: string; ts: string; snapshot_json: string }>;
+    )
+    .all() as Array<{ node: string; ts: string; snapshot_json: string }>;
   return rows.map((row) => ({
     node: row.node,
     ts: row.ts,
@@ -80,8 +78,9 @@ export function getHistoricalForNode(
 ): SnapshotRow[] {
   ensureSchema(db);
   const limit = opts.limit ?? 50;
-  const rows = db.query(
-    `
+  const rows = db
+    .query(
+      `
       SELECT node, ts, snapshot_json
       FROM node_snapshots
       WHERE node = $node
@@ -89,11 +88,12 @@ export function getHistoricalForNode(
       ORDER BY ts DESC
       LIMIT $limit
     `,
-  ).all({
-    $node: node,
-    $sinceTs: opts.sinceTs ?? null,
-    $limit: limit,
-  }) as Array<{ node: string; ts: string; snapshot_json: string }>;
+    )
+    .all({
+      $node: node,
+      $sinceTs: opts.sinceTs ?? null,
+      $limit: limit,
+    }) as Array<{ node: string; ts: string; snapshot_json: string }>;
   return rows.map((row) => ({
     node: row.node,
     ts: row.ts,

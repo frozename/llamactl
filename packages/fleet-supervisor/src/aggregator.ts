@@ -1,5 +1,5 @@
-import type { FleetSnapshotEntry } from './types.js';
-import { listPeers, type PeerNode } from '../../remote/src/config/peers.js';
+import type { FleetSnapshotEntry } from "./types.js";
+import { listPeers, type PeerNode } from "../../remote/src/config/peers.js";
 
 export type AggregatorPeer = PeerNode;
 
@@ -64,7 +64,7 @@ export class FleetAggregator {
             this.cache.set(peer.id, {
               ...prior,
               stale: true,
-              error: 'empty snapshot',
+              error: "empty snapshot",
             });
             return;
           }
@@ -100,7 +100,7 @@ export class FleetAggregator {
       if (row.fetchedAt === null) return row;
       if (row.stale) return row;
       if (this.now() - row.fetchedAt > this.staleAfterMs) {
-        return { ...row, stale: true, error: row.error ?? 'stale' };
+        return { ...row, stale: true, error: row.error ?? "stale" };
       }
       return row;
     });

@@ -52,6 +52,7 @@ enable. `kubectl config use-context docker-desktop`. Comes with a
 default StorageClass + a working kubeconfig.
 
 **Linux (production-adjacent):** k3s.
+
 ```sh
 curl -sfL https://get.k3s.io | sh -
 # kubeconfig lands at /etc/rancher/k3s/k3s.yaml — copy to ~/.kube/config
@@ -61,7 +62,7 @@ kubectl get nodes
 ```
 
 Either environment is enough for single-node composites. Multi-node
-composites need a second labelled node — see *Node addressing* below.
+composites need a second labelled node — see _Node addressing_ below.
 
 ---
 
@@ -75,7 +76,7 @@ kind: Composite
 metadata:
   name: kb-stack
 spec:
-  runtime: kubernetes      # docker | kubernetes, default docker
+  runtime: kubernetes # docker | kubernetes, default docker
   services:
     - kind: chroma
       name: chroma-main
@@ -186,11 +187,11 @@ services:
   - kind: chroma
     name: chroma-main
     port: 8000
-    serviceType: NodePort        # k8s auto-assigns 30000-32767
+    serviceType: NodePort # k8s auto-assigns 30000-32767
   - kind: pgvector
     name: pg-main
     port: 5432
-    serviceType: LoadBalancer    # Docker Desktop K8s binds localhost:5432
+    serviceType: LoadBalancer # Docker Desktop K8s binds localhost:5432
 ```
 
 - **`NodePort`** — k8s picks the port in the 30000-32767 range;
@@ -225,7 +226,7 @@ files inside the container, one file per key.
 services:
   - kind: container
     name: sirius-main
-    image: { repository: sirius/gateway, tag: '1.4.0' }
+    image: { repository: sirius/gateway, tag: "1.4.0" }
     volumes:
       - containerPath: /config
         configMap:
@@ -237,7 +238,7 @@ services:
             routes.yaml: |
               - path: /v1/chat/completions
                 upstream: primary
-          defaultMode: 0o444          # optional; k8s default is 0644
+          defaultMode: 0o444 # optional; k8s default is 0644
 ```
 
 - `name` is the `v1.ConfigMap` object name created in the composite
@@ -250,7 +251,7 @@ services:
   k8s default of `0644`.
 - Docker runtime **rejects** this variant at apply time with
   `spec-invalid: volumes[N]: configMap mounts require runtime:
-  kubernetes; use hostPath or name for docker`. Pick a bind mount
+kubernetes; use hostPath or name for docker`. Pick a bind mount
   or a named volume on the Docker path.
 - `configMap`, `hostPath`, and `name` are mutually exclusive — the
   schema requires exactly one.
@@ -327,7 +328,7 @@ restore the legacy location:
 ```yaml
 services:
   - kind: pgvector
-    image: { repository: pgvector/pgvector, tag: '0.7.4-pg17-trixie' }
+    image: { repository: pgvector/pgvector, tag: "0.7.4-pg17-trixie" }
     persistence:
       volume: pgdata
       mountPath: /var/lib/postgresql/data

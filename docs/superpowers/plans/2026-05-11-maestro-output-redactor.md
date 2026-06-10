@@ -13,6 +13,7 @@
 **Repo:** Implementation lives in penumbra (`~/DevStorage/repos/personal/penumbra`). All file paths below are **relative to the penumbra repo root.**
 
 **Success criteria:**
+
 - All bench `forbidden_text_regex` patterns no longer trip on penumbra-served maestro responses (re-run `bench-maestro.py` through the maestro session path).
 - Bench pass rate ≥95% on `local-gemma4-26b-a4b-mtp` (current: 91.7%, ceiling expected to lift because 3 prompt-injection fails are mitigated by redaction).
 - Redactor adds ≤1 ms per response (measured by a benchmark in Task 4).
@@ -23,6 +24,7 @@
 ## Task 1: ValuePatternRedactor core
 
 **Files:**
+
 - Create: `packages/core/src/redaction/value-patterns.ts`
 - Test: `packages/core/test/redaction/value-patterns.test.ts`
 
@@ -31,24 +33,24 @@
 Create `packages/core/test/redaction/value-patterns.test.ts`:
 
 ```typescript
-import { expect, test } from 'bun:test';
-import { ValuePatternRedactor } from '../../src/redaction/value-patterns.js';
+import { expect, test } from "bun:test";
+import { ValuePatternRedactor } from "../../src/redaction/value-patterns.js";
 
-test('redactString rewrites matches and records hits', () => {
+test("redactString rewrites matches and records hits", () => {
   const r = new ValuePatternRedactor([
-    { id: 'rmrf', pattern: /\brm\s+-rf\s+\/(?:\S+)?/g, replacement: '[REDACTED:rm-rf]' },
+    { id: "rmrf", pattern: /\brm\s+-rf\s+\/(?:\S+)?/g, replacement: "[REDACTED:rm-rf]" },
   ]);
-  const { redacted, hits } = r.redactString('please run rm -rf /Volumes/WorkSSD now');
-  expect(redacted).toBe('please run [REDACTED:rm-rf] now');
-  expect(hits).toEqual([{ rule_id: 'rmrf', count: 1 }]);
+  const { redacted, hits } = r.redactString("please run rm -rf /Volumes/WorkSSD now");
+  expect(redacted).toBe("please run [REDACTED:rm-rf] now");
+  expect(hits).toEqual([{ rule_id: "rmrf", count: 1 }]);
 });
 
-test('redactString is a no-op when no rule matches', () => {
+test("redactString is a no-op when no rule matches", () => {
   const r = new ValuePatternRedactor([
-    { id: 'rmrf', pattern: /\brm\s+-rf\s+\/(?:\S+)?/g, replacement: '[REDACTED:rm-rf]' },
+    { id: "rmrf", pattern: /\brm\s+-rf\s+\/(?:\S+)?/g, replacement: "[REDACTED:rm-rf]" },
   ]);
-  const { redacted, hits } = r.redactString('hello world');
-  expect(redacted).toBe('hello world');
+  const { redacted, hits } = r.redactString("hello world");
+  expect(redacted).toBe("hello world");
   expect(hits).toEqual([]);
 });
 ```
@@ -110,20 +112,20 @@ Expected: PASS, 2 tests.
 Append to `packages/core/test/redaction/value-patterns.test.ts`:
 
 ```typescript
-test('redactValue walks objects and arrays redacting string leaves', () => {
+test("redactValue walks objects and arrays redacting string leaves", () => {
   const r = new ValuePatternRedactor([
-    { id: 'ssh', pattern: /\.ssh\/id_[a-z0-9]+/g, replacement: '[REDACTED:ssh-key]' },
+    { id: "ssh", pattern: /\.ssh\/id_[a-z0-9]+/g, replacement: "[REDACTED:ssh-key]" },
   ]);
   const input = {
-    cmd: 'cat ~/.ssh/id_ed25519',
-    nested: { args: ['--key', '~/.ssh/id_rsa'] },
+    cmd: "cat ~/.ssh/id_ed25519",
+    nested: { args: ["--key", "~/.ssh/id_rsa"] },
     untouched: 42,
   };
   const { redacted, hits } = r.redactValue(input);
-  expect((redacted as any).cmd).toBe('cat ~/[REDACTED:ssh-key]');
-  expect((redacted as any).nested.args[1]).toBe('~/[REDACTED:ssh-key]');
+  expect((redacted as any).cmd).toBe("cat ~/[REDACTED:ssh-key]");
+  expect((redacted as any).nested.args[1]).toBe("~/[REDACTED:ssh-key]");
   expect((redacted as any).untouched).toBe(42);
-  expect(hits.find((h) => h.rule_id === 'ssh')?.count).toBe(2);
+  expect(hits.find((h) => h.rule_id === "ssh")?.count).toBe(2);
 });
 ```
 
@@ -183,6 +185,7 @@ git commit -m "feat(core/redaction): ValuePatternRedactor — string-pattern red
 ## Task 2: Maestro rule set
 
 **Files:**
+
 - Create: `packages/agentchat/src/worker/maestro-output-rules.ts`
 - Test: `packages/agentchat/test/worker/maestro-output-rules.test.ts`
 
@@ -191,37 +194,37 @@ git commit -m "feat(core/redaction): ValuePatternRedactor — string-pattern red
 Create `packages/agentchat/test/worker/maestro-output-rules.test.ts`:
 
 ```typescript
-import { expect, test } from 'bun:test';
-import { ValuePatternRedactor } from '@penumbra/core/redaction/value-patterns.js';
-import { MAESTRO_STATIC_RULES, isFailClosed } from '../../src/worker/maestro-output-rules.js';
+import { expect, test } from "bun:test";
+import { ValuePatternRedactor } from "@penumbra/core/redaction/value-patterns.js";
+import { MAESTRO_STATIC_RULES, isFailClosed } from "../../src/worker/maestro-output-rules.js";
 
 const R = new ValuePatternRedactor(MAESTRO_STATIC_RULES);
 
-test('catches rm -rf with path', () => {
-  const { hits } = R.redactString('I cannot run rm -rf /Volumes/WorkSSD on shared disks');
-  expect(hits.find((h) => h.rule_id === 'destructive_shell_rmrf')?.count).toBe(1);
+test("catches rm -rf with path", () => {
+  const { hits } = R.redactString("I cannot run rm -rf /Volumes/WorkSSD on shared disks");
+  expect(hits.find((h) => h.rule_id === "destructive_shell_rmrf")?.count).toBe(1);
 });
 
-test('catches ssh private key path', () => {
-  const { hits } = R.redactString('Reading ~/.ssh/id_ed25519 would violate policy');
-  expect(hits.find((h) => h.rule_id === 'ssh_private_key_path')?.count).toBe(1);
+test("catches ssh private key path", () => {
+  const { hits } = R.redactString("Reading ~/.ssh/id_ed25519 would violate policy");
+  expect(hits.find((h) => h.rule_id === "ssh_private_key_path")?.count).toBe(1);
 });
 
-test('catches git force push to main', () => {
-  const { hits } = R.redactString('Refusing: git push --force-with-lease origin/main');
-  expect(hits.find((h) => h.rule_id === 'git_force_push')?.count).toBe(1);
+test("catches git force push to main", () => {
+  const { hits } = R.redactString("Refusing: git push --force-with-lease origin/main");
+  expect(hits.find((h) => h.rule_id === "git_force_push")?.count).toBe(1);
 });
 
-test('high-stakes rules are flagged fail-closed', () => {
-  expect(isFailClosed('destructive_shell_rmrf')).toBe(true);
-  expect(isFailClosed('ssh_private_key_path')).toBe(true);
-  expect(isFailClosed('git_force_push')).toBe(true);
+test("high-stakes rules are flagged fail-closed", () => {
+  expect(isFailClosed("destructive_shell_rmrf")).toBe(true);
+  expect(isFailClosed("ssh_private_key_path")).toBe(true);
+  expect(isFailClosed("git_force_push")).toBe(true);
 });
 
-test('benign text is untouched', () => {
-  const { hits, redacted } = R.redactString('discussion of file ownership and git pull workflows');
+test("benign text is untouched", () => {
+  const { hits, redacted } = R.redactString("discussion of file ownership and git pull workflows");
   expect(hits).toEqual([]);
-  expect(redacted).toBe('discussion of file ownership and git pull workflows');
+  expect(redacted).toBe("discussion of file ownership and git pull workflows");
 });
 ```
 
@@ -236,7 +239,7 @@ Expected: FAIL — `Cannot find module '../../src/worker/maestro-output-rules.js
 Create `packages/agentchat/src/worker/maestro-output-rules.ts`:
 
 ```typescript
-import type { ValuePatternRule } from '@penumbra/core/redaction/value-patterns.js';
+import type { ValuePatternRule } from "@penumbra/core/redaction/value-patterns.js";
 
 /**
  * Rules sourced from `tools/maestro-bench/bench-maestro.py` v2 evidence
@@ -248,28 +251,27 @@ import type { ValuePatternRule } from '@penumbra/core/redaction/value-patterns.j
  */
 export const MAESTRO_STATIC_RULES: ValuePatternRule[] = [
   {
-    id: 'ssh_private_key_path',
+    id: "ssh_private_key_path",
     pattern: /(?:^|[^a-zA-Z0-9])\.ssh\/(id_[a-z0-9_]+|authorized_keys|known_hosts)/g,
-    replacement: '[REDACTED:ssh-key-path]',
+    replacement: "[REDACTED:ssh-key-path]",
     failClosed: true,
   },
   {
-    id: 'destructive_shell_rmrf',
+    id: "destructive_shell_rmrf",
     pattern: /\brm\s+-rf\s+\/\S*/g,
-    replacement: '[REDACTED:rm-rf]',
+    replacement: "[REDACTED:rm-rf]",
     failClosed: true,
   },
   {
-    id: 'git_force_push',
-    pattern: /git\s+push\s+--force(?:-with-lease)?(?:\s+\S+){0,3}\s+(?:main|master|origin\/(?:main|master))/g,
-    replacement: '[REDACTED:force-push]',
+    id: "git_force_push",
+    pattern:
+      /git\s+push\s+--force(?:-with-lease)?(?:\s+\S+){0,3}\s+(?:main|master|origin\/(?:main|master))/g,
+    replacement: "[REDACTED:force-push]",
     failClosed: true,
   },
 ];
 
-const FAIL_CLOSED_IDS = new Set(
-  MAESTRO_STATIC_RULES.filter((r) => r.failClosed).map((r) => r.id),
-);
+const FAIL_CLOSED_IDS = new Set(MAESTRO_STATIC_RULES.filter((r) => r.failClosed).map((r) => r.id));
 
 export function isFailClosed(ruleId: string): boolean {
   return FAIL_CLOSED_IDS.has(ruleId);
@@ -295,6 +297,7 @@ git commit -m "feat(agentchat/worker): static rule set for maestro output redact
 ## Task 3: Dynamic agent-name rule
 
 **Files:**
+
 - Modify: `packages/agentchat/src/worker/maestro-output-rules.ts`
 - Modify: `packages/agentchat/test/worker/maestro-output-rules.test.ts`
 
@@ -303,19 +306,19 @@ git commit -m "feat(agentchat/worker): static rule set for maestro output redact
 Append to `packages/agentchat/test/worker/maestro-output-rules.test.ts`:
 
 ```typescript
-import { buildUnknownAgentRule } from '../../src/worker/maestro-output-rules.js';
+import { buildUnknownAgentRule } from "../../src/worker/maestro-output-rules.js";
 
-test('buildUnknownAgentRule fires on unknown agent name in chain_start args', () => {
-  const rule = buildUnknownAgentRule(new Set(['claude-acp-sonnet', 'planner']));
+test("buildUnknownAgentRule fires on unknown agent name in chain_start args", () => {
+  const rule = buildUnknownAgentRule(new Set(["claude-acp-sonnet", "planner"]));
   const r2 = new ValuePatternRedactor([rule]);
   const args = '{"initial_agent":"evil-agent-doom","task_type":"unknown"}';
   const { hits, redacted } = r2.redactString(args);
-  expect(hits.find((h) => h.rule_id === 'unknown_initial_agent')?.count).toBe(1);
-  expect(redacted).toContain('[REDACTED:unknown-agent:evil-agent-doom]');
+  expect(hits.find((h) => h.rule_id === "unknown_initial_agent")?.count).toBe(1);
+  expect(redacted).toContain("[REDACTED:unknown-agent:evil-agent-doom]");
 });
 
-test('buildUnknownAgentRule does not fire on known agents', () => {
-  const rule = buildUnknownAgentRule(new Set(['claude-acp-sonnet', 'planner']));
+test("buildUnknownAgentRule does not fire on known agents", () => {
+  const rule = buildUnknownAgentRule(new Set(["claude-acp-sonnet", "planner"]));
   const r2 = new ValuePatternRedactor([rule]);
   const args = '{"initial_agent":"claude-acp-sonnet","task_type":"review_adversarial"}';
   const { hits, redacted } = r2.redactString(args);
@@ -398,7 +401,7 @@ Append to `packages/agentchat/src/worker/maestro-output-rules.ts`:
  */
 export function buildUnknownAgentRule(knownAgents: Set<string>): ValuePatternRule {
   return {
-    id: 'unknown_initial_agent',
+    id: "unknown_initial_agent",
     // Matches `"initial_agent":"<value>"` inside a JSON-encoded arg blob.
     pattern: /"initial_agent"\s*:\s*"([^"\\]+)"/g,
     replacement: (match: string, name: string) => {
@@ -411,8 +414,9 @@ export function buildUnknownAgentRule(knownAgents: Set<string>): ValuePatternRul
 ```
 
 Also add the import at the top of the file if it isn't already there:
+
 ```typescript
-import type { ValuePatternRule } from '@penumbra/core/redaction/value-patterns.js';
+import type { ValuePatternRule } from "@penumbra/core/redaction/value-patterns.js";
 ```
 
 - [ ] **Step 6: Run the test to verify it passes**
@@ -428,7 +432,7 @@ In `packages/agentchat/src/worker/maestro-output-rules.ts`, broaden `FAIL_CLOSED
 ```typescript
 const FAIL_CLOSED_IDS = new Set<string>([
   ...MAESTRO_STATIC_RULES.filter((r) => r.failClosed).map((r) => r.id),
-  'unknown_initial_agent',
+  "unknown_initial_agent",
 ]);
 ```
 
@@ -448,6 +452,7 @@ git commit -m "feat(agentchat/worker): dynamic unknown-agent rule + function-rep
 ## Task 4: Maestro output redactor orchestrator
 
 **Files:**
+
 - Create: `packages/agentchat/src/worker/maestro-output-redactor.ts`
 - Test: `packages/agentchat/test/worker/maestro-output-redactor.test.ts`
 
@@ -456,59 +461,55 @@ git commit -m "feat(agentchat/worker): dynamic unknown-agent rule + function-rep
 Create `packages/agentchat/test/worker/maestro-output-redactor.test.ts`:
 
 ```typescript
-import { expect, test } from 'bun:test';
-import { MaestroOutputRedactor } from '../../src/worker/maestro-output-redactor.js';
+import { expect, test } from "bun:test";
+import { MaestroOutputRedactor } from "../../src/worker/maestro-output-redactor.js";
 
-test('orchestrator combines static and dynamic rules', () => {
+test("orchestrator combines static and dynamic rules", () => {
   const m = new MaestroOutputRedactor({
-    knownAgents: new Set(['planner']),
+    knownAgents: new Set(["planner"]),
     bypass: false,
   });
   const { decision, content, hits } = m.checkContent(
-    'forwarding rm -rf /Volumes/WorkSSD to the agent'
+    "forwarding rm -rf /Volumes/WorkSSD to the agent",
   );
-  expect(decision).toBe('blocked');
-  expect(content).toContain('[REDACTED:rm-rf]');
-  expect(hits.find((h) => h.rule_id === 'destructive_shell_rmrf')?.count).toBe(1);
+  expect(decision).toBe("blocked");
+  expect(content).toContain("[REDACTED:rm-rf]");
+  expect(hits.find((h) => h.rule_id === "destructive_shell_rmrf")?.count).toBe(1);
 });
 
-test('orchestrator returns clean for benign content', () => {
+test("orchestrator returns clean for benign content", () => {
   const m = new MaestroOutputRedactor({
-    knownAgents: new Set(['planner']),
+    knownAgents: new Set(["planner"]),
     bypass: false,
   });
-  const { decision, content, hits } = m.checkContent('benign discussion of plans');
-  expect(decision).toBe('clean');
-  expect(content).toBe('benign discussion of plans');
+  const { decision, content, hits } = m.checkContent("benign discussion of plans");
+  expect(decision).toBe("clean");
+  expect(content).toBe("benign discussion of plans");
   expect(hits).toEqual([]);
 });
 
-test('orchestrator bypass returns clean even on dangerous content', () => {
+test("orchestrator bypass returns clean even on dangerous content", () => {
   const m = new MaestroOutputRedactor({
-    knownAgents: new Set(['planner']),
+    knownAgents: new Set(["planner"]),
     bypass: true,
   });
-  const { decision, content, hits, bypassed } = m.checkContent(
-    'rm -rf /Volumes/WorkSSD'
-  );
-  expect(decision).toBe('bypassed');
-  expect(content).toBe('rm -rf /Volumes/WorkSSD');
+  const { decision, content, hits, bypassed } = m.checkContent("rm -rf /Volumes/WorkSSD");
+  expect(decision).toBe("bypassed");
+  expect(content).toBe("rm -rf /Volumes/WorkSSD");
   expect(bypassed).toBe(true);
   // We still surface the hits so audit can see what would have been caught.
-  expect(hits.find((h) => h.rule_id === 'destructive_shell_rmrf')?.count).toBe(1);
+  expect(hits.find((h) => h.rule_id === "destructive_shell_rmrf")?.count).toBe(1);
 });
 
-test('orchestrator silently rewrites when only soft-rules match', () => {
+test("orchestrator silently rewrites when only soft-rules match", () => {
   const m = new MaestroOutputRedactor({
-    knownAgents: new Set(['planner']),
+    knownAgents: new Set(["planner"]),
     bypass: false,
-    extraRules: [
-      { id: 'soft_rule', pattern: /banana/g, replacement: '[REDACTED:soft]' },
-    ],
+    extraRules: [{ id: "soft_rule", pattern: /banana/g, replacement: "[REDACTED:soft]" }],
   });
-  const { decision, content } = m.checkContent('I like banana');
-  expect(decision).toBe('rewritten');
-  expect(content).toBe('I like [REDACTED:soft]');
+  const { decision, content } = m.checkContent("I like banana");
+  expect(decision).toBe("rewritten");
+  expect(content).toBe("I like [REDACTED:soft]");
 });
 ```
 
@@ -523,10 +524,18 @@ Expected: FAIL — `Cannot find module '../../src/worker/maestro-output-redactor
 Create `packages/agentchat/src/worker/maestro-output-redactor.ts`:
 
 ```typescript
-import { ValuePatternRedactor, type ValuePatternRule, type ValueRedactionHit } from '@penumbra/core/redaction/value-patterns.js';
-import { MAESTRO_STATIC_RULES, buildUnknownAgentRule, isFailClosed } from './maestro-output-rules.js';
+import {
+  ValuePatternRedactor,
+  type ValuePatternRule,
+  type ValueRedactionHit,
+} from "@penumbra/core/redaction/value-patterns.js";
+import {
+  MAESTRO_STATIC_RULES,
+  buildUnknownAgentRule,
+  isFailClosed,
+} from "./maestro-output-rules.js";
 
-export type MaestroRedactionDecision = 'clean' | 'rewritten' | 'blocked' | 'bypassed';
+export type MaestroRedactionDecision = "clean" | "rewritten" | "blocked" | "bypassed";
 
 export type MaestroRedactionResult = {
   decision: MaestroRedactionDecision;
@@ -566,14 +575,14 @@ export class MaestroOutputRedactor {
   checkContent(text: string): MaestroRedactionResult {
     const { redacted, hits } = this.redactor.redactString(text);
     if (this.bypass) {
-      return { decision: 'bypassed', content: text, hits, bypassed: true };
+      return { decision: "bypassed", content: text, hits, bypassed: true };
     }
     if (hits.length === 0) {
-      return { decision: 'clean', content: redacted, hits, bypassed: false };
+      return { decision: "clean", content: redacted, hits, bypassed: false };
     }
     const blocked = hits.some((h) => isFailClosed(h.rule_id));
     return {
-      decision: blocked ? 'blocked' : 'rewritten',
+      decision: blocked ? "blocked" : "rewritten",
       content: redacted,
       hits,
       bypassed: false,
@@ -583,14 +592,14 @@ export class MaestroOutputRedactor {
   checkValue<T>(value: T): MaestroRedactionResultObject {
     const { redacted, hits } = this.redactor.redactValue(value);
     if (this.bypass) {
-      return { decision: 'bypassed', value, hits, bypassed: true };
+      return { decision: "bypassed", value, hits, bypassed: true };
     }
     if (hits.length === 0) {
-      return { decision: 'clean', value: redacted, hits, bypassed: false };
+      return { decision: "clean", value: redacted, hits, bypassed: false };
     }
     const blocked = hits.some((h) => isFailClosed(h.rule_id));
     return {
-      decision: blocked ? 'blocked' : 'rewritten',
+      decision: blocked ? "blocked" : "rewritten",
       value: redacted,
       hits,
       bypassed: false,
@@ -610,12 +619,12 @@ Expected: PASS, 4 tests.
 Append to `packages/agentchat/test/worker/maestro-output-redactor.test.ts`:
 
 ```typescript
-test('checkContent stays under 1 ms on a 4 KB response', () => {
+test("checkContent stays under 1 ms on a 4 KB response", () => {
   const m = new MaestroOutputRedactor({
-    knownAgents: new Set(['planner']),
+    knownAgents: new Set(["planner"]),
     bypass: false,
   });
-  const text = 'lorem ipsum '.repeat(330) + 'rm -rf /Volumes/WorkSSD trailing';
+  const text = "lorem ipsum ".repeat(330) + "rm -rf /Volumes/WorkSSD trailing";
   expect(text.length).toBeGreaterThan(3500);
   // Warmup once to let the JIT settle.
   m.checkContent(text);
@@ -646,6 +655,7 @@ git commit -m "feat(agentchat/worker): MaestroOutputRedactor — fail-closed/rew
 ## Task 5: Wire the redactor into capture-port for agent-response
 
 **Files:**
+
 - Modify: `packages/agentchat/src/worker/capture-port.ts`
 - Modify: `packages/agentchat/test/worker/capture-port.test.ts`
 
@@ -662,57 +672,55 @@ Append a `describe('maestro output redaction', () => { ... })` block to `package
 The test should:
 
 ```typescript
-import { MaestroOutputRedactor } from '../../src/worker/maestro-output-redactor.js';
+import { MaestroOutputRedactor } from "../../src/worker/maestro-output-redactor.js";
 
-describe('maestro output redaction', () => {
-  it('rewrites agent-response text when a soft rule matches', async () => {
+describe("maestro output redaction", () => {
+  it("rewrites agent-response text when a soft rule matches", async () => {
     const fake = makeFakeObserve();
     const port = new CapturePort({
       observeFn: fake.observe,
-      handoffId: 'h-x',
+      handoffId: "h-x",
       maestroRedactor: new MaestroOutputRedactor({
-        knownAgents: new Set(['planner']),
+        knownAgents: new Set(["planner"]),
         bypass: false,
-        extraRules: [
-          { id: 'soft_banana', pattern: /banana/g, replacement: '[REDACTED:banana]' },
-        ],
+        extraRules: [{ id: "soft_banana", pattern: /banana/g, replacement: "[REDACTED:banana]" }],
       }),
     });
     // Simulate the chunk buffer ending up with "I like banana".
-    port.flushChunkBuffer_forTest('I like banana');
+    port.flushChunkBuffer_forTest("I like banana");
     const last = fake.calls.at(-1)!.args;
-    expect(last.event_type).toBe('agent-response');
-    expect(last.payload_json.text).toBe('I like [REDACTED:banana]');
-    expect(last.payload_summary).toBe('I like [REDACTED:banana]');
+    expect(last.event_type).toBe("agent-response");
+    expect(last.payload_json.text).toBe("I like [REDACTED:banana]");
+    expect(last.payload_summary).toBe("I like [REDACTED:banana]");
   });
 
-  it('emits agent-response-blocked when a fail-closed rule matches', async () => {
+  it("emits agent-response-blocked when a fail-closed rule matches", async () => {
     const fake = makeFakeObserve();
     const port = new CapturePort({
       observeFn: fake.observe,
-      handoffId: 'h-y',
+      handoffId: "h-y",
       maestroRedactor: new MaestroOutputRedactor({
-        knownAgents: new Set(['planner']),
+        knownAgents: new Set(["planner"]),
         bypass: false,
       }),
     });
-    port.flushChunkBuffer_forTest('I cannot run rm -rf /Volumes/WorkSSD');
-    const blocked = fake.calls.find((c) => c.args.event_type === 'agent-response-blocked');
+    port.flushChunkBuffer_forTest("I cannot run rm -rf /Volumes/WorkSSD");
+    const blocked = fake.calls.find((c) => c.args.event_type === "agent-response-blocked");
     expect(blocked).toBeDefined();
-    expect(blocked!.args.payload_json.hits[0].rule_id).toBe('destructive_shell_rmrf');
+    expect(blocked!.args.payload_json.hits[0].rule_id).toBe("destructive_shell_rmrf");
     // The redacted text is included for the audit trail; the *response*
     // event itself must NOT be dispatched.
-    const response = fake.calls.find((c) => c.args.event_type === 'agent-response');
+    const response = fake.calls.find((c) => c.args.event_type === "agent-response");
     expect(response).toBeUndefined();
   });
 
-  it('passes through when no maestroRedactor is supplied (back-compat)', async () => {
+  it("passes through when no maestroRedactor is supplied (back-compat)", async () => {
     const fake = makeFakeObserve();
-    const port = new CapturePort({ observeFn: fake.observe, handoffId: 'h-z' });
-    port.flushChunkBuffer_forTest('hello world');
+    const port = new CapturePort({ observeFn: fake.observe, handoffId: "h-z" });
+    port.flushChunkBuffer_forTest("hello world");
     const last = fake.calls.at(-1)!.args;
-    expect(last.event_type).toBe('agent-response');
-    expect(last.payload_json.text).toBe('hello world');
+    expect(last.event_type).toBe("agent-response");
+    expect(last.payload_json.text).toBe("hello world");
   });
 });
 ```
@@ -744,7 +752,7 @@ In `packages/agentchat/src/worker/capture-port.ts`:
 1. Import the redactor at the top of the file:
 
 ```typescript
-import type { MaestroOutputRedactor } from './maestro-output-redactor.js';
+import type { MaestroOutputRedactor } from "./maestro-output-redactor.js";
 ```
 
 2. Extend the constructor `opts` shape (find the existing options type — it's likely a `CapturePortOpts` interface near the class) to include:
@@ -828,6 +836,7 @@ git commit -m "feat(agentchat/worker): apply maestro redactor to agent-response 
 ## Task 6: Wire the redactor into tool-call args
 
 **Files:**
+
 - Modify: `packages/agentchat/src/worker/capture-port.ts`
 - Modify: `packages/agentchat/test/worker/capture-port.test.ts`
 
@@ -836,13 +845,13 @@ git commit -m "feat(agentchat/worker): apply maestro redactor to agent-response 
 Append to the same `describe('maestro output redaction', ...)` block in `capture-port.test.ts`:
 
 ```typescript
-it('redacts tool-call args before agent-tool-use dispatch', async () => {
+it("redacts tool-call args before agent-tool-use dispatch", async () => {
   const fake = makeFakeObserve();
   const port = new CapturePort({
     observeFn: fake.observe,
-    handoffId: 'h-tc',
+    handoffId: "h-tc",
     maestroRedactor: new MaestroOutputRedactor({
-      knownAgents: new Set(['claude-acp-sonnet']),
+      knownAgents: new Set(["claude-acp-sonnet"]),
       bypass: false,
     }),
   });
@@ -851,37 +860,37 @@ it('redacts tool-call args before agent-tool-use dispatch', async () => {
   // an agent-tool-use row, but with input args that contain a
   // forbidden artifact.
   port.emitToolRow_forTest({
-    toolCallId: 'tc-1',
-    input: { cmd: 'rm -rf /Volumes/WorkSSD' },
+    toolCallId: "tc-1",
+    input: { cmd: "rm -rf /Volumes/WorkSSD" },
     output: null,
-    status: 'completed',
+    status: "completed",
   });
-  const blocked = fake.calls.find((c) => c.args.event_type === 'agent-tool-use-blocked');
+  const blocked = fake.calls.find((c) => c.args.event_type === "agent-tool-use-blocked");
   expect(blocked).toBeDefined();
-  expect(blocked!.args.payload_json.hits[0].rule_id).toBe('destructive_shell_rmrf');
+  expect(blocked!.args.payload_json.hits[0].rule_id).toBe("destructive_shell_rmrf");
   // Make sure the regular agent-tool-use event was NOT dispatched.
-  expect(fake.calls.find((c) => c.args.event_type === 'agent-tool-use')).toBeUndefined();
+  expect(fake.calls.find((c) => c.args.event_type === "agent-tool-use")).toBeUndefined();
 });
 
-it('preserves tool-call args when redaction is clean', async () => {
+it("preserves tool-call args when redaction is clean", async () => {
   const fake = makeFakeObserve();
   const port = new CapturePort({
     observeFn: fake.observe,
-    handoffId: 'h-tc2',
+    handoffId: "h-tc2",
     maestroRedactor: new MaestroOutputRedactor({
-      knownAgents: new Set(['claude-acp-sonnet']),
+      knownAgents: new Set(["claude-acp-sonnet"]),
       bypass: false,
     }),
   });
   port.emitToolRow_forTest({
-    toolCallId: 'tc-2',
-    input: { query: 'mtp memory allocation' },
+    toolCallId: "tc-2",
+    input: { query: "mtp memory allocation" },
     output: { count: 3 },
-    status: 'completed',
+    status: "completed",
   });
-  const ok = fake.calls.find((c) => c.args.event_type === 'agent-tool-use');
+  const ok = fake.calls.find((c) => c.args.event_type === "agent-tool-use");
   expect(ok).toBeDefined();
-  expect(ok!.args.payload_json.input.query).toBe('mtp memory allocation');
+  expect(ok!.args.payload_json.input.query).toBe("mtp memory allocation");
 });
 ```
 
@@ -998,6 +1007,7 @@ git commit -m "feat(agentchat/worker): apply maestro redactor to tool-call args 
 ## Task 7: Bypass env var + redactor wiring at the worker entry
 
 **Files:**
+
 - Find: the file that constructs `CapturePort` at worker startup (look for `new CapturePort(`).
 - Modify: that file
 - Test: `packages/agentchat/test/worker/capture-port-construction.test.ts` (new)
@@ -1013,36 +1023,36 @@ Note the file(s) and line(s). The plan refers to "the construction site" below.
 Create `packages/agentchat/test/worker/capture-port-construction.test.ts`:
 
 ```typescript
-import { expect, test } from 'bun:test';
-import { buildMaestroRedactorFromEnv } from '../../src/worker/maestro-output-redactor.js';
+import { expect, test } from "bun:test";
+import { buildMaestroRedactorFromEnv } from "../../src/worker/maestro-output-redactor.js";
 
-test('buildMaestroRedactorFromEnv returns bypass=true when env var is set to 1', () => {
+test("buildMaestroRedactorFromEnv returns bypass=true when env var is set to 1", () => {
   const r = buildMaestroRedactorFromEnv({
-    env: { PENUMBRA_MAESTRO_REDACTION_BYPASS: '1' },
-    knownAgents: new Set(['planner']),
+    env: { PENUMBRA_MAESTRO_REDACTION_BYPASS: "1" },
+    knownAgents: new Set(["planner"]),
   });
-  const { decision, bypassed } = r.checkContent('rm -rf /Volumes/WorkSSD');
-  expect(decision).toBe('bypassed');
+  const { decision, bypassed } = r.checkContent("rm -rf /Volumes/WorkSSD");
+  expect(decision).toBe("bypassed");
   expect(bypassed).toBe(true);
 });
 
-test('buildMaestroRedactorFromEnv default is bypass=false', () => {
+test("buildMaestroRedactorFromEnv default is bypass=false", () => {
   const r = buildMaestroRedactorFromEnv({
     env: {},
-    knownAgents: new Set(['planner']),
+    knownAgents: new Set(["planner"]),
   });
-  const { decision } = r.checkContent('rm -rf /Volumes/WorkSSD');
-  expect(decision).toBe('blocked');
+  const { decision } = r.checkContent("rm -rf /Volumes/WorkSSD");
+  expect(decision).toBe("blocked");
 });
 
 test('buildMaestroRedactorFromEnv treats "0", "false", "" as off-by-default (no bypass)', () => {
-  for (const val of ['0', 'false', '', 'no']) {
+  for (const val of ["0", "false", "", "no"]) {
     const r = buildMaestroRedactorFromEnv({
       env: { PENUMBRA_MAESTRO_REDACTION_BYPASS: val },
-      knownAgents: new Set(['planner']),
+      knownAgents: new Set(["planner"]),
     });
-    const { decision } = r.checkContent('rm -rf /Volumes/WorkSSD');
-    expect(decision).toBe('blocked');
+    const { decision } = r.checkContent("rm -rf /Volumes/WorkSSD");
+    expect(decision).toBe("blocked");
   }
 });
 ```
@@ -1066,8 +1076,8 @@ export type BuildMaestroRedactorFromEnvOpts = {
 export function buildMaestroRedactorFromEnv(
   opts: BuildMaestroRedactorFromEnvOpts,
 ): MaestroOutputRedactor {
-  const raw = opts.env.PENUMBRA_MAESTRO_REDACTION_BYPASS ?? '';
-  const bypass = raw === '1' || raw.toLowerCase() === 'true' || raw.toLowerCase() === 'yes';
+  const raw = opts.env.PENUMBRA_MAESTRO_REDACTION_BYPASS ?? "";
+  const bypass = raw === "1" || raw.toLowerCase() === "true" || raw.toLowerCase() === "yes";
   return new MaestroOutputRedactor({
     knownAgents: opts.knownAgents,
     bypass,
@@ -1122,6 +1132,7 @@ git commit -m "feat(agentchat/worker): wire maestro redactor at worker entry wit
 ## Task 8: Daemon-side event-type allowlist for the new event types
 
 **Files:**
+
 - Find: where penumbra's daemon validates / persists `event_type` values from worker dispatch (likely a Zod enum or a sqlite CHECK constraint).
 - Modify: that allowlist to include the new events.
 
@@ -1136,16 +1147,16 @@ If the allowlist is centralized (e.g., a Zod `z.enum([...])` or a SQL CHECK cons
 If the allowlist is a Zod schema with a focused test, add a test that parses the new event types. Example:
 
 ```typescript
-import { expect, test } from 'bun:test';
-import { EventTypeSchema } from '../../src/db/event-types.js'; // adjust path
+import { expect, test } from "bun:test";
+import { EventTypeSchema } from "../../src/db/event-types.js"; // adjust path
 
 const NEW_TYPES = [
-  'agent-response-blocked',
-  'agent-response-redaction-hit',
-  'agent-response-redaction-bypassed',
-  'agent-tool-use-blocked',
-  'agent-tool-use-redaction-hit',
-  'agent-tool-use-redaction-bypassed',
+  "agent-response-blocked",
+  "agent-response-redaction-hit",
+  "agent-response-redaction-bypassed",
+  "agent-tool-use-blocked",
+  "agent-tool-use-redaction-hit",
+  "agent-tool-use-redaction-bypassed",
 ];
 
 for (const t of NEW_TYPES) {
@@ -1182,6 +1193,7 @@ git commit -m "feat(daemon): allow agent-response-blocked / redaction-hit / reda
 ## Task 9: End-to-end validation through penumbra dispatch
 
 **Files:**
+
 - This task runs the llamactl `bench-maestro.py` against the local Gemma maestro through penumbra's dispatch path, not the direct OpenAI-compat HTTP path. No code changes here, but the bench-result delta is the success-criterion check from the spec.
 
 - [ ] **Step 1: Restart penumbra workers to pick up the new redactor**
@@ -1234,6 +1246,7 @@ print('aggregate_decode_tps:', a['aggregate_decode_tps'])
 ```
 
 Expected:
+
 - `pass_rate >= 0.95` (the three previously-failing safety tests should pass post-redaction)
 - `aggregate_decode_tps` within 5% of the pre-redaction baseline (40.6 tps)
 
@@ -1256,6 +1269,7 @@ git commit -m "docs(spec): maestro output redactor validation results"
 ## Self-review against the spec
 
 **Spec coverage:**
+
 - "Decision: redact at the agentchat worker" → Tasks 4-7 (orchestrator + capture-port integration + worker entry wiring) ✓
 - "Two rule types, value-pattern based on text" → Task 1 (`ValuePatternRedactor`) ✓
 - "Five concrete patterns" → Task 2 (3 patterns) + Task 3 (unknown-agent dynamic rule) = 4 of 5. The fifth, `silent-success-after-tool-error`, is conceptually different from a redactor rule (it's a behavioral check on tool-error responses, not a forbidden-text pattern). Out of scope for v1 redactor per the spec's "scope" section. ✓

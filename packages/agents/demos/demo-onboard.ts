@@ -13,11 +13,11 @@
  * onboard-new-gpu-node both dry and wet, and prints the state
  * transition the operator would see.
  */
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { stringify as stringifyYaml } from 'yaml';
-import { runRunbook } from '../src/index.js';
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
+import { runRunbook } from "../src/index.js";
 
 /**
  * Local copy of the bootstrap blob shape + encoder so this demo
@@ -30,7 +30,7 @@ function encodeBootstrap(blob: {
   token: string;
   certificate: string;
 }): string {
-  return Buffer.from(JSON.stringify(blob), 'utf8').toString('base64url');
+  return Buffer.from(JSON.stringify(blob), "utf8").toString("base64url");
 }
 
 const NARRATIVE = `\
@@ -49,7 +49,7 @@ Steps the runbook drives (each maps to one @llamactl/mcp tool call):
 `;
 
 function banner(text: string): void {
-  process.stdout.write(`\n─── ${text} ${'─'.repeat(Math.max(0, 60 - text.length))}\n`);
+  process.stdout.write(`\n─── ${text} ${"─".repeat(Math.max(0, 60 - text.length))}\n`);
 }
 
 function seedTempFleet(): {
@@ -59,27 +59,27 @@ function seedTempFleet(): {
   embersynthPath: string;
   restore: () => void;
 } {
-  const runtimeDir = mkdtempSync(join(tmpdir(), 'llamactl-demo-onboard-runtime-'));
-  const auditDir = mkdtempSync(join(tmpdir(), 'llamactl-demo-onboard-audit-'));
-  const kubeconfigPath = join(runtimeDir, 'config');
-  const embersynthPath = join(runtimeDir, 'embersynth.yaml');
+  const runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-demo-onboard-runtime-"));
+  const auditDir = mkdtempSync(join(tmpdir(), "llamactl-demo-onboard-audit-"));
+  const kubeconfigPath = join(runtimeDir, "config");
+  const embersynthPath = join(runtimeDir, "embersynth.yaml");
 
   // Start with only the local agent so we can observe a real
   // before/after node count.
   writeFileSync(
     kubeconfigPath,
     stringifyYaml({
-      apiVersion: 'llamactl/v1',
-      kind: 'Config',
-      currentContext: 'default',
-      contexts: [{ name: 'default', cluster: 'home', user: 'me', defaultNode: 'local' }],
+      apiVersion: "llamactl/v1",
+      kind: "Config",
+      currentContext: "default",
+      contexts: [{ name: "default", cluster: "home", user: "me", defaultNode: "local" }],
       clusters: [
         {
-          name: 'home',
-          nodes: [{ name: 'local', endpoint: 'inproc://local' }],
+          name: "home",
+          nodes: [{ name: "local", endpoint: "inproc://local" }],
         },
       ],
-      users: [{ name: 'me', token: 'local' }],
+      users: [{ name: "me", token: "local" }],
     }),
   );
 
@@ -88,7 +88,7 @@ function seedTempFleet(): {
   Object.assign(process.env, originalEnv, {
     DEV_STORAGE: runtimeDir,
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
-    LOCAL_AI_PRESET_OVERRIDES_FILE: join(runtimeDir, 'preset-overrides.tsv'),
+    LOCAL_AI_PRESET_OVERRIDES_FILE: join(runtimeDir, "preset-overrides.tsv"),
     LLAMACTL_MCP_AUDIT_DIR: auditDir,
     LLAMACTL_EMBERSYNTH_CONFIG: embersynthPath,
     LLAMACTL_CONFIG: kubeconfigPath,
@@ -122,7 +122,7 @@ async function runOnce(
   banner(`${tag}: onboard-new-gpu-node (dryRun=${dryRun})`);
   const startedAt = Date.now();
   let lastTick = startedAt;
-  const result = await runRunbook('onboard-new-gpu-node', params, {
+  const result = await runRunbook("onboard-new-gpu-node", params, {
     dryRun,
     log: (msg: string) => {
       const now = Date.now();
@@ -141,7 +141,7 @@ async function runOnce(
     );
   }
   if (tape.length > 0) {
-    process.stdout.write(tape.join('\n') + '\n');
+    process.stdout.write(tape.join("\n") + "\n");
   }
   process.stdout.write(`  total=${totalMs}ms\n`);
   const out: {
@@ -164,7 +164,7 @@ async function main(): Promise<void> {
   process.stdout.write(NARRATIVE);
 
   const seeded = seedTempFleet();
-  banner('Fleet seeded (1 local agent only)');
+  banner("Fleet seeded (1 local agent only)");
   process.stdout.write(`  runtime:    ${seeded.runtimeDir}\n`);
   process.stdout.write(`  kubeconfig: ${seeded.kubeconfigPath}\n`);
   process.stdout.write(`  embersynth: ${seeded.embersynthPath} (absent before onboarding)\n`);
@@ -173,64 +173,50 @@ async function main(): Promise<void> {
   // dead port so we never accidentally probe a real host; the runbook
   // scope is kubeconfig + embersynth, not reachability.
   const bootstrap = encodeBootstrap({
-    url: 'https://127.0.0.1:59999',
-    fingerprint: 'sha256:' + 'a'.repeat(64),
-    token: 'fake-token-for-demo',
-    certificate: '-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n',
+    url: "https://127.0.0.1:59999",
+    fingerprint: "sha256:" + "a".repeat(64),
+    token: "fake-token-for-demo",
+    certificate: "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n",
   });
 
   try {
     // First: dry-run. Should decode the blob and preview the entry
     // without mutating kubeconfig or touching embersynth.
-    const dry = await runOnce(
-      'Step 1',
-      { name: 'gpu1-demo', bootstrap },
-      true,
-    );
+    const dry = await runOnce("Step 1", { name: "gpu1-demo", bootstrap }, true);
 
     const embersynthBeforeWet = existsSync(seeded.embersynthPath);
 
     // Second: wet run. Commits the node, then runs embersynth sync.
-    const wet = await runOnce(
-      'Step 2',
-      { name: 'gpu1-demo', bootstrap },
-      false,
-    );
+    const wet = await runOnce("Step 2", { name: "gpu1-demo", bootstrap }, false);
 
-    banner('State transition');
-    process.stdout.write(
-      `  dry-run steps:       ${dry.stepsCount} (preview only, no writes)\n`,
-    );
+    banner("State transition");
+    process.stdout.write(`  dry-run steps:       ${dry.stepsCount} (preview only, no writes)\n`);
     process.stdout.write(`  wet-run steps:       ${wet.stepsCount}\n`);
+    process.stdout.write(`  embersynth before:   ${embersynthBeforeWet ? "exists" : "absent"}\n`);
     process.stdout.write(
-      `  embersynth before:   ${embersynthBeforeWet ? 'exists' : 'absent'}\n`,
-    );
-    process.stdout.write(
-      `  embersynth after:    ${existsSync(seeded.embersynthPath) ? 'exists' : 'absent'}\n`,
+      `  embersynth after:    ${existsSync(seeded.embersynthPath) ? "exists" : "absent"}\n`,
     );
     if (wet.summary) {
       const s = wet.summary as { cluster?: string; totalNodes?: number; endpoint?: string };
-      process.stdout.write(`  cluster:             ${s.cluster ?? '(none)'}\n`);
-      process.stdout.write(`  total nodes after:   ${s.totalNodes ?? '?'}\n`);
-      process.stdout.write(`  new node endpoint:   ${s.endpoint ?? '(not reported)'}\n`);
+      process.stdout.write(`  cluster:             ${s.cluster ?? "(none)"}\n`);
+      process.stdout.write(`  total nodes after:   ${s.totalNodes ?? "?"}\n`);
+      process.stdout.write(`  new node endpoint:   ${s.endpoint ?? "(not reported)"}\n`);
     }
 
-    banner('Result');
-    process.stdout.write(
-      `  dry-run ok=${dry.ok}   wet-run ok=${wet.ok}\n`,
-    );
+    banner("Result");
+    process.stdout.write(`  dry-run ok=${dry.ok}   wet-run ok=${wet.ok}\n`);
     if (!dry.ok || !wet.ok) {
-      process.stdout.write(`  dry error: ${dry.error ?? '(none)'}\n`);
-      process.stdout.write(`  wet error: ${wet.error ?? '(none)'}\n`);
+      process.stdout.write(`  dry error: ${dry.error ?? "(none)"}\n`);
+      process.stdout.write(`  wet error: ${wet.error ?? "(none)"}\n`);
       process.exitCode = 1;
     }
   } finally {
     seeded.restore();
-    banner('Teardown complete');
+    banner("Teardown complete");
   }
 }
 
 main().catch((err) => {
-  console.error('demo-onboard crashed:', err);
+  console.error("demo-onboard crashed:", err);
   process.exitCode = 1;
 });

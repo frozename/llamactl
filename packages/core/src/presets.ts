@@ -1,11 +1,11 @@
-import { readFileSync, unlinkSync } from 'node:fs';
-import { resolveEnv } from './env.js';
-import { atomicWriteFile } from './fsAtomic.js';
-import { normalizeProfile } from './profile.js';
-import { PresetOverride, presetOverrideFields, splitTsvRow } from './schemas.js';
-import type { MachineProfile } from './types.js';
+import { readFileSync, unlinkSync } from "node:fs";
+import { resolveEnv } from "./env.js";
+import { atomicWriteFile } from "./fsAtomic.js";
+import { normalizeProfile } from "./profile.js";
+import { PresetOverride, presetOverrideFields, splitTsvRow } from "./schemas.js";
+import type { MachineProfile } from "./types.js";
 
-export type PresetName = 'best' | 'vision' | 'balanced' | 'fast';
+export type PresetName = "best" | "vision" | "balanced" | "fast";
 
 /**
  * Built-in mapping of (profile, preset) to the relative GGUF path that
@@ -15,23 +15,23 @@ export type PresetName = 'best' | 'vision' | 'balanced' | 'fast';
  * precedence.
  */
 const BUILTIN_PRESETS: Record<MachineProfile, Record<PresetName, string>> = {
-  'mac-mini-16g': {
-    best: 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf',
-    vision: 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf',
-    balanced: 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf',
-    fast: 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf',
+  "mac-mini-16g": {
+    best: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
+    vision: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
+    balanced: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf",
+    fast: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf",
   },
   balanced: {
-    best: 'gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf',
-    vision: 'gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
-    balanced: 'gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
-    fast: 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf',
+    best: "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+    vision: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    balanced: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    fast: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
   },
-  'macbook-pro-48g': {
-    best: 'gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf',
-    vision: 'gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
-    balanced: 'gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf',
-    fast: 'gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf',
+  "macbook-pro-48g": {
+    best: "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+    vision: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    balanced: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    fast: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
   },
 };
 
@@ -41,13 +41,13 @@ const BUILTIN_PRESETS: Record<MachineProfile, Record<PresetName, string>> = {
  * `mac-mini-16g + best` becomes `LOCAL_AI_PRESET_MAC_MINI_16G_BEST_MODEL`.
  */
 function envVarName(profile: MachineProfile, preset: PresetName): string {
-  const profileKey = profile.replace(/-/g, '_').toUpperCase();
+  const profileKey = profile.replace(/-/g, "_").toUpperCase();
   const presetKey = preset.toUpperCase();
   return `LOCAL_AI_PRESET_${profileKey}_${presetKey}_MODEL`;
 }
 
 /** Source of a preset resolution, useful for UI annotations. */
-export type PresetOverrideSource = 'env' | 'file' | null;
+export type PresetOverrideSource = "env" | "file" | null;
 
 export interface PresetResolution {
   rel: string;
@@ -62,21 +62,21 @@ export interface PresetResolution {
 export function readPresetOverrides(file: string): PresetOverride[] {
   let raw: string;
   try {
-    raw = readFileSync(file, 'utf8');
+    raw = readFileSync(file, "utf8");
   } catch {
     return [];
   }
   const out: PresetOverride[] = [];
-  for (const line of raw.split('\n')) {
+  for (const line of raw.split("\n")) {
     const trimmed = line.trim();
-    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
     const cols = splitTsvRow(line);
     if (cols.length < presetOverrideFields.length) continue;
     const record: Record<string, string> = {};
     for (let i = 0; i < presetOverrideFields.length; i += 1) {
       const field = presetOverrideFields[i];
       if (field === undefined) continue;
-      record[field] = cols[i] ?? '';
+      record[field] = cols[i] ?? "";
     }
     const parsed = PresetOverride.safeParse(record);
     if (parsed.success) out.push(parsed.data);
@@ -98,24 +98,24 @@ export function resolvePreset(
 ): PresetResolution {
   const envOverride = env[envVarName(profile, preset)];
   if (envOverride && envOverride.length > 0) {
-    return { rel: envOverride, source: 'env' };
+    return { rel: envOverride, source: "env" };
   }
 
   const fileOverride = readPresetOverrides(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE).find(
     (row) => row.profile === profile && row.preset === preset,
   );
   if (fileOverride) {
-    return { rel: fileOverride.rel, source: 'file' };
+    return { rel: fileOverride.rel, source: "file" };
   }
 
-  const normalized = normalizeProfile(profile) ?? 'macbook-pro-48g';
+  const normalized = normalizeProfile(profile) ?? "macbook-pro-48g";
   return { rel: BUILTIN_PRESETS[normalized][preset], source: null };
 }
 
 function formatIso(date: Date = new Date()): string {
   // Matches `date +%Y-%m-%dT%H:%M:%S%z` used by the shell library —
   // local time with an offset like `-0300`, no colon in the offset.
-  const pad = (n: number) => String(n).padStart(2, '0');
+  const pad = (n: number) => String(n).padStart(2, "0");
   const y = date.getFullYear();
   const mo = pad(date.getMonth() + 1);
   const d = pad(date.getDate());
@@ -123,7 +123,7 @@ function formatIso(date: Date = new Date()): string {
   const mi = pad(date.getMinutes());
   const s = pad(date.getSeconds());
   const off = -date.getTimezoneOffset();
-  const sign = off >= 0 ? '+' : '-';
+  const sign = off >= 0 ? "+" : "-";
   const abs = Math.abs(off);
   const oh = pad(Math.floor(abs / 60));
   const om = pad(abs % 60);
@@ -150,9 +150,9 @@ export function writePresetOverride(
     .filter((row) => !(row.profile === profile && row.preset === preset))
     .concat([{ profile, preset, rel, updated_at: updatedAt }]);
   const body = next
-    .map((row) => `${row.profile}\t${row.preset}\t${row.rel}\t${row.updated_at ?? ''}`)
-    .join('\n');
-  atomicWriteFile(file, body === '' ? '' : `${body}\n`);
+    .map((row) => `${row.profile}\t${row.preset}\t${row.rel}\t${row.updated_at ?? ""}`)
+    .join("\n");
+  atomicWriteFile(file, body === "" ? "" : `${body}\n`);
 }
 
 /**
@@ -169,9 +169,7 @@ export function deletePresetOverride(
   const resolved = resolveEnv(env);
   const file = resolved.LOCAL_AI_PRESET_OVERRIDES_FILE;
   const existing = readPresetOverrides(file);
-  const next = existing.filter(
-    (row) => !(row.profile === profile && row.preset === preset),
-  );
+  const next = existing.filter((row) => !(row.profile === profile && row.preset === preset));
   if (next.length === existing.length) return false;
   if (next.length === 0) {
     try {
@@ -182,8 +180,8 @@ export function deletePresetOverride(
     return true;
   }
   const body = next
-    .map((row) => `${row.profile}\t${row.preset}\t${row.rel}\t${row.updated_at ?? ''}`)
-    .join('\n');
+    .map((row) => `${row.profile}\t${row.preset}\t${row.rel}\t${row.updated_at ?? ""}`)
+    .join("\n");
   atomicWriteFile(file, `${body}\n`);
   return true;
 }
@@ -197,7 +195,7 @@ export function formatPromotionsList(overrides: readonly PresetOverride[]): stri
   return overrides
     .map(
       (row) =>
-        `profile=${row.profile} preset=${row.preset} model=${row.rel} updated_at=${row.updated_at ?? ''}`,
+        `profile=${row.profile} preset=${row.preset} model=${row.rel} updated_at=${row.updated_at ?? ""}`,
     )
-    .join('\n');
+    .join("\n");
 }

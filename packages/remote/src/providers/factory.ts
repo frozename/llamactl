@@ -1,4 +1,4 @@
-import { createOpenAICompatProvider, type AiProvider } from '@nova/contracts';
+import { createOpenAICompatProvider, type AiProvider } from "@nova/contracts";
 import {
   DEFAULT_CLOUD_BASE_URLS,
   LOCAL_NODE_ENDPOINT,
@@ -8,9 +8,9 @@ import {
   type CloudProvider,
   type Config,
   type User,
-} from '../config/schema.js';
-import { resolveApiKeyRef, resolveToken } from '../config/kubeconfig.js';
-import type { PinnedFetchFactory } from '../client/links.js';
+} from "../config/schema.js";
+import { resolveApiKeyRef, resolveToken } from "../config/kubeconfig.js";
+import type { PinnedFetchFactory } from "../client/links.js";
 
 /**
  * Factory that turns a kubeconfig cloud node + resolved API key into
@@ -30,12 +30,10 @@ export function providerForCloudNode(
   // is allowed when `apiKeyRef` is unset — pass an empty key and the
   // OpenAI-compat adapter sends a vacuous `Authorization` header that
   // unauthenticated upstreams ignore.
-  const apiKey = node.cloud.apiKeyRef
-    ? resolveApiKeyRef(node.cloud.apiKeyRef, env)
-    : '';
+  const apiKey = node.cloud.apiKeyRef ? resolveApiKeyRef(node.cloud.apiKeyRef, env) : "";
   const providerName: CloudProvider = node.cloud.provider;
   const baseUrl = normalizeOpenAICompatBaseUrl(
-    node.cloud.baseUrl || DEFAULT_CLOUD_BASE_URLS[providerName] || '',
+    node.cloud.baseUrl || DEFAULT_CLOUD_BASE_URLS[providerName] || "",
     providerName,
   );
   const base = createOpenAICompatProvider({
@@ -64,19 +62,16 @@ export function providerForCloudNode(
  *                upstream returns empty / 401 / 404 so the chat UI
  *                can still pick a model to talk to.
  */
-function applyProviderQuirks(
-  base: AiProvider,
-  providerName: CloudProvider,
-): AiProvider {
-  if (providerName !== 'gemini' && providerName !== 'anthropic') return base;
+function applyProviderQuirks(base: AiProvider, providerName: CloudProvider): AiProvider {
+  if (providerName !== "gemini" && providerName !== "anthropic") return base;
 
   const stripGeminiPrefix = (value: string | undefined): string | undefined =>
-    typeof value === 'string' && value.startsWith('models/')
-      ? value.slice('models/'.length)
+    typeof value === "string" && value.startsWith("models/")
+      ? value.slice("models/".length)
       : value;
 
   const transformRequest = <T extends { model?: string } | undefined>(req: T): T => {
-    if (providerName !== 'gemini' || !req || !req.model) return req;
+    if (providerName !== "gemini" || !req || !req.model) return req;
     return { ...req, model: stripGeminiPrefix(req.model) } as T;
   };
 
@@ -113,32 +108,28 @@ function fallbackModelsFor(provider: CloudProvider): any[] {
   // The operator picks one to chat with; they can add custom catalog
   // entries if they need a model we don't list.
   const now = Math.floor(Date.now() / 1000);
-  if (provider === 'anthropic') {
+  if (provider === "anthropic") {
     return [
-      'claude-opus-4-5-20251101',
-      'claude-sonnet-4-5-20251022',
-      'claude-haiku-4-5-20251001',
-      'claude-3-7-sonnet-20250219',
-      'claude-3-5-sonnet-20241022',
+      "claude-opus-4-5-20251101",
+      "claude-sonnet-4-5-20251022",
+      "claude-haiku-4-5-20251001",
+      "claude-3-7-sonnet-20250219",
+      "claude-3-5-sonnet-20241022",
     ].map((id) => ({
       id,
-      object: 'model' as const,
+      object: "model" as const,
       created: now,
-      owned_by: 'anthropic',
-      capabilities: ['chat' as const, 'tools' as const, 'vision' as const, 'long_context' as const],
+      owned_by: "anthropic",
+      capabilities: ["chat" as const, "tools" as const, "vision" as const, "long_context" as const],
     }));
   }
-  if (provider === 'gemini') {
-    return [
-      'gemini-2.5-pro',
-      'gemini-2.5-flash',
-      'gemini-2.5-flash-8b',
-    ].map((id) => ({
+  if (provider === "gemini") {
+    return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-8b"].map((id) => ({
       id,
-      object: 'model' as const,
+      object: "model" as const,
       created: now,
-      owned_by: 'google',
-      capabilities: ['chat' as const, 'tools' as const, 'vision' as const, 'long_context' as const],
+      owned_by: "google",
+      capabilities: ["chat" as const, "tools" as const, "vision" as const, "long_context" as const],
     }));
   }
   return [];
@@ -160,14 +151,14 @@ function fallbackModelsFor(provider: CloudProvider): any[] {
  * versioned prefix (or none) open.
  */
 function normalizeOpenAICompatBaseUrl(url: string, providerName?: CloudProvider): string {
-  const trimmed = url.endsWith('/') ? url.slice(0, -1) : url;
+  const trimmed = url.endsWith("/") ? url.slice(0, -1) : url;
   // Google's OpenAI-compat shim lives at /v1beta/openai/ — a path
   // that DOESN'T end in /v<n> so the default-append rule above
   // would bolt on a bogus /v1 and every request would 404. Skip
   // the append when the URL already terminates at .../openai.
   if (/\/openai$/.test(trimmed)) return trimmed;
   if (/\/v\d+$/.test(trimmed)) return trimmed;
-  if (providerName === 'gemini') return trimmed;
+  if (providerName === "gemini") return trimmed;
   return `${trimmed}/v1`;
 }
 
@@ -206,7 +197,7 @@ export function providerForNode(opts: {
   // gateway and using that binding. The adapter keeps the virtual
   // node's name so telemetry / observers see `llamactl-sirius.openai`
   // rather than the parent gateway name.
-  if (kind === 'provider') {
+  if (kind === "provider") {
     if (!node.provider) {
       throw new Error(`provider-kind node '${node.name}' is missing provider{}`);
     }
@@ -219,7 +210,7 @@ export function providerForNode(opts: {
     // agent's `cli:[]` binding, NOT a gateway's cloud binding. Dispatch
     // to the subprocess adapter; the parent "gateway" in this binding
     // is actually the hosting agent.
-    if (node.provider.source === 'cli') {
+    if (node.provider.source === "cli") {
       return buildCliProviderForNode({ node, cfg, env });
     }
     const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
@@ -230,9 +221,7 @@ export function providerForNode(opts: {
         `provider-kind node '${node.name}': parent gateway '${node.provider.gateway}' not found or missing cloud{}`,
       );
     }
-    const apiKey = parent.cloud.apiKeyRef
-      ? resolveApiKeyRef(parent.cloud.apiKeyRef, env)
-      : '';
+    const apiKey = parent.cloud.apiKeyRef ? resolveApiKeyRef(parent.cloud.apiKeyRef, env) : "";
     return createOpenAICompatProvider({
       name: node.name,
       displayName: parent.cloud.displayName ?? node.name,
@@ -249,7 +238,7 @@ export function providerForNode(opts: {
   // llamactl agent endpoint and sends the agent's bearer instead
   // of the cloud API key. That's the "still erroring on gemini"
   // bug: transform was there, but unreachable.
-  if (kind === 'gateway' || kind === 'cloud') return providerForCloudNode(node, env);
+  if (kind === "gateway" || kind === "cloud") return providerForCloudNode(node, env);
 
   if (node.endpoint === LOCAL_NODE_ENDPOINT) {
     throw new Error(
@@ -257,7 +246,7 @@ export function providerForNode(opts: {
     );
   }
   const token = resolveToken(user, env);
-  const baseUrl = node.endpoint.replace(/\/$/, '') + '/v1';
+  const baseUrl = node.endpoint.replace(/\/$/, "") + "/v1";
   const fetchImpl = fetchFactory ? fetchFactory(node) : undefined;
   return createOpenAICompatProvider({
     name: node.name,
@@ -287,7 +276,7 @@ function buildCliProviderForNode(opts: {
   const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
   const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
   const agent = cluster?.nodes.find(
-    (n) => n.name === node.provider!.gateway && resolveNodeKind(n) === 'agent',
+    (n) => n.name === node.provider!.gateway && resolveNodeKind(n) === "agent",
   );
   if (!agent) {
     throw new Error(
@@ -305,7 +294,7 @@ function buildCliProviderForNode(opts: {
   // its own Bun.spawn dependency — don't force that surface onto
   // every factory caller.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createCliSubprocessProvider } = require('../cli/adapter.js') as {
+  const { createCliSubprocessProvider } = require("../cli/adapter.js") as {
     createCliSubprocessProvider: (o: {
       agentName: string;
       binding: typeof binding;
@@ -331,7 +320,7 @@ export function defaultCloudBinding(
 ): CloudBinding {
   return {
     provider,
-    baseUrl: DEFAULT_CLOUD_BASE_URLS[provider] || '',
+    baseUrl: DEFAULT_CLOUD_BASE_URLS[provider] || "",
     apiKeyRef,
     ...overrides,
   };

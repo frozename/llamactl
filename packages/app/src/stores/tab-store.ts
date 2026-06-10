@@ -1,7 +1,7 @@
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
-export type TabKind = 'module' | 'workload' | 'node' | 'ops-session' | 'settings';
+export type TabKind = "module" | "workload" | "node" | "ops-session" | "settings";
 
 export interface TabEntry {
   /** Stable identity: `module:chat`, `workload:wl-abc`, `node:atlas`, etc. */
@@ -171,7 +171,7 @@ export const useTabStore = create<Store>()(
       closeAll: (keepPinned = true) => set((s) => closeAll(s, keepPinned)),
     }),
     {
-      name: 'beacon-tabs',
+      name: "beacon-tabs",
       version: 1,
       partialize: (s) => ({ tabs: s.tabs, activeKey: s.activeKey, closed: s.closed }),
     },

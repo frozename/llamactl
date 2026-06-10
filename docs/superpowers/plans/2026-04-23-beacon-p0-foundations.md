@@ -13,12 +13,14 @@
 ## File Structure
 
 Create:
+
 - `packages/app/src/themes/tokens.css` — the full Beacon token CSS (shared across all four families, noise overlay, font declarations, scrollbar)
 - `packages/app/src/themes/migrate.ts` — pure legacy-id mapping function + unit-testable
 - `packages/app/test/themes/migrate.test.ts` — unit test for the migration mapping
 - `tests/ui-flows/beacon-p0-verify.ts` — Electron-driven end-of-phase verification flow (data-theme, tokens, body background per family, Google Fonts link, legacy migration durability)
 
 Modify:
+
 - `packages/app/src/index.css` — replace the `@theme` block with an `@import "./themes/tokens.css"` line, drop `.activity-icon` class (becomes part of P2's rail), keep `.mono`
 - `packages/app/src/themes/index.ts` — rewrite `THEMES` with Sirius/Ember/Clinical/Scrubs, keep the `Theme` interface shape, keep `mapVariant` field, default = `sirius`
 - `packages/app/src/stores/theme-store.ts` — add `version: 2` + `migrate` function that calls `migrate.ts`, rename `localStorage` key to `beacon-theme` (Zustand `name`), **persist the migrated values to `beacon-theme` synchronously during the legacy read** so the migration survives a reload that happens before any user-driven state change
@@ -32,6 +34,7 @@ Delete: none in P0.
 ## Task 1: Create the Beacon tokens CSS
 
 **Files:**
+
 - Create: `packages/app/src/themes/tokens.css`
 
 - [ ] **Step 1: Create the tokens file**
@@ -48,11 +51,12 @@ Create `packages/app/src/themes/tokens.css` with the full Beacon token set. This
  * are re-exported as aliases at the end so existing modules keep
  * compiling while P1/P3 migrate them to the new token names. */
 
-:root, [data-theme='sirius'] {
+:root,
+[data-theme="sirius"] {
   --color-brand: #6366f1;
   --color-brand-subtle: #4f46e5;
-  --color-brand-muted: rgba(99,102,241,0.15);
-  --color-brand-ghost: rgba(99,102,241,0.08);
+  --color-brand-muted: rgba(99, 102, 241, 0.15);
+  --color-brand-ghost: rgba(99, 102, 241, 0.08);
   --color-brand-contrast: #ffffff;
 
   --color-surface-0: #0c0c0f;
@@ -60,11 +64,11 @@ Create `packages/app/src/themes/tokens.css` with the full Beacon token set. This
   --color-surface-2: #1a1a20;
   --color-surface-3: #22222a;
   --color-surface-4: #2d2d38;
-  --color-surface-overlay: rgba(0,0,0,0.6);
+  --color-surface-overlay: rgba(0, 0, 0, 0.6);
 
-  --color-border: rgba(255,255,255,0.06);
-  --color-border-subtle: rgba(255,255,255,0.03);
-  --color-border-strong: rgba(255,255,255,0.12);
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-border-subtle: rgba(255, 255, 255, 0.03);
+  --color-border-strong: rgba(255, 255, 255, 0.12);
   --color-border-focus: var(--color-brand);
 
   --color-text: #ededf0;
@@ -79,25 +83,25 @@ Create `packages/app/src/themes/tokens.css` with the full Beacon token set. This
   --color-info: #60a5fa;
 
   --glow-brand: radial-gradient(circle at 50% 50%, var(--color-brand-muted) 0%, transparent 60%);
-  --glow-ember:  radial-gradient(circle at 50% 50%, rgba(245,158,11,0.12) 0%, transparent 60%);
+  --glow-ember: radial-gradient(circle at 50% 50%, rgba(245, 158, 11, 0.12) 0%, transparent 60%);
 
   color-scheme: dark;
 }
 
-[data-theme='ember'] {
+[data-theme="ember"] {
   --color-brand: #f59e0b;
   --color-brand-subtle: #d97706;
-  --color-brand-muted: rgba(245,158,11,0.16);
-  --color-brand-ghost: rgba(245,158,11,0.08);
+  --color-brand-muted: rgba(245, 158, 11, 0.16);
+  --color-brand-ghost: rgba(245, 158, 11, 0.08);
   --color-brand-contrast: #0a0a08;
   --color-surface-0: #0a0a08;
   --color-surface-1: #131210;
   --color-surface-2: #1a1915;
   --color-surface-3: #22201b;
   --color-surface-4: #2c2a23;
-  --color-border: rgba(255,245,220,0.06);
-  --color-border-subtle: rgba(255,245,220,0.03);
-  --color-border-strong: rgba(255,245,220,0.12);
+  --color-border: rgba(255, 245, 220, 0.06);
+  --color-border-subtle: rgba(255, 245, 220, 0.03);
+  --color-border-strong: rgba(255, 245, 220, 0.12);
   --color-text: #ece7da;
   --color-text-secondary: #b5ac95;
   --color-text-tertiary: #807868;
@@ -105,20 +109,20 @@ Create `packages/app/src/themes/tokens.css` with the full Beacon token set. This
   color-scheme: dark;
 }
 
-[data-theme='clinical'] {
+[data-theme="clinical"] {
   --color-brand: #2563eb;
   --color-brand-subtle: #1d4ed8;
-  --color-brand-muted: rgba(37,99,235,0.10);
-  --color-brand-ghost: rgba(37,99,235,0.05);
+  --color-brand-muted: rgba(37, 99, 235, 0.1);
+  --color-brand-ghost: rgba(37, 99, 235, 0.05);
   --color-brand-contrast: #ffffff;
   --color-surface-0: #faf9f7;
   --color-surface-1: #ffffff;
   --color-surface-2: #f3f2ef;
   --color-surface-3: #e6e5e0;
   --color-surface-4: #cfcdc7;
-  --color-border: rgba(30,25,20,0.08);
-  --color-border-subtle: rgba(30,25,20,0.04);
-  --color-border-strong: rgba(30,25,20,0.14);
+  --color-border: rgba(30, 25, 20, 0.08);
+  --color-border-subtle: rgba(30, 25, 20, 0.04);
+  --color-border-strong: rgba(30, 25, 20, 0.14);
   --color-text: #14110d;
   --color-text-secondary: #4a4740;
   --color-text-tertiary: #8a867d;
@@ -130,20 +134,20 @@ Create `packages/app/src/themes/tokens.css` with the full Beacon token set. This
   color-scheme: light;
 }
 
-[data-theme='scrubs'] {
+[data-theme="scrubs"] {
   --color-brand: #14b8a6;
   --color-brand-subtle: #0d9488;
-  --color-brand-muted: rgba(20,184,166,0.15);
-  --color-brand-ghost: rgba(20,184,166,0.08);
+  --color-brand-muted: rgba(20, 184, 166, 0.15);
+  --color-brand-ghost: rgba(20, 184, 166, 0.08);
   --color-brand-contrast: #06201c;
   --color-surface-0: #07130f;
   --color-surface-1: #0e1c18;
   --color-surface-2: #13241f;
   --color-surface-3: #1a2e28;
   --color-surface-4: #213d37;
-  --color-border: rgba(180,230,220,0.08);
-  --color-border-subtle: rgba(180,230,220,0.04);
-  --color-border-strong: rgba(180,230,220,0.14);
+  --color-border: rgba(180, 230, 220, 0.08);
+  --color-border-subtle: rgba(180, 230, 220, 0.04);
+  --color-border-strong: rgba(180, 230, 220, 0.14);
   --color-text: #d4ede8;
   --color-text-secondary: #8cbcb2;
   --color-text-tertiary: #5d8f84;
@@ -153,29 +157,57 @@ Create `packages/app/src/themes/tokens.css` with the full Beacon token set. This
 
 /* Shared non-color tokens */
 :root {
-  --font-sans:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-mono:    'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, monospace;
-  --font-display: 'Inter', system-ui, sans-serif; /* display == sans, just tighter */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+  --font-display: "Inter", system-ui, sans-serif; /* display == sans, just tighter */
 
-  --fs-10: 10px; --fs-11: 11px; --fs-12: 12px; --fs-13: 13px;
-  --fs-14: 14px; --fs-16: 16px; --fs-20: 20px; --fs-24: 24px;
-  --fs-28: 28px; --fs-32: 32px; --fs-48: 48px; --fs-56: 56px;
-  --fs-72: 72px; --fs-96: 96px; --fs-128: 128px;
+  --fs-10: 10px;
+  --fs-11: 11px;
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-20: 20px;
+  --fs-24: 24px;
+  --fs-28: 28px;
+  --fs-32: 32px;
+  --fs-48: 48px;
+  --fs-56: 56px;
+  --fs-72: 72px;
+  --fs-96: 96px;
+  --fs-128: 128px;
 
-  --lh-tight:  1.05;
-  --lh-snug:   1.2;
+  --lh-tight: 1.05;
+  --lh-snug: 1.2;
   --lh-normal: 1.5;
-  --lh-loose:  1.65;
+  --lh-loose: 1.65;
 
-  --s-1:4px;  --s-2:8px;  --s-3:12px; --s-4:16px;  --s-5:20px; --s-6:24px;
-  --s-8:32px; --s-10:40px; --s-12:48px; --s-16:64px; --s-20:80px;
-  --s-24:96px; --s-32:128px; --s-40:160px; --s-48:192px;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+  --s-12: 48px;
+  --s-16: 64px;
+  --s-20: 80px;
+  --s-24: 96px;
+  --s-32: 128px;
+  --s-40: 160px;
+  --s-48: 192px;
 
-  --r-sm:3px; --r-md:6px; --r-lg:10px; --r-xl:16px; --r-2xl:24px; --r-pill:999px;
+  --r-sm: 3px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-xl: 16px;
+  --r-2xl: 24px;
+  --r-pill: 999px;
 
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.20);
-  --shadow-md: 0 8px 24px rgba(0,0,0,0.32);
-  --shadow-lg: 0 20px 60px rgba(0,0,0,0.50);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.5);
 
   /* Chrome heights — operator UI */
   --h-title: 44px;
@@ -187,16 +219,20 @@ Create `packages/app/src/themes/tokens.css` with the full Beacon token set. This
 
 /* Foreground aliases + status-muted tints — per-theme because fg
  * aliases track --color-text values that vary per family. */
-:root, [data-theme='sirius'], [data-theme='ember'], [data-theme='clinical'], [data-theme='scrubs'] {
+:root,
+[data-theme="sirius"],
+[data-theme="ember"],
+[data-theme="clinical"],
+[data-theme="scrubs"] {
   --fg1: var(--color-text);
   --fg2: var(--color-text-secondary);
   --fg3: var(--color-text-tertiary);
   --fg4: var(--color-text-ghost);
 
-  --color-ok-muted:   rgba(52,211,153,0.12);
-  --color-warn-muted: rgba(251,191,36,0.12);
-  --color-err-muted:  rgba(248,113,113,0.12);
-  --color-info-muted: rgba(96,165,250,0.12);
+  --color-ok-muted: rgba(52, 211, 153, 0.12);
+  --color-warn-muted: rgba(251, 191, 36, 0.12);
+  --color-err-muted: rgba(248, 113, 113, 0.12);
+  --color-info-muted: rgba(96, 165, 250, 0.12);
 }
 
 /* Legacy aliases — consumed by modules that still reference the pre-Beacon
@@ -213,7 +249,10 @@ Create `packages/app/src/themes/tokens.css` with the full Beacon token set. This
 }
 
 /* Body defaults + noise overlay */
-html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
 body {
   margin: 0;
   font-family: var(--font-sans);
@@ -221,10 +260,12 @@ body {
   line-height: 1.55;
   color: var(--color-text);
   background: var(--color-surface-0);
-  transition: background 600ms ease, color 600ms ease;
+  transition:
+    background 600ms ease,
+    color 600ms ease;
 }
 body::before {
-  content: '';
+  content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
@@ -233,33 +274,144 @@ body::before {
   opacity: 0.025;
   mix-blend-mode: overlay;
 }
-::selection { background: var(--color-brand); color: var(--color-brand-contrast); }
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-surface-3); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-surface-4); }
+::selection {
+  background: var(--color-brand);
+  color: var(--color-brand-contrast);
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-surface-4);
+}
 
-.mono { font-family: var(--font-mono); font-feature-settings: 'tnum'; letter-spacing: -0.02em; }
-.display { font-family: var(--font-display); font-weight: 300; letter-spacing: -0.03em; line-height: 0.95; }
-.eyebrow { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.18em; color: var(--color-text-tertiary); }
-.eyebrow.brand { color: var(--color-brand); }
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
+  letter-spacing: -0.02em;
+}
+.display {
+  font-family: var(--font-display);
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+}
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--color-text-tertiary);
+}
+.eyebrow.brand {
+  color: var(--color-brand);
+}
 
 /* Semantic type classes — use these instead of re-authoring font stacks. */
-.t-h1     { font-family: var(--font-sans); font-size: var(--fs-56); font-weight: 600; letter-spacing: -0.03em; line-height: var(--lh-tight); color: var(--fg1); }
-.t-h2     { font-family: var(--font-sans); font-size: var(--fs-28); font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; color: var(--fg1); }
-.t-h3     { font-family: var(--font-sans); font-size: var(--fs-20); font-weight: 600; letter-spacing: -0.005em; line-height: 1.25; color: var(--fg1); }
-.t-h4     { font-family: var(--font-sans); font-size: var(--fs-16); font-weight: 600; line-height: 1.35; color: var(--fg1); }
-.t-lede   { font-family: var(--font-sans); font-size: 19px; font-weight: 300; line-height: 1.55; color: var(--fg2); max-width: 62ch; }
-.t-body   { font-family: var(--font-sans); font-size: var(--fs-14); line-height: var(--lh-loose); color: var(--fg2); }
-.t-ui     { font-family: var(--font-sans); font-size: var(--fs-13); line-height: 1.4; color: var(--fg1); }
-.t-meta   { font-family: var(--font-sans); font-size: var(--fs-12); line-height: 1.5; color: var(--fg3); }
-.t-eyebrow{ font-family: var(--font-mono); font-size: var(--fs-11); letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg3); font-weight: 500; }
-.t-label  { font-family: var(--font-mono); font-size: var(--fs-10); letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg3); font-weight: 500; }
-.t-mono   { font-family: var(--font-mono); font-size: var(--fs-12); font-feature-settings: 'tnum'; letter-spacing: -0.02em; color: var(--fg1); }
-.t-code   { font-family: var(--font-mono); font-size: 0.92em; padding: 1px 5px; border-radius: var(--r-sm); background: var(--color-surface-2); border: 1px solid var(--color-border); color: var(--fg1); }
+.t-h1 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-56);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: var(--lh-tight);
+  color: var(--fg1);
+}
+.t-h2 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-28);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--fg1);
+}
+.t-h3 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-20);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.25;
+  color: var(--fg1);
+}
+.t-h4 {
+  font-family: var(--font-sans);
+  font-size: var(--fs-16);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--fg1);
+}
+.t-lede {
+  font-family: var(--font-sans);
+  font-size: 19px;
+  font-weight: 300;
+  line-height: 1.55;
+  color: var(--fg2);
+  max-width: 62ch;
+}
+.t-body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-14);
+  line-height: var(--lh-loose);
+  color: var(--fg2);
+}
+.t-ui {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  line-height: 1.4;
+  color: var(--fg1);
+}
+.t-meta {
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--fg3);
+}
+.t-eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-11);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg3);
+  font-weight: 500;
+}
+.t-label {
+  font-family: var(--font-mono);
+  font-size: var(--fs-10);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg3);
+  font-weight: 500;
+}
+.t-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  font-feature-settings: "tnum";
+  letter-spacing: -0.02em;
+  color: var(--fg1);
+}
+.t-code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: var(--r-sm);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--fg1);
+}
 
 /* Emphasis: brand color, upright — NEVER italic. Used as <em class="t-brand">. */
-.t-brand  { color: var(--color-brand); font-weight: 400; font-style: normal; }
+.t-brand {
+  color: var(--color-brand);
+  font-weight: 400;
+  font-style: normal;
+}
 ```
 
 - [ ] **Step 2: Commit**
@@ -274,6 +426,7 @@ git commit -m "style(app): add Beacon tokens.css (sirius/ember/clinical/scrubs f
 ## Task 2: Wire tokens.css into the app + drop the old @theme block
 
 **Files:**
+
 - Modify: `packages/app/src/index.css`
 
 - [ ] **Step 1: Rewrite `index.css`**
@@ -315,6 +468,7 @@ git commit -m "refactor(app): move tokens out of @theme block into tokens.css"
 ## Task 3: Load Inter + JetBrains Mono from Google Fonts, apply theme early
 
 **Files:**
+
 - Modify: `packages/app/src/index.html`
 
 - [ ] **Step 1: Update `index.html` with the theme-early-read `<script>` and font `<link>` tags**
@@ -329,12 +483,12 @@ Replace the `<head>` block in `packages/app/src/index.html` with:
   <script>
     (function () {
       try {
-        var raw = localStorage.getItem('beacon-theme');
+        var raw = localStorage.getItem("beacon-theme");
         if (!raw) return;
         var parsed = JSON.parse(raw);
         var id = parsed && parsed.state && parsed.state.themeId;
-        if (id === 'sirius' || id === 'ember' || id === 'clinical' || id === 'scrubs') {
-          document.documentElement.setAttribute('data-theme', id);
+        if (id === "sirius" || id === "ember" || id === "clinical" || id === "scrubs") {
+          document.documentElement.setAttribute("data-theme", id);
         }
       } catch (e) {
         /* storage disabled / malformed — fall through to default theme */
@@ -373,6 +527,7 @@ git commit -m "feat(app): load Inter + JetBrains Mono from Google Fonts"
 ## Task 4: Write the legacy theme-id migration function
 
 **Files:**
+
 - Create: `packages/app/src/themes/migrate.ts`
 - Create: `packages/app/test/themes/migrate.test.ts`
 
@@ -381,28 +536,38 @@ git commit -m "feat(app): load Inter + JetBrains Mono from Google Fonts"
 Create `packages/app/test/themes/migrate.test.ts`:
 
 ```typescript
-import { describe, test, expect } from 'bun:test';
-import { migrateLegacyThemeId, type LegacyThemeId, type BeaconThemeId } from '../../src/themes/migrate';
+import { describe, test, expect } from "bun:test";
+import {
+  migrateLegacyThemeId,
+  type LegacyThemeId,
+  type BeaconThemeId,
+} from "../../src/themes/migrate";
 
-describe('migrateLegacyThemeId', () => {
-  test('glass → sirius', () => {
-    expect(migrateLegacyThemeId('glass')).toEqual({ themeId: 'sirius', extras: {} });
+describe("migrateLegacyThemeId", () => {
+  test("glass → sirius", () => {
+    expect(migrateLegacyThemeId("glass")).toEqual({ themeId: "sirius", extras: {} });
   });
 
-  test('neon → sirius + scanlines opt-in', () => {
-    expect(migrateLegacyThemeId('neon')).toEqual({ themeId: 'sirius', extras: { scanlines: true } });
+  test("neon → sirius + scanlines opt-in", () => {
+    expect(migrateLegacyThemeId("neon")).toEqual({
+      themeId: "sirius",
+      extras: { scanlines: true },
+    });
   });
 
-  test('ops → scrubs', () => {
-    expect(migrateLegacyThemeId('ops')).toEqual({ themeId: 'scrubs', extras: {} });
+  test("ops → scrubs", () => {
+    expect(migrateLegacyThemeId("ops")).toEqual({ themeId: "scrubs", extras: {} });
   });
 
-  test('unknown legacy id → sirius default', () => {
-    expect(migrateLegacyThemeId('unknown' as LegacyThemeId)).toEqual({ themeId: 'sirius', extras: {} });
+  test("unknown legacy id → sirius default", () => {
+    expect(migrateLegacyThemeId("unknown" as LegacyThemeId)).toEqual({
+      themeId: "sirius",
+      extras: {},
+    });
   });
 
-  test('pass-through: already-new beacon id returns as-is', () => {
-    const idsToPreserve: BeaconThemeId[] = ['sirius', 'ember', 'clinical', 'scrubs'];
+  test("pass-through: already-new beacon id returns as-is", () => {
+    const idsToPreserve: BeaconThemeId[] = ["sirius", "ember", "clinical", "scrubs"];
     for (const id of idsToPreserve) {
       expect(migrateLegacyThemeId(id)).toEqual({ themeId: id, extras: {} });
     }
@@ -426,8 +591,8 @@ Create `packages/app/src/themes/migrate.ts`:
  * load after upgrading. Pure; no side-effects.
  */
 
-export type LegacyThemeId = 'glass' | 'neon' | 'ops';
-export type BeaconThemeId = 'sirius' | 'ember' | 'clinical' | 'scrubs';
+export type LegacyThemeId = "glass" | "neon" | "ops";
+export type BeaconThemeId = "sirius" | "ember" | "clinical" | "scrubs";
 export type AnyThemeId = LegacyThemeId | BeaconThemeId | string;
 
 export interface MigrationExtras {
@@ -444,19 +609,19 @@ export interface MigrationResult {
 
 export function migrateLegacyThemeId(id: AnyThemeId): MigrationResult {
   switch (id) {
-    case 'glass':
-      return { themeId: 'sirius', extras: {} };
-    case 'neon':
-      return { themeId: 'sirius', extras: { scanlines: true } };
-    case 'ops':
-      return { themeId: 'scrubs', extras: {} };
-    case 'sirius':
-    case 'ember':
-    case 'clinical':
-    case 'scrubs':
+    case "glass":
+      return { themeId: "sirius", extras: {} };
+    case "neon":
+      return { themeId: "sirius", extras: { scanlines: true } };
+    case "ops":
+      return { themeId: "scrubs", extras: {} };
+    case "sirius":
+    case "ember":
+    case "clinical":
+    case "scrubs":
       return { themeId: id, extras: {} };
     default:
-      return { themeId: 'sirius', extras: {} };
+      return { themeId: "sirius", extras: {} };
   }
 }
 ```
@@ -478,6 +643,7 @@ git commit -m "feat(app): add legacy theme-id migration (glass/neon/ops → siri
 ## Task 5: Rewrite themes/index.ts with the four Beacon families
 
 **Files:**
+
 - Modify: `packages/app/src/themes/index.ts`
 
 - [ ] **Step 1: Replace the entire file contents**
@@ -498,14 +664,14 @@ Replace `packages/app/src/themes/index.ts` with:
  * ThemeProvider can't get from CSS alone.
  */
 
-export type ThemeId = 'sirius' | 'ember' | 'clinical' | 'scrubs';
+export type ThemeId = "sirius" | "ember" | "clinical" | "scrubs";
 
 export interface Theme {
   id: ThemeId;
   label: string;
   tagline: string;
   /** NodeMap variant paired with this theme. */
-  mapVariant: 'glass' | 'neon' | 'hex';
+  mapVariant: "glass" | "neon" | "hex";
   /** Root font-family override. */
   fontFamily: string;
   /** CSS custom properties applied at runtime. Kept for backwards
@@ -522,40 +688,40 @@ const MONO_STACK = "'JetBrains Mono', ui-monospace, Menlo, monospace";
 
 export const THEMES: readonly Theme[] = [
   {
-    id: 'sirius',
-    label: 'Sirius',
-    tagline: 'Indigo calm. Default operator-night dark.',
-    mapVariant: 'glass',
+    id: "sirius",
+    label: "Sirius",
+    tagline: "Indigo calm. Default operator-night dark.",
+    mapVariant: "glass",
     fontFamily: SANS_STACK,
     vars: {},
   },
   {
-    id: 'ember',
-    label: 'Ember',
-    tagline: 'Warm amber dark. Workshop mood.',
-    mapVariant: 'glass',
+    id: "ember",
+    label: "Ember",
+    tagline: "Warm amber dark. Workshop mood.",
+    mapVariant: "glass",
     fontFamily: SANS_STACK,
     vars: {},
   },
   {
-    id: 'clinical',
-    label: 'Clinical',
-    tagline: 'Bright, high-contrast, morning light.',
-    mapVariant: 'hex',
+    id: "clinical",
+    label: "Clinical",
+    tagline: "Bright, high-contrast, morning light.",
+    mapVariant: "hex",
     fontFamily: SANS_STACK,
     vars: {},
   },
   {
-    id: 'scrubs',
-    label: 'Scrubs',
-    tagline: 'Teal-dark. Hospital-quiet precision.',
-    mapVariant: 'hex',
+    id: "scrubs",
+    label: "Scrubs",
+    tagline: "Teal-dark. Hospital-quiet precision.",
+    mapVariant: "hex",
     fontFamily: SANS_STACK,
     vars: {},
   },
 ];
 
-export const DEFAULT_THEME: ThemeId = 'sirius';
+export const DEFAULT_THEME: ThemeId = "sirius";
 
 export function getTheme(id: ThemeId): Theme {
   return THEMES.find((t) => t.id === id) ?? THEMES[0]!;
@@ -565,7 +731,7 @@ export function getTheme(id: ThemeId): Theme {
  *  been migrated yet) and returns the closest match. Callers that
  *  know they already have a valid id should use `getTheme` instead. */
 export function coerceThemeId(id: string | null | undefined): ThemeId {
-  if (id === 'sirius' || id === 'ember' || id === 'clinical' || id === 'scrubs') return id;
+  if (id === "sirius" || id === "ember" || id === "clinical" || id === "scrubs") return id;
   return DEFAULT_THEME;
 }
 
@@ -593,6 +759,7 @@ git commit -m "feat(app): replace Glass/Neon/Ops with Sirius/Ember/Clinical/Scru
 ## Task 6: Update the theme store — version bump + migrate hook, durable write
 
 **Files:**
+
 - Modify: `packages/app/src/stores/theme-store.ts`
 
 - [ ] **Step 1: Rewrite the store to run the legacy migration on first load**
@@ -600,10 +767,10 @@ git commit -m "feat(app): replace Glass/Neon/Ops with Sirius/Ember/Clinical/Scru
 Replace `packages/app/src/stores/theme-store.ts` with:
 
 ```typescript
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import { DEFAULT_THEME, type ThemeId } from '@/themes';
-import { migrateLegacyThemeId, type AnyThemeId } from '@/themes/migrate';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { DEFAULT_THEME, type ThemeId } from "@/themes";
+import { migrateLegacyThemeId, type AnyThemeId } from "@/themes/migrate";
 
 /**
  * Zustand store for the active Beacon theme + opt-in decorations
@@ -635,10 +802,7 @@ interface PersistedShape {
  *  never writes, and the next reload reverts to the default theme. */
 function writeBeaconTheme(shape: PersistedShape): void {
   try {
-    localStorage.setItem(
-      'beacon-theme',
-      JSON.stringify({ state: shape, version: 1 }),
-    );
+    localStorage.setItem("beacon-theme", JSON.stringify({ state: shape, version: 1 }));
   } catch {
     /* storage quota / disabled — silently tolerate */
   }
@@ -650,23 +814,23 @@ function writeBeaconTheme(shape: PersistedShape): void {
  *  values to `beacon-theme` so the migration is durable across
  *  reloads that occur before any subsequent state change. */
 function readLegacyAndClear(): PersistedShape | undefined {
-  if (typeof localStorage === 'undefined') return undefined;
-  const raw = localStorage.getItem('llamactl-theme');
+  if (typeof localStorage === "undefined") return undefined;
+  const raw = localStorage.getItem("llamactl-theme");
   if (!raw) return undefined;
   try {
     const parsed = JSON.parse(raw) as { state?: { themeId?: AnyThemeId } };
     const legacyId = parsed.state?.themeId;
     if (!legacyId) {
-      localStorage.removeItem('llamactl-theme');
+      localStorage.removeItem("llamactl-theme");
       return undefined;
     }
     const { themeId, extras } = migrateLegacyThemeId(legacyId);
     const shape: PersistedShape = { themeId, scanlines: extras.scanlines === true };
-    localStorage.removeItem('llamactl-theme');
+    localStorage.removeItem("llamactl-theme");
     writeBeaconTheme(shape);
     return shape;
   } catch {
-    localStorage.removeItem('llamactl-theme');
+    localStorage.removeItem("llamactl-theme");
     return undefined;
   }
 }
@@ -681,7 +845,7 @@ export const useThemeStore = create<ThemeStore>()(
       setThemeId: (id) => set({ themeId: id }),
       setScanlines: (on) => set({ scanlines: on }),
     }),
-    { name: 'beacon-theme', version: 1 },
+    { name: "beacon-theme", version: 1 },
   ),
 );
 ```
@@ -715,6 +879,7 @@ git commit -m "feat(app): migrate theme-store to Beacon (one-shot mapping from l
 ## Task 7: Verify ThemeProvider still works end-to-end with the new themes
 
 **Files:**
+
 - Verify-only: `packages/app/src/shell/theme-provider.tsx`
 
 The existing `ThemeProvider` applies `theme.vars`, sets `data-theme` on `<html>`, and conditionally paints `rootBackground` + `rootOverlay`. With Beacon, `vars` is empty for every family (tokens come from `tokens.css`), so the provider's only job now is setting `data-theme`. This works unchanged.
@@ -726,11 +891,11 @@ Run: `bun run --cwd packages/app dev`
 Then open the theme picker (title-bar button or `⌘K` then `⌘T`) and arrow through every family. For each:
 
 | Family   | Surface-0 hex | Brand hex | Fonts      |
-|----------|--------------|-----------|------------|
-| Sirius   | `#0c0c0f`    | `#6366f1` | Inter (UI) |
-| Ember    | `#0a0a08`    | `#f59e0b` | Inter (UI) |
-| Clinical | `#faf9f7`    | `#2563eb` | Inter (UI) |
-| Scrubs   | `#07130f`    | `#14b8a6` | Inter (UI) |
+| -------- | ------------- | --------- | ---------- |
+| Sirius   | `#0c0c0f`     | `#6366f1` | Inter (UI) |
+| Ember    | `#0a0a08`     | `#f59e0b` | Inter (UI) |
+| Clinical | `#faf9f7`     | `#2563eb` | Inter (UI) |
+| Scrubs   | `#07130f`     | `#14b8a6` | Inter (UI) |
 
 For each: inspect `<html>` in DevTools → `data-theme` attribute matches the id → computed `background-color` on `<body>` matches the expected hex.
 
@@ -743,6 +908,7 @@ No code changes. Mark as verified in your notes and move on. If any theme fails 
 ## Task 8: Expose scanlines as a decoration the provider honors
 
 **Files:**
+
 - Modify: `packages/app/src/shell/theme-provider.tsx`
 
 - [ ] **Step 1: Teach ThemeProvider to paint the scanlines overlay when `scanlines === true`**
@@ -882,6 +1048,7 @@ git tag beacon-p0
 - Flash-of-wrong-theme on reload — prevented by the synchronous early-read `<script>` in Task 3. Without this, the 600ms `transition` on `body.background` animates from Sirius to the persisted theme on every reload.
 
 Deferred to later phases:
+
 - Primitives (`@app/ui`) → P1.
 - Shell chrome rewrite → P2.
 - Module flattening + editorial polish → P3.

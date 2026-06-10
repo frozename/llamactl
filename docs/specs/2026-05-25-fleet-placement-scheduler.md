@@ -23,6 +23,7 @@ These are connected: a placement layer needs accurate node telemetry; pushing in
 ## 2 — Existing surfaces this plan reuses
 
 Read the actual code at:
+
 - `packages/fleet-supervisor/src/types.ts` — `NodeMemSnapshot`, `WorkloadSnapshot`, journal entry types (`fleet-snapshot`, `fleet-proposal`, `fleet-transition`, `fleet-execution`, `fleet-heartbeat`, `fleet-pressure-status`).
 - `packages/fleet-supervisor/src/loop.ts` — `startSupervisorLoop` per-node loop (interval 30s, hysteresis `consecutiveTicks=3` to enter HIGH, `clearTicks=5` to exit).
 - `packages/fleet-supervisor/src/policy.ts` — pressure + degradation detection + proposal generation.
@@ -40,16 +41,16 @@ The plan does NOT replace any of this. It composes on top.
 
 This is the critical conflict surface. Reviewer focus when running the adversarial plan.
 
-| Subject | Owner | Tick interval | Scope |
-|---|---|---|---|
-| Per-node pressure detection (HIGH/NORMAL) | per-node fleet-supervisor | 30s | one node |
-| Per-workload health (healthy/degraded) | per-node fleet-supervisor | 30s | one node |
-| L2/L3 proposals (`evict` / `restart` / `mark-degraded`) | per-node fleet-supervisor → controller executes | event-driven | one node |
-| **New:** Cluster topology (which workloads on which node) | **placement scheduler** | apply-time + on-pressure | fleet-wide |
-| **New:** Migration proposals (`place` / `move` / `drain`) | **placement scheduler** → emits via fleet journal | event-driven | fleet-wide |
-| **New:** Cluster-wide telemetry aggregation | **fleet aggregator** (subset of placement scheduler) | 30s (passive) | fleet-wide |
+| Subject                                                   | Owner                                                | Tick interval            | Scope      |
+| --------------------------------------------------------- | ---------------------------------------------------- | ------------------------ | ---------- |
+| Per-node pressure detection (HIGH/NORMAL)                 | per-node fleet-supervisor                            | 30s                      | one node   |
+| Per-workload health (healthy/degraded)                    | per-node fleet-supervisor                            | 30s                      | one node   |
+| L2/L3 proposals (`evict` / `restart` / `mark-degraded`)   | per-node fleet-supervisor → controller executes      | event-driven             | one node   |
+| **New:** Cluster topology (which workloads on which node) | **placement scheduler**                              | apply-time + on-pressure | fleet-wide |
+| **New:** Migration proposals (`place` / `move` / `drain`) | **placement scheduler** → emits via fleet journal    | event-driven             | fleet-wide |
+| **New:** Cluster-wide telemetry aggregation               | **fleet aggregator** (subset of placement scheduler) | 30s (passive)            | fleet-wide |
 
-**Authority rule (proposed):** the placement scheduler is the *only* layer that emits `place` / `move` / `drain` proposals. The per-node supervisor stays the only layer that emits `evict` / `restart` / `mark-degraded`. The two cooperate via shared journal events.
+**Authority rule (proposed):** the placement scheduler is the _only_ layer that emits `place` / `move` / `drain` proposals. The per-node supervisor stays the only layer that emits `evict` / `restart` / `mark-degraded`. The two cooperate via shared journal events.
 
 **Conflict cases:**
 
@@ -148,7 +149,7 @@ Specific compatibility statements (each is a falsifiable reviewer check):
 1. **Peer discovery (cluster.yaml vs mDNS):** is the explicit file right, or do we want mDNS browsing? Trade-off: explicit = no surprises but operator has to update on node add/remove; mDNS = zero-touch but spooky-action-at-distance.
 2. **Where does the aggregator live — inside the per-node supervisor process, or a separate `llamactl fleet aggregator` daemon?** Cleaner to separate, but more processes to manage.
 3. **Cluster CA management:** today mac-mini's CA pem lives at `/tmp/llamactl-mac-mini-ca.pem`. Should `cluster.yaml` distribute CAs inline, or point to per-node pem paths?
-4. **Should `fleet-supervisor` learn to *consume* placement proposals (e.g. defer `evict` for 30s if a `move` is in flight), or is the controller the right place to arbitrate?**
+4. **Should `fleet-supervisor` learn to _consume_ placement proposals (e.g. defer `evict` for 30s if a `move` is in flight), or is the controller the right place to arbitrate?**
 5. **Sequencing of phases vs the user's named priorities:** is Phase 1 (cross-node routing) urgent enough to land standalone, before Phase 0 (aggregator) is fully built? Today the only consumer is bench scripts.
 
 ## 7 — Risk register

@@ -5,27 +5,27 @@ Cells: 3
 
 ## Primary metric (mixed)
 
-| Model | memory-recall | task-refiner-rubric | tool-call-grammar |
-| -- | -- | -- | -- |
-| qwen3-14b-mlx-4bit | 0.7311 | 0.7733 | 0.9200 |
+| Model              | memory-recall | task-refiner-rubric | tool-call-grammar |
+| ------------------ | ------------- | ------------------- | ----------------- |
+| qwen3-14b-mlx-4bit | 0.7311        | 0.7733              | 0.9200            |
 
 ## Latency (p50 / p95, ms)
 
-| Model | memory-recall | task-refiner-rubric | tool-call-grammar |
-| -- | -- | -- | -- |
-| qwen3-14b-mlx-4bit | 5383 / 7021 | 10654 / 13912 | 2538 / 4020 |
+| Model              | memory-recall | task-refiner-rubric | tool-call-grammar |
+| ------------------ | ------------- | ------------------- | ----------------- |
+| qwen3-14b-mlx-4bit | 5383 / 7021   | 10654 / 13912       | 2538 / 4020       |
 
 ## Throughput (tps)
 
-| Model | memory-recall | task-refiner-rubric | tool-call-grammar |
-| -- | -- | -- | -- |
-| qwen3-14b-mlx-4bit | 13.56 | 19.11 | 16.75 |
+| Model              | memory-recall | task-refiner-rubric | tool-call-grammar |
+| ------------------ | ------------- | ------------------- | ----------------- |
+| qwen3-14b-mlx-4bit | 13.56         | 19.11               | 16.75             |
 
 ## Errors
 
-| Model | memory-recall | task-refiner-rubric | tool-call-grammar |
-| -- | -- | -- | -- |
-| qwen3-14b-mlx-4bit | 0 | 0 | 0 |
+| Model              | memory-recall | task-refiner-rubric | tool-call-grammar |
+| ------------------ | ------------- | ------------------- | ----------------- |
+| qwen3-14b-mlx-4bit | 0             | 0                   | 0                 |
 
 ## Per-workload winner
 

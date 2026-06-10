@@ -17,6 +17,7 @@
 ### Server (`packages/remote/src/`)
 
 **Created (`workload/gateway-catalog/`):**
+
 - `schema.ts` — `CompositeOwnership` Zod, `DerivedSiriusEntry`, `DerivedEmbersynthEntry`, `ApplyResult`, `RemoveResult`, `ApplyConflict` types
 - `sirius-entries.ts` — `deriveSiriusEntries(ctx)`
 - `embersynth-entries.ts` — `deriveEmbersynthEntries(ctx)` (nodes only — no syntheticModels per spec D)
@@ -27,6 +28,7 @@
 - `index.ts` — public re-exports
 
 **Modified:**
+
 - `config/sirius-providers.ts` — `SiriusProviderSchema` gains optional `ownership?: CompositeOwnership`
 - `config/embersynth.ts` — `EmbersynthNodeSchema` gains optional `ownership?: CompositeOwnership`
 - `composite/schema.ts` — typed `ProviderConfigCommon`; replace opaque `Record<string, unknown>` on the gateway entry's `providerConfig`
@@ -36,6 +38,7 @@
 - `composite/apply.ts` — `destroyComposite` calls `removeCompositeEntries` for each kind after teardown; reload if changed
 
 **Tests (`packages/remote/test/`):**
+
 - `gateway-catalog-schema.test.ts`
 - `gateway-catalog-derive-sirius.test.ts`
 - `gateway-catalog-derive-embersynth.test.ts`
@@ -66,6 +69,7 @@
 ## Task 1: Schemas — `CompositeOwnership`, `ProviderConfigCommon`, extend `SiriusProvider` and `EmbersynthNode`
 
 **Files:**
+
 - Create: `packages/remote/src/workload/gateway-catalog/schema.ts`
 - Modify: `packages/remote/src/config/sirius-providers.ts`
 - Modify: `packages/remote/src/config/embersynth.ts`
@@ -77,45 +81,42 @@
 
 ```ts
 // packages/remote/test/gateway-catalog-schema.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import {
-  loadSiriusProviders,
-  saveSiriusProviders,
-} from '../src/config/sirius-providers';
-import { loadEmbersynthConfig, saveEmbersynthConfig } from '../src/config/embersynth';
-import { CompositeOwnershipSchema } from '../src/workload/gateway-catalog/schema';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadSiriusProviders, saveSiriusProviders } from "../src/config/sirius-providers";
+import { loadEmbersynthConfig, saveEmbersynthConfig } from "../src/config/embersynth";
+import { CompositeOwnershipSchema } from "../src/workload/gateway-catalog/schema";
 
-describe('CompositeOwnership schema', () => {
-  test('accepts shape with non-empty compositeNames', () => {
+describe("CompositeOwnership schema", () => {
+  test("accepts shape with non-empty compositeNames", () => {
     const ok = CompositeOwnershipSchema.safeParse({
-      source: 'composite',
-      compositeNames: ['a'],
-      specHash: 'h1',
+      source: "composite",
+      compositeNames: ["a"],
+      specHash: "h1",
     });
     expect(ok.success).toBe(true);
   });
 
-  test('rejects empty compositeNames', () => {
+  test("rejects empty compositeNames", () => {
     const out = CompositeOwnershipSchema.safeParse({
-      source: 'composite',
+      source: "composite",
       compositeNames: [],
-      specHash: 'h1',
+      specHash: "h1",
     });
     expect(out.success).toBe(false);
   });
 });
 
-describe('SiriusProvider schema with ownership', () => {
+describe("SiriusProvider schema with ownership", () => {
   let tmp: string;
   let path: string;
   let prev: string | undefined;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'sp-'));
-    path = join(tmp, 'sirius-providers.yaml');
+    tmp = mkdtempSync(join(tmpdir(), "sp-"));
+    path = join(tmp, "sirius-providers.yaml");
     prev = process.env.LLAMACTL_SIRIUS_PROVIDERS;
     process.env.LLAMACTL_SIRIUS_PROVIDERS = path;
   });
@@ -125,45 +126,43 @@ describe('SiriusProvider schema with ownership', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('round-trips ownership marker', () => {
+  test("round-trips ownership marker", () => {
     saveSiriusProviders([
       {
-        name: 'mc-llama',
-        kind: 'openai-compatible',
-        baseUrl: 'http://host.lan:8080/v1',
+        name: "mc-llama",
+        kind: "openai-compatible",
+        baseUrl: "http://host.lan:8080/v1",
         ownership: {
-          source: 'composite',
-          compositeNames: ['mc'],
-          specHash: 'abc',
+          source: "composite",
+          compositeNames: ["mc"],
+          specHash: "abc",
         },
       } as any,
     ]);
     const out = loadSiriusProviders();
     expect(out[0]!.ownership).toEqual({
-      source: 'composite',
-      compositeNames: ['mc'],
-      specHash: 'abc',
+      source: "composite",
+      compositeNames: ["mc"],
+      specHash: "abc",
     } as any);
   });
 
-  test('parses operator entry without ownership marker', () => {
-    saveSiriusProviders([
-      { name: 'openai', kind: 'openai', apiKeyRef: '$OPENAI' } as any,
-    ]);
+  test("parses operator entry without ownership marker", () => {
+    saveSiriusProviders([{ name: "openai", kind: "openai", apiKeyRef: "$OPENAI" } as any]);
     const out = loadSiriusProviders();
-    expect(out[0]!.name).toBe('openai');
+    expect(out[0]!.name).toBe("openai");
     expect((out[0] as any).ownership).toBeUndefined();
   });
 });
 
-describe('EmbersynthNode schema with ownership', () => {
+describe("EmbersynthNode schema with ownership", () => {
   let tmp: string;
   let path: string;
   let prev: string | undefined;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'em-'));
-    path = join(tmp, 'embersynth.yaml');
+    tmp = mkdtempSync(join(tmpdir(), "em-"));
+    path = join(tmp, "embersynth.yaml");
     prev = process.env.LLAMACTL_EMBERSYNTH_CONFIG;
     process.env.LLAMACTL_EMBERSYNTH_CONFIG = path;
   });
@@ -173,33 +172,33 @@ describe('EmbersynthNode schema with ownership', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('round-trips ownership marker on a node', () => {
+  test("round-trips ownership marker on a node", () => {
     saveEmbersynthConfig({
       nodes: [
         {
-          id: 'mc-llama',
-          label: 'mc/llama',
-          endpoint: 'http://host.lan:8080/v1',
-          transport: 'http',
+          id: "mc-llama",
+          label: "mc/llama",
+          endpoint: "http://host.lan:8080/v1",
+          transport: "http",
           enabled: true,
-          capabilities: ['reasoning'],
-          tags: ['vision'],
-          providerType: 'openai-compatible',
-          modelId: 'default',
+          capabilities: ["reasoning"],
+          tags: ["vision"],
+          providerType: "openai-compatible",
+          modelId: "default",
           priority: 5,
           ownership: {
-            source: 'composite',
-            compositeNames: ['mc'],
-            specHash: 'abc',
+            source: "composite",
+            compositeNames: ["mc"],
+            specHash: "abc",
           },
         } as any,
       ],
       profiles: [],
       syntheticModels: {},
-      server: { host: '127.0.0.1', port: 7777 },
+      server: { host: "127.0.0.1", port: 7777 },
     });
     const out = loadEmbersynthConfig();
-    expect((out!.nodes[0] as any).ownership.compositeNames).toEqual(['mc']);
+    expect((out!.nodes[0] as any).ownership.compositeNames).toEqual(["mc"]);
   });
 });
 ```
@@ -213,7 +212,7 @@ Expected: FAIL — `CompositeOwnershipSchema` not found; `ownership` not a recog
 
 ```ts
 // packages/remote/src/workload/gateway-catalog/schema.ts
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * Marker on YAML entries that llamactl writes on behalf of a composite.
@@ -222,7 +221,7 @@ import { z } from 'zod';
  * composites, the union of which lives in `compositeNames`.
  */
 export const CompositeOwnershipSchema = z.object({
-  source: z.literal('composite'),
+  source: z.literal("composite"),
   compositeNames: z.array(z.string().min(1)).min(1),
   specHash: z.string().min(1),
 });
@@ -245,7 +244,7 @@ export const ProviderConfigCommonSchema = z
 export type ProviderConfigCommon = z.infer<typeof ProviderConfigCommonSchema>;
 
 export interface ApplyConflict {
-  kind: 'name' | 'shape';
+  kind: "name" | "shape";
   name: string;
   /** When kind=='name': 'operator'. When kind=='shape': describes the differing field. */
   detail: string;
@@ -257,7 +256,7 @@ export interface ApplyConflict {
 In `packages/remote/src/config/sirius-providers.ts`, add the import and the optional field:
 
 ```ts
-import { CompositeOwnershipSchema } from '../workload/gateway-catalog/schema.js';
+import { CompositeOwnershipSchema } from "../workload/gateway-catalog/schema.js";
 
 // In SiriusProviderSchema definition, add:
 //   ownership: CompositeOwnershipSchema.optional(),
@@ -274,7 +273,7 @@ ownership: CompositeOwnershipSchema.optional(),
 Add the import at the top:
 
 ```ts
-import { CompositeOwnershipSchema } from '../workload/gateway-catalog/schema.js';
+import { CompositeOwnershipSchema } from "../workload/gateway-catalog/schema.js";
 ```
 
 - [ ] **Step 6: Update `composite/schema.ts` with `ProviderConfigCommon`**
@@ -317,6 +316,7 @@ git commit -m "feat(remote): add CompositeOwnership marker and ProviderConfigCom
 ## Task 2: `deriveSiriusEntries`
 
 **Files:**
+
 - Create: `packages/remote/src/workload/gateway-catalog/sirius-entries.ts`
 - Test: `packages/remote/test/gateway-catalog-derive-sirius.test.ts`
 
@@ -324,42 +324,42 @@ git commit -m "feat(remote): add CompositeOwnership marker and ProviderConfigCom
 
 ```ts
 // packages/remote/test/gateway-catalog-derive-sirius.test.ts
-import { describe, expect, test } from 'bun:test';
-import { deriveSiriusEntries } from '../src/workload/gateway-catalog/sirius-entries';
-import type { CompositeGatewayContext } from '../src/workload/gateway-handlers/types';
+import { describe, expect, test } from "bun:test";
+import { deriveSiriusEntries } from "../src/workload/gateway-catalog/sirius-entries";
+import type { CompositeGatewayContext } from "../src/workload/gateway-handlers/types";
 
 const ctx: CompositeGatewayContext = {
-  compositeName: 'mc',
+  compositeName: "mc",
   upstreams: [
-    { name: 'llama-31-8b', endpoint: 'http://host.lan:8080/v1', nodeName: 'macbook-pro' },
-    { name: 'qwen-72b', endpoint: 'http://atlas.lan:8080/v1', nodeName: 'atlas' },
+    { name: "llama-31-8b", endpoint: "http://host.lan:8080/v1", nodeName: "macbook-pro" },
+    { name: "qwen-72b", endpoint: "http://atlas.lan:8080/v1", nodeName: "atlas" },
   ],
-  providerConfig: { tags: ['vision'], displayName: 'My Llama' },
+  providerConfig: { tags: ["vision"], displayName: "My Llama" },
 };
 
-describe('deriveSiriusEntries', () => {
-  test('produces one openai-compatible provider per upstream', () => {
+describe("deriveSiriusEntries", () => {
+  test("produces one openai-compatible provider per upstream", () => {
     const out = deriveSiriusEntries(ctx);
     expect(out.length).toBe(2);
-    expect(out.every((e) => e.kind === 'openai-compatible')).toBe(true);
+    expect(out.every((e) => e.kind === "openai-compatible")).toBe(true);
   });
 
-  test('names are deterministic: <compositeName>-<upstream.name>', () => {
+  test("names are deterministic: <compositeName>-<upstream.name>", () => {
     const out = deriveSiriusEntries(ctx);
-    expect(out.map((e) => e.name)).toEqual(['mc-llama-31-8b', 'mc-qwen-72b']);
+    expect(out.map((e) => e.name)).toEqual(["mc-llama-31-8b", "mc-qwen-72b"]);
   });
 
-  test('baseUrl flows from upstream.endpoint', () => {
+  test("baseUrl flows from upstream.endpoint", () => {
     const out = deriveSiriusEntries(ctx);
-    expect(out[0]!.baseUrl).toBe('http://host.lan:8080/v1');
+    expect(out[0]!.baseUrl).toBe("http://host.lan:8080/v1");
   });
 
-  test('displayName from providerConfig wins per-entry', () => {
+  test("displayName from providerConfig wins per-entry", () => {
     const out = deriveSiriusEntries(ctx);
-    expect(out[0]!.displayName).toBe('My Llama');
+    expect(out[0]!.displayName).toBe("My Llama");
   });
 
-  test('empty upstreams returns []', () => {
+  test("empty upstreams returns []", () => {
     expect(deriveSiriusEntries({ ...ctx, upstreams: [] })).toEqual([]);
   });
 });
@@ -374,22 +374,20 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/remote/src/workload/gateway-catalog/sirius-entries.ts
-import type { CompositeGatewayContext } from '../gateway-handlers/types.js';
+import type { CompositeGatewayContext } from "../gateway-handlers/types.js";
 
 export interface DerivedSiriusEntry {
   name: string;
-  kind: 'openai-compatible';
+  kind: "openai-compatible";
   baseUrl: string;
   apiKeyRef?: string;
   displayName?: string;
 }
 
-export function deriveSiriusEntries(
-  ctx: CompositeGatewayContext,
-): DerivedSiriusEntry[] {
+export function deriveSiriusEntries(ctx: CompositeGatewayContext): DerivedSiriusEntry[] {
   return ctx.upstreams.map((u) => ({
     name: `${ctx.compositeName}-${u.name}`,
-    kind: 'openai-compatible' as const,
+    kind: "openai-compatible" as const,
     baseUrl: u.endpoint,
     displayName: ctx.providerConfig.displayName,
   }));
@@ -414,6 +412,7 @@ git commit -m "feat(remote/gateway-catalog): add deriveSiriusEntries"
 ## Task 3: `deriveEmbersynthEntries` (nodes only)
 
 **Files:**
+
 - Create: `packages/remote/src/workload/gateway-catalog/embersynth-entries.ts`
 - Test: `packages/remote/test/gateway-catalog-derive-embersynth.test.ts`
 
@@ -421,50 +420,50 @@ git commit -m "feat(remote/gateway-catalog): add deriveSiriusEntries"
 
 ```ts
 // packages/remote/test/gateway-catalog-derive-embersynth.test.ts
-import { describe, expect, test } from 'bun:test';
-import { deriveEmbersynthEntries } from '../src/workload/gateway-catalog/embersynth-entries';
-import type { CompositeGatewayContext } from '../src/workload/gateway-handlers/types';
+import { describe, expect, test } from "bun:test";
+import { deriveEmbersynthEntries } from "../src/workload/gateway-catalog/embersynth-entries";
+import type { CompositeGatewayContext } from "../src/workload/gateway-handlers/types";
 
 const ctx: CompositeGatewayContext = {
-  compositeName: 'mc',
+  compositeName: "mc",
   upstreams: [
-    { name: 'llama-31-8b', endpoint: 'http://host.lan:8080/v1', nodeName: 'macbook-pro' },
+    { name: "llama-31-8b", endpoint: "http://host.lan:8080/v1", nodeName: "macbook-pro" },
   ],
-  providerConfig: { tags: ['vision'], priority: 3, displayName: 'Llama 3.1' },
+  providerConfig: { tags: ["vision"], priority: 3, displayName: "Llama 3.1" },
 };
 
-describe('deriveEmbersynthEntries', () => {
-  test('one upstream → one node entry', () => {
+describe("deriveEmbersynthEntries", () => {
+  test("one upstream → one node entry", () => {
     const out = deriveEmbersynthEntries(ctx);
     expect(out.length).toBe(1);
   });
 
-  test('id is deterministic: <compositeName>-<upstream.name>', () => {
+  test("id is deterministic: <compositeName>-<upstream.name>", () => {
     const out = deriveEmbersynthEntries(ctx);
-    expect(out[0]!.id).toBe('mc-llama-31-8b');
+    expect(out[0]!.id).toBe("mc-llama-31-8b");
   });
 
-  test('endpoint flows from upstream.endpoint', () => {
+  test("endpoint flows from upstream.endpoint", () => {
     const out = deriveEmbersynthEntries(ctx);
-    expect(out[0]!.endpoint).toBe('http://host.lan:8080/v1');
+    expect(out[0]!.endpoint).toBe("http://host.lan:8080/v1");
   });
 
-  test('tags flow into node.tags', () => {
+  test("tags flow into node.tags", () => {
     const out = deriveEmbersynthEntries(ctx);
-    expect(out[0]!.tags).toEqual(['vision']);
+    expect(out[0]!.tags).toEqual(["vision"]);
   });
 
-  test('priority flows from providerConfig.priority', () => {
+  test("priority flows from providerConfig.priority", () => {
     const out = deriveEmbersynthEntries(ctx);
     expect(out[0]!.priority).toBe(3);
   });
 
-  test('default priority is 10 when providerConfig.priority absent', () => {
+  test("default priority is 10 when providerConfig.priority absent", () => {
     const out = deriveEmbersynthEntries({ ...ctx, providerConfig: {} });
     expect(out[0]!.priority).toBe(10);
   });
 
-  test('empty upstreams returns []', () => {
+  test("empty upstreams returns []", () => {
     expect(deriveEmbersynthEntries({ ...ctx, upstreams: [] })).toEqual([]);
   });
 });
@@ -479,26 +478,24 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/remote/src/workload/gateway-catalog/embersynth-entries.ts
-import type { CompositeGatewayContext } from '../gateway-handlers/types.js';
-import type { EmbersynthNode } from '../../config/embersynth.js';
+import type { CompositeGatewayContext } from "../gateway-handlers/types.js";
+import type { EmbersynthNode } from "../../config/embersynth.js";
 
 export type DerivedEmbersynthEntry = EmbersynthNode;
 
-export function deriveEmbersynthEntries(
-  ctx: CompositeGatewayContext,
-): DerivedEmbersynthEntry[] {
+export function deriveEmbersynthEntries(ctx: CompositeGatewayContext): DerivedEmbersynthEntry[] {
   const tags = ctx.providerConfig.tags ?? [];
   const priority = ctx.providerConfig.priority ?? 10;
   return ctx.upstreams.map((u) => ({
     id: `${ctx.compositeName}-${u.name}`,
     label: ctx.providerConfig.displayName ?? `${ctx.compositeName}/${u.name}`,
     endpoint: u.endpoint,
-    transport: 'http' as const,
+    transport: "http" as const,
     enabled: true,
     capabilities: [],
     tags,
-    providerType: 'openai-compatible' as const,
-    modelId: 'default',
+    providerType: "openai-compatible" as const,
+    modelId: "default",
     priority,
   }));
 }
@@ -522,6 +519,7 @@ git commit -m "feat(remote/gateway-catalog): add deriveEmbersynthEntries (nodes)
 ## Task 4: `entrySpecHash`
 
 **Files:**
+
 - Create: `packages/remote/src/workload/gateway-catalog/hash.ts`
 - Test: `packages/remote/test/gateway-catalog-hash.test.ts`
 
@@ -529,48 +527,48 @@ git commit -m "feat(remote/gateway-catalog): add deriveEmbersynthEntries (nodes)
 
 ```ts
 // packages/remote/test/gateway-catalog-hash.test.ts
-import { describe, expect, test } from 'bun:test';
-import { entrySpecHash } from '../src/workload/gateway-catalog/hash';
+import { describe, expect, test } from "bun:test";
+import { entrySpecHash } from "../src/workload/gateway-catalog/hash";
 
-describe('entrySpecHash — sirius shape', () => {
-  test('deterministic for same shape', () => {
-    const a = { name: 'x', kind: 'openai-compatible', baseUrl: 'http://h:1/v1' };
+describe("entrySpecHash — sirius shape", () => {
+  test("deterministic for same shape", () => {
+    const a = { name: "x", kind: "openai-compatible", baseUrl: "http://h:1/v1" };
     expect(entrySpecHash(a)).toBe(entrySpecHash(a));
   });
 
-  test('differs when baseUrl changes', () => {
-    const a = { name: 'x', kind: 'openai-compatible', baseUrl: 'http://h:1/v1' };
-    const b = { name: 'x', kind: 'openai-compatible', baseUrl: 'http://h:2/v1' };
+  test("differs when baseUrl changes", () => {
+    const a = { name: "x", kind: "openai-compatible", baseUrl: "http://h:1/v1" };
+    const b = { name: "x", kind: "openai-compatible", baseUrl: "http://h:2/v1" };
     expect(entrySpecHash(a)).not.toBe(entrySpecHash(b));
   });
 
-  test('ignores compositeNames inside ownership block', () => {
+  test("ignores compositeNames inside ownership block", () => {
     const a = {
-      name: 'x',
-      kind: 'openai-compatible',
-      baseUrl: 'http://h:1/v1',
-      ownership: { source: 'composite', compositeNames: ['a'], specHash: '' },
+      name: "x",
+      kind: "openai-compatible",
+      baseUrl: "http://h:1/v1",
+      ownership: { source: "composite", compositeNames: ["a"], specHash: "" },
     };
     const b = {
-      name: 'x',
-      kind: 'openai-compatible',
-      baseUrl: 'http://h:1/v1',
-      ownership: { source: 'composite', compositeNames: ['a', 'b'], specHash: '' },
+      name: "x",
+      kind: "openai-compatible",
+      baseUrl: "http://h:1/v1",
+      ownership: { source: "composite", compositeNames: ["a", "b"], specHash: "" },
     };
     expect(entrySpecHash(a)).toBe(entrySpecHash(b));
   });
 });
 
-describe('entrySpecHash — embersynth shape', () => {
-  test('differs when tags change', () => {
-    const a = { id: 'x', endpoint: 'http://h:1/v1', tags: ['vision'], priority: 5 };
-    const b = { id: 'x', endpoint: 'http://h:1/v1', tags: ['code'], priority: 5 };
+describe("entrySpecHash — embersynth shape", () => {
+  test("differs when tags change", () => {
+    const a = { id: "x", endpoint: "http://h:1/v1", tags: ["vision"], priority: 5 };
+    const b = { id: "x", endpoint: "http://h:1/v1", tags: ["code"], priority: 5 };
     expect(entrySpecHash(a)).not.toBe(entrySpecHash(b));
   });
 
-  test('differs when priority changes', () => {
-    const a = { id: 'x', endpoint: 'http://h:1/v1', tags: ['vision'], priority: 5 };
-    const b = { id: 'x', endpoint: 'http://h:1/v1', tags: ['vision'], priority: 7 };
+  test("differs when priority changes", () => {
+    const a = { id: "x", endpoint: "http://h:1/v1", tags: ["vision"], priority: 5 };
+    const b = { id: "x", endpoint: "http://h:1/v1", tags: ["vision"], priority: 7 };
     expect(entrySpecHash(a)).not.toBe(entrySpecHash(b));
   });
 });
@@ -585,7 +583,7 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/remote/src/workload/gateway-catalog/hash.ts
-import { createHash } from 'node:crypto';
+import { createHash } from "node:crypto";
 
 /**
  * Stable hash of an entry's "shape" — deliberately ignores the
@@ -597,15 +595,15 @@ import { createHash } from 'node:crypto';
 export function entrySpecHash(entry: unknown): string {
   const stripped = stripOwnership(entry);
   const json = stableStringify(stripped);
-  return createHash('sha256').update(json).digest('hex').slice(0, 16);
+  return createHash("sha256").update(json).digest("hex").slice(0, 16);
 }
 
 function stripOwnership(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripOwnership);
-  if (value && typeof value === 'object') {
+  if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const k of Object.keys(value as Record<string, unknown>).sort()) {
-      if (k === 'ownership') continue;
+      if (k === "ownership") continue;
       out[k] = stripOwnership((value as Record<string, unknown>)[k]);
     }
     return out;
@@ -615,16 +613,14 @@ function stripOwnership(value: unknown): unknown {
 
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
-    return '[' + value.map(stableStringify).join(',') + ']';
+    return "[" + value.map(stableStringify).join(",") + "]";
   }
-  if (value && typeof value === 'object') {
+  if (value && typeof value === "object") {
     const keys = Object.keys(value as Record<string, unknown>).sort();
     return (
-      '{' +
-      keys
-        .map((k) => JSON.stringify(k) + ':' + stableStringify((value as any)[k]))
-        .join(',') +
-      '}'
+      "{" +
+      keys.map((k) => JSON.stringify(k) + ":" + stableStringify((value as any)[k])).join(",") +
+      "}"
     );
   }
   return JSON.stringify(value);
@@ -649,6 +645,7 @@ git commit -m "feat(remote/gateway-catalog): add entrySpecHash"
 ## Task 5: `applyCompositeEntries`
 
 **Files:**
+
 - Create: `packages/remote/src/workload/gateway-catalog/apply.ts`
 - Test: `packages/remote/test/gateway-catalog-apply.test.ts`
 
@@ -658,21 +655,21 @@ The apply function is parameterized over kind. For sirius, it operates on `Siriu
 
 ```ts
 // packages/remote/test/gateway-catalog-apply.test.ts
-import { describe, expect, test } from 'bun:test';
-import { applyCompositeEntries } from '../src/workload/gateway-catalog/apply';
-import type { SiriusProvider } from '../src/config/sirius-providers';
+import { describe, expect, test } from "bun:test";
+import { applyCompositeEntries } from "../src/workload/gateway-catalog/apply";
+import type { SiriusProvider } from "../src/config/sirius-providers";
 
 const baseDerived: SiriusProvider = {
-  name: 'mc-llama',
-  kind: 'openai-compatible',
-  baseUrl: 'http://h:1/v1',
+  name: "mc-llama",
+  kind: "openai-compatible",
+  baseUrl: "http://h:1/v1",
 } as SiriusProvider;
 
-describe('applyCompositeEntries — sirius', () => {
-  test('appends new entry on empty current', () => {
+describe("applyCompositeEntries — sirius", () => {
+  test("appends new entry on empty current", () => {
     const r = applyCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'mc',
+      kind: "sirius",
+      compositeName: "mc",
       derived: [baseDerived],
       current: [],
     });
@@ -680,77 +677,77 @@ describe('applyCompositeEntries — sirius', () => {
     expect(r.conflicts).toEqual([]);
     expect(r.next.length).toBe(1);
     const o = (r.next[0] as any).ownership;
-    expect(o.compositeNames).toEqual(['mc']);
+    expect(o.compositeNames).toEqual(["mc"]);
     expect(o.specHash).toBeTruthy();
   });
 
-  test('idempotent on re-apply by same composite (same shape)', () => {
+  test("idempotent on re-apply by same composite (same shape)", () => {
     const first = applyCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'mc',
+      kind: "sirius",
+      compositeName: "mc",
       derived: [baseDerived],
       current: [],
     });
     const second = applyCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'mc',
+      kind: "sirius",
+      compositeName: "mc",
       derived: [baseDerived],
       current: first.next as SiriusProvider[],
     });
     expect(second.changed).toBe(false);
   });
 
-  test('unions compositeNames when same shape from different composite', () => {
+  test("unions compositeNames when same shape from different composite", () => {
     const first = applyCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'mc',
+      kind: "sirius",
+      compositeName: "mc",
       derived: [baseDerived],
       current: [],
     });
     const second = applyCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'other',
+      kind: "sirius",
+      compositeName: "other",
       derived: [baseDerived],
       current: first.next as SiriusProvider[],
     });
     expect(second.changed).toBe(true);
     const o = (second.next[0] as any).ownership;
-    expect(o.compositeNames.sort()).toEqual(['mc', 'other']);
+    expect(o.compositeNames.sort()).toEqual(["mc", "other"]);
   });
 
-  test('shape mismatch between two composites returns conflict', () => {
+  test("shape mismatch between two composites returns conflict", () => {
     const first = applyCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'mc',
+      kind: "sirius",
+      compositeName: "mc",
       derived: [baseDerived],
       current: [],
     });
     const second = applyCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'other',
-      derived: [{ ...baseDerived, baseUrl: 'http://different:1/v1' }],
+      kind: "sirius",
+      compositeName: "other",
+      derived: [{ ...baseDerived, baseUrl: "http://different:1/v1" }],
       current: first.next as SiriusProvider[],
     });
     expect(second.conflicts.length).toBe(1);
-    expect(second.conflicts[0]!.kind).toBe('shape');
-    expect(second.conflicts[0]!.name).toBe('mc-llama');
+    expect(second.conflicts[0]!.kind).toBe("shape");
+    expect(second.conflicts[0]!.name).toBe("mc-llama");
   });
 
-  test('name collision against operator entry returns conflict', () => {
+  test("name collision against operator entry returns conflict", () => {
     const operator: SiriusProvider = {
-      name: 'mc-llama',
-      kind: 'openai',
-      apiKeyRef: '$OPENAI',
+      name: "mc-llama",
+      kind: "openai",
+      apiKeyRef: "$OPENAI",
     } as SiriusProvider;
     const r = applyCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'mc',
+      kind: "sirius",
+      compositeName: "mc",
       derived: [baseDerived],
       current: [operator],
     });
     expect(r.conflicts.length).toBe(1);
-    expect(r.conflicts[0]!.kind).toBe('name');
-    expect(r.conflicts[0]!.detail).toBe('operator');
+    expect(r.conflicts[0]!.kind).toBe("name");
+    expect(r.conflicts[0]!.detail).toBe("operator");
   });
 });
 ```
@@ -764,13 +761,13 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/remote/src/workload/gateway-catalog/apply.ts
-import { entrySpecHash } from './hash.js';
-import type { ApplyConflict, CompositeOwnership } from './schema.js';
+import { entrySpecHash } from "./hash.js";
+import type { ApplyConflict, CompositeOwnership } from "./schema.js";
 
 type AnyEntry = Record<string, unknown> & { ownership?: CompositeOwnership };
 
 export interface ApplyOpts<T> {
-  kind: 'sirius' | 'embersynth';
+  kind: "sirius" | "embersynth";
   compositeName: string;
   derived: T[];
   current: T[];
@@ -782,11 +779,9 @@ export interface ApplyResult<T> {
   conflicts: ApplyConflict[];
 }
 
-const KEY_OF: Record<string, string> = { sirius: 'name', embersynth: 'id' };
+const KEY_OF: Record<string, string> = { sirius: "name", embersynth: "id" };
 
-export function applyCompositeEntries<T extends AnyEntry>(
-  opts: ApplyOpts<T>,
-): ApplyResult<T> {
+export function applyCompositeEntries<T extends AnyEntry>(opts: ApplyOpts<T>): ApplyResult<T> {
   const key = KEY_OF[opts.kind]!;
   const map = new Map<string, T>();
   for (const e of opts.current) {
@@ -802,7 +797,7 @@ export function applyCompositeEntries<T extends AnyEntry>(
       const next = {
         ...d,
         ownership: {
-          source: 'composite' as const,
+          source: "composite" as const,
           compositeNames: [opts.compositeName],
           specHash: newHash,
         },
@@ -812,13 +807,13 @@ export function applyCompositeEntries<T extends AnyEntry>(
       continue;
     }
     if (!existing.ownership) {
-      conflicts.push({ kind: 'name', name: k, detail: 'operator' });
+      conflicts.push({ kind: "name", name: k, detail: "operator" });
       continue;
     }
     const existingHash = entrySpecHash(existing);
     if (existingHash !== newHash) {
       conflicts.push({
-        kind: 'shape',
+        kind: "shape",
         name: k,
         detail: `existing shape (specHash=${existingHash}) does not match composite-derived shape (specHash=${newHash})`,
       });
@@ -861,6 +856,7 @@ git commit -m "feat(remote/gateway-catalog): add applyCompositeEntries with conf
 ## Task 6: `removeCompositeEntries`
 
 **Files:**
+
 - Create: `packages/remote/src/workload/gateway-catalog/remove.ts`
 - Test: `packages/remote/test/gateway-catalog-remove.test.ts`
 
@@ -868,68 +864,68 @@ git commit -m "feat(remote/gateway-catalog): add applyCompositeEntries with conf
 
 ```ts
 // packages/remote/test/gateway-catalog-remove.test.ts
-import { describe, expect, test } from 'bun:test';
-import { removeCompositeEntries } from '../src/workload/gateway-catalog/remove';
+import { describe, expect, test } from "bun:test";
+import { removeCompositeEntries } from "../src/workload/gateway-catalog/remove";
 
 const own = (names: string[]) => ({
-  source: 'composite' as const,
+  source: "composite" as const,
   compositeNames: names,
-  specHash: 'h',
+  specHash: "h",
 });
 
-describe('removeCompositeEntries', () => {
-  test('drops entry when last composite removed', () => {
+describe("removeCompositeEntries", () => {
+  test("drops entry when last composite removed", () => {
     const r = removeCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'mc',
+      kind: "sirius",
+      compositeName: "mc",
       current: [
-        { name: 'a', kind: 'openai-compatible', baseUrl: 'http://h/v1', ownership: own(['mc']) },
+        { name: "a", kind: "openai-compatible", baseUrl: "http://h/v1", ownership: own(["mc"]) },
       ] as any,
     });
     expect(r.changed).toBe(true);
-    expect(r.removedNames).toEqual(['a']);
+    expect(r.removedNames).toEqual(["a"]);
     expect(r.next.length).toBe(0);
   });
 
-  test('keeps entry with shorter compositeNames list when others remain', () => {
+  test("keeps entry with shorter compositeNames list when others remain", () => {
     const r = removeCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'mc',
+      kind: "sirius",
+      compositeName: "mc",
       current: [
         {
-          name: 'a',
-          kind: 'openai-compatible',
-          baseUrl: 'http://h/v1',
-          ownership: own(['mc', 'other']),
+          name: "a",
+          kind: "openai-compatible",
+          baseUrl: "http://h/v1",
+          ownership: own(["mc", "other"]),
         },
       ] as any,
     });
     expect(r.changed).toBe(true);
     expect(r.removedNames).toEqual([]);
     expect(r.next.length).toBe(1);
-    expect((r.next[0] as any).ownership.compositeNames).toEqual(['other']);
+    expect((r.next[0] as any).ownership.compositeNames).toEqual(["other"]);
   });
 
-  test('leaves operator-owned entries untouched', () => {
+  test("leaves operator-owned entries untouched", () => {
     const r = removeCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'mc',
+      kind: "sirius",
+      compositeName: "mc",
       current: [
-        { name: 'op', kind: 'openai', apiKeyRef: '$X' },
-        { name: 'cm', kind: 'openai-compatible', baseUrl: 'http://h/v1', ownership: own(['mc']) },
+        { name: "op", kind: "openai", apiKeyRef: "$X" },
+        { name: "cm", kind: "openai-compatible", baseUrl: "http://h/v1", ownership: own(["mc"]) },
       ] as any,
     });
     expect(r.next.length).toBe(1);
-    expect((r.next[0] as any).name).toBe('op');
-    expect(r.removedNames).toEqual(['cm']);
+    expect((r.next[0] as any).name).toBe("op");
+    expect(r.removedNames).toEqual(["cm"]);
   });
 
-  test('no-op when composite name not present', () => {
+  test("no-op when composite name not present", () => {
     const r = removeCompositeEntries({
-      kind: 'sirius',
-      compositeName: 'mc',
+      kind: "sirius",
+      compositeName: "mc",
       current: [
-        { name: 'a', kind: 'openai-compatible', baseUrl: 'http://h/v1', ownership: own(['other']) },
+        { name: "a", kind: "openai-compatible", baseUrl: "http://h/v1", ownership: own(["other"]) },
       ] as any,
     });
     expect(r.changed).toBe(false);
@@ -947,12 +943,12 @@ Expected: FAIL — module not found.
 
 ```ts
 // packages/remote/src/workload/gateway-catalog/remove.ts
-import type { CompositeOwnership } from './schema.js';
+import type { CompositeOwnership } from "./schema.js";
 
 type AnyEntry = Record<string, unknown> & { ownership?: CompositeOwnership };
 
 export interface RemoveOpts<T> {
-  kind: 'sirius' | 'embersynth';
+  kind: "sirius" | "embersynth";
   compositeName: string;
   current: T[];
 }
@@ -963,11 +959,9 @@ export interface RemoveResult<T> {
   removedNames: string[];
 }
 
-const KEY_OF: Record<string, string> = { sirius: 'name', embersynth: 'id' };
+const KEY_OF: Record<string, string> = { sirius: "name", embersynth: "id" };
 
-export function removeCompositeEntries<T extends AnyEntry>(
-  opts: RemoveOpts<T>,
-): RemoveResult<T> {
+export function removeCompositeEntries<T extends AnyEntry>(opts: RemoveOpts<T>): RemoveResult<T> {
   const key = KEY_OF[opts.kind]!;
   const next: T[] = [];
   const removedNames: string[] = [];
@@ -1011,6 +1005,7 @@ git commit -m "feat(remote/gateway-catalog): add removeCompositeEntries (ref-cou
 ## Task 7: `gateway-catalog/io.ts`
 
 **Files:**
+
 - Create: `packages/remote/src/workload/gateway-catalog/io.ts`
 - Create: `packages/remote/src/workload/gateway-catalog/index.ts`
 - Test: `packages/remote/test/gateway-catalog-io.test.ts`
@@ -1019,26 +1014,23 @@ git commit -m "feat(remote/gateway-catalog): add removeCompositeEntries (ref-cou
 
 ```ts
 // packages/remote/test/gateway-catalog-io.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import {
-  readGatewayCatalog,
-  writeGatewayCatalog,
-} from '../src/workload/gateway-catalog/io';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readGatewayCatalog, writeGatewayCatalog } from "../src/workload/gateway-catalog/io";
 
-describe('gateway-catalog io', () => {
+describe("gateway-catalog io", () => {
   let tmp: string;
   let prevSp: string | undefined;
   let prevEm: string | undefined;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'gc-io-'));
+    tmp = mkdtempSync(join(tmpdir(), "gc-io-"));
     prevSp = process.env.LLAMACTL_SIRIUS_PROVIDERS;
     prevEm = process.env.LLAMACTL_EMBERSYNTH_CONFIG;
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, 'sp.yaml');
-    process.env.LLAMACTL_EMBERSYNTH_CONFIG = join(tmp, 'em.yaml');
+    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, "sp.yaml");
+    process.env.LLAMACTL_EMBERSYNTH_CONFIG = join(tmp, "em.yaml");
   });
 
   afterEach(() => {
@@ -1049,42 +1041,42 @@ describe('gateway-catalog io', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('sirius round-trip', () => {
-    writeGatewayCatalog('sirius', [
-      { name: 'a', kind: 'openai-compatible', baseUrl: 'http://h/v1' } as any,
+  test("sirius round-trip", () => {
+    writeGatewayCatalog("sirius", [
+      { name: "a", kind: "openai-compatible", baseUrl: "http://h/v1" } as any,
     ]);
-    const out = readGatewayCatalog('sirius');
+    const out = readGatewayCatalog("sirius");
     expect(out.length).toBe(1);
-    expect((out[0] as any).name).toBe('a');
+    expect((out[0] as any).name).toBe("a");
   });
 
-  test('embersynth round-trip — preserves nodes', () => {
-    writeGatewayCatalog('embersynth', [
+  test("embersynth round-trip — preserves nodes", () => {
+    writeGatewayCatalog("embersynth", [
       {
-        id: 'a',
-        label: 'a',
-        endpoint: 'http://h/v1',
-        transport: 'http',
+        id: "a",
+        label: "a",
+        endpoint: "http://h/v1",
+        transport: "http",
         enabled: true,
         capabilities: [],
         tags: [],
-        providerType: 'openai-compatible',
-        modelId: 'default',
+        providerType: "openai-compatible",
+        modelId: "default",
         priority: 5,
       } as any,
     ]);
-    const out = readGatewayCatalog('embersynth');
+    const out = readGatewayCatalog("embersynth");
     expect(out.length).toBe(1);
-    expect((out[0] as any).id).toBe('a');
+    expect((out[0] as any).id).toBe("a");
   });
 
-  test('reading missing sirius file returns empty array', () => {
-    const out = readGatewayCatalog('sirius');
+  test("reading missing sirius file returns empty array", () => {
+    const out = readGatewayCatalog("sirius");
     expect(out).toEqual([]);
   });
 
-  test('reading missing embersynth file returns empty array', () => {
-    const out = readGatewayCatalog('embersynth');
+  test("reading missing embersynth file returns empty array", () => {
+    const out = readGatewayCatalog("embersynth");
     expect(out).toEqual([]);
   });
 });
@@ -1103,37 +1095,37 @@ import {
   loadSiriusProviders,
   saveSiriusProviders,
   type SiriusProvider,
-} from '../../config/sirius-providers.js';
+} from "../../config/sirius-providers.js";
 import {
   loadEmbersynthConfig,
   saveEmbersynthConfig,
   type EmbersynthNode,
-} from '../../config/embersynth.js';
+} from "../../config/embersynth.js";
 
-export type GatewayKind = 'sirius' | 'embersynth';
+export type GatewayKind = "sirius" | "embersynth";
 
-export function readGatewayCatalog(kind: 'sirius'): SiriusProvider[];
-export function readGatewayCatalog(kind: 'embersynth'): EmbersynthNode[];
+export function readGatewayCatalog(kind: "sirius"): SiriusProvider[];
+export function readGatewayCatalog(kind: "embersynth"): EmbersynthNode[];
 export function readGatewayCatalog(kind: GatewayKind): SiriusProvider[] | EmbersynthNode[] {
-  if (kind === 'sirius') return loadSiriusProviders();
+  if (kind === "sirius") return loadSiriusProviders();
   const cfg = loadEmbersynthConfig();
   return cfg ? cfg.nodes : [];
 }
 
-export function writeGatewayCatalog(kind: 'sirius', entries: SiriusProvider[]): void;
-export function writeGatewayCatalog(kind: 'embersynth', entries: EmbersynthNode[]): void;
+export function writeGatewayCatalog(kind: "sirius", entries: SiriusProvider[]): void;
+export function writeGatewayCatalog(kind: "embersynth", entries: EmbersynthNode[]): void;
 export function writeGatewayCatalog(
   kind: GatewayKind,
   entries: SiriusProvider[] | EmbersynthNode[],
 ): void {
-  if (kind === 'sirius') {
+  if (kind === "sirius") {
     saveSiriusProviders(entries as SiriusProvider[]);
     return;
   }
   // For embersynth, preserve any non-node fields the operator may
   // already have (profiles, syntheticModels, etc.).
   const cur = loadEmbersynthConfig() ?? {
-    server: { host: '127.0.0.1', port: 7777 },
+    server: { host: "127.0.0.1", port: 7777 },
     nodes: [],
     profiles: [],
     syntheticModels: {},
@@ -1149,23 +1141,19 @@ export function writeGatewayCatalog(
 
 ```ts
 // packages/remote/src/workload/gateway-catalog/index.ts
-export { CompositeOwnershipSchema, ProviderConfigCommonSchema } from './schema.js';
-export type {
-  CompositeOwnership,
-  ProviderConfigCommon,
-  ApplyConflict,
-} from './schema.js';
-export { deriveSiriusEntries } from './sirius-entries.js';
-export type { DerivedSiriusEntry } from './sirius-entries.js';
-export { deriveEmbersynthEntries } from './embersynth-entries.js';
-export type { DerivedEmbersynthEntry } from './embersynth-entries.js';
-export { entrySpecHash } from './hash.js';
-export { applyCompositeEntries } from './apply.js';
-export type { ApplyOpts, ApplyResult } from './apply.js';
-export { removeCompositeEntries } from './remove.js';
-export type { RemoveOpts, RemoveResult } from './remove.js';
-export { readGatewayCatalog, writeGatewayCatalog } from './io.js';
-export type { GatewayKind } from './io.js';
+export { CompositeOwnershipSchema, ProviderConfigCommonSchema } from "./schema.js";
+export type { CompositeOwnership, ProviderConfigCommon, ApplyConflict } from "./schema.js";
+export { deriveSiriusEntries } from "./sirius-entries.js";
+export type { DerivedSiriusEntry } from "./sirius-entries.js";
+export { deriveEmbersynthEntries } from "./embersynth-entries.js";
+export type { DerivedEmbersynthEntry } from "./embersynth-entries.js";
+export { entrySpecHash } from "./hash.js";
+export { applyCompositeEntries } from "./apply.js";
+export type { ApplyOpts, ApplyResult } from "./apply.js";
+export { removeCompositeEntries } from "./remove.js";
+export type { RemoveOpts, RemoveResult } from "./remove.js";
+export { readGatewayCatalog, writeGatewayCatalog } from "./io.js";
+export type { GatewayKind } from "./io.js";
 ```
 
 - [ ] **Step 5: Run, verify pass**
@@ -1187,6 +1175,7 @@ git commit -m "feat(remote/gateway-catalog): add io module + public index"
 ## Task 8: Sirius handler — composite-aware prelude
 
 **Files:**
+
 - Modify: `packages/remote/src/workload/gateway-handlers/sirius.ts`
 - Test: `packages/remote/test/gateway-handler-sirius-composite.test.ts`
 
@@ -1198,26 +1187,26 @@ Read the existing patterns first: `head -80 packages/remote/test/gateway-handler
 
 ```ts
 // packages/remote/test/gateway-handler-sirius-composite.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { siriusHandler } from '../src/workload/gateway-handlers/sirius';
-import { readGatewayCatalog } from '../src/workload/gateway-catalog/io';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { siriusHandler } from "../src/workload/gateway-handlers/sirius";
+import { readGatewayCatalog } from "../src/workload/gateway-catalog/io";
 
 const node = {
-  name: 'sirius-1',
-  kind: 'gateway',
-  cloud: { provider: 'sirius', baseUrl: 'http://sirius.test' },
+  name: "sirius-1",
+  kind: "gateway",
+  cloud: { provider: "sirius", baseUrl: "http://sirius.test" },
 } as any;
 
 const manifest = {
-  apiVersion: 'llamactl/v1',
-  kind: 'ModelRun',
-  metadata: { name: 'm', labels: {} },
+  apiVersion: "llamactl/v1",
+  kind: "ModelRun",
+  metadata: { name: "m", labels: {} },
   spec: {
-    node: 'sirius-1',
-    target: { kind: 'rel' as const, value: 'mc-llama/x' },
+    node: "sirius-1",
+    target: { kind: "rel" as const, value: "mc-llama/x" },
     extraArgs: [],
     timeoutSeconds: 60,
     workers: [],
@@ -1226,22 +1215,22 @@ const manifest = {
 } as any;
 
 const composite = {
-  compositeName: 'mc',
-  upstreams: [{ name: 'llama', endpoint: 'http://h:1/v1', nodeName: 'mac' }],
+  compositeName: "mc",
+  upstreams: [{ name: "llama", endpoint: "http://h:1/v1", nodeName: "mac" }],
   providerConfig: {},
 };
 
-describe('siriusHandler with composite context', () => {
+describe("siriusHandler with composite context", () => {
   let tmp: string;
   let prev: string | undefined;
   let origFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'sh-'));
+    tmp = mkdtempSync(join(tmpdir(), "sh-"));
     prev = process.env.LLAMACTL_SIRIUS_PROVIDERS;
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, 'sp.yaml');
+    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, "sp.yaml");
     origFetch = globalThis.fetch;
-    globalThis.fetch = (async () => new Response('ok', { status: 200 })) as any;
+    globalThis.fetch = (async () => new Response("ok", { status: 200 })) as any;
     // also stub kubeconfig lookup; reuse what the existing handler test does.
     // (See gateway-handlers.test.ts for the pattern; copy verbatim.)
   });
@@ -1253,24 +1242,24 @@ describe('siriusHandler with composite context', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('writes entries before reload', async () => {
+  test("writes entries before reload", async () => {
     await siriusHandler.apply({
       manifest,
       node,
       getClient: (() => null) as any,
       composite,
     });
-    const out = readGatewayCatalog('sirius');
-    expect(out.find((e) => e.name === 'mc-llama')).toBeDefined();
+    const out = readGatewayCatalog("sirius");
+    expect(out.find((e) => e.name === "mc-llama")).toBeDefined();
   });
 
-  test('returns Pending NameCollision when operator entry exists with same name', async () => {
-    const path = join(tmp, 'sp.yaml');
-    const fs = require('node:fs');
+  test("returns Pending NameCollision when operator entry exists with same name", async () => {
+    const path = join(tmp, "sp.yaml");
+    const fs = require("node:fs");
     fs.writeFileSync(
       path,
-      'apiVersion: llamactl/v1\nkind: SiriusProviderList\nproviders:\n  - name: mc-llama\n    kind: openai\n    apiKeyRef: $K\n',
-      'utf8',
+      "apiVersion: llamactl/v1\nkind: SiriusProviderList\nproviders:\n  - name: mc-llama\n    kind: openai\n    apiKeyRef: $K\n",
+      "utf8",
     );
     const r = await siriusHandler.apply({
       manifest,
@@ -1278,15 +1267,15 @@ describe('siriusHandler with composite context', () => {
       getClient: (() => null) as any,
       composite,
     });
-    expect(r.action).toBe('pending');
-    expect(r.statusSection.conditions[0]!.reason).toBe('SiriusUpstreamNameCollision');
+    expect(r.action).toBe("pending");
+    expect(r.statusSection.conditions[0]!.reason).toBe("SiriusUpstreamNameCollision");
   });
 
-  test('idempotent re-apply skips reload', async () => {
+  test("idempotent re-apply skips reload", async () => {
     const calls: string[] = [];
     globalThis.fetch = (async (url: string) => {
       calls.push(url);
-      return new Response('ok', { status: 200 });
+      return new Response("ok", { status: 200 });
     }) as any;
     await siriusHandler.apply({ manifest, node, getClient: (() => null) as any, composite });
     const before = calls.length;
@@ -1317,7 +1306,7 @@ import {
   applyCompositeEntries,
   readGatewayCatalog,
   writeGatewayCatalog,
-} from '../gateway-catalog/index.js';
+} from "../gateway-catalog/index.js";
 ```
 
 Replace the apply method body to gate on `opts.composite`. New flow:
@@ -1395,6 +1384,7 @@ git commit -m "feat(remote/gateway-handlers/sirius): composite-aware catalog aut
 ## Task 9: Embersynth handler — composite-aware prelude
 
 **Files:**
+
 - Modify: `packages/remote/src/workload/gateway-handlers/embersynth.ts`
 - Test: `packages/remote/test/gateway-handler-embersynth-composite.test.ts`
 
@@ -1404,26 +1394,26 @@ Symmetric to Task 8. The reload URL is `/config/reload` (already in the handler)
 
 ```ts
 // packages/remote/test/gateway-handler-embersynth-composite.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { embersynthHandler } from '../src/workload/gateway-handlers/embersynth';
-import { readGatewayCatalog } from '../src/workload/gateway-catalog/io';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { embersynthHandler } from "../src/workload/gateway-handlers/embersynth";
+import { readGatewayCatalog } from "../src/workload/gateway-catalog/io";
 
 const node = {
-  name: 'em-1',
-  kind: 'gateway',
-  cloud: { provider: 'embersynth', baseUrl: 'http://em.test' },
+  name: "em-1",
+  kind: "gateway",
+  cloud: { provider: "embersynth", baseUrl: "http://em.test" },
 } as any;
 
 const manifest = {
-  apiVersion: 'llamactl/v1',
-  kind: 'ModelRun',
-  metadata: { name: 'm', labels: {} },
+  apiVersion: "llamactl/v1",
+  kind: "ModelRun",
+  metadata: { name: "m", labels: {} },
   spec: {
-    node: 'em-1',
-    target: { kind: 'rel' as const, value: 'fusion-vision' },
+    node: "em-1",
+    target: { kind: "rel" as const, value: "fusion-vision" },
     extraArgs: [],
     timeoutSeconds: 60,
     workers: [],
@@ -1432,22 +1422,22 @@ const manifest = {
 } as any;
 
 const composite = {
-  compositeName: 'mc',
-  upstreams: [{ name: 'llama', endpoint: 'http://h:1/v1', nodeName: 'mac' }],
-  providerConfig: { tags: ['vision'], priority: 3 },
+  compositeName: "mc",
+  upstreams: [{ name: "llama", endpoint: "http://h:1/v1", nodeName: "mac" }],
+  providerConfig: { tags: ["vision"], priority: 3 },
 };
 
-describe('embersynthHandler with composite context', () => {
+describe("embersynthHandler with composite context", () => {
   let tmp: string;
   let prev: string | undefined;
   let origFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'eh-'));
+    tmp = mkdtempSync(join(tmpdir(), "eh-"));
     prev = process.env.LLAMACTL_EMBERSYNTH_CONFIG;
-    process.env.LLAMACTL_EMBERSYNTH_CONFIG = join(tmp, 'em.yaml');
+    process.env.LLAMACTL_EMBERSYNTH_CONFIG = join(tmp, "em.yaml");
     origFetch = globalThis.fetch;
-    globalThis.fetch = (async () => new Response('ok', { status: 200 })) as any;
+    globalThis.fetch = (async () => new Response("ok", { status: 200 })) as any;
     // stub kubeconfig identically to the sirius test (see Task 8 step 1).
   });
 
@@ -1458,25 +1448,25 @@ describe('embersynthHandler with composite context', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('writes a node entry before reload', async () => {
+  test("writes a node entry before reload", async () => {
     await embersynthHandler.apply({
       manifest,
       node,
       getClient: (() => null) as any,
       composite,
     });
-    const nodes = readGatewayCatalog('embersynth');
-    const found = nodes.find((n) => n.id === 'mc-llama');
+    const nodes = readGatewayCatalog("embersynth");
+    const found = nodes.find((n) => n.id === "mc-llama");
     expect(found).toBeDefined();
-    expect(found!.tags).toEqual(['vision']);
+    expect(found!.tags).toEqual(["vision"]);
     expect(found!.priority).toBe(3);
   });
 
-  test('returns Pending NameCollision when operator entry exists with same id', async () => {
-    const fs = require('node:fs');
+  test("returns Pending NameCollision when operator entry exists with same id", async () => {
+    const fs = require("node:fs");
     fs.mkdirSync(tmp, { recursive: true });
     fs.writeFileSync(
-      join(tmp, 'em.yaml'),
+      join(tmp, "em.yaml"),
       `nodes:
   - id: mc-llama
     label: hand-edited
@@ -1494,7 +1484,7 @@ server:
   host: 127.0.0.1
   port: 7777
 `,
-      'utf8',
+      "utf8",
     );
     const r = await embersynthHandler.apply({
       manifest,
@@ -1502,15 +1492,15 @@ server:
       getClient: (() => null) as any,
       composite,
     });
-    expect(r.action).toBe('pending');
-    expect(r.statusSection.conditions[0]!.reason).toBe('EmbersynthUpstreamNameCollision');
+    expect(r.action).toBe("pending");
+    expect(r.statusSection.conditions[0]!.reason).toBe("EmbersynthUpstreamNameCollision");
   });
 
-  test('idempotent re-apply skips reload', async () => {
+  test("idempotent re-apply skips reload", async () => {
     const calls: string[] = [];
     globalThis.fetch = (async (url: string) => {
       calls.push(url);
-      return new Response('ok', { status: 200 });
+      return new Response("ok", { status: 200 });
     }) as any;
     await embersynthHandler.apply({ manifest, node, getClient: (() => null) as any, composite });
     const before = calls.length;
@@ -1535,7 +1525,7 @@ import {
   applyCompositeEntries,
   readGatewayCatalog,
   writeGatewayCatalog,
-} from '../gateway-catalog/index.js';
+} from "../gateway-catalog/index.js";
 ```
 
 Add the prelude (mirror Task 8) at the top of `apply()`:
@@ -1544,9 +1534,9 @@ Add the prelude (mirror Task 8) at the top of `apply()`:
 let catalogChanged = false;
 if (opts.composite) {
   const derived = deriveEmbersynthEntries(opts.composite);
-  const current = readGatewayCatalog('embersynth');
+  const current = readGatewayCatalog("embersynth");
   const result = applyCompositeEntries({
-    kind: 'embersynth',
+    kind: "embersynth",
     compositeName: opts.composite.compositeName,
     derived,
     current,
@@ -1554,21 +1544,21 @@ if (opts.composite) {
   if (result.conflicts.length > 0) {
     const c = result.conflicts[0]!;
     const reason =
-      c.kind === 'name' ? 'EmbersynthUpstreamNameCollision' : 'EmbersynthUpstreamShapeMismatch';
+      c.kind === "name" ? "EmbersynthUpstreamNameCollision" : "EmbersynthUpstreamShapeMismatch";
     const message =
-      c.kind === 'name'
+      c.kind === "name"
         ? `node '${c.name}' already exists as an operator-authored embersynth node; remove it or change composite spec`
         : `node '${c.name}': ${c.detail}`;
     return pending(opts, reason, message, now);
   }
   if (result.changed) {
     try {
-      writeGatewayCatalog('embersynth', result.next);
+      writeGatewayCatalog("embersynth", result.next);
       catalogChanged = true;
     } catch (err) {
       return failure(
         opts,
-        'EmbersynthCatalogWriteFailed',
+        "EmbersynthCatalogWriteFailed",
         `could not write embersynth.yaml: ${(err as Error).message}`,
         now,
       );
@@ -1602,6 +1592,7 @@ git commit -m "feat(remote/gateway-handlers/embersynth): composite-aware catalog
 ## Task 10: Composite destroy — catalog cleanup
 
 **Files:**
+
 - Modify: `packages/remote/src/composite/apply.ts` (specifically `destroyComposite` around line 533)
 - Test: `packages/remote/test/composite-destroy-catalog-cleanup.test.ts`
 
@@ -1611,27 +1602,27 @@ After workload + service teardown, walk both gateway YAMLs via `removeCompositeE
 
 ```ts
 // packages/remote/test/composite-destroy-catalog-cleanup.test.ts
-import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { writeGatewayCatalog, readGatewayCatalog } from '../src/workload/gateway-catalog/io';
-import { destroyComposite } from '../src/composite/apply';
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { writeGatewayCatalog, readGatewayCatalog } from "../src/workload/gateway-catalog/io";
+import { destroyComposite } from "../src/composite/apply";
 
-describe('destroyComposite catalog cleanup', () => {
+describe("destroyComposite catalog cleanup", () => {
   let tmp: string;
   let prevSp: string | undefined;
   let prevEm: string | undefined;
   let origFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'cd-'));
+    tmp = mkdtempSync(join(tmpdir(), "cd-"));
     prevSp = process.env.LLAMACTL_SIRIUS_PROVIDERS;
     prevEm = process.env.LLAMACTL_EMBERSYNTH_CONFIG;
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, 'sp.yaml');
-    process.env.LLAMACTL_EMBERSYNTH_CONFIG = join(tmp, 'em.yaml');
+    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, "sp.yaml");
+    process.env.LLAMACTL_EMBERSYNTH_CONFIG = join(tmp, "em.yaml");
     origFetch = globalThis.fetch;
-    globalThis.fetch = (async () => new Response('ok', { status: 200 })) as any;
+    globalThis.fetch = (async () => new Response("ok", { status: 200 })) as any;
   });
 
   afterEach(() => {
@@ -1643,57 +1634,72 @@ describe('destroyComposite catalog cleanup', () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  test('removes solely-owned entries from sirius catalog', async () => {
-    writeGatewayCatalog('sirius', [
+  test("removes solely-owned entries from sirius catalog", async () => {
+    writeGatewayCatalog("sirius", [
       {
-        name: 'mc-llama',
-        kind: 'openai-compatible',
-        baseUrl: 'http://h/v1',
-        ownership: { source: 'composite', compositeNames: ['mc'], specHash: 'h' },
+        name: "mc-llama",
+        kind: "openai-compatible",
+        baseUrl: "http://h/v1",
+        ownership: { source: "composite", compositeNames: ["mc"], specHash: "h" },
       } as any,
     ]);
     // Use a minimal manifest the destroy entry-point accepts.
     // (Adapt manifest shape to the actual destroyComposite signature found
     //  in packages/remote/src/composite/apply.ts:533.)
     await destroyComposite({
-      manifest: { apiVersion: 'llamactl/v1', kind: 'Composite', metadata: { name: 'mc', labels: {} }, spec: { components: [] } } as any,
+      manifest: {
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "mc", labels: {} },
+        spec: { components: [] },
+      } as any,
       backend: { destroyCompositeBoundary: async () => {} } as any,
     } as any);
-    const after = readGatewayCatalog('sirius');
-    expect(after.find((e) => e.name === 'mc-llama')).toBeUndefined();
+    const after = readGatewayCatalog("sirius");
+    expect(after.find((e) => e.name === "mc-llama")).toBeUndefined();
   });
 
-  test('keeps co-owned entries with shorter compositeNames', async () => {
-    writeGatewayCatalog('sirius', [
+  test("keeps co-owned entries with shorter compositeNames", async () => {
+    writeGatewayCatalog("sirius", [
       {
-        name: 'mc-llama',
-        kind: 'openai-compatible',
-        baseUrl: 'http://h/v1',
-        ownership: { source: 'composite', compositeNames: ['mc', 'other'], specHash: 'h' },
+        name: "mc-llama",
+        kind: "openai-compatible",
+        baseUrl: "http://h/v1",
+        ownership: { source: "composite", compositeNames: ["mc", "other"], specHash: "h" },
       } as any,
     ]);
     await destroyComposite({
-      manifest: { apiVersion: 'llamactl/v1', kind: 'Composite', metadata: { name: 'mc', labels: {} }, spec: { components: [] } } as any,
+      manifest: {
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "mc", labels: {} },
+        spec: { components: [] },
+      } as any,
       backend: { destroyCompositeBoundary: async () => {} } as any,
     } as any);
-    const after = readGatewayCatalog('sirius');
-    expect(after[0]!.name).toBe('mc-llama');
-    expect((after[0] as any).ownership.compositeNames).toEqual(['other']);
+    const after = readGatewayCatalog("sirius");
+    expect(after[0]!.name).toBe("mc-llama");
+    expect((after[0] as any).ownership.compositeNames).toEqual(["other"]);
   });
 
-  test('triggers reload only when changed', async () => {
+  test("triggers reload only when changed", async () => {
     const calls: string[] = [];
     globalThis.fetch = (async (url: string) => {
       calls.push(url);
-      return new Response('ok', { status: 200 });
+      return new Response("ok", { status: 200 });
     }) as any;
     // No composite-owned entries → no changes → no reload.
     await destroyComposite({
-      manifest: { apiVersion: 'llamactl/v1', kind: 'Composite', metadata: { name: 'mc', labels: {} }, spec: { components: [] } } as any,
+      manifest: {
+        apiVersion: "llamactl/v1",
+        kind: "Composite",
+        metadata: { name: "mc", labels: {} },
+        spec: { components: [] },
+      } as any,
       backend: { destroyCompositeBoundary: async () => {} } as any,
     } as any);
-    expect(calls.filter((c) => c.includes('/providers/reload')).length).toBe(0);
-    expect(calls.filter((c) => c.includes('/config/reload')).length).toBe(0);
+    expect(calls.filter((c) => c.includes("/providers/reload")).length).toBe(0);
+    expect(calls.filter((c) => c.includes("/config/reload")).length).toBe(0);
   });
 });
 ```
@@ -1716,10 +1722,14 @@ Expected: FAIL — entries remain after destroy.
 Add catalog cleanup near the end of `destroyComposite`, after the existing teardown completes successfully. Pseudocode:
 
 ```ts
-import { removeCompositeEntries, readGatewayCatalog, writeGatewayCatalog } from '../workload/gateway-catalog/index.js';
+import {
+  removeCompositeEntries,
+  readGatewayCatalog,
+  writeGatewayCatalog,
+} from "../workload/gateway-catalog/index.js";
 
 // At the end of destroyComposite, after existing cleanup logic:
-for (const kind of ['sirius', 'embersynth'] as const) {
+for (const kind of ["sirius", "embersynth"] as const) {
   const current = readGatewayCatalog(kind);
   const result = removeCompositeEntries({
     kind,
@@ -1742,6 +1752,7 @@ for (const kind of ['sirius', 'embersynth'] as const) {
 ```
 
 The `reloadAllGatewayNodesOfKind` helper does NOT need to live in this file — it's a small new helper in `packages/remote/src/workload/gateway-catalog/reload.ts` that:
+
 1. Reads kubeconfig.
 2. For every node where `resolveNodeKind(node) === 'gateway' && node.cloud?.provider === kind` and `cloud.baseUrl` is set:
 3. Resolves bearer auth the same way both handlers do today.
@@ -1830,6 +1841,7 @@ If sibling changes were needed, note the PR URLs for the llamactl PR description
 ## Task 12: Docs + tag + final validation
 
 **Files:**
+
 - Modify: `docs/composites.md`
 
 - [ ] **Step 1: Update `docs/composites.md`**
@@ -1848,7 +1860,7 @@ Replace the "documented follow-up" notes with a concise description of the auto-
 When a composite spec routes upstream workloads through a sirius or
 embersynth gateway, llamactl writes the corresponding catalog entries
 into `sirius-providers.yaml` / `embersynth.yaml` (the `nodes:` list)
-*before* calling the gateway's reload endpoint. Operators no longer
+_before_ calling the gateway's reload endpoint. Operators no longer
 need to run `llamactl sirius add-provider` or `llamactl embersynth
 sync` as a precondition for `llamactl composite apply`.
 
@@ -1904,6 +1916,7 @@ Open a PR titled `feat(remote): gateway catalog auto-populate from CompositeGate
 ## Self-review checklist
 
 **Spec coverage:**
+
 - D1 (both gateways) → Tasks 8 (sirius), 9 (embersynth)
 - D2 (ownership marker, ref-counted) → Task 1 (schema), Task 5 (apply union), Task 6 (remove ref-count)
 - D3 (typed providerConfig) → Task 1 (schema + thread through types)

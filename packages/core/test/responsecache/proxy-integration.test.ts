@@ -1,13 +1,17 @@
-import { afterEach, expect, spyOn, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { openaiProxy } from '../../src/index.js';
-import { translateAnthropicRequest } from '../../src/anthropic/translateRequest.js';
-import { readWorkloadEpoch } from '../../src/kvstore/index.js';
-import { ResponseCacheRegistry, canonicalRequestSha, openResponseCacheStorage } from '../../src/responsecache/index.js';
-import type { PeerSnapshot } from '../../src/workloadRuntime.js';
-import type { PeerNode } from '../../../remote/src/config/peers.js';
+import { afterEach, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openaiProxy } from "../../src/index.js";
+import { translateAnthropicRequest } from "../../src/anthropic/translateRequest.js";
+import { readWorkloadEpoch } from "../../src/kvstore/index.js";
+import {
+  ResponseCacheRegistry,
+  canonicalRequestSha,
+  openResponseCacheStorage,
+} from "../../src/responsecache/index.js";
+import type { PeerSnapshot } from "../../src/workloadRuntime.js";
+import type { PeerNode } from "../../../remote/src/config/peers.js";
 
 interface TempRuntime {
   root: string;
@@ -22,7 +26,7 @@ interface TestUpstream {
 }
 
 function makeTempRuntime(): TempRuntime {
-  const root = mkdtempSync(join(tmpdir(), 'llamactl-responsecache-proxy-'));
+  const root = mkdtempSync(join(tmpdir(), "llamactl-responsecache-proxy-"));
   return {
     root,
     env: { LOCAL_AI_RUNTIME_DIR: root },
@@ -34,21 +38,21 @@ function writeModelRunWorkload(
   runtimeRoot: string,
   workload: string,
   port: number,
-  rel = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
+  rel = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
 ): void {
-  const dir = join(runtimeRoot, 'workloads', workload);
+  const dir = join(runtimeRoot, "workloads", workload);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'llama-server.pid'), `${process.pid}\n`);
+  writeFileSync(join(dir, "llama-server.pid"), `${process.pid}\n`);
   writeFileSync(
-    join(dir, 'llama-server.state'),
+    join(dir, "llama-server.state"),
     JSON.stringify({
       rel,
       extraArgs: [],
-      host: '127.0.0.1',
+      host: "127.0.0.1",
       port,
-      binary: '/x/llama-server',
+      binary: "/x/llama-server",
       pid: process.pid,
-      startedAt: '2026-05-24T00:00:00.000Z',
+      startedAt: "2026-05-24T00:00:00.000Z",
       tunedProfile: null,
     }),
   );
@@ -65,57 +69,71 @@ function lookupScope(params: {
   model: string;
   workload: string;
   workloadEpoch: string;
-  protocolVariant?: 'openai' | 'anthropic';
+  protocolVariant?: "openai" | "anthropic";
 }) {
   return {
     sha: params.sha,
     model: params.model,
     workload: params.workload,
     workloadEpoch: params.workloadEpoch,
-    protocolVariant: params.protocolVariant ?? 'openai',
+    protocolVariant: params.protocolVariant ?? "openai",
   } as const;
 }
 
-async function startUpstream(mode: 'json' | 'sse' | 'json_error' | 'sse_partial'): Promise<TestUpstream> {
+async function startUpstream(
+  mode: "json" | "sse" | "json_error" | "sse_partial",
+): Promise<TestUpstream> {
   let calls = 0;
-  const baseUrl = 'http://127.0.0.1:19501';
+  const baseUrl = "http://127.0.0.1:19501";
   globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-    const method = init?.method ?? (typeof input === 'object' && 'method' in input ? (input as Request).method : 'GET');
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method =
+      init?.method ??
+      (typeof input === "object" && "method" in input ? (input as Request).method : "GET");
     const parsed = new URL(url);
-    if (method === 'POST' && parsed.pathname === '/v1/chat/completions') {
+    if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
       calls += 1;
-      const body = typeof init?.body === 'string' ? init.body : '';
-      if (mode === 'sse') {
-        return new Response(`data: ${JSON.stringify({ id: calls, echoed: body })}\n\ndata: [DONE]\n\n`, {
-          status: 200,
-          headers: { 'content-type': 'text/event-stream' },
-        });
+      const body = typeof init?.body === "string" ? init.body : "";
+      if (mode === "sse") {
+        return new Response(
+          `data: ${JSON.stringify({ id: calls, echoed: body })}\n\ndata: [DONE]\n\n`,
+          {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          },
+        );
       }
-      if (mode === 'sse_partial') {
+      if (mode === "sse_partial") {
         return new Response(`data: ${JSON.stringify({ id: calls, echoed: body })}\n\n`, {
           status: 200,
-          headers: { 'content-type': 'text/event-stream' },
+          headers: { "content-type": "text/event-stream" },
         });
       }
-      if (mode === 'json_error') {
+      if (mode === "json_error") {
         return Response.json({
           error: {
-            message: 'upstream failure',
-            type: 'upstream_error',
+            message: "upstream failure",
+            type: "upstream_error",
           },
         });
       }
       return Response.json({
         id: `chatcmpl-${calls}`,
-        object: 'chat.completion',
-        model: 'claude-compatible',
-        choices: [{ index: 0, message: { role: 'assistant', content: `hit-${calls}` }, finish_reason: 'stop' }],
+        object: "chat.completion",
+        model: "claude-compatible",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: `hit-${calls}` },
+            finish_reason: "stop",
+          },
+        ],
         usage: { prompt_tokens: 1, completion_tokens: 1 },
         echoed: body,
       });
     }
-    return new Response('', { status: 404 });
+    return new Response("", { status: 404 });
   }) as typeof fetch;
 
   return {
@@ -143,24 +161,24 @@ afterEach(() => {
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
 });
 
-test('cold miss saves and warm hit serves cached JSON without upstream call', async () => {
+test("cold miss saves and warm hit serves cached JSON without upstream call", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
+  const upstream = await startUpstream("json");
   try {
     const url = new URL(upstream.baseUrl);
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
     const body = JSON.stringify({
       model,
-      messages: [{ role: 'user', content: 'cached json' }],
+      messages: [{ role: "user", content: "cached json" }],
       temperature: 0,
     });
 
     const first = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
@@ -169,27 +187,29 @@ test('cold miss saves and warm hit serves cached JSON without upstream call', as
     expect(upstream.calls).toBe(1);
 
     const second = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
     );
-    const secondJson = await second.json() as { id: string };
+    const secondJson = (await second.json()) as { id: string };
     expect(second.status).toBe(200);
-    expect(secondJson.id).toBe('chatcmpl-1');
+    expect(secondJson.id).toBe("chatcmpl-1");
     expect(upstream.calls).toBe(1);
     expect(openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(runtime.env as any)).toBe(1);
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
-    const entry = registry.findBySha(lookupScope({
-      sha: canonicalRequestSha(body),
-      model,
-      workload: 'wl-a',
-      workloadEpoch,
-    }));
+    const entry = registry.findBySha(
+      lookupScope({
+        sha: canonicalRequestSha(body),
+        model,
+        workload: "wl-a",
+        workloadEpoch,
+      }),
+    );
     expect(entry).not.toBeNull();
     storage.close();
   } finally {
@@ -198,44 +218,44 @@ test('cold miss saves and warm hit serves cached JSON without upstream call', as
   }
 });
 
-test('SSE responses are cached and replayed on warm hit', async () => {
+test("SSE responses are cached and replayed on warm hit", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('sse');
+  const upstream = await startUpstream("sse");
   try {
     const url = new URL(upstream.baseUrl);
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10));
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
     const body = JSON.stringify({
-      model: 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf',
-      messages: [{ role: 'user', content: 'cached sse' }],
+      model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+      messages: [{ role: "user", content: "cached sse" }],
       stream: true,
       temperature: 0,
     });
 
     const first = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
     );
     const firstText = await first.text();
     expect(first.status).toBe(200);
-    expect(first.headers.get('content-type')).toContain('text/event-stream');
-    expect(firstText).toContain('[DONE]');
+    expect(first.headers.get("content-type")).toContain("text/event-stream");
+    expect(firstText).toContain("[DONE]");
     expect(upstream.calls).toBe(1);
 
     const second = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
     );
     const secondText = await second.text();
     expect(second.status).toBe(200);
-    expect(second.headers.get('content-type')).toContain('text/event-stream');
+    expect(second.headers.get("content-type")).toContain("text/event-stream");
     expect(secondText).toBe(firstText);
     expect(upstream.calls).toBe(1);
   } finally {
@@ -244,32 +264,32 @@ test('SSE responses are cached and replayed on warm hit', async () => {
   }
 });
 
-test('non-deterministic request bypasses response cache', async () => {
+test("non-deterministic request bypasses response cache", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
+  const upstream = await startUpstream("json");
   try {
     const url = new URL(upstream.baseUrl);
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
     const body = JSON.stringify({
       model,
-      messages: [{ role: 'user', content: 'sampled' }],
+      messages: [{ role: "user", content: "sampled" }],
       temperature: 0.7,
     });
 
     const first = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
     );
     const second = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
@@ -280,12 +300,16 @@ test('non-deterministic request bypasses response cache', async () => {
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
-    expect(registry.findBySha(lookupScope({
-      sha: canonicalRequestSha(body),
-      model,
-      workload: 'wl-a',
-      workloadEpoch,
-    }))).toBeNull();
+    expect(
+      registry.findBySha(
+        lookupScope({
+          sha: canonicalRequestSha(body),
+          model,
+          workload: "wl-a",
+          workloadEpoch,
+        }),
+      ),
+    ).toBeNull();
     storage.close();
   } finally {
     await upstream.close();
@@ -293,15 +317,15 @@ test('non-deterministic request bypasses response cache', async () => {
   }
 });
 
-test('eviction trims entries under configured response-cache budget', async () => {
+test("eviction trims entries under configured response-cache budget", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
-  process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB = '1';
+  const upstream = await startUpstream("json");
+  process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB = "1";
   try {
     const url = new URL(upstream.baseUrl);
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
@@ -309,12 +333,12 @@ test('eviction trims entries under configured response-cache budget', async () =
     const blobA = new Uint8Array(450_000);
     const blobB = new Uint8Array(420_000);
     registry.insert({
-      sha: 'old-a',
+      sha: "old-a",
       model,
-      workload: 'wl-a',
+      workload: "wl-a",
       workloadEpoch,
-      protocolVariant: 'openai',
-      contentType: 'application/json',
+      protocolVariant: "openai",
+      contentType: "application/json",
       statusCode: 200,
       responseBody: blobA,
       requestBodyBytes: 120_000,
@@ -324,12 +348,12 @@ test('eviction trims entries under configured response-cache budget', async () =
       hits: 0,
     });
     registry.insert({
-      sha: 'old-b',
+      sha: "old-b",
       model,
-      workload: 'wl-a',
+      workload: "wl-a",
       workloadEpoch,
-      protocolVariant: 'openai',
-      contentType: 'application/json',
+      protocolVariant: "openai",
+      contentType: "application/json",
       statusCode: 200,
       responseBody: blobB,
       requestBodyBytes: 100_000,
@@ -342,13 +366,13 @@ test('eviction trims entries under configured response-cache budget', async () =
 
     const body = JSON.stringify({
       model,
-      messages: [{ role: 'user', content: 'evict if needed' }],
+      messages: [{ role: "user", content: "evict if needed" }],
       temperature: 0,
     });
     const response = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
@@ -358,15 +382,24 @@ test('eviction trims entries under configured response-cache budget', async () =
     const afterStorage = openResponseCacheStorage(runtime.root);
     const afterRegistry = new ResponseCacheRegistry(afterStorage);
     const entries = afterRegistry.listForModel(model);
-    const totalBytes = entries.reduce((sum, entry) => sum + entry.requestBodyBytes + entry.responseBodyBytes, 0);
+    const totalBytes = entries.reduce(
+      (sum, entry) => sum + entry.requestBodyBytes + entry.responseBodyBytes,
+      0,
+    );
     expect(totalBytes).toBeLessThanOrEqual(1 * 1024 * 1024);
-    expect(afterRegistry.findBySha(lookupScope({
-      sha: canonicalRequestSha(body),
-      model,
-      workload: 'wl-a',
-      workloadEpoch,
-    }))).not.toBeNull();
-    expect(openaiProxy.__getOpenAIProxyResponseCacheEvictTotalForTests(runtime.env as any)).toBeGreaterThan(0);
+    expect(
+      afterRegistry.findBySha(
+        lookupScope({
+          sha: canonicalRequestSha(body),
+          model,
+          workload: "wl-a",
+          workloadEpoch,
+        }),
+      ),
+    ).not.toBeNull();
+    expect(
+      openaiProxy.__getOpenAIProxyResponseCacheEvictTotalForTests(runtime.env as any),
+    ).toBeGreaterThan(0);
     afterStorage.close();
   } finally {
     await upstream.close();
@@ -374,40 +407,48 @@ test('eviction trims entries under configured response-cache budget', async () =
   }
 });
 
-test('error-envelope JSON responses are not cached and emit skip log', async () => {
+test("error-envelope JSON responses are not cached and emit skip log", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json_error');
-  const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+  const upstream = await startUpstream("json_error");
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
   try {
     const url = new URL(upstream.baseUrl);
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
     const body = JSON.stringify({
       model,
-      messages: [{ role: 'user', content: 'error envelope' }],
+      messages: [{ role: "user", content: "error envelope" }],
       temperature: 0,
     });
     const response = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
     );
     expect(response.status).toBe(200);
     expect(upstream.calls).toBe(1);
-    expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('"event":"response_cache_skip_error_envelope"'))).toBe(true);
+    expect(
+      warnSpy.mock.calls.some((call) =>
+        String(call[0]).includes('"event":"response_cache_skip_error_envelope"'),
+      ),
+    ).toBe(true);
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
-    expect(registry.findBySha(lookupScope({
-      sha: canonicalRequestSha(body),
-      model,
-      workload: 'wl-a',
-      workloadEpoch,
-    }))).toBeNull();
+    expect(
+      registry.findBySha(
+        lookupScope({
+          sha: canonicalRequestSha(body),
+          model,
+          workload: "wl-a",
+          workloadEpoch,
+        }),
+      ),
+    ).toBeNull();
     storage.close();
   } finally {
     warnSpy.mockRestore();
@@ -416,41 +457,49 @@ test('error-envelope JSON responses are not cached and emit skip log', async () 
   }
 });
 
-test('partial SSE responses are not cached and emit skip log', async () => {
+test("partial SSE responses are not cached and emit skip log", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('sse_partial');
-  const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+  const upstream = await startUpstream("sse_partial");
+  const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
   try {
     const url = new URL(upstream.baseUrl);
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
     const body = JSON.stringify({
       model,
-      messages: [{ role: 'user', content: 'partial sse' }],
+      messages: [{ role: "user", content: "partial sse" }],
       stream: true,
       temperature: 0,
     });
     const response = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
     );
     expect(response.status).toBe(200);
     expect(upstream.calls).toBe(1);
-    expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('"event":"response_cache_skip_partial_sse"'))).toBe(true);
+    expect(
+      warnSpy.mock.calls.some((call) =>
+        String(call[0]).includes('"event":"response_cache_skip_partial_sse"'),
+      ),
+    ).toBe(true);
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
-    expect(registry.findBySha(lookupScope({
-      sha: canonicalRequestSha(body),
-      model,
-      workload: 'wl-a',
-      workloadEpoch,
-    }))).toBeNull();
+    expect(
+      registry.findBySha(
+        lookupScope({
+          sha: canonicalRequestSha(body),
+          model,
+          workload: "wl-a",
+          workloadEpoch,
+        }),
+      ),
+    ).toBeNull();
     storage.close();
   } finally {
     warnSpy.mockRestore();
@@ -459,18 +508,18 @@ test('partial SSE responses are not cached and emit skip log', async () => {
   }
 });
 
-test('TTL-expired response-cache entries are treated as misses and deleted', async () => {
+test("TTL-expired response-cache entries are treated as misses and deleted", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json_error');
-  process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = '24';
+  const upstream = await startUpstream("json_error");
+  process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = "24";
   try {
     const url = new URL(upstream.baseUrl);
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
     const body = JSON.stringify({
       model,
-      messages: [{ role: 'user', content: 'ttl expired' }],
+      messages: [{ role: "user", content: "ttl expired" }],
       temperature: 0,
     });
     const storage = openResponseCacheStorage(runtime.root);
@@ -479,14 +528,14 @@ test('TTL-expired response-cache entries are treated as misses and deleted', asy
     registry.insert({
       sha: canonicalRequestSha(body),
       model,
-      workload: 'wl-a',
+      workload: "wl-a",
       workloadEpoch,
-      protocolVariant: 'openai',
-      contentType: 'application/json',
+      protocolVariant: "openai",
+      contentType: "application/json",
       statusCode: 200,
-      responseBody: new Uint8Array(Buffer.from('{"ok":true}', 'utf8')),
-      requestBodyBytes: Buffer.byteLength(body, 'utf8'),
-      responseBodyBytes: Buffer.byteLength('{"ok":true}', 'utf8'),
+      responseBody: new Uint8Array(Buffer.from('{"ok":true}', "utf8")),
+      requestBodyBytes: Buffer.byteLength(body, "utf8"),
+      responseBodyBytes: Buffer.byteLength('{"ok":true}', "utf8"),
       createdAt: now - 25 * 60 * 60 * 1000,
       lastUsed: now - 25 * 60 * 60 * 1000,
       hits: 0,
@@ -494,9 +543,9 @@ test('TTL-expired response-cache entries are treated as misses and deleted', asy
     storage.close();
 
     const response = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
@@ -508,12 +557,16 @@ test('TTL-expired response-cache entries are treated as misses and deleted', asy
 
     const afterStorage = openResponseCacheStorage(runtime.root);
     const afterRegistry = new ResponseCacheRegistry(afterStorage);
-    expect(afterRegistry.findBySha(lookupScope({
-      sha: canonicalRequestSha(body),
-      model,
-      workload: 'wl-a',
-      workloadEpoch,
-    }))).toBeNull();
+    expect(
+      afterRegistry.findBySha(
+        lookupScope({
+          sha: canonicalRequestSha(body),
+          model,
+          workload: "wl-a",
+          workloadEpoch,
+        }),
+      ),
+    ).toBeNull();
     afterStorage.close();
   } finally {
     await upstream.close();
@@ -521,18 +574,18 @@ test('TTL-expired response-cache entries are treated as misses and deleted', asy
   }
 });
 
-test('fresh response-cache entries are served as hits before TTL expiry', async () => {
+test("fresh response-cache entries are served as hits before TTL expiry", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
-  process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = '24';
+  const upstream = await startUpstream("json");
+  process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = "24";
   try {
     const url = new URL(upstream.baseUrl);
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(url.port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
     const body = JSON.stringify({
       model,
-      messages: [{ role: 'user', content: 'ttl fresh' }],
+      messages: [{ role: "user", content: "ttl fresh" }],
       temperature: 0,
     });
     const storage = openResponseCacheStorage(runtime.root);
@@ -541,14 +594,14 @@ test('fresh response-cache entries are served as hits before TTL expiry', async 
     registry.insert({
       sha: canonicalRequestSha(body),
       model,
-      workload: 'wl-a',
+      workload: "wl-a",
       workloadEpoch,
-      protocolVariant: 'openai',
-      contentType: 'application/json',
+      protocolVariant: "openai",
+      contentType: "application/json",
       statusCode: 200,
-      responseBody: new Uint8Array(Buffer.from('{"id":"cached"}', 'utf8')),
-      requestBodyBytes: Buffer.byteLength(body, 'utf8'),
-      responseBodyBytes: Buffer.byteLength('{"id":"cached"}', 'utf8'),
+      responseBody: new Uint8Array(Buffer.from('{"id":"cached"}', "utf8")),
+      requestBodyBytes: Buffer.byteLength(body, "utf8"),
+      responseBodyBytes: Buffer.byteLength('{"id":"cached"}', "utf8"),
       createdAt: now - 60 * 60 * 1000,
       lastUsed: now - 60 * 60 * 1000,
       hits: 0,
@@ -556,16 +609,16 @@ test('fresh response-cache entries are served as hits before TTL expiry', async 
     storage.close();
 
     const response = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
     );
-    const payload = await response.json() as { id?: string };
+    const payload = (await response.json()) as { id?: string };
     expect(response.status).toBe(200);
-    expect(payload.id).toBe('cached');
+    expect(payload.id).toBe("cached");
     expect(upstream.calls).toBe(0);
     expect(openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(runtime.env as any)).toBe(1);
   } finally {
@@ -574,16 +627,21 @@ test('fresh response-cache entries are served as hits before TTL expiry', async 
   }
 });
 
-test('response cache misses when workload scope differs', async () => {
+test("response cache misses when workload scope differs", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
+  const upstream = await startUpstream("json");
   try {
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(
+      runtime.root,
+      "wl-a",
+      Number.parseInt(new URL(upstream.baseUrl).port, 10),
+      model,
+    );
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
     const body = JSON.stringify({
       model,
-      messages: [{ role: 'user', content: 'scope workload mismatch' }],
+      messages: [{ role: "user", content: "scope workload mismatch" }],
       temperature: 0,
     });
     const storage = openResponseCacheStorage(runtime.root);
@@ -591,14 +649,14 @@ test('response cache misses when workload scope differs', async () => {
     registry.insert({
       sha: canonicalRequestSha(body),
       model,
-      workload: 'wl-b',
+      workload: "wl-b",
       workloadEpoch,
-      protocolVariant: 'openai',
-      contentType: 'application/json',
+      protocolVariant: "openai",
+      contentType: "application/json",
       statusCode: 200,
       responseBody: new TextEncoder().encode('{"id":"wrong-workload"}'),
-      requestBodyBytes: Buffer.byteLength(body, 'utf8'),
-      responseBodyBytes: Buffer.byteLength('{"id":"wrong-workload"}', 'utf8'),
+      requestBodyBytes: Buffer.byteLength(body, "utf8"),
+      responseBodyBytes: Buffer.byteLength('{"id":"wrong-workload"}', "utf8"),
       createdAt: Date.now(),
       lastUsed: Date.now(),
       hits: 0,
@@ -606,9 +664,9 @@ test('response cache misses when workload scope differs', async () => {
     storage.close();
 
     const response = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
@@ -621,15 +679,20 @@ test('response cache misses when workload scope differs', async () => {
   }
 });
 
-test('response cache misses when workload epoch differs', async () => {
+test("response cache misses when workload epoch differs", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
+  const upstream = await startUpstream("json");
   try {
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(
+      runtime.root,
+      "wl-a",
+      Number.parseInt(new URL(upstream.baseUrl).port, 10),
+      model,
+    );
     const body = JSON.stringify({
       model,
-      messages: [{ role: 'user', content: 'scope epoch mismatch' }],
+      messages: [{ role: "user", content: "scope epoch mismatch" }],
       temperature: 0,
     });
     const storage = openResponseCacheStorage(runtime.root);
@@ -637,14 +700,14 @@ test('response cache misses when workload epoch differs', async () => {
     registry.insert({
       sha: canonicalRequestSha(body),
       model,
-      workload: 'wl-a',
-      workloadEpoch: 'stale-epoch',
-      protocolVariant: 'openai',
-      contentType: 'application/json',
+      workload: "wl-a",
+      workloadEpoch: "stale-epoch",
+      protocolVariant: "openai",
+      contentType: "application/json",
       statusCode: 200,
       responseBody: new TextEncoder().encode('{"id":"stale-epoch"}'),
-      requestBodyBytes: Buffer.byteLength(body, 'utf8'),
-      responseBodyBytes: Buffer.byteLength('{"id":"stale-epoch"}', 'utf8'),
+      requestBodyBytes: Buffer.byteLength(body, "utf8"),
+      responseBodyBytes: Buffer.byteLength('{"id":"stale-epoch"}', "utf8"),
       createdAt: Date.now(),
       lastUsed: Date.now(),
       hits: 0,
@@ -652,9 +715,9 @@ test('response cache misses when workload epoch differs', async () => {
     storage.close();
 
     const response = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
@@ -667,16 +730,21 @@ test('response cache misses when workload epoch differs', async () => {
   }
 });
 
-test('response cache hits when workload and epoch match', async () => {
+test("response cache hits when workload and epoch match", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
+  const upstream = await startUpstream("json");
   try {
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(
+      runtime.root,
+      "wl-a",
+      Number.parseInt(new URL(upstream.baseUrl).port, 10),
+      model,
+    );
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
     const body = JSON.stringify({
       model,
-      messages: [{ role: 'user', content: 'scope hit' }],
+      messages: [{ role: "user", content: "scope hit" }],
       temperature: 0,
     });
     const storage = openResponseCacheStorage(runtime.root);
@@ -684,14 +752,14 @@ test('response cache hits when workload and epoch match', async () => {
     registry.insert({
       sha: canonicalRequestSha(body),
       model,
-      workload: 'wl-a',
+      workload: "wl-a",
       workloadEpoch,
-      protocolVariant: 'openai',
-      contentType: 'application/json',
+      protocolVariant: "openai",
+      contentType: "application/json",
       statusCode: 200,
       responseBody: new TextEncoder().encode('{"id":"scope-hit"}'),
-      requestBodyBytes: Buffer.byteLength(body, 'utf8'),
-      responseBodyBytes: Buffer.byteLength('{"id":"scope-hit"}', 'utf8'),
+      requestBodyBytes: Buffer.byteLength(body, "utf8"),
+      responseBodyBytes: Buffer.byteLength('{"id":"scope-hit"}', "utf8"),
       createdAt: Date.now(),
       lastUsed: Date.now(),
       hits: 0,
@@ -699,15 +767,15 @@ test('response cache hits when workload and epoch match', async () => {
     storage.close();
 
     const response = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ id: 'scope-hit' });
+    expect(await response.json()).toEqual({ id: "scope-hit" });
     expect(upstream.calls).toBe(0);
   } finally {
     await upstream.close();
@@ -715,46 +783,56 @@ test('response cache hits when workload and epoch match', async () => {
   }
 });
 
-test('/v1/messages persists anthropic variant with post-translation bytes', async () => {
+test("/v1/messages persists anthropic variant with post-translation bytes", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
+  const upstream = await startUpstream("json");
   try {
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(
+      runtime.root,
+      "wl-a",
+      Number.parseInt(new URL(upstream.baseUrl).port, 10),
+      model,
+    );
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
     const anthropicRequest = {
       model,
       max_tokens: 64,
       temperature: 0,
-      messages: [{ role: 'user', content: 'cache anthropic bytes' }],
+      messages: [{ role: "user", content: "cache anthropic bytes" }],
     } as const;
 
     const response = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify(anthropicRequest),
       }),
       runtime.env as any,
     );
     expect(response.status).toBe(200);
     const responsePayload = await response.json();
-    expect((responsePayload as { type?: string }).type).toBe('message');
+    expect((responsePayload as { type?: string }).type).toBe("message");
 
     const translatedBody = JSON.stringify(translateAnthropicRequest(anthropicRequest as any));
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
-    const entry = registry.findBySha(lookupScope({
-      sha: canonicalRequestSha(translatedBody),
-      model,
-      workload: 'wl-a',
-      workloadEpoch,
-      protocolVariant: 'anthropic',
-    }));
+    const entry = registry.findBySha(
+      lookupScope({
+        sha: canonicalRequestSha(translatedBody),
+        model,
+        workload: "wl-a",
+        workloadEpoch,
+        protocolVariant: "anthropic",
+      }),
+    );
     expect(entry).not.toBeNull();
-    const cachedPayload = JSON.parse(Buffer.from(entry!.responseBody).toString('utf8')) as { type?: string; id?: string };
-    expect(cachedPayload.type).toBe('message');
-    expect(cachedPayload.id).toBe('chatcmpl-1');
+    const cachedPayload = JSON.parse(Buffer.from(entry!.responseBody).toString("utf8")) as {
+      type?: string;
+      id?: string;
+    };
+    expect(cachedPayload.type).toBe("message");
+    expect(cachedPayload.id).toBe("chatcmpl-1");
     storage.close();
   } finally {
     await upstream.close();
@@ -762,18 +840,23 @@ test('/v1/messages persists anthropic variant with post-translation bytes', asyn
   }
 });
 
-test('/v1/messages misses when only openai protocol variant exists for matching sha', async () => {
+test("/v1/messages misses when only openai protocol variant exists for matching sha", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
+  const upstream = await startUpstream("json");
   try {
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(
+      runtime.root,
+      "wl-a",
+      Number.parseInt(new URL(upstream.baseUrl).port, 10),
+      model,
+    );
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
     const anthropicRequest = {
       model,
       max_tokens: 64,
       temperature: 0,
-      messages: [{ role: 'user', content: 'protocol mismatch' }],
+      messages: [{ role: "user", content: "protocol mismatch" }],
     } as const;
     const translatedBody = JSON.stringify(translateAnthropicRequest(anthropicRequest as any));
     const storage = openResponseCacheStorage(runtime.root);
@@ -781,14 +864,14 @@ test('/v1/messages misses when only openai protocol variant exists for matching 
     registry.insert({
       sha: canonicalRequestSha(translatedBody),
       model,
-      workload: 'wl-a',
+      workload: "wl-a",
       workloadEpoch,
-      protocolVariant: 'openai',
-      contentType: 'application/json',
+      protocolVariant: "openai",
+      contentType: "application/json",
       statusCode: 200,
       responseBody: new TextEncoder().encode('{"id":"openai-shape"}'),
-      requestBodyBytes: Buffer.byteLength(translatedBody, 'utf8'),
-      responseBodyBytes: Buffer.byteLength('{"id":"openai-shape"}', 'utf8'),
+      requestBodyBytes: Buffer.byteLength(translatedBody, "utf8"),
+      responseBodyBytes: Buffer.byteLength('{"id":"openai-shape"}', "utf8"),
       createdAt: Date.now(),
       lastUsed: Date.now(),
       hits: 0,
@@ -796,9 +879,9 @@ test('/v1/messages misses when only openai protocol variant exists for matching 
     storage.close();
 
     const response = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify(anthropicRequest),
       }),
       runtime.env as any,
@@ -811,27 +894,32 @@ test('/v1/messages misses when only openai protocol variant exists for matching 
   }
 });
 
-test('/v1/messages warm-hit returns cached anthropic bytes without translation', async () => {
+test("/v1/messages warm-hit returns cached anthropic bytes without translation", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
+  const upstream = await startUpstream("json");
   try {
-    const model = 'Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf';
-    writeModelRunWorkload(runtime.root, 'wl-a', Number.parseInt(new URL(upstream.baseUrl).port, 10), model);
-    const workloadEpoch = workloadEpochFor(runtime, 'wl-a');
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(
+      runtime.root,
+      "wl-a",
+      Number.parseInt(new URL(upstream.baseUrl).port, 10),
+      model,
+    );
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
     const anthropicRequest = {
       model,
       max_tokens: 64,
       temperature: 0,
-      messages: [{ role: 'user', content: 'anthropic warm hit' }],
+      messages: [{ role: "user", content: "anthropic warm hit" }],
     } as const;
     const translatedBody = JSON.stringify(translateAnthropicRequest(anthropicRequest as any));
     const cachedAnthropic = {
-      id: 'msg_cached',
-      type: 'message',
-      role: 'assistant',
-      content: [{ type: 'text', text: 'cached anthropic body' }],
+      id: "msg_cached",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: "cached anthropic body" }],
       model,
-      stop_reason: 'end_turn',
+      stop_reason: "end_turn",
       usage: { input_tokens: 1, output_tokens: 1 },
     };
     const storage = openResponseCacheStorage(runtime.root);
@@ -839,14 +927,14 @@ test('/v1/messages warm-hit returns cached anthropic bytes without translation',
     registry.insert({
       sha: canonicalRequestSha(translatedBody),
       model,
-      workload: 'wl-a',
+      workload: "wl-a",
       workloadEpoch,
-      protocolVariant: 'anthropic',
-      contentType: 'application/json',
+      protocolVariant: "anthropic",
+      contentType: "application/json",
       statusCode: 200,
       responseBody: new TextEncoder().encode(JSON.stringify(cachedAnthropic)),
-      requestBodyBytes: Buffer.byteLength(translatedBody, 'utf8'),
-      responseBodyBytes: Buffer.byteLength(JSON.stringify(cachedAnthropic), 'utf8'),
+      requestBodyBytes: Buffer.byteLength(translatedBody, "utf8"),
+      responseBodyBytes: Buffer.byteLength(JSON.stringify(cachedAnthropic), "utf8"),
       createdAt: Date.now(),
       lastUsed: Date.now(),
       hits: 0,
@@ -854,9 +942,9 @@ test('/v1/messages warm-hit returns cached anthropic bytes without translation',
     storage.close();
 
     const response = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body: JSON.stringify(anthropicRequest),
       }),
       runtime.env as any,
@@ -870,8 +958,8 @@ test('/v1/messages warm-hit returns cached anthropic bytes without translation',
   }
 });
 
-const PEER_NODE_ID = 'mac-mini';
-const PEER_MODEL = 'peer/granite-3b.gguf';
+const PEER_NODE_ID = "mac-mini";
+const PEER_MODEL = "peer/granite-3b.gguf";
 
 // A cross-node (peer) route advertised through __setOpenAIProxyClusterRoutingForTests.
 // listClusterRoutes derives the route host/port from the peer endpoint and synthesises
@@ -887,30 +975,32 @@ function peerClusterRouting(
   const clusterPeers: PeerNode[] = [{ id: PEER_NODE_ID, endpoint: upstreamBaseUrl }];
   const snapshot: PeerSnapshot = {
     workloads: [{ modelId: PEER_MODEL, port, revision }],
-    pressure: 'NORMAL',
+    pressure: "NORMAL",
     fetchedAt,
   };
   return { clusterPeers, peerSnapshots: new Map([[PEER_NODE_ID, snapshot]]) };
 }
 
-test('peer route response cache: cold miss forwards, warm hit served under synthetic peer epoch', async () => {
+test("peer route response cache: cold miss forwards, warm hit served under synthetic peer epoch", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
+  const upstream = await startUpstream("json");
   try {
     const port = Number.parseInt(new URL(upstream.baseUrl).port, 10);
     // No local workload is written, so PEER_MODEL routes only via the peer snapshot.
-    openaiProxy.__setOpenAIProxyClusterRoutingForTests(peerClusterRouting(upstream.baseUrl, port, Date.now()));
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(
+      peerClusterRouting(upstream.baseUrl, port, Date.now()),
+    );
     const body = JSON.stringify({
       model: PEER_MODEL,
-      messages: [{ role: 'user', content: 'peer cached json' }],
+      messages: [{ role: "user", content: "peer cached json" }],
       temperature: 0,
     });
 
     // Cold miss: forwarded across the node boundary exactly once.
     const first = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
@@ -920,16 +1010,16 @@ test('peer route response cache: cold miss forwards, warm hit served under synth
 
     // Warm hit: served from THIS proxy's cache without a second cross-node round-trip.
     const second = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
     );
     const secondJson = (await second.json()) as { id: string };
     expect(second.status).toBe(200);
-    expect(secondJson.id).toBe('chatcmpl-1');
+    expect(secondJson.id).toBe("chatcmpl-1");
     expect(upstream.calls).toBe(1);
     expect(openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(runtime.env as any)).toBe(1);
 
@@ -946,7 +1036,7 @@ test('peer route response cache: cold miss forwards, warm hit served under synth
     expect(registry.findBySha(peerScope)).not.toBeNull();
     // A lookup under any other epoch must miss — proves the key is the synthetic
     // peer epoch and not an accidental local/empty one.
-    expect(registry.findBySha({ ...peerScope, workloadEpoch: 'local-style-epoch' })).toBeNull();
+    expect(registry.findBySha({ ...peerScope, workloadEpoch: "local-style-epoch" })).toBeNull();
     storage.close();
   } finally {
     await upstream.close();
@@ -954,22 +1044,24 @@ test('peer route response cache: cold miss forwards, warm hit served under synth
   }
 });
 
-test('peer route cache survives a peer re-poll (stable synthetic epoch, no re-forward)', async () => {
+test("peer route cache survives a peer re-poll (stable synthetic epoch, no re-forward)", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
+  const upstream = await startUpstream("json");
   try {
     const port = Number.parseInt(new URL(upstream.baseUrl).port, 10);
-    openaiProxy.__setOpenAIProxyClusterRoutingForTests(peerClusterRouting(upstream.baseUrl, port, Date.now()));
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(
+      peerClusterRouting(upstream.baseUrl, port, Date.now()),
+    );
     const body = JSON.stringify({
       model: PEER_MODEL,
-      messages: [{ role: 'user', content: 'peer survives repoll' }],
+      messages: [{ role: "user", content: "peer survives repoll" }],
       temperature: 0,
     });
 
     const first = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
@@ -981,18 +1073,20 @@ test('peer route cache survives a peer re-poll (stable synthetic epoch, no re-fo
     // restart of the SAME model. The synthetic epoch keys on node+model only, so
     // the cached deterministic response is still served (documents the trade-off:
     // a different model swapped under the same peer alias would need a manual flush).
-    openaiProxy.__setOpenAIProxyClusterRoutingForTests(peerClusterRouting(upstream.baseUrl, port, Date.now()));
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(
+      peerClusterRouting(upstream.baseUrl, port, Date.now()),
+    );
 
     const second = await openaiProxy.proxyOpenAI(
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       }),
       runtime.env as any,
     );
     expect(second.status).toBe(200);
-    expect(((await second.json()) as { id: string }).id).toBe('chatcmpl-1');
+    expect(((await second.json()) as { id: string }).id).toBe("chatcmpl-1");
     expect(upstream.calls).toBe(1);
   } finally {
     await upstream.close();
@@ -1000,22 +1094,24 @@ test('peer route cache survives a peer re-poll (stable synthetic epoch, no re-fo
   }
 });
 
-test('peer route cache invalidates when the peer revision changes (restart/swap)', async () => {
+test("peer route cache invalidates when the peer revision changes (restart/swap)", async () => {
   const runtime = makeTempRuntime();
-  const upstream = await startUpstream('json');
+  const upstream = await startUpstream("json");
   try {
     const port = Number.parseInt(new URL(upstream.baseUrl).port, 10);
     // Boot 1 advertises revision rev-1.
-    openaiProxy.__setOpenAIProxyClusterRoutingForTests(peerClusterRouting(upstream.baseUrl, port, Date.now(), 'rev-1'));
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(
+      peerClusterRouting(upstream.baseUrl, port, Date.now(), "rev-1"),
+    );
     const body = JSON.stringify({
       model: PEER_MODEL,
-      messages: [{ role: 'user', content: 'peer revision invalidation' }],
+      messages: [{ role: "user", content: "peer revision invalidation" }],
       temperature: 0,
     });
     const mkReq = () =>
-      new Request('http://localhost/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
         body,
       });
 
@@ -1027,7 +1123,9 @@ test('peer route cache invalidates when the peer revision changes (restart/swap)
     // The peer restarts with a new boot token (rev-2) — e.g. a model/quant swap
     // under the same alias. The revision-qualified epoch changes, so the identical
     // request misses the rev-1 entry and is re-forwarded (automatic invalidation).
-    openaiProxy.__setOpenAIProxyClusterRoutingForTests(peerClusterRouting(upstream.baseUrl, port, Date.now(), 'rev-2'));
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(
+      peerClusterRouting(upstream.baseUrl, port, Date.now(), "rev-2"),
+    );
     expect((await openaiProxy.proxyOpenAI(mkReq(), runtime.env as any)).status).toBe(200);
     expect(upstream.calls).toBe(2);
 
@@ -1041,8 +1139,8 @@ test('peer route cache invalidates when the peer revision changes (restart/swap)
         workload: `${PEER_NODE_ID}:${PEER_MODEL}`,
         workloadEpoch: `peer:${PEER_NODE_ID}:${PEER_MODEL}:${rev}`,
       });
-    expect(registry.findBySha(scopeFor('rev-1'))).not.toBeNull();
-    expect(registry.findBySha(scopeFor('rev-2'))).not.toBeNull();
+    expect(registry.findBySha(scopeFor("rev-1"))).not.toBeNull();
+    expect(registry.findBySha(scopeFor("rev-2"))).not.toBeNull();
     storage.close();
   } finally {
     await upstream.close();

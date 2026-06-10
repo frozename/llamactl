@@ -1,9 +1,9 @@
-import { hashToken } from '../server/auth.js';
+import { hashToken } from "../server/auth.js";
 import {
   appendTunnelJournal,
   defaultTunnelJournalPath,
   type TunnelJournalEntry,
-} from './journal.js';
+} from "./journal.js";
 import {
   TUNNEL_CLOSE_BAD_HELLO,
   TUNNEL_CLOSE_HELLO_TIMEOUT,
@@ -13,7 +13,7 @@ import {
   type TunnelMessage,
   type TunnelReq,
   type TunnelRes,
-} from './messages.js';
+} from "./messages.js";
 
 /**
  * Subscription state tracked per correlation id. Kept in a
@@ -101,7 +101,7 @@ export interface TunnelServer {
     message: (ws: AnyBunServerWebSocket, data: string | Buffer) => void;
     close: (ws: AnyBunServerWebSocket, code: number, reason: string) => void;
   };
-  send: (nodeName: string, req: Omit<TunnelReq, 'type'>) => Promise<TunnelRes>;
+  send: (nodeName: string, req: Omit<TunnelReq, "type">) => Promise<TunnelRes>;
   /**
    * Open a streaming subscription to a node. Ships a `req` frame
    * with `params.type === 'subscription'` and returns an
@@ -113,10 +113,7 @@ export interface TunnelServer {
    * `for await`) sends a `stream-cancel` back to the node and
    * releases the correlation-id slot.
    */
-  sendSubscribe: (
-    nodeName: string,
-    req: Omit<TunnelReq, 'type'>,
-  ) => AsyncIterable<unknown>;
+  sendSubscribe: (nodeName: string, req: Omit<TunnelReq, "type">) => AsyncIterable<unknown>;
   registry: () => TunnelRegistryEntry[];
   /** Force-close a node's tunnel; primarily for tests + operator
    *  "agent tunnel kick" tooling. */
@@ -141,13 +138,16 @@ function buildSubscriptionIterable(
   // Typed as an internal tagged union so the next()-side consumer
   // knows which branch to take after a Deferred resolves.
   type Entry =
-    | { kind: 'value'; value: unknown }
-    | { kind: 'error'; error: { code: string; message: string } }
-    | { kind: 'complete' };
+    | { kind: "value"; value: unknown }
+    | { kind: "error"; error: { code: string; message: string } }
+    | { kind: "complete" };
   return {
     [Symbol.asyncIterator](): AsyncIterator<unknown> {
       const buffer: Entry[] = [];
-      let pending: { resolve: (r: IteratorResult<unknown>) => void; reject: (e: Error) => void } | null = null;
+      let pending: {
+        resolve: (r: IteratorResult<unknown>) => void;
+        reject: (e: Error) => void;
+      } | null = null;
       let registered = false;
       let finished = false;
       const handlers: SubscriptionHandlers = {
@@ -158,7 +158,7 @@ function buildSubscriptionIterable(
             pending = null;
             p.resolve({ value, done: false });
           } else {
-            buffer.push({ kind: 'value', value });
+            buffer.push({ kind: "value", value });
           }
         },
         done(error) {
@@ -169,11 +169,9 @@ function buildSubscriptionIterable(
             if (pending) {
               const p = pending;
               pending = null;
-              p.reject(
-                Object.assign(new Error(error.message), { code: error.code }),
-              );
+              p.reject(Object.assign(new Error(error.message), { code: error.code }));
             } else {
-              buffer.push({ kind: 'error', error });
+              buffer.push({ kind: "error", error });
             }
           } else {
             if (pending) {
@@ -181,7 +179,7 @@ function buildSubscriptionIterable(
               pending = null;
               p.resolve({ value: undefined, done: true });
             } else {
-              buffer.push({ kind: 'complete' });
+              buffer.push({ kind: "complete" });
             }
           }
         },
@@ -191,9 +189,7 @@ function buildSubscriptionIterable(
         finished = true;
         state.subscriptions.delete(req.id);
         try {
-          ws.send(
-            encodeTunnelMessage({ type: 'stream-cancel', id: req.id }),
-          );
+          ws.send(encodeTunnelMessage({ type: "stream-cancel", id: req.id }));
         } catch {
           // ws already gone; nothing to ship.
         }
@@ -206,7 +202,7 @@ function buildSubscriptionIterable(
           ws.send(encodeTunnelMessage(req));
         } catch (err) {
           handlers.done({
-            code: 'ws-send-failed',
+            code: "ws-send-failed",
             message: (err as Error).message,
           });
         }
@@ -216,8 +212,8 @@ function buildSubscriptionIterable(
           ensureRegistered();
           if (buffer.length > 0) {
             const head = buffer.shift()!;
-            if (head.kind === 'value') return { value: head.value, done: false };
-            if (head.kind === 'complete') return { value: undefined, done: true };
+            if (head.kind === "value") return { value: head.value, done: false };
+            if (head.kind === "complete") return { value: undefined, done: true };
             throw Object.assign(new Error(head.error.message), {
               code: head.error.code,
             });
@@ -269,12 +265,12 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       // operators see the displacement event even if the close fires
       // a race-y disconnect-log-first.
       journal({
-        kind: 'tunnel-replaced',
+        kind: "tunnel-replaced",
         ts: clock().toISOString(),
         nodeName,
       });
       try {
-        prior.close(TUNNEL_CLOSE_REPLACED, 'replaced by newer connection');
+        prior.close(TUNNEL_CLOSE_REPLACED, "replaced by newer connection");
       } catch {
         // best-effort; prior socket may already be closed
       }
@@ -282,7 +278,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
     nodes.set(nodeName, ws);
     opts.onNodeConnect?.(nodeName);
     journal({
-      kind: 'tunnel-connect',
+      kind: "tunnel-connect",
       ts: clock().toISOString(),
       nodeName,
     });
@@ -303,11 +299,11 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       const codeMatch = /^ws closed (\d+)/.exec(reason);
       const code = codeMatch ? Number.parseInt(codeMatch[1]!, 10) : undefined;
       journal({
-        kind: 'tunnel-disconnect',
+        kind: "tunnel-disconnect",
         ts: clock().toISOString(),
         nodeName: state.nodeName,
         reason,
-        ...(typeof code === 'number' && Number.isFinite(code) ? { code } : {}),
+        ...(typeof code === "number" && Number.isFinite(code) ? { code } : {}),
       });
     }
     // Error out any pending requests awaiting responses.
@@ -320,7 +316,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
     // can bail out of its SSE body loop cleanly. No explicit
     // stream-cancel ships because the ws is already gone.
     for (const { done } of state.subscriptions.values()) {
-      done({ code: 'tunnel-disconnected', message: reason });
+      done({ code: "tunnel-disconnected", message: reason });
     }
     state.subscriptions.clear();
   }
@@ -328,7 +324,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
   return {
     handleUpgrade(req, server) {
       const url = new URL(req.url);
-      if (url.pathname !== '/tunnel') return undefined;
+      if (url.pathname !== "/tunnel") return undefined;
       const state: ConnectionState = {
         authenticated: false,
         nodeName: null,
@@ -339,7 +335,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const upgraded = (server as any).upgrade(req, { data: state });
       if (!upgraded) {
-        return new Response('tunnel upgrade failed', { status: 400 });
+        return new Response("tunnel upgrade failed", { status: 400 });
       }
       return undefined;
     },
@@ -351,12 +347,12 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           // the timeout itself so operators can distinguish idle
           // loopback probes from actual nodes failing to auth.
           journal({
-            kind: 'tunnel-unauthorized',
+            kind: "tunnel-unauthorized",
             ts: clock().toISOString(),
-            reason: 'hello-timeout',
+            reason: "hello-timeout",
           });
           try {
-            ws.close(TUNNEL_CLOSE_HELLO_TIMEOUT, 'hello timeout');
+            ws.close(TUNNEL_CLOSE_HELLO_TIMEOUT, "hello timeout");
           } catch {
             // ignore
           }
@@ -364,30 +360,30 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       },
       message(ws, data) {
         const state = getState(ws);
-        const raw = typeof data === 'string' ? data : data.toString('utf8');
+        const raw = typeof data === "string" ? data : data.toString("utf8");
         const msg = parseTunnelMessage(raw);
         if (!msg) {
           journal({
-            kind: 'tunnel-unauthorized',
+            kind: "tunnel-unauthorized",
             ts: clock().toISOString(),
-            reason: 'malformed-hello',
+            reason: "malformed-hello",
           });
           try {
-            ws.close(TUNNEL_CLOSE_BAD_HELLO, 'malformed frame');
+            ws.close(TUNNEL_CLOSE_BAD_HELLO, "malformed frame");
           } catch {
             // ignore
           }
           return;
         }
         if (!state.authenticated) {
-          if (msg.type !== 'hello') {
+          if (msg.type !== "hello") {
             journal({
-              kind: 'tunnel-unauthorized',
+              kind: "tunnel-unauthorized",
               ts: clock().toISOString(),
-              reason: 'hello-required-first',
+              reason: "hello-required-first",
             });
             try {
-              ws.close(TUNNEL_CLOSE_UNAUTHORIZED, 'hello required first');
+              ws.close(TUNNEL_CLOSE_UNAUTHORIZED, "hello required first");
             } catch {
               // ignore
             }
@@ -398,13 +394,13 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
             // so operators can see WHICH node is presenting a stale
             // bearer (common after a central-side bearer rotation).
             journal({
-              kind: 'tunnel-unauthorized',
+              kind: "tunnel-unauthorized",
               ts: clock().toISOString(),
               nodeName: msg.nodeName,
-              reason: 'bad-bearer',
+              reason: "bad-bearer",
             });
             try {
-              ws.close(TUNNEL_CLOSE_UNAUTHORIZED, 'bad bearer');
+              ws.close(TUNNEL_CLOSE_UNAUTHORIZED, "bad bearer");
             } catch {
               // ignore
             }
@@ -418,13 +414,13 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           }
           registerNode(ws, msg.nodeName);
           const ack: TunnelMessage = {
-            type: 'hello-ack',
+            type: "hello-ack",
             serverTime: clock().toISOString(),
           };
           ws.send(encodeTunnelMessage(ack));
           return;
         }
-        if (msg.type === 'res') {
+        if (msg.type === "res") {
           const pending = state.pending.get(msg.id);
           if (pending) {
             state.pending.delete(msg.id);
@@ -432,7 +428,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           }
           return;
         }
-        if (msg.type === 'stream-event') {
+        if (msg.type === "stream-event") {
           // Route to subscription map ONLY — a late stream-event
           // after cancel will miss (no-op) which is the intended
           // silent-drop behaviour.
@@ -440,7 +436,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           if (sub) sub.push(msg.data);
           return;
         }
-        if (msg.type === 'stream-done') {
+        if (msg.type === "stream-done") {
           const sub = state.subscriptions.get(msg.id);
           if (sub) {
             state.subscriptions.delete(msg.id);
@@ -448,8 +444,8 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           }
           return;
         }
-        if (msg.type === 'ping') {
-          ws.send(encodeTunnelMessage({ type: 'pong', nonce: msg.nonce }));
+        if (msg.type === "ping") {
+          ws.send(encodeTunnelMessage({ type: "pong", nonce: msg.nonce }));
           return;
         }
         // Anything else at this stage (req from a node, spurious
@@ -461,14 +457,14 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           clearTimeout(state.helloTimer);
           state.helloTimer = null;
         }
-        unregisterNode(ws, `ws closed ${code}${reason ? ` (${reason})` : ''}`);
+        unregisterNode(ws, `ws closed ${code}${reason ? ` (${reason})` : ""}`);
       },
     },
     async send(nodeName, req) {
       const ws = nodes.get(nodeName);
       if (!ws) throw new Error(`tunnel not connected for node '${nodeName}'`);
       const state = getState(ws);
-      const full: TunnelReq = { type: 'req', ...req };
+      const full: TunnelReq = { type: "req", ...req };
       return new Promise<TunnelRes>((resolve, reject) => {
         state.pending.set(full.id, { resolve, reject });
         try {
@@ -503,7 +499,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         };
       }
       const state = getState(ws);
-      const full: TunnelReq = { type: 'req', ...req };
+      const full: TunnelReq = { type: "req", ...req };
       return buildSubscriptionIterable(ws, state, full);
     },
     registry() {
@@ -525,7 +521,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
             }),
           close: (code, reason) => {
             try {
-              ws.close(code ?? 1000, reason ?? 'closed by registry');
+              ws.close(code ?? 1000, reason ?? "closed by registry");
             } catch {
               // ignore
             }
@@ -538,7 +534,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       const ws = nodes.get(nodeName);
       if (!ws) return false;
       try {
-        ws.close(1000, reason ?? 'kicked by central');
+        ws.close(1000, reason ?? "kicked by central");
       } catch {
         // ignore
       }

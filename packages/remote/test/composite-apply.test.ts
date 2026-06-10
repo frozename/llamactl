@@ -1,13 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { applyComposite, destroyComposite } from '../src/composite/apply.js';
-import type { CompositeApplyEvent } from '../src/composite/types.js';
-import type { Composite } from '../src/composite/schema.js';
-import { saveConfig } from '../src/config/kubeconfig.js';
-import { freshConfig } from '../src/config/schema.js';
+import { applyComposite, destroyComposite } from "../src/composite/apply.js";
+import type { CompositeApplyEvent } from "../src/composite/types.js";
+import type { Composite } from "../src/composite/schema.js";
+import { saveConfig } from "../src/config/kubeconfig.js";
+import { freshConfig } from "../src/config/schema.js";
 import type {
   ImageRef,
   RemoveServiceOptions,
@@ -16,8 +16,8 @@ import type {
   ServiceFilter,
   ServiceInstance,
   ServiceRef,
-} from '../src/runtime/backend.js';
-import type { WorkloadClient } from '../src/workload/apply.js';
+} from "../src/runtime/backend.js";
+import type { WorkloadClient } from "../src/workload/apply.js";
 
 /**
  * Phase 4 — applyComposite tests. Fake `RuntimeBackend` + fake
@@ -31,15 +31,15 @@ import type { WorkloadClient } from '../src/workload/apply.js';
  *   6. Destroy reverses the DAG
  */
 
-let tmp = '';
-let configPath = '';
-let compositesDir = '';
+let tmp = "";
+let configPath = "";
+let compositesDir = "";
 const originalEnv = { ...process.env };
 
 beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), 'llamactl-composite-apply-'));
-  configPath = join(tmp, 'config');
-  compositesDir = join(tmp, 'composites');
+  tmp = mkdtempSync(join(tmpdir(), "llamactl-composite-apply-"));
+  configPath = join(tmp, "config");
+  compositesDir = join(tmp, "composites");
   saveConfig(freshConfig(), configPath);
   process.env.LLAMACTL_CONFIG = configPath;
   process.env.LLAMACTL_COMPOSITES_DIR = compositesDir;
@@ -54,17 +54,17 @@ afterEach(() => {
 // ---- fakes ---------------------------------------------------------------
 
 class FakeRuntimeBackend implements RuntimeBackend {
-  readonly kind = 'fake';
+  readonly kind = "fake";
   readonly calls: Array<{ op: string; arg: unknown }> = [];
   readonly services = new Map<string, ServiceInstance>();
   /** When set, the next ensureService call throws. */
   failNextEnsure: string | null = null;
 
   async ping(): Promise<void> {
-    this.calls.push({ op: 'ping', arg: null });
+    this.calls.push({ op: "ping", arg: null });
   }
   async ensureService(spec: ServiceDeployment): Promise<ServiceInstance> {
-    this.calls.push({ op: 'ensureService', arg: spec });
+    this.calls.push({ op: "ensureService", arg: spec });
     if (this.failNextEnsure) {
       const msg = this.failNextEnsure;
       this.failNextEnsure = null;
@@ -73,28 +73,28 @@ class FakeRuntimeBackend implements RuntimeBackend {
     const instance: ServiceInstance = {
       ref: { name: spec.name },
       running: true,
-      health: 'healthy',
+      health: "healthy",
       specHash: spec.specHash,
       createdAt: new Date().toISOString(),
-      endpoint: { host: '127.0.0.1', port: spec.ports?.[0]?.hostPort ?? 8000 },
+      endpoint: { host: "127.0.0.1", port: spec.ports?.[0]?.hostPort ?? 8000 },
     };
     this.services.set(spec.name, instance);
     return instance;
   }
   async removeService(ref: ServiceRef, opts?: RemoveServiceOptions): Promise<void> {
-    this.calls.push({ op: 'removeService', arg: { ref, opts: opts ?? {} } });
+    this.calls.push({ op: "removeService", arg: { ref, opts: opts ?? {} } });
     this.services.delete(ref.name);
   }
   async inspectService(ref: ServiceRef): Promise<ServiceInstance | null> {
-    this.calls.push({ op: 'inspectService', arg: ref });
+    this.calls.push({ op: "inspectService", arg: ref });
     return this.services.get(ref.name) ?? null;
   }
   async listServices(filter?: ServiceFilter): Promise<ServiceInstance[]> {
-    this.calls.push({ op: 'listServices', arg: filter });
+    this.calls.push({ op: "listServices", arg: filter });
     return Array.from(this.services.values());
   }
   async pullImage(ref: ImageRef): Promise<void> {
-    this.calls.push({ op: 'pullImage', arg: ref });
+    this.calls.push({ op: "pullImage", arg: ref });
   }
 }
 
@@ -109,14 +109,14 @@ function makeFakeWorkloadClient(): {
     serverStatus: {
       async query() {
         return {
-          state: 'stopped',
+          state: "stopped",
           rel: null,
           extraArgs: [],
           pid: null,
           host: null,
           port: null,
           binary: null,
-          endpoint: 'http://127.0.0.1:8080',
+          endpoint: "http://127.0.0.1:8080",
         };
       },
     },
@@ -133,19 +133,19 @@ function makeFakeWorkloadClient(): {
         // interprets `done.ok=true` as success.
         queueMicrotask(() => {
           callbacks.onData?.({
-            type: 'started',
+            type: "started",
             pid: 12345,
-            endpoint: 'http://127.0.0.1:8080',
-            model: 'test',
+            endpoint: "http://127.0.0.1:8080",
+            model: "test",
           });
           // applyOne extracts StartDone from `e.result` on the done
           // event — not the event itself. Mirror the real shape.
           callbacks.onData?.({
-            type: 'done',
+            type: "done",
             result: {
               ok: true,
               pid: 12345,
-              endpoint: 'http://127.0.0.1:8080',
+              endpoint: "http://127.0.0.1:8080",
             },
           });
           callbacks.onComplete?.();
@@ -165,7 +165,7 @@ function makeFakeWorkloadClient(): {
     },
     modelHostStatus: {
       async query() {
-        return { state: 'Stopped', pid: null };
+        return { state: "Stopped", pid: null };
       },
     },
     rpcServerStart: {
@@ -180,7 +180,7 @@ function makeFakeWorkloadClient(): {
     },
     rpcServerDoctor: {
       async query() {
-        return { ok: true, path: '/fake', llamaCppBin: '/fake' };
+        return { ok: true, path: "/fake", llamaCppBin: "/fake" };
       },
     },
   };
@@ -205,20 +205,20 @@ function makeFakeWorkloadClient(): {
   };
 }
 
-function sampleComposite(overrides: Partial<Composite['spec']> = {}): Composite {
+function sampleComposite(overrides: Partial<Composite["spec"]> = {}): Composite {
   return {
-    apiVersion: 'llamactl/v1',
-    kind: 'Composite',
-    metadata: { name: 'kb-stack' },
+    apiVersion: "llamactl/v1",
+    kind: "Composite",
+    metadata: { name: "kb-stack" },
     spec: {
       services: [
         {
-          kind: 'chroma',
-          name: 'chroma-1',
-          node: 'local',
-          runtime: 'docker',
+          kind: "chroma",
+          name: "chroma-1",
+          node: "local",
+          runtime: "docker",
           port: 8001,
-          image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+          image: { repository: "chromadb/chroma", tag: "1.5.8" },
         },
       ],
       workloads: [],
@@ -226,7 +226,7 @@ function sampleComposite(overrides: Partial<Composite['spec']> = {}): Composite 
       gateways: [],
       pipelines: [],
       dependencies: [],
-      onFailure: 'rollback',
+      onFailure: "rollback",
       ...overrides,
     },
   };
@@ -234,8 +234,8 @@ function sampleComposite(overrides: Partial<Composite['spec']> = {}): Composite 
 
 // ---- tests ---------------------------------------------------------------
 
-describe('applyComposite — happy path (service only)', () => {
-  test('single chroma service → Ready', async () => {
+describe("applyComposite — happy path (service only)", () => {
+  test("single chroma service → Ready", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
     const events: CompositeApplyEvent[] = [];
@@ -251,43 +251,43 @@ describe('applyComposite — happy path (service only)', () => {
 
     expect(result.ok).toBe(true);
     expect(result.rolledBack).toBe(false);
-    expect(result.status.phase).toBe('Ready');
+    expect(result.status.phase).toBe("Ready");
     expect(result.componentResults).toHaveLength(1);
-    expect(result.componentResults[0]?.state).toBe('Ready');
+    expect(result.componentResults[0]?.state).toBe("Ready");
     expect(backend.services.size).toBe(1);
 
     // Event ordering sanity: phase:Applying → component-start →
     // component-ready → phase:Ready → done.
     const types = events.map((e) => e.type);
-    expect(types[0]).toBe('phase');
-    expect(types).toContain('component-start');
-    expect(types).toContain('component-ready');
-    expect(types[types.length - 1]).toBe('done');
+    expect(types[0]).toBe("phase");
+    expect(types).toContain("component-start");
+    expect(types).toContain("component-ready");
+    expect(types[types.length - 1]).toBe("done");
   });
 });
 
-describe('applyComposite — happy path with rag + backingService', () => {
-  test('service → rag with endpoint resolved from service instance', async () => {
+describe("applyComposite — happy path with rag + backingService", () => {
+  test("service → rag with endpoint resolved from service instance", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
 
     const manifest = sampleComposite({
       ragNodes: [
         {
-          name: 'kb',
-          node: 'local',
+          name: "kb",
+          node: "local",
           binding: {
-            provider: 'chroma',
-            endpoint: '',
+            provider: "chroma",
+            endpoint: "",
             extraArgs: [],
           },
-          backingService: 'chroma-1',
+          backingService: "chroma-1",
         },
       ],
       dependencies: [
         {
-          from: { kind: 'rag', name: 'kb' },
-          to: { kind: 'service', name: 'chroma-1' },
+          from: { kind: "rag", name: "kb" },
+          to: { kind: "service", name: "chroma-1" },
         },
       ],
     });
@@ -303,18 +303,18 @@ describe('applyComposite — happy path with rag + backingService', () => {
     expect(result.ok).toBe(true);
     // Service comes up first, then rag — verify rag component's
     // apply triggered an upsert to kubeconfig with the endpoint.
-    const { loadConfig } = await import('../src/config/kubeconfig.js');
+    const { loadConfig } = await import("../src/config/kubeconfig.js");
     const cfg = loadConfig(configPath);
-    const kbNode = cfg.clusters[0]?.nodes.find((n) => n.name === 'kb');
+    const kbNode = cfg.clusters[0]?.nodes.find((n) => n.name === "kb");
     expect(kbNode).toBeDefined();
-    expect(kbNode?.rag?.provider).toBe('chroma');
+    expect(kbNode?.rag?.provider).toBe("chroma");
     // endpoint should have been resolved to 127.0.0.1:8001 (per the
     // service spec's port) and rendered as http://...
-    expect(kbNode?.rag?.endpoint).toContain('127.0.0.1');
-    expect(kbNode?.rag?.endpoint).toContain('8001');
+    expect(kbNode?.rag?.endpoint).toContain("127.0.0.1");
+    expect(kbNode?.rag?.endpoint).toContain("8001");
   });
 
-  test('NodePort backing service → rag endpoint pulled from resolveExternalServiceEndpoint', async () => {
+  test("NodePort backing service → rag endpoint pulled from resolveExternalServiceEndpoint", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
     // Simulate k8s backend's external-endpoint resolver.
@@ -323,39 +323,39 @@ describe('applyComposite — happy path with rag + backingService', () => {
         resolveExternalServiceEndpoint: (
           ref: ServiceRef,
           opts: {
-            serviceType: 'ClusterIP' | 'NodePort' | 'LoadBalancer';
+            serviceType: "ClusterIP" | "NodePort" | "LoadBalancer";
           },
         ) => Promise<string | null>;
       }
     ).resolveExternalServiceEndpoint = async (_ref, opts) => {
-      if (opts.serviceType === 'NodePort') return 'http://localhost:31234';
+      if (opts.serviceType === "NodePort") return "http://localhost:31234";
       return null;
     };
 
     const manifest = sampleComposite({
       services: [
         {
-          kind: 'chroma',
-          name: 'chroma-1',
-          node: 'local',
-          runtime: 'docker',
+          kind: "chroma",
+          name: "chroma-1",
+          node: "local",
+          runtime: "docker",
           port: 8001,
-          serviceType: 'NodePort',
-          image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+          serviceType: "NodePort",
+          image: { repository: "chromadb/chroma", tag: "1.5.8" },
         },
       ],
       ragNodes: [
         {
-          name: 'kb',
-          node: 'local',
-          binding: { provider: 'chroma', endpoint: '', extraArgs: [] },
-          backingService: 'chroma-1',
+          name: "kb",
+          node: "local",
+          binding: { provider: "chroma", endpoint: "", extraArgs: [] },
+          backingService: "chroma-1",
         },
       ],
       dependencies: [
         {
-          from: { kind: 'rag', name: 'kb' },
-          to: { kind: 'service', name: 'chroma-1' },
+          from: { kind: "rag", name: "kb" },
+          to: { kind: "service", name: "chroma-1" },
         },
       ],
     });
@@ -369,13 +369,13 @@ describe('applyComposite — happy path with rag + backingService', () => {
     });
     expect(result.ok).toBe(true);
 
-    const { loadConfig } = await import('../src/config/kubeconfig.js');
+    const { loadConfig } = await import("../src/config/kubeconfig.js");
     const cfg = loadConfig(configPath);
-    const kbNode = cfg.clusters[0]?.nodes.find((n) => n.name === 'kb');
-    expect(kbNode?.rag?.endpoint).toBe('http://localhost:31234');
+    const kbNode = cfg.clusters[0]?.nodes.find((n) => n.name === "kb");
+    expect(kbNode?.rag?.endpoint).toBe("http://localhost:31234");
   });
 
-  test('ClusterIP backing service → external resolver NOT consulted (handler URL used)', async () => {
+  test("ClusterIP backing service → external resolver NOT consulted (handler URL used)", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
     let externalCalls = 0;
@@ -385,33 +385,33 @@ describe('applyComposite — happy path with rag + backingService', () => {
       }
     ).resolveExternalServiceEndpoint = async () => {
       externalCalls++;
-      return 'http://should-not-be-used';
+      return "http://should-not-be-used";
     };
 
     const manifest = sampleComposite({
       services: [
         {
-          kind: 'chroma',
-          name: 'chroma-1',
-          node: 'local',
-          runtime: 'docker',
+          kind: "chroma",
+          name: "chroma-1",
+          node: "local",
+          runtime: "docker",
           port: 8001,
-          serviceType: 'ClusterIP',
-          image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+          serviceType: "ClusterIP",
+          image: { repository: "chromadb/chroma", tag: "1.5.8" },
         },
       ],
       ragNodes: [
         {
-          name: 'kb',
-          node: 'local',
-          binding: { provider: 'chroma', endpoint: '', extraArgs: [] },
-          backingService: 'chroma-1',
+          name: "kb",
+          node: "local",
+          binding: { provider: "chroma", endpoint: "", extraArgs: [] },
+          backingService: "chroma-1",
         },
       ],
       dependencies: [
         {
-          from: { kind: 'rag', name: 'kb' },
-          to: { kind: 'service', name: 'chroma-1' },
+          from: { kind: "rag", name: "kb" },
+          to: { kind: "service", name: "chroma-1" },
         },
       ],
     });
@@ -428,32 +428,32 @@ describe('applyComposite — happy path with rag + backingService', () => {
   });
 });
 
-describe('applyComposite — service failure triggers rollback', () => {
-  test('ensureService throws → rollback walks previously-applied in reverse → empty', async () => {
+describe("applyComposite — service failure triggers rollback", () => {
+  test("ensureService throws → rollback walks previously-applied in reverse → empty", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
 
     const manifest: Composite = {
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'failing' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "failing" },
       spec: {
         services: [
           {
-            kind: 'chroma',
-            name: 'chroma-1',
-            node: 'local',
-            runtime: 'docker',
+            kind: "chroma",
+            name: "chroma-1",
+            node: "local",
+            runtime: "docker",
             port: 8001,
-            image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+            image: { repository: "chromadb/chroma", tag: "1.5.8" },
           },
           {
-            kind: 'chroma',
-            name: 'chroma-2',
-            node: 'local',
-            runtime: 'docker',
+            kind: "chroma",
+            name: "chroma-2",
+            node: "local",
+            runtime: "docker",
             port: 8002,
-            image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+            image: { repository: "chromadb/chroma", tag: "1.5.8" },
           },
         ],
         workloads: [],
@@ -462,11 +462,11 @@ describe('applyComposite — service failure triggers rollback', () => {
         pipelines: [],
         dependencies: [
           {
-            from: { kind: 'service', name: 'chroma-2' },
-            to: { kind: 'service', name: 'chroma-1' },
+            from: { kind: "service", name: "chroma-2" },
+            to: { kind: "service", name: "chroma-1" },
           },
         ],
-        onFailure: 'rollback',
+        onFailure: "rollback",
       },
     };
 
@@ -475,7 +475,7 @@ describe('applyComposite — service failure triggers rollback', () => {
     const origEnsure = backend.ensureService.bind(backend);
     backend.ensureService = async (spec) => {
       callCount++;
-      if (callCount === 2) throw new Error('simulated docker failure');
+      if (callCount === 2) throw new Error("simulated docker failure");
       return origEnsure(spec);
     };
 
@@ -491,43 +491,43 @@ describe('applyComposite — service failure triggers rollback', () => {
 
     expect(result.ok).toBe(false);
     expect(result.rolledBack).toBe(true);
-    expect(result.status.phase).toBe('Failed');
+    expect(result.status.phase).toBe("Failed");
     // Service 1 was torn down during rollback.
     expect(backend.services.size).toBe(0);
-    const rollbackStart = events.find((e) => e.type === 'rollback-start');
+    const rollbackStart = events.find((e) => e.type === "rollback-start");
     expect(rollbackStart).toBeDefined();
     // Rollback should have gone in reverse — chroma-1 teardown after
     // chroma-2's failure.
-    expect(backend.calls.some((c) => c.op === 'removeService')).toBe(true);
+    expect(backend.calls.some((c) => c.op === "removeService")).toBe(true);
   });
 });
 
-describe('applyComposite — onFailure=leave-partial', () => {
-  test('mid-failure → no rollback, Degraded phase, partial state kept', async () => {
+describe("applyComposite — onFailure=leave-partial", () => {
+  test("mid-failure → no rollback, Degraded phase, partial state kept", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
 
     const manifest: Composite = {
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'partial' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "partial" },
       spec: {
         services: [
           {
-            kind: 'chroma',
-            name: 'chroma-1',
-            node: 'local',
-            runtime: 'docker',
+            kind: "chroma",
+            name: "chroma-1",
+            node: "local",
+            runtime: "docker",
             port: 8001,
-            image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+            image: { repository: "chromadb/chroma", tag: "1.5.8" },
           },
           {
-            kind: 'chroma',
-            name: 'chroma-2',
-            node: 'local',
-            runtime: 'docker',
+            kind: "chroma",
+            name: "chroma-2",
+            node: "local",
+            runtime: "docker",
             port: 8002,
-            image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+            image: { repository: "chromadb/chroma", tag: "1.5.8" },
           },
         ],
         workloads: [],
@@ -536,11 +536,11 @@ describe('applyComposite — onFailure=leave-partial', () => {
         pipelines: [],
         dependencies: [
           {
-            from: { kind: 'service', name: 'chroma-2' },
-            to: { kind: 'service', name: 'chroma-1' },
+            from: { kind: "service", name: "chroma-2" },
+            to: { kind: "service", name: "chroma-1" },
           },
         ],
-        onFailure: 'leave-partial',
+        onFailure: "leave-partial",
       },
     };
 
@@ -548,7 +548,7 @@ describe('applyComposite — onFailure=leave-partial', () => {
     const origEnsure = backend.ensureService.bind(backend);
     backend.ensureService = async (spec) => {
       callCount++;
-      if (callCount === 2) throw new Error('partial failure');
+      if (callCount === 2) throw new Error("partial failure");
       return origEnsure(spec);
     };
 
@@ -562,17 +562,17 @@ describe('applyComposite — onFailure=leave-partial', () => {
 
     expect(result.ok).toBe(false);
     expect(result.rolledBack).toBe(false);
-    expect(result.status.phase).toBe('Degraded');
+    expect(result.status.phase).toBe("Degraded");
     // First service is still running.
     expect(backend.services.size).toBe(1);
-    expect(backend.services.has('llamactl-chroma-partial-chroma-1')).toBe(true);
+    expect(backend.services.has("llamactl-chroma-partial-chroma-1")).toBe(true);
     // No removeService calls — we left partial state.
-    expect(backend.calls.filter((c) => c.op === 'removeService')).toHaveLength(0);
+    expect(backend.calls.filter((c) => c.op === "removeService")).toHaveLength(0);
   });
 });
 
-describe('applyComposite — idempotent re-apply', () => {
-  test('second apply with unchanged spec is a cheap no-op', async () => {
+describe("applyComposite — idempotent re-apply", () => {
+  test("second apply with unchanged spec is a cheap no-op", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
 
@@ -599,7 +599,7 @@ describe('applyComposite — idempotent re-apply', () => {
       configPath,
       compositesDir,
     });
-    const ensureCalls = backend.calls.filter((c) => c.op === 'ensureService').length;
+    const ensureCalls = backend.calls.filter((c) => c.op === "ensureService").length;
     expect(ensureCalls).toBe(2); // one per apply, same spec
     // Idempotency at the backend layer is tested in
     // runtime-docker-backend.test.ts. Here we verify the composite
@@ -608,28 +608,28 @@ describe('applyComposite — idempotent re-apply', () => {
   });
 });
 
-describe('destroyComposite — reverses the DAG', () => {
-  test('services + rag node all torn down', async () => {
+describe("destroyComposite — reverses the DAG", () => {
+  test("services + rag node all torn down", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
 
     const manifest = sampleComposite({
       ragNodes: [
         {
-          name: 'kb',
-          node: 'local',
+          name: "kb",
+          node: "local",
           binding: {
-            provider: 'chroma',
-            endpoint: '',
+            provider: "chroma",
+            endpoint: "",
             extraArgs: [],
           },
-          backingService: 'chroma-1',
+          backingService: "chroma-1",
         },
       ],
       dependencies: [
         {
-          from: { kind: 'rag', name: 'kb' },
-          to: { kind: 'service', name: 'chroma-1' },
+          from: { kind: "rag", name: "kb" },
+          to: { kind: "service", name: "chroma-1" },
         },
       ],
     });
@@ -658,19 +658,19 @@ describe('destroyComposite — reverses the DAG', () => {
 
     // Order: rag teardown (removeNode) runs before service teardown.
     // Our counters: one removeService call for the container.
-    const removeServiceCalls = backend.calls.filter((c) => c.op === 'removeService');
+    const removeServiceCalls = backend.calls.filter((c) => c.op === "removeService");
     expect(removeServiceCalls).toHaveLength(1);
 
     // Rag node should be gone from kubeconfig.
-    const { loadConfig } = await import('../src/config/kubeconfig.js');
+    const { loadConfig } = await import("../src/config/kubeconfig.js");
     const cfg = loadConfig(configPath);
-    const kbStillThere = cfg.clusters[0]?.nodes.find((n) => n.name === 'kb');
+    const kbStillThere = cfg.clusters[0]?.nodes.find((n) => n.name === "kb");
     expect(kbStillThere).toBeUndefined();
   });
 });
 
-describe('destroyComposite — purgeVolumes plumbing', () => {
-  test('default destroy forwards purgeVolumes=false to the backend', async () => {
+describe("destroyComposite — purgeVolumes plumbing", () => {
+  test("default destroy forwards purgeVolumes=false to the backend", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
     const manifest = sampleComposite();
@@ -691,7 +691,7 @@ describe('destroyComposite — purgeVolumes plumbing', () => {
       compositesDir,
     });
 
-    const removeCall = backend.calls.find((c) => c.op === 'removeService');
+    const removeCall = backend.calls.find((c) => c.op === "removeService");
     expect(removeCall).toBeDefined();
     const { opts } = removeCall!.arg as {
       ref: ServiceRef;
@@ -700,7 +700,7 @@ describe('destroyComposite — purgeVolumes plumbing', () => {
     expect(opts.purgeVolumes).toBe(false);
   });
 
-  test('purgeVolumes: true flows through to backend.removeService', async () => {
+  test("purgeVolumes: true flows through to backend.removeService", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
     const manifest = sampleComposite();
@@ -722,7 +722,7 @@ describe('destroyComposite — purgeVolumes plumbing', () => {
       purgeVolumes: true,
     });
 
-    const removeCalls = backend.calls.filter((c) => c.op === 'removeService');
+    const removeCalls = backend.calls.filter((c) => c.op === "removeService");
     expect(removeCalls.length).toBeGreaterThan(0);
     for (const call of removeCalls) {
       const { opts } = call.arg as {
@@ -733,7 +733,7 @@ describe('destroyComposite — purgeVolumes plumbing', () => {
     }
   });
 
-  test('rollback NEVER purges volumes — even if a hypothetical flag were passed', async () => {
+  test("rollback NEVER purges volumes — even if a hypothetical flag were passed", async () => {
     // Rollback is a reactive cleanup pass after apply failure; per the
     // anti-pattern list it MUST never wipe operator storage. We prove
     // this by inducing a rollback and asserting every removeService
@@ -742,26 +742,26 @@ describe('destroyComposite — purgeVolumes plumbing', () => {
     const { client } = makeFakeWorkloadClient();
 
     const manifest: Composite = {
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'rb' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "rb" },
       spec: {
         services: [
           {
-            kind: 'chroma',
-            name: 'chroma-1',
-            node: 'local',
-            runtime: 'docker',
+            kind: "chroma",
+            name: "chroma-1",
+            node: "local",
+            runtime: "docker",
             port: 8001,
-            image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+            image: { repository: "chromadb/chroma", tag: "1.5.8" },
           },
           {
-            kind: 'chroma',
-            name: 'chroma-2',
-            node: 'local',
-            runtime: 'docker',
+            kind: "chroma",
+            name: "chroma-2",
+            node: "local",
+            runtime: "docker",
             port: 8002,
-            image: { repository: 'chromadb/chroma', tag: '1.5.8' },
+            image: { repository: "chromadb/chroma", tag: "1.5.8" },
           },
         ],
         workloads: [],
@@ -770,11 +770,11 @@ describe('destroyComposite — purgeVolumes plumbing', () => {
         pipelines: [],
         dependencies: [
           {
-            from: { kind: 'service', name: 'chroma-2' },
-            to: { kind: 'service', name: 'chroma-1' },
+            from: { kind: "service", name: "chroma-2" },
+            to: { kind: "service", name: "chroma-1" },
           },
         ],
-        onFailure: 'rollback',
+        onFailure: "rollback",
       },
     };
 
@@ -782,7 +782,7 @@ describe('destroyComposite — purgeVolumes plumbing', () => {
     const origEnsure = backend.ensureService.bind(backend);
     backend.ensureService = async (spec) => {
       callCount++;
-      if (callCount === 2) throw new Error('simulated docker failure');
+      if (callCount === 2) throw new Error("simulated docker failure");
       return origEnsure(spec);
     };
 
@@ -797,7 +797,7 @@ describe('destroyComposite — purgeVolumes plumbing', () => {
     expect(result.rolledBack).toBe(true);
     // Rollback teardown happened; every removeService call must have
     // purgeVolumes: false.
-    const removeCalls = backend.calls.filter((c) => c.op === 'removeService');
+    const removeCalls = backend.calls.filter((c) => c.op === "removeService");
     expect(removeCalls.length).toBeGreaterThan(0);
     for (const call of removeCalls) {
       const { opts } = call.arg as {
@@ -809,23 +809,23 @@ describe('destroyComposite — purgeVolumes plumbing', () => {
   });
 });
 
-describe('applyComposite — external-runtime service short-circuits', () => {
-  test('runtime=external service records Ready without backend call', async () => {
+describe("applyComposite — external-runtime service short-circuits", () => {
+  test("runtime=external service records Ready without backend call", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
 
     const manifest: Composite = {
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'ext' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "ext" },
       spec: {
         services: [
           {
-            kind: 'chroma',
-            name: 'chroma-ext',
-            node: 'local',
-            runtime: 'external',
-            externalEndpoint: 'http://chroma.internal:8000',
+            kind: "chroma",
+            name: "chroma-ext",
+            node: "local",
+            runtime: "external",
+            externalEndpoint: "http://chroma.internal:8000",
             port: 8000,
           },
         ],
@@ -834,7 +834,7 @@ describe('applyComposite — external-runtime service short-circuits', () => {
         gateways: [],
         pipelines: [],
         dependencies: [],
-        onFailure: 'rollback',
+        onFailure: "rollback",
       },
     };
 
@@ -848,22 +848,19 @@ describe('applyComposite — external-runtime service short-circuits', () => {
 
     expect(result.ok).toBe(true);
     // No ensureService call — external runtime short-circuits.
-    const ensureCalls = backend.calls.filter((c) => c.op === 'ensureService');
+    const ensureCalls = backend.calls.filter((c) => c.op === "ensureService");
     expect(ensureCalls).toHaveLength(0);
   });
 });
 
-describe('destroyComposite — boundary-based destroy (k8s cascade)', () => {
-  test('backend with destroyCompositeBoundary skips per-service removeService', async () => {
+describe("destroyComposite — boundary-based destroy (k8s cascade)", () => {
+  test("backend with destroyCompositeBoundary skips per-service removeService", async () => {
     const backend = new FakeRuntimeBackend();
     const boundaryCalls: Array<{ compositeName: string; opts: unknown }> = [];
     // Attach the optional hook — the applier should prefer it.
     (
       backend as FakeRuntimeBackend & {
-        destroyCompositeBoundary?: (
-          name: string,
-          opts?: unknown,
-        ) => Promise<void>;
+        destroyCompositeBoundary?: (name: string, opts?: unknown) => Promise<void>;
       }
     ).destroyCompositeBoundary = async (compositeName, opts) => {
       boundaryCalls.push({ compositeName, opts });
@@ -873,20 +870,20 @@ describe('destroyComposite — boundary-based destroy (k8s cascade)', () => {
     const manifest = sampleComposite({
       ragNodes: [
         {
-          name: 'kb',
-          node: 'local',
+          name: "kb",
+          node: "local",
           binding: {
-            provider: 'chroma',
-            endpoint: '',
+            provider: "chroma",
+            endpoint: "",
             extraArgs: [],
           },
-          backingService: 'chroma-1',
+          backingService: "chroma-1",
         },
       ],
       dependencies: [
         {
-          from: { kind: 'rag', name: 'kb' },
-          to: { kind: 'service', name: 'chroma-1' },
+          from: { kind: "rag", name: "kb" },
+          to: { kind: "service", name: "chroma-1" },
         },
       ],
     });
@@ -911,51 +908,47 @@ describe('destroyComposite — boundary-based destroy (k8s cascade)', () => {
     expect(result.ok).toBe(true);
     // Boundary called once — no per-service removeService during destroy.
     expect(boundaryCalls).toHaveLength(1);
-    expect(boundaryCalls[0]?.compositeName).toBe('kb-stack');
+    expect(boundaryCalls[0]?.compositeName).toBe("kb-stack");
     // No removeService during destroy (only during rollback, which
     // didn't fire here since apply succeeded).
-    const removeDuringDestroy = backend.calls.filter(
-      (c) => c.op === 'removeService',
-    );
+    const removeDuringDestroy = backend.calls.filter((c) => c.op === "removeService");
     expect(removeDuringDestroy).toHaveLength(0);
 
     // Non-service components (rag node) still cleaned up via the
     // per-component loop.
-    const { loadConfig } = await import('../src/config/kubeconfig.js');
+    const { loadConfig } = await import("../src/config/kubeconfig.js");
     const cfg = loadConfig(configPath);
-    expect(
-      cfg.clusters[0]?.nodes.find((n) => n.name === 'kb'),
-    ).toBeUndefined();
+    expect(cfg.clusters[0]?.nodes.find((n) => n.name === "kb")).toBeUndefined();
   });
 
-  test('boundary call failure surfaces as a destroy error without breaking non-service teardown', async () => {
+  test("boundary call failure surfaces as a destroy error without breaking non-service teardown", async () => {
     const backend = new FakeRuntimeBackend();
     (
       backend as FakeRuntimeBackend & {
         destroyCompositeBoundary?: (name: string) => Promise<void>;
       }
     ).destroyCompositeBoundary = async () => {
-      throw new Error('cluster unreachable');
+      throw new Error("cluster unreachable");
     };
     const { client } = makeFakeWorkloadClient();
 
     const manifest = sampleComposite({
       ragNodes: [
         {
-          name: 'kb',
-          node: 'local',
+          name: "kb",
+          node: "local",
           binding: {
-            provider: 'chroma',
-            endpoint: '',
+            provider: "chroma",
+            endpoint: "",
             extraArgs: [],
           },
-          backingService: 'chroma-1',
+          backingService: "chroma-1",
         },
       ],
       dependencies: [
         {
-          from: { kind: 'rag', name: 'kb' },
-          to: { kind: 'service', name: 'chroma-1' },
+          from: { kind: "rag", name: "kb" },
+          to: { kind: "service", name: "chroma-1" },
         },
       ],
     });
@@ -978,34 +971,34 @@ describe('destroyComposite — boundary-based destroy (k8s cascade)', () => {
 
     expect(result.ok).toBe(false);
     expect(result.errors.length).toBeGreaterThan(0);
-    expect(result.errors[0]?.message).toContain('cluster unreachable');
+    expect(result.errors[0]?.message).toContain("cluster unreachable");
     // RAG node still got cleaned up.
-    const { loadConfig } = await import('../src/config/kubeconfig.js');
+    const { loadConfig } = await import("../src/config/kubeconfig.js");
     const cfg = loadConfig(configPath);
-    expect(
-      cfg.clusters[0]?.nodes.find((n) => n.name === 'kb'),
-    ).toBeUndefined();
+    expect(cfg.clusters[0]?.nodes.find((n) => n.name === "kb")).toBeUndefined();
   });
 });
 
-describe('applyComposite — gateway upstream threading', () => {
-  test('resolved upstream endpoints + providerConfig reach the gateway handler', async () => {
+describe("applyComposite — gateway upstream threading", () => {
+  test("resolved upstream endpoints + providerConfig reach the gateway handler", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
 
     // Register the gateway node so dispatchGatewayApply resolves it.
-    const { loadConfig, saveConfig: saveCfg, upsertNode } = await import(
-      '../src/config/kubeconfig.js'
-    );
+    const {
+      loadConfig,
+      saveConfig: saveCfg,
+      upsertNode,
+    } = await import("../src/config/kubeconfig.js");
     const cfg0 = loadConfig(configPath);
     saveCfg(
-      upsertNode(cfg0, 'home', {
-        name: 'sirius-gw',
-        endpoint: '',
-        kind: 'gateway',
+      upsertNode(cfg0, "home", {
+        name: "sirius-gw",
+        endpoint: "",
+        kind: "gateway",
         cloud: {
-          provider: 'sirius',
-          baseUrl: 'http://127.0.0.1:3000/v1',
+          provider: "sirius",
+          baseUrl: "http://127.0.0.1:3000/v1",
         },
       }),
       configPath,
@@ -1019,9 +1012,8 @@ describe('applyComposite — gateway upstream threading', () => {
       providerConfig: Readonly<Record<string, unknown>>;
     }> = [];
     const fakeSirius = {
-      kind: 'sirius',
-      canHandle: (node: { cloud?: { provider: string } }) =>
-        node.cloud?.provider === 'sirius',
+      kind: "sirius",
+      canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "sirius",
       apply: async (o: {
         composite?: {
           compositeName: string;
@@ -1032,11 +1024,11 @@ describe('applyComposite — gateway upstream threading', () => {
         if (o.composite) recorded.push({ ...o.composite });
         const now = new Date().toISOString();
         return {
-          action: 'started' as const,
+          action: "started" as const,
           statusSection: {
-            phase: 'Running' as const,
+            phase: "Running" as const,
             serverPid: null,
-            endpoint: 'http://127.0.0.1:3000/v1',
+            endpoint: "http://127.0.0.1:3000/v1",
             lastTransitionTime: now,
             conditions: [],
           },
@@ -1045,19 +1037,19 @@ describe('applyComposite — gateway upstream threading', () => {
     };
 
     const manifest: Composite = {
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'stack' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "stack" },
       spec: {
         services: [],
         workloads: [
           {
-            node: 'local',
+            node: "local",
             enabled: true,
-            target: { kind: 'rel', value: 'llama-7b.gguf' },
+            target: { kind: "rel", value: "llama-7b.gguf" },
             extraArgs: [],
             workers: [],
-            restartPolicy: 'OnFailure',
+            restartPolicy: "OnFailure",
             gateway: false,
             allowExternalBind: false,
             timeoutSeconds: 60,
@@ -1066,16 +1058,16 @@ describe('applyComposite — gateway upstream threading', () => {
         ragNodes: [],
         gateways: [
           {
-            name: 'sirius-entry',
-            node: 'sirius-gw',
-            provider: 'sirius',
-            upstreamWorkloads: ['local'],
-            providerConfig: { extra: { routing: 'latency-aware', maxQps: 42 } },
+            name: "sirius-entry",
+            node: "sirius-gw",
+            provider: "sirius",
+            upstreamWorkloads: ["local"],
+            providerConfig: { extra: { routing: "latency-aware", maxQps: 42 } },
           },
         ],
         pipelines: [],
         dependencies: [],
-        onFailure: 'rollback',
+        onFailure: "rollback",
       },
     };
 
@@ -1091,32 +1083,34 @@ describe('applyComposite — gateway upstream threading', () => {
     expect(result.ok).toBe(true);
     expect(recorded).toHaveLength(1);
     const ctx = recorded[0]!;
-    expect(ctx.compositeName).toBe('stack');
+    expect(ctx.compositeName).toBe("stack");
     expect(ctx.upstreams).toHaveLength(1);
-    expect(ctx.upstreams[0]?.name).toBe('local');
-    expect(ctx.upstreams[0]?.nodeName).toBe('local');
+    expect(ctx.upstreams[0]?.name).toBe("local");
+    expect(ctx.upstreams[0]?.nodeName).toBe("local");
     // The fake workload client's started event resolves endpoint to
     // http://127.0.0.1:8080 (see makeFakeWorkloadClient above).
-    expect(ctx.upstreams[0]?.endpoint).toBe('http://127.0.0.1:8080');
-    expect(ctx.providerConfig).toEqual({ extra: { routing: 'latency-aware', maxQps: 42 } });
+    expect(ctx.upstreams[0]?.endpoint).toBe("http://127.0.0.1:8080");
+    expect(ctx.providerConfig).toEqual({ extra: { routing: "latency-aware", maxQps: 42 } });
   });
 
-  test('useProxy=true emits the internal-proxy endpoint for upstream workloads', async () => {
+  test("useProxy=true emits the internal-proxy endpoint for upstream workloads", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
 
-    const { loadConfig, saveConfig: saveCfg, upsertNode } = await import(
-      '../src/config/kubeconfig.js'
-    );
+    const {
+      loadConfig,
+      saveConfig: saveCfg,
+      upsertNode,
+    } = await import("../src/config/kubeconfig.js");
     const cfg0 = loadConfig(configPath);
     saveCfg(
-      upsertNode(cfg0, 'home', {
-        name: 'proxy-gw',
-        endpoint: '',
-        kind: 'gateway',
+      upsertNode(cfg0, "home", {
+        name: "proxy-gw",
+        endpoint: "",
+        kind: "gateway",
         cloud: {
-          provider: 'sirius',
-          baseUrl: 'http://127.0.0.1:3000/v1',
+          provider: "sirius",
+          baseUrl: "http://127.0.0.1:3000/v1",
         },
       }),
       configPath,
@@ -1126,9 +1120,8 @@ describe('applyComposite — gateway upstream threading', () => {
       upstreams: ReadonlyArray<{ endpoint: string }>;
     }> = [];
     const fakeSirius = {
-      kind: 'sirius',
-      canHandle: (node: { cloud?: { provider: string } }) =>
-        node.cloud?.provider === 'sirius',
+      kind: "sirius",
+      canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "sirius",
       apply: async (o: {
         composite?: {
           upstreams: ReadonlyArray<{ endpoint: string }>;
@@ -1137,11 +1130,11 @@ describe('applyComposite — gateway upstream threading', () => {
         if (o.composite) recorded.push(o.composite);
         const now = new Date().toISOString();
         return {
-          action: 'started' as const,
+          action: "started" as const,
           statusSection: {
-            phase: 'Running' as const,
+            phase: "Running" as const,
             serverPid: null,
-            endpoint: 'http://127.0.0.1:3000/v1',
+            endpoint: "http://127.0.0.1:3000/v1",
             lastTransitionTime: now,
             conditions: [],
           },
@@ -1150,19 +1143,19 @@ describe('applyComposite — gateway upstream threading', () => {
     };
 
     const manifest: Composite = {
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'proxy-stack' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "proxy-stack" },
       spec: {
         services: [],
         workloads: [
           {
-            node: 'local',
+            node: "local",
             enabled: true,
-            target: { kind: 'rel', value: 'llama-7b.gguf' },
+            target: { kind: "rel", value: "llama-7b.gguf" },
             extraArgs: [],
             workers: [],
-            restartPolicy: 'OnFailure',
+            restartPolicy: "OnFailure",
             gateway: false,
             allowExternalBind: false,
             timeoutSeconds: 60,
@@ -1172,16 +1165,16 @@ describe('applyComposite — gateway upstream threading', () => {
         ragNodes: [],
         gateways: [
           {
-            name: 'sirius-entry',
-            node: 'proxy-gw',
-            provider: 'sirius',
-            upstreamWorkloads: ['local'],
+            name: "sirius-entry",
+            node: "proxy-gw",
+            provider: "sirius",
+            upstreamWorkloads: ["local"],
             providerConfig: {},
           },
         ],
         pipelines: [],
         dependencies: [],
-        onFailure: 'rollback',
+        onFailure: "rollback",
       },
     };
 
@@ -1196,25 +1189,27 @@ describe('applyComposite — gateway upstream threading', () => {
 
     expect(result.ok).toBe(true);
     expect(recorded).toHaveLength(1);
-    expect(recorded[0]?.upstreams[0]?.endpoint).toBe('http://127.0.0.1:7944');
+    expect(recorded[0]?.upstreams[0]?.endpoint).toBe("http://127.0.0.1:7944");
   });
 
-  test('useProxy=false keeps the direct workload endpoint', async () => {
+  test("useProxy=false keeps the direct workload endpoint", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
 
-    const { loadConfig, saveConfig: saveCfg, upsertNode } = await import(
-      '../src/config/kubeconfig.js'
-    );
+    const {
+      loadConfig,
+      saveConfig: saveCfg,
+      upsertNode,
+    } = await import("../src/config/kubeconfig.js");
     const cfg0 = loadConfig(configPath);
     saveCfg(
-      upsertNode(cfg0, 'home', {
-        name: 'direct-gw',
-        endpoint: '',
-        kind: 'gateway',
+      upsertNode(cfg0, "home", {
+        name: "direct-gw",
+        endpoint: "",
+        kind: "gateway",
         cloud: {
-          provider: 'sirius',
-          baseUrl: 'http://127.0.0.1:3000/v1',
+          provider: "sirius",
+          baseUrl: "http://127.0.0.1:3000/v1",
         },
       }),
       configPath,
@@ -1224,9 +1219,8 @@ describe('applyComposite — gateway upstream threading', () => {
       upstreams: ReadonlyArray<{ endpoint: string }>;
     }> = [];
     const fakeSirius = {
-      kind: 'sirius',
-      canHandle: (node: { cloud?: { provider: string } }) =>
-        node.cloud?.provider === 'sirius',
+      kind: "sirius",
+      canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "sirius",
       apply: async (o: {
         composite?: {
           upstreams: ReadonlyArray<{ endpoint: string }>;
@@ -1235,11 +1229,11 @@ describe('applyComposite — gateway upstream threading', () => {
         if (o.composite) recorded.push(o.composite);
         const now = new Date().toISOString();
         return {
-          action: 'started' as const,
+          action: "started" as const,
           statusSection: {
-            phase: 'Running' as const,
+            phase: "Running" as const,
             serverPid: null,
-            endpoint: 'http://127.0.0.1:3000/v1',
+            endpoint: "http://127.0.0.1:3000/v1",
             lastTransitionTime: now,
             conditions: [],
           },
@@ -1248,19 +1242,19 @@ describe('applyComposite — gateway upstream threading', () => {
     };
 
     const manifest: Composite = {
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'direct-stack' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "direct-stack" },
       spec: {
         services: [],
         workloads: [
           {
-            node: 'local',
+            node: "local",
             enabled: true,
-            target: { kind: 'rel', value: 'llama-7b.gguf' },
+            target: { kind: "rel", value: "llama-7b.gguf" },
             extraArgs: [],
             workers: [],
-            restartPolicy: 'OnFailure',
+            restartPolicy: "OnFailure",
             gateway: false,
             allowExternalBind: false,
             timeoutSeconds: 60,
@@ -1270,16 +1264,16 @@ describe('applyComposite — gateway upstream threading', () => {
         ragNodes: [],
         gateways: [
           {
-            name: 'sirius-entry',
-            node: 'direct-gw',
-            provider: 'sirius',
-            upstreamWorkloads: ['local'],
+            name: "sirius-entry",
+            node: "direct-gw",
+            provider: "sirius",
+            upstreamWorkloads: ["local"],
             providerConfig: {},
           },
         ],
         pipelines: [],
         dependencies: [],
-        onFailure: 'rollback',
+        onFailure: "rollback",
       },
     };
 
@@ -1294,25 +1288,27 @@ describe('applyComposite — gateway upstream threading', () => {
 
     expect(result.ok).toBe(true);
     expect(recorded).toHaveLength(1);
-    expect(recorded[0]?.upstreams[0]?.endpoint).toBe('http://127.0.0.1:8080');
+    expect(recorded[0]?.upstreams[0]?.endpoint).toBe("http://127.0.0.1:8080");
   });
 
-  test('upstreamWorkloads=[] still emits empty composite context', async () => {
+  test("upstreamWorkloads=[] still emits empty composite context", async () => {
     const backend = new FakeRuntimeBackend();
     const { client } = makeFakeWorkloadClient();
 
-    const { loadConfig, saveConfig: saveCfg, upsertNode } = await import(
-      '../src/config/kubeconfig.js'
-    );
+    const {
+      loadConfig,
+      saveConfig: saveCfg,
+      upsertNode,
+    } = await import("../src/config/kubeconfig.js");
     const cfg0 = loadConfig(configPath);
     saveCfg(
-      upsertNode(cfg0, 'home', {
-        name: 'empty-gw',
-        endpoint: '',
-        kind: 'gateway',
+      upsertNode(cfg0, "home", {
+        name: "empty-gw",
+        endpoint: "",
+        kind: "gateway",
         cloud: {
-          provider: 'embersynth',
-          baseUrl: 'http://127.0.0.1:7777/v1',
+          provider: "embersynth",
+          baseUrl: "http://127.0.0.1:7777/v1",
         },
       }),
       configPath,
@@ -1320,20 +1316,17 @@ describe('applyComposite — gateway upstream threading', () => {
 
     let ctxSeen: { upstreams?: unknown; providerConfig?: unknown } | null = null;
     const fakeEmber = {
-      kind: 'embersynth',
-      canHandle: (node: { cloud?: { provider: string } }) =>
-        node.cloud?.provider === 'embersynth',
-      apply: async (o: {
-        composite?: { upstreams: unknown; providerConfig: unknown };
-      }) => {
+      kind: "embersynth",
+      canHandle: (node: { cloud?: { provider: string } }) => node.cloud?.provider === "embersynth",
+      apply: async (o: { composite?: { upstreams: unknown; providerConfig: unknown } }) => {
         ctxSeen = o.composite ?? null;
         const now = new Date().toISOString();
         return {
-          action: 'started' as const,
+          action: "started" as const,
           statusSection: {
-            phase: 'Running' as const,
+            phase: "Running" as const,
             serverPid: null,
-            endpoint: 'http://127.0.0.1:7777/v1',
+            endpoint: "http://127.0.0.1:7777/v1",
             lastTransitionTime: now,
             conditions: [],
           },
@@ -1342,25 +1335,25 @@ describe('applyComposite — gateway upstream threading', () => {
     };
 
     const manifest: Composite = {
-      apiVersion: 'llamactl/v1',
-      kind: 'Composite',
-      metadata: { name: 'empty' },
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "empty" },
       spec: {
         services: [],
         workloads: [],
         ragNodes: [],
         gateways: [
           {
-            name: 'ember-entry',
-            node: 'empty-gw',
-            provider: 'embersynth',
+            name: "ember-entry",
+            node: "empty-gw",
+            provider: "embersynth",
             upstreamWorkloads: [],
             providerConfig: {},
           },
         ],
         pipelines: [],
         dependencies: [],
-        onFailure: 'rollback',
+        onFailure: "rollback",
       },
     };
 

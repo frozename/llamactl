@@ -8,6 +8,7 @@ The original task spec was based on outdated information that assumed
 these were hardcoded literals.
 
 Architecture defaults set at `device.cpp:499-520`:
+
 - Phone (`'p'`): ops=20, mb=40
 - Base / Pro (`'g'`): ops=40, mb=40
 - Max (`'s'`): ops=50, mb=50

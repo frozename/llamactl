@@ -1,12 +1,12 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { startSearchIngest, stopSearchIngest } from '../search/ingest/lifecycle.js';
-import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
-import { openaiProxy } from '@llamactl/core';
-import { resolveEnv } from '../../../core/src/env.js';
-import { migrateLegacySingletonRuntime } from '../../../core/src/workloadRuntime.js';
-import { router as appRouter } from '../router.js';
-import { extractBearer, unauthorizedResponse, verifyBearer } from './auth.js';
-import { loadCert } from './tls.js';
+import { existsSync, readFileSync } from "node:fs";
+import { startSearchIngest, stopSearchIngest } from "../search/ingest/lifecycle.js";
+import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+import { openaiProxy } from "@llamactl/core";
+import { resolveEnv } from "../../../core/src/env.js";
+import { migrateLegacySingletonRuntime } from "../../../core/src/workloadRuntime.js";
+import { router as appRouter } from "../router.js";
+import { extractBearer, unauthorizedResponse, verifyBearer } from "./auth.js";
+import { loadCert } from "./tls.js";
 import {
   agentInfo,
   llamaServerUp,
@@ -16,19 +16,16 @@ import {
   openaiUpstreamErrorsTotal,
   registry as metricsRegistry,
   statusClass,
-} from './metrics.js';
-import { publishAgentMdns, type PublishedAgent } from './mdns.js';
-import { startPeerSnapshotPoller } from './peer-snapshot-poller.js';
-import { handleRegister, type RegisterHandlerOptions } from './register.js';
-import {
-  handleInstallScript,
-  type InstallScriptHandlerOptions,
-} from './install-script.js';
-import { handleArtifact, type ArtifactsHandlerOptions } from './artifacts.js';
-import { handleAgentRollback, handleAgentUpdate } from './agent-update.js';
-import { handleRagChatCompletions } from './rag-chat-endpoint.js';
-import { handleTunnelRelay } from './tunnel-relay.js';
-import { handleFleetSnapshotRoute } from '../routes/fleet.js';
+} from "./metrics.js";
+import { publishAgentMdns, type PublishedAgent } from "./mdns.js";
+import { startPeerSnapshotPoller } from "./peer-snapshot-poller.js";
+import { handleRegister, type RegisterHandlerOptions } from "./register.js";
+import { handleInstallScript, type InstallScriptHandlerOptions } from "./install-script.js";
+import { handleArtifact, type ArtifactsHandlerOptions } from "./artifacts.js";
+import { handleAgentRollback, handleAgentUpdate } from "./agent-update.js";
+import { handleRagChatCompletions } from "./rag-chat-endpoint.js";
+import { handleTunnelRelay } from "./tunnel-relay.js";
+import { handleFleetSnapshotRoute } from "../routes/fleet.js";
 import {
   createTunnelClient,
   createTunnelRouterHandler,
@@ -36,18 +33,18 @@ import {
   type TunnelClient,
   type TunnelServer,
   type TunnelState,
-} from '../tunnel/index.js';
-import { join } from 'node:path';
-import { listWorkloads, saveWorkload } from '../workload/store.js';
-import type { ModelRun } from '../workload/schema.js';
+} from "../tunnel/index.js";
+import { join } from "node:path";
+import { listWorkloads, saveWorkload } from "../workload/store.js";
+import type { ModelRun } from "../workload/schema.js";
 
 export interface StartAgentOptions {
-  bindHost?: string;          // default '127.0.0.1'
-  port?: number;              // default 0 (let OS pick)
-  endpoint?: string;          // default '/trpc'
-  tokenHash: string;          // SHA-256 hex of the expected bearer token
+  bindHost?: string; // default '127.0.0.1'
+  port?: number; // default 0 (let OS pick)
+  endpoint?: string; // default '/trpc'
+  tokenHash: string; // SHA-256 hex of the expected bearer token
   noAuth?: boolean;
-  tls?: { certPath: string; keyPath: string };  // omit for plain HTTP (test-only)
+  tls?: { certPath: string; keyPath: string }; // omit for plain HTTP (test-only)
   onRequest?: (url: URL) => void;
   /**
    * Labels attached to `llamactl_agent_info`. Defaults to a best-
@@ -126,7 +123,7 @@ export interface StartAgentOptions {
 }
 
 export interface RunningAgent {
-  url: string;                // e.g. https://127.0.0.1:7843
+  url: string; // e.g. https://127.0.0.1:7843
   port: number;
   fingerprint: string | null;
   stop: () => Promise<void>;
@@ -137,13 +134,10 @@ export interface RunningAgent {
   tunnelClient?: TunnelClient;
 }
 
-function synthesizeTransientWorkload(
-  workloadName: string,
-  statePath: string,
-): void {
+function synthesizeTransientWorkload(workloadName: string, statePath: string): void {
   if (!existsSync(statePath)) return;
   try {
-    const raw = readFileSync(statePath, 'utf8');
+    const raw = readFileSync(statePath, "utf8");
     const parsed = JSON.parse(raw) as {
       rel?: string;
       extraArgs?: string[];
@@ -151,28 +145,28 @@ function synthesizeTransientWorkload(
       port?: string | number;
       binary?: string;
     };
-    if (typeof parsed.rel !== 'string') return;
+    if (typeof parsed.rel !== "string") return;
     const transient: ModelRun = {
-      apiVersion: 'llamactl/v1',
-      kind: 'ModelRun',
+      apiVersion: "llamactl/v1",
+      kind: "ModelRun",
       metadata: { name: workloadName, labels: {}, annotations: {} },
       spec: {
-        node: 'local',
+        node: "local",
         enabled: true,
-        target: { kind: 'rel', value: parsed.rel },
+        target: { kind: "rel", value: parsed.rel },
         extraArgs: Array.isArray(parsed.extraArgs) ? parsed.extraArgs : [],
         workers: [],
-        restartPolicy: 'Never',
+        restartPolicy: "Never",
         timeoutSeconds: 60,
-        ...(typeof parsed.host === 'string' || typeof parsed.port === 'number'
+        ...(typeof parsed.host === "string" || typeof parsed.port === "number"
           ? {
               endpoint: {
-                ...(typeof parsed.host === 'string' ? { host: parsed.host } : {}),
-                ...(typeof parsed.port === 'number' ? { port: parsed.port } : {}),
+                ...(typeof parsed.host === "string" ? { host: parsed.host } : {}),
+                ...(typeof parsed.port === "number" ? { port: parsed.port } : {}),
               },
             }
           : {}),
-        ...(typeof parsed.binary === 'string' ? { binary: parsed.binary } : {}),
+        ...(typeof parsed.binary === "string" ? { binary: parsed.binary } : {}),
         gateway: false,
         allowExternalBind: false,
       },
@@ -190,17 +184,17 @@ interface ClientAddress {
 }
 
 function formatClientAddress(address: ClientAddress | null | undefined): string {
-  if (!address) return 'unknown';
-  return typeof address.port === 'number' ? `${address.address}:${address.port}` : address.address;
+  if (!address) return "unknown";
+  return typeof address.port === "number" ? `${address.address}:${address.port}` : address.address;
 }
 
 function isLoopbackAddress(address: string | null | undefined): boolean {
   if (!address) return false;
   return (
-    address === '127.0.0.1' ||
-    address === 'localhost' ||
-    address === '::1' ||
-    address === '::ffff:127.0.0.1'
+    address === "127.0.0.1" ||
+    address === "localhost" ||
+    address === "::1" ||
+    address === "::ffff:127.0.0.1"
   );
 }
 
@@ -208,13 +202,15 @@ export function runStartupMigration(): void {
   try {
     const resolved = resolveEnv();
     const migration = migrateLegacySingletonRuntime(resolved, listWorkloads());
-    if (migration.kind === 'migrated') {
+    if (migration.kind === "migrated") {
       console.log(`[migration] re-homed legacy runtime under workload '${migration.workload}'`);
-    } else if (migration.kind === 'synthesized') {
-      console.log(`[migration] no manifest matched legacy state; synthesized '${migration.workload}'`);
+    } else if (migration.kind === "synthesized") {
+      console.log(
+        `[migration] no manifest matched legacy state; synthesized '${migration.workload}'`,
+      );
       synthesizeTransientWorkload(
         migration.workload,
-        join(resolved.LOCAL_AI_RUNTIME_DIR, 'workloads', migration.workload, 'llama-server.state'),
+        join(resolved.LOCAL_AI_RUNTIME_DIR, "workloads", migration.workload, "llama-server.state"),
       );
     }
   } catch {
@@ -230,9 +226,9 @@ export function runStartupMigration(): void {
  * three mounts.
  */
 export function startAgentServer(opts: StartAgentOptions): RunningAgent {
-  const bindHost = opts.bindHost ?? '127.0.0.1';
+  const bindHost = opts.bindHost ?? "127.0.0.1";
   const port = opts.port ?? 0;
-  const endpoint = opts.endpoint ?? '/trpc';
+  const endpoint = opts.endpoint ?? "/trpc";
   const noAuth = opts.noAuth === true;
   const allowPlainHttp = noAuth && isLoopbackAddress(bindHost);
   let unauthenticatedNoAuthRequestCount = 0;
@@ -246,15 +242,15 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   // covers ANY future async-leak the agent picks up — not just mDNS.
   const captureFatal = (kind: string) => (err: unknown) => {
     process.stderr.write(
-      `${kind}: ${err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err)}\n`,
+      `${kind}: ${err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err)}\n`,
     );
   };
-  process.on('uncaughtException', captureFatal('uncaughtException'));
-  process.on('unhandledRejection', captureFatal('unhandledRejection'));
+  process.on("uncaughtException", captureFatal("uncaughtException"));
+  process.on("unhandledRejection", captureFatal("unhandledRejection"));
 
   runStartupMigration();
   if (noAuth) {
-    const transport = allowPlainHttp ? 'Serving plain HTTP (no TLS).' : 'Serving HTTPS.';
+    const transport = allowPlainHttp ? "Serving plain HTTP (no TLS)." : "Serving HTTPS.";
     process.stderr.write(
       `[agent] WARNING: --no-auth flag enabled. Bearer token validation BYPASSED for /v1/* connections from 127.0.0.1. All other routes (including /trpc) still require bearer auth. ${transport}\n`,
     );
@@ -268,8 +264,8 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     : null;
   agentInfo.set(
     {
-      node_name: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? 'agent',
-      version: opts.version ?? '0.0.0',
+      node_name: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? "agent",
+      version: opts.version ?? "0.0.0",
     },
     1,
   );
@@ -288,7 +284,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   function allowNoAuth(pathname: string, address: ClientAddress | null): boolean {
     return (
       noAuth &&
-      pathname.startsWith('/v1/') &&
+      pathname.startsWith("/v1/") &&
       isLoopbackAddress(bindHost) &&
       isLoopbackAddress(address?.address)
     );
@@ -303,7 +299,11 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     );
   }
 
-  async function handleOpenAI(req: Request, url: URL, address: ClientAddress | null): Promise<Response> {
+  async function handleOpenAI(
+    req: Request,
+    url: URL,
+    address: ClientAddress | null,
+  ): Promise<Response> {
     if (allowNoAuth(url.pathname, address)) {
       logUnauthenticatedNoAuthRequest(req, address);
     } else if (!verifyBearer(req, opts.tokenHash)) {
@@ -313,9 +313,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     const endTimer = openaiRequestDurationSeconds.startTimer({ path: pathLabel });
     let status = 0;
     try {
-      if (req.method === 'GET' && url.pathname === '/v1/models') {
+      if (req.method === "GET" && url.pathname === "/v1/models") {
         const data = openaiProxy.listOpenAIModels().data;
-        const models = { object: 'list' as const, data };
+        const models = { object: "list" as const, data };
         llamaServerUp.set(data.length > 0 ? 1 : 0);
         status = 200;
         return Response.json(models);
@@ -336,12 +336,12 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     server: any,
   ): Response | Promise<Response> => {
     const url = new URL(req.url);
-    const clientAddress = (typeof server?.requestIP === 'function' ? server.requestIP(req) : null) as
-      | ClientAddress
-      | null;
+    const clientAddress = (
+      typeof server?.requestIP === "function" ? server.requestIP(req) : null
+    ) as ClientAddress | null;
     opts.onRequest?.(url);
-    if (url.pathname === '/health' || url.pathname === '/healthz') {
-      return new Response('ok', { status: 200 });
+    if (url.pathname === "/health" || url.pathname === "/healthz") {
+      return new Response("ok", { status: 200 });
     }
     // Reverse-tunnel endpoints — gated on opts.tunnelCentral. Both
     // are no-ops when tunnelServer is null (falls through to 404).
@@ -350,37 +350,31 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // 101 placeholder is unreachable when the upgrade succeeded
     // (Bun has already taken over the socket); it satisfies the
     // typed Response return shape for the fetch handler.
-    if (url.pathname === '/tunnel' && tunnelServer) {
+    if (url.pathname === "/tunnel" && tunnelServer) {
       const upgradeRes = tunnelServer.handleUpgrade(req, server);
       return upgradeRes ?? new Response(null, { status: 101 });
     }
-    if (url.pathname.startsWith('/tunnel-relay/') && tunnelServer) {
-      return handleTunnelRelay(
-        req,
-        url,
-        tunnelServer,
-        opts.tokenHash,
-        opts.tunnelJournalPath,
-      );
+    if (url.pathname.startsWith("/tunnel-relay/") && tunnelServer) {
+      return handleTunnelRelay(req, url, tunnelServer, opts.tokenHash, opts.tunnelJournalPath);
     }
     // Bootstrap registration — unauthenticated by design (nodes have
     // no bearer yet; that's what this endpoint mints). Consumes a
     // single-use token from deploy-node, writes to kubeconfig.
-    if (url.pathname === '/register') {
+    if (url.pathname === "/register") {
       return handleRegister(req, opts.registerOptions ?? {});
     }
     // Install-script endpoint — returns the curl-pipe-sh bootstrap
     // script for the given token. Unauthenticated; the token query
     // param is the capability. Hits /artifacts + /register once the
     // target host runs it.
-    if (url.pathname === '/install-agent.sh') {
+    if (url.pathname === "/install-agent.sh") {
       return handleInstallScript(req, opts.installScriptOptions ?? {});
     }
     // Artifact server — streams pre-built llamactl-agent binaries
     // to the curl-pipe-sh installer. Public, no auth (the binary is
     // the same thing anyone can compile from git; serving it over
     // TLS with caching is a convenience, not a privilege).
-    if (url.pathname.startsWith('/artifacts/')) {
+    if (url.pathname.startsWith("/artifacts/")) {
       return handleArtifact(req, url, opts.artifactsOptions ?? {});
     }
     // Agent self-update endpoint — bearer-auth'd POST that takes a
@@ -388,18 +382,18 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // binary, and exits so launchd respawns into the new build.
     // Used by `llamactl agent update --node <n>` from the control
     // plane; never exposed unauthenticated.
-    if (url.pathname === '/agent/update') {
+    if (url.pathname === "/agent/update") {
       return handleAgentUpdate(req, { tokenHash: opts.tokenHash });
     }
     // Companion to /agent/update — restores `<execPath>.previous`
     // over the running binary + exits 0 so launchd respawns the
     // prior version. Symmetric: calling it twice flips back.
-    if (url.pathname === '/agent/rollback') {
+    if (url.pathname === "/agent/rollback") {
       return handleAgentRollback(req, { tokenHash: opts.tokenHash });
     }
     // Prometheus scrape endpoint. Bearer-auth'd like everything else;
     // scrapers can set the standard Authorization header.
-    if (url.pathname === '/metrics') {
+    if (url.pathname === "/metrics") {
       if (allowNoAuth(url.pathname, clientAddress)) {
         logUnauthenticatedNoAuthRequest(req, clientAddress);
       } else if (!verifyBearer(req, opts.tokenHash)) {
@@ -409,7 +403,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         (text) =>
           new Response(text, {
             status: 200,
-            headers: { 'content-type': metricsRegistry.contentType },
+            headers: { "content-type": metricsRegistry.contentType },
           }),
       );
     }
@@ -419,7 +413,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // chat through. When neither field is present the handler falls
     // through to the legacy openai-proxy path below. Non-POST / other
     // paths under /v1/* fall straight through to handleOpenAI.
-    if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
+    if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
       if (allowNoAuth(url.pathname, clientAddress)) {
         logUnauthenticatedNoAuthRequest(req, clientAddress);
       } else if (!verifyBearer(req, opts.tokenHash)) {
@@ -430,7 +424,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         fallback: (forwarded) => handleOpenAI(forwarded, url, clientAddress),
       });
     }
-    if (req.method === 'GET' && url.pathname === '/v1/fleet/snapshot') {
+    if (req.method === "GET" && url.pathname === "/v1/fleet/snapshot") {
       if (allowNoAuth(url.pathname, clientAddress)) {
         logUnauthenticatedNoAuthRequest(req, clientAddress);
       } else if (!verifyBearer(req, opts.tokenHash)) {
@@ -442,11 +436,11 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // then either listed (GET /v1/models — static, no upstream call)
     // or proxied straight to the local llama-server so external tools
     // can speak plain OpenAI SDK to the agent's URL.
-    if (url.pathname.startsWith('/v1/') || url.pathname === '/v1') {
+    if (url.pathname.startsWith("/v1/") || url.pathname === "/v1") {
       return handleOpenAI(req, url, clientAddress);
     }
     if (!url.pathname.startsWith(endpoint)) {
-      return new Response('not found', { status: 404 });
+      return new Response("not found", { status: 404 });
     }
     if (allowNoAuth(url.pathname, clientAddress)) {
       logUnauthenticatedNoAuthRequest(req, clientAddress);
@@ -466,52 +460,53 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   // present, so we can't share a single literal with `websocket?:`
   // optional — the ws-and-no-ws branches construct separately.
   const wsConfig = tunnelServer ? tunnelServer.websocket : null;
-  const server = opts.tls && !allowPlainHttp
-    ? (() => {
-        const loaded = loadCert(opts.tls);
-        fingerprint = loaded.fingerprint;
-        return wsConfig
-          ? Bun.serve({
-              port,
-              hostname: bindHost,
-              reusePort: true,
-              fetch: fetchHandler,
-              websocket: wsConfig,
-              tls: { cert: loaded.certPem, key: loaded.keyPem },
-              // Composite applies (image pulls + pod readiness polling)
-              // routinely run well past Bun.serve's default 10s idle
-              // timeout. 255 is Bun.serve's hard ceiling; past that the
-              // caller polls compositeStatus subscriptions instead of
-              // waiting on the apply mutation.
-              idleTimeout: 255,
-            })
-          : Bun.serve({
-              port,
-              hostname: bindHost,
-              reusePort: true,
-              fetch: fetchHandler,
-              tls: { cert: loaded.certPem, key: loaded.keyPem },
-              idleTimeout: 255,
-            });
-      })()
-    : wsConfig
-      ? Bun.serve({
-          port,
-          hostname: bindHost,
-          reusePort: true,
-          fetch: fetchHandler,
-          websocket: wsConfig,
-          idleTimeout: 255,
-        })
-      : Bun.serve({
-          port,
-          hostname: bindHost,
-          reusePort: true,
-          fetch: fetchHandler,
-          idleTimeout: 255,
-        });
+  const server =
+    opts.tls && !allowPlainHttp
+      ? (() => {
+          const loaded = loadCert(opts.tls);
+          fingerprint = loaded.fingerprint;
+          return wsConfig
+            ? Bun.serve({
+                port,
+                hostname: bindHost,
+                reusePort: true,
+                fetch: fetchHandler,
+                websocket: wsConfig,
+                tls: { cert: loaded.certPem, key: loaded.keyPem },
+                // Composite applies (image pulls + pod readiness polling)
+                // routinely run well past Bun.serve's default 10s idle
+                // timeout. 255 is Bun.serve's hard ceiling; past that the
+                // caller polls compositeStatus subscriptions instead of
+                // waiting on the apply mutation.
+                idleTimeout: 255,
+              })
+            : Bun.serve({
+                port,
+                hostname: bindHost,
+                reusePort: true,
+                fetch: fetchHandler,
+                tls: { cert: loaded.certPem, key: loaded.keyPem },
+                idleTimeout: 255,
+              });
+        })()
+      : wsConfig
+        ? Bun.serve({
+            port,
+            hostname: bindHost,
+            reusePort: true,
+            fetch: fetchHandler,
+            websocket: wsConfig,
+            idleTimeout: 255,
+          })
+        : Bun.serve({
+            port,
+            hostname: bindHost,
+            reusePort: true,
+            fetch: fetchHandler,
+            idleTimeout: 255,
+          });
 
-  const scheme = opts.tls && !allowPlainHttp ? 'https' : 'http';
+  const scheme = opts.tls && !allowPlainHttp ? "https" : "http";
   const listenPort = server.port ?? port;
 
   let mdns: PublishedAgent | null = null;
@@ -526,17 +521,15 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   // bypasses it. Until bonjour-service is replaced, the env-var
   // escape hatch keeps long-lived launchd-managed agents stable.
   const mdnsDisabledByEnv =
-    process.env.LLAMACTL_DISABLE_MDNS === '1' ||
-    process.env.LLAMACTL_DISABLE_MDNS === 'true';
-  const shouldAdvertise =
-    !mdnsDisabledByEnv && (opts.advertiseMdns ?? Boolean(opts.tls));
+    process.env.LLAMACTL_DISABLE_MDNS === "1" || process.env.LLAMACTL_DISABLE_MDNS === "true";
+  const shouldAdvertise = !mdnsDisabledByEnv && (opts.advertiseMdns ?? Boolean(opts.tls));
   if (shouldAdvertise) {
     try {
       mdns = publishAgentMdns({
         port: listenPort,
-        nodeName: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? 'agent',
+        nodeName: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? "agent",
         fingerprint,
-        version: opts.version ?? '0.0.0',
+        version: opts.version ?? "0.0.0",
       });
     } catch {
       // mDNS is best-effort — platforms without a working multicast
@@ -588,7 +581,11 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       // Best-effort — never let a tunnel-client teardown error
       // prevent the HTTP server from also stopping.
       if (tunnelClient) {
-        try { tunnelClient.stop(); } catch { /* ignore */ }
+        try {
+          tunnelClient.stop();
+        } catch {
+          /* ignore */
+        }
       }
       await mdns?.stop().catch(() => {});
       server.stop(true);

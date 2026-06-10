@@ -1,7 +1,7 @@
 import {
   defaultFleetJournalPath,
   readLatestFleetSnapshotFromJournal,
-} from '../../../fleet-supervisor/src/index.js';
+} from "../../../fleet-supervisor/src/index.js";
 
 export interface FleetSnapshotRouteOptions {
   journalPath?: string;

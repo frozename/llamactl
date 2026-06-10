@@ -1,5 +1,5 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 /**
  * Root directory for ops-chat state. Honours the same cascade
@@ -15,8 +15,8 @@ import { join } from 'node:path';
  */
 function defaultOpsChatDir(env: NodeJS.ProcessEnv = process.env): string {
   const devStorage = env.DEV_STORAGE?.trim();
-  if (devStorage) return join(devStorage, 'ops-chat');
-  return join(homedir(), '.llamactl', 'ops-chat');
+  if (devStorage) return join(devStorage, "ops-chat");
+  return join(homedir(), ".llamactl", "ops-chat");
 }
 
 /**
@@ -24,18 +24,16 @@ function defaultOpsChatDir(env: NodeJS.ProcessEnv = process.env): string {
  * (tests scope this to a tempdir so they never touch the real
  * ~/.llamactl).
  */
-export function defaultOpsChatAuditPath(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function defaultOpsChatAuditPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_OPS_CHAT_AUDIT?.trim();
   if (override) return override;
-  return join(defaultOpsChatDir(env), 'audit.jsonl');
+  return join(defaultOpsChatDir(env), "audit.jsonl");
 }
 
 export function defaultSessionsDir(env: NodeJS.ProcessEnv = process.env): string {
   const devStorage = env.DEV_STORAGE?.trim();
-  if (devStorage) return join(devStorage, 'ops-chat', 'sessions');
-  return join(homedir(), '.llamactl', 'ops-chat', 'sessions');
+  if (devStorage) return join(devStorage, "ops-chat", "sessions");
+  return join(homedir(), ".llamactl", "ops-chat", "sessions");
 }
 
 export function defaultSessionDir(env: NodeJS.ProcessEnv, sessionId: string): string {

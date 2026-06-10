@@ -16,23 +16,27 @@ in `AGENTS.md`:
    - Don't bundle unrelated refactors.
 
 3. **Test locally:**
+
    ```bash
    bun test
    bun run typecheck
    bun run --cwd packages/remote tsc --noEmit
    bun run --cwd packages/app tsc --noEmit
    ```
+
    All green before you move on.
 
 4. **Cross-repo sweep.** If the slice touches `@nova/*`, bump the
    Nova package first, then in llamactl + sirius-gateway +
    embersynth:
+
    ```bash
    (cd ../sirius-gateway && bun install && bun test)
    (cd ../embersynth && bun install && bun test)
    (cd ../nova && bun test)
    bun test
    ```
+
    Four repos green = slice shippable.
 
 5. **Commit.** One focused commit:

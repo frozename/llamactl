@@ -43,7 +43,7 @@ interface RefusalRule {
  * worrying about indentation or newlines.
  */
 export function normalizeGoal(goal: string): string {
-  return goal.toLowerCase().replace(/\s+/g, ' ').trim();
+  return goal.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -58,14 +58,12 @@ export const DEFAULT_REFUSAL_RULES: readonly RefusalRule[] = [
   },
   {
     pattern: /\bwipe\s+(?:all|everything|the\s+cluster|the\s+fleet)\b/,
-    reason:
-      'refused: "wipe all/everything/cluster/fleet" — blanket wipe; narrow the scope',
+    reason: 'refused: "wipe all/everything/cluster/fleet" — blanket wipe; narrow the scope',
   },
   {
     pattern: /\bdrop\s+all\b/,
     qualifier: /\bdrop\s+all\s+(?:stopped|failed|idle|orphaned|stale|old)\b/,
-    reason:
-      'refused: "drop all" with no qualifier — specify which resources to drop',
+    reason: 'refused: "drop all" with no qualifier — specify which resources to drop',
   },
   {
     pattern: /\breset\s+(?:the\s+)?(?:cluster|fleet|everything)\b/,
@@ -74,12 +72,11 @@ export const DEFAULT_REFUSAL_RULES: readonly RefusalRule[] = [
   },
   {
     pattern: /\buninstall\s+(?:all|everything|every\s+node)\b/,
-    reason:
-      'refused: "uninstall all/everything/every node" — use the per-node uninstall flow',
+    reason: 'refused: "uninstall all/everything/every node" — use the per-node uninstall flow',
   },
   {
     pattern: /\bdisable\s+(?:all|every)\s+(?:safety|safeguard|guard)\b/,
-    reason: 'refused: operator requested disabling safety guards',
+    reason: "refused: operator requested disabling safety guards",
   },
 ];
 

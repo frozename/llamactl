@@ -122,8 +122,8 @@ Every CLI command that targets a node routes through
 `packages/cli/src/dispatcher.ts`:
 
 ```ts
-await runOp(nodeId, 'catalog.list', {});
-await subscribeRemote(nodeId, 'pullFile', input, onEvent);
+await runOp(nodeId, "catalog.list", {});
+await subscribeRemote(nodeId, "pullFile", input, onEvent);
 ```
 
 `local` is an in-proc `createCaller` shortcut; remote uses an HTTPS
@@ -176,15 +176,15 @@ or a production swap, default to these in order:
      reload into 1-3s).
    - You're closing the train -> infer loop (packages/train/ produces
      MLX adapters; serving them via oMLX skips the GGUF roundtrip).
-   Skip MLX when:
+     Skip MLX when:
    - The workload is classification / rubric-in-prompt — Q8-small
      GGUF (Granite 3B Q8_0 via llama.cpp) still wins per the
      attention-thesis eval until directly re-benched on MLX.
    - You need the wider set of llama.cpp arch-specific flags
      (--mtp-head, --swa-full, --rpc, etc.) — oMLX exposes its own
      flag set, not those.
-   Sub A ships single-model ModelHost on local only;
-   multi-model + mac-mini + train-adapter loading land in Sub B/C/D.
+     Sub A ships single-model ModelHost on local only;
+     multi-model + mac-mini + train-adapter loading land in Sub B/C/D.
 3. **Quant ladder, by architecture.** Conventional dense + hybrid
    attention (Granite 4.1, Llama 3.x, Qwen 3.x non-MoE) ranks
    Q8_0 > Q6_K > Q5_K_M > Q4_K_M monotonically on retrieval/
@@ -214,7 +214,7 @@ a MoE family should resolve to `UD-Q4_K_XL`.
 
 ## Ops Chat dispatch (N.4)
 
-`packages/remote/src/ops-chat/` maps 16 llamactl.* MCP tools onto
+`packages/remote/src/ops-chat/` maps 16 llamactl.\* MCP tools onto
 the matching tRPC procedures. The Operator Console renderer calls
 `trpc.operatorRunTool({name, arguments, dryRun})` and the server
 routes via `createCaller` — no secondary MCP server boot, no
@@ -410,11 +410,11 @@ operators describe 3+ interacting components.
 
 **K8s backend (Phase K8s-1 through K8s-7 shipped) — opt-in by
 design**: the backend is fully implemented + tested, but nothing
-about llamactl's onboarding *requires* a cluster. Docker is the
+about llamactl's onboarding _requires_ a cluster. Docker is the
 default runtime everywhere. K8s becomes active when either:
 
-  - `spec.runtime: kubernetes` is set on a composite manifest, or
-  - `LLAMACTL_RUNTIME_BACKEND=kubernetes` is exported in the env.
+- `spec.runtime: kubernetes` is set on a composite manifest, or
+- `LLAMACTL_RUNTIME_BACKEND=kubernetes` is exported in the env.
 
 The `@kubernetes/client-node` dep is installed unconditionally
 but lazy-loaded — nothing talks to a cluster until the first
@@ -502,19 +502,19 @@ the operator's reachable machine + N nodes dialing in.
 
 **Flags**:
 
-- *On central*: no CLI flag today. The tunnel server is wired
+- _On central_: no CLI flag today. The tunnel server is wired
   programmatically via `startAgentServer({ tunnelCentral: { port,
-  expectedBearerHash, onNodeConnect?, onNodeDisconnect? } })` in
+expectedBearerHash, onNodeConnect?, onNodeDisconnect? } })` in
   `packages/remote/src/server/serve.ts`. An operator that wants to
   run an agent in central mode must script the boot path (or
   extend `agent serve` with a matching flag in a follow-up slice).
-- *On dialing node* — `llamactl agent serve`:
+- _On dialing node_ — `llamactl agent serve`:
   - `--dial-central=<wss-url>` — the central's `/tunnel` URL.
   - `--central-bearer=<token>` — tunnel bearer (or set
     `LLAMACTL_TUNNEL_BEARER` so it stays out of the command line).
   - `--tunnel-node-name=<name>` — identity presented in the hello
     frame; defaults to the agent's `nodeName`.
-- *In kubeconfig*: mark a node with `tunnelPreferred: true` and
+- _In kubeconfig_: mark a node with `tunnelPreferred: true` and
   set the context's `tunnelCentralUrl` to the local central's URL.
   The dispatcher then POSTs `tunnelCentralUrl/tunnel-relay/<node>`
   instead of talking to the node directly.
@@ -572,19 +572,19 @@ otherwise bleed through.
 When `$LLAMACTL_TEST_PROFILE` is set the resolver applies these
 defaults — any individually-set env var still wins:
 
-| Env var                 | Default value                                       |
-|-------------------------|-----------------------------------------------------|
-| `DEV_STORAGE`           | `$LLAMACTL_TEST_PROFILE`                            |
-| `LOCAL_AI_RUNTIME_DIR`  | `$LLAMACTL_TEST_PROFILE/ai-models/local-ai`         |
-| `LLAMA_CPP_ROOT`        | `$LLAMACTL_TEST_PROFILE/ai-models/llama.cpp`        |
-| `LLAMA_CPP_MODELS`      | `$LLAMA_CPP_ROOT/models`                            |
-| `LLAMA_CPP_CACHE`       | `$LLAMA_CPP_ROOT/.cache`                            |
-| `LLAMA_CPP_LOGS`        | `$LLAMACTL_TEST_PROFILE/logs/llama.cpp`             |
-| `LLAMA_CPP_BIN`         | `$LLAMACTL_TEST_PROFILE/bin` (empty dir)            |
-| `HF_HOME`               | `$LLAMACTL_TEST_PROFILE/cache/huggingface`          |
-| `HUGGINGFACE_HUB_CACHE` | `$HF_HOME/hub`                                      |
-| `OLLAMA_MODELS`         | `$LLAMACTL_TEST_PROFILE/ai-models/ollama`           |
-| `LLAMA_CPP_HOST`        | `127.0.0.1` (constant — no real interface bind)     |
+| Env var                 | Default value                                                       |
+| ----------------------- | ------------------------------------------------------------------- |
+| `DEV_STORAGE`           | `$LLAMACTL_TEST_PROFILE`                                            |
+| `LOCAL_AI_RUNTIME_DIR`  | `$LLAMACTL_TEST_PROFILE/ai-models/local-ai`                         |
+| `LLAMA_CPP_ROOT`        | `$LLAMACTL_TEST_PROFILE/ai-models/llama.cpp`                        |
+| `LLAMA_CPP_MODELS`      | `$LLAMA_CPP_ROOT/models`                                            |
+| `LLAMA_CPP_CACHE`       | `$LLAMA_CPP_ROOT/.cache`                                            |
+| `LLAMA_CPP_LOGS`        | `$LLAMACTL_TEST_PROFILE/logs/llama.cpp`                             |
+| `LLAMA_CPP_BIN`         | `$LLAMACTL_TEST_PROFILE/bin` (empty dir)                            |
+| `HF_HOME`               | `$LLAMACTL_TEST_PROFILE/cache/huggingface`                          |
+| `HUGGINGFACE_HUB_CACHE` | `$HF_HOME/hub`                                                      |
+| `OLLAMA_MODELS`         | `$LLAMACTL_TEST_PROFILE/ai-models/ollama`                           |
+| `LLAMA_CPP_HOST`        | `127.0.0.1` (constant — no real interface bind)                     |
 | `LLAMA_CPP_PORT`        | `65534` (sentinel — nothing listens; Logs/Server surface "offline") |
 
 Both the TypeScript resolver (`packages/core/src/env.ts`) and the

@@ -7,11 +7,11 @@
  * built electron-mcp-server checkout pointed at by ELECTRON_MCP_DIR
  * (or ../electron-mcp-server relative to the llamactl repo root).
  */
-import { spawn, type ChildProcessByStdio } from 'node:child_process';
-import { createInterface } from 'node:readline';
-import type { Readable, Writable } from 'node:stream';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { createInterface } from "node:readline";
+import type { Readable, Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 interface JsonRpcResponse {
   id?: number;
@@ -26,7 +26,7 @@ class McpClient {
   constructor(proc: ChildProcessByStdio<Writable, Readable, null>) {
     this.proc = proc;
     const rl = createInterface({ input: proc.stdout });
-    rl.on('line', (line) => {
+    rl.on("line", (line) => {
       if (!line.trim()) return;
       try {
         const frame = JSON.parse(line) as JsonRpcResponse;
@@ -53,11 +53,11 @@ class McpClient {
       });
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'tools/call',
+          method: "tools/call",
           params: { name: tool, arguments: args },
-        }) + '\n',
+        }) + "\n",
       );
     });
     if (res.error) throw new Error(`${tool} → ${res.error.message}`);
@@ -65,7 +65,7 @@ class McpClient {
       isError?: boolean;
       content?: Array<{ text?: string }>;
     };
-    const text = envelope?.content?.[0]?.text ?? '';
+    const text = envelope?.content?.[0]?.text ?? "";
     if (envelope?.isError) throw new Error(`${tool} → ${text}`);
     try {
       return JSON.parse(text);
@@ -79,15 +79,15 @@ class McpClient {
       this.pending.set(id, (r) => resolveP(r));
       this.proc.stdin.write(
         JSON.stringify({
-          jsonrpc: '2.0',
+          jsonrpc: "2.0",
           id,
-          method: 'initialize',
+          method: "initialize",
           params: {
-            protocolVersion: '2024-11-05',
+            protocolVersion: "2024-11-05",
             capabilities: {},
-            clientInfo: { name: 'chat-compare-flow', version: '0.0.1' },
+            clientInfo: { name: "chat-compare-flow", version: "0.0.1" },
           },
-        }) + '\n',
+        }) + "\n",
       );
     });
   }
@@ -113,25 +113,26 @@ function parseArgs(argv: string[]): DriverArgs {
   const env: Record<string, string> = {};
   let userDataDir: string | undefined;
   for (const a of argv.slice(2)) {
-    if (a.startsWith('--executable=')) executable = a.slice('--executable='.length);
-    else if (a.startsWith('--args=')) execArgs = a.slice('--args='.length).split(' ').filter(Boolean);
-    else if (a.startsWith('--env=')) {
-      const kv = a.slice('--env='.length);
-      const eq = kv.indexOf('=');
+    if (a.startsWith("--executable=")) executable = a.slice("--executable=".length);
+    else if (a.startsWith("--args="))
+      execArgs = a.slice("--args=".length).split(" ").filter(Boolean);
+    else if (a.startsWith("--env=")) {
+      const kv = a.slice("--env=".length);
+      const eq = kv.indexOf("=");
       if (eq > 0) env[kv.slice(0, eq)] = kv.slice(eq + 1);
-    } else if (a.startsWith('--userDataDir=')) {
-      userDataDir = a.slice('--userDataDir='.length);
+    } else if (a.startsWith("--userDataDir=")) {
+      userDataDir = a.slice("--userDataDir=".length);
     }
   }
-  if (!executable) throw new Error('--executable required');
+  if (!executable) throw new Error("--executable required");
   const out: DriverArgs = { executable, execArgs, env };
   if (userDataDir !== undefined) out.userDataDir = userDataDir;
   return out;
 }
 
-function check(label: string, cond: boolean, detail = ''): void {
-  const mark = cond ? 'PASS' : 'FAIL';
-  console.log(`[${mark}] ${label}${detail ? ' — ' + detail : ''}`);
+function check(label: string, cond: boolean, detail = ""): void {
+  const mark = cond ? "PASS" : "FAIL";
+  console.log(`[${mark}] ${label}${detail ? " — " + detail : ""}`);
   if (!cond) process.exitCode = 1;
 }
 
@@ -144,11 +145,11 @@ function check(label: string, cond: boolean, detail = ''): void {
 function resolveServerScript(here: string): string {
   const explicit = process.env.ELECTRON_MCP_DIR;
   if (explicit && explicit.length > 0) {
-    return resolve(explicit, 'dist', 'server', 'index.js');
+    return resolve(explicit, "dist", "server", "index.js");
   }
   // Default: ../../../../electron-mcp-server/dist/server/index.js
   // (from tests/ui-flows up to llamactl root, then sibling repo).
-  return resolve(here, '..', '..', '..', 'electron-mcp-server', 'dist', 'server', 'index.js');
+  return resolve(here, "..", "..", "..", "electron-mcp-server", "dist", "server", "index.js");
 }
 
 async function main(): Promise<void> {
@@ -156,9 +157,9 @@ async function main(): Promise<void> {
   const here = dirname(fileURLToPath(import.meta.url));
   const serverScript = resolveServerScript(here);
   const env: NodeJS.ProcessEnv = { ...process.env };
-  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? 'warn';
-  const nodeBin = process.env.MCP_NODE ?? 'node';
-  const proc = spawn(nodeBin, [serverScript], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "warn";
+  const nodeBin = process.env.MCP_NODE ?? "node";
+  const proc = spawn(nodeBin, [serverScript], { env, stdio: ["pipe", "pipe", "inherit"] });
   const client = new McpClient(proc);
 
   try {
@@ -169,21 +170,21 @@ async function main(): Promise<void> {
     };
     if (Object.keys(args.env).length > 0) launchArgs.env = args.env;
     if (args.userDataDir !== undefined) launchArgs.userDataDir = args.userDataDir;
-    const launch = (await client.call('electron_launch', launchArgs, 60_000)) as {
+    const launch = (await client.call("electron_launch", launchArgs, 60_000)) as {
       sessionId?: string;
     };
     const sessionId = launch.sessionId;
-    if (!sessionId) throw new Error('launch failed');
-    await client.call('electron_wait_for_window', { sessionId, index: 0, timeoutMs: 30_000 });
-    await client.call('electron_wait_for_selector', {
+    if (!sessionId) throw new Error("launch failed");
+    await client.call("electron_wait_for_window", { sessionId, index: 0, timeoutMs: 30_000 });
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="dashboard-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 10_000,
     });
 
     // Navigate to Chat via the command palette (Beacon shell).
-    await client.call('electron_evaluate_renderer', {
+    await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `(() => {
         const e = new KeyboardEvent('keydown', {
@@ -197,18 +198,18 @@ async function main(): Promise<void> {
         document.dispatchEvent(e);
       })()`,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="command-palette"]',
-      state: 'visible',
+      state: "visible",
       timeout: 3_000,
     });
-    await client.call('electron_fill', {
+    await client.call("electron_fill", {
       sessionId,
       selector: '[data-testid="command-palette-input"]',
-      value: 'Chat',
+      value: "Chat",
     });
-    await client.call('electron_evaluate_renderer', {
+    await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `(() => {
         const e = new KeyboardEvent('keydown', {
@@ -223,10 +224,10 @@ async function main(): Promise<void> {
         target.dispatchEvent(e);
       })()`,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="chat-root"]',
-      state: 'visible',
+      state: "visible",
       timeout: 8_000,
     });
 
@@ -234,20 +235,22 @@ async function main(): Promise<void> {
     // behind nodeList.isLoading — without a backend the query never
     // resolves, so the empty state never renders. SKIP gracefully.
     try {
-      await client.call('electron_wait_for_selector', {
+      await client.call("electron_wait_for_selector", {
         sessionId,
         selector: '[data-testid="chat-new"]',
-        state: 'visible',
+        state: "visible",
         timeout: 5_000,
       });
     } catch {
-      console.log('SKIP — chat-new button not visible (likely nodeList still loading; needs backend).');
-      await client.call('electron_close', { sessionId });
+      console.log(
+        "SKIP — chat-new button not visible (likely nodeList still loading; needs backend).",
+      );
+      await client.call("electron_close", { sessionId });
       return;
     }
     // Dispatch via DOM click() — electron_click's clickability check has
     // been flaky on the small chat-new button in headless macOS CI.
-    await client.call('electron_evaluate_renderer', {
+    await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: `(() => {
         const el = document.querySelector('[data-testid="chat-new"]');
@@ -255,79 +258,81 @@ async function main(): Promise<void> {
         el.click();
       })()`,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="chat-pane-a"]',
-      state: 'visible',
+      state: "visible",
       timeout: 5_000,
     });
-    check('pane A visible after New chat', true);
+    check("pane A visible after New chat", true);
 
     // Pane B should NOT be rendered yet.
-    const before = (await client.call('electron_evaluate_renderer', {
+    const before = (await client.call("electron_evaluate_renderer", {
       sessionId,
       expression: 'document.querySelectorAll("[data-testid=\\"chat-pane-b\\"]").length',
     })) as { result: number };
-    check('pane B absent before compare', before.result === 0, `count=${before.result}`);
+    check("pane B absent before compare", before.result === 0, `count=${before.result}`);
 
     // Enter compare mode. force:true skips Playwright's actionability
     // wait — the headless macOS runner intermittently fails the small-
     // button visibility check. Wrap the assertion in a SKIP path: chat
     // compare-mode requires a configured node + model, which the
     // hermetic profile doesn't provide.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="chat-compare"]',
       force: true,
     });
     try {
-      await client.call('electron_wait_for_selector', {
+      await client.call("electron_wait_for_selector", {
         sessionId,
         selector: '[data-testid="chat-pane-b"]',
-        state: 'visible',
+        state: "visible",
         timeout: 5_000,
       });
     } catch {
-      console.log('SKIP — chat-pane-b did not render (likely needs node+model configured).');
-      await client.call('electron_close', { sessionId });
+      console.log("SKIP — chat-pane-b did not render (likely needs node+model configured).");
+      await client.call("electron_close", { sessionId });
       return;
     }
-    check('pane B appears after Compare', true);
+    check("pane B appears after Compare", true);
 
     // Both panes have their own node/model select plus capability pills.
-    const dual = (await client.call('electron_accessibility_snapshot', {
+    const dual = (await client.call("electron_accessibility_snapshot", {
       sessionId,
       root: '[data-testid="chat-root"]',
       interestingOnly: true,
       timeout: 5_000,
     })) as { tree: unknown };
-    const serialized = JSON.stringify(dual.tree ?? '');
+    const serialized = JSON.stringify(dual.tree ?? "");
     const comboBoxCount = (serialized.match(/"combobox"/g) ?? []).length;
     // Expect 4 selects: node+model on each pane.
     check(
-      'dual panes expose 4 combobox selects',
+      "dual panes expose 4 combobox selects",
       comboBoxCount >= 4,
       `comboboxes=${comboBoxCount}`,
     );
 
     // Exit compare.
-    await client.call('electron_click', {
+    await client.call("electron_click", {
       sessionId,
       selector: '[data-testid="chat-compare-exit"]',
       force: true,
     });
-    await client.call('electron_wait_for_selector', {
+    await client.call("electron_wait_for_selector", {
       sessionId,
       selector: '[data-testid="chat-pane-b"]',
-      state: 'detached',
+      state: "detached",
       timeout: 5_000,
     });
-    check('pane B removed after Exit compare', true);
+    check("pane B removed after Exit compare", true);
 
-    await client.call('electron_close', { sessionId });
-    console.log(process.exitCode === 1 ? 'FAIL — see above' : 'PASS — all compare flow checks green');
+    await client.call("electron_close", { sessionId });
+    console.log(
+      process.exitCode === 1 ? "FAIL — see above" : "PASS — all compare flow checks green",
+    );
   } catch (err) {
-    console.error('flow crashed:', err);
+    console.error("flow crashed:", err);
     process.exitCode = 1;
   } finally {
     client.kill();

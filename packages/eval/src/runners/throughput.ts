@@ -1,5 +1,5 @@
-import promptsRaw from '../fixtures/prompts-throughput.json' with { type: 'json' };
-import { buildCompletionRequest, completeChat } from '../client.js';
+import promptsRaw from "../fixtures/prompts-throughput.json" with { type: "json" };
+import { buildCompletionRequest, completeChat } from "../client.js";
 
 export interface ThroughputSample {
   name: string;
@@ -45,7 +45,7 @@ export async function runThroughput(url: string): Promise<ThroughputResult> {
   const samples: ThroughputSample[] = [];
   for (const p of promptsRaw as Array<{ name: string; prompt: string }>) {
     const req = buildCompletionRequest({
-      messages: [{ role: 'user', content: p.prompt }],
+      messages: [{ role: "user", content: p.prompt }],
       maxTokens: 192,
       seed: 42,
     });

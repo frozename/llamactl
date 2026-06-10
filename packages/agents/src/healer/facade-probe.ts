@@ -1,5 +1,5 @@
-import type { ProbeReport, ProbeResult, ProbeState } from './probe.js';
-import type { RunbookToolClient } from '../types.js';
+import type { ProbeReport, ProbeResult, ProbeState } from "./probe.js";
+import type { RunbookToolClient } from "../types.js";
 
 /**
  * Facade probe — calls `nova.ops.healthcheck` through the in-proc MCP
@@ -64,14 +64,14 @@ function firstTextBlock(result: McpCallResult): string | undefined {
   const content = result.content;
   if (!Array.isArray(content) || content.length === 0) return undefined;
   const first = content[0];
-  if (!first || first.type !== 'text' || typeof first.text !== 'string') return undefined;
+  if (!first || first.type !== "text" || typeof first.text !== "string") return undefined;
   return first.text;
 }
 
 function parseEnvelope(result: McpCallResult): NovaHealthcheckEnvelope {
   const text = firstTextBlock(result);
   if (text === undefined) {
-    throw new Error('nova.ops.healthcheck: missing text content block');
+    throw new Error("nova.ops.healthcheck: missing text content block");
   }
   let parsed: unknown;
   try {
@@ -79,24 +79,24 @@ function parseEnvelope(result: McpCallResult): NovaHealthcheckEnvelope {
   } catch (err) {
     throw new Error(`nova.ops.healthcheck: JSON parse failed — ${(err as Error).message}`);
   }
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error('nova.ops.healthcheck: envelope is not an object');
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("nova.ops.healthcheck: envelope is not an object");
   }
   return parsed as NovaHealthcheckEnvelope;
 }
 
 function stateFromOk(ok: boolean): ProbeState {
-  return ok ? 'healthy' : 'unhealthy';
+  return ok ? "healthy" : "unhealthy";
 }
 
 export async function probeFleetViaNova(toolClient: RunbookToolClient): Promise<ProbeReport> {
   const raw = (await toolClient.callTool({
-    name: 'nova.ops.healthcheck',
+    name: "nova.ops.healthcheck",
     arguments: {},
   })) as McpCallResult;
 
   if (raw?.isError === true) {
-    const text = firstTextBlock(raw) ?? 'nova.ops.healthcheck returned isError';
+    const text = firstTextBlock(raw) ?? "nova.ops.healthcheck returned isError";
     throw new Error(text.slice(0, 500));
   }
 
@@ -107,13 +107,13 @@ export async function probeFleetViaNova(toolClient: RunbookToolClient): Promise<
     const state = stateFromOk(Boolean(g.ok));
     const entry: ProbeResult = {
       name: g.name,
-      kind: 'gateway',
+      kind: "gateway",
       baseUrl: g.baseUrl,
       state,
-      status: typeof g.status === 'number' ? g.status : 0,
+      status: typeof g.status === "number" ? g.status : 0,
       latencyMs: 0,
     };
-    if (typeof g.error === 'string' && g.error.length > 0) entry.error = g.error;
+    if (typeof g.error === "string" && g.error.length > 0) entry.error = g.error;
     probes.push(entry);
   }
 
@@ -121,18 +121,18 @@ export async function probeFleetViaNova(toolClient: RunbookToolClient): Promise<
     const state = stateFromOk(Boolean(p.ok));
     const entry: ProbeResult & { providerKind?: string } = {
       name: p.name,
-      kind: 'provider',
+      kind: "provider",
       baseUrl: p.baseUrl,
       state,
-      status: typeof p.status === 'number' ? p.status : 0,
+      status: typeof p.status === "number" ? p.status : 0,
       latencyMs: 0,
     };
-    if (typeof p.error === 'string' && p.error.length > 0) entry.error = p.error;
-    if (typeof p.kind === 'string' && p.kind.length > 0) entry.providerKind = p.kind;
+    if (typeof p.error === "string" && p.error.length > 0) entry.error = p.error;
+    if (typeof p.kind === "string" && p.kind.length > 0) entry.providerKind = p.kind;
     probes.push(entry);
   }
 
-  const unhealthy = probes.filter((p) => p.state === 'unhealthy').length;
+  const unhealthy = probes.filter((p) => p.state === "unhealthy").length;
   return {
     ts: new Date().toISOString(),
     probes,

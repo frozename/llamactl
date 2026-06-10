@@ -1,7 +1,7 @@
-import * as React from 'react';
-import { useEffect, useMemo } from 'react';
-import { trpc } from '@/lib/trpc';
-import { useOpsExecutorStore } from '@/stores/ops-executor-store';
+import * as React from "react";
+import { useEffect, useMemo } from "react";
+import { trpc } from "@/lib/trpc";
+import { useOpsExecutorStore } from "@/stores/ops-executor-store";
 
 /**
  * Shared node + model picker for the Ops Console. Mounted in the
@@ -20,20 +20,20 @@ export function OpsExecutorPicker(): React.JSX.Element {
   const nodes = useMemo<SelectorNode[]>(
     () =>
       ((nodeList.data?.nodes ?? []) as SelectorNode[]).filter(
-        (n) => (n.effectiveKind ?? 'agent') !== 'rag',
+        (n) => (n.effectiveKind ?? "agent") !== "rag",
       ),
     [nodeList.data],
   );
 
   const modelList = trpc.nodeModels.useQuery(
-    { name: nodeId ?? 'local' },
+    { name: nodeId ?? "local" },
     { enabled: !!nodeId, staleTime: 60_000 },
   );
   const models = useMemo(
     () =>
       (modelList.data?.models as Array<{ id?: string }> | undefined)
         ?.map((m) => m.id)
-        .filter((id): id is string => typeof id === 'string') ?? [],
+        .filter((id): id is string => typeof id === "string") ?? [],
     [modelList.data],
   );
 
@@ -69,7 +69,7 @@ export function OpsExecutorPicker(): React.JSX.Element {
   return (
     <div className="flex items-center gap-2 text-xs">
       <select
-        value={nodeId ?? ''}
+        value={nodeId ?? ""}
         onChange={(e) => setNode(e.target.value || null)}
         data-testid="ops-executor-node"
         aria-label="Executor node"
@@ -83,7 +83,7 @@ export function OpsExecutorPicker(): React.JSX.Element {
         ))}
       </select>
       <select
-        value={model ?? ''}
+        value={model ?? ""}
         onChange={(e) => setModel(e.target.value || null)}
         disabled={!nodeId || models.length === 0}
         data-testid="ops-executor-model"

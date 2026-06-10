@@ -1,9 +1,6 @@
-import { rpcServer as rpcServerMod } from '@llamactl/core';
-import {
-  config as kubecfg,
-  createNodeClient as defaultCreateNodeClient,
-} from '@llamactl/remote';
-import type { Config } from '@llamactl/remote';
+import { rpcServer as rpcServerMod } from "@llamactl/core";
+import { config as kubecfg, createNodeClient as defaultCreateNodeClient } from "@llamactl/remote";
+import type { Config } from "@llamactl/remote";
 
 /**
  * `llamactl agent rpc-doctor` — preflight check for tensor-parallel
@@ -35,9 +32,7 @@ Exit code: 0 when rpc-server is ready; 1 otherwise.
  */
 export interface RpcDoctorRemoteClient {
   rpcServerDoctor: {
-    query(
-      input?: Record<string, never>,
-    ): Promise<rpcServerMod.RpcServerDoctorResult>;
+    query(input?: Record<string, never>): Promise<rpcServerMod.RpcServerDoctorResult>;
   };
 }
 
@@ -51,10 +46,7 @@ export interface RpcDoctorDeps {
   /** Invoked when --node is absent. Default wraps checkRpcServerAvailable. */
   checkLocal: (env?: NodeJS.ProcessEnv) => rpcServerMod.RpcServerDoctorResult;
   /** Invoked when --node is present. Default builds a real NodeClient. */
-  createNodeClient: (
-    cfg: Config,
-    opts: { nodeName: string },
-  ) => RpcDoctorRemoteClient;
+  createNodeClient: (cfg: Config, opts: { nodeName: string }) => RpcDoctorRemoteClient;
   loadConfig: (path: string) => Config;
   defaultConfigPath: () => string;
   stdout: (chunk: string) => void;
@@ -86,35 +78,33 @@ export interface RpcDoctorFlags {
   json: boolean;
 }
 
-export function parseRpcDoctorFlags(
-  argv: string[],
-): RpcDoctorFlags | { error: string } {
+export function parseRpcDoctorFlags(argv: string[]): RpcDoctorFlags | { error: string } {
   const flags: RpcDoctorFlags = { json: false };
   for (const arg of argv) {
-    if (arg === '--help' || arg === '-h') {
-      return { error: '__help' };
+    if (arg === "--help" || arg === "-h") {
+      return { error: "__help" };
     }
-    if (arg === '--json') {
+    if (arg === "--json") {
       flags.json = true;
       continue;
     }
-    const eq = arg.indexOf('=');
+    const eq = arg.indexOf("=");
     if (eq < 0) {
       return { error: `agent rpc-doctor: flag must be --key=value: ${arg}` };
     }
     const k = arg.slice(0, eq);
     const v = arg.slice(eq + 1);
     switch (k) {
-      case '--node':
+      case "--node":
         if (v.length === 0) {
-          return { error: 'agent rpc-doctor: --node requires a value' };
+          return { error: "agent rpc-doctor: --node requires a value" };
         }
         flags.node = v;
         break;
-      case '--json':
+      case "--json":
         // --json=true / --json=false also supported for parity with
         // other subcommands, though bare --json is the common form.
-        flags.json = v !== 'false';
+        flags.json = v !== "false";
         break;
       default:
         return { error: `agent rpc-doctor: unknown flag ${k}` };
@@ -132,8 +122,8 @@ export async function runRpcDoctor(
     ...depsOverride,
   };
   const parsed = parseRpcDoctorFlags(argv);
-  if ('error' in parsed) {
-    if (parsed.error === '__help') {
+  if ("error" in parsed) {
+    if (parsed.error === "__help") {
       deps.stdout(RPC_DOCTOR_USAGE);
       return 0;
     }
@@ -161,14 +151,14 @@ export async function runRpcDoctor(
   } else if (result.ok) {
     deps.stdout(
       `ok\n` +
-        `  path: ${result.path ?? '(none)'}\n` +
-        `  LLAMA_CPP_BIN: ${result.llamaCppBin ?? '(none)'}\n`,
+        `  path: ${result.path ?? "(none)"}\n` +
+        `  LLAMA_CPP_BIN: ${result.llamaCppBin ?? "(none)"}\n`,
     );
   } else {
     deps.stderr(
       `rpc-server not available\n` +
-        `  reason: ${result.reason ?? '(unknown)'}\n` +
-        `  hint: ${result.hint ?? '(no hint)'}\n`,
+        `  reason: ${result.reason ?? "(unknown)"}\n` +
+        `  hint: ${result.hint ?? "(no hint)"}\n`,
     );
   }
   return result.ok ? 0 : 1;

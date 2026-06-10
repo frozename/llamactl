@@ -11,7 +11,7 @@ export function cx(...values: Value[]): string {
   const out: string[] = [];
   for (const v of values) {
     if (!v) continue;
-    if (typeof v === 'string') {
+    if (typeof v === "string") {
       out.push(v);
       continue;
     }
@@ -19,5 +19,5 @@ export function cx(...values: Value[]): string {
       if (flag) out.push(key);
     }
   }
-  return out.join(' ');
+  return out.join(" ");
 }

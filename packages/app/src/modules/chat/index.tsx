@@ -1,12 +1,12 @@
-import * as React from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import { skipToken } from '@tanstack/react-query';
-import { trpc } from '@/lib/trpc';
-import { useActiveWorkload } from '@/hooks/useActiveWorkload';
-import { useTabStore } from '@/stores/tab-store';
-import { Badge, Button } from '@/ui';
+import * as React from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { skipToken } from "@tanstack/react-query";
+import { trpc } from "@/lib/trpc";
+import { useActiveWorkload } from "@/hooks/useActiveWorkload";
+import { useTabStore } from "@/stores/tab-store";
+import { Badge, Button } from "@/ui";
 
 /**
  * Chat module. Scopes a conversation to a node + model; streams
@@ -36,7 +36,7 @@ interface RetrievedContext {
 
 interface Message {
   id: string;
-  role: 'system' | 'user' | 'assistant' | 'error';
+  role: "system" | "user" | "assistant" | "error";
   content: string;
   /**
    * Auto-retrieval metadata. Attached to the user message that
@@ -69,12 +69,12 @@ const CONTENT_PREVIEW_CHARS = 200;
  * sirius + direct providers ignore the extra field).
  */
 const CAPABILITY_TAGS = [
-  'reasoning',
-  'long_context',
-  'tools',
-  'vision',
-  'json_mode',
-  'code',
+  "reasoning",
+  "long_context",
+  "tools",
+  "vision",
+  "json_mode",
+  "code",
 ] as const;
 type CapabilityTag = (typeof CAPABILITY_TAGS)[number];
 
@@ -118,10 +118,10 @@ interface ChatStore {
   patchLast: (id: string, patch: Partial<Message>) => void;
   appendB: (id: string, message: Message) => void;
   patchLastB: (id: string, patch: Partial<Message>) => void;
-  updateMeta: (id: string, patch: Partial<Pick<Conversation, 'node' | 'model' | 'title'>>) => void;
+  updateMeta: (id: string, patch: Partial<Pick<Conversation, "node" | "model" | "title">>) => void;
   toggleCapability: (id: string, tag: CapabilityTag) => void;
   setCompareWith: (id: string, meta: CompareMeta | null) => void;
-  updateCompareMeta: (id: string, patch: Partial<Pick<CompareMeta, 'node' | 'model'>>) => void;
+  updateCompareMeta: (id: string, patch: Partial<Pick<CompareMeta, "node" | "model">>) => void;
   toggleCompareCapability: (id: string, tag: CapabilityTag) => void;
   setRagBinding: (id: string, ragNode: string | null, ragTopK?: number) => void;
   patchMessage: (convId: string, messageId: string, patch: Partial<Message>) => void;
@@ -138,7 +138,7 @@ const useChatStore = create<ChatStore>()(
         set((s) => ({
           conversations: {
             ...s.conversations,
-            [id]: { id, title: 'New chat', node, model, messages: [] },
+            [id]: { id, title: "New chat", node, model, messages: [] },
           },
           activeId: id,
         }));
@@ -188,9 +188,7 @@ const useChatStore = create<ChatStore>()(
           const conv = s.conversations[id];
           if (!conv) return s;
           const current = conv.capabilities ?? [];
-          const next = current.includes(tag)
-            ? current.filter((t) => t !== tag)
-            : [...current, tag];
+          const next = current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag];
           return {
             conversations: {
               ...s.conversations,
@@ -238,7 +236,7 @@ const useChatStore = create<ChatStore>()(
                 // Clear B's transcript on disable; otherwise keep it so
                 // toggling off and on during a session doesn't nuke the
                 // history mid-comparison.
-                messagesB: meta === null ? [] : conv.messagesB ?? [],
+                messagesB: meta === null ? [] : (conv.messagesB ?? []),
               },
             },
           };
@@ -262,9 +260,7 @@ const useChatStore = create<ChatStore>()(
           const conv = s.conversations[id];
           if (!conv?.compareWith) return s;
           const current = conv.compareWith.capabilities ?? [];
-          const next = current.includes(tag)
-            ? current.filter((t) => t !== tag)
-            : [...current, tag];
+          const next = current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag];
           return {
             conversations: {
               ...s.conversations,
@@ -322,11 +318,11 @@ const useChatStore = create<ChatStore>()(
           const ids = Object.keys(rest);
           return {
             conversations: rest,
-            activeId: s.activeId === id ? ids[0] ?? null : s.activeId,
+            activeId: s.activeId === id ? (ids[0] ?? null) : s.activeId,
           };
         }),
     }),
-    { name: 'llamactl-chat' },
+    { name: "llamactl-chat" },
   ),
 );
 
@@ -338,18 +334,48 @@ function Sidebar(props: {
   onDelete: (id: string) => void;
 }): React.JSX.Element {
   return (
-    <aside style={{ display: 'flex', height: '100%', width: 240, flexShrink: 0, flexDirection: 'column', borderRight: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--color-border)', borderColor: 'var(--color-border)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8 }}>
-        <span style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
+    <aside
+      style={{
+        display: "flex",
+        height: "100%",
+        width: 240,
+        flexShrink: 0,
+        flexDirection: "column",
+        borderRight: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-1)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderBottom: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+        }}
+      >
+        <span
+          style={{
+            fontSize: 12,
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+            color: "var(--color-text-secondary)",
+          }}
+        >
           Chats
         </span>
         <Button type="button" variant="secondary" size="sm" onClick={props.onNew}>
           New
         </Button>
       </div>
-      <ul style={{ flex: 1, overflow: 'auto' }}>
+      <ul style={{ flex: 1, overflow: "auto" }}>
         {props.conversations.length === 0 && (
-          <li style={{ padding: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
+          <li style={{ padding: 12, fontSize: 12, color: "var(--color-text-secondary)" }}>
             No chats yet.
           </li>
         )}
@@ -357,27 +383,44 @@ function Sidebar(props: {
           <li
             key={c.id}
             style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
               gap: 8,
-              borderBottom: '1px solid var(--color-border)',
-              borderColor: 'var(--color-border)',
+              borderBottom: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
               paddingLeft: 12,
               paddingRight: 12,
               paddingTop: 8,
               paddingBottom: 8,
               fontSize: 12,
-              ...(c.id === props.activeId ? { background: 'var(--color-surface-2)' } : {})
+              ...(c.id === props.activeId ? { background: "var(--color-surface-2)" } : {}),
             }}
           >
             <button
               type="button"
               onClick={() => props.onSelect(c.id)}
-              style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left', color: 'var(--color-text)' }}
+              style={{
+                flex: 1,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                textAlign: "left",
+                color: "var(--color-text)",
+              }}
             >
-              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.title}</div>
-              <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 10, color: 'var(--color-text-secondary)' }}>
+              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {c.title}
+              </div>
+              <div
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontSize: 10,
+                  color: "var(--color-text-secondary)",
+                }}
+              >
                 {c.node} · {c.model}
               </div>
             </button>
@@ -401,71 +444,98 @@ function Sidebar(props: {
 function MessageBubble(props: { message: Message }): React.JSX.Element {
   const { role, content, retrievedContext } = props.message;
   const [showContext, setShowContext] = useState(false);
-  const align =
-    role === 'user'
-      ? 'flex-end'
-      : role === 'error'
-        ? 'center'
-        : 'flex-start';
+  const align = role === "user" ? "flex-end" : role === "error" ? "center" : "flex-start";
   const bgStyle =
-    role === 'user'
-      ? { background: 'var(--color-brand)', color: 'var(--color-brand-contrast)' }
-      : role === 'error'
-        ? { background: 'var(--color-err)', color: 'var(--color-text-inverse)' }
-        : { background: 'var(--color-surface-1)', color: 'var(--color-text)' };
+    role === "user"
+      ? { background: "var(--color-brand)", color: "var(--color-brand-contrast)" }
+      : role === "error"
+        ? { background: "var(--color-err)", color: "var(--color-text-inverse)" }
+        : { background: "var(--color-surface-1)", color: "var(--color-text)" };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: align, gap: 4 }} data-role={role}>
-      <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
+    <div
+      style={{ display: "flex", flexDirection: "column", alignItems: align, gap: 4 }}
+      data-role={role}
+    >
+      <span
+        style={{
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
         {role}
       </span>
       <div
         style={{
-          maxWidth: '80%',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          borderRadius: 'var(--r-md)',
-          border: '1px solid var(--color-border)',
-          borderColor: 'var(--color-border)',
+          maxWidth: "80%",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
           paddingLeft: 12,
           paddingRight: 12,
           paddingTop: 8,
           paddingBottom: 8,
           fontSize: 14,
-          ...bgStyle
+          ...bgStyle,
         }}
       >
-        {content || (role === 'assistant' ? '…' : '')}
+        {content || (role === "assistant" ? "…" : "")}
       </div>
       {retrievedContext && (
-        <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontSize: 10, color: 'var(--color-text-secondary)' }}>
+        <div
+          style={{
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "var(--color-border)",
+            background: "var(--color-surface-2)",
+            paddingLeft: 8,
+            paddingRight: 8,
+            paddingTop: 4,
+            paddingBottom: 4,
+            fontSize: 10,
+            color: "var(--color-text-secondary)",
+          }}
+        >
           <button
             type="button"
             onClick={() => setShowContext((v) => !v)}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-mono)' }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontFamily: "var(--font-mono)",
+            }}
             data-testid="chat-rag-disclosure"
           >
-            <span>{showContext ? '▾' : '▸'}</span>
+            <span>{showContext ? "▾" : "▸"}</span>
             <span>
               retrieved {retrievedContext.docs.length} doc
-              {retrievedContext.docs.length === 1 ? '' : 's'} from
-              {' '}
-              <span style={{ color: 'var(--color-text)' }}>
-                {retrievedContext.sourceNode}
-              </span>
-              {' '}
-              · {retrievedContext.totalChars} chars
-              {retrievedContext.truncated ? ' (trimmed)' : ''}
+              {retrievedContext.docs.length === 1 ? "" : "s"} from{" "}
+              <span style={{ color: "var(--color-text)" }}>{retrievedContext.sourceNode}</span> ·{" "}
+              {retrievedContext.totalChars} chars
+              {retrievedContext.truncated ? " (trimmed)" : ""}
             </span>
           </button>
           {showContext && (
             <ul style={{ marginTop: 4 }}>
               {retrievedContext.docs.map((d) => (
-                <li key={d.id} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontFamily: 'var(--font-mono)' }}>
+                <li
+                  key={d.id}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 2,
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
                   <span>
-                    <span style={{ color: 'var(--color-text)' }}>{d.id}</span>
+                    <span style={{ color: "var(--color-text)" }}>{d.id}</span>
                     <span style={{ marginLeft: 8 }}>score={d.score.toFixed(3)}</span>
                   </span>
-                  <span style={{ whiteSpace: 'pre-wrap' }}>{d.contentPreview}</span>
+                  <span style={{ whiteSpace: "pre-wrap" }}>{d.contentPreview}</span>
                 </li>
               ))}
             </ul>
@@ -485,57 +555,80 @@ function MessageBubble(props: { message: Message }): React.JSX.Element {
  */
 function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): React.JSX.Element {
   const utils = trpc.useUtils();
-  const catalog = trpc.catalogList.useQuery('all');
+  const catalog = trpc.catalogList.useQuery("all");
   const { workload, loading: workloadLoading } = useActiveWorkload();
-  const [picked, setPicked] = React.useState<string>('');
+  const [picked, setPicked] = React.useState<string>("");
   const start = trpc.serverStart.useSubscription(
     picked && workload ? { target: picked, workload } : skipToken,
     {
-      enabled: picked !== '' && !!workload,
+      enabled: picked !== "" && !!workload,
       onData: (evt: unknown) => {
         const e = evt as { type?: string; result?: { ok?: boolean } };
-        if (e.type === 'done' && e.result?.ok) {
-          setPicked('');
+        if (e.type === "done" && e.result?.ok) {
+          setPicked("");
           void utils.nodeModels.invalidate();
           void utils.serverStatus.invalidate(workload ? { workload } : undefined);
           onStarted?.();
         }
       },
-      onError: () => setPicked(''),
+      onError: () => setPicked(""),
     } as Parameters<typeof trpc.serverStart.useSubscription>[1],
   );
   void start;
   const rels = React.useMemo(() => {
     const rows = (catalog.data ?? []) as Array<{ rel?: string }>;
-    return rows.map((r) => r.rel).filter((r): r is string => typeof r === 'string');
+    return rows.map((r) => r.rel).filter((r): r is string => typeof r === "string");
   }, [catalog.data]);
-  const [choice, setChoice] = React.useState<string>('');
+  const [choice, setChoice] = React.useState<string>("");
   React.useEffect(() => {
     if (!choice && rels.length > 0) setChoice(rels[0]!);
   }, [rels, choice]);
-  const isStarting = picked !== '' && !!workload;
+  const isStarting = picked !== "" && !!workload;
   return (
-    <div style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 12 }}>
-      <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--color-text)' }}>
+    <div
+      style={{
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-1)",
+        padding: 12,
+      }}
+    >
+      <div style={{ marginBottom: 8, fontSize: 12, color: "var(--color-text)" }}>
         Start local llama-server
       </div>
       {!workload && !workloadLoading ? (
-        <div style={{ color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
+        <div style={{ color: "var(--color-text-secondary)", fontSize: 12, lineHeight: 1.6 }}>
           No active workload. Apply one to enable this view.
         </div>
       ) : (
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
           <select
             value={choice}
             onChange={(e) => setChoice(e.target.value)}
             disabled={isStarting}
-            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text)', opacity: 0.5 }}
+            style={{
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-2)",
+              paddingLeft: 8,
+              paddingRight: 8,
+              paddingTop: 4,
+              paddingBottom: 4,
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              color: "var(--color-text)",
+              opacity: 0.5,
+            }}
           >
             {rels.length === 0 ? (
               <option value="">(no catalog entries)</option>
             ) : (
               rels.map((r) => (
-                <option key={r} value={r}>{r}</option>
+                <option key={r} value={r}>
+                  {r}
+                </option>
               ))
             )}
           </select>
@@ -548,21 +641,24 @@ function LocalServerStartInline({ onStarted }: { onStarted?: () => void }): Reac
             loading={isStarting}
             data-testid="chat-empty-start-local"
           >
-            {isStarting ? 'Starting…' : 'Start'}
+            {isStarting ? "Starting…" : "Start"}
           </Button>
-          <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>
-            or open <button
+          <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+            or open{" "}
+            <button
               type="button"
               onClick={() =>
                 useTabStore.getState().open({
-                  tabKey: 'module:models.server',
-                  title: 'Local Server',
-                  kind: 'module',
+                  tabKey: "module:models.server",
+                  title: "Local Server",
+                  kind: "module",
                   openedAt: Date.now(),
                 })
               }
-              
-            >Models → Local Server</button> for the full flow.
+            >
+              Models → Local Server
+            </button>{" "}
+            for the full flow.
           </span>
         </div>
       )}
@@ -587,22 +683,54 @@ function TranscriptColumn(props: {
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: 'smooth' });
+    ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: "smooth" });
   }, [props.messages]);
 
   return (
     <div
-      style={{ display: 'flex', flex: 1, flexDirection: 'column', borderRight: '1px solid var(--color-border)', borderColor: 'var(--color-border)' }}
+      style={{
+        display: "flex",
+        flex: 1,
+        flexDirection: "column",
+        borderRight: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+      }}
       data-testid={`chat-pane-${props.label.toLowerCase()}`}
       data-pane={props.label}
     >
-      <header style={{ display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', paddingLeft: 16, paddingRight: 16, paddingTop: 8, paddingBottom: 8, fontSize: 12 }}>
+      <header
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          borderBottom: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-1)",
+          paddingLeft: 16,
+          paddingRight: 16,
+          paddingTop: 8,
+          paddingBottom: 8,
+          fontSize: 12,
+        }}
+      >
         <Badge variant="default">{props.label}</Badge>
-        <span style={{ color: 'var(--color-text-secondary)' }}>node</span>
+        <span style={{ color: "var(--color-text-secondary)" }}>node</span>
         <select
           value={props.node}
           onChange={(e) => props.onNodeChange(e.target.value)}
-          style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text)' }}
+          style={{
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--color-border)",
+            borderColor: "var(--color-border)",
+            background: "var(--color-surface-2)",
+            paddingLeft: 8,
+            paddingRight: 8,
+            paddingTop: 2,
+            paddingBottom: 2,
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            color: "var(--color-text)",
+          }}
         >
           {props.nodes.map((n) => (
             <option key={n.name} value={n.name}>
@@ -610,14 +738,26 @@ function TranscriptColumn(props: {
             </option>
           ))}
         </select>
-        <span style={{ color: 'var(--color-text-secondary)' }}>model</span>
+        <span style={{ color: "var(--color-text-secondary)" }}>model</span>
         {props.modelsLoading ? (
-          <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>loading…</span>
+          <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>loading…</span>
         ) : (
           <select
             value={props.model}
             onChange={(e) => props.onModelChange(e.target.value)}
-            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text)' }}
+            style={{
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-2)",
+              paddingLeft: 8,
+              paddingRight: 8,
+              paddingTop: 2,
+              paddingBottom: 2,
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--color-text)",
+            }}
           >
             {props.models.length === 0 ? (
               <option value="">(no models)</option>
@@ -630,22 +770,32 @@ function TranscriptColumn(props: {
             )}
           </select>
         )}
-        {props.headerExtras && <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{props.headerExtras}</div>}
+        {props.headerExtras && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>{props.headerExtras}</div>
+        )}
       </header>
       <div
         ref={ref}
-        style={{ display: 'flex', flex: 1, flexDirection: 'column', gap: 16, overflow: 'auto', background: 'var(--color-surface-0)', padding: 24 }}
+        style={{
+          display: "flex",
+          flex: 1,
+          flexDirection: "column",
+          gap: 16,
+          overflow: "auto",
+          background: "var(--color-surface-0)",
+          padding: 24,
+        }}
       >
         {props.messages.length === 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ fontSize: 14, color: 'var(--color-text-secondary)' }}>
-              {!props.modelsLoading && props.models.length === 0 && props.node === 'local'
-                ? 'Local llama-server isn\u2019t running yet \u2014 no models to chat with.'
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 14, color: "var(--color-text-secondary)" }}>
+              {!props.modelsLoading && props.models.length === 0 && props.node === "local"
+                ? "Local llama-server isn\u2019t running yet \u2014 no models to chat with."
                 : !props.modelsLoading && props.models.length === 0
                   ? `No models exposed by ${props.node}.`
-                  : 'Start a conversation by typing below.'}
+                  : "Start a conversation by typing below."}
             </div>
-            {!props.modelsLoading && props.models.length === 0 && props.node === 'local' && (
+            {!props.modelsLoading && props.models.length === 0 && props.node === "local" && (
               <LocalServerStartInline onStarted={props.onStartedLocal} />
             )}
           </div>
@@ -654,8 +804,23 @@ function TranscriptColumn(props: {
           <MessageBubble key={m.id} message={m} />
         ))}
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, borderTop: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 10 }}>
-        <span style={{ color: 'var(--color-text-secondary)' }}>capabilities:</span>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: 4,
+          borderTop: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-1)",
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          fontSize: 10,
+        }}
+      >
+        <span style={{ color: "var(--color-text-secondary)" }}>capabilities:</span>
         {CAPABILITY_TAGS.map((tag) => {
           const active = props.capabilities.includes(tag);
           return (
@@ -665,23 +830,30 @@ function TranscriptColumn(props: {
               onClick={() => props.onToggleCapability(tag)}
               style={{
                 borderRadius: 9999,
-                border: '1px solid',
+                border: "1px solid",
                 paddingLeft: 8,
                 paddingRight: 8,
                 paddingTop: 2,
                 paddingBottom: 2,
-                fontFamily: 'var(--font-mono)',
-                transition: 'color 0.15s, background-color 0.15s, border-color 0.15s',
+                fontFamily: "var(--font-mono)",
+                transition: "color 0.15s, background-color 0.15s, border-color 0.15s",
                 ...(active
-                  ? { borderColor: 'var(--color-brand)', background: 'var(--color-brand)', color: 'var(--color-brand-contrast)' }
-                  : { borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', color: 'var(--color-text-secondary)' })
+                  ? {
+                      borderColor: "var(--color-brand)",
+                      background: "var(--color-brand)",
+                      color: "var(--color-brand-contrast)",
+                    }
+                  : {
+                      borderColor: "var(--color-border)",
+                      background: "var(--color-surface-2)",
+                      color: "var(--color-text-secondary)",
+                    }),
               }}
-              title={                active
-                  ? `remove ${tag}`
-                  : `attach ${tag} — orchestrators route by capability tags`
+              title={
+                active ? `remove ${tag}` : `attach ${tag} — orchestrators route by capability tags`
               }
             >
-              {tag.replace('_', '-')}
+              {tag.replace("_", "-")}
             </button>
           );
         })}
@@ -696,19 +868,36 @@ function RagPicker(props: {
   ragTopK: number;
   onChange: (node: string | null, topK: number) => void;
 }): React.JSX.Element | null {
-  const ragNodes = props.nodes.filter((n) => n.effectiveKind === 'rag');
+  const ragNodes = props.nodes.filter((n) => n.effectiveKind === "rag");
   if (ragNodes.length === 0) return null;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }} data-testid="chat-rag-picker">
-      <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--color-text-secondary)' }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 4 }} data-testid="chat-rag-picker">
+      <span
+        style={{
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
         rag
       </span>
       <select
-        value={props.ragNode ?? ''}
-        onChange={(e) =>
-          props.onChange(e.target.value || null, props.ragTopK)
-        }
-        style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 8, paddingRight: 8, paddingTop: 2, paddingBottom: 2, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text)' }}
+        value={props.ragNode ?? ""}
+        onChange={(e) => props.onChange(e.target.value || null, props.ragTopK)}
+        style={{
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-2)",
+          paddingLeft: 8,
+          paddingRight: 8,
+          paddingTop: 2,
+          paddingBottom: 2,
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+          color: "var(--color-text)",
+        }}
         title="Auto-retrieve context from this knowledge base on every turn"
       >
         <option value="">(off)</option>
@@ -720,16 +909,29 @@ function RagPicker(props: {
       </select>
       {props.ragNode && (
         <>
-          <span style={{ fontSize: 10, color: 'var(--color-text-secondary)' }}>top</span>
+          <span style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>top</span>
           <input
             type="number"
             min={1}
             max={20}
             value={props.ragTopK}
             onChange={(e) =>
-              props.onChange(props.ragNode, Number.parseInt(e.target.value, 10) || DEFAULT_RAG_TOP_K)
+              props.onChange(
+                props.ragNode,
+                Number.parseInt(e.target.value, 10) || DEFAULT_RAG_TOP_K,
+              )
             }
-            style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingTop: 2, paddingBottom: 2, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--color-text)' }}
+            style={{
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-2)",
+              paddingTop: 2,
+              paddingBottom: 2,
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--color-text)",
+            }}
             title="How many top docs to inject"
           />
         </>
@@ -742,12 +944,12 @@ function ComposerBar(props: {
   busy: boolean;
   onSend: (text: string) => void | Promise<void>;
 }): React.JSX.Element {
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState("");
   function submit(): void {
     const text = input.trim();
     if (!text || props.busy) return;
     props.onSend(text);
-    setInput('');
+    setInput("");
   }
   return (
     <form
@@ -755,19 +957,40 @@ function ComposerBar(props: {
         e.preventDefault();
         submit();
       }}
-      style={{ display: 'flex', gap: 8, borderTop: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-1)', padding: 12 }}
+      style={{
+        display: "flex",
+        gap: 8,
+        borderTop: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-1)",
+        padding: 12,
+      }}
     >
       <textarea
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
+          if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             submit();
           }
         }}
         placeholder="Message (Shift+Enter for newline)…"
-        style={{ height: 64, flex: 1, resize: 'none', borderRadius: 'var(--r-md)', border: '1px solid var(--color-border)', borderColor: 'var(--color-border)', background: 'var(--color-surface-2)', paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, fontSize: 14, color: 'var(--color-text)' }}
+        style={{
+          height: 64,
+          flex: 1,
+          resize: "none",
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-2)",
+          paddingLeft: 12,
+          paddingRight: 12,
+          paddingTop: 8,
+          paddingBottom: 8,
+          fontSize: 14,
+          color: "var(--color-text)",
+        }}
       />
       <Button
         type="submit"
@@ -776,7 +999,7 @@ function ComposerBar(props: {
         disabled={props.busy || !input.trim()}
         loading={props.busy}
       >
-        {props.busy ? 'Streaming…' : 'Send'}
+        {props.busy ? "Streaming…" : "Send"}
       </Button>
     </form>
   );
@@ -804,21 +1027,18 @@ export default function Chat(): React.JSX.Element {
   // all qualify. RAG nodes (Chroma/pgvector) don't speak chat, so
   // they're filtered out.
   const nodes = useMemo(
-    () =>
-      (nodeList.data?.nodes ?? []).filter(
-        (n) => (n.effectiveKind ?? 'agent') !== 'rag',
-      ),
+    () => (nodeList.data?.nodes ?? []).filter((n) => (n.effectiveKind ?? "agent") !== "rag"),
     [nodeList.data],
   );
   const modelList = trpc.nodeModels.useQuery(
-    { name: active?.node ?? 'local' },
+    { name: active?.node ?? "local" },
     { enabled: !!active, staleTime: 60_000 },
   );
   const models = useMemo(
     () =>
       (modelList.data?.models as Array<{ id?: string }> | undefined)
         ?.map((m) => m.id)
-        .filter((id): id is string => typeof id === 'string') ?? [],
+        .filter((id): id is string => typeof id === "string") ?? [],
     [modelList.data],
   );
   // When the node changed (model got cleared) OR the stored model
@@ -835,102 +1055,109 @@ export default function Chat(): React.JSX.Element {
     }
   }, [active, activeId, models, store]);
   const modelListB = trpc.nodeModels.useQuery(
-    { name: active?.compareWith?.node ?? 'local' },
+    { name: active?.compareWith?.node ?? "local" },
     { enabled: !!active?.compareWith, staleTime: 60_000 },
   );
   const modelsB = useMemo(
     () =>
       (modelListB.data?.models as Array<{ id?: string }> | undefined)
         ?.map((m) => m.id)
-        .filter((id): id is string => typeof id === 'string') ?? [],
+        .filter((id): id is string => typeof id === "string") ?? [],
     [modelListB.data],
   );
 
-  trpc.chatStream.useSubscription(streamInputA ?? { node: 'local', request: { model: '', messages: [] } }, {
-    enabled: !!streamInputA,
-    // Force a fresh subscription every time we bump the counter —
-    // tRPC v11 only re-subscribes when input identity changes, and
-    // sending the same prompt twice in a row shouldn't collapse.
-    key: streamKeyA,
-    onData: (evt) => {
-      if (!activeId) return;
-      const e = evt as {
-        type?: string;
-        chunk?: { choices?: [{ delta?: { content?: string } }] };
-        error?: { message?: string };
-      };
-      if (e.type === 'chunk') {
-        const piece = e.chunk?.choices?.[0]?.delta?.content ?? '';
-        if (piece) {
-          store.patchLast(activeId, {
-            content: (store.conversations[activeId]?.messages.slice(-1)[0]?.content ?? '') + piece,
+  trpc.chatStream.useSubscription(
+    streamInputA ?? { node: "local", request: { model: "", messages: [] } },
+    {
+      enabled: !!streamInputA,
+      // Force a fresh subscription every time we bump the counter —
+      // tRPC v11 only re-subscribes when input identity changes, and
+      // sending the same prompt twice in a row shouldn't collapse.
+      key: streamKeyA,
+      onData: (evt) => {
+        if (!activeId) return;
+        const e = evt as {
+          type?: string;
+          chunk?: { choices?: [{ delta?: { content?: string } }] };
+          error?: { message?: string };
+        };
+        if (e.type === "chunk") {
+          const piece = e.chunk?.choices?.[0]?.delta?.content ?? "";
+          if (piece) {
+            store.patchLast(activeId, {
+              content:
+                (store.conversations[activeId]?.messages.slice(-1)[0]?.content ?? "") + piece,
+            });
+          }
+        } else if (e.type === "error") {
+          store.append(activeId, {
+            id: `m-${Date.now()}`,
+            role: "error",
+            content: e.error?.message ?? "stream error",
           });
+          setBusyA(false);
+          setStreamInputA(null);
+        } else if (e.type === "done") {
+          setBusyA(false);
+          setStreamInputA(null);
         }
-      } else if (e.type === 'error') {
+      },
+      onError: (err) => {
+        if (!activeId) return;
         store.append(activeId, {
           id: `m-${Date.now()}`,
-          role: 'error',
-          content: e.error?.message ?? 'stream error',
+          role: "error",
+          content: err.message,
         });
         setBusyA(false);
         setStreamInputA(null);
-      } else if (e.type === 'done') {
-        setBusyA(false);
-        setStreamInputA(null);
-      }
-    },
-    onError: (err) => {
-      if (!activeId) return;
-      store.append(activeId, {
-        id: `m-${Date.now()}`,
-        role: 'error',
-        content: err.message,
-      });
-      setBusyA(false);
-      setStreamInputA(null);
-    },
-  } as Parameters<typeof trpc.chatStream.useSubscription>[1]);
+      },
+    } as Parameters<typeof trpc.chatStream.useSubscription>[1],
+  );
 
-  trpc.chatStream.useSubscription(streamInputB ?? { node: 'local', request: { model: '', messages: [] } }, {
-    enabled: !!streamInputB,
-    key: streamKeyB,
-    onData: (evt) => {
-      if (!activeId) return;
-      const e = evt as {
-        type?: string;
-        chunk?: { choices?: [{ delta?: { content?: string } }] };
-        error?: { message?: string };
-      };
-      if (e.type === 'chunk') {
-        const piece = e.chunk?.choices?.[0]?.delta?.content ?? '';
-        if (piece) {
-          const last = store.conversations[activeId]?.messagesB?.slice(-1)[0]?.content ?? '';
-          store.patchLastB(activeId, { content: last + piece });
+  trpc.chatStream.useSubscription(
+    streamInputB ?? { node: "local", request: { model: "", messages: [] } },
+    {
+      enabled: !!streamInputB,
+      key: streamKeyB,
+      onData: (evt) => {
+        if (!activeId) return;
+        const e = evt as {
+          type?: string;
+          chunk?: { choices?: [{ delta?: { content?: string } }] };
+          error?: { message?: string };
+        };
+        if (e.type === "chunk") {
+          const piece = e.chunk?.choices?.[0]?.delta?.content ?? "";
+          if (piece) {
+            const last = store.conversations[activeId]?.messagesB?.slice(-1)[0]?.content ?? "";
+            store.patchLastB(activeId, { content: last + piece });
+          }
+        } else if (e.type === "error") {
+          store.appendB(activeId, {
+            id: `m-${Date.now()}`,
+            role: "error",
+            content: e.error?.message ?? "stream error",
+          });
+          setBusyB(false);
+          setStreamInputB(null);
+        } else if (e.type === "done") {
+          setBusyB(false);
+          setStreamInputB(null);
         }
-      } else if (e.type === 'error') {
+      },
+      onError: (err) => {
+        if (!activeId) return;
         store.appendB(activeId, {
           id: `m-${Date.now()}`,
-          role: 'error',
-          content: e.error?.message ?? 'stream error',
+          role: "error",
+          content: err.message,
         });
         setBusyB(false);
         setStreamInputB(null);
-      } else if (e.type === 'done') {
-        setBusyB(false);
-        setStreamInputB(null);
-      }
-    },
-    onError: (err) => {
-      if (!activeId) return;
-      store.appendB(activeId, {
-        id: `m-${Date.now()}`,
-        role: 'error',
-        content: err.message,
-      });
-      setBusyB(false);
-      setStreamInputB(null);
-    },
-  } as Parameters<typeof trpc.chatStream.useSubscription>[1]);
+      },
+    } as Parameters<typeof trpc.chatStream.useSubscription>[1],
+  );
 
   const conversationList = useMemo(
     () => Object.values(store.conversations).sort((a, b) => b.id.localeCompare(a.id)),
@@ -938,8 +1165,8 @@ export default function Chat(): React.JSX.Element {
   );
 
   function newChat(): void {
-    const node = nodes[0]?.name ?? 'local';
-    const model = models[0] ?? '';
+    const node = nodes[0]?.name ?? "local";
+    const model = models[0] ?? "";
     store.create({ node, model });
   }
 
@@ -948,17 +1175,15 @@ export default function Chat(): React.JSX.Element {
     text: string,
     model: string,
     capabilities: CapabilityTag[],
-    contextMessage?: { role: 'system'; content: string },
-  ): StreamInput['request'] {
-    const priorTurns = history.filter(
-      (m) => m.role === 'user' || m.role === 'assistant',
-    );
+    contextMessage?: { role: "system"; content: string },
+  ): StreamInput["request"] {
+    const priorTurns = history.filter((m) => m.role === "user" || m.role === "assistant");
     return {
       model,
       messages: [
         ...(contextMessage ? [contextMessage] : []),
         ...priorTurns,
-        { role: 'user', content: text },
+        { role: "user", content: text },
       ].map((m) => ({ role: m.role, content: m.content })),
       // Carry capability hints via providerOptions so orchestrators
       // (embersynth) see them on the wire. Omit the field entirely
@@ -982,7 +1207,7 @@ export default function Chat(): React.JSX.Element {
     query: string,
     topK: number,
   ): Promise<{
-    systemMessage: { role: 'system'; content: string };
+    systemMessage: { role: "system"; content: string };
     metadata: RetrievedContext;
   } | null> {
     let response;
@@ -1000,14 +1225,12 @@ export default function Chat(): React.JSX.Element {
 
     // Greedy budget-fill: keep adding docs to the system-message
     // body until the next doc would blow the char budget, then stop.
-    const parts: string[] = [
-      `Relevant context from knowledge base "${ragNode}":`,
-    ];
+    const parts: string[] = [`Relevant context from knowledge base "${ragNode}":`];
     const attachedDocs: RetrievedDoc[] = [];
     let used = parts[0]!.length;
     let truncated = false;
     for (const hit of hits) {
-      const body = hit.document.content ?? '';
+      const body = hit.document.content ?? "";
       const chunk = `--- doc ${hit.document.id} (score=${hit.score.toFixed(3)}) ---\n${body}`;
       if (used + chunk.length + 2 > MAX_CONTEXT_CHARS) {
         truncated = true;
@@ -1023,7 +1246,7 @@ export default function Chat(): React.JSX.Element {
     }
     if (attachedDocs.length === 0) return null;
     return {
-      systemMessage: { role: 'system', content: parts.join('\n\n') },
+      systemMessage: { role: "system", content: parts.join("\n\n") },
       metadata: {
         sourceNode: ragNode,
         docs: attachedDocs,
@@ -1036,8 +1259,8 @@ export default function Chat(): React.JSX.Element {
   async function send(text: string): Promise<void> {
     if (!active) return;
     const stamp = Date.now();
-    const userMsg: Message = { id: `m-${stamp}-u`, role: 'user', content: text };
-    const asstMsg: Message = { id: `m-${stamp}-a`, role: 'assistant', content: '' };
+    const userMsg: Message = { id: `m-${stamp}-u`, role: "user", content: text };
+    const asstMsg: Message = { id: `m-${stamp}-a`, role: "assistant", content: "" };
     store.append(active.id, userMsg);
     store.append(active.id, asstMsg);
     if (active.messages.length === 0) {
@@ -1049,7 +1272,7 @@ export default function Chat(): React.JSX.Element {
     // Auto-retrieve context when the conversation names a RAG node.
     // Failure is non-fatal — we send without context and let the
     // chat surface a clear error if the whole request blows up.
-    let systemMessage: { role: 'system'; content: string } | undefined;
+    let systemMessage: { role: "system"; content: string } | undefined;
     if (active.ragNode) {
       const topK = active.ragTopK ?? DEFAULT_RAG_TOP_K;
       const ctx = await retrieveContext(active.ragNode, text, topK);
@@ -1079,8 +1302,8 @@ export default function Chat(): React.JSX.Element {
     // history is independent so each side's context stays honest to
     // its own prior assistant turns.
     if (active.compareWith) {
-      const userMsgB: Message = { id: `m-${stamp}-ub`, role: 'user', content: text };
-      const asstMsgB: Message = { id: `m-${stamp}-ab`, role: 'assistant', content: '' };
+      const userMsgB: Message = { id: `m-${stamp}-ub`, role: "user", content: text };
+      const asstMsgB: Message = { id: `m-${stamp}-ab`, role: "assistant", content: "" };
       store.appendB(active.id, userMsgB);
       store.appendB(active.id, asstMsgB);
       setBusyB(true);
@@ -1099,15 +1322,31 @@ export default function Chat(): React.JSX.Element {
 
   if (nodeList.isLoading) {
     return (
-      <div style={{ height: '100%' }} data-testid="chat-root">
-        <div style={{ padding: 24, fontSize: 14, color: 'var(--color-text-secondary)' }}>Loading…</div>
+      <div style={{ height: "100%" }} data-testid="chat-root">
+        <div style={{ padding: 24, fontSize: 14, color: "var(--color-text-secondary)" }}>
+          Loading…
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ display: 'flex', height: '100%' }} data-testid="chat-root">
-      <h1 style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0, 0, 0, 0)', whiteSpace: 'nowrap', borderWidth: 0 }}>Chat</h1>
+    <div style={{ display: "flex", height: "100%" }} data-testid="chat-root">
+      <h1
+        style={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          padding: 0,
+          margin: -1,
+          overflow: "hidden",
+          clip: "rect(0, 0, 0, 0)",
+          whiteSpace: "nowrap",
+          borderWidth: 0,
+        }}
+      >
+        Chat
+      </h1>
       <Sidebar
         activeId={store.activeId}
         conversations={conversationList}
@@ -1116,8 +1355,8 @@ export default function Chat(): React.JSX.Element {
         onDelete={store.remove}
       />
       {active ? (
-        <div style={{ display: 'flex', height: '100%', flex: 1, flexDirection: 'column' }}>
-          <div style={{ display: 'flex', flex: 1 }}>
+        <div style={{ display: "flex", height: "100%", flex: 1, flexDirection: "column" }}>
+          <div style={{ display: "flex", flex: 1 }}>
             <TranscriptColumn
               label="A"
               node={active.node}
@@ -1127,8 +1366,10 @@ export default function Chat(): React.JSX.Element {
               nodes={nodes}
               models={models}
               modelsLoading={modelList.isLoading}
-              onStartedLocal={() => { void modelList.refetch(); }}
-              onNodeChange={(node) => store.updateMeta(active.id, { node, model: '' })}
+              onStartedLocal={() => {
+                void modelList.refetch();
+              }}
+              onNodeChange={(node) => store.updateMeta(active.id, { node, model: "" })}
               onModelChange={(model) => store.updateMeta(active.id, { model })}
               onToggleCapability={(tag) => store.toggleCapability(active.id, tag)}
               headerExtras={
@@ -1138,9 +1379,7 @@ export default function Chat(): React.JSX.Element {
                       nodes={nodes}
                       ragNode={active.ragNode ?? null}
                       ragTopK={active.ragTopK ?? DEFAULT_RAG_TOP_K}
-                      onChange={(node, topK) =>
-                        store.setRagBinding(active.id, node, topK)
-                      }
+                      onChange={(node, topK) => store.setRagBinding(active.id, node, topK)}
                     />
                     <Button
                       type="button"
@@ -1173,7 +1412,7 @@ export default function Chat(): React.JSX.Element {
                 nodes={nodes}
                 models={modelsB}
                 modelsLoading={modelListB.isLoading}
-                onNodeChange={(node) => store.updateCompareMeta(active.id, { node, model: '' })}
+                onNodeChange={(node) => store.updateCompareMeta(active.id, { node, model: "" })}
                 onModelChange={(model) => store.updateCompareMeta(active.id, { model })}
                 onToggleCapability={(tag) => store.toggleCompareCapability(active.id, tag)}
                 headerExtras={
@@ -1196,17 +1435,24 @@ export default function Chat(): React.JSX.Element {
         </div>
       ) : (
         <div
-          style={{ display: 'flex', height: '100%', flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}
+          style={{
+            display: "flex",
+            height: "100%",
+            flex: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 32,
+          }}
           data-testid="chat-empty"
         >
-          <div style={{ maxWidth: 448, marginTop: 12, textAlign: 'center' }}>
-            <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text)' }}>
+          <div style={{ maxWidth: 448, marginTop: 12, textAlign: "center" }}>
+            <h2 style={{ fontSize: 18, fontWeight: 600, color: "var(--color-text)" }}>
               Start a conversation
             </h2>
-            <p style={{ fontSize: 14, color: 'var(--color-text-secondary)' }}>
-              Chat scopes a conversation to a node + model. Attach capability
-              tags (reasoning, vision, tools…) and orchestrators like
-              embersynth will route by them. History stays on this laptop.
+            <p style={{ fontSize: 14, color: "var(--color-text-secondary)" }}>
+              Chat scopes a conversation to a node + model. Attach capability tags (reasoning,
+              vision, tools…) and orchestrators like embersynth will route by them. History stays on
+              this laptop.
             </p>
             <Button
               type="button"

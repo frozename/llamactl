@@ -1,13 +1,8 @@
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { findByRel } from './catalog.js';
-import { resolveEnv } from './env.js';
-import type {
-  HFDiscoveryFeed,
-  HFModelInfo,
-  HFModelSibling,
-  HFTree,
-} from './schemas.js';
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { findByRel } from "./catalog.js";
+import { resolveEnv } from "./env.js";
+import type { HFDiscoveryFeed, HFModelInfo, HFModelSibling, HFTree } from "./schemas.js";
 
 const DEFAULT_TTL_SECONDS = 43_200; // 12h
 
@@ -17,14 +12,14 @@ const DEFAULT_TTL_SECONDS = 43_200; // 12h
  * HF lookups and downstream helpers degrade to local-only behaviour.
  */
 export function hfEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env.LOCAL_AI_RECOMMENDATIONS_SOURCE ?? 'hf';
+  const raw = env.LOCAL_AI_RECOMMENDATIONS_SOURCE ?? "hf";
   switch (raw) {
-    case 'off':
-    case 'none':
-    case 'local':
-    case 'false':
-    case 'FALSE':
-    case '0':
+    case "off":
+    case "none":
+    case "local":
+    case "false":
+    case "FALSE":
+    case "0":
       return false;
     default:
       return true;
@@ -39,11 +34,11 @@ export function cacheTtlSeconds(env: NodeJS.ProcessEnv = process.env): number {
 }
 
 function sanitizeRepo(repo: string): string {
-  return repo.replace(/\//g, '__');
+  return repo.replace(/\//g, "__");
 }
 
 function sanitizeSearch(search: string): string {
-  return search.replace(/[^A-Za-z0-9._-]/g, '_');
+  return search.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
 export function modelInfoCacheFile(runtimeDir: string, repo: string): string {
@@ -77,7 +72,7 @@ function isCacheFresh(file: string, ttlSeconds: number): boolean {
 
 function readJsonFile<T>(file: string): T | null {
   try {
-    const raw = readFileSync(file, 'utf8');
+    const raw = readFileSync(file, "utf8");
     if (!raw.trim()) return null;
     return JSON.parse(raw) as T;
   } catch {
@@ -131,7 +126,7 @@ async function fetchWithCache(opts: FetchWithCacheOpts): Promise<string | null> 
 
   try {
     const res = await fetch(url, {
-      headers: { Accept: 'application/json', 'User-Agent': 'llamactl' },
+      headers: { Accept: "application/json", "User-Agent": "llamactl" },
     });
     if (res.ok) {
       const body = await res.text();
@@ -148,9 +143,7 @@ async function fetchWithCache(opts: FetchWithCacheOpts): Promise<string | null> 
       }
       return body;
     }
-    process.stderr.write(
-      `llamactl: HF returned status ${res.status} for ${url}\n`,
-    );
+    process.stderr.write(`llamactl: HF returned status ${res.status} for ${url}\n`);
   } catch (err) {
     process.stderr.write(
       `llamactl: HF fetch failed for ${url}: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -254,12 +247,9 @@ export function mmprojFileForRepo(info: HFModelInfo): string | null {
  * (in which case any sibling whose rfilename equals it or ends in
  * `/<file>` matches) or a full repo-relative path.
  */
-export function siblingForFile(
-  info: HFModelInfo,
-  file: string,
-): HFModelSibling | null {
+export function siblingForFile(info: HFModelInfo, file: string): HFModelSibling | null {
   const siblings = info.siblings ?? [];
-  const exactSlash = file.includes('/');
+  const exactSlash = file.includes("/");
   for (const s of siblings) {
     if (s.rfilename === file) return s;
     if (!exactSlash && s.rfilename.endsWith(`/${file}`)) return s;
@@ -273,14 +263,14 @@ export function siblingForFile(
  * tree entry reflects the pointer file, not the real blob).
  */
 export function fileSizeFromTree(tree: HFTree, file: string): number | null {
-  const exactSlash = file.includes('/');
+  const exactSlash = file.includes("/");
   for (const entry of tree) {
     const matches = exactSlash
       ? entry.path === file
       : entry.path === file || entry.path.endsWith(`/${file}`);
     if (!matches) continue;
     const size = entry.lfs?.size ?? entry.size;
-    if (typeof size === 'number' && Number.isFinite(size)) return size;
+    if (typeof size === "number" && Number.isFinite(size)) return size;
   }
   return null;
 }
@@ -295,8 +285,8 @@ export function fileSizeFromTree(tree: HFTree, file: string): number | null {
  */
 export function humanSize(bytes: number | null | undefined): string {
   const n = bytes === null || bytes === undefined ? 0 : bytes;
-  if (!Number.isFinite(n)) return 'n/a';
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  if (!Number.isFinite(n)) return "n/a";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   let i = 0;
   let x = n;
   while (x >= 1024 && i < units.length - 1) {
@@ -318,7 +308,7 @@ export function repoForRel(rel: string): string | null {
  * Returns null when no catalog entry covers the input.
  */
 export function repoForRelOrRepo(relOrRepo: string): string | null {
-  if (relOrRepo.includes('/') && !relOrRepo.endsWith('.gguf')) return relOrRepo;
+  if (relOrRepo.includes("/") && !relOrRepo.endsWith(".gguf")) return relOrRepo;
   return repoForRel(relOrRepo);
 }
 
@@ -338,10 +328,10 @@ export async function summaryForRel(
   const info = await fetchModelInfo(repo, resolved, env);
   if (!info) return null;
 
-  const fileName = rel.split('/').pop() ?? rel;
-  const downloads = info.downloads ?? 'n/a';
-  const likes = info.likes ?? 'n/a';
-  const updated = info.lastModified ?? 'n/a';
-  const pipeline = info.pipeline_tag ?? info.pipelineTag ?? 'n/a';
+  const fileName = rel.split("/").pop() ?? rel;
+  const downloads = info.downloads ?? "n/a";
+  const likes = info.likes ?? "n/a";
+  const updated = info.lastModified ?? "n/a";
+  const pipeline = info.pipeline_tag ?? info.pipelineTag ?? "n/a";
   return `repo=${repo} downloads=${downloads} likes=${likes} updated=${updated} task=${pipeline} file=${fileName}`;
 }

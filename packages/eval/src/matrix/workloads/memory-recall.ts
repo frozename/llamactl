@@ -1,4 +1,4 @@
-import type { WorkloadEval } from '../types.js';
+import type { WorkloadEval } from "../types.js";
 
 interface Candidate {
   id: string;
@@ -22,33 +22,31 @@ Output ONLY a JSON object with this exact shape (no preamble, no markdown):
 The "ranking" array MUST include every candidate ID exactly once. Most relevant first.`;
 
 function buildUserMessage(row: CorpusRow): string {
-  const ctx = row.context ? `Context: ${row.context}\n\n` : '';
-  const cands = row.candidates
-    .map((c, i) => `${i + 1}. [${c.id}] ${c.text}`)
-    .join('\n');
+  const ctx = row.context ? `Context: ${row.context}\n\n` : "";
+  const cands = row.candidates.map((c, i) => `${i + 1}. [${c.id}] ${c.text}`).join("\n");
   return `${ctx}Query: ${row.query}\n\nCandidates:\n${cands}\n\nReturn the ranked IDs as JSON.`;
 }
 
 function parseRanking(text: string): string[] | null {
   let s = text.trim();
-  if (s.includes('@@metadata')) {
-    const parts = s.split('@@metadata', 2);
+  if (s.includes("@@metadata")) {
+    const parts = s.split("@@metadata", 2);
     if (parts.length > 1 && parts[1] !== undefined) s = parts[1];
-    if (s.includes('@@end')) {
-      const head = s.split('@@end', 1)[0];
+    if (s.includes("@@end")) {
+      const head = s.split("@@end", 1)[0];
       if (head !== undefined) s = head;
     }
   }
   const fenceMatch = s.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   if (fenceMatch && fenceMatch[1] !== undefined) s = fenceMatch[1];
-  const start = s.indexOf('{');
-  const end = s.lastIndexOf('}');
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
   try {
     const obj = JSON.parse(s.slice(start, end + 1)) as Record<string, unknown>;
     const r = obj.ranking;
     if (!Array.isArray(r)) return null;
-    if (!r.every((v) => typeof v === 'string')) return null;
+    if (!r.every((v) => typeof v === "string")) return null;
     return r as string[];
   } catch {
     return null;
@@ -105,15 +103,15 @@ export function extractIdsByAppearance(text: string, candidates: Candidate[]): s
 }
 
 export const memoryRecallWorkload: WorkloadEval = {
-  name: 'memory-recall',
-  corpus_path: 'packages/eval/corpora/memory-recall/v0/test.jsonl',
-  primary_metric_name: 'mean_ndcg5',
+  name: "memory-recall",
+  corpus_path: "packages/eval/corpora/memory-recall/v0/test.jsonl",
+  primary_metric_name: "mean_ndcg5",
   prompt_builder: (row) => {
     const r = row as CorpusRow;
     return {
       messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: buildUserMessage(r) },
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: buildUserMessage(r) },
       ],
     };
   },
@@ -127,16 +125,16 @@ export const memoryRecallWorkload: WorkloadEval = {
     }
     if (!parsed) {
       return {
-        prediction: '__parse_error__',
-        gold: r.gold_ids.join(','),
+        prediction: "__parse_error__",
+        gold: r.gold_ids.join(","),
         metrics: { ndcg5: 0, recall5: 0, parse_error: 1, fallback: 0 },
       };
     }
     const ndcg5 = ndcgAtK(parsed, r.gold_ids, 5);
     const recall5 = recallAtK(parsed, r.gold_ids, 5);
     return {
-      prediction: parsed.slice(0, 5).join(','),
-      gold: r.gold_ids.join(','),
+      prediction: parsed.slice(0, 5).join(","),
+      gold: r.gold_ids.join(","),
       metrics: { ndcg5, recall5, parse_error: 0, fallback },
     };
   },

@@ -1,15 +1,15 @@
-import { describe, expect, test } from 'bun:test';
-import { router } from '../src/router.js';
+import { describe, expect, test } from "bun:test";
+import { router } from "../src/router.js";
 
-describe('router workload validation', () => {
-  test('exposes ModelHost lifecycle procedures', () => {
+describe("router workload validation", () => {
+  test("exposes ModelHost lifecycle procedures", () => {
     const caller = router.createCaller({});
-    expect(typeof caller.modelHostStatus).toBe('function');
-    expect(typeof caller.modelHostStop).toBe('function');
-    expect(typeof caller.modelHostStart).toBe('function');
+    expect(typeof caller.modelHostStatus).toBe("function");
+    expect(typeof caller.modelHostStop).toBe("function");
+    expect(typeof caller.modelHostStart).toBe("function");
   });
 
-  test('accepts ModelRun manifests', async () => {
+  test("accepts ModelRun manifests", async () => {
     const caller = router.createCaller({});
     const result = await caller.workloadValidate({
       yaml: `
@@ -25,11 +25,11 @@ spec:
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.manifest.kind).toBe('ModelRun');
-    expect(result.manifest.metadata.name).toBe('validate-run');
+    expect(result.manifest.kind).toBe("ModelRun");
+    expect(result.manifest.metadata.name).toBe("validate-run");
   });
 
-  test('accepts ModelHost manifests', async () => {
+  test("accepts ModelHost manifests", async () => {
     const caller = router.createCaller({});
     const result = await caller.workloadValidate({
       yaml: `
@@ -50,29 +50,29 @@ spec:
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.manifest.kind).toBe('ModelHost');
-    expect(result.manifest.metadata.name).toBe('validate-host');
+    expect(result.manifest.kind).toBe("ModelHost");
+    expect(result.manifest.metadata.name).toBe("validate-host");
   });
 
-  test('reads ModelHost status from local runtime state', async () => {
+  test("reads ModelHost status from local runtime state", async () => {
     const caller = router.createCaller({});
-    const result = await caller.modelHostStatus({ workload: 'host-a' });
-    expect(result).toEqual({ state: 'Stopped' });
+    const result = await caller.modelHostStatus({ workload: "host-a" });
+    expect(result).toEqual({ state: "Stopped" });
   });
 
-  test('modelHostStart validates optional inline manifest payloads', async () => {
+  test("modelHostStart validates optional inline manifest payloads", async () => {
     const caller = router.createCaller({});
-    const stream = await caller.modelHostStart({ workload: 'host-a' });
-    expect(typeof stream[Symbol.asyncIterator]).toBe('function');
+    const stream = await caller.modelHostStart({ workload: "host-a" });
+    expect(typeof stream[Symbol.asyncIterator]).toBe("function");
     await expect(
       caller.modelHostStart({
-        workload: 'host-a',
-        manifest: { kind: 'ModelHost' } as never,
+        workload: "host-a",
+        manifest: { kind: "ModelHost" } as never,
       }),
     ).rejects.toThrow(/manifest/i);
   });
 
-  test('rejects unknown workload kinds with a clear error', async () => {
+  test("rejects unknown workload kinds with a clear error", async () => {
     const caller = router.createCaller({});
     const result = await caller.workloadValidate({
       yaml: `

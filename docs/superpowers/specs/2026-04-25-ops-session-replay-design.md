@@ -23,23 +23,48 @@ Rich session events are persisted in a new per-session journal at `~/.llamactl/o
 
 ```ts
 type JournalEvent =
-  | { type: 'session_started'; ts: string; sessionId: string;
-      goal: string; nodeId?: string; model?: string;
-      historyLen: number; toolCount: number }
-  | { type: 'plan_proposed';   ts: string; stepId: string;
-      iteration: number; tier: ToolTier; reasoning: string;
-      step: PlanStep /* args full */ }
-  | { type: 'preview_outcome'; ts: string; stepId: string;
-      ok: boolean; durationMs: number;
-      result?: unknown; resultRedacted?: 'omitted' | 'truncated';
-      error?: { code: string; message: string } }
-  | { type: 'wet_outcome';     ts: string; stepId: string;
-      ok: boolean; durationMs: number;
-      result?: unknown; resultRedacted?: 'omitted' | 'truncated';
-      error?: { code: string; message: string } }
-  | { type: 'refusal'; ts: string; reason: string }
-  | { type: 'done';    ts: string; iterations: number }
-  | { type: 'aborted'; ts: string; reason: 'client_abort' | 'signal' | 'timeout' };
+  | {
+      type: "session_started";
+      ts: string;
+      sessionId: string;
+      goal: string;
+      nodeId?: string;
+      model?: string;
+      historyLen: number;
+      toolCount: number;
+    }
+  | {
+      type: "plan_proposed";
+      ts: string;
+      stepId: string;
+      iteration: number;
+      tier: ToolTier;
+      reasoning: string;
+      step: PlanStep; /* args full */
+    }
+  | {
+      type: "preview_outcome";
+      ts: string;
+      stepId: string;
+      ok: boolean;
+      durationMs: number;
+      result?: unknown;
+      resultRedacted?: "omitted" | "truncated";
+      error?: { code: string; message: string };
+    }
+  | {
+      type: "wet_outcome";
+      ts: string;
+      stepId: string;
+      ok: boolean;
+      durationMs: number;
+      result?: unknown;
+      resultRedacted?: "omitted" | "truncated";
+      error?: { code: string; message: string };
+    }
+  | { type: "refusal"; ts: string; reason: string }
+  | { type: "done"; ts: string; iterations: number }
+  | { type: "aborted"; ts: string; reason: "client_abort" | "signal" | "timeout" };
 ```
 
 `session_started` is always first; one of `done` / `refusal` / `aborted` is always last. Anything between is paired by `stepId` (one proposal + zero, one, or two outcomes).
@@ -72,7 +97,7 @@ Rules live in `packages/remote/src/ops-chat/sessions/redaction.ts` and are confi
 
 ### D6. Layout: iteration-grouped accordion
 
-`OpsSessionDetail` renders one collapsible `IterationCard` per iteration. Card header shows `[#3] tool · tier · ✓/✗ · 1.2s`; card body shows reasoning, args, preview outcome, wet outcome. Default-expanded state is the latest iteration (so live sessions naturally display the current frontier); all earlier iterations start collapsed. New iterations arriving during a live session auto-expand and demote the previously-latest iteration to collapsed — *unless* the user has manually toggled any iteration during this tab session, at which point auto-expansion stops and user intent sticks. The `EditorialHero` from `@/ui` carries the session header (goal, status pill, iteration count, timestamps).
+`OpsSessionDetail` renders one collapsible `IterationCard` per iteration. Card header shows `[#3] tool · tier · ✓/✗ · 1.2s`; card body shows reasoning, args, preview outcome, wet outcome. Default-expanded state is the latest iteration (so live sessions naturally display the current frontier); all earlier iterations start collapsed. New iterations arriving during a live session auto-expand and demote the previously-latest iteration to collapsed — _unless_ the user has manually toggled any iteration during this tab session, at which point auto-expansion stops and user intent sticks. The `EditorialHero` from `@/ui` carries the session header (goal, status pill, iteration count, timestamps).
 
 This visual language deliberately differs from ops-chat's chat-bubble style. Different surfaces for different mental modes (operating vs. reviewing); the "Open in ops-chat" button signals the context switch explicitly.
 
@@ -102,12 +127,12 @@ ops-chat/
 
 ### tRPC procedures (`packages/remote/src/router.ts`)
 
-| Proc | Kind | Input | Output |
-|---|---|---|---|
-| `opsSessionList` | query | `{ limit, cursor?, status? }` | `{ sessions: SessionSummary[]; nextCursor?: string }` |
-| `opsSessionGet` | query | `{ sessionId }` | `{ summary: SessionSummary; recentEvents: JournalEvent[] }` |
-| `opsSessionWatch` | subscription | `{ sessionId }` | yields `JournalEvent` (replay then live) |
-| `opsSessionDelete` | mutation | `{ sessionId }` | `{ ok: true }` or throws `PRECONDITION_FAILED` if in-flight |
+| Proc               | Kind         | Input                         | Output                                                      |
+| ------------------ | ------------ | ----------------------------- | ----------------------------------------------------------- |
+| `opsSessionList`   | query        | `{ limit, cursor?, status? }` | `{ sessions: SessionSummary[]; nextCursor?: string }`       |
+| `opsSessionGet`    | query        | `{ sessionId }`               | `{ summary: SessionSummary; recentEvents: JournalEvent[] }` |
+| `opsSessionWatch`  | subscription | `{ sessionId }`               | yields `JournalEvent` (replay then live)                    |
+| `opsSessionDelete` | mutation     | `{ sessionId }`               | `{ ok: true }` or throws `PRECONDITION_FAILED` if in-flight |
 
 ### App (`packages/app/src`)
 
@@ -139,14 +164,26 @@ type IterationView = {
   tier: ToolTier;
   reasoning: string;
   args: unknown;
-  preview?: { ok: boolean; durationMs: number; result?: unknown; resultRedacted?: 'omitted' | 'truncated'; error?: { code: string; message: string } };
-  wet?:     { ok: boolean; durationMs: number; result?: unknown; resultRedacted?: 'omitted' | 'truncated'; error?: { code: string; message: string } };
+  preview?: {
+    ok: boolean;
+    durationMs: number;
+    result?: unknown;
+    resultRedacted?: "omitted" | "truncated";
+    error?: { code: string; message: string };
+  };
+  wet?: {
+    ok: boolean;
+    durationMs: number;
+    result?: unknown;
+    resultRedacted?: "omitted" | "truncated";
+    error?: { code: string; message: string };
+  };
 };
 
 type SessionView = {
   sessionId: string;
   goal: string;
-  status: 'live' | 'done' | 'refused' | 'aborted';
+  status: "live" | "done" | "refused" | "aborted";
   startedAt: string;
   endedAt?: string;
   iterations: IterationView[];
@@ -202,7 +239,7 @@ opsSessionWatch subscription opens for sessionId:
       bus channel close also closes it.
 ```
 
-A tab opened *after* a session ends executes step 1, finds no bus channel in step 2, and closes naturally. A tab opened mid-flight gets the past plus the future. The client doesn't branch on mode.
+A tab opened _after_ a session ends executes step 1, finds no bus channel in step 2, and closes naturally. A tab opened mid-flight gets the past plus the future. The client doesn't branch on mode.
 
 ### Multi-tab consistency
 
@@ -220,25 +257,25 @@ Two `OpsSessionDetail` tabs and the ops-chat tab can all watch the same session 
 
 ### Server (`packages/remote`)
 
-| Test | Coverage |
-|---|---|
-| `ops-chat/sessions/journal.test.ts` | Append + read round-trip, JSONL parse-tolerant of trailing newlines, malformed-line skip, atomic append |
-| `ops-chat/sessions/redaction.test.ts` | `secrets.read` → omitted, `fs.read` → truncated at 4KB with marker, default tool → full passthrough |
-| `ops-chat/sessions/event-bus.test.ts` | Multiple subscribers receive same events; channel close propagates; resubscribe after close gets no events |
-| `ops-chat/sessions/list.test.ts` | Lists by recency desc, paginates, derives status from terminal event, summary computed from journal |
-| `ops-chat/loop-executor.test.ts` (extend) | Events written to journal in correct order; sessionId stamped on each audit entry; bus published per event |
-| `router/ops-session.test.ts` | `opsSessionWatch` replay-then-tail; open mid-flight gets prelude then live; open post-terminal closes after replay; `opsSessionDelete` rejects in-flight |
+| Test                                      | Coverage                                                                                                                                                 |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ops-chat/sessions/journal.test.ts`       | Append + read round-trip, JSONL parse-tolerant of trailing newlines, malformed-line skip, atomic append                                                  |
+| `ops-chat/sessions/redaction.test.ts`     | `secrets.read` → omitted, `fs.read` → truncated at 4KB with marker, default tool → full passthrough                                                      |
+| `ops-chat/sessions/event-bus.test.ts`     | Multiple subscribers receive same events; channel close propagates; resubscribe after close gets no events                                               |
+| `ops-chat/sessions/list.test.ts`          | Lists by recency desc, paginates, derives status from terminal event, summary computed from journal                                                      |
+| `ops-chat/loop-executor.test.ts` (extend) | Events written to journal in correct order; sessionId stamped on each audit entry; bus published per event                                               |
+| `router/ops-session.test.ts`              | `opsSessionWatch` replay-then-tail; open mid-flight gets prelude then live; open post-terminal closes after replay; `opsSessionDelete` rejects in-flight |
 
 All run under the existing hermetic `LLAMACTL_TEST_PROFILE` / `DEV_STORAGE` pattern — sessions land in profile tmp dir, never in `~/.llamactl`.
 
 ### App (`packages/app`)
 
-| Test | Coverage |
-|---|---|
-| `modules/ops/detail/use-ops-session.test.ts` | View-model derivation: idempotent merge, replay+live overlap dedupe, status transitions |
-| `modules/ops/detail/iteration-card.test.tsx` | Default-expanded latest, expand on click, tier badge, redaction markers visible |
-| `modules/ops/detail/result-viewer.test.tsx` | Truncation marker, "show full" toggle, omitted-result message |
-| `modules/ops-sessions/sessions-table.test.tsx` | Sort, paginate, delete-confirm flow, status pills |
+| Test                                           | Coverage                                                                                |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `modules/ops/detail/use-ops-session.test.ts`   | View-model derivation: idempotent merge, replay+live overlap dedupe, status transitions |
+| `modules/ops/detail/iteration-card.test.tsx`   | Default-expanded latest, expand on click, tier badge, redaction markers visible         |
+| `modules/ops/detail/result-viewer.test.tsx`    | Truncation marker, "show full" toggle, omitted-result message                           |
+| `modules/ops-sessions/sessions-table.test.tsx` | Sort, paginate, delete-confirm flow, status pills                                       |
 
 ### UI flow tests (`tests/ui-flows/`)
 

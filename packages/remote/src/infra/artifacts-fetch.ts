@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -12,9 +12,9 @@ import {
   symlinkSync,
   unlinkSync,
   writeFileSync,
-} from 'node:fs';
-import { dirname, join } from 'node:path';
-import { agentBinaryPath, defaultArtifactsDir } from '../server/artifacts.js';
+} from "node:fs";
+import { dirname, join } from "node:path";
+import { agentBinaryPath, defaultArtifactsDir } from "../server/artifacts.js";
 
 /**
  * Download an agent binary from a GitHub Release, verify its
@@ -25,14 +25,20 @@ import { agentBinaryPath, defaultArtifactsDir } from '../server/artifacts.js';
  * real github.com.
  */
 
-export type ArtifactFetcher = (url: string, opts?: { accept?: string }) => Promise<{
+export type ArtifactFetcher = (
+  url: string,
+  opts?: { accept?: string },
+) => Promise<{
   ok: boolean;
   status: number;
   body: Uint8Array;
   text: () => string;
 }>;
 
-async function defaultFetcher(url: string, opts?: { accept?: string }): Promise<{
+async function defaultFetcher(
+  url: string,
+  opts?: { accept?: string },
+): Promise<{
   ok: boolean;
   status: number;
   body: Uint8Array;
@@ -53,12 +59,7 @@ async function defaultFetcher(url: string, opts?: { accept?: string }): Promise<
   };
 }
 
-const ALLOWED_TARGETS = new Set([
-  'darwin-arm64',
-  'darwin-x64',
-  'linux-x64',
-  'linux-arm64',
-]);
+const ALLOWED_TARGETS = new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"]);
 
 export interface FetchAgentReleaseOptions {
   /** `owner/repo`, e.g. `frozename/llamactl`. */
@@ -84,7 +85,7 @@ export interface FetchAgentReleaseOptions {
    *     completed — missing asset, missing cosign, or verification
    *     mismatch. Returns `reason: 'sig-verify-failed'`.
    */
-  verifySig?: 'skip' | 'best-effort' | 'require';
+  verifySig?: "skip" | "best-effort" | "require";
   /** Override the cosign invocation — tests stub this. Receives the
    *  three paths (binary, sig, cert) + repo + tag and returns
    *  verification result. */
@@ -126,18 +127,18 @@ export type FetchAgentReleaseResult =
   | {
       ok: false;
       reason:
-        | 'unknown-target'
-        | 'resolve-failed'
-        | 'asset-missing'
-        | 'download-failed'
-        | 'sha-mismatch'
-        | 'sig-verify-failed';
+        | "unknown-target"
+        | "resolve-failed"
+        | "asset-missing"
+        | "download-failed"
+        | "sha-mismatch"
+        | "sig-verify-failed";
       message: string;
       detail?: unknown;
     };
 
 function sha256hex(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 /**
@@ -159,7 +160,7 @@ async function resolveLatestTag(
   fetcher: ArtifactFetcher,
 ): Promise<{ ok: true; tag: string } | { ok: false; message: string }> {
   const url = `https://api.github.com/repos/${repo}/releases/latest`;
-  const res = await fetcher(url, { accept: 'application/vnd.github+json' });
+  const res = await fetcher(url, { accept: "application/vnd.github+json" });
   if (!res.ok) {
     return {
       ok: false,
@@ -168,8 +169,8 @@ async function resolveLatestTag(
   }
   try {
     const parsed = JSON.parse(res.text()) as { tag_name?: unknown };
-    if (typeof parsed.tag_name !== 'string' || parsed.tag_name.length === 0) {
-      return { ok: false, message: 'GitHub latest release has no tag_name' };
+    if (typeof parsed.tag_name !== "string" || parsed.tag_name.length === 0) {
+      return { ok: false, message: "GitHub latest release has no tag_name" };
     }
     return { ok: true, tag: parsed.tag_name };
   } catch (err) {
@@ -200,11 +201,11 @@ export function agentAssetCertUrl(repo: string, tag: string, target: string): st
  * a trailing `vX.Y.Z` tag match.
  */
 export function cosignIdentityRegex(repo: string): string {
-  const escaped = repo.replace(/[.\\+*?^$()[\]{}|]/g, '\\$&');
+  const escaped = repo.replace(/[.\\+*?^$()[\]{}|]/g, "\\$&");
   return `^https://github\\.com/${escaped}/\\.github/workflows/release-agent\\.yml@refs/tags/v.+$`;
 }
 
-const COSIGN_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
+const COSIGN_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 
 /**
  * Default cosign verifier: spawns `cosign verify-blob` as a subprocess
@@ -218,20 +219,20 @@ async function defaultCosignVerifier(
   try {
     const proc = Bun.spawn({
       cmd: [
-        'cosign',
-        'verify-blob',
-        '--certificate-identity-regexp',
+        "cosign",
+        "verify-blob",
+        "--certificate-identity-regexp",
         cosignIdentityRegex(input.repo),
-        '--certificate-oidc-issuer',
+        "--certificate-oidc-issuer",
         COSIGN_OIDC_ISSUER,
-        '--signature',
+        "--signature",
         input.sigPath,
-        '--certificate',
+        "--certificate",
         input.certPath,
         input.binaryPath,
       ],
-      stdout: 'pipe',
-      stderr: 'pipe',
+      stdout: "pipe",
+      stderr: "pipe",
     });
     const code = await proc.exited;
     if (code === 0) return { ok: true };
@@ -251,17 +252,17 @@ export async function fetchAgentRelease(
   if (!ALLOWED_TARGETS.has(opts.target)) {
     return {
       ok: false,
-      reason: 'unknown-target',
-      message: `unknown --target ${opts.target} (allowed: ${[...ALLOWED_TARGETS].sort().join(', ')})`,
+      reason: "unknown-target",
+      message: `unknown --target ${opts.target} (allowed: ${[...ALLOWED_TARGETS].sort().join(", ")})`,
     };
   }
   const fetcher = opts.fetcher ?? defaultFetcher;
 
   let tag = opts.version;
-  if (tag === 'latest') {
+  if (tag === "latest") {
     const resolved = await resolveLatestTag(opts.repo, fetcher);
     if (!resolved.ok) {
-      return { ok: false, reason: 'resolve-failed', message: resolved.message };
+      return { ok: false, reason: "resolve-failed", message: resolved.message };
     }
     tag = resolved.tag;
   }
@@ -270,13 +271,13 @@ export async function fetchAgentRelease(
   const shaUrl = agentAssetShaUrl(opts.repo, tag, opts.target);
 
   const [binRes, shaRes] = await Promise.all([
-    fetcher(binUrl, { accept: 'application/octet-stream' }),
-    fetcher(shaUrl, { accept: 'text/plain' }),
+    fetcher(binUrl, { accept: "application/octet-stream" }),
+    fetcher(shaUrl, { accept: "text/plain" }),
   ]);
   if (!binRes.ok) {
     return {
       ok: false,
-      reason: 'asset-missing',
+      reason: "asset-missing",
       message: `binary asset ${binUrl} returned ${binRes.status}`,
       detail: { url: binUrl, status: binRes.status },
     };
@@ -284,7 +285,7 @@ export async function fetchAgentRelease(
   if (!shaRes.ok) {
     return {
       ok: false,
-      reason: 'asset-missing',
+      reason: "asset-missing",
       message: `sha256 asset ${shaUrl} returned ${shaRes.status}`,
       detail: { url: shaUrl, status: shaRes.status },
     };
@@ -293,7 +294,7 @@ export async function fetchAgentRelease(
   if (!expectedSha) {
     return {
       ok: false,
-      reason: 'download-failed',
+      reason: "download-failed",
       message: `sha256 file content is not a valid hex hash`,
       detail: { body: shaRes.text().slice(0, 100) },
     };
@@ -302,7 +303,7 @@ export async function fetchAgentRelease(
   if (actualSha !== expectedSha) {
     return {
       ok: false,
-      reason: 'sha-mismatch',
+      reason: "sha-mismatch",
       message: `sha256 mismatch: expected ${expectedSha}, got ${actualSha}`,
       detail: { expected: expectedSha, actual: actualSha, bytes: binRes.body.length },
     };
@@ -311,7 +312,7 @@ export async function fetchAgentRelease(
   const artifactsDir = opts.artifactsDir ?? defaultArtifactsDir();
   const topLevelPath = agentBinaryPath(opts.target, artifactsDir);
   const versionDir = agentVersionDir(opts.target, tag, artifactsDir);
-  const versionedBin = join(versionDir, 'llamactl-agent');
+  const versionedBin = join(versionDir, "llamactl-agent");
   mkdirSync(versionDir, { recursive: true });
   writeFileSync(versionedBin, binRes.body);
   try {
@@ -323,10 +324,10 @@ export async function fetchAgentRelease(
   // with `shasum -a 256 -c`.
   writeFileSync(
     `${versionedBin}.sha256`,
-    shaRes.text().endsWith('\n') ? shaRes.text() : `${shaRes.text()}\n`,
+    shaRes.text().endsWith("\n") ? shaRes.text() : `${shaRes.text()}\n`,
   );
 
-  const verifyMode = opts.verifySig ?? 'skip';
+  const verifyMode = opts.verifySig ?? "skip";
   const signature = await maybeVerifySignature({
     mode: verifyMode,
     repo: opts.repo,
@@ -337,10 +338,10 @@ export async function fetchAgentRelease(
     cosignVerifier: opts.cosignVerifier ?? defaultCosignVerifier,
   });
 
-  if (verifyMode === 'require' && signature.verified !== true) {
+  if (verifyMode === "require" && signature.verified !== true) {
     return {
       ok: false,
-      reason: 'sig-verify-failed',
+      reason: "sig-verify-failed",
       message: `signature verification failed: ${signature.reason}`,
       detail: signature,
     };
@@ -366,23 +367,19 @@ export async function fetchAgentRelease(
 
 /** Root of the versioned layout for one platform. */
 export function agentPlatformDir(platform: string, artifactsDir: string): string {
-  return join(artifactsDir, 'agent', platform);
+  return join(artifactsDir, "agent", platform);
 }
 
 /** Directory holding all versioned binaries for one platform. */
 export function agentVersionsRoot(platform: string, artifactsDir: string): string {
-  return join(agentPlatformDir(platform, artifactsDir), 'versions');
+  return join(agentPlatformDir(platform, artifactsDir), "versions");
 }
 
 /** Directory for one (platform, tag) pair. Tag is sanitized so
  *  path-traversal in the version string is impossible — only
  *  `[A-Za-z0-9._+-]` is kept; everything else becomes `_`. */
-export function agentVersionDir(
-  platform: string,
-  tag: string,
-  artifactsDir: string,
-): string {
-  const safe = tag.replace(/[^A-Za-z0-9._+-]/g, '_');
+export function agentVersionDir(platform: string, tag: string, artifactsDir: string): string {
+  const safe = tag.replace(/[^A-Za-z0-9._+-]/g, "_");
   return join(agentVersionsRoot(platform, artifactsDir), safe);
 }
 
@@ -398,7 +395,11 @@ function linkCurrentVersion(topLevel: string, target: string): void {
   mkdirSync(dirname(topLevel), { recursive: true });
   const info = lstatSafe(topLevel);
   if (info) {
-    try { unlinkSync(topLevel); } catch { /* ignore */ }
+    try {
+      unlinkSync(topLevel);
+    } catch {
+      /* ignore */
+    }
   }
   try {
     symlinkSync(target, topLevel);
@@ -408,7 +409,11 @@ function linkCurrentVersion(topLevel: string, target: string): void {
   }
   try {
     writeFileSync(topLevel, readFileSync(target));
-    try { chmodSync(topLevel, 0o755); } catch { /* ignore */ }
+    try {
+      chmodSync(topLevel, 0o755);
+    } catch {
+      /* ignore */
+    }
   } catch {
     // If even the copy fails we've still written to versions/ — the
     // next fetch or a manual `ln -s` will recover the top-level
@@ -417,11 +422,15 @@ function linkCurrentVersion(topLevel: string, target: string): void {
 }
 
 function lstatSafe(path: string): ReturnType<typeof lstatSync> | null {
-  try { return lstatSync(path); } catch { return null; }
+  try {
+    return lstatSync(path);
+  } catch {
+    return null;
+  }
 }
 
 interface MaybeVerifyOptions {
-  mode: 'skip' | 'best-effort' | 'require';
+  mode: "skip" | "best-effort" | "require";
   repo: string;
   tag: string;
   target: string;
@@ -431,14 +440,14 @@ interface MaybeVerifyOptions {
 }
 
 async function maybeVerifySignature(opts: MaybeVerifyOptions): Promise<SignatureOutcome> {
-  if (opts.mode === 'skip') {
-    return { verified: null, reason: 'verification skipped (--verify-sig not set)' };
+  if (opts.mode === "skip") {
+    return { verified: null, reason: "verification skipped (--verify-sig not set)" };
   }
   const sigUrl = agentAssetSigUrl(opts.repo, opts.tag, opts.target);
   const certUrl = agentAssetCertUrl(opts.repo, opts.tag, opts.target);
   const [sigRes, certRes] = await Promise.all([
-    opts.fetcher(sigUrl, { accept: 'application/octet-stream' }),
-    opts.fetcher(certUrl, { accept: 'application/octet-stream' }),
+    opts.fetcher(sigUrl, { accept: "application/octet-stream" }),
+    opts.fetcher(certUrl, { accept: "application/octet-stream" }),
   ]);
   if (!sigRes.ok || !certRes.ok) {
     return {
@@ -458,7 +467,7 @@ async function maybeVerifySignature(opts: MaybeVerifyOptions): Promise<Signature
     tag: opts.tag,
   });
   if (result.ok) {
-    return { verified: true, reason: 'cosign verify-blob succeeded' };
+    return { verified: true, reason: "cosign verify-blob succeeded" };
   }
   return { verified: false, reason: result.message };
 }
@@ -502,20 +511,16 @@ export interface ListAgentVersionsOptions {
  * `active` on the matching version entry when the symlink resolves
  * into `versions/`.
  */
-export function listAgentVersions(
-  opts: ListAgentVersionsOptions = {},
-): InstalledAgentVersion[] {
+export function listAgentVersions(opts: ListAgentVersionsOptions = {}): InstalledAgentVersion[] {
   const artifactsDir = opts.artifactsDir ?? defaultArtifactsDir();
-  const platforms = opts.target
-    ? [opts.target]
-    : Array.from(ALLOWED_TARGETS).sort();
+  const platforms = opts.target ? [opts.target] : Array.from(ALLOWED_TARGETS).sort();
   const out: InstalledAgentVersion[] = [];
   for (const target of platforms) {
     const versionsRoot = agentVersionsRoot(target, artifactsDir);
     if (!existsSync(versionsRoot)) continue;
     const activeTarget = resolveActiveVersionTag(target, artifactsDir);
     for (const tag of readdirSync(versionsRoot).sort()) {
-      const bin = join(versionsRoot, tag, 'llamactl-agent');
+      const bin = join(versionsRoot, tag, "llamactl-agent");
       if (!existsSync(bin)) continue;
       const stat = statSync(bin);
       out.push({
@@ -533,10 +538,7 @@ export function listAgentVersions(
 
 /** Resolve the top-level symlink back to its tag, or null if the
  *  symlink is missing / points outside `versions/`. */
-function resolveActiveVersionTag(
-  target: string,
-  artifactsDir: string,
-): string | null {
+function resolveActiveVersionTag(target: string, artifactsDir: string): string | null {
   const topLevel = agentBinaryPath(target, artifactsDir);
   const info = lstatSafe(topLevel);
   if (!info) return null;
@@ -553,7 +555,7 @@ function resolveActiveVersionTag(
   if (segments.length < 2) return null;
   const last = segments[segments.length - 1];
   const tag = segments[segments.length - 2];
-  if (last !== 'llamactl-agent' || !tag) return null;
+  if (last !== "llamactl-agent" || !tag) return null;
   return tag;
 }
 

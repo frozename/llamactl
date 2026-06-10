@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'bun:test';
-import { parseVmStatOutput } from '../src/node-probe.js';
+import { describe, it, expect } from "bun:test";
+import { parseVmStatOutput } from "../src/node-probe.js";
 
 const FAKE_VM_STAT = `
 Mach Virtual Memory Statistics: (page size of 16384 bytes)
@@ -12,12 +12,12 @@ Swapins:                               0.
 Swapouts:                              0.
 `.trim();
 
-describe('parseVmStatOutput', () => {
-  it('produces correct NodeMemSnapshot from known output', () => {
+describe("parseVmStatOutput", () => {
+  it("produces correct NodeMemSnapshot from known output", () => {
     const snap = parseVmStatOutput(FAKE_VM_STAT);
-    expect(snap.free_mb).toBeCloseTo(1031 * 16384 / 1024 / 1024, 0);
-    expect(snap.active_mb).toBeCloseTo(912 * 16384 / 1024 / 1024, 0);
-    expect(snap.compressor_mb).toBeCloseTo(2600 * 16384 / 1024 / 1024, 0);
+    expect(snap.free_mb).toBeCloseTo((1031 * 16384) / 1024 / 1024, 0);
+    expect(snap.active_mb).toBeCloseTo((912 * 16384) / 1024 / 1024, 0);
+    expect(snap.compressor_mb).toBeCloseTo((2600 * 16384) / 1024 / 1024, 0);
     expect(snap.swap_in).toBe(0);
     expect(snap.swap_out).toBe(0);
   });

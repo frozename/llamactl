@@ -1,5 +1,5 @@
-import { callTRPCProcedure, type AnyTRPCRouter } from '@trpc/server';
-import type { TunnelReq } from './messages.js';
+import { callTRPCProcedure, type AnyTRPCRouter } from "@trpc/server";
+import type { TunnelReq } from "./messages.js";
 
 /**
  * Agent-side bridge between the reverse tunnel's `req` frames and a
@@ -39,13 +39,11 @@ export interface TunnelRouterParams {
   /** 'query' | 'mutation' | 'subscription' — query/mutation go through
    *  the caller path; subscription goes through
    *  `createTunnelSubscriptionHandler`. */
-  type?: 'query' | 'mutation' | 'subscription';
+  type?: "query" | "mutation" | "subscription";
   input?: unknown;
 }
 
-export function createTunnelRouterHandler(
-  caller: AnyCaller,
-): (req: TunnelReq) => Promise<unknown> {
+export function createTunnelRouterHandler(caller: AnyCaller): (req: TunnelReq) => Promise<unknown> {
   return async (req: TunnelReq) => {
     const method = req.method;
     const params = (req.params ?? {}) as TunnelRouterParams;
@@ -73,17 +71,20 @@ export function createTunnelRouterHandler(
  * fail on the very first segment for any real caller.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function walkCaller(caller: any, method: string): ((input: unknown) => Promise<unknown>) | undefined {
-  const parts = method.split('.');
+function walkCaller(
+  caller: any,
+  method: string,
+): ((input: unknown) => Promise<unknown>) | undefined {
+  const parts = method.split(".");
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let cursor: any = caller;
   for (const part of parts) {
     if (cursor == null) return undefined;
-    if (typeof cursor !== 'object' && typeof cursor !== 'function') return undefined;
+    if (typeof cursor !== "object" && typeof cursor !== "function") return undefined;
     cursor = cursor[part];
     if (cursor === undefined) return undefined;
   }
-  if (typeof cursor !== 'function') return undefined;
+  if (typeof cursor !== "function") return undefined;
   // Don't use cursor.bind(caller): tRPC v11's caller is a Proxy that
   // intercepts EVERY property access (including `.bind`) and treats
   // it as another procedure-path segment, so cursor.bind would walk
@@ -180,7 +181,7 @@ export function createTunnelSubscriptionHandler(
               path,
               getRawInput: async () => params.input,
               ctx: createContext(),
-              type: 'subscription',
+              type: "subscription",
               signal: abort.signal,
               batchIndex: 0,
             });
@@ -198,11 +199,7 @@ export function createTunnelSubscriptionHandler(
           // generator) or an Observable. Normalise to AsyncIterable.
           const iterable = toAsyncIterable(result, abort.signal);
           if (!iterable) {
-            safeError(
-              new Error(
-                `subscription '${path}' did not return an async iterable`,
-              ),
-            );
+            safeError(new Error(`subscription '${path}' did not return an async iterable`));
             return;
           }
           try {
@@ -253,10 +250,7 @@ export function createTunnelSubscriptionHandler(
  *     into an AsyncIterable that pulls via push-pull deferreds.
  *   - anything else — rejected; the caller surfaces an error frame.
  */
-function toAsyncIterable(
-  value: unknown,
-  signal: AbortSignal,
-): AsyncIterable<unknown> | null {
+function toAsyncIterable(value: unknown, signal: AbortSignal): AsyncIterable<unknown> | null {
   if (value == null) return null;
   if (isAsyncIterable(value)) return value;
   if (isObservable(value)) return observableToAsyncIterable(value, signal);
@@ -264,8 +258,10 @@ function toAsyncIterable(
 }
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
-  if (value == null || typeof value !== 'object') return false;
-  return typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === 'function';
+  if (value == null || typeof value !== "object") return false;
+  return (
+    typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function"
+  );
 }
 
 interface MinimalObservable {
@@ -277,8 +273,8 @@ interface MinimalObservable {
 }
 
 function isObservable(value: unknown): value is MinimalObservable {
-  if (value == null || typeof value !== 'object') return false;
-  return typeof (value as { subscribe?: unknown }).subscribe === 'function';
+  if (value == null || typeof value !== "object") return false;
+  return typeof (value as { subscribe?: unknown }).subscribe === "function";
 }
 
 /**
@@ -294,8 +290,13 @@ function observableToAsyncIterable(
 ): AsyncIterable<unknown> {
   return {
     [Symbol.asyncIterator](): AsyncIterator<unknown> {
-      const buffer: Array<{ kind: 'v'; value: unknown } | { kind: 'e'; err: unknown } | { kind: 'c' }> = [];
-      let pending: { resolve: (v: IteratorResult<unknown>) => void; reject: (e: unknown) => void } | null = null;
+      const buffer: Array<
+        { kind: "v"; value: unknown } | { kind: "e"; err: unknown } | { kind: "c" }
+      > = [];
+      let pending: {
+        resolve: (v: IteratorResult<unknown>) => void;
+        reject: (e: unknown) => void;
+      } | null = null;
       let done = false;
       const teardownHandle = observable.subscribe({
         next(v) {
@@ -305,7 +306,7 @@ function observableToAsyncIterable(
             pending = null;
             p.resolve({ value: v, done: false });
           } else {
-            buffer.push({ kind: 'v', value: v });
+            buffer.push({ kind: "v", value: v });
           }
         },
         error(err) {
@@ -316,7 +317,7 @@ function observableToAsyncIterable(
             pending = null;
             p.reject(err);
           } else {
-            buffer.push({ kind: 'e', err });
+            buffer.push({ kind: "e", err });
           }
         },
         complete() {
@@ -327,13 +328,16 @@ function observableToAsyncIterable(
             pending = null;
             p.resolve({ value: undefined, done: true });
           } else {
-            buffer.push({ kind: 'c' });
+            buffer.push({ kind: "c" });
           }
         },
       });
       const teardown = (): void => {
-        if (typeof teardownHandle === 'function') teardownHandle();
-        else if (teardownHandle && typeof (teardownHandle as { unsubscribe?: unknown }).unsubscribe === 'function') {
+        if (typeof teardownHandle === "function") teardownHandle();
+        else if (
+          teardownHandle &&
+          typeof (teardownHandle as { unsubscribe?: unknown }).unsubscribe === "function"
+        ) {
           (teardownHandle as { unsubscribe: () => void }).unsubscribe();
         }
       };
@@ -350,17 +354,17 @@ function observableToAsyncIterable(
           pending = null;
           p.resolve({ value: undefined, done: true });
         } else {
-          buffer.push({ kind: 'c' });
+          buffer.push({ kind: "c" });
         }
       };
       if (signal.aborted) onAbort();
-      else signal.addEventListener('abort', onAbort, { once: true });
+      else signal.addEventListener("abort", onAbort, { once: true });
       return {
         async next(): Promise<IteratorResult<unknown>> {
           if (buffer.length > 0) {
             const head = buffer.shift()!;
-            if (head.kind === 'v') return { value: head.value, done: false };
-            if (head.kind === 'c') return { value: undefined, done: true };
+            if (head.kind === "v") return { value: head.value, done: false };
+            if (head.kind === "c") return { value: undefined, done: true };
             throw head.err;
           }
           if (done) return { value: undefined, done: true };

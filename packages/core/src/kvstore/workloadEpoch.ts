@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
-import { readModelHostState } from '../engines/state.js';
-import { readServerState } from '../server.js';
-import type { ResolvedEnv } from '../types.js';
-import type { WorkloadKey } from '../workloadRuntime.js';
+import { createHash } from "node:crypto";
+import { readModelHostState } from "../engines/state.js";
+import { readServerState } from "../server.js";
+import type { ResolvedEnv } from "../types.js";
+import type { WorkloadKey } from "../workloadRuntime.js";
 
 export interface WorkloadEpochInput {
   startedAt: string;
@@ -12,7 +12,7 @@ export interface WorkloadEpochInput {
 export function computeWorkloadEpoch(input: WorkloadEpochInput): string {
   // Simplified 2026-05-24: epoch = sha1(startedAt + rel). pid + argsHash dropped per adversarial review — they added mtime-touch flap risk without real invalidation gain. Restart bumps startedAt; apply-cycle (which changes args) restarts the workload too.
   const payload = `${input.startedAt}|${input.rel}`;
-  return createHash('sha1').update(payload).digest('hex');
+  return createHash("sha1").update(payload).digest("hex");
 }
 
 // Kept in kvstore because workload_epoch is a cache-key concern, not an engine concern.
@@ -20,8 +20,8 @@ export function readWorkloadEpoch(key: WorkloadKey, resolved: ResolvedEnv): stri
   const modelRunState = readServerState(key, resolved);
   if (
     modelRunState !== null &&
-    typeof modelRunState.startedAt === 'string' &&
-    typeof modelRunState.rel === 'string'
+    typeof modelRunState.startedAt === "string" &&
+    typeof modelRunState.rel === "string"
   ) {
     return computeWorkloadEpoch({
       startedAt: modelRunState.startedAt,
@@ -40,12 +40,12 @@ export function readWorkloadEpoch(key: WorkloadKey, resolved: ResolvedEnv): stri
   // field). Derive the epoch identity from the canonical first alias so omlx prefix-KV
   // caching engages; fall back to `rel` if a future sidecar shape provides it.
   const hostRel =
-    typeof hostLike.rel === 'string'
+    typeof hostLike.rel === "string"
       ? hostLike.rel
-      : Array.isArray(hostLike.modelAliases) && typeof hostLike.modelAliases[0] === 'string'
+      : Array.isArray(hostLike.modelAliases) && typeof hostLike.modelAliases[0] === "string"
         ? hostLike.modelAliases[0]
         : null;
-  if (typeof hostLike.startedAt === 'string' && hostRel !== null) {
+  if (typeof hostLike.startedAt === "string" && hostRel !== null) {
     return computeWorkloadEpoch({ startedAt: hostLike.startedAt, rel: hostRel });
   }
   console.warn(

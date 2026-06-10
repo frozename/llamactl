@@ -8,16 +8,16 @@
 
 ## Design decisions baked in
 
-| Open question | Decision |
-|---|---|
-| Pressure threshold derivation | `free_mb < headroom_min_mb AND compressor_mb > compressor_warn_mb` for N=3 **consecutive** ticks. No SMA averaging — consecutive avoids false positives from brief Metal bursts. Defaults: `headroom_min_mb=512`, `compressor_warn_mb=2048`. Derivation: 2026-05-22 incident had free=15MB + compressor=2600MB. |
-| Per-port request/error accounting | Pure HTTP probe: `/health` non-2xx or timeout → increment error counter. `/v1/models` → reachability + model list. No log-tailing, no proxy coupling. Request rate from `/v1/metrics` if available; null otherwise. |
-| Eviction tie-break at equal priority | RSS descending (evict largest → recover most memory), then alphabetical for determinism. |
-| mcr live-tuning vs restart | Propose restart with new args for v1. No live config mutation. |
-| Admission overhead factor | `projected_free = current_free_mb - expectedMemoryGiB * 1024 * 1.3`. Derived from bench: Qwen3-8B 7 GiB spec → ~10 GiB reality = 1.43×; granite-3b 3 GiB spec → ~4 GiB = 1.33×; use 1.3 as floor. Configurable via `--overhead-factor`. |
-| Eviction severity tier | Tier 3 (destructive). Never auto-executed unless `--severity-threshold=3`. Marking `degraded` is Tier 2 (auto-allowed by default). |
-| Supervisor self-monitoring | Emit `kind: 'fleet-heartbeat'` every tick. Missing heartbeat = stale. |
-| Cross-node v1 | Per-node supervisor instances run independently. mac-mini runs its own via launchd (same pattern as `install-agent-macos.sh`). |
+| Open question                        | Decision                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pressure threshold derivation        | `free_mb < headroom_min_mb AND compressor_mb > compressor_warn_mb` for N=3 **consecutive** ticks. No SMA averaging — consecutive avoids false positives from brief Metal bursts. Defaults: `headroom_min_mb=512`, `compressor_warn_mb=2048`. Derivation: 2026-05-22 incident had free=15MB + compressor=2600MB. |
+| Per-port request/error accounting    | Pure HTTP probe: `/health` non-2xx or timeout → increment error counter. `/v1/models` → reachability + model list. No log-tailing, no proxy coupling. Request rate from `/v1/metrics` if available; null otherwise.                                                                                             |
+| Eviction tie-break at equal priority | RSS descending (evict largest → recover most memory), then alphabetical for determinism.                                                                                                                                                                                                                        |
+| mcr live-tuning vs restart           | Propose restart with new args for v1. No live config mutation.                                                                                                                                                                                                                                                  |
+| Admission overhead factor            | `projected_free = current_free_mb - expectedMemoryGiB * 1024 * 1.3`. Derived from bench: Qwen3-8B 7 GiB spec → ~10 GiB reality = 1.43×; granite-3b 3 GiB spec → ~4 GiB = 1.33×; use 1.3 as floor. Configurable via `--overhead-factor`.                                                                         |
+| Eviction severity tier               | Tier 3 (destructive). Never auto-executed unless `--severity-threshold=3`. Marking `degraded` is Tier 2 (auto-allowed by default).                                                                                                                                                                              |
+| Supervisor self-monitoring           | Emit `kind: 'fleet-heartbeat'` every tick. Missing heartbeat = stale.                                                                                                                                                                                                                                           |
+| Cross-node v1                        | Per-node supervisor instances run independently. mac-mini runs its own via launchd (same pattern as `install-agent-macos.sh`).                                                                                                                                                                                  |
 
 ---
 
@@ -47,6 +47,7 @@ packages/fleet-supervisor/
 ```
 
 CLI additions:
+
 - `packages/cli/src/commands/supervisor.ts` — `llamactl supervisor serve`
 - `packages/cli/src/commands/admit.ts` — `llamactl admit <workload>`
 - `packages/cli/src/commands/enable.ts` — wire pre-flight check before `spec.enabled=true`
@@ -63,8 +64,8 @@ CLI additions:
 **Test name**: `parseVmStatOutput: produces correct NodeMemSnapshot from known output`
 
 ```typescript
-import { describe, it, expect } from 'bun:test';
-import { parseVmStatOutput } from '../src/node-probe.js';
+import { describe, it, expect } from "bun:test";
+import { parseVmStatOutput } from "../src/node-probe.js";
 
 const FAKE_VM_STAT = `
 Mach Virtual Memory Statistics: (page size of 16384 bytes)
@@ -77,12 +78,12 @@ Swapins:                               0.
 Swapouts:                              0.
 `.trim();
 
-describe('parseVmStatOutput', () => {
-  it('produces correct NodeMemSnapshot from known output', () => {
+describe("parseVmStatOutput", () => {
+  it("produces correct NodeMemSnapshot from known output", () => {
     const snap = parseVmStatOutput(FAKE_VM_STAT);
-    expect(snap.free_mb).toBeCloseTo(1031 * 16384 / 1024 / 1024, 0);
-    expect(snap.active_mb).toBeCloseTo(912 * 16384 / 1024 / 1024, 0);
-    expect(snap.compressor_mb).toBeCloseTo(2600 * 16384 / 1024 / 1024, 0);
+    expect(snap.free_mb).toBeCloseTo((1031 * 16384) / 1024 / 1024, 0);
+    expect(snap.active_mb).toBeCloseTo((912 * 16384) / 1024 / 1024, 0);
+    expect(snap.compressor_mb).toBeCloseTo((2600 * 16384) / 1024 / 1024, 0);
     expect(snap.swap_in).toBe(0);
     expect(snap.swap_out).toBe(0);
   });
@@ -117,31 +118,31 @@ bun test packages/fleet-supervisor/test/node-probe.test.ts
 **Test name**: `probeWorkload: healthy endpoint → reachable:true with latency and models`
 
 ```typescript
-import { describe, it, expect } from 'bun:test';
-import { probeWorkload } from '../src/workload-probe.js';
+import { describe, it, expect } from "bun:test";
+import { probeWorkload } from "../src/workload-probe.js";
 
-describe('probeWorkload', () => {
-  it('healthy endpoint → reachable:true with latency and models', async () => {
+describe("probeWorkload", () => {
+  it("healthy endpoint → reachable:true with latency and models", async () => {
     const fakeFetch = async (url: string) => {
-      if (url.endsWith('/health')) return new Response('ok', { status: 200 });
-      if (url.endsWith('/v1/models'))
-        return new Response(JSON.stringify({ data: [{ id: 'Qwen3-8B' }] }), { status: 200 });
-      return new Response('', { status: 404 });
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      if (url.endsWith("/v1/models"))
+        return new Response(JSON.stringify({ data: [{ id: "Qwen3-8B" }] }), { status: 200 });
+      return new Response("", { status: 404 });
     };
     const result = await probeWorkload(
-      { name: 'qwen-host', endpoint: 'http://127.0.0.1:8090' },
+      { name: "qwen-host", endpoint: "http://127.0.0.1:8090" },
       { fetch: fakeFetch as typeof fetch, timeoutMs: 500 },
     );
     expect(result.reachable).toBe(true);
     expect(result.healthLatencyMs).toBeGreaterThanOrEqual(0);
-    expect(result.models).toEqual(['Qwen3-8B']);
+    expect(result.models).toEqual(["Qwen3-8B"]);
     expect(result.consecutiveErrors).toBe(0);
   });
 
-  it('502 response → reachable:false, consecutiveErrors incremented', async () => {
-    const fakeFetch = async () => new Response('Bad Gateway', { status: 502 });
+  it("502 response → reachable:false, consecutiveErrors incremented", async () => {
+    const fakeFetch = async () => new Response("Bad Gateway", { status: 502 });
     const result = await probeWorkload(
-      { name: 'granite-mini-3b', endpoint: 'http://mac-mini.ai:8086' },
+      { name: "granite-mini-3b", endpoint: "http://mac-mini.ai:8086" },
       { fetch: fakeFetch as typeof fetch, timeoutMs: 500, priorConsecutiveErrors: 3 },
     );
     expect(result.reachable).toBe(false);
@@ -177,38 +178,56 @@ bun test packages/fleet-supervisor/test/workload-probe.test.ts
 **Test name**: `appendFleetJournal: fleet-snapshot written to disk and parses back correctly`
 
 ```typescript
-import { describe, it, expect, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { appendFleetJournal } from '../src/journal.js';
-import type { FleetSnapshotEntry } from '../src/types.js';
+import { describe, it, expect, afterEach } from "bun:test";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appendFleetJournal } from "../src/journal.js";
+import type { FleetSnapshotEntry } from "../src/types.js";
 
-describe('appendFleetJournal', () => {
+describe("appendFleetJournal", () => {
   let dir: string;
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('fleet-snapshot written to disk and parses back correctly', () => {
-    dir = mkdtempSync(join(tmpdir(), 'fleet-journal-test-'));
-    const path = join(dir, 'journal.jsonl');
+  it("fleet-snapshot written to disk and parses back correctly", () => {
+    dir = mkdtempSync(join(tmpdir(), "fleet-journal-test-"));
+    const path = join(dir, "journal.jsonl");
     const entry: FleetSnapshotEntry = {
-      kind: 'fleet-snapshot',
-      ts: '2026-05-22T17:00:00.000Z',
-      node: 'local',
-      node_mem: { free_mb: 1031, active_mb: 912, inactive_mb: 839,
-                  wired_mb: 320, compressor_mb: 2600, swap_in: 0, swap_out: 0 },
-      workloads: [{ name: 'qwen-host', kind: 'ModelHost', endpoint: 'http://127.0.0.1:8090',
-                    rss_mb: null, request_rate_5m: null, error_rate_5m: 0,
-                    p50_ms: 240, p95_ms: 480, models: ['Qwen3-8B'], reachable: true,
-                    consecutiveErrors: 0 }],
+      kind: "fleet-snapshot",
+      ts: "2026-05-22T17:00:00.000Z",
+      node: "local",
+      node_mem: {
+        free_mb: 1031,
+        active_mb: 912,
+        inactive_mb: 839,
+        wired_mb: 320,
+        compressor_mb: 2600,
+        swap_in: 0,
+        swap_out: 0,
+      },
+      workloads: [
+        {
+          name: "qwen-host",
+          kind: "ModelHost",
+          endpoint: "http://127.0.0.1:8090",
+          rss_mb: null,
+          request_rate_5m: null,
+          error_rate_5m: 0,
+          p50_ms: 240,
+          p95_ms: 480,
+          models: ["Qwen3-8B"],
+          reachable: true,
+          consecutiveErrors: 0,
+        },
+      ],
     };
     appendFleetJournal(entry, path);
-    const lines = readFileSync(path, 'utf8').trim().split('\n');
+    const lines = readFileSync(path, "utf8").trim().split("\n");
     expect(lines).toHaveLength(1);
     const parsed = JSON.parse(lines[0]);
-    expect(parsed.kind).toBe('fleet-snapshot');
-    expect(parsed.node).toBe('local');
-    expect(parsed.workloads[0].name).toBe('qwen-host');
+    expect(parsed.kind).toBe("fleet-snapshot");
+    expect(parsed.node).toBe("local");
+    expect(parsed.workloads[0].name).toBe("qwen-host");
     expect(parsed.node_mem.compressor_mb).toBe(2600);
   });
 });
@@ -220,56 +239,73 @@ describe('appendFleetJournal', () => {
 
 ```typescript
 export interface NodeMemSnapshot {
-  free_mb: number; active_mb: number; inactive_mb: number;
-  wired_mb: number; compressor_mb: number;
-  swap_in: number; swap_out: number;
+  free_mb: number;
+  active_mb: number;
+  inactive_mb: number;
+  wired_mb: number;
+  compressor_mb: number;
+  swap_in: number;
+  swap_out: number;
 }
 
 export interface WorkloadSnapshot {
   name: string;
-  kind: 'ModelHost' | 'ModelRun';
+  kind: "ModelHost" | "ModelRun";
   endpoint: string;
   rss_mb: number | null;
   request_rate_5m: number | null;
   error_rate_5m: number;
-  p50_ms: number; p95_ms: number;
+  p50_ms: number;
+  p95_ms: number;
   models: string[];
   reachable: boolean;
   consecutiveErrors: number;
 }
 
 export interface FleetSnapshotEntry {
-  kind: 'fleet-snapshot';
-  ts: string; node: string;
+  kind: "fleet-snapshot";
+  ts: string;
+  node: string;
   node_mem: NodeMemSnapshot;
   workloads: WorkloadSnapshot[];
 }
 
-export interface FleetHeartbeatEntry { kind: 'fleet-heartbeat'; ts: string; node: string; }
+export interface FleetHeartbeatEntry {
+  kind: "fleet-heartbeat";
+  ts: string;
+  node: string;
+}
 
 export interface FleetTransitionEntry {
-  kind: 'fleet-transition';
-  ts: string; node: string;
-  subject: string; subjectKind: 'workload' | 'node';
-  signal: 'pressure' | 'degraded';
-  from: string; to: string;
+  kind: "fleet-transition";
+  ts: string;
+  node: string;
+  subject: string;
+  subjectKind: "workload" | "node";
+  signal: "pressure" | "degraded";
+  from: string;
+  to: string;
 }
 
 export type FleetProposalAction =
-  | { type: 'evict'; workload: string; reason: string }
-  | { type: 'restart'; workload: string; reason: string }
-  | { type: 'mark-degraded'; workload: string; reason: string };
+  | { type: "evict"; workload: string; reason: string }
+  | { type: "restart"; workload: string; reason: string }
+  | { type: "mark-degraded"; workload: string; reason: string };
 
 export interface FleetProposalEntry {
-  kind: 'fleet-proposal';
-  ts: string; node: string; proposalId: string;
-  transition: Pick<FleetTransitionEntry, 'subject' | 'subjectKind' | 'signal' | 'from' | 'to'>;
+  kind: "fleet-proposal";
+  ts: string;
+  node: string;
+  proposalId: string;
+  transition: Pick<FleetTransitionEntry, "subject" | "subjectKind" | "signal" | "from" | "to">;
   action: FleetProposalAction;
 }
 
 export type FleetJournalEntry =
-  | FleetSnapshotEntry | FleetHeartbeatEntry
-  | FleetTransitionEntry | FleetProposalEntry;
+  | FleetSnapshotEntry
+  | FleetHeartbeatEntry
+  | FleetTransitionEntry
+  | FleetProposalEntry;
 ```
 
 **File**: `packages/fleet-supervisor/src/journal.ts`
@@ -295,28 +331,33 @@ bun test packages/fleet-supervisor/test/journal.test.ts
 **Test name**: `startSupervisorLoop: one tick emits fleet-snapshot + fleet-heartbeat`
 
 ```typescript
-import { describe, it, expect } from 'bun:test';
-import { startSupervisorLoop } from '../src/loop.js';
-import type { FleetJournalEntry } from '../src/types.js';
+import { describe, it, expect } from "bun:test";
+import { startSupervisorLoop } from "../src/loop.js";
+import type { FleetJournalEntry } from "../src/types.js";
 
-describe('startSupervisorLoop', () => {
-  it('one tick emits fleet-snapshot + fleet-heartbeat to writeJournal', async () => {
+describe("startSupervisorLoop", () => {
+  it("one tick emits fleet-snapshot + fleet-heartbeat to writeJournal", async () => {
     const entries: FleetJournalEntry[] = [];
     const handle = startSupervisorLoop({
-      node: 'local',
+      node: "local",
       once: true,
-      workloads: [{ name: 'qwen-host', endpoint: 'http://127.0.0.1:8090', kind: 'ModelHost' }],
-      fetch: async () => new Response('ok', { status: 200 }),
+      workloads: [{ name: "qwen-host", endpoint: "http://127.0.0.1:8090", kind: "ModelHost" }],
+      fetch: async () => new Response("ok", { status: 200 }),
       probeNodeMem: async () => ({
-        free_mb: 1031, active_mb: 912, inactive_mb: 839,
-        wired_mb: 320, compressor_mb: 100, swap_in: 0, swap_out: 0,
+        free_mb: 1031,
+        active_mb: 912,
+        inactive_mb: 839,
+        wired_mb: 320,
+        compressor_mb: 100,
+        swap_in: 0,
+        swap_out: 0,
       }),
       writeJournal: (entry) => entries.push(entry),
     });
     await handle.done;
     const kinds = entries.map((e) => e.kind);
-    expect(kinds).toContain('fleet-snapshot');
-    expect(kinds).toContain('fleet-heartbeat');
+    expect(kinds).toContain("fleet-snapshot");
+    expect(kinds).toContain("fleet-heartbeat");
   });
 });
 ```
@@ -341,9 +382,12 @@ export interface SupervisorLoopOptions {
   severityThreshold?: 1 | 2 | 3;
 }
 
-export interface SupervisorLoopHandle { stop(): void; done: Promise<void>; }
+export interface SupervisorLoopHandle {
+  stop(): void;
+  done: Promise<void>;
+}
 
-export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoopHandle
+export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoopHandle;
 ```
 
 Per tick: probe node mem → probe all workloads → emit `fleet-snapshot` → emit `fleet-heartbeat` → run pressure policy → run per-workload degradation policy.
@@ -366,39 +410,57 @@ bun test packages/fleet-supervisor/test/loop.test.ts
 **Test names**: reject / admit / skip-when-null
 
 ```typescript
-import { describe, it, expect } from 'bun:test';
-import { admitWithLiveCheck } from '../src/admission.js';
+import { describe, it, expect } from "bun:test";
+import { admitWithLiveCheck } from "../src/admission.js";
 
 const NORMAL_MEM = async () => ({
-  free_mb: 8192, active_mb: 0, inactive_mb: 0, wired_mb: 0, compressor_mb: 0, swap_in: 0, swap_out: 0,
+  free_mb: 8192,
+  active_mb: 0,
+  inactive_mb: 0,
+  wired_mb: 0,
+  compressor_mb: 0,
+  swap_in: 0,
+  swap_out: 0,
 });
 const LOW_MEM = async () => ({
-  free_mb: 500, active_mb: 0, inactive_mb: 0, wired_mb: 0, compressor_mb: 0, swap_in: 0, swap_out: 0,
+  free_mb: 500,
+  active_mb: 0,
+  inactive_mb: 0,
+  wired_mb: 0,
+  compressor_mb: 0,
+  swap_in: 0,
+  swap_out: 0,
 });
 
-describe('admitWithLiveCheck', () => {
-  it('rejects when projected free memory below headroom', async () => {
+describe("admitWithLiveCheck", () => {
+  it("rejects when projected free memory below headroom", async () => {
     // 0.6 GiB * 1024 * 1.3 = 798 MB; 500 - 798 = -298 < 200 headroom
     const result = await admitWithLiveCheck({
-      expectedMemoryGiB: 0.6, overheadFactor: 1.3, headroomMb: 200,
+      expectedMemoryGiB: 0.6,
+      overheadFactor: 1.3,
+      headroomMb: 200,
       probeNodeMem: LOW_MEM,
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/headroom/i);
   });
 
-  it('admits when projected free memory exceeds headroom', async () => {
+  it("admits when projected free memory exceeds headroom", async () => {
     // 3 GiB * 1024 * 1.3 = 3994 MB; 8192 - 3994 = 4198 > 512 headroom
     const result = await admitWithLiveCheck({
-      expectedMemoryGiB: 3, overheadFactor: 1.3, headroomMb: 512,
+      expectedMemoryGiB: 3,
+      overheadFactor: 1.3,
+      headroomMb: 512,
       probeNodeMem: NORMAL_MEM,
     });
     expect(result.ok).toBe(true);
   });
 
-  it('skips check when expectedMemoryGiB is null', async () => {
+  it("skips check when expectedMemoryGiB is null", async () => {
     const result = await admitWithLiveCheck({
-      expectedMemoryGiB: null, overheadFactor: 1.3, headroomMb: 512,
+      expectedMemoryGiB: null,
+      overheadFactor: 1.3,
+      headroomMb: 512,
       probeNodeMem: LOW_MEM,
     });
     expect(result.ok).toBe(true);
@@ -414,15 +476,15 @@ describe('admitWithLiveCheck', () => {
 ```typescript
 export interface AdmitLiveInput {
   expectedMemoryGiB: number | null;
-  overheadFactor?: number;   // default 1.3
-  headroomMb?: number;       // default 512
+  overheadFactor?: number; // default 1.3
+  headroomMb?: number; // default 512
   probeNodeMem?: () => Promise<NodeMemSnapshot>;
 }
 export type AdmitLiveResult =
   | { ok: true; projectedFreeMb: number; headroomMb: number; skipped?: boolean }
   | { ok: false; projectedFreeMb: number; headroomMb: number; reason: string };
 
-export async function admitWithLiveCheck(input: AdmitLiveInput): Promise<AdmitLiveResult>
+export async function admitWithLiveCheck(input: AdmitLiveInput): Promise<AdmitLiveResult>;
 ```
 
 Logic: null → skip. `requiredMb = expectedMemoryGiB * 1024 * factor`. `projected = free_mb - requiredMb`. Reject if `projected < headroomMb`.
@@ -430,9 +492,11 @@ Logic: null → skip. `requiredMb = expectedMemoryGiB * 1024 * factor`. `project
 **Wire into CLI `enable`**: call `admitWithLiveCheck` before writing `spec.enabled = true`; if `!ok` print error + exit 1.
 
 **New command** `packages/cli/src/commands/admit.ts`:
+
 ```
 llamactl admit <workload-name> [--headroom-mb=512] [--overhead-factor=1.3] [--json]
 ```
+
 Reads manifest, calls `admitWithLiveCheck`, exits 0 (admit) / 1 (reject).
 
 ### 5.3 Verify
@@ -454,42 +518,78 @@ llamactl admit gains-host-35b-local
 **Test name**: `detectPressure: 3 consecutive high-pressure ticks → transition HIGH + evict largest`
 
 ```typescript
-import { describe, it, expect } from 'bun:test';
-import { PressureWindow, detectPressure } from '../src/policy.js';
-import type { NodeMemSnapshot, WorkloadSnapshot } from '../src/types.js';
+import { describe, it, expect } from "bun:test";
+import { PressureWindow, detectPressure } from "../src/policy.js";
+import type { NodeMemSnapshot, WorkloadSnapshot } from "../src/types.js";
 
 const THRESHOLDS = { headroomMinMb: 512, compressorWarnMb: 2048, consecutiveTicks: 3 };
 
-const HIGH: NodeMemSnapshot = { free_mb: 30, compressor_mb: 4000, active_mb: 0, inactive_mb: 0, wired_mb: 0, swap_in: 0, swap_out: 0 };
-const NORMAL: NodeMemSnapshot = { free_mb: 4096, compressor_mb: 200, active_mb: 0, inactive_mb: 0, wired_mb: 0, swap_in: 0, swap_out: 0 };
+const HIGH: NodeMemSnapshot = {
+  free_mb: 30,
+  compressor_mb: 4000,
+  active_mb: 0,
+  inactive_mb: 0,
+  wired_mb: 0,
+  swap_in: 0,
+  swap_out: 0,
+};
+const NORMAL: NodeMemSnapshot = {
+  free_mb: 4096,
+  compressor_mb: 200,
+  active_mb: 0,
+  inactive_mb: 0,
+  wired_mb: 0,
+  swap_in: 0,
+  swap_out: 0,
+};
 
 const WLS: WorkloadSnapshot[] = [
-  { name: 'gains-host-35b-local', kind: 'ModelHost', endpoint: 'http://127.0.0.1:8096',
-    rss_mb: 36864, reachable: true, consecutiveErrors: 0,
-    request_rate_5m: 2, error_rate_5m: 0, p50_ms: 240, p95_ms: 480, models: [] },
-  { name: 'granite-3b-local', kind: 'ModelHost', endpoint: 'http://127.0.0.1:8083',
-    rss_mb: 4096, reachable: true, consecutiveErrors: 0,
-    request_rate_5m: 1, error_rate_5m: 0, p50_ms: 100, p95_ms: 200, models: [] },
+  {
+    name: "gains-host-35b-local",
+    kind: "ModelHost",
+    endpoint: "http://127.0.0.1:8096",
+    rss_mb: 36864,
+    reachable: true,
+    consecutiveErrors: 0,
+    request_rate_5m: 2,
+    error_rate_5m: 0,
+    p50_ms: 240,
+    p95_ms: 480,
+    models: [],
+  },
+  {
+    name: "granite-3b-local",
+    kind: "ModelHost",
+    endpoint: "http://127.0.0.1:8083",
+    rss_mb: 4096,
+    reachable: true,
+    consecutiveErrors: 0,
+    request_rate_5m: 1,
+    error_rate_5m: 0,
+    p50_ms: 100,
+    p95_ms: 200,
+    models: [],
+  },
 ];
 
-describe('detectPressure', () => {
-  it('3 consecutive HIGH ticks → level HIGH + evict largest RSS', () => {
+describe("detectPressure", () => {
+  it("3 consecutive HIGH ticks → level HIGH + evict largest RSS", () => {
     const window = new PressureWindow(3);
     for (let i = 0; i < 3; i++) window.push(HIGH, WLS);
     const result = detectPressure(window, THRESHOLDS);
     expect(result).not.toBeNull();
-    expect(result!.level).toBe('HIGH');
-    expect(result!.proposal.action.type).toBe('evict');
-    expect(result!.proposal.action.workload).toBe('gains-host-35b-local'); // largest RSS
+    expect(result!.level).toBe("HIGH");
+    expect(result!.proposal.action.type).toBe("evict");
+    expect(result!.proposal.action.workload).toBe("gains-host-35b-local"); // largest RSS
   });
 
-  it('returns null under normal pressure', () => {
+  it("returns null under normal pressure", () => {
     const window = new PressureWindow(3);
     for (let i = 0; i < 3; i++) window.push(NORMAL, WLS);
     expect(detectPressure(window, THRESHOLDS)).toBeNull();
   });
 
-  it('returns null with only 2 consecutive HIGH ticks (not yet N=3)', () => {
+  it("returns null with only 2 consecutive HIGH ticks (not yet N=3)", () => {
     const window = new PressureWindow(3);
     window.push(NORMAL, WLS);
     window.push(HIGH, WLS);
@@ -525,44 +625,68 @@ bun test packages/fleet-supervisor/test/policy-pressure.test.ts
 **Test name**: `detectDegradation: 4 consecutive 502s → degraded + restart proposal`
 
 ```typescript
-import { describe, it, expect } from 'bun:test';
-import { detectDegradation } from '../src/policy.js';
-import type { WorkloadSnapshot } from '../src/types.js';
+import { describe, it, expect } from "bun:test";
+import { detectDegradation } from "../src/policy.js";
+import type { WorkloadSnapshot } from "../src/types.js";
 
 const THRESHOLDS = { consecutiveErrorsForDegraded: 3, p95DegradedMs: 5000 };
 
-describe('detectDegradation', () => {
-  it('4 consecutive errors → state degraded + restart proposal', () => {
+describe("detectDegradation", () => {
+  it("4 consecutive errors → state degraded + restart proposal", () => {
     const workload: WorkloadSnapshot = {
-      name: 'granite-mini-3b', kind: 'ModelRun', endpoint: 'http://mac-mini.ai:8086',
-      rss_mb: null, request_rate_5m: null, error_rate_5m: 1.0,
-      p50_ms: 0, p95_ms: 0, models: [], reachable: false, consecutiveErrors: 4,
+      name: "granite-mini-3b",
+      kind: "ModelRun",
+      endpoint: "http://mac-mini.ai:8086",
+      rss_mb: null,
+      request_rate_5m: null,
+      error_rate_5m: 1.0,
+      p50_ms: 0,
+      p95_ms: 0,
+      models: [],
+      reachable: false,
+      consecutiveErrors: 4,
     };
-    const result = detectDegradation(workload, 'healthy', THRESHOLDS);
+    const result = detectDegradation(workload, "healthy", THRESHOLDS);
     expect(result).not.toBeNull();
-    expect(result!.to).toBe('degraded');
-    expect(result!.proposal.action.type).toBe('restart');
-    expect(result!.proposal.action.workload).toBe('granite-mini-3b');
+    expect(result!.to).toBe("degraded");
+    expect(result!.proposal.action.type).toBe("restart");
+    expect(result!.proposal.action.workload).toBe("granite-mini-3b");
   });
 
-  it('healthy workload emits no transition', () => {
+  it("healthy workload emits no transition", () => {
     const workload: WorkloadSnapshot = {
-      name: 'qwen-host', kind: 'ModelHost', endpoint: 'http://127.0.0.1:8090',
-      rss_mb: 10240, request_rate_5m: 2, error_rate_5m: 0,
-      p50_ms: 240, p95_ms: 480, models: ['Qwen3-8B'], reachable: true, consecutiveErrors: 0,
+      name: "qwen-host",
+      kind: "ModelHost",
+      endpoint: "http://127.0.0.1:8090",
+      rss_mb: 10240,
+      request_rate_5m: 2,
+      error_rate_5m: 0,
+      p50_ms: 240,
+      p95_ms: 480,
+      models: ["Qwen3-8B"],
+      reachable: true,
+      consecutiveErrors: 0,
     };
-    expect(detectDegradation(workload, 'healthy', THRESHOLDS)).toBeNull();
+    expect(detectDegradation(workload, "healthy", THRESHOLDS)).toBeNull();
   });
 
-  it('degraded → healthy recovery emits transition + no proposal', () => {
+  it("degraded → healthy recovery emits transition + no proposal", () => {
     const workload: WorkloadSnapshot = {
-      name: 'granite-mini-3b', kind: 'ModelRun', endpoint: 'http://mac-mini.ai:8086',
-      rss_mb: 2048, request_rate_5m: 1, error_rate_5m: 0,
-      p50_ms: 120, p95_ms: 200, models: [], reachable: true, consecutiveErrors: 0,
+      name: "granite-mini-3b",
+      kind: "ModelRun",
+      endpoint: "http://mac-mini.ai:8086",
+      rss_mb: 2048,
+      request_rate_5m: 1,
+      error_rate_5m: 0,
+      p50_ms: 120,
+      p95_ms: 200,
+      models: [],
+      reachable: true,
+      consecutiveErrors: 0,
     };
-    const result = detectDegradation(workload, 'degraded', THRESHOLDS);
+    const result = detectDegradation(workload, "degraded", THRESHOLDS);
     expect(result).not.toBeNull();
-    expect(result!.to).toBe('healthy');
+    expect(result!.to).toBe("healthy");
   });
 });
 ```
@@ -592,26 +716,34 @@ bun test packages/fleet-supervisor/test/policy-degradation.test.ts
 **Test name**: `llamactl supervisor serve --once exits 0 and writes fleet-snapshot`
 
 ```typescript
-import { describe, it, expect } from 'bun:test';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { describe, it, expect } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-describe('llamactl supervisor serve', () => {
-  it('--once exits 0 and writes fleet-snapshot to journal', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'supervisor-test-'));
+describe("llamactl supervisor serve", () => {
+  it("--once exits 0 and writes fleet-snapshot to journal", () => {
+    const dir = mkdtempSync(join(tmpdir(), "supervisor-test-"));
     try {
-      const journal = join(dir, 'journal.jsonl');
+      const journal = join(dir, "journal.jsonl");
       const result = spawnSync(
-        'bun', ['run', 'packages/cli/src/index.ts', 'supervisor', 'serve',
-                '--once', `--journal=${journal}`, '--no-workloads'],
-        { encoding: 'utf8', timeout: 10_000 },
+        "bun",
+        [
+          "run",
+          "packages/cli/src/index.ts",
+          "supervisor",
+          "serve",
+          "--once",
+          `--journal=${journal}`,
+          "--no-workloads",
+        ],
+        { encoding: "utf8", timeout: 10_000 },
       );
       expect(result.status).toBe(0);
-      const lines = readFileSync(journal, 'utf8').trim().split('\n');
+      const lines = readFileSync(journal, "utf8").trim().split("\n");
       expect(lines.length).toBeGreaterThanOrEqual(1);
-      expect(JSON.parse(lines[0]).kind).toBe('fleet-snapshot');
+      expect(JSON.parse(lines[0]).kind).toBe("fleet-snapshot");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -624,6 +756,7 @@ describe('llamactl supervisor serve', () => {
 **File**: `packages/cli/src/commands/supervisor.ts`
 
 Flags:
+
 ```
 --interval=<s>            Seconds between ticks. Default 30.
 --once                    One tick then exit.
@@ -638,6 +771,7 @@ Flags:
 ```
 
 **File**: `packages/cli/src/commands/admit.ts`
+
 ```
 llamactl admit <workload-name> [--headroom-mb=512] [--overhead-factor=1.3] [--json]
 ```
@@ -668,14 +802,14 @@ llamactl admit gains-host-35b-local
 
 ## Thresholds reference (bench-informed)
 
-| Threshold | Default | Derivation |
-|---|---|---|
-| `headroom_min_mb` | 512 MB | 2026-05-22: free=15MB = cascade risk. 512MB gives ~1 model-worth of headroom. |
-| `compressor_warn_mb` | 2048 MB | 2026-05-22: compressor=2600MB with 3 co-loaded models. 2048 = warning before crisis. |
-| `consecutive_ticks` (pressure) | 3 | Avoids Metal-init spikes (~60s at default 30s interval). |
-| `consecutive_errors` (degraded) | 3 | granite-mini-3b returned 502s for hours; 3 ticks = ~90s at 30s interval. |
-| `p95_degraded_ms` | 5000 ms | 10× normal p95 (480ms). |
-| `overhead_factor` | 1.3× | Qwen3-8B 7GiB→10GiB = 1.43×; granite-3b 3GiB→4GiB = 1.33×; 1.3 as floor. |
+| Threshold                       | Default | Derivation                                                                           |
+| ------------------------------- | ------- | ------------------------------------------------------------------------------------ |
+| `headroom_min_mb`               | 512 MB  | 2026-05-22: free=15MB = cascade risk. 512MB gives ~1 model-worth of headroom.        |
+| `compressor_warn_mb`            | 2048 MB | 2026-05-22: compressor=2600MB with 3 co-loaded models. 2048 = warning before crisis. |
+| `consecutive_ticks` (pressure)  | 3       | Avoids Metal-init spikes (~60s at default 30s interval).                             |
+| `consecutive_errors` (degraded) | 3       | granite-mini-3b returned 502s for hours; 3 ticks = ~90s at 30s interval.             |
+| `p95_degraded_ms`               | 5000 ms | 10× normal p95 (480ms).                                                              |
+| `overhead_factor`               | 1.3×    | Qwen3-8B 7GiB→10GiB = 1.43×; granite-3b 3GiB→4GiB = 1.33×; 1.3 as floor.             |
 
 ---
 

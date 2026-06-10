@@ -1,6 +1,6 @@
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import { DEFAULT_THEME, type ThemeId } from '@/themes';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { DEFAULT_THEME, type ThemeId } from "@/themes";
 
 /**
  * Zustand store for the active Beacon theme + opt-in decorations
@@ -22,6 +22,6 @@ export const useThemeStore = create<ThemeStore>()(
       setThemeId: (id) => set({ themeId: id }),
       setScanlines: (on) => set({ scanlines: on }),
     }),
-    { name: 'beacon-theme', version: 2 },
+    { name: "beacon-theme", version: 2 },
   ),
 );

@@ -1,7 +1,7 @@
-import * as React from 'react';
-import { StatusDot, TreeItem } from '@/ui';
-import { trpc } from '@/lib/trpc';
-import { useTabStore } from '@/stores/tab-store';
+import * as React from "react";
+import { StatusDot, TreeItem } from "@/ui";
+import { trpc } from "@/lib/trpc";
+import { useTabStore } from "@/stores/tab-store";
 
 /**
  * Compact node list for quick context switching. Click a node to
@@ -22,18 +22,18 @@ export function FleetView(): React.JSX.Element {
     return (
       <div
         style={{
-          padding: '14px 18px',
-          color: 'var(--color-text-secondary)',
+          padding: "14px 18px",
+          color: "var(--color-text-secondary)",
           fontSize: 13,
           lineHeight: 1.6,
         }}
       >
-        No nodes in the current cluster. Add one via{' '}
+        No nodes in the current cluster. Add one via{" "}
         <code
           style={{
-            fontFamily: 'var(--font-mono)',
+            fontFamily: "var(--font-mono)",
             fontSize: 12,
-            color: 'var(--color-text)',
+            color: "var(--color-text)",
           }}
         >
           llamactl node add
@@ -44,9 +44,9 @@ export function FleetView(): React.JSX.Element {
   }
 
   return (
-    <div role="tree" style={{ overflowY: 'auto', flex: 1, padding: '8px 0' }}>
+    <div role="tree" style={{ overflowY: "auto", flex: 1, padding: "8px 0" }}>
       {nodes.map((n) => {
-        const tone = n.phase === 'Ready' || !n.phase ? 'ok' : 'warn';
+        const tone = n.phase === "Ready" || !n.phase ? "ok" : "warn";
         return (
           <TreeItem
             key={n.name}
@@ -56,7 +56,7 @@ export function FleetView(): React.JSX.Element {
               open({
                 tabKey: `node:${n.name}`,
                 title: `Node · ${n.name}`,
-                kind: 'node',
+                kind: "node",
                 instanceId: n.name,
                 openedAt: Date.now(),
               })

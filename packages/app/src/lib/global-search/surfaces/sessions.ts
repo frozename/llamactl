@@ -1,10 +1,10 @@
 // packages/app/src/lib/global-search/surfaces/sessions.ts
-import type { Hit, MatchExcerpt } from '../types';
+import type { Hit, MatchExcerpt } from "../types";
 
 export interface SessionServerHit {
   sessionId: string;
   goal: string;
-  status: 'live' | 'done' | 'refused' | 'aborted';
+  status: "live" | "done" | "refused" | "aborted";
   startedAt: string;
   matches: MatchExcerpt[];
   score: number;
@@ -16,19 +16,19 @@ export function mapSessionHits(hits: SessionServerHit[]): Hit[] {
     if (h.matches.length === 0) continue;
     for (const m of h.matches) {
       out.push({
-        surface: 'session',
+        surface: "session",
         parentId: h.sessionId,
         parentTitle: h.goal || h.sessionId,
         originNode: (h as { originNode?: string }).originNode,
         score: h.score,
-        matchKind: 'exact',
+        matchKind: "exact",
         match: m,
         action: {
-          kind: 'open-tab',
+          kind: "open-tab",
           tab: {
             tabKey: `ops-session:${h.sessionId}`,
             title: `Session ${h.sessionId.slice(0, 8)}`,
-            kind: 'ops-session',
+            kind: "ops-session",
             instanceId: h.sessionId,
             openedAt: Date.now(),
           },

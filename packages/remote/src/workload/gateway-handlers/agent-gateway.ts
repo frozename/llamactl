@@ -1,6 +1,6 @@
-import { resolveNodeKind, type ClusterNode } from '../../config/schema.js';
-import type { ApplyResult } from '../apply.js';
-import type { GatewayApplyOptions, GatewayHandler } from './types.js';
+import { resolveNodeKind, type ClusterNode } from "../../config/schema.js";
+import type { ApplyResult } from "../apply.js";
+import type { GatewayApplyOptions, GatewayHandler } from "./types.js";
 
 /**
  * Sentinel handler: when `spec.gateway: true` is pointed at a plain
@@ -15,19 +15,19 @@ import type { GatewayApplyOptions, GatewayHandler } from './types.js';
  * the intent (a working server) rather than returning a Pending
  * that would force them to rewrite the manifest.
  */
-export const AGENT_GATEWAY_HANDLER_KIND = 'agent-gateway';
+export const AGENT_GATEWAY_HANDLER_KIND = "agent-gateway";
 
 export const agentGatewayHandler: GatewayHandler = {
   kind: AGENT_GATEWAY_HANDLER_KIND,
   canHandle(node: ClusterNode): boolean {
-    return resolveNodeKind(node) === 'agent';
+    return resolveNodeKind(node) === "agent";
   },
   // Never actually called by the dispatcher — matched-by-kind short-
   // circuits first. Kept for interface uniformity and as a defensive
   // fallback if someone invokes it directly in a test.
   async apply(_opts: GatewayApplyOptions): Promise<ApplyResult> {
     throw new Error(
-      'agentGatewayHandler.apply() should not be called; dispatcher detects this handler and falls back to serverStart',
+      "agentGatewayHandler.apply() should not be called; dispatcher detects this handler and falls back to serverStart",
     );
   },
 };
