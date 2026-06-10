@@ -1069,7 +1069,7 @@ function IndexingTab(props: { nodeName: string }): React.JSX.Element {
     store.mutate(input);
   }
 
-  const previewCount = (() => {
+  const previewCount = ((): number | null => {
     const { documents, error } = parseIndexInput(text);
     if (error) return null;
     return documents.length;

@@ -20,7 +20,7 @@ export function useStatusBarItems(moduleId: string, items: StatusBarItem[]): voi
   const clearItems = useStatusBarStore((s) => s.clearModuleItems);
   useEffect(() => {
     setItems(moduleId, items);
-    return () => {
+    return (): void => {
       clearItems(moduleId);
     };
     // We intentionally serialize items so downstream consumers

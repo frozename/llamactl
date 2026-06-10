@@ -101,6 +101,19 @@ function parseJudgeJson(
   }
 }
 
+/** Zeroed rubric score emitted when judging cannot complete (`parse_error: 1`). */
+type RubricFailScore = {
+  metrics: {
+    intent_preservation: number;
+    contract_clarity: number;
+    noise_removal: number;
+    composite: number;
+    parse_error: number;
+  };
+  prediction: string;
+  gold: string;
+};
+
 export const taskRefinerRubricWorkload: WorkloadEval = {
   name: "task-refiner-rubric",
   corpus_path: "/tmp/phase2-refiner/inputs.jsonl",
@@ -117,7 +130,7 @@ export const taskRefinerRubricWorkload: WorkloadEval = {
   },
   scorer: async (row, completion) => {
     const r = row as CorpusRow;
-    const fail = (reason: string) => ({
+    const fail = (reason: string): RubricFailScore => ({
       metrics: {
         intent_preservation: 0,
         contract_clarity: 0,

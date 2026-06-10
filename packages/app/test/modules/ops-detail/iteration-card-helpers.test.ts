@@ -5,7 +5,7 @@ import type { IterationView } from "../../../src/lib/use-ops-session";
 import { fmtMs, statusGlyph } from "../../../src/modules/ops/detail/iteration-card-helpers";
 
 void mock.module("@/themes", () => ({}));
-void mock.module("@/ui", () => ({ Badge: () => null }));
+void mock.module("@/ui", () => ({ Badge: (): null => null }));
 
 const base: IterationView = {
   iteration: 0,

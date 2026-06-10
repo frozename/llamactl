@@ -12,7 +12,7 @@ export const useModelsStore = create<ModelsStore>()(
   persist(
     (set) => ({
       scope: "all",
-      setScope: (s) => set({ scope: s }),
+      setScope: (s): void => void set({ scope: s }),
     }),
     { name: "llamactl-models" },
   ),

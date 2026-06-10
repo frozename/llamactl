@@ -19,9 +19,9 @@ export const useUIStore = create<UIStore>()(
   persist(
     (set) => ({
       activeModule: "dashboard",
-      setActiveModule: (id) => set({ activeModule: id }),
+      setActiveModule: (id): void => void set({ activeModule: id }),
       commandPaletteOpen: false,
-      setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
+      setCommandPaletteOpen: (open): void => void set({ commandPaletteOpen: open }),
     }),
     {
       name: "llamactl-ui",

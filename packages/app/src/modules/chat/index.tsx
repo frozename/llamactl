@@ -134,7 +134,7 @@ const useChatStore = create<ChatStore>()(
     (set) => ({
       conversations: {},
       activeId: null,
-      create: ({ node, model }) => {
+      create: ({ node, model }): string => {
         const id = `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
         set((s) => ({
           conversations: {
@@ -145,9 +145,9 @@ const useChatStore = create<ChatStore>()(
         }));
         return id;
       },
-      setActive: (id) => set({ activeId: id }),
-      append: (id, message) =>
-        set((s) => {
+      setActive: (id): void => void set({ activeId: id }),
+      append: (id, message): void =>
+        void set((s) => {
           const conv = s.conversations[id];
           if (!conv) return s;
           return {
@@ -157,8 +157,8 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
-      patchLast: (id, patch) =>
-        set((s) => {
+      patchLast: (id, patch): void =>
+        void set((s) => {
           const conv = s.conversations[id];
           if (!conv || conv.messages.length === 0) return s;
           const last = conv.messages.at(-1);
@@ -174,8 +174,8 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
-      updateMeta: (id, patch) =>
-        set((s) => {
+      updateMeta: (id, patch): void =>
+        void set((s) => {
           const conv = s.conversations[id];
           if (!conv) return s;
           return {
@@ -185,8 +185,8 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
-      toggleCapability: (id, tag) =>
-        set((s) => {
+      toggleCapability: (id, tag): void =>
+        void set((s) => {
           const conv = s.conversations[id];
           if (!conv) return s;
           const current = conv.capabilities ?? [];
@@ -198,8 +198,8 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
-      appendB: (id, message) =>
-        set((s) => {
+      appendB: (id, message): void =>
+        void set((s) => {
           const conv = s.conversations[id];
           if (!conv) return s;
           return {
@@ -209,8 +209,8 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
-      patchLastB: (id, patch) =>
-        set((s) => {
+      patchLastB: (id, patch): void =>
+        void set((s) => {
           const conv = s.conversations[id];
           const list = conv?.messagesB ?? [];
           if (!conv || list.length === 0) return s;
@@ -226,8 +226,8 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
-      setCompareWith: (id, meta) =>
-        set((s) => {
+      setCompareWith: (id, meta): void =>
+        void set((s) => {
           const conv = s.conversations[id];
           if (!conv) return s;
           return {
@@ -244,8 +244,8 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
-      updateCompareMeta: (id, patch) =>
-        set((s) => {
+      updateCompareMeta: (id, patch): void =>
+        void set((s) => {
           const conv = s.conversations[id];
           if (!conv?.compareWith) return s;
           return {
@@ -258,8 +258,8 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
-      toggleCompareCapability: (id, tag) =>
-        set((s) => {
+      toggleCompareCapability: (id, tag): void =>
+        void set((s) => {
           const conv = s.conversations[id];
           if (!conv?.compareWith) return s;
           const current = conv.compareWith.capabilities ?? [];
@@ -274,8 +274,8 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
-      patchMessage: (convId, messageId, patch) =>
-        set((s) => {
+      patchMessage: (convId, messageId, patch): void =>
+        void set((s) => {
           const conv = s.conversations[convId];
           if (!conv) return s;
           const idx = conv.messages.findIndex((m) => m.id === messageId);
@@ -297,8 +297,8 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
-      setRagBinding: (id, ragNode, ragTopK) =>
-        set((s) => {
+      setRagBinding: (id, ragNode, ragTopK): void =>
+        void set((s) => {
           const conv = s.conversations[id];
           if (!conv) return s;
           const next: Conversation = { ...conv };
@@ -316,8 +316,8 @@ const useChatStore = create<ChatStore>()(
             },
           };
         }),
-      remove: (id) =>
-        set((s) => {
+      remove: (id): void =>
+        void set((s) => {
           const rest = Object.fromEntries(
             Object.entries(s.conversations).filter(([key]) => key !== id),
           );

@@ -22,7 +22,7 @@ export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       projectScanRootsText: DEFAULT_PROJECT_SCAN_ROOTS_TEXT,
-      setProjectScanRootsText: (text) => set({ projectScanRootsText: text }),
+      setProjectScanRootsText: (text): void => void set({ projectScanRootsText: text }),
     }),
     { name: "llamactl-settings" },
   ),

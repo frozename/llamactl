@@ -22,7 +22,7 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
   if (opts.validLabels?.size === 0) {
     throw new Error("buildJsonClassifierWorkload: validLabels must contain at least one label");
   }
-  const normalize = opts.normalizeLabel ?? ((v: unknown) => String(v));
+  const normalize = opts.normalizeLabel ?? ((v: unknown): string => String(v));
   const accept = (label: string): boolean => !opts.validLabels || opts.validLabels.has(label);
   const requireReason = opts.requireReason === true;
   const labels = opts.validLabels ? Array.from(opts.validLabels) : undefined;
@@ -78,11 +78,14 @@ export function buildJsonClassifierWorkload(opts: JsonClassifierOpts): WorkloadE
     corpus_path: opts.corpus_path,
     primary_metric_name: "macro_f1",
     ...(response_format ? { response_format } : {}),
-    prompt_builder: (row) => {
+    prompt_builder: (row): { messages: { role: string; content: string }[] } => {
       const r = row as ChatCorpusRow;
       return { messages: r.messages.slice(0, -1) };
     },
-    scorer: (row, completion) => {
+    scorer: (
+      row,
+      completion,
+    ): { metrics: { correct: number }; prediction: string; gold: string } => {
       const pred = extract(completion);
       const r = row as ChatCorpusRow;
       const goldContent = r.messages[r.messages.length - 1]?.content ?? "";

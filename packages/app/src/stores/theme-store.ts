@@ -20,8 +20,8 @@ export const useThemeStore = create<ThemeStore>()(
     (set) => ({
       themeId: DEFAULT_THEME,
       scanlines: false,
-      setThemeId: (id) => set({ themeId: id }),
-      setScanlines: (on) => set({ scanlines: on }),
+      setThemeId: (id): void => void set({ themeId: id }),
+      setScanlines: (on): void => void set({ scanlines: on }),
     }),
     { name: "beacon-theme", version: 2 },
   ),

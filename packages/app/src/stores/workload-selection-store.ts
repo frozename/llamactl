@@ -10,7 +10,7 @@ export const useWorkloadSelectionStore = create<WorkloadSelectionStore>()(
   persist(
     (set) => ({
       selected: null,
-      setSelected: (name) => set({ selected: name }),
+      setSelected: (name): void => void set({ selected: name }),
     }),
     { name: "beacon-workload-selection", version: 1 },
   ),

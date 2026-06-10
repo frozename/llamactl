@@ -12,6 +12,9 @@ import { resolveCorpusPath } from "./repo-root.js";
 import { aggregateMetrics, percentile } from "./scoring.js";
 import { ensureMatrixSchema, insertCellRow, insertCellRowDetail } from "./store.js";
 
+/** Aggregate shape each per-workload reducer produces for the cell row. */
+type WorkloadAggregate = { primary_metric_value: number; per_class_metrics_json: string };
+
 interface RunMatrixOpts {
   models: ModelSpec[];
   workloads: WorkloadEval[];
@@ -187,7 +190,7 @@ export async function runMatrix(
         const finished = new Date().toISOString();
         const agg =
           workload.primary_metric_name === "composite"
-            ? (() => {
+            ? ((): WorkloadAggregate => {
                 const sums = {
                   intent_preservation: 0,
                   contract_clarity: 0,
@@ -222,7 +225,7 @@ export async function runMatrix(
                 };
               })()
             : workload.primary_metric_name === "mean_exact_match"
-              ? (() => {
+              ? ((): WorkloadAggregate => {
                   let sum = 0;
                   let n = 0;
                   for (const metrics of rowMetrics) {
@@ -238,7 +241,7 @@ export async function runMatrix(
                   };
                 })()
               : workload.primary_metric_name === "mean_ndcg5"
-                ? (() => {
+                ? ((): WorkloadAggregate => {
                     let sum = 0;
                     let recallSum = 0;
                     let n = 0;
@@ -268,7 +271,7 @@ export async function runMatrix(
                     };
                   })()
                 : workload.primary_metric_name === "mean_brief_quality"
-                  ? (() => {
+                  ? ((): WorkloadAggregate => {
                       let sum = 0;
                       let n = 0;
                       let sumTcs = 0;
@@ -295,7 +298,7 @@ export async function runMatrix(
                         }),
                       };
                     })()
-                  : (() => {
+                  : ((): WorkloadAggregate => {
                       const aggregate = aggregateMetrics(predictions);
                       return {
                         primary_metric_value: aggregate.macro_f1,

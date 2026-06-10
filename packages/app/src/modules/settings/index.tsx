@@ -82,7 +82,7 @@ function PromotionsEditor(): React.JSX.Element {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const invalidate = async () => {
+  const invalidate = async (): Promise<void> => {
     await queryClient.invalidateQueries({
       queryKey: [["promotions"], { type: "query" }],
     });

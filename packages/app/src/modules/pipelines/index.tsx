@@ -63,7 +63,7 @@ const usePipelinesStore = create<PipelinesStore>()(
     (set) => ({
       pipelines: {},
       activeId: null,
-      create: ({ node, model }) => {
+      create: ({ node, model }): string => {
         const id = `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
         set((s) => ({
           pipelines: {
@@ -86,15 +86,15 @@ const usePipelinesStore = create<PipelinesStore>()(
         }));
         return id;
       },
-      setActive: (id) => set({ activeId: id }),
-      rename: (id, name) =>
-        set((s) => {
+      setActive: (id): void => void set({ activeId: id }),
+      rename: (id, name): void =>
+        void set((s) => {
           const p = s.pipelines[id];
           if (!p) return s;
           return { pipelines: { ...s.pipelines, [id]: { ...p, name } } };
         }),
-      remove: (id) =>
-        set((s) => {
+      remove: (id): void =>
+        void set((s) => {
           const rest = Object.fromEntries(
             Object.entries(s.pipelines).filter(([key]) => key !== id),
           );
@@ -104,16 +104,16 @@ const usePipelinesStore = create<PipelinesStore>()(
             activeId: s.activeId === id ? (ids[0] ?? null) : s.activeId,
           };
         }),
-      addStage: (id, stage) =>
-        set((s) => {
+      addStage: (id, stage): void =>
+        void set((s) => {
           const p = s.pipelines[id];
           if (!p) return s;
           return {
             pipelines: { ...s.pipelines, [id]: { ...p, stages: [...p.stages, stage] } },
           };
         }),
-      updateStage: (id, stageId, patch) =>
-        set((s) => {
+      updateStage: (id, stageId, patch): void =>
+        void set((s) => {
           const p = s.pipelines[id];
           if (!p) return s;
           return {
@@ -126,8 +126,8 @@ const usePipelinesStore = create<PipelinesStore>()(
             },
           };
         }),
-      removeStage: (id, stageId) =>
-        set((s) => {
+      removeStage: (id, stageId): void =>
+        void set((s) => {
           const p = s.pipelines[id];
           if (!p) return s;
           return {
@@ -137,8 +137,8 @@ const usePipelinesStore = create<PipelinesStore>()(
             },
           };
         }),
-      toggleStageCapability: (id, stageId, tag) =>
-        set((s) => {
+      toggleStageCapability: (id, stageId, tag): void =>
+        void set((s) => {
           const p = s.pipelines[id];
           if (!p) return s;
           return {

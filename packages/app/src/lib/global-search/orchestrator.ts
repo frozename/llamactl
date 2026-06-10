@@ -45,7 +45,7 @@ function groupHits(hits: Hit[]): SurfaceGroup[] {
 export function runClientPhase(input: ClientPhaseInput): GroupedResults {
   const { needle, surfaceFilter } = input.query;
   if (!needle) return [];
-  const allow = (s: SurfaceKind) => !surfaceFilter || surfaceFilter === s;
+  const allow = (s: SurfaceKind): boolean => !surfaceFilter || surfaceFilter === s;
   const hits: Hit[] = [];
   if (allow("module")) hits.push(...matchModules(needle));
   if (allow("tab-history")) hits.push(...matchTabHistory(needle, input.tabState));

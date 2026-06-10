@@ -59,7 +59,7 @@ describe("UI Cross-Node Dispatcher Procedures", () => {
       const nodeName = node.name;
       return {
         opsSessionSearch: {
-          query: (input: { query: string }) => {
+          query: (input: { query: string }): Promise<{ hits: { id: string; query: string }[] }> => {
             hitsCalled.push(nodeName);
             return Promise.resolve({ hits: [{ id: `session-${nodeName}`, query: input.query }] });
           },
@@ -85,7 +85,9 @@ describe("UI Cross-Node Dispatcher Procedures", () => {
       const nodeName = node.name;
       return {
         logsSearch: {
-          query: (input: { query: string }) => {
+          query: (input: {
+            query: string;
+          }): Promise<{ hits: { line: string; query: string }[] }> => {
             hitsCalled.push(nodeName);
             return Promise.resolve({ hits: [{ line: `log-${nodeName}`, query: input.query }] });
           },

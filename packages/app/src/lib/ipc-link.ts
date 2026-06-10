@@ -40,7 +40,7 @@ class IPCClient {
     });
   }
 
-  private handleResponse(msg: unknown) {
+  private handleResponse(msg: unknown): void {
     const envelope = msg as { id?: number | string; result?: { type?: string } } | null;
     const entry = envelope?.id !== undefined ? this.pending.get(envelope.id) : undefined;
     if (!entry) return;
@@ -73,7 +73,9 @@ class IPCClient {
   }
 }
 
-function transformResponse(envelope: unknown) {
+function transformResponse(
+  envelope: unknown,
+): { ok: false; error: object & Record<"error", unknown> } | { ok: true; result: unknown } {
   if (typeof envelope === "object" && envelope !== null && "error" in envelope) {
     return { ok: false as const, error: envelope };
   }

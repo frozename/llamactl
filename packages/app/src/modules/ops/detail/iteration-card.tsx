@@ -88,7 +88,7 @@ export function IterationCard({ it, expanded, onToggle }: Props): React.JSX.Elem
         <span style={{ color: "var(--color-text-secondary)" }}>#{it.iteration + 1}</span>
         <code style={{ flex: 1, fontFamily: "var(--font-mono)" }}>{it.tool}</code>
         <Badge variant={it.tier === "mutation-destructive" ? "err" : "default"}>{it.tier}</Badge>
-        {(() => {
+        {((): React.JSX.Element | null => {
           const run = it.wet ?? it.preview;
           if (!run) return null;
           return (

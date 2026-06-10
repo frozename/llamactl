@@ -7,7 +7,10 @@ import {
 
 const wl = buildReasoningMcWorkload({ name: "reasoning-test", corpus_path: "/tmp/none.jsonl" });
 
-function score(row: ReasoningRow, completion: string) {
+function score(
+  row: ReasoningRow,
+  completion: string,
+): { metrics: Record<string, number>; prediction: string; gold: string } {
   return wl.scorer(row, completion) as {
     metrics: Record<string, number>;
     prediction: string;

@@ -31,12 +31,12 @@ interface StatusBarStore {
 
 export const useStatusBarStore = create<StatusBarStore>((set) => ({
   contributions: {},
-  setModuleItems: (moduleId, items) => {
+  setModuleItems: (moduleId, items): void => {
     set((state) => ({
       contributions: { ...state.contributions, [moduleId]: items },
     }));
   },
-  clearModuleItems: (moduleId) => {
+  clearModuleItems: (moduleId): void => {
     set((state) => {
       const next = Object.fromEntries(
         Object.entries(state.contributions).filter(([key]) => key !== moduleId),

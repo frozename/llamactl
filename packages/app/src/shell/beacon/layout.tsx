@@ -79,7 +79,7 @@ export function BeaconLayout(): React.JSX.Element {
       }
     };
     window.addEventListener("keydown", h);
-    return () => {
+    return (): void => {
       window.removeEventListener("keydown", h);
     };
   }, [tabs, activeKey, close, reopen, setActive]);

@@ -18,9 +18,10 @@ export const useExplorerCollapse = create<Store>()(
   persist(
     (set, get) => ({
       collapsed: {},
-      isCollapsed: (key) => get().collapsed[key] === true,
-      toggle: (key) => set((s) => ({ collapsed: { ...s.collapsed, [key]: !s.collapsed[key] } })),
-      set: (key, value) => set((s) => ({ collapsed: { ...s.collapsed, [key]: value } })),
+      isCollapsed: (key): boolean => get().collapsed[key] === true,
+      toggle: (key): void =>
+        void set((s) => ({ collapsed: { ...s.collapsed, [key]: !s.collapsed[key] } })),
+      set: (key, value): void => void set((s) => ({ collapsed: { ...s.collapsed, [key]: value } })),
     }),
     { name: "beacon-explorer-collapsed", version: 1 },
   ),

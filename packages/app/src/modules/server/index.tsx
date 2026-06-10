@@ -45,14 +45,14 @@ export default function Server(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
-  const appendLog = (line: LogLine) => {
+  const appendLog = (line: LogLine): void => {
     setLog((prev) => truncate([...prev, line]));
     requestAnimationFrame(() => {
       if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     });
   };
 
-  const handleEvent = (ev: unknown) => {
+  const handleEvent = (ev: unknown): void => {
     const e = ev as { type: string } & Record<string, unknown>;
     switch (e.type) {
       case "launch":
@@ -108,7 +108,7 @@ export default function Server(): React.JSX.Element {
     }
   };
 
-  const handleError = (err: { message: string }) => {
+  const handleError = (err: { message: string }): void => {
     appendLog({ kind: "error", text: err.message });
     setError(err.message);
     setStarting(null);
@@ -132,7 +132,7 @@ export default function Server(): React.JSX.Element {
 
   const rels = useMemo(() => (catalog.data ?? []).map((row) => row.rel), [catalog.data]);
 
-  const onStart = () => {
+  const onStart = (): void => {
     const t = target.trim();
     if (!t) {
       setError("Target is required");

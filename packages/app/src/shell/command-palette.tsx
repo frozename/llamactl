@@ -38,7 +38,7 @@ function modulesToCommands(): Command[] {
     group: groupLabel(m.group),
     hint: m.shortcut ? `⌘${String(m.shortcut)}` : undefined,
     keywords: m.aliases ?? [],
-    run: () => {
+    run: (): void => {
       useTabStore.getState().open({
         tabKey: `module:${m.id}`,
         title: m.labelKey,
@@ -157,7 +157,7 @@ export function CommandPalette({
       }
     };
     window.addEventListener("keydown", handler, { capture: true });
-    return () => {
+    return (): void => {
       window.removeEventListener("keydown", handler, { capture: true });
     };
   }, [open, filtered, highlight, onClose]);
@@ -287,7 +287,7 @@ export function CommandPaletteMount(): React.JSX.Element {
       }
     };
     window.addEventListener("keydown", handler);
-    return () => {
+    return (): void => {
       window.removeEventListener("keydown", handler);
     };
   }, [open, setOpen]);

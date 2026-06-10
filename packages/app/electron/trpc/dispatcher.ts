@@ -9,7 +9,7 @@ import {
 } from "@llamactl/remote";
 import { createTRPCClient } from "@trpc/client";
 import { initTRPC, TRPCError } from "@trpc/server";
-import { observable } from "@trpc/server/observable";
+import { observable, type Observable } from "@trpc/server/observable";
 import {
   type AnyProcedure,
   type AnyRouter,
@@ -125,11 +125,11 @@ function remoteProcedure(client: RemoteClient, path: string): RemoteProcedure {
  *    resources (closes server-side watchers held inside the generator
  *    body — e.g. llama-server log tail fds).
  */
-function asyncIterableToObservable<T>(iter: AsyncIterable<T>) {
+function asyncIterableToObservable<T>(iter: AsyncIterable<T>): Observable<T, unknown> {
   return observable<T>((emit) => {
     const state = { cancelled: false };
     const iterator = iter[Symbol.asyncIterator]();
-    void (async () => {
+    void (async (): Promise<void> => {
       try {
         for (;;) {
           const next = await iterator.next();
@@ -144,7 +144,7 @@ function asyncIterableToObservable<T>(iter: AsyncIterable<T>) {
         if (!state.cancelled) emit.error(err);
       }
     })();
-    return () => {
+    return (): void => {
       state.cancelled = true;
       try {
         void iterator.return?.(undefined);
@@ -662,7 +662,7 @@ function wrapQueryOrMutation(
   type: "query" | "mutation",
   fetchFactory: PinnedFetchFactory,
 ): AnyProcedure {
-  const resolver = ({ input }: { input: unknown }) => {
+  const resolver = ({ input }: { input: unknown }): unknown => {
     const target = resolveDispatchTarget(path);
     if (target.kind === "local") {
       return localProcedure(baseCaller, path)(input);
@@ -923,7 +923,7 @@ export function buildDispatcherRouter(
       path: string | undefined;
       input: unknown;
       ctx: unknown;
-    }) =>
+    }): unknown =>
       getErrorShape({
         config: merged._def._config,
         error:

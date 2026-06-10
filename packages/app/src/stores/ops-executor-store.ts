@@ -20,8 +20,8 @@ export const useOpsExecutorStore = create<OpsExecutorStore>()(
     (set) => ({
       nodeId: null,
       model: null,
-      setNode: (nodeId) => set({ nodeId, model: null }),
-      setModel: (model) => set({ model }),
+      setNode: (nodeId): void => void set({ nodeId, model: null }),
+      setModel: (model): void => void set({ model }),
     }),
     { name: "llamactl-ops-executor" },
   ),

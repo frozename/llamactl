@@ -32,7 +32,7 @@ export function TabBar(): React.JSX.Element {
     };
     window.addEventListener("click", dismiss);
     window.addEventListener("keydown", onKey);
-    return () => {
+    return (): void => {
       window.removeEventListener("click", dismiss);
       window.removeEventListener("keydown", onKey);
     };

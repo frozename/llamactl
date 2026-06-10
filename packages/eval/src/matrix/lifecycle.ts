@@ -60,10 +60,10 @@ function hasExited(proc: ChildProcess): boolean {
   return proc.exitCode !== null || (signalCode !== null && signalCode !== undefined);
 }
 
-function installExitHook() {
+function installExitHook(): void {
   if (exitHookInstalled) return;
   exitHookInstalled = true;
-  const cleanup = () => {
+  const cleanup = (): void => {
     for (const p of ownedProcs) {
       if (!hasExited(p)) {
         signalOwnedProcessGroup(p, "SIGTERM");
@@ -219,7 +219,7 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
   // can signal the whole group (the server + any worker subprocesses it forks).
   const proc = spawn(boot.binary, boot.args, { stdio: "pipe", detached: true });
   const stderrTail: string[] = [];
-  function pushStderr(chunk: Buffer | string) {
+  function pushStderr(chunk: Buffer | string): void {
     const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
     for (const line of text.split("\n")) {
       if (!line) continue;

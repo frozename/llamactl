@@ -96,7 +96,7 @@ function RunningBadge(props: { entry: RunningEntry }): React.JSX.Element {
     const id = setInterval(() => {
       setNow(Date.now());
     }, 1000);
-    return () => {
+    return (): void => {
       clearInterval(id);
     };
   }, []);

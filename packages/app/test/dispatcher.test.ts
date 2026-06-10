@@ -87,7 +87,7 @@ describe("Electron dispatcher router", () => {
     __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter((node) => {
       const inner = makePinnedFetch(node);
-      return async (input, init) => {
+      return async (input, init): Promise<Response> => {
         urls.push(fetchInputLabel(input));
         return await inner(input, init);
       };
@@ -169,7 +169,7 @@ describe("Electron dispatcher router", () => {
     __resetClientCacheForTests();
     const dispatcher = buildDispatcherRouter((node) => {
       const inner = makePinnedFetch(node);
-      return async (input, init) => {
+      return async (input, init): Promise<Response> => {
         urls.push(fetchInputLabel(input));
         return await inner(input, init);
       };

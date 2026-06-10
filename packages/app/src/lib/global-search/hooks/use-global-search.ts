@@ -110,7 +110,7 @@ export function useGlobalSearch(input: string): {
     const allow = (s: string): boolean => !parsed.surfaceFilter || parsed.surfaceFilter === s;
 
     tier2Timer.current = setTimeout(() => {
-      void (async () => {
+      void (async (): Promise<void> => {
         const tasks: Promise<unknown>[] = [];
         if (allow("session")) {
           tasks.push(
@@ -155,7 +155,7 @@ export function useGlobalSearch(input: string): {
     }, TIER2_MS);
 
     tier3Timer.current = setTimeout(() => {
-      void (async () => {
+      void (async (): Promise<void> => {
         if (queryToken.current !== token) return;
         const status = ragStatus.data;
         if (!status?.defaultNode) return;
@@ -268,7 +268,7 @@ export function useGlobalSearch(input: string): {
       })();
     }, TIER3_MS);
 
-    return () => {
+    return (): void => {
       if (tier2Timer.current) clearTimeout(tier2Timer.current);
       if (tier3Timer.current) clearTimeout(tier3Timer.current);
       ctrl.abort();

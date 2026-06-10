@@ -324,14 +324,14 @@ export default function Bench(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
-  const appendLog = (line: LogLine) => {
+  const appendLog = (line: LogLine): void => {
     setLog((prev) => truncate([...prev, line]));
     requestAnimationFrame(() => {
       if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     });
   };
 
-  const handleEvent = (ev: unknown) => {
+  const handleEvent = (ev: unknown): void => {
     const e = ev as { type: string } & Record<string, unknown>;
     switch (e.type) {
       case "start":
@@ -407,7 +407,7 @@ export default function Bench(): React.JSX.Element {
     }
   };
 
-  const handleError = (err: { message: string }) => {
+  const handleError = (err: { message: string }): void => {
     appendLog({ kind: "error", text: err.message });
     setError(err.message);
     setActive(null);
@@ -433,7 +433,7 @@ export default function Bench(): React.JSX.Element {
 
   const rels = useMemo(() => (catalog.data ?? []).map((row) => row.rel), [catalog.data]);
 
-  const start = (kind: RunKind) => {
+  const start = (kind: RunKind): void => {
     const t = target.trim();
     if (!t) {
       setError("Target is required");
@@ -452,7 +452,7 @@ export default function Bench(): React.JSX.Element {
   const busy = active !== null;
   const recentHistory = history.data ?? [];
   const canRun = target.trim().length > 0;
-  const cancel = () => {
+  const cancel = (): void => {
     setActive(null);
     setError("Cancelled by user");
   };

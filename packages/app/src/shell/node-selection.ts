@@ -14,7 +14,7 @@ export const useNodeSelection = create<NodeSelectionStore>()(
   persist(
     (set) => ({
       selectedNode: null,
-      setSelectedNode: (name) => set({ selectedNode: name }),
+      setSelectedNode: (name): void => void set({ selectedNode: name }),
     }),
     { name: "llamactl-node-selection" },
   ),

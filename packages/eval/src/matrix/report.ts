@@ -108,7 +108,7 @@ export function renderMarkdownReport(cells: CellRow[], opts: ReportOpts = {}): s
   const filtered = filteredCells(cells, opts);
   const { models, workloads, lookup } = buildGrid(filtered);
   const primaryMetricName = getPrimaryMetricName(filtered);
-  const sectionRows = (section: Section, mapper: (cell?: CellRow) => string) =>
+  const sectionRows = (section: Section, mapper: (cell?: CellRow) => string): string[] =>
     models.map((model) => {
       const values = workloads.map((workload) => {
         const mapped = mapper(lookup.get(cellKey(model, workload)));
@@ -175,11 +175,11 @@ export function renderCsvReport(cells: CellRow[], opts: ReportOpts = {}): string
   const filtered = filteredCells(cells, opts);
   const { models, workloads, lookup } = buildGrid(filtered);
   const sections: [Section, (cell?: CellRow) => string][] = [
-    ["primary_metric", (cell) => (cell ? fmtMetric(cell.primary_metric_value) : "")],
-    ["latency_p50_ms", (cell) => (cell ? fmtMs(cell.latency_p50_ms) : "")],
-    ["latency_p95_ms", (cell) => (cell ? fmtMs(cell.latency_p95_ms) : "")],
-    ["throughput_tps", (cell) => (cell ? fmtTps(cell.throughput_tps) : "")],
-    ["errors", (cell) => (cell ? String(cell.errors) : "")],
+    ["primary_metric", (cell): string => (cell ? fmtMetric(cell.primary_metric_value) : "")],
+    ["latency_p50_ms", (cell): string => (cell ? fmtMs(cell.latency_p50_ms) : "")],
+    ["latency_p95_ms", (cell): string => (cell ? fmtMs(cell.latency_p95_ms) : "")],
+    ["throughput_tps", (cell): string => (cell ? fmtTps(cell.throughput_tps) : "")],
+    ["errors", (cell): string => (cell ? String(cell.errors) : "")],
   ];
   const lines = ["section,model,workload,value"];
   for (const [section, formatter] of sections) {

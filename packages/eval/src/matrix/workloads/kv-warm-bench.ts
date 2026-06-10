@@ -108,7 +108,7 @@ export async function createTokenizeClient(args: {
   const endpoint = `${args.proxyBaseUrl}/v1/tokenize`;
   const warn =
     args.onWarn ??
-    ((message: string) => {
+    ((message: string): void => {
       console.warn(message);
     });
   const probe = await fetch(endpoint, {

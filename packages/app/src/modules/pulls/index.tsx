@@ -70,14 +70,14 @@ function PullCard({
   const [error, setError] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
-  const appendLog = (line: LogLine) => {
+  const appendLog = (line: LogLine): void => {
     setLog((prev) => truncate([...prev, line]));
     requestAnimationFrame(() => {
       if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     });
   };
 
-  const handleData = (ev: unknown) => {
+  const handleData = (ev: unknown): void => {
     const e = ev as { type: string } & Record<string, unknown>;
     switch (e.type) {
       case "start":
@@ -150,7 +150,7 @@ function PullCard({
     }
   };
 
-  const handleError = (err: { message: string }) => {
+  const handleError = (err: { message: string }): void => {
     appendLog({ kind: "error", text: err.message });
     setError(err.message);
     setState("error");
@@ -331,11 +331,11 @@ export default function Pulls(): React.JSX.Element {
     setFile("");
   };
 
-  const onDismiss = (id: string) => {
+  const onDismiss = (id: string): void => {
     setCards((prev) => prev.filter((c) => c.id !== id));
   };
 
-  const onDone = () => {
+  const onDone = (): void => {
     void queryClient.invalidateQueries({
       queryKey: [["catalogList"], { type: "query" }],
     });

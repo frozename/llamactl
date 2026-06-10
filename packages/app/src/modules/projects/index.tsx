@@ -765,7 +765,7 @@ function GitRepoSuggestions({
     const handle = window.setTimeout(() => {
       setDebouncedProjectScanRootsText(projectScanRootsText);
     }, 300);
-    return () => {
+    return (): void => {
       window.clearTimeout(handle);
     };
   }, [projectScanRootsText]);
@@ -804,7 +804,7 @@ function GitRepoSuggestions({
       setState({ kind: "ready", repos, rootsShown });
     };
     void scan();
-    return () => {
+    return (): void => {
       cancelled = true;
     };
   }, [debouncedProjectScanRootsText]);
@@ -1025,7 +1025,7 @@ function CreateProjectForm({ compact }: { compact?: boolean } = {}): React.JSX.E
               variant="secondary"
               size="sm"
               onClick={() => {
-                void (async () => {
+                void (async (): Promise<void> => {
                   const picked = await trpcUIClient.uiPickDirectory.mutate({
                     title: "Pick a project directory",
                     defaultPath: path.length > 0 ? path : undefined,

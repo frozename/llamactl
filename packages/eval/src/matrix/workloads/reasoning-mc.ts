@@ -112,7 +112,7 @@ export function buildReasoningMcWorkload(opts: {
     // no_answer. 1024 leaves headroom for the chain-of-thought to land the answer.
     maxTokens: 1024,
     temperature: 0,
-    prompt_builder: (row) => {
+    prompt_builder: (row): { messages: { role: string; content: string }[] } => {
       const r = row as ReasoningRow;
       return {
         messages: [
@@ -125,7 +125,14 @@ export function buildReasoningMcWorkload(opts: {
         ],
       };
     },
-    scorer: (row, completion) => {
+    scorer: (
+      row,
+      completion,
+    ): {
+      prediction: string;
+      gold: string;
+      metrics: { exact_match: number; no_answer: number };
+    } => {
       const r = row as ReasoningRow;
       const gold = r.answer.trim();
       let prediction: string;
