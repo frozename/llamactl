@@ -486,39 +486,14 @@ export function CreateProjectForm({ compact }: { compact?: boolean } = {}): Reac
             data-testid="projects-create-name"
           />
         </Field>
-        <Field label="Path" required>
-          <div className="flex gap-1">
-            <input
-              type="text"
-              value={path}
-              onChange={(e) => {
-                setPath(e.target.value);
-              }}
-              placeholder="/Users/you/repos/novaflow"
-              className="flex-1 px-2 py-1 font-mono text-xs border rounded bg-surface-2 border-border text-primary"
-              required
-              data-testid="projects-create-path"
-            />
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() =>
-                void (async (): Promise<void> => {
-                  const picked = await trpcUIClient.uiPickDirectory.mutate({
-                    title: "Pick project dir",
-                    defaultPath: path || undefined,
-                  });
-                  if (picked) {
-                    setPath(picked);
-                    if (!name.trim()) setName(picked.split("/").filter(Boolean).pop() ?? "");
-                  }
-                })()
-              }
-            >
-              Browse\u2026
-            </Button>
-          </div>
-        </Field>
+        <ProjectPathField
+          path={path}
+          setPath={setPath}
+          onPickedDir={(picked) => {
+            setPath(picked);
+            if (!name.trim()) setName(picked.split("/").filter(Boolean).pop() ?? "");
+          }}
+        />
         {!compact && (
           <CreateProjectExtendedFields
             purpose={purpose}
@@ -550,6 +525,49 @@ export function CreateProjectForm({ compact }: { compact?: boolean } = {}): Reac
         </div>
       </div>
     </form>
+  );
+}
+
+function ProjectPathField({
+  path,
+  setPath,
+  onPickedDir,
+}: {
+  path: string;
+  setPath: (v: string) => void;
+  onPickedDir: (picked: string) => void;
+}): React.JSX.Element {
+  return (
+    <Field label="Path" required>
+      <div className="flex gap-1">
+        <input
+          type="text"
+          value={path}
+          onChange={(e) => {
+            setPath(e.target.value);
+          }}
+          placeholder="/Users/you/repos/novaflow"
+          className="flex-1 px-2 py-1 font-mono text-xs border rounded bg-surface-2 border-border text-primary"
+          required
+          data-testid="projects-create-path"
+        />
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() =>
+            void (async (): Promise<void> => {
+              const picked = await trpcUIClient.uiPickDirectory.mutate({
+                title: "Pick project dir",
+                defaultPath: path || undefined,
+              });
+              if (picked) onPickedDir(picked);
+            })()
+          }
+        >
+          Browse…
+        </Button>
+      </div>
+    </Field>
   );
 }
 

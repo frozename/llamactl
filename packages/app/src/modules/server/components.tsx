@@ -226,43 +226,67 @@ export function ServerControlForm({
             <span>use tuned</span>
           </label>
         </label>
-        <div style={{ gridColumn: "span 2 / span 2" }} className="flex items-end gap-2">
-          <Button
-            type="submit"
-            variant="primary"
-            disabled={busy || !workload}
-            data-testid="server-start"
-            className="flex-1"
-          >
-            {starting ? "Starting…" : "Start"}
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            onClick={() => {
-              if (workload) {
-                stopMutation.mutate({ workload, graceSeconds: 5 });
-              }
-            }}
-            disabled={busy || stopMutation.isPending || !isUp || !workload}
-            data-testid="server-stop"
-            className="flex-1"
-            title={
-              !workload
-                ? "No workload selected"
-                : !isUp
-                  ? "Server not running"
-                  : "SIGTERM -> SIGKILL (5s grace)"
-            }
-          >
-            {stopMutation.isPending ? "Stopping…" : "Stop"}
-          </Button>
-        </div>
+        <ServerStartStopButtons
+          busy={busy}
+          starting={starting}
+          isUp={isUp}
+          workload={workload}
+          stopMutation={stopMutation}
+        />
       </div>
       <div className="mt-2 text-xs text-secondary">
         LLAMA_CPP_HOST={envData?.LLAMA_CPP_HOST ?? "?"}:{envData?.LLAMA_CPP_PORT ?? "?"}
       </div>
     </form>
+  );
+}
+
+function ServerStartStopButtons({
+  busy,
+  starting,
+  isUp,
+  workload,
+  stopMutation,
+}: {
+  busy: boolean;
+  starting: UseServerControlReturn["starting"];
+  isUp: boolean;
+  workload: UseServerControlReturn["workload"];
+  stopMutation: UseServerControlReturn["stopMutation"];
+}): React.JSX.Element {
+  return (
+    <div style={{ gridColumn: "span 2 / span 2" }} className="flex items-end gap-2">
+      <Button
+        type="submit"
+        variant="primary"
+        disabled={busy || !workload}
+        data-testid="server-start"
+        className="flex-1"
+      >
+        {starting ? "Starting…" : "Start"}
+      </Button>
+      <Button
+        type="button"
+        variant="destructive"
+        onClick={() => {
+          if (workload) {
+            stopMutation.mutate({ workload, graceSeconds: 5 });
+          }
+        }}
+        disabled={busy || stopMutation.isPending || !isUp || !workload}
+        data-testid="server-stop"
+        className="flex-1"
+        title={
+          !workload
+            ? "No workload selected"
+            : !isUp
+              ? "Server not running"
+              : "SIGTERM -> SIGKILL (5s grace)"
+        }
+      >
+        {stopMutation.isPending ? "Stopping…" : "Stop"}
+      </Button>
+    </div>
   );
 }
 

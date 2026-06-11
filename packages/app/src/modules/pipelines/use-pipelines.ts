@@ -45,6 +45,92 @@ interface ChatStreamEvent {
   error?: { message?: string };
 }
 
+interface StageRunControls {
+  setCurrentIdx: (v: number) => void;
+  setOutputs: (update: (prev: string[]) => string[]) => void;
+  setRunError: (v: string | null) => void;
+  setRunningId: (v: string | null) => void;
+  setStreamInput: (v: StreamInput | null) => void;
+  setStreamKey: (update: (prev: number) => number) => void;
+}
+
+function advanceStage(
+  pipeline: Pipeline,
+  finishedIdx: number,
+  finalOutput: string,
+  c: StageRunControls,
+): void {
+  const nextIdx = finishedIdx + 1;
+  if (nextIdx >= pipeline.stages.length) {
+    c.setRunningId(null);
+    c.setStreamInput(null);
+    return;
+  }
+  const nextStage = pipeline.stages[nextIdx];
+  if (!nextStage) return;
+  c.setCurrentIdx(nextIdx);
+  c.setOutputs((o) => [...o, ""]);
+  c.setStreamKey((k) => k + 1);
+  c.setStreamInput(buildStageRequest(nextStage, finalOutput));
+}
+
+function applyChatStreamEvent(
+  e: ChatStreamEvent,
+  pipeline: Pipeline,
+  currentIdx: number,
+  c: StageRunControls,
+): void {
+  if (e.type === "chunk") {
+    const piece = e.chunk?.choices?.[0]?.delta?.content ?? "";
+    if (piece) {
+      c.setOutputs((prev) => {
+        const next = [...prev];
+        const current = next[currentIdx] ?? "";
+        next[currentIdx] = current + piece;
+        return next;
+      });
+    }
+  } else if (e.type === "error") {
+    c.setRunError(e.error?.message ?? "stream error");
+    c.setRunningId(null);
+    c.setStreamInput(null);
+  } else {
+    c.setOutputs((prev) => {
+      const final = prev[currentIdx] ?? "";
+      queueMicrotask(() => {
+        advanceStage(pipeline, currentIdx, final, c);
+      });
+      return prev;
+    });
+  }
+}
+
+function exportPipelineAsMcp(
+  pipeline: Pipeline | undefined,
+  overwrite: boolean,
+  setExportInfo: UsePipelinesReturn["setExportInfo"],
+  mutate: ReturnType<typeof trpc.pipelineExportMcp.useMutation>["mutate"],
+): void {
+  if (!pipeline || pipeline.stages.length === 0) {
+    setExportInfo({
+      kind: "error",
+      message: pipeline ? "Pipeline has no stages" : "No active pipeline",
+    });
+    return;
+  }
+  setExportInfo(null);
+  mutate({
+    name: pipeline.name,
+    stages: pipeline.stages.map((s) => ({
+      node: s.node,
+      model: s.model,
+      systemPrompt: s.systemPrompt,
+      capabilities: s.capabilities,
+    })),
+    overwrite,
+  });
+}
+
 export function usePipelines(): UsePipelinesReturn {
   const store = usePipelinesStore();
   const nodeList = trpc.nodeList.useQuery();
@@ -75,19 +161,13 @@ export function usePipelines(): UsePipelinesReturn {
     },
   });
 
-  const advance = (activePipeline: Pipeline, finishedIdx: number, finalOutput: string): void => {
-    const nextIdx = finishedIdx + 1;
-    if (nextIdx >= activePipeline.stages.length) {
-      setRunningId(null);
-      setStreamInput(null);
-      return;
-    }
-    const nextStage = activePipeline.stages[nextIdx];
-    if (!nextStage) return;
-    setCurrentIdx(nextIdx);
-    setOutputs((o) => [...o, ""]);
-    setStreamKey((k) => k + 1);
-    setStreamInput(buildStageRequest(nextStage, finalOutput));
+  const controls: StageRunControls = {
+    setCurrentIdx,
+    setOutputs,
+    setRunError,
+    setRunningId,
+    setStreamInput,
+    setStreamKey,
   };
 
   trpc.chatStream.useSubscription(
@@ -97,30 +177,7 @@ export function usePipelines(): UsePipelinesReturn {
       key: streamKey,
       onData: (evt) => {
         if (!active || !runningId) return;
-        const e = evt as ChatStreamEvent;
-        if (e.type === "chunk") {
-          const piece = e.chunk?.choices?.[0]?.delta?.content ?? "";
-          if (piece) {
-            setOutputs((prev) => {
-              const next = [...prev];
-              const current = next[currentIdx] ?? "";
-              next[currentIdx] = current + piece;
-              return next;
-            });
-          }
-        } else if (e.type === "error") {
-          setRunError(e.error?.message ?? "stream error");
-          setRunningId(null);
-          setStreamInput(null);
-        } else {
-          setOutputs((prev) => {
-            const final = prev[currentIdx] ?? "";
-            queueMicrotask(() => {
-              advance(active, currentIdx, final);
-            });
-            return prev;
-          });
-        }
+        applyChatStreamEvent(evt as ChatStreamEvent, active, currentIdx, controls);
       },
       onError: (err: { message: string }) => {
         setRunError(err.message);
@@ -144,24 +201,7 @@ export function usePipelines(): UsePipelinesReturn {
     exportMcp,
     nodeList,
     exportActiveAsMcp: (overwrite: boolean): void => {
-      if (!active || active.stages.length === 0) {
-        setExportInfo({
-          kind: "error",
-          message: active ? "Pipeline has no stages" : "No active pipeline",
-        });
-        return;
-      }
-      setExportInfo(null);
-      exportMcp.mutate({
-        name: active.name,
-        stages: active.stages.map((s) => ({
-          node: s.node,
-          model: s.model,
-          systemPrompt: s.systemPrompt,
-          capabilities: s.capabilities,
-        })),
-        overwrite,
-      });
+      exportPipelineAsMcp(active, overwrite, setExportInfo, exportMcp.mutate);
     },
     run: (): void => {
       const text = initialInput.trim();

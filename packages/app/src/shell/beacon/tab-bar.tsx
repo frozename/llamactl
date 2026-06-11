@@ -115,32 +115,7 @@ function TabItem({
         setMenu({ x: e.clientX, y: e.clientY, tab });
       }}
       onKeyDown={(e) => {
-        if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-          e.preventDefault();
-          const dir = e.key === "ArrowRight" ? 1 : -1;
-          const next = tabs[(idx + dir + total) % total];
-          if (next) {
-            setActive(next.tabKey);
-            focusTab(next.tabKey);
-          }
-        } else if (e.key === "Home") {
-          e.preventDefault();
-          const first = tabs[0];
-          if (first) {
-            setActive(first.tabKey);
-            focusTab(first.tabKey);
-          }
-        } else if (e.key === "End") {
-          e.preventDefault();
-          const last = tabs[total - 1];
-          if (last) {
-            setActive(last.tabKey);
-            focusTab(last.tabKey);
-          }
-        } else if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          setActive(tab.tabKey);
-        }
+        handleTabKeyDown(e, { tab, tabs, idx, total, setActive, focusTab });
       }}
       style={{
         display: "flex",
@@ -179,33 +154,87 @@ function TabItem({
         }}
       />
       <span>{tab.title}</span>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (tab.pinned) unpin(tab.tabKey);
-          else close(tab.tabKey);
-        }}
-        style={{
-          all: "unset",
-          width: 16,
-          height: 16,
-          display: "grid",
-          placeItems: "center",
-          borderRadius: 4,
-          cursor: "pointer",
-          marginLeft: 4,
-          color: "inherit",
-        }}
-        title={tab.pinned ? "Unpin" : "Close"}
-      >
-        {tab.pinned ? (
-          <Pin size={11} strokeWidth={2} fill="currentColor" />
-        ) : (
-          <X size={12} strokeWidth={2} />
-        )}
-      </button>
+      <TabCloseButton tab={tab} close={close} unpin={unpin} />
     </div>
+  );
+}
+
+function handleTabKeyDown(
+  e: React.KeyboardEvent<HTMLDivElement>,
+  opts: {
+    tab: TabEntry;
+    tabs: TabEntry[];
+    idx: number;
+    total: number;
+    setActive: (k: string) => void;
+    focusTab: (k: string) => void;
+  },
+): void {
+  const { tab, tabs, idx, total, setActive, focusTab } = opts;
+  if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+    e.preventDefault();
+    const dir = e.key === "ArrowRight" ? 1 : -1;
+    const next = tabs[(idx + dir + total) % total];
+    if (next) {
+      setActive(next.tabKey);
+      focusTab(next.tabKey);
+    }
+  } else if (e.key === "Home") {
+    e.preventDefault();
+    const first = tabs[0];
+    if (first) {
+      setActive(first.tabKey);
+      focusTab(first.tabKey);
+    }
+  } else if (e.key === "End") {
+    e.preventDefault();
+    const last = tabs[total - 1];
+    if (last) {
+      setActive(last.tabKey);
+      focusTab(last.tabKey);
+    }
+  } else if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    setActive(tab.tabKey);
+  }
+}
+
+function TabCloseButton({
+  tab,
+  close,
+  unpin,
+}: {
+  tab: TabEntry;
+  close: (k: string) => void;
+  unpin: (k: string) => void;
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (tab.pinned) unpin(tab.tabKey);
+        else close(tab.tabKey);
+      }}
+      style={{
+        all: "unset",
+        width: 16,
+        height: 16,
+        display: "grid",
+        placeItems: "center",
+        borderRadius: 4,
+        cursor: "pointer",
+        marginLeft: 4,
+        color: "inherit",
+      }}
+      title={tab.pinned ? "Unpin" : "Close"}
+    >
+      {tab.pinned ? (
+        <Pin size={11} strokeWidth={2} fill="currentColor" />
+      ) : (
+        <X size={12} strokeWidth={2} />
+      )}
+    </button>
   );
 }
 

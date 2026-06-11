@@ -46,49 +46,9 @@ export default function UIPrimitivesSandbox(): React.JSX.Element {
         ]}
       />
 
-      <Section title="Buttons">
-        <Row>
-          <Button variant="primary">Primary</Button>
-          <Button variant="secondary">Secondary</Button>
-          <Button variant="ghost">Ghost</Button>
-          <Button variant="outline">Outline</Button>
-          <Button variant="destructive">Destructive</Button>
-        </Row>
-        <Row>
-          <Button variant="primary" size="sm">
-            Small
-          </Button>
-          <Button variant="primary" size="md">
-            Medium
-          </Button>
-          <Button variant="primary" size="lg">
-            Large
-          </Button>
-        </Row>
-      </Section>
+      <ButtonsShowcase />
 
-      <Section title="Badges + StatusDots + Kbd">
-        <Row>
-          <Badge>default</Badge>
-          <Badge variant="brand">brand</Badge>
-          <Badge variant="ok">ok</Badge>
-          <Badge variant="warn">warn</Badge>
-          <Badge variant="err">err</Badge>
-        </Row>
-        <Row>
-          <StatusDot tone="ok" label="healthy" />
-          <StatusDot tone="warn" label="degraded" pulse />
-          <StatusDot tone="err" label="down" pulse />
-          <StatusDot tone="idle" label="offline" />
-          <StatusDot tone="info" label="starting" pulse />
-        </Row>
-        <Row>
-          <Kbd>⌘</Kbd>
-          <Kbd>K</Kbd>
-          <Kbd>⌘⇧P</Kbd>
-          <Kbd compact>⌘K</Kbd>
-        </Row>
-      </Section>
+      <BadgesShowcase />
 
       <Section title="Input">
         <Input placeholder="Search…" />
@@ -109,98 +69,11 @@ export default function UIPrimitivesSandbox(): React.JSX.Element {
         </p>
       </Section>
 
-      <Section title="Tree items">
-        <Panel>
-          <TreeItem label="README.md" icon={<DotIcon />} active />
-          <TreeItem
-            label="color.css"
-            icon={<DotIcon />}
-            trailing={
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 9,
-                  color: "var(--color-text-tertiary)",
-                }}
-              >
-                108
-              </span>
-            }
-          />
-          <TreeItem
-            label="typography.css"
-            icon={<DotIcon />}
-            trailing={
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 9,
-                  color: "var(--color-text-tertiary)",
-                }}
-              >
-                12
-              </span>
-            }
-          />
-          <TreeItem label="Workloads" collapsed={false} icon={<DotIcon />} />
-          <TreeItem
-            indent={1}
-            label="wl-abc · qwen-coder"
-            icon={<DotIcon />}
-            trailing={<StatusDot tone="ok" />}
-          />
-          <TreeItem
-            indent={1}
-            label="wl-ghi · llama-70b"
-            icon={<DotIcon />}
-            trailing={<StatusDot tone="warn" pulse />}
-          />
-        </Panel>
-      </Section>
+      <TreeItemsShowcase />
 
-      <Section title="StatCards">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-          <StatCard
-            label="tokens / sec"
-            value="48.2"
-            unit="t/s"
-            delta={{ text: "↑ 12 %", direction: "up" }}
-            sparkline={[10, 14, 9, 18, 22, 16, 28, 24, 32, 30, 38, 48]}
-          />
-          <StatCard
-            label="workloads"
-            value="3"
-            delta={{ text: "— no change", direction: "flat" }}
-          />
-          <StatCard
-            label="queue depth"
-            value="12"
-            delta={{ text: "↓ 4", direction: "down" }}
-            sparkline={[20, 22, 18, 15, 14, 12, 16, 12, 10, 12]}
-          />
-          <StatCard label="nodes" value="4" unit="/6" />
-        </div>
-      </Section>
+      <StatCardsShowcase />
 
-      <Section title="AtmosphericPanel">
-        <AtmosphericPanel>
-          <h2
-            style={{
-              margin: 0,
-              fontFamily: "var(--font-display)",
-              fontWeight: 300,
-              fontSize: 64,
-              letterSpacing: "-0.03em",
-            }}
-          >
-            Beacon
-          </h2>
-          <p style={{ color: "var(--color-text-secondary)", maxWidth: "50ch" }}>
-            The atmospheric surface — gradient, two blurred blobs, noise overlay from tokens. Use
-            for hero moments only.
-          </p>
-        </AtmosphericPanel>
-      </Section>
+      <AtmosphericShowcase />
 
       <Section title="CommandBar + ThemeOrbs">
         <Row>
@@ -233,6 +106,159 @@ export default function UIPrimitivesSandbox(): React.JSX.Element {
         </Row>
       </Section>
     </div>
+  );
+}
+
+function ButtonsShowcase(): React.JSX.Element {
+  return (
+    <Section title="Buttons">
+      <Row>
+        <Button variant="primary">Primary</Button>
+        <Button variant="secondary">Secondary</Button>
+        <Button variant="ghost">Ghost</Button>
+        <Button variant="outline">Outline</Button>
+        <Button variant="destructive">Destructive</Button>
+      </Row>
+      <Row>
+        <Button variant="primary" size="sm">
+          Small
+        </Button>
+        <Button variant="primary" size="md">
+          Medium
+        </Button>
+        <Button variant="primary" size="lg">
+          Large
+        </Button>
+      </Row>
+    </Section>
+  );
+}
+
+function BadgesShowcase(): React.JSX.Element {
+  return (
+    <Section title="Badges + StatusDots + Kbd">
+      <Row>
+        <Badge>default</Badge>
+        <Badge variant="brand">brand</Badge>
+        <Badge variant="ok">ok</Badge>
+        <Badge variant="warn">warn</Badge>
+        <Badge variant="err">err</Badge>
+      </Row>
+      <Row>
+        <StatusDot tone="ok" label="healthy" />
+        <StatusDot tone="warn" label="degraded" pulse />
+        <StatusDot tone="err" label="down" pulse />
+        <StatusDot tone="idle" label="offline" />
+        <StatusDot tone="info" label="starting" pulse />
+      </Row>
+      <Row>
+        <Kbd>⌘</Kbd>
+        <Kbd>K</Kbd>
+        <Kbd>⌘⇧P</Kbd>
+        <Kbd compact>⌘K</Kbd>
+      </Row>
+    </Section>
+  );
+}
+
+function TreeItemsShowcase(): React.JSX.Element {
+  return (
+    <Section title="Tree items">
+      <Panel>
+        <TreeItem label="README.md" icon={<DotIcon />} active />
+        <TreeItem
+          label="color.css"
+          icon={<DotIcon />}
+          trailing={
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 9,
+                color: "var(--color-text-tertiary)",
+              }}
+            >
+              108
+            </span>
+          }
+        />
+        <TreeItem
+          label="typography.css"
+          icon={<DotIcon />}
+          trailing={
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 9,
+                color: "var(--color-text-tertiary)",
+              }}
+            >
+              12
+            </span>
+          }
+        />
+        <TreeItem label="Workloads" collapsed={false} icon={<DotIcon />} />
+        <TreeItem
+          indent={1}
+          label="wl-abc · qwen-coder"
+          icon={<DotIcon />}
+          trailing={<StatusDot tone="ok" />}
+        />
+        <TreeItem
+          indent={1}
+          label="wl-ghi · llama-70b"
+          icon={<DotIcon />}
+          trailing={<StatusDot tone="warn" pulse />}
+        />
+      </Panel>
+    </Section>
+  );
+}
+
+function StatCardsShowcase(): React.JSX.Element {
+  return (
+    <Section title="StatCards">
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        <StatCard
+          label="tokens / sec"
+          value="48.2"
+          unit="t/s"
+          delta={{ text: "↑ 12 %", direction: "up" }}
+          sparkline={[10, 14, 9, 18, 22, 16, 28, 24, 32, 30, 38, 48]}
+        />
+        <StatCard label="workloads" value="3" delta={{ text: "— no change", direction: "flat" }} />
+        <StatCard
+          label="queue depth"
+          value="12"
+          delta={{ text: "↓ 4", direction: "down" }}
+          sparkline={[20, 22, 18, 15, 14, 12, 16, 12, 10, 12]}
+        />
+        <StatCard label="nodes" value="4" unit="/6" />
+      </div>
+    </Section>
+  );
+}
+
+function AtmosphericShowcase(): React.JSX.Element {
+  return (
+    <Section title="AtmosphericPanel">
+      <AtmosphericPanel>
+        <h2
+          style={{
+            margin: 0,
+            fontFamily: "var(--font-display)",
+            fontWeight: 300,
+            fontSize: 64,
+            letterSpacing: "-0.03em",
+          }}
+        >
+          Beacon
+        </h2>
+        <p style={{ color: "var(--color-text-secondary)", maxWidth: "50ch" }}>
+          The atmospheric surface — gradient, two blurred blobs, noise overlay from tokens. Use for
+          hero moments only.
+        </p>
+      </AtmosphericPanel>
+    </Section>
   );
 }
 

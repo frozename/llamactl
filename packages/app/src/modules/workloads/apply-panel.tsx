@@ -6,6 +6,78 @@ import * as YAML from "yaml";
 import { trpc } from "@/lib/trpc";
 import { Button, Input } from "@/ui";
 
+interface TemplateDraft {
+  name: string;
+  node: string;
+  target: string;
+}
+
+function TemplateFieldsRow({
+  tpl,
+  setTpl,
+  nodeNames,
+  generating,
+  onGenerate,
+}: {
+  tpl: TemplateDraft;
+  setTpl: (v: TemplateDraft) => void;
+  nodeNames: string[];
+  generating: boolean;
+  onGenerate: () => void;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-wrap items-end gap-2 text-xs mb-3">
+      <label className="flex flex-col">
+        <span className="text-secondary mb-1">name</span>
+        <Input
+          type="text"
+          placeholder="gemma-qa"
+          value={tpl.name}
+          onChange={(e) => {
+            setTpl({ ...tpl, name: e.target.value });
+          }}
+        />
+      </label>
+      <label className="flex flex-col">
+        <span className="text-secondary mb-1">node</span>
+        <select
+          value={tpl.node}
+          onChange={(e) => {
+            setTpl({ ...tpl, node: e.target.value });
+          }}
+          className="w-32 px-2 py-1 font-mono border rounded bg-surface-2 border-border text-primary"
+        >
+          {nodeNames.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex flex-col flex-1">
+        <span className="text-secondary mb-1">target (rel path)</span>
+        <Input
+          type="text"
+          placeholder="unsloth/gemma-4-..."
+          value={tpl.target}
+          onChange={(e) => {
+            setTpl({ ...tpl, target: e.target.value });
+          }}
+        />
+      </label>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={onGenerate}
+        disabled={generating}
+      >
+        {generating ? "Generating…" : "Generate YAML"}
+      </Button>
+    </div>
+  );
+}
+
 export function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
   const qc = useQueryClient();
   const utils = trpc.useUtils();
@@ -81,57 +153,15 @@ export function ApplyPanel(props: { onDone: () => void }): React.JSX.Element {
   return (
     <form onSubmit={onSubmit} className="mt-3 p-4 border rounded bg-surface-1 border-border">
       <div className="font-medium text-sm text-primary mb-3">Apply a workload</div>
-      <div className="flex flex-wrap items-end gap-2 text-xs mb-3">
-        <label className="flex flex-col">
-          <span className="text-secondary mb-1">name</span>
-          <Input
-            type="text"
-            placeholder="gemma-qa"
-            value={tpl.name}
-            onChange={(e) => {
-              setTpl({ ...tpl, name: e.target.value });
-            }}
-          />
-        </label>
-        <label className="flex flex-col">
-          <span className="text-secondary mb-1">node</span>
-          <select
-            value={tpl.node}
-            onChange={(e) => {
-              setTpl({ ...tpl, node: e.target.value });
-            }}
-            className="w-32 px-2 py-1 font-mono border rounded bg-surface-2 border-border text-primary"
-          >
-            {(nodes.data?.nodes.map((n) => n.name) ?? ["local"]).map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col flex-1">
-          <span className="text-secondary mb-1">target (rel path)</span>
-          <Input
-            type="text"
-            placeholder="unsloth/gemma-4-..."
-            value={tpl.target}
-            onChange={(e) => {
-              setTpl({ ...tpl, target: e.target.value });
-            }}
-          />
-        </label>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={() => {
-            void onTemplate();
-          }}
-          disabled={template.isFetching}
-        >
-          {template.isFetching ? "Generating…" : "Generate YAML"}
-        </Button>
-      </div>
+      <TemplateFieldsRow
+        tpl={tpl}
+        setTpl={setTpl}
+        nodeNames={nodes.data?.nodes.map((n) => n.name) ?? ["local"]}
+        generating={template.isFetching}
+        onGenerate={() => {
+          void onTemplate();
+        }}
+      />
       <textarea
         placeholder="apiVersion: llamactl/v1\nkind: ModelRun\n..."
         value={yaml}
