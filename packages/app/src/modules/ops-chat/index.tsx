@@ -134,7 +134,9 @@ function ChatHeader({ opsChat }: { opsChat: UseOpsChatReturn }): React.JSX.Eleme
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 500 }}>Operator Console</h2>
           <p style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-            Natural-language goals become MCP tool calls. Every attempt appends one entry to
+            Natural-language goals become MCP tool calls. Reads run with one click; mutations
+            preview dry-first; destructive actions require the operator to type the tool name to
+            confirm. Every attempt — dry, wet, successful, failed — appends one entry to
             {data?.path ? (
               <span style={{ fontFamily: "var(--font-mono)" }}> {data.path}</span>
             ) : (
@@ -201,7 +203,8 @@ function ChatTranscript({ opsChat }: { opsChat: UseOpsChatReturn }): React.JSX.E
           <p style={{ marginTop: 4, fontSize: 12 }}>
             Example:{" "}
             <span style={{ fontFamily: "var(--font-mono)" }}>list installed vision models</span>.
-            The planner proposes tool calls one at a time.
+            The planner proposes tool calls one at a time, inline. Approve each one; reads run with
+            a click, mutations preview dry-first.
           </p>
         </div>
       )}

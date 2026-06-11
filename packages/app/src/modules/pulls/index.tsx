@@ -72,7 +72,7 @@ function PullForm({ pullsObj }: { pullsObj: UsePullsReturn }): React.JSX.Element
       <PullModeTabs pullsObj={pullsObj} />
       <PullInputs pullsObj={pullsObj} />
       <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>
-        Each Enqueue adds a new card below — independent and individually cancellable.
+        Each Enqueue adds a new card below — runs are independent and can be cancelled individually.
       </div>
     </form>
   );

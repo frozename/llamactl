@@ -45,7 +45,15 @@ export default function Projects(): React.JSX.Element {
           color: "var(--color-text-secondary)",
         }}
       >
-        Registered project directories with per-task routing policies.
+        Registered project directories with per-task routing policies. Register via{" "}
+        <span style={{ fontFamily: "var(--font-mono)" }}>
+          llamactl project add &lt;name&gt; --path &lt;abs&gt;
+        </span>
+        ; indexed docs land in the declared rag collection; routing decisions for{" "}
+        <span style={{ fontFamily: "var(--font-mono)" }}>
+          project:&lt;name&gt;/&lt;taskKind&gt;
+        </span>{" "}
+        chat calls stream into the detail view.
       </p>
 
       {list.isLoading && <LoadingState />}
@@ -130,7 +138,7 @@ function ProjectsEmptyState(): React.JSX.Element {
       <EditorialHero
         title="New project"
         titleAccent="starts here"
-        lede="Projects bundle workloads, prompts, and knowledge into one namespace."
+        lede="Projects bundle workloads, prompts, and knowledge into one namespace. Start with a blank template — you can attach a data pipeline later."
         actions={
           <Button
             type="button"

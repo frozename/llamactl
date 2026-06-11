@@ -10,6 +10,68 @@ import type { DetectedRepo, ProjectManifest, RoutePreviewResponse, RoutingDecisi
 
 import { useGitRepoScanner, useRoutingJournal } from "./hooks";
 
+const dashedBoxStyle: React.CSSProperties = {
+  borderRadius: "var(--r-md)",
+  border: "1px solid var(--color-border)",
+  borderStyle: "dashed",
+  borderColor: "var(--color-border)",
+  background: "var(--color-surface-1)",
+  paddingLeft: 12,
+  paddingRight: 12,
+  paddingTop: 8,
+  paddingBottom: 8,
+  fontSize: 12,
+  color: "var(--color-text-secondary)",
+};
+
+const cellPadStyle: React.CSSProperties = {
+  paddingLeft: 8,
+  paddingRight: 8,
+  paddingTop: 4,
+  paddingBottom: 4,
+};
+
+const headCellStyle: React.CSSProperties = { ...cellPadStyle, fontWeight: 500 };
+
+const rowBorderStyle: React.CSSProperties = {
+  borderTop: "1px solid var(--color-border)",
+  borderColor: "var(--color-border)",
+};
+
+const rowCellPadStyle: React.CSSProperties = {
+  paddingLeft: 12,
+  paddingRight: 12,
+  paddingTop: 8,
+  paddingBottom: 8,
+};
+
+const sectionLabelStyle: React.CSSProperties = {
+  marginBottom: 8,
+  fontSize: 12,
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  color: "var(--color-text-secondary)",
+};
+
+const textInputStyle: React.CSSProperties = {
+  width: "100%",
+  borderRadius: "var(--r-md)",
+  border: "1px solid var(--color-border)",
+  borderColor: "var(--color-border)",
+  background: "var(--color-surface-2)",
+  paddingLeft: 8,
+  paddingRight: 8,
+  paddingTop: 4,
+  paddingBottom: 4,
+  fontSize: 12,
+  color: "var(--color-text)",
+};
+
+const monoInputStyle: React.CSSProperties = {
+  ...textInputStyle,
+  fontFamily: "var(--font-mono)",
+};
+
 function reasonBadgeVariant(reason: RoutingDecision["reason"]): BadgeVariant {
   if (reason === "matched") return "ok";
   if (reason === "fallback-default") return "default";
@@ -80,20 +142,14 @@ export function RoutingJournalFeed(props: { project: string }): React.JSX.Elemen
   const { q, entries } = useRoutingJournal(project);
 
   if (q.isLoading) {
-    return (
-      <div className="p-2 text-xs border border-dashed rounded bg-surface-1 text-secondary">
-        Loading decisions…
-      </div>
-    );
+    return <div style={dashedBoxStyle}>Loading decisions…</div>;
   }
   if (entries.length === 0) {
     return (
-      <div
-        className="p-2 text-xs border border-dashed rounded bg-surface-1 text-secondary"
-        data-testid="projects-journal-empty"
-      >
+      <div style={dashedBoxStyle} data-testid="projects-journal-empty">
         No routing decisions journaled yet — trigger a chat against{" "}
-        <span className="font-mono">project:{project}/&lt;taskKind&gt;</span> to populate this feed.
+        <span style={{ fontFamily: "var(--font-mono)" }}>project:{project}/&lt;taskKind&gt;</span>{" "}
+        to populate this feed.
       </div>
     );
   }
@@ -102,29 +158,48 @@ export function RoutingJournalFeed(props: { project: string }): React.JSX.Elemen
 
 function JournalTable({ entries }: { entries: RoutingDecision[] }): React.JSX.Element {
   const reversed = [...entries].reverse();
+  const monoCellStyle: React.CSSProperties = {
+    ...cellPadStyle,
+    fontFamily: "var(--font-mono)",
+    fontSize: 10,
+  };
   return (
     <div
-      className="overflow-auto border rounded bg-surface-1 border-border"
+      style={{
+        overflow: "auto",
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-1)",
+      }}
       data-testid="projects-journal"
     >
-      <table className="w-full text-xs">
-        <thead className="text-left bg-surface-2 text-secondary">
+      <table style={{ width: "100%", fontSize: 12 }}>
+        <thead
+          style={{
+            background: "var(--color-surface-2)",
+            textAlign: "left",
+            color: "var(--color-text-secondary)",
+          }}
+        >
           <tr>
-            <th className="px-2 py-1 font-medium">Elapsed</th>
-            <th className="w-32 px-2 py-1 font-medium">Task kind</th>
-            <th className="px-2 py-1 font-medium">Target</th>
-            <th className="w-32 px-2 py-1 font-medium">Reason</th>
+            <th style={headCellStyle}>Elapsed</th>
+            <th style={{ ...headCellStyle, width: 128 }}>Task kind</th>
+            <th style={headCellStyle}>Target</th>
+            <th style={{ ...headCellStyle, width: 128 }}>Reason</th>
           </tr>
         </thead>
         <tbody>
           {reversed.map((d, i) => (
-            <tr key={`${d.ts}-${String(i)}`} className="border-t border-border">
-              <td className="px-2 py-1 font-mono text-[10px] text-secondary">
+            <tr key={`${d.ts}-${String(i)}`} style={rowBorderStyle}>
+              <td style={{ ...monoCellStyle, color: "var(--color-text-secondary)" }}>
                 {formatElapsed(d.ts)}
               </td>
-              <td className="px-2 py-1 font-mono text-[10px] text-primary">{d.taskKind}</td>
-              <td className="px-2 py-1 font-mono text-[10px] text-primary break-all">{d.target}</td>
-              <td className="px-2 py-1">
+              <td style={{ ...monoCellStyle, color: "var(--color-text)" }}>{d.taskKind}</td>
+              <td style={{ ...monoCellStyle, color: "var(--color-text)", wordBreak: "break-all" }}>
+                {d.target}
+              </td>
+              <td style={cellPadStyle}>
                 <Badge variant={reasonBadgeVariant(d.reason)}>{d.reason}</Badge>
               </td>
             </tr>
@@ -158,7 +233,14 @@ export function ProjectDetail(props: {
 
   return (
     <div
-      className="p-4 mt-4 border rounded bg-surface-0 border-border"
+      style={{
+        marginTop: 16,
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-0)",
+        padding: 16,
+      }}
       data-testid={`projects-detail-${project.metadata.name}`}
     >
       <ProjectDetailHeader
@@ -168,10 +250,8 @@ export function ProjectDetail(props: {
         removePending={removeMut.isPending}
       />
       {taskKinds.length > 0 && <RoutingPolicyPreview project={project} taskKinds={taskKinds} />}
-      <div className="mt-4">
-        <div className="mb-2 text-xs font-medium tracking-wide uppercase text-secondary">
-          Routing decisions (live)
-        </div>
+      <div>
+        <div style={sectionLabelStyle}>Routing decisions (live)</div>
         <RoutingJournalFeed project={project.metadata.name} />
       </div>
       <ProjectManifestViewer project={project} />
@@ -191,29 +271,54 @@ function ProjectDetailHeader({
   removePending: boolean;
 }): React.JSX.Element {
   return (
-    <div className="flex items-baseline justify-between gap-3">
+    <div
+      style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}
+    >
       <div>
-        <div className="text-xs font-medium tracking-wide uppercase text-secondary">Project</div>
-        <div className="font-mono text-lg text-primary">{project.metadata.name}</div>
-        <div className="font-mono text-xs text-secondary">{project.spec.path}</div>
+        <div
+          style={{
+            fontSize: 12,
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+            color: "var(--color-text-secondary)",
+          }}
+        >
+          Project
+        </div>
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 18, color: "var(--color-text)" }}>
+          {project.metadata.name}
+        </div>
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+            color: "var(--color-text-secondary)",
+          }}
+        >
+          {project.spec.path}
+        </div>
       </div>
-      <div className="flex gap-2">
+      <div style={{ display: "flex", gap: 8 }}>
         <Button
+          type="button"
           variant="destructive"
           size="sm"
           onClick={() => {
             onRemove();
           }}
           disabled={removePending}
+          data-testid={`projects-remove-${project.metadata.name}`}
         >
           Remove
         </Button>
         <Button
+          type="button"
           variant="secondary"
           size="sm"
           onClick={() => {
             onClose();
           }}
+          data-testid="projects-detail-close"
         >
           Close
         </Button>
@@ -230,30 +335,54 @@ function RoutingPolicyPreview({
   taskKinds: string[];
 }): React.JSX.Element {
   return (
-    <div className="mt-4">
-      <div className="mb-2 text-xs font-medium tracking-tight uppercase text-secondary">
-        Routing policy preview
-      </div>
+    <div>
+      <div style={sectionLabelStyle}>Routing policy preview</div>
       <div
-        className="overflow-hidden border rounded border-border"
+        style={{
+          overflow: "hidden",
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+        }}
         data-testid="projects-policy-table"
       >
-        <table className="w-full text-xs">
-          <thead className="text-left bg-surface-1 text-secondary">
+        <table style={{ width: "100%", fontSize: 12 }}>
+          <thead
+            style={{
+              background: "var(--color-surface-1)",
+              textAlign: "left",
+              color: "var(--color-text-secondary)",
+            }}
+          >
             <tr>
-              <th className="px-2 py-1 font-medium">Task kind</th>
-              <th className="px-2 py-1 font-medium">Declared target</th>
-              <th className="px-2 py-1 font-medium">Resolved (live)</th>
+              <th style={headCellStyle}>Task kind</th>
+              <th style={headCellStyle}>Declared target</th>
+              <th style={headCellStyle}>Resolved (live)</th>
             </tr>
           </thead>
           <tbody>
             {taskKinds.map((k) => (
-              <tr key={k} className="border-t border-border bg-surface-1">
-                <td className="px-2 py-1 font-mono text-primary">{k}</td>
-                <td className="px-2 py-1 font-mono text-[10px] text-secondary">
+              <tr key={k} style={{ ...rowBorderStyle, background: "var(--color-surface-1)" }}>
+                <td
+                  style={{
+                    ...cellPadStyle,
+                    fontFamily: "var(--font-mono)",
+                    color: "var(--color-text)",
+                  }}
+                >
+                  {k}
+                </td>
+                <td
+                  style={{
+                    ...cellPadStyle,
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 10,
+                    color: "var(--color-text-secondary)",
+                  }}
+                >
                   {project.spec.routing?.[k]}
                 </td>
-                <td className="px-2 py-1">
+                <td style={cellPadStyle}>
                   <RoutingPreviewCard project={project.metadata.name} taskKind={k} />
                 </td>
               </tr>
@@ -267,12 +396,20 @@ function RoutingPolicyPreview({
 
 function ProjectManifestViewer({ project }: { project: ProjectManifest }): React.JSX.Element {
   return (
-    <div className="mt-4">
-      <div className="mb-2 text-xs font-medium tracking-tight uppercase text-secondary">
-        Manifest
-      </div>
+    <div>
+      <div style={sectionLabelStyle}>Manifest</div>
       <pre
-        className="p-3 overflow-auto font-mono text-[10px] border rounded bg-surface-2 border-border text-primary"
+        style={{
+          overflow: "auto",
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-2)",
+          padding: 12,
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          color: "var(--color-text)",
+        }}
         data-testid={`projects-manifest-${project.metadata.name}`}
       >
         {stringifyYaml(project)}
@@ -300,38 +437,46 @@ export function ProjectRow(props: {
   const hasRag = !!project.spec.rag;
   return (
     <tr
-      className="border-t border-border bg-surface-1"
+      style={{ ...rowBorderStyle, background: "var(--color-surface-1)" }}
       data-testid={`projects-row-${project.metadata.name}`}
     >
-      <td className="px-3 py-2 text-ok break-all">
+      <td style={{ ...rowCellPadStyle, color: "var(--color-ok)", wordBreak: "break-all" }}>
         <button
           type="button"
           onClick={() => {
             onOpenDetail();
           }}
-          className="text-left"
+          style={{ textAlign: "left" }}
           data-testid={`projects-open-${project.metadata.name}`}
         >
           {project.metadata.name}
         </button>
       </td>
-      <td className="px-3 py-2 font-mono text-[10px] text-secondary break-all">
+      <td
+        style={{
+          ...rowCellPadStyle,
+          color: "var(--color-text-secondary)",
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          wordBreak: "break-all",
+        }}
+      >
         {project.spec.path}
       </td>
-      <td className="px-3 py-2 text-[10px]">
+      <td style={{ ...rowCellPadStyle, fontSize: 10 }}>
         {project.spec.rag ? (
-          <span className="font-mono text-primary">
+          <span style={{ fontFamily: "var(--font-mono)", color: "var(--color-text)" }}>
             {project.spec.rag.node}/{project.spec.rag.collection}
           </span>
         ) : (
-          <span className="text-secondary">no rag block</span>
+          <span style={{ color: "var(--color-text-secondary)" }}>no rag block</span>
         )}
       </td>
-      <td className="px-3 py-2">
+      <td style={rowCellPadStyle}>
         <RoutingHeatmap routing={project.spec.routing} />
       </td>
-      <td className="px-3 py-2 text-right">
-        <div className="flex items-center justify-end gap-1">
+      <td style={{ ...rowCellPadStyle, textAlign: "right" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
           <Button
             variant="primary"
             size="sm"
@@ -341,7 +486,11 @@ export function ProjectRow(props: {
             disabled={indexMut.isPending || !hasRag}
             loading={indexMut.isPending}
             data-testid={`projects-index-${project.metadata.name}`}
-            title={hasRag ? "Apply + run RAG pipeline" : "No rag block declared"}
+            title={
+              hasRag
+                ? "Apply + run the auto-generated RAG pipeline"
+                : "No rag block declared; add one in the manifest to enable indexing"
+            }
           >
             {indexMut.isPending ? "…" : "Index"}
           </Button>
@@ -356,7 +505,9 @@ export function ProjectRow(props: {
             Detail
           </Button>
         </div>
-        {indexError && <div className="mt-1 text-[10px] text-err">{indexError}</div>}
+        {indexError && (
+          <div style={{ marginTop: 4, fontSize: 10, color: "var(--color-err)" }}>{indexError}</div>
+        )}
       </td>
     </tr>
   );
@@ -370,20 +521,37 @@ export function GitRepoSuggestions({
   const { state, expanded, setExpanded } = useGitRepoScanner();
 
   if (state.kind === "loading")
-    return <div className="text-[10px] text-secondary">Scanning for git repos\u2026</div>;
+    return (
+      <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
+        Scanning for git repos…
+      </div>
+    );
   if (state.kind === "error" || state.repos.length === 0) return null;
 
   const visible = expanded ? state.repos : state.repos.slice(0, 8);
   return (
     <div>
-      <div className="flex items-baseline gap-2 mb-2 text-[10px] font-medium uppercase tracking-wide text-secondary">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 8,
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
         <span>Detected git repos</span>
-        <span className="opacity-60">
+        <span style={{ opacity: 0.6 }}>
           ({state.repos.length} across {state.rootsShown.length} root
           {state.rootsShown.length === 1 ? "" : "s"})
         </span>
       </div>
-      <div className="flex flex-wrap gap-1" data-testid="projects-git-suggestions">
+      <div
+        style={{ display: "flex", flexWrap: "wrap", gap: 4 }}
+        data-testid="projects-git-suggestions"
+      >
         {visible.map((repo) => (
           <Button
             key={repo.path}
@@ -411,6 +579,47 @@ export function GitRepoSuggestions({
         )}
       </div>
     </div>
+  );
+}
+
+const compactFormStyle: React.CSSProperties = {
+  borderRadius: "var(--r-md)",
+  border: "1px solid var(--color-border)",
+  borderColor: "var(--color-border)",
+  background: "var(--color-surface-1)",
+  padding: 12,
+};
+
+const compactFieldRowStyle: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "flex-end",
+  gap: 8,
+};
+
+const submitRowStyle: React.CSSProperties = {
+  gridColumn: "span 2 / span 2",
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+};
+
+function CreateProjectStatus({
+  status,
+}: {
+  status: { kind: "idle" | "ok" | "error"; message?: string };
+}): React.JSX.Element | null {
+  if (status.kind === "idle") return null;
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        color: status.kind === "ok" ? "var(--color-ok)" : "var(--color-err)",
+      }}
+    >
+      {status.kind === "ok" ? "✓ " : ""}
+      {status.message}
+    </span>
   );
 }
 
@@ -461,7 +670,7 @@ export function CreateProjectForm({ compact }: { compact?: boolean } = {}): Reac
   return (
     <form
       onSubmit={onSubmit}
-      className={compact ? "p-3 border rounded bg-surface-1 border-border" : ""}
+      style={compact ? compactFormStyle : undefined}
       data-testid="projects-create-form"
     >
       {!compact && (
@@ -472,7 +681,7 @@ export function CreateProjectForm({ compact }: { compact?: boolean } = {}): Reac
           }}
         />
       )}
-      <div className={compact ? "flex flex-wrap items-end gap-2" : "grid gap-3 mt-4"}>
+      <div style={compact ? compactFieldRowStyle : { display: "grid", gap: 12 }}>
         <Field label="Name" required>
           <input
             type="text"
@@ -481,7 +690,7 @@ export function CreateProjectForm({ compact }: { compact?: boolean } = {}): Reac
               setName(e.target.value);
             }}
             placeholder="novaflow"
-            className="w-full px-2 py-1 font-mono text-xs border rounded bg-surface-2 border-border text-primary"
+            style={monoInputStyle}
             required
             data-testid="projects-create-name"
           />
@@ -505,7 +714,7 @@ export function CreateProjectForm({ compact }: { compact?: boolean } = {}): Reac
             ragNodes={ragNodes}
           />
         )}
-        <div className={compact ? "" : "col-span-2 flex items-center gap-2"}>
+        <div style={compact ? undefined : submitRowStyle}>
           <Button
             type="submit"
             variant="primary"
@@ -516,12 +725,7 @@ export function CreateProjectForm({ compact }: { compact?: boolean } = {}): Reac
           >
             {apply.isPending ? "Creating…" : compact ? "Add" : "Create project"}
           </Button>
-          {status.kind !== "idle" && (
-            <span className={`text-[11px] ${status.kind === "ok" ? "text-ok" : "text-err"}`}>
-              {status.kind === "ok" ? "✓ " : ""}
-              {status.message}
-            </span>
-          )}
+          <CreateProjectStatus status={status} />
         </div>
       </div>
     </form>
@@ -539,7 +743,7 @@ function ProjectPathField({
 }): React.JSX.Element {
   return (
     <Field label="Path" required>
-      <div className="flex gap-1">
+      <div style={{ display: "flex", gap: 4 }}>
         <input
           type="text"
           value={path}
@@ -547,22 +751,25 @@ function ProjectPathField({
             setPath(e.target.value);
           }}
           placeholder="/Users/you/repos/novaflow"
-          className="flex-1 px-2 py-1 font-mono text-xs border rounded bg-surface-2 border-border text-primary"
+          style={{ ...monoInputStyle, width: undefined, flex: 1 }}
           required
           data-testid="projects-create-path"
         />
         <Button
+          type="button"
           variant="secondary"
           size="sm"
           onClick={() =>
             void (async (): Promise<void> => {
               const picked = await trpcUIClient.uiPickDirectory.mutate({
-                title: "Pick project dir",
+                title: "Pick a project directory",
                 defaultPath: path || undefined,
               });
               if (picked) onPickedDir(picked);
             })()
           }
+          data-testid="projects-create-pick-dir"
+          title="Pick directory…"
         >
           Browse…
         </Button>
@@ -598,7 +805,7 @@ function CreateProjectExtendedFields({
             setPurpose(e.target.value);
           }}
           placeholder="e.g. at-home diagnostic services platform"
-          className="w-full px-2 py-1 text-xs border rounded bg-surface-2 border-border text-primary"
+          style={textInputStyle}
         />
       </Field>
       <Field label="RAG node (optional)">
@@ -607,7 +814,7 @@ function CreateProjectExtendedFields({
           onChange={(e) => {
             setRagNode(e.target.value);
           }}
-          className="w-full px-2 py-1 text-xs border rounded bg-surface-2 border-border text-primary"
+          style={textInputStyle}
         >
           <option value="">— skip RAG binding —</option>
           {ragNodes.map((n) => (
@@ -626,7 +833,7 @@ function CreateProjectExtendedFields({
               setRagCollection(e.target.value);
             }}
             placeholder="novaflow_docs"
-            className="w-full px-2 py-1 font-mono text-xs border rounded bg-surface-2 border-border text-primary"
+            style={monoInputStyle}
           />
         </Field>
       )}
@@ -644,10 +851,17 @@ function Field({
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-[10px] font-medium uppercase tracking-wide text-secondary">
+    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span
+        style={{
+          fontSize: 10,
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
         {label}
-        {required && <span className="text-err">*</span>}
+        {required && <span style={{ color: "var(--color-err)" }}>*</span>}
       </span>
       {children}
     </label>

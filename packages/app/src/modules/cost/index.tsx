@@ -327,7 +327,13 @@ function JournalPane(): React.JSX.Element {
           color: "var(--color-text-secondary)",
         }}
       >
-        No guardian ticks recorded yet.
+        No guardian ticks recorded yet. Run{" "}
+        <code style={{ fontFamily: "var(--font-mono)" }}>llamactl cost-guardian tick</code> or
+        enable the loop to start populating{" "}
+        <code style={{ fontFamily: "var(--font-mono)" }}>
+          {data.path || "~/.llamactl/healer/cost-journal.jsonl"}
+        </code>
+        .
       </div>
     );
   return (

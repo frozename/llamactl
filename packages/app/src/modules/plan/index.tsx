@@ -100,7 +100,8 @@ function PlanHeader({ planObj }: { planObj: UsePlanReturn }): React.JSX.Element 
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 500 }}>Operator plan</h2>
           <p style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-            Describe an operational goal. Each reply is a validated plan.
+            Describe an operational goal. Each reply is a validated plan you can approve or refine
+            in a follow-up turn.
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -160,8 +161,11 @@ function PlanTranscript({ planObj }: { planObj: UsePlanReturn }): React.JSX.Elem
           </h3>
           <p style={{ marginTop: 4, fontSize: 12 }}>
             Example:{" "}
-            <span style={{ fontFamily: "var(--font-mono)" }}>promote the fastest vision model</span>
-            .
+            <span style={{ fontFamily: "var(--font-mono)" }}>
+              promote the fastest vision model on macbook-pro-48g
+            </span>
+            . The planner returns a step-by-step plan — you can then ask for refinements in the same
+            conversation.
           </p>
         </div>
       )}
@@ -281,7 +285,11 @@ function PlanInput({ planObj }: { planObj: UsePlanReturn }): React.JSX.Element {
           }
         }}
         rows={3}
-        placeholder="e.g. promote the fastest vision model"
+        placeholder={
+          turns.length === 0
+            ? "e.g. promote the fastest vision model on macbook-pro-48g"
+            : 'Refine: "change step 3 to target gpu1", "add a rollback", "why did you skip nova.ops.overview?"'
+        }
         style={{
           width: "100%",
           borderRadius: "var(--r-md)",

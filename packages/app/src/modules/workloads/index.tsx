@@ -227,7 +227,8 @@ function EmptyWorkloadsState({ onApply }: { onApply: () => void }): React.JSX.El
       <p style={{ marginTop: 4, color: "var(--color-text-secondary)", fontSize: 12 }}>
         A <span style={{ fontFamily: "var(--font-mono)" }}>ModelRun</span> manifest pins a model to
         a node. The reconciler keeps it running, restarts it on crash, and corrects drift when extra
-        args change.
+        args change. Use it for long-lived endpoints that shouldn&apos;t depend on someone typing{" "}
+        <span style={{ fontFamily: "var(--font-mono)" }}>llamactl server start</span>.
       </p>
       <Button
         type="button"

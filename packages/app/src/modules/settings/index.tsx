@@ -10,24 +10,48 @@ import { GROUPS } from "./types";
  * Settings module — environment and preset control.
  */
 
+const sectionHeadingStyle: React.CSSProperties = {
+  marginBottom: 8,
+  fontSize: 14,
+  fontWeight: 600,
+  textTransform: "uppercase",
+  letterSpacing: "0.025em",
+  color: "var(--color-text-secondary)",
+};
+
 export default function Settings(): React.JSX.Element {
   const env = trpc.env.useQuery();
   const { projectScanRootsText, setProjectScanRootsText } = useSettingsStore();
 
   if (env.isLoading) {
-    return <div className="p-6 text-secondary">Loading…</div>;
+    return <div style={{ padding: 24, color: "var(--color-text-secondary)" }}>Loading…</div>;
   }
   const values = (env.data ?? {}) as Record<string, string>;
 
   return (
     <div style={{ height: "100%", overflow: "auto", padding: 24 }} data-testid="settings-root">
-      <div className="mb-1 text-xs uppercase tracking-widest text-secondary">Settings</div>
-      <h1 className="mb-2 text-2xl font-semibold text-primary">Environment</h1>
-      <p className="mb-6 text-xs text-secondary">
-        Read-only snapshot of the shell environment llamactl is running under.
+      <div
+        style={{
+          marginBottom: 4,
+          fontSize: 12,
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
+        Settings
+      </div>
+      <h1 style={{ marginBottom: 8, fontSize: 24, fontWeight: 600, color: "var(--color-text)" }}>
+        Environment
+      </h1>
+      <p style={{ marginBottom: 24, fontSize: 12, color: "var(--color-text-secondary)" }}>
+        Read-only snapshot of the shell environment llamactl is running under. Values come from your
+        shell (e.g. <span style={{ fontFamily: "var(--font-mono)" }}>LLAMA_CPP_MODELS</span>) and
+        <span style={{ fontFamily: "var(--font-mono)" }}> ~/.llamactl/env</span>; rows marked
+        <span style={{ color: "var(--color-text-secondary)" }}> unset</span> fall back to defaults.
       </p>
 
-      <div className="flex flex-col gap-6">
+      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <ProjectScanRootsSection
           text={projectScanRootsText}
           onChange={(v) => {
@@ -59,12 +83,24 @@ function ProjectScanRootsSection({
 }): React.JSX.Element {
   return (
     <section>
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-tight text-secondary">
-        Project scan roots
-      </h2>
-      <div className="p-3 border rounded bg-surface-1 border-border">
-        <label className="flex flex-col gap-1">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-secondary">
+      <h2 style={sectionHeadingStyle}>Project scan roots</h2>
+      <div
+        style={{
+          borderRadius: 6,
+          border: "1px solid var(--color-border)",
+          background: "var(--color-surface-1)",
+          padding: 12,
+        }}
+      >
+        <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span
+            style={{
+              fontSize: 10,
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              color: "var(--color-text-secondary)",
+            }}
+          >
             Roots
           </span>
           <textarea
@@ -75,11 +111,23 @@ function ProjectScanRootsSection({
             rows={7}
             spellCheck={false}
             placeholder="~/DevStorage/repos/personal&#10;~/DevStorage/repos/work"
-            className="w-full p-2 font-mono text-xs border rounded bg-surface-2 border-border text-primary resize-y"
+            style={{
+              width: "100%",
+              borderRadius: 4,
+              border: "1px solid var(--color-border)",
+              background: "var(--color-surface-2)",
+              padding: 8,
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+              color: "var(--color-text)",
+              resize: "vertical",
+            }}
           />
         </label>
-        <div className="mt-2 text-xs text-secondary">
-          One root per line or comma-separated. Leave empty for defaults.
+        <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>
+          One root per line or comma-separated.{" "}
+          <span style={{ fontFamily: "var(--font-mono)" }}>~</span> expands in the scanner. Leave
+          empty to use the built-in defaults.
         </div>
       </div>
     </section>
@@ -97,11 +145,16 @@ function EnvGroupSection({
 }): React.JSX.Element {
   return (
     <section>
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-tight text-secondary">
-        {title}
-      </h2>
-      <div className="overflow-hidden border rounded border-border">
-        <table className="w-full font-mono text-sm border-collapse">
+      <h2 style={sectionHeadingStyle}>{title}</h2>
+      <div style={{ overflow: "hidden", borderRadius: 6, border: "1px solid var(--color-border)" }}>
+        <table
+          style={{
+            width: "100%",
+            fontFamily: "var(--font-mono)",
+            fontSize: 14,
+            borderCollapse: "collapse",
+          }}
+        >
           <tbody>
             {keys.map((key, idx) => {
               const raw = values[key];
@@ -111,11 +164,31 @@ function EnvGroupSection({
                   key={key}
                   data-testid={`env-${key}`}
                   data-set={isSet ? "true" : "false"}
-                  className={`bg-surface-1 ${idx === keys.length - 1 ? "" : "border-b border-border"}`}
+                  style={{
+                    borderBottom:
+                      idx === keys.length - 1 ? "none" : "1px solid var(--color-border)",
+                    background: "var(--color-surface-1)",
+                  }}
                 >
-                  <td className="w-72 px-3 py-1.5 text-secondary">{key}</td>
                   <td
-                    className={`px-3 py-1.5 break-all ${isSet ? "text-primary" : "text-secondary"}`}
+                    style={{
+                      width: 288,
+                      padding: "6px 12px",
+                      color: "var(--color-text-secondary)",
+                    }}
+                  >
+                    {key}
+                  </td>
+                  <td
+                    style={
+                      isSet
+                        ? {
+                            padding: "6px 12px",
+                            color: "var(--color-text)",
+                            wordBreak: "break-all",
+                          }
+                        : { padding: "6px 12px", color: "var(--color-text-secondary)" }
+                    }
                   >
                     {isSet ? raw : "unset"}
                   </td>

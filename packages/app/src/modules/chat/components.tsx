@@ -753,7 +753,8 @@ export function ChatEmptyView(props: { onNew: () => void }): React.JSX.Element {
         </h2>
         <p style={{ fontSize: 14, color: "var(--color-text-secondary)" }}>
           Chat scopes a conversation to a node + model. Attach capability tags (reasoning, vision,
-          tools…) and orchestrators like embersynth will route by them.
+          tools…) and orchestrators like embersynth will route by them. History stays on this
+          laptop.
         </p>
         <Button
           type="button"

@@ -33,7 +33,8 @@ export default function Composites(): React.JSX.Element {
         Declarative multi-component applies
       </h1>
       <p style={{ marginBottom: 24, color: "var(--color-text-secondary)", fontSize: 12 }}>
-        Bundle services, workloads, RAG nodes, and gateways into one manifest.
+        Bundle services, workloads, RAG nodes, and gateways into one manifest. The applier orders
+        components via the dependency DAG and rolls back on failure.
       </p>
       <TabBar
         active={tab}

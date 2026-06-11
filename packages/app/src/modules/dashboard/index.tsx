@@ -188,7 +188,7 @@ function DashboardBody(): React.JSX.Element {
         eyebrow="Dashboard"
         title="Your fleet"
         titleAccent="at a glance"
-        lede="Nodes, workloads, and cost — in one view."
+        lede="Nodes, workloads, and cost — in one view. Pin a workload or open a specific node from the Explorer to dig in."
         pills={[
           { label: "healthy", tone: "ok" },
           { label: "Beacon", tone: "info" },
@@ -206,7 +206,7 @@ function DashboardBody(): React.JSX.Element {
             color: "var(--color-text-secondary)",
           }}
         >
-          No active workload.
+          No active workload. Apply one to enable this view.
         </div>
       )}
       <section style={{ marginBottom: 32 }} data-testid="dashboard-node-map-section">

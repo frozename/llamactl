@@ -29,10 +29,13 @@ function ImportForm(props: {
   defaultRoot: string | undefined;
   busy: boolean;
   actionableCount: number;
-  onImport: (rootOverride: string, link: boolean) => void;
+  rootOverride: string;
+  setRootOverride: (v: string) => void;
+  link: boolean;
+  setLink: (v: boolean) => void;
+  onImport: () => void;
 }): React.JSX.Element {
-  const [rootOverride, setRootOverride] = useState("");
-  const [link, setLink] = useState(true);
+  const { busy, actionableCount, rootOverride, setRootOverride, link, setLink } = props;
   return (
     <form
       onSubmit={(e) => {
@@ -47,7 +50,7 @@ function ImportForm(props: {
       }}
     >
       <div style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}>
-        <label style={{ gridColumn: "span 7" }}>
+        <label style={{ gridColumn: "span 7 / span 7", fontSize: 14 }}>
           <span
             style={{
               marginBottom: 4,
@@ -56,7 +59,7 @@ function ImportForm(props: {
               color: "var(--color-text-secondary)",
             }}
           >
-            Root override
+            Root (optional override)
           </span>
           <Input
             value={rootOverride}
@@ -64,17 +67,18 @@ function ImportForm(props: {
               setRootOverride(e.target.value);
             }}
             placeholder={props.root ?? props.defaultRoot ?? ""}
-            disabled={props.busy}
+            disabled={busy}
             style={{ width: "100%", fontFamily: "monospace" }}
           />
         </label>
         <label
           style={{
-            gridColumn: "span 2",
+            gridColumn: "span 2 / span 2",
             display: "flex",
             flexDirection: "column",
             justifyContent: "flex-end",
             fontSize: 12,
+            color: "var(--color-text-secondary)",
           }}
         >
           <span style={{ marginBottom: 4 }}>Link</span>
@@ -85,23 +89,37 @@ function ImportForm(props: {
               onChange={(e) => {
                 setLink(e.target.checked);
               }}
-              disabled={props.busy}
+              disabled={busy}
             />
-            <span>symlink</span>
+            <span>symlink into $LLAMA_CPP_MODELS</span>
           </label>
         </label>
-        <div style={{ gridColumn: "span 3", display: "flex", alignItems: "flex-end" }}>
+        <div style={{ gridColumn: "span 3 / span 3", display: "flex", alignItems: "flex-end" }}>
           <Button
             variant="primary"
             onClick={() => {
-              props.onImport(rootOverride, link);
+              props.onImport();
             }}
-            disabled={props.busy || props.actionableCount === 0}
+            disabled={busy || actionableCount === 0}
+            data-testid="lmstudio-import"
             style={{ width: "100%" }}
+            title={
+              actionableCount === 0
+                ? "No candidates ready to import — scan a root with .gguf files first."
+                : `Import ${String(actionableCount)} candidate${actionableCount === 1 ? "" : "s"} into $LLAMA_CPP_MODELS.`
+            }
           >
-            {props.busy ? "Importing…" : `Import ${String(props.actionableCount)}`}
+            {busy
+              ? "Importing…"
+              : actionableCount === 0
+                ? "Nothing to import"
+                : `Import ${String(actionableCount)}`}
           </Button>
         </div>
+      </div>
+      <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>
+        When link is on, each candidate becomes a symlink at $LLAMA_CPP_MODELS/&lt;rel&gt; so
+        llamactl reads find it without copying gigabytes.
       </div>
     </form>
   );
@@ -111,12 +129,18 @@ function CandidatesTable({ items }: { items: ImportItem[] }): React.JSX.Element 
   return (
     <div style={{ overflow: "hidden", borderRadius: 6, border: "1px solid var(--color-border)" }}>
       <table style={{ width: "100%", fontFamily: "monospace", fontSize: 12 }}>
-        <thead style={{ backgroundColor: "var(--color-surface-1)", textAlign: "left" }}>
+        <thead
+          style={{
+            backgroundColor: "var(--color-surface-1)",
+            textAlign: "left",
+            color: "var(--color-text-secondary)",
+          }}
+        >
           <tr>
-            <th style={{ padding: "8px 12px" }}>Action</th>
-            <th style={{ padding: "8px 12px" }}>Rel</th>
-            <th style={{ padding: "8px 12px" }}>Size</th>
-            <th style={{ padding: "8px 12px" }}>Target</th>
+            <th style={{ padding: "8px 12px", fontWeight: 500 }}>Action</th>
+            <th style={{ padding: "8px 12px", fontWeight: 500 }}>Rel</th>
+            <th style={{ padding: "8px 12px", fontWeight: 500 }}>Size</th>
+            <th style={{ padding: "8px 12px", fontWeight: 500 }}>Target</th>
           </tr>
         </thead>
         <tbody>
@@ -144,7 +168,9 @@ function CandidatesTable({ items }: { items: ImportItem[] }): React.JSX.Element 
               >
                 {item.rel}
               </td>
-              <td style={{ padding: "6px 12px" }}>{formatBytes(item.source.sizeBytes)}</td>
+              <td style={{ padding: "6px 12px", color: "var(--color-text-secondary)" }}>
+                {formatBytes(item.source.sizeBytes)}
+              </td>
               <td
                 style={{
                   padding: "6px 12px",
@@ -158,6 +184,30 @@ function CandidatesTable({ items }: { items: ImportItem[] }): React.JSX.Element 
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function ResultBanner({
+  tone,
+  children,
+}: {
+  tone: "ok" | "err";
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <div
+      style={{
+        marginBottom: 12,
+        borderRadius: 6,
+        border: `1px solid var(--color-${tone})`,
+        backgroundColor: "var(--color-surface-1)",
+        padding: "8px 12px",
+        fontSize: 14,
+        color: `var(--color-${tone})`,
+      }}
+    >
+      {children}
     </div>
   );
 }
@@ -188,6 +238,7 @@ export default function LMStudio(): React.JSX.Element {
   });
 
   const items = (plan.data?.items ?? []) as ImportItem[];
+  const root = plan.data?.root ?? undefined;
   const actionableCount = items.filter(
     (i) => i.action === "link-and-add" || i.action === "add",
   ).length;
@@ -202,59 +253,55 @@ export default function LMStudio(): React.JSX.Element {
           marginBottom: 4,
           fontSize: 12,
           textTransform: "uppercase",
+          letterSpacing: "0.1em",
           color: "var(--color-text-secondary)",
         }}
       >
         LM Studio
       </div>
-      <h1 style={{ marginBottom: 16, fontSize: 24, fontWeight: 600 }}>Import models</h1>
+      <h1 style={{ marginBottom: 16, fontSize: 24, fontWeight: 600, color: "var(--color-text)" }}>
+        Import models
+      </h1>
       <ImportForm
-        root={plan.data?.root ?? undefined}
+        root={root}
         defaultRoot={plan.data?.defaultRoot ?? undefined}
         busy={importMut.isPending}
         actionableCount={actionableCount}
-        onImport={(r, l) => {
-          setRootOverride(r);
-          setLink(l);
-          importMut.mutate({ root: r.trim() || undefined, link: l });
+        rootOverride={rootOverride}
+        setRootOverride={setRootOverride}
+        link={link}
+        setLink={setLink}
+        onImport={() => {
+          importMut.mutate({ root: rootOverride.trim() || undefined, link });
         }}
       />
-      {error && (
-        <div
-          style={{
-            marginBottom: 12,
-            borderRadius: 6,
-            border: "1px solid var(--color-err)",
-            padding: "8px 12px",
-            color: "var(--color-err)",
-          }}
-        >
-          {error}
-        </div>
-      )}
-      {report && (
-        <div
-          style={{
-            marginBottom: 12,
-            borderRadius: 6,
-            border: "1px solid var(--color-ok)",
-            padding: "8px 12px",
-            color: "var(--color-ok)",
-          }}
-        >
-          {report}
-        </div>
-      )}
+      {error && <ResultBanner tone="err">{error}</ResultBanner>}
+      {report && <ResultBanner tone="ok">{report}</ResultBanner>}
       <section>
-        <h2 style={{ marginBottom: 8, fontSize: 14, fontWeight: 600 }}>
-          Candidates ({String(items.length)}){plan.data?.root ? ` — ${plan.data.root}` : ""}
+        <h2
+          style={{
+            marginBottom: 8,
+            fontSize: 14,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            color: "var(--color-text-secondary)",
+          }}
+        >
+          Candidates ({items.length}){root ? ` — ${root}` : ""}
         </h2>
         {plan.isLoading ? (
-          <div>Scanning…</div>
-        ) : !plan.data?.root ? (
-          <EditorialHero title="No install detected" lede="Set LMSTUDIO_MODELS_DIR." />
+          <div style={{ color: "var(--color-text-secondary)" }}>Scanning…</div>
+        ) : !root ? (
+          <EditorialHero
+            title="No LM Studio install detected"
+            lede="Set LMSTUDIO_MODELS_DIR or supply a root override above."
+          />
         ) : items.length === 0 ? (
-          <EditorialHero title="No models found" lede="Check directory." />
+          <EditorialHero
+            title={`No .gguf files found under ${root}`}
+            lede="Ensure the directory exists and contains valid model files."
+          />
         ) : (
           <CandidatesTable items={items} />
         )}

@@ -14,6 +14,29 @@ interface ServerStatusData {
   };
 }
 
+const statCardStyle: React.CSSProperties = {
+  borderRadius: 6,
+  border: "1px solid var(--color-border)",
+  backgroundColor: "var(--color-surface-1)",
+  padding: 12,
+};
+
+const cardLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  color: "var(--color-text-secondary)",
+};
+
+const fieldLabelStyle: React.CSSProperties = {
+  marginBottom: 4,
+  display: "block",
+  fontSize: 12,
+  color: "var(--color-text-secondary)",
+};
+
+const monoInputStyle: React.CSSProperties = { width: "100%", fontFamily: "monospace" };
+
 export function ServerStatusCards({
   serverObj,
 }: {
@@ -33,16 +56,8 @@ export function ServerStatusCards({
         gap: 12,
       }}
     >
-      <div
-        style={{
-          borderRadius: 6,
-          border: "1px solid var(--color-border)",
-          backgroundColor: "var(--color-surface-1)",
-          padding: 12,
-        }}
-        data-testid="server-state-card"
-      >
-        <div className="text-xs uppercase tracking-tight text-secondary">State</div>
+      <div style={statCardStyle} data-testid="server-state-card">
+        <div style={cardLabelStyle}>State</div>
         <div
           data-testid="server-state"
           data-state={s?.state ?? "unknown"}
@@ -64,18 +79,24 @@ export function ServerStatusCards({
           {s?.state ?? "—"}
         </div>
       </div>
-      <div
-        style={{
-          borderRadius: 6,
-          border: "1px solid var(--color-border)",
-          backgroundColor: "var(--color-surface-1)",
-          padding: 12,
-        }}
-      >
-        <div className="text-xs uppercase tracking-tight text-secondary">Endpoint</div>
-        <div className="mt-1 font-mono text-sm break-all text-primary">
+      <div style={statCardStyle}>
+        <div style={cardLabelStyle}>Endpoint</div>
+        <div
+          style={{
+            marginTop: 4,
+            fontFamily: "monospace",
+            fontSize: 14,
+            wordBreak: "break-all",
+            color: "var(--color-text)",
+          }}
+        >
           {s?.endpoint ? (
-            <a href={s.endpoint} target="_blank" rel="noreferrer" className="underline">
+            <a
+              href={s.endpoint}
+              target="_blank"
+              rel="noreferrer"
+              style={{ textDecoration: "underline" }}
+            >
               {s.endpoint}
             </a>
           ) : (
@@ -83,43 +104,39 @@ export function ServerStatusCards({
           )}
         </div>
         {s?.advertisedEndpoint && s.advertisedEndpoint !== s.endpoint && (
-          <div className="mt-1 text-[10px] text-secondary">
+          <div style={{ marginTop: 4, fontSize: 10, color: "var(--color-text-secondary)" }}>
             LAN:{" "}
             <a
               href={s.advertisedEndpoint}
               target="_blank"
               rel="noreferrer"
-              className="font-mono underline"
+              style={{ fontFamily: "monospace", textDecoration: "underline" }}
             >
               {s.advertisedEndpoint}
             </a>
           </div>
         )}
       </div>
-      <div
-        style={{
-          borderRadius: 6,
-          border: "1px solid var(--color-border)",
-          backgroundColor: "var(--color-surface-1)",
-          padding: 12,
-        }}
-      >
-        <div className="text-xs uppercase tracking-tight text-secondary">PID</div>
-        <div className="mt-1 font-mono text-sm text-primary">{s?.pid ?? "none"}</div>
-      </div>
-      <div
-        style={{
-          borderRadius: 6,
-          border: "1px solid var(--color-border)",
-          backgroundColor: "var(--color-surface-1)",
-          padding: 12,
-        }}
-        data-testid="server-http-card"
-      >
-        <div className="text-xs uppercase tracking-tight text-secondary">HTTP</div>
+      <div style={statCardStyle}>
+        <div style={cardLabelStyle}>PID</div>
         <div
-          className="mt-1 font-mono text-sm"
           style={{
+            marginTop: 4,
+            fontFamily: "monospace",
+            fontSize: 14,
+            color: "var(--color-text)",
+          }}
+        >
+          {s?.pid ?? "none"}
+        </div>
+      </div>
+      <div style={statCardStyle} data-testid="server-http-card">
+        <div style={cardLabelStyle}>HTTP</div>
+        <div
+          style={{
+            marginTop: 4,
+            fontFamily: "monospace",
+            fontSize: 14,
             color: httpOk
               ? "var(--color-ok)"
               : s?.health.httpCode === null || s?.health.httpCode === undefined
@@ -174,8 +191,8 @@ export function ServerControlForm({
       }}
     >
       <div style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}>
-        <label style={{ gridColumn: "span 6 / span 6" }} className="text-sm">
-          <span className="block mb-1 text-xs text-secondary">Target</span>
+        <label style={{ gridColumn: "span 6 / span 6", fontSize: 14 }}>
+          <span style={fieldLabelStyle}>Target</span>
           <Input
             list="server-rel-suggestions"
             value={target}
@@ -183,7 +200,7 @@ export function ServerControlForm({
               setTarget(e.target.value);
             }}
             disabled={busy}
-            className="w-full font-mono"
+            style={monoInputStyle}
             placeholder="current | best | <rel>"
           />
           <datalist id="server-rel-suggestions">
@@ -195,8 +212,8 @@ export function ServerControlForm({
             ))}
           </datalist>
         </label>
-        <label style={{ gridColumn: "span 2 / span 2" }} className="text-sm">
-          <span className="block mb-1 text-xs text-secondary">Timeout (s)</span>
+        <label style={{ gridColumn: "span 2 / span 2", fontSize: 14 }}>
+          <span style={fieldLabelStyle}>Timeout (s)</span>
           <Input
             type="number"
             min={5}
@@ -206,15 +223,21 @@ export function ServerControlForm({
               setTimeoutSeconds(Math.max(5, Number(e.target.value) || 60));
             }}
             disabled={busy}
-            className="w-full font-mono"
+            style={monoInputStyle}
           />
         </label>
         <label
-          style={{ gridColumn: "span 2 / span 2" }}
-          className="flex flex-col justify-end text-xs text-secondary"
+          style={{
+            gridColumn: "span 2 / span 2",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "flex-end",
+            fontSize: 12,
+            color: "var(--color-text-secondary)",
+          }}
         >
-          <span className="mb-1">Tuned args</span>
-          <label className="flex items-center gap-1">
+          <span style={{ marginBottom: 4 }}>Tuned args</span>
+          <label style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <input
               type="checkbox"
               checked={!skipTuned}
@@ -234,7 +257,7 @@ export function ServerControlForm({
           stopMutation={stopMutation}
         />
       </div>
-      <div className="mt-2 text-xs text-secondary">
+      <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>
         LLAMA_CPP_HOST={envData?.LLAMA_CPP_HOST ?? "?"}:{envData?.LLAMA_CPP_PORT ?? "?"}
       </div>
     </form>
@@ -255,13 +278,13 @@ function ServerStartStopButtons({
   stopMutation: UseServerControlReturn["stopMutation"];
 }): React.JSX.Element {
   return (
-    <div style={{ gridColumn: "span 2 / span 2" }} className="flex items-end gap-2">
+    <div style={{ gridColumn: "span 2 / span 2", display: "flex", alignItems: "flex-end", gap: 8 }}>
       <Button
         type="submit"
         variant="primary"
         disabled={busy || !workload}
         data-testid="server-start"
-        className="flex-1"
+        style={{ flex: 1 }}
       >
         {starting ? "Starting…" : "Start"}
       </Button>
@@ -275,13 +298,13 @@ function ServerStartStopButtons({
         }}
         disabled={busy || stopMutation.isPending || !isUp || !workload}
         data-testid="server-stop"
-        className="flex-1"
+        style={{ flex: 1 }}
         title={
           !workload
-            ? "No workload selected"
+            ? "No active workload is selected."
             : !isUp
-              ? "Server not running"
-              : "SIGTERM -> SIGKILL (5s grace)"
+              ? "Server is not running."
+              : "Send SIGTERM, then SIGKILL after a 5s grace."
         }
       >
         {stopMutation.isPending ? "Stopping…" : "Stop"}
@@ -326,27 +349,50 @@ export function KeepAliveSupervisor({
         padding: 16,
       }}
     >
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold uppercase tracking-tight text-secondary">
+      <div
+        style={{
+          marginBottom: 12,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <h2
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            color: "var(--color-text-secondary)",
+          }}
+        >
           Keep-alive supervisor
         </h2>
-        <span className={`font-mono text-xs ${ka?.running ? "text-ok" : "text-secondary"}`}>
+        <span
+          style={{
+            fontFamily: "monospace",
+            fontSize: 12,
+            color: ka?.running ? "var(--color-ok)" : "var(--color-text-secondary)",
+          }}
+        >
           {ka?.running ? `running (pid=${String(ka.pid)})` : "stopped"}
         </span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}>
-        <label style={{ gridColumn: "span 7 / span 7" }} className="text-sm">
-          <span className="block mb-1 text-xs text-secondary">Target</span>
+        <label style={{ gridColumn: "span 7 / span 7", fontSize: 14 }}>
+          <span style={fieldLabelStyle}>Target</span>
           <Input
             value={target}
             onChange={(e) => {
               setTarget(e.target.value);
             }}
             disabled={ka?.running === true || keepAliveStartMutation.isPending}
-            className="w-full font-mono"
+            style={monoInputStyle}
           />
         </label>
-        <div style={{ gridColumn: "span 5 / span 5" }} className="flex items-end gap-2">
+        <div
+          style={{ gridColumn: "span 5 / span 5", display: "flex", alignItems: "flex-end", gap: 8 }}
+        >
           <Button
             type="button"
             variant="primary"
@@ -354,7 +400,7 @@ export function KeepAliveSupervisor({
               keepAliveStartMutation.mutate({ target: target.trim() || "current" });
             }}
             disabled={ka?.running === true || keepAliveStartMutation.isPending}
-            className="flex-1"
+            style={{ flex: 1 }}
           >
             {keepAliveStartMutation.isPending ? "Starting…" : "Start supervisor"}
           </Button>
@@ -367,29 +413,46 @@ export function KeepAliveSupervisor({
               }
             }}
             disabled={!ka?.running || keepAliveStopMutation.isPending}
-            className="flex-1"
+            style={{ flex: 1 }}
           >
             {keepAliveStopMutation.isPending ? "Stopping…" : "Stop supervisor"}
           </Button>
         </div>
       </div>
-      {ka?.state && (
-        <div className="grid grid-cols-4 gap-2 mt-3 text-xs text-secondary">
-          <div>
-            state=<span className="text-primary">{ka.state.state}</span>
-          </div>
-          <div>
-            model=<span className="text-primary">{ka.state.model}</span>
-          </div>
-          <div>
-            restarts=<span className="text-primary">{ka.state.restarts}</span>
-          </div>
-          <div>
-            backoff=<span className="text-primary">{ka.state.backoff_seconds}s</span>
-          </div>
-        </div>
-      )}
+      {ka?.state && <KeepAliveStateGrid state={ka.state} />}
     </section>
+  );
+}
+
+function KeepAliveStateGrid({
+  state,
+}: {
+  state: NonNullable<KeepAliveStatusData["state"]>;
+}): React.JSX.Element {
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        display: "grid",
+        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+        gap: 8,
+        fontSize: 12,
+        color: "var(--color-text-secondary)",
+      }}
+    >
+      <div>
+        state=<span style={{ color: "var(--color-text)" }}>{state.state}</span>
+      </div>
+      <div>
+        model=<span style={{ color: "var(--color-text)" }}>{state.model}</span>
+      </div>
+      <div>
+        restarts=<span style={{ color: "var(--color-text)" }}>{state.restarts}</span>
+      </div>
+      <div>
+        backoff=<span style={{ color: "var(--color-text)" }}>{state.backoff_seconds}s</span>
+      </div>
+    </div>
   );
 }
 
@@ -403,7 +466,18 @@ export function ServerLog({ serverObj }: { serverObj: UseServerControlReturn }):
         backgroundColor: "var(--color-surface-0)",
       }}
     >
-      <div className="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-tight text-secondary">
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "8px 12px",
+          fontSize: 12,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
         <span>Log</span>
         <span>
           {log.length} line{log.length === 1 ? "" : "s"}
@@ -416,11 +490,12 @@ export function ServerLog({ serverObj }: { serverObj: UseServerControlReturn }):
           overflow: "auto",
           borderTop: "1px solid var(--color-border)",
           padding: "8px 12px",
+          fontFamily: "monospace",
+          fontSize: 12,
         }}
-        className="font-mono text-xs"
       >
         {log.length === 0 ? (
-          <div className="text-secondary">
+          <div style={{ color: "var(--color-text-secondary)" }}>
             {starting ? "Waiting for events…" : "Lifecycle events appear here during a start."}
           </div>
         ) : (

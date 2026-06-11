@@ -21,6 +21,7 @@ function ListEmptyState({ onCreate }: { onCreate: () => void }): React.JSX.Eleme
       <div style={{ color: "var(--color-text)", fontSize: 14 }}>No composites yet.</div>
       <p style={{ marginTop: 8, color: "var(--color-text-secondary)", fontSize: 12 }}>
         A composite bundles services, workloads, RAG nodes, and gateways into one declarative unit.
+        Apply one from a YAML file:
       </p>
       <pre
         style={{

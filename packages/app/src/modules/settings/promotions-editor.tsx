@@ -9,6 +9,22 @@ import type { Preset, PresetOverride, Profile } from "./types";
 
 import { PRESETS, PROFILES } from "./types";
 
+const fieldLabelStyle: React.CSSProperties = {
+  marginBottom: 4,
+  display: "block",
+  fontSize: 12,
+  color: "var(--color-text-secondary)",
+};
+
+const selectStyle: React.CSSProperties = {
+  width: "100%",
+  borderRadius: 4,
+  border: "1px solid var(--color-border)",
+  background: "var(--color-surface-2)",
+  padding: "4px 8px",
+  fontFamily: "var(--font-mono)",
+};
+
 export function PromotionsEditor(): React.JSX.Element {
   const queryClient = useQueryClient();
   const promotions = trpc.promotions.useQuery();
@@ -45,84 +61,57 @@ export function PromotionsEditor(): React.JSX.Element {
 
   return (
     <section>
-      <h2 className="mb-2 text-sm font-semibold uppercase tracking-tight text-secondary">
+      <h2
+        style={{
+          marginBottom: 8,
+          fontSize: 14,
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: "0.025em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
         Preset promotions ({rows.length})
       </h2>
       {error && (
-        <div className="mb-3 p-2 text-sm border rounded bg-surface-1 border-err text-err">
+        <div
+          style={{
+            marginBottom: 12,
+            borderRadius: 6,
+            border: "1px solid var(--color-err)",
+            background: "var(--color-surface-1)",
+            padding: "8px 12px",
+            fontSize: 14,
+            color: "var(--color-err)",
+          }}
+        >
           {error}
         </div>
       )}
       {rows.length === 0 ? (
-        <div className="mb-4 p-4 border border-dashed rounded text-secondary">
-          No active promotions.
+        <div
+          style={{
+            marginBottom: 16,
+            borderRadius: 6,
+            border: "1px dashed var(--color-border)",
+            padding: 16,
+            color: "var(--color-text-secondary)",
+          }}
+        >
+          No active promotions. Use the form below or{" "}
+          <span style={{ fontFamily: "var(--font-mono)" }}>llamactl catalog promote</span> to add
+          one.
         </div>
       ) : (
-        <div className="mb-4 overflow-hidden border rounded border-border">
-          <table className="w-full font-mono text-sm border-collapse">
-            <thead className="text-left bg-surface-1 text-secondary">
-              <tr>
-                <th className="px-3 py-2 font-medium">Profile</th>
-                <th className="px-3 py-2 font-medium">Preset</th>
-                <th className="px-3 py-2 font-medium">Rel</th>
-                <th className="px-3 py-2 font-medium">Updated</th>
-                <th className="w-28 px-3 py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p: PresetOverride) => {
-                const key = `${p.profile}:${p.preset}`;
-                const isPending = pendingDelete === key;
-                return (
-                  <tr key={key} className="border-t border-border bg-surface-1">
-                    <td className="px-3 py-2 text-brand">{p.profile}</td>
-                    <td className="px-3 py-2 text-primary">{p.preset}</td>
-                    <td className="px-3 py-2 text-ok break-all">{p.rel}</td>
-                    <td className="px-3 py-2 text-secondary">{p.updated_at}</td>
-                    <td className="px-3 py-2 text-right">
-                      {isPending ? (
-                        <span className="inline-flex gap-1">
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            disabled={busy}
-                            onClick={() => {
-                              deleteMutation.mutate({ profile: p.profile, preset: p.preset });
-                            }}
-                          >
-                            Confirm
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={busy}
-                            onClick={() => {
-                              setPendingDelete(null);
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                        </span>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={busy}
-                          onClick={() => {
-                            setPendingDelete(key);
-                          }}
-                          aria-label={`Remove promotion ${key}`}
-                        >
-                          Remove
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <PromotionsTable
+          rows={rows}
+          busy={busy}
+          pendingDelete={pendingDelete}
+          setPendingDelete={setPendingDelete}
+          onDelete={(p) => {
+            deleteMutation.mutate({ profile: p.profile, preset: p.preset });
+          }}
+        />
       )}
       <PromotionForm
         busy={busy}
@@ -131,6 +120,122 @@ export function PromotionsEditor(): React.JSX.Element {
         catalogRels={useMemo(() => (catalog.data ?? []).map((row) => row.rel), [catalog.data])}
       />
     </section>
+  );
+}
+
+function PromotionsTable({
+  rows,
+  busy,
+  pendingDelete,
+  setPendingDelete,
+  onDelete,
+}: {
+  rows: PresetOverride[];
+  busy: boolean;
+  pendingDelete: string | null;
+  setPendingDelete: (v: string | null) => void;
+  onDelete: (p: PresetOverride) => void;
+}): React.JSX.Element {
+  return (
+    <div
+      style={{
+        marginBottom: 16,
+        overflow: "hidden",
+        borderRadius: 6,
+        border: "1px solid var(--color-border)",
+      }}
+    >
+      <table
+        style={{
+          width: "100%",
+          fontFamily: "var(--font-mono)",
+          fontSize: 14,
+          borderCollapse: "collapse",
+        }}
+      >
+        <thead
+          style={{
+            background: "var(--color-surface-1)",
+            textAlign: "left",
+            color: "var(--color-text-secondary)",
+          }}
+        >
+          <tr>
+            <th style={{ padding: "8px 12px", fontWeight: 500 }}>Profile</th>
+            <th style={{ padding: "8px 12px", fontWeight: 500 }}>Preset</th>
+            <th style={{ padding: "8px 12px", fontWeight: 500 }}>Rel</th>
+            <th style={{ padding: "8px 12px", fontWeight: 500 }}>Updated</th>
+            <th
+              style={{ width: 112, padding: "8px 12px", fontWeight: 500, textAlign: "right" }}
+            ></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p: PresetOverride) => {
+            const key = `${p.profile}:${p.preset}`;
+            const isPending = pendingDelete === key;
+            return (
+              <tr
+                key={key}
+                style={{
+                  borderTop: "1px solid var(--color-border)",
+                  background: "var(--color-surface-1)",
+                }}
+              >
+                <td style={{ padding: "8px 12px", color: "var(--color-brand)" }}>{p.profile}</td>
+                <td style={{ padding: "8px 12px" }}>{p.preset}</td>
+                <td
+                  style={{ padding: "8px 12px", color: "var(--color-ok)", wordBreak: "break-all" }}
+                >
+                  {p.rel}
+                </td>
+                <td style={{ padding: "8px 12px", color: "var(--color-text-secondary)" }}>
+                  {p.updated_at}
+                </td>
+                <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                  {isPending ? (
+                    <span style={{ display: "inline-flex", gap: 4 }}>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => {
+                          onDelete(p);
+                        }}
+                      >
+                        Confirm
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => {
+                          setPendingDelete(null);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </span>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => {
+                        setPendingDelete(key);
+                      }}
+                      aria-label={`Remove promotion ${key}`}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -161,20 +266,36 @@ function PromotionForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="p-4 border rounded bg-surface-1 border-border">
-      <div className="mb-3 text-xs font-medium uppercase tracking-tight text-secondary">
+    <form
+      onSubmit={handleSubmit}
+      style={{
+        borderRadius: 6,
+        border: "1px solid var(--color-border)",
+        background: "var(--color-surface-1)",
+        padding: 16,
+      }}
+    >
+      <div
+        style={{
+          marginBottom: 12,
+          fontSize: 12,
+          textTransform: "uppercase",
+          letterSpacing: "0.025em",
+          color: "var(--color-text-secondary)",
+        }}
+      >
         Add / update promotion
       </div>
-      <div className="grid grid-cols-12 gap-3">
-        <label className="col-span-3 text-sm">
-          <span className="block mb-1 text-xs text-secondary">Profile</span>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}>
+        <label style={{ gridColumn: "span 3 / span 3", fontSize: 14 }}>
+          <span style={fieldLabelStyle}>Profile</span>
           <select
             value={profile}
             onChange={(e) => {
               setProfile(e.target.value as Profile);
             }}
             disabled={busy}
-            className="w-full px-2 py-1 font-mono border rounded bg-surface-2 border-border text-primary"
+            style={selectStyle}
           >
             {PROFILES.map((p) => (
               <option key={p} value={p}>
@@ -183,15 +304,15 @@ function PromotionForm({
             ))}
           </select>
         </label>
-        <label className="col-span-2 text-sm">
-          <span className="block mb-1 text-xs text-secondary">Preset</span>
+        <label style={{ gridColumn: "span 2 / span 2", fontSize: 14 }}>
+          <span style={fieldLabelStyle}>Preset</span>
           <select
             value={preset}
             onChange={(e) => {
               setPreset(e.target.value as Preset);
             }}
             disabled={busy}
-            className="w-full px-2 py-1 font-mono border rounded bg-surface-2 border-border text-primary"
+            style={selectStyle}
           >
             {PRESETS.map((p) => (
               <option key={p} value={p}>
@@ -200,8 +321,8 @@ function PromotionForm({
             ))}
           </select>
         </label>
-        <label className="col-span-5 text-sm">
-          <span className="block mb-1 text-xs text-secondary">Rel</span>
+        <label style={{ gridColumn: "span 5 / span 5", fontSize: 14 }}>
+          <span style={fieldLabelStyle}>Rel</span>
           <Input
             list="rel-suggestions"
             value={rel}
@@ -209,8 +330,8 @@ function PromotionForm({
               setRel(e.target.value);
             }}
             disabled={busy}
-            placeholder="e.g. gemma-4-31B-it-GGUF/..."
-            className="font-mono"
+            placeholder="e.g. gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
+            style={{ fontFamily: "var(--font-mono)" }}
           />
           <datalist id="rel-suggestions">
             {catalogRels.map((r) => (
@@ -218,11 +339,14 @@ function PromotionForm({
             ))}
           </datalist>
         </label>
-        <div className="col-span-2 flex items-end">
-          <Button type="submit" variant="primary" disabled={busy} className="w-full">
+        <div style={{ gridColumn: "span 2 / span 2", display: "flex", alignItems: "flex-end" }}>
+          <Button type="submit" variant="primary" disabled={busy} style={{ width: "100%" }}>
             {promoteMutation.isPending ? "Saving…" : "Save"}
           </Button>
         </div>
+      </div>
+      <div style={{ marginTop: 12, fontSize: 12, color: "var(--color-text-secondary)" }}>
+        Existing (profile, preset) pairs are replaced in place. Rels autocomplete from the catalog.
       </div>
     </form>
   );
