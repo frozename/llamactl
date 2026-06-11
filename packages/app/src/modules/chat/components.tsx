@@ -526,6 +526,7 @@ export function TranscriptColumn(props: {
 
   return (
     <div
+      data-testid={`chat-pane-${props.label.toLowerCase()}`}
       style={{
         display: "flex",
         height: "100%",
