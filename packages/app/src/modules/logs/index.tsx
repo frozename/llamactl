@@ -7,18 +7,36 @@ import { trpc } from "@/lib/trpc";
 import { Button, StatusDot } from "@/ui";
 import type { StatusDotTone } from "@/ui";
 
-/**
- * Tails the active workload's `llama-server.log` via the `serverLogs` subscription. Keeps a
- * rolling buffer of the last N lines so the UI doesn't explode when
- * llama-server floods output. The "follow" toggle switches between
- * one-shot tail (the last `lines` items) and live streaming.
- */
-
 const MAX_BUFFER_LINES = 2000;
 
 type ConnState = "connecting" | "live" | "error" | "idle";
 
-export default function Logs(): React.JSX.Element {
+interface LogStreamResult {
+  lines: string[];
+  setLines: React.Dispatch<React.SetStateAction<string[]>>;
+  follow: boolean;
+  setFollow: React.Dispatch<React.SetStateAction<boolean>>;
+  historyLines: number;
+  setHistoryLines: React.Dispatch<React.SetStateAction<number>>;
+  subKey: number;
+  setSubKey: React.Dispatch<React.SetStateAction<number>>;
+  autoscroll: boolean;
+  setAutoscroll: React.Dispatch<React.SetStateAction<boolean>>;
+  error: string | null;
+  setError: React.Dispatch<React.SetStateAction<string | null>>;
+  conn: ConnState;
+  setConn: React.Dispatch<React.SetStateAction<ConnState>>;
+  workload: string | undefined;
+  workloadLoading: boolean;
+  serverDown: boolean;
+}
+
+interface LogLineEvent {
+  type: string;
+  line: string;
+}
+
+function useLogStream(): LogStreamResult {
   const [lines, setLines] = useState<string[]>([]);
   const [follow, setFollow] = useState(true);
   const [historyLines, setHistoryLines] = useState(200);
@@ -26,12 +44,8 @@ export default function Logs(): React.JSX.Element {
   const [autoscroll, setAutoscroll] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [conn, setConn] = useState<ConnState>("connecting");
-  const scrollRef = useRef<HTMLDivElement | null>(null);
   const { workload, loading: workloadLoading } = useActiveWorkload();
 
-  // Mirror the Server module's status poll so we can gate tailing when
-  // no llama-server is reachable. Without this the subscription keeps
-  // retrying a dead endpoint and the UI sits on an opaque empty state.
   const serverStatus = trpc.serverStatus.useQuery(workload ? { workload } : skipToken, {
     refetchInterval: 5000,
     enabled: !!workload,
@@ -46,20 +60,16 @@ export default function Logs(): React.JSX.Element {
         setConn(follow ? "live" : "idle");
         setError(null);
       },
-      onData: (evt) => {
-        const e = evt as { type?: string; line?: string };
+      onData: (evt: unknown) => {
+        const e = evt as LogLineEvent;
         if (e.type === "line" && typeof e.line === "string") {
-          const line = e.line;
           setLines((prev) => {
-            const next = [...prev, line];
-            if (next.length > MAX_BUFFER_LINES) {
-              return next.slice(next.length - MAX_BUFFER_LINES);
-            }
-            return next;
+            const next = [...prev, e.line];
+            return next.length > MAX_BUFFER_LINES ? next.slice(-MAX_BUFFER_LINES) : next;
           });
         }
       },
-      onError: (err) => {
+      onError: (err: { message: string }) => {
         setError(err.message);
         setConn("error");
       },
@@ -71,173 +81,194 @@ export default function Logs(): React.JSX.Element {
     } as Parameters<typeof trpc.serverLogs.useSubscription>[1],
   );
 
-  useEffect(() => {
-    if (!autoscroll) return;
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [lines, autoscroll]);
+  return {
+    lines,
+    setLines,
+    follow,
+    setFollow,
+    historyLines,
+    setHistoryLines,
+    subKey,
+    setSubKey,
+    autoscroll,
+    setAutoscroll,
+    error,
+    setError,
+    conn,
+    setConn,
+    workload: workload ?? undefined,
+    workloadLoading,
+    serverDown,
+  };
+}
 
-  function clear(): void {
-    setLines([]);
-    setError(null);
-  }
+function LogInfo({ s }: { s: LogStreamResult }): React.JSX.Element {
+  return (
+    <div>
+      <h1 style={{ fontSize: 18, fontWeight: 600 }}>Logs</h1>
+      <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
+        {s.serverDown ? (
+          <span>Server offline</span>
+        ) : (
+          <>
+            Tailing{" "}
+            <span style={{ fontFamily: "var(--font-mono)" }}>{s.workload}/llama-server.log</span>
+          </>
+        )}
+        {s.error && (
+          <span style={{ marginLeft: 8, color: "var(--color-err)" }}>· error: {s.error}</span>
+        )}
+      </div>
+    </div>
+  );
+}
 
-  function restart(): void {
-    setLines([]);
-    setError(null);
-    setConn("connecting");
-    setSubKey((k) => k + 1);
-  }
-
+function LogControls({ s }: { s: LogStreamResult }): React.JSX.Element {
   const connTone: StatusDotTone =
-    conn === "live" ? "ok" : conn === "error" ? "err" : conn === "connecting" ? "info" : "idle";
+    s.conn === "live"
+      ? "ok"
+      : s.conn === "error"
+        ? "err"
+        : s.conn === "connecting"
+          ? "info"
+          : "idle";
   const connLabel =
-    conn === "live"
+    s.conn === "live"
       ? "streaming"
-      : conn === "error"
+      : s.conn === "error"
         ? "error"
-        : conn === "connecting"
+        : s.conn === "connecting"
           ? "connecting"
           : "idle";
 
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 12 }}>
+      <StatusDot
+        tone={connTone}
+        pulse={s.conn === "live" || s.conn === "connecting"}
+        label={connLabel}
+      />
+      <label style={{ display: "flex", gap: 4 }}>
+        <input
+          type="checkbox"
+          checked={s.follow}
+          onChange={(e) => {
+            s.setFollow(e.target.checked);
+            s.setConn("connecting");
+            s.setSubKey((k) => k + 1);
+          }}
+        />
+        follow
+      </label>
+      <label style={{ display: "flex", gap: 4 }}>
+        history
+        <input
+          type="number"
+          min={0}
+          max={1000}
+          step={50}
+          value={s.historyLines}
+          onChange={(e) => {
+            s.setHistoryLines(Number(e.target.value) || 0);
+          }}
+          style={{ width: 60, textAlign: "right" }}
+        />
+      </label>
+      <label style={{ display: "flex", gap: 4 }}>
+        <input
+          type="checkbox"
+          checked={s.autoscroll}
+          onChange={(e) => {
+            s.setAutoscroll(e.target.checked);
+          }}
+        />
+        autoscroll
+      </label>
+      <Button
+        size="sm"
+        variant="secondary"
+        onClick={() => {
+          s.setLines([]);
+          s.setError(null);
+          s.setConn("connecting");
+          s.setSubKey((k) => k + 1);
+        }}
+      >
+        Reconnect
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          s.setLines([]);
+          s.setError(null);
+        }}
+      >
+        Clear
+      </Button>
+    </div>
+  );
+}
+
+function LogHeader({ s }: { s: LogStreamResult }): React.JSX.Element {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+      <LogInfo s={s} />
+      <LogControls s={s} />
+    </div>
+  );
+}
+
+function LogTerminal({ s }: { s: LogStreamResult }): React.JSX.Element {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (s.autoscroll && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [s.lines, s.autoscroll]);
+
+  return (
+    <div
+      ref={scrollRef}
+      style={{
+        flex: 1,
+        overflow: "auto",
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        background: "var(--color-surface-0)",
+        padding: 8,
+        fontFamily: "var(--font-mono)",
+        fontSize: 11,
+        marginTop: 12,
+      }}
+    >
+      {!s.workload && !s.workloadLoading ? (
+        <div style={{ color: "var(--color-text-secondary)" }}>No active workload.</div>
+      ) : s.serverDown ? (
+        <div style={{ color: "var(--color-text-secondary)" }}>Server offline.</div>
+      ) : s.lines.length === 0 ? (
+        <div style={{ color: "var(--color-text-secondary)" }}>(no log lines yet)</div>
+      ) : (
+        s.lines.map((line, i) => (
+          <div key={i} style={{ whiteSpace: "pre-wrap" }}>
+            {line}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+export default function Logs(): React.JSX.Element {
+  const s = useLogStream();
   return (
     <div
       style={{ display: "flex", height: "100%", flexDirection: "column", padding: 24 }}
       data-testid="logs-root"
     >
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-        <div>
-          <h1 style={{ fontSize: 18, fontWeight: 600, color: "var(--color-text)" }}>Logs</h1>
-          <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>
-            {serverDown ? (
-              <span>Server offline</span>
-            ) : (
-              <>
-                Tailing{" "}
-                <span style={{ fontFamily: "var(--font-mono)" }}>{workload}/llama-server.log</span>
-              </>
-            )}
-            {error && (
-              <span style={{ marginLeft: 8, color: "var(--color-err)" }}>· error: {error}</span>
-            )}
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 12 }}>
-          <StatusDot
-            data-testid="logs-conn"
-            data-state={conn}
-            tone={connTone}
-            pulse={conn === "live" || conn === "connecting"}
-            label={connLabel}
-            title={error ?? `subscription ${connLabel}`}
-          />
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              color: "var(--color-text-secondary)",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={follow}
-              onChange={(e) => {
-                setFollow(e.target.checked);
-                setConn("connecting");
-                setSubKey((k) => k + 1);
-              }}
-            />
-            follow
-          </label>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              color: "var(--color-text-secondary)",
-            }}
-          >
-            history
-            <input
-              type="number"
-              min={0}
-              max={1000}
-              step={50}
-              value={historyLines}
-              onChange={(e) => {
-                setHistoryLines(Number(e.target.value) || 0);
-              }}
-              style={{
-                borderRadius: "var(--r-md)",
-                border: "1px solid var(--color-border)",
-                borderColor: "var(--color-border)",
-                background: "var(--color-surface-2)",
-                paddingTop: 2,
-                paddingBottom: 2,
-                textAlign: "right",
-                color: "var(--color-text)",
-              }}
-            />
-          </label>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              color: "var(--color-text-secondary)",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={autoscroll}
-              onChange={(e) => {
-                setAutoscroll(e.target.checked);
-              }}
-            />
-            autoscroll
-          </label>
-          <Button type="button" variant="secondary" size="sm" onClick={restart}>
-            Reconnect
-          </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={clear}>
-            Clear
-          </Button>
-        </div>
-      </div>
-      <div
-        ref={scrollRef}
-        style={{
-          flex: 1,
-          overflow: "auto",
-          borderRadius: "var(--r-md)",
-          border: "1px solid var(--color-border)",
-          borderColor: "var(--color-border)",
-          background: "var(--color-surface-0)",
-          padding: 8,
-          fontFamily: "var(--font-mono)",
-          fontSize: 11,
-          color: "var(--color-text)",
-        }}
-      >
-        {!workload && !workloadLoading ? (
-          <div data-testid="logs-offline" style={{ color: "var(--color-text-secondary)" }}>
-            No active workload. Apply one to enable log streaming.
-          </div>
-        ) : serverDown ? (
-          <div data-testid="logs-offline" style={{ color: "var(--color-text-secondary)" }}>
-            No llama-server running. Start one from the Server module first.
-          </div>
-        ) : lines.length === 0 ? (
-          <div style={{ color: "var(--color-text-secondary)" }}>(no log lines yet)</div>
-        ) : (
-          lines.map((line, i) => (
-            <div key={i} style={{ whiteSpace: "pre-wrap" }}>
-              {line}
-            </div>
-          ))
-        )}
-      </div>
+      <LogHeader s={s} />
+      <LogTerminal s={s} />
     </div>
   );
 }

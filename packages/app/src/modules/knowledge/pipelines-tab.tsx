@@ -3,560 +3,26 @@ import { useMemo, useState } from "react";
 
 import { trpc } from "@/lib/trpc";
 
+import type { PipelineRecord, RunningEntry } from "./pipeline-components";
+
+import { DraftPanel, PipelineRow } from "./pipeline-components";
 import { PipelineWizardModal } from "./pipeline-wizard";
-
-/**
- * Pipelines tab — the operator-facing view of the R1/R2 RAG
- * ingestion pipelines. Lists every applied pipeline (filtered to
- * those targeting the selected rag node), surfaces last-run status
- * and schedule, and exposes row actions:
- *
- *   - Run: fires `ragPipelineRun` (--dry-run toggle available).
- *   - Logs: opens a side panel that polls `ragPipelineLogs` every
- *     2s for the last 200 journal entries.
- *   - Remove: calls `ragPipelineRemove` after a confirm dialog.
- *
- * "New pipeline" is a placeholder button in v1 — wiring it to the
- * wizard modal is R3.c. The draft-from-NL hook is exposed as a
- * separate "Draft from description…" button that hits
- * `ragPipelineDraft` and dumps the returned YAML into a preview
- * area the operator can copy + paste into an apply command.
- */
-
-interface PipelineManifest {
-  apiVersion: string;
-  kind: string;
-  metadata: { name: string };
-  spec: {
-    destination: { ragNode: string; collection: string };
-    sources: ({ kind: string } & Record<string, unknown>)[];
-    schedule?: string;
-    on_duplicate?: "skip" | "replace" | "version";
-  };
-}
-
-interface PipelineRecord {
-  name: string;
-  manifest: PipelineManifest;
-  lastRun?: {
-    at: string;
-    summary: {
-      total_docs: number;
-      total_chunks: number;
-      skipped_docs: number;
-      errors: number;
-      elapsed_ms: number;
-      estimated_cost?: {
-        usd: number;
-        currency: string;
-        source: "per_chunk" | "per_doc" | "combined";
-      };
-    };
-  };
-}
-
-interface PipelineListResponse {
-  pipelines: PipelineRecord[];
-}
-
-interface LogsResponse {
-  path: string;
-  entries: Record<string, unknown>[];
-}
-
-interface RunningEntry {
-  name: string;
-  startedAt: string;
-  sources: string[];
-  /** When true, the entry came from the journal-scan orphan path
-   *  (agent crashed mid-run — no live event-bus signal). */
-  stale?: boolean;
-}
-
-interface RunningResponse {
-  running: RunningEntry[];
-}
-
-function formatElapsed(startIso: string, now: number = Date.now()): string {
-  const ms = now - Date.parse(startIso);
-  if (!Number.isFinite(ms) || ms < 0) return "";
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${String(s)}s`;
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return rem === 0 ? `${String(m)}m` : `${String(m)}m${String(rem)}s`;
-}
-
-function RunningBadge(props: { entry: RunningEntry }): React.JSX.Element {
-  const { entry } = props;
-  // Tick the display every second so the elapsed counter doesn't
-  // look frozen between polls. State-only, no fetch.
-  const [now, setNow] = useState<number>(() => Date.now());
-  React.useEffect(() => {
-    const id = setInterval(() => {
-      setNow(Date.now());
-    }, 1000);
-    return (): void => {
-      clearInterval(id);
-    };
-  }, []);
-  if (entry.stale) {
-    // Orphan path — the journal recorded a run-started that never
-    // paired with a run-complete (agent crashed mid-run). Don't
-    // pulse (misleading — nothing is actually running); warn
-    // instead. Elapsed counter shows how long it's been stuck.
-    return (
-      <span
-        className="inline-flex items-center gap-1 rounded border border-[var(--color-err)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-err)]"
-        data-testid={`pipelines-orphan-${entry.name}`}
-        title={`journal shows run-started ${entry.startedAt} but no run-complete — agent likely crashed mid-run. Re-run to clear.`}
-      >
-        ⚠ orphaned · {formatElapsed(entry.startedAt, now)}
-      </span>
-    );
-  }
-  return (
-    <span
-      className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-brand)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-surface-0)]"
-      data-testid={`pipelines-running-${entry.name}`}
-      title={`started ${entry.startedAt} · sources: ${entry.sources.join(", ")}`}
-    >
-      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--color-surface-0)]" />
-      running · {formatElapsed(entry.startedAt, now)}
-    </span>
-  );
-}
-
-function formatRelative(iso: string, now: number = Date.now()): string {
-  const ms = now - Date.parse(iso);
-  if (!Number.isFinite(ms) || ms < 0) return iso;
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${String(s)}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${String(m)}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${String(h)}h ago`;
-  const d = Math.floor(h / 24);
-  return `${String(d)}d ago`;
-}
-
-function formatCost(cost: { usd: number; currency: string }): string {
-  // Operator-declared rates can be very small (e.g. $0.0001/chunk).
-  // Pick a precision that makes sub-cent runs readable without lying
-  // about larger ones.
-  if (cost.usd === 0) return `0 ${cost.currency}`;
-  if (cost.usd < 0.01) return `${cost.usd.toFixed(6)} ${cost.currency}`;
-  if (cost.usd < 1) return `${cost.usd.toFixed(4)} ${cost.currency}`;
-  return `${cost.usd.toFixed(2)} ${cost.currency}`;
-}
-
-function LastRunBadge(props: { rec: PipelineRecord }): React.JSX.Element {
-  const { rec } = props;
-  if (!rec.lastRun) {
-    return (
-      <span
-        className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-1.5 py-0.5 text-[10px] text-[color:var(--color-text-secondary)]"
-        data-testid="pipelines-lastrun-none"
-      >
-        never run
-      </span>
-    );
-  }
-  const { summary, at } = rec.lastRun;
-  const ok = summary.errors === 0;
-  const cls = ok
-    ? "bg-[var(--color-brand)] text-[color:var(--color-brand-contrast)]"
-    : "bg-[var(--color-err)] text-[color:var(--color-text-inverse)]";
-  const costStr = summary.estimated_cost ? formatCost(summary.estimated_cost) : null;
-  const tooltipParts: string[] = [
-    `${String(summary.total_docs)} docs`,
-    `${String(summary.total_chunks)} chunks`,
-    `${String(summary.errors)} errors`,
-    `${String(Math.round(summary.elapsed_ms))}ms`,
-  ];
-  if (costStr) tooltipParts.push(`cost ~${costStr}`);
-  return (
-    <div className="flex items-baseline gap-2" data-testid="pipelines-lastrun">
-      <span
-        className={`rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] ${cls}`}
-        title={tooltipParts.join(" · ")}
-      >
-        {ok ? "ok" : `${String(summary.errors)} err`}
-      </span>
-      <span className="text-[10px] text-[color:var(--color-text-secondary)]">
-        {summary.total_docs}/{summary.total_chunks} · {formatRelative(at)}
-        {costStr && summary.estimated_cost && (
-          <>
-            {" · "}
-            <span
-              className="mono text-[color:var(--color-text)]"
-              data-testid={`pipelines-lastrun-cost-${rec.name}`}
-              title={`source: ${summary.estimated_cost.source}`}
-            >
-              ~{costStr}
-            </span>
-          </>
-        )}
-      </span>
-    </div>
-  );
-}
-
-function LogsPanel(props: { name: string; onClose: () => void }): React.JSX.Element {
-  const { name, onClose } = props;
-  const logs = trpc.ragPipelineLogs.useQuery(
-    { name, tail: 200 },
-    { refetchInterval: 2000, retry: false },
-  );
-  const data = logs.data as LogsResponse | undefined;
-  const entries = data?.entries ?? [];
-
-  return (
-    <div
-      className="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)]"
-      data-testid={`pipelines-logs-panel-${name}`}
-    >
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-3 py-2">
-        <div className="text-xs text-[color:var(--color-text-secondary)]">
-          Logs for <span className="mono text-[color:var(--color-text)]">{name}</span>
-          {data?.path && <span className="ml-2 mono">{data.path}</span>}
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          data-testid={`pipelines-logs-close-${name}`}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
-        >
-          Close
-        </button>
-      </div>
-      {logs.isLoading && (
-        <div className="p-3 text-sm text-[color:var(--color-text-secondary)]">Loading…</div>
-      )}
-      {logs.error && (
-        <div className="p-3 text-sm text-[color:var(--color-err)]">{logs.error.message}</div>
-      )}
-      {!logs.isLoading && !logs.error && entries.length === 0 && (
-        <div className="p-3 text-sm text-[color:var(--color-text-secondary)]">
-          Journal empty — the pipeline hasn&apos;t run yet.
-        </div>
-      )}
-      {entries.length > 0 && (
-        <pre className="max-h-96 overflow-auto p-3 mono text-[10px] text-[color:var(--color-text)]">
-          {entries.map((e) => `${JSON.stringify(e)}\n`).join("")}
-        </pre>
-      )}
-    </div>
-  );
-}
-
-function PipelineRow(props: {
-  rec: PipelineRecord;
-  onLogsToggle: () => void;
-  logsOpen: boolean;
-  running: RunningEntry | null;
-}): React.JSX.Element {
-  const { rec, onLogsToggle, logsOpen, running } = props;
-  const utils = trpc.useUtils();
-  const [dryRun, setDryRun] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  // Optimistic "run just started" stamp — the backend event bus polls
-  // at 2s so sub-second runs would otherwise flash past without any
-  // visible feedback. When the operator clicks Run we snap a fake
-  // RunningEntry into view immediately; the real `running` prop takes
-  // over once the next poll lands (usually within 2s, always within
-  // ragPipelineList invalidation on mutation success).
-  const [optimisticRunAt, setOptimisticRunAt] = useState<string | null>(null);
-
-  const runMut = trpc.ragPipelineRun.useMutation({
-    onSuccess: async () => {
-      setActionError(null);
-      setOptimisticRunAt(null);
-      // Refresh list so last-run column flips.
-      await utils.ragPipelineList.invalidate();
-    },
-    onError: (err) => {
-      setOptimisticRunAt(null);
-      setActionError(err.message);
-    },
-  });
-  const removeMut = trpc.ragPipelineRemove.useMutation({
-    onSuccess: async () => {
-      setActionError(null);
-      await utils.ragPipelineList.invalidate();
-    },
-    onError: (err) => {
-      setActionError(err.message);
-    },
-  });
-
-  const onRun = (): void => {
-    setActionError(null);
-    // Stamp optimistic start BEFORE firing the mutation so the
-    // running badge appears on the very next render — no poll
-    // dependency. Cleared in runMut.{onSuccess,onError}.
-    if (!dryRun) setOptimisticRunAt(new Date().toISOString());
-    runMut.mutate({ name: rec.name, dryRun });
-  };
-  const onRemove = (): void => {
-    // eslint-disable-next-line no-alert
-    if (!confirm(`Remove pipeline '${rec.name}'? Applied documents stay in the rag node.`)) {
-      return;
-    }
-    setActionError(null);
-    removeMut.mutate({ name: rec.name });
-  };
-
-  const schedule = rec.manifest.spec.schedule ?? "—";
-  const sources = rec.manifest.spec.sources.map((s) => s.kind).join(", ");
-  // Prefer the authoritative server signal when present; fall back
-  // to our optimistic stamp so fast runs (<2s) still render a badge.
-  // Orphan entries (stale: true) don't block the Run button — the
-  // operator should be able to trigger a fresh run to clear the
-  // stuck state.
-  const displayRunning: RunningEntry | null =
-    running ??
-    (optimisticRunAt
-      ? {
-          name: rec.name,
-          startedAt: optimisticRunAt,
-          sources: rec.manifest.spec.sources.map((s) => s.kind),
-          stale: false,
-        }
-      : null);
-  const isLive = !!displayRunning && !displayRunning.stale;
-
-  return (
-    <>
-      <tr
-        className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)]"
-        data-testid={`pipelines-row-${rec.name}`}
-      >
-        <td className="px-3 py-2 text-[color:var(--color-ok)] break-all">{rec.name}</td>
-        <td className="px-3 py-2 text-[color:var(--color-text)] text-xs">{sources}</td>
-        <td className="px-3 py-2 mono text-xs text-[color:var(--color-text-secondary)]">
-          {schedule}
-        </td>
-        <td className="px-3 py-2">
-          {displayRunning ? <RunningBadge entry={displayRunning} /> : <LastRunBadge rec={rec} />}
-        </td>
-        <td className="px-3 py-2 text-right">
-          <div className="flex items-center justify-end gap-1">
-            <label className="flex items-center gap-1 text-[10px] text-[color:var(--color-text-secondary)]">
-              <input
-                type="checkbox"
-                checked={dryRun}
-                onChange={(e) => {
-                  setDryRun(e.target.checked);
-                }}
-                data-testid={`pipelines-dryrun-${rec.name}`}
-                disabled={isLive}
-              />
-              dry
-            </label>
-            <button
-              type="button"
-              onClick={onRun}
-              disabled={runMut.isPending || isLive}
-              data-testid={`pipelines-run-${rec.name}`}
-              title={
-                isLive
-                  ? "run in progress"
-                  : displayRunning?.stale
-                    ? "previous run was orphaned — click to start a fresh run"
-                    : undefined
-              }
-              className="rounded bg-[var(--color-brand)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {runMut.isPending ? "…" : isLive ? "Running" : "Run"}
-            </button>
-            <button
-              type="button"
-              onClick={onLogsToggle}
-              data-testid={`pipelines-logs-toggle-${rec.name}`}
-              className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
-            >
-              {logsOpen ? "Hide logs" : "Logs"}
-            </button>
-            <button
-              type="button"
-              onClick={onRemove}
-              disabled={removeMut.isPending}
-              data-testid={`pipelines-remove-${rec.name}`}
-              className="rounded border border-[var(--color-err)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-err)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Remove
-            </button>
-          </div>
-        </td>
-      </tr>
-      {actionError && (
-        <tr className="bg-[var(--color-surface-1)]">
-          <td colSpan={5} className="px-3 py-2 text-xs text-[color:var(--color-err)]">
-            {actionError}
-          </td>
-        </tr>
-      )}
-      {logsOpen && (
-        <tr className="bg-[var(--color-surface-1)]">
-          <td colSpan={5} className="px-3 py-2">
-            <LogsPanel name={rec.name} onClose={onLogsToggle} />
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-function DraftPanel(props: { selectedNode: string; availableNodes: string[] }): React.JSX.Element {
-  const { selectedNode, availableNodes } = props;
-  const utils = trpc.useUtils();
-  const [open, setOpen] = useState(false);
-  const [description, setDescription] = useState("");
-  const [nameOverride, setNameOverride] = useState("");
-  const [yaml, setYaml] = useState("");
-  const [warnings, setWarnings] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [drafting, setDrafting] = useState(false);
-
-  async function onDraft(): Promise<void> {
-    setError(null);
-    setDrafting(true);
-    try {
-      const input: {
-        description: string;
-        availableRagNodes?: string[];
-        defaultRagNode?: string;
-        nameOverride?: string;
-      } = { description, defaultRagNode: selectedNode };
-      if (availableNodes.length > 0) input.availableRagNodes = availableNodes;
-      if (nameOverride.trim()) input.nameOverride = nameOverride.trim();
-      const res = await utils.ragPipelineDraft.fetch(input);
-      setYaml(res.yaml);
-      setWarnings(res.warnings);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setDrafting(false);
-    }
-  }
-
-  if (!open) {
-    return (
-      <div className="mb-3">
-        <button
-          type="button"
-          onClick={() => {
-            setOpen(true);
-          }}
-          data-testid="pipelines-draft-open"
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-xs text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
-        >
-          Draft from description…
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3"
-      data-testid="pipelines-draft-panel"
-    >
-      <div className="mb-2 flex items-baseline justify-between">
-        <div className="text-xs text-[color:var(--color-text-secondary)]">
-          Draft a pipeline manifest from a description. The drafter is deterministic — extracts
-          URLs, paths, schedule aliases, and rag node hints. Review the YAML, then apply via CLI or
-          the tRPC procedure.
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            setOpen(false);
-          }}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-secondary)] hover:text-[color:var(--color-text)]"
-        >
-          Close
-        </button>
-      </div>
-      <div className="grid grid-cols-12 gap-2">
-        <label className="col-span-8 text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
-            Description
-          </span>
-          <textarea
-            value={description}
-            onChange={(e) => {
-              setDescription(e.target.value);
-            }}
-            rows={2}
-            data-testid="pipelines-draft-description"
-            placeholder="e.g. crawl https://docs.example.com into kb-pg daily"
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
-          />
-        </label>
-        <label className="col-span-2 text-sm">
-          <span className="mb-1 block text-xs text-[color:var(--color-text-secondary)]">
-            Name (optional)
-          </span>
-          <input
-            type="text"
-            value={nameOverride}
-            onChange={(e) => {
-              setNameOverride(e.target.value);
-            }}
-            data-testid="pipelines-draft-name"
-            className="w-full rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 mono text-xs text-[color:var(--color-text)]"
-          />
-        </label>
-        <div className="col-span-2 flex items-end">
-          <button
-            type="button"
-            onClick={() => void onDraft()}
-            disabled={drafting || !description.trim()}
-            data-testid="pipelines-draft-submit"
-            className="w-full rounded bg-[var(--color-brand)] px-3 py-1 text-sm font-medium text-[color:var(--color-surface-0)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {drafting ? "…" : "Draft"}
-          </button>
-        </div>
-      </div>
-      {error && <div className="mt-2 text-xs text-[color:var(--color-err)]">{error}</div>}
-      {warnings.length > 0 && (
-        <ul
-          className="mt-2 space-y-1 text-xs text-[color:var(--color-text-secondary)]"
-          data-testid="pipelines-draft-warnings"
-        >
-          {warnings.map((w, i) => (
-            <li key={i}>⚠ {w}</li>
-          ))}
-        </ul>
-      )}
-      {yaml && (
-        <pre
-          className="mt-2 max-h-64 overflow-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]"
-          data-testid="pipelines-draft-yaml"
-        >
-          {yaml}
-        </pre>
-      )}
-    </div>
-  );
-}
 
 export function PipelinesTab(props: {
   nodeName: string;
   availableNodes: string[];
 }): React.JSX.Element {
-  const { nodeName, availableNodes } = props;
+  const { availableNodes, nodeName } = props;
   const list = trpc.ragPipelineList.useQuery(undefined, { retry: false });
-  const data = list.data as PipelineListResponse | undefined;
-  const rows = data?.pipelines ?? [];
-  const running = trpc.ragPipelineRunning.useQuery(undefined, {
+  const rows = useMemo(
+    () => (list.data as { pipelines: PipelineRecord[] } | undefined)?.pipelines ?? [],
+    [list.data],
+  );
+  const runningQ = trpc.ragPipelineRunning.useQuery(undefined, {
     refetchInterval: 2000,
     retry: false,
   });
-  const runningData = running.data as RunningResponse | undefined;
+  const runningData = runningQ.data as { running: RunningEntry[] } | undefined;
   const runningByName = useMemo(() => {
     const m = new Map<string, RunningEntry>();
     for (const r of runningData?.running ?? []) m.set(r.name, r);
@@ -565,49 +31,27 @@ export function PipelinesTab(props: {
   const [logsOpen, setLogsOpen] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
 
-  // When a pipeline transitions from running → not-running, the
-  // scheduler has just written state.json. Invalidate the list query
-  // so the "last run" badge flips without waiting for the 2s poll.
-  const prevRunningRef = React.useRef<Set<string>>(new Set());
   React.useEffect(() => {
-    const prev = prevRunningRef.current;
     const curr = new Set(Array.from(runningByName.keys()));
-    let changed = false;
-    for (const name of prev) {
-      if (!curr.has(name)) {
-        changed = true;
-        break;
-      }
-    }
-    prevRunningRef.current = curr;
-    if (changed) void list.refetch();
-  }, [runningByName, list]);
+    if (curr.size === 0 && list.isSuccess) void list.refetch();
+  }, [runningByName, list.isSuccess, list]);
 
-  // Show every pipeline; filter note if it targets a different node.
-  // Operators often have a single rag node, but filtering would hide
-  // misconfigured pipelines — we surface them instead.
   const sorted = useMemo(() => [...rows].sort((a, b) => a.name.localeCompare(b.name)), [rows]);
 
   return (
-    <div className="space-y-4" data-testid="pipelines-root">
+    <div className="space-y-4">
       <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={() => {
             setWizardOpen(true);
           }}
-          data-testid="pipelines-new"
-          className="rounded bg-[var(--color-brand)] px-3 py-1 text-xs font-medium text-[color:var(--color-surface-0)] hover:opacity-90"
+          className="rounded bg-[var(--color-brand)] px-3 py-1 text-xs text-white"
         >
           + New pipeline
         </button>
-        <span className="text-xs text-[color:var(--color-text-secondary)]">
-          Step through destination → sources → transforms → review, then apply.
-        </span>
       </div>
-
       <DraftPanel selectedNode={nodeName} availableNodes={availableNodes} />
-
       <PipelineWizardModal
         open={wizardOpen}
         onClose={() => {
@@ -619,43 +63,20 @@ export function PipelinesTab(props: {
         availableRagNodes={availableNodes}
         defaultRagNode={nodeName}
       />
-
-      {list.isLoading && (
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-sm text-[color:var(--color-text-secondary)]">
-          Loading pipelines…
-        </div>
-      )}
-      {list.error && (
-        <div className="rounded-md border border-[var(--color-err)] bg-[var(--color-surface-1)] px-3 py-2 text-sm text-[color:var(--color-err)]">
-          {list.error.message}
-        </div>
-      )}
-      {!list.isLoading && !list.error && sorted.length === 0 && (
-        <div
-          className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] p-6 text-sm text-[color:var(--color-text-secondary)]"
-          data-testid="pipelines-empty"
-        >
-          <div className="text-[color:var(--color-text)]">No pipelines applied yet.</div>
-          <p className="mt-2 text-xs">Apply one from the CLI:</p>
-          <pre className="mt-1 overflow-x-auto rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 mono text-[10px] text-[color:var(--color-text)]">{`llamactl rag pipeline apply -f templates/rag-pipelines/llamactl-docs.yaml`}</pre>
-          <p className="mt-2 text-xs">
-            Or use the Draft button above to scaffold a new manifest from a description.
-          </p>
-        </div>
-      )}
-      {sorted.length > 0 && (
-        <div
-          className="overflow-hidden rounded-md border border-[var(--color-border)]"
-          data-testid="pipelines-table"
-        >
+      {list.isLoading ? (
+        <div>Loading…</div>
+      ) : sorted.length === 0 ? (
+        <div className="p-6 border border-dashed text-color-text-secondary">No pipelines yet.</div>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
           <table className="w-full text-sm">
-            <thead className="bg-[var(--color-surface-1)] text-left text-[color:var(--color-text-secondary)]">
+            <thead className="bg-[var(--color-surface-1)] text-left">
               <tr>
-                <th className="px-3 py-2 font-medium mono">Name</th>
-                <th className="px-3 py-2 font-medium">Sources</th>
-                <th className="px-3 py-2 font-medium">Schedule</th>
-                <th className="px-3 py-2 font-medium">Last run</th>
-                <th className="w-64 px-3 py-2 font-medium text-right">Actions</th>
+                <th className="px-3 py-2">Name</th>
+                <th className="px-3 py-2">Sources</th>
+                <th className="px-3 py-2">Schedule</th>
+                <th className="px-3 py-2">Last run</th>
+                <th className="px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -663,11 +84,11 @@ export function PipelinesTab(props: {
                 <PipelineRow
                   key={rec.name}
                   rec={rec}
+                  running={runningByName.get(rec.name) ?? null}
                   onLogsToggle={() => {
-                    setLogsOpen((cur) => (cur === rec.name ? null : rec.name));
+                    setLogsOpen(logsOpen === rec.name ? null : rec.name);
                   }}
                   logsOpen={logsOpen === rec.name}
-                  running={runningByName.get(rec.name) ?? null}
                 />
               ))}
             </tbody>

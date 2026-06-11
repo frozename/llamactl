@@ -1,50 +1,18 @@
 // packages/app/src/lib/global-search/hooks/use-global-search.ts
 import * as React from "react";
 
-import type { GroupedResults } from "../types";
+import type { GroupedResults, ParsedQuery } from "../types";
 
 import { useTabStore } from "../../../stores/tab-store.js";
 import { trpc } from "../../trpc.js";
 import { mergeServerHits, runClientPhase } from "../orchestrator";
 import { parseQuery } from "../query";
-import { mapKnowledgeRagHits } from "../surfaces/knowledge-rag";
 import { mapLogHits } from "../surfaces/logs";
-import { mapLogRagHits } from "../surfaces/logs-rag";
 import { mapSessionHits } from "../surfaces/sessions";
-import { mapSessionRagHits } from "../surfaces/sessions-rag";
+import { runTier3Search } from "./use-global-search-helpers";
 
 const TIER2_MS = 250;
 const TIER3_MS = 400;
-
-type RagResult = {
-  document: {
-    id: string;
-    content: string;
-    metadata?: Record<string, unknown>;
-  };
-  score: number;
-  distance?: number;
-};
-
-function metadataString(metadata: Record<string, unknown> | undefined, key: string): string | null {
-  const value = metadata?.[key];
-  return typeof value === "string" ? value : null;
-}
-
-function metadataNumber(metadata: Record<string, unknown> | undefined, key: string): number | null {
-  const value = metadata?.[key];
-  return typeof value === "number" ? value : null;
-}
-
-function sessionStatus(value: string | null): "live" | "done" | "refused" | "aborted" {
-  return value === "live" || value === "done" || value === "refused" || value === "aborted"
-    ? value
-    : "done";
-}
-
-function ragSnippet(result: RagResult): { where: string; snippet: string; spans: never[] } {
-  return { where: "content", snippet: result.document.content.slice(0, 240), spans: [] };
-}
 
 export function computeNextSchedule(
   now: number,
@@ -54,6 +22,56 @@ export function computeNextSchedule(
     tier2At: now + (opts.tier2Ms ?? TIER2_MS),
     tier3At: now + (opts.tier3Ms ?? TIER3_MS),
   };
+}
+
+async function runTier2Search(
+  token: number,
+  queryToken: React.RefObject<number>,
+  parsed: ParsedQuery,
+  utils: ReturnType<typeof trpc.useUtils>,
+  setResults: React.Dispatch<React.SetStateAction<GroupedResults>>,
+  setStatus: React.Dispatch<React.SetStateAction<"idle" | "searching">>,
+): Promise<void> {
+  const tasks: Promise<unknown>[] = [];
+  const allow = (s: string): boolean => !parsed.surfaceFilter || parsed.surfaceFilter === s;
+
+  if (allow("session")) {
+    tasks.push(
+      utils.opsSessionSearch
+        .fetch({ query: parsed.needle })
+        .then((res) => {
+          if (queryToken.current !== token) return;
+          setResults((cur) =>
+            mergeServerHits(cur, "session", mapSessionHits(res.hits), {
+              append: true,
+            }),
+          );
+        })
+        .catch((e: unknown) => {
+          if (queryToken.current !== token) return;
+          setResults((cur) =>
+            mergeServerHits(cur, "session", [], {
+              error: e instanceof Error ? e.message : JSON.stringify(e),
+            }),
+          );
+        }),
+    );
+  }
+  if (allow("logs")) {
+    tasks.push(
+      utils.logsSearch
+        .fetch({ query: parsed.needle })
+        .then((res) => {
+          if (queryToken.current !== token) return;
+          setResults((cur) => mergeServerHits(cur, "logs", mapLogHits(res.hits), { append: true }));
+        })
+        .catch(() => {
+          if (queryToken.current !== token) return;
+        }),
+    );
+  }
+  await Promise.allSettled(tasks);
+  if (queryToken.current === token) setStatus("idle");
 }
 
 export function useGlobalSearch(input: string): {
@@ -69,7 +87,6 @@ export function useGlobalSearch(input: string): {
     staleTime: 60_000,
   });
 
-  // Cached client-side lists for client surfaces.
   const workloadsQ = trpc.workloadList.useQuery(undefined, { staleTime: 30_000 });
   const nodesQ = trpc.nodeList.useQuery(undefined, { staleTime: 30_000 });
 
@@ -107,165 +124,12 @@ export function useGlobalSearch(input: string): {
       setResults(initial);
     });
 
-    const allow = (s: string): boolean => !parsed.surfaceFilter || parsed.surfaceFilter === s;
-
     tier2Timer.current = setTimeout(() => {
-      void (async (): Promise<void> => {
-        const tasks: Promise<unknown>[] = [];
-        if (allow("session")) {
-          tasks.push(
-            utils.opsSessionSearch
-              .fetch({ query: parsed.needle })
-              .then((res) => {
-                if (queryToken.current !== token) return;
-                setResults((cur) =>
-                  mergeServerHits(cur, "session", mapSessionHits(res.hits), {
-                    append: true,
-                  }),
-                );
-              })
-              .catch((e: unknown) => {
-                if (queryToken.current !== token) return;
-                setResults((cur) =>
-                  mergeServerHits(cur, "session", [], {
-                    error: e instanceof Error ? e.message : JSON.stringify(e),
-                  }),
-                );
-              }),
-          );
-        }
-        if (allow("logs")) {
-          tasks.push(
-            utils.logsSearch
-              .fetch({ query: parsed.needle })
-              .then((res) => {
-                if (queryToken.current !== token) return;
-                setResults((cur) =>
-                  mergeServerHits(cur, "logs", mapLogHits(res.hits), { append: true }),
-                );
-              })
-              .catch(() => {
-                if (queryToken.current !== token) return;
-              }),
-          );
-        }
-        await Promise.allSettled(tasks);
-        if (queryToken.current === token) setStatus("idle");
-      })();
+      void runTier2Search(token, queryToken, parsed, utils, setResults, setStatus);
     }, TIER2_MS);
 
     tier3Timer.current = setTimeout(() => {
-      void (async (): Promise<void> => {
-        if (queryToken.current !== token) return;
-        const status = ragStatus.data;
-        if (!status?.defaultNode) return;
-        const tasks: Promise<unknown>[] = [];
-        if (allow("session") && status.sessions) {
-          tasks.push(
-            utils.ragSearch
-              .fetch({
-                node: status.defaultNode,
-                query: parsed.needle,
-                collection: "sessions",
-                topK: 10,
-              })
-              .then((res) => {
-                if (queryToken.current !== token) return;
-                const hits = res.results.map((result) => {
-                  const metadata = result.document.metadata;
-                  return {
-                    sessionId: metadataString(metadata, "sessionId") ?? result.document.id,
-                    goal: metadataString(metadata, "goal") ?? result.document.id,
-                    status: sessionStatus(metadataString(metadata, "status")),
-                    startedAt: metadataString(metadata, "startedAt") ?? "",
-                    matches: [ragSnippet(result)],
-                    score: result.score,
-                    ragDistance: result.distance,
-                  };
-                });
-                setResults((cur) =>
-                  mergeServerHits(cur, "session", mapSessionRagHits(hits), {
-                    append: true,
-                  }),
-                );
-              })
-              .catch(() => {
-                return undefined;
-              }),
-          );
-        }
-        if (allow("knowledge") && status.knowledge) {
-          tasks.push(
-            utils.ragSearch
-              .fetch({
-                node: status.defaultNode,
-                query: parsed.needle,
-                collection: "knowledge",
-                topK: 10,
-              })
-              .then((res) => {
-                if (queryToken.current !== token) return;
-                const hits = res.results.map((result) => {
-                  const metadata = result.document.metadata;
-                  return {
-                    entityId: metadataString(metadata, "entityId") ?? result.document.id,
-                    title: metadataString(metadata, "title") ?? result.document.id,
-                    matches: [ragSnippet(result)],
-                    score: result.score,
-                    ragDistance: result.distance,
-                  };
-                });
-                setResults((cur) =>
-                  mergeServerHits(cur, "knowledge", mapKnowledgeRagHits(hits), {
-                    append: true,
-                  }),
-                );
-              })
-              .catch(() => {
-                return undefined;
-              }),
-          );
-        }
-        if (allow("logs") && status.logs) {
-          tasks.push(
-            utils.ragSearch
-              .fetch({
-                node: status.defaultNode,
-                query: parsed.needle,
-                collection: "logs",
-                topK: 10,
-              })
-              .then((res) => {
-                if (queryToken.current !== token) return;
-                const hits = res.results.map((result) => {
-                  const metadata = result.document.metadata;
-                  const fileLabel = metadataString(metadata, "fileLabel") ?? result.document.id;
-                  return {
-                    fileLabel,
-                    filePath: metadataString(metadata, "filePath") ?? fileLabel,
-                    matches: [
-                      {
-                        lineNumber: metadataNumber(metadata, "lineNumber") ?? 0,
-                        ...ragSnippet(result),
-                      },
-                    ],
-                    score: result.score,
-                    ragDistance: result.distance,
-                  };
-                });
-                setResults((cur) =>
-                  mergeServerHits(cur, "logs", mapLogRagHits(hits), {
-                    append: true,
-                  }),
-                );
-              })
-              .catch(() => {
-                return undefined;
-              }),
-          );
-        }
-        await Promise.allSettled(tasks);
-      })();
+      void runTier3Search(token, queryToken, parsed, ragStatus.data, utils, setResults);
     }, TIER3_MS);
 
     return (): void => {
