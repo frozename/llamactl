@@ -1,16 +1,12 @@
 {
   "totals": {
     "errors": 0,
-    "warnings": 1661
+    "warnings": 1430
   },
   "byRule": {
     "security/detect-non-literal-fs-filename": {
       "errors": 0,
       "warnings": 1369
-    },
-    "sonarjs/cognitive-complexity": {
-      "errors": 0,
-      "warnings": 231
     },
     "perfectionist/sort-imports": {
       "errors": 0,
@@ -72,11 +68,11 @@
     },
     "packages/agents/src/cost-guardian/state.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/agents/src/cost-guardian/tick.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/agents/src/cost-guardian/webhook.ts": {
       "errors": 0,
@@ -88,7 +84,7 @@
     },
     "packages/agents/src/healer/composites.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/agents/src/healer/execute.ts": {
       "errors": 0,
@@ -96,7 +92,7 @@
     },
     "packages/agents/src/healer/facade-probe.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/agents/src/healer/journal.ts": {
       "errors": 0,
@@ -104,7 +100,7 @@
     },
     "packages/agents/src/healer/loop.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/agents/src/healer/probe.ts": {
       "errors": 0,
@@ -112,7 +108,7 @@
     },
     "packages/agents/src/healer/remediation.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/agents/src/healer/severity.ts": {
       "errors": 0,
@@ -232,7 +228,7 @@
     },
     "packages/app/electron/trpc/dispatcher.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/electron/trpc/node-pinned-fetch.ts": {
       "errors": 0,
@@ -312,7 +308,7 @@
     },
     "packages/app/src/lib/global-search/surfaces/tab-history.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/lib/global-search/surfaces/workloads.ts": {
       "errors": 0,
@@ -468,7 +464,7 @@
     },
     "packages/app/src/modules/knowledge/helpers.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/app/src/modules/knowledge/index.tsx": {
       "errors": 0,
@@ -484,7 +480,7 @@
     },
     "packages/app/src/modules/knowledge/pipeline-logic.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/app/src/modules/knowledge/pipeline-types.ts": {
       "errors": 0,
@@ -684,7 +680,7 @@
     },
     "packages/app/src/modules/projects/hooks.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/app/src/modules/projects/index.tsx": {
       "errors": 0,
@@ -700,7 +696,7 @@
     },
     "packages/app/src/modules/pulls/pull-card.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/modules/pulls/types.ts": {
       "errors": 0,
@@ -728,7 +724,7 @@
     },
     "packages/app/src/modules/server/use-server-control.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/app/src/modules/settings/index.tsx": {
       "errors": 0,
@@ -812,7 +808,7 @@
     },
     "packages/app/src/shell/beacon/registry-view.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/search-modules.ts": {
       "errors": 0,
@@ -1128,15 +1124,15 @@
     },
     "packages/cli/src/commands/admit-measure.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/cli/src/commands/admit.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 1
     },
     "packages/cli/src/commands/agent-install/index.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/cli/src/commands/agent-install/templates.ts": {
       "errors": 0,
@@ -1144,51 +1140,51 @@
     },
     "packages/cli/src/commands/agent-rollback.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/cli/src/commands/agent-rpc-doctor.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/agent-update.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 3
     },
     "packages/cli/src/commands/agent.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 5
     },
     "packages/cli/src/commands/artifacts.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 3
     },
     "packages/cli/src/commands/bench.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/cli/src/commands/candidate.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/catalog.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/cli/src/commands/cli-doctor.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/composite.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 2
     },
     "packages/cli/src/commands/controller.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/cost-guardian.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/ctx.ts": {
       "errors": 0,
@@ -1196,7 +1192,7 @@
     },
     "packages/cli/src/commands/deploy.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/disable.ts": {
       "errors": 0,
@@ -1208,11 +1204,11 @@
     },
     "packages/cli/src/commands/doctor.ts": {
       "errors": 0,
-      "warnings": 9
+      "warnings": 7
     },
     "packages/cli/src/commands/embersynth.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/enable.ts": {
       "errors": 0,
@@ -1228,15 +1224,15 @@
     },
     "packages/cli/src/commands/expose.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/cli/src/commands/fleet.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/cli/src/commands/heal.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/cli/src/commands/infra.ts": {
       "errors": 0,
@@ -1244,19 +1240,19 @@
     },
     "packages/cli/src/commands/init.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 6
     },
     "packages/cli/src/commands/keepAlive.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/cli/src/commands/lmstudio.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/cli/src/commands/node.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 3
     },
     "packages/cli/src/commands/noderun-helpers.ts": {
       "errors": 0,
@@ -1264,51 +1260,51 @@
     },
     "packages/cli/src/commands/plan.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/project.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 2
     },
     "packages/cli/src/commands/pull.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/cli/src/commands/rag-bench.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/cli/src/commands/rag-pipeline.ts": {
       "errors": 0,
-      "warnings": 11
+      "warnings": 8
     },
     "packages/cli/src/commands/rag.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/cli/src/commands/recommendations.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/runbook.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/server.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 0
     },
     "packages/cli/src/commands/setEnabled.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/sirius.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/cli/src/commands/supervisor.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 1
     },
     "packages/cli/src/commands/tunnel.ts": {
       "errors": 0,
@@ -1316,15 +1312,15 @@
     },
     "packages/cli/src/commands/uninstall.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/workload.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 2
     },
     "packages/cli/src/dispatcher.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/required.ts": {
       "errors": 0,
@@ -1336,7 +1332,7 @@
     },
     "packages/cli/src/tunnel-dispatch.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/cli/test/admit-measure.test.ts": {
       "errors": 0,
@@ -1448,7 +1444,7 @@
     },
     "packages/cli/test/multinode-e2e.test.ts": {
       "errors": 0,
-      "warnings": 9
+      "warnings": 7
     },
     "packages/cli/test/node-add-cloud.test.ts": {
       "errors": 0,
@@ -1540,7 +1536,7 @@
     },
     "packages/core/src/anthropic/translateRequest.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/src/anthropic/translateResponse.ts": {
       "errors": 0,
@@ -1548,7 +1544,7 @@
     },
     "packages/core/src/anthropic/translateStream.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/src/anthropic/types.ts": {
       "errors": 0,
@@ -1560,7 +1556,7 @@
     },
     "packages/core/src/bench/compare.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/core/src/bench/index.ts": {
       "errors": 0,
@@ -1576,11 +1572,11 @@
     },
     "packages/core/src/bench/runner.ts": {
       "errors": 0,
-      "warnings": 20
+      "warnings": 17
     },
     "packages/core/src/bench/store.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 1
     },
     "packages/core/src/build.ts": {
       "errors": 0,
@@ -1592,15 +1588,15 @@
     },
     "packages/core/src/candidateTest.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/core/src/catalog.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/core/src/catalogWriter.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/src/ctx.ts": {
       "errors": 0,
@@ -1608,7 +1604,7 @@
     },
     "packages/core/src/discovery.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/core/src/engines/index.ts": {
       "errors": 0,
@@ -1628,7 +1624,7 @@
     },
     "packages/core/src/engines/state.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 5
     },
     "packages/core/src/engines/types.ts": {
       "errors": 0,
@@ -1644,7 +1640,7 @@
     },
     "packages/core/src/hf.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 5
     },
     "packages/core/src/index.ts": {
       "errors": 0,
@@ -1668,7 +1664,7 @@
     },
     "packages/core/src/kvstore/policy.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/src/kvstore/registry.ts": {
       "errors": 0,
@@ -1680,7 +1676,7 @@
     },
     "packages/core/src/kvstore/slotPath.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/core/src/kvstore/storage.ts": {
       "errors": 0,
@@ -1700,7 +1696,7 @@
     },
     "packages/core/src/lmstudio.ts": {
       "errors": 0,
-      "warnings": 14
+      "warnings": 12
     },
     "packages/core/src/mmproj.ts": {
       "errors": 0,
@@ -1712,7 +1708,7 @@
     },
     "packages/core/src/openaiProxy.ts": {
       "errors": 0,
-      "warnings": 15
+      "warnings": 5
     },
     "packages/core/src/presets.ts": {
       "errors": 0,
@@ -1724,11 +1720,11 @@
     },
     "packages/core/src/profile.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/src/pull.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 5
     },
     "packages/core/src/quant.ts": {
       "errors": 0,
@@ -1764,7 +1760,7 @@
     },
     "packages/core/src/rpcServer.ts": {
       "errors": 0,
-      "warnings": 16
+      "warnings": 15
     },
     "packages/core/src/schemas.ts": {
       "errors": 0,
@@ -1772,11 +1768,11 @@
     },
     "packages/core/src/server.ts": {
       "errors": 0,
-      "warnings": 18
+      "warnings": 15
     },
     "packages/core/src/serverLogs.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 6
     },
     "packages/core/src/target.ts": {
       "errors": 0,
@@ -1788,11 +1784,11 @@
     },
     "packages/core/src/uninstall.ts": {
       "errors": 0,
-      "warnings": 10
+      "warnings": 9
     },
     "packages/core/src/workloadRuntime.ts": {
       "errors": 0,
-      "warnings": 21
+      "warnings": 19
     },
     "packages/core/test/advertisedEndpoint.test.ts": {
       "errors": 0,
@@ -1808,7 +1804,7 @@
     },
     "packages/core/test/anthropic.translateStream.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/test/autotune.test.ts": {
       "errors": 0,
@@ -1944,7 +1940,7 @@
     },
     "packages/core/test/openaiProxy.kvcache.test.ts": {
       "errors": 0,
-      "warnings": 65
+      "warnings": 64
     },
     "packages/core/test/openaiProxy.test.ts": {
       "errors": 0,
@@ -1972,7 +1968,7 @@
     },
     "packages/core/test/recommendations.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/core/test/responsecache/policy.test.ts": {
       "errors": 0,
@@ -1980,7 +1976,7 @@
     },
     "packages/core/test/responsecache/proxy-integration.test.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 3
     },
     "packages/core/test/responsecache/sha.test.ts": {
       "errors": 0,
@@ -2032,7 +2028,7 @@
     },
     "packages/eval/src/matrix/cli.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/eval/src/matrix/diff.ts": {
       "errors": 0,
@@ -2040,7 +2036,7 @@
     },
     "packages/eval/src/matrix/lifecycle.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/eval/src/matrix/repo-root.ts": {
       "errors": 0,
@@ -2052,7 +2048,7 @@
     },
     "packages/eval/src/matrix/runner.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/eval/src/matrix/scoring.ts": {
       "errors": 0,
@@ -2088,7 +2084,7 @@
     },
     "packages/eval/src/matrix/workloads/memory-recall.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/src/matrix/workloads/project-brief-gen.ts": {
       "errors": 0,
@@ -2100,7 +2096,7 @@
     },
     "packages/eval/src/matrix/workloads/task-refiner-rubric.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/src/matrix/workloads/tool-call-grammar.ts": {
       "errors": 0,
@@ -2116,7 +2112,7 @@
     },
     "packages/eval/src/runners/json-output.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/eval/src/runners/throughput.ts": {
       "errors": 0,
@@ -2224,11 +2220,11 @@
     },
     "packages/fleet-supervisor/src/audit-reader.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/fleet-supervisor/src/executor.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/fleet-supervisor/src/index.ts": {
       "errors": 0,
@@ -2240,7 +2236,7 @@
     },
     "packages/fleet-supervisor/src/journal.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 6
     },
     "packages/fleet-supervisor/src/loop-helpers.ts": {
       "errors": 0,
@@ -2256,7 +2252,7 @@
     },
     "packages/fleet-supervisor/src/migration-controller.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/fleet-supervisor/src/node-probe.ts": {
       "errors": 0,
@@ -2280,7 +2276,7 @@
     },
     "packages/fleet-supervisor/src/status-reader.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/fleet-supervisor/src/types.ts": {
       "errors": 0,
@@ -2412,7 +2408,7 @@
     },
     "packages/mcp/src/tools/fleet.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/mcp/src/tools/models-leaderboard.ts": {
       "errors": 0,
@@ -2468,7 +2464,7 @@
     },
     "packages/remote/src/cli/adapter.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/cli/index.ts": {
       "errors": 0,
@@ -2492,15 +2488,15 @@
     },
     "packages/remote/src/client/node-client.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/composite/apply.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 1
     },
     "packages/remote/src/composite/dag.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/composite/event-bus.ts": {
       "errors": 0,
@@ -2512,7 +2508,7 @@
     },
     "packages/remote/src/composite/schema.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/composite/store.ts": {
       "errors": 0,
@@ -2532,7 +2528,7 @@
     },
     "packages/remote/src/config/embersynth.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 4
     },
     "packages/remote/src/config/env.ts": {
       "errors": 0,
@@ -2540,7 +2536,7 @@
     },
     "packages/remote/src/config/kubeconfig.ts": {
       "errors": 0,
-      "warnings": 6
+      "warnings": 5
     },
     "packages/remote/src/config/peers.ts": {
       "errors": 0,
@@ -2556,11 +2552,11 @@
     },
     "packages/remote/src/config/provider-nodes.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/config/schema.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/config/secret.ts": {
       "errors": 0,
@@ -2576,7 +2572,7 @@
     },
     "packages/remote/src/infra/artifacts-fetch.ts": {
       "errors": 0,
-      "warnings": 19
+      "warnings": 18
     },
     "packages/remote/src/infra/install.ts": {
       "errors": 0,
@@ -2584,7 +2580,7 @@
     },
     "packages/remote/src/infra/layout.ts": {
       "errors": 0,
-      "warnings": 20
+      "warnings": 19
     },
     "packages/remote/src/infra/services.ts": {
       "errors": 0,
@@ -2600,11 +2596,11 @@
     },
     "packages/remote/src/ops-chat/dispatch.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/remote/src/ops-chat/loop-executor.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/ops-chat/loop-schema.ts": {
       "errors": 0,
@@ -2644,7 +2640,7 @@
     },
     "packages/remote/src/providers/factory.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/rag/bench.ts": {
       "errors": 0,
@@ -2652,7 +2648,7 @@
     },
     "packages/remote/src/rag/chroma/adapter.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/rag/chroma/client.ts": {
       "errors": 0,
@@ -2680,7 +2676,7 @@
     },
     "packages/remote/src/rag/pgvector/adapter.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/rag/pgvector/client.ts": {
       "errors": 0,
@@ -2692,7 +2688,7 @@
     },
     "packages/remote/src/rag/pipeline/draft.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/remote/src/rag/pipeline/event-bus.ts": {
       "errors": 0,
@@ -2700,15 +2696,15 @@
     },
     "packages/remote/src/rag/pipeline/fetchers/filesystem.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 3
     },
     "packages/remote/src/rag/pipeline/fetchers/git.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 2
     },
     "packages/remote/src/rag/pipeline/fetchers/http.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/rag/pipeline/fetchers/registry.ts": {
       "errors": 0,
@@ -2720,19 +2716,19 @@
     },
     "packages/remote/src/rag/pipeline/journal.ts": {
       "errors": 0,
-      "warnings": 5
+      "warnings": 4
     },
     "packages/remote/src/rag/pipeline/orphan.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/remote/src/rag/pipeline/runtime.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/rag/pipeline/scheduler.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/rag/pipeline/schema.ts": {
       "errors": 0,
@@ -2744,7 +2740,7 @@
     },
     "packages/remote/src/rag/pipeline/transforms/markdown-chunk.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/rag/pipeline/transforms/registry.ts": {
       "errors": 0,
@@ -2760,7 +2756,7 @@
     },
     "packages/remote/src/router.ts": {
       "errors": 0,
-      "warnings": 10
+      "warnings": 7
     },
     "packages/remote/src/routes/fleet.ts": {
       "errors": 0,
@@ -2772,11 +2768,11 @@
     },
     "packages/remote/src/runtime/docker/backend.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/runtime/docker/client.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/runtime/errors.ts": {
       "errors": 0,
@@ -2788,7 +2784,7 @@
     },
     "packages/remote/src/runtime/kubernetes/backend.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/remote/src/runtime/kubernetes/client.ts": {
       "errors": 0,
@@ -2824,11 +2820,11 @@
     },
     "packages/remote/src/search/knowledge.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/search/logs.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 3
     },
     "packages/remote/src/search/rag-bridge.ts": {
       "errors": 0,
@@ -2840,7 +2836,7 @@
     },
     "packages/remote/src/search/sessions.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/remote/src/search/text-match.ts": {
       "errors": 0,
@@ -2876,15 +2872,15 @@
     },
     "packages/remote/src/server/modelhost.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/remote/src/server/peer-snapshot-poller.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/server/rag-chat-endpoint.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/remote/src/server/register.ts": {
       "errors": 0,
@@ -2892,7 +2888,7 @@
     },
     "packages/remote/src/server/serve.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 2
     },
     "packages/remote/src/server/service-templates.ts": {
       "errors": 0,
@@ -2912,7 +2908,7 @@
     },
     "packages/remote/src/service/handlers/chroma-handler.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/service/handlers/generic-handler.ts": {
       "errors": 0,
@@ -2964,11 +2960,11 @@
     },
     "packages/remote/src/tunnel/tunnel-client.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/tunnel/tunnel-server.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/workload/admission.test.ts": {
       "errors": 0,
@@ -2984,7 +2980,7 @@
     },
     "packages/remote/src/workload/apply.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-catalog/apply.ts": {
       "errors": 0,
@@ -3008,7 +3004,7 @@
     },
     "packages/remote/src/workload/gateway-catalog/reload.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-catalog/remove.ts": {
       "errors": 0,
@@ -3028,7 +3024,7 @@
     },
     "packages/remote/src/workload/gateway-handlers/embersynth.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-handlers/index.ts": {
       "errors": 0,
@@ -3040,7 +3036,7 @@
     },
     "packages/remote/src/workload/gateway-handlers/sirius.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/workload/gateway-handlers/types.ts": {
       "errors": 0,
@@ -3064,7 +3060,7 @@
     },
     "packages/remote/src/workload/noderun-apply.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/remote/src/workload/noderun-reconciler.ts": {
       "errors": 0,
@@ -3088,7 +3084,7 @@
     },
     "packages/remote/src/workload/reconciler.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/workload/schema.test.ts": {
       "errors": 0,
@@ -3100,7 +3096,7 @@
     },
     "packages/remote/src/workload/store.ts": {
       "errors": 0,
-      "warnings": 17
+      "warnings": 16
     },
     "packages/remote/test/agent-dial-central.test.ts": {
       "errors": 0,
@@ -3432,7 +3428,7 @@
     },
     "packages/remote/test/rag-chroma-http.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/rag-e2e.test.ts": {
       "errors": 0,
@@ -3520,7 +3516,7 @@
     },
     "packages/remote/test/runtime-docker-backend.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/runtime-k8s-backend.test.ts": {
       "errors": 0,
@@ -3624,7 +3620,7 @@
     },
     "packages/remote/test/tunnel-relay-sse.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/tunnel-router-bridge-subscription.test.ts": {
       "errors": 0,

@@ -147,7 +147,7 @@ export default tseslint.config(
       "perfectionist/sort-named-exports": ["warn", { type: "natural", order: "asc" }],
       "perfectionist/sort-exports": ["warn", { type: "natural", order: "asc" }],
       "max-lines-per-function": ["error", { max: 120, skipBlankLines: true, skipComments: true }],
-      "sonarjs/cognitive-complexity": ["warn", 12],
+      "sonarjs/cognitive-complexity": ["error", 12],
       "unicorn/no-for-loop": "warn",
       "unicorn/no-array-for-each": "warn",
       "unicorn/prefer-node-protocol": "warn",
