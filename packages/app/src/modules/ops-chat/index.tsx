@@ -377,7 +377,15 @@ function AuditLog({ opsChat }: { opsChat: UseOpsChatReturn }): React.JSX.Element
           ))}
         </ul>
       ) : (
-        <p style={{ marginTop: 8, color: "var(--color-text-secondary)" }}>No audit entries yet.</p>
+        <p style={{ marginTop: 8, color: "var(--color-text-secondary)" }}>
+          No audit entries yet — run a step to start populating{" "}
+          {data?.path ? (
+            <span style={{ fontFamily: "var(--font-mono)" }}>{data.path}</span>
+          ) : (
+            <span>the ops-chat audit journal</span>
+          )}
+          .
+        </p>
       )}
     </details>
   );
@@ -477,7 +485,13 @@ function ChatInput({ opsChat }: { opsChat: UseOpsChatReturn }): React.JSX.Elemen
           }
         }}
         rows={2}
-        placeholder="e.g. list installed vision models"
+        placeholder={
+          messages.length === 0
+            ? "e.g. list installed vision models"
+            : streaming
+              ? "Waiting for next proposal…"
+              : 'Start a new conversation by clicking "New conversation"'
+        }
         disabled={streaming}
         style={{
           width: "100%",
@@ -512,8 +526,8 @@ function ChatInput({ opsChat }: { opsChat: UseOpsChatReturn }): React.JSX.Elemen
             paddingBottom: 4,
             fontSize: 14,
             fontWeight: 500,
-            cursor: submitDisabled ? "not-allowed" : "pointer",
-            opacity: submitDisabled ? 0.5 : 1,
+            cursor: "not-allowed",
+            opacity: 0.5,
           }}
         >
           {streaming ? "Streaming…" : messages.length === 0 ? "Plan" : "Send"}

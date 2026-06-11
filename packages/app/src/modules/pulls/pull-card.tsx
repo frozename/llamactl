@@ -56,53 +56,52 @@ export function PullCard({
         : "var(--color-brand)";
 
   return (
-    <div className="border rounded bg-surface-1 border-border">
-      <div className="flex items-center justify-between p-2 px-3 text-xs">
-        <div className="flex items-center gap-3 font-mono">
-          <span style={{ color: stateColor }}>{state}</span>
-          <span className="text-secondary break-all">{label}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          {state === "running" && (
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => {
-                setState("error");
-                setError("Cancelled by user");
-              }}
-              className="p-1 px-2 text-xs"
-            >
-              Cancel
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              onDismiss(spec.id);
-            }}
-            disabled={state === "running"}
-            className="p-1 px-2 text-xs"
-          >
-            ×
-          </Button>
-        </div>
-      </div>
+    <div
+      style={{
+        borderRadius: 6,
+        border: "1px solid var(--color-border)",
+        backgroundColor: "var(--color-surface-1)",
+      }}
+    >
+      <PullCardHeader
+        state={state}
+        stateColor={stateColor}
+        label={label}
+        onCancel={() => {
+          setState("error");
+          setError("Cancelled by user");
+        }}
+        onDismiss={() => {
+          onDismiss(spec.id);
+        }}
+      />
       {(summary !== null || error !== null) && (
         <div
-          className="font-mono border-t border-border p-1 px-3 text-xs"
-          style={{ color: error ? "var(--color-err)" : "var(--color-ok)" }}
+          style={{
+            fontFamily: "monospace",
+            borderTop: "1px solid var(--color-border)",
+            padding: "4px 12px",
+            fontSize: 12,
+            color: error ? "var(--color-err)" : "var(--color-ok)",
+          }}
         >
           {error ?? summary}
         </div>
       )}
       <div
         ref={logRef}
-        className="max-h-[28vh] overflow-auto border-t border-border bg-surface-0 p-2 px-3 font-mono text-xs"
+        style={{
+          maxHeight: "28vh",
+          overflow: "auto",
+          borderTop: "1px solid var(--color-border)",
+          backgroundColor: "var(--color-surface-0)",
+          padding: "6px 12px",
+          fontFamily: "monospace",
+          fontSize: 12,
+        }}
       >
         {log.length === 0 ? (
-          <div className="text-secondary">Waiting for output…</div>
+          <div style={{ color: "var(--color-text-secondary)" }}>Waiting for output…</div>
         ) : (
           log.map((line, i) => (
             <div key={i} style={{ color: getLogColor(line.kind), whiteSpace: "pre-wrap" }}>
@@ -110,6 +109,67 @@ export function PullCard({
             </div>
           ))
         )}
+      </div>
+    </div>
+  );
+}
+
+function PullCardHeader({
+  state,
+  stateColor,
+  label,
+  onCancel,
+  onDismiss,
+}: {
+  state: "running" | "done" | "error";
+  stateColor: string;
+  label: string;
+  onCancel: () => void;
+  onDismiss: () => void;
+}): React.JSX.Element {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "8px 12px",
+        fontSize: 12,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ fontFamily: "monospace", color: stateColor }}>{state}</span>
+        <span
+          style={{
+            fontFamily: "monospace",
+            color: "var(--color-text-secondary)",
+            wordBreak: "break-all",
+          }}
+        >
+          {label}
+        </span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        {state === "running" && (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={onCancel}
+            style={{ fontSize: 12, padding: "2px 8px" }}
+          >
+            Cancel
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onDismiss}
+          disabled={state === "running"}
+          style={{ fontSize: 12, padding: "2px 8px" }}
+          aria-label="Dismiss"
+        >
+          ×
+        </Button>
       </div>
     </div>
   );

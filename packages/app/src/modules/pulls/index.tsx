@@ -118,18 +118,34 @@ function PullInputs({ pullsObj }: { pullsObj: UsePullsReturn }): React.JSX.Eleme
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}>
       <label style={{ gridColumn: "span 5 / span 5", fontSize: 14 }}>
-        <span className="block mb-1 text-xs text-secondary">Repo</span>
+        <span
+          style={{
+            marginBottom: 4,
+            display: "block",
+            fontSize: 12,
+            color: "var(--color-text-secondary)",
+          }}
+        >
+          Repo
+        </span>
         <Input
           value={repo}
           onChange={(e) => {
             setRepo(e.target.value);
           }}
           placeholder="unsloth/gemma-4-E4B-it-GGUF"
-          className="w-full font-mono"
+          style={{ width: "100%", fontFamily: "monospace" }}
         />
       </label>
       <label style={{ gridColumn: "span 5 / span 5", fontSize: 14 }}>
-        <span className="block mb-1 text-xs text-secondary">
+        <span
+          style={{
+            marginBottom: 4,
+            display: "block",
+            fontSize: 12,
+            color: "var(--color-text-secondary)",
+          }}
+        >
           {mode === "file" ? "File" : "File (optional override)"}
         </span>
         <Input
@@ -138,18 +154,35 @@ function PullInputs({ pullsObj }: { pullsObj: UsePullsReturn }): React.JSX.Eleme
             setFile(e.target.value);
           }}
           placeholder={mode === "file" ? "gemma-4-E4B-it-Q8_0.gguf" : "(auto-pick via profile)"}
-          className="w-full font-mono"
+          style={{ width: "100%", fontFamily: "monospace" }}
         />
       </label>
       {(mode === "candidate" || mode === "test") && (
         <label style={{ gridColumn: "span 2 / span 2", fontSize: 14 }}>
-          <span className="block mb-1 text-xs text-secondary">Profile</span>
+          <span
+            style={{
+              marginBottom: 4,
+              display: "block",
+              fontSize: 12,
+              color: "var(--color-text-secondary)",
+            }}
+          >
+            Profile
+          </span>
           <select
             value={profile}
             onChange={(e) => {
               setProfile(e.target.value as Profile | "");
             }}
-            className="w-full h-8 px-2 border rounded bg-surface-2 border-border text-primary font-mono"
+            style={{
+              width: "100%",
+              borderRadius: 4,
+              border: "1px solid var(--color-border)",
+              backgroundColor: "var(--color-surface-2)",
+              padding: "4px 8px",
+              fontFamily: "monospace",
+              color: "var(--color-text)",
+            }}
           >
             <option value="">(current)</option>
             {PROFILES.map((p) => (
@@ -201,6 +234,18 @@ function PullQueue({ pullsObj }: { pullsObj: UsePullsReturn }): React.JSX.Elemen
 
 function PullsError({ error }: { error: string }): React.JSX.Element {
   return (
-    <div className="mb-3 p-3 border rounded bg-surface-1 border-err text-err text-sm">{error}</div>
+    <div
+      style={{
+        marginBottom: 12,
+        borderRadius: 6,
+        border: "1px solid var(--color-err)",
+        backgroundColor: "var(--color-surface-1)",
+        padding: "8px 12px",
+        fontSize: 14,
+        color: "var(--color-err)",
+      }}
+    >
+      {error}
+    </div>
   );
 }
