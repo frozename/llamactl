@@ -27,6 +27,7 @@ import {
 } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
 import {
+  type AdmissionResult,
   computeNodeBudget,
   defaultNodeBudgetGiB,
   estimateModelHostMemoryGiB,
@@ -306,10 +307,10 @@ function manifestKind(raw: unknown): string | null {
   return typeof kind === "string" ? kind : null;
 }
 
-async function applyModelHostManifest(
+function validateModelHostAdmission(
   manifest: ModelHostManifest,
   opts: Omit<ApplyManifestOptions, "manifest">,
-): Promise<ApplyManifestOutcome> {
+): { ok: false; error: string } | null {
   if (opts.supervisor && manifest.spec.resources?.expectedMemoryGiB) {
     const projected = projectAdmissionHeadroom({
       currentFreeGiB: opts.supervisor.currentFreeGiB,
@@ -336,36 +337,38 @@ async function applyModelHostManifest(
       return { ok: false, error: validation.error };
     }
   }
+  return null;
+}
 
-  const resolved = resolveEnv(opts.env);
-  if (!opts.getClient) {
-    return { ok: false, error: `missing getClient for node ${manifest.spec.node}` };
+async function disableModelHost(
+  manifest: ModelHostManifest,
+  client: WorkloadClient,
+  resolved: ReturnType<typeof resolveEnv>,
+): Promise<ApplyManifestOutcome> {
+  try {
+    await client.modelHostStop.mutate({ workload: manifest.metadata.name });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `modelHostStop failed: ${message}` };
   }
-  const client = opts.getClient(manifest.spec.node);
+  // Idempotent cleanup: sweep any local sidecar (including pre-a6cab9e
+  // leaks for remote workloads) before signaling disable.
+  removeModelHostState({ name: manifest.metadata.name }, resolved);
+  return {
+    ok: true,
+    kind: "ModelHost",
+    manifest,
+    pid: null,
+    endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${String(manifest.spec.endpoint.port)}`,
+  };
+}
 
-  if (!manifest.spec.enabled) {
-    try {
-      await client.modelHostStop.mutate({ workload: manifest.metadata.name });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { ok: false, error: `modelHostStop failed: ${message}` };
-    }
-    // Idempotent cleanup: sweep any local sidecar (including pre-a6cab9e
-    // leaks for remote workloads) before signaling disable.
-    removeModelHostState({ name: manifest.metadata.name }, resolved);
-    return {
-      ok: true,
-      kind: "ModelHost",
-      manifest,
-      pid: null,
-      endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${String(manifest.spec.endpoint.port)}`,
-    };
-  }
-
-  const firstHostedModel = manifest.spec.hostedModels[0];
-  if (!firstHostedModel) {
-    return { ok: false, error: `ModelHost ${manifest.metadata.name} has no hosted models` };
-  }
+function admitModelHostBudget(
+  manifest: ModelHostManifest,
+  opts: Omit<ApplyManifestOptions, "manifest">,
+  resolved: ReturnType<typeof resolveEnv>,
+  firstHostedModel: ModelHostManifest["spec"]["hostedModels"][number],
+): { ok: false; error: string } | null {
   const budget = opts.getNodeBudgetGiB?.(manifest.spec.node) ?? defaultNodeBudgetGiB();
   const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir();
   const livingManifests = listAnyWorkloadsForAdmission(workloadsDir, resolved)
@@ -399,11 +402,18 @@ async function applyModelHostManifest(
   if (!admit.ok) {
     return { ok: false, error: admit.reason };
   }
+  return null;
+}
 
+async function startModelHostProcess(
+  client: WorkloadClient,
+  manifest: ModelHostManifest,
+): Promise<
+  { ok: false; error: string } | { ok: true; status: { state: string; pid?: number | null } }
+> {
   const timeoutMs = manifest.spec.timeoutSeconds * 1000;
   let sub: Unsubscribable | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let status: { state: string; pid?: number | null };
   try {
     type StartResult =
       | { ok: true; error?: string; pid?: number | null; state?: string | null }
@@ -446,19 +456,24 @@ async function applyModelHostManifest(
     }
 
     if (typeof startResult.pid === "number" && typeof startResult.state === "string") {
-      status = {
-        state: startResult.state,
-        pid: startResult.pid,
-      };
-    } else {
-      status = await client.modelHostStatus.query({ workload: manifest.metadata.name });
+      return { ok: true, status: { state: startResult.state, pid: startResult.pid } };
     }
+    return {
+      ok: true,
+      status: await client.modelHostStatus.query({ workload: manifest.metadata.name }),
+    };
   } finally {
     if (timer) clearTimeout(timer);
     sub?.unsubscribe?.();
   }
+}
 
-  const rel = firstHostedModel.rel;
+function writeModelHostSidecar(
+  manifest: ModelHostManifest,
+  status: { state: string; pid?: number | null },
+  resolved: ReturnType<typeof resolveEnv>,
+  rel: string,
+): void {
   const modelAliases = Array.from(new Set([rel, basename(rel)]));
   const existing = readModelHostState({ name: manifest.metadata.name }, resolved);
   // Only write the local sidecar when this controller owns the process
@@ -483,12 +498,42 @@ async function applyModelHostManifest(
       resolved,
     );
   }
+}
+
+async function applyModelHostManifest(
+  manifest: ModelHostManifest,
+  opts: Omit<ApplyManifestOptions, "manifest">,
+): Promise<ApplyManifestOutcome> {
+  const invalid = validateModelHostAdmission(manifest, opts);
+  if (invalid) return invalid;
+
+  const resolved = resolveEnv(opts.env);
+  if (!opts.getClient) {
+    return { ok: false, error: `missing getClient for node ${manifest.spec.node}` };
+  }
+  const client = opts.getClient(manifest.spec.node);
+
+  if (!manifest.spec.enabled) {
+    return await disableModelHost(manifest, client, resolved);
+  }
+
+  const firstHostedModel = manifest.spec.hostedModels[0];
+  if (!firstHostedModel) {
+    return { ok: false, error: `ModelHost ${manifest.metadata.name} has no hosted models` };
+  }
+  const rejected = admitModelHostBudget(manifest, opts, resolved, firstHostedModel);
+  if (rejected) return rejected;
+
+  const started = await startModelHostProcess(client, manifest);
+  if (!started.ok) return { ok: false, error: started.error };
+
+  writeModelHostSidecar(manifest, started.status, resolved, firstHostedModel.rel);
 
   return {
     ok: true,
     kind: "ModelHost",
     manifest,
-    pid: status.pid ?? null,
+    pid: started.status.pid ?? null,
     endpoint: `http://${formatHostForUrl(manifest.spec.endpoint.host)}:${String(manifest.spec.endpoint.port)}`,
   };
 }
@@ -685,6 +730,380 @@ async function stopWorkers(
   }
 }
 
+interface ApplyOneOpts {
+  workloadsDir?: string;
+  /**
+   * Map a manifest's `spec.node` name to a stable identity (typically
+   * the node's endpoint URL) so the port-collision preflight can
+   * detect aliases — e.g. two manifests on `local` vs `mac-mini`
+   * resolving to the same physical agent. Return `null` when the
+   * name can't be resolved (e.g. operator typo'd the node); the
+   * filter falls back to name-equality so a missing resolution
+   * doesn't accidentally relax the check.
+   */
+  resolveNodeIdentity?: (nodeName: string) => string | null;
+  listManifests?: () => ModelRun[];
+  getNodeBudgetGiB?: (nodeName: string) => number;
+}
+
+type ServerStatusSnapshot = Awaited<ReturnType<WorkloadClient["serverStatus"]["query"]>>;
+
+function gatewayPendingResult(
+  manifest: ModelRun,
+  onEvent: ((e: ApplyEvent) => void) | undefined,
+): ApplyResult {
+  const now = new Date().toISOString();
+  const msg =
+    `gateway workload targeting '${manifest.spec.node}': ` +
+    `no gateway dispatcher provided — manifest validated but no upstream mutation performed`;
+  onEvent?.({ type: "gateway-pending", message: `${manifest.metadata.name}: ${msg}` });
+  return {
+    action: "pending",
+    statusSection: {
+      phase: "Pending",
+      serverPid: null,
+      endpoint: null,
+      lastTransitionTime: now,
+      conditions: [
+        {
+          type: "Applied",
+          status: "False",
+          reason: "GatewayRegistrationPending",
+          message: msg,
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
+
+async function stopDisabledWorkload(
+  manifest: ModelRun,
+  client: WorkloadClient,
+  onEvent: ((e: ApplyEvent) => void) | undefined,
+): Promise<ApplyResult> {
+  const now = new Date().toISOString();
+  const status = await client.serverStatus.query({ workload: manifest.metadata.name });
+  if (status.state === "up") {
+    onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping disabled server` });
+    await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
+  }
+  return {
+    action: "unchanged",
+    statusSection: {
+      phase: "Stopped",
+      serverPid: null,
+      endpoint: null,
+      lastTransitionTime: now,
+      conditions: [
+        {
+          type: "Applied",
+          status: "True",
+          reason: "Disabled",
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
+
+function checkPortCollision(
+  manifest: ModelRun,
+  opts: ApplyOneOpts | undefined,
+): ApplyResult | null {
+  const desired = manifest.spec.endpoint;
+  if (desired?.port === undefined) return null;
+  const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir();
+  const resolveIdent = opts?.resolveNodeIdentity;
+  const desiredIdentity = resolveIdent?.(manifest.spec.node) ?? null;
+  const sameNode = (otherNode: string): boolean => {
+    if (otherNode === manifest.spec.node) return true;
+    if (!resolveIdent || !desiredIdentity) return false;
+    const otherIdentity = resolveIdent(otherNode);
+    return otherIdentity !== null && otherIdentity === desiredIdentity;
+  };
+  const others = listWorkloads(workloadsDir)
+    .filter((m) => m.metadata.name !== manifest.metadata.name)
+    .filter((m) => sameNode(m.spec.node))
+    .filter((m) => m.spec.enabled);
+  for (const other of others) {
+    if (
+      other.status?.phase === "Failed" &&
+      other.status.conditions[0]?.reason === "PortCollision"
+    ) {
+      continue;
+    }
+    const o = other.spec.endpoint;
+    if (o?.port === undefined) continue;
+    if (o.port !== desired.port) continue;
+    const dHost = normalizeLoopbackHost(desired.host);
+    const oHost = normalizeLoopbackHost(o.host);
+    const hostCollides = dHost === oHost || dHost === "0.0.0.0" || oHost === "0.0.0.0";
+    if (hostCollides) {
+      const now = new Date().toISOString();
+      return {
+        action: "pending",
+        error: `port collision: ${other.metadata.name} already claims ${oHost}:${String(o.port)} on node ${manifest.spec.node}`,
+        statusSection: {
+          phase: "Failed",
+          serverPid: null,
+          endpoint: null,
+          lastTransitionTime: now,
+          conditions: [
+            {
+              type: "Applied",
+              status: "False",
+              reason: "PortCollision",
+              message: `port ${String(desired.port)} already claimed by ${other.metadata.name}`,
+              lastTransitionTime: now,
+            },
+          ],
+        },
+      };
+    }
+  }
+  return null;
+}
+
+function parseEvictTargets(manifest: ModelRun): string[] {
+  return (manifest.metadata.annotations["llamactl.io/evict"] ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+async function stopEvictTargets(
+  manifest: ModelRun,
+  client: WorkloadClient,
+  evictTargets: readonly string[],
+  onEvent: ((e: ApplyEvent) => void) | undefined,
+): Promise<void> {
+  for (const target of evictTargets) {
+    try {
+      const targetStatus = await client.serverStatus.query({ workload: target });
+      if (targetStatus.state !== "up") {
+        onEvent?.({
+          type: "skipped",
+          message: `${manifest.metadata.name}: eviction target ${target} already stopped`,
+        });
+        continue;
+      }
+      onEvent?.({ type: "stop", message: `${manifest.metadata.name}: evicting ${target}` });
+      await client.serverStop.mutate({ workload: target, graceSeconds: 5 });
+    } catch {
+      onEvent?.({
+        type: "skipped",
+        message: `${manifest.metadata.name}: eviction target ${target} not found`,
+      });
+    }
+  }
+}
+
+interface ConvergeServerContext {
+  manifest: ModelRun;
+  client: WorkloadClient;
+  getClient: (nodeName: string) => WorkloadClient;
+  onEvent: ((e: ApplyEvent) => void) | undefined;
+  opts: ApplyOneOpts | undefined;
+  now: string;
+  status: ServerStatusSnapshot;
+  matches: boolean;
+  desiredArgs: string[];
+  evictTargets: string[];
+}
+
+function admitServerBudget(
+  ctx: ConvergeServerContext,
+): { ok: true; adm: Extract<AdmissionResult, { ok: true }> } | { ok: false; result: ApplyResult } {
+  const { manifest, opts, evictTargets, now } = ctx;
+  const listManifests =
+    opts?.listManifests ?? ((): ModelRun[] => listWorkloads(opts?.workloadsDir));
+  const living = listManifests().filter(
+    (m) =>
+      m.metadata.name !== manifest.metadata.name &&
+      m.spec.node === manifest.spec.node &&
+      m.spec.enabled &&
+      !evictTargets.includes(m.metadata.name),
+  );
+  const budget = opts?.getNodeBudgetGiB?.(manifest.spec.node) ?? Number.POSITIVE_INFINITY;
+  const forceAdmit = manifest.metadata.annotations["llamactl.io/force-admit"] === "true";
+  const adm = computeNodeBudget({
+    nodeName: manifest.spec.node,
+    nodeBudgetGiB: budget,
+    livingManifests: living,
+    incoming: manifest,
+    forceAdmit,
+  });
+  if (!adm.ok) {
+    return {
+      ok: false,
+      result: {
+        action: "pending",
+        error: adm.reason,
+        statusSection: {
+          phase: "Failed",
+          serverPid: null,
+          endpoint: null,
+          lastTransitionTime: now,
+          conditions: [
+            {
+              type: "Applied",
+              status: "False",
+              reason: "BudgetExceeded",
+              message: adm.reason,
+              lastTransitionTime: now,
+            },
+          ],
+        },
+      },
+    };
+  }
+  return { ok: true, adm };
+}
+
+function failedApplyResult(action: ApplyAction, error: string, when: string): ApplyResult {
+  return {
+    action,
+    statusSection: {
+      phase: "Failed",
+      serverPid: null,
+      endpoint: null,
+      lastTransitionTime: when,
+      conditions: [
+        {
+          type: "Applied",
+          status: "False",
+          reason: action,
+          message: error,
+          lastTransitionTime: when,
+        },
+      ],
+    },
+    error,
+  };
+}
+
+async function startCoordinator(
+  client: WorkloadClient,
+  manifest: ModelRun,
+  desiredArgs: string[],
+): Promise<StartDone | null> {
+  return await new Promise<StartDone | null>((resolve, reject) => {
+    const timer = setTimeout(
+      () => {
+        reject(new Error("serverStart timed out"));
+      },
+      (manifest.spec.timeoutSeconds + 5) * 1000,
+    );
+    let done: StartDone | null = null;
+    const sub = client.serverStart.subscribe(
+      {
+        workload: manifest.metadata.name,
+        target: manifest.spec.target.value,
+        ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
+        ...(manifest.spec.allowExternalBind ? { allowExternalBind: true } : {}),
+        ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
+        ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
+        timeoutSeconds: manifest.spec.timeoutSeconds,
+      },
+      {
+        onData: (evt: unknown) => {
+          const e = evt as { type?: string; result?: unknown };
+          if (e.type === "done") done = e.result as StartDone;
+        },
+        onError: (err: unknown) => {
+          clearTimeout(timer);
+          reject(err instanceof Error ? err : new Error(String(err)));
+        },
+        onComplete: () => {
+          clearTimeout(timer);
+          resolve(done);
+        },
+      },
+    );
+    void sub;
+  });
+}
+
+async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
+  const { manifest, client, getClient, onEvent, now, status, matches, desiredArgs } = ctx;
+  const admission = admitServerBudget(ctx);
+  if (!admission.ok) return admission.result;
+  const adm = admission.adm;
+
+  if (matches) {
+    onEvent?.({
+      type: "skipped",
+      message: `${manifest.metadata.name}: already running (${manifest.spec.target.value})`,
+    });
+    return {
+      action: "unchanged",
+      statusSection: {
+        phase: "Running",
+        serverPid: status.pid,
+        endpoint: status.endpoint,
+        lastTransitionTime: now,
+        conditions: [
+          { type: "Applied", status: "True", reason: "unchanged", lastTransitionTime: now },
+        ],
+      },
+    };
+  }
+
+  let action: ApplyAction;
+  if (status.state === "up") {
+    onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping mismatched server` });
+    await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
+    action = "restarted";
+  } else {
+    action = "started";
+  }
+
+  const workers = manifest.spec.workers;
+  if (workers.length > 0) {
+    const wres = await startWorkers(workers, getClient, onEvent);
+    if (wres.error) {
+      return failedApplyResult(action, wres.error, new Date().toISOString());
+    }
+  }
+
+  onEvent?.({
+    type: "start",
+    message: `${manifest.metadata.name}: starting ${manifest.spec.target.value}`,
+  });
+  const startResult = await startCoordinator(client, manifest, desiredArgs);
+
+  if (!startResult?.ok) {
+    const err = startResult?.error ?? "serverStart failed";
+    if (workers.length > 0) await stopWorkers(workers, getClient);
+    return failedApplyResult(action, err, now);
+  }
+
+  onEvent?.({
+    type: "started",
+    message: `${manifest.metadata.name}: ready at ${startResult.endpoint} pid=${String(startResult.pid ?? "?")}`,
+  });
+
+  return {
+    action,
+    statusSection: {
+      phase: "Running",
+      serverPid: startResult.pid,
+      endpoint: startResult.endpoint,
+      lastTransitionTime: now,
+      conditions: [
+        { type: "Applied", status: "True", reason: action, lastTransitionTime: now },
+        {
+          type: "BudgetReserved",
+          status: "True",
+          message: `node reserves ${adm.reservedAfter.toFixed(1)} / ${adm.budget === Infinity ? "unbounded" : adm.budget.toFixed(1)} GiB`,
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
+
 /**
  * Diff one workload against the live status of its target node and
  * converge: stop the running server if the config differs, then start
@@ -700,21 +1119,7 @@ export async function applyOne(
   getClient: (nodeName: string) => WorkloadClient,
   onEvent?: (e: ApplyEvent) => void,
   gatewayDispatch?: GatewayDispatch,
-  opts?: {
-    workloadsDir?: string;
-    /**
-     * Map a manifest's `spec.node` name to a stable identity (typically
-     * the node's endpoint URL) so the port-collision preflight can
-     * detect aliases — e.g. two manifests on `local` vs `mac-mini`
-     * resolving to the same physical agent. Return `null` when the
-     * name can't be resolved (e.g. operator typo'd the node); the
-     * filter falls back to name-equality so a missing resolution
-     * doesn't accidentally relax the check.
-     */
-    resolveNodeIdentity?: (nodeName: string) => string | null;
-    listManifests?: () => ModelRun[];
-    getNodeBudgetGiB?: (nodeName: string) => number;
-  },
+  opts?: ApplyOneOpts,
 ): Promise<ApplyResult> {
   if (manifest.spec.gateway) {
     if (gatewayDispatch) {
@@ -724,109 +1129,16 @@ export async function applyOne(
       // runs through the regular serverStart path below.
       if (dispatched !== null) return dispatched;
     } else {
-      const now = new Date().toISOString();
-      const msg =
-        `gateway workload targeting '${manifest.spec.node}': ` +
-        `no gateway dispatcher provided — manifest validated but no upstream mutation performed`;
-      onEvent?.({ type: "gateway-pending", message: `${manifest.metadata.name}: ${msg}` });
-      return {
-        action: "pending",
-        statusSection: {
-          phase: "Pending",
-          serverPid: null,
-          endpoint: null,
-          lastTransitionTime: now,
-          conditions: [
-            {
-              type: "Applied",
-              status: "False",
-              reason: "GatewayRegistrationPending",
-              message: msg,
-              lastTransitionTime: now,
-            },
-          ],
-        },
-      };
+      return gatewayPendingResult(manifest, onEvent);
     }
   }
   const client = getClient(manifest.spec.node);
   if (!manifest.spec.enabled) {
-    const now = new Date().toISOString();
-    const status = await client.serverStatus.query({ workload: manifest.metadata.name });
-    if (status.state === "up") {
-      onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping disabled server` });
-      await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
-    }
-    return {
-      action: "unchanged",
-      statusSection: {
-        phase: "Stopped",
-        serverPid: null,
-        endpoint: null,
-        lastTransitionTime: now,
-        conditions: [
-          {
-            type: "Applied",
-            status: "True",
-            reason: "Disabled",
-            lastTransitionTime: now,
-          },
-        ],
-      },
-    };
+    return await stopDisabledWorkload(manifest, client, onEvent);
   }
-  const desired = manifest.spec.endpoint;
-  if (desired?.port !== undefined) {
-    const workloadsDir = opts?.workloadsDir ?? defaultWorkloadsDir();
-    const resolveIdent = opts?.resolveNodeIdentity;
-    const desiredIdentity = resolveIdent?.(manifest.spec.node) ?? null;
-    const sameNode = (otherNode: string): boolean => {
-      if (otherNode === manifest.spec.node) return true;
-      if (!resolveIdent || !desiredIdentity) return false;
-      const otherIdentity = resolveIdent(otherNode);
-      return otherIdentity !== null && otherIdentity === desiredIdentity;
-    };
-    const others = listWorkloads(workloadsDir)
-      .filter((m) => m.metadata.name !== manifest.metadata.name)
-      .filter((m) => sameNode(m.spec.node))
-      .filter((m) => m.spec.enabled);
-    for (const other of others) {
-      if (
-        other.status?.phase === "Failed" &&
-        other.status.conditions[0]?.reason === "PortCollision"
-      ) {
-        continue;
-      }
-      const o = other.spec.endpoint;
-      if (o?.port === undefined) continue;
-      if (o.port !== desired.port) continue;
-      const dHost = normalizeLoopbackHost(desired.host);
-      const oHost = normalizeLoopbackHost(o.host);
-      const hostCollides = dHost === oHost || dHost === "0.0.0.0" || oHost === "0.0.0.0";
-      if (hostCollides) {
-        const now = new Date().toISOString();
-        return {
-          action: "pending",
-          error: `port collision: ${other.metadata.name} already claims ${oHost}:${String(o.port)} on node ${manifest.spec.node}`,
-          statusSection: {
-            phase: "Failed",
-            serverPid: null,
-            endpoint: null,
-            lastTransitionTime: now,
-            conditions: [
-              {
-                type: "Applied",
-                status: "False",
-                reason: "PortCollision",
-                message: `port ${String(desired.port)} already claimed by ${other.metadata.name}`,
-                lastTransitionTime: now,
-              },
-            ],
-          },
-        };
-      }
-    }
-  }
+  const collision = checkPortCollision(manifest, opts);
+  if (collision) return collision;
+
   const status = await client.serverStatus.query({ workload: manifest.metadata.name });
 
   const desiredRel = manifest.spec.target.value;
@@ -860,211 +1172,25 @@ export async function applyOne(
     binaryMatches;
 
   const now = new Date().toISOString();
-  const evictTargets = (manifest.metadata.annotations["llamactl.io/evict"] ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  const evictTargets = parseEvictTargets(manifest);
+  await stopEvictTargets(manifest, client, evictTargets, onEvent);
 
-  for (const target of evictTargets) {
-    try {
-      const targetStatus = await client.serverStatus.query({ workload: target });
-      if (targetStatus.state !== "up") {
-        onEvent?.({
-          type: "skipped",
-          message: `${manifest.metadata.name}: eviction target ${target} already stopped`,
-        });
-        continue;
-      }
-      onEvent?.({ type: "stop", message: `${manifest.metadata.name}: evicting ${target}` });
-      await client.serverStop.mutate({ workload: target, graceSeconds: 5 });
-    } catch {
-      onEvent?.({
-        type: "skipped",
-        message: `${manifest.metadata.name}: eviction target ${target} not found`,
-      });
-    }
-  }
-
-  return await withNodeLock(manifest.spec.node, async () => {
-    const listManifests =
-      opts?.listManifests ?? ((): ModelRun[] => listWorkloads(opts?.workloadsDir));
-    const living = listManifests().filter(
-      (m) =>
-        m.metadata.name !== manifest.metadata.name &&
-        m.spec.node === manifest.spec.node &&
-        m.spec.enabled &&
-        !evictTargets.includes(m.metadata.name),
-    );
-    const budget = opts?.getNodeBudgetGiB?.(manifest.spec.node) ?? Number.POSITIVE_INFINITY;
-    const forceAdmit = manifest.metadata.annotations["llamactl.io/force-admit"] === "true";
-    const adm = computeNodeBudget({
-      nodeName: manifest.spec.node,
-      nodeBudgetGiB: budget,
-      livingManifests: living,
-      incoming: manifest,
-      forceAdmit,
-    });
-    if (!adm.ok) {
-      return {
-        action: "pending",
-        error: adm.reason,
-        statusSection: {
-          phase: "Failed",
-          serverPid: null,
-          endpoint: null,
-          lastTransitionTime: now,
-          conditions: [
-            {
-              type: "Applied",
-              status: "False",
-              reason: "BudgetExceeded",
-              message: adm.reason,
-              lastTransitionTime: now,
-            },
-          ],
-        },
-      };
-    }
-
-    if (matches) {
-      onEvent?.({
-        type: "skipped",
-        message: `${manifest.metadata.name}: already running (${desiredRel})`,
-      });
-      return {
-        action: "unchanged",
-        statusSection: {
-          phase: "Running",
-          serverPid: status.pid,
-          endpoint: status.endpoint,
-          lastTransitionTime: now,
-          conditions: [
-            { type: "Applied", status: "True", reason: "unchanged", lastTransitionTime: now },
-          ],
-        },
-      };
-    }
-
-    let action: ApplyAction;
-    if (running) {
-      onEvent?.({ type: "stop", message: `${manifest.metadata.name}: stopping mismatched server` });
-      await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
-      action = "restarted";
-    } else {
-      action = "started";
-    }
-
-    if (workers.length > 0) {
-      const wres = await startWorkers(workers, getClient, onEvent);
-      if (wres.error) {
-        const when = new Date().toISOString();
-        return {
-          action,
-          statusSection: {
-            phase: "Failed",
-            serverPid: null,
-            endpoint: null,
-            lastTransitionTime: when,
-            conditions: [
-              {
-                type: "Applied",
-                status: "False",
-                reason: action,
-                message: wres.error,
-                lastTransitionTime: when,
-              },
-            ],
-          },
-          error: wres.error,
-        };
-      }
-    }
-
-    onEvent?.({ type: "start", message: `${manifest.metadata.name}: starting ${desiredRel}` });
-    const startResult = await new Promise<StartDone | null>((resolve, reject) => {
-      const timer = setTimeout(
-        () => {
-          reject(new Error("serverStart timed out"));
-        },
-        (manifest.spec.timeoutSeconds + 5) * 1000,
-      );
-      let done: StartDone | null = null;
-      const sub = client.serverStart.subscribe(
-        {
-          workload: manifest.metadata.name,
-          target: desiredRel,
-          ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
-          ...(manifest.spec.allowExternalBind ? { allowExternalBind: true } : {}),
-          ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
-          ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
-          timeoutSeconds: manifest.spec.timeoutSeconds,
-        },
-        {
-          onData: (evt: unknown) => {
-            const e = evt as { type?: string; result?: unknown };
-            if (e.type === "done") done = e.result as StartDone;
-          },
-          onError: (err: unknown) => {
-            clearTimeout(timer);
-            reject(err instanceof Error ? err : new Error(String(err)));
-          },
-          onComplete: () => {
-            clearTimeout(timer);
-            resolve(done);
-          },
-        },
-      );
-      void sub;
-    });
-
-    if (!startResult?.ok) {
-      const err = startResult?.error ?? "serverStart failed";
-      if (workers.length > 0) await stopWorkers(workers, getClient);
-      return {
-        action,
-        statusSection: {
-          phase: "Failed",
-          serverPid: null,
-          endpoint: null,
-          lastTransitionTime: now,
-          conditions: [
-            {
-              type: "Applied",
-              status: "False",
-              reason: action,
-              message: err,
-              lastTransitionTime: now,
-            },
-          ],
-        },
-        error: err,
-      };
-    }
-
-    onEvent?.({
-      type: "started",
-      message: `${manifest.metadata.name}: ready at ${startResult.endpoint} pid=${String(startResult.pid ?? "?")}`,
-    });
-
-    return {
-      action,
-      statusSection: {
-        phase: "Running",
-        serverPid: startResult.pid,
-        endpoint: startResult.endpoint,
-        lastTransitionTime: now,
-        conditions: [
-          { type: "Applied", status: "True", reason: action, lastTransitionTime: now },
-          {
-            type: "BudgetReserved",
-            status: "True",
-            message: `node reserves ${adm.reservedAfter.toFixed(1)} / ${adm.budget === Infinity ? "unbounded" : adm.budget.toFixed(1)} GiB`,
-            lastTransitionTime: now,
-          },
-        ],
-      },
-    };
-  });
+  return await withNodeLock(
+    manifest.spec.node,
+    async () =>
+      await convergeServerUnderLock({
+        manifest,
+        client,
+        getClient,
+        onEvent,
+        opts,
+        now,
+        status,
+        matches,
+        desiredArgs,
+        evictTargets,
+      }),
+  );
 }
 
 export async function applyManifest(opts: ApplyManifestOptions): Promise<ApplyManifestOutcome> {

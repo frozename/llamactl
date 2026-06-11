@@ -66,6 +66,7 @@ interface SessionRecord {
   currentStepId: string | null;
   pendingOutcome: Deferred<OpsChatStepOutcome> | null;
   closed: boolean;
+  abortHandler?: (() => void) | null;
 }
 
 const sessionRegistry = new Map<string, SessionRecord>();
@@ -130,15 +131,12 @@ function buildTranscript(
   return lines.join("\n");
 }
 
-/**
- * Main entry point. Yields OpsChatStreamEvent values until the loop
- * terminates via `done` or `refusal`. Deletes its session record in
- * `finally` so AbortSignal or caller disconnect cleans up.
- */
-export async function* runLoopExecutor(
+/** Create the session record + journal/event-bus plumbing and wire
+ *  the abort handler. The caller owns teardown in its `finally`. */
+async function initSessionState(
   opts: LoopExecutorOptions,
-): AsyncGenerator<OpsChatStreamEvent> {
-  const sessionId = randomUUID();
+  sessionId: string,
+): Promise<SessionRecord> {
   sessionEventBus.create(sessionId);
   const startEvent: JournalEvent = {
     type: "session_started",
@@ -153,21 +151,50 @@ export async function* runLoopExecutor(
   await appendJournalEvent(sessionId, startEvent);
   sessionEventBus.publish(sessionId, startEvent);
 
-  const maxIterations = opts.maxIterations ?? 10;
   const record: SessionRecord = {
     currentStepId: null,
     pendingOutcome: null,
     closed: false,
+    abortHandler: null,
   };
   sessionRegistry.set(sessionId, record);
-
-  const outcomes: { step: string; ok: boolean; summary: string }[] = [];
-  const seenSteps = new Set<string>();
 
   const abortHandler = (): void => {
     record.pendingOutcome?.reject(new Error("aborted"));
   };
   opts.signal?.addEventListener("abort", abortHandler);
+  record.abortHandler = abortHandler;
+
+  return record;
+}
+
+async function emitDoneEvent(
+  sessionId: string,
+  outcomes: { step: string; ok: boolean; summary: string }[],
+): Promise<void> {
+  const doneEvt: JournalEvent = {
+    type: "done",
+    ts: new Date().toISOString(),
+    iterations: outcomes.length,
+  };
+  await appendJournalEvent(sessionId, doneEvt);
+  sessionEventBus.publish(sessionId, doneEvt);
+}
+
+/**
+ * Main entry point. Yields OpsChatStreamEvent values until the loop
+ * terminates via `done` or `refusal`. Deletes its session record in
+ * `finally` so AbortSignal or caller disconnect cleans up.
+ */
+export async function* runLoopExecutor(
+  opts: LoopExecutorOptions,
+): AsyncGenerator<OpsChatStreamEvent> {
+  const sessionId = randomUUID();
+  const record = await initSessionState(opts, sessionId);
+
+  const maxIterations = opts.maxIterations ?? 10;
+  const outcomes: { step: string; ok: boolean; summary: string }[] = [];
+  const seenSteps = new Set<string>();
 
   try {
     // Goal-pattern refusal fires before the planner ever runs. A
@@ -267,17 +294,12 @@ export async function* runLoopExecutor(
       iteration += 1;
     }
 
-    const doneEvt: JournalEvent = {
-      type: "done",
-      ts: new Date().toISOString(),
-      iterations: outcomes.length,
-    };
-    await appendJournalEvent(sessionId, doneEvt);
-    sessionEventBus.publish(sessionId, doneEvt);
-
+    await emitDoneEvent(sessionId, outcomes);
     yield { type: "done", iterations: outcomes.length };
   } finally {
-    opts.signal?.removeEventListener("abort", abortHandler);
+    if (record.abortHandler) {
+      opts.signal?.removeEventListener("abort", record.abortHandler);
+    }
     record.closed = true;
     record.pendingOutcome = null;
     sessionRegistry.delete(sessionId);

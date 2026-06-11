@@ -33,6 +33,182 @@ import {
  * are a deliberate follow-up so this slice stays compatible with the
  * sirius-providers.yaml shape today.
  */
+
+function resolveSiriusCatalog(
+  opts: GatewayApplyOptions,
+  now: string,
+): { ok: false; result: ApplyResult } | { ok: true; changed: boolean } {
+  let changed = false;
+  if (opts.composite) {
+    const derived = deriveSiriusEntries(opts.composite);
+    const current = readGatewayCatalog("sirius");
+    const result = applyCompositeEntries({
+      kind: "sirius",
+      compositeName: opts.composite.compositeName,
+      derived,
+      current,
+    });
+    if (result.conflicts.length > 0) {
+      const [c] = result.conflicts;
+      if (!c) throw new Error("gateway conflict list unexpectedly empty");
+      const reason =
+        c.kind === "name" ? "SiriusUpstreamNameCollision" : "SiriusUpstreamShapeMismatch";
+      const message =
+        c.kind === "name"
+          ? `entry '${c.name}' already exists as an operator-authored provider; remove it or change composite spec`
+          : `entry '${c.name}': ${c.detail}`;
+      return { ok: false, result: pending(opts, reason, message, now) };
+    }
+    if (result.changed) {
+      try {
+        writeGatewayCatalog("sirius", result.next);
+        changed = true;
+      } catch (err) {
+        return {
+          ok: false,
+          result: failure(
+            opts,
+            "SiriusCatalogWriteFailed",
+            `could not write sirius-providers.yaml: ${(err as Error).message}`,
+            now,
+          ),
+        };
+      }
+    }
+  }
+  return { ok: true, changed };
+}
+
+function resolveSiriusUpstream(
+  opts: GatewayApplyOptions,
+  now: string,
+): { ok: false; result: ApplyResult } | { ok: true; upstream: string; modelId: string } {
+  const targetValue = opts.manifest.spec.target.value;
+  const slash = targetValue.indexOf("/");
+  if (slash <= 0) {
+    return {
+      ok: false,
+      result: failure(
+        opts,
+        "SiriusTargetMalformed",
+        `sirius gateway manifests require spec.target.value in '<upstream>/<model>' form; got '${targetValue}'`,
+        now,
+      ),
+    };
+  }
+  const upstream = targetValue.slice(0, slash);
+  const modelId = targetValue.slice(slash + 1);
+
+  // Best-effort host-side validation. We read the same YAML sirius
+  // does, so a "not found" here matches what sirius would report
+  // itself. When the file is absent or empty — typical for
+  // containerized sirius deployments where the providers config
+  // lives in a ConfigMap mount inside the pod — skip the check and
+  // defer to sirius's /providers/reload response, which returns the
+  // authoritative error if the upstream is truly missing. Eager
+  // host-side validation stays the first line of defense whenever
+  // the operator maintains their own `sirius-providers.yaml` via
+  // `llamactl sirius add-provider`.
+  let providers;
+  try {
+    providers = loadSiriusProviders();
+  } catch (err) {
+    return {
+      ok: false,
+      result: failure(
+        opts,
+        "SiriusProvidersUnreadable",
+        `failed to read sirius-providers.yaml: ${(err as Error).message}`,
+        now,
+      ),
+    };
+  }
+  if (providers.length === 0) {
+    opts.onEvent?.({
+      type: "gateway-pending",
+      message: `${opts.manifest.metadata.name}: host-side sirius-providers.yaml empty/absent — deferring upstream validation to sirius /providers/reload`,
+    });
+  } else {
+    const match = providers.find((p) => p.name === upstream);
+    if (!match) {
+      return {
+        ok: false,
+        result: pending(
+          opts,
+          "SiriusUpstreamMissing",
+          `upstream '${upstream}' not found in sirius-providers.yaml; run \`llamactl sirius add-provider ${upstream} …\` first`,
+          now,
+        ),
+      };
+    }
+  }
+
+  return { ok: true, upstream, modelId };
+}
+
+async function performSiriusReload(
+  opts: GatewayApplyOptions,
+  baseUrl: string,
+  upstream: string,
+  modelId: string,
+  token: string,
+  now: string,
+): Promise<ApplyResult> {
+  // POST /providers/reload. Bearer-authed using the user resolved
+  // from the current kubeconfig context.
+  const reloadUrl = normalizeBaseUrl(baseUrl) + "/providers/reload";
+  try {
+    const res = await fetch(reloadUrl, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ source: "llamactl-workload", name: opts.manifest.metadata.name }),
+    });
+    if (!res.ok) {
+      const body = (await res.text().catch(() => "")).slice(0, 500);
+      return failure(
+        opts,
+        "SiriusReloadFailed",
+        `POST ${reloadUrl} returned ${String(res.status)}${body ? `: ${body}` : ""}`,
+        now,
+      );
+    }
+  } catch (err) {
+    return failure(
+      opts,
+      "SiriusReloadUnreachable",
+      `POST ${reloadUrl} failed: ${(err as Error).message}`,
+      now,
+    );
+  }
+
+  const endpoint = `${normalizeBaseUrl(baseUrl)}/v1/chat/completions`;
+  opts.onEvent?.({
+    type: "gateway-pending",
+    message: `${opts.manifest.metadata.name}: sirius reloaded — '${modelId}' via upstream '${upstream}' now routable at ${endpoint}`,
+  });
+  return {
+    action: "started",
+    statusSection: {
+      phase: "Running",
+      serverPid: null,
+      endpoint,
+      lastTransitionTime: now,
+      conditions: [
+        {
+          type: "Applied",
+          status: "True",
+          reason: "SiriusReloaded",
+          message: `sirius reloaded providers/${upstream}; model '${modelId}' is routable`,
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
+
 export const siriusHandler: GatewayHandler = {
   kind: "sirius",
   canHandle(node: ClusterNode): boolean {
@@ -41,92 +217,11 @@ export const siriusHandler: GatewayHandler = {
   async apply(opts: GatewayApplyOptions): Promise<ApplyResult> {
     const now = new Date().toISOString();
 
-    let catalogChanged = false;
-    if (opts.composite) {
-      const derived = deriveSiriusEntries(opts.composite);
-      const current = readGatewayCatalog("sirius");
-      const result = applyCompositeEntries({
-        kind: "sirius",
-        compositeName: opts.composite.compositeName,
-        derived,
-        current,
-      });
-      if (result.conflicts.length > 0) {
-        const [c] = result.conflicts;
-        if (!c) throw new Error("gateway conflict list unexpectedly empty");
-        const reason =
-          c.kind === "name" ? "SiriusUpstreamNameCollision" : "SiriusUpstreamShapeMismatch";
-        const message =
-          c.kind === "name"
-            ? `entry '${c.name}' already exists as an operator-authored provider; remove it or change composite spec`
-            : `entry '${c.name}': ${c.detail}`;
-        return pending(opts, reason, message, now);
-      }
-      if (result.changed) {
-        try {
-          writeGatewayCatalog("sirius", result.next);
-          catalogChanged = true;
-        } catch (err) {
-          return failure(
-            opts,
-            "SiriusCatalogWriteFailed",
-            `could not write sirius-providers.yaml: ${(err as Error).message}`,
-            now,
-          );
-        }
-      }
-    }
+    const catalogResult = resolveSiriusCatalog(opts, now);
+    if (!catalogResult.ok) return catalogResult.result;
 
-    const targetValue = opts.manifest.spec.target.value;
-    const slash = targetValue.indexOf("/");
-    if (slash <= 0) {
-      return failure(
-        opts,
-        "SiriusTargetMalformed",
-        `sirius gateway manifests require spec.target.value in '<upstream>/<model>' form; got '${targetValue}'`,
-        now,
-      );
-    }
-    const upstream = targetValue.slice(0, slash);
-    const modelId = targetValue.slice(slash + 1);
-
-    // Best-effort host-side validation. We read the same YAML sirius
-    // does, so a "not found" here matches what sirius would report
-    // itself. When the file is absent or empty — typical for
-    // containerized sirius deployments where the providers config
-    // lives in a ConfigMap mount inside the pod — skip the check and
-    // defer to sirius's /providers/reload response, which returns the
-    // authoritative error if the upstream is truly missing. Eager
-    // host-side validation stays the first line of defense whenever
-    // the operator maintains their own `sirius-providers.yaml` via
-    // `llamactl sirius add-provider`.
-    let providers;
-    try {
-      providers = loadSiriusProviders();
-    } catch (err) {
-      return failure(
-        opts,
-        "SiriusProvidersUnreadable",
-        `failed to read sirius-providers.yaml: ${(err as Error).message}`,
-        now,
-      );
-    }
-    if (providers.length === 0) {
-      opts.onEvent?.({
-        type: "gateway-pending",
-        message: `${opts.manifest.metadata.name}: host-side sirius-providers.yaml empty/absent — deferring upstream validation to sirius /providers/reload`,
-      });
-    } else {
-      const match = providers.find((p) => p.name === upstream);
-      if (!match) {
-        return pending(
-          opts,
-          "SiriusUpstreamMissing",
-          `upstream '${upstream}' not found in sirius-providers.yaml; run \`llamactl sirius add-provider ${upstream} …\` first`,
-          now,
-        );
-      }
-    }
+    const upstreamResult = resolveSiriusUpstream(opts, now);
+    if (!upstreamResult.ok) return upstreamResult.result;
 
     const baseUrl = opts.node.cloud?.baseUrl;
     if (!baseUrl) {
@@ -138,9 +233,6 @@ export const siriusHandler: GatewayHandler = {
       );
     }
 
-    // POST /providers/reload. Bearer-authed using the user resolved
-    // from the current kubeconfig context.
-    const reloadUrl = normalizeBaseUrl(baseUrl) + "/providers/reload";
     let token: string;
     try {
       const cfg = loadConfig();
@@ -157,39 +249,21 @@ export const siriusHandler: GatewayHandler = {
       );
     }
 
-    if (!opts.composite || catalogChanged) {
-      try {
-        const res = await fetch(reloadUrl, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${token}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({ source: "llamactl-workload", name: opts.manifest.metadata.name }),
-        });
-        if (!res.ok) {
-          const body = (await res.text().catch(() => "")).slice(0, 500);
-          return failure(
-            opts,
-            "SiriusReloadFailed",
-            `POST ${reloadUrl} returned ${String(res.status)}${body ? `: ${body}` : ""}`,
-            now,
-          );
-        }
-      } catch (err) {
-        return failure(
-          opts,
-          "SiriusReloadUnreachable",
-          `POST ${reloadUrl} failed: ${(err as Error).message}`,
-          now,
-        );
-      }
+    if (!opts.composite || catalogResult.changed) {
+      return await performSiriusReload(
+        opts,
+        baseUrl,
+        upstreamResult.upstream,
+        upstreamResult.modelId,
+        token,
+        now,
+      );
     }
 
     const endpoint = `${normalizeBaseUrl(baseUrl)}/v1/chat/completions`;
     opts.onEvent?.({
       type: "gateway-pending",
-      message: `${opts.manifest.metadata.name}: sirius reloaded — '${modelId}' via upstream '${upstream}' now routable at ${endpoint}`,
+      message: `${opts.manifest.metadata.name}: sirius reloaded — '${upstreamResult.modelId}' via upstream '${upstreamResult.upstream}' now routable at ${endpoint}`,
     });
     return {
       action: "started",
@@ -203,7 +277,7 @@ export const siriusHandler: GatewayHandler = {
             type: "Applied",
             status: "True",
             reason: "SiriusReloaded",
-            message: `sirius reloaded providers/${upstream}; model '${modelId}' is routable`,
+            message: `sirius reloaded providers/${upstreamResult.upstream}; model '${upstreamResult.modelId}' is routable`,
             lastTransitionTime: now,
           },
         ],

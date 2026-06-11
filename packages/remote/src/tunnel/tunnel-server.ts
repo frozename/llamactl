@@ -241,6 +241,236 @@ function buildSubscriptionIterable(
   };
 }
 
+function getState(ws: BunServerWebSocket): ConnectionState {
+  return ws.data as ConnectionState;
+}
+
+function closeQuietly(ws: BunServerWebSocket, code: number, reason: string): void {
+  try {
+    ws.close(code, reason);
+  } catch {
+    // ignore
+  }
+}
+
+/** Shared wiring threaded through the per-connection handlers. */
+interface TunnelServerContext {
+  opts: TunnelServerOptions;
+  clock: () => Date;
+  nodes: Map<string, BunServerWebSocket>;
+  journal: (entry: TunnelJournalEntry) => void;
+}
+
+function registerNode(ctx: TunnelServerContext, ws: BunServerWebSocket, nodeName: string): void {
+  const prior = ctx.nodes.get(nodeName);
+  if (prior && prior !== ws) {
+    // Emit the replaced entry BEFORE closing the prior socket so
+    // operators see the displacement event even if the close fires
+    // a race-y disconnect-log-first.
+    ctx.journal({
+      kind: "tunnel-replaced",
+      ts: ctx.clock().toISOString(),
+      nodeName,
+    });
+    try {
+      prior.close(TUNNEL_CLOSE_REPLACED, "replaced by newer connection");
+    } catch {
+      // best-effort; prior socket may already be closed
+    }
+  }
+  ctx.nodes.set(nodeName, ws);
+  ctx.opts.onNodeConnect?.(nodeName);
+  ctx.journal({
+    kind: "tunnel-connect",
+    ts: ctx.clock().toISOString(),
+    nodeName,
+  });
+}
+
+function unregisterNode(ctx: TunnelServerContext, ws: BunServerWebSocket, reason: string): void {
+  const state = getState(ws);
+  if (!state.nodeName) return;
+  // Only remove from registry if *this* ws still owns the slot.
+  // A displaced prior connection will fail this check — that case
+  // is already journaled as `tunnel-replaced` by registerNode.
+  if (ctx.nodes.get(state.nodeName) === ws) {
+    ctx.nodes.delete(state.nodeName);
+    ctx.opts.onNodeDisconnect?.(state.nodeName, reason);
+    // close() calls pass `ws closed <code>(<reason>)`; extract the
+    // numeric code so downstream tooling can bucket by close code
+    // (1000 clean shutdown vs 4xxx policy-close vs 1006 abnormal).
+    const codeMatch = /^ws closed (\d+)/.exec(reason);
+    const rawCode = codeMatch?.[1];
+    const code = rawCode ? Number.parseInt(rawCode, 10) : undefined;
+    ctx.journal({
+      kind: "tunnel-disconnect",
+      ts: ctx.clock().toISOString(),
+      nodeName: state.nodeName,
+      reason,
+      ...(typeof code === "number" && Number.isFinite(code) ? { code } : {}),
+    });
+  }
+  // Error out any pending requests awaiting responses.
+  for (const { reject } of state.pending.values()) {
+    reject(new Error(`tunnel-disconnected: ${reason}`));
+  }
+  state.pending.clear();
+  // Terminate any in-flight subscriptions with a synthetic error —
+  // the consumer's `for await` will throw with the reason so it
+  // can bail out of its SSE body loop cleanly. No explicit
+  // stream-cancel ships because the ws is already gone.
+  for (const { done } of state.subscriptions.values()) {
+    done({ code: "tunnel-disconnected", message: reason });
+  }
+  state.subscriptions.clear();
+}
+
+/** First-message authentication: a `hello` frame carrying the bearer. */
+function handleHello(
+  ctx: TunnelServerContext,
+  ws: BunServerWebSocket,
+  state: ConnectionState,
+  msg: TunnelMessage,
+): void {
+  if (msg.type !== "hello") {
+    ctx.journal({
+      kind: "tunnel-unauthorized",
+      ts: ctx.clock().toISOString(),
+      reason: "hello-required-first",
+    });
+    closeQuietly(ws, TUNNEL_CLOSE_UNAUTHORIZED, "hello required first");
+    return;
+  }
+  if (hashToken(msg.bearer) !== ctx.opts.expectedBearerHash) {
+    // Hello parsed cleanly so the nodeName is known; journal it
+    // so operators can see WHICH node is presenting a stale
+    // bearer (common after a central-side bearer rotation).
+    ctx.journal({
+      kind: "tunnel-unauthorized",
+      ts: ctx.clock().toISOString(),
+      nodeName: msg.nodeName,
+      reason: "bad-bearer",
+    });
+    closeQuietly(ws, TUNNEL_CLOSE_UNAUTHORIZED, "bad bearer");
+    return;
+  }
+  state.authenticated = true;
+  state.nodeName = msg.nodeName;
+  if (state.helloTimer) {
+    clearTimeout(state.helloTimer);
+    state.helloTimer = null;
+  }
+  registerNode(ctx, ws, msg.nodeName);
+  const ack: TunnelMessage = {
+    type: "hello-ack",
+    serverTime: ctx.clock().toISOString(),
+  };
+  ws.send(encodeTunnelMessage(ack));
+}
+
+function handleTunnelMessage(
+  ctx: TunnelServerContext,
+  ws: BunServerWebSocket,
+  data: string | Buffer,
+): void {
+  const state = getState(ws);
+  const raw = typeof data === "string" ? data : data.toString("utf8");
+  const msg = parseTunnelMessage(raw);
+  if (!msg) {
+    ctx.journal({
+      kind: "tunnel-unauthorized",
+      ts: ctx.clock().toISOString(),
+      reason: "malformed-hello",
+    });
+    closeQuietly(ws, TUNNEL_CLOSE_BAD_HELLO, "malformed frame");
+    return;
+  }
+  if (!state.authenticated) {
+    handleHello(ctx, ws, state, msg);
+    return;
+  }
+  if (msg.type === "res") {
+    const pending = state.pending.get(msg.id);
+    if (pending) {
+      state.pending.delete(msg.id);
+      pending.resolve(msg);
+    }
+    return;
+  }
+  if (msg.type === "stream-event") {
+    // Route to subscription map ONLY — a late stream-event
+    // after cancel will miss (no-op) which is the intended
+    // silent-drop behaviour.
+    const sub = state.subscriptions.get(msg.id);
+    if (sub) sub.push(msg.data);
+    return;
+  }
+  if (msg.type === "stream-done") {
+    const sub = state.subscriptions.get(msg.id);
+    if (sub) {
+      state.subscriptions.delete(msg.id);
+      sub.done(msg.ok ? undefined : msg.error);
+    }
+    return;
+  }
+  if (msg.type === "ping") {
+    ws.send(encodeTunnelMessage({ type: "pong", nonce: msg.nonce }));
+    return;
+  }
+  // Anything else at this stage (req from a node, spurious
+  // hello) is ignored — tunnel is request-from-central only.
+}
+
+/** AsyncIterable that throws on first `next()` — used when the target
+ *  node has no live tunnel so `for await` consumers fail fast. */
+function notConnectedIterable(nodeName: string): AsyncIterable<unknown> {
+  const err = new Error(`tunnel not connected for node '${nodeName}'`);
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<unknown> {
+      let thrown = false;
+      return {
+        next(): Promise<IteratorResult<unknown>> {
+          if (thrown) return Promise.resolve({ value: undefined, done: true });
+          thrown = true;
+          return Promise.reject(err);
+        },
+        return(): Promise<IteratorResult<unknown>> {
+          return Promise.resolve({ value: undefined, done: true });
+        },
+      };
+    },
+  };
+}
+
+function buildRegistry(ctx: TunnelServerContext): TunnelRegistryEntry[] {
+  const out: TunnelRegistryEntry[] = [];
+  for (const [nodeName, ws] of ctx.nodes.entries()) {
+    const state = getState(ws);
+    out.push({
+      nodeName,
+      connectedAt: ctx.clock().toISOString(),
+      send: (req) =>
+        new Promise<TunnelRes>((resolve, reject) => {
+          state.pending.set(req.id, { resolve, reject });
+          try {
+            ws.send(encodeTunnelMessage(req));
+          } catch (err) {
+            state.pending.delete(req.id);
+            reject(err instanceof Error ? err : new Error(String(err)));
+          }
+        }),
+      close: (code, reason) => {
+        try {
+          ws.close(code ?? 1000, reason ?? "closed by registry");
+        } catch {
+          // ignore
+        }
+      },
+    });
+  }
+  return out;
+}
+
 export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
   const clock = opts.clock ?? ((): Date => new Date());
   const nodes = new Map<string, BunServerWebSocket>();
@@ -257,74 +487,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       // swallowed; appendTunnelJournal already stderr-warns once.
     }
   };
-
-  function getState(ws: BunServerWebSocket): ConnectionState {
-    return ws.data as ConnectionState;
-  }
-
-  function registerNode(ws: BunServerWebSocket, nodeName: string): void {
-    const prior = nodes.get(nodeName);
-    if (prior && prior !== ws) {
-      // Emit the replaced entry BEFORE closing the prior socket so
-      // operators see the displacement event even if the close fires
-      // a race-y disconnect-log-first.
-      journal({
-        kind: "tunnel-replaced",
-        ts: clock().toISOString(),
-        nodeName,
-      });
-      try {
-        prior.close(TUNNEL_CLOSE_REPLACED, "replaced by newer connection");
-      } catch {
-        // best-effort; prior socket may already be closed
-      }
-    }
-    nodes.set(nodeName, ws);
-    opts.onNodeConnect?.(nodeName);
-    journal({
-      kind: "tunnel-connect",
-      ts: clock().toISOString(),
-      nodeName,
-    });
-  }
-
-  function unregisterNode(ws: BunServerWebSocket, reason: string): void {
-    const state = getState(ws);
-    if (!state.nodeName) return;
-    // Only remove from registry if *this* ws still owns the slot.
-    // A displaced prior connection will fail this check — that case
-    // is already journaled as `tunnel-replaced` by registerNode.
-    if (nodes.get(state.nodeName) === ws) {
-      nodes.delete(state.nodeName);
-      opts.onNodeDisconnect?.(state.nodeName, reason);
-      // close() calls pass `ws closed <code>(<reason>)`; extract the
-      // numeric code so downstream tooling can bucket by close code
-      // (1000 clean shutdown vs 4xxx policy-close vs 1006 abnormal).
-      const codeMatch = /^ws closed (\d+)/.exec(reason);
-      const rawCode = codeMatch?.[1];
-      const code = rawCode ? Number.parseInt(rawCode, 10) : undefined;
-      journal({
-        kind: "tunnel-disconnect",
-        ts: clock().toISOString(),
-        nodeName: state.nodeName,
-        reason,
-        ...(typeof code === "number" && Number.isFinite(code) ? { code } : {}),
-      });
-    }
-    // Error out any pending requests awaiting responses.
-    for (const { reject } of state.pending.values()) {
-      reject(new Error(`tunnel-disconnected: ${reason}`));
-    }
-    state.pending.clear();
-    // Terminate any in-flight subscriptions with a synthetic error —
-    // the consumer's `for await` will throw with the reason so it
-    // can bail out of its SSE body loop cleanly. No explicit
-    // stream-cancel ships because the ws is already gone.
-    for (const { done } of state.subscriptions.values()) {
-      done({ code: "tunnel-disconnected", message: reason });
-    }
-    state.subscriptions.clear();
-  }
+  const ctx: TunnelServerContext = { opts, clock, nodes, journal };
 
   return {
     handleUpgrade(req, server): Response | undefined {
@@ -364,97 +527,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         }, HELLO_TIMEOUT_MS);
       },
       message(ws, data): void {
-        const state = getState(ws);
-        const raw = typeof data === "string" ? data : data.toString("utf8");
-        const msg = parseTunnelMessage(raw);
-        if (!msg) {
-          journal({
-            kind: "tunnel-unauthorized",
-            ts: clock().toISOString(),
-            reason: "malformed-hello",
-          });
-          try {
-            ws.close(TUNNEL_CLOSE_BAD_HELLO, "malformed frame");
-          } catch {
-            // ignore
-          }
-          return;
-        }
-        if (!state.authenticated) {
-          if (msg.type !== "hello") {
-            journal({
-              kind: "tunnel-unauthorized",
-              ts: clock().toISOString(),
-              reason: "hello-required-first",
-            });
-            try {
-              ws.close(TUNNEL_CLOSE_UNAUTHORIZED, "hello required first");
-            } catch {
-              // ignore
-            }
-            return;
-          }
-          if (hashToken(msg.bearer) !== opts.expectedBearerHash) {
-            // Hello parsed cleanly so the nodeName is known; journal it
-            // so operators can see WHICH node is presenting a stale
-            // bearer (common after a central-side bearer rotation).
-            journal({
-              kind: "tunnel-unauthorized",
-              ts: clock().toISOString(),
-              nodeName: msg.nodeName,
-              reason: "bad-bearer",
-            });
-            try {
-              ws.close(TUNNEL_CLOSE_UNAUTHORIZED, "bad bearer");
-            } catch {
-              // ignore
-            }
-            return;
-          }
-          state.authenticated = true;
-          state.nodeName = msg.nodeName;
-          if (state.helloTimer) {
-            clearTimeout(state.helloTimer);
-            state.helloTimer = null;
-          }
-          registerNode(ws, msg.nodeName);
-          const ack: TunnelMessage = {
-            type: "hello-ack",
-            serverTime: clock().toISOString(),
-          };
-          ws.send(encodeTunnelMessage(ack));
-          return;
-        }
-        if (msg.type === "res") {
-          const pending = state.pending.get(msg.id);
-          if (pending) {
-            state.pending.delete(msg.id);
-            pending.resolve(msg);
-          }
-          return;
-        }
-        if (msg.type === "stream-event") {
-          // Route to subscription map ONLY — a late stream-event
-          // after cancel will miss (no-op) which is the intended
-          // silent-drop behaviour.
-          const sub = state.subscriptions.get(msg.id);
-          if (sub) sub.push(msg.data);
-          return;
-        }
-        if (msg.type === "stream-done") {
-          const sub = state.subscriptions.get(msg.id);
-          if (sub) {
-            state.subscriptions.delete(msg.id);
-            sub.done(msg.ok ? undefined : msg.error);
-          }
-          return;
-        }
-        if (msg.type === "ping") {
-          ws.send(encodeTunnelMessage({ type: "pong", nonce: msg.nonce }));
-          return;
-        }
-        // Anything else at this stage (req from a node, spurious
-        // hello) is ignored — tunnel is request-from-central only.
+        handleTunnelMessage(ctx, ws, data);
       },
       close(ws, code, reason): void {
         const state = getState(ws);
@@ -462,7 +535,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
           clearTimeout(state.helloTimer);
           state.helloTimer = null;
         }
-        unregisterNode(ws, `ws closed ${String(code)}${reason ? ` (${reason})` : ""}`);
+        unregisterNode(ctx, ws, `ws closed ${String(code)}${reason ? ` (${reason})` : ""}`);
       },
     },
     async send(
@@ -494,54 +567,14 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         // Return an iterable that throws on first `next()` so the
         // synchronous call signature stays simple. Consumers inside
         // a `for await` will see the throw on iteration start.
-        const err = new Error(`tunnel not connected for node '${nodeName}'`);
-        return {
-          [Symbol.asyncIterator](): AsyncIterator<unknown> {
-            let thrown = false;
-            return {
-              next(): Promise<IteratorResult<unknown>> {
-                if (thrown) return Promise.resolve({ value: undefined, done: true });
-                thrown = true;
-                return Promise.reject(err);
-              },
-              return(): Promise<IteratorResult<unknown>> {
-                return Promise.resolve({ value: undefined, done: true });
-              },
-            };
-          },
-        };
+        return notConnectedIterable(nodeName);
       }
       const state = getState(ws);
       const full: TunnelReq = { type: "req", ...req };
       return buildSubscriptionIterable(ws, state, full);
     },
     registry(): TunnelRegistryEntry[] {
-      const out: TunnelRegistryEntry[] = [];
-      for (const [nodeName, ws] of nodes.entries()) {
-        const state = getState(ws);
-        out.push({
-          nodeName,
-          connectedAt: clock().toISOString(),
-          send: (req) =>
-            new Promise<TunnelRes>((resolve, reject) => {
-              state.pending.set(req.id, { resolve, reject });
-              try {
-                ws.send(encodeTunnelMessage(req));
-              } catch (err) {
-                state.pending.delete(req.id);
-                reject(err instanceof Error ? err : new Error(String(err)));
-              }
-            }),
-          close: (code, reason) => {
-            try {
-              ws.close(code ?? 1000, reason ?? "closed by registry");
-            } catch {
-              // ignore
-            }
-          },
-        });
-      }
-      return out;
+      return buildRegistry(ctx);
     },
     disconnect(nodeName, reason): boolean {
       const ws = nodes.get(nodeName);

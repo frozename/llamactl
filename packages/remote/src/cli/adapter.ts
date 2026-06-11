@@ -131,6 +131,353 @@ interface BunRuntime {
  * request from the factory, not per-workspace — each adapter is
  * cheap (no persistent connection; every call re-spawns).
  */
+function buildCliJournalEntry(
+  opts: CliProviderOptions,
+  startedAt: number,
+  prompt: string,
+  spawnResult: SpawnResult | undefined,
+  ok: boolean,
+): CliJournalEntry {
+  const latencyMs = Date.now() - startedAt;
+  const entry: CliJournalEntry = {
+    ts: new Date(startedAt).toISOString(),
+    agent: opts.agentName,
+    binding_name: opts.binding.name,
+    preset: opts.binding.preset,
+    ...(opts.binding.subscription !== undefined ? { subscription: opts.binding.subscription } : {}),
+    ...(opts.binding.defaultModel !== undefined ? { model: opts.binding.defaultModel } : {}),
+    prompt_bytes: Buffer.byteLength(prompt, "utf8"),
+    response_bytes: spawnResult ? Buffer.byteLength(spawnResult.stdout, "utf8") : 0,
+    latency_ms: latencyMs,
+    ok,
+  };
+  if (spawnResult) {
+    entry.exit_code = spawnResult.exitCode;
+    if (spawnResult.aborted) entry.error_code = "timeout";
+    else if (spawnResult.exitCode !== 0) entry.error_code = "non-zero-exit";
+  } else {
+    entry.error_code = "spawn-failed";
+  }
+  return entry;
+}
+
+function buildCliResponse(
+  opts: CliProviderOptions,
+  startedAt: number,
+  prompt: string,
+  assistantContent: string,
+  model: string,
+): UnifiedAiResponse {
+  // Rough token estimation — 4 chars/token is the industry
+  // rule of thumb. Real adapters (openai-compat) read usage
+  // off the response; CLIs don't expose it, so the journal
+  // carries bytes and the UsageRecord carries an estimate.
+  const promptTokens = Math.ceil(Buffer.byteLength(prompt, "utf8") / 4);
+  const completionTokens = Math.ceil(Buffer.byteLength(assistantContent, "utf8") / 4);
+  const latencyMs = Date.now() - startedAt;
+  return {
+    id: `cli-${randomUUID()}`,
+    object: "chat.completion",
+    model,
+    created: Math.floor(startedAt / 1000),
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: assistantContent },
+        finish_reason: "stop",
+      },
+    ],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    },
+    latencyMs,
+    provider: `${opts.agentName}.${opts.binding.name}`,
+  };
+}
+
+function throwCliError(
+  providerId: string,
+  opts: CliProviderOptions,
+  spawnResult: SpawnResult,
+  code: "timeout" | "non-zero-exit",
+): never {
+  const msg =
+    code === "timeout"
+      ? `timed out after ${String(opts.binding.timeoutMs)}ms (stderr: ${truncate(spawnResult.stderr, 400)})`
+      : `exited with code ${String(spawnResult.exitCode)} (stderr: ${truncate(spawnResult.stderr, 400)})`;
+  throw wrapCliError(providerId, new Error(msg), code);
+}
+
+function buildStreamErrorEvent(providerId: string, err: unknown): UnifiedStreamEvent {
+  return {
+    type: "error",
+    error: {
+      message: `cli provider '${providerId}' stream-failed: ${(err as Error).message}`,
+      code: "stream-failed",
+    },
+  };
+}
+
+function buildStreamJournalEntry(
+  opts: CliProviderOptions,
+  startedAt: number,
+  prompt: string,
+  responseBytes: number,
+  exitCode: number,
+  aborted: boolean,
+): CliJournalEntry {
+  return {
+    ts: new Date(startedAt).toISOString(),
+    agent: opts.agentName,
+    binding_name: opts.binding.name,
+    preset: opts.binding.preset,
+    ...(opts.binding.subscription !== undefined ? { subscription: opts.binding.subscription } : {}),
+    ...(opts.binding.defaultModel !== undefined ? { model: opts.binding.defaultModel } : {}),
+    prompt_bytes: Buffer.byteLength(prompt, "utf8"),
+    response_bytes: responseBytes,
+    latency_ms: Date.now() - startedAt,
+    ok: !aborted && exitCode === 0,
+    exit_code: exitCode,
+    ...(aborted
+      ? { error_code: "timeout" }
+      : exitCode !== 0
+        ? { error_code: "non-zero-exit" }
+        : {}),
+  };
+}
+
+async function createCliResponse(
+  opts: CliProviderOptions,
+  providerId: string,
+  spawn: SpawnFn,
+  journalWrite: (entry: CliJournalEntry) => Promise<void>,
+  request: UnifiedAiRequest,
+): Promise<UnifiedAiResponse> {
+  const resolved = resolvePreset(opts.binding);
+  const prompt = messagesToPrompt(request.messages);
+  const { args: expandedArgs, promptOnStdin } = expandArgs(resolved.args, prompt);
+  const argv: SpawnArgv = [resolved.command, ...expandedArgs];
+  const env = mergeEnv(opts.env ?? process.env, opts.binding.env);
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => {
+    ctrl.abort();
+  }, opts.binding.timeoutMs);
+  const startedAt = Date.now();
+  let spawnResult: SpawnResult;
+  try {
+    spawnResult = await spawn(argv, {
+      env,
+      signal: ctrl.signal,
+      promptOnStdin,
+      prompt,
+    });
+  } catch (err) {
+    const entry = buildCliJournalEntry(opts, startedAt, prompt, undefined, false);
+    await journalWrite(entry);
+    throw wrapCliError(providerId, err, "spawn-failed");
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const entry = buildCliJournalEntry(
+    opts,
+    startedAt,
+    prompt,
+    spawnResult,
+    !spawnResult.aborted && spawnResult.exitCode === 0,
+  );
+  await journalWrite(entry);
+
+  if (spawnResult.aborted) {
+    throwCliError(providerId, opts, spawnResult, "timeout");
+  }
+  if (spawnResult.exitCode !== 0) {
+    throwCliError(providerId, opts, spawnResult, "non-zero-exit");
+  }
+
+  const assistantContent = parseAssistantContent(spawnResult.stdout, resolved.format);
+  return buildCliResponse(opts, startedAt, prompt, assistantContent, request.model);
+}
+
+async function* streamCliResponse(
+  opts: CliProviderOptions,
+  providerId: string,
+  spawnStream: SpawnStreamFn,
+  journalWrite: (entry: CliJournalEntry) => Promise<void>,
+  request: UnifiedAiRequest,
+  callerSignal?: AbortSignal,
+): AsyncGenerator<UnifiedStreamEvent, void, void> {
+  const resolved = resolvePreset(opts.binding);
+  const prompt = messagesToPrompt(request.messages);
+  const { args: expandedArgs, promptOnStdin } = expandArgs(resolved.args, prompt);
+  const argv: SpawnArgv = [resolved.command, ...expandedArgs];
+  const env = mergeEnv(opts.env ?? process.env, opts.binding.env);
+
+  // Local AbortController: timeout + caller signal both
+  // flip it. The caller's AbortSignal (from tRPC) takes
+  // precedence — if the UI cancels, kill the child.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => {
+    ctrl.abort();
+  }, opts.binding.timeoutMs);
+  const onCallerAbort = (): void => {
+    ctrl.abort();
+  };
+  if (callerSignal) {
+    if (callerSignal.aborted) ctrl.abort();
+    else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
+  }
+  const startedAt = Date.now();
+  const model = request.model;
+  const chunkId = `cli-${randomUUID()}`;
+  let responseBytes = 0;
+  let yieldedRole = false;
+  let stream: SpawnStreamResult;
+  try {
+    stream = await spawnStream(argv, {
+      env,
+      signal: ctrl.signal,
+      promptOnStdin,
+      prompt,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    callerSignal?.removeEventListener("abort", onCallerAbort);
+    await journalWrite(buildCliJournalEntry(opts, startedAt, prompt, undefined, false));
+    yield {
+      type: "error",
+      error: {
+        message: `cli provider '${providerId}' spawn-failed: ${(err as Error).message}`,
+        code: "spawn-failed",
+      },
+    };
+    return;
+  }
+
+  try {
+    for await (const rawLine of stream.stdout) {
+      if (ctrl.signal.aborted) break;
+      // Re-attach the newline so concatenated deltas
+      // reconstruct the original output. The final
+      // \n is trimmed in consumers that display
+      // token-by-token.
+      const delta = `${rawLine}\n`;
+      responseBytes += Buffer.byteLength(delta, "utf8");
+      const choice: {
+        index: number;
+        delta: { role?: "assistant"; content: string };
+      } = {
+        index: 0,
+        delta: yieldedRole ? { content: delta } : { role: "assistant", content: delta },
+      };
+      yieldedRole = true;
+      yield {
+        type: "chunk",
+        chunk: {
+          id: chunkId,
+          object: "chat.completion.chunk",
+          model,
+          created: Math.floor(startedAt / 1000),
+          choices: [choice],
+        },
+      };
+    }
+  } catch (err) {
+    yield buildStreamErrorEvent(providerId, err);
+    // Fall through to the journal write + done below.
+  }
+
+  const { exitCode, aborted } = await stream.exitedPromise;
+  const stderrText = await stream.stderrPromise;
+  clearTimeout(timer);
+  callerSignal?.removeEventListener("abort", onCallerAbort);
+
+  await journalWrite(
+    buildStreamJournalEntry(opts, startedAt, prompt, responseBytes, exitCode, aborted),
+  );
+
+  if (aborted) {
+    yield {
+      type: "error",
+      error: {
+        message: `cli provider '${providerId}' timeout after ${String(opts.binding.timeoutMs)}ms`,
+        code: "timeout",
+        retryable: false,
+      },
+    };
+    yield { type: "done", finish_reason: "stop" };
+    return;
+  }
+  if (exitCode !== 0) {
+    yield {
+      type: "error",
+      error: {
+        message: `cli provider '${providerId}' non-zero-exit ${String(exitCode)}: ${truncate(stderrText, 400)}`,
+        code: "non-zero-exit",
+      },
+    };
+  }
+  yield { type: "done", finish_reason: "stop" };
+}
+
+async function cliHealthCheck(
+  opts: CliProviderOptions,
+  providerId: string,
+  spawn: SpawnFn,
+): Promise<ProviderHealth> {
+  const resolved = resolvePreset(opts.binding);
+  const startedAt = Date.now();
+  const ctrl = new AbortController();
+  // Short window — version probes should come back instantly. If
+  // the binary hangs on --version we'd rather fail fast than
+  // burn through the call timeout.
+  const timer = setTimeout(() => {
+    ctrl.abort();
+  }, 10_000);
+  try {
+    const result = await spawn([resolved.command, ...resolved.versionProbe], {
+      env: mergeEnv(opts.env ?? process.env, opts.binding.env),
+      signal: ctrl.signal,
+      promptOnStdin: false,
+      prompt: "",
+    });
+    const latencyMs = Date.now() - startedAt;
+    if (result.aborted) {
+      return {
+        state: "unhealthy",
+        lastChecked: new Date().toISOString(),
+        latencyMs,
+        error: `timeout running ${resolved.command} ${resolved.versionProbe.join(" ")}`,
+      };
+    }
+    if (result.exitCode !== 0) {
+      return {
+        state: "unhealthy",
+        lastChecked: new Date().toISOString(),
+        latencyMs,
+        error: `${resolved.command} ${resolved.versionProbe.join(" ")} exited ${String(result.exitCode)}: ${truncate(result.stderr, 240)}`,
+      };
+    }
+    return {
+      state: "healthy",
+      lastChecked: new Date().toISOString(),
+      latencyMs,
+    };
+  } catch (err) {
+    return {
+      state: "unhealthy",
+      lastChecked: new Date().toISOString(),
+      latencyMs: Date.now() - startedAt,
+      error: (err as Error).message,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvider {
   const resolved = resolvePreset(opts.binding);
   const providerId = `${opts.agentName}.${opts.binding.name}`;
@@ -141,120 +488,7 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
   return {
     name: providerId,
     displayName: `${opts.binding.name} (${opts.binding.preset})`,
-
-    async createResponse(request: UnifiedAiRequest): Promise<UnifiedAiResponse> {
-      const prompt = messagesToPrompt(request.messages);
-      const { args: expandedArgs, promptOnStdin } = expandArgs(resolved.args, prompt);
-      const argv: SpawnArgv = [resolved.command, ...expandedArgs];
-      const env = mergeEnv(opts.env ?? process.env, opts.binding.env);
-
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => {
-        ctrl.abort();
-      }, opts.binding.timeoutMs);
-      const startedAt = Date.now();
-      let spawnResult: SpawnResult;
-      try {
-        spawnResult = await spawn(argv, {
-          env,
-          signal: ctrl.signal,
-          promptOnStdin,
-          prompt,
-        });
-      } catch (err) {
-        const entry: CliJournalEntry = {
-          ts: new Date(startedAt).toISOString(),
-          agent: opts.agentName,
-          binding_name: opts.binding.name,
-          preset: opts.binding.preset,
-          ...(opts.binding.subscription !== undefined
-            ? { subscription: opts.binding.subscription }
-            : {}),
-          ...(opts.binding.defaultModel !== undefined ? { model: opts.binding.defaultModel } : {}),
-          prompt_bytes: Buffer.byteLength(prompt, "utf8"),
-          response_bytes: 0,
-          latency_ms: Date.now() - startedAt,
-          ok: false,
-          error_code: "spawn-failed",
-        };
-        await journalWrite(entry);
-        throw wrapCliError(providerId, err, "spawn-failed");
-      } finally {
-        clearTimeout(timer);
-      }
-      const latencyMs = Date.now() - startedAt;
-
-      const entry: CliJournalEntry = {
-        ts: new Date(startedAt).toISOString(),
-        agent: opts.agentName,
-        binding_name: opts.binding.name,
-        preset: opts.binding.preset,
-        ...(opts.binding.subscription !== undefined
-          ? { subscription: opts.binding.subscription }
-          : {}),
-        ...(opts.binding.defaultModel !== undefined ? { model: opts.binding.defaultModel } : {}),
-        prompt_bytes: Buffer.byteLength(prompt, "utf8"),
-        response_bytes: Buffer.byteLength(spawnResult.stdout, "utf8"),
-        latency_ms: latencyMs,
-        ok: !spawnResult.aborted && spawnResult.exitCode === 0,
-        exit_code: spawnResult.exitCode,
-        ...(spawnResult.aborted
-          ? { error_code: "timeout" }
-          : spawnResult.exitCode !== 0
-            ? { error_code: "non-zero-exit" }
-            : {}),
-      };
-      await journalWrite(entry);
-
-      if (spawnResult.aborted) {
-        throw wrapCliError(
-          providerId,
-          new Error(
-            `timed out after ${String(opts.binding.timeoutMs)}ms (stderr: ${truncate(spawnResult.stderr, 400)})`,
-          ),
-          "timeout",
-        );
-      }
-      if (spawnResult.exitCode !== 0) {
-        throw wrapCliError(
-          providerId,
-          new Error(
-            `exited with code ${String(spawnResult.exitCode)} (stderr: ${truncate(spawnResult.stderr, 400)})`,
-          ),
-          "non-zero-exit",
-        );
-      }
-
-      const assistantContent = parseAssistantContent(spawnResult.stdout, resolved.format);
-      const model = request.model;
-
-      // Rough token estimation — 4 chars/token is the industry
-      // rule of thumb. Real adapters (openai-compat) read usage
-      // off the response; CLIs don't expose it, so the journal
-      // carries bytes and the UsageRecord carries an estimate.
-      const promptTokens = Math.ceil(Buffer.byteLength(prompt, "utf8") / 4);
-      const completionTokens = Math.ceil(Buffer.byteLength(assistantContent, "utf8") / 4);
-      return {
-        id: `cli-${randomUUID()}`,
-        object: "chat.completion",
-        model,
-        created: Math.floor(startedAt / 1000),
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: assistantContent },
-            finish_reason: "stop",
-          },
-        ],
-        usage: {
-          prompt_tokens: promptTokens,
-          completion_tokens: completionTokens,
-          total_tokens: promptTokens + completionTokens,
-        },
-        latencyMs,
-        provider: providerId,
-      };
-    },
+    createResponse: (request) => createCliResponse(opts, providerId, spawn, journalWrite, request),
 
     // Streaming path — only wired when the preset declares
     // `stream: true`. Presets that don't support incremental
@@ -267,212 +501,18 @@ export function createCliSubprocessProvider(opts: CliProviderOptions): AiProvide
             request: UnifiedAiRequest,
             callerSignal?: AbortSignal,
           ): AsyncGenerator<UnifiedStreamEvent, void, void> {
-            const prompt = messagesToPrompt(request.messages);
-            const { args: expandedArgs, promptOnStdin } = expandArgs(resolved.args, prompt);
-            const argv: SpawnArgv = [resolved.command, ...expandedArgs];
-            const env = mergeEnv(opts.env ?? process.env, opts.binding.env);
-
-            // Local AbortController: timeout + caller signal both
-            // flip it. The caller's AbortSignal (from tRPC) takes
-            // precedence — if the UI cancels, kill the child.
-            const ctrl = new AbortController();
-            const timer = setTimeout(() => {
-              ctrl.abort();
-            }, opts.binding.timeoutMs);
-            const onCallerAbort = (): void => {
-              ctrl.abort();
-            };
-            if (callerSignal) {
-              if (callerSignal.aborted) ctrl.abort();
-              else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
-            }
-            const startedAt = Date.now();
-            const model = request.model;
-            const chunkId = `cli-${randomUUID()}`;
-            let responseBytes = 0;
-            let yieldedRole = false;
-            let stream: SpawnStreamResult;
-            try {
-              stream = await spawnStream(argv, {
-                env,
-                signal: ctrl.signal,
-                promptOnStdin,
-                prompt,
-              });
-            } catch (err) {
-              clearTimeout(timer);
-              callerSignal?.removeEventListener("abort", onCallerAbort);
-              const entry: CliJournalEntry = {
-                ts: new Date(startedAt).toISOString(),
-                agent: opts.agentName,
-                binding_name: opts.binding.name,
-                preset: opts.binding.preset,
-                ...(opts.binding.subscription !== undefined
-                  ? { subscription: opts.binding.subscription }
-                  : {}),
-                ...(opts.binding.defaultModel !== undefined
-                  ? { model: opts.binding.defaultModel }
-                  : {}),
-                prompt_bytes: Buffer.byteLength(prompt, "utf8"),
-                response_bytes: 0,
-                latency_ms: Date.now() - startedAt,
-                ok: false,
-                error_code: "spawn-failed",
-              };
-              await journalWrite(entry);
-              yield {
-                type: "error",
-                error: {
-                  message: `cli provider '${providerId}' spawn-failed: ${(err as Error).message}`,
-                  code: "spawn-failed",
-                },
-              };
-              return;
-            }
-
-            try {
-              for await (const rawLine of stream.stdout) {
-                if (ctrl.signal.aborted) break;
-                // Re-attach the newline so concatenated deltas
-                // reconstruct the original output. The final
-                // \n is trimmed in consumers that display
-                // token-by-token.
-                const delta = `${rawLine}\n`;
-                responseBytes += Buffer.byteLength(delta, "utf8");
-                const choice: {
-                  index: number;
-                  delta: { role?: "assistant"; content: string };
-                } = {
-                  index: 0,
-                  delta: yieldedRole ? { content: delta } : { role: "assistant", content: delta },
-                };
-                yieldedRole = true;
-                yield {
-                  type: "chunk",
-                  chunk: {
-                    id: chunkId,
-                    object: "chat.completion.chunk",
-                    model,
-                    created: Math.floor(startedAt / 1000),
-                    choices: [choice],
-                  },
-                };
-              }
-            } catch (err) {
-              yield {
-                type: "error",
-                error: {
-                  message: `cli provider '${providerId}' stream-failed: ${(err as Error).message}`,
-                  code: "stream-failed",
-                },
-              };
-              // Fall through to the journal write + done below.
-            }
-
-            const { exitCode, aborted } = await stream.exitedPromise;
-            const stderrText = await stream.stderrPromise;
-            clearTimeout(timer);
-            callerSignal?.removeEventListener("abort", onCallerAbort);
-
-            const entry: CliJournalEntry = {
-              ts: new Date(startedAt).toISOString(),
-              agent: opts.agentName,
-              binding_name: opts.binding.name,
-              preset: opts.binding.preset,
-              ...(opts.binding.subscription !== undefined
-                ? { subscription: opts.binding.subscription }
-                : {}),
-              ...(opts.binding.defaultModel !== undefined
-                ? { model: opts.binding.defaultModel }
-                : {}),
-              prompt_bytes: Buffer.byteLength(prompt, "utf8"),
-              response_bytes: responseBytes,
-              latency_ms: Date.now() - startedAt,
-              ok: !aborted && exitCode === 0,
-              exit_code: exitCode,
-              ...(aborted
-                ? { error_code: "timeout" }
-                : exitCode !== 0
-                  ? { error_code: "non-zero-exit" }
-                  : {}),
-            };
-            await journalWrite(entry);
-
-            if (aborted) {
-              yield {
-                type: "error",
-                error: {
-                  message: `cli provider '${providerId}' timeout after ${String(opts.binding.timeoutMs)}ms`,
-                  code: "timeout",
-                  retryable: false,
-                },
-              };
-              yield { type: "done", finish_reason: "stop" };
-              return;
-            }
-            if (exitCode !== 0) {
-              yield {
-                type: "error",
-                error: {
-                  message: `cli provider '${providerId}' non-zero-exit ${String(exitCode)}: ${truncate(stderrText, 400)}`,
-                  code: "non-zero-exit",
-                },
-              };
-            }
-            yield { type: "done", finish_reason: "stop" };
+            yield* streamCliResponse(
+              opts,
+              providerId,
+              spawnStream,
+              journalWrite,
+              request,
+              callerSignal,
+            );
           },
         }
       : {}),
-
-    async healthCheck(): Promise<ProviderHealth> {
-      const startedAt = Date.now();
-      const ctrl = new AbortController();
-      // Short window — version probes should come back instantly. If
-      // the binary hangs on --version we'd rather fail fast than
-      // burn through the call timeout.
-      const timer = setTimeout(() => {
-        ctrl.abort();
-      }, 10_000);
-      try {
-        const result = await spawn([resolved.command, ...resolved.versionProbe], {
-          env: mergeEnv(opts.env ?? process.env, opts.binding.env),
-          signal: ctrl.signal,
-          promptOnStdin: false,
-          prompt: "",
-        });
-        const latencyMs = Date.now() - startedAt;
-        if (result.aborted) {
-          return {
-            state: "unhealthy",
-            lastChecked: new Date().toISOString(),
-            latencyMs,
-            error: `timeout running ${resolved.command} ${resolved.versionProbe.join(" ")}`,
-          };
-        }
-        if (result.exitCode !== 0) {
-          return {
-            state: "unhealthy",
-            lastChecked: new Date().toISOString(),
-            latencyMs,
-            error: `${resolved.command} ${resolved.versionProbe.join(" ")} exited ${String(result.exitCode)}: ${truncate(result.stderr, 240)}`,
-          };
-        }
-        return {
-          state: "healthy",
-          lastChecked: new Date().toISOString(),
-          latencyMs,
-        };
-      } catch (err) {
-        return {
-          state: "unhealthy",
-          lastChecked: new Date().toISOString(),
-          latencyMs: Date.now() - startedAt,
-          error: (err as Error).message,
-        };
-      } finally {
-        clearTimeout(timer);
-      }
-    },
+    healthCheck: () => cliHealthCheck(opts, providerId, spawn),
   };
 }
 

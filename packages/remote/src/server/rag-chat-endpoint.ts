@@ -226,6 +226,189 @@ function validateMessages(raw: unknown): ChatMessage[] | null {
   return out;
 }
 
+type RagChatCaller = NonNullable<RagChatEndpointContext["caller"]>;
+
+interface ForwardFields {
+  maxTokens: number | undefined;
+  temperature: number | undefined;
+  providerOptions: Record<string, unknown> | undefined;
+}
+
+/** Validate the optional OpenAI forwarding fields we pass through. */
+function validateForwardFields(
+  body: RagChatRequestBody,
+): { ok: true; fields: ForwardFields } | { ok: false; response: Response } {
+  let maxTokens: number | undefined;
+  if (body.max_tokens !== undefined) {
+    if (
+      typeof body.max_tokens !== "number" ||
+      !Number.isInteger(body.max_tokens) ||
+      body.max_tokens <= 0
+    ) {
+      return {
+        ok: false,
+        response: jsonError(400, "max_tokens must be a positive integer", "invalid_request_error"),
+      };
+    }
+    maxTokens = body.max_tokens;
+  }
+  let temperature: number | undefined;
+  if (body.temperature !== undefined) {
+    if (typeof body.temperature !== "number" || !Number.isFinite(body.temperature)) {
+      return {
+        ok: false,
+        response: jsonError(400, "temperature must be a finite number", "invalid_request_error"),
+      };
+    }
+    temperature = body.temperature;
+  }
+  let providerOptions: Record<string, unknown> | undefined;
+  if (body.providerOptions !== undefined) {
+    if (
+      !body.providerOptions ||
+      typeof body.providerOptions !== "object" ||
+      Array.isArray(body.providerOptions)
+    ) {
+      return {
+        ok: false,
+        response: jsonError(400, "providerOptions must be an object", "invalid_request_error"),
+      };
+    }
+    providerOptions = body.providerOptions as Record<string, unknown>;
+  }
+  return { ok: true, fields: { maxTokens, temperature, providerOptions } };
+}
+
+/**
+ * Run the optional retrieval leg: validate the `rag` field, query the
+ * rag node with the last user message, and prepend the synthesized
+ * system message to the forwarded conversation.
+ */
+async function runRagRetrieval(
+  rawRag: unknown,
+  messages: ChatMessage[],
+  caller: RagChatCaller,
+  log: (line: string) => void,
+): Promise<
+  | { ok: true; retrievedCount: number; augmentedMessages: ChatMessage[] }
+  | { ok: false; response: Response }
+> {
+  const parsed = parseRagField(rawRag);
+  if (!parsed.ok) {
+    return { ok: false, response: jsonError(400, parsed.error, "invalid_request_error") };
+  }
+  const rag = parsed.rag;
+  const query = lastUserMessageContent(messages);
+  if (query === null) {
+    return {
+      ok: false,
+      response: jsonError(
+        400,
+        "no user message found in messages (rag retrieval needs a user query)",
+        "invalid_request_error",
+      ),
+    };
+  }
+  const topK = rag.topK ?? DEFAULT_TOP_K;
+  const ragInput: RagSearchInput = {
+    node: rag.node,
+    query,
+    topK,
+  };
+  if (rag.collection !== undefined) ragInput.collection = rag.collection;
+
+  const started = Date.now();
+  let retrieval: RagSearchResponse;
+  try {
+    retrieval = await caller.ragSearch(ragInput);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Deliberately vague — retrieval errors are operator-ops concerns,
+    // not client ones. The underlying message is surfaced but the
+    // HTTP code is a stable 502.
+    log(
+      JSON.stringify({
+        evt: "rag_chat_retrieval_error",
+        node: rag.node,
+        topK,
+        elapsed_ms: Date.now() - started,
+        error: msg,
+      }),
+    );
+    return { ok: false, response: jsonError(502, `retrieval failed: ${msg}`, "rag_error") };
+  }
+  const retrievedCount = retrieval.results.length;
+  log(
+    JSON.stringify({
+      evt: "rag_chat_retrieval_ok",
+      node: rag.node,
+      topK,
+      received: retrievedCount,
+      elapsed_ms: Date.now() - started,
+    }),
+  );
+
+  const prefix = rag.system_prompt_prefix ?? DEFAULT_SYSTEM_PROMPT_PREFIX;
+  const systemMessage: ChatMessage = {
+    role: "system",
+    content: buildRagSystemMessage(retrieval.results, prefix),
+  };
+  // Our system message goes first so caller-supplied system messages
+  // (if any) are honored afterward but visibly contextualized with
+  // the retrieved docs first.
+  return { ok: true, retrievedCount, augmentedMessages: [systemMessage, ...messages] };
+}
+
+/** Forward the (possibly augmented) chat through `chatComplete`. */
+async function forwardChat(
+  caller: RagChatCaller,
+  via: string,
+  chatRequest: ChatCompleteInput["request"],
+): Promise<{ ok: true; result: unknown } | { ok: false; response: Response }> {
+  try {
+    const result = await caller.chatComplete({ node: via, request: chatRequest });
+    return { ok: true, result };
+  } catch (err) {
+    // Preserve upstream status + body verbatim when it's a TRPCError
+    // (the chatComplete procedure throws TRPCError with a mapped code).
+    if (err instanceof TRPCError) {
+      const status = getHTTPStatusCodeFromError(err);
+      return {
+        ok: false,
+        response: new Response(
+          JSON.stringify({
+            error: {
+              message: err.message,
+              type: "upstream_error",
+              code: err.code,
+            },
+          }),
+          {
+            status,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      };
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      response: new Response(
+        JSON.stringify({
+          error: {
+            message: `chat failed: ${msg}`,
+            type: "upstream_error",
+          },
+        }),
+        {
+          status: 502,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    };
+  }
+}
+
 /**
  * Handle a `POST /v1/chat/completions` request with optional RAG
  * augmentation. The caller (serve.ts) is responsible for:
@@ -312,35 +495,9 @@ export async function handleRagChatCompletions(
     );
   }
 
-  let maxTokens: number | undefined;
-  if (body.max_tokens !== undefined) {
-    if (
-      typeof body.max_tokens !== "number" ||
-      !Number.isInteger(body.max_tokens) ||
-      body.max_tokens <= 0
-    ) {
-      return jsonError(400, "max_tokens must be a positive integer", "invalid_request_error");
-    }
-    maxTokens = body.max_tokens;
-  }
-  let temperature: number | undefined;
-  if (body.temperature !== undefined) {
-    if (typeof body.temperature !== "number" || !Number.isFinite(body.temperature)) {
-      return jsonError(400, "temperature must be a finite number", "invalid_request_error");
-    }
-    temperature = body.temperature;
-  }
-  let providerOptions: Record<string, unknown> | undefined;
-  if (body.providerOptions !== undefined) {
-    if (
-      !body.providerOptions ||
-      typeof body.providerOptions !== "object" ||
-      Array.isArray(body.providerOptions)
-    ) {
-      return jsonError(400, "providerOptions must be an object", "invalid_request_error");
-    }
-    providerOptions = body.providerOptions as Record<string, unknown>;
-  }
+  const fields = validateForwardFields(body);
+  if (!fields.ok) return fields.response;
+  const { maxTokens, temperature, providerOptions } = fields.fields;
 
   // Resolve the caller — tests inject a fake; production builds one
   // from the shared appRouter.
@@ -358,67 +515,10 @@ export async function handleRagChatCompletions(
   let retrievedCount = 0;
   let augmentedMessages: ChatMessage[] = messages;
   if (hasRag) {
-    const parsed = parseRagField(body.rag);
-    if (!parsed.ok) {
-      return jsonError(400, parsed.error, "invalid_request_error");
-    }
-    const rag = parsed.rag;
-    const query = lastUserMessageContent(messages);
-    if (query === null) {
-      return jsonError(
-        400,
-        "no user message found in messages (rag retrieval needs a user query)",
-        "invalid_request_error",
-      );
-    }
-    const topK = rag.topK ?? DEFAULT_TOP_K;
-    const ragInput: RagSearchInput = {
-      node: rag.node,
-      query,
-      topK,
-    };
-    if (rag.collection !== undefined) ragInput.collection = rag.collection;
-
-    const started = Date.now();
-    let retrieval: RagSearchResponse;
-    try {
-      retrieval = await caller.ragSearch(ragInput);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Deliberately vague — retrieval errors are operator-ops concerns,
-      // not client ones. The underlying message is surfaced but the
-      // HTTP code is a stable 502.
-      log(
-        JSON.stringify({
-          evt: "rag_chat_retrieval_error",
-          node: rag.node,
-          topK,
-          elapsed_ms: Date.now() - started,
-          error: msg,
-        }),
-      );
-      return jsonError(502, `retrieval failed: ${msg}`, "rag_error");
-    }
-    retrievedCount = retrieval.results.length;
-    log(
-      JSON.stringify({
-        evt: "rag_chat_retrieval_ok",
-        node: rag.node,
-        topK,
-        received: retrievedCount,
-        elapsed_ms: Date.now() - started,
-      }),
-    );
-
-    const prefix = rag.system_prompt_prefix ?? DEFAULT_SYSTEM_PROMPT_PREFIX;
-    const systemMessage: ChatMessage = {
-      role: "system",
-      content: buildRagSystemMessage(retrieval.results, prefix),
-    };
-    // Our system message goes first so caller-supplied system messages
-    // (if any) are honored afterward but visibly contextualized with
-    // the retrieved docs first.
-    augmentedMessages = [systemMessage, ...messages];
+    const retrieved = await runRagRetrieval(body.rag, messages, caller, log);
+    if (!retrieved.ok) return retrieved.response;
+    retrievedCount = retrieved.retrievedCount;
+    augmentedMessages = retrieved.augmentedMessages;
   }
 
   // ---- chat forwarding --------------------------------------------------
@@ -430,42 +530,9 @@ export async function handleRagChatCompletions(
   if (temperature !== undefined) chatRequest.temperature = temperature;
   if (providerOptions !== undefined) chatRequest.providerOptions = providerOptions;
 
-  let chatResult: unknown;
-  try {
-    chatResult = await caller.chatComplete({ node: via, request: chatRequest });
-  } catch (err) {
-    // Preserve upstream status + body verbatim when it's a TRPCError
-    // (the chatComplete procedure throws TRPCError with a mapped code).
-    if (err instanceof TRPCError) {
-      const status = getHTTPStatusCodeFromError(err);
-      return new Response(
-        JSON.stringify({
-          error: {
-            message: err.message,
-            type: "upstream_error",
-            code: err.code,
-          },
-        }),
-        {
-          status,
-          headers: { "content-type": "application/json" },
-        },
-      );
-    }
-    const msg = err instanceof Error ? err.message : String(err);
-    return new Response(
-      JSON.stringify({
-        error: {
-          message: `chat failed: ${msg}`,
-          type: "upstream_error",
-        },
-      }),
-      {
-        status: 502,
-        headers: { "content-type": "application/json" },
-      },
-    );
-  }
+  const forwarded = await forwardChat(caller, via, chatRequest);
+  if (!forwarded.ok) return forwarded.response;
+  const chatResult: unknown = forwarded.result;
 
   const headers: Record<string, string> = {
     "content-type": "application/json",

@@ -85,6 +85,34 @@ export interface RunSummary {
 
 const BATCH_SIZE = 20;
 
+async function openAdapterOrFail(
+  opts: RunPipelineOptions,
+  manifest: RagPipelineManifest,
+  journal: Journal,
+  startedAt: number,
+): Promise<OpenAdapterResult> {
+  const env = opts.env ?? process.env;
+  const openAdapter = opts.openAdapter ?? defaultOpenAdapter(env);
+  try {
+    return await openAdapter(manifest.spec.destination.ragNode);
+  } catch (err) {
+    await journal.append({
+      kind: "error",
+      ts: new Date().toISOString(),
+      message: `openAdapter failed: ${toMessage(err)}`,
+    });
+    await journal.append({
+      kind: "run-complete",
+      ts: new Date().toISOString(),
+      total_docs: 0,
+      total_chunks: 0,
+      elapsed_ms: Date.now() - startedAt,
+    });
+    await journal.close();
+    throw err;
+  }
+}
+
 export async function runPipeline(opts: RunPipelineOptions): Promise<RunSummary> {
   const manifest = RagPipelineManifestSchema.parse(opts.manifest);
   const env = opts.env ?? process.env;
@@ -112,26 +140,7 @@ export async function runPipeline(opts: RunPipelineOptions): Promise<RunSummary>
   pipelineEvents.startRun(manifest.metadata.name, { sources: sourceLabels });
 
   try {
-    const openAdapter = opts.openAdapter ?? defaultOpenAdapter(env);
-    let adapter: OpenAdapterResult;
-    try {
-      adapter = await openAdapter(manifest.spec.destination.ragNode);
-    } catch (err) {
-      await journal.append({
-        kind: "error",
-        ts: new Date().toISOString(),
-        message: `openAdapter failed: ${toMessage(err)}`,
-      });
-      await journal.append({
-        kind: "run-complete",
-        ts: new Date().toISOString(),
-        total_docs: 0,
-        total_chunks: 0,
-        elapsed_ms: Date.now() - startedAt,
-      });
-      await journal.close();
-      throw err;
-    }
+    const adapter = await openAdapterOrFail(opts, manifest, journal, startedAt);
 
     const summary: RunSummary = {
       total_docs: 0,

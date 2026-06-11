@@ -32,6 +32,177 @@ import {
  * workload handler's role is coordinating timing (reload after
  * upstream changes land), not authoring routing config.
  */
+
+function resolveEmbersynthCatalog(
+  opts: GatewayApplyOptions,
+  now: string,
+): { ok: false; result: ApplyResult } | { ok: true; changed: boolean } {
+  let changed = false;
+  if (opts.composite) {
+    const derived = deriveEmbersynthEntries(opts.composite);
+    const current = readGatewayCatalog("embersynth");
+    const result = applyCompositeEntries({
+      kind: "embersynth",
+      compositeName: opts.composite.compositeName,
+      derived,
+      current,
+    });
+    if (result.conflicts.length > 0) {
+      const [c] = result.conflicts;
+      if (!c) throw new Error("gateway conflict list unexpectedly empty");
+      const reason =
+        c.kind === "name" ? "EmbersynthUpstreamNameCollision" : "EmbersynthUpstreamShapeMismatch";
+      const message =
+        c.kind === "name"
+          ? `node '${c.name}' already exists as an operator-authored embersynth node; remove it or change composite spec`
+          : `node '${c.name}': ${c.detail}`;
+      return { ok: false, result: pending(opts, reason, message, now) };
+    }
+    if (result.changed) {
+      try {
+        writeGatewayCatalog("embersynth", result.next);
+        changed = true;
+      } catch (err) {
+        return {
+          ok: false,
+          result: failure(
+            opts,
+            "EmbersynthCatalogWriteFailed",
+            `could not write embersynth.yaml: ${(err as Error).message}`,
+            now,
+          ),
+        };
+      }
+    }
+  }
+  return { ok: true, changed };
+}
+
+function resolveEmbersynthSynthetic(
+  opts: GatewayApplyOptions,
+  now: string,
+): { ok: false; result: ApplyResult } | { ok: true; synthetic: string } {
+  const target = opts.manifest.spec.target.value.trim();
+  if (!target) {
+    return {
+      ok: false,
+      result: failure(
+        opts,
+        "EmbersynthTargetMalformed",
+        `embersynth gateway manifests require spec.target.value to name a synthetic model`,
+        now,
+      ),
+    };
+  }
+  const synthetic = target.startsWith("fusion-") ? target : `fusion-${target}`;
+
+  // Best-effort host-side validation. When `embersynth.yaml` lives
+  // on the operator's host (from `llamactl embersynth init`), we
+  // cross-check the requested synthetic before calling the gateway
+  // so typos surface with a clear error. When the config lives
+  // only inside the embersynth pod (ConfigMap mount pattern —
+  // file absent on host), skip the host check and defer to
+  // embersynth's /config/reload, which authoritatively answers
+  // whether the synthetic exists.
+  let cfg;
+  try {
+    cfg = loadEmbersynthConfig(defaultEmbersynthConfigPath());
+  } catch (err) {
+    return {
+      ok: false,
+      result: failure(
+        opts,
+        "EmbersynthConfigUnreadable",
+        `failed to read embersynth.yaml: ${(err as Error).message}`,
+        now,
+      ),
+    };
+  }
+  if (!cfg) {
+    opts.onEvent?.({
+      type: "gateway-pending",
+      message: `${opts.manifest.metadata.name}: host-side embersynth.yaml absent — deferring synthetic-model validation to embersynth /config/reload`,
+    });
+  } else if (!(synthetic in cfg.syntheticModels)) {
+    return {
+      ok: false,
+      result: pending(
+        opts,
+        "EmbersynthSyntheticMissing",
+        `synthetic model '${synthetic}' not defined in embersynth.yaml; run \`llamactl embersynth sync\` or edit syntheticModels`,
+        now,
+      ),
+    };
+  }
+
+  return { ok: true, synthetic };
+}
+
+async function performEmbersynthReload(
+  opts: GatewayApplyOptions,
+  baseUrl: string,
+  synthetic: string,
+  token: string,
+  now: string,
+): Promise<ApplyResult> {
+  const reloadUrl = normalizeBaseUrl(baseUrl) + "/config/reload";
+
+  try {
+    const res = await fetch(reloadUrl, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        source: "llamactl-workload",
+        name: opts.manifest.metadata.name,
+        syntheticModel: synthetic,
+      }),
+    });
+    if (!res.ok) {
+      const body = (await res.text().catch(() => "")).slice(0, 500);
+      return failure(
+        opts,
+        "EmbersynthReloadFailed",
+        `POST ${reloadUrl} returned ${String(res.status)}${body ? `: ${body}` : ""}`,
+        now,
+      );
+    }
+  } catch (err) {
+    return failure(
+      opts,
+      "EmbersynthReloadUnreachable",
+      `POST ${reloadUrl} failed: ${(err as Error).message}`,
+      now,
+    );
+  }
+
+  const endpoint = `${normalizeBaseUrl(baseUrl)}/v1/chat/completions`;
+  opts.onEvent?.({
+    type: "gateway-pending",
+    message: `${opts.manifest.metadata.name}: embersynth reloaded — '${synthetic}' routable at ${endpoint}`,
+  });
+  return {
+    action: "started",
+    statusSection: {
+      phase: "Running",
+      serverPid: null,
+      endpoint,
+      lastTransitionTime: now,
+      conditions: [
+        {
+          type: "Applied",
+          status: "True",
+          reason: "EmbersynthReloaded",
+          message: `embersynth reloaded; synthetic model '${synthetic}' is routable`,
+          lastTransitionTime: now,
+        },
+      ],
+    },
+  };
+}
+
 export const embersynthHandler: GatewayHandler = {
   kind: "embersynth",
   canHandle(node: ClusterNode): boolean {
@@ -40,85 +211,11 @@ export const embersynthHandler: GatewayHandler = {
   async apply(opts: GatewayApplyOptions): Promise<ApplyResult> {
     const now = new Date().toISOString();
 
-    let catalogChanged = false;
-    if (opts.composite) {
-      const derived = deriveEmbersynthEntries(opts.composite);
-      const current = readGatewayCatalog("embersynth");
-      const result = applyCompositeEntries({
-        kind: "embersynth",
-        compositeName: opts.composite.compositeName,
-        derived,
-        current,
-      });
-      if (result.conflicts.length > 0) {
-        const [c] = result.conflicts;
-        if (!c) throw new Error("gateway conflict list unexpectedly empty");
-        const reason =
-          c.kind === "name" ? "EmbersynthUpstreamNameCollision" : "EmbersynthUpstreamShapeMismatch";
-        const message =
-          c.kind === "name"
-            ? `node '${c.name}' already exists as an operator-authored embersynth node; remove it or change composite spec`
-            : `node '${c.name}': ${c.detail}`;
-        return pending(opts, reason, message, now);
-      }
-      if (result.changed) {
-        try {
-          writeGatewayCatalog("embersynth", result.next);
-          catalogChanged = true;
-        } catch (err) {
-          return failure(
-            opts,
-            "EmbersynthCatalogWriteFailed",
-            `could not write embersynth.yaml: ${(err as Error).message}`,
-            now,
-          );
-        }
-      }
-    }
+    const catalogResult = resolveEmbersynthCatalog(opts, now);
+    if (!catalogResult.ok) return catalogResult.result;
 
-    const target = opts.manifest.spec.target.value.trim();
-    if (!target) {
-      return failure(
-        opts,
-        "EmbersynthTargetMalformed",
-        `embersynth gateway manifests require spec.target.value to name a synthetic model`,
-        now,
-      );
-    }
-    const synthetic = target.startsWith("fusion-") ? target : `fusion-${target}`;
-
-    // Best-effort host-side validation. When `embersynth.yaml` lives
-    // on the operator's host (from `llamactl embersynth init`), we
-    // cross-check the requested synthetic before calling the gateway
-    // so typos surface with a clear error. When the config lives
-    // only inside the embersynth pod (ConfigMap mount pattern —
-    // file absent on host), skip the host check and defer to
-    // embersynth's /config/reload, which authoritatively answers
-    // whether the synthetic exists.
-    let cfg;
-    try {
-      cfg = loadEmbersynthConfig(defaultEmbersynthConfigPath());
-    } catch (err) {
-      return failure(
-        opts,
-        "EmbersynthConfigUnreadable",
-        `failed to read embersynth.yaml: ${(err as Error).message}`,
-        now,
-      );
-    }
-    if (!cfg) {
-      opts.onEvent?.({
-        type: "gateway-pending",
-        message: `${opts.manifest.metadata.name}: host-side embersynth.yaml absent — deferring synthetic-model validation to embersynth /config/reload`,
-      });
-    } else if (!(synthetic in cfg.syntheticModels)) {
-      return pending(
-        opts,
-        "EmbersynthSyntheticMissing",
-        `synthetic model '${synthetic}' not defined in embersynth.yaml; run \`llamactl embersynth sync\` or edit syntheticModels`,
-        now,
-      );
-    }
+    const syntheticResult = resolveEmbersynthSynthetic(opts, now);
+    if (!syntheticResult.ok) return syntheticResult.result;
 
     const baseUrl = opts.node.cloud?.baseUrl;
     if (!baseUrl) {
@@ -129,7 +226,6 @@ export const embersynthHandler: GatewayHandler = {
         now,
       );
     }
-    const reloadUrl = normalizeBaseUrl(baseUrl) + "/config/reload";
 
     let token: string;
     try {
@@ -147,43 +243,14 @@ export const embersynthHandler: GatewayHandler = {
       );
     }
 
-    if (!opts.composite || catalogChanged) {
-      try {
-        const res = await fetch(reloadUrl, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${token}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            source: "llamactl-workload",
-            name: opts.manifest.metadata.name,
-            syntheticModel: synthetic,
-          }),
-        });
-        if (!res.ok) {
-          const body = (await res.text().catch(() => "")).slice(0, 500);
-          return failure(
-            opts,
-            "EmbersynthReloadFailed",
-            `POST ${reloadUrl} returned ${String(res.status)}${body ? `: ${body}` : ""}`,
-            now,
-          );
-        }
-      } catch (err) {
-        return failure(
-          opts,
-          "EmbersynthReloadUnreachable",
-          `POST ${reloadUrl} failed: ${(err as Error).message}`,
-          now,
-        );
-      }
+    if (!opts.composite || catalogResult.changed) {
+      return await performEmbersynthReload(opts, baseUrl, syntheticResult.synthetic, token, now);
     }
 
     const endpoint = `${normalizeBaseUrl(baseUrl)}/v1/chat/completions`;
     opts.onEvent?.({
       type: "gateway-pending",
-      message: `${opts.manifest.metadata.name}: embersynth reloaded — '${synthetic}' routable at ${endpoint}`,
+      message: `${opts.manifest.metadata.name}: embersynth reloaded — '${syntheticResult.synthetic}' routable at ${endpoint}`,
     });
     return {
       action: "started",
@@ -197,7 +264,7 @@ export const embersynthHandler: GatewayHandler = {
             type: "Applied",
             status: "True",
             reason: "EmbersynthReloaded",
-            message: `embersynth reloaded; synthetic model '${synthetic}' is routable`,
+            message: `embersynth reloaded; synthetic model '${syntheticResult.synthetic}' is routable`,
             lastTransitionTime: now,
           },
         ],

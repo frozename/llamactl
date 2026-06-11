@@ -132,6 +132,86 @@ export async function handleTunnelRelay(
   }
 }
 
+function makeStreamFinish(
+  journal: (e: TunnelJournalEntry) => void,
+  nodeName: string,
+  method: string,
+  start: number,
+): (ok: boolean, code?: string, message?: string) => void {
+  let journaled = false;
+  return (ok: boolean, code?: string, message?: string): void => {
+    if (journaled) return;
+    journaled = true;
+    const durationMs = performance.now() - start;
+    if (ok) {
+      journal({
+        kind: "tunnel-relay-call",
+        ts: new Date().toISOString(),
+        nodeName,
+        method,
+        durationMs,
+        ok: true,
+      });
+    } else {
+      journal({
+        kind: "tunnel-relay-error",
+        ts: new Date().toISOString(),
+        nodeName,
+        method,
+        code: code ?? "tunnel-send-failed",
+        message: message ?? "unknown",
+      });
+    }
+  };
+}
+
+async function closeIterator<T>(iterator: AsyncIterator<T>): Promise<void> {
+  try {
+    await iterator.return?.();
+  } catch {
+    /* ignore */
+  }
+}
+
+// Race each next() against the abort signal so a mid-stream
+// client disconnect terminates the read loop without waiting
+// for the next event from the node.
+async function pumpSubscriptionEvents<T>(
+  iterator: AsyncIterator<T>,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  encoder: TextEncoder,
+  signal: AbortSignal,
+): Promise<void> {
+  for (;;) {
+    if (signal.aborted) {
+      await closeIterator(iterator);
+      break;
+    }
+    const nextPromise = iterator.next();
+    const abortPromise = new Promise<{ aborted: true }>((resolve) => {
+      const handler = (): void => {
+        resolve({ aborted: true });
+      };
+      if (signal.aborted) handler();
+      else signal.addEventListener("abort", handler, { once: true });
+    });
+    const step = await Promise.race([nextPromise.then((r) => ({ step: r })), abortPromise]);
+    if ("aborted" in step) {
+      await closeIterator(iterator);
+      break;
+    }
+    const { step: result } = step;
+    if (result.done) break;
+    try {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(result.value)}\n\n`));
+    } catch {
+      // controller closed (downstream sink gone). Bail out.
+      await closeIterator(iterator);
+      break;
+    }
+  }
+}
+
 /**
  * Stream subscription events over SSE. The ReadableStream pulls
  * from `tunnelServer.sendSubscribe(...)` and writes standard SSE
@@ -169,76 +249,10 @@ function handleStream(
         method,
         params: { type: "subscription", input },
       });
-      let journaled = false;
-      const finish = (ok: boolean, code?: string, message?: string): void => {
-        if (journaled) return;
-        journaled = true;
-        const durationMs = performance.now() - start;
-        if (ok) {
-          journal({
-            kind: "tunnel-relay-call",
-            ts: new Date().toISOString(),
-            nodeName,
-            method,
-            durationMs,
-            ok: true,
-          });
-        } else {
-          journal({
-            kind: "tunnel-relay-error",
-            ts: new Date().toISOString(),
-            nodeName,
-            method,
-            code: code ?? "tunnel-send-failed",
-            message: message ?? "unknown",
-          });
-        }
-      };
+      const finish = makeStreamFinish(journal, nodeName, method, start);
       try {
         const iterator = iter[Symbol.asyncIterator]();
-        // Race each next() against the abort signal so a mid-stream
-        // client disconnect terminates the read loop without waiting
-        // for the next event from the node.
-        for (;;) {
-          if (abort.signal.aborted) {
-            try {
-              await iterator.return?.();
-            } catch {
-              /* ignore */
-            }
-            break;
-          }
-          const nextPromise = iterator.next();
-          const abortPromise = new Promise<{ aborted: true }>((resolve) => {
-            const handler = (): void => {
-              resolve({ aborted: true });
-            };
-            if (abort.signal.aborted) handler();
-            else abort.signal.addEventListener("abort", handler, { once: true });
-          });
-          const step = await Promise.race([nextPromise.then((r) => ({ step: r })), abortPromise]);
-          if ("aborted" in step) {
-            try {
-              await iterator.return?.();
-            } catch {
-              /* ignore */
-            }
-            break;
-          }
-          const { step: result } = step;
-          if (result.done) break;
-          try {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(result.value)}\n\n`));
-          } catch {
-            // controller closed (downstream sink gone). Bail out.
-            try {
-              await iterator.return?.();
-            } catch {
-              /* ignore */
-            }
-            break;
-          }
-        }
+        await pumpSubscriptionEvents(iterator, controller, encoder, abort.signal);
         if (!abort.signal.aborted) {
           try {
             controller.enqueue(

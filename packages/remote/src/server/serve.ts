@@ -225,126 +225,82 @@ export function runStartupMigration(): void {
   }
 }
 
-/**
- * Starts a Bun HTTP(S) server that exposes the llamactl tRPC router
- * behind bearer-token auth. The fetchRequestHandler is the same surface
- * the Electron main process mounts via electron-trpc — one router,
- * three mounts.
- */
-export function startAgentServer(opts: StartAgentOptions): RunningAgent {
-  const bindHost = opts.bindHost ?? "127.0.0.1";
-  const port = opts.port ?? 0;
-  const endpoint = opts.endpoint ?? "/trpc";
-  const noAuth = opts.noAuth === true;
-  const allowPlainHttp = noAuth && isLoopbackAddress(bindHost);
+interface NoAuthGate {
+  allowNoAuth(pathname: string, address: ClientAddress | null): boolean;
+  logUnauthenticatedNoAuthRequest(req: Request, address: ClientAddress | null): void;
+}
+
+function makeNoAuthGate(noAuth: boolean, bindHost: string): NoAuthGate {
   let unauthenticatedNoAuthRequestCount = 0;
-
-  // Async best-effort subsystems (mDNS Bonjour probes, the tunnel
-  // client's reconnect loop, telemetry flushers) can throw
-  // unhandled rejections + uncaughtExceptions hours after startup.
-  // In a TTY those land as stderr noise; under launchd the default
-  // handler kills the process even though the HTTP server is fine.
-  // Make the agent resilient: log + continue. Once installed, this
-  // covers ANY future async-leak the agent picks up — not just mDNS.
-  const captureFatal =
-    (kind: string) =>
-    (err: unknown): void => {
-      process.stderr.write(
-        `${kind}: ${err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err)}\n`,
+  return {
+    allowNoAuth(pathname: string, address: ClientAddress | null): boolean {
+      return (
+        noAuth &&
+        pathname.startsWith("/v1/") &&
+        isLoopbackAddress(bindHost) &&
+        isLoopbackAddress(address?.address)
       );
-    };
-  process.on("uncaughtException", captureFatal("uncaughtException"));
-  process.on("unhandledRejection", captureFatal("unhandledRejection"));
-
-  runStartupMigration();
-  if (noAuth) {
-    const transport = allowPlainHttp ? "Serving plain HTTP (no TLS)." : "Serving HTTPS.";
-    process.stderr.write(
-      `[agent] WARNING: --no-auth flag enabled. Bearer token validation BYPASSED for /v1/* connections from 127.0.0.1. All other routes (including /trpc) still require bearer auth. ${transport}\n`,
-    );
-  }
-
-  startSearchIngest().catch(() => undefined);
-  const stopPeerSnapshotPoller = opts.peerSnapshotPoll
-    ? startPeerSnapshotPoller(
-        opts.peerSnapshotPollIntervalMs ? { intervalMs: opts.peerSnapshotPollIntervalMs } : {},
-      )
-    : null;
-  agentInfo.set(
-    {
-      node_name: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? "agent",
-      version: opts.version ?? "0.0.0",
     },
-    1,
-  );
-
-  const tunnelServer: TunnelServer | null = opts.tunnelCentral
-    ? createTunnelServer({
-        expectedBearerHash: opts.tunnelCentral.expectedBearerHash,
-        onNodeConnect: opts.tunnelCentral.onNodeConnect,
-        onNodeDisconnect: opts.tunnelCentral.onNodeDisconnect,
-        // journal.ts resolves undefined → the default path; we just
-        // pass through so callers can force a tempfile in tests.
-        journalPath: opts.tunnelJournalPath,
-      })
-    : null;
-
-  function allowNoAuth(pathname: string, address: ClientAddress | null): boolean {
-    return (
-      noAuth &&
-      pathname.startsWith("/v1/") &&
-      isLoopbackAddress(bindHost) &&
-      isLoopbackAddress(address?.address)
-    );
-  }
-
-  function logUnauthenticatedNoAuthRequest(req: Request, address: ClientAddress | null): void {
-    if (!noAuth || extractBearer(req)) return;
-    unauthenticatedNoAuthRequestCount += 1;
-    if ((unauthenticatedNoAuthRequestCount - 1) % 100 !== 0) return;
-    process.stderr.write(
-      `[agent] WARNING: serving unauthenticated request from ${formatClientAddress(address)}: ${req.method} ${new URL(req.url).pathname}\n`,
-    );
-  }
-
-  async function handleOpenAI(
-    req: Request,
-    url: URL,
-    address: ClientAddress | null,
-  ): Promise<Response> {
-    if (allowNoAuth(url.pathname, address)) {
-      logUnauthenticatedNoAuthRequest(req, address);
-    } else if (!verifyBearer(req, opts.tokenHash)) {
-      return unauthorizedResponse();
-    }
-    const pathLabel = openaiPathBucket(url.pathname);
-    const endTimer = openaiRequestDurationSeconds.startTimer({ path: pathLabel });
-    let status = 0;
-    try {
-      if (req.method === "GET" && url.pathname === "/v1/models") {
-        const data = openaiProxy.listOpenAIModels().data;
-        const models = { object: "list" as const, data };
-        llamaServerUp.set(data.length > 0 ? 1 : 0);
-        status = 200;
-        return Response.json(models);
-      }
-      const res = await openaiProxy.proxyOpenAI(req);
-      status = res.status;
-      if (status === 502) openaiUpstreamErrorsTotal.inc();
-      return res;
-    } finally {
-      endTimer();
-      openaiRequestsTotal.inc({ path: pathLabel, status_class: statusClass(status) });
-    }
-  }
-
-  const fetchHandler = (
-    req: Request,
-    server: {
-      requestIP?: (req: Request) => ClientAddress | null;
-      upgrade(req: Request, opts: { data: unknown }): boolean;
+    logUnauthenticatedNoAuthRequest(req: Request, address: ClientAddress | null): void {
+      if (!noAuth || extractBearer(req)) return;
+      unauthenticatedNoAuthRequestCount += 1;
+      if ((unauthenticatedNoAuthRequestCount - 1) % 100 !== 0) return;
+      process.stderr.write(
+        `[agent] WARNING: serving unauthenticated request from ${formatClientAddress(address)}: ${req.method} ${new URL(req.url).pathname}\n`,
+      );
     },
-  ): Response | Promise<Response> => {
+  };
+}
+
+async function handleOpenAIRoute(
+  req: Request,
+  url: URL,
+  address: ClientAddress | null,
+  opts: StartAgentOptions,
+  gate: NoAuthGate,
+): Promise<Response> {
+  if (gate.allowNoAuth(url.pathname, address)) {
+    gate.logUnauthenticatedNoAuthRequest(req, address);
+  } else if (!verifyBearer(req, opts.tokenHash)) {
+    return unauthorizedResponse();
+  }
+  const pathLabel = openaiPathBucket(url.pathname);
+  const endTimer = openaiRequestDurationSeconds.startTimer({ path: pathLabel });
+  let status = 0;
+  try {
+    if (req.method === "GET" && url.pathname === "/v1/models") {
+      const data = openaiProxy.listOpenAIModels().data;
+      const models = { object: "list" as const, data };
+      llamaServerUp.set(data.length > 0 ? 1 : 0);
+      status = 200;
+      return Response.json(models);
+    }
+    const res = await openaiProxy.proxyOpenAI(req);
+    status = res.status;
+    if (status === 502) openaiUpstreamErrorsTotal.inc();
+    return res;
+  } finally {
+    endTimer();
+    openaiRequestsTotal.inc({ path: pathLabel, status_class: statusClass(status) });
+  }
+}
+
+type AgentFetchHandler = (
+  req: Request,
+  server: {
+    requestIP?: (req: Request) => ClientAddress | null;
+    upgrade(req: Request, opts: { data: unknown }): boolean;
+  },
+) => Response | Promise<Response>;
+
+function createAgentFetchHandler(args: {
+  opts: StartAgentOptions;
+  endpoint: string;
+  tunnelServer: TunnelServer | null;
+  gate: NoAuthGate;
+}): AgentFetchHandler {
+  const { opts, endpoint, tunnelServer, gate } = args;
+  return (req, server) => {
     const url = new URL(req.url);
     const clientAddress = typeof server.requestIP === "function" ? server.requestIP(req) : null;
     opts.onRequest?.(url);
@@ -402,8 +358,8 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // Prometheus scrape endpoint. Bearer-auth'd like everything else;
     // scrapers can set the standard Authorization header.
     if (url.pathname === "/metrics") {
-      if (allowNoAuth(url.pathname, clientAddress)) {
-        logUnauthenticatedNoAuthRequest(req, clientAddress);
+      if (gate.allowNoAuth(url.pathname, clientAddress)) {
+        gate.logUnauthenticatedNoAuthRequest(req, clientAddress);
       } else if (!verifyBearer(req, opts.tokenHash)) {
         return unauthorizedResponse();
       }
@@ -420,21 +376,21 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // must include `via: <node>` to name the llamactl node to route
     // chat through. When neither field is present the handler falls
     // through to the legacy openai-proxy path below. Non-POST / other
-    // paths under /v1/* fall straight through to handleOpenAI.
+    // paths under /v1/* fall straight through to handleOpenAIRoute.
     if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
-      if (allowNoAuth(url.pathname, clientAddress)) {
-        logUnauthenticatedNoAuthRequest(req, clientAddress);
+      if (gate.allowNoAuth(url.pathname, clientAddress)) {
+        gate.logUnauthenticatedNoAuthRequest(req, clientAddress);
       } else if (!verifyBearer(req, opts.tokenHash)) {
         return unauthorizedResponse();
       }
       return handleRagChatCompletions(req, {
         appRouter,
-        fallback: (forwarded) => handleOpenAI(forwarded, url, clientAddress),
+        fallback: (forwarded) => handleOpenAIRoute(forwarded, url, clientAddress, opts, gate),
       });
     }
     if (req.method === "GET" && url.pathname === "/v1/fleet/snapshot") {
-      if (allowNoAuth(url.pathname, clientAddress)) {
-        logUnauthenticatedNoAuthRequest(req, clientAddress);
+      if (gate.allowNoAuth(url.pathname, clientAddress)) {
+        gate.logUnauthenticatedNoAuthRequest(req, clientAddress);
       } else if (!verifyBearer(req, opts.tokenHash)) {
         return unauthorizedResponse();
       }
@@ -445,13 +401,13 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     // or proxied straight to the local llama-server so external tools
     // can speak plain OpenAI SDK to the agent's URL.
     if (url.pathname.startsWith("/v1/") || url.pathname === "/v1") {
-      return handleOpenAI(req, url, clientAddress);
+      return handleOpenAIRoute(req, url, clientAddress, opts, gate);
     }
     if (!url.pathname.startsWith(endpoint)) {
       return new Response("not found", { status: 404 });
     }
-    if (allowNoAuth(url.pathname, clientAddress)) {
-      logUnauthenticatedNoAuthRequest(req, clientAddress);
+    if (gate.allowNoAuth(url.pathname, clientAddress)) {
+      gate.logUnauthenticatedNoAuthRequest(req, clientAddress);
     } else if (!verifyBearer(req, opts.tokenHash)) {
       return unauthorizedResponse();
     }
@@ -462,16 +418,25 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       createContext: () => ({}),
     });
   };
+}
 
+function startBunServer(args: {
+  tls: StartAgentOptions["tls"];
+  allowPlainHttp: boolean;
+  port: number;
+  bindHost: string;
+  wsConfig: TunnelServer["websocket"] | null;
+  fetchHandler: AgentFetchHandler;
+}): { server: Bun.Server<unknown>; fingerprint: string | null } {
+  const { tls, allowPlainHttp, port, bindHost, wsConfig, fetchHandler } = args;
   let fingerprint: string | null = null;
   // Bun.serve's option type discriminates on whether `websocket` is
   // present, so we can't share a single literal with `websocket?:`
   // optional — the ws-and-no-ws branches construct separately.
-  const wsConfig = tunnelServer ? tunnelServer.websocket : null;
   const server =
-    opts.tls && !allowPlainHttp
+    tls && !allowPlainHttp
       ? ((): Bun.Server<unknown> => {
-          const loaded = loadCert(opts.tls);
+          const loaded = loadCert(tls);
           fingerprint = loaded.fingerprint;
           return wsConfig
             ? Bun.serve({
@@ -513,11 +478,14 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
             fetch: fetchHandler,
             idleTimeout: 255,
           });
+  return { server, fingerprint };
+}
 
-  const scheme = opts.tls && !allowPlainHttp ? "https" : "http";
-  const listenPort = server.port ?? port;
-
-  let mdns: PublishedAgent | null = null;
+function maybePublishAgentMdns(
+  opts: StartAgentOptions,
+  listenPort: number,
+  fingerprint: string | null,
+): PublishedAgent | null {
   // LLAMACTL_DISABLE_MDNS=1 forces mDNS off even when tls=true. Needed
   // when bonjour-service v1.3.0 hits a probe collision against a stale
   // cached announcement on the LAN and synchronously emits
@@ -531,48 +499,133 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const mdnsDisabledByEnv =
     process.env.LLAMACTL_DISABLE_MDNS === "1" || process.env.LLAMACTL_DISABLE_MDNS === "true";
   const shouldAdvertise = !mdnsDisabledByEnv && (opts.advertiseMdns ?? Boolean(opts.tls));
-  if (shouldAdvertise) {
-    try {
-      mdns = publishAgentMdns({
-        port: listenPort,
-        nodeName: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? "agent",
-        fingerprint,
-        version: opts.version ?? "0.0.0",
-      });
-    } catch {
-      // mDNS is best-effort — platforms without a working multicast
-      // interface shouldn't prevent the agent from starting.
-      mdns = null;
-    }
+  if (!shouldAdvertise) return null;
+  try {
+    return publishAgentMdns({
+      port: listenPort,
+      nodeName: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? "agent",
+      fingerprint,
+      version: opts.version ?? "0.0.0",
+    });
+  } catch {
+    // mDNS is best-effort — platforms without a working multicast
+    // interface shouldn't prevent the agent from starting.
+    return null;
+  }
+}
+
+// Reverse-tunnel dial-out — gated on opts.tunnelDial. The HTTP
+// server is already up at this point; the tunnel client runs in
+// the background and uses its own reconnect loop, so an unreachable
+// central never blocks the local agent. Bridges inbound `req`
+// frames from central into the same appRouter the /trpc endpoint
+// serves (createCaller({}) — matches the existing /trpc context
+// shape).
+function maybeStartTunnelClient(opts: StartAgentOptions): TunnelClient | null {
+  if (!opts.tunnelDial) return null;
+  const caller = appRouter.createCaller({});
+  const handleRequest = createTunnelRouterHandler(caller);
+  const tunnelClient = createTunnelClient({
+    url: opts.tunnelDial.url,
+    bearer: opts.tunnelDial.bearer,
+    nodeName: opts.tunnelDial.nodeName,
+    handleRequest,
+    onStateChange: opts.tunnelDial.onStateChange,
+    // Background mode by default: the HTTP server must come up
+    // regardless of central's reachability. The reconnect loop
+    // handles transient failures on its own schedule.
+    initialAttemptTimeoutMs: opts.tunnelDial.initialAttemptTimeoutMs ?? 0,
+    WebSocketCtor: opts.tunnelDial.WebSocketCtor,
+  });
+  // Fire-and-forget; state transitions are observable via
+  // opts.tunnelDial.onStateChange.
+  void tunnelClient.start();
+  return tunnelClient;
+}
+
+/**
+ * Starts a Bun HTTP(S) server that exposes the llamactl tRPC router
+ * behind bearer-token auth. The fetchRequestHandler is the same surface
+ * the Electron main process mounts via electron-trpc — one router,
+ * three mounts.
+ */
+export function startAgentServer(opts: StartAgentOptions): RunningAgent {
+  const bindHost = opts.bindHost ?? "127.0.0.1";
+  const port = opts.port ?? 0;
+  const endpoint = opts.endpoint ?? "/trpc";
+  const noAuth = opts.noAuth === true;
+  const allowPlainHttp = noAuth && isLoopbackAddress(bindHost);
+
+  // Async best-effort subsystems (mDNS Bonjour probes, the tunnel
+  // client's reconnect loop, telemetry flushers) can throw
+  // unhandled rejections + uncaughtExceptions hours after startup.
+  // In a TTY those land as stderr noise; under launchd the default
+  // handler kills the process even though the HTTP server is fine.
+  // Make the agent resilient: log + continue. Once installed, this
+  // covers ANY future async-leak the agent picks up — not just mDNS.
+  const captureFatal =
+    (kind: string) =>
+    (err: unknown): void => {
+      process.stderr.write(
+        `${kind}: ${err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err)}\n`,
+      );
+    };
+  process.on("uncaughtException", captureFatal("uncaughtException"));
+  process.on("unhandledRejection", captureFatal("unhandledRejection"));
+
+  runStartupMigration();
+  if (noAuth) {
+    const transport = allowPlainHttp ? "Serving plain HTTP (no TLS)." : "Serving HTTPS.";
+    process.stderr.write(
+      `[agent] WARNING: --no-auth flag enabled. Bearer token validation BYPASSED for /v1/* connections from 127.0.0.1. All other routes (including /trpc) still require bearer auth. ${transport}\n`,
+    );
   }
 
-  // Reverse-tunnel dial-out — gated on opts.tunnelDial. The HTTP
-  // server is already up at this point; the tunnel client runs in
-  // the background and uses its own reconnect loop, so an unreachable
-  // central never blocks the local agent. Bridges inbound `req`
-  // frames from central into the same appRouter the /trpc endpoint
-  // serves (createCaller({}) — matches the existing /trpc context
-  // shape on line 244 above).
-  let tunnelClient: TunnelClient | null = null;
-  if (opts.tunnelDial) {
-    const caller = appRouter.createCaller({});
-    const handleRequest = createTunnelRouterHandler(caller);
-    tunnelClient = createTunnelClient({
-      url: opts.tunnelDial.url,
-      bearer: opts.tunnelDial.bearer,
-      nodeName: opts.tunnelDial.nodeName,
-      handleRequest,
-      onStateChange: opts.tunnelDial.onStateChange,
-      // Background mode by default: the HTTP server must come up
-      // regardless of central's reachability. The reconnect loop
-      // handles transient failures on its own schedule.
-      initialAttemptTimeoutMs: opts.tunnelDial.initialAttemptTimeoutMs ?? 0,
-      WebSocketCtor: opts.tunnelDial.WebSocketCtor,
-    });
-    // Fire-and-forget; state transitions are observable via
-    // opts.tunnelDial.onStateChange.
-    void tunnelClient.start();
-  }
+  startSearchIngest().catch(() => undefined);
+  const stopPeerSnapshotPoller = opts.peerSnapshotPoll
+    ? startPeerSnapshotPoller(
+        opts.peerSnapshotPollIntervalMs ? { intervalMs: opts.peerSnapshotPollIntervalMs } : {},
+      )
+    : null;
+  agentInfo.set(
+    {
+      node_name: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? "agent",
+      version: opts.version ?? "0.0.0",
+    },
+    1,
+  );
+
+  const tunnelServer: TunnelServer | null = opts.tunnelCentral
+    ? createTunnelServer({
+        expectedBearerHash: opts.tunnelCentral.expectedBearerHash,
+        onNodeConnect: opts.tunnelCentral.onNodeConnect,
+        onNodeDisconnect: opts.tunnelCentral.onNodeDisconnect,
+        // journal.ts resolves undefined → the default path; we just
+        // pass through so callers can force a tempfile in tests.
+        journalPath: opts.tunnelJournalPath,
+      })
+    : null;
+
+  const gate = makeNoAuthGate(noAuth, bindHost);
+
+  const fetchHandler = createAgentFetchHandler({ opts, endpoint, tunnelServer, gate });
+
+  const wsConfig = tunnelServer ? tunnelServer.websocket : null;
+  const { server, fingerprint } = startBunServer({
+    tls: opts.tls,
+    allowPlainHttp,
+    port,
+    bindHost,
+    wsConfig,
+    fetchHandler,
+  });
+
+  const scheme = opts.tls && !allowPlainHttp ? "https" : "http";
+  const listenPort = server.port ?? port;
+
+  const mdns = maybePublishAgentMdns(opts, listenPort, fingerprint);
+
+  const tunnelClient = maybeStartTunnelClient(opts);
 
   return {
     url: `${scheme}://${bindHost}:${String(listenPort)}`,

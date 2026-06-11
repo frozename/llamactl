@@ -287,6 +287,58 @@ async function tryAdoptLiveHost(
   return { ok: true, pid: livePid };
 }
 
+// Reap a prior live ModelHost for this workload before spawning a new one.
+// Without this, applying over a still-running host leaves the old process
+// holding the endpoint port: the new omlx fails to bind and exits, yet
+// probeReady is satisfied by the OLD listener, so we would record the new
+// child's already-dead pid — which listLocalRoutes then drops from routing.
+// Returns a terminal result (adopted or deferred) or null to proceed with a
+// normal spawn.
+async function reapOrAdoptPriorHost(
+  manifest: ModelHostManifest,
+  opts: StartModelHostOptions,
+  resolved: ReturnType<typeof resolveEnv>,
+  engine: (typeof ENGINES)[keyof typeof ENGINES],
+): Promise<StartModelHostResult | null> {
+  const priorState = readModelHostState(opts.key, resolved);
+  if (!priorState) return null;
+  if (isProcessAlive(priorState.pid)) {
+    await engine.teardown(priorState.pid).catch(() => undefined);
+    return null;
+  }
+  // Recorded pid is dead but a sidecar exists. Decide adopt-vs-spawn on
+  // listener PRESENCE, not on the short readiness window: if a live process
+  // already owns the endpoint (an out-of-band relaunch — manual restart, or
+  // a crash + external respawn), a fresh spawn cannot bind the held port, so
+  // we must never fall through to it.
+  const findListenerPid =
+    opts.findListenerPid ??
+    ((endpoint): Promise<number | null> => defaultFindListenerPid(endpoint, opts.signal));
+  const livePid = await findListenerPid(manifest.spec.endpoint).catch(() => null);
+  if (livePid !== null && isProcessAlive(livePid)) {
+    const adopted = await tryAdoptLiveHost(
+      manifest,
+      opts,
+      resolved,
+      opts.probeReady ??
+        ((endpoint, timeoutMs): Promise<{ ready: boolean; modelIds: string[] }> =>
+          engine.probeReady(endpoint, timeoutMs)),
+      livePid,
+    );
+    if (adopted) return adopted;
+    // A live process owns the port but is not (yet) confirmable as ours
+    // (still loading, or an unrelated process). Defer to the next reconcile
+    // tick rather than spawn a competitor that would only fail to bind.
+    return {
+      ok: false,
+      pid: null,
+      error: `endpoint ${manifest.spec.endpoint.host}:${String(manifest.spec.endpoint.port)} is held by live pid ${String(livePid)} that is not yet adoptable (readiness/model unconfirmed); deferring restart`,
+    };
+  }
+  // No live listener — the port is free; fall through to a normal spawn.
+  return null;
+}
+
 export async function startModelHost(opts: StartModelHostOptions): Promise<StartModelHostResult> {
   const env = toRuntimeEnv(opts.env);
   const runtimeEnv = withRuntimeDir(env, opts.runtimeDir);
@@ -315,50 +367,10 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     return result;
   }
 
-  // Reap a prior live ModelHost for this workload before spawning a new one.
-  // Without this, applying over a still-running host leaves the old process
-  // holding the endpoint port: the new omlx fails to bind and exits, yet
-  // probeReady is satisfied by the OLD listener, so we would record the new
-  // child's already-dead pid — which listLocalRoutes then drops from routing.
-  const priorState = readModelHostState(opts.key, resolved);
-  if (priorState && isProcessAlive(priorState.pid)) {
-    await engine.teardown(priorState.pid).catch(() => undefined);
-  } else if (priorState) {
-    // Recorded pid is dead but a sidecar exists. Decide adopt-vs-spawn on
-    // listener PRESENCE, not on the short readiness window: if a live process
-    // already owns the endpoint (an out-of-band relaunch — manual restart, or
-    // a crash + external respawn), a fresh spawn cannot bind the held port, so
-    // we must never fall through to it.
-    const findListenerPid =
-      opts.findListenerPid ??
-      ((endpoint): Promise<number | null> => defaultFindListenerPid(endpoint, opts.signal));
-    const livePid = await findListenerPid(manifest.spec.endpoint).catch(() => null);
-    if (livePid !== null && isProcessAlive(livePid)) {
-      const adopted = await tryAdoptLiveHost(
-        manifest,
-        opts,
-        resolved,
-        opts.probeReady ??
-          ((endpoint, timeoutMs): Promise<{ ready: boolean; modelIds: string[] }> =>
-            engine.probeReady(endpoint, timeoutMs)),
-        livePid,
-      );
-      if (adopted) {
-        opts.onEvent?.({ type: "done", result: adopted });
-        return adopted;
-      }
-      // A live process owns the port but is not (yet) confirmable as ours
-      // (still loading, or an unrelated process). Defer to the next reconcile
-      // tick rather than spawn a competitor that would only fail to bind.
-      const deferred: StartModelHostResult = {
-        ok: false,
-        pid: null,
-        error: `endpoint ${manifest.spec.endpoint.host}:${String(manifest.spec.endpoint.port)} is held by live pid ${String(livePid)} that is not yet adoptable (readiness/model unconfirmed); deferring restart`,
-      };
-      opts.onEvent?.({ type: "done", result: deferred });
-      return deferred;
-    }
-    // No live listener — the port is free; fall through to a normal spawn.
+  const early = await reapOrAdoptPriorHost(manifest, opts, resolved, engine);
+  if (early) {
+    opts.onEvent?.({ type: "done", result: early });
+    return early;
   }
 
   const bootEnv: EngineBootEnv = {
