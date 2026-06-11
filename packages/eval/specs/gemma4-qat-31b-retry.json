@@ -1,0 +1,16 @@
+[
+  {
+    "name": "gemma-4-31B-it-qat-mxfp4",
+    "engine": "omlx",
+    "family": "gemma-4",
+    "quant": "qat-mxfp4",
+    "size_params": "31B",
+    "host": "127.0.0.1",
+    "port": 8195,
+    "binary": "/Volumes/WorkSSD/src/omlx/.venv/bin/omlx",
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/mlx",
+    "request_model_id": "gemma-4-31B-it-qat-mxfp4",
+    "extra_args": ["--max-model-memory", "30GB", "--max-process-memory", "36GB"],
+    "managed": true
+  }
+]
