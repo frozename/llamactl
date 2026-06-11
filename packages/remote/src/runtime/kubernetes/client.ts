@@ -1,7 +1,7 @@
 import {
-  AppsV1Api,
   type ApiConstructor,
   type ApiType,
+  AppsV1Api,
   CoreV1Api,
   KubeConfig,
 } from "@kubernetes/client-node";

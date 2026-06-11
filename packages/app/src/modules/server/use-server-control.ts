@@ -5,6 +5,7 @@ import { useActiveWorkload } from "@/hooks/useActiveWorkload";
 import { trpc } from "@/lib/trpc";
 
 import type { LogLine } from "./types";
+
 import { MAX_LOG_LINES } from "./types";
 
 export interface UseServerControlReturn {

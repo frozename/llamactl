@@ -1,9 +1,12 @@
 import * as React from "react";
 import { useState } from "react";
+
 import { trpc } from "@/lib/trpc";
 import { Badge, Button, Input } from "@/ui";
-import { parseIndexInput } from "./helpers";
+
 import type { StoreResponse } from "./types";
+
+import { parseIndexInput } from "./helpers";
 
 function CollectionRow(props: {
   collection: string;

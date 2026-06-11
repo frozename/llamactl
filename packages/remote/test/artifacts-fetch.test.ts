@@ -281,7 +281,10 @@ describe("cosignIdentityRegex", () => {
       "^https://github\\.com/frozename/llamactl/\\.github/workflows/release-agent\\.yml@refs/tags/v.+$",
     );
     // Sanity: the regex actually matches a plausible cosign cert identity.
-    const re = new RegExp(r);
+    // Literal mirror of the exact string asserted above, so testing it
+    // is equivalent to testing `r` without a dynamic RegExp.
+    const re =
+      /^https:\/\/github\.com\/frozename\/llamactl\/\.github\/workflows\/release-agent\.yml@refs\/tags\/v.+$/;
     expect(
       re.test(
         "https://github.com/frozename/llamactl/.github/workflows/release-agent.yml@refs/tags/v0.4.2",

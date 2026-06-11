@@ -1,3 +1,5 @@
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
 import {
   bench,
   catalog,
@@ -13,7 +15,6 @@ import {
   router,
   workloadStore,
 } from "@llamactl/remote";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
 

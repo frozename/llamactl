@@ -23,8 +23,13 @@ export const useNodeSelection = create<NodeSelectionStore>()(
 export function useSyncActiveNode(): void {
   const qc = useQueryClient();
   const utils = trpc.useUtils();
-  const { selectedNode, setSelectedNode } = useNodeSelection();
   useEffect(() => {
+    // Read the persisted selection imperatively: this is a one-shot
+    // "reset to local on startup" migration, not a subscription —
+    // re-running on selection changes would make selecting a node
+    // impossible. After the first run the body is a no-op, so the
+    // effect is idempotent if qc/utils ever change identity.
+    const { selectedNode, setSelectedNode } = useNodeSelection.getState();
     if (selectedNode !== null) {
       setSelectedNode(null);
       void trpcUIClient.uiSetActiveNode.mutate({ name: "local" }).catch(() => {
@@ -33,5 +38,5 @@ export function useSyncActiveNode(): void {
       void utils.invalidate();
       void qc.invalidateQueries();
     }
-  }, []);
+  }, [qc, utils]);
 }

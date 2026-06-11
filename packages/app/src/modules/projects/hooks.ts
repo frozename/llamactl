@@ -20,13 +20,12 @@ export function useProjects(): {
 } {
   const list = trpc.projectList.useQuery(undefined, { retry: false });
   const data = list.data as ProjectListResponse | undefined;
-  const rows = data?.projects ?? [];
   const [selected, setSelected] = useState<string | null>(null);
 
-  const sorted = useMemo(
-    () => [...rows].sort((a, b) => a.metadata.name.localeCompare(b.metadata.name)),
-    [rows],
-  );
+  const sorted = useMemo(() => {
+    const rows = data?.projects ?? [];
+    return [...rows].sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
+  }, [data]);
   const selectedProject =
     selected !== null ? (sorted.find((p) => p.metadata.name === selected) ?? null) : null;
 

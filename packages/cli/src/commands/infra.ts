@@ -323,6 +323,7 @@ function matchNodeGlob(name: string, glob: string): boolean {
     .split("*")
     .map((part) => part.replaceAll(/[.+?^${}()|[\]\\]/g, "\\$&"))
     .join(".*");
+  // eslint-disable-next-line security/detect-non-literal-regexp -- Pattern is the operator's CLI node glob with every part regex-escaped above; only `*` expands to `.*`.
   return new RegExp(`^${escaped}$`).test(name);
 }
 

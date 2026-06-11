@@ -61,11 +61,13 @@ function normalizeNumber(raw: string): string | null {
 function extractMc(completion: string, nOptions: number): string {
   const max = Math.max(1, Math.min(nOptions, LETTERS.length));
   const maxLetter = LETTERS[max - 1] ?? "A";
-  const valid = new RegExp(`[A-${maxLetter}]`);
+  // Inputs are single uppercase chars (or ""), so a char-range check
+  // is equivalent to the old dynamic `[A-${maxLetter}]` regex.
+  const valid = (ch: string): boolean => ch.length === 1 && ch >= "A" && ch <= maxLetter;
   const ans = lastAnswerLine(completion);
   if (ans) {
     const letter = /[A-Za-z]/.exec(ans);
-    if (letter && valid.test(letter[0].toUpperCase())) return letter[0].toUpperCase();
+    if (letter && valid(letter[0].toUpperCase())) return letter[0].toUpperCase();
   }
   // fallback: last standalone "(B)" / "B)" / "option B" / bare "B" in the tail
   const tail = completion.slice(-400);
@@ -74,7 +76,7 @@ function extractMc(completion: string, nOptions: number): string {
   let last: string | null = null;
   while ((m = re.exec(tail)) !== null) {
     const c = (m[1] ?? "").toUpperCase();
-    if (valid.test(c)) last = c;
+    if (valid(c)) last = c;
   }
   return last ?? "__no_answer__";
 }

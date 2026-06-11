@@ -8,7 +8,8 @@ import { trpc } from "@/lib/trpc";
 import { Badge, Button, StatusDot } from "@/ui";
 
 import type { WorkloadRow as WorkloadRowType } from "./types";
-import { WorkersPanel, type WorkerManifest } from "./workers-panel";
+
+import { type WorkerManifest, WorkersPanel } from "./workers-panel";
 
 interface DescribeData {
   manifest: {

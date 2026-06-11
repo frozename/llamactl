@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
 import type { ClusterNode } from "../src/config/schema.js";
-import type { ModelRun } from "../src/workload/schema.js";
 import type { GatewayApplyOptions } from "../src/workload/gateway-handlers/types.js";
+import type { ModelRun } from "../src/workload/schema.js";
 
 import { readGatewayCatalog } from "../src/workload/gateway-catalog/io.js";
 import { embersynthHandler } from "../src/workload/gateway-handlers/embersynth.js";

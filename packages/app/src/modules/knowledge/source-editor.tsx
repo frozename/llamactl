@@ -1,10 +1,11 @@
 import * as React from "react";
+
 import type {
   FilesystemSource,
   GitSource,
   HttpSource,
-  SourceState,
   SourceKind,
+  SourceState,
 } from "./pipeline-types";
 
 const FIELD_CLS =

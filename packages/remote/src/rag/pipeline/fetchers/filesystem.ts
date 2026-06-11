@@ -113,6 +113,7 @@ function globToRegex(glob: string): RegExp {
     re += fragment;
     i = nextIndex;
   }
+  // eslint-disable-next-line security/detect-non-literal-regexp -- Pattern is built by this translator from the trusted pipeline-manifest glob; every regex metacharacter is escaped.
   return new RegExp(`^${re}$`);
 }
 

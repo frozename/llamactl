@@ -1,4 +1,6 @@
+import type { EmbersynthNode } from "../config/embersynth.js";
 import type { ClusterNode, Config } from "../config/schema.js";
+import type { SiriusProvider } from "../config/sirius-providers.js";
 import type { RuntimeBackend, ServiceInstance, ServiceRef } from "../runtime/backend.js";
 import type { ApplyEvent, WorkloadClient } from "../workload/apply.js";
 import type { GatewayHandler } from "../workload/gateway-handlers/types.js";
@@ -14,8 +16,6 @@ import type {
   CompositeApplyResult,
   CompositeComponentResult,
 } from "./types.js";
-import type { EmbersynthNode } from "../config/embersynth.js";
-import type { SiriusProvider } from "../config/sirius-providers.js";
 
 import { resolveInternalProxyEndpoint } from "../../../core/src/env.js";
 import {

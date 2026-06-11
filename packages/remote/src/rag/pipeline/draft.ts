@@ -170,6 +170,7 @@ function pickRagNode(desc: string, ctx: DraftContext, warnings: string[]): strin
     // Word-boundary match, not substring, so "kb-pg" doesn't swallow
     // "kb-pg-replica" and a stray "kb" in the description doesn't
     // silently pick a node whose name starts with those letters.
+    // eslint-disable-next-line security/detect-non-literal-regexp -- Node names come from trusted cluster config (ctx.availableRagNodes) and are escaped via escapeRegex.
     const re = new RegExp(`\\b${escapeRegex(node)}\\b`);
     if (re.test(desc)) return node;
   }

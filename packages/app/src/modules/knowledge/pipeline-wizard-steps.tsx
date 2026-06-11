@@ -1,5 +1,7 @@
 import * as React from "react";
-import type { FormState, TransformState, SourceState, SourceKind } from "./pipeline-types";
+
+import type { FormState, SourceKind, SourceState, TransformState } from "./pipeline-types";
+
 import { SourceEditor } from "./source-editor";
 
 export function DestinationStep(props: {

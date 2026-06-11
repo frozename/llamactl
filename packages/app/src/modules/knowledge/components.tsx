@@ -1,6 +1,8 @@
 import * as React from "react";
+
 import { trpc } from "@/lib/trpc";
-import type { EmbedderBinding, RagProviderKind, ListCollectionsResponse } from "./types";
+
+import type { EmbedderBinding, ListCollectionsResponse, RagProviderKind } from "./types";
 
 export function CollectionHeader(props: {
   nodeName: string;

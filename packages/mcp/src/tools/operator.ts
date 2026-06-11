@@ -1,5 +1,6 @@
-import { bench, env as envMod } from "@llamactl/core";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+import { bench, env as envMod } from "@llamactl/core";
 import { createOpenAICompatProvider } from "@nova/contracts";
 import {
   computeCostSnapshot,

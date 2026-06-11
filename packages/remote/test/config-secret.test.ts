@@ -83,7 +83,7 @@ describe("file backend", () => {
   test("missing file → clear error naming the path", () => {
     const path = join(tmp, "nope");
     expect(() => resolveSecret(path)).toThrow(/does not exist/);
-    expect(() => resolveSecret(path)).toThrow(new RegExp(path));
+    expect(() => resolveSecret(path)).toThrow(path);
   });
 
   test("~ expansion uses env.HOME", () => {

@@ -1,5 +1,6 @@
-import { router } from "@llamactl/remote";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+import { router } from "@llamactl/remote";
 import { appendAudit, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
 

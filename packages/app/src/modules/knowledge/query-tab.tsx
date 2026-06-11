@@ -1,10 +1,13 @@
 import * as React from "react";
 import { useState } from "react";
+
 import { trpc } from "@/lib/trpc";
 import { Badge, Button, Input } from "@/ui";
+
+import type { EmbedderBinding, RagProviderKind, SearchResponse } from "./types";
+
 import { CollectionHeader } from "./components";
 import { formatScore, truncateContent } from "./helpers";
-import type { EmbedderBinding, RagProviderKind, SearchResponse } from "./types";
 
 function QueryForm(props: {
   query: string;

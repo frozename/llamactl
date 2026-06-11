@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { sessionEventBus } from "../src/ops-chat/sessions/event-bus.js";
-import { startSessionsIngest, type IngestRecord } from "../src/search/ingest/sessions.js";
+import { type IngestRecord, startSessionsIngest } from "../src/search/ingest/sessions.js";
 
 describe("sessions ingest", () => {
   test("subscribes to event bus and forwards records to a sink", async () => {

@@ -55,9 +55,9 @@ function parseJsonDocuments(trimmed: string): ParseIndexResult {
       error: "JSON input must be an array of {id, content, metadata?} objects.",
     };
   }
+  const entries: unknown[] = parsed;
   const docs: IndexDocumentInput[] = [];
-  for (let i = 0; i < parsed.length; i++) {
-    const entry: unknown = parsed[i];
+  for (const [i, entry] of entries.entries()) {
     if (isInvalidDocEntry(entry)) {
       return {
         documents: [],

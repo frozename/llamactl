@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Composite } from "../src/composite/schema.js";
-import type { RuntimeBackend } from "../src/runtime/backend.js";
 import type { SiriusProvider } from "../src/config/sirius-providers.js";
+import type { RuntimeBackend } from "../src/runtime/backend.js";
 import type { WorkloadClient } from "../src/workload/apply.js";
 
 import { destroyComposite } from "../src/composite/apply.js";

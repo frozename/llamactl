@@ -4,7 +4,7 @@ import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Badge, Button, Input } from "@/ui";
 
-import type { RagNodeSummary, AgentNodeSummary, EmbedderBinding } from "./types";
+import type { AgentNodeSummary, EmbedderBinding, RagNodeSummary } from "./types";
 
 function EmbedderEditForm(props: {
   draftNode: string;
