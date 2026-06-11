@@ -50,13 +50,14 @@ describe("strict lint rollout baselines", () => {
     expect(pkg.scripts?.["format:check"]).toBe("prettier . --check");
   });
 
-  test("pre-commit hook stays fast and pre-push is not present yet", () => {
+  test("pre-commit hook stays fast; pre-push carries the full lint", () => {
     const preCommit = readFileSync(join(root, ".husky/pre-commit"), "utf8");
+    const prePush = readFileSync(join(root, ".husky/pre-push"), "utf8");
 
-    expect(existsSync(join(root, ".husky/pre-push"))).toBe(false);
     expect(preCommit).toContain("bunx lint-staged");
     expect(preCommit).not.toContain("bun run lint");
     expect(preCommit).not.toContain("tsc");
+    expect(prePush).toContain("bun run lint");
   });
 
   test("tsconfig.eslint.json exists but is not referenced by build typecheck configs", () => {
