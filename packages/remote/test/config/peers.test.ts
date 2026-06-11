@@ -1,11 +1,25 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import * as kubeconfigActual from "../../src/config/kubeconfig.js";
 import { saveConfig, upsertCluster, upsertNode } from "../../src/config/kubeconfig.js";
 import { listPeers } from "../../src/config/peers.js";
 import { freshConfig, LOCAL_NODE_NAME } from "../../src/config/schema.js";
+
+// Snapshot the real exports at load time. mock.module retroactively
+// patches live bindings, so once the throwing mock below registers, the
+// namespace object itself reflects the mock — a plain-object copy taken
+// now keeps the real functions reachable for restoration.
+const kubeconfigReal = { ...kubeconfigActual };
+
+// The throwing kubeconfig mock below leaks across test FILES when the
+// whole suite runs in one bun process (mock.module is process-global);
+// re-register the real module so later files see real behavior.
+afterAll(() => {
+  void mock.module("../../src/config/kubeconfig.js", () => kubeconfigReal);
+});
 
 let tmp: string;
 let prevConfigEnv: string | undefined;
@@ -148,9 +162,17 @@ test("readSchedulerLease reads holder from journal and does not call loadConfig 
     upsertNode,
   }));
 
-  const peers = (await import(`../../src/config/peers.js?f11-${String(Date.now())}`)) as {
-    readSchedulerLease: (path: string) => { holder: string } | null;
-  };
+  let peers: { readSchedulerLease: (path: string) => { holder: string } | null };
+  try {
+    peers = (await import(`../../src/config/peers.js?f11-${String(Date.now())}`)) as {
+      readSchedulerLease: (path: string) => { holder: string } | null;
+    };
+  } finally {
+    // The throwing mock must not outlive this import: mock.module is
+    // process-global, and a whole-suite run (cross-repo-smoke) executes
+    // other files' kubeconfig calls after this test.
+    void mock.module("../../src/config/kubeconfig.js", () => kubeconfigReal);
+  }
   const lease = peers.readSchedulerLease(journalPath);
   expect(lease).toEqual({ holder: "node-b" });
   expect(loadConfigSpy).not.toHaveBeenCalled();
