@@ -324,6 +324,122 @@ async function runSource(args: {
   return tally;
 }
 
+/**
+ * `version` mode rewrites chunk IDs for re-ingestions so both old
+ * and new coexist in the store. First-time ingestions stay bare
+ * (no `@sha` suffix) so the operator can start in `skip` and flip
+ * to `version` later without bifurcating the ID space unnecessarily.
+ * `replace` and `skip` use the chunks as the transform emitted them
+ * (empty suffix).
+ */
+async function versionChunkIdSuffix(
+  journal: Journal,
+  label: string,
+  docId: string,
+  sha: string,
+  onDuplicate: OnDuplicate,
+): Promise<string> {
+  if (onDuplicate !== "version") return "";
+  const prior = await journal.priorIngestions(label, docId);
+  return prior.length > 0 ? `@${sha.slice(0, 12)}` : "";
+}
+
+/** Apply the version suffix to every chunk id. The orig id stays in
+ *  metadata so retrieval can still attribute the chunk to its doc. */
+function applyChunkIdSuffix(
+  chunks: RawDoc[],
+  docId: string,
+  sha: string,
+  chunkIdSuffix: string,
+): RawDoc[] {
+  if (!chunkIdSuffix) return chunks;
+  return chunks.map((c) => ({
+    ...c,
+    id: injectIdSuffix(c.id, docId, chunkIdSuffix),
+    metadata: { ...c.metadata, orig_doc_id: docId, version_sha: sha.slice(0, 12) },
+  }));
+}
+
+/**
+ * `replace`: union every prior ingestion's chunk_ids and delete
+ * them up front. Only relevant when this doc_id has been seen
+ * before with a different sha. No-ops for fresh docs. Returns true
+ * when the pre-delete errored — surfaced but not fatal: the store
+ * that follows will overwrite matching IDs in some adapters
+ * (pgvector upserts) and duplicate in others. Either outcome is
+ * still auditable via the journal.
+ */
+async function replacePriorChunks(args: {
+  journal: Journal;
+  label: string;
+  docId: string;
+  collection: string;
+  adapter: OpenAdapterResult;
+}): Promise<boolean> {
+  const { journal, label, docId, collection, adapter } = args;
+  const priorIds = await collectPriorChunkIds(journal, label, docId);
+  if (priorIds.length === 0) return false;
+  if (!adapter.delete) {
+    await appendErrorEntry(
+      journal,
+      label,
+      `on_duplicate=replace requested but adapter has no delete binding — skipping pre-delete for ${docId}`,
+      docId,
+    );
+    return false;
+  }
+  try {
+    const deleteReq: DeleteRequest = { ids: priorIds, collection };
+    await adapter.delete(deleteReq);
+    return false;
+  } catch (err) {
+    await appendErrorEntry(
+      journal,
+      label,
+      `replace-delete failed for ${docId}: ${toMessage(err)}`,
+      docId,
+    );
+    return true;
+  }
+}
+
+/** Push chunks to the store in BATCH_SIZE batches. Returns true when
+ *  a batch failed — the remainder is not pushed, because a partial
+ *  doc in the store is a worse outcome than a retry. */
+async function storeChunkBatches(args: {
+  journal: Journal;
+  label: string;
+  docId: string;
+  collection: string;
+  adapter: OpenAdapterResult;
+  storedChunks: RawDoc[];
+}): Promise<boolean> {
+  const { journal, label, docId, collection, adapter, storedChunks } = args;
+  for (let i = 0; i < storedChunks.length; i += BATCH_SIZE) {
+    const batch = storedChunks.slice(i, i + BATCH_SIZE);
+    const storeReq: StoreRequest = {
+      collection,
+      documents: batch.map((c) => ({
+        id: c.id,
+        content: c.content,
+        metadata: c.metadata,
+      })),
+    };
+    try {
+      await adapter.store(storeReq);
+    } catch (err) {
+      await appendErrorEntry(
+        journal,
+        label,
+        `store failed for ${docId} batch@${String(i)}: ${toMessage(err)}`,
+        docId,
+      );
+      return true;
+    }
+  }
+  return false;
+}
+
 async function processDoc(args: {
   label: string;
   rawDoc: RawDoc;
@@ -361,88 +477,24 @@ async function processDoc(args: {
     return { skipped: false, errored: true, chunks: 0 };
   }
 
-  // `version` mode rewrites chunk IDs for re-ingestions so both old
-  // and new coexist in the store. First-time ingestions stay bare
-  // (no `@sha` suffix) so the operator can start in `skip` and flip
-  // to `version` later without bifurcating the ID space unnecessarily.
-  // The orig id stays in metadata so retrieval can still attribute
-  // the chunk to its doc. `replace` and `skip` use the chunks as the
-  // transform emitted them.
-  let chunkIdSuffix = "";
-  if (onDuplicate === "version") {
-    const prior = await journal.priorIngestions(label, rawDoc.id);
-    if (prior.length > 0) chunkIdSuffix = `@${sha.slice(0, 12)}`;
-  }
-  const storedChunks = chunkIdSuffix
-    ? chunks.map((c) => ({
-        ...c,
-        id: injectIdSuffix(c.id, rawDoc.id, chunkIdSuffix),
-        metadata: { ...c.metadata, orig_doc_id: rawDoc.id, version_sha: sha.slice(0, 12) },
-      }))
-    : chunks;
+  const chunkIdSuffix = await versionChunkIdSuffix(journal, label, rawDoc.id, sha, onDuplicate);
+  const storedChunks = applyChunkIdSuffix(chunks, rawDoc.id, sha, chunkIdSuffix);
   const chunkIds = storedChunks.map((c) => c.id);
 
   let errored = false;
   if (!dryRun) {
-    // `replace`: union every prior ingestion's chunk_ids and delete
-    // them up front. Only relevant when this doc_id has been seen
-    // before with a different sha. No-ops for fresh docs.
     if (onDuplicate === "replace") {
-      const priorIds = await collectPriorChunkIds(journal, label, rawDoc.id);
-      if (priorIds.length > 0) {
-        if (!adapter.delete) {
-          await appendErrorEntry(
-            journal,
-            label,
-            `on_duplicate=replace requested but adapter has no delete binding — skipping pre-delete for ${rawDoc.id}`,
-            rawDoc.id,
-          );
-        } else {
-          try {
-            const deleteReq: DeleteRequest = { ids: priorIds, collection };
-            await adapter.delete(deleteReq);
-          } catch (err) {
-            errored = true;
-            await appendErrorEntry(
-              journal,
-              label,
-              `replace-delete failed for ${rawDoc.id}: ${toMessage(err)}`,
-              rawDoc.id,
-            );
-            // Surface but keep going — the store below will overwrite
-            // matching IDs in some adapters (pgvector upserts) and
-            // duplicate in others. Either outcome is still auditable
-            // via the journal.
-          }
-        }
-      }
+      errored = await replacePriorChunks({ journal, label, docId: rawDoc.id, collection, adapter });
     }
-
-    for (let i = 0; i < storedChunks.length; i += BATCH_SIZE) {
-      const batch = storedChunks.slice(i, i + BATCH_SIZE);
-      const storeReq: StoreRequest = {
-        collection,
-        documents: batch.map((c) => ({
-          id: c.id,
-          content: c.content,
-          metadata: c.metadata,
-        })),
-      };
-      try {
-        await adapter.store(storeReq);
-      } catch (err) {
-        errored = true;
-        await appendErrorEntry(
-          journal,
-          label,
-          `store failed for ${rawDoc.id} batch@${String(i)}: ${toMessage(err)}`,
-          rawDoc.id,
-        );
-        // Surface the first batch failure and stop pushing the rest —
-        // partial doc in the store is a worse outcome than a retry.
-        break;
-      }
-    }
+    const storeFailed = await storeChunkBatches({
+      journal,
+      label,
+      docId: rawDoc.id,
+      collection,
+      adapter,
+      storedChunks,
+    });
+    errored = errored || storeFailed;
   }
 
   await journal.append({

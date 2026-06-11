@@ -161,6 +161,46 @@ function requireString(obj: Record<string, unknown>, key: string): string {
   return v;
 }
 
+function buildBenchHistoryInput(args: Record<string, unknown>): { rel?: string; limit?: number } {
+  const opts: { rel?: string; limit?: number } = {};
+  if (typeof args.rel === "string") opts.rel = args.rel;
+  if (typeof args.limit === "number") opts.limit = args.limit;
+  return opts;
+}
+
+function buildRagSearchInput(args: Record<string, unknown>): Parameters<Caller["ragSearch"]>[0] {
+  const payload: Parameters<Caller["ragSearch"]>[0] = {
+    node: requireString(args, "node"),
+    query: requireString(args, "query"),
+    topK: typeof args.topK === "number" ? args.topK : 10,
+  };
+  if (args.filter && typeof args.filter === "object") {
+    payload.filter = args.filter as Record<string, unknown>;
+  }
+  if (typeof args.collection === "string") {
+    payload.collection = args.collection;
+  }
+  return payload;
+}
+
+function buildRagPipelineDraftInput(
+  args: Record<string, unknown>,
+): Parameters<Caller["ragPipelineDraft"]>[0] {
+  const payload: Parameters<Caller["ragPipelineDraft"]>[0] = {
+    description: typeof args.description === "string" ? args.description : "",
+  };
+  if (Array.isArray(args.availableRagNodes)) {
+    payload.availableRagNodes = args.availableRagNodes as string[];
+  }
+  if (typeof args.defaultRagNode === "string") {
+    payload.defaultRagNode = args.defaultRagNode;
+  }
+  if (typeof args.nameOverride === "string") {
+    payload.nameOverride = args.nameOverride;
+  }
+  return payload;
+}
+
 async function executeReadTool(
   caller: Caller,
   name: ReadToolName,
@@ -193,12 +233,8 @@ async function executeReadTool(
             | undefined) ?? "all",
         scopeFilter: (args.scopeFilter as string | undefined) ?? "all",
       });
-    case "llamactl.bench.history": {
-      const opts: { rel?: string; limit?: number } = {};
-      if (typeof args.rel === "string") opts.rel = args.rel;
-      if (typeof args.limit === "number") opts.limit = args.limit;
-      return await caller.benchHistory(opts);
-    }
+    case "llamactl.bench.history":
+      return await caller.benchHistory(buildBenchHistoryInput(args));
     case "llamactl.cost.snapshot":
       return await caller.costSnapshot({
         days: typeof args.days === "number" ? args.days : 7,
@@ -208,20 +244,8 @@ async function executeReadTool(
       // goal/context/history unchanged. Callers that skip these
       // still get a useful error from Zod.
       return await caller.operatorPlan(args as unknown as Parameters<Caller["operatorPlan"]>[0]);
-    case "llamactl.rag.search": {
-      const payload: Parameters<Caller["ragSearch"]>[0] = {
-        node: requireString(args, "node"),
-        query: requireString(args, "query"),
-        topK: typeof args.topK === "number" ? args.topK : 10,
-      };
-      if (args.filter && typeof args.filter === "object") {
-        payload.filter = args.filter as Record<string, unknown>;
-      }
-      if (typeof args.collection === "string") {
-        payload.collection = args.collection;
-      }
-      return await caller.ragSearch(payload);
-    }
+    case "llamactl.rag.search":
+      return await caller.ragSearch(buildRagSearchInput(args));
     case "llamactl.rag.listCollections":
       return await caller.ragListCollections({
         node: requireString(args, "node"),
@@ -246,21 +270,8 @@ async function executeReadTool(
       return await caller.ragPipelineGet({
         name: requireString(args, "name"),
       });
-    case "llamactl.rag.pipeline.draft": {
-      const payload: Parameters<Caller["ragPipelineDraft"]>[0] = {
-        description: typeof args.description === "string" ? args.description : "",
-      };
-      if (Array.isArray(args.availableRagNodes)) {
-        payload.availableRagNodes = args.availableRagNodes as string[];
-      }
-      if (typeof args.defaultRagNode === "string") {
-        payload.defaultRagNode = args.defaultRagNode;
-      }
-      if (typeof args.nameOverride === "string") {
-        payload.nameOverride = args.nameOverride;
-      }
-      return await caller.ragPipelineDraft(payload);
-    }
+    case "llamactl.rag.pipeline.draft":
+      return await caller.ragPipelineDraft(buildRagPipelineDraftInput(args));
     case "llamactl.project.list":
       return await caller.projectList();
     case "llamactl.project.get":
@@ -273,6 +284,19 @@ async function executeReadTool(
         taskKind: requireString(args, "taskKind"),
       });
   }
+}
+
+/**
+ * Shared dry-run gate: surface the intended payload instead of
+ * mutating when `dryRun` is set; otherwise run the real call.
+ */
+async function dryRunOr(
+  dryRun: boolean,
+  preview: Record<string, unknown>,
+  run: () => Promise<unknown>,
+): Promise<unknown> {
+  if (dryRun) return preview;
+  return await run();
 }
 
 async function executeMutationDryRunTool(
@@ -291,28 +315,30 @@ async function executeMutationDryRunTool(
       // The underlying procedure doesn't accept a dryRun flag — it
       // just writes the TSV. We surface the intended payload when
       // dryRun is requested instead of mutating disk.
-      if (dryRun) {
-        return { dryRun: true, wouldWrite: payload };
-      }
-      return await caller.promote(payload);
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldWrite: payload },
+        async (): Promise<unknown> => await caller.promote(payload),
+      );
     }
-    case "llamactl.node.add": {
-      if (dryRun) {
-        // No wet-run probe so dry-run just echoes the intended call.
-        return {
+    case "llamactl.node.add":
+      // No wet-run probe so dry-run just echoes the intended call.
+      return await dryRunOr(
+        dryRun,
+        {
           dryRun: true,
           wouldRegister: {
             name: requireString(args, "name"),
             bootstrapLength: typeof args.bootstrap === "string" ? args.bootstrap.length : 0,
           },
-        };
-      }
-      return await caller.nodeAdd({
-        name: requireString(args, "name"),
-        bootstrap: requireString(args, "bootstrap"),
-        ...(typeof args.force === "boolean" ? { force: args.force } : {}),
-      });
-    }
+        },
+        async (): Promise<unknown> =>
+          await caller.nodeAdd({
+            name: requireString(args, "name"),
+            bootstrap: requireString(args, "bootstrap"),
+            ...(typeof args.force === "boolean" ? { force: args.force } : {}),
+          }),
+      );
     case "llamactl.rag.store": {
       const node = requireString(args, "node");
       const documents = Array.isArray(args.documents)
@@ -323,20 +349,20 @@ async function executeMutationDryRunTool(
             vector?: number[];
           }[])
         : [];
-      if (dryRun) {
-        return {
-          dryRun: true,
-          wouldStore: { node, count: documents.length },
-        };
-      }
-      const payload: Parameters<Caller["ragStore"]>[0] = {
-        node,
-        documents: documents,
-      };
-      if (typeof args.collection === "string") {
-        payload.collection = args.collection;
-      }
-      return await caller.ragStore(payload);
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldStore: { node, count: documents.length } },
+        async (): Promise<unknown> => {
+          const payload: Parameters<Caller["ragStore"]>[0] = {
+            node,
+            documents: documents,
+          };
+          if (typeof args.collection === "string") {
+            payload.collection = args.collection;
+          }
+          return await caller.ragStore(payload);
+        },
+      );
     }
     case "llamactl.composite.apply":
       // The composite procedure supports dry-run natively (it
@@ -351,10 +377,11 @@ async function executeMutationDryRunTool(
       // Apply is idempotent — writing the spec.yaml is safe. Dry
       // run only parses + validates without touching disk.
       const manifestYaml = requireString(args, "manifestYaml");
-      if (dryRun) {
-        return { dryRun: true, wouldApply: { bytes: manifestYaml.length } };
-      }
-      return await caller.ragPipelineApply({ manifestYaml });
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldApply: { bytes: manifestYaml.length } },
+        async (): Promise<unknown> => await caller.ragPipelineApply({ manifestYaml }),
+      );
     }
     case "llamactl.rag.pipeline.run":
       // The underlying procedure supports dry-run natively — it
@@ -368,23 +395,22 @@ async function executeMutationDryRunTool(
       // projectApply is idempotent — writing projects.yaml is safe.
       // Dry run only parses + validates without touching disk.
       const manifestYaml = requireString(args, "manifestYaml");
-      if (dryRun) {
-        return { dryRun: true, wouldApply: { bytes: manifestYaml.length } };
-      }
-      return await caller.projectApply({ manifestYaml });
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldApply: { bytes: manifestYaml.length } },
+        async (): Promise<unknown> => await caller.projectApply({ manifestYaml }),
+      );
     }
     case "llamactl.project.index": {
       // Generates + applies the auto-wired RagPipeline manifest.
       // Dry run surfaces the intended pipeline name without
       // invoking ragPipelineApply.
       const name = requireString(args, "name");
-      if (dryRun) {
-        return {
-          dryRun: true,
-          wouldIndex: { project: name, pipelineName: `project-${name}` },
-        };
-      }
-      return await caller.projectIndex({ name });
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldIndex: { project: name, pipelineName: `project-${name}` } },
+        async (): Promise<unknown> => await caller.projectIndex({ name }),
+      );
     }
   }
 }
@@ -401,39 +427,45 @@ async function executeMutationDestructiveTool(
         profile: requireString(args, "profile") as "mac-mini-16g" | "balanced" | "macbook-pro-48g",
         preset: requireString(args, "preset") as "best" | "vision" | "balanced" | "fast",
       };
-      if (dryRun) {
-        return { dryRun: true, wouldRemove: payload };
-      }
-      return await caller.promoteDelete(payload);
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldRemove: payload },
+        async (): Promise<unknown> => await caller.promoteDelete(payload),
+      );
     }
     case "llamactl.workload.delete": {
       const payload = {
         name: requireString(args, "name"),
         keepRunning: typeof args.keepRunning === "boolean" ? args.keepRunning : false,
       };
-      if (dryRun) {
-        return { dryRun: true, wouldDelete: payload };
-      }
-      return await caller.workloadDelete(payload);
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldDelete: payload },
+        async (): Promise<unknown> => await caller.workloadDelete(payload),
+      );
     }
     case "llamactl.node.remove": {
       const payload = { name: requireString(args, "name") };
-      if (dryRun) {
-        return { dryRun: true, wouldRemove: payload };
-      }
-      return await caller.nodeRemove(payload);
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldRemove: payload },
+        async (): Promise<unknown> => await caller.nodeRemove(payload),
+      );
     }
     case "llamactl.rag.delete": {
       const node = requireString(args, "node");
       const ids = Array.isArray(args.ids) ? (args.ids as string[]) : [];
-      if (dryRun) {
-        return { dryRun: true, wouldDelete: { node, ids } };
-      }
-      const payload: Parameters<Caller["ragDelete"]>[0] = { node, ids };
-      if (typeof args.collection === "string") {
-        payload.collection = args.collection;
-      }
-      return await caller.ragDelete(payload);
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldDelete: { node, ids } },
+        async (): Promise<unknown> => {
+          const payload: Parameters<Caller["ragDelete"]>[0] = { node, ids };
+          if (typeof args.collection === "string") {
+            payload.collection = args.collection;
+          }
+          return await caller.ragDelete(payload);
+        },
+      );
     }
     case "llamactl.composite.destroy":
       // Like compositeApply, the procedure handles dry-run
@@ -447,20 +479,22 @@ async function executeMutationDestructiveTool(
       });
     case "llamactl.rag.pipeline.remove": {
       const payload = { name: requireString(args, "name") };
-      if (dryRun) {
-        return { dryRun: true, wouldRemove: payload };
-      }
-      return await caller.ragPipelineRemove(payload);
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldRemove: payload },
+        async (): Promise<unknown> => await caller.ragPipelineRemove(payload),
+      );
     }
     case "llamactl.project.remove": {
       // Matches ragPipelineRemove semantics — never touches the
       // already-indexed data in the rag node. Re-indexing requires
       // `project add` + `project index` again.
       const payload = { name: requireString(args, "name") };
-      if (dryRun) {
-        return { dryRun: true, wouldRemove: payload };
-      }
-      return await caller.projectRemove(payload);
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldRemove: payload },
+        async (): Promise<unknown> => await caller.projectRemove(payload),
+      );
     }
   }
 }

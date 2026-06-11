@@ -106,48 +106,47 @@ interface AppliedRecord {
   started: boolean;
 }
 
-export async function applyComposite(opts: CompositeApplyOptions): Promise<CompositeApplyResult> {
-  const manifest = opts.manifest;
-  const emit = (e: CompositeApplyEvent): void => opts.onEvent?.(e);
-
-  emit({ type: "phase", phase: "Applying" });
-
-  const componentResults: CompositeComponentResult[] = [];
-  const applied: AppliedRecord[] = [];
-  const order = topologicalOrder(manifest.spec);
-
-  let failureMessage: string | null = null;
+interface ApplyLoopOutcome {
+  failureMessage: string | null;
   // Pipeline components return Pending (recoverable steady state) on
   // shape/name conflicts. Pending is not a hard failure — it must NOT
   // trigger rollback — but it MUST halt the topo loop so downstream
   // components don't come up against an inconsistent state. Spec D4 +
   // "Error handling": "Composite halts at this entry; topo dependents
   // downstream pick up the dependent-failed condition."
-  let haltedOnPending: { ref: ComponentRef; message: string } | null = null;
-  let lastProcessedIdx = -1;
+  haltedOnPending: { ref: ComponentRef; message: string } | null;
+  lastProcessedIdx: number;
+}
 
-  for (const [i, element] of order.entries()) {
-    const ref = element;
+async function runComponentLoop(
+  order: ComponentRef[],
+  manifest: Composite,
+  opts: CompositeApplyOptions,
+  applied: AppliedRecord[],
+  componentResults: CompositeComponentResult[],
+  emit: (e: CompositeApplyEvent) => void,
+): Promise<ApplyLoopOutcome> {
+  const outcome: ApplyLoopOutcome = {
+    failureMessage: null,
+    haltedOnPending: null,
+    lastProcessedIdx: -1,
+  };
+  for (const [i, ref] of order.entries()) {
     emit({ type: "component-start", ref });
     try {
       const record = await applyComponent(ref, manifest, opts, applied);
       applied.push(record);
-      lastProcessedIdx = i;
+      outcome.lastProcessedIdx = i;
       // Pipeline components carry a richer status than Ready/Failed
       // (Pending on shape/name conflict). When the handler reported
       // Pending, halt the loop here without flagging this as a failure
       // — rollback is reserved for genuine errors.
-      const pipelinePending = record.pipelineStatus?.state === "Pending";
       const message = record.pipelineStatus?.message;
-      if (pipelinePending) {
+      if (record.pipelineStatus?.state === "Pending") {
         const pendingMessage = message ?? "pipeline reported Pending";
-        componentResults.push({
-          ref,
-          state: "Pending",
-          message: pendingMessage,
-        });
+        componentResults.push({ ref, state: "Pending", message: pendingMessage });
         emit({ type: "component-ready", ref, message: pendingMessage });
-        haltedOnPending = { ref, message: pendingMessage };
+        outcome.haltedOnPending = { ref, message: pendingMessage };
         break;
       }
       componentResults.push({
@@ -160,37 +159,53 @@ export async function applyComposite(opts: CompositeApplyOptions): Promise<Compo
       const message = toErrorMessage(err);
       componentResults.push({ ref, state: "Failed", message });
       emit({ type: "component-failed", ref, message });
-      failureMessage = message;
+      outcome.failureMessage = message;
       break;
     }
   }
+  return outcome;
+}
 
-  // Spec "Error handling": when an entry halts on Pending, downstream
-  // dependents pick up the dependent-failed condition. Mark each
-  // unprocessed component Pending with a dependent-failed message so
-  // the status surface reflects "blocked, not Ready".
-  if (haltedOnPending !== null) {
-    const haltRef = haltedOnPending.ref;
-    for (let i = lastProcessedIdx + 1; i < order.length; i++) {
-      const ref = order[i];
-      if (!ref) continue;
-      componentResults.push({
-        ref,
-        state: "Pending",
-        message: `dependent-failed: ${haltRef.kind}/${haltRef.name} pending`,
-      });
-    }
+/**
+ * Spec "Error handling": when an entry halts on Pending, downstream
+ * dependents pick up the dependent-failed condition. Mark each
+ * unprocessed component Pending with a dependent-failed message so
+ * the status surface reflects "blocked, not Ready".
+ */
+function markDependentsPending(
+  order: ComponentRef[],
+  lastProcessedIdx: number,
+  haltRef: ComponentRef,
+  componentResults: CompositeComponentResult[],
+): void {
+  for (let i = lastProcessedIdx + 1; i < order.length; i++) {
+    const ref = order[i];
+    if (!ref) continue;
+    componentResults.push({
+      ref,
+      state: "Pending",
+      message: `dependent-failed: ${haltRef.kind}/${haltRef.name} pending`,
+    });
   }
+}
 
-  let rolledBack = false;
-  if (failureMessage !== null && manifest.spec.onFailure === "rollback") {
-    const teardownRefs = reverseOrder(applied.filter((r) => r.started).map((r) => r.ref));
-    emit({ type: "rollback-start", refs: teardownRefs });
-    await rollback(applied, manifest, opts);
-    rolledBack = true;
-    emit({ type: "rollback-complete" });
+/**
+ * Composite phase rules:
+ * - failureMessage !== null  → 'Failed' (rollback) or 'Degraded' (leave-partial)
+ * - haltedOnPending !== null → 'Degraded' (closest existing match for "halted, not failed")
+ * - otherwise                → 'Ready'
+ */
+function compositePhase(outcome: ApplyLoopOutcome, manifest: Composite): CompositeStatus["phase"] {
+  if (outcome.failureMessage !== null) {
+    return manifest.spec.onFailure === "rollback" ? "Failed" : "Degraded";
   }
+  return outcome.haltedOnPending !== null ? "Degraded" : "Ready";
+}
 
+function buildFinalComponents(
+  componentResults: CompositeComponentResult[],
+  applied: AppliedRecord[],
+): CompositeStatusComponent[] {
   // Pipeline components have a richer state space (Ready | Pending) —
   // build a lookup so the final-status mapping can swap in the
   // handler-reported status for those refs.
@@ -198,60 +213,88 @@ export async function applyComposite(opts: CompositeApplyOptions): Promise<Compo
   for (const rec of applied) {
     if (rec.pipelineStatus) pipelineStatusByName.set(rec.ref.name, rec.pipelineStatus);
   }
+  return componentResults.map((r) => {
+    // Pipeline-kind override: surface the handler-reported state
+    // (Ready|Pending) verbatim instead of flattening to Ready/Failed.
+    if (r.ref.kind === "pipeline") {
+      const ps = pipelineStatusByName.get(r.ref.name);
+      if (ps) return ps;
+    }
+    return {
+      ref: r.ref,
+      state: r.state,
+      ...(r.message !== undefined && { message: r.message }),
+    };
+  });
+}
 
-  // Composite phase rules:
-  // - failureMessage !== null  → 'Failed' (rollback) or 'Degraded' (leave-partial)
-  // - haltedOnPending !== null → 'Degraded' (closest existing match for "halted, not failed")
-  // - otherwise                → 'Ready'
-  const phase: CompositeStatus["phase"] =
-    failureMessage !== null
-      ? manifest.spec.onFailure === "rollback"
-        ? "Failed"
-        : "Degraded"
-      : haltedOnPending !== null
-        ? "Degraded"
-        : "Ready";
-
-  const appliedAt = new Date().toISOString();
-  const finalStatus: CompositeStatus = {
-    phase,
-    appliedAt,
-    components: componentResults.map((r) => {
-      // Pipeline-kind override: surface the handler-reported state
-      // (Ready|Pending) verbatim instead of flattening to Ready/Failed.
-      if (r.ref.kind === "pipeline") {
-        const ps = pipelineStatusByName.get(r.ref.name);
-        if (ps) return ps;
-      }
-      return {
-        ref: r.ref,
-        state: r.state,
-        ...(r.message !== undefined && { message: r.message }),
-      };
-    }),
-  };
-
-  // Persist the status on the manifest. The composite YAML on disk
-  // tracks the last-known apply outcome so operators see state
-  // without re-running.
+/**
+ * Persist the status on the manifest. The composite YAML on disk
+ * tracks the last-known apply outcome so operators see state
+ * without re-running. Persistence is best-effort — we don't want a
+ * missing compositesDir to flip a successful apply into a failure.
+ */
+function persistCompositeStatus(
+  manifest: Composite,
+  finalStatus: CompositeStatus,
+  opts: CompositeApplyOptions,
+  emit: (e: CompositeApplyEvent) => void,
+): void {
   try {
     const updated: Composite = { ...manifest, status: finalStatus };
     const dir = opts.compositesDir ?? defaultCompositesDir();
     saveComposite(updated, dir);
   } catch (err) {
-    // Persistence is best-effort — we don't want a missing
-    // compositesDir to flip a successful apply into a failure.
     emit({
       type: "component-failed",
       ref: { kind: "service", name: "__persist__" },
       message: `failed to persist composite status: ${toErrorMessage(err)}`,
     });
   }
+}
+
+export async function applyComposite(opts: CompositeApplyOptions): Promise<CompositeApplyResult> {
+  const manifest = opts.manifest;
+  const emit = (e: CompositeApplyEvent): void => opts.onEvent?.(e);
+
+  emit({ type: "phase", phase: "Applying" });
+
+  const componentResults: CompositeComponentResult[] = [];
+  const applied: AppliedRecord[] = [];
+  const order = topologicalOrder(manifest.spec);
+
+  const outcome = await runComponentLoop(order, manifest, opts, applied, componentResults, emit);
+
+  if (outcome.haltedOnPending !== null) {
+    markDependentsPending(
+      order,
+      outcome.lastProcessedIdx,
+      outcome.haltedOnPending.ref,
+      componentResults,
+    );
+  }
+
+  let rolledBack = false;
+  if (outcome.failureMessage !== null && manifest.spec.onFailure === "rollback") {
+    const teardownRefs = reverseOrder(applied.filter((r) => r.started).map((r) => r.ref));
+    emit({ type: "rollback-start", refs: teardownRefs });
+    await rollback(applied, manifest, opts);
+    rolledBack = true;
+    emit({ type: "rollback-complete" });
+  }
+
+  const finalStatus: CompositeStatus = {
+    phase: compositePhase(outcome, manifest),
+    appliedAt: new Date().toISOString(),
+    components: buildFinalComponents(componentResults, applied),
+  };
+
+  persistCompositeStatus(manifest, finalStatus, opts, emit);
 
   // `ok` reports a fully-applied composite. Halt-on-Pending is not an
   // error (no rollback) but is also not a success — the operator must
   // resolve the conflict before downstream components come up.
-  const ok = failureMessage === null && haltedOnPending === null;
+  const ok = outcome.failureMessage === null && outcome.haltedOnPending === null;
   emit({ type: "phase", phase: finalStatus.phase });
   emit({ type: "done", ok });
 
@@ -371,6 +414,56 @@ async function applyWorkloadComponent(
   };
 }
 
+/**
+ * Resolve the endpoint URL a rag node should bind to, from its
+ * backing service. Default to the handler's in-cluster DNS endpoint.
+ * For k8s services with `serviceType: NodePort | LoadBalancer` we
+ * then swap in a host-reachable URL sourced from the live Service.
+ * Docker ignores serviceType entirely; the handler already emits
+ * `host:hostPort` which is reachable.
+ */
+async function resolveRagEndpointUrl(
+  entry: Composite["spec"]["ragNodes"][number],
+  backingService: string,
+  manifest: Composite,
+  opts: CompositeApplyOptions,
+  applied: AppliedRecord[],
+): Promise<string> {
+  const serviceSpec = manifest.spec.services.find((s) => s.name === backingService);
+  if (!serviceSpec) {
+    throw new Error(
+      `rag node '${entry.name}' references unknown backingService '${backingService}'`,
+    );
+  }
+  const serviceRecord = applied.find(
+    (r) => r.ref.kind === "service" && r.ref.name === backingService,
+  );
+  const handler = findServiceHandler(serviceSpec);
+  const instance = serviceRecord?.serviceInstance ?? null;
+  const resolved = handler.resolvedEndpoint(serviceSpec, instance);
+  const serviceType =
+    "serviceType" in serviceSpec && serviceSpec.serviceType ? serviceSpec.serviceType : undefined;
+  const external = opts.backend.resolveExternalServiceEndpoint?.bind(opts.backend);
+  if (
+    !serviceType ||
+    serviceType === "ClusterIP" ||
+    typeof external !== "function" ||
+    !serviceRecord?.serviceRef
+  ) {
+    return resolved.url;
+  }
+  const externalUrl = await external(serviceRecord.serviceRef, { serviceType });
+  if (!externalUrl) return resolved.url;
+  // The external resolver returns host:port (wrapped as
+  // http://host:port) since it works at the Service level and
+  // doesn't know the rag provider's protocol. Splice those
+  // coordinates into the handler-resolved URL so pgvector
+  // keeps its `postgres://user:REDACTED@...` scheme + path +
+  // userinfo — only host + port flip to the host-reachable
+  // pair.
+  return swapUrlHost(resolved.url, externalUrl);
+}
+
 async function applyRagComponent(
   ref: ComponentRef,
   manifest: Composite,
@@ -385,45 +478,13 @@ async function applyRagComponent(
   // can produce an endpoint URL.
   let bindingWithEndpoint = entry.binding;
   if (entry.backingService) {
-    const serviceSpec = manifest.spec.services.find((s) => s.name === entry.backingService);
-    if (!serviceSpec) {
-      throw new Error(
-        `rag node '${entry.name}' references unknown backingService '${entry.backingService}'`,
-      );
-    }
-    const serviceRecord = applied.find(
-      (r) => r.ref.kind === "service" && r.ref.name === entry.backingService,
+    const endpointUrl = await resolveRagEndpointUrl(
+      entry,
+      entry.backingService,
+      manifest,
+      opts,
+      applied,
     );
-    const handler = findServiceHandler(serviceSpec);
-    const instance = serviceRecord?.serviceInstance ?? null;
-    const resolved = handler.resolvedEndpoint(serviceSpec, instance);
-    // Default to the handler's in-cluster DNS endpoint. For k8s
-    // services with `serviceType: NodePort | LoadBalancer` we then
-    // swap in a host-reachable URL sourced from the live Service.
-    // Docker ignores serviceType entirely; the handler already
-    // emits `host:hostPort` which is reachable.
-    let endpointUrl = resolved.url;
-    const serviceType =
-      "serviceType" in serviceSpec && serviceSpec.serviceType ? serviceSpec.serviceType : undefined;
-    const external = opts.backend.resolveExternalServiceEndpoint?.bind(opts.backend);
-    if (
-      serviceType &&
-      serviceType !== "ClusterIP" &&
-      typeof external === "function" &&
-      serviceRecord?.serviceRef
-    ) {
-      const externalUrl = await external(serviceRecord.serviceRef, { serviceType });
-      if (externalUrl) {
-        // The external resolver returns host:port (wrapped as
-        // http://host:port) since it works at the Service level and
-        // doesn't know the rag provider's protocol. Splice those
-        // coordinates into the handler-resolved URL so pgvector
-        // keeps its `postgres://user:REDACTED@...` scheme + path +
-        // userinfo — only host + port flip to the host-reachable
-        // pair.
-        endpointUrl = swapUrlHost(resolved.url, externalUrl);
-      }
-    }
     bindingWithEndpoint = { ...entry.binding, endpoint: endpointUrl };
   }
 
@@ -677,59 +738,51 @@ export async function destroyComposite(
   // per-component loop still runs for the non-service kinds
   // (workload / rag / gateway) since those aren't namespace-scoped
   // on our side.
-  if (typeof opts.backend.destroyCompositeBoundary === "function") {
-    try {
-      await opts.backend.destroyCompositeBoundary(opts.manifest.metadata.name, {
-        purgeVolumes: opts.purgeVolumes ?? false,
-      });
-      // Every service counts as removed — the boundary delete
-      // cascaded them. We still iterate workloads / rags / gateways
-      // below so those non-runtime teardown paths still run.
-      for (const ref of order) {
-        if (ref.kind === "service") removed.push(ref);
-      }
-    } catch (err) {
-      errors.push({
-        ref: { kind: "service", name: "__boundary__" },
-        message: toErrorMessage(err),
-      });
-    }
-    for (const ref of order) {
-      if (ref.kind === "service") continue;
-      try {
-        await destroyComponent(ref, opts);
-        removed.push(ref);
-      } catch (err) {
-        errors.push({ ref, message: toErrorMessage(err) });
-      }
-    }
-
-    const currentSirius = readGatewayCatalog("sirius");
-    const resSirius = removeCompositeEntries({
-      kind: "sirius",
-      compositeName: opts.manifest.metadata.name,
-      current: currentSirius,
-    });
-    if (resSirius.changed) {
-      writeGatewayCatalog("sirius", resSirius.next as SiriusProvider[]);
-      await reloadAllGatewayNodesOfKind("sirius");
-    }
-
-    const currentEmber = readGatewayCatalog("embersynth");
-    const resEmber = removeCompositeEntries({
-      kind: "embersynth",
-      compositeName: opts.manifest.metadata.name,
-      current: currentEmber,
-    });
-    if (resEmber.changed) {
-      writeGatewayCatalog("embersynth", resEmber.next as EmbersynthNode[]);
-      await reloadAllGatewayNodesOfKind("embersynth");
-    }
-
-    return { ok: errors.length === 0, removed, errors };
+  const hasBoundary = typeof opts.backend.destroyCompositeBoundary === "function";
+  if (hasBoundary) {
+    await destroyServicesViaBoundary(opts, order, removed, errors);
   }
+  await destroyComponentsInOrder(order, opts, removed, errors, hasBoundary);
 
+  await cleanupGatewayCatalogs(opts.manifest.metadata.name);
+
+  return { ok: errors.length === 0, removed, errors };
+}
+
+async function destroyServicesViaBoundary(
+  opts: CompositeDestroyOptions,
+  order: ComponentRef[],
+  removed: ComponentRef[],
+  errors: { ref: ComponentRef; message: string }[],
+): Promise<void> {
+  try {
+    await opts.backend.destroyCompositeBoundary?.(opts.manifest.metadata.name, {
+      purgeVolumes: opts.purgeVolumes ?? false,
+    });
+    // Every service counts as removed — the boundary delete
+    // cascaded them. The per-component loop still handles
+    // workloads / rags / gateways so those non-runtime teardown
+    // paths still run.
+    for (const ref of order) {
+      if (ref.kind === "service") removed.push(ref);
+    }
+  } catch (err) {
+    errors.push({
+      ref: { kind: "service", name: "__boundary__" },
+      message: toErrorMessage(err),
+    });
+  }
+}
+
+async function destroyComponentsInOrder(
+  order: ComponentRef[],
+  opts: CompositeDestroyOptions,
+  removed: ComponentRef[],
+  errors: { ref: ComponentRef; message: string }[],
+  skipServices: boolean,
+): Promise<void> {
   for (const ref of order) {
+    if (skipServices && ref.kind === "service") continue;
     try {
       await destroyComponent(ref, opts);
       removed.push(ref);
@@ -737,11 +790,15 @@ export async function destroyComposite(
       errors.push({ ref, message: toErrorMessage(err) });
     }
   }
+}
 
+/** Drop the composite's sirius / embersynth catalog entries and
+ *  reload the affected gateway nodes when anything changed. */
+async function cleanupGatewayCatalogs(compositeName: string): Promise<void> {
   const currentSirius = readGatewayCatalog("sirius");
   const resSirius = removeCompositeEntries({
     kind: "sirius",
-    compositeName: opts.manifest.metadata.name,
+    compositeName,
     current: currentSirius,
   });
   if (resSirius.changed) {
@@ -752,66 +809,87 @@ export async function destroyComposite(
   const currentEmber = readGatewayCatalog("embersynth");
   const resEmber = removeCompositeEntries({
     kind: "embersynth",
-    compositeName: opts.manifest.metadata.name,
+    compositeName,
     current: currentEmber,
   });
   if (resEmber.changed) {
     writeGatewayCatalog("embersynth", resEmber.next as EmbersynthNode[]);
     await reloadAllGatewayNodesOfKind("embersynth");
   }
-
-  return { ok: errors.length === 0, removed, errors };
 }
 
 async function destroyComponent(ref: ComponentRef, opts: CompositeDestroyOptions): Promise<void> {
-  const manifest = opts.manifest;
   switch (ref.kind) {
-    case "service": {
-      const spec = manifest.spec.services.find((s) => s.name === ref.name);
-      if (!spec) return;
-      if (spec.kind === "chroma" || spec.kind === "pgvector") {
-        if (spec.runtime === "external") return;
-      }
-      const handler = findServiceHandler(spec);
-      const deployment = handler.toDeployment(spec, {
-        compositeName: manifest.metadata.name,
-      });
-      if (deployment === null) return;
-      await opts.backend.removeService(
-        { name: deployment.name },
-        { purgeVolumes: opts.purgeVolumes ?? false },
-      );
+    case "service":
+      await destroyServiceComponent(ref, opts);
       return;
-    }
-    case "workload": {
-      const manifestWorkload = manifest.spec.workloads.find((w) => w.node === ref.name);
-      if (!manifestWorkload) return;
-      const client = opts.getWorkloadClient(manifestWorkload.node);
-      await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 10 });
+    case "workload":
+      await destroyWorkloadComponent(ref, opts);
       return;
-    }
-    case "rag": {
-      const cfg = loadConfig(opts.configPath);
-      const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
-      if (!ctx) return;
-      const next = removeNode(cfg, ctx.cluster, ref.name);
-      saveConfig(next, opts.configPath);
+    case "rag":
+      destroyRagComponent(ref, opts);
       return;
-    }
     case "gateway":
       // Same v1 limitation as rollback — no symmetric deregister.
       return;
-    case "pipeline": {
-      const entry = manifest.spec.pipelines.find((p) => p.name === ref.name);
-      if (!entry) return;
-      const caller = await buildPipelineCaller();
-      await removePipelineComponent(entry, {
-        compositeName: manifest.metadata.name,
-        caller: caller as unknown as Parameters<typeof removePipelineComponent>[1]["caller"],
-      });
+    case "pipeline":
+      await destroyPipelineComponentRef(ref, opts);
       return;
-    }
   }
+}
+
+async function destroyServiceComponent(
+  ref: ComponentRef,
+  opts: CompositeDestroyOptions,
+): Promise<void> {
+  const manifest = opts.manifest;
+  const spec = manifest.spec.services.find((s) => s.name === ref.name);
+  if (!spec) return;
+  if (spec.kind === "chroma" || spec.kind === "pgvector") {
+    if (spec.runtime === "external") return;
+  }
+  const handler = findServiceHandler(spec);
+  const deployment = handler.toDeployment(spec, {
+    compositeName: manifest.metadata.name,
+  });
+  if (deployment === null) return;
+  await opts.backend.removeService(
+    { name: deployment.name },
+    { purgeVolumes: opts.purgeVolumes ?? false },
+  );
+}
+
+async function destroyWorkloadComponent(
+  ref: ComponentRef,
+  opts: CompositeDestroyOptions,
+): Promise<void> {
+  const manifest = opts.manifest;
+  const manifestWorkload = manifest.spec.workloads.find((w) => w.node === ref.name);
+  if (!manifestWorkload) return;
+  const client = opts.getWorkloadClient(manifestWorkload.node);
+  await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 10 });
+}
+
+function destroyRagComponent(ref: ComponentRef, opts: CompositeDestroyOptions): void {
+  const cfg = loadConfig(opts.configPath);
+  const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
+  if (!ctx) return;
+  const next = removeNode(cfg, ctx.cluster, ref.name);
+  saveConfig(next, opts.configPath);
+}
+
+async function destroyPipelineComponentRef(
+  ref: ComponentRef,
+  opts: CompositeDestroyOptions,
+): Promise<void> {
+  const manifest = opts.manifest;
+  const entry = manifest.spec.pipelines.find((p) => p.name === ref.name);
+  if (!entry) return;
+  const caller = await buildPipelineCaller();
+  await removePipelineComponent(entry, {
+    compositeName: manifest.metadata.name,
+    caller: caller as unknown as Parameters<typeof removePipelineComponent>[1]["caller"],
+  });
 }
 
 // ---- helpers --------------------------------------------------------------

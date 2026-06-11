@@ -71,46 +71,52 @@ export function listInstalledInfra(base: string = defaultInfraDir()): InstalledI
   const rows: InstalledInfra[] = [];
   for (const pkg of readdirSync(base)) {
     const pkgDir = join(base, pkg);
-    let stat;
-    try {
-      stat = lstatSync(pkgDir);
-    } catch {
-      continue;
-    }
-    if (!stat.isDirectory()) continue;
-    const versions: string[] = [];
-    for (const entry of readdirSync(pkgDir)) {
-      if (entry === "current") continue;
-      const entryPath = join(pkgDir, entry);
-      try {
-        if (lstatSync(entryPath).isDirectory()) versions.push(entry);
-      } catch {
-        // skip
-      }
-    }
-    versions.sort();
-    let active: string | null = null;
-    const currentPath = infraCurrentSymlink(pkg, base);
-    if (existsSync(currentPath)) {
-      try {
-        const target = readlinkSync(currentPath);
-        // The symlink stores a relative version name (or absolute
-        // path); accept either shape.
-        active = basename(target);
-        if (!versions.includes(active)) {
-          // Target points at something we don't recognize as an
-          // installed version; surface as "unknown" rather than
-          // fabricating an active row.
-          active = null;
-        }
-      } catch {
-        active = null;
-      }
-    }
+    if (!isDirectorySafe(pkgDir)) continue;
+    const versions = listInstalledVersions(pkgDir);
+    const active = resolveActiveVersion(pkg, base, versions);
     rows.push({ pkg, versions, active });
   }
   rows.sort((a, b) => a.pkg.localeCompare(b.pkg));
   return rows;
+}
+
+function isDirectorySafe(path: string): boolean {
+  try {
+    return lstatSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function listInstalledVersions(pkgDir: string): string[] {
+  const versions: string[] = [];
+  for (const entry of readdirSync(pkgDir)) {
+    if (entry === "current") continue;
+    const entryPath = join(pkgDir, entry);
+    try {
+      if (lstatSync(entryPath).isDirectory()) versions.push(entry);
+    } catch {
+      // skip
+    }
+  }
+  versions.sort();
+  return versions;
+}
+
+function resolveActiveVersion(pkg: string, base: string, versions: string[]): string | null {
+  const currentPath = infraCurrentSymlink(pkg, base);
+  if (!existsSync(currentPath)) return null;
+  try {
+    const target = readlinkSync(currentPath);
+    // The symlink stores a relative version name (or absolute
+    // path); accept either shape. A target we don't recognize as an
+    // installed version surfaces as "unknown" (null) rather than
+    // fabricating an active row.
+    const active = basename(target);
+    return versions.includes(active) ? active : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -304,6 +304,64 @@ export const DEFAULT_EMBERSYNTH_PROFILES: EmbersynthProfile[] = [
  * (used by `llamactl embersynth sync`); `opts.existing` feeds the
  * current file back in.
  */
+/**
+ * Read the control plane's own `llama-bench-history.tsv`. Missing /
+ * unreadable history degrades to "no bench signal" rather than
+ * failing config generation.
+ */
+function readLocalBenchRows(env: NodeJS.ProcessEnv): readonly BenchHistoryEntry[] {
+  try {
+    const resolved = envMod.resolveEnv(env);
+    const file = bench.benchHistoryFile(resolved);
+    return bench.readBenchHistory(file).current;
+  } catch {
+    return [] as readonly BenchHistoryEntry[];
+  }
+}
+
+function collectAgentEmbersynthNodes(
+  cluster: Config["clusters"][number] | undefined,
+  user: Config["users"][number] | undefined,
+  env: NodeJS.ProcessEnv,
+  benchRows: readonly BenchHistoryEntry[],
+): EmbersynthNode[] {
+  const nodes: EmbersynthNode[] = [];
+  for (const n of cluster?.nodes ?? []) {
+    if (resolveNodeKind(n) !== "agent") continue;
+    if (n.endpoint === LOCAL_NODE_ENDPOINT) {
+      // Skip the inproc sentinel — embersynth needs an HTTP endpoint.
+      continue;
+    }
+    if (!user) continue;
+    let token: string;
+    try {
+      token = resolveToken(user, env);
+    } catch {
+      continue;
+    }
+    const summary = summarizeBenchForMachine(benchRows, n.name);
+    nodes.push(agentToEmbersynthNode(n, token, summary));
+  }
+  return nodes;
+}
+
+function collectSiriusEmbersynthNodes(): EmbersynthNode[] {
+  const providers = ((): SiriusProvider[] => {
+    try {
+      return loadSiriusProviders();
+    } catch {
+      return [];
+    }
+  })();
+  const nodes: EmbersynthNode[] = [];
+  for (const p of providers) {
+    const baseUrl = p.baseUrl ?? "";
+    if (!baseUrl) continue;
+    nodes.push(siriusProviderToEmbersynthNode(p.name, p.kind, baseUrl, p.apiKeyRef));
+  }
+  return nodes;
+}
+
 export function generateEmbersynthConfig(opts?: {
   cfg?: Config;
   existing?: EmbersynthConfig | null;
@@ -327,51 +385,13 @@ export function generateEmbersynthConfig(opts?: {
   // not overridden. Fetching per-remote-agent bench history via tRPC
   // is a follow-up; today the control plane's TSV covers benches it
   // initiated locally or in-proc, plus any records a user copied in.
-  const benchRows: readonly BenchHistoryEntry[] =
-    opts?.benchHistory ??
-    ((): readonly BenchHistoryEntry[] => {
-      try {
-        const resolved = envMod.resolveEnv(env);
-        const file = bench.benchHistoryFile(resolved);
-        return bench.readBenchHistory(file).current;
-      } catch {
-        return [] as readonly BenchHistoryEntry[];
-      }
-    })();
+  const benchRows: readonly BenchHistoryEntry[] = opts?.benchHistory ?? readLocalBenchRows(env);
 
-  const nodes: EmbersynthNode[] = [];
-
-  // Agents
-  for (const n of cluster?.nodes ?? []) {
-    if (resolveNodeKind(n) !== "agent") continue;
-    if (n.endpoint === LOCAL_NODE_ENDPOINT) {
-      // Skip the inproc sentinel — embersynth needs an HTTP endpoint.
-      continue;
-    }
-    if (!user) continue;
-    let token: string;
-    try {
-      token = resolveToken(user, env);
-    } catch {
-      continue;
-    }
-    const summary = summarizeBenchForMachine(benchRows, n.name);
-    nodes.push(agentToEmbersynthNode(n, token, summary));
-  }
-
-  // Sirius-provider entries
-  const providers = ((): SiriusProvider[] => {
-    try {
-      return loadSiriusProviders();
-    } catch {
-      return [];
-    }
-  })();
-  for (const p of providers) {
-    const baseUrl = p.baseUrl ?? "";
-    if (!baseUrl) continue;
-    nodes.push(siriusProviderToEmbersynthNode(p.name, p.kind, baseUrl, p.apiKeyRef));
-  }
+  // Agents first, then sirius-provider entries.
+  const nodes: EmbersynthNode[] = [
+    ...collectAgentEmbersynthNodes(cluster, user, env, benchRows),
+    ...collectSiriusEmbersynthNodes(),
+  ];
 
   const existingProfiles = opts?.existing?.profiles;
   const profiles =

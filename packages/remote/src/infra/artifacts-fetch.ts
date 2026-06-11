@@ -617,13 +617,31 @@ export function pruneAgentArtifacts(
     ...(opts.artifactsDir !== undefined ? { artifactsDir: opts.artifactsDir } : {}),
     ...(opts.target !== undefined ? { target: opts.target } : {}),
   });
-  // Group by target, sort desc by mtime, keep first `keep`.
+  const candidates = collectPruneCandidates(groupVersionsByTarget(inspected), keep);
+  const executed = opts.execute === true;
+  const removed = executed ? removePrunedVersions(candidates) : [];
+  return { inspected, candidates, removed, executed, keep };
+}
+
+function groupVersionsByTarget(
+  inspected: InstalledAgentVersion[],
+): Map<string, InstalledAgentVersion[]> {
   const byTarget = new Map<string, InstalledAgentVersion[]>();
   for (const v of inspected) {
     const bucket = byTarget.get(v.target) ?? [];
     bucket.push(v);
     byTarget.set(v.target, bucket);
   }
+  return byTarget;
+}
+
+/** Sort each platform's versions desc by mtime, keep the first
+ *  `keep`, and flag the rest — except the active version, which is
+ *  never pruned. */
+function collectPruneCandidates(
+  byTarget: Map<string, InstalledAgentVersion[]>,
+  keep: number,
+): PrunedAgentVersion[] {
   const candidates: PrunedAgentVersion[] = [];
   for (const bucket of byTarget.values()) {
     bucket.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -640,19 +658,20 @@ export function pruneAgentArtifacts(
       });
     }
   }
-  const executed = opts.execute === true;
+  return candidates;
+}
+
+function removePrunedVersions(candidates: PrunedAgentVersion[]): PrunedAgentVersion[] {
   const removed: PrunedAgentVersion[] = [];
-  if (executed) {
-    for (const c of candidates) {
-      const versionDir = dirname(c.path);
-      try {
-        rmSync(versionDir, { recursive: true, force: true });
-        removed.push(c);
-      } catch {
-        // swallow — the CLI can surface undeleted entries by
-        // diffing candidates vs removed.
-      }
+  for (const c of candidates) {
+    const versionDir = dirname(c.path);
+    try {
+      rmSync(versionDir, { recursive: true, force: true });
+      removed.push(c);
+    } catch {
+      // swallow — the CLI can surface undeleted entries by
+      // diffing candidates vs removed.
     }
   }
-  return { inspected, candidates, removed, executed, keep };
+  return removed;
 }

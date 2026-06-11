@@ -413,22 +413,9 @@ export class PgvectorRagAdapter implements RetrievalProvider {
   ): Promise<
     { id: string; content: string; metadata?: Record<string, unknown>; vector: number[] }[]
   > {
-    const missingIdx: number[] = [];
-    for (const [i, document] of documents.entries()) {
-      const d = document;
-      if (!d.vector || d.vector.length === 0) missingIdx.push(i);
-    }
+    const missingIdx = missingVectorIndexes(documents);
     if (missingIdx.length > 0 && !this.embedder) {
-      const firstMissingIndex = missingIdx[0];
-      const firstMissing =
-        firstMissingIndex !== undefined ? documents[firstMissingIndex] : undefined;
-      if (firstMissing === undefined) {
-        throw new RagError("invalid-request", "pgvector store: missing document index");
-      }
-      throw new RagError(
-        "invalid-request",
-        `pgvector store requires doc.vector on every document (missing on id=${firstMissing.id}) — configure a rag.embedder to auto-compute`,
-      );
+      throwNoEmbedderForMissingVector(documents, missingIdx);
     }
 
     let computed: number[][] = [];
@@ -474,6 +461,33 @@ function requireDocument(documents: readonly Document[], index: number): Documen
     );
   }
   return document;
+}
+
+/** Indexes of documents that arrived without a caller-supplied vector. */
+function missingVectorIndexes(documents: readonly Document[]): number[] {
+  const missingIdx: number[] = [];
+  for (const [i, document] of documents.entries()) {
+    const d = document;
+    if (!d.vector || d.vector.length === 0) missingIdx.push(i);
+  }
+  return missingIdx;
+}
+
+/** Vectors are missing and no embedder is configured — surface the
+ *  first offending doc id in the error. */
+function throwNoEmbedderForMissingVector(
+  documents: readonly Document[],
+  missingIdx: number[],
+): never {
+  const firstMissingIndex = missingIdx[0];
+  const firstMissing = firstMissingIndex !== undefined ? documents[firstMissingIndex] : undefined;
+  if (firstMissing === undefined) {
+    throw new RagError("invalid-request", "pgvector store: missing document index");
+  }
+  throw new RagError(
+    "invalid-request",
+    `pgvector store requires doc.vector on every document (missing on id=${firstMissing.id}) — configure a rag.embedder to auto-compute`,
+  );
 }
 
 /**

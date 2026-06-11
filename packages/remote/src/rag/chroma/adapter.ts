@@ -324,22 +324,9 @@ export class ChromaRagAdapter implements RetrievalProvider {
    */
   private async embedDocuments(documents: readonly Document[]): Promise<number[][]> {
     if (this.backend.kind !== "http") throw new Error("unreachable");
-    const missingIdx: number[] = [];
-    for (const [i, document] of documents.entries()) {
-      const d = document;
-      if (!d.vector || d.vector.length === 0) missingIdx.push(i);
-    }
+    const missingIdx = missingVectorIndexes(documents);
     if (missingIdx.length > 0 && !this.backend.embedder) {
-      const firstMissingIndex = missingIdx[0];
-      const firstMissing =
-        firstMissingIndex !== undefined ? documents[firstMissingIndex] : undefined;
-      if (firstMissing === undefined) {
-        throw new RagError("invalid-request", "chroma http store: missing document index");
-      }
-      throw new RagError(
-        "invalid-request",
-        `chroma http store: doc id=${firstMissing.id} has no .vector and no rag.embedder is configured`,
-      );
+      throwNoEmbedderForMissingVector(documents, missingIdx);
     }
 
     let computed: number[][] = [];
@@ -454,6 +441,33 @@ export function extractQueryVector(req: SearchRequest): number[] | null {
   if (!Array.isArray(v) || v.length === 0) return null;
   if (!v.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
   return v as number[];
+}
+
+/** Indexes of documents that arrived without a caller-supplied vector. */
+function missingVectorIndexes(documents: readonly Document[]): number[] {
+  const missingIdx: number[] = [];
+  for (const [i, document] of documents.entries()) {
+    const d = document;
+    if (!d.vector || d.vector.length === 0) missingIdx.push(i);
+  }
+  return missingIdx;
+}
+
+/** Vectors are missing and no embedder is configured — surface the
+ *  first offending doc id in the error. */
+function throwNoEmbedderForMissingVector(
+  documents: readonly Document[],
+  missingIdx: number[],
+): never {
+  const firstMissingIndex = missingIdx[0];
+  const firstMissing = firstMissingIndex !== undefined ? documents[firstMissingIndex] : undefined;
+  if (firstMissing === undefined) {
+    throw new RagError("invalid-request", "chroma http store: missing document index");
+  }
+  throw new RagError(
+    "invalid-request",
+    `chroma http store: doc id=${firstMissing.id} has no .vector and no rag.embedder is configured`,
+  );
 }
 
 function requireDocument(documents: readonly Document[], index: number): Document {

@@ -302,6 +302,92 @@ async function createCliResponse(
   return buildCliResponse(opts, startedAt, prompt, assistantContent, request.model);
 }
 
+/**
+ * Local AbortController: timeout + caller signal both flip it. The
+ * caller's AbortSignal (from tRPC) takes precedence — if the UI
+ * cancels, kill the child. `cleanup` detaches the timer + listener.
+ */
+function createLinkedAbort(
+  timeoutMs: number,
+  callerSignal?: AbortSignal,
+): { ctrl: AbortController; cleanup: () => void } {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => {
+    ctrl.abort();
+  }, timeoutMs);
+  const onCallerAbort = (): void => {
+    ctrl.abort();
+  };
+  if (callerSignal?.aborted) ctrl.abort();
+  else callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  return {
+    ctrl,
+    cleanup: (): void => {
+      clearTimeout(timer);
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    },
+  };
+}
+
+function buildContentChunk(
+  chunkId: string,
+  model: string,
+  startedAt: number,
+  delta: string,
+  yieldedRole: boolean,
+): UnifiedStreamEvent {
+  const choice: {
+    index: number;
+    delta: { role?: "assistant"; content: string };
+  } = {
+    index: 0,
+    delta: yieldedRole ? { content: delta } : { role: "assistant", content: delta },
+  };
+  return {
+    type: "chunk",
+    chunk: {
+      id: chunkId,
+      object: "chat.completion.chunk",
+      model,
+      created: Math.floor(startedAt / 1000),
+      choices: [choice],
+    },
+  };
+}
+
+/** Terminal events after the child exits: timeout / non-zero-exit
+ *  errors (when applicable) followed by the closing `done`. */
+function* exitStreamEvents(
+  providerId: string,
+  timeoutMs: number,
+  exitCode: number,
+  aborted: boolean,
+  stderrText: string,
+): Generator<UnifiedStreamEvent, void, void> {
+  if (aborted) {
+    yield {
+      type: "error",
+      error: {
+        message: `cli provider '${providerId}' timeout after ${String(timeoutMs)}ms`,
+        code: "timeout",
+        retryable: false,
+      },
+    };
+    yield { type: "done", finish_reason: "stop" };
+    return;
+  }
+  if (exitCode !== 0) {
+    yield {
+      type: "error",
+      error: {
+        message: `cli provider '${providerId}' non-zero-exit ${String(exitCode)}: ${truncate(stderrText, 400)}`,
+        code: "non-zero-exit",
+      },
+    };
+  }
+  yield { type: "done", finish_reason: "stop" };
+}
+
 async function* streamCliResponse(
   opts: CliProviderOptions,
   providerId: string,
@@ -315,23 +401,8 @@ async function* streamCliResponse(
   const { args: expandedArgs, promptOnStdin } = expandArgs(resolved.args, prompt);
   const argv: SpawnArgv = [resolved.command, ...expandedArgs];
   const env = mergeEnv(opts.env ?? process.env, opts.binding.env);
-
-  // Local AbortController: timeout + caller signal both
-  // flip it. The caller's AbortSignal (from tRPC) takes
-  // precedence — if the UI cancels, kill the child.
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => {
-    ctrl.abort();
-  }, opts.binding.timeoutMs);
-  const onCallerAbort = (): void => {
-    ctrl.abort();
-  };
-  if (callerSignal) {
-    if (callerSignal.aborted) ctrl.abort();
-    else callerSignal.addEventListener("abort", onCallerAbort, { once: true });
-  }
+  const { ctrl, cleanup } = createLinkedAbort(opts.binding.timeoutMs, callerSignal);
   const startedAt = Date.now();
-  const model = request.model;
   const chunkId = `cli-${randomUUID()}`;
   let responseBytes = 0;
   let yieldedRole = false;
@@ -344,8 +415,7 @@ async function* streamCliResponse(
       prompt,
     });
   } catch (err) {
-    clearTimeout(timer);
-    callerSignal?.removeEventListener("abort", onCallerAbort);
+    cleanup();
     await journalWrite(buildCliJournalEntry(opts, startedAt, prompt, undefined, false));
     yield {
       type: "error",
@@ -366,24 +436,8 @@ async function* streamCliResponse(
       // token-by-token.
       const delta = `${rawLine}\n`;
       responseBytes += Buffer.byteLength(delta, "utf8");
-      const choice: {
-        index: number;
-        delta: { role?: "assistant"; content: string };
-      } = {
-        index: 0,
-        delta: yieldedRole ? { content: delta } : { role: "assistant", content: delta },
-      };
+      yield buildContentChunk(chunkId, request.model, startedAt, delta, yieldedRole);
       yieldedRole = true;
-      yield {
-        type: "chunk",
-        chunk: {
-          id: chunkId,
-          object: "chat.completion.chunk",
-          model,
-          created: Math.floor(startedAt / 1000),
-          choices: [choice],
-        },
-      };
     }
   } catch (err) {
     yield buildStreamErrorEvent(providerId, err);
@@ -392,35 +446,13 @@ async function* streamCliResponse(
 
   const { exitCode, aborted } = await stream.exitedPromise;
   const stderrText = await stream.stderrPromise;
-  clearTimeout(timer);
-  callerSignal?.removeEventListener("abort", onCallerAbort);
+  cleanup();
 
   await journalWrite(
     buildStreamJournalEntry(opts, startedAt, prompt, responseBytes, exitCode, aborted),
   );
 
-  if (aborted) {
-    yield {
-      type: "error",
-      error: {
-        message: `cli provider '${providerId}' timeout after ${String(opts.binding.timeoutMs)}ms`,
-        code: "timeout",
-        retryable: false,
-      },
-    };
-    yield { type: "done", finish_reason: "stop" };
-    return;
-  }
-  if (exitCode !== 0) {
-    yield {
-      type: "error",
-      error: {
-        message: `cli provider '${providerId}' non-zero-exit ${String(exitCode)}: ${truncate(stderrText, 400)}`,
-        code: "non-zero-exit",
-      },
-    };
-  }
-  yield { type: "done", finish_reason: "stop" };
+  yield* exitStreamEvents(providerId, opts.binding.timeoutMs, exitCode, aborted, stderrText);
 }
 
 async function cliHealthCheck(
@@ -557,26 +589,26 @@ function parseAssistantContent(stdout: string, format: "text" | "json"): string 
   if (format === "text") return stdout.trimEnd();
   try {
     const parsed = JSON.parse(stdout) as unknown;
-    // Best-effort extraction — presets that emit JSON vary. We look
-    // for common shapes: `{ response: string }`, `{ content: string }`,
-    // `{ choices: [{ message: { content: string } }] }`. Fall back
+    // Best-effort extraction — presets that emit JSON vary. Fall back
     // to the full JSON string so nothing is silently dropped.
-    if (parsed && typeof parsed === "object") {
-      const obj = parsed as Record<string, unknown>;
-      if (typeof obj.response === "string") return obj.response;
-      if (typeof obj.content === "string") return obj.content;
-      const choices = obj.choices;
-      if (Array.isArray(choices) && choices[0]) {
-        const first = choices[0] as { message?: { content?: unknown } };
-        if (typeof first.message?.content === "string") {
-          return first.message.content;
-        }
-      }
-    }
-    return JSON.stringify(parsed);
+    return extractJsonAssistantText(parsed) ?? JSON.stringify(parsed);
   } catch {
     return stdout.trimEnd();
   }
+}
+
+/** Extract the assistant text from common JSON shapes:
+ *  `{ response: string }`, `{ content: string }`,
+ *  `{ choices: [{ message: { content: string } }] }`. */
+function extractJsonAssistantText(parsed: unknown): string | undefined {
+  if (!parsed || typeof parsed !== "object") return undefined;
+  const obj = parsed as Record<string, unknown>;
+  if (typeof obj.response === "string") return obj.response;
+  if (typeof obj.content === "string") return obj.content;
+  const choices = obj.choices;
+  if (!Array.isArray(choices) || !choices[0]) return undefined;
+  const first = choices[0] as { message?: { content?: unknown } };
+  return typeof first.message?.content === "string" ? first.message.content : undefined;
 }
 
 function mergeEnv(base: NodeJS.ProcessEnv, overlay?: Record<string, string>): NodeJS.ProcessEnv {

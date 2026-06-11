@@ -27,80 +27,73 @@ import { loadSiriusProviders, type SiriusProvider } from "./sirius-providers.js"
  * immediately without a restart.
  */
 
-export function synthesizeProviderNodes(
-  cfg: Config,
-  loaders: {
-    loadSirius?: () => SiriusProvider[];
-    loadEmbersynth?: () => ReturnType<typeof loadEmbersynthConfig>;
-  } = {},
+/** One synth node per (sirius gateway, registered upstream provider). */
+function synthesizeSiriusNodes(
+  gateways: ClusterNode[],
+  loadSirius: () => SiriusProvider[],
 ): ClusterNode[] {
-  const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
-  if (!ctx) return [];
-  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
-  if (!cluster) return [];
-
-  const gateways = cluster.nodes.filter((n) => resolveNodeKind(n) === "gateway");
-  // NOTE: do not early-return here — the CLI-binding synthesis
-  // below emits virtual nodes from agent nodes, independent of
-  // whether any gateways exist. The sirius + embersynth blocks
-  // below both tolerate an empty `gateways` list.
-
-  const loadSirius = loaders.loadSirius ?? loadSiriusProviders;
-  const loadEmbersynth =
-    loaders.loadEmbersynth ??
-    ((): ReturnType<typeof loadEmbersynthConfig> => loadEmbersynthConfig());
-
-  const virtual: ClusterNode[] = [];
-
   const siriusGateways = gateways.filter((g) => g.cloud?.provider === "sirius");
-  if (siriusGateways.length > 0) {
-    let providers: SiriusProvider[] = [];
-    try {
-      providers = loadSirius();
-    } catch {
-      providers = [];
-    }
-    for (const gw of siriusGateways) {
-      for (const p of providers) {
-        virtual.push({
-          name: `${gw.name}.${p.name}`,
-          endpoint: "",
-          kind: "provider",
-          provider: { gateway: gw.name, providerName: p.name },
-        });
-      }
+  if (siriusGateways.length === 0) return [];
+  let providers: SiriusProvider[] = [];
+  try {
+    providers = loadSirius();
+  } catch {
+    providers = [];
+  }
+  const virtual: ClusterNode[] = [];
+  for (const gw of siriusGateways) {
+    for (const p of providers) {
+      virtual.push({
+        name: `${gw.name}.${p.name}`,
+        endpoint: "",
+        kind: "provider",
+        provider: { gateway: gw.name, providerName: p.name },
+      });
     }
   }
+  return virtual;
+}
 
+/** One synth node per (embersynth gateway, synthetic model id). */
+function synthesizeEmbersynthNodes(
+  gateways: ClusterNode[],
+  loadEmbersynth: () => ReturnType<typeof loadEmbersynthConfig>,
+): ClusterNode[] {
   const embersynthGateways = gateways.filter((g) => g.cloud?.provider === "embersynth");
-  if (embersynthGateways.length > 0) {
-    let eCfg: ReturnType<typeof loadEmbersynthConfig> = null;
-    try {
-      eCfg = loadEmbersynth();
-    } catch {
-      eCfg = null;
-    }
-    const synthModels = eCfg ? listSyntheticModelIds(eCfg) : [];
-    for (const gw of embersynthGateways) {
-      for (const m of synthModels) {
-        virtual.push({
-          name: `${gw.name}.${m}`,
-          endpoint: "",
-          kind: "provider",
-          provider: { gateway: gw.name, providerName: m },
-        });
-      }
+  if (embersynthGateways.length === 0) return [];
+  let eCfg: ReturnType<typeof loadEmbersynthConfig> = null;
+  try {
+    eCfg = loadEmbersynth();
+  } catch {
+    eCfg = null;
+  }
+  const synthModels = eCfg ? listSyntheticModelIds(eCfg) : [];
+  const virtual: ClusterNode[] = [];
+  for (const gw of embersynthGateways) {
+    for (const m of synthModels) {
+      virtual.push({
+        name: `${gw.name}.${m}`,
+        endpoint: "",
+        kind: "provider",
+        provider: { gateway: gw.name, providerName: m },
+      });
     }
   }
+  return virtual;
+}
 
-  // CLI subscription backends declared on agent nodes. Same
-  // projection shape — one virtual provider-kind node per
-  // (agent, cli-binding) pair — but the `provider.source: 'cli'`
-  // discriminator tells the factory to build a subprocess adapter
-  // instead of an OpenAI-compat one.
+/**
+ * CLI subscription backends declared on agent nodes. Same
+ * projection shape — one virtual provider-kind node per
+ * (agent, cli-binding) pair — but the `provider.source: 'cli'`
+ * discriminator tells the factory to build a subprocess adapter
+ * instead of an OpenAI-compat one.
+ */
+function synthesizeCliNodes(cluster: Config["clusters"][number]): ClusterNode[] {
   const agentsWithCli = cluster.nodes.filter(
     (n) => resolveNodeKind(n) === "agent" && (n.cli?.length ?? 0) > 0,
   );
+  const virtual: ClusterNode[] = [];
   for (const agent of agentsWithCli) {
     for (const binding of agent.cli ?? []) {
       virtual.push({
@@ -115,8 +108,36 @@ export function synthesizeProviderNodes(
       });
     }
   }
-
   return virtual;
+}
+
+export function synthesizeProviderNodes(
+  cfg: Config,
+  loaders: {
+    loadSirius?: () => SiriusProvider[];
+    loadEmbersynth?: () => ReturnType<typeof loadEmbersynthConfig>;
+  } = {},
+): ClusterNode[] {
+  const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
+  if (!ctx) return [];
+  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
+  if (!cluster) return [];
+
+  const gateways = cluster.nodes.filter((n) => resolveNodeKind(n) === "gateway");
+  // NOTE: the CLI-binding synthesis emits virtual nodes from agent
+  // nodes, independent of whether any gateways exist. The sirius +
+  // embersynth collectors both tolerate an empty `gateways` list.
+
+  const loadSirius = loaders.loadSirius ?? loadSiriusProviders;
+  const loadEmbersynth =
+    loaders.loadEmbersynth ??
+    ((): ReturnType<typeof loadEmbersynthConfig> => loadEmbersynthConfig());
+
+  return [
+    ...synthesizeSiriusNodes(gateways, loadSirius),
+    ...synthesizeEmbersynthNodes(gateways, loadEmbersynth),
+    ...synthesizeCliNodes(cluster),
+  ];
 }
 
 /**

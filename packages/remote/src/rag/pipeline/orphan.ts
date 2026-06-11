@@ -111,36 +111,34 @@ interface TrailingOrphan {
  *
  * Exported for direct unit-test coverage.
  */
-export function findTrailingOrphan(
-  journalRaw: string,
-  thresholdMs: number,
-  nowMs: number,
-): TrailingOrphan | null {
-  const lines = journalRaw.split("\n");
-  // Scan tail-first so we find the newest run-started quickly.
-  let lastRunStarted: {
-    ts: string;
-    sources: string[];
-  } | null = null;
+/** Parse one journal line into its loose `{kind, ts, sources}` shape,
+ *  or `null` for blank / malformed / non-object lines. */
+function parseJournalLine(line: string): { kind?: string; ts?: string; sources?: unknown } | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  let entry: unknown;
+  try {
+    entry = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  if (!entry || typeof entry !== "object") return null;
+  return entry;
+}
+
+/**
+ * Walk forward, tracking the most recent run-started + whether a
+ * later run-complete paired with it.
+ */
+function scanTailForRunStart(tail: string[]): {
+  lastRunStarted: { ts: string; sources: string[] } | null;
+  sawCompleteAfter: boolean;
+} {
+  let lastRunStarted: { ts: string; sources: string[] } | null = null;
   let sawCompleteAfter = false;
-  // Walk forward, tracking the most recent run-started + whether a
-  // later run-complete paired with it. Bounded tail slice first.
-  const tail = lines.slice(Math.max(0, lines.length - JOURNAL_TAIL_LINES));
   for (const line of tail) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    let entry: unknown;
-    try {
-      entry = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-    if (!entry || typeof entry !== "object") continue;
-    const e = entry as {
-      kind?: string;
-      ts?: string;
-      sources?: unknown;
-    };
+    const e = parseJournalLine(line);
+    if (e === null) continue;
     if (e.kind === "run-started" && typeof e.ts === "string") {
       lastRunStarted = {
         ts: e.ts,
@@ -151,6 +149,18 @@ export function findTrailingOrphan(
       sawCompleteAfter = true;
     }
   }
+  return { lastRunStarted, sawCompleteAfter };
+}
+
+export function findTrailingOrphan(
+  journalRaw: string,
+  thresholdMs: number,
+  nowMs: number,
+): TrailingOrphan | null {
+  const lines = journalRaw.split("\n");
+  // Bounded tail slice — scan only the newest JOURNAL_TAIL_LINES.
+  const tail = lines.slice(Math.max(0, lines.length - JOURNAL_TAIL_LINES));
+  const { lastRunStarted, sawCompleteAfter } = scanTailForRunStart(tail);
   if (!lastRunStarted) return null;
   if (sawCompleteAfter) return null;
   const startedMs = Date.parse(lastRunStarted.ts);

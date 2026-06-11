@@ -1,7 +1,9 @@
 import {
   type AllowlistConfig,
+  type Plan,
   type PlannerExecutor,
   type PlannerToolDescriptor,
+  type PlanStep,
   runPlanner,
 } from "@nova/mcp";
 import { randomUUID } from "node:crypto";
@@ -181,6 +183,88 @@ async function emitDoneEvent(
   sessionEventBus.publish(sessionId, doneEvt);
 }
 
+/** Fold prior turns + tool outcomes + the operator's own context
+ *  into the planner's context string. */
+function buildMergedContext(
+  opts: LoopExecutorOptions,
+  outcomes: { step: string; ok: boolean; summary: string }[],
+): string {
+  const transcript = buildTranscript(opts.history, outcomes);
+  const userContext = opts.context?.trim() ?? "";
+  return [transcript, userContext].filter((s) => s.length > 0).join("\n\n");
+}
+
+async function emitRefusalEvent(sessionId: string, reason: string): Promise<void> {
+  const ev: JournalEvent = {
+    type: "refusal",
+    ts: new Date().toISOString(),
+    reason,
+  };
+  await appendJournalEvent(sessionId, ev);
+  sessionEventBus.publish(sessionId, ev);
+}
+
+/**
+ * Pick the next step or `null` to terminate the loop: the planner
+ * returned an empty plan, or it's looping on a step it already
+ * proposed (stuck model — don't waste iterations).
+ */
+function nextPlannedStep(plan: Plan, seenSteps: Set<string>): PlanStep | null {
+  const [step] = plan.steps;
+  if (!step) return null;
+  const signature = `${step.tool}:${JSON.stringify(step.args)}`;
+  if (seenSteps.has(signature)) return null;
+  seenSteps.add(signature);
+  return step;
+}
+
+/** Journal + publish the `plan_proposed` event, returning the
+ *  stream-shaped twin for the generator to yield. */
+async function publishPlanProposed(
+  sessionId: string,
+  stepId: string,
+  iteration: number,
+  step: PlanStep,
+  planReasoning: string,
+): Promise<OpsChatStreamEvent> {
+  const tier = resolveTier(step.tool);
+  const reasoning = iteration === 0 ? planReasoning : "";
+  const planEvt: JournalEvent = {
+    type: "plan_proposed",
+    ts: new Date().toISOString(),
+    stepId,
+    iteration,
+    tier,
+    reasoning,
+    step,
+  };
+  await appendJournalEvent(sessionId, planEvt);
+  sessionEventBus.publish(sessionId, planEvt);
+  return { type: "plan_proposed", sessionId, stepId, iteration, step, tier, reasoning };
+}
+
+/** Block until the caller posts the step outcome. `null` means the
+ *  wait was rejected (abort / reset) — exit cleanly. */
+async function waitForOutcome(
+  pending: Deferred<OpsChatStepOutcome>,
+): Promise<OpsChatStepOutcome | null> {
+  try {
+    return await pending.promise;
+  } catch {
+    return null;
+  }
+}
+
+function teardownSession(sessionId: string, record: SessionRecord, signal?: AbortSignal): void {
+  if (record.abortHandler) {
+    signal?.removeEventListener("abort", record.abortHandler);
+  }
+  record.closed = true;
+  record.pendingOutcome = null;
+  sessionRegistry.delete(sessionId);
+  sessionEventBus.close(sessionId);
+}
+
 /**
  * Main entry point. Yields OpsChatStreamEvent values until the loop
  * terminates via `done` or `refusal`. Deletes its session record in
@@ -207,82 +291,34 @@ export async function* runLoopExecutor(
     }
 
     let iteration = 0;
-    while (iteration < maxIterations) {
-      if (opts.signal?.aborted) break;
-
-      const transcript = buildTranscript(opts.history, outcomes);
-      const userContext = opts.context?.trim() ?? "";
-      const mergedContext = [transcript, userContext].filter((s) => s.length > 0).join("\n\n");
-
+    while (iteration < maxIterations && !opts.signal?.aborted) {
       const result = await runPlanner({
         goal: opts.goal,
-        context: mergedContext,
+        context: buildMergedContext(opts, outcomes),
         tools: opts.tools,
         executor: opts.executor,
         allowlist: opts.allowlist,
       });
 
       if (!result.ok) {
-        const ev: JournalEvent = {
-          type: "refusal",
-          ts: new Date().toISOString(),
-          reason: `${result.reason}: ${result.message}`,
-        };
-        await appendJournalEvent(sessionId, ev);
-        sessionEventBus.publish(sessionId, ev);
-        yield {
-          type: "refusal",
-          reason: `${result.reason}: ${result.message}`,
-        };
+        const reason = `${result.reason}: ${result.message}`;
+        await emitRefusalEvent(sessionId, reason);
+        yield { type: "refusal", reason };
         return;
       }
 
-      if (result.plan.steps.length === 0) break;
-
-      const [step] = result.plan.steps;
+      const step = nextPlannedStep(result.plan, seenSteps);
       if (!step) break;
-      const signature = `${step.tool}:${JSON.stringify(step.args)}`;
-      if (seenSteps.has(signature)) {
-        // Planner is looping on the same step — terminate to avoid
-        // wasting iterations on a stuck model.
-        break;
-      }
-      seenSteps.add(signature);
 
       const stepId = `${sessionId}:${String(iteration)}`;
       const pending = createDeferred<OpsChatStepOutcome>();
       record.currentStepId = stepId;
       record.pendingOutcome = pending;
 
-      const planEvt: JournalEvent = {
-        type: "plan_proposed",
-        ts: new Date().toISOString(),
-        stepId,
-        iteration,
-        tier: resolveTier(step.tool),
-        reasoning: iteration === 0 ? result.plan.reasoning : "",
-        step,
-      };
-      await appendJournalEvent(sessionId, planEvt);
-      sessionEventBus.publish(sessionId, planEvt);
+      yield await publishPlanProposed(sessionId, stepId, iteration, step, result.plan.reasoning);
 
-      yield {
-        type: "plan_proposed",
-        sessionId,
-        stepId,
-        iteration,
-        step,
-        tier: resolveTier(step.tool),
-        reasoning: iteration === 0 ? result.plan.reasoning : "",
-      };
-
-      let outcome: OpsChatStepOutcome;
-      try {
-        outcome = await pending.promise;
-      } catch {
-        // Abort / reset — exit cleanly.
-        return;
-      }
+      const outcome = await waitForOutcome(pending);
+      if (outcome === null) return;
 
       outcomes.push({
         step: step.tool,
@@ -297,12 +333,6 @@ export async function* runLoopExecutor(
     await emitDoneEvent(sessionId, outcomes);
     yield { type: "done", iterations: outcomes.length };
   } finally {
-    if (record.abortHandler) {
-      opts.signal?.removeEventListener("abort", record.abortHandler);
-    }
-    record.closed = true;
-    record.pendingOutcome = null;
-    sessionRegistry.delete(sessionId);
-    sessionEventBus.close(sessionId);
+    teardownSession(sessionId, record, opts.signal);
   }
 }

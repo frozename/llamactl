@@ -117,24 +117,29 @@ function refKey(r: ComponentRef): string {
  * nodes first; decrement the in-degree of each dependent when one
  * completes.
  */
-export function topologicalOrder(spec: CompositeSpec): ComponentRef[] {
-  const nodes = listComponents(spec);
-  const edges = allEdges(spec);
+interface IndexedNode {
+  ref: ComponentRef;
+  order: number;
+}
 
-  // Index nodes + preserve declaration order for stable tie-breaks.
-  const byKey = new Map<string, { ref: ComponentRef; order: number }>();
+/** Index nodes + preserve declaration order for stable tie-breaks. */
+function indexNodes(nodes: ComponentRef[]): Map<string, IndexedNode> {
+  const byKey = new Map<string, IndexedNode>();
   for (const [i, node] of nodes.entries()) {
     byKey.set(refKey(node), { ref: node, order: i });
   }
-  const requireNode = (key: string): { ref: ComponentRef; order: number } => {
-    const node = byKey.get(key);
-    if (!node) throw new Error(`missing component node: ${key}`);
-    return node;
-  };
+  return byKey;
+}
 
-  // Build: `from depends on to`.
-  // dependents.get(k) = nodes that depend on k (i.e., downstream of k).
-  // remaining.get(k) = count of deps k still waits on.
+/**
+ * Build: `from depends on to`.
+ * dependents.get(k) = nodes that depend on k (i.e., downstream of k).
+ * remaining.get(k) = count of deps k still waits on.
+ */
+function buildDegreeMaps(
+  edges: DependencyEdge[],
+  byKey: Map<string, IndexedNode>,
+): { dependents: Map<string, string[]>; remaining: Map<string, number> } {
   const dependents = new Map<string, string[]>();
   const remaining = new Map<string, number>();
   for (const k of byKey.keys()) {
@@ -152,41 +157,76 @@ export function topologicalOrder(spec: CompositeSpec): ComponentRef[] {
     dependents.get(toKey)?.push(fromKey);
     remaining.set(fromKey, (remaining.get(fromKey) ?? 0) + 1);
   }
+  return { dependents, remaining };
+}
 
-  // Zero-in-degree queue, seeded in declaration order for stable ties.
+/** Zero-in-degree keys, unsorted — callers sort by declaration order. */
+function zeroInDegreeKeys(remaining: Map<string, number>): string[] {
   const zero: string[] = [];
   for (const [k, count] of remaining) {
     if (count === 0) zero.push(k);
   }
-  zero.sort((a, b) => requireNode(a).order - requireNode(b).order);
+  return zero;
+}
+
+/** Decrement each downstream node's remaining-dependency count and
+ *  return the keys that just reached zero. */
+function decrementDependents(downstream: string[], remaining: Map<string, number>): string[] {
+  const freed: string[] = [];
+  for (const d of downstream) {
+    const next = (remaining.get(d) ?? 0) - 1;
+    remaining.set(d, next);
+    if (next === 0) freed.push(d);
+  }
+  return freed;
+}
+
+/** Keys still waiting on dependencies — the cycle participants when
+ *  Kahn's algorithm terminates early. */
+function stuckKeys(remaining: Map<string, number>): string[] {
+  const stuck: string[] = [];
+  for (const [k, count] of remaining) {
+    if (count > 0) stuck.push(k.replace("/", "/"));
+  }
+  return stuck;
+}
+
+export function topologicalOrder(spec: CompositeSpec): ComponentRef[] {
+  const nodes = listComponents(spec);
+  const edges = allEdges(spec);
+
+  const byKey = indexNodes(nodes);
+  const requireNode = (key: string): IndexedNode => {
+    const node = byKey.get(key);
+    if (!node) throw new Error(`missing component node: ${key}`);
+    return node;
+  };
+  const byDeclarationOrder = (a: string, b: string): number =>
+    requireNode(a).order - requireNode(b).order;
+
+  const { dependents, remaining } = buildDegreeMaps(edges, byKey);
+
+  // Zero-in-degree queue, seeded in declaration order for stable ties.
+  const zero = zeroInDegreeKeys(remaining);
+  zero.sort(byDeclarationOrder);
 
   const out: ComponentRef[] = [];
   while (zero.length > 0) {
     const k = zero.shift();
     if (!k) break;
     out.push(requireNode(k).ref);
-    const downstream = dependents.get(k) ?? [];
     // Sort the newly-freed nodes by declaration order so ties stay
     // stable across runs.
-    const freed: string[] = [];
-    for (const d of downstream) {
-      const next = (remaining.get(d) ?? 0) - 1;
-      remaining.set(d, next);
-      if (next === 0) freed.push(d);
-    }
-    freed.sort((a, b) => requireNode(a).order - requireNode(b).order);
+    const freed = decrementDependents(dependents.get(k) ?? [], remaining);
+    freed.sort(byDeclarationOrder);
     // Insert in-order at the head so overall processing stays
     // insertion-sorted.
     zero.unshift(...freed);
-    zero.sort((a, b) => requireNode(a).order - requireNode(b).order);
+    zero.sort(byDeclarationOrder);
   }
 
   if (out.length !== nodes.length) {
-    const stuck: string[] = [];
-    for (const [k, count] of remaining) {
-      if (count > 0) stuck.push(k.replace("/", "/"));
-    }
-    throw new Error(`cycle detected among: ${stuck.join(", ")}`);
+    throw new Error(`cycle detected among: ${stuckKeys(remaining).join(", ")}`);
   }
 
   return out;

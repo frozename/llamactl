@@ -48,25 +48,37 @@ export function nextRunAt(
     return nextBoundary(now, 24 * 60 * 60 * 1000);
   }
   if (trimmed === "@weekly") {
-    // Sunday-at-midnight UTC cycle. Anchor to epoch Sunday
-    // (1970-01-04T00:00:00Z) so the math is stable.
-    const WEEK = 7 * 24 * 60 * 60 * 1000;
-    const SUNDAY_EPOCH = Date.UTC(1970, 0, 4);
-    const sinceAnchor = now - SUNDAY_EPOCH;
-    const next = SUNDAY_EPOCH + Math.ceil(sinceAnchor / WEEK) * WEEK;
-    return next > now ? next : next + WEEK;
+    return nextWeeklyBoundary(now);
   }
+  return nextEveryRunAt(trimmed, lastRunAtMs, now);
+}
+
+/** Sunday-at-midnight UTC cycle. Anchor to epoch Sunday
+ *  (1970-01-04T00:00:00Z) so the math is stable. */
+function nextWeeklyBoundary(now: number): number {
+  const WEEK = 7 * 24 * 60 * 60 * 1000;
+  const SUNDAY_EPOCH = Date.UTC(1970, 0, 4);
+  const sinceAnchor = now - SUNDAY_EPOCH;
+  const next = SUNDAY_EPOCH + Math.ceil(sinceAnchor / WEEK) * WEEK;
+  return next > now ? next : next + WEEK;
+}
+
+/** `@every N<unit>` is run-relative: the first run (no prior) fires
+ *  right away; subsequent runs fire `N<unit>` after the last run.
+ *  Null when the expression doesn't parse. */
+function nextEveryRunAt(trimmed: string, lastRunAtMs: number | null, now: number): number | null {
   const m = /^@every\s+(\d+)([mhd])$/.exec(trimmed);
-  if (m) {
-    const n = Number(m[1]);
-    const unit = m[2];
-    const step = unit === "m" ? n * 60_000 : unit === "h" ? n * 3_600_000 : n * 86_400_000;
-    if (step <= 0) return null;
-    // First run (no prior) fires right away; otherwise `lastRunAt + step`.
-    if (lastRunAtMs === null) return now;
-    return lastRunAtMs + step;
-  }
-  return null;
+  if (!m) return null;
+  const step = everyStepMs(Number(m[1]), m[2]);
+  if (step <= 0) return null;
+  if (lastRunAtMs === null) return now;
+  return lastRunAtMs + step;
+}
+
+function everyStepMs(n: number, unit: string | undefined): number {
+  if (unit === "m") return n * 60_000;
+  if (unit === "h") return n * 3_600_000;
+  return n * 86_400_000;
 }
 
 function nextBoundary(now: number, periodMs: number): number {
@@ -144,114 +156,153 @@ export type SchedulerJournalEntry =
 // kept as a separate type alias since the runtime doesn't care about
 // these entries, only the CLI's log tail does.
 
+/** Resolved injection seams + shared state for one scheduler loop. */
+interface SchedulerDeps {
+  list: () => PipelineRecord[];
+  write: (name: string, summary: RunSummary) => void;
+  journalPath: (name: string) => string;
+  run: (manifest: RagPipelineManifest, journalPath: string) => Promise<RunSummary>;
+  inFlight: Set<string>;
+  verbose: boolean;
+}
+
+function listRecordsSafe(deps: SchedulerDeps): PipelineRecord[] {
+  try {
+    return deps.list();
+  } catch (err) {
+    if (deps.verbose) {
+      process.stderr.write(`rag-pipeline-scheduler: listPipelines failed: ${toMessage(err)}\n`);
+    }
+    return [];
+  }
+}
+
+/** Classify + act on one scheduled pipeline for this tick:
+ *  unparseable / not-due / in-flight / fire. */
+async function processScheduledRecord(
+  rec: PipelineRecord,
+  schedule: string,
+  nowMs: number,
+  ts: string,
+  deps: SchedulerDeps,
+  report: TickReport,
+): Promise<void> {
+  const lastAt = rec.lastRun ? Date.parse(rec.lastRun.at) : null;
+  const next = nextRunAt(schedule, Number.isFinite(lastAt) ? lastAt : null, nowMs);
+  if (next === null) {
+    report.unparseable.push(rec.name);
+    await appendSchedulerEntry(deps.journalPath(rec.name), {
+      kind: "schedule-skipped",
+      ts,
+      reason: "schedule-unparseable",
+      schedule,
+    });
+    return;
+  }
+  if (next > nowMs) return;
+  if (deps.inFlight.has(rec.name)) {
+    report.skippedInFlight.push(rec.name);
+    await appendSchedulerEntry(deps.journalPath(rec.name), {
+      kind: "schedule-skipped",
+      ts,
+      reason: "in-flight",
+      schedule,
+    });
+    return;
+  }
+  report.fired.push(rec.name);
+  await fireScheduledRun(rec, schedule, nowMs, ts, deps);
+}
+
+/**
+ * Fire and await — sequential within a tick keeps the scheduler
+ * loop single-threaded and predictable. Long-running ingestions
+ * don't block future ticks because we release `inFlight` in
+ * `finally` and the outer loop only sleeps *between* ticks, not
+ * during the run.
+ */
+async function fireScheduledRun(
+  rec: PipelineRecord,
+  schedule: string,
+  nowMs: number,
+  ts: string,
+  deps: SchedulerDeps,
+): Promise<void> {
+  deps.inFlight.add(rec.name);
+  const nextAfter = nextRunAt(schedule, nowMs, nowMs);
+  await appendSchedulerEntry(deps.journalPath(rec.name), {
+    kind: "schedule-fired",
+    ts,
+    schedule,
+    next_at: nextAfter !== null ? new Date(nextAfter).toISOString() : "unknown",
+  });
+  try {
+    const summary = await deps.run(rec.manifest, deps.journalPath(rec.name));
+    deps.write(rec.name, summary);
+  } catch (err) {
+    if (deps.verbose) {
+      process.stderr.write(`rag-pipeline-scheduler: run ${rec.name} failed: ${toMessage(err)}\n`);
+    }
+    // Runtime already journals its own failures; the scheduler's
+    // only obligation here is to release the inFlight slot.
+  } finally {
+    deps.inFlight.delete(rec.name);
+  }
+}
+
+async function runSchedulerTick(
+  nowMs: number,
+  ts: string,
+  deps: SchedulerDeps,
+): Promise<TickReport> {
+  const report: TickReport = {
+    ts,
+    considered: 0,
+    fired: [],
+    skippedInFlight: [],
+    unparseable: [],
+  };
+  for (const rec of listRecordsSafe(deps)) {
+    const schedule = rec.manifest.spec.schedule;
+    if (!schedule) continue;
+    report.considered++;
+    await processScheduledRecord(rec, schedule, nowMs, ts, deps, report);
+  }
+  return report;
+}
+
 export function startPipelineScheduler(
   opts: PipelineSchedulerOptions = {},
 ): PipelineSchedulerHandle {
   const tickMs = Math.max(5_000, opts.tickIntervalMs ?? 60_000);
   const now = opts.now ?? Date.now;
-  const list = opts.listPipelines ?? ((): PipelineRecord[] => listPipelines(opts.env));
-  const write =
-    opts.writeLastRun ??
-    ((name, summary): void => {
-      writeLastRun(name, summary, opts.env);
-    });
-  const journalPath =
-    opts.journalPathFor ?? ((name: string): string => journalPathFor(name, opts.env));
-  const run =
-    opts.runPipeline ??
-    (async (manifest, path): Promise<RunSummary> =>
-      await runPipeline({ manifest, journalPath: path }));
+  const deps: SchedulerDeps = {
+    list: opts.listPipelines ?? ((): PipelineRecord[] => listPipelines(opts.env)),
+    write:
+      opts.writeLastRun ??
+      ((name, summary): void => {
+        writeLastRun(name, summary, opts.env);
+      }),
+    journalPath: opts.journalPathFor ?? ((name: string): string => journalPathFor(name, opts.env)),
+    run:
+      opts.runPipeline ??
+      (async (manifest, path): Promise<RunSummary> =>
+        await runPipeline({ manifest, journalPath: path })),
+    inFlight: new Set<string>(),
+    verbose: opts.verbose ?? false,
+  };
 
   const state = { stopped: false };
-  const inFlight = new Set<string>();
   const isStopped = (): boolean => state.stopped;
 
   const done = (async (): Promise<void> => {
     for (;;) {
       const nowMs = now();
       const ts = new Date(nowMs).toISOString();
-      const fired: string[] = [];
-      const skippedInFlight: string[] = [];
-      const unparseable: string[] = [];
-      let considered = 0;
-
-      let records: PipelineRecord[] = [];
-      try {
-        records = list();
-      } catch (err) {
-        if (opts.verbose) {
-          process.stderr.write(`rag-pipeline-scheduler: listPipelines failed: ${toMessage(err)}\n`);
-        }
-      }
-
-      for (const rec of records) {
-        const schedule = rec.manifest.spec.schedule;
-        if (!schedule) continue;
-        considered++;
-        const lastAt = rec.lastRun ? Date.parse(rec.lastRun.at) : null;
-        const next = nextRunAt(schedule, Number.isFinite(lastAt) ? lastAt : null, nowMs);
-        if (next === null) {
-          unparseable.push(rec.name);
-          await appendSchedulerEntry(journalPath(rec.name), {
-            kind: "schedule-skipped",
-            ts,
-            reason: "schedule-unparseable",
-            schedule,
-          });
-          continue;
-        }
-        if (next > nowMs) continue;
-        if (inFlight.has(rec.name)) {
-          skippedInFlight.push(rec.name);
-          await appendSchedulerEntry(journalPath(rec.name), {
-            kind: "schedule-skipped",
-            ts,
-            reason: "in-flight",
-            schedule,
-          });
-          continue;
-        }
-
-        inFlight.add(rec.name);
-        fired.push(rec.name);
-        const nextAfter = nextRunAt(schedule, nowMs, nowMs);
-        await appendSchedulerEntry(journalPath(rec.name), {
-          kind: "schedule-fired",
-          ts,
-          schedule,
-          next_at: nextAfter !== null ? new Date(nextAfter).toISOString() : "unknown",
-        });
-        // Fire and await — sequential within a tick keeps the scheduler
-        // loop single-threaded and predictable. Long-running ingestions
-        // don't block future ticks because we release `inFlight` in
-        // `finally` and the outer `do-while` loop only sleeps *between*
-        // ticks, not during the run.
-        try {
-          const summary = await run(rec.manifest, journalPath(rec.name));
-          write(rec.name, summary);
-        } catch (err) {
-          if (opts.verbose) {
-            process.stderr.write(
-              `rag-pipeline-scheduler: run ${rec.name} failed: ${toMessage(err)}\n`,
-            );
-          }
-          // Runtime already journals its own failures; the scheduler's
-          // only obligation here is to release the inFlight slot.
-        } finally {
-          inFlight.delete(rec.name);
-        }
-      }
-
-      const report: TickReport = {
-        ts,
-        considered,
-        fired,
-        skippedInFlight,
-        unparseable,
-      };
-      if (opts.verbose) {
+      const report = await runSchedulerTick(nowMs, ts, deps);
+      if (deps.verbose) {
         process.stderr.write(
-          `rag-pipeline-scheduler: tick ${ts} considered=${String(considered)} fired=${String(fired.length)} skipped=${String(skippedInFlight.length)}\n`,
+          `rag-pipeline-scheduler: tick ${ts} considered=${String(report.considered)} fired=${String(report.fired.length)} skipped=${String(report.skippedInFlight.length)}\n`,
         );
       }
       opts.onTick?.(report);

@@ -228,33 +228,48 @@ function pickSchedule(desc: string): string | null {
   return null;
 }
 
+/**
+ * Git clone URLs: pull the repo slug out of the path so
+ * `https://github.com/pytorch/docs.git` becomes `pytorch-docs`
+ * rather than `github-com`.
+ */
+function nameFromGitUrl(url: string): string | null {
+  const slugFromHttps = /\/([^/\s]+?)\/([^/\s]+?)\.git$/.exec(url);
+  const httpsOwner = slugFromHttps?.[1];
+  const httpsRepo = slugFromHttps?.[2];
+  if (httpsOwner !== undefined && httpsRepo !== undefined) {
+    return kebabCase(`${httpsOwner}-${httpsRepo}`);
+  }
+  const slugFromSsh = /:([^/\s]+?)\/([^/\s]+?)\.git$/.exec(url);
+  const sshOwner = slugFromSsh?.[1];
+  const sshRepo = slugFromSsh?.[2];
+  if (sshOwner !== undefined && sshRepo !== undefined) {
+    return kebabCase(`${sshOwner}-${sshRepo}`);
+  }
+  return null;
+}
+
+/** Name from a URL: git repo slug when it's a clone URL, otherwise
+ *  the hostname. `null` means the URL didn't parse — fall through. */
+function nameFromUrl(url: string): string | null {
+  if (url.endsWith(".git")) {
+    const gitName = nameFromGitUrl(url);
+    if (gitName !== null) return gitName;
+  }
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    return kebabCase(host);
+  } catch {
+    return null;
+  }
+}
+
 function inferName(desc: string, urls: string[], paths: string[]): string {
   if (urls.length > 0) {
     const first = urls[0];
     if (first === undefined) return "";
-    // Git clone URLs: pull the repo slug out of the path so
-    // `https://github.com/pytorch/docs.git` becomes `pytorch-docs`
-    // rather than `github-com`.
-    if (first.endsWith(".git")) {
-      const slugFromHttps = /\/([^/\s]+?)\/([^/\s]+?)\.git$/.exec(first);
-      const httpsOwner = slugFromHttps?.[1];
-      const httpsRepo = slugFromHttps?.[2];
-      if (httpsOwner !== undefined && httpsRepo !== undefined) {
-        return kebabCase(`${httpsOwner}-${httpsRepo}`);
-      }
-      const slugFromSsh = /:([^/\s]+?)\/([^/\s]+?)\.git$/.exec(first);
-      const sshOwner = slugFromSsh?.[1];
-      const sshRepo = slugFromSsh?.[2];
-      if (sshOwner !== undefined && sshRepo !== undefined) {
-        return kebabCase(`${sshOwner}-${sshRepo}`);
-      }
-    }
-    try {
-      const host = new URL(first).hostname.replace(/^www\./, "");
-      return kebabCase(host);
-    } catch {
-      /* fallthrough */
-    }
+    const fromUrl = nameFromUrl(first);
+    if (fromUrl !== null) return fromUrl;
   }
   if (paths.length > 0) {
     const firstPath = paths[0];

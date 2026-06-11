@@ -24,6 +24,48 @@ import { resolveSecret } from "../../../config/secret.js";
 import { GitSourceSpecSchema } from "../schema.js";
 import { looksBinary } from "./filesystem.js";
 
+type GitSourceSpec = ReturnType<typeof GitSourceSpecSchema.parse>;
+
+/** Read a file for ingestion. `null` means skip it (binary content
+ *  or unreadable) — both cases are logged, not fatal. */
+async function readIngestibleFile(absPath: string, ctx: FetcherContext): Promise<string | null> {
+  try {
+    const buf = await readFile(absPath);
+    if (looksBinary(buf)) {
+      ctx.log({ level: "warn", msg: `skipping binary file: ${absPath}` });
+      return null;
+    }
+    return buf.toString("utf8");
+  } catch (err) {
+    ctx.log({
+      level: "warn",
+      msg: `unreadable file: ${absPath}`,
+      data: { error: (err as Error).message },
+    });
+    return null;
+  }
+}
+
+function gitDocMetadata(spec: GitSourceSpec, path: string): Record<string, unknown> {
+  return {
+    source_kind: "git",
+    repo: spec.repo,
+    path,
+    ...(spec.ref !== undefined ? { ref: spec.ref } : {}),
+    ...(spec.subpath !== undefined ? { subpath: spec.subpath } : {}),
+    ...(spec.tag ?? {}),
+  };
+}
+
+function removeTmpCheckout(tmp: string): void {
+  try {
+    rmSync(tmp, { recursive: true, force: true });
+  } catch {
+    // Tmpdir cleanup failure is non-fatal — OS will GC /tmp
+    // eventually. We prefer to keep the run successful.
+  }
+}
+
 export const gitFetcher: Fetcher = {
   kind: "git",
   async *fetch(ctx) {
@@ -47,43 +89,17 @@ export const gitFetcher: Fetcher = {
       const root = spec.subpath ? resolve(tmp, spec.subpath) : tmp;
       for await (const absPath of scanFiles(root, spec.glob)) {
         if (ctx.signal.aborted) return;
-        let content: string;
-        try {
-          const buf = await readFile(absPath);
-          if (looksBinary(buf)) {
-            ctx.log({ level: "warn", msg: `skipping binary file: ${absPath}` });
-            continue;
-          }
-          content = buf.toString("utf8");
-        } catch (err) {
-          ctx.log({
-            level: "warn",
-            msg: `unreadable file: ${absPath}`,
-            data: { error: (err as Error).message },
-          });
-          continue;
-        }
+        const content = await readIngestibleFile(absPath, ctx);
+        if (content === null) continue;
         const rel = relative(root, absPath);
         yield {
           id: rel || absPath,
           content,
-          metadata: {
-            source_kind: "git",
-            repo: spec.repo,
-            path: rel || absPath,
-            ...(spec.ref !== undefined ? { ref: spec.ref } : {}),
-            ...(spec.subpath !== undefined ? { subpath: spec.subpath } : {}),
-            ...(spec.tag ?? {}),
-          },
+          metadata: gitDocMetadata(spec, rel || absPath),
         };
       }
     } finally {
-      try {
-        rmSync(tmp, { recursive: true, force: true });
-      } catch {
-        // Tmpdir cleanup failure is non-fatal — OS will GC /tmp
-        // eventually. We prefer to keep the run successful.
-      }
+      removeTmpCheckout(tmp);
     }
   },
 };
@@ -207,22 +223,31 @@ async function* scanFiles(root: string, pattern: string): AsyncIterable<string> 
 function globToRegex(glob: string): RegExp {
   let re = "";
   for (let i = 0; i < glob.length; i++) {
-    const c = glob.charAt(i);
-    if (c === "*") {
-      if (glob[i + 1] === "*") {
-        re += ".*";
-        i++;
-        if (glob[i + 1] === "/") i++;
-      } else {
-        re += "[^/]*";
-      }
-    } else if (c === "?") {
-      re += "[^/]";
-    } else if ("\\^$+{}()|[].".includes(c)) {
-      re += `\\${c}`;
-    } else {
-      re += c;
-    }
+    const { fragment, nextIndex } = translateGlobChar(glob, i);
+    re += fragment;
+    i = nextIndex;
   }
   return new RegExp(`^${re}$`);
+}
+
+/** Translate one glob character into its regex fragment, returning
+ *  the index the scan should resume from (multi-char `**` tokens
+ *  consume extra input). */
+function translateGlobChar(glob: string, i: number): { fragment: string; nextIndex: number } {
+  const c = glob.charAt(i);
+  if (c === "*") return translateStar(glob, i);
+  if (c === "?") return { fragment: "[^/]", nextIndex: i };
+  if ("\\^$+{}()|[].".includes(c)) return { fragment: `\\${c}`, nextIndex: i };
+  return { fragment: c, nextIndex: i };
+}
+
+/** `**` (with an optional trailing `/`) swallows path separators;
+ *  a single `*` stays within one segment. */
+function translateStar(glob: string, i: number): { fragment: string; nextIndex: number } {
+  if (glob[i + 1] !== "*") {
+    return { fragment: "[^/]*", nextIndex: i };
+  }
+  let next = i + 1;
+  if (glob[next + 1] === "/") next++;
+  return { fragment: ".*", nextIndex: next };
 }

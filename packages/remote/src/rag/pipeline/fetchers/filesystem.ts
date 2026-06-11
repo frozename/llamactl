@@ -109,24 +109,33 @@ async function* walkAndMatch(root: string, pattern: string): AsyncIterable<strin
 function globToRegex(glob: string): RegExp {
   let re = "";
   for (let i = 0; i < glob.length; i++) {
-    const c = glob.charAt(i);
-    if (c === "*") {
-      if (glob[i + 1] === "*") {
-        re += ".*";
-        i++;
-        if (glob[i + 1] === "/") i++;
-      } else {
-        re += "[^/]*";
-      }
-    } else if (c === "?") {
-      re += "[^/]";
-    } else if ("\\^$+{}()|[].".includes(c)) {
-      re += `\\${c}`;
-    } else {
-      re += c;
-    }
+    const { fragment, nextIndex } = translateGlobChar(glob, i);
+    re += fragment;
+    i = nextIndex;
   }
   return new RegExp(`^${re}$`);
+}
+
+/** Translate one glob character into its regex fragment, returning
+ *  the index the scan should resume from (multi-char `**` tokens
+ *  consume extra input). */
+function translateGlobChar(glob: string, i: number): { fragment: string; nextIndex: number } {
+  const c = glob.charAt(i);
+  if (c === "*") return translateStar(glob, i);
+  if (c === "?") return { fragment: "[^/]", nextIndex: i };
+  if ("\\^$+{}()|[].".includes(c)) return { fragment: `\\${c}`, nextIndex: i };
+  return { fragment: c, nextIndex: i };
+}
+
+/** `**` (with an optional trailing `/`) swallows path separators;
+ *  a single `*` stays within one segment. */
+function translateStar(glob: string, i: number): { fragment: string; nextIndex: number } {
+  if (glob[i + 1] !== "*") {
+    return { fragment: "[^/]*", nextIndex: i };
+  }
+  let next = i + 1;
+  if (glob[next + 1] === "/") next++;
+  return { fragment: ".*", nextIndex: next };
 }
 
 /**

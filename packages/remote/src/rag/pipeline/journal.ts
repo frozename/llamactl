@@ -171,6 +171,35 @@ interface JournalIndexes {
   prior: Map<string, PriorIngestion[]>;
 }
 
+type DocIngestedEntry = Extract<JournalEntry, { kind: "doc-ingested" }>;
+
+/**
+ * Parse one JSONL line into a doc-ingested entry, or `null` when the
+ * line is blank, malformed, a different kind, or missing fields.
+ * Malformed lines are skipped silently — re-running after a crash is
+ * allowed to produce a partial JSONL stream; the in-memory set is
+ * advisory anyway (a missed dedupe surfaces as a re-embed, not a
+ * correctness bug).
+ */
+function parseDocIngestedLine(line: string): DocIngestedEntry | null {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const entry = parsed as Partial<JournalEntry>;
+  if (entry.kind !== "doc-ingested") return null;
+  const e = entry as DocIngestedEntry;
+  if (typeof e.source !== "string" || typeof e.doc_id !== "string" || typeof e.sha !== "string") {
+    return null;
+  }
+  return e;
+}
+
 async function loadIndexes(path: string): Promise<JournalIndexes> {
   let raw: string;
   try {
@@ -188,25 +217,8 @@ async function loadIndexes(path: string): Promise<JournalIndexes> {
   const seen = new Set<string>();
   const prior = new Map<string, PriorIngestion[]>();
   for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      // Malformed line — skip silently. Re-running after a crash is
-      // allowed to produce a partial JSONL stream; the in-memory set
-      // is advisory anyway (a missed dedupe surfaces as a re-embed,
-      // not a correctness bug).
-      continue;
-    }
-    if (!parsed || typeof parsed !== "object") continue;
-    const entry = parsed as Partial<JournalEntry>;
-    if (entry.kind !== "doc-ingested") continue;
-    const e = entry as Extract<JournalEntry, { kind: "doc-ingested" }>;
-    if (typeof e.source !== "string" || typeof e.doc_id !== "string" || typeof e.sha !== "string") {
-      continue;
-    }
+    const e = parseDocIngestedLine(line);
+    if (e === null) continue;
     seen.add(key(e.source, e.doc_id, e.sha));
     const pk = docKey(e.source, e.doc_id);
     const list = prior.get(pk) ?? [];

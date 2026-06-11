@@ -180,6 +180,111 @@ function workloadName(w: z.infer<typeof ModelRunSpecSchema>): string {
   return w.node;
 }
 
+function countNames(names: Iterable<string>): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const name of names) {
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function addDuplicateIssues(
+  kind: ComponentRef["kind"],
+  bag: Map<string, number>,
+  ctx: z.RefinementCtx,
+): void {
+  for (const [name, count] of bag) {
+    if (count > 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: `duplicate ${kind} component name: '${name}'`,
+        path: ["spec", kind === "rag" ? "ragNodes" : `${kind}s`],
+      });
+    }
+  }
+}
+
+/** 1. Unique component names per kind. */
+function checkUniqueComponentNames(spec: CompositeSpec, ctx: z.RefinementCtx): void {
+  const seen = {
+    service: countNames(spec.services.map((s) => s.name)),
+    workload: countNames(spec.workloads.map((w) => workloadName(w))),
+    rag: countNames(spec.ragNodes.map((r) => r.name)),
+    gateway: countNames(spec.gateways.map((g) => g.name)),
+    pipeline: countNames(spec.pipelines.map((p) => p.name)),
+  } as const;
+  for (const [kind, bag] of Object.entries(seen) as [keyof typeof seen, Map<string, number>][]) {
+    addDuplicateIssues(kind, bag, ctx);
+  }
+}
+
+/** 2. Dependencies must reference real components. */
+function checkDependencyRefs(
+  spec: CompositeSpec,
+  pool: Record<ComponentRef["kind"], Set<string>>,
+  ctx: z.RefinementCtx,
+): void {
+  for (let i = 0; i < spec.dependencies.length; i++) {
+    const edge = spec.dependencies[i];
+    if (!edge) continue;
+    if (!pool[edge.from.kind].has(edge.from.name)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `dependency.from references unknown ${edge.from.kind} '${edge.from.name}'`,
+        path: ["spec", "dependencies", i, "from"],
+      });
+    }
+    if (!pool[edge.to.kind].has(edge.to.name)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `dependency.to references unknown ${edge.to.kind} '${edge.to.name}'`,
+        path: ["spec", "dependencies", i, "to"],
+      });
+    }
+  }
+}
+
+/** 3. ragNode.backingService must name a declared service. */
+function checkRagBackingServices(
+  spec: CompositeSpec,
+  serviceNames: Set<string>,
+  ctx: z.RefinementCtx,
+): void {
+  for (let i = 0; i < spec.ragNodes.length; i++) {
+    const rn = spec.ragNodes[i];
+    if (!rn) continue;
+    if (rn.backingService && !serviceNames.has(rn.backingService)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `ragNode '${rn.name}' references unknown backingService '${rn.backingService}'`,
+        path: ["spec", "ragNodes", i, "backingService"],
+      });
+    }
+  }
+}
+
+/** 4. gateway.upstreamWorkloads must name declared workloads. */
+function checkGatewayUpstreams(
+  spec: CompositeSpec,
+  workloadNames: Set<string>,
+  ctx: z.RefinementCtx,
+): void {
+  for (let i = 0; i < spec.gateways.length; i++) {
+    const gw = spec.gateways[i];
+    if (!gw) continue;
+    for (let j = 0; j < gw.upstreamWorkloads.length; j++) {
+      const up = gw.upstreamWorkloads[j];
+      if (up && !workloadNames.has(up)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `gateway '${gw.name}' references unknown upstream workload '${up}'`,
+          path: ["spec", "gateways", i, "upstreamWorkloads", j],
+        });
+      }
+    }
+  }
+}
+
 export const CompositeSchema = z
   .object({
     apiVersion: z.literal("llamactl/v1"),
@@ -191,43 +296,8 @@ export const CompositeSchema = z
   .superRefine((manifest, ctx) => {
     const spec = manifest.spec;
 
-    // 1. Unique component names per kind.
-    const seen = {
-      service: new Map<string, number>(),
-      workload: new Map<string, number>(),
-      rag: new Map<string, number>(),
-      gateway: new Map<string, number>(),
-      pipeline: new Map<string, number>(),
-    } as const;
-    for (const s of spec.services) {
-      seen.service.set(s.name, (seen.service.get(s.name) ?? 0) + 1);
-    }
-    for (const w of spec.workloads) {
-      const n = workloadName(w);
-      seen.workload.set(n, (seen.workload.get(n) ?? 0) + 1);
-    }
-    for (const r of spec.ragNodes) {
-      seen.rag.set(r.name, (seen.rag.get(r.name) ?? 0) + 1);
-    }
-    for (const g of spec.gateways) {
-      seen.gateway.set(g.name, (seen.gateway.get(g.name) ?? 0) + 1);
-    }
-    for (const p of spec.pipelines) {
-      seen.pipeline.set(p.name, (seen.pipeline.get(p.name) ?? 0) + 1);
-    }
-    for (const [kind, bag] of Object.entries(seen) as [keyof typeof seen, Map<string, number>][]) {
-      for (const [name, count] of bag) {
-        if (count > 1) {
-          ctx.addIssue({
-            code: "custom",
-            message: `duplicate ${kind} component name: '${name}'`,
-            path: ["spec", kind === "rag" ? "ragNodes" : `${kind}s`],
-          });
-        }
-      }
-    }
+    checkUniqueComponentNames(spec, ctx);
 
-    // 2. Dependencies must reference real components.
     const names = collectComponentNames(spec);
     const pool: Record<ComponentRef["kind"], Set<string>> = {
       service: names.service,
@@ -236,53 +306,9 @@ export const CompositeSchema = z
       gateway: names.gateway,
       pipeline: names.pipeline,
     };
-    for (let i = 0; i < spec.dependencies.length; i++) {
-      const edge = spec.dependencies[i];
-      if (!edge) continue;
-      if (!pool[edge.from.kind].has(edge.from.name)) {
-        ctx.addIssue({
-          code: "custom",
-          message: `dependency.from references unknown ${edge.from.kind} '${edge.from.name}'`,
-          path: ["spec", "dependencies", i, "from"],
-        });
-      }
-      if (!pool[edge.to.kind].has(edge.to.name)) {
-        ctx.addIssue({
-          code: "custom",
-          message: `dependency.to references unknown ${edge.to.kind} '${edge.to.name}'`,
-          path: ["spec", "dependencies", i, "to"],
-        });
-      }
-    }
-
-    // 3. ragNode.backingService must name a declared service.
-    for (let i = 0; i < spec.ragNodes.length; i++) {
-      const rn = spec.ragNodes[i];
-      if (!rn) continue;
-      if (rn.backingService && !names.service.has(rn.backingService)) {
-        ctx.addIssue({
-          code: "custom",
-          message: `ragNode '${rn.name}' references unknown backingService '${rn.backingService}'`,
-          path: ["spec", "ragNodes", i, "backingService"],
-        });
-      }
-    }
-
-    // 4. gateway.upstreamWorkloads must name declared workloads.
-    for (let i = 0; i < spec.gateways.length; i++) {
-      const gw = spec.gateways[i];
-      if (!gw) continue;
-      for (let j = 0; j < gw.upstreamWorkloads.length; j++) {
-        const up = gw.upstreamWorkloads[j];
-        if (up && !names.workload.has(up)) {
-          ctx.addIssue({
-            code: "custom",
-            message: `gateway '${gw.name}' references unknown upstream workload '${up}'`,
-            path: ["spec", "gateways", i, "upstreamWorkloads", j],
-          });
-        }
-      }
-    }
+    checkDependencyRefs(spec, pool, ctx);
+    checkRagBackingServices(spec, names.service, ctx);
+    checkGatewayUpstreams(spec, names.workload, ctx);
   });
 export type Composite = z.infer<typeof CompositeSchema>;
 

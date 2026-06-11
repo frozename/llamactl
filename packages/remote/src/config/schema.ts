@@ -275,21 +275,7 @@ export const ClusterNodeSchema = z
   })
   .refine(
     (n) => {
-      // Legacy kubeconfigs may carry `kind: 'cloud'`. Treat that as
-      // gateway for validation — the data shape is identical.
-      const rawKind = (n as { kind?: string }).kind;
-      const k =
-        rawKind === "gateway" || rawKind === "agent" || rawKind === "provider" || rawKind === "rag"
-          ? rawKind
-          : rawKind === "cloud"
-            ? "gateway"
-            : n.provider
-              ? "provider"
-              : n.rag
-                ? "rag"
-                : n.cloud
-                  ? "gateway"
-                  : "agent";
+      const k = nodeValidationKind(n);
       // CLI bindings only on agent nodes. Checked first so rag /
       // gateway / provider rejection wins over their own
       // block-specific rules when cli[] is present.
@@ -306,6 +292,29 @@ export const ClusterNodeSchema = z
         "agent nodes require endpoint; gateway nodes require cloud{} block; provider nodes require provider{} block; rag nodes require rag{} block and must not carry cloud/provider blocks; cli[] is agent-only",
     },
   );
+
+/**
+ * Effective kind used by the `ClusterNodeSchema` refine. Explicit
+ * kinds win; legacy kubeconfigs may carry `kind: 'cloud'` — treat
+ * that as gateway for validation (the data shape is identical).
+ * Without an explicit kind, infer from the block the node carries.
+ */
+function nodeValidationKind(n: {
+  kind?: string;
+  provider?: unknown;
+  rag?: unknown;
+  cloud?: unknown;
+}): "agent" | "gateway" | "provider" | "rag" {
+  const rawKind = n.kind;
+  if (rawKind === "gateway" || rawKind === "agent" || rawKind === "provider" || rawKind === "rag") {
+    return rawKind;
+  }
+  if (rawKind === "cloud") return "gateway";
+  if (n.provider) return "provider";
+  if (n.rag) return "rag";
+  if (n.cloud) return "gateway";
+  return "agent";
+}
 
 export const ClusterSchema = z.object({
   name: z.string().min(1),

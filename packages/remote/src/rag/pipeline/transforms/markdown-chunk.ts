@@ -58,50 +58,66 @@ export function chunkMarkdown(
     const prefix =
       spec.preserve_headings && sec.path.length > 0 ? formatHeadingPrefix(sec.path) + "\n\n" : "";
     const budget = Math.max(1, spec.chunk_size - prefix.length);
-    const paragraphs = sec.body
-      .split(/\n{2,}/)
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
-
-    // Empty sections still emit the heading anchor so short pages
-    // with nothing but a title aren't silently dropped.
-    if (paragraphs.length === 0) {
-      if (prefix.length > 0) {
-        out.push({
-          content: prefix.trimEnd(),
-          headingPath: sec.path,
-        });
-      }
-      continue;
-    }
-
-    let current = "";
-    for (const p of paragraphs) {
-      const candidate = current.length === 0 ? p : `${current}\n\n${p}`;
-      if (candidate.length <= budget || current.length === 0) {
-        current = candidate;
-        continue;
-      }
-      out.push({
-        content: prefix + current,
-        headingPath: sec.path,
-      });
-      const tail =
-        spec.overlap > 0 && current.length > spec.overlap
-          ? current.slice(current.length - spec.overlap)
-          : "";
-      current = tail.length > 0 ? `${tail}\n\n${p}` : p;
-    }
-    if (current.length > 0) {
-      out.push({
-        content: prefix + current,
-        headingPath: sec.path,
-      });
-    }
+    out.push(...packSection(sec, prefix, budget, spec.overlap));
   }
 
   // Empty doc → single empty chunk would be useless; drop to zero.
   return out;
+}
+
+/** Pack one section's paragraphs into chunks within `budget` chars,
+ *  carrying `overlap` chars of tail context across boundaries. */
+function packSection(
+  sec: Section,
+  prefix: string,
+  budget: number,
+  overlap: number,
+): { content: string; headingPath: string[] }[] {
+  const out: { content: string; headingPath: string[] }[] = [];
+  const paragraphs = sec.body
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  // Empty sections still emit the heading anchor so short pages
+  // with nothing but a title aren't silently dropped.
+  if (paragraphs.length === 0) {
+    if (prefix.length > 0) {
+      out.push({
+        content: prefix.trimEnd(),
+        headingPath: sec.path,
+      });
+    }
+    return out;
+  }
+
+  let current = "";
+  for (const p of paragraphs) {
+    const candidate = current.length === 0 ? p : `${current}\n\n${p}`;
+    if (candidate.length <= budget || current.length === 0) {
+      current = candidate;
+      continue;
+    }
+    out.push({
+      content: prefix + current,
+      headingPath: sec.path,
+    });
+    current = nextWindowSeed(current, p, overlap);
+  }
+  if (current.length > 0) {
+    out.push({
+      content: prefix + current,
+      headingPath: sec.path,
+    });
+  }
+  return out;
+}
+
+/** Seed the next chunk with the overlap tail of the previous one. */
+function nextWindowSeed(current: string, paragraph: string, overlap: number): string {
+  const tail =
+    overlap > 0 && current.length > overlap ? current.slice(current.length - overlap) : "";
+  return tail.length > 0 ? `${tail}\n\n${paragraph}` : paragraph;
 }
 
 /**

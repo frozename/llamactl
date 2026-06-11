@@ -142,16 +142,31 @@ function proxyFromCaller(): NodeClient {
       abort.abort();
     };
 
+    const resolveStream = async (): Promise<AsyncIterable<unknown>> => {
+      const methodFn = callerWithSignal(abort.signal)[method];
+      if (typeof methodFn !== "function") {
+        throw new Error(`unknown procedure '${method}'`);
+      }
+      const stream = await methodFn(input);
+      if (!isAsyncIterable(stream)) {
+        throw new Error(`inproc subscribe('${method}') did not return an AsyncIterable`);
+      }
+      return stream;
+    };
+
+    // A caller-initiated abort settles as a clean completion; any
+    // other failure surfaces through onError. Either way only the
+    // first settlement wins.
+    const settleFailure = (err: unknown): void => {
+      if (settled) return;
+      settled = true;
+      if (abort.signal.aborted) handlers.onComplete();
+      else handlers.onError(err);
+    };
+
     const run = async (): Promise<void> => {
       try {
-        const methodFn = callerWithSignal(abort.signal)[method];
-        if (typeof methodFn !== "function") {
-          throw new Error(`unknown procedure '${method}'`);
-        }
-        const stream = await methodFn(input);
-        if (!isAsyncIterable(stream)) {
-          throw new Error(`inproc subscribe('${method}') did not return an AsyncIterable`);
-        }
+        const stream = await resolveStream();
         handlers.onStarted?.();
         for await (const event of stream) {
           if (settled) break;
@@ -162,11 +177,7 @@ function proxyFromCaller(): NodeClient {
           handlers.onComplete();
         }
       } catch (err) {
-        if (!settled) {
-          settled = true;
-          if (abort.signal.aborted) handlers.onComplete();
-          else handlers.onError(err);
-        }
+        settleFailure(err);
       } finally {
         close();
       }

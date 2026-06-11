@@ -200,37 +200,7 @@ export function providerForNode(opts: {
   // node's name so telemetry / observers see `llamactl-sirius.openai`
   // rather than the parent gateway name.
   if (kind === "provider") {
-    if (!node.provider) {
-      throw new Error(`provider-kind node '${node.name}' is missing provider{}`);
-    }
-    if (!cfg) {
-      throw new Error(
-        `provider-kind node '${node.name}' requires opts.cfg to resolve its parent gateway`,
-      );
-    }
-    // CLI subscription backend — the virtual node synthesizes from an
-    // agent's `cli:[]` binding, NOT a gateway's cloud binding. Dispatch
-    // to the subprocess adapter; the parent "gateway" in this binding
-    // is actually the hosting agent.
-    const binding = node.provider;
-    if (binding.source === "cli") {
-      return buildCliProviderForNode({ node, cfg, env });
-    }
-    const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
-    const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
-    const parent = cluster?.nodes.find((n) => n.name === binding.gateway);
-    if (!parent?.cloud) {
-      throw new Error(
-        `provider-kind node '${node.name}': parent gateway '${binding.gateway}' not found or missing cloud{}`,
-      );
-    }
-    const apiKey = parent.cloud.apiKeyRef ? resolveApiKeyRef(parent.cloud.apiKeyRef, env) : "";
-    return createOpenAICompatProvider({
-      name: node.name,
-      displayName: parent.cloud.displayName ?? node.name,
-      baseUrl: parent.cloud.baseUrl,
-      apiKey,
-    });
+    return providerForVirtualNode(node, cfg, env);
   }
 
   // Gateway + cloud-direct both carry a `cloud` binding and want
@@ -257,6 +227,47 @@ export function providerForNode(opts: {
     baseUrl,
     apiKey: token,
     ...(fetchImpl ? { fetch: fetchImpl as typeof globalThis.fetch } : {}),
+  });
+}
+
+/**
+ * Provider-kind virtual node resolution: walk to the parent gateway
+ * and use its binding. CLI-source bindings dispatch to the subprocess
+ * adapter instead — the virtual node synthesizes from an agent's
+ * `cli:[]` binding, NOT a gateway's cloud binding, and the parent
+ * "gateway" in that binding is actually the hosting agent.
+ */
+function providerForVirtualNode(
+  node: ClusterNode,
+  cfg: Config | undefined,
+  env: NodeJS.ProcessEnv,
+): AiProvider {
+  if (!node.provider) {
+    throw new Error(`provider-kind node '${node.name}' is missing provider{}`);
+  }
+  if (!cfg) {
+    throw new Error(
+      `provider-kind node '${node.name}' requires opts.cfg to resolve its parent gateway`,
+    );
+  }
+  const binding = node.provider;
+  if (binding.source === "cli") {
+    return buildCliProviderForNode({ node, cfg, env });
+  }
+  const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
+  const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
+  const parent = cluster?.nodes.find((n) => n.name === binding.gateway);
+  if (!parent?.cloud) {
+    throw new Error(
+      `provider-kind node '${node.name}': parent gateway '${binding.gateway}' not found or missing cloud{}`,
+    );
+  }
+  const apiKey = parent.cloud.apiKeyRef ? resolveApiKeyRef(parent.cloud.apiKeyRef, env) : "";
+  return createOpenAICompatProvider({
+    name: node.name,
+    displayName: parent.cloud.displayName ?? node.name,
+    baseUrl: parent.cloud.baseUrl,
+    apiKey,
   });
 }
 

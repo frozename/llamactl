@@ -14,123 +14,188 @@
  * collapse tags and whitespace. Good enough for doc crawls; we
  * don't replace a real search-engine extractor.
  */
-import type { Fetcher, RawDoc } from "../types.js";
+import type { Fetcher, FetcherContext, RawDoc } from "../types.js";
 
 import { resolveSecret } from "../../../config/secret.js";
 import { HttpSourceSpecSchema } from "../schema.js";
+
+type HttpSourceSpec = ReturnType<typeof HttpSourceSpecSchema.parse>;
+
+interface QueueItem {
+  url: string;
+  depth: number;
+}
+
+/** Everything one BFS step needs — bundled so the per-item helper
+ *  has a single, readable parameter. */
+interface CrawlState {
+  spec: HttpSourceSpec;
+  ctx: FetcherContext;
+  origin: string;
+  rate: RateLimiter;
+  robots: RobotsCache;
+  authHeader: string | undefined;
+  visited: Set<string>;
+  queue: QueueItem[];
+}
+
+/**
+ * Resolve the optional Bearer header. `{ ok: false }` means the
+ * tokenRef failed to resolve (already logged) — abort the crawl.
+ */
+function resolveAuthHeader(
+  spec: HttpSourceSpec,
+  ctx: FetcherContext,
+): { ok: boolean; header?: string } {
+  if (!spec.auth?.tokenRef) return { ok: true };
+  try {
+    const token = resolveSecret(spec.auth.tokenRef, ctx.env);
+    return { ok: true, header: `Bearer ${token}` };
+  } catch (err) {
+    ctx.log({
+      level: "error",
+      msg: `http source: unable to resolve tokenRef`,
+      data: { error: (err as Error).message },
+    });
+    return { ok: false };
+  }
+}
+
+async function robotsAllows(url: URL, itemUrl: string, state: CrawlState): Promise<boolean> {
+  if (state.spec.ignore_robots) return true;
+  const allowed = await state.robots.isAllowed(url, state.ctx, state.spec.timeout_ms);
+  if (!allowed) {
+    state.ctx.log({
+      level: "info",
+      msg: `robots.txt disallows ${itemUrl}`,
+    });
+  }
+  return allowed;
+}
+
+/** Fetch one page; `null` means skip it (transport error or non-2xx
+ *  status — both logged). */
+async function fetchPage(url: string, state: CrawlState): Promise<Response | null> {
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(
+      url,
+      {
+        headers: {
+          ...(state.authHeader ? { Authorization: state.authHeader } : {}),
+          "User-Agent": "llamactl-pipeline/1",
+        },
+        signal: state.ctx.signal,
+      },
+      state.spec.timeout_ms,
+    );
+  } catch (err) {
+    state.ctx.log({
+      level: "warn",
+      msg: `fetch failed: ${url}`,
+      data: { error: (err as Error).message },
+    });
+    return null;
+  }
+  if (!res.ok) {
+    state.ctx.log({
+      level: "warn",
+      msg: `http ${String(res.status)} for ${url}`,
+    });
+    return null;
+  }
+  return res;
+}
+
+/** Same-origin + protocol + dedupe filter over extracted links;
+ *  survivors join the BFS queue at depth + 1. */
+function enqueueLinks(html: string, pageUrl: URL, depth: number, state: CrawlState): void {
+  for (const raw of extractLinks(html, pageUrl)) {
+    const next = canonicalize(raw);
+    if (state.visited.has(next)) continue;
+    let u: URL;
+    try {
+      u = new URL(next);
+    } catch {
+      continue;
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") continue;
+    if (state.spec.same_origin && u.origin !== state.origin) continue;
+    state.visited.add(next);
+    state.queue.push({ url: next, depth: depth + 1 });
+  }
+}
+
+/**
+ * Crawl one queue entry: robots check, rate-limit wait, fetch,
+ * text extraction, and link expansion. Returns the doc to yield
+ * (absent when the entry was skipped) plus a `stop` flag set when
+ * the abort signal fired during the rate-limit wait.
+ */
+async function crawlOne(
+  item: QueueItem,
+  state: CrawlState,
+): Promise<{ stop: boolean; doc?: RawDoc }> {
+  const url = new URL(item.url);
+
+  if (!(await robotsAllows(url, item.url, state))) return { stop: false };
+
+  const abortedDuringWait = await state.rate.wait(url.hostname, state.ctx.signal);
+  if (abortedDuringWait) return { stop: true };
+
+  const res = await fetchPage(item.url, state);
+  if (res === null) return { stop: false };
+
+  const contentType = res.headers.get("content-type") ?? "";
+  const html = await res.text();
+  const isHtml = contentType.includes("html") || /<html[\s>]/i.test(html.slice(0, 512));
+  const text = isHtml ? extractReadableText(html) : html;
+  const doc: RawDoc = {
+    id: item.url,
+    content: text,
+    metadata: {
+      source_kind: "http",
+      url: item.url,
+      fetched_at: new Date().toISOString(),
+      status: res.status,
+      content_type: contentType,
+      depth: item.depth,
+      ...(state.spec.tag ?? {}),
+    },
+  };
+
+  if (isHtml && item.depth < state.spec.max_depth) {
+    enqueueLinks(html, url, item.depth, state);
+  }
+  return { stop: false, doc };
+}
 
 export const httpFetcher: Fetcher = {
   kind: "http",
   async *fetch(ctx) {
     const spec = HttpSourceSpecSchema.parse(ctx.spec);
-    const start = new URL(spec.url);
-    const origin = start.origin;
-    const rate = new RateLimiter(spec.rate_limit_per_sec);
-    const robots = new RobotsCache();
-    let authHeader: string | undefined;
-    if (spec.auth?.tokenRef) {
-      try {
-        const token = resolveSecret(spec.auth.tokenRef, ctx.env);
-        authHeader = `Bearer ${token}`;
-      } catch (err) {
-        ctx.log({
-          level: "error",
-          msg: `http source: unable to resolve tokenRef`,
-          data: { error: (err as Error).message },
-        });
-        return;
-      }
-    }
+    const auth = resolveAuthHeader(spec, ctx);
+    if (!auth.ok) return;
 
-    const queue: { url: string; depth: number }[] = [{ url: canonicalize(spec.url), depth: 0 }];
-    const visited = new Set<string>([canonicalize(spec.url)]);
+    const state: CrawlState = {
+      spec,
+      ctx,
+      origin: new URL(spec.url).origin,
+      rate: new RateLimiter(spec.rate_limit_per_sec),
+      robots: new RobotsCache(),
+      authHeader: auth.header,
+      visited: new Set<string>([canonicalize(spec.url)]),
+      queue: [{ url: canonicalize(spec.url), depth: 0 }],
+    };
 
-    while (queue.length > 0) {
+    while (state.queue.length > 0) {
       if (ctx.signal.aborted) return;
-      const item = queue.shift();
+      const item = state.queue.shift();
       if (item === undefined) break;
-      const url = new URL(item.url);
 
-      if (!spec.ignore_robots) {
-        const allowed = await robots.isAllowed(url, ctx, spec.timeout_ms);
-        if (!allowed) {
-          ctx.log({
-            level: "info",
-            msg: `robots.txt disallows ${item.url}`,
-          });
-          continue;
-        }
-      }
-
-      const abortedDuringWait = await rate.wait(url.hostname, ctx.signal);
-      if (abortedDuringWait) return;
-
-      let res: Response;
-      try {
-        res = await fetchWithTimeout(
-          item.url,
-          {
-            headers: {
-              ...(authHeader ? { Authorization: authHeader } : {}),
-              "User-Agent": "llamactl-pipeline/1",
-            },
-            signal: ctx.signal,
-          },
-          spec.timeout_ms,
-        );
-      } catch (err) {
-        ctx.log({
-          level: "warn",
-          msg: `fetch failed: ${item.url}`,
-          data: { error: (err as Error).message },
-        });
-        continue;
-      }
-      if (!res.ok) {
-        ctx.log({
-          level: "warn",
-          msg: `http ${String(res.status)} for ${item.url}`,
-        });
-        continue;
-      }
-      const contentType = res.headers.get("content-type") ?? "";
-      const html = await res.text();
-
-      const isHtml = contentType.includes("html") || /<html[\s>]/i.test(html.slice(0, 512));
-
-      const text = isHtml ? extractReadableText(html) : html;
-      const doc: RawDoc = {
-        id: item.url,
-        content: text,
-        metadata: {
-          source_kind: "http",
-          url: item.url,
-          fetched_at: new Date().toISOString(),
-          status: res.status,
-          content_type: contentType,
-          depth: item.depth,
-          ...(spec.tag ?? {}),
-        },
-      };
-      yield doc;
-
-      if (!isHtml) continue;
-      if (item.depth >= spec.max_depth) continue;
-
-      for (const raw of extractLinks(html, url)) {
-        const next = canonicalize(raw);
-        if (visited.has(next)) continue;
-        let u: URL;
-        try {
-          u = new URL(next);
-        } catch {
-          continue;
-        }
-        if (u.protocol !== "http:" && u.protocol !== "https:") continue;
-        if (spec.same_origin && u.origin !== origin) continue;
-        visited.add(next);
-        queue.push({ url: next, depth: item.depth + 1 });
-      }
+      const { stop, doc } = await crawlOne(item, state);
+      if (stop) return;
+      if (doc) yield doc;
     }
   },
 };
