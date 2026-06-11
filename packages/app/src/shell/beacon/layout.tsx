@@ -1,11 +1,9 @@
 import * as React from "react";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo } from "react";
 
 import { APP_MODULES } from "@/modules/registry";
 import { CommandPaletteMount } from "@/shell/command-palette";
-import { useTabStore } from "@/stores/tab-store";
-
-import type { RailViewId } from "./rail-views";
+import { type TabEntry, useTabStore } from "@/stores/tab-store";
 
 import { ActivityRail } from "./activity-rail";
 import { DynamicTabRouter } from "./dynamic-tab-router";
@@ -15,14 +13,11 @@ import { FirstRunTip } from "./first-run-tip";
 import { StatusBar } from "./status-bar";
 import { TabBar } from "./tab-bar";
 import { TitleBar } from "./title-bar";
-
-const RAIL_KEY = "beacon.rail.view";
+import { useRailState } from "./use-rail-state";
+import { useTabShortcuts } from "./use-tab-shortcuts";
 
 /**
- * Beacon shell root. Manages the rail-view selection (local state,
- * persisted to localStorage), mounts every tab's module component
- * lazily via APP_MODULES, and toggles visibility with display:none
- * so each module's state is preserved across tab switches.
+ * Beacon shell root.
  */
 export function BeaconLayout(): React.JSX.Element {
   const tabs = useTabStore((s) => s.tabs);
@@ -32,16 +27,8 @@ export function BeaconLayout(): React.JSX.Element {
   const reopen = useTabStore((s) => s.reopen);
   const setActive = useTabStore((s) => s.setActive);
 
-  const [railView, setRailView] = useState<RailViewId>(() => {
-    if (typeof localStorage === "undefined") return "explorer";
-    const stored = localStorage.getItem(RAIL_KEY);
-    return stored !== null ? (stored as RailViewId) : "explorer";
-  });
-  useEffect(() => {
-    localStorage.setItem(RAIL_KEY, railView);
-  }, [railView]);
+  const [railView, setRailView] = useRailState();
 
-  // Seed a default tab if none exist.
   useEffect(() => {
     if (tabs.length === 0) {
       open({
@@ -53,36 +40,7 @@ export function BeaconLayout(): React.JSX.Element {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Tab keyboard shortcuts: ⌘1–⌘9, ⌘W, ⌘⇧T.
-  useEffect(() => {
-    const h = (e: KeyboardEvent): void => {
-      const meta = e.metaKey || e.ctrlKey;
-      if (!meta) return;
-      const k = e.key.toLowerCase();
-      if (k === "w" && !e.shiftKey && activeKey) {
-        e.preventDefault();
-        close(activeKey);
-        return;
-      }
-      if (k === "t" && e.shiftKey) {
-        e.preventDefault();
-        reopen();
-        return;
-      }
-      const n = Number(e.key);
-      if (Number.isInteger(n) && n >= 1 && n <= 9) {
-        const target = tabs[n - 1];
-        if (target) {
-          e.preventDefault();
-          setActive(target.tabKey);
-        }
-      }
-    };
-    window.addEventListener("keydown", h);
-    return (): void => {
-      window.removeEventListener("keydown", h);
-    };
-  }, [tabs, activeKey, close, reopen, setActive]);
+  useTabShortcuts(tabs, activeKey, close, reopen, setActive);
 
   const visitedKeys = useMemo(
     () => new Set([...tabs.map((tab) => tab.tabKey), ...(activeKey ? [activeKey] : [])]),
@@ -127,46 +85,7 @@ export function BeaconLayout(): React.JSX.Element {
                   <div style={{ padding: 24, color: "var(--color-text-tertiary)" }}>Loading…</div>
                 }
               >
-                {tabs.map((tab) => {
-                  if (!visitedKeys.has(tab.tabKey)) return null;
-                  const isActive = tab.tabKey === activeKey;
-                  if (tab.kind === "module") {
-                    const moduleId = tab.tabKey.slice("module:".length);
-                    const mod = APP_MODULES.find((m) => m.id === moduleId);
-                    if (!mod) return null;
-                    const Component = mod.Component;
-                    return (
-                      <div
-                        key={tab.tabKey}
-                        data-module-id={moduleId}
-                        aria-hidden={!isActive}
-                        style={{
-                          position: "absolute",
-                          inset: 0,
-                          overflow: "auto",
-                          display: isActive ? "block" : "none",
-                        }}
-                      >
-                        <Component />
-                      </div>
-                    );
-                  }
-                  return (
-                    <div
-                      key={tab.tabKey}
-                      data-tab-key={tab.tabKey}
-                      aria-hidden={!isActive}
-                      style={{
-                        position: "absolute",
-                        inset: 0,
-                        overflow: "auto",
-                        display: isActive ? "block" : "none",
-                      }}
-                    >
-                      <DynamicTabRouter tab={tab} />
-                    </div>
-                  );
-                })}
+                <TabContentRenderer tabs={tabs} activeKey={activeKey} visitedKeys={visitedKeys} />
               </Suspense>
             </ModuleErrorBoundary>
           </div>
@@ -177,5 +96,60 @@ export function BeaconLayout(): React.JSX.Element {
       <CommandPaletteMount />
       <FirstRunTip />
     </div>
+  );
+}
+
+function TabContentRenderer({
+  tabs,
+  activeKey,
+  visitedKeys,
+}: {
+  tabs: TabEntry[];
+  activeKey: string | null;
+  visitedKeys: Set<string>;
+}): React.JSX.Element {
+  return (
+    <>
+      {tabs.map((tab) => {
+        if (!visitedKeys.has(tab.tabKey)) return null;
+        const isActive = tab.tabKey === activeKey;
+        if (tab.kind === "module") {
+          const moduleId = tab.tabKey.slice("module:".length);
+          const mod = APP_MODULES.find((m) => m.id === moduleId);
+          if (!mod) return null;
+          const Component = mod.Component;
+          return (
+            <div
+              key={tab.tabKey}
+              data-module-id={moduleId}
+              aria-hidden={!isActive}
+              style={{
+                position: "absolute",
+                inset: 0,
+                overflow: "auto",
+                display: isActive ? "block" : "none",
+              }}
+            >
+              <Component />
+            </div>
+          );
+        }
+        return (
+          <div
+            key={tab.tabKey}
+            data-tab-key={tab.tabKey}
+            aria-hidden={!isActive}
+            style={{
+              position: "absolute",
+              inset: 0,
+              overflow: "auto",
+              display: isActive ? "block" : "none",
+            }}
+          >
+            <DynamicTabRouter tab={tab} />
+          </div>
+        );
+      })}
+    </>
   );
 }

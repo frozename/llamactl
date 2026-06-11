@@ -3,11 +3,10 @@ import * as React from "react";
 
 import { type TabEntry, useTabStore } from "@/stores/tab-store";
 
+import { type MenuState, useTabMenu } from "./use-tab-menu";
+
 /**
- * Persistent tab strip. Pinned tabs render leftmost with a pin glyph
- * in place of the × close button. Active tab paints a 1.5 px brand
- * underbar on its top edge. Middle-click closes; right-click shows a
- * context menu (Pin, Close others, Close all).
+ * Persistent tab strip.
  */
 export function TabBar(): React.JSX.Element {
   const tabs = useTabStore((s) => s.tabs);
@@ -19,27 +18,13 @@ export function TabBar(): React.JSX.Element {
   const closeOthers = useTabStore((s) => s.closeOthers);
   const closeAll = useTabStore((s) => s.closeAll);
 
-  const [menu, setMenu] = React.useState<{ x: number; y: number; tab: TabEntry } | null>(null);
+  const [menu, setMenu] = useTabMenu();
   const tabRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
 
-  React.useEffect(() => {
-    if (!menu) return;
-    const dismiss = (): void => {
-      setMenu(null);
-    };
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") setMenu(null);
-    };
-    window.addEventListener("click", dismiss);
-    window.addEventListener("keydown", onKey);
-    return (): void => {
-      window.removeEventListener("click", dismiss);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [menu]);
-
   const focusTab = (key: string): void => {
-    requestAnimationFrame(() => tabRefs.current.get(key)?.focus());
+    requestAnimationFrame(() => {
+      tabRefs.current.get(key)?.focus();
+    });
   };
 
   return (
@@ -54,184 +39,241 @@ export function TabBar(): React.JSX.Element {
         minHeight: 38,
       }}
     >
-      {tabs.map((tab, idx) => {
-        const active = tab.tabKey === activeKey;
-        return (
-          <div
-            key={tab.tabKey}
-            ref={(el) => {
-              if (el) tabRefs.current.set(tab.tabKey, el);
-              else tabRefs.current.delete(tab.tabKey);
-            }}
-            role="tab"
-            aria-selected={active}
-            tabIndex={active ? 0 : -1}
-            onClick={() => {
-              setActive(tab.tabKey);
-            }}
-            onAuxClick={(e) => {
-              if (e.button === 1) close(tab.tabKey);
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setMenu({ x: e.clientX, y: e.clientY, tab });
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-                e.preventDefault();
-                const dir = e.key === "ArrowRight" ? 1 : -1;
-                const next = tabs[(idx + dir + tabs.length) % tabs.length];
-                if (next) {
-                  setActive(next.tabKey);
-                  focusTab(next.tabKey);
-                }
-                return;
-              }
-              if (e.key === "Home") {
-                e.preventDefault();
-                const first = tabs[0];
-                if (first) {
-                  setActive(first.tabKey);
-                  focusTab(first.tabKey);
-                }
-                return;
-              }
-              if (e.key === "End") {
-                e.preventDefault();
-                const last = tabs[tabs.length - 1];
-                if (last) {
-                  setActive(last.tabKey);
-                  focusTab(last.tabKey);
-                }
-                return;
-              }
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                setActive(tab.tabKey);
-              }
-            }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "0 14px",
-              fontSize: 12,
-              color: active ? "var(--color-text)" : "var(--color-text-tertiary)",
-              background: active ? "var(--color-surface-0)" : "transparent",
-              cursor: "pointer",
-              borderRight: "1px solid var(--color-border-subtle)",
-              position: "relative",
-              whiteSpace: "nowrap",
-              transition: "background 160ms, color 160ms",
-            }}
-          >
-            {active && (
-              <span
-                aria-hidden="true"
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  height: 1.5,
-                  background: "var(--color-brand)",
-                }}
-              />
-            )}
-            <span
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                background: active ? "var(--color-brand)" : "var(--color-text-ghost)",
-              }}
-            />
-            <span>{tab.title}</span>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (tab.pinned) {
-                  unpin(tab.tabKey);
-                } else {
-                  close(tab.tabKey);
-                }
-              }}
-              style={{
-                all: "unset",
-                width: 16,
-                height: 16,
-                display: "grid",
-                placeItems: "center",
-                borderRadius: 4,
-                cursor: "pointer",
-                marginLeft: 4,
-                color: "inherit",
-              }}
-              title={tab.pinned ? "Unpin" : "Close"}
-            >
-              {tab.pinned ? (
-                <Pin size={11} strokeWidth={2} fill="currentColor" />
-              ) : (
-                <X size={12} strokeWidth={2} />
-              )}
-            </button>
-          </div>
-        );
-      })}
+      {tabs.map((tab, idx) => (
+        <TabItem
+          key={tab.tabKey}
+          tab={tab}
+          idx={idx}
+          total={tabs.length}
+          active={tab.tabKey === activeKey}
+          setActive={setActive}
+          close={close}
+          unpin={unpin}
+          setMenu={setMenu}
+          tabRefs={tabRefs}
+          focusTab={focusTab}
+          tabs={tabs}
+        />
+      ))}
       {menu && (
-        <div
-          onClick={(e) => {
-            e.stopPropagation();
-          }}
-          style={{
-            position: "fixed",
-            left: menu.x,
-            top: menu.y,
-            background: "var(--color-surface-2)",
-            border: "1px solid var(--color-border)",
-            borderRadius: "var(--r-md)",
-            padding: 4,
-            boxShadow: "var(--shadow-md)",
-            fontSize: 12,
-            zIndex: 2000,
-            minWidth: 180,
-          }}
-        >
-          <MenuItem
-            label={menu.tab.pinned ? "Unpin" : "Pin"}
-            onPick={() => {
-              if (menu.tab.pinned) {
-                unpin(menu.tab.tabKey);
-              } else {
-                pin(menu.tab.tabKey);
-              }
-              setMenu(null);
-            }}
-          />
-          <MenuItem
-            label="Close"
-            onPick={() => {
-              close(menu.tab.tabKey);
-              setMenu(null);
-            }}
-          />
-          <MenuItem
-            label="Close others"
-            onPick={() => {
-              closeOthers(menu.tab.tabKey);
-              setMenu(null);
-            }}
-          />
-          <MenuItem
-            label="Close all"
-            onPick={() => {
-              closeAll(true);
-              setMenu(null);
-            }}
-          />
-        </div>
+        <TabContextMenu
+          menu={menu}
+          setMenu={setMenu}
+          pin={pin}
+          unpin={unpin}
+          close={close}
+          closeOthers={closeOthers}
+          closeAll={closeAll}
+        />
       )}
+    </div>
+  );
+}
+
+function TabItem({
+  tab,
+  idx,
+  total,
+  active,
+  setActive,
+  close,
+  unpin,
+  setMenu,
+  tabRefs,
+  focusTab,
+  tabs,
+}: {
+  tab: TabEntry;
+  idx: number;
+  total: number;
+  active: boolean;
+  setActive: (k: string) => void;
+  close: (k: string) => void;
+  unpin: (k: string) => void;
+  setMenu: (v: MenuState) => void;
+  tabRefs: React.RefObject<Map<string, HTMLDivElement>>;
+  focusTab: (k: string) => void;
+  tabs: TabEntry[];
+}): React.JSX.Element {
+  return (
+    <div
+      ref={(el) => {
+        if (el) tabRefs.current.set(tab.tabKey, el);
+        else tabRefs.current.delete(tab.tabKey);
+      }}
+      role="tab"
+      aria-selected={active}
+      tabIndex={active ? 0 : -1}
+      onClick={() => {
+        setActive(tab.tabKey);
+      }}
+      onAuxClick={(e) => {
+        if (e.button === 1) close(tab.tabKey);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY, tab });
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+          e.preventDefault();
+          const dir = e.key === "ArrowRight" ? 1 : -1;
+          const next = tabs[(idx + dir + total) % total];
+          if (next) {
+            setActive(next.tabKey);
+            focusTab(next.tabKey);
+          }
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          const first = tabs[0];
+          if (first) {
+            setActive(first.tabKey);
+            focusTab(first.tabKey);
+          }
+        } else if (e.key === "End") {
+          e.preventDefault();
+          const last = tabs[total - 1];
+          if (last) {
+            setActive(last.tabKey);
+            focusTab(last.tabKey);
+          }
+        } else if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setActive(tab.tabKey);
+        }
+      }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "0 14px",
+        fontSize: 12,
+        color: active ? "var(--color-text)" : "var(--color-text-tertiary)",
+        background: active ? "var(--color-surface-0)" : "transparent",
+        cursor: "pointer",
+        borderRight: "1px solid var(--color-border-subtle)",
+        position: "relative",
+        whiteSpace: "nowrap",
+        transition: "background 160ms, color 160ms",
+      }}
+    >
+      {active && (
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: 0,
+            height: 1.5,
+            background: "var(--color-brand)",
+          }}
+        />
+      )}
+      <span
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          background: active ? "var(--color-brand)" : "var(--color-text-ghost)",
+        }}
+      />
+      <span>{tab.title}</span>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (tab.pinned) unpin(tab.tabKey);
+          else close(tab.tabKey);
+        }}
+        style={{
+          all: "unset",
+          width: 16,
+          height: 16,
+          display: "grid",
+          placeItems: "center",
+          borderRadius: 4,
+          cursor: "pointer",
+          marginLeft: 4,
+          color: "inherit",
+        }}
+        title={tab.pinned ? "Unpin" : "Close"}
+      >
+        {tab.pinned ? (
+          <Pin size={11} strokeWidth={2} fill="currentColor" />
+        ) : (
+          <X size={12} strokeWidth={2} />
+        )}
+      </button>
+    </div>
+  );
+}
+
+function TabContextMenu({
+  menu,
+  setMenu,
+  pin,
+  unpin,
+  close,
+  closeOthers,
+  closeAll,
+}: {
+  menu: NonNullable<MenuState>;
+  setMenu: (v: MenuState) => void;
+  pin: (k: string) => void;
+  unpin: (k: string) => void;
+  close: (k: string) => void;
+  closeOthers: (k: string) => void;
+  closeAll: (v: boolean) => void;
+}): React.JSX.Element {
+  return (
+    <div
+      onClick={(e) => {
+        e.stopPropagation();
+      }}
+      style={{
+        position: "fixed",
+        left: menu.x,
+        top: menu.y,
+        background: "var(--color-surface-2)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "var(--r-md)",
+        padding: 4,
+        boxShadow: "var(--shadow-md)",
+        fontSize: 12,
+        zIndex: 2000,
+        minWidth: 180,
+      }}
+    >
+      <MenuItem
+        label={menu.tab.pinned ? "Unpin" : "Pin"}
+        onPick={() => {
+          if (menu.tab.pinned) unpin(menu.tab.tabKey);
+          else pin(menu.tab.tabKey);
+          setMenu(null);
+        }}
+      />
+      <MenuItem
+        label="Close"
+        onPick={() => {
+          close(menu.tab.tabKey);
+          setMenu(null);
+        }}
+      />
+      <MenuItem
+        label="Close others"
+        onPick={() => {
+          closeOthers(menu.tab.tabKey);
+          setMenu(null);
+        }}
+      />
+      <MenuItem
+        label="Close all"
+        onPick={() => {
+          closeAll(true);
+          setMenu(null);
+        }}
+      />
     </div>
   );
 }
