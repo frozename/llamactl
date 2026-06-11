@@ -80,6 +80,12 @@ async function runWorkloadRows(
         messages: built.messages as ChatMessage[],
         maxTokens: workload.maxTokens ?? 256,
         temperature: workload.temperature,
+        // Diffusion hosts draw canvas-init noise from the server's global
+        // PRNG and only reseed when the request carries a seed; unseeded
+        // sequential rows let that state drift until an unlucky init sends
+        // one row into a pathologically slow denoise. AR hosts ignore the
+        // seed at temperature 0, so pinning it costs nothing there.
+        seed: 0,
         ...(model.request_model_id ? { model: model.request_model_id } : {}),
         ...(model.disable_thinking ? { enableThinking: false } : {}),
         ...(built.tools ? { tools: built.tools as ToolDef[], tool_choice: built.tool_choice } : {}),
