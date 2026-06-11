@@ -110,16 +110,15 @@ interface BuiltRelayRequest {
   url: string;
   init: Parameters<FetchLike>[1];
 }
-function buildRelayFetchInit(
-  centralUrl: string,
-  nodeName: string,
-  opts: BuildRelayFetchInitOptions,
-  query?: Record<string, string>,
-): BuiltRelayRequest {
-  // Fingerprint gate. `tunnelCentralFingerprint` /
-  // `tunnelCentralCertificate` pin against the *local central agent's*
-  // TLS cert — NOT the remote node's cert. See links.ts:38-62 for
-  // the mirror pattern.
+// Fingerprint gate. `tunnelCentralFingerprint` /
+// `tunnelCentralCertificate` pin against the *local central agent's*
+// TLS cert — NOT the remote node's cert. See links.ts:38-62 for
+// the mirror pattern.
+function enforceRelayPinning(opts: {
+  pinnedCa?: string;
+  expectedFingerprint?: string;
+  insecure?: boolean;
+}): void {
   if (opts.insecure) {
     if (!warnedAboutInsecureTunnel) {
       process.stderr.write(
@@ -127,21 +126,30 @@ function buildRelayFetchInit(
       );
       warnedAboutInsecureTunnel = true;
     }
-  } else {
-    if (!opts.pinnedCa || !opts.expectedFingerprint) {
-      throw new Error(
-        "tunnelCentralFingerprint + tunnelCentralCertificate must be " +
-          "set in kubeconfig context, or pass --insecure-tunnel-relay to " +
-          "bypass (run `llamactl tunnel pin-central` to populate)",
-      );
-    }
-    const computed = computeFingerprint(opts.pinnedCa);
-    if (!fingerprintsEqual(computed, opts.expectedFingerprint)) {
-      throw new Error(
-        `tunnel-relay fingerprint mismatch: expected ${opts.expectedFingerprint}, got ${computed}`,
-      );
-    }
+    return;
   }
+  if (!opts.pinnedCa || !opts.expectedFingerprint) {
+    throw new Error(
+      "tunnelCentralFingerprint + tunnelCentralCertificate must be " +
+        "set in kubeconfig context, or pass --insecure-tunnel-relay to " +
+        "bypass (run `llamactl tunnel pin-central` to populate)",
+    );
+  }
+  const computed = computeFingerprint(opts.pinnedCa);
+  if (!fingerprintsEqual(computed, opts.expectedFingerprint)) {
+    throw new Error(
+      `tunnel-relay fingerprint mismatch: expected ${opts.expectedFingerprint}, got ${computed}`,
+    );
+  }
+}
+
+function buildRelayFetchInit(
+  centralUrl: string,
+  nodeName: string,
+  opts: BuildRelayFetchInitOptions,
+  query?: Record<string, string>,
+): BuiltRelayRequest {
+  enforceRelayPinning(opts);
   const base = centralUrl.replace(/\/$/, "");
   let url = `${base}/tunnel-relay/${encodeURIComponent(nodeName)}`;
   if (query) {
@@ -308,6 +316,50 @@ function makeSafeCallbacks(
   return { safeError, safeComplete, isAborted };
 }
 
+function parseDoneFrame(dataPayload: string): { action: "complete" | "error"; err?: Error } {
+  let parsed: { ok: boolean; error?: { code: string; message: string } };
+  try {
+    const value: unknown = JSON.parse(dataPayload);
+    if (!isDoneFrame(value)) {
+      return { action: "error", err: new Error("tunnel-relay SSE: invalid done frame") };
+    }
+    parsed = value;
+  } catch {
+    return { action: "error", err: new Error("tunnel-relay SSE: malformed done frame") };
+  }
+  if (parsed.ok) {
+    return { action: "complete" };
+  }
+  const err = Object.assign(new Error(parsed.error?.message ?? "subscription error"), {
+    code: parsed.error?.code,
+  });
+  return { action: "error", err };
+}
+
+// default 'message' event
+function deliverDataFrame(
+  dataPayload: string,
+  handlers: Parameters<TunnelSubscribeFn>[2],
+  safe: SafeCallbacks,
+): { action: "continue" | "error"; err?: Error } {
+  let data: unknown;
+  try {
+    data = JSON.parse(dataPayload);
+  } catch {
+    return { action: "error", err: new Error("tunnel-relay SSE: malformed data frame") };
+  }
+  // Buffered frames can remain after unsubscribe/SIGINT; do
+  // not deliver data once the subscription is aborted.
+  if (safe.isAborted()) return { action: "continue" };
+  try {
+    handlers.onData(data);
+  } catch {
+    // caller handler threw; continue pumping — their
+    // subscribeRemote catches and surfaces.
+  }
+  return { action: "continue" };
+}
+
 function parseSseChunk(
   chunk: string,
   handlers: Parameters<TunnelSubscribeFn>[2],
@@ -320,41 +372,10 @@ function parseSseChunk(
     else if (line.startsWith("data:")) dataPayload = line.slice(5).trim();
   }
   if (eventName === "done") {
-    let parsed: { ok: boolean; error?: { code: string; message: string } };
-    try {
-      const value: unknown = JSON.parse(dataPayload);
-      if (!isDoneFrame(value)) {
-        return { action: "error", err: new Error("tunnel-relay SSE: invalid done frame") };
-      }
-      parsed = value;
-    } catch {
-      return { action: "error", err: new Error("tunnel-relay SSE: malformed done frame") };
-    }
-    if (parsed.ok) {
-      return { action: "complete" };
-    }
-    const err = Object.assign(new Error(parsed.error?.message ?? "subscription error"), {
-      code: parsed.error?.code,
-    });
-    return { action: "error", err };
+    return parseDoneFrame(dataPayload);
   }
   if (!eventName) {
-    // default 'message' event
-    let data: unknown;
-    try {
-      data = JSON.parse(dataPayload);
-    } catch {
-      return { action: "error", err: new Error("tunnel-relay SSE: malformed data frame") };
-    }
-    // Buffered frames can remain after unsubscribe/SIGINT; do
-    // not deliver data once the subscription is aborted.
-    if (safe.isAborted()) return { action: "continue" };
-    try {
-      handlers.onData(data);
-    } catch {
-      // caller handler threw; continue pumping — their
-      // subscribeRemote catches and surfaces.
-    }
+    return deliverDataFrame(dataPayload, handlers, safe);
   }
   return { action: "continue" };
 }
@@ -396,53 +417,16 @@ async function pumpTunnelSse(
     safe.safeError(err);
     return;
   }
-  let res: Response;
-  try {
-    res = await fetchImpl(built.url, built.init);
-  } catch (err) {
-    if (abort.signal.aborted) {
-      safe.safeComplete();
-      return;
-    }
-    safe.safeError(err);
-    return;
-  }
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    safe.safeError(new Error(`tunnel-relay ${String(res.status)}: ${text || res.statusText}`));
-    return;
-  }
+  const res = await openTunnelSseResponse(fetchImpl, built, abort, safe);
+  if (!res) return;
   handlers.onStarted?.();
   if (!res.body) {
     safe.safeError(new Error("tunnel-relay SSE returned an empty body"));
     return;
   }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
   try {
-    for (;;) {
-      if (abort.signal.aborted) break;
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      // Parse one SSE frame at a time — standard \n\n separator.
-      let idx: number;
-      while ((idx = buf.indexOf("\n\n")) !== -1) {
-        const chunk = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        if (!chunk) continue;
-        const result = parseSseChunk(chunk, handlers, safe);
-        if (result.action === "complete") {
-          safe.safeComplete();
-          return;
-        }
-        if (result.action === "error") {
-          safe.safeError(result.err ?? new Error("tunnel-relay SSE: unknown error"));
-          return;
-        }
-      }
-    }
+    const settled = await readTunnelSseStream(res.body, handlers, abort, safe);
+    if (settled) return;
     // Stream ended without a done frame (server closed body).
     if (abort.signal.aborted) safe.safeComplete();
     else safe.safeError(new Error("tunnel-relay SSE: stream closed without a done frame"));
@@ -452,6 +436,77 @@ async function pumpTunnelSse(
       return;
     }
     safe.safeError(err);
+  }
+}
+
+async function openTunnelSseResponse(
+  fetchImpl: FetchLike,
+  built: BuiltRelayRequest,
+  abort: AbortController,
+  safe: SafeCallbacks,
+): Promise<Response | null> {
+  let res: Response;
+  try {
+    res = await fetchImpl(built.url, built.init);
+  } catch (err) {
+    if (abort.signal.aborted) {
+      safe.safeComplete();
+      return null;
+    }
+    safe.safeError(err);
+    return null;
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    safe.safeError(new Error(`tunnel-relay ${String(res.status)}: ${text || res.statusText}`));
+    return null;
+  }
+  return res;
+}
+
+/** Drain complete `\n\n`-separated SSE frames out of `state.buf`.
+ *  Returns true when a terminal frame settled the subscription. */
+function drainSseFrames(
+  state: { buf: string },
+  handlers: Parameters<TunnelSubscribeFn>[2],
+  safe: SafeCallbacks,
+): boolean {
+  let idx: number;
+  while ((idx = state.buf.indexOf("\n\n")) !== -1) {
+    const chunk = state.buf.slice(0, idx);
+    state.buf = state.buf.slice(idx + 2);
+    if (!chunk) continue;
+    const result = parseSseChunk(chunk, handlers, safe);
+    if (result.action === "complete") {
+      safe.safeComplete();
+      return true;
+    }
+    if (result.action === "error") {
+      safe.safeError(result.err ?? new Error("tunnel-relay SSE: unknown error"));
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Pump the SSE body until a terminal frame settles the subscription
+ *  (returns true) or the stream ends / aborts first (returns false). */
+async function readTunnelSseStream(
+  body: NonNullable<Response["body"]>,
+  handlers: Parameters<TunnelSubscribeFn>[2],
+  abort: AbortController,
+  safe: SafeCallbacks,
+): Promise<boolean> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const state = { buf: "" };
+  for (;;) {
+    if (abort.signal.aborted) return false;
+    const { value, done } = await reader.read();
+    if (done) return false;
+    state.buf += decoder.decode(value, { stream: true });
+    // Parse one SSE frame at a time — standard \n\n separator.
+    if (drainSseFrames(state, handlers, safe)) return true;
   }
 }
 

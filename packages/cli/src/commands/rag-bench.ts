@@ -87,56 +87,42 @@ function parseFlags(args: string[]): Opts | { error: string } {
   return { file, json };
 }
 
-export async function runRagBenchCli(args: string[]): Promise<number> {
-  const parsed = parseFlags(args);
-  if ("error" in parsed) {
-    if (parsed.error === "help") {
-      process.stdout.write(USAGE);
-      return 0;
-    }
-    process.stderr.write(`${parsed.error}\n\n${USAGE}`);
-    return 1;
-  }
+function readBenchManifestFromStdin(): string | null {
+  const reader = testSeams.readStdinYaml ?? ((): string => readFileSync(0, "utf8"));
   let manifestYaml: string;
-  if (parsed.file === "-") {
-    const reader = testSeams.readStdinYaml ?? ((): string => readFileSync(0, "utf8"));
-    try {
-      manifestYaml = reader();
-    } catch (err) {
-      process.stderr.write(
-        `rag bench: failed reading manifest from stdin: ${(err as Error).message}\n`,
-      );
-      return 1;
-    }
-    if (!manifestYaml.trim()) {
-      process.stderr.write("rag bench: stdin was empty — pipe a RagBench YAML in.\n");
-      return 1;
-    }
-  } else {
-    const absPath = resolve(parsed.file);
-    if (!existsSync(absPath)) {
-      process.stderr.write(`rag bench: file not found: ${absPath}\n`);
-      return 1;
-    }
-    manifestYaml = readFileSync(absPath, "utf8");
-  }
-
-  let report;
   try {
-    report = await client().ragBench.mutate({ manifestYaml });
+    manifestYaml = reader();
   } catch (err) {
-    process.stderr.write(`rag bench: ${(err as Error).message}\n`);
-    return 1;
+    process.stderr.write(
+      `rag bench: failed reading manifest from stdin: ${(err as Error).message}\n`,
+    );
+    return null;
   }
-
-  if (parsed.json) {
-    process.stdout.write(`${JSON.stringify(report)}\n`);
-    return 0;
+  if (!manifestYaml.trim()) {
+    process.stderr.write("rag bench: stdin was empty — pipe a RagBench YAML in.\n");
+    return null;
   }
+  return manifestYaml;
+}
 
-  // Human-readable summary. Single-screen: headline metrics first,
-  // then a compact per-query breakdown (miss first so failures are
-  // easy to scan to).
+function readBenchManifest(file: string): string | null {
+  if (file === "-") {
+    return readBenchManifestFromStdin();
+  }
+  const absPath = resolve(file);
+  if (!existsSync(absPath)) {
+    process.stderr.write(`rag bench: file not found: ${absPath}\n`);
+    return null;
+  }
+  return readFileSync(absPath, "utf8");
+}
+
+type RagBenchReport = Awaited<ReturnType<NodeClient["ragBench"]["mutate"]>>;
+
+// Human-readable summary. Single-screen: headline metrics first,
+// then a compact per-query breakdown (miss first so failures are
+// easy to scan to).
+function renderBenchReport(report: RagBenchReport): void {
   const pct = (n: number): string => `${(n * 100).toFixed(1)}%`;
   const lines: string[] = [];
   lines.push(`RagBench: ${report.manifest.metadata.name}`);
@@ -171,6 +157,35 @@ export async function runRagBenchCli(args: string[]): Promise<number> {
     );
   }
   process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+export async function runRagBenchCli(args: string[]): Promise<number> {
+  const parsed = parseFlags(args);
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
+      process.stdout.write(USAGE);
+      return 0;
+    }
+    process.stderr.write(`${parsed.error}\n\n${USAGE}`);
+    return 1;
+  }
+  const manifestYaml = readBenchManifest(parsed.file);
+  if (manifestYaml === null) return 1;
+
+  let report;
+  try {
+    report = await client().ragBench.mutate({ manifestYaml });
+  } catch (err) {
+    process.stderr.write(`rag bench: ${(err as Error).message}\n`);
+    return 1;
+  }
+
+  if (parsed.json) {
+    process.stdout.write(`${JSON.stringify(report)}\n`);
+    return 0;
+  }
+
+  renderBenchReport(report);
   // Exit non-zero when ANY query failed to hit — this is a quality
   // gate and the CI-style "treat bench result as pass/fail" pattern
   // expects a meaningful exit code.

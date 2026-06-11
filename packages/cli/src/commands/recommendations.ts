@@ -26,6 +26,15 @@ active env/file promotion, and a live Hugging Face summary when the
 rel is catalogued and HF lookups are enabled.
 `;
 
+function printProfileBlock(profile: string, rows: recommendations.RecommendationRow[]): void {
+  process.stdout.write(`profile=${profile}\n`);
+  for (const row of rows) {
+    process.stdout.write(`${formatRow(row)}\n`);
+    if (row.hf) process.stdout.write(`             hf=${row.hf}\n`);
+  }
+  process.stdout.write("\n");
+}
+
 export async function runRecommendations(args: string[]): Promise<number> {
   if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(USAGE);
@@ -42,12 +51,7 @@ export async function runRecommendations(args: string[]): Promise<number> {
   if (!isLocalDispatch()) {
     const blocks = await getNodeClient().recommendations.query(requested);
     for (const block of blocks) {
-      process.stdout.write(`profile=${block.profile}\n`);
-      for (const row of block.rows) {
-        process.stdout.write(`${formatRow(row)}\n`);
-        if (row.hf) process.stdout.write(`             hf=${row.hf}\n`);
-      }
-      process.stdout.write("\n");
+      printProfileBlock(block.profile, block.rows);
     }
     return 0;
   }
@@ -56,12 +60,7 @@ export async function runRecommendations(args: string[]): Promise<number> {
 
   for (const profile of profiles) {
     const rows = await recommendations.recommendationsWithHf(profile);
-    process.stdout.write(`profile=${profile}\n`);
-    for (const row of rows) {
-      process.stdout.write(`${formatRow(row)}\n`);
-      if (row.hf) process.stdout.write(`             hf=${row.hf}\n`);
-    }
-    process.stdout.write("\n");
+    printProfileBlock(profile, rows);
   }
 
   return 0;

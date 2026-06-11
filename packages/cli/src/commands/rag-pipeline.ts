@@ -145,6 +145,41 @@ function parseApplyFlags(args: string[]): ApplyOpts | { error: string } {
   return { file };
 }
 
+// Enables: `llamactl rag pipeline draft "…" | llamactl rag pipeline apply -f -`
+// Reads all of stdin synchronously since tRPC mutations need
+// the full body up front. Small manifests (< a few MB); we're
+// not streaming anywhere. Tests override via `readStdinYaml`
+// seam because fd-0 can't be redirected without a subprocess.
+function readPipelineManifestFromStdin(): string | null {
+  const reader = testSeams.readStdinYaml ?? ((): string => readFileSync(0, "utf8"));
+  let manifestYaml: string;
+  try {
+    manifestYaml = reader();
+  } catch (err) {
+    process.stderr.write(
+      `rag pipeline apply: failed reading manifest from stdin: ${(err as Error).message}\n`,
+    );
+    return null;
+  }
+  if (!manifestYaml.trim()) {
+    process.stderr.write("rag pipeline apply: stdin was empty — pipe a RagPipeline YAML in.\n");
+    return null;
+  }
+  return manifestYaml;
+}
+
+function readPipelineManifest(file: string): string | null {
+  if (file === "-") {
+    return readPipelineManifestFromStdin();
+  }
+  const absPath = resolve(file);
+  if (!existsSync(absPath)) {
+    process.stderr.write(`rag pipeline apply: file not found: ${absPath}\n`);
+    return null;
+  }
+  return readFileSync(absPath, "utf8");
+}
+
 async function runApply(args: string[]): Promise<number> {
   const parsed = parseApplyFlags(args);
   if ("error" in parsed) {
@@ -155,34 +190,8 @@ async function runApply(args: string[]): Promise<number> {
     process.stderr.write(`${parsed.error}\n\n${USAGE}`);
     return 1;
   }
-  let manifestYaml: string;
-  if (parsed.file === "-") {
-    // Enables: `llamactl rag pipeline draft "…" | llamactl rag pipeline apply -f -`
-    // Reads all of stdin synchronously since tRPC mutations need
-    // the full body up front. Small manifests (< a few MB); we're
-    // not streaming anywhere. Tests override via `readStdinYaml`
-    // seam because fd-0 can't be redirected without a subprocess.
-    const reader = testSeams.readStdinYaml ?? ((): string => readFileSync(0, "utf8"));
-    try {
-      manifestYaml = reader();
-    } catch (err) {
-      process.stderr.write(
-        `rag pipeline apply: failed reading manifest from stdin: ${(err as Error).message}\n`,
-      );
-      return 1;
-    }
-    if (!manifestYaml.trim()) {
-      process.stderr.write("rag pipeline apply: stdin was empty — pipe a RagPipeline YAML in.\n");
-      return 1;
-    }
-  } else {
-    const absPath = resolve(parsed.file);
-    if (!existsSync(absPath)) {
-      process.stderr.write(`rag pipeline apply: file not found: ${absPath}\n`);
-      return 1;
-    }
-    manifestYaml = readFileSync(absPath, "utf8");
-  }
+  const manifestYaml = readPipelineManifest(parsed.file);
+  if (manifestYaml === null) return 1;
   try {
     const res = await client().ragPipelineApply.mutate({ manifestYaml });
     if (!res.ok) {
@@ -358,29 +367,52 @@ interface LogsOpts {
   tail: number;
 }
 
-function parseLogsFlags(args: string[]): LogsOpts | { error: string } {
-  let name = "";
-  let follow = false;
-  let tail = 50;
-  for (let i = 0; i < args.length; i++) {
-    const arg = required(args[i]);
-    if (arg === "--follow" || arg === "-f") follow = true;
-    else if (arg.startsWith("--tail=")) {
-      const n = Number.parseInt(arg.slice("--tail=".length), 10);
-      if (!Number.isFinite(n) || n < 0) return { error: `--tail must be a non-negative integer` };
-      tail = n;
-    } else if (arg === "--tail") {
-      const raw = args[++i];
-      const n = Number.parseInt(raw ?? "", 10);
-      if (!Number.isFinite(n) || n < 0) return { error: `--tail must be a non-negative integer` };
-      tail = n;
-    } else if (arg === "-h" || arg === "--help") return { error: "help" };
-    else if (arg.startsWith("-")) return { error: `Unknown flag: ${arg}` };
-    else if (!name) name = arg;
-    else return { error: `Unexpected argument: ${arg}` };
+function applyTailValue(
+  draft: { tail: number },
+  raw: string,
+  next: number,
+): { next: number } | { error: string } {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) return { error: `--tail must be a non-negative integer` };
+  draft.tail = n;
+  return { next };
+}
+
+function consumeLogsArg(
+  draft: LogsOpts,
+  args: string[],
+  i: number,
+): { next: number } | { error: string } {
+  const arg = required(args[i]);
+  if (arg === "--follow" || arg === "-f") {
+    draft.follow = true;
+    return { next: i + 1 };
   }
-  if (!name) return { error: "rag pipeline logs: <name> is required" };
-  return { name, follow, tail };
+  if (arg.startsWith("--tail=")) {
+    return applyTailValue(draft, arg.slice("--tail=".length), i + 1);
+  }
+  if (arg === "--tail") {
+    return applyTailValue(draft, args[i + 1] ?? "", i + 2);
+  }
+  if (arg === "-h" || arg === "--help") return { error: "help" };
+  if (arg.startsWith("-")) return { error: `Unknown flag: ${arg}` };
+  if (!draft.name) {
+    draft.name = arg;
+    return { next: i + 1 };
+  }
+  return { error: `Unexpected argument: ${arg}` };
+}
+
+function parseLogsFlags(args: string[]): LogsOpts | { error: string } {
+  const draft: LogsOpts = { name: "", follow: false, tail: 50 };
+  let i = 0;
+  while (i < args.length) {
+    const step = consumeLogsArg(draft, args, i);
+    if ("error" in step) return step;
+    i = step.next;
+  }
+  if (!draft.name) return { error: "rag pipeline logs: <name> is required" };
+  return draft;
 }
 
 async function runLogs(args: string[]): Promise<number> {
@@ -445,29 +477,51 @@ interface SchedulerOpts {
   quiet: boolean;
 }
 
-function parseSchedulerFlags(args: string[]): SchedulerOpts | { error: string } {
-  let once = false;
-  let intervalSec = 60;
-  let quiet = false;
-  for (let i = 0; i < args.length; i++) {
-    const arg = required(args[i]);
-    if (arg === "--once") once = true;
-    else if (arg === "--quiet") quiet = true;
-    else if (arg === "--interval" || arg === "-i") {
-      const v = args[++i] ?? "";
-      const n = Number(v);
-      if (!Number.isFinite(n) || n <= 0) return { error: `Invalid --interval value: ${v}` };
-      intervalSec = n;
-    } else if (arg.startsWith("--interval=")) {
-      const v = arg.slice("--interval=".length);
-      const n = Number(v);
-      if (!Number.isFinite(n) || n <= 0) return { error: `Invalid --interval value: ${v}` };
-      intervalSec = n;
-    } else if (arg === "-h" || arg === "--help") return { error: "help" };
-    else if (arg.startsWith("-")) return { error: `Unknown flag: ${arg}` };
-    else return { error: `Unexpected argument: ${arg}` };
+function applyIntervalValue(
+  draft: { intervalSec: number },
+  v: string,
+  next: number,
+): { next: number } | { error: string } {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return { error: `Invalid --interval value: ${v}` };
+  draft.intervalSec = n;
+  return { next };
+}
+
+function consumeSchedulerArg(
+  draft: SchedulerOpts,
+  args: string[],
+  i: number,
+): { next: number } | { error: string } {
+  const arg = required(args[i]);
+  if (arg === "--once") {
+    draft.once = true;
+    return { next: i + 1 };
   }
-  return { once, intervalSec, quiet };
+  if (arg === "--quiet") {
+    draft.quiet = true;
+    return { next: i + 1 };
+  }
+  if (arg === "--interval" || arg === "-i") {
+    return applyIntervalValue(draft, args[i + 1] ?? "", i + 2);
+  }
+  if (arg.startsWith("--interval=")) {
+    return applyIntervalValue(draft, arg.slice("--interval=".length), i + 1);
+  }
+  if (arg === "-h" || arg === "--help") return { error: "help" };
+  if (arg.startsWith("-")) return { error: `Unknown flag: ${arg}` };
+  return { error: `Unexpected argument: ${arg}` };
+}
+
+function parseSchedulerFlags(args: string[]): SchedulerOpts | { error: string } {
+  const draft: SchedulerOpts = { once: false, intervalSec: 60, quiet: false };
+  let i = 0;
+  while (i < args.length) {
+    const step = consumeSchedulerArg(draft, args, i);
+    if ("error" in step) return step;
+    i = step.next;
+  }
+  return draft;
 }
 
 async function runScheduler(args: string[]): Promise<number> {

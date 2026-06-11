@@ -123,6 +123,28 @@ interface AddFlags {
   force: boolean;
 }
 
+function assignAddFlag(flags: AddFlags, key: string, value: string | undefined): boolean {
+  switch (key) {
+    case "--bootstrap":
+      flags.bootstrap = value;
+      return true;
+    case "--server":
+      flags.server = value;
+      return true;
+    case "--fingerprint":
+      flags.fingerprint = value;
+      return true;
+    case "--token":
+      flags.token = value;
+      return true;
+    case "--token-file":
+      flags.tokenFile = value;
+      return true;
+    default:
+      return false;
+  }
+}
+
 function parseAdd(args: string[]): AddFlags | { error: string } {
   if (args.length === 0) return { error: "node add: missing <name>" };
   const [name, ...rest] = args;
@@ -134,132 +156,98 @@ function parseAdd(args: string[]): AddFlags | { error: string } {
       flags.force = true;
       continue;
     }
-    if (arg === "--bootstrap") {
-      flags.bootstrap = rest[++i];
-      continue;
-    }
-    if (arg === "--server") {
-      flags.server = rest[++i];
-      continue;
-    }
-    if (arg === "--fingerprint") {
-      flags.fingerprint = rest[++i];
-      continue;
-    }
-    if (arg === "--token") {
-      flags.token = rest[++i];
-      continue;
-    }
-    if (arg === "--token-file") {
-      flags.tokenFile = rest[++i];
+    if (assignAddFlag(flags, arg, rest[i + 1])) {
+      i++;
       continue;
     }
     const [k, v] = splitFlag(arg);
-    if (v !== undefined) {
-      switch (k) {
-        case "--bootstrap":
-          flags.bootstrap = v;
-          continue;
-        case "--server":
-          flags.server = v;
-          continue;
-        case "--fingerprint":
-          flags.fingerprint = v;
-          continue;
-        case "--token":
-          flags.token = v;
-          continue;
-        case "--token-file":
-          flags.tokenFile = v;
-          continue;
-      }
-    }
+    if (v !== undefined && assignAddFlag(flags, k, v)) continue;
     return { error: `node add: unknown argument ${arg}` };
   }
   return flags;
 }
 
-async function runAdd(args: string[]): Promise<number> {
-  const parsed = parseAdd(args);
-  if ("error" in parsed) {
-    process.stderr.write(`${parsed.error}\n`);
-    return 1;
-  }
-  const f = parsed;
-  let url: string;
-  let fingerprint: string;
-  let token: string;
-  let certificate: string | undefined;
+interface AddCredentials {
+  url: string;
+  fingerprint: string;
+  token: string;
+  certificate: string | undefined;
+}
 
+function resolveAddToken(f: AddFlags): string | undefined {
+  if (f.token) return f.token;
+  if (f.tokenFile) return readFileSync(f.tokenFile, "utf8").trim();
+  return undefined;
+}
+
+function resolveAddCredentials(f: AddFlags): AddCredentials | { error: string } {
   if (f.bootstrap) {
     const decoded = agentConfigMod.decodeBootstrap(f.bootstrap);
-    url = decoded.url;
-    fingerprint = decoded.fingerprint;
-    token = decoded.token;
-    certificate = decoded.certificate;
-  } else {
-    if (!f.server || !f.fingerprint) {
-      process.stderr.write(
-        "node add: --bootstrap or (--server + --fingerprint + --token|--token-file) required\n",
-      );
-      return 1;
-    }
-    url = f.server;
-    fingerprint = f.fingerprint;
-    if (f.token) token = f.token;
-    else if (f.tokenFile) token = readFileSync(f.tokenFile, "utf8").trim();
-    else {
-      process.stderr.write(
-        "node add: --token or --token-file required when not using --bootstrap\n",
-      );
-      return 1;
-    }
+    return {
+      url: decoded.url,
+      fingerprint: decoded.fingerprint,
+      token: decoded.token,
+      certificate: decoded.certificate,
+    };
   }
-
-  // Probe the node for reachability + credential validity before we
-  // commit anything to the kubeconfig. nodeFacts is the cheapest query
-  // on the router that exercises auth + TLS end-to-end.
-  type ProbeFacts = {
-    nodeName: string;
-    profile: string;
-    platform: string;
-    advertisedEndpoint?: string;
-  };
-  let probeFacts: ProbeFacts | null = null;
-  if (!f.force) {
-    try {
-      const probeClient = createRemoteNodeClient({
-        url,
-        token,
-        ...(certificate ? { certificate } : {}),
-        certificateFingerprint: fingerprint,
-      });
-      probeFacts = await probeClient.nodeFacts.query();
-    } catch (err) {
-      process.stderr.write(
-        [
-          `node add: reachability check failed for ${url}`,
-          `  error: ${(err as Error).message}`,
-          `  hint:  verify the agent is running and \`llamactl agent serve\``,
-          `         started successfully on that host; or pass --force to`,
-          `         persist without the check.`,
-          "",
-        ].join("\n"),
-      );
-      return 1;
-    }
+  if (!f.server || !f.fingerprint) {
+    return {
+      error: "node add: --bootstrap or (--server + --fingerprint + --token|--token-file) required",
+    };
   }
+  const token = resolveAddToken(f);
+  if (token === undefined) {
+    return { error: "node add: --token or --token-file required when not using --bootstrap" };
+  }
+  return { url: f.server, fingerprint: f.fingerprint, token, certificate: undefined };
+}
 
-  const cfgPath = kubecfg.defaultConfigPath();
-  let cfg = kubecfg.loadConfig(cfgPath);
-  const ctx = kubecfg.currentContext(cfg);
+// Probe the node for reachability + credential validity before we
+// commit anything to the kubeconfig. nodeFacts is the cheapest query
+// on the router that exercises auth + TLS end-to-end.
+type ProbeFacts = {
+  nodeName: string;
+  profile: string;
+  platform: string;
+  advertisedEndpoint?: string;
+};
 
-  // Persist the token at the user's tokenRef path if present; otherwise
-  // inline it on the user entry.
-  cfg = {
+async function probeAddTarget(creds: AddCredentials): Promise<ProbeFacts | null> {
+  const { url, token, certificate, fingerprint } = creds;
+  try {
+    const probeClient = createRemoteNodeClient({
+      url,
+      token,
+      ...(certificate ? { certificate } : {}),
+      certificateFingerprint: fingerprint,
+    });
+    return await probeClient.nodeFacts.query();
+  } catch (err) {
+    process.stderr.write(
+      [
+        `node add: reachability check failed for ${url}`,
+        `  error: ${(err as Error).message}`,
+        `  hint:  verify the agent is running and \`llamactl agent serve\``,
+        `         started successfully on that host; or pass --force to`,
+        `         persist without the check.`,
+        "",
+      ].join("\n"),
+    );
+    return null;
+  }
+}
+
+// Persist the token at the user's tokenRef path if present; otherwise
+// inline it on the user entry.
+function persistUserToken(
+  cfg: configSchema.Config,
+  userName: string,
+  token: string,
+): configSchema.Config {
+  return {
     ...cfg,
     users: cfg.users.map((u) => {
-      if (u.name !== ctx.user) return u;
+      if (u.name !== userName) return u;
       const updated: configSchema.User = { ...u };
       if (u.tokenRef) {
         // Write token to referenced file. Not caching the write here —
@@ -278,6 +266,58 @@ async function runAdd(args: string[]): Promise<number> {
       return updated;
     }),
   };
+}
+
+function renderAddResult(
+  name: string,
+  url: string,
+  ctxName: string,
+  probeFacts: ProbeFacts | null,
+): void {
+  if (!probeFacts) {
+    // --force path — unverified persistence
+    process.stdout.write(`added node '${name}' (${url}) to context '${ctxName}' [unverified]\n`);
+    return;
+  }
+  const advertised =
+    probeFacts.advertisedEndpoint && probeFacts.advertisedEndpoint.length > 0
+      ? probeFacts.advertisedEndpoint
+      : "(not set)";
+  process.stdout.write(
+    [
+      `added node '${name}' (${url}) to context '${ctxName}'`,
+      `  profile:    ${probeFacts.profile}`,
+      `  platform:   ${probeFacts.platform}`,
+      `  advertised: ${advertised}`,
+      "",
+    ].join("\n"),
+  );
+}
+
+async function runAdd(args: string[]): Promise<number> {
+  const parsed = parseAdd(args);
+  if ("error" in parsed) {
+    process.stderr.write(`${parsed.error}\n`);
+    return 1;
+  }
+  const f = parsed;
+  const creds = resolveAddCredentials(f);
+  if ("error" in creds) {
+    process.stderr.write(`${creds.error}\n`);
+    return 1;
+  }
+  const { url, fingerprint, certificate, token } = creds;
+
+  let probeFacts: ProbeFacts | null = null;
+  if (!f.force) {
+    probeFacts = await probeAddTarget(creds);
+    if (!probeFacts) return 1;
+  }
+
+  const cfgPath = kubecfg.defaultConfigPath();
+  let cfg = kubecfg.loadConfig(cfgPath);
+  const ctx = kubecfg.currentContext(cfg);
+  cfg = persistUserToken(cfg, ctx.user, token);
 
   const nodeEntry: configSchema.ClusterNode = {
     name: f.name,
@@ -288,24 +328,7 @@ async function runAdd(args: string[]): Promise<number> {
   cfg = kubecfg.upsertNode(cfg, ctx.cluster, nodeEntry);
 
   kubecfg.saveConfig(cfg, cfgPath);
-  if (probeFacts) {
-    const advertised =
-      probeFacts.advertisedEndpoint && probeFacts.advertisedEndpoint.length > 0
-        ? probeFacts.advertisedEndpoint
-        : "(not set)";
-    process.stdout.write(
-      [
-        `added node '${f.name}' (${url}) to context '${ctx.name}'`,
-        `  profile:    ${probeFacts.profile}`,
-        `  platform:   ${probeFacts.platform}`,
-        `  advertised: ${advertised}`,
-        "",
-      ].join("\n"),
-    );
-  } else {
-    // --force path — unverified persistence
-    process.stdout.write(`added node '${f.name}' (${url}) to context '${ctx.name}' [unverified]\n`);
-  }
+  renderAddResult(f.name, url, ctx.name, probeFacts);
   return 0;
 }
 
@@ -426,106 +449,151 @@ interface AddRagFlags {
   extraArgs: string[];
 }
 
-function parseAddRagFlags(args: string[]): AddRagFlags | { error: string } | { help: true } {
-  let name: string | undefined;
-  let provider: "chroma" | "pgvector" | undefined;
-  let endpoint: string | undefined;
-  let collection: string | undefined;
-  let embedderNode: string | undefined;
-  let embedderModel: string | undefined;
-  let passwordEnv: string | undefined;
-  let passwordRef: string | undefined;
-  const extraArgs: string[] = [];
+interface AddRagDraft {
+  name?: string;
+  provider?: "chroma" | "pgvector";
+  endpoint?: string;
+  collection?: string;
+  embedderNode?: string;
+  embedderModel?: string;
+  passwordEnv?: string;
+  passwordRef?: string;
+  extraArgs: string[];
+}
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = required(args[i]);
-    const [flag, inline] = splitFlag(arg);
-    const takeValue = (): string | undefined => {
-      // Truthiness on purpose: an empty-string value is deliberately treated as unset.
-      const next = args[i + 1];
-      return inline ?? (next && !next.startsWith("-") ? required(args[++i]) : undefined);
-    };
-    if (!flag.startsWith("-")) {
-      if (name === undefined) {
-        name = flag;
-        continue;
+function takeFlagValue(
+  args: string[],
+  i: number,
+  inline: string | undefined,
+): { value: string | undefined; next: number } {
+  // Truthiness on purpose: an empty-string value is deliberately treated as unset.
+  if (inline !== undefined) return { value: inline, next: i + 1 };
+  const next = args[i + 1];
+  if (next && !next.startsWith("-")) return { value: next, next: i + 2 };
+  return { value: undefined, next: i + 1 };
+}
+
+function assignAddRagValue(
+  draft: AddRagDraft,
+  flag: string,
+  value: string | undefined,
+): { ok: true } | { error: string } {
+  switch (flag) {
+    case "--provider": {
+      if (value !== "chroma" && value !== "pgvector") {
+        return {
+          error: `node add-rag: --provider must be 'chroma' or 'pgvector' (got ${value ?? "<empty>"})`,
+        };
       }
+      draft.provider = value;
+      return { ok: true };
+    }
+    case "--endpoint":
+      draft.endpoint = value;
+      return { ok: true };
+    case "--collection":
+      draft.collection = value;
+      return { ok: true };
+    case "--embedder-node":
+      draft.embedderNode = value;
+      return { ok: true };
+    case "--embedder-model":
+      draft.embedderModel = value;
+      return { ok: true };
+    case "--password-env":
+      draft.passwordEnv = value;
+      return { ok: true };
+    case "--password-ref":
+      draft.passwordRef = value;
+      return { ok: true };
+    default:
+      return { error: `node add-rag: unknown flag ${flag}` };
+  }
+}
+
+// Extra args frequently begin with `--` (e.g. `--persist-directory`),
+// so we accept the next argv slot unconditionally rather than stopping
+// at a dash.
+function consumeExtraArg(
+  draft: AddRagDraft,
+  args: string[],
+  i: number,
+  inline: string | undefined,
+): { next: number } {
+  if (inline !== undefined) {
+    draft.extraArgs.push(inline);
+    return { next: i + 1 };
+  }
+  if (i + 1 < args.length) {
+    draft.extraArgs.push(required(args[i + 1]));
+    return { next: i + 2 };
+  }
+  return { next: i + 1 };
+}
+
+function consumeAddRagArg(
+  draft: AddRagDraft,
+  args: string[],
+  i: number,
+): { next: number } | { error: string } | { help: true } {
+  const arg = required(args[i]);
+  const [flag, inline] = splitFlag(arg);
+  if (!flag.startsWith("-")) {
+    if (draft.name !== undefined) {
       return { error: `node add-rag: unexpected positional ${flag}` };
     }
-    switch (flag) {
-      case "--provider": {
-        const v = takeValue();
-        if (v !== "chroma" && v !== "pgvector") {
-          return {
-            error: `node add-rag: --provider must be 'chroma' or 'pgvector' (got ${v ?? "<empty>"})`,
-          };
-        }
-        provider = v;
-        break;
-      }
-      case "--endpoint":
-        endpoint = takeValue();
-        break;
-      case "--collection":
-        collection = takeValue();
-        break;
-      case "--embedder-node":
-        embedderNode = takeValue();
-        break;
-      case "--embedder-model":
-        embedderModel = takeValue();
-        break;
-      case "--password-env":
-        passwordEnv = takeValue();
-        break;
-      case "--password-ref":
-        passwordRef = takeValue();
-        break;
-      case "--extra-arg": {
-        // Extra args frequently begin with `--` (e.g.
-        // `--persist-directory`), so we accept the next argv slot
-        // unconditionally rather than stopping at a dash.
-        const v = inline ?? (i + 1 < args.length ? args[++i] : undefined);
-        if (v !== undefined) extraArgs.push(v);
-        break;
-      }
-      case "-h":
-      case "--help":
-        return { help: true };
-      default:
-        return { error: `node add-rag: unknown flag ${flag}` };
-    }
+    draft.name = flag;
+    return { next: i + 1 };
   }
+  if (flag === "-h" || flag === "--help") return { help: true };
+  if (flag === "--extra-arg") return consumeExtraArg(draft, args, i, inline);
+  const { value, next } = takeFlagValue(args, i, inline);
+  const assigned = assignAddRagValue(draft, flag, value);
+  if ("error" in assigned) return assigned;
+  return { next };
+}
 
-  if (!name) {
+function validateAddRagDraft(draft: AddRagDraft): AddRagFlags | { error: string } {
+  if (!draft.name) {
     return { error: "node add-rag: missing <name>" };
   }
-  if (!provider) {
+  if (!draft.provider) {
     return { error: "node add-rag: --provider is required" };
   }
-  if (!endpoint) {
+  if (!draft.endpoint) {
     return { error: "node add-rag: --endpoint is required" };
   }
-  if ((embedderNode === undefined) !== (embedderModel === undefined)) {
+  if ((draft.embedderNode === undefined) !== (draft.embedderModel === undefined)) {
     return {
       error: "node add-rag: --embedder-node and --embedder-model must be set together",
     };
   }
-  if (passwordEnv && passwordRef) {
+  if (draft.passwordEnv && draft.passwordRef) {
     return { error: "node add-rag: pass only one of --password-env / --password-ref" };
   }
-
   return {
-    name,
-    provider,
-    endpoint,
-    collection,
-    embedderNode,
-    embedderModel,
-    passwordEnv,
-    passwordRef,
-    extraArgs,
+    name: draft.name,
+    provider: draft.provider,
+    endpoint: draft.endpoint,
+    collection: draft.collection,
+    embedderNode: draft.embedderNode,
+    embedderModel: draft.embedderModel,
+    passwordEnv: draft.passwordEnv,
+    passwordRef: draft.passwordRef,
+    extraArgs: draft.extraArgs,
   };
+}
+
+function parseAddRagFlags(args: string[]): AddRagFlags | { error: string } | { help: true } {
+  const draft: AddRagDraft = { extraArgs: [] };
+  let i = 0;
+  while (i < args.length) {
+    const step = consumeAddRagArg(draft, args, i);
+    if ("error" in step) return step;
+    if ("help" in step) return step;
+    i = step.next;
+  }
+  return validateAddRagDraft(draft);
 }
 
 function runAddRag(args: string[]): number {
@@ -598,77 +666,119 @@ const CLOUD_PROVIDERS = [
 ] as const;
 type CloudProviderFlag = (typeof CLOUD_PROVIDERS)[number];
 
-async function runAddCloud(args: string[]): Promise<number> {
-  let name: string | undefined;
-  let provider: CloudProviderFlag | undefined;
-  let baseUrl: string | undefined;
-  let apiKeyRef: string | undefined;
-  let displayName: string | undefined;
-  let force = false;
+interface AddCloudFlags {
+  name: string;
+  provider: CloudProviderFlag;
+  baseUrl: string;
+  apiKeyRef: string | undefined;
+  displayName: string | undefined;
+  force: boolean;
+}
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = required(args[i]);
-    const [flag, inline] = splitFlag(arg);
-    const takeValue = (): string | undefined => {
-      // Truthiness on purpose: an empty-string value is deliberately treated as unset.
-      const next = args[i + 1];
-      return inline ?? (next && !next.startsWith("-") ? required(args[++i]) : undefined);
-    };
-    if (!flag.startsWith("-")) {
-      if (name === undefined) {
-        name = flag;
-        continue;
+interface AddCloudDraft {
+  name?: string;
+  provider?: CloudProviderFlag;
+  baseUrl?: string;
+  apiKeyRef?: string;
+  displayName?: string;
+  force: boolean;
+}
+
+function assignAddCloudValue(
+  draft: AddCloudDraft,
+  flag: string,
+  value: string | undefined,
+): { ok: true } | { error: string } {
+  switch (flag) {
+    case "--provider": {
+      const provider = CLOUD_PROVIDERS.find((p) => p === value);
+      if (!provider) {
+        return {
+          error: `node add-cloud: --provider must be one of ${CLOUD_PROVIDERS.join("|")} (got ${value ?? "<empty>"})`,
+        };
       }
-      process.stderr.write(`node add-cloud: unexpected positional ${flag}\n`);
-      return 1;
+      draft.provider = provider;
+      return { ok: true };
     }
-    switch (flag) {
-      case "--provider": {
-        const v = takeValue();
-        if (!v || !CLOUD_PROVIDERS.includes(v as CloudProviderFlag)) {
-          process.stderr.write(
-            `node add-cloud: --provider must be one of ${CLOUD_PROVIDERS.join("|")} (got ${v ?? "<empty>"})\n`,
-          );
-          return 1;
-        }
-        provider = v as CloudProviderFlag;
-        break;
-      }
-      case "--base-url":
-        baseUrl = takeValue();
-        break;
-      case "--api-key-ref":
-        apiKeyRef = takeValue();
-        break;
-      case "--display-name":
-        displayName = takeValue();
-        break;
-      case "--force":
-        force = true;
-        break;
-      case "-h":
-      case "--help":
-        process.stdout.write(USAGE);
-        return 0;
-      default:
-        process.stderr.write(`node add-cloud: unknown flag ${flag}\n`);
-        return 1;
+    case "--base-url":
+      draft.baseUrl = value;
+      return { ok: true };
+    case "--api-key-ref":
+      draft.apiKeyRef = value;
+      return { ok: true };
+    case "--display-name":
+      draft.displayName = value;
+      return { ok: true };
+    default:
+      return { error: `node add-cloud: unknown flag ${flag}` };
+  }
+}
+
+function consumeAddCloudArg(
+  draft: AddCloudDraft,
+  args: string[],
+  i: number,
+): { next: number } | { error: string } | { help: true } {
+  const arg = required(args[i]);
+  const [flag, inline] = splitFlag(arg);
+  if (!flag.startsWith("-")) {
+    if (draft.name !== undefined) {
+      return { error: `node add-cloud: unexpected positional ${flag}` };
     }
+    draft.name = flag;
+    return { next: i + 1 };
   }
+  if (flag === "-h" || flag === "--help") return { help: true };
+  if (flag === "--force") {
+    draft.force = true;
+    return { next: i + 1 };
+  }
+  const { value, next } = takeFlagValue(args, i, inline);
+  const assigned = assignAddCloudValue(draft, flag, value);
+  if ("error" in assigned) return assigned;
+  return { next };
+}
 
-  if (!name) {
-    process.stderr.write("node add-cloud: missing <name>\n");
-    return 1;
+function validateAddCloudDraft(draft: AddCloudDraft): AddCloudFlags | { error: string } {
+  if (!draft.name) {
+    return { error: "node add-cloud: missing <name>" };
   }
-  if (!provider) {
-    process.stderr.write("node add-cloud: --provider is required\n");
-    return 1;
+  if (!draft.provider) {
+    return { error: "node add-cloud: --provider is required" };
   }
-  if (!baseUrl) {
-    process.stderr.write("node add-cloud: --base-url is required\n");
-    return 1;
+  if (!draft.baseUrl) {
+    return { error: "node add-cloud: --base-url is required" };
   }
+  return {
+    name: draft.name,
+    provider: draft.provider,
+    baseUrl: draft.baseUrl,
+    apiKeyRef: draft.apiKeyRef,
+    displayName: draft.displayName,
+    force: draft.force,
+  };
+}
 
+function parseAddCloudFlags(args: string[]): AddCloudFlags | { error: string } | { help: true } {
+  const draft: AddCloudDraft = { force: false };
+  let i = 0;
+  while (i < args.length) {
+    const step = consumeAddCloudArg(draft, args, i);
+    if ("error" in step) return step;
+    if ("help" in step) return step;
+    i = step.next;
+  }
+  return validateAddCloudDraft(draft);
+}
+
+function buildAddCloudInput(f: AddCloudFlags): {
+  name: string;
+  provider: CloudProviderFlag;
+  baseUrl: string;
+  apiKeyRef?: string;
+  displayName?: string;
+  skipProbe?: boolean;
+} {
   const input: {
     name: string;
     provider: CloudProviderFlag;
@@ -676,44 +786,62 @@ async function runAddCloud(args: string[]): Promise<number> {
     apiKeyRef?: string;
     displayName?: string;
     skipProbe?: boolean;
-  } = { name, provider, baseUrl };
-  if (apiKeyRef) input.apiKeyRef = apiKeyRef;
-  if (displayName) input.displayName = displayName;
-  if (force) input.skipProbe = true;
+  } = { name: f.name, provider: f.provider, baseUrl: f.baseUrl };
+  if (f.apiKeyRef) input.apiKeyRef = f.apiKeyRef;
+  if (f.displayName) input.displayName = f.displayName;
+  if (f.force) input.skipProbe = true;
+  return input;
+}
 
+function renderAddCloudSuccess(f: AddCloudFlags, result: { name: string; baseUrl: string }): void {
+  const cfgPath = kubecfg.defaultConfigPath();
+  const cfg = kubecfg.loadConfig(cfgPath);
+  const ctx = kubecfg.currentContext(cfg);
+  const lines = [
+    `added cloud node '${result.name}' (${f.provider} @ ${result.baseUrl})`,
+    `  context:     ${ctx.name}`,
+  ];
+  if (f.apiKeyRef) {
+    lines.push(`  apiKey:      ${f.apiKeyRef} (not resolved at register time)`);
+  } else {
+    lines.push("  apiKey:      (anonymous — no Authorization header sent)");
+  }
+  if (f.displayName) lines.push(`  displayName: ${f.displayName}`);
+  if (f.force) lines.push("  [unverified — probe skipped via --force]");
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+function reportAddCloudError(err: unknown, force: boolean): void {
+  const message = err instanceof Error ? err.message : String(err);
+  // The router wraps probe failures as `cloud node probe failed: …`.
+  // Mirror add-rag's error UX: surface the message, suggest --force
+  // when we're confident the failure is reachability-flavoured.
+  process.stderr.write(`node add-cloud: ${message}\n`);
+  if (
+    !force &&
+    /probe failed|health check|unhealthy|ECONNREFUSED|fetch failed|ENOTFOUND|timeout/i.test(message)
+  ) {
+    process.stderr.write("  hint: pass --force to persist without the /v1/models probe\n");
+  }
+}
+
+async function runAddCloud(args: string[]): Promise<number> {
+  const parsed = parseAddCloudFlags(args);
+  if ("help" in parsed) {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+  if ("error" in parsed) {
+    process.stderr.write(`${parsed.error}\n`);
+    return 1;
+  }
   const client = getNodeClient();
   try {
-    const result = await client.nodeAddCloud.mutate(input);
-    const cfgPath = kubecfg.defaultConfigPath();
-    const cfg = kubecfg.loadConfig(cfgPath);
-    const ctx = kubecfg.currentContext(cfg);
-    const lines = [
-      `added cloud node '${result.name}' (${provider} @ ${result.baseUrl})`,
-      `  context:     ${ctx.name}`,
-    ];
-    if (apiKeyRef) {
-      lines.push(`  apiKey:      ${apiKeyRef} (not resolved at register time)`);
-    } else {
-      lines.push("  apiKey:      (anonymous — no Authorization header sent)");
-    }
-    if (displayName) lines.push(`  displayName: ${displayName}`);
-    if (force) lines.push("  [unverified — probe skipped via --force]");
-    process.stdout.write(`${lines.join("\n")}\n`);
+    const result = await client.nodeAddCloud.mutate(buildAddCloudInput(parsed));
+    renderAddCloudSuccess(parsed, result);
     return 0;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    // The router wraps probe failures as `cloud node probe failed: …`.
-    // Mirror add-rag's error UX: surface the message, suggest --force
-    // when we're confident the failure is reachability-flavoured.
-    process.stderr.write(`node add-cloud: ${message}\n`);
-    if (
-      !force &&
-      /probe failed|health check|unhealthy|ECONNREFUSED|fetch failed|ENOTFOUND|timeout/i.test(
-        message,
-      )
-    ) {
-      process.stderr.write("  hint: pass --force to persist without the /v1/models probe\n");
-    }
+    reportAddCloudError(err, parsed.force);
     return 1;
   }
 }

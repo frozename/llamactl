@@ -109,6 +109,104 @@ function splitFlag(arg: string): [string, string | undefined] {
   return [arg.slice(0, eq), arg.slice(eq + 1)];
 }
 
+function takeAskValue(
+  args: string[],
+  i: number,
+  inline: string | undefined,
+): { value: string | undefined; next: number } {
+  if (inline !== undefined) return { value: inline, next: i + 1 };
+  if (i + 1 < args.length) return { value: args[i + 1], next: i + 2 };
+  return { value: undefined, next: i + 1 };
+}
+
+function assignPositiveInt(
+  opts: AskOpts,
+  key: "maxTokens" | "topK",
+  flag: string,
+  raw: string | undefined,
+): { ok: true } | { error: string } {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+    return { error: `rag ask: ${flag} must be a positive integer (got ${raw ?? "<empty>"})` };
+  }
+  opts[key] = n;
+  return { ok: true };
+}
+
+function assignTemperature(
+  opts: AskOpts,
+  raw: string | undefined,
+): { ok: true } | { error: string } {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    return {
+      error: `rag ask: --temperature must be a non-negative number (got ${raw ?? "<empty>"})`,
+    };
+  }
+  opts.temperature = n;
+  return { ok: true };
+}
+
+function assignAskValue(
+  opts: AskOpts,
+  flag: string,
+  value: string | undefined,
+): { ok: true } | { error: string } {
+  switch (flag) {
+    case "--kb":
+      opts.kb = value;
+      return { ok: true };
+    case "--via":
+      opts.via = value;
+      return { ok: true };
+    case "--model":
+      opts.model = value;
+      return { ok: true };
+    case "--top-k":
+      return assignPositiveInt(opts, "topK", "--top-k", value);
+    case "--collection":
+      opts.collection = value;
+      return { ok: true };
+    case "--max-tokens":
+      return assignPositiveInt(opts, "maxTokens", "--max-tokens", value);
+    case "--temperature":
+      return assignTemperature(opts, value);
+    case "--system-prompt":
+      opts.systemPrompt = value;
+      return { ok: true };
+    default:
+      return { error: `rag ask: unknown flag ${flag}` };
+  }
+}
+
+function consumeAskArg(
+  opts: AskOpts,
+  questionParts: string[],
+  args: string[],
+  i: number,
+): { next: number } | { error: string } {
+  const arg = required(args[i]);
+  const [flag, inline] = splitFlag(arg);
+  if (!flag.startsWith("-")) {
+    // Positional — everything non-flag accumulates into the question.
+    questionParts.push(arg);
+    return { next: i + 1 };
+  }
+  if (flag === "--cite") {
+    opts.cite = true;
+    return { next: i + 1 };
+  }
+  if (flag === "--json") {
+    opts.json = true;
+    return { next: i + 1 };
+  }
+  if (flag === "-h" || flag === "--help") return { error: "__help__" };
+  const { value, next } = takeAskValue(args, i, inline);
+  const assigned = assignAskValue(opts, flag, value);
+  if ("error" in assigned) return assigned;
+  return { next };
+}
+
 function parseAsk(args: string[]): AskOpts | { error: string } {
   const opts: AskOpts = {
     question: "",
@@ -124,80 +222,12 @@ function parseAsk(args: string[]): AskOpts | { error: string } {
     json: false,
   };
   const questionParts: string[] = [];
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = required(args[i]);
-    const [flag, inline] = splitFlag(arg);
-    const takeValue = (): string | undefined =>
-      inline ?? (i + 1 < args.length ? args[++i] : undefined);
-    if (!flag.startsWith("-")) {
-      // Positional — everything non-flag accumulates into the question.
-      questionParts.push(arg);
-      continue;
-    }
-    switch (flag) {
-      case "--kb":
-        opts.kb = takeValue();
-        break;
-      case "--via":
-        opts.via = takeValue();
-        break;
-      case "--model":
-        opts.model = takeValue();
-        break;
-      case "--top-k": {
-        const raw = takeValue();
-        const n = Number(raw);
-        if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
-          return {
-            error: `rag ask: --top-k must be a positive integer (got ${raw ?? "<empty>"})`,
-          };
-        }
-        opts.topK = n;
-        break;
-      }
-      case "--collection":
-        opts.collection = takeValue();
-        break;
-      case "--max-tokens": {
-        const raw = takeValue();
-        const n = Number(raw);
-        if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
-          return {
-            error: `rag ask: --max-tokens must be a positive integer (got ${raw ?? "<empty>"})`,
-          };
-        }
-        opts.maxTokens = n;
-        break;
-      }
-      case "--temperature": {
-        const raw = takeValue();
-        const n = Number(raw);
-        if (!Number.isFinite(n) || n < 0) {
-          return {
-            error: `rag ask: --temperature must be a non-negative number (got ${raw ?? "<empty>"})`,
-          };
-        }
-        opts.temperature = n;
-        break;
-      }
-      case "--system-prompt":
-        opts.systemPrompt = takeValue();
-        break;
-      case "--cite":
-        opts.cite = true;
-        break;
-      case "--json":
-        opts.json = true;
-        break;
-      case "-h":
-      case "--help":
-        return { error: "__help__" };
-      default:
-        return { error: `rag ask: unknown flag ${flag}` };
-    }
+  let i = 0;
+  while (i < args.length) {
+    const step = consumeAskArg(opts, questionParts, args, i);
+    if ("error" in step) return step;
+    i = step.next;
   }
-
   opts.question = questionParts.join(" ").trim();
   return opts;
 }
@@ -260,6 +290,132 @@ interface ChatResponseShape {
   model?: string;
 }
 
+// Resolve --kb, either from the flag or by auto-picking the lone
+// rag node in the current context.
+function resolveKbName(kb: string | undefined): string | null {
+  if (kb) return kb;
+  const auto = autoResolveKb();
+  if ("error" in auto) {
+    process.stderr.write(`${auto.error}\n`);
+    return null;
+  }
+  return auto.name;
+}
+
+// --- Step 1: retrieval ------------------------------------------------
+async function fetchRetrieval(
+  client: NodeClient,
+  kbName: string,
+  opts: AskOpts,
+): Promise<SearchResponseShape | null> {
+  try {
+    const ragInput: {
+      node: string;
+      query: string;
+      topK: number;
+      collection?: string;
+    } = { node: kbName, query: opts.question, topK: opts.topK };
+    if (opts.collection) ragInput.collection = opts.collection;
+    return await client.ragSearch.query(ragInput);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`rag ask: retrieval failed from '${kbName}': ${msg}\n`);
+    if (/not a rag node|not found/i.test(msg)) {
+      process.stderr.write("  hint: run 'llamactl node ls' to see registered nodes\n");
+    }
+    return null;
+  }
+}
+
+// --- Steps 2 + 3: build the prompt, then chat completion ---------------
+async function fetchChatAnswer(
+  client: NodeClient,
+  via: string,
+  model: string,
+  opts: AskOpts,
+  retrieval: SearchResponseShape,
+): Promise<ChatResponseShape | null> {
+  const systemPrompt =
+    opts.systemPrompt ??
+    "Answer strictly from the provided context. If the answer isn't there, say \"I don't know.\" Be concise.";
+  const contextBlock = retrieval.results
+    .map((r, i) => `[${String(i + 1)}] ${r.document.content}`)
+    .join("\n");
+  const userPrompt = `Context:\n${contextBlock}\n\nQuestion: ${opts.question}`;
+
+  try {
+    return await client.chatComplete.mutate({
+      node: via,
+      request: {
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        max_tokens: opts.maxTokens,
+        temperature: opts.temperature,
+      },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`rag ask: chat completion failed via '${via}': ${msg}\n`);
+    if (/not found/i.test(msg)) {
+      process.stderr.write("  hint: run 'llamactl node ls' to see registered nodes\n");
+    }
+    return null;
+  }
+}
+
+function extractAnswer(chat: ChatResponseShape): string {
+  const rawAnswer = chat.choices?.[0]?.message?.content;
+  const answer =
+    // eslint-disable-next-line eqeqeq -- Preserve existing CLI/test semantics while clearing strict lint debt.
+    typeof rawAnswer === "string" ? rawAnswer : rawAnswer == null ? "" : JSON.stringify(rawAnswer);
+  return answer;
+}
+
+function printCitations(retrieval: SearchResponseShape, kbName: string): void {
+  process.stdout.write(
+    `Retrieved ${String(retrieval.results.length)} passage(s) from ${kbName}:\n`,
+  );
+  for (let i = 0; i < retrieval.results.length; i++) {
+    const r = required(retrieval.results[i]);
+    // Truncate long passages at ~240 chars for readability; full text
+    // is available via --json.
+    const content = r.document.content;
+    const shown = content.length > 240 ? `${content.slice(0, 237)}…` : content;
+    process.stdout.write(`  [${String(i + 1)}] ${shown}\n`);
+  }
+  process.stdout.write("\n");
+}
+
+// --- Step 4: render ---------------------------------------------------
+function renderAskResult(
+  opts: AskOpts,
+  kbName: string,
+  retrieval: SearchResponseShape,
+  answer: string,
+): void {
+  if (opts.json) {
+    const doc = {
+      retrieval: {
+        node: kbName,
+        collection: retrieval.collection,
+        results: retrieval.results,
+      },
+      answer,
+      model: opts.model,
+      via: opts.via,
+    };
+    process.stdout.write(`${JSON.stringify(doc)}\n`);
+    return;
+  }
+  if (opts.cite) {
+    printCitations(retrieval, kbName);
+  }
+  process.stdout.write(`${answer}\n`);
+}
+
 async function runAsk(args: string[]): Promise<number> {
   const parsed = parseAsk(args);
   if ("error" in parsed) {
@@ -285,111 +441,16 @@ async function runAsk(args: string[]): Promise<number> {
     return 1;
   }
 
-  // Resolve --kb, either from the flag or by auto-picking the lone
-  // rag node in the current context.
-  let kbName: string;
-  if (opts.kb) {
-    kbName = opts.kb;
-  } else {
-    const auto = autoResolveKb();
-    if ("error" in auto) {
-      process.stderr.write(`${auto.error}\n`);
-      return 1;
-    }
-    kbName = auto.name;
-  }
+  const kbName = resolveKbName(opts.kb);
+  if (kbName === null) return 1;
 
   const client = resolveClient();
+  const retrieval = await fetchRetrieval(client, kbName, opts);
+  if (retrieval === null) return 1;
 
-  // --- Step 1: retrieval ------------------------------------------------
-  let retrieval: SearchResponseShape;
-  try {
-    const ragInput: {
-      node: string;
-      query: string;
-      topK: number;
-      collection?: string;
-    } = { node: kbName, query: opts.question, topK: opts.topK };
-    if (opts.collection) ragInput.collection = opts.collection;
-    retrieval = await client.ragSearch.query(ragInput);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`rag ask: retrieval failed from '${kbName}': ${msg}\n`);
-    if (/not a rag node|not found/i.test(msg)) {
-      process.stderr.write("  hint: run 'llamactl node ls' to see registered nodes\n");
-    }
-    return 1;
-  }
+  const chat = await fetchChatAnswer(client, opts.via, opts.model, opts, retrieval);
+  if (chat === null) return 1;
 
-  // --- Step 2: build the prompt ----------------------------------------
-  const systemPrompt =
-    opts.systemPrompt ??
-    "Answer strictly from the provided context. If the answer isn't there, say \"I don't know.\" Be concise.";
-  const contextBlock = retrieval.results
-    .map((r, i) => `[${String(i + 1)}] ${r.document.content}`)
-    .join("\n");
-  const userPrompt = `Context:\n${contextBlock}\n\nQuestion: ${opts.question}`;
-
-  // --- Step 3: chat completion -----------------------------------------
-  let chat: ChatResponseShape;
-  try {
-    chat = await client.chatComplete.mutate({
-      node: opts.via,
-      request: {
-        model: opts.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        max_tokens: opts.maxTokens,
-        temperature: opts.temperature,
-      },
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`rag ask: chat completion failed via '${opts.via}': ${msg}\n`);
-    if (/not found/i.test(msg)) {
-      process.stderr.write("  hint: run 'llamactl node ls' to see registered nodes\n");
-    }
-    return 1;
-  }
-
-  const rawAnswer = chat.choices?.[0]?.message?.content;
-  const answer =
-    // eslint-disable-next-line eqeqeq -- Preserve existing CLI/test semantics while clearing strict lint debt.
-    typeof rawAnswer === "string" ? rawAnswer : rawAnswer == null ? "" : JSON.stringify(rawAnswer);
-
-  // --- Step 4: render ---------------------------------------------------
-  if (opts.json) {
-    const doc = {
-      retrieval: {
-        node: kbName,
-        collection: retrieval.collection,
-        results: retrieval.results,
-      },
-      answer,
-      model: opts.model,
-      via: opts.via,
-    };
-    process.stdout.write(`${JSON.stringify(doc)}\n`);
-    return 0;
-  }
-
-  if (opts.cite) {
-    process.stdout.write(
-      `Retrieved ${String(retrieval.results.length)} passage(s) from ${kbName}:\n`,
-    );
-    for (let i = 0; i < retrieval.results.length; i++) {
-      const r = required(retrieval.results[i]);
-      // Truncate long passages at ~240 chars for readability; full text
-      // is available via --json.
-      const content = r.document.content;
-      const shown = content.length > 240 ? `${content.slice(0, 237)}…` : content;
-      process.stdout.write(`  [${String(i + 1)}] ${shown}\n`);
-    }
-    process.stdout.write("\n");
-  }
-
-  process.stdout.write(`${answer}\n`);
+  renderAskResult(opts, kbName, retrieval, extractAnswer(chat));
   return 0;
 }

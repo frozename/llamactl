@@ -96,6 +96,38 @@ interface GgufHit {
  * synthesizing a fake GGUF (llama-server would reject a non-GGUF file
  * anyway, so there's no safe short-circuit).
  */
+function listEntriesOrNull(root: string): string[] | null {
+  try {
+    return readdirSync(root, { recursive: true }) as string[];
+  } catch {
+    return null;
+  }
+}
+
+function statSizeOrNull(abs: string): number | null {
+  try {
+    return statSync(abs).size;
+  } catch {
+    return null;
+  }
+}
+
+function smallestGgufUnderRoot(root: string): GgufHit | null {
+  const entries = listEntriesOrNull(root);
+  if (!entries) return null;
+  let best: GgufHit | null = null;
+  for (const entry of entries) {
+    if (!entry.endsWith(".gguf")) continue;
+    const abs = join(root, entry);
+    const size = statSizeOrNull(abs);
+    if (size === null) continue;
+    if (!best || size < best.size) {
+      best = { absPath: abs, rel: entry, modelsRoot: root, size };
+    }
+  }
+  return best;
+}
+
 function findSmallestLocalGguf(): GgufHit | null {
   const candidates: string[] = [];
   const cppModels = process.env.LLAMA_CPP_MODELS?.trim();
@@ -106,26 +138,7 @@ function findSmallestLocalGguf(): GgufHit | null {
   // wins — we don't merge across roots because the `target` field is
   // resolved against a single models directory.
   for (const root of candidates) {
-    let entries: string[];
-    try {
-      entries = readdirSync(root, { recursive: true }) as string[];
-    } catch {
-      continue;
-    }
-    let best: GgufHit | null = null;
-    for (const entry of entries) {
-      if (!entry.endsWith(".gguf")) continue;
-      const abs = join(root, entry);
-      let size = 0;
-      try {
-        size = statSync(abs).size;
-      } catch {
-        continue;
-      }
-      if (!best || size < best.size) {
-        best = { absPath: abs, rel: entry, modelsRoot: root, size };
-      }
-    }
+    const best = smallestGgufUnderRoot(root);
     if (best) return best;
   }
   return null;
@@ -191,6 +204,29 @@ function waitForTcpOpen(host: string, port: number, timeoutMs: number): Promise<
     };
     tryOnce();
   });
+}
+
+/**
+ * Best-effort kill any still-tracked pids (covers the failed apply
+ * case where workloadDelete never ran).
+ */
+function killTrackedPids(runtimeDir: string): void {
+  for (const basename of ["llama-server.pid", "rpc-server.pid"]) {
+    const pidFile = join(runtimeDir, basename);
+    if (!existsSync(pidFile)) continue;
+    try {
+      const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
+      if (Number.isFinite(pid) && pid > 0) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {
+          /* Intentionally empty. */
+        }
+      }
+    } catch {
+      /* Intentionally empty. */
+    }
+  }
 }
 
 // ---------- shared fixture state ------------------------------------
@@ -354,24 +390,7 @@ describeMaybe("multinode e2e: coordinator + worker via --rpc", () => {
         return;
       });
       cluster = null;
-      // Best-effort kill any still-tracked pids (covers the failed
-      // apply case where workloadDelete never ran).
-      for (const basename of ["llama-server.pid", "rpc-server.pid"]) {
-        const pidFile = join(runtimeDir, basename);
-        if (!existsSync(pidFile)) continue;
-        try {
-          const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);
-          if (Number.isFinite(pid) && pid > 0) {
-            try {
-              process.kill(pid, "SIGTERM");
-            } catch {
-              /* Intentionally empty. */
-            }
-          }
-        } catch {
-          /* Intentionally empty. */
-        }
-      }
+      killTrackedPids(runtimeDir);
     }
   }, 30_000); // /health on a small GGUF (up to ~20s in pathological cases), // rpc-server spawn + bind (1-2s), llama-server spawn + warm // Wall-time cap for the whole test. Covers cluster boot (~0.5s), // and teardown (~1s). Under 30s per the slice budget.
 });

@@ -117,13 +117,9 @@ function renderEnv(entries: NodeEntry[]): string {
   return `export LLAMACTL_NODES='${compact.replaceAll("'", "'\\''")}'`;
 }
 
-// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-async function runConnect(argv: string[]): Promise<number> {
-  const url = argv[0];
-  if (!url || url.startsWith("--")) {
-    process.stderr.write(`sirius connect: base URL is required\n\n${USAGE}`);
-    return 1;
-  }
+function parseConnectFlags(
+  argv: string[],
+): { name: string; apiKeyRef: string | undefined } | { exit: number } {
   let name = "sirius";
   let apiKeyRef: string | undefined;
   for (let i = 1; i < argv.length; i++) {
@@ -132,18 +128,31 @@ async function runConnect(argv: string[]): Promise<number> {
       name = argv[++i] ?? "";
       if (!name) {
         process.stderr.write(`--name requires a value\n`);
-        return 1;
+        return { exit: 1 };
       }
     } else if (arg === "--api-key-ref") {
       apiKeyRef = argv[++i];
     } else if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
-      return 0;
+      return { exit: 0 };
     } else {
       process.stderr.write(`unknown flag: ${String(arg)}\n\n${USAGE}`);
-      return 1;
+      return { exit: 1 };
     }
   }
+  return { name, apiKeyRef };
+}
+
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
+async function runConnect(argv: string[]): Promise<number> {
+  const url = argv[0];
+  if (!url || url.startsWith("--")) {
+    process.stderr.write(`sirius connect: base URL is required\n\n${USAGE}`);
+    return 1;
+  }
+  const parsed = parseConnectFlags(argv);
+  if ("exit" in parsed) return parsed.exit;
+  const { name, apiKeyRef } = parsed;
   const normalized = url.endsWith("/") ? url.slice(0, -1) : url;
   const baseUrl = normalized.endsWith("/v1") ? normalized : `${normalized}/v1`;
   const cfgPath = kubecfg.defaultConfigPath();
@@ -171,6 +180,35 @@ async function runConnect(argv: string[]): Promise<number> {
   return 0;
 }
 
+interface AddProviderFlags {
+  name: string;
+  apiKeyRef: string | undefined;
+  baseUrl: string | undefined;
+  displayName: string | undefined;
+}
+
+function parseAddProviderFlags(argv: string[], kind: string): AddProviderFlags | { exit: number } {
+  let name = kind;
+  let apiKeyRef: string | undefined;
+  let baseUrl: string | undefined;
+  let displayName: string | undefined;
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--name") name = argv[++i] ?? name;
+    else if (arg === "--api-key-ref") apiKeyRef = argv[++i];
+    else if (arg === "--base-url") baseUrl = argv[++i];
+    else if (arg === "--display-name") displayName = argv[++i];
+    else if (arg === "--help" || arg === "-h") {
+      process.stdout.write(USAGE);
+      return { exit: 0 };
+    } else {
+      process.stderr.write(`unknown flag: ${String(arg)}\n`);
+      return { exit: 1 };
+    }
+  }
+  return { name, apiKeyRef, baseUrl, displayName };
+}
+
 // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function runAddProvider(argv: string[]): Promise<number> {
   const kind = argv[0];
@@ -190,24 +228,10 @@ async function runAddProvider(argv: string[]): Promise<number> {
     process.stderr.write(`unknown provider kind: ${kind}\nvalid: ${validKinds.join(", ")}\n`);
     return 1;
   }
-  let name = kind;
-  let apiKeyRef: string | undefined;
-  let baseUrl: string | undefined;
-  let displayName: string | undefined;
-  for (let i = 1; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--name") name = argv[++i] ?? name;
-    else if (arg === "--api-key-ref") apiKeyRef = argv[++i];
-    else if (arg === "--base-url") baseUrl = argv[++i];
-    else if (arg === "--display-name") displayName = argv[++i];
-    else if (arg === "--help" || arg === "-h") {
-      process.stdout.write(USAGE);
-      return 0;
-    } else {
-      process.stderr.write(`unknown flag: ${String(arg)}\n`);
-      return 1;
-    }
-  }
+  const parsed = parseAddProviderFlags(argv, kind);
+  if ("exit" in parsed) return parsed.exit;
+  const { name, apiKeyRef, displayName } = parsed;
+  let baseUrl = parsed.baseUrl;
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
   if (!baseUrl) {
     baseUrl =
@@ -287,6 +311,57 @@ async function runRemoveProvider(argv: string[]): Promise<number> {
   return 0;
 }
 
+function parseExportFormat(next: string | undefined): "env" | "json" | "yaml" | null {
+  if (next === "json" || next === "yaml" || next === "env") return next;
+  process.stderr.write(`--format must be json|yaml|env (got ${next ?? ""})\n`);
+  return null;
+}
+
+function parseExportFlags(
+  argv: string[],
+): { format: "env" | "json" | "yaml"; tokenInline: boolean } | { exit: number } {
+  let format: "env" | "json" | "yaml" = "json";
+  let tokenInline = false;
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--format") {
+      const next = parseExportFormat(argv[++i]);
+      if (next === null) return { exit: 1 };
+      format = next;
+    } else if (arg === "--token-inline") {
+      tokenInline = true;
+    } else if (arg === "--help" || arg === "-h") {
+      process.stdout.write(USAGE);
+      return { exit: 0 };
+    } else {
+      process.stderr.write(`unknown flag: ${String(arg)}\n\n${USAGE}`);
+      return { exit: 1 };
+    }
+  }
+  return { format, tokenInline };
+}
+
+function runExport(argv: string[]): number {
+  const parsed = parseExportFlags(argv);
+  if ("exit" in parsed) return parsed.exit;
+
+  const entries = collectAgentNodes(parsed.tokenInline);
+  if (entries.length === 0) {
+    process.stderr.write("no remote agent nodes registered — nothing to export\n");
+    return 0;
+  }
+
+  const rendered =
+    parsed.format === "json"
+      ? renderJson(entries)
+      : parsed.format === "yaml"
+        ? renderYaml(entries)
+        : renderEnv(entries);
+  process.stdout.write(rendered);
+  if (!rendered.endsWith("\n")) process.stdout.write("\n");
+  return 0;
+}
+
 export async function runSirius(argv: string[]): Promise<number> {
   const sub = argv[0];
   if (!sub || sub === "--help" || sub === "-h") {
@@ -301,41 +376,5 @@ export async function runSirius(argv: string[]): Promise<number> {
     process.stderr.write(`unknown sirius subcommand: ${sub}\n\n${USAGE}`);
     return 1;
   }
-  let format: "json" | "yaml" | "env" = "json";
-  let tokenInline = false;
-  for (let i = 1; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--format") {
-      const next = argv[++i];
-      if (next !== "json" && next !== "yaml" && next !== "env") {
-        process.stderr.write(`--format must be json|yaml|env (got ${next ?? ""})\n`);
-        return 1;
-      }
-      format = next;
-    } else if (arg === "--token-inline") {
-      tokenInline = true;
-    } else if (arg === "--help" || arg === "-h") {
-      process.stdout.write(USAGE);
-      return 0;
-    } else {
-      process.stderr.write(`unknown flag: ${String(arg)}\n\n${USAGE}`);
-      return 1;
-    }
-  }
-
-  const entries = collectAgentNodes(tokenInline);
-  if (entries.length === 0) {
-    process.stderr.write("no remote agent nodes registered — nothing to export\n");
-    return 0;
-  }
-
-  const rendered =
-    format === "json"
-      ? renderJson(entries)
-      : format === "yaml"
-        ? renderYaml(entries)
-        : renderEnv(entries);
-  process.stdout.write(rendered);
-  if (!rendered.endsWith("\n")) process.stdout.write("\n");
-  return 0;
+  return runExport(argv);
 }

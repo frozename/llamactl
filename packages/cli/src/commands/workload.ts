@@ -130,41 +130,63 @@ interface ApplyFlags {
   force: boolean;
 }
 
-function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
-  let file = "";
-  let json = false;
-  const evict: string[] = [];
-  let force = false;
-  for (let i = 0; i < args.length; i++) {
-    const arg = required(args[i]);
-    if (arg === "-f" || arg === "--file") {
-      file = args[++i] ?? "";
-    } else if (arg.startsWith("--file=")) {
-      file = arg.slice("--file=".length);
-    } else if (arg === "--json") {
-      json = true;
-    } else if (arg === "--evict") {
-      const value = args[++i] ?? "";
-      if (!value) return { error: "apply: --evict requires a value" };
-      evict.push(value);
-    } else if (arg.startsWith("--evict=")) {
-      const value = arg.slice("--evict=".length);
-      if (!value) return { error: "apply: --evict requires a value" };
-      evict.push(value);
-    } else if (arg === "--force") {
-      force = true;
-    } else if (arg === "-h" || arg === "--help") {
-      return { error: "help" };
-    } else if (arg.startsWith("-")) {
-      return { error: `Unknown flag: ${arg}` };
-    } else if (!file) {
-      file = arg;
-    } else {
-      return { error: `Unexpected extra argument: ${arg}` };
-    }
+function appendEvict(
+  draft: { evict: string[] },
+  value: string,
+  next: number,
+): { next: number } | { error: string } {
+  if (!value) return { error: "apply: --evict requires a value" };
+  draft.evict.push(value);
+  return { next };
+}
+
+function consumeApplyArg(
+  draft: ApplyFlags,
+  args: string[],
+  i: number,
+): { next: number } | { error: string } {
+  const arg = required(args[i]);
+  if (arg === "-f" || arg === "--file") {
+    draft.file = args[i + 1] ?? "";
+    return { next: i + 2 };
   }
-  if (!file) return { error: "apply: -f <manifest.yaml> is required" };
-  return { file, json, evict, force };
+  if (arg.startsWith("--file=")) {
+    draft.file = arg.slice("--file=".length);
+    return { next: i + 1 };
+  }
+  if (arg === "--json") {
+    draft.json = true;
+    return { next: i + 1 };
+  }
+  if (arg === "--evict") {
+    return appendEvict(draft, args[i + 1] ?? "", i + 2);
+  }
+  if (arg.startsWith("--evict=")) {
+    return appendEvict(draft, arg.slice("--evict=".length), i + 1);
+  }
+  if (arg === "--force") {
+    draft.force = true;
+    return { next: i + 1 };
+  }
+  if (arg === "-h" || arg === "--help") return { error: "help" };
+  if (arg.startsWith("-")) return { error: `Unknown flag: ${arg}` };
+  if (!draft.file) {
+    draft.file = arg;
+    return { next: i + 1 };
+  }
+  return { error: `Unexpected extra argument: ${arg}` };
+}
+
+function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
+  const draft: ApplyFlags = { file: "", json: false, evict: [], force: false };
+  let i = 0;
+  while (i < args.length) {
+    const step = consumeApplyArg(draft, args, i);
+    if ("error" in step) return step;
+    i = step.next;
+  }
+  if (!draft.file) return { error: "apply: -f <manifest.yaml> is required" };
+  return draft;
 }
 
 export function stampApplyAnnotations(
@@ -269,38 +291,55 @@ async function applyModelRunFromRaw(
     status: result.statusSection,
   };
   const savedPath = workloadStore.saveWorkload(persisted);
+  return renderModelRunApply(manifest, result, savedPath, json);
+}
 
-  // Gateway manifests land as Pending (upstream missing) or Failed
-  // (reload call didn't succeed). Surface both as a non-zero exit —
-  // the manifest is persisted either way so the operator can inspect
-  // it with `llamactl describe workload` but the run itself is
-  // incomplete. Agent manifests that reach 'started' always produce
-  // phase=Running here, so the check only fires on gateway paths.
+function renderModelRunApplyHuman(
+  manifest: workloadSchema.ModelRun,
+  result: workloadApply.ApplyResult,
+  savedPath: string,
+  gatewayIncomplete: boolean,
+): void {
   const phase = result.statusSection.phase;
   const conditionMessage = result.statusSection.conditions[0]?.message ?? "";
   const conditionReason = result.statusSection.conditions[0]?.reason ?? "";
-  const gatewayIncomplete = manifest.spec.gateway && phase !== "Running";
+  process.stdout.write(
+    `${result.action} modelrun/${manifest.metadata.name} on node ${manifest.spec.node}\n`,
+  );
+  process.stdout.write(`  manifest: ${savedPath}\n`);
+  process.stdout.write(`  phase:    ${phase}\n`);
+  if (result.statusSection.endpoint) {
+    process.stdout.write(`  endpoint: ${result.statusSection.endpoint}\n`);
+  }
+  if (result.statusSection.serverPid) {
+    process.stdout.write(`  pid:      ${String(result.statusSection.serverPid)}\n`);
+  }
+  if (gatewayIncomplete) {
+    process.stderr.write(
+      `apply: gateway workload did not reach Running (phase=${phase}, reason=${conditionReason}): ${conditionMessage}\n`,
+    );
+  }
+}
+
+// Gateway manifests land as Pending (upstream missing) or Failed
+// (reload call didn't succeed). Surface both as a non-zero exit —
+// the manifest is persisted either way so the operator can inspect
+// it with `llamactl describe workload` but the run itself is
+// incomplete. Agent manifests that reach 'started' always produce
+// phase=Running here, so the check only fires on gateway paths.
+function renderModelRunApply(
+  manifest: workloadSchema.ModelRun,
+  result: workloadApply.ApplyResult,
+  savedPath: string,
+  json: boolean,
+): number {
+  const gatewayIncomplete = manifest.spec.gateway && result.statusSection.phase !== "Running";
   if (json) {
     process.stdout.write(
       `${JSON.stringify({ action: result.action, path: savedPath, status: result.statusSection }, null, 2)}\n`,
     );
   } else {
-    process.stdout.write(
-      `${result.action} modelrun/${manifest.metadata.name} on node ${manifest.spec.node}\n`,
-    );
-    process.stdout.write(`  manifest: ${savedPath}\n`);
-    process.stdout.write(`  phase:    ${phase}\n`);
-    if (result.statusSection.endpoint) {
-      process.stdout.write(`  endpoint: ${result.statusSection.endpoint}\n`);
-    }
-    if (result.statusSection.serverPid) {
-      process.stdout.write(`  pid:      ${String(result.statusSection.serverPid)}\n`);
-    }
-    if (gatewayIncomplete) {
-      process.stderr.write(
-        `apply: gateway workload did not reach Running (phase=${phase}, reason=${conditionReason}): ${conditionMessage}\n`,
-      );
-    }
+    renderModelRunApplyHuman(manifest, result, savedPath, gatewayIncomplete);
   }
   return gatewayIncomplete ? 1 : 0;
 }
@@ -336,29 +375,39 @@ async function applyNodeRunFromRaw(raw: string, json: boolean): Promise<number> 
       `${result.status.phase.toLowerCase()} noderun/${manifest.metadata.name} on node ${manifest.spec.node}\n`,
     );
     process.stdout.write(`  manifest: ${savedPath}\n`);
-    const nonSkip = result.actions.filter((a) => a.type !== "skip");
-    if (nonSkip.length === 0) {
-      process.stdout.write(`  no changes — every infra entry already at desired version\n`);
-    } else {
-      process.stdout.write(`  actions:\n`);
-      for (const outcome of result.outcomes) {
-        const a = outcome.action;
-        const tail = outcome.ok ? "" : `  ERROR: ${outcome.error ?? "(unknown)"}`;
-        const label =
-          a.type === "install"
-            ? `install ${a.pkg}@${a.version} (${a.reason})`
-            : a.type === "activate"
-              ? `activate ${a.pkg}@${a.version}`
-              : a.type === "uninstall-version"
-                ? `uninstall ${a.pkg}@${a.version} (${a.reason})`
-                : a.type === "uninstall-pkg"
-                  ? `uninstall ${a.pkg} (${a.reason})`
-                  : `skip ${a.pkg}@${a.version} (${a.reason})`;
-        process.stdout.write(`    * ${label}${tail}\n`);
-      }
-    }
+    renderNodeRunOutcomes(result);
   }
   return result.error ? 1 : 0;
+}
+
+function describeNodeRunAction(
+  a: noderunApply.NodeRunApplyResult["outcomes"][number]["action"],
+): string {
+  switch (a.type) {
+    case "install":
+      return `install ${a.pkg}@${a.version} (${a.reason})`;
+    case "activate":
+      return `activate ${a.pkg}@${a.version}`;
+    case "uninstall-version":
+      return `uninstall ${a.pkg}@${a.version} (${a.reason})`;
+    case "uninstall-pkg":
+      return `uninstall ${a.pkg} (${a.reason})`;
+    case "skip":
+      return `skip ${a.pkg}@${a.version} (${a.reason})`;
+  }
+}
+
+function renderNodeRunOutcomes(result: noderunApply.NodeRunApplyResult): void {
+  const nonSkip = result.actions.filter((a) => a.type !== "skip");
+  if (nonSkip.length === 0) {
+    process.stdout.write(`  no changes — every infra entry already at desired version\n`);
+    return;
+  }
+  process.stdout.write(`  actions:\n`);
+  for (const outcome of result.outcomes) {
+    const tail = outcome.ok ? "" : `  ERROR: ${outcome.error ?? "(unknown)"}`;
+    process.stdout.write(`    * ${describeNodeRunAction(outcome.action)}${tail}\n`);
+  }
 }
 
 async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number> {
@@ -557,33 +606,22 @@ export async function runGet(args: string[]): Promise<number> {
   return 0;
 }
 
-export async function runDescribe(args: string[]): Promise<number> {
-  const [kind, name, ...rest] = args;
+function parseDescribeArgs(rest: string[]): { json: boolean } | { exit: number } {
   let json = false;
   for (const arg of rest) {
     if (arg === "--json") json = true;
     else if (arg === "-h" || arg === "--help") {
       process.stdout.write(DESCRIBE_USAGE);
-      return 0;
+      return { exit: 0 };
     } else {
       process.stderr.write(`describe: unknown argument ${arg}\n`);
-      return 1;
+      return { exit: 1 };
     }
   }
-  if ((kind === "noderun" || kind === "noderuns") && name) {
-    return await runDescribeNodeRun(name, json);
-  }
-  if (kind === "node" && name) {
-    return await runDescribeNode(name, json);
-  }
-  if (kind !== "workload" && kind !== "workloads") {
-    process.stderr.write(DESCRIBE_USAGE);
-    return 1;
-  }
-  if (!name) {
-    process.stderr.write(DESCRIBE_USAGE);
-    return 1;
-  }
+  return { json };
+}
+
+async function runDescribeWorkload(name: string, json: boolean): Promise<number> {
   let manifest: workloadSchema.ModelRun;
   try {
     manifest = workloadStore.loadWorkloadByName(name);
@@ -618,6 +656,28 @@ export async function runDescribe(args: string[]): Promise<number> {
   return 0;
 }
 
+export async function runDescribe(args: string[]): Promise<number> {
+  const [kind, name, ...rest] = args;
+  const parsed = parseDescribeArgs(rest);
+  if ("exit" in parsed) return parsed.exit;
+  const { json } = parsed;
+  if ((kind === "noderun" || kind === "noderuns") && name) {
+    return await runDescribeNodeRun(name, json);
+  }
+  if (kind === "node" && name) {
+    return await runDescribeNode(name, json);
+  }
+  if (kind !== "workload" && kind !== "workloads") {
+    process.stderr.write(DESCRIBE_USAGE);
+    return 1;
+  }
+  if (!name) {
+    process.stderr.write(DESCRIBE_USAGE);
+    return 1;
+  }
+  return await runDescribeWorkload(name, json);
+}
+
 async function runDescribeNode(name: string, json: boolean): Promise<number> {
   try {
     const client = getNodeClientByName(name);
@@ -634,27 +694,126 @@ async function runDescribeNode(name: string, json: boolean): Promise<number> {
   }
 }
 
-export async function runDelete(args: string[]): Promise<number> {
-  const [kind, name, ...rest] = args;
+function parseDeleteArgs(rest: string[]): { keepRunning: boolean } | { exit: number } {
   let keepRunning = false;
   for (const arg of rest) {
     if (arg === "--keep-running") keepRunning = true;
     else if (arg === "-h" || arg === "--help") {
       process.stdout.write(DELETE_USAGE);
-      return 0;
+      return { exit: 0 };
     } else {
       process.stderr.write(`delete: unknown argument ${arg}\n`);
-      return 1;
+      return { exit: 1 };
     }
   }
-  if ((kind === "noderun" || kind === "noderuns") && name) {
-    const removed = noderunStore.deleteNodeRun(name);
-    if (!removed) {
-      process.stderr.write(`delete: noderun ${name} not found\n`);
-      return 1;
+  return { keepRunning };
+}
+
+function deleteNodeRunByName(name: string): number {
+  const removed = noderunStore.deleteNodeRun(name);
+  if (!removed) {
+    process.stderr.write(`delete: noderun ${name} not found\n`);
+    return 1;
+  }
+  process.stdout.write(`deleted noderun/${name}\n`);
+  return 0;
+}
+
+async function stopModelHostBeforeDelete(manifest: ModelHostManifest): Promise<void> {
+  try {
+    const client = getWorkloadNodeClient(manifest.spec.node);
+    await client.modelHostStop.mutate({ workload: manifest.metadata.name });
+    process.stdout.write(`stopped modelhost on node ${manifest.spec.node}\n`);
+  } catch (err) {
+    process.stderr.write(
+      `warning: failed to reach node ${manifest.spec.node}: ${(err as Error).message}\n`,
+    );
+  }
+  rmSync(workloadRuntimeDir(resolveEnv(), { name: manifest.metadata.name }), {
+    recursive: true,
+    force: true,
+  });
+}
+
+async function deleteModelHost(
+  manifest: ModelHostManifest,
+  name: string,
+  keepRunning: boolean,
+): Promise<number> {
+  if (!keepRunning) {
+    await stopModelHostBeforeDelete(manifest);
+  }
+  const ok = workloadStore.deleteWorkload(name);
+  if (!ok) {
+    process.stderr.write(`delete: workload '${name}' not found in store\n`);
+    return 1;
+  }
+  process.stdout.write(`deleted modelhost/${name}\n`);
+  return 0;
+}
+
+async function stopModelRunServer(manifest: workloadSchema.ModelRun): Promise<void> {
+  try {
+    const client = getWorkloadNodeClient(manifest.spec.node);
+    const status = await client.serverStatus.query({ workload: manifest.metadata.name });
+    // Only stop the server if the running rel matches this workload's
+    // target. If something else is running there (perhaps another
+    // workload was applied on top), leave it alone.
+    if (status.state === "up" && status.rel === manifest.spec.target.value) {
+      await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
+      process.stdout.write(`stopped server on node ${manifest.spec.node}\n`);
+    } else if (status.state === "up") {
+      process.stdout.write(
+        `skipped stop: node ${manifest.spec.node} is running a different rel (${status.rel ?? "unknown"})\n`,
+      );
     }
-    process.stdout.write(`deleted noderun/${name}\n`);
-    return 0;
+  } catch (err) {
+    process.stderr.write(
+      `warning: failed to reach node ${manifest.spec.node}: ${(err as Error).message}\n`,
+    );
+  }
+}
+
+// Stop rpc-server workers in reverse order. Best-effort — we still
+// want to remove the manifest even if a worker node is unreachable.
+async function stopModelRunWorkers(manifest: workloadSchema.ModelRun): Promise<void> {
+  for (const worker of [...manifest.spec.workers].reverse()) {
+    try {
+      const wc = getWorkloadNodeClient(worker.node);
+      await wc.rpcServerStop.mutate({ graceSeconds: 3 });
+      process.stdout.write(`stopped rpc-server on worker ${worker.node}\n`);
+    } catch (err) {
+      process.stderr.write(
+        `warning: failed to stop rpc-server on ${worker.node}: ${(err as Error).message}\n`,
+      );
+    }
+  }
+}
+
+async function deleteModelRun(
+  manifest: workloadSchema.ModelRun,
+  name: string,
+  keepRunning: boolean,
+): Promise<number> {
+  if (!keepRunning) {
+    await stopModelRunServer(manifest);
+    await stopModelRunWorkers(manifest);
+  }
+  const ok = workloadStore.deleteWorkload(name);
+  if (!ok) {
+    process.stderr.write(`delete: workload '${name}' not found in store\n`);
+    return 1;
+  }
+  process.stdout.write(`deleted modelrun/${name}\n`);
+  return 0;
+}
+
+export async function runDelete(args: string[]): Promise<number> {
+  const [kind, name, ...rest] = args;
+  const parsed = parseDeleteArgs(rest);
+  if ("exit" in parsed) return parsed.exit;
+  if ((kind === "noderun" || kind === "noderuns") && name) {
+    return deleteNodeRunByName(name);
   }
   if (kind !== "workload" && kind !== "workloads") {
     process.stderr.write(DELETE_USAGE);
@@ -672,72 +831,9 @@ export async function runDelete(args: string[]): Promise<number> {
     return 1;
   }
   if (manifest.kind === "ModelHost") {
-    if (!keepRunning) {
-      try {
-        const client = getWorkloadNodeClient(manifest.spec.node);
-        await client.modelHostStop.mutate({ workload: manifest.metadata.name });
-        process.stdout.write(`stopped modelhost on node ${manifest.spec.node}\n`);
-      } catch (err) {
-        process.stderr.write(
-          `warning: failed to reach node ${manifest.spec.node}: ${(err as Error).message}\n`,
-        );
-      }
-      rmSync(workloadRuntimeDir(resolveEnv(), { name: manifest.metadata.name }), {
-        recursive: true,
-        force: true,
-      });
-    }
-    const ok = workloadStore.deleteWorkload(name);
-    if (!ok) {
-      process.stderr.write(`delete: workload '${name}' not found in store\n`);
-      return 1;
-    }
-    process.stdout.write(`deleted modelhost/${name}\n`);
-    return 0;
+    return await deleteModelHost(manifest, name, parsed.keepRunning);
   }
-
-  if (!keepRunning) {
-    try {
-      const client = getWorkloadNodeClient(manifest.spec.node);
-      const status = await client.serverStatus.query({ workload: manifest.metadata.name });
-      // Only stop the server if the running rel matches this workload's
-      // target. If something else is running there (perhaps another
-      // workload was applied on top), leave it alone.
-      if (status.state === "up" && status.rel === manifest.spec.target.value) {
-        await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
-        process.stdout.write(`stopped server on node ${manifest.spec.node}\n`);
-      } else if (status.state === "up") {
-        process.stdout.write(
-          `skipped stop: node ${manifest.spec.node} is running a different rel (${status.rel ?? "unknown"})\n`,
-        );
-      }
-    } catch (err) {
-      process.stderr.write(
-        `warning: failed to reach node ${manifest.spec.node}: ${(err as Error).message}\n`,
-      );
-    }
-
-    // Stop rpc-server workers in reverse order. Best-effort — we still
-    // want to remove the manifest even if a worker node is unreachable.
-    for (const worker of [...manifest.spec.workers].reverse()) {
-      try {
-        const wc = getWorkloadNodeClient(worker.node);
-        await wc.rpcServerStop.mutate({ graceSeconds: 3 });
-        process.stdout.write(`stopped rpc-server on worker ${worker.node}\n`);
-      } catch (err) {
-        process.stderr.write(
-          `warning: failed to stop rpc-server on ${worker.node}: ${(err as Error).message}\n`,
-        );
-      }
-    }
-  }
-  const ok = workloadStore.deleteWorkload(name);
-  if (!ok) {
-    process.stderr.write(`delete: workload '${name}' not found in store\n`);
-    return 1;
-  }
-  process.stdout.write(`deleted modelrun/${name}\n`);
-  return 0;
+  return await deleteModelRun(manifest, name, parsed.keepRunning);
 }
 
 // ---- NodeRun handlers --------------------------------------------

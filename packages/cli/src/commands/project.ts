@@ -126,115 +126,160 @@ interface AddOpts {
   routes: Record<string, string>;
 }
 
-function parseAddFlags(args: string[]): AddOpts | { error: string } {
-  let name = "";
-  let path = "";
-  let purpose: string | undefined;
-  let stack: string[] = [];
-  let ragNode: string | undefined;
-  let ragCollection: string | undefined;
-  let ragGlob: string | undefined;
-  let ragSchedule: string | undefined;
-  const routes: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    const arg = required(args[i]);
-    if (arg === "--path") {
-      path = args[++i] ?? "";
-    } else if (arg.startsWith("--path=")) {
-      path = arg.slice("--path=".length);
-    } else if (arg === "--purpose") {
-      purpose = args[++i];
-    } else if (arg.startsWith("--purpose=")) {
-      purpose = arg.slice("--purpose=".length);
-    } else if (arg === "--stack") {
-      stack = (args[++i] ?? "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-    } else if (arg.startsWith("--stack=")) {
-      stack = arg
-        .slice("--stack=".length)
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-    } else if (arg === "--rag-node") {
-      ragNode = args[++i];
-    } else if (arg.startsWith("--rag-node=")) {
-      ragNode = arg.slice("--rag-node=".length);
-    } else if (arg === "--rag-collection") {
-      ragCollection = args[++i];
-    } else if (arg.startsWith("--rag-collection=")) {
-      ragCollection = arg.slice("--rag-collection=".length);
-    } else if (arg === "--rag-glob") {
-      ragGlob = args[++i];
-    } else if (arg.startsWith("--rag-glob=")) {
-      ragGlob = arg.slice("--rag-glob=".length);
-    } else if (arg === "--rag-schedule") {
-      ragSchedule = args[++i];
-    } else if (arg.startsWith("--rag-schedule=")) {
-      ragSchedule = arg.slice("--rag-schedule=".length);
-    } else if (arg === "--route") {
-      const pair = args[++i] ?? "";
-      const eqIndex = pair.indexOf("=");
-      if (eqIndex === -1) {
-        return { error: `--route expects <taskKind>=<target>, got '${pair}'` };
-      }
-      const key = pair.slice(0, eqIndex).trim();
-      const value = pair.slice(eqIndex + 1).trim();
-      if (!key || !value) {
-        return { error: `--route expects a non-empty taskKind and target` };
-      }
-      routes[key] = value;
-    } else if (arg.startsWith("--route=")) {
-      const pair = arg.slice("--route=".length);
-      const eqIndex = pair.indexOf("=");
-      if (eqIndex === -1) {
-        return { error: `--route expects <taskKind>=<target>, got '${pair}'` };
-      }
-      const key = pair.slice(0, eqIndex).trim();
-      const value = pair.slice(eqIndex + 1).trim();
-      if (!key || !value) {
-        return { error: `--route expects a non-empty taskKind and target` };
-      }
-      routes[key] = value;
-    } else if (arg === "-h" || arg === "--help") {
-      return { error: "help" };
-    } else if (arg.startsWith("-")) {
-      return { error: `Unknown flag: ${arg}` };
-    } else if (!name) {
-      name = arg;
-    } else {
-      return { error: `Unexpected argument: ${arg}` };
-    }
+interface AddDraft {
+  name: string;
+  path: string;
+  purpose: string | undefined;
+  stack: string[];
+  ragNode: string | undefined;
+  ragCollection: string | undefined;
+  ragGlob: string | undefined;
+  ragSchedule: string | undefined;
+  routes: Record<string, string>;
+}
+
+const ADD_VALUE_FLAGS = new Set([
+  "--path",
+  "--purpose",
+  "--stack",
+  "--rag-node",
+  "--rag-collection",
+  "--rag-glob",
+  "--rag-schedule",
+  "--route",
+]);
+
+function parseStackList(value: string): string[] {
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function parseRoutePair(pair: string, routes: Record<string, string>): string | null {
+  const eqIndex = pair.indexOf("=");
+  if (eqIndex === -1) {
+    return `--route expects <taskKind>=<target>, got '${pair}'`;
   }
-  if (!name) return { error: "project add: <name> is required" };
-  if (!path) return { error: "project add: --path is required" };
-  if ((ragNode && !ragCollection) || (!ragNode && ragCollection)) {
+  const key = pair.slice(0, eqIndex).trim();
+  const value = pair.slice(eqIndex + 1).trim();
+  if (!key || !value) {
+    return `--route expects a non-empty taskKind and target`;
+  }
+  routes[key] = value;
+  return null;
+}
+
+function assignProjectAddFlag(
+  draft: AddDraft,
+  flag: string,
+  value: string | undefined,
+): string | null {
+  switch (flag) {
+    case "--path":
+      draft.path = value ?? "";
+      return null;
+    case "--purpose":
+      draft.purpose = value;
+      return null;
+    case "--stack":
+      draft.stack = parseStackList(value ?? "");
+      return null;
+    case "--rag-node":
+      draft.ragNode = value;
+      return null;
+    case "--rag-collection":
+      draft.ragCollection = value;
+      return null;
+    case "--rag-glob":
+      draft.ragGlob = value;
+      return null;
+    case "--rag-schedule":
+      draft.ragSchedule = value;
+      return null;
+    case "--route":
+      return parseRoutePair(value ?? "", draft.routes);
+    default:
+      return `Unknown flag: ${flag}`;
+  }
+}
+
+function consumeProjectAddValueFlag(
+  draft: AddDraft,
+  args: string[],
+  i: number,
+  arg: string,
+): { next: number } | { error: string } | null {
+  if (ADD_VALUE_FLAGS.has(arg)) {
+    const error = assignProjectAddFlag(draft, arg, args[i + 1]);
+    return error ? { error } : { next: i + 2 };
+  }
+  const eq = arg.indexOf("=");
+  if (eq >= 0 && ADD_VALUE_FLAGS.has(arg.slice(0, eq))) {
+    const error = assignProjectAddFlag(draft, arg.slice(0, eq), arg.slice(eq + 1));
+    return error ? { error } : { next: i + 1 };
+  }
+  return null;
+}
+
+function consumeProjectAddArg(
+  draft: AddDraft,
+  args: string[],
+  i: number,
+): { next: number } | { error: string } {
+  const arg = required(args[i]);
+  const viaValueFlag = consumeProjectAddValueFlag(draft, args, i, arg);
+  if (viaValueFlag) return viaValueFlag;
+  if (arg === "-h" || arg === "--help") return { error: "help" };
+  if (arg.startsWith("-")) return { error: `Unknown flag: ${arg}` };
+  if (!draft.name) {
+    draft.name = arg;
+    return { next: i + 1 };
+  }
+  return { error: `Unexpected argument: ${arg}` };
+}
+
+function validateProjectAdd(draft: AddDraft): AddOpts | { error: string } {
+  if (!draft.name) return { error: "project add: <name> is required" };
+  if (!draft.path) return { error: "project add: --path is required" };
+  if ((draft.ragNode && !draft.ragCollection) || (!draft.ragNode && draft.ragCollection)) {
     return { error: "project add: --rag-node and --rag-collection must be set together" };
   }
   return {
-    name,
-    path,
-    purpose,
-    stack,
-    ragNode,
-    ragCollection,
-    ragGlob,
-    ragSchedule,
-    routes,
+    name: draft.name,
+    path: draft.path,
+    purpose: draft.purpose,
+    stack: draft.stack,
+    ragNode: draft.ragNode,
+    ragCollection: draft.ragCollection,
+    ragGlob: draft.ragGlob,
+    ragSchedule: draft.ragSchedule,
+    routes: draft.routes,
   };
 }
 
-async function runAdd(args: string[]): Promise<number> {
-  const parsed = parseAddFlags(args);
-  if ("error" in parsed) {
-    if (parsed.error === "help") {
-      process.stdout.write(USAGE);
-      return 0;
-    }
-    process.stderr.write(`${parsed.error}\n\n${USAGE}`);
-    return 1;
+function parseAddFlags(args: string[]): AddOpts | { error: string } {
+  const draft: AddDraft = {
+    name: "",
+    path: "",
+    purpose: undefined,
+    stack: [],
+    ragNode: undefined,
+    ragCollection: undefined,
+    ragGlob: undefined,
+    ragSchedule: undefined,
+    routes: {},
+  };
+  let i = 0;
+  while (i < args.length) {
+    const step = consumeProjectAddArg(draft, args, i);
+    if ("error" in step) return step;
+    i = step.next;
   }
+  return validateProjectAdd(draft);
+}
+
+function buildProjectSpec(parsed: AddOpts): Record<string, unknown> {
   const spec: Record<string, unknown> = { path: parsed.path };
   if (parsed.purpose) spec.purpose = parsed.purpose;
   if (parsed.stack.length > 0) spec.stack = parsed.stack;
@@ -248,11 +293,24 @@ async function runAdd(args: string[]): Promise<number> {
     spec.rag = rag;
   }
   if (Object.keys(parsed.routes).length > 0) spec.routing = parsed.routes;
+  return spec;
+}
+
+async function runAdd(args: string[]): Promise<number> {
+  const parsed = parseAddFlags(args);
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
+      process.stdout.write(USAGE);
+      return 0;
+    }
+    process.stderr.write(`${parsed.error}\n\n${USAGE}`);
+    return 1;
+  }
   const manifest = {
     apiVersion: "llamactl/v1",
     kind: "Project",
     metadata: { name: parsed.name },
-    spec,
+    spec: buildProjectSpec(parsed),
   };
   const manifestYaml = stringifyYaml(manifest);
   try {
@@ -293,6 +351,32 @@ function parseApplyFlags(args: string[]): ApplyOpts | { error: string } {
   return { file };
 }
 
+function readManifestFromStdin(): string | null {
+  let manifestYaml: string;
+  try {
+    manifestYaml = readFileSync(0, "utf8");
+  } catch (err) {
+    process.stderr.write(
+      `project apply: failed reading manifest from stdin: ${(err as Error).message}\n`,
+    );
+    return null;
+  }
+  if (!manifestYaml.trim()) {
+    process.stderr.write("project apply: stdin was empty — pipe a Project YAML in.\n");
+    return null;
+  }
+  return manifestYaml;
+}
+
+function readManifestFromFile(file: string): string | null {
+  const absPath = resolve(file);
+  if (!existsSync(absPath)) {
+    process.stderr.write(`project apply: file not found: ${absPath}\n`);
+    return null;
+  }
+  return readFileSync(absPath, "utf8");
+}
+
 async function runApply(args: string[]): Promise<number> {
   const parsed = parseApplyFlags(args);
   if ("error" in parsed) {
@@ -303,28 +387,9 @@ async function runApply(args: string[]): Promise<number> {
     process.stderr.write(`${parsed.error}\n\n${USAGE}`);
     return 1;
   }
-  let manifestYaml: string;
-  if (parsed.file === "-") {
-    try {
-      manifestYaml = readFileSync(0, "utf8");
-    } catch (err) {
-      process.stderr.write(
-        `project apply: failed reading manifest from stdin: ${(err as Error).message}\n`,
-      );
-      return 1;
-    }
-    if (!manifestYaml.trim()) {
-      process.stderr.write("project apply: stdin was empty — pipe a Project YAML in.\n");
-      return 1;
-    }
-  } else {
-    const absPath = resolve(parsed.file);
-    if (!existsSync(absPath)) {
-      process.stderr.write(`project apply: file not found: ${absPath}\n`);
-      return 1;
-    }
-    manifestYaml = readFileSync(absPath, "utf8");
-  }
+  const manifestYaml =
+    parsed.file === "-" ? readManifestFromStdin() : readManifestFromFile(parsed.file);
+  if (manifestYaml === null) return 1;
   try {
     const res = await client().projectApply.mutate({ manifestYaml });
     process.stdout.write(

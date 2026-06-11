@@ -167,6 +167,33 @@ export function resetGlobals(): void {
  * `--flag=value`, and `-n value`. Flags occurring after `--` are left
  * untouched (POSIX convention for pass-through args).
  */
+const GLOBAL_FLAG_FIELDS: Record<string, keyof Globals> = {
+  "--node": "nodeName",
+  "-n": "nodeName",
+  "--context": "contextName",
+  "--cluster-config": "configPath",
+};
+
+/**
+ * Consume one recognised global flag at argv[i]. Returns the index of
+ * the next argument to process, or null when `key` is not a global
+ * flag. Throws when the flag is present but has no value.
+ */
+function consumeGlobalFlag(
+  globals: Globals,
+  argv: string[],
+  i: number,
+  key: string,
+  valueInline: string | undefined,
+): number | null {
+  const field = GLOBAL_FLAG_FIELDS[key];
+  if (!field) return null;
+  const value = valueInline ?? argv[i + 1];
+  if (value === undefined) throw new Error(`${key} requires a value`);
+  globals[field] = value;
+  return valueInline !== undefined ? i + 1 : i + 2;
+}
+
 export function extractGlobalFlags(argv: string[]): { globals: Globals; rest: string[] } {
   const globals: Globals = { ...EMPTY_GLOBALS };
   const rest: string[] = [];
@@ -182,25 +209,9 @@ export function extractGlobalFlags(argv: string[]): { globals: Globals; rest: st
     const key = split ? split[0] : arg;
     const valueInline = split ? split[1] : undefined;
 
-    if (key === "--node" || key === "-n") {
-      const value = valueInline ?? argv[++i];
-      if (value === undefined) throw new Error(`${key} requires a value`);
-      globals.nodeName = value;
-      i++;
-      continue;
-    }
-    if (key === "--context") {
-      const value = valueInline ?? argv[++i];
-      if (value === undefined) throw new Error(`${key} requires a value`);
-      globals.contextName = value;
-      i++;
-      continue;
-    }
-    if (key === "--cluster-config") {
-      const value = valueInline ?? argv[++i];
-      if (value === undefined) throw new Error(`${key} requires a value`);
-      globals.configPath = value;
-      i++;
+    const next = consumeGlobalFlag(globals, argv, i, key, valueInline);
+    if (next !== null) {
+      i = next;
       continue;
     }
 

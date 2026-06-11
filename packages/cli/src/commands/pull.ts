@@ -117,41 +117,91 @@ function printTuneSummary(report: autotune.MaybeTuneAfterPullResult): void {
   }
 }
 
-async function runPullFile(args: string[]): Promise<number> {
+function parseArgsOrExit(args: string[]): ParsedArgs | { exitCode: number } {
   const parsed = parseArgs(args);
-  if ("error" in parsed) {
-    const stream = parsed.error === "help" ? process.stdout : process.stderr;
-    stream.write(USAGE);
-    return parsed.error === "help" ? 0 : 1;
+  if (!("error" in parsed)) return parsed;
+  const stream = parsed.error === "help" ? process.stdout : process.stderr;
+  stream.write(USAGE);
+  return { exitCode: parsed.error === "help" ? 0 : 1 };
+}
+
+async function fetchPullFile(
+  repo: string,
+  file: string,
+  localDispatch: boolean,
+): Promise<pull.PullFileResult | null> {
+  if (localDispatch) {
+    return await pull.pullRepoFile({
+      repo,
+      file,
+      onEvent: forwardStream,
+    });
   }
+  try {
+    return await subscribeRemote<pull.PullEvent, pull.PullFileResult>({
+      subscribe: (handlers) => getNodeClient().pullFile.subscribe({ repo, file }, handlers),
+      onEvent: forwardStream,
+      extractDone: matchDoneEvent<pull.PullFileResult>("done"),
+    });
+  } catch (err) {
+    process.stderr.write(
+      `pull file: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+    );
+    return null;
+  }
+}
+
+async function runAutotuneAfterPull(
+  localDispatch: boolean,
+  rel: string,
+  wasMissing: boolean,
+): Promise<autotune.MaybeTuneAfterPullResult | null> {
+  if (localDispatch) {
+    return await autotune.maybeTuneAfterPull({
+      rel,
+      wasMissing,
+      onEvent: forwardStream,
+    });
+  }
+  try {
+    return await subscribeRemote<bench.BenchEvent, autotune.MaybeTuneAfterPullResult>({
+      subscribe: (handlers) =>
+        getNodeClient().autotuneAfterPull.subscribe({ rel, wasMissing }, handlers),
+      onEvent: forwardStream,
+      extractDone: matchDoneEvent<autotune.MaybeTuneAfterPullResult>("done-tune"),
+    });
+  } catch (err) {
+    process.stderr.write(
+      `autotune: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+    );
+    // Pull itself succeeded; don't fail the command on an autotune
+    // error — just skip the tune summary.
+    return null;
+  }
+}
+
+function renderPullFileSuccess(
+  result: pull.PullFileResult,
+  tune: autotune.MaybeTuneAfterPullResult | null,
+): void {
+  process.stdout.write(
+    `Pulled ${result.rel} (wasMissing=${String(result.wasMissing)}${result.mmproj ? `, mmproj=${result.mmproj}` : ""})\n`,
+  );
+  if (tune) printTuneSummary(tune);
+}
+
+async function runPullFile(args: string[]): Promise<number> {
+  const parsed = parseArgsOrExit(args);
+  if ("exitCode" in parsed) return parsed.exitCode;
   const [repo, file] = parsed.positional;
   if (!repo || !file) {
     process.stderr.write("Usage: llamactl pull file <hf-repo> <gguf-file> [--json] [--no-tune]\n");
     return 1;
   }
 
-  let result: pull.PullFileResult;
   const localDispatch = isLocalDispatch();
-  if (localDispatch) {
-    result = await pull.pullRepoFile({
-      repo,
-      file,
-      onEvent: forwardStream,
-    });
-  } else {
-    try {
-      result = await subscribeRemote<pull.PullEvent, pull.PullFileResult>({
-        subscribe: (handlers) => getNodeClient().pullFile.subscribe({ repo, file }, handlers),
-        onEvent: forwardStream,
-        extractDone: matchDoneEvent<pull.PullFileResult>("done"),
-      });
-    } catch (err) {
-      process.stderr.write(
-        `pull file: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
-      );
-      return 1;
-    }
-  }
+  const result = await fetchPullFile(repo, file, localDispatch);
+  if (!result) return 1;
   if (result.code !== 0) {
     if (parsed.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return 1;
@@ -159,51 +209,69 @@ async function runPullFile(args: string[]): Promise<number> {
 
   let tune: autotune.MaybeTuneAfterPullResult | null = null;
   if (!parsed.noTune) {
-    if (localDispatch) {
-      tune = await autotune.maybeTuneAfterPull({
-        rel: result.rel,
-        wasMissing: result.wasMissing,
-        onEvent: forwardStream,
-      });
-    } else {
-      try {
-        tune = await subscribeRemote<bench.BenchEvent, autotune.MaybeTuneAfterPullResult>({
-          subscribe: (handlers) =>
-            getNodeClient().autotuneAfterPull.subscribe(
-              { rel: result.rel, wasMissing: result.wasMissing },
-              handlers,
-            ),
-          onEvent: forwardStream,
-          extractDone: matchDoneEvent<autotune.MaybeTuneAfterPullResult>("done-tune"),
-        });
-      } catch (err) {
-        process.stderr.write(
-          `autotune: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
-        );
-        // Pull itself succeeded; don't fail the command on an autotune
-        // error — just skip the tune summary.
-      }
-    }
+    tune = await runAutotuneAfterPull(localDispatch, result.rel, result.wasMissing);
   }
 
   if (parsed.json) {
     process.stdout.write(`${JSON.stringify({ ...result, tune }, null, 2)}\n`);
   } else {
-    process.stdout.write(
-      `Pulled ${result.rel} (wasMissing=${String(result.wasMissing)}${result.mmproj ? `, mmproj=${result.mmproj}` : ""})\n`,
-    );
-    if (tune) printTuneSummary(tune);
+    renderPullFileSuccess(result, tune);
   }
   return 0;
 }
 
-async function runPullCandidate(args: string[]): Promise<number> {
-  const parsed = parseArgs(args);
-  if ("error" in parsed) {
-    const stream = parsed.error === "help" ? process.stdout : process.stderr;
-    stream.write(USAGE);
-    return parsed.error === "help" ? 0 : 1;
+async function fetchPullCandidate(
+  repo: string,
+  file: string | undefined,
+  profile: string | undefined,
+  localDispatch: boolean,
+): Promise<Awaited<ReturnType<typeof pull.pullCandidate>> | null> {
+  if (localDispatch) {
+    return await pull.pullCandidate({
+      repo,
+      file,
+      profile,
+      onEvent: forwardStream,
+    });
   }
+  try {
+    const input: { repo: string; file?: string; profile?: string } = { repo };
+    if (file !== undefined) input.file = file;
+    if (profile !== undefined) input.profile = profile;
+    return await subscribeRemote<pull.PullEvent, Awaited<ReturnType<typeof pull.pullCandidate>>>({
+      subscribe: (handlers) => getNodeClient().pullCandidate.subscribe(input, handlers),
+      onEvent: forwardStream,
+      extractDone: matchDoneEvent<Awaited<ReturnType<typeof pull.pullCandidate>>>("done-candidate"),
+    });
+  } catch (err) {
+    process.stderr.write(
+      `pull candidate: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+    );
+    return null;
+  }
+}
+
+function renderCandidateError(error: string, json: boolean): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ error }, null, 2)}\n`);
+  } else {
+    process.stderr.write(`${error}\n`);
+  }
+}
+
+function renderPullCandidateSuccess(
+  result: pull.PullCandidateResult,
+  tune: autotune.MaybeTuneAfterPullResult | null,
+): void {
+  process.stdout.write(
+    `Pulled ${result.rel} (source=${result.picked.source}, profile=${result.picked.profile}, wasMissing=${String(result.wasMissing)}${result.mmproj ? `, mmproj=${result.mmproj}` : ""})\n`,
+  );
+  if (tune) printTuneSummary(tune);
+}
+
+async function runPullCandidate(args: string[]): Promise<number> {
+  const parsed = parseArgsOrExit(args);
+  if ("exitCode" in parsed) return parsed.exitCode;
   const [repo, file, profile] = parsed.positional;
   if (!repo) {
     process.stderr.write(
@@ -212,42 +280,11 @@ async function runPullCandidate(args: string[]): Promise<number> {
     return 1;
   }
 
-  let result: Awaited<ReturnType<typeof pull.pullCandidate>>;
   const localDispatch = isLocalDispatch();
-  if (localDispatch) {
-    result = await pull.pullCandidate({
-      repo,
-      file,
-      profile,
-      onEvent: forwardStream,
-    });
-  } else {
-    try {
-      const input: { repo: string; file?: string; profile?: string } = { repo };
-      if (file !== undefined) input.file = file;
-      if (profile !== undefined) input.profile = profile;
-      result = await subscribeRemote<
-        pull.PullEvent,
-        Awaited<ReturnType<typeof pull.pullCandidate>>
-      >({
-        subscribe: (handlers) => getNodeClient().pullCandidate.subscribe(input, handlers),
-        onEvent: forwardStream,
-        extractDone:
-          matchDoneEvent<Awaited<ReturnType<typeof pull.pullCandidate>>>("done-candidate"),
-      });
-    } catch (err) {
-      process.stderr.write(
-        `pull candidate: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
-      );
-      return 1;
-    }
-  }
+  const result = await fetchPullCandidate(repo, file, profile, localDispatch);
+  if (!result) return 1;
   if ("error" in result) {
-    if (parsed.json) {
-      process.stdout.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
-    } else {
-      process.stderr.write(`${result.error}\n`);
-    }
+    renderCandidateError(result.error, parsed.json);
     return 1;
   }
   if (result.code !== 0) {
@@ -257,38 +294,13 @@ async function runPullCandidate(args: string[]): Promise<number> {
 
   let tune: autotune.MaybeTuneAfterPullResult | null = null;
   if (!parsed.noTune) {
-    if (localDispatch) {
-      tune = await autotune.maybeTuneAfterPull({
-        rel: result.rel,
-        wasMissing: result.wasMissing,
-        onEvent: forwardStream,
-      });
-    } else {
-      try {
-        tune = await subscribeRemote<bench.BenchEvent, autotune.MaybeTuneAfterPullResult>({
-          subscribe: (handlers) =>
-            getNodeClient().autotuneAfterPull.subscribe(
-              { rel: result.rel, wasMissing: result.wasMissing },
-              handlers,
-            ),
-          onEvent: forwardStream,
-          extractDone: matchDoneEvent<autotune.MaybeTuneAfterPullResult>("done-tune"),
-        });
-      } catch (err) {
-        process.stderr.write(
-          `autotune: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
-        );
-      }
-    }
+    tune = await runAutotuneAfterPull(localDispatch, result.rel, result.wasMissing);
   }
 
   if (parsed.json) {
     process.stdout.write(`${JSON.stringify({ ...result, tune }, null, 2)}\n`);
   } else {
-    process.stdout.write(
-      `Pulled ${result.rel} (source=${result.picked.source}, profile=${result.picked.profile}, wasMissing=${String(result.wasMissing)}${result.mmproj ? `, mmproj=${result.mmproj}` : ""})\n`,
-    );
-    if (tune) printTuneSummary(tune);
+    renderPullCandidateSuccess(result, tune);
   }
   return 0;
 }

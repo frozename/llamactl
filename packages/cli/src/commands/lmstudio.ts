@@ -17,6 +17,10 @@ Subcommands:
       catalog row but leaves the file in place.
 `;
 
+type ScanResult = ReturnType<typeof lmstudio.scanLMStudio>;
+type ImportPlan = ReturnType<typeof lmstudio.planImport>;
+type ImportResult = Awaited<ReturnType<typeof lmstudio.applyImport>>;
+
 function parseImportFlags(
   args: string[],
 ): { root?: string; apply: boolean; link: boolean; json: boolean } | { error: string } {
@@ -36,35 +40,50 @@ function parseImportFlags(
   return { root, apply, link, json };
 }
 
-async function runScan(args: string[]): Promise<number> {
+type ScanFlags =
+  | { kind: "ok"; root: string | undefined; json: boolean }
+  | { kind: "help" }
+  | { kind: "error"; message: string };
+
+function parseScanFlags(args: string[]): ScanFlags {
   let root: string | undefined;
   let json = false;
   for (const arg of args) {
     if (arg === "--json") json = true;
-    else if (arg === "-h" || arg === "--help") {
-      process.stdout.write(USAGE);
-      return 0;
-    } else if (arg.startsWith("--root=")) {
-      root = arg.slice("--root=".length);
-    } else if (arg.startsWith("--")) {
-      process.stderr.write(`Unknown flag: ${arg}\n`);
-      return 1;
-    }
+    else if (arg === "-h" || arg === "--help") return { kind: "help" };
+    else if (arg.startsWith("--root=")) root = arg.slice("--root=".length);
+    else if (arg.startsWith("--")) return { kind: "error", message: `Unknown flag: ${arg}` };
   }
-  let scan: ReturnType<typeof lmstudio.scanLMStudio>;
+  return { kind: "ok", root, json };
+}
+
+async function fetchScan(root: string | undefined): Promise<ScanResult | null> {
   if (isLocalDispatch()) {
-    scan = lmstudio.scanLMStudio({ root });
-  } else {
-    try {
-      scan = await getNodeClient().lmstudioScan.query(root ? { root } : undefined);
-    } catch (err) {
-      process.stderr.write(
-        `lmstudio scan: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
-      );
-      return 1;
-    }
+    return lmstudio.scanLMStudio({ root });
   }
-  if (json) {
+  try {
+    return await getNodeClient().lmstudioScan.query(root ? { root } : undefined);
+  } catch (err) {
+    process.stderr.write(
+      `lmstudio scan: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+    );
+    return null;
+  }
+}
+
+async function runScan(args: string[]): Promise<number> {
+  const parsed = parseScanFlags(args);
+  if (parsed.kind === "help") {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+  if (parsed.kind === "error") {
+    process.stderr.write(`${parsed.message}\n`);
+    return 1;
+  }
+  const scan = await fetchScan(parsed.root);
+  if (!scan) return 1;
+  if (parsed.json) {
     process.stdout.write(`${JSON.stringify(scan, null, 2)}\n`);
     return scan.models.length > 0 ? 0 : 1;
   }
@@ -83,78 +102,83 @@ async function runScan(args: string[]): Promise<number> {
   return scan.models.length > 0 ? 0 : 1;
 }
 
-async function runImport(args: string[]): Promise<number> {
-  const parsed = parseImportFlags(args);
-  if ("error" in parsed) {
-    if (parsed.error === "help") {
-      process.stdout.write(USAGE);
-      return 0;
-    }
-    process.stderr.write(`${parsed.error}\n`);
+function buildRemoteImportInput(
+  root: string | undefined,
+  link: boolean,
+): { root?: string; link?: boolean } | undefined {
+  const input: { root?: string; link?: boolean } = {};
+  if (root !== undefined) input.root = root;
+  if (!link) input.link = link;
+  return Object.keys(input).length > 0 ? input : undefined;
+}
+
+async function fetchImportPlan(
+  root: string | undefined,
+  link: boolean,
+): Promise<ImportPlan | null> {
+  if (isLocalDispatch()) {
+    return lmstudio.planImport({ root, link });
+  }
+  try {
+    return await getNodeClient().lmstudioPlan.query(buildRemoteImportInput(root, link));
+  } catch (err) {
+    process.stderr.write(
+      `lmstudio plan: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+    );
+    return null;
+  }
+}
+
+function renderImportPlan(plan: ImportPlan): number {
+  if (!plan.root) {
+    process.stderr.write(
+      "No LM Studio install detected. Pass --root or set LMSTUDIO_MODELS_DIR.\n",
+    );
     return 1;
   }
-  const { root, apply, link, json } = parsed;
+  process.stdout.write(`root=${plan.root} (${String(plan.items.length)} candidates)\n`);
+  for (const item of plan.items) {
+    const suffix = item.reason ? ` — ${item.reason}` : "";
+    process.stdout.write(
+      `  ${item.action.padEnd(26)} rel=${item.rel.padEnd(40)} target=${item.targetPath}${suffix}\n`,
+    );
+  }
+  process.stdout.write(`\nRe-run with --apply to make the above changes.\n`);
+  return 0;
+}
 
-  if (!apply) {
-    let plan: ReturnType<typeof lmstudio.planImport>;
-    if (isLocalDispatch()) {
-      plan = lmstudio.planImport({ root, link });
-    } else {
-      try {
-        const input: { root?: string; link?: boolean } = {};
-        if (root !== undefined) input.root = root;
-        if (!link) input.link = link;
-        plan = await getNodeClient().lmstudioPlan.query(
-          Object.keys(input).length > 0 ? input : undefined,
-        );
-      } catch (err) {
-        process.stderr.write(
-          `lmstudio plan: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
-        );
-        return 1;
-      }
-    }
-    if (json) {
-      process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
-      return 0;
-    }
-    if (!plan.root) {
-      process.stderr.write(
-        "No LM Studio install detected. Pass --root or set LMSTUDIO_MODELS_DIR.\n",
-      );
-      return 1;
-    }
-    process.stdout.write(`root=${plan.root} (${String(plan.items.length)} candidates)\n`);
-    for (const item of plan.items) {
-      const suffix = item.reason ? ` — ${item.reason}` : "";
-      process.stdout.write(
-        `  ${item.action.padEnd(26)} rel=${item.rel.padEnd(40)} target=${item.targetPath}${suffix}\n`,
-      );
-    }
-    process.stdout.write(`\nRe-run with --apply to make the above changes.\n`);
+async function runImportPreview(
+  root: string | undefined,
+  link: boolean,
+  json: boolean,
+): Promise<number> {
+  const plan = await fetchImportPlan(root, link);
+  if (!plan) return 1;
+  if (json) {
+    process.stdout.write(`${JSON.stringify(plan, null, 2)}\n`);
     return 0;
   }
+  return renderImportPlan(plan);
+}
 
-  let result: Awaited<ReturnType<typeof lmstudio.applyImport>>;
+async function fetchImportResult(
+  root: string | undefined,
+  link: boolean,
+): Promise<ImportResult | null> {
   if (isLocalDispatch()) {
-    result = await lmstudio.applyImport({ root, apply: true, link });
-  } else {
-    try {
-      const input: { root?: string; link?: boolean } = {};
-      if (root !== undefined) input.root = root;
-      if (!link) input.link = link;
-      result = await getNodeClient().lmstudioImport.mutate(input);
-    } catch (err) {
-      process.stderr.write(
-        `lmstudio import: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
-      );
-      return 1;
-    }
+    return await lmstudio.applyImport({ root, apply: true, link });
   }
-  if (json) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return result.errors.length === 0 ? 0 : 1;
+  try {
+    return await getNodeClient().lmstudioImport.mutate(buildRemoteImportInput(root, link) ?? {});
+  } catch (err) {
+    process.stderr.write(
+      `lmstudio import: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+    );
+    return null;
   }
+}
+
+function renderImportResult(result: ImportResult): number {
   if (!result.root) {
     process.stderr.write("No LM Studio install detected.\n");
     return 1;
@@ -172,6 +196,37 @@ async function runImport(args: string[]): Promise<number> {
     process.stderr.write(`  error rel=${err.rel}: ${err.error}\n`);
   }
   return result.errors.length === 0 ? 0 : 1;
+}
+
+async function runImportApply(
+  root: string | undefined,
+  link: boolean,
+  json: boolean,
+): Promise<number> {
+  const result = await fetchImportResult(root, link);
+  if (!result) return 1;
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return result.errors.length === 0 ? 0 : 1;
+  }
+  return renderImportResult(result);
+}
+
+async function runImport(args: string[]): Promise<number> {
+  const parsed = parseImportFlags(args);
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
+      process.stdout.write(USAGE);
+      return 0;
+    }
+    process.stderr.write(`${parsed.error}\n`);
+    return 1;
+  }
+  const { root, apply, link, json } = parsed;
+  if (!apply) {
+    return await runImportPreview(root, link, json);
+  }
+  return await runImportApply(root, link, json);
 }
 
 export async function runLMStudio(args: string[]): Promise<number> {

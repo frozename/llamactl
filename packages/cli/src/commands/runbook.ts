@@ -21,6 +21,58 @@ EXAMPLES:
   llamactl runbook run promote-fastest-vision-model --params '{"profile":"macbook-pro-48g"}'
 `;
 
+function parseParamsJson(next: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(next);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      process.stderr.write("--params must be a JSON object\n");
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch (err) {
+    process.stderr.write(`--params: invalid JSON (${(err as Error).message})\n`);
+    return null;
+  }
+}
+
+function consumeParamsFlag(
+  argv: string[],
+  i: number,
+): { params: Record<string, unknown>; next: number } | null {
+  const next = argv[i + 1];
+  if (!next) {
+    process.stderr.write("--params requires a JSON value\n");
+    return null;
+  }
+  const parsed = parseParamsJson(next);
+  if (!parsed) return null;
+  return { params: parsed, next: i + 2 };
+}
+
+function consumeRunbookArg(
+  state: { dryRun: boolean; params: Record<string, unknown> },
+  argv: string[],
+  i: number,
+): { next: number } | null {
+  const arg = argv[i];
+  if (arg === "--dry-run") {
+    state.dryRun = true;
+    return { next: i + 1 };
+  }
+  if (arg === "--params") {
+    const consumed = consumeParamsFlag(argv, i);
+    if (!consumed) return null;
+    state.params = consumed.params;
+    return { next: consumed.next };
+  }
+  if (arg === "--help" || arg === "-h") {
+    process.stdout.write(USAGE);
+    return null;
+  }
+  process.stderr.write(`unknown flag: ${String(arg)}\n\n${USAGE}`);
+  return null;
+}
+
 function parseRunArgs(argv: string[]): {
   name: string;
   dryRun: boolean;
@@ -31,38 +83,17 @@ function parseRunArgs(argv: string[]): {
     process.stderr.write(`runbook run: name is required\n\n${USAGE}`);
     return null;
   }
-  let dryRun = false;
-  let params: Record<string, unknown> = {};
-  for (let i = 1; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--dry-run") {
-      dryRun = true;
-    } else if (arg === "--params") {
-      const next = argv[++i];
-      if (!next) {
-        process.stderr.write("--params requires a JSON value\n");
-        return null;
-      }
-      try {
-        const parsed: unknown = JSON.parse(next);
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-          process.stderr.write("--params must be a JSON object\n");
-          return null;
-        }
-        params = parsed as Record<string, unknown>;
-      } catch (err) {
-        process.stderr.write(`--params: invalid JSON (${(err as Error).message})\n`);
-        return null;
-      }
-    } else if (arg === "--help" || arg === "-h") {
-      process.stdout.write(USAGE);
-      return null;
-    } else {
-      process.stderr.write(`unknown flag: ${String(arg)}\n\n${USAGE}`);
-      return null;
-    }
+  const state: { dryRun: boolean; params: Record<string, unknown> } = {
+    dryRun: false,
+    params: {},
+  };
+  let i = 1;
+  while (i < argv.length) {
+    const step = consumeRunbookArg(state, argv, i);
+    if (!step) return null;
+    i = step.next;
   }
-  return { name, dryRun, params };
+  return { name, dryRun: state.dryRun, params: state.params };
 }
 
 export async function runRunbookCmd(argv: string[]): Promise<number> {

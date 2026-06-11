@@ -83,6 +83,38 @@ EXAMPLES:
   llamactl supervisor status --json --limit=5
 `;
 
+type SupervisorStatusNode = Awaited<ReturnType<typeof readSupervisorStatus>>["nodes"][number];
+
+function renderStatusNode(node: SupervisorStatusNode): void {
+  if (node.state === "NORMAL") {
+    process.stdout.write(`node ${node.name}: NORMAL (no recent pressure event)\n`);
+    process.stdout.write("\n");
+    return;
+  }
+  const mins = Math.floor(node.durationMs / 60000);
+  process.stdout.write(
+    `node ${node.name}: HIGH for ${String(mins)}m (since ${String(node.enteredAt)})\n`,
+  );
+  process.stdout.write(
+    `  clear progress: ${String(node.consecutiveClearTicks)}/${String(node.clearTicksNeeded)}\n`,
+  );
+  process.stdout.write(
+    `  free_mb=${String(node.free_mb)} (breach: ${node.headroomBreach ? "yes" : "no"}) compressor_mb=${String(node.compressor_mb)} (breach: ${node.compressorBreach ? "yes" : "no"})\n`,
+  );
+  process.stdout.write(`  last ${String(node.recent.length)} pressure-status:\n`);
+  for (const recent of node.recent) {
+    const t = new Date(recent.ts).toLocaleTimeString("en-US", { hour12: false });
+    const hits = [];
+    if (recent.headroomBreach) hits.push("headroom");
+    if (recent.compressorBreach) hits.push("compressor");
+    const hitsStr = hits.length > 0 ? hits.join(",") : "(none)";
+    process.stdout.write(
+      `    ${t}  free=${String(recent.free_mb)}  comp=${String(recent.compressor_mb)}  clear=${String(recent.consecutiveClearTicks)}/${String(recent.clearTicksNeeded)}  hits=${hitsStr}\n`,
+    );
+  }
+  process.stdout.write("\n");
+}
+
 async function runSupervisorStatus(flags: Flags, journalPath: string): Promise<number> {
   const report = await readSupervisorStatus({
     journalPath,
@@ -101,33 +133,7 @@ async function runSupervisorStatus(flags: Flags, journalPath: string): Promise<n
   }
 
   for (const node of report.nodes) {
-    if (node.state === "NORMAL") {
-      process.stdout.write(`node ${node.name}: NORMAL (no recent pressure event)\n`);
-      process.stdout.write("\n");
-    } else {
-      const mins = Math.floor(node.durationMs / 60000);
-      process.stdout.write(
-        `node ${node.name}: HIGH for ${String(mins)}m (since ${String(node.enteredAt)})\n`,
-      );
-      process.stdout.write(
-        `  clear progress: ${String(node.consecutiveClearTicks)}/${String(node.clearTicksNeeded)}\n`,
-      );
-      process.stdout.write(
-        `  free_mb=${String(node.free_mb)} (breach: ${node.headroomBreach ? "yes" : "no"}) compressor_mb=${String(node.compressor_mb)} (breach: ${node.compressorBreach ? "yes" : "no"})\n`,
-      );
-      process.stdout.write(`  last ${String(node.recent.length)} pressure-status:\n`);
-      for (const recent of node.recent) {
-        const t = new Date(recent.ts).toLocaleTimeString("en-US", { hour12: false });
-        const hits = [];
-        if (recent.headroomBreach) hits.push("headroom");
-        if (recent.compressorBreach) hits.push("compressor");
-        const hitsStr = hits.length > 0 ? hits.join(",") : "(none)";
-        process.stdout.write(
-          `    ${t}  free=${String(recent.free_mb)}  comp=${String(recent.compressor_mb)}  clear=${String(recent.consecutiveClearTicks)}/${String(recent.clearTicksNeeded)}  hits=${hitsStr}\n`,
-        );
-      }
-      process.stdout.write("\n");
-    }
+    renderStatusNode(node);
   }
   return 0;
 }
@@ -287,13 +293,66 @@ function buildSupervisorLoopOptions(
   };
 }
 
+function isSupervisorSubcommand(sub: string): sub is "audit" | "serve" | "status" | "tick" {
+  return sub === "serve" || sub === "tick" || sub === "status" || sub === "audit";
+}
+
+function printLoopBanner(
+  flags: Flags,
+  journalPath: string,
+  once: boolean,
+  loopOpts: SupervisorLoopOptions,
+): void {
+  if (!flags.quiet) {
+    const wlSummary =
+      flags.workloads.length === 0
+        ? "(mem-only)"
+        : flags.workloads.map((w) => `${w.name}@${redactEndpoint(w.endpoint)}`).join(", ");
+    process.stderr.write(
+      `supervisor: node=${flags.node} interval=${String(flags.intervalMs)}ms once=${String(once)} workloads=${wlSummary}\n`,
+    );
+    process.stderr.write(`supervisor: journal=${journalPath}\n`);
+    if (loopOpts.onTick !== undefined) {
+      process.stderr.write(
+        `supervisor: executor=on auto=${String(flags.auto)} threshold=${String(flags.severityThreshold)}${flags.executeId ? ` executeId=${flags.executeId}` : ""}\n`,
+      );
+    }
+  }
+  if (flags.noWorkloadsConflict) {
+    process.stderr.write(
+      "supervisor: warning — both --no-workloads and --workload= were passed; --no-workloads wins, workloads ignored.\n",
+    );
+  }
+}
+
+async function runSupervisorLoop(
+  flags: Flags,
+  journalPath: string,
+  once: boolean,
+): Promise<number> {
+  const loopOpts = buildSupervisorLoopOptions(flags, journalPath, once);
+  printLoopBanner(flags, journalPath, once, loopOpts);
+
+  const handle = startSupervisorLoop(loopOpts);
+  if (!once) {
+    process.on("SIGINT", () => {
+      handle.stop();
+    });
+    process.on("SIGTERM", () => {
+      handle.stop();
+    });
+  }
+  await handle.done;
+  return 0;
+}
+
 export async function runSupervisor(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   if (!sub || sub === "--help" || sub === "-h" || rest.includes("--help") || rest.includes("-h")) {
     process.stdout.write(`${USAGE}\n`);
     return sub ? 0 : 1;
   }
-  if (sub !== "serve" && sub !== "tick" && sub !== "status" && sub !== "audit") {
+  if (!isSupervisorSubcommand(sub)) {
     console.error(`Unknown supervisor subcommand: ${sub}`);
     console.error(USAGE);
     return 1;
@@ -324,40 +383,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
   }
 
   const once = sub === "tick" || flags.once;
-  const loopOpts = buildSupervisorLoopOptions(flags, journalPath, once);
-
-  if (!flags.quiet) {
-    const wlSummary =
-      flags.workloads.length === 0
-        ? "(mem-only)"
-        : flags.workloads.map((w) => `${w.name}@${redactEndpoint(w.endpoint)}`).join(", ");
-    process.stderr.write(
-      `supervisor: node=${flags.node} interval=${String(flags.intervalMs)}ms once=${String(once)} workloads=${wlSummary}\n`,
-    );
-    process.stderr.write(`supervisor: journal=${journalPath}\n`);
-    if (loopOpts.onTick !== undefined) {
-      process.stderr.write(
-        `supervisor: executor=on auto=${String(flags.auto)} threshold=${String(flags.severityThreshold)}${flags.executeId ? ` executeId=${flags.executeId}` : ""}\n`,
-      );
-    }
-  }
-  if (flags.noWorkloadsConflict) {
-    process.stderr.write(
-      "supervisor: warning — both --no-workloads and --workload= were passed; --no-workloads wins, workloads ignored.\n",
-    );
-  }
-
-  const handle = startSupervisorLoop(loopOpts);
-  if (!once) {
-    process.on("SIGINT", () => {
-      handle.stop();
-    });
-    process.on("SIGTERM", () => {
-      handle.stop();
-    });
-  }
-  await handle.done;
-  return 0;
+  return await runSupervisorLoop(flags, journalPath, once);
 }
 
 interface Flags {
@@ -560,15 +586,101 @@ function parsePressureFlags(
   }
 }
 
+const AUDIT_FLAG_PREFIXES: readonly string[] = [
+  "--limit=",
+  "--audit-path=",
+  "--audit=",
+  "--tool=",
+  "--outcome=",
+  "--since=",
+];
+
+const PRESSURE_FLAG_PREFIXES: readonly string[] = [
+  "--interval=",
+  "--journal=",
+  "--node=",
+  "--headroom-mb=",
+  "--compressor-mb=",
+  "--consecutive-ticks=",
+  "--clear-ticks=",
+  "--p95-degraded-ms=",
+  "--consecutive-errors=",
+];
+
+function hasPrefix(raw: string, prefixes: readonly string[]): boolean {
+  return prefixes.some((prefix) => raw.startsWith(prefix));
+}
+
+interface ToggleFlags {
+  once: boolean;
+  noWorkloads: boolean;
+  quiet: boolean;
+  auto: boolean;
+}
+
+function parseToggleFlags(raw: string, toggles: ToggleFlags, audit: AuditFlags): boolean {
+  switch (raw) {
+    case "--once":
+      toggles.once = true;
+      return true;
+    case "--no-workloads":
+      toggles.noWorkloads = true;
+      return true;
+    case "--quiet":
+      toggles.quiet = true;
+      return true;
+    case "--auto":
+      toggles.auto = true;
+      return true;
+    case "--json":
+      audit.json = true;
+      return true;
+    default:
+      return false;
+  }
+}
+
+function parseExecutorFlags(
+  raw: string,
+  executor: { severityThreshold: 1 | 2 | 3; executeId?: string },
+): boolean {
+  if (raw.startsWith("--severity-threshold=")) {
+    const v = Number(raw.slice("--severity-threshold=".length));
+    if (v === 1 || v === 2 || v === 3) executor.severityThreshold = v;
+    return true;
+  }
+  if (raw.startsWith("--execute=")) {
+    executor.executeId = raw.slice("--execute=".length);
+    return true;
+  }
+  return false;
+}
+
+function parseWorkloadFlags(
+  raw: string,
+  state: { kind: "ModelHost" | "ModelRun"; workloads: WorkloadTarget[] },
+): boolean {
+  if (raw.startsWith("--kind=")) {
+    const v = raw.slice("--kind=".length);
+    if (v === "ModelHost" || v === "ModelRun") state.kind = v;
+    return true;
+  }
+  if (raw.startsWith("--workload=")) {
+    const v = raw.slice("--workload=".length);
+    const [name, endpoint] = v.split("@", 2);
+    if (name && endpoint) state.workloads.push({ name, endpoint, kind: state.kind });
+    return true;
+  }
+  return false;
+}
+
 function parseFlags(argv: string[]): Flags {
-  let once = false;
-  let kind: "ModelHost" | "ModelRun" = "ModelHost";
-  const workloads: WorkloadTarget[] = [];
-  let noWorkloads = false;
-  let quiet = false;
-  let auto = false;
-  let severityThreshold: 1 | 2 | 3 = 2;
-  let executeId: string | undefined;
+  const toggles: ToggleFlags = { once: false, noWorkloads: false, quiet: false, auto: false };
+  const executor: { severityThreshold: 1 | 2 | 3; executeId?: string } = { severityThreshold: 2 };
+  const workloadState: { kind: "ModelHost" | "ModelRun"; workloads: WorkloadTarget[] } = {
+    kind: "ModelHost",
+    workloads: [],
+  };
 
   const audit: AuditFlags = { json: false };
   const pressure = {
@@ -584,76 +696,22 @@ function parseFlags(argv: string[]): Flags {
   };
 
   for (const raw of argv) {
-    if (raw === "--once") {
-      once = true;
-      continue;
-    }
-    if (raw === "--no-workloads") {
-      noWorkloads = true;
-      continue;
-    }
-    if (raw === "--quiet") {
-      quiet = true;
-      continue;
-    }
-    if (raw === "--auto") {
-      auto = true;
-      continue;
-    }
-    if (raw === "--json") {
-      audit.json = true;
-      continue;
-    }
-    if (
-      raw.startsWith("--limit=") ||
-      raw.startsWith("--audit-path=") ||
-      raw.startsWith("--audit=") ||
-      raw.startsWith("--tool=") ||
-      raw.startsWith("--outcome=") ||
-      raw.startsWith("--since=")
-    ) {
+    if (parseToggleFlags(raw, toggles, audit)) continue;
+    if (hasPrefix(raw, AUDIT_FLAG_PREFIXES)) {
       parseAuditFlags(raw, audit);
       continue;
     }
-    if (
-      raw.startsWith("--interval=") ||
-      raw.startsWith("--journal=") ||
-      raw.startsWith("--node=") ||
-      raw.startsWith("--headroom-mb=") ||
-      raw.startsWith("--compressor-mb=") ||
-      raw.startsWith("--consecutive-ticks=") ||
-      raw.startsWith("--clear-ticks=") ||
-      raw.startsWith("--p95-degraded-ms=") ||
-      raw.startsWith("--consecutive-errors=")
-    ) {
+    if (hasPrefix(raw, PRESSURE_FLAG_PREFIXES)) {
       parsePressureFlags(raw, pressure);
       continue;
     }
-    if (raw.startsWith("--severity-threshold=")) {
-      const v = Number(raw.slice("--severity-threshold=".length));
-      if (v === 1 || v === 2 || v === 3) severityThreshold = v;
-      continue;
-    }
-    if (raw.startsWith("--execute=")) {
-      executeId = raw.slice("--execute=".length);
-      continue;
-    }
-    if (raw.startsWith("--kind=")) {
-      const v = raw.slice("--kind=".length);
-      if (v === "ModelHost" || v === "ModelRun") kind = v;
-      continue;
-    }
-    if (raw.startsWith("--workload=")) {
-      const v = raw.slice("--workload=".length);
-      const [name, endpoint] = v.split("@", 2);
-      if (name && endpoint) workloads.push({ name, endpoint, kind });
-      continue;
-    }
+    if (parseExecutorFlags(raw, executor)) continue;
+    parseWorkloadFlags(raw, workloadState);
   }
 
   return {
     intervalMs: pressure.intervalMs,
-    once,
+    once: toggles.once,
     journal: pressure.journal,
     node: pressure.node,
     headroomMb: pressure.headroomMb,
@@ -662,13 +720,13 @@ function parseFlags(argv: string[]): Flags {
     clearTicks: pressure.clearTicks,
     p95DegradedMs: pressure.p95DegradedMs,
     consecutiveErrors: pressure.consecutiveErrors,
-    workloads: noWorkloads ? [] : workloads,
-    noWorkloadsConflict: noWorkloads && workloads.length > 0,
-    quiet,
-    auto,
-    severityThreshold,
+    workloads: toggles.noWorkloads ? [] : workloadState.workloads,
+    noWorkloadsConflict: toggles.noWorkloads && workloadState.workloads.length > 0,
+    quiet: toggles.quiet,
+    auto: toggles.auto,
+    severityThreshold: executor.severityThreshold,
 
-    executeId,
+    executeId: executor.executeId,
     json: audit.json,
     limit: audit.limit,
     auditPath: audit.auditPath,

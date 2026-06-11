@@ -10,7 +10,19 @@ bench profile / history / vision files, and clears the custom-catalog
 entry. Non-candidate scopes and promotion overrides require --force.
 `;
 
-export async function runUninstall(args: string[]): Promise<number> {
+function acceptUninstallPositional(rel: string, arg: string): { rel: string } | { exit: number } {
+  if (arg.startsWith("-")) {
+    process.stderr.write(`Unknown flag: ${arg}\n`);
+    return { exit: 1 };
+  }
+  if (rel) {
+    process.stderr.write(`Unexpected extra argument: ${arg}\n`);
+    return { exit: 1 };
+  }
+  return { rel: arg };
+}
+
+function parseUninstallArgs(args: string[]): { rel: string; force: boolean } | { exit: number } {
   let rel = "";
   let force = false;
   for (const arg of args) {
@@ -22,39 +34,46 @@ export async function runUninstall(args: string[]): Promise<number> {
       case "-h":
       case "--help":
         process.stdout.write(USAGE);
-        return 0;
-      default:
-        if (arg.startsWith("-")) {
-          process.stderr.write(`Unknown flag: ${arg}\n`);
-          return 1;
-        }
-        if (rel) {
-          process.stderr.write(`Unexpected extra argument: ${arg}\n`);
-          return 1;
-        }
-        rel = arg;
+        return { exit: 0 };
+      default: {
+        const accepted = acceptUninstallPositional(rel, arg);
+        if ("exit" in accepted) return accepted;
+        rel = accepted.rel;
         break;
+      }
     }
   }
 
   if (!rel) {
     process.stdout.write(USAGE);
-    return 1;
+    return { exit: 1 };
   }
+  return { rel, force };
+}
 
-  let report: ReturnType<typeof uninstall.uninstall>;
+async function fetchUninstallReport(
+  rel: string,
+  force: boolean,
+): Promise<ReturnType<typeof uninstall.uninstall> | null> {
   if (isLocalDispatch()) {
-    report = uninstall.uninstall({ rel, force });
-  } else {
-    try {
-      report = await getNodeClient().uninstall.mutate({ rel, force });
-    } catch (err) {
-      process.stderr.write(
-        `uninstall: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
-      );
-      return 1;
-    }
+    return uninstall.uninstall({ rel, force });
   }
+  try {
+    return await getNodeClient().uninstall.mutate({ rel, force });
+  } catch (err) {
+    process.stderr.write(
+      `uninstall: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+    );
+    return null;
+  }
+}
+
+export async function runUninstall(args: string[]): Promise<number> {
+  const parsed = parseUninstallArgs(args);
+  if ("exit" in parsed) return parsed.exit;
+
+  const report = await fetchUninstallReport(parsed.rel, parsed.force);
+  if (!report) return 1;
   if (report.error) {
     process.stderr.write(`${report.error}\n`);
     return report.code;

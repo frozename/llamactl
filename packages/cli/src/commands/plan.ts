@@ -65,6 +65,62 @@ interface RunFlags {
 
 type ParseResult = { kind: "ok"; flags: RunFlags } | { kind: "help" } | { kind: "error" };
 
+function applyRunToggle(flags: RunFlags, arg: string): boolean {
+  if (arg === "--stub") {
+    flags.stub = true;
+    return true;
+  }
+  if (arg === "--auto") {
+    flags.auto = true;
+    return true;
+  }
+  if (arg === "--json") {
+    flags.json = true;
+    return true;
+  }
+  return false;
+}
+
+function applyRunValueFlag(flags: RunFlags, arg: string): ParseResult | null {
+  const eq = arg.indexOf("=");
+  if (eq < 0) {
+    process.stderr.write(`plan run: flag ${arg} requires a value (--key=value)\n`);
+    return { kind: "error" };
+  }
+  const key = arg.slice(2, eq);
+  const value = arg.slice(eq + 1);
+  switch (key) {
+    case "context":
+      flags.context = value;
+      return null;
+    case "model":
+      flags.model = value;
+      return null;
+    case "base-url":
+      flags.baseUrl = value;
+      return null;
+    case "api-key-env":
+      flags.apiKeyEnv = value;
+      return null;
+    default:
+      process.stderr.write(`plan run: unknown flag --${key}\n\n${USAGE}`);
+      return { kind: "error" };
+  }
+}
+
+function consumePlanRunArg(flags: RunFlags, positional: string[], arg: string): ParseResult | null {
+  if (arg === "--help" || arg === "-h") {
+    process.stdout.write(USAGE);
+    return { kind: "help" };
+  }
+  if (applyRunToggle(flags, arg)) return null;
+  if (arg.startsWith("--")) {
+    return applyRunValueFlag(flags, arg);
+  }
+  positional.push(arg);
+  return null;
+}
+
 function parseRunFlags(argv: string[]): ParseResult {
   const flags: RunFlags = {
     goal: "",
@@ -78,50 +134,8 @@ function parseRunFlags(argv: string[]): ParseResult {
   };
   const positional: string[] = [];
   for (const arg of argv) {
-    if (arg === "--help" || arg === "-h") {
-      process.stdout.write(USAGE);
-      return { kind: "help" };
-    }
-    if (arg === "--stub") {
-      flags.stub = true;
-      continue;
-    }
-    if (arg === "--auto") {
-      flags.auto = true;
-      continue;
-    }
-    if (arg === "--json") {
-      flags.json = true;
-      continue;
-    }
-    if (arg.startsWith("--")) {
-      const eq = arg.indexOf("=");
-      if (eq < 0) {
-        process.stderr.write(`plan run: flag ${arg} requires a value (--key=value)\n`);
-        return { kind: "error" };
-      }
-      const key = arg.slice(2, eq);
-      const value = arg.slice(eq + 1);
-      switch (key) {
-        case "context":
-          flags.context = value;
-          break;
-        case "model":
-          flags.model = value;
-          break;
-        case "base-url":
-          flags.baseUrl = value;
-          break;
-        case "api-key-env":
-          flags.apiKeyEnv = value;
-          break;
-        default:
-          process.stderr.write(`plan run: unknown flag --${key}\n\n${USAGE}`);
-          return { kind: "error" };
-      }
-      continue;
-    }
-    positional.push(arg);
+    const step = consumePlanRunArg(flags, positional, arg);
+    if (step) return step;
   }
   if (positional.length === 0) {
     process.stderr.write(`plan run: goal is required\n\n${USAGE}`);
