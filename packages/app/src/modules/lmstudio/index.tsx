@@ -193,7 +193,10 @@ export default function LMStudio(): React.JSX.Element {
   ).length;
 
   return (
-    <div style={{ height: "100%", overflow: "auto", padding: 24 }}>
+    <div
+      style={{ height: "100%", overflow: "auto", padding: 24 }}
+      data-testid="models-lmstudio-root"
+    >
       <div
         style={{
           marginBottom: 4,

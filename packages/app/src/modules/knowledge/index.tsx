@@ -2,7 +2,7 @@ import * as React from "react";
 import { useMemo, useState } from "react";
 
 import { trpc } from "@/lib/trpc";
-import { Button } from "@/ui";
+import { Badge, Button } from "@/ui";
 
 import type { AgentNodeSummary, RagNodeSummary, RagProviderKind, TabId } from "./types";
 
@@ -28,6 +28,129 @@ interface AgentNode {
   endpoint: string;
 }
 
+/** Root container — always rendered, in every state, so the smoke
+ *  affordance `knowledge-retrieval-root` is unconditional. */
+function KnowledgeShell({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <div
+      style={{ height: "100%", overflow: "auto", padding: 24 }}
+      data-testid="knowledge-retrieval-root"
+    >
+      <div
+        style={{
+          marginBottom: 4,
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          color: "var(--color-text-secondary)",
+          fontSize: 12,
+        }}
+      >
+        Knowledge
+      </div>
+      <h1 style={{ marginBottom: 8, fontSize: 24, fontWeight: 600, color: "var(--color-text)" }}>
+        Retrieval-Augmented Generation
+      </h1>
+      <p style={{ marginBottom: 24, color: "var(--color-text-secondary)", fontSize: 12 }}>
+        Query, browse, and index documents against the RAG nodes registered in your kubeconfig.
+        Supported providers:{" "}
+        <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+          chroma
+        </Badge>{" "}
+        and{" "}
+        <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+          pgvector
+        </Badge>
+        .
+      </p>
+      {children}
+    </div>
+  );
+}
+
+function KnowledgeLoading(): React.JSX.Element {
+  return (
+    <div
+      style={{
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-1)",
+        padding: 16,
+        color: "var(--color-text-secondary)",
+        fontSize: 14,
+      }}
+    >
+      Loading nodes…
+    </div>
+  );
+}
+
+function KnowledgeEmptyState(): React.JSX.Element {
+  return (
+    <div
+      style={{
+        borderRadius: "var(--r-md)",
+        border: "1px solid var(--color-border)",
+        borderStyle: "dashed",
+        borderColor: "var(--color-border)",
+        background: "var(--color-surface-1)",
+        padding: 24,
+      }}
+      data-testid="knowledge-empty-state"
+    >
+      <div style={{ color: "var(--color-text)", fontSize: 14 }}>
+        No knowledge bases yet — register one with{" "}
+        <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+          llamactl node add …
+        </Badge>
+        .
+      </div>
+      <p style={{ marginTop: 8, color: "var(--color-text-secondary)", fontSize: 12 }}>
+        Example for a Chroma node backed by the chroma-mcp server:
+      </p>
+      <pre
+        style={{
+          marginTop: 4,
+          overflowX: "auto",
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-2)",
+          padding: 8,
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          color: "var(--color-text)",
+        }}
+      >{`llamactl node add kb-chroma \\
+  --rag=chroma \\
+  --endpoint="chroma-mcp run --persist-directory /path/to/chroma-data"`}</pre>
+      <p style={{ marginTop: 8, color: "var(--color-text-secondary)", fontSize: 12 }}>
+        Or a pgvector node against a running Postgres with the{" "}
+        <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+          vector
+        </Badge>{" "}
+        extension:
+      </p>
+      <pre
+        style={{
+          marginTop: 4,
+          overflowX: "auto",
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
+          background: "var(--color-surface-2)",
+          padding: 8,
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          color: "var(--color-text)",
+        }}
+      >{`llamactl node add kb-pg \\
+  --rag=pgvector \\
+  --endpoint="postgres://kb_user:$PG_PASSWORD@db.local:5432/kb_main"`}</pre>
+    </div>
+  );
+}
+
 function KnowledgeConfig({
   selected,
   ragNodes,
@@ -49,7 +172,7 @@ function KnowledgeConfig({
           gap: 12,
         }}
       >
-        <label style={{ gridColumn: "span 6" }}>
+        <label style={{ gridColumn: "span 6 / span 6", fontSize: 14 }}>
           <span
             style={{
               marginBottom: 4,
@@ -65,27 +188,91 @@ function KnowledgeConfig({
             onChange={(e) => {
               setSelectedNode(e.target.value);
             }}
+            data-testid="knowledge-node-select"
             style={{
               width: "100%",
-              padding: "4px",
-              borderRadius: 4,
-              background: "var(--color-surface-2)",
-              color: "var(--color-text)",
+              borderRadius: "var(--r-md)",
               border: "1px solid var(--color-border)",
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-2)",
+              paddingLeft: 8,
+              paddingRight: 8,
+              paddingTop: 4,
+              paddingBottom: 4,
               fontFamily: "var(--font-mono)",
+              color: "var(--color-text)",
             }}
           >
             {ragNodes.map((n) => (
               <option key={n.name} value={n.name}>
-                {n.name} — {n.provider}
+                {n.name}
+                {n.provider ? ` — ${n.provider}` : ""}
               </option>
             ))}
           </select>
         </label>
+        <div
+          style={{
+            gridColumn: "span 6 / span 6",
+            display: "flex",
+            alignItems: "flex-end",
+            gap: 8,
+            color: "var(--color-text-secondary)",
+            fontSize: 12,
+          }}
+        >
+          <span>
+            kind{" "}
+            <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+              rag
+            </Badge>
+          </span>
+          {selected.provider && (
+            <span>
+              · provider{" "}
+              <Badge variant="default" style={{ fontFamily: "var(--font-mono)" }}>
+                {selected.provider}
+              </Badge>
+            </span>
+          )}
+        </div>
       </div>
       <EmbedderPanel node={selected} agentNodes={agentNodes} />
     </>
   );
+}
+
+const TAB_DEFS: { id: TabId; label: string }[] = [
+  { id: "query", label: "Query" },
+  { id: "collections", label: "Collections" },
+  { id: "indexing", label: "Indexing" },
+  { id: "pipelines", label: "Pipelines" },
+  { id: "quality", label: "Quality" },
+];
+
+function tabButtonStyle(active: boolean): React.CSSProperties {
+  return active
+    ? {
+        borderBottom: "2px solid var(--color-border)",
+        borderColor: "var(--color-brand)",
+        paddingLeft: 12,
+        paddingRight: 12,
+        paddingTop: 8,
+        paddingBottom: 8,
+        fontSize: 14,
+        fontWeight: 500,
+        color: "var(--color-text)",
+      }
+    : {
+        borderBottom: "2px solid var(--color-border)",
+        borderColor: "transparent",
+        paddingLeft: 12,
+        paddingRight: 12,
+        paddingTop: 8,
+        paddingBottom: 8,
+        fontSize: 14,
+        color: "var(--color-text-secondary)",
+      };
 }
 
 function KnowledgeTabs({
@@ -111,21 +298,21 @@ function KnowledgeTabs({
           display: "flex",
           gap: 4,
           borderBottom: "1px solid var(--color-border)",
+          borderColor: "var(--color-border)",
         }}
+        data-testid="knowledge-tabs"
       >
-        {(["query", "collections", "indexing", "pipelines", "quality"] as TabId[]).map((id) => (
+        {TAB_DEFS.map((tab) => (
           <Button
-            key={id}
+            key={tab.id}
+            type="button"
             onClick={() => {
-              setActiveTab(id);
+              setActiveTab(tab.id);
             }}
-            style={{
-              padding: "8px 12px",
-              borderBottom: id === activeTab ? "2px solid var(--color-brand)" : "none",
-              color: id === activeTab ? "var(--color-text)" : "var(--color-text-secondary)",
-            }}
+            data-testid={`knowledge-tab-${tab.id}`}
+            style={tabButtonStyle(tab.id === activeTab)}
           >
-            {id.charAt(0).toUpperCase() + id.slice(1)}
+            {tab.label}
           </Button>
         ))}
       </div>
@@ -160,65 +347,6 @@ function KnowledgeTabs({
   );
 }
 
-function KnowledgeView({
-  selected,
-  agentNodes,
-  ragNodes,
-  setSelectedNode,
-  activeTab,
-  setActiveTab,
-  queryCollection,
-  setQueryCollection,
-}: {
-  selected: RagNodeSummary;
-  agentNodes: AgentNodeSummary[];
-  ragNodes: RagNodeSummary[];
-  setSelectedNode: (name: string) => void;
-  activeTab: TabId;
-  setActiveTab: (id: TabId) => void;
-  queryCollection: string;
-  setQueryCollection: (c: string) => void;
-}): React.JSX.Element {
-  return (
-    <div
-      style={{ height: "100%", overflow: "auto", padding: 24 }}
-      data-testid="knowledge-retrieval-root"
-    >
-      <div
-        style={{
-          marginBottom: 4,
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
-          color: "var(--color-text-secondary)",
-          fontSize: 12,
-        }}
-      >
-        Knowledge
-      </div>
-      <h1 style={{ marginBottom: 8, fontSize: 24, fontWeight: 600, color: "var(--color-text)" }}>
-        Retrieval-Augmented Generation
-      </h1>
-      <p style={{ marginBottom: 24, color: "var(--color-text-secondary)", fontSize: 12 }}>
-        Query, browse, and index documents against the RAG nodes registered in your kubeconfig.
-      </p>
-      <KnowledgeConfig
-        agentNodes={agentNodes}
-        ragNodes={ragNodes}
-        selected={selected}
-        setSelectedNode={setSelectedNode}
-      />
-      <KnowledgeTabs
-        activeTab={activeTab}
-        queryCollection={queryCollection}
-        ragNodes={ragNodes}
-        selected={selected}
-        setActiveTab={setActiveTab}
-        setQueryCollection={setQueryCollection}
-      />
-    </div>
-  );
-}
-
 export default function Knowledge(): React.JSX.Element {
   const nodes = trpc.nodeList.useQuery();
   const ragNodes = useMemo<RagNodeSummary[]>(() => {
@@ -229,7 +357,7 @@ export default function Knowledge(): React.JSX.Element {
         const embedder = n.rag?.embedder;
         return {
           name: n.name,
-          provider: n.rag?.provider as RagProviderKind,
+          provider: (n.rag?.provider ?? null) as RagProviderKind | null,
           kind: "rag" as const,
           embedder: embedder ? { node: embedder.node, model: embedder.model } : null,
         };
@@ -262,36 +390,28 @@ export default function Knowledge(): React.JSX.Element {
 
   const selected = ragNodes.find((n) => n.name === selectedNode) ?? null;
 
-  if (nodes.isLoading) {
-    return (
-      <div style={{ height: "100%", overflow: "auto", padding: 24 }}>
-        <div style={{ padding: 16 }}>Loading nodes…</div>
-      </div>
-    );
-  }
-
-  if (ragNodes.length === 0) {
-    return (
-      <div style={{ height: "100%", overflow: "auto", padding: 24 }}>
-        <div style={{ padding: 24, border: "1px dashed var(--color-border)" }}>
-          No knowledge bases registered.
-        </div>
-      </div>
-    );
-  }
-
-  if (!selected) return <></>;
-
   return (
-    <KnowledgeView
-      activeTab={activeTab}
-      agentNodes={agentNodes}
-      queryCollection={queryCollection}
-      ragNodes={ragNodes}
-      selected={selected}
-      setActiveTab={setActiveTab}
-      setQueryCollection={setQueryCollection}
-      setSelectedNode={setSelectedNode}
-    />
+    <KnowledgeShell>
+      {nodes.isLoading && <KnowledgeLoading />}
+      {!nodes.isLoading && ragNodes.length === 0 && <KnowledgeEmptyState />}
+      {ragNodes.length > 0 && selected && (
+        <>
+          <KnowledgeConfig
+            agentNodes={agentNodes}
+            ragNodes={ragNodes}
+            selected={selected}
+            setSelectedNode={setSelectedNode}
+          />
+          <KnowledgeTabs
+            activeTab={activeTab}
+            queryCollection={queryCollection}
+            ragNodes={ragNodes}
+            selected={selected}
+            setActiveTab={setActiveTab}
+            setQueryCollection={setQueryCollection}
+          />
+        </>
+      )}
+    </KnowledgeShell>
   );
 }

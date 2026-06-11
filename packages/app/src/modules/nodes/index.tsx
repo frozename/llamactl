@@ -72,7 +72,24 @@ export default function Nodes(): React.JSX.Element {
   const [showDisc, setShowDisc] = useState(false);
   const [showCloud, setShowCloud] = useState(false);
 
-  if (list.isLoading) return <div style={{ padding: 24 }}>Loading…</div>;
+  if (list.isLoading) {
+    return (
+      <div style={{ height: "100%" }} data-testid="nodes-root">
+        <div style={{ padding: 24, fontSize: 14, color: "var(--color-text-secondary)" }}>
+          Loading…
+        </div>
+      </div>
+    );
+  }
+  if (list.error) {
+    return (
+      <div style={{ height: "100%" }} data-testid="nodes-root">
+        <div style={{ padding: 24, fontSize: 14, color: "var(--color-err)" }}>
+          Failed to load nodes: {list.error.message}
+        </div>
+      </div>
+    );
+  }
   const data = list.data ?? { nodes: [], context: "", cluster: "", defaultNode: "" };
 
   return (
