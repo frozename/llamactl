@@ -393,6 +393,60 @@ function doHandleSubscription(ctx: TunnelClientContext, req: TunnelReq): void {
   ctx.activeSubscriptions.set(req.id, handle);
 }
 
+/**
+ * First hello-ack on a fresh socket: stop the ack timeout, reset the
+ * backoff, flip to ready, start the heartbeat, and resolve the
+ * first-attempt waiter.
+ */
+function handleHelloAck(ctx: TunnelClientContext, clearAckTimer: () => void): void {
+  clearAckTimer();
+  ctx.attempt = 0; // reset backoff on a healthy ack
+  setState(ctx, "ready");
+  startHeartbeat(ctx);
+  if (ctx.firstAttemptResolver) {
+    ctx.firstAttemptResolver.resolve();
+    ctx.firstAttemptResolver = null;
+  }
+}
+
+function handleReqMessage(ctx: TunnelClientContext, msg: TunnelReq): void {
+  // Inspect params.type to split subscription reqs from
+  // query/mutation reqs. Subscription reqs take a distinct
+  // path (stream frames) and never write a `res`.
+  const params = msg.params as { type?: string } | undefined;
+  if (params?.type === "subscription") {
+    doHandleSubscription(ctx, msg);
+    return;
+  }
+  void doHandleRequest(ctx, msg).then((res) => {
+    try {
+      ctx.ws?.send(encodeTunnelMessage(res));
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+function handleStreamCancel(ctx: TunnelClientContext, id: string): void {
+  const handle = ctx.activeSubscriptions.get(id);
+  if (handle) {
+    ctx.activeSubscriptions.delete(id);
+    try {
+      handle.cancel();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function handlePong(ctx: TunnelClientContext, nonce: string): void {
+  const p = ctx.pendingPings.get(nonce);
+  if (p) {
+    ctx.pendingPings.delete(nonce);
+    p.resolve();
+  }
+}
+
 function doConnect(ctx: TunnelClientContext): void {
   if (ctx.stopped) return;
   ctx.attempt++;
@@ -419,6 +473,12 @@ function doConnect(ctx: TunnelClientContext): void {
       /* ignore */
     }
   }, ackTimeout);
+  const clearAckTimer = (): void => {
+    if (ackTimer) {
+      clearTimeout(ackTimer);
+      ackTimer = null;
+    }
+  };
   newWs.onopen = (): void => {
     try {
       newWs.send(
@@ -438,64 +498,25 @@ function doConnect(ctx: TunnelClientContext): void {
     if (!msg) return;
     if (ctx.state !== "ready") {
       if (msg.type === "hello-ack") {
-        if (ackTimer) {
-          clearTimeout(ackTimer);
-          ackTimer = null;
-        }
-        ctx.attempt = 0; // reset backoff on a healthy ack
-        setState(ctx, "ready");
-        startHeartbeat(ctx);
-        if (ctx.firstAttemptResolver) {
-          ctx.firstAttemptResolver.resolve();
-          ctx.firstAttemptResolver = null;
-        }
+        handleHelloAck(ctx, clearAckTimer);
       }
       return;
     }
     if (msg.type === "req") {
-      // Inspect params.type to split subscription reqs from
-      // query/mutation reqs. Subscription reqs take a distinct
-      // path (stream frames) and never write a `res`.
-      const params = msg.params as { type?: string } | undefined;
-      if (params?.type === "subscription") {
-        doHandleSubscription(ctx, msg);
-        return;
-      }
-      void doHandleRequest(ctx, msg).then((res) => {
-        try {
-          ctx.ws?.send(encodeTunnelMessage(res));
-        } catch {
-          /* ignore */
-        }
-      });
+      handleReqMessage(ctx, msg);
       return;
     }
     if (msg.type === "stream-cancel") {
-      const handle = ctx.activeSubscriptions.get(msg.id);
-      if (handle) {
-        ctx.activeSubscriptions.delete(msg.id);
-        try {
-          handle.cancel();
-        } catch {
-          /* ignore */
-        }
-      }
+      handleStreamCancel(ctx, msg.id);
       return;
     }
     if (msg.type === "pong") {
-      const p = ctx.pendingPings.get(msg.nonce);
-      if (p) {
-        ctx.pendingPings.delete(msg.nonce);
-        p.resolve();
-      }
+      handlePong(ctx, msg.nonce);
       return;
     }
   };
   newWs.onclose = (ev: { code: number; reason: string }): void => {
-    if (ackTimer) {
-      clearTimeout(ackTimer);
-      ackTimer = null;
-    }
+    clearAckTimer();
     const wasFirstAttempt = ctx.firstAttemptResolver !== null && ctx.attempt === 1;
     ctx.opts.onClose?.(ev.code, ev.reason);
     cleanupSocket(ctx);

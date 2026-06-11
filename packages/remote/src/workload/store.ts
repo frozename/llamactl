@@ -150,6 +150,31 @@ export function listWorkloadNames(dir: string = defaultWorkloadsDir()): string[]
     .sort();
 }
 
+/**
+ * Parse one manifest file as a ModelRun. Returns null for non-ModelRun
+ * kinds and for unreadable/invalid files (reported via `onSkip`).
+ */
+function readModelRunEntry(
+  path: string,
+  onSkip: ((file: string, err: Error) => void) | undefined,
+): ModelRun | null {
+  try {
+    const raw = readFileSync(path, "utf8");
+    const parsed = parseYaml(raw) as { kind?: string } | null;
+    if (parsed?.kind !== "ModelRun") return null;
+    return ModelRunSchema.parse(parsed);
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    (
+      onSkip ??
+      ((skippedFile: string, skippedErr: Error): void => {
+        console.warn(`listWorkloads: skipped ${skippedFile}: ${skippedErr.message}`);
+      })
+    )(path, error);
+    return null;
+  }
+}
+
 export function listWorkloads(
   dir: string = defaultWorkloadsDir(),
   onSkip?: (file: string, err: Error) => void,
@@ -163,24 +188,12 @@ export function listWorkloads(
   for (const entry of readdirSync(dir)) {
     if (!entry.endsWith(".yaml")) continue;
     const path = join(dir, entry);
-    try {
-      const raw = readFileSync(path, "utf8");
-      const parsed = parseYaml(raw) as { kind?: string } | null;
-      if (parsed?.kind !== "ModelRun") continue;
-      const manifest = ModelRunSchema.parse(parsed);
-      out.push(manifest);
-      const byName = manifestPathsByName.get(manifest.metadata.name) ?? [];
-      byName.push(path);
-      manifestPathsByName.set(manifest.metadata.name, byName);
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      (
-        onSkip ??
-        ((skippedFile: string, skippedErr: Error): void => {
-          console.warn(`listWorkloads: skipped ${skippedFile}: ${skippedErr.message}`);
-        })
-      )(path, error);
-    }
+    const manifest = readModelRunEntry(path, onSkip);
+    if (!manifest) continue;
+    out.push(manifest);
+    const byName = manifestPathsByName.get(manifest.metadata.name) ?? [];
+    byName.push(path);
+    manifestPathsByName.set(manifest.metadata.name, byName);
   }
   for (const [name, paths] of manifestPathsByName) {
     if (paths.length > 1) {

@@ -58,6 +58,33 @@ function hashMaterial(spec: ChromaServiceSpec): Record<string, unknown> {
   };
 }
 
+/** Parse + validate the external endpoint URL for runtime='external'. */
+function resolveExternalEndpoint(spec: ChromaServiceSpec): ResolvedServiceEndpoint {
+  const raw = spec.externalEndpoint;
+  if (!raw) {
+    throw new ServiceError(
+      "spec-invalid",
+      `chroma service '${spec.name}': externalEndpoint is missing`,
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch (err) {
+    throw new ServiceError(
+      "spec-invalid",
+      `chroma service '${spec.name}': externalEndpoint '${raw}' is not a valid URL`,
+      err,
+    );
+  }
+  const port = parsed.port
+    ? Number(parsed.port)
+    : parsed.protocol === "https:"
+      ? 443
+      : CONTAINER_PORT;
+  return { host: parsed.hostname, port, url: raw };
+}
+
 export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
   kind: "chroma",
 
@@ -137,29 +164,7 @@ export const chromaHandler: ServiceHandler<ChromaServiceSpec> = {
 
   resolvedEndpoint(spec, instance: ServiceInstance | null): ResolvedServiceEndpoint {
     if (spec.runtime === "external") {
-      const raw = spec.externalEndpoint;
-      if (!raw) {
-        throw new ServiceError(
-          "spec-invalid",
-          `chroma service '${spec.name}': externalEndpoint is missing`,
-        );
-      }
-      let parsed: URL;
-      try {
-        parsed = new URL(raw);
-      } catch (err) {
-        throw new ServiceError(
-          "spec-invalid",
-          `chroma service '${spec.name}': externalEndpoint '${raw}' is not a valid URL`,
-          err,
-        );
-      }
-      const port = parsed.port
-        ? Number(parsed.port)
-        : parsed.protocol === "https:"
-          ? 443
-          : CONTAINER_PORT;
-      return { host: parsed.hostname, port, url: raw };
+      return resolveExternalEndpoint(spec);
     }
 
     // runtime === 'docker'

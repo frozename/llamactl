@@ -42,24 +42,7 @@ export function searchLogs(opts: SearchLogsOpts): Promise<LogHit[]> {
   const hits: LogHit[] = [];
   for (const f of opts.files) {
     if (!existsSync(f.path)) continue;
-    const { text } = tailFile(f.path, window);
-    const lines = text.split("\n");
-    const matches: (MatchExcerpt & { lineNumber: number })[] = [];
-    let score = 0;
-    for (const [i, line] of lines.entries()) {
-      if (matches.length >= cap) break;
-      const lineMatches = findTextMatches({ needle: opts.query, text: line });
-      for (const m of lineMatches) {
-        if (matches.length >= cap) break;
-        matches.push({
-          lineNumber: i + 1,
-          where: `${f.label}:${String(i + 1)}`,
-          snippet: m.snippet,
-          spans: m.spans,
-        });
-        score = Math.max(score, m.score);
-      }
-    }
+    const { matches, score } = matchFile(opts.query, f, window, cap);
     if (matches.length > 0) {
       hits.push({
         fileLabel: f.label,
@@ -71,4 +54,35 @@ export function searchLogs(opts: SearchLogsOpts): Promise<LogHit[]> {
   }
   hits.sort((a, b) => b.score - a.score || a.fileLabel.localeCompare(b.fileLabel));
   return Promise.resolve(hits.slice(0, opts.limit));
+}
+
+/**
+ * Match the query against the tail window of one log file, line by
+ * line, collecting up to `cap` excerpts and the best score.
+ */
+function matchFile(
+  query: string,
+  f: LogFileSpec,
+  windowBytes: number,
+  cap: number,
+): { matches: (MatchExcerpt & { lineNumber: number })[]; score: number } {
+  const { text } = tailFile(f.path, windowBytes);
+  const lines = text.split("\n");
+  const matches: (MatchExcerpt & { lineNumber: number })[] = [];
+  let score = 0;
+  for (const [i, line] of lines.entries()) {
+    if (matches.length >= cap) break;
+    const lineMatches = findTextMatches({ needle: query, text: line });
+    for (const m of lineMatches) {
+      if (matches.length >= cap) break;
+      matches.push({
+        lineNumber: i + 1,
+        where: `${f.label}:${String(i + 1)}`,
+        snippet: m.snippet,
+        spans: m.spans,
+      });
+      score = Math.max(score, m.score);
+    }
+  }
+  return { matches, score };
 }

@@ -177,52 +177,13 @@ export class KubernetesBackend implements RuntimeBackend {
     // 1. Controller first — removing it stops the pods before we
     //    drop the Service that points at them, so clients see a
     //    clean "gone" instead of a stale endpoint.
-    try {
-      if (controllerKind === "deployment") {
-        await this.client.apps.deleteNamespacedDeployment({
-          name: ref.name,
-          namespace,
-        });
-      } else {
-        await this.client.apps.deleteNamespacedStatefulSet({
-          name: ref.name,
-          namespace,
-        });
-      }
-    } catch (err) {
-      if (!isNotFound(err)) {
-        throw wrapBackend(err, `delete ${controllerKind} '${ref.name}'`);
-      }
-    }
+    await this.deleteController(ref.name, namespace, controllerKind);
 
     // 2. Services — both the ClusterIP service and, for StatefulSet,
     //    the headless companion + the `-client` ClusterIP. Look them
     //    up via label selector so we pick up every variant without
     //    hard-coding name suffixes.
-    const serviceSelector = `${K8S_LABEL_KEYS.managedBy}=${MANAGED_BY_VALUE},${K8S_LABEL_KEYS.component}=service,app=${ref.name}`;
-    try {
-      const services = await this.client.core.listNamespacedService({
-        namespace,
-        labelSelector: serviceSelector,
-      });
-      for (const svc of services.items) {
-        if (!svc.metadata?.name) continue;
-        try {
-          await this.client.core.deleteNamespacedService({
-            name: svc.metadata.name,
-            namespace,
-          });
-        } catch (err) {
-          if (!isNotFound(err)) {
-            throw wrapBackend(err, `delete service '${svc.metadata.name}'`);
-          }
-        }
-      }
-    } catch (err) {
-      if (!isNotFound(err)) {
-        throw wrapBackend(err, `list services for '${ref.name}'`);
-      }
-    }
+    await this.deleteManagedServices(ref.name, namespace);
 
     // 3. Secret (both translators use the same naming convention).
     try {
@@ -243,36 +204,94 @@ export class KubernetesBackend implements RuntimeBackend {
     //    prefix when the controller is a StatefulSet; Deployment
     //    path deletes the named PVC directly.
     if (purgeVolumes) {
-      try {
-        const pvcs = await this.client.core.listNamespacedPersistentVolumeClaim({
+      await this.purgeServicePvcs(ref.name, namespace);
+    }
+  }
+
+  /** Delete the controller (Deployment / StatefulSet); 404-tolerant. */
+  private async deleteController(
+    name: string,
+    namespace: string,
+    controllerKind: "deployment" | "statefulset",
+  ): Promise<void> {
+    try {
+      if (controllerKind === "deployment") {
+        await this.client.apps.deleteNamespacedDeployment({
+          name,
           namespace,
         });
-        for (const pvc of pvcs.items) {
-          const n = pvc.metadata?.name;
-          if (!n) continue;
-          // Deployment case: exactly `${name}-data`.
-          // StatefulSet case: `*-${name}-<ordinal>` (k8s convention).
-          if (
-            n === `${ref.name}-data` ||
-            n.endsWith(`-${ref.name}-0`) ||
-            n.includes(`-${ref.name}-`)
-          ) {
-            try {
-              await this.client.core.deleteNamespacedPersistentVolumeClaim({
-                name: n,
-                namespace,
-              });
-            } catch (err) {
-              if (!isNotFound(err)) {
-                throw wrapBackend(err, `delete pvc '${n}'`);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        if (!isNotFound(err)) {
-          throw wrapBackend(err, `list pvcs for '${ref.name}'`);
-        }
+      } else {
+        await this.client.apps.deleteNamespacedStatefulSet({
+          name,
+          namespace,
+        });
+      }
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw wrapBackend(err, `delete ${controllerKind} '${name}'`);
+      }
+    }
+  }
+
+  /** Delete every managed Service labeled `app=<name>`; 404-tolerant. */
+  private async deleteManagedServices(name: string, namespace: string): Promise<void> {
+    const serviceSelector = `${K8S_LABEL_KEYS.managedBy}=${MANAGED_BY_VALUE},${K8S_LABEL_KEYS.component}=service,app=${name}`;
+    try {
+      const services = await this.client.core.listNamespacedService({
+        namespace,
+        labelSelector: serviceSelector,
+      });
+      for (const svc of services.items) {
+        if (!svc.metadata?.name) continue;
+        await this.deleteServiceResource(svc.metadata.name, namespace);
+      }
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw wrapBackend(err, `list services for '${name}'`);
+      }
+    }
+  }
+
+  private async deleteServiceResource(name: string, namespace: string): Promise<void> {
+    try {
+      await this.client.core.deleteNamespacedService({
+        name,
+        namespace,
+      });
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw wrapBackend(err, `delete service '${name}'`);
+      }
+    }
+  }
+
+  /** Delete every PVC owned by the service; 404-tolerant. */
+  private async purgeServicePvcs(name: string, namespace: string): Promise<void> {
+    try {
+      const pvcs = await this.client.core.listNamespacedPersistentVolumeClaim({
+        namespace,
+      });
+      for (const pvc of pvcs.items) {
+        const n = pvc.metadata?.name;
+        if (!n || !pvcBelongsToService(n, name)) continue;
+        await this.deletePvc(n, namespace);
+      }
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw wrapBackend(err, `list pvcs for '${name}'`);
+      }
+    }
+  }
+
+  private async deletePvc(name: string, namespace: string): Promise<void> {
+    try {
+      await this.client.core.deleteNamespacedPersistentVolumeClaim({
+        name,
+        namespace,
+      });
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw wrapBackend(err, `delete pvc '${name}'`);
       }
     }
   }
@@ -358,61 +377,52 @@ export class KubernetesBackend implements RuntimeBackend {
       const name = d.metadata?.name;
       const namespace = d.metadata?.namespace;
       if (!name || !namespace) continue;
-      let service: V1Service | null = null;
-      try {
-        service = await this.client.core.readNamespacedService({
-          name,
-          namespace,
-        });
-      } catch (err) {
-        if (!isNotFound(err)) {
-          throw wrapBackend(err, `read service '${name}'`);
-        }
-      }
-      out.push(
-        this.buildServiceInstance(
-          {
-            name,
-            image: { repository: "", tag: "" },
-            specHash: annotationHash(d) ?? "",
-          },
-          d,
-          service,
-          namespace,
-        ),
-      );
+      const service = await this.readServiceOrNull(name, namespace);
+      out.push(this.controllerInstance(name, d, service, namespace));
     }
 
     for (const ss of statefulSets) {
       const name = ss.metadata?.name;
       const namespace = ss.metadata?.namespace;
       if (!name || !namespace) continue;
-      let service: V1Service | null = null;
-      try {
-        service = await this.client.core.readNamespacedService({
-          name: `${name}-client`,
-          namespace,
-        });
-      } catch (err) {
-        if (!isNotFound(err)) {
-          throw wrapBackend(err, `read service '${name}-client'`);
-        }
-      }
-      out.push(
-        this.buildServiceInstance(
-          {
-            name,
-            image: { repository: "", tag: "" },
-            specHash: annotationHash(ss) ?? "",
-          },
-          ss,
-          service,
-          namespace,
-        ),
-      );
+      const service = await this.readServiceOrNull(`${name}-client`, namespace);
+      out.push(this.controllerInstance(name, ss, service, namespace));
     }
 
     return out;
+  }
+
+  /** Read a Service by exact name; null when missing (404-tolerant). */
+  private async readServiceOrNull(name: string, namespace: string): Promise<V1Service | null> {
+    try {
+      return await this.client.core.readNamespacedService({
+        name,
+        namespace,
+      });
+    } catch (err) {
+      if (!isNotFound(err)) {
+        throw wrapBackend(err, `read service '${name}'`);
+      }
+      return null;
+    }
+  }
+
+  private controllerInstance(
+    name: string,
+    controller: V1Deployment | V1StatefulSet,
+    service: V1Service | null,
+    namespace: string,
+  ): ServiceInstance {
+    return this.buildServiceInstance(
+      {
+        name,
+        image: { repository: "", tag: "" },
+        specHash: annotationHash(controller) ?? "",
+      },
+      controller,
+      service,
+      namespace,
+    );
   }
 
   /**
@@ -569,59 +579,46 @@ export class KubernetesBackend implements RuntimeBackend {
     const { namespace, controllerKind } = located;
     const candidateName = controllerKind === "statefulset" ? `${ref.name}-client` : ref.name;
 
-    const readLive = async (): Promise<V1Service | null> => {
-      try {
-        return await this.client.core.readNamespacedService({
-          name: candidateName,
-          namespace,
-        });
-      } catch (err) {
-        if (isNotFound(err)) return null;
-        throw wrapBackend(err, `read service '${candidateName}'`);
-      }
-    };
-
-    let svc = await readLive();
+    const svc = await this.readLiveService(candidateName, namespace);
     if (!svc) return null;
 
     if (opts.serviceType === "NodePort") {
-      let nodePort = svc.spec?.ports?.[0]?.nodePort;
-      // k8s assigns the nodePort asynchronously on create. If it's
-      // still unset on the first read, back off once and retry
-      // rather than looping — the applier already blocks on pod
-      // readiness, so a bounded retry here is enough.
-      if (nodePort === undefined) {
-        await delay(2_000);
-        svc = await readLive();
-        nodePort = svc?.spec?.ports?.[0]?.nodePort;
-      }
-      if (typeof nodePort !== "number") return null;
-      return `http://localhost:${String(nodePort)}`;
+      return await this.resolveNodePortEndpoint(svc, candidateName, namespace);
     }
+    return resolveLoadBalancerEndpoint(svc);
+  }
 
-    // LoadBalancer
-    const ingress = svc.status?.loadBalancer?.ingress?.[0];
-    const ip = ingress?.ip;
-    const hostname = ingress?.hostname;
-    const port = svc.spec?.ports?.[0]?.port;
-    if (typeof port !== "number") return null;
+  private async readLiveService(name: string, namespace: string): Promise<V1Service | null> {
+    try {
+      return await this.client.core.readNamespacedService({
+        name,
+        namespace,
+      });
+    } catch (err) {
+      if (isNotFound(err)) return null;
+      throw wrapBackend(err, `read service '${name}'`);
+    }
+  }
 
-    // On Docker Desktop K8s and kind, the status block often reports
-    // a VM-internal address (e.g., 172.19.0.x) that's unreachable
-    // from the operator's host — but the service port is also bound
-    // on localhost via the Docker Desktop port forwarder. Prefer
-    // localhost whenever the ingress IP is in RFC1918 private space
-    // (or absent), since the llamactl CLI runs on the same host as
-    // the cluster in every local-dev scenario we support. Public
-    // hostnames / IPs still win — a real cloud LoadBalancer reports
-    // those and they're what operators want.
-    if (typeof hostname === "string" && hostname.length > 0 && !isLocalHostname(hostname)) {
-      return `http://${hostname}:${String(port)}`;
+  /**
+   * k8s assigns the nodePort asynchronously on create. If it's
+   * still unset on the first read, back off once and retry
+   * rather than looping — the applier already blocks on pod
+   * readiness, so a bounded retry here is enough.
+   */
+  private async resolveNodePortEndpoint(
+    initial: V1Service,
+    name: string,
+    namespace: string,
+  ): Promise<string | null> {
+    let nodePort = initial.spec?.ports?.[0]?.nodePort;
+    if (nodePort === undefined) {
+      await delay(2_000);
+      const svc = await this.readLiveService(name, namespace);
+      nodePort = svc?.spec?.ports?.[0]?.nodePort;
     }
-    if (typeof ip === "string" && ip.length > 0 && !isPrivateIpv4(ip)) {
-      return `http://${ip}:${String(port)}`;
-    }
-    return `http://localhost:${String(port)}`;
+    if (typeof nodePort !== "number") return null;
+    return `http://localhost:${String(nodePort)}`;
   }
 
   // Consumed by Phase 3+ translators; exposed here so tests can
@@ -1004,37 +1001,7 @@ export class KubernetesBackend implements RuntimeBackend {
       }
     }
     if (annotationHash(existing) === specHash) {
-      // Spec-hash matches, but actual state may have drifted (someone
-      // scaled the Deployment externally, the pod got evicted and the
-      // ReplicaSet lost ground, etc). When desired.spec.replicas
-      // exceeds what's on the cluster, patch the replicas field to
-      // reconcile — without this, the self-healing re-apply path
-      // polls readiness against zero pods and times out. Hash-match
-      // is a desired-spec check, not an actual-state check.
-      const desiredReplicas = desired.spec?.replicas ?? 1;
-      const existingReplicas = existing.spec?.replicas;
-      // Only act when the cluster explicitly reports fewer replicas
-      // than we want. `undefined` means the field was unset at read
-      // time (K8s server-side defaults to 1) — treat as matching so
-      // we never trip on a stub / elided field.
-      if (typeof existingReplicas === "number" && existingReplicas < desiredReplicas) {
-        try {
-          const specBody = existing.spec ?? desired.spec;
-          if (!specBody) {
-            throw new RuntimeError("spec-invalid", `deployment '${name}' missing spec`);
-          }
-          specBody.replicas = desiredReplicas;
-          existing.spec = specBody;
-          return await this.client.apps.replaceNamespacedDeployment({
-            name,
-            namespace,
-            body: existing,
-          });
-        } catch (err) {
-          throw wrapBackend(err, `reconcile-replicas deployment '${name}'`);
-        }
-      }
-      return existing;
+      return await this.reconcileDeploymentReplicas(name, namespace, desired, existing);
     }
     const body = desired;
     body.metadata = Object.assign(body.metadata ?? {}, {
@@ -1048,6 +1015,47 @@ export class KubernetesBackend implements RuntimeBackend {
       });
     } catch (err) {
       throw wrapBackend(err, `replace deployment '${name}'`);
+    }
+  }
+
+  /**
+   * Spec-hash matches, but actual state may have drifted (someone
+   * scaled the Deployment externally, the pod got evicted and the
+   * ReplicaSet lost ground, etc). When desired.spec.replicas
+   * exceeds what's on the cluster, patch the replicas field to
+   * reconcile — without this, the self-healing re-apply path
+   * polls readiness against zero pods and times out. Hash-match
+   * is a desired-spec check, not an actual-state check.
+   */
+  private async reconcileDeploymentReplicas(
+    name: string,
+    namespace: string,
+    desired: V1Deployment,
+    existing: V1Deployment,
+  ): Promise<V1Deployment> {
+    const desiredReplicas = desired.spec?.replicas ?? 1;
+    const existingReplicas = existing.spec?.replicas;
+    // Only act when the cluster explicitly reports fewer replicas
+    // than we want. `undefined` means the field was unset at read
+    // time (K8s server-side defaults to 1) — treat as matching so
+    // we never trip on a stub / elided field.
+    if (typeof existingReplicas !== "number" || existingReplicas >= desiredReplicas) {
+      return existing;
+    }
+    try {
+      const specBody = existing.spec ?? desired.spec;
+      if (!specBody) {
+        throw new RuntimeError("spec-invalid", `deployment '${name}' missing spec`);
+      }
+      specBody.replicas = desiredReplicas;
+      existing.spec = specBody;
+      return await this.client.apps.replaceNamespacedDeployment({
+        name,
+        namespace,
+        body: existing,
+      });
+    } catch (err) {
+      throw wrapBackend(err, `reconcile-replicas deployment '${name}'`);
     }
   }
 
@@ -1226,6 +1234,18 @@ export class KubernetesBackend implements RuntimeBackend {
 
 // --- helpers ------------------------------------------------------
 
+/**
+ * Deployment case: exactly `${name}-data`.
+ * StatefulSet case: `*-${name}-<ordinal>` (k8s convention).
+ */
+function pvcBelongsToService(pvcName: string, serviceName: string): boolean {
+  return (
+    pvcName === `${serviceName}-data` ||
+    pvcName.endsWith(`-${serviceName}-0`) ||
+    pvcName.includes(`-${serviceName}-`)
+  );
+}
+
 function isNotFound(err: unknown): boolean {
   return readStatus(err) === 404;
 }
@@ -1290,6 +1310,33 @@ function isPrivateIpv4(ip: string): boolean {
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
   return false;
+}
+
+/**
+ * On Docker Desktop K8s and kind, the status block often reports
+ * a VM-internal address (e.g., 172.19.0.x) that's unreachable
+ * from the operator's host — but the service port is also bound
+ * on localhost via the Docker Desktop port forwarder. Prefer
+ * localhost whenever the ingress IP is in RFC1918 private space
+ * (or absent), since the llamactl CLI runs on the same host as
+ * the cluster in every local-dev scenario we support. Public
+ * hostnames / IPs still win — a real cloud LoadBalancer reports
+ * those and they're what operators want.
+ */
+function resolveLoadBalancerEndpoint(svc: V1Service): string | null {
+  const ingress = svc.status?.loadBalancer?.ingress?.[0];
+  const ip = ingress?.ip;
+  const hostname = ingress?.hostname;
+  const port = svc.spec?.ports?.[0]?.port;
+  if (typeof port !== "number") return null;
+
+  if (typeof hostname === "string" && hostname.length > 0 && !isLocalHostname(hostname)) {
+    return `http://${hostname}:${String(port)}`;
+  }
+  if (typeof ip === "string" && ip.length > 0 && !isPrivateIpv4(ip)) {
+    return `http://${ip}:${String(port)}`;
+  }
+  return `http://localhost:${String(port)}`;
 }
 
 function isLocalHostname(host: string): boolean {

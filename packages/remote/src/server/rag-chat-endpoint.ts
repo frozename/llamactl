@@ -148,23 +148,26 @@ export function lastUserMessageContent(messages: ChatMessage[]): string | null {
     if (m?.role !== "user") continue;
     const c = m.content;
     if (typeof c === "string") return c;
-    if (Array.isArray(c)) {
-      const texts: string[] = [];
-      for (const part of c) {
-        if (part && typeof part === "object") {
-          const p = part as Record<string, unknown>;
-          // OpenAI-style `{type:'text', text:'...'}` — other shapes
-          // (image_url, input_audio) carry no retrieval query, skip.
-          const text = p["text"];
-          if (typeof text === "string") texts.push(text);
-        }
-      }
-      return texts.join("\n");
-    }
+    if (Array.isArray(c)) return collapseMultipartText(c);
     // null / other — treat as empty; keep looking back for a useful
     // one in case the last user turn was a media-only placeholder.
   }
   return null;
+}
+
+/** Collapse a multipart content array to its text parts joined by newlines. */
+function collapseMultipartText(parts: unknown[]): string {
+  const texts: string[] = [];
+  for (const part of parts) {
+    if (part && typeof part === "object") {
+      const p = part as Record<string, unknown>;
+      // OpenAI-style `{type:'text', text:'...'}` — other shapes
+      // (image_url, input_audio) carry no retrieval query, skip.
+      const text = p["text"];
+      if (typeof text === "string") texts.push(text);
+    }
+  }
+  return texts.join("\n");
 }
 
 /**
@@ -188,26 +191,40 @@ function parseRagField(
     return { ok: false, error: "rag.node is required (string)" };
   }
   const out: RagExtensionField = { node: r["node"] };
-  if ("topK" in r) {
-    const tk = r["topK"];
-    if (typeof tk !== "number" || !Number.isInteger(tk) || tk <= 0) {
-      return { ok: false, error: "rag.topK must be a positive integer" };
-    }
-    out.topK = tk;
-  }
-  if ("collection" in r && r["collection"] !== undefined) {
-    if (typeof r["collection"] !== "string") {
-      return { ok: false, error: "rag.collection must be a string" };
-    }
-    out.collection = r["collection"];
-  }
-  if ("system_prompt_prefix" in r && r["system_prompt_prefix"] !== undefined) {
-    if (typeof r["system_prompt_prefix"] !== "string") {
-      return { ok: false, error: "rag.system_prompt_prefix must be a string" };
-    }
-    out.system_prompt_prefix = r["system_prompt_prefix"];
-  }
+  const error =
+    validateRagTopK(r, out) ??
+    validateRagStringField(r, out, "collection") ??
+    validateRagStringField(r, out, "system_prompt_prefix");
+  if (error !== null) return { ok: false, error };
   return { ok: true, rag: out };
+}
+
+/** Validate + copy the optional `topK` field; error string when invalid. */
+function validateRagTopK(r: Record<string, unknown>, out: RagExtensionField): string | null {
+  if (!("topK" in r)) return null;
+  const tk = r["topK"];
+  if (typeof tk !== "number" || !Number.isInteger(tk) || tk <= 0) {
+    return "rag.topK must be a positive integer";
+  }
+  out.topK = tk;
+  return null;
+}
+
+/** Validate + copy an optional string field; error string when invalid. */
+function validateRagStringField(
+  r: Record<string, unknown>,
+  out: RagExtensionField,
+  key: "collection" | "system_prompt_prefix",
+): string | null {
+  if (!(key in r) || r[key] === undefined) return null;
+  const v = r[key];
+  if (typeof v !== "string") return `rag.${key} must be a string`;
+  if (key === "collection") {
+    out.collection = v;
+  } else {
+    out.system_prompt_prefix = v;
+  }
+  return null;
 }
 
 function validateMessages(raw: unknown): ChatMessage[] | null {
@@ -430,23 +447,9 @@ export async function handleRagChatCompletions(
 
   // Read the body once. We may need to replay it to the fallback
   // when neither `rag` nor `via` are present.
-  let bodyText: string;
-  try {
-    bodyText = await req.text();
-  } catch (err) {
-    return jsonError(
-      400,
-      `failed to read request body: ${(err as Error).message}`,
-      "invalid_request_error",
-    );
-  }
-
-  let body: RagChatRequestBody;
-  try {
-    body = JSON.parse(bodyText) as RagChatRequestBody;
-  } catch (err) {
-    return jsonError(400, `invalid JSON body: ${(err as Error).message}`, "invalid_request_error");
-  }
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const { bodyText, body } = parsed;
 
   const hasRag = "rag" in body && body.rag !== undefined && body.rag !== null;
   const hasVia = "via" in body && body.via !== undefined && body.via !== null;
@@ -454,62 +457,18 @@ export async function handleRagChatCompletions(
   // Plain OpenAI request — fall through to the legacy openai-proxy
   // path so existing callers (plain SDKs, smoke tests) keep working.
   if (!hasRag && !hasVia) {
-    if (ctx.fallback) {
-      // Rebuild a fresh Request so the fallback can .text() / .json()
-      // the body itself (the original Request's body is already
-      // consumed above).
-      const forwarded = new Request(req.url, {
-        method: req.method,
-        headers: req.headers,
-        body: bodyText,
-      });
-      return await ctx.fallback(forwarded);
-    }
-    return jsonError(
-      400,
-      "request must include `via` (node name to route chat through) or the `rag` extension",
-      "invalid_request_error",
-    );
+    return await dispatchPlainOpenAiRequest(req, bodyText, ctx);
   }
 
   // From here on the request uses the extension — `via` is mandatory.
-  if (!hasVia || typeof body.via !== "string" || body.via.trim() === "") {
-    return jsonError(
-      400,
-      "via is required — name the llamactl node to route chat through (gateway / agent / cloud)",
-      "invalid_request_error",
-    );
-  }
-  const via = body.via;
-
-  // Validate core OpenAI fields we plan to forward.
-  if (typeof body.model !== "string" || body.model === "") {
-    return jsonError(400, "model is required (string)", "invalid_request_error");
-  }
-  const messages = validateMessages(body.messages);
-  if (!messages || messages.length === 0) {
-    return jsonError(
-      400,
-      "messages must be a non-empty array of {role, content}",
-      "invalid_request_error",
-    );
-  }
+  const core = validateExtensionRequest(body);
+  if (!core.ok) return core.response;
+  const { via, model, messages } = core;
 
   const fields = validateForwardFields(body);
   if (!fields.ok) return fields.response;
-  const { maxTokens, temperature, providerOptions } = fields.fields;
 
-  // Resolve the caller — tests inject a fake; production builds one
-  // from the shared appRouter.
-  const caller =
-    ctx.caller ??
-    ((): NonNullable<RagChatEndpointContext["caller"]> => {
-      const c = ctx.appRouter.createCaller({}) as {
-        ragSearch: (input: RagSearchInput) => Promise<RagSearchResponse>;
-        chatComplete: (input: ChatCompleteInput) => Promise<unknown>;
-      };
-      return { ragSearch: c.ragSearch, chatComplete: c.chatComplete };
-    })();
+  const caller = resolveCaller(ctx);
 
   // ---- retrieval (optional) --------------------------------------------
   let retrievedCount = 0;
@@ -522,14 +481,7 @@ export async function handleRagChatCompletions(
   }
 
   // ---- chat forwarding --------------------------------------------------
-  const chatRequest: ChatCompleteInput["request"] = {
-    model: body.model,
-    messages: augmentedMessages,
-  };
-  if (maxTokens !== undefined) chatRequest.max_tokens = maxTokens;
-  if (temperature !== undefined) chatRequest.temperature = temperature;
-  if (providerOptions !== undefined) chatRequest.providerOptions = providerOptions;
-
+  const chatRequest = buildChatRequest(model, augmentedMessages, fields.fields);
   const forwarded = await forwardChat(caller, via, chatRequest);
   if (!forwarded.ok) return forwarded.response;
   const chatResult: unknown = forwarded.result;
@@ -544,4 +496,123 @@ export async function handleRagChatCompletions(
     status: 200,
     headers,
   });
+}
+
+/** Read + JSON-decode the request body, keeping the raw text for replay. */
+async function readJsonBody(
+  req: Request,
+): Promise<
+  { ok: true; bodyText: string; body: RagChatRequestBody } | { ok: false; response: Response }
+> {
+  let bodyText: string;
+  try {
+    bodyText = await req.text();
+  } catch (err) {
+    return {
+      ok: false,
+      response: jsonError(
+        400,
+        `failed to read request body: ${(err as Error).message}`,
+        "invalid_request_error",
+      ),
+    };
+  }
+  try {
+    return { ok: true, bodyText, body: JSON.parse(bodyText) as RagChatRequestBody };
+  } catch (err) {
+    return {
+      ok: false,
+      response: jsonError(
+        400,
+        `invalid JSON body: ${(err as Error).message}`,
+        "invalid_request_error",
+      ),
+    };
+  }
+}
+
+/** Route a plain OpenAI request (no `rag` / `via`) to the legacy fallback. */
+async function dispatchPlainOpenAiRequest(
+  req: Request,
+  bodyText: string,
+  ctx: RagChatEndpointContext,
+): Promise<Response> {
+  if (ctx.fallback) {
+    // Rebuild a fresh Request so the fallback can .text() / .json()
+    // the body itself (the original Request's body is already
+    // consumed above).
+    const forwarded = new Request(req.url, {
+      method: req.method,
+      headers: req.headers,
+      body: bodyText,
+    });
+    return await ctx.fallback(forwarded);
+  }
+  return jsonError(
+    400,
+    "request must include `via` (node name to route chat through) or the `rag` extension",
+    "invalid_request_error",
+  );
+}
+
+/** Validate the mandatory extension fields: `via`, `model`, `messages`. */
+function validateExtensionRequest(
+  body: RagChatRequestBody,
+):
+  | { ok: true; via: string; model: string; messages: ChatMessage[] }
+  | { ok: false; response: Response } {
+  if (typeof body.via !== "string" || body.via.trim() === "") {
+    return {
+      ok: false,
+      response: jsonError(
+        400,
+        "via is required — name the llamactl node to route chat through (gateway / agent / cloud)",
+        "invalid_request_error",
+      ),
+    };
+  }
+  if (typeof body.model !== "string" || body.model === "") {
+    return {
+      ok: false,
+      response: jsonError(400, "model is required (string)", "invalid_request_error"),
+    };
+  }
+  const messages = validateMessages(body.messages);
+  if (!messages || messages.length === 0) {
+    return {
+      ok: false,
+      response: jsonError(
+        400,
+        "messages must be a non-empty array of {role, content}",
+        "invalid_request_error",
+      ),
+    };
+  }
+  return { ok: true, via: body.via, model: body.model, messages };
+}
+
+/**
+ * Resolve the caller — tests inject a fake; production builds one
+ * from the shared appRouter.
+ */
+function resolveCaller(ctx: RagChatEndpointContext): RagChatCaller {
+  if (ctx.caller) return ctx.caller;
+  const c = ctx.appRouter.createCaller({}) as {
+    ragSearch: (input: RagSearchInput) => Promise<RagSearchResponse>;
+    chatComplete: (input: ChatCompleteInput) => Promise<unknown>;
+  };
+  return { ragSearch: c.ragSearch, chatComplete: c.chatComplete };
+}
+
+/** Assemble the forwarded OpenAI request from the validated fields. */
+function buildChatRequest(
+  model: string,
+  messages: ChatMessage[],
+  fields: ForwardFields,
+): ChatCompleteInput["request"] {
+  const chatRequest: ChatCompleteInput["request"] = { model, messages };
+  if (fields.maxTokens !== undefined) chatRequest.max_tokens = fields.maxTokens;
+  if (fields.temperature !== undefined) chatRequest.temperature = fields.temperature;
+  if (fields.providerOptions !== undefined) chatRequest.providerOptions = fields.providerOptions;
+  return chatRequest;
 }

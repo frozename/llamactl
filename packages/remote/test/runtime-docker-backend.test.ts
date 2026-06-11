@@ -145,6 +145,20 @@ describe("DockerBackend.ping", () => {
   });
 });
 
+/**
+ * Image-inspect behaviour for the happy path: the first call reports
+ * the image missing (404); after the pull, 200 with arch/os matching
+ * the host.
+ */
+function imageInspectResponse(recorded: Recorded[], url: string): MockResponse {
+  const calls = recorded.filter((r) => r.url.includes(url)).length;
+  if (calls === 1) return { status: 404, body: "" };
+  return {
+    status: 200,
+    body: jsonBody({ Architecture: "amd64", Os: "linux" }),
+  };
+}
+
 describe("DockerBackend.ensureService — happy path (create fresh)", () => {
   test("inspect 404 → pull → create → start → re-inspect", async () => {
     const recorded: Recorded[] = [];
@@ -156,17 +170,8 @@ describe("DockerBackend.ensureService — happy path (create fresh)", () => {
           return { status: 404, body: jsonBody({ message: "No such container" }) };
         return { status: 200, body: inspectBody({ specHash: "hash-v1", hostPort: 8000 }) };
       }
-      if (req.url.includes("/images/") && req.url.endsWith("/json")) {
-        if (req.url.includes("chromadb%2Fchroma%3A1.5.8")) {
-          // First call: image not present locally → 404. After pull:
-          // 200 with arch/os matching the host.
-          const calls = recorded.filter((r) => r.url.includes(req.url)).length;
-          if (calls === 1) return { status: 404, body: "" };
-          return {
-            status: 200,
-            body: jsonBody({ Architecture: "amd64", Os: "linux" }),
-          };
-        }
+      if (req.url.includes("chromadb%2Fchroma%3A1.5.8") && req.url.endsWith("/json")) {
+        return imageInspectResponse(recorded, req.url);
       }
       if (req.url.includes("/images/create") && req.method === "POST") {
         return { status: 200, body: '{"status":"Downloading"}\n{"status":"Complete"}' };

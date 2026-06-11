@@ -107,128 +107,162 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
   let errors = 0;
 
   for (const manifest of manifests) {
-    const name = manifest.metadata.name;
-    const { spec } = manifest;
-    try {
-      const result = await applyOne(
-        manifest,
-        opts.getClient,
-        (e) => {
-          opts.onEvent?.({ ...e, name });
-        },
-        undefined,
-        {
-          workloadsDir: dir,
-          ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
-          getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
-        },
-      );
-      if (result.error) errors++;
-      reports.push({
-        name,
-        node: spec.node,
-        action: result.action,
-        ...(result.error ? { error: result.error } : {}),
-      });
-      // Persist status WITHOUT clobbering a concurrent spec edit. A reconcile
-      // pass snapshots every manifest up-front (listWorkloads) and can run for
-      // minutes when a serverStart on another workload is slow or times out. If
-      // `llamactl enable/disable` (or a manual edit) writes spec.enabled to disk
-      // during that window, writing back the pass-start snapshot would silently
-      // revert it. Re-read the current on-disk manifest and merge only our
-      // status; the next pass observes the new spec and converges.
-      let toPersist: ModelRun = { ...manifest, status: result.statusSection };
-      try {
-        toPersist = { ...loadWorkloadByName(name, dir), status: result.statusSection };
-      } catch {
-        // Manifest deleted/renamed mid-pass — fall back to snapshot + status.
-      }
-      saveWorkload(toPersist, dir);
-    } catch (err) {
-      errors++;
-      const message = (err as Error).message;
-      reports.push({ name, node: spec.node, action: "unchanged", error: message });
-    }
+    errors += await reconcileModelRun(manifest, opts, dir, nodeBudgetByName, reports);
   }
 
   for (const manifest of hosts) {
-    const name = manifest.metadata.name;
-    const { spec } = manifest;
-    try {
-      const client = opts.getClient(spec.node);
-      const current = await client.modelHostStatus.query({ workload: name });
-      if (!spec.enabled && current.state !== "Running") {
-        // A disabled host that isn't Running may still have a stale sidecar
-        // (e.g. a dead-pid sidecar left by an out-of-band exit). statusModelHost
-        // reports Stopped for a dead pid, so this short-circuit now runs before
-        // the apply path that would otherwise remove it — sweep it here so the
-        // sidecar does not leak. No-op when the sidecar is already absent.
-        if (spec.node === LOCAL_NODE_ID) {
-          removeModelHostState({ name }, resolveEnv(process.env));
-        }
-        reports.push({
-          name,
-          node: spec.node,
-          action: "unchanged",
-        });
-        continue;
-      }
-      // Idempotent reconcile with spec-drift detection. For local
-      // workloads, the controller-owned sidecar is the source of truth
-      // for observed specHash. For remote workloads, trust the remote
-      // modelHostStatus.specHash surfaced by the node dispatcher. Skip
-      // restart iff Running and observedHash matches desiredHash.
-      const desiredHash = computeModelHostSpecHash(spec);
-      const observedHash =
-        spec.node === LOCAL_NODE_ID
-          ? readModelHostState({ name }, resolveEnv(process.env))?.specHash
-          : current.specHash;
-      if (current.state === "Running" && observedHash === desiredHash) {
-        reports.push({
-          name,
-          node: spec.node,
-          action: "unchanged",
-        });
-        continue;
-      }
-      const result = await applyOneModelHost(
-        manifest,
-        opts.getClient,
-        (e) => {
-          opts.onEvent?.({ ...e, name });
-        },
-        {
-          env: process.env,
-          workloadsDir: dir,
-          getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
-        },
-      );
-      if (result.ok && result.kind === "ModelHost") {
-        reports.push({
-          name,
-          node: spec.node,
-          action: current.state === "Running" ? "restarted" : "started",
-        });
-        saveModelHost(result.manifest, dir);
-      } else {
-        // applyOneModelHost only emits {ok:true, kind:'ModelHost'} or
-        // {ok:false, error}; the ModelRun shape can't arrive here, but
-        // narrow defensively for TS.
-        const errMsg = result.ok ? "unexpected non-ModelHost outcome" : result.error;
-        errors++;
-        reports.push({
-          name,
-          node: spec.node,
-          action: "unchanged",
-          error: errMsg,
-        });
-      }
-    } catch (err) {
-      errors++;
-      const message = (err as Error).message;
-      reports.push({ name, node: spec.node, action: "unchanged", error: message });
-    }
+    errors += await reconcileModelHost(manifest, opts, dir, nodeBudgetByName, reports);
   }
 
   return { reports, errors };
+}
+
+/**
+ * Reconcile one ModelRun manifest. Pushes its report(s) onto
+ * `reports` and returns the number of errors observed.
+ */
+async function reconcileModelRun(
+  manifest: ModelRun,
+  opts: ReconcileOptions,
+  dir: string,
+  nodeBudgetByName: Map<string, number>,
+  reports: ReconcileNodeReport[],
+): Promise<number> {
+  const name = manifest.metadata.name;
+  const { spec } = manifest;
+  let errors = 0;
+  try {
+    const result = await applyOne(
+      manifest,
+      opts.getClient,
+      (e) => {
+        opts.onEvent?.({ ...e, name });
+      },
+      undefined,
+      {
+        workloadsDir: dir,
+        ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
+        getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
+      },
+    );
+    if (result.error) errors++;
+    reports.push({
+      name,
+      node: spec.node,
+      action: result.action,
+      ...(result.error ? { error: result.error } : {}),
+    });
+    // Persist status WITHOUT clobbering a concurrent spec edit. A reconcile
+    // pass snapshots every manifest up-front (listWorkloads) and can run for
+    // minutes when a serverStart on another workload is slow or times out. If
+    // `llamactl enable/disable` (or a manual edit) writes spec.enabled to disk
+    // during that window, writing back the pass-start snapshot would silently
+    // revert it. Re-read the current on-disk manifest and merge only our
+    // status; the next pass observes the new spec and converges.
+    let toPersist: ModelRun = { ...manifest, status: result.statusSection };
+    try {
+      toPersist = { ...loadWorkloadByName(name, dir), status: result.statusSection };
+    } catch {
+      // Manifest deleted/renamed mid-pass — fall back to snapshot + status.
+    }
+    saveWorkload(toPersist, dir);
+  } catch (err) {
+    errors++;
+    const message = (err as Error).message;
+    reports.push({ name, node: spec.node, action: "unchanged", error: message });
+  }
+  return errors;
+}
+
+/**
+ * Decide what one ModelHost reconcile pass should do:
+ *
+ *   sweep-disabled — host is disabled and not Running; clear any
+ *                    stale sidecar and report unchanged.
+ *   converged      — Running with a matching specHash; nothing to do.
+ *   apply          — anything else; run applyOneModelHost.
+ *
+ * Idempotent reconcile with spec-drift detection. For local
+ * workloads, the controller-owned sidecar is the source of truth
+ * for observed specHash. For remote workloads, trust the remote
+ * modelHostStatus.specHash surfaced by the node dispatcher. Skip
+ * restart iff Running and observedHash matches desiredHash.
+ */
+function classifyHostReconcile(
+  spec: ModelHostManifest["spec"],
+  name: string,
+  current: { state: string; specHash?: string },
+): "sweep-disabled" | "converged" | "apply" {
+  if (!spec.enabled && current.state !== "Running") return "sweep-disabled";
+  const desiredHash = computeModelHostSpecHash(spec);
+  const observedHash =
+    spec.node === LOCAL_NODE_ID
+      ? readModelHostState({ name }, resolveEnv(process.env))?.specHash
+      : current.specHash;
+  if (current.state === "Running" && observedHash === desiredHash) return "converged";
+  return "apply";
+}
+
+/**
+ * Reconcile one ModelHost manifest. Pushes its report onto `reports`
+ * and returns the number of errors observed.
+ */
+async function reconcileModelHost(
+  manifest: ModelHostManifest,
+  opts: ReconcileOptions,
+  dir: string,
+  nodeBudgetByName: Map<string, number>,
+  reports: ReconcileNodeReport[],
+): Promise<number> {
+  const name = manifest.metadata.name;
+  const { spec } = manifest;
+  try {
+    const client = opts.getClient(spec.node);
+    const current = await client.modelHostStatus.query({ workload: name });
+    const decision = classifyHostReconcile(spec, name, current);
+    if (decision === "sweep-disabled") {
+      // A disabled host that isn't Running may still have a stale sidecar
+      // (e.g. a dead-pid sidecar left by an out-of-band exit). statusModelHost
+      // reports Stopped for a dead pid, so this short-circuit now runs before
+      // the apply path that would otherwise remove it — sweep it here so the
+      // sidecar does not leak. No-op when the sidecar is already absent.
+      if (spec.node === LOCAL_NODE_ID) {
+        removeModelHostState({ name }, resolveEnv(process.env));
+      }
+      reports.push({ name, node: spec.node, action: "unchanged" });
+      return 0;
+    }
+    if (decision === "converged") {
+      reports.push({ name, node: spec.node, action: "unchanged" });
+      return 0;
+    }
+    const result = await applyOneModelHost(
+      manifest,
+      opts.getClient,
+      (e) => {
+        opts.onEvent?.({ ...e, name });
+      },
+      {
+        env: process.env,
+        workloadsDir: dir,
+        getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
+      },
+    );
+    const action = current.state === "Running" ? "restarted" : "started";
+    if (result.ok && result.kind === "ModelHost") {
+      reports.push({ name, node: spec.node, action });
+      saveModelHost(result.manifest, dir);
+      return 0;
+    }
+    // applyOneModelHost only emits {ok:true, kind:'ModelHost'} or
+    // {ok:false, error}; the ModelRun shape can't arrive here, but
+    // narrow defensively for TS.
+    const errMsg = result.ok ? "unexpected non-ModelHost outcome" : result.error;
+    reports.push({ name, node: spec.node, action: "unchanged", error: errMsg });
+    return 1;
+  } catch (err) {
+    const message = (err as Error).message;
+    reports.push({ name, node: spec.node, action: "unchanged", error: message });
+    return 1;
+  }
 }

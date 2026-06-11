@@ -368,6 +368,39 @@ function handleHello(
   ws.send(encodeTunnelMessage(ack));
 }
 
+/** Correlate a `res` frame back to its pending request promise. */
+function resolvePendingRes(state: ConnectionState, msg: TunnelRes): void {
+  const pending = state.pending.get(msg.id);
+  if (pending) {
+    state.pending.delete(msg.id);
+    pending.resolve(msg);
+  }
+}
+
+/**
+ * Route to subscription map ONLY — a late stream-event
+ * after cancel will miss (no-op) which is the intended
+ * silent-drop behaviour.
+ */
+function pushStreamEvent(
+  state: ConnectionState,
+  msg: Extract<TunnelMessage, { type: "stream-event" }>,
+): void {
+  const sub = state.subscriptions.get(msg.id);
+  if (sub) sub.push(msg.data);
+}
+
+function finishStream(
+  state: ConnectionState,
+  msg: Extract<TunnelMessage, { type: "stream-done" }>,
+): void {
+  const sub = state.subscriptions.get(msg.id);
+  if (sub) {
+    state.subscriptions.delete(msg.id);
+    sub.done(msg.ok ? undefined : msg.error);
+  }
+}
+
 function handleTunnelMessage(
   ctx: TunnelServerContext,
   ws: BunServerWebSocket,
@@ -390,27 +423,15 @@ function handleTunnelMessage(
     return;
   }
   if (msg.type === "res") {
-    const pending = state.pending.get(msg.id);
-    if (pending) {
-      state.pending.delete(msg.id);
-      pending.resolve(msg);
-    }
+    resolvePendingRes(state, msg);
     return;
   }
   if (msg.type === "stream-event") {
-    // Route to subscription map ONLY — a late stream-event
-    // after cancel will miss (no-op) which is the intended
-    // silent-drop behaviour.
-    const sub = state.subscriptions.get(msg.id);
-    if (sub) sub.push(msg.data);
+    pushStreamEvent(state, msg);
     return;
   }
   if (msg.type === "stream-done") {
-    const sub = state.subscriptions.get(msg.id);
-    if (sub) {
-      state.subscriptions.delete(msg.id);
-      sub.done(msg.ok ? undefined : msg.error);
-    }
+    finishStream(state, msg);
     return;
   }
   if (msg.type === "ping") {

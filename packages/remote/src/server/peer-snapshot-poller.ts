@@ -37,6 +37,42 @@ interface RawFleetSnapshot {
 // a few hundred MB even when GBs are available. Use free + inactive.
 const HIGH_PRESSURE_AVAILABLE_MB = 768;
 
+function parseWorkloadPort(endpoint: string | undefined): number {
+  if (!endpoint) return 0;
+  try {
+    return Number(new URL(endpoint).port) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Flatten reachable workloads into deduped { modelId, port, revision } rows. */
+function collectPeerWorkloads(
+  rawWorkloads: NonNullable<RawFleetSnapshot["workloads"]>,
+): PeerSnapshot["workloads"] {
+  const seen = new Set<string>();
+  const workloads: { modelId: string; port: number; revision?: string | null }[] = [];
+  for (const w of rawWorkloads) {
+    if (w.reachable === false) continue;
+    const port = parseWorkloadPort(w.endpoint);
+    const revision = w.revision ?? null;
+    for (const modelId of w.models ?? []) {
+      if (!modelId || seen.has(modelId)) continue;
+      seen.add(modelId);
+      workloads.push({ modelId, port, revision });
+    }
+  }
+  return workloads;
+}
+
+function computePeerPressure(nodeMem: RawFleetSnapshot["node_mem"]): PeerSnapshot["pressure"] {
+  let availableMb: number | null = null;
+  if (nodeMem && (typeof nodeMem.free_mb === "number" || typeof nodeMem.inactive_mb === "number")) {
+    availableMb = (nodeMem.free_mb ?? 0) + (nodeMem.inactive_mb ?? 0);
+  }
+  return availableMb !== null && availableMb < HIGH_PRESSURE_AVAILABLE_MB ? "HIGH" : "NORMAL";
+}
+
 async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSnapshot | null> {
   const headers: Record<string, string> = {};
   if (peer.token) headers.authorization = `Bearer ${peer.token}`;
@@ -57,36 +93,9 @@ async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSna
   const snap = (await res.json().catch(() => null)) as RawFleetSnapshot | null;
   if (!snap?.workloads?.length) return null;
 
-  const seen = new Set<string>();
-  const workloads: { modelId: string; port: number; revision?: string | null }[] = [];
-  for (const w of snap.workloads) {
-    if (w.reachable === false) continue;
-    let port = 0;
-    if (w.endpoint) {
-      try {
-        port = Number(new URL(w.endpoint).port) || 0;
-      } catch {
-        port = 0;
-      }
-    }
-    const revision = w.revision ?? null;
-    for (const modelId of w.models ?? []) {
-      if (!modelId || seen.has(modelId)) continue;
-      seen.add(modelId);
-      workloads.push({ modelId, port, revision });
-    }
-  }
+  const workloads = collectPeerWorkloads(snap.workloads);
   if (workloads.length === 0) return null;
-  let availableMb: number | null = null;
-  if (
-    snap.node_mem &&
-    (typeof snap.node_mem.free_mb === "number" || typeof snap.node_mem.inactive_mb === "number")
-  ) {
-    availableMb = (snap.node_mem.free_mb ?? 0) + (snap.node_mem.inactive_mb ?? 0);
-  }
-  const pressure: PeerSnapshot["pressure"] =
-    availableMb !== null && availableMb < HIGH_PRESSURE_AVAILABLE_MB ? "HIGH" : "NORMAL";
-  return { workloads, pressure, fetchedAt: nowMs };
+  return { workloads, pressure: computePeerPressure(snap.node_mem), fetchedAt: nowMs };
 }
 
 export interface PeerSnapshotPollerOptions {

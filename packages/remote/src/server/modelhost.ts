@@ -339,6 +339,44 @@ async function reapOrAdoptPriorHost(
   return null;
 }
 
+/**
+ * Detach from the parent's reference count so subscription
+ * teardown / generator cleanup cannot propagate a signal back
+ * to the engine process. Mirrors core/src/server.ts:startServer
+ * which uses the same detached + unref pattern for llama-server.
+ */
+function detachChild(child: ChildProcess): void {
+  const maybeUnref = (child as { unref?: () => void }).unref;
+  if (maybeUnref) maybeUnref.call(child);
+}
+
+/**
+ * The readiness probe can be satisfied by a DIFFERENT process already bound
+ * to this endpoint (e.g. a prior omlx we did not reap). If our spawned child
+ * has already exited, refuse to record its dead pid — recording it would make
+ * listLocalRoutes drop the ModelHost from routing. exitCode is null while the
+ * child runs and a number once it exits (undefined for test stubs → running).
+ */
+function ensureSpawnedChildStillRunning(
+  child: ChildProcess,
+  pid: number,
+  endpoint: { host: string; port: number },
+): void {
+  if (typeof child.exitCode === "number") {
+    throw new Error(
+      `modelhost child pid ${String(pid)} exited before readiness (endpoint ${endpoint.host}:${String(endpoint.port)} likely served by another process); refusing to record a stale pid`,
+    );
+  }
+}
+
+function resolveModelAliases(manifest: ModelHostManifest): string[] {
+  const firstHostedModel = manifest.spec.hostedModels[0];
+  if (!firstHostedModel) {
+    throw new Error(`ModelHost ${manifest.metadata.name} has no hosted models`);
+  }
+  return Array.from(new Set([firstHostedModel.rel, basename(firstHostedModel.rel)]));
+}
+
 export async function startModelHost(opts: StartModelHostOptions): Promise<StartModelHostResult> {
   const env = toRuntimeEnv(opts.env);
   const runtimeEnv = withRuntimeDir(env, opts.runtimeDir);
@@ -401,12 +439,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     if (pid === null) {
       throw new Error("failed to spawn modelhost process");
     }
-    // Detach from the parent's reference count so subscription
-    // teardown / generator cleanup cannot propagate a signal back
-    // to the engine process. Mirrors core/src/server.ts:startServer
-    // which uses the same detached + unref pattern for llama-server.
-    const maybeUnref = (child as { unref?: () => void }).unref;
-    if (maybeUnref) maybeUnref.call(child);
+    detachChild(child);
 
     const endpoint = manifest.spec.endpoint;
     const readiness = await (opts.probeReady ?? engine.probeReady)(
@@ -417,24 +450,9 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
       throw new Error("modelhost failed readiness probe");
     }
 
-    // The readiness probe can be satisfied by a DIFFERENT process already bound
-    // to this endpoint (e.g. a prior omlx we did not reap). If our spawned child
-    // has already exited, refuse to record its dead pid — recording it would make
-    // listLocalRoutes drop the ModelHost from routing. exitCode is null while the
-    // child runs and a number once it exits (undefined for test stubs → running).
-    if (typeof child.exitCode === "number") {
-      throw new Error(
-        `modelhost child pid ${String(pid)} exited before readiness (endpoint ${endpoint.host}:${String(endpoint.port)} likely served by another process); refusing to record a stale pid`,
-      );
-    }
+    ensureSpawnedChildStillRunning(child, pid, endpoint);
 
-    const firstHostedModel = manifest.spec.hostedModels[0];
-    if (!firstHostedModel) {
-      throw new Error(`ModelHost ${manifest.metadata.name} has no hosted models`);
-    }
-    const modelAliases = Array.from(
-      new Set([firstHostedModel.rel, basename(firstHostedModel.rel)]),
-    );
+    const modelAliases = resolveModelAliases(manifest);
     writeModelHostState(
       {
         kind: "ModelHost",

@@ -168,35 +168,69 @@ export async function drainNdjson(
     const { value, done } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
-    let newline = buf.indexOf("\n");
-    while (newline !== -1) {
-      const line = buf.slice(0, newline).trim();
-      buf = buf.slice(newline + 1);
-      newline = buf.indexOf("\n");
-      if (line.length === 0) continue;
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(line) as Record<string, unknown>;
-      } catch {
-        continue; // malformed line — docker occasionally interleaves non-JSON progress
-      }
-      if (typeof parsed.error === "string") {
-        throw new RuntimeError(errorCode, `${context}: ${parsed.error}`);
-      }
-      lines.push(parsed);
-    }
+    buf = drainCompleteLines(buf, lines, errorCode, context);
   }
-  const trailing = buf.trim();
-  if (trailing.length > 0) {
-    try {
-      const parsed = JSON.parse(trailing) as Record<string, unknown>;
-      if (typeof parsed.error === "string") {
-        throw new RuntimeError(errorCode, `${context}: ${parsed.error}`);
-      }
-      lines.push(parsed);
-    } catch {
-      // ignore — trailing junk is common
-    }
-  }
+  collectTrailingLine(buf, lines, errorCode, context);
   return lines;
+}
+
+function parseNdjsonLine(line: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(line) as Record<string, unknown>;
+  } catch {
+    return null; // malformed line — docker occasionally interleaves non-JSON progress
+  }
+}
+
+/**
+ * Consume every complete (newline-terminated) NDJSON line in `buf`,
+ * appending decoded objects to `lines`. Any line carrying
+ * `{ error: string }` short-circuits with a `RuntimeError`. Returns
+ * the unconsumed tail (a partial line awaiting more bytes).
+ */
+function drainCompleteLines(
+  buf: string,
+  lines: Record<string, unknown>[],
+  errorCode: "image-pull-failed" | "create-failed",
+  context: string,
+): string {
+  let rest = buf;
+  let newline = rest.indexOf("\n");
+  while (newline !== -1) {
+    const line = rest.slice(0, newline).trim();
+    rest = rest.slice(newline + 1);
+    newline = rest.indexOf("\n");
+    if (line.length === 0) continue;
+    const parsed = parseNdjsonLine(line);
+    if (parsed === null) continue;
+    if (typeof parsed.error === "string") {
+      throw new RuntimeError(errorCode, `${context}: ${parsed.error}`);
+    }
+    lines.push(parsed);
+  }
+  return rest;
+}
+
+/**
+ * Decode whatever is left in the buffer after EOF. Mirrors the
+ * historical behavior: anything that throws here — malformed JSON or
+ * an `{ error }` line — is ignored, since trailing junk is common.
+ */
+function collectTrailingLine(
+  buf: string,
+  lines: Record<string, unknown>[],
+  errorCode: "image-pull-failed" | "create-failed",
+  context: string,
+): void {
+  const trailing = buf.trim();
+  if (trailing.length === 0) return;
+  try {
+    const parsed = JSON.parse(trailing) as Record<string, unknown>;
+    if (typeof parsed.error === "string") {
+      throw new RuntimeError(errorCode, `${context}: ${parsed.error}`);
+    }
+    lines.push(parsed);
+  } catch {
+    // ignore — trailing junk is common
+  }
 }

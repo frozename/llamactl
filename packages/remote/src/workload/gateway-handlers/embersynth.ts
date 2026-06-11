@@ -1,4 +1,5 @@
 import type { ApplyResult } from "../apply.js";
+import type { ApplyConflict } from "../gateway-catalog/index.js";
 import type { GatewayApplyOptions, GatewayHandler } from "./types.js";
 
 import { defaultEmbersynthConfigPath, loadEmbersynthConfig } from "../../config/embersynth.js";
@@ -33,49 +34,53 @@ import {
  * upstream changes land), not authoring routing config.
  */
 
+function embersynthConflictResult(
+  opts: GatewayApplyOptions,
+  conflicts: ApplyConflict[],
+  now: string,
+): ApplyResult {
+  const [c] = conflicts;
+  if (!c) throw new Error("gateway conflict list unexpectedly empty");
+  const reason =
+    c.kind === "name" ? "EmbersynthUpstreamNameCollision" : "EmbersynthUpstreamShapeMismatch";
+  const message =
+    c.kind === "name"
+      ? `node '${c.name}' already exists as an operator-authored embersynth node; remove it or change composite spec`
+      : `node '${c.name}': ${c.detail}`;
+  return pending(opts, reason, message, now);
+}
+
 function resolveEmbersynthCatalog(
   opts: GatewayApplyOptions,
   now: string,
 ): { ok: false; result: ApplyResult } | { ok: true; changed: boolean } {
-  let changed = false;
-  if (opts.composite) {
-    const derived = deriveEmbersynthEntries(opts.composite);
-    const current = readGatewayCatalog("embersynth");
-    const result = applyCompositeEntries({
-      kind: "embersynth",
-      compositeName: opts.composite.compositeName,
-      derived,
-      current,
-    });
-    if (result.conflicts.length > 0) {
-      const [c] = result.conflicts;
-      if (!c) throw new Error("gateway conflict list unexpectedly empty");
-      const reason =
-        c.kind === "name" ? "EmbersynthUpstreamNameCollision" : "EmbersynthUpstreamShapeMismatch";
-      const message =
-        c.kind === "name"
-          ? `node '${c.name}' already exists as an operator-authored embersynth node; remove it or change composite spec`
-          : `node '${c.name}': ${c.detail}`;
-      return { ok: false, result: pending(opts, reason, message, now) };
-    }
-    if (result.changed) {
-      try {
-        writeGatewayCatalog("embersynth", result.next);
-        changed = true;
-      } catch (err) {
-        return {
-          ok: false,
-          result: failure(
-            opts,
-            "EmbersynthCatalogWriteFailed",
-            `could not write embersynth.yaml: ${(err as Error).message}`,
-            now,
-          ),
-        };
-      }
-    }
+  if (!opts.composite) return { ok: true, changed: false };
+  const derived = deriveEmbersynthEntries(opts.composite);
+  const current = readGatewayCatalog("embersynth");
+  const result = applyCompositeEntries({
+    kind: "embersynth",
+    compositeName: opts.composite.compositeName,
+    derived,
+    current,
+  });
+  if (result.conflicts.length > 0) {
+    return { ok: false, result: embersynthConflictResult(opts, result.conflicts, now) };
   }
-  return { ok: true, changed };
+  if (!result.changed) return { ok: true, changed: false };
+  try {
+    writeGatewayCatalog("embersynth", result.next);
+    return { ok: true, changed: true };
+  } catch (err) {
+    return {
+      ok: false,
+      result: failure(
+        opts,
+        "EmbersynthCatalogWriteFailed",
+        `could not write embersynth.yaml: ${(err as Error).message}`,
+        now,
+      ),
+    };
+  }
 }
 
 function resolveEmbersynthSynthetic(

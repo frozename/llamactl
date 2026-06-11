@@ -25,12 +25,14 @@ import { arch as nodeArch, platform as nodePlatform } from "node:os";
 
 import type {
   ImageRef,
+  PortMapping,
   RemoveServiceOptions,
   RuntimeBackend,
   ServiceDeployment,
   ServiceFilter,
   ServiceInstance,
   ServiceRef,
+  VolumeMount,
 } from "../backend.js";
 
 import { resolveSecret } from "../../config/secret.js";
@@ -359,6 +361,56 @@ interface DockerMount {
   ReadOnly?: boolean;
 }
 
+/** Fill ExposedPorts + PortBindings on the create body from the spec's
+ *  port list. Ports without a hostPort get an empty binding so Docker
+ *  assigns an ephemeral host port. */
+function applyPortBindings(body: DockerCreateBody, ports: PortMapping[]): void {
+  body.ExposedPorts = {};
+  body.HostConfig.PortBindings = {};
+  for (const p of ports) {
+    const key = `${String(p.containerPort)}/${p.protocol ?? "tcp"}`;
+    body.ExposedPorts[key] = {};
+    if (p.hostPort !== undefined) {
+      body.HostConfig.PortBindings[key] = [{ HostPort: String(p.hostPort) }];
+    } else {
+      body.HostConfig.PortBindings[key] = [{}];
+    }
+  }
+}
+
+function translateMounts(volumes: VolumeMount[]): DockerMount[] {
+  return volumes.map((v, i) => {
+    // ConfigMap is a k8s-only projection — there's no Docker
+    // equivalent (Docker has no native key-file materialization at
+    // runtime). Reject at translate time with a clear redirect so
+    // operators can pick hostPath / name instead.
+    if (v.configMap !== undefined) {
+      throw new RuntimeError(
+        "spec-invalid",
+        `volumes[${String(i)}]: configMap mounts require runtime: kubernetes; use hostPath or name for docker`,
+      );
+    }
+    return {
+      Type: v.hostPath ? "bind" : "volume",
+      Source: v.hostPath ?? v.name ?? "",
+      Target: v.containerPath,
+      ReadOnly: v.readOnly,
+    };
+  });
+}
+
+function translateHealthcheck(
+  hc: NonNullable<ServiceDeployment["healthcheck"]>,
+): DockerHealthcheck {
+  return {
+    Test: hc.test,
+    ...(hc.intervalMs !== undefined && { Interval: hc.intervalMs * 1_000_000 }),
+    ...(hc.timeoutMs !== undefined && { Timeout: hc.timeoutMs * 1_000_000 }),
+    ...(hc.retries !== undefined && { Retries: hc.retries }),
+    ...(hc.startPeriodMs !== undefined && { StartPeriod: hc.startPeriodMs * 1_000_000 }),
+  };
+}
+
 function translateDeployment(
   spec: ServiceDeployment,
   resolvedSecrets: Record<string, string>,
@@ -384,52 +436,13 @@ function translateDeployment(
     body.Env = Object.entries(envEntries).map(([k, v]) => `${k}=${v}`);
   }
   if (spec.ports && spec.ports.length > 0) {
-    body.ExposedPorts = {};
-    body.HostConfig.PortBindings = {};
-    for (const p of spec.ports) {
-      const key = `${String(p.containerPort)}/${p.protocol ?? "tcp"}`;
-      body.ExposedPorts[key] = {};
-      if (p.hostPort !== undefined) {
-        body.HostConfig.PortBindings[key] = [{ HostPort: String(p.hostPort) }];
-      } else {
-        body.HostConfig.PortBindings[key] = [{}];
-      }
-    }
+    applyPortBindings(body, spec.ports);
   }
   if (spec.volumes && spec.volumes.length > 0) {
-    body.HostConfig.Mounts = spec.volumes.map((v, i) => {
-      // ConfigMap is a k8s-only projection — there's no Docker
-      // equivalent (Docker has no native key-file materialization at
-      // runtime). Reject at translate time with a clear redirect so
-      // operators can pick hostPath / name instead.
-      if (v.configMap !== undefined) {
-        throw new RuntimeError(
-          "spec-invalid",
-          `volumes[${String(i)}]: configMap mounts require runtime: kubernetes; use hostPath or name for docker`,
-        );
-      }
-      return {
-        Type: v.hostPath ? "bind" : "volume",
-        Source: v.hostPath ?? v.name ?? "",
-        Target: v.containerPath,
-        ReadOnly: v.readOnly,
-      };
-    });
+    body.HostConfig.Mounts = translateMounts(spec.volumes);
   }
   if (spec.healthcheck) {
-    body.Healthcheck = {
-      Test: spec.healthcheck.test,
-      ...(spec.healthcheck.intervalMs !== undefined && {
-        Interval: spec.healthcheck.intervalMs * 1_000_000,
-      }),
-      ...(spec.healthcheck.timeoutMs !== undefined && {
-        Timeout: spec.healthcheck.timeoutMs * 1_000_000,
-      }),
-      ...(spec.healthcheck.retries !== undefined && { Retries: spec.healthcheck.retries }),
-      ...(spec.healthcheck.startPeriodMs !== undefined && {
-        StartPeriod: spec.healthcheck.startPeriodMs * 1_000_000,
-      }),
-    };
+    body.Healthcheck = translateHealthcheck(spec.healthcheck);
   }
   if (spec.restartPolicy) {
     body.HostConfig.RestartPolicy = { Name: spec.restartPolicy };

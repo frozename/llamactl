@@ -31,6 +31,7 @@ import {
   createOpenAICompatProvider,
   type UnifiedAiRequest,
   type UnifiedAiResponse,
+  type UnifiedStreamEvent,
 } from "@nova/contracts";
 import {
   computeCostSnapshot,
@@ -49,7 +50,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import type { CompositeApplyEvent } from "./composite/types.js";
-import type { ClusterNode, Config } from "./config/schema.js";
+import type { ClusterNode, Config, User } from "./config/schema.js";
 import type { RuntimeBackend } from "./runtime/backend.js";
 import type { RuntimeKind } from "./runtime/factory.js";
 
@@ -420,6 +421,130 @@ async function probeNodeFacts(opts: {
   return body.result.data;
 }
 
+type NodeTestResult =
+  | { ok: true; facts: nodeFactsMod.NodeFacts | null }
+  | { ok: false; error: string };
+
+/**
+ * For provider-kind nodes, confirm the upstream actually carries that
+ * provider's models — a gateway reporting healthy doesn't prove the
+ * specific provider is alive. Returns a failure result when the model
+ * catalog lacks the provider, or null when the probe should pass.
+ */
+async function verifyProviderModelPresence(
+  provider: AiProvider,
+  node: ClusterNode,
+): Promise<NodeTestResult | null> {
+  if (!provider.listModels) return null;
+  try {
+    const models = await provider.listModels();
+    const binding = node.provider;
+    if (!binding) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: `provider node '${node.name}' missing provider binding`,
+      });
+    }
+    const hit = models.some((m) => m.owned_by === binding.providerName);
+    if (!hit) {
+      return {
+        ok: false,
+        error: `provider '${binding.providerName}' not present in gateway's model catalog`,
+      };
+    }
+  } catch {
+    // If listModels fails, fall back to the gateway's
+    // health. Not ideal but not worth failing the probe.
+  }
+  return null;
+}
+
+/**
+ * Gateway + provider kinds don't have nodeFacts (no llamactl agent
+ * behind them). Probe via the OpenAI-compat adapter's healthCheck —
+ * cheap `/v1/models` call that confirms the upstream answers and, for
+ * provider kind, that at least one model claims `owned_by === providerName`.
+ */
+async function probeGatewayNodeHealth(opts: {
+  node: ClusterNode;
+  user: User;
+  cfg: Config;
+  kind: "gateway" | "provider";
+}): Promise<NodeTestResult> {
+  const { providerForNode } = await import("./providers/factory.js");
+  try {
+    const provider = providerForNode({ node: opts.node, user: opts.user, cfg: opts.cfg });
+    const health = await provider.healthCheck?.();
+    if (!health) return { ok: true, facts: null };
+    if (health.state !== "healthy" && health.state !== "degraded") {
+      return { ok: false, error: health.error ?? `state=${health.state}` };
+    }
+    if (opts.kind === "provider") {
+      const missing = await verifyProviderModelPresence(provider, opts.node);
+      if (missing) return missing;
+    }
+    return { ok: true, facts: null };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
+/**
+ * Drive a provider's streamResponse, yielding each event until the
+ * stream ends or the signal aborts. Providers without streaming get a
+ * synthetic done event so subscribers always terminate cleanly.
+ */
+async function* streamNodeChatEvents(
+  provider: AiProvider,
+  request: UnifiedAiRequest,
+  signal: AbortSignal | undefined,
+): AsyncGenerator<UnifiedStreamEvent | { type: "done"; finish_reason: "stop" }> {
+  const stream = provider.streamResponse?.(request, signal);
+  if (!stream) {
+    yield { type: "done", finish_reason: "stop" };
+    return;
+  }
+  for await (const ev of stream) {
+    if (signal?.aborted) break;
+    yield ev;
+  }
+}
+
+/**
+ * Live-tail a session's event bus: park until the publisher pushes
+ * events, drain the queue in arrival order, and stop on a terminal
+ * event or when the subscriber disconnects.
+ */
+async function* tailSessionEvents(
+  sessionId: string,
+  signal: AbortSignal | undefined,
+): AsyncGenerator<JournalEvent> {
+  const queue: JournalEvent[] = [];
+  let resolve: (() => void) | null = null;
+  const off = sessionEventBus.subscribe(sessionId, (event) => {
+    queue.push(event);
+    resolve?.();
+  });
+  try {
+    while (!signal?.aborted) {
+      if (queue.length === 0) {
+        await new Promise<void>((r) => {
+          resolve = r;
+        });
+        resolve = null;
+      }
+      while (queue.length > 0) {
+        const ev = queue.shift();
+        if (ev === undefined) continue;
+        yield ev;
+        if (isTerminal(ev)) return;
+      }
+    }
+  } finally {
+    off();
+  }
+}
+
 export const router = t.router({
   env: t.procedure.query(() => envMod.resolveEnv()),
 
@@ -459,54 +584,8 @@ export const router = t.router({
     const kind = resolveNodeKind(resolved.node);
     const node = resolved.node;
 
-    // Gateway + provider kinds don't have nodeFacts (no llamactl
-    // agent behind them). Probe via the OpenAI-compat adapter's
-    // healthCheck — cheap `/v1/models` call that confirms the
-    // upstream answers and, for provider kind, that at least one
-    // model claims `owned_by === providerName`.
     if (kind === "gateway" || kind === "provider") {
-      const { providerForNode } = await import("./providers/factory.js");
-      try {
-        const provider = providerForNode({ node, user: resolved.user, cfg });
-        const health = await provider.healthCheck?.();
-        if (!health) return { ok: true as const, facts: null };
-        if (health.state === "healthy" || health.state === "degraded") {
-          // For provider kind, also confirm the upstream actually
-          // carries that provider's models — a gateway reporting
-          // healthy doesn't prove the specific provider is alive.
-          if (kind === "provider" && provider.listModels) {
-            try {
-              const models = await provider.listModels();
-              const binding = node.provider;
-              if (!binding) {
-                throw new TRPCError({
-                  code: "INTERNAL_SERVER_ERROR",
-                  message: `provider node '${node.name}' missing provider binding`,
-                });
-              }
-              const hit = models.some(
-                (m) => (m as { owned_by?: string }).owned_by === binding.providerName,
-              );
-              if (!hit) {
-                return {
-                  ok: false as const,
-                  error: `provider '${binding.providerName}' not present in gateway's model catalog`,
-                };
-              }
-            } catch {
-              // If listModels fails, fall back to the gateway's
-              // health. Not ideal but not worth failing the probe.
-            }
-          }
-          return { ok: true as const, facts: null };
-        }
-        return {
-          ok: false as const,
-          error: health.error ?? `state=${health.state}`,
-        };
-      } catch (err) {
-        return { ok: false as const, error: (err as Error).message };
-      }
+      return await probeGatewayNodeHealth({ node, user: resolved.user, cfg, kind });
     }
 
     const token = kubecfg.resolveToken(resolved.user);
@@ -853,28 +932,12 @@ export const router = t.router({
           baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
           apiKey: "local",
         });
-        const stream = provider.streamResponse?.(input.request as UnifiedAiRequest, signal);
-        if (!stream) {
-          yield { type: "done" as const, finish_reason: "stop" as const };
-          return;
-        }
-        for await (const ev of stream) {
-          if (signal?.aborted) break;
-          yield ev;
-        }
+        yield* streamNodeChatEvents(provider, input.request as UnifiedAiRequest, signal);
         return;
       }
 
       const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
-      const stream = provider.streamResponse?.(input.request as UnifiedAiRequest, signal);
-      if (!stream) {
-        yield { type: "done" as const, finish_reason: "stop" as const };
-        return;
-      }
-      for await (const ev of stream) {
-        if (signal?.aborted) break;
-        yield ev;
-      }
+      yield* streamNodeChatEvents(provider, input.request as UnifiedAiRequest, signal);
     }),
 
   /**
@@ -2464,30 +2527,7 @@ export const router = t.router({
         };
         return;
       }
-      const queue: JournalEvent[] = [];
-      let resolve: (() => void) | null = null;
-      const off = sessionEventBus.subscribe(input.sessionId, (event) => {
-        queue.push(event);
-        resolve?.();
-      });
-      try {
-        while (!signal?.aborted) {
-          if (queue.length === 0) {
-            await new Promise<void>((r) => {
-              resolve = r;
-            });
-            resolve = null;
-          }
-          while (queue.length > 0) {
-            const ev = queue.shift();
-            if (ev === undefined) continue;
-            yield ev;
-            if (isTerminal(ev)) return;
-          }
-        }
-      } finally {
-        off();
-      }
+      yield* tailSessionEvents(input.sessionId, signal);
     }),
 
   opsSessionDelete: t.procedure

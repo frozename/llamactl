@@ -21,6 +21,34 @@ interface SSEFrame {
   data: string;
 }
 
+function parseSSEFrame(chunk: string): SSEFrame {
+  const frame: SSEFrame = { data: "" };
+  for (const line of chunk.split("\n")) {
+    if (line.startsWith("event:")) frame.event = line.slice(6).trim();
+    else if (line.startsWith("data:")) frame.data = line.slice(5).trim();
+  }
+  return frame;
+}
+
+/**
+ * Drain every complete (`\n\n`-terminated) frame from the buffer into
+ * `out`. Returns the unconsumed tail and whether a `done` frame arrived.
+ */
+function drainSSEFrames(buf: string, out: SSEFrame[]): { rest: string; done: boolean } {
+  let rest = buf;
+  let idx = rest.indexOf("\n\n");
+  while (idx !== -1) {
+    const chunk = rest.slice(0, idx);
+    rest = rest.slice(idx + 2);
+    idx = rest.indexOf("\n\n");
+    if (!chunk) continue;
+    const frame = parseSSEFrame(chunk);
+    out.push(frame);
+    if (frame.event === "done") return { rest, done: true };
+  }
+  return { rest, done: false };
+}
+
 async function readSSE(res: Response, maxFrames = 50): Promise<SSEFrame[]> {
   const out: SSEFrame[] = [];
   if (!res.body) return out;
@@ -31,19 +59,9 @@ async function readSSE(res: Response, maxFrames = 50): Promise<SSEFrame[]> {
     const { value, done } = await reader.read();
     if (done) break;
     buf += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) !== -1) {
-      const chunk = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      if (!chunk) continue;
-      const frame: SSEFrame = { data: "" };
-      for (const line of chunk.split("\n")) {
-        if (line.startsWith("event:")) frame.event = line.slice(6).trim();
-        else if (line.startsWith("data:")) frame.data = line.slice(5).trim();
-      }
-      out.push(frame);
-      if (frame.event === "done") return out;
-    }
+    const drained = drainSSEFrames(buf, out);
+    buf = drained.rest;
+    if (drained.done) return out;
   }
   return out;
 }

@@ -83,51 +83,7 @@ export function planNodeRun(spec: NodeRun["spec"], live: InstalledInfra[]): Node
   for (const item of spec.infra) desiredByPkg.set(item.pkg, item);
 
   for (const item of spec.infra) {
-    const observed = live.find((r) => r.pkg === item.pkg);
-    if (!observed) {
-      actions.push({
-        type: "install",
-        pkg: item.pkg,
-        version: item.version,
-        reason: "missing",
-      });
-      continue;
-    }
-    if (observed.active === item.version) {
-      actions.push({
-        type: "skip",
-        pkg: item.pkg,
-        version: item.version,
-        reason: "already-current",
-      });
-    } else if (observed.versions.includes(item.version)) {
-      // Version is installed but not active — flip the symlink.
-      actions.push({
-        type: "activate",
-        pkg: item.pkg,
-        version: item.version,
-      });
-    } else {
-      actions.push({
-        type: "install",
-        pkg: item.pkg,
-        version: item.version,
-        reason: "version-mismatch",
-      });
-    }
-    // Prune superseded versions on the same pkg. v1 keeps only the
-    // desired active version; side-by-side retention is a future
-    // `keepVersions: []` flag.
-    for (const v of observed.versions) {
-      if (v !== item.version) {
-        actions.push({
-          type: "uninstall-version",
-          pkg: item.pkg,
-          version: v,
-          reason: "superseded",
-        });
-      }
-    }
+    planInfraItem(item, live, actions);
   }
 
   // Any live pkg that isn't in the desired set → uninstall entirely.
@@ -142,6 +98,59 @@ export function planNodeRun(spec: NodeRun["spec"], live: InstalledInfra[]): Node
   }
 
   return actions;
+}
+
+/** Plan the converge actions for one desired infra item. */
+function planInfraItem(
+  item: NodeRunInfraItem,
+  live: InstalledInfra[],
+  actions: NodeRunAction[],
+): void {
+  const observed = live.find((r) => r.pkg === item.pkg);
+  if (!observed) {
+    actions.push({
+      type: "install",
+      pkg: item.pkg,
+      version: item.version,
+      reason: "missing",
+    });
+    return;
+  }
+  if (observed.active === item.version) {
+    actions.push({
+      type: "skip",
+      pkg: item.pkg,
+      version: item.version,
+      reason: "already-current",
+    });
+  } else if (observed.versions.includes(item.version)) {
+    // Version is installed but not active — flip the symlink.
+    actions.push({
+      type: "activate",
+      pkg: item.pkg,
+      version: item.version,
+    });
+  } else {
+    actions.push({
+      type: "install",
+      pkg: item.pkg,
+      version: item.version,
+      reason: "version-mismatch",
+    });
+  }
+  // Prune superseded versions on the same pkg. v1 keeps only the
+  // desired active version; side-by-side retention is a future
+  // `keepVersions: []` flag.
+  for (const v of observed.versions) {
+    if (v !== item.version) {
+      actions.push({
+        type: "uninstall-version",
+        pkg: item.pkg,
+        version: v,
+        reason: "superseded",
+      });
+    }
+  }
 }
 
 interface ApplyInfraChangesOptions {
@@ -170,73 +179,16 @@ export async function applyNodeRun(
   const now = (): string => new Date().toISOString();
 
   if (dryRun) {
-    return {
-      actions,
-      outcomes: actions.map((action) => ({ action, ok: true })),
-      status: {
-        phase: actions.every((a) => a.type === "skip") ? "Converged" : "Drift",
-        observedInfra: observedSummary(manifest, live),
-        lastTransitionTime: now(),
-        conditions: [
-          {
-            type: "Planned",
-            status: "True",
-            reason: "dry-run",
-            lastTransitionTime: now(),
-          },
-        ],
-      },
-    };
+    return dryRunResult(manifest, live, actions, now);
   }
 
   let firstError: string | undefined;
 
   for (const action of actions) {
     try {
-      if (action.type === "skip") {
-        outcomes.push({ action, ok: true });
-        continue;
-      }
-      if (action.type === "install") {
-        const artifact = await resolveArtifact({
-          pkg: action.pkg,
-          version: action.version,
-        });
-        const result = await client.infraInstall.mutate({
-          pkg: action.pkg,
-          version: action.version,
-          tarballUrl: artifact.tarballUrl,
-          sha256: artifact.sha256,
-          activate: true,
-          skipIfPresent: true,
-        });
-        outcomes.push({
-          action,
-          ok: result.ok,
-          detail: result,
-          ...(result.ok ? {} : { error: result.error }),
-        });
-        if (!result.ok && !firstError) firstError = result.error;
-        continue;
-      }
-      if (action.type === "activate") {
-        const result = await client.infraActivate.mutate({
-          pkg: action.pkg,
-          version: action.version,
-        });
-        outcomes.push({ action, ok: result.ok, detail: result });
-        continue;
-      }
-      if (action.type === "uninstall-version") {
-        const result = await client.infraUninstall.mutate({
-          pkg: action.pkg,
-          version: action.version,
-        });
-        outcomes.push({ action, ok: result.ok, detail: result });
-        continue;
-      }
-      const result = await client.infraUninstall.mutate({ pkg: action.pkg });
-      outcomes.push({ action, ok: result.ok, detail: result });
+      const outcome = await runNodeRunAction(action, client, resolveArtifact);
+      outcomes.push(outcome);
+      if (!outcome.ok && !firstError) firstError = outcome.error;
     } catch (err) {
       const message = (err as Error).message;
       outcomes.push({ action, ok: false, error: message });
@@ -247,11 +199,7 @@ export async function applyNodeRun(
   // Re-fetch to record the post-apply state.
   const postLive = await client.infraList.query();
   const anyFailure = outcomes.some((o) => !o.ok);
-  const phase: NodeRunStatus["phase"] = anyFailure
-    ? "Failed"
-    : actions.every((a) => a.type === "skip")
-      ? "Converged"
-      : "Converged";
+  const phase: NodeRunStatus["phase"] = anyFailure ? "Failed" : "Converged";
 
   return {
     actions,
@@ -272,6 +220,79 @@ export async function applyNodeRun(
     },
     ...(firstError ? { error: firstError } : {}),
   };
+}
+
+/** Build the no-mutation result for `apply --dry-run`. */
+function dryRunResult(
+  manifest: NodeRun,
+  live: InstalledInfra[],
+  actions: NodeRunAction[],
+  now: () => string,
+): NodeRunApplyResult {
+  return {
+    actions,
+    outcomes: actions.map((action) => ({ action, ok: true })),
+    status: {
+      phase: actions.every((a) => a.type === "skip") ? "Converged" : "Drift",
+      observedInfra: observedSummary(manifest, live),
+      lastTransitionTime: now(),
+      conditions: [
+        {
+          type: "Planned",
+          status: "True",
+          reason: "dry-run",
+          lastTransitionTime: now(),
+        },
+      ],
+    },
+  };
+}
+
+/** Execute one planned action via the injected client. */
+async function runNodeRunAction(
+  action: NodeRunAction,
+  client: NodeRunInfraClient,
+  resolveArtifact: ArtifactResolver,
+): Promise<NodeRunActionOutcome> {
+  if (action.type === "skip") {
+    return { action, ok: true };
+  }
+  if (action.type === "install") {
+    const artifact = await resolveArtifact({
+      pkg: action.pkg,
+      version: action.version,
+    });
+    const result = await client.infraInstall.mutate({
+      pkg: action.pkg,
+      version: action.version,
+      tarballUrl: artifact.tarballUrl,
+      sha256: artifact.sha256,
+      activate: true,
+      skipIfPresent: true,
+    });
+    return {
+      action,
+      ok: result.ok,
+      detail: result,
+      ...(result.ok ? {} : { error: result.error }),
+    };
+  }
+  if (action.type === "activate") {
+    const result = await client.infraActivate.mutate({
+      pkg: action.pkg,
+      version: action.version,
+    });
+    return { action, ok: result.ok, detail: result };
+  }
+  if (action.type === "uninstall-version") {
+    const result = await client.infraUninstall.mutate({
+      pkg: action.pkg,
+      version: action.version,
+    });
+    return { action, ok: result.ok, detail: result };
+  }
+  const result = await client.infraUninstall.mutate({ pkg: action.pkg });
+  return { action, ok: result.ok, detail: result };
 }
 
 function observedSummary(

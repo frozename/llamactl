@@ -44,6 +44,112 @@ interface FakeChromaOptions {
   collectionId?: string;
 }
 
+interface FakeChromaState {
+  opts: FakeChromaOptions;
+  collections: Map<string, { id: string; name: string }>;
+  assignedUuid: () => string;
+}
+
+function jsonResponse(body: string, status = 200): Response {
+  return new Response(body, { status, headers: { "content-type": "application/json" } });
+}
+
+async function readRequestBody(req: Request): Promise<string> {
+  return req.method === "GET" || req.method === "HEAD" ? "" : await req.text();
+}
+
+function heartbeatResponse(opts: FakeChromaOptions): Response {
+  const status = opts.heartbeatStatus ?? 200;
+  if (status !== 200) {
+    return jsonResponse(`{"error":"down"}`, status);
+  }
+  return jsonResponse('{"nanosecond heartbeat":12345}');
+}
+
+function collectionJson(
+  state: FakeChromaState,
+  c: { id: string; name: string },
+): Record<string, unknown> {
+  return {
+    id: c.id,
+    name: c.name,
+    configuration_json: {},
+    dimension: state.opts.collectionDimension ?? null,
+    metadata: null,
+    tenant: CHROMA_DEFAULT_TENANT,
+    database: CHROMA_DEFAULT_DATABASE,
+    log_position: 0,
+    version: 0,
+  };
+}
+
+function handleCreateCollection(state: FakeChromaState, body: string): Response {
+  const parsed = body ? (safeJson(body) as { name: string }) : { name: "" };
+  let existing = [...state.collections.values()].find((c) => c.name === parsed.name);
+  if (!existing) {
+    existing = { id: state.assignedUuid(), name: parsed.name };
+    state.collections.set(existing.id, existing);
+  }
+  return jsonResponse(JSON.stringify(collectionJson(state, existing)));
+}
+
+function handleListCollections(state: FakeChromaState): Response {
+  const arr = [...state.collections.values()].map((c) => collectionJson(state, c));
+  return jsonResponse(JSON.stringify(arr));
+}
+
+function queryResponse(body: string): Response {
+  const parsed = body ? (safeJson(body) as { n_results?: number }) : {};
+  const n = parsed.n_results ?? 2;
+  const ids = Array.from({ length: n }, (_, i) => `doc-${String(i)}`);
+  const docs = Array.from({ length: n }, (_, i) => `content-${String(i)}`);
+  const metas = Array.from({ length: n }, (_, i): Record<string, unknown> | null =>
+    i === n - 1 ? null : { t: "x" },
+  );
+  const distances = Array.from({ length: n }, (_, i) => Math.min(0.1 * (i + 1), 1.5));
+  return jsonResponse(
+    JSON.stringify({
+      ids: [ids],
+      documents: [docs],
+      metadatas: [metas],
+      distances: [distances],
+      include: ["distances", "documents", "metadatas"],
+    }),
+  );
+}
+
+/** Per-collection sub-resource actions (`<id>/upsert|query|delete`).
+ *  Returns null for unknown actions so the caller falls through to
+ *  the shared not-found response. */
+function handleCollectionAction(
+  state: FakeChromaState,
+  pathname: string,
+  base: string,
+  body: string,
+): Response | null {
+  const rest = pathname.slice(base.length + 1);
+  const slash = rest.indexOf("/");
+  const id = slash >= 0 ? rest.slice(0, slash) : rest;
+  const action = slash >= 0 ? rest.slice(slash + 1) : "";
+  if (!state.collections.has(id)) {
+    return jsonResponse(
+      `{"error":"NotFoundError","message":"Collection [${id}] does not exist"}`,
+      404,
+    );
+  }
+  if (action === "upsert") {
+    return jsonResponse("{}");
+  }
+  if (action === "query") {
+    return queryResponse(body);
+  }
+  if (action === "delete") {
+    const parsed = body ? (safeJson(body) as { ids?: string[] }) : {};
+    return jsonResponse(JSON.stringify({ deleted: parsed.ids?.length ?? 0 }));
+  }
+  return null;
+}
+
 async function startFakeChroma(opts: FakeChromaOptions = {}): Promise<{
   url: string;
   calls: RecordedRequest[];
@@ -58,13 +164,14 @@ async function startFakeChroma(opts: FakeChromaOptions = {}): Promise<{
     const base = opts.collectionId ?? "11111111-1111-4111-8111-";
     return `${base}${String(nextId++).padStart(12, "0")}`;
   };
+  const state: FakeChromaState = { opts, collections, assignedUuid };
 
   const server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
     async fetch(req) {
       const url = new URL(req.url);
-      const body = req.method === "GET" || req.method === "HEAD" ? "" : await req.text();
+      const body = await readRequestBody(req);
       calls.push({
         method: req.method,
         path: url.pathname,
@@ -80,113 +187,23 @@ async function startFakeChroma(opts: FakeChromaOptions = {}): Promise<{
       }
 
       if (url.pathname === "/api/v2/heartbeat") {
-        const status = opts.heartbeatStatus ?? 200;
-        if (status !== 200) {
-          return new Response(`{"error":"down"}`, {
-            status,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        return new Response('{"nanosecond heartbeat":12345}', {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return heartbeatResponse(opts);
       }
 
       const base = `/api/v2/tenants/${CHROMA_DEFAULT_TENANT}/databases/${CHROMA_DEFAULT_DATABASE}/collections`;
       if (req.method === "POST" && url.pathname === base) {
-        const parsed = body ? (safeJson(body) as { name: string }) : { name: "" };
-        let existing = [...collections.values()].find((c) => c.name === parsed.name);
-        if (!existing) {
-          existing = { id: assignedUuid(), name: parsed.name };
-          collections.set(existing.id, existing);
-        }
-        const dim = opts.collectionDimension ?? null;
-        return new Response(
-          JSON.stringify({
-            id: existing.id,
-            name: existing.name,
-            configuration_json: {},
-            dimension: dim,
-            metadata: null,
-            tenant: CHROMA_DEFAULT_TENANT,
-            database: CHROMA_DEFAULT_DATABASE,
-            log_position: 0,
-            version: 0,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+        return handleCreateCollection(state, body);
       }
       if (req.method === "GET" && url.pathname === base) {
-        const dim = opts.collectionDimension ?? null;
-        const arr = [...collections.values()].map((c) => ({
-          id: c.id,
-          name: c.name,
-          configuration_json: {},
-          dimension: dim,
-          metadata: null,
-          tenant: CHROMA_DEFAULT_TENANT,
-          database: CHROMA_DEFAULT_DATABASE,
-          log_position: 0,
-          version: 0,
-        }));
-        return new Response(JSON.stringify(arr), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return handleListCollections(state);
       }
-
       if (req.method === "POST" && url.pathname.startsWith(`${base}/`)) {
-        const rest = url.pathname.slice(base.length + 1);
-        const slash = rest.indexOf("/");
-        const id = slash >= 0 ? rest.slice(0, slash) : rest;
-        const action = slash >= 0 ? rest.slice(slash + 1) : "";
-        if (!collections.has(id)) {
-          return new Response(
-            `{"error":"NotFoundError","message":"Collection [${id}] does not exist"}`,
-            { status: 404, headers: { "content-type": "application/json" } },
-          );
-        }
-        if (action === "upsert") {
-          return new Response("{}", {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
-        if (action === "query") {
-          const parsed = body ? (safeJson(body) as { n_results?: number }) : {};
-          const n = parsed.n_results ?? 2;
-          const ids = Array.from({ length: n }, (_, i) => `doc-${String(i)}`);
-          const docs = Array.from({ length: n }, (_, i) => `content-${String(i)}`);
-          const metas = Array.from({ length: n }, (_, i): Record<string, unknown> | null =>
-            i === n - 1 ? null : { t: "x" },
-          );
-          const distances = Array.from({ length: n }, (_, i) => Math.min(0.1 * (i + 1), 1.5));
-          return new Response(
-            JSON.stringify({
-              ids: [ids],
-              documents: [docs],
-              metadatas: [metas],
-              distances: [distances],
-              include: ["distances", "documents", "metadatas"],
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          );
-        }
-        if (action === "delete") {
-          const parsed = body ? (safeJson(body) as { ids?: string[] }) : {};
-          return new Response(JSON.stringify({ deleted: parsed.ids?.length ?? 0 }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
+        const handled = handleCollectionAction(state, url.pathname, base, body);
+        if (handled) return handled;
       }
 
       const nf = opts.notFound ?? { status: 404, body: `{"error":"NotFound","message":"unknown"}` };
-      return new Response(nf.body, {
-        status: nf.status,
-        headers: { "content-type": "application/json" },
-      });
+      return jsonResponse(nf.body, nf.status);
     },
   });
 

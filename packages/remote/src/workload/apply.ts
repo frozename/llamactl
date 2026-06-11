@@ -1193,33 +1193,37 @@ export async function applyOne(
   );
 }
 
+async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyManifestOutcome> {
+  const parsed = ModelRunSchema.safeParse(opts.manifest);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.message };
+  }
+  let manifest = parsed.data;
+  if (shouldAutoPlace(manifest)) {
+    const placement = runPlacement({
+      manifest,
+      dbPath: opts.placement?.dbPath ?? defaultAggregatorDbPath(),
+      journalPath: opts.placement?.journalPath ?? defaultFleetJournalPath(),
+      headroomMinMb: opts.placement?.headroomMinMb ?? 512,
+      modelFilePenaltyMb: opts.placement?.modelFilePenaltyMb ?? 128,
+    });
+    if (!placement.ok) return { ok: false, error: placement.error };
+    manifest = placement.manifest;
+  }
+  if (!opts.getClient) {
+    return { ok: false, error: "applyManifest requires getClient for ModelRun manifests" };
+  }
+  const result = await applyOne(manifest, opts.getClient);
+  if (result.error) {
+    return { ok: false, error: result.error };
+  }
+  return { ok: true, kind: "ModelRun", manifest, result };
+}
+
 export async function applyManifest(opts: ApplyManifestOptions): Promise<ApplyManifestOutcome> {
   const kind = manifestKind(opts.manifest);
   if (kind === "ModelRun") {
-    const parsed = ModelRunSchema.safeParse(opts.manifest);
-    if (!parsed.success) {
-      return { ok: false, error: parsed.error.message };
-    }
-    let manifest = parsed.data;
-    if (shouldAutoPlace(manifest)) {
-      const placement = runPlacement({
-        manifest,
-        dbPath: opts.placement?.dbPath ?? defaultAggregatorDbPath(),
-        journalPath: opts.placement?.journalPath ?? defaultFleetJournalPath(),
-        headroomMinMb: opts.placement?.headroomMinMb ?? 512,
-        modelFilePenaltyMb: opts.placement?.modelFilePenaltyMb ?? 128,
-      });
-      if (!placement.ok) return { ok: false, error: placement.error };
-      manifest = placement.manifest;
-    }
-    if (!opts.getClient) {
-      return { ok: false, error: "applyManifest requires getClient for ModelRun manifests" };
-    }
-    const result = await applyOne(manifest, opts.getClient);
-    if (result.error) {
-      return { ok: false, error: result.error };
-    }
-    return { ok: true, kind: "ModelRun", manifest, result };
+    return await applyModelRunManifest(opts);
   }
   if (kind === "ModelHost") {
     const parsed = ModelHostManifestSchema.safeParse(opts.manifest);

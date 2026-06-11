@@ -252,6 +252,29 @@ function makeNoAuthGate(noAuth: boolean, bindHost: string): NoAuthGate {
   };
 }
 
+/**
+ * Run the shared bearer-auth gate for a route: no-auth-eligible
+ * requests are logged and admitted; everything else must carry a
+ * valid bearer. Returns the 401 response when the request must be
+ * rejected, null when it may proceed.
+ */
+function authGateReject(
+  req: Request,
+  pathname: string,
+  address: ClientAddress | null,
+  opts: StartAgentOptions,
+  gate: NoAuthGate,
+): Response | null {
+  if (gate.allowNoAuth(pathname, address)) {
+    gate.logUnauthenticatedNoAuthRequest(req, address);
+    return null;
+  }
+  if (!verifyBearer(req, opts.tokenHash)) {
+    return unauthorizedResponse();
+  }
+  return null;
+}
+
 async function handleOpenAIRoute(
   req: Request,
   url: URL,
@@ -259,11 +282,8 @@ async function handleOpenAIRoute(
   opts: StartAgentOptions,
   gate: NoAuthGate,
 ): Promise<Response> {
-  if (gate.allowNoAuth(url.pathname, address)) {
-    gate.logUnauthenticatedNoAuthRequest(req, address);
-  } else if (!verifyBearer(req, opts.tokenHash)) {
-    return unauthorizedResponse();
-  }
+  const denied = authGateReject(req, url.pathname, address, opts, gate);
+  if (denied) return denied;
   const pathLabel = openaiPathBucket(url.pathname);
   const endTimer = openaiRequestDurationSeconds.startTimer({ path: pathLabel });
   let status = 0;
@@ -285,13 +305,145 @@ async function handleOpenAIRoute(
   }
 }
 
-type AgentFetchHandler = (
+interface AgentFetchServer {
+  requestIP?: (req: Request) => ClientAddress | null;
+  upgrade(req: Request, opts: { data: unknown }): boolean;
+}
+
+type AgentFetchHandler = (req: Request, server: AgentFetchServer) => Response | Promise<Response>;
+
+/**
+ * Infrastructure routes that precede the API surface: health checks,
+ * reverse-tunnel endpoints, bootstrap registration, the install
+ * script, artifact downloads, and agent self-update/rollback. Order
+ * is load-bearing — it mirrors the original route chain exactly.
+ * Returns null when no route matched (fall through to the API routes).
+ */
+function handleInfraRoutes(
   req: Request,
-  server: {
-    requestIP?: (req: Request) => ClientAddress | null;
-    upgrade(req: Request, opts: { data: unknown }): boolean;
-  },
-) => Response | Promise<Response>;
+  url: URL,
+  server: AgentFetchServer,
+  opts: StartAgentOptions,
+  tunnelServer: TunnelServer | null,
+): Response | Promise<Response> | null {
+  if (url.pathname === "/health" || url.pathname === "/healthz") {
+    return new Response("ok", { status: 200 });
+  }
+  // Reverse-tunnel endpoints — gated on opts.tunnelCentral. Both
+  // are no-ops when tunnelServer is null (falls through to 404).
+  // handleUpgrade returns undefined on a successful upgrade (Bun
+  // owns the response) and a 400 Response on upgrade failure. The
+  // 101 placeholder is unreachable when the upgrade succeeded
+  // (Bun has already taken over the socket); it satisfies the
+  // typed Response return shape for the fetch handler.
+  if (url.pathname === "/tunnel" && tunnelServer) {
+    const upgradeRes = tunnelServer.handleUpgrade(req, server);
+    return upgradeRes ?? new Response(null, { status: 101 });
+  }
+  if (url.pathname.startsWith("/tunnel-relay/") && tunnelServer) {
+    return handleTunnelRelay(req, url, tunnelServer, opts.tokenHash, opts.tunnelJournalPath);
+  }
+  // Bootstrap registration — unauthenticated by design (nodes have
+  // no bearer yet; that's what this endpoint mints). Consumes a
+  // single-use token from deploy-node, writes to kubeconfig.
+  if (url.pathname === "/register") {
+    return handleRegister(req, opts.registerOptions ?? {});
+  }
+  // Install-script endpoint — returns the curl-pipe-sh bootstrap
+  // script for the given token. Unauthenticated; the token query
+  // param is the capability. Hits /artifacts + /register once the
+  // target host runs it.
+  if (url.pathname === "/install-agent.sh") {
+    return handleInstallScript(req, opts.installScriptOptions ?? {});
+  }
+  // Artifact server — streams pre-built llamactl-agent binaries
+  // to the curl-pipe-sh installer. Public, no auth (the binary is
+  // the same thing anyone can compile from git; serving it over
+  // TLS with caching is a convenience, not a privilege).
+  if (url.pathname.startsWith("/artifacts/")) {
+    return handleArtifact(req, url, opts.artifactsOptions ?? {});
+  }
+  // Agent self-update endpoint — bearer-auth'd POST that takes a
+  // raw binary body + X-Sha256 header, atomic-replaces the running
+  // binary, and exits so launchd respawns into the new build.
+  // Used by `llamactl agent update --node <n>` from the control
+  // plane; never exposed unauthenticated.
+  if (url.pathname === "/agent/update") {
+    return handleAgentUpdate(req, { tokenHash: opts.tokenHash });
+  }
+  // Companion to /agent/update — restores `<execPath>.previous`
+  // over the running binary + exits 0 so launchd respawns the
+  // prior version. Symmetric: calling it twice flips back.
+  if (url.pathname === "/agent/rollback") {
+    return handleAgentRollback(req, { tokenHash: opts.tokenHash });
+  }
+  return null;
+}
+
+/**
+ * Bearer-auth'd API routes: metrics, RAG-aware chat completions, the
+ * fleet snapshot, and the OpenAI-compatible /v1 gateway. Order is
+ * load-bearing — it mirrors the original route chain exactly.
+ * Returns null when no route matched (fall through to /trpc).
+ */
+function handleAuthedApiRoutes(
+  req: Request,
+  url: URL,
+  clientAddress: ClientAddress | null,
+  opts: StartAgentOptions,
+  gate: NoAuthGate,
+): Response | Promise<Response> | null {
+  // Prometheus scrape endpoint. Bearer-auth'd like everything else;
+  // scrapers can set the standard Authorization header.
+  if (url.pathname === "/metrics") {
+    return handleMetricsRoute(req, url, clientAddress, opts, gate);
+  }
+  // RAG-aware chat completions. Plain OpenAI clients can opt into
+  // retrieval by adding a `rag: {node, topK?}` extension field, and
+  // must include `via: <node>` to name the llamactl node to route
+  // chat through. When neither field is present the handler falls
+  // through to the legacy openai-proxy path below. Non-POST / other
+  // paths under /v1/* fall straight through to handleOpenAIRoute.
+  if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
+    const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
+    if (denied) return denied;
+    return handleRagChatCompletions(req, {
+      appRouter,
+      fallback: (forwarded) => handleOpenAIRoute(forwarded, url, clientAddress, opts, gate),
+    });
+  }
+  if (req.method === "GET" && url.pathname === "/v1/fleet/snapshot") {
+    const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
+    if (denied) return denied;
+    return handleFleetSnapshotRoute(req);
+  }
+  // OpenAI-compatible gateway. Anything under /v1/* is bearer-auth'd
+  // then either listed (GET /v1/models — static, no upstream call)
+  // or proxied straight to the local llama-server so external tools
+  // can speak plain OpenAI SDK to the agent's URL.
+  if (url.pathname.startsWith("/v1/") || url.pathname === "/v1") {
+    return handleOpenAIRoute(req, url, clientAddress, opts, gate);
+  }
+  return null;
+}
+
+function handleMetricsRoute(
+  req: Request,
+  url: URL,
+  clientAddress: ClientAddress | null,
+  opts: StartAgentOptions,
+  gate: NoAuthGate,
+): Response | Promise<Response> {
+  const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
+  if (denied) return denied;
+  return metricsRegistry.metrics().then(
+    (text) =>
+      new Response(text, {
+        status: 200,
+        headers: { "content-type": metricsRegistry.contentType },
+      }),
+  );
+}
 
 function createAgentFetchHandler(args: {
   opts: StartAgentOptions;
@@ -304,113 +456,15 @@ function createAgentFetchHandler(args: {
     const url = new URL(req.url);
     const clientAddress = typeof server.requestIP === "function" ? server.requestIP(req) : null;
     opts.onRequest?.(url);
-    if (url.pathname === "/health" || url.pathname === "/healthz") {
-      return new Response("ok", { status: 200 });
-    }
-    // Reverse-tunnel endpoints — gated on opts.tunnelCentral. Both
-    // are no-ops when tunnelServer is null (falls through to 404).
-    // handleUpgrade returns undefined on a successful upgrade (Bun
-    // owns the response) and a 400 Response on upgrade failure. The
-    // 101 placeholder is unreachable when the upgrade succeeded
-    // (Bun has already taken over the socket); it satisfies the
-    // typed Response return shape for the fetch handler.
-    if (url.pathname === "/tunnel" && tunnelServer) {
-      const upgradeRes = tunnelServer.handleUpgrade(req, server);
-      return upgradeRes ?? new Response(null, { status: 101 });
-    }
-    if (url.pathname.startsWith("/tunnel-relay/") && tunnelServer) {
-      return handleTunnelRelay(req, url, tunnelServer, opts.tokenHash, opts.tunnelJournalPath);
-    }
-    // Bootstrap registration — unauthenticated by design (nodes have
-    // no bearer yet; that's what this endpoint mints). Consumes a
-    // single-use token from deploy-node, writes to kubeconfig.
-    if (url.pathname === "/register") {
-      return handleRegister(req, opts.registerOptions ?? {});
-    }
-    // Install-script endpoint — returns the curl-pipe-sh bootstrap
-    // script for the given token. Unauthenticated; the token query
-    // param is the capability. Hits /artifacts + /register once the
-    // target host runs it.
-    if (url.pathname === "/install-agent.sh") {
-      return handleInstallScript(req, opts.installScriptOptions ?? {});
-    }
-    // Artifact server — streams pre-built llamactl-agent binaries
-    // to the curl-pipe-sh installer. Public, no auth (the binary is
-    // the same thing anyone can compile from git; serving it over
-    // TLS with caching is a convenience, not a privilege).
-    if (url.pathname.startsWith("/artifacts/")) {
-      return handleArtifact(req, url, opts.artifactsOptions ?? {});
-    }
-    // Agent self-update endpoint — bearer-auth'd POST that takes a
-    // raw binary body + X-Sha256 header, atomic-replaces the running
-    // binary, and exits so launchd respawns into the new build.
-    // Used by `llamactl agent update --node <n>` from the control
-    // plane; never exposed unauthenticated.
-    if (url.pathname === "/agent/update") {
-      return handleAgentUpdate(req, { tokenHash: opts.tokenHash });
-    }
-    // Companion to /agent/update — restores `<execPath>.previous`
-    // over the running binary + exits 0 so launchd respawns the
-    // prior version. Symmetric: calling it twice flips back.
-    if (url.pathname === "/agent/rollback") {
-      return handleAgentRollback(req, { tokenHash: opts.tokenHash });
-    }
-    // Prometheus scrape endpoint. Bearer-auth'd like everything else;
-    // scrapers can set the standard Authorization header.
-    if (url.pathname === "/metrics") {
-      if (gate.allowNoAuth(url.pathname, clientAddress)) {
-        gate.logUnauthenticatedNoAuthRequest(req, clientAddress);
-      } else if (!verifyBearer(req, opts.tokenHash)) {
-        return unauthorizedResponse();
-      }
-      return metricsRegistry.metrics().then(
-        (text) =>
-          new Response(text, {
-            status: 200,
-            headers: { "content-type": metricsRegistry.contentType },
-          }),
-      );
-    }
-    // RAG-aware chat completions. Plain OpenAI clients can opt into
-    // retrieval by adding a `rag: {node, topK?}` extension field, and
-    // must include `via: <node>` to name the llamactl node to route
-    // chat through. When neither field is present the handler falls
-    // through to the legacy openai-proxy path below. Non-POST / other
-    // paths under /v1/* fall straight through to handleOpenAIRoute.
-    if (req.method === "POST" && url.pathname === "/v1/chat/completions") {
-      if (gate.allowNoAuth(url.pathname, clientAddress)) {
-        gate.logUnauthenticatedNoAuthRequest(req, clientAddress);
-      } else if (!verifyBearer(req, opts.tokenHash)) {
-        return unauthorizedResponse();
-      }
-      return handleRagChatCompletions(req, {
-        appRouter,
-        fallback: (forwarded) => handleOpenAIRoute(forwarded, url, clientAddress, opts, gate),
-      });
-    }
-    if (req.method === "GET" && url.pathname === "/v1/fleet/snapshot") {
-      if (gate.allowNoAuth(url.pathname, clientAddress)) {
-        gate.logUnauthenticatedNoAuthRequest(req, clientAddress);
-      } else if (!verifyBearer(req, opts.tokenHash)) {
-        return unauthorizedResponse();
-      }
-      return handleFleetSnapshotRoute(req);
-    }
-    // OpenAI-compatible gateway. Anything under /v1/* is bearer-auth'd
-    // then either listed (GET /v1/models — static, no upstream call)
-    // or proxied straight to the local llama-server so external tools
-    // can speak plain OpenAI SDK to the agent's URL.
-    if (url.pathname.startsWith("/v1/") || url.pathname === "/v1") {
-      return handleOpenAIRoute(req, url, clientAddress, opts, gate);
-    }
+    const infra = handleInfraRoutes(req, url, server, opts, tunnelServer);
+    if (infra) return infra;
+    const api = handleAuthedApiRoutes(req, url, clientAddress, opts, gate);
+    if (api) return api;
     if (!url.pathname.startsWith(endpoint)) {
       return new Response("not found", { status: 404 });
     }
-    if (gate.allowNoAuth(url.pathname, clientAddress)) {
-      gate.logUnauthenticatedNoAuthRequest(req, clientAddress);
-    } else if (!verifyBearer(req, opts.tokenHash)) {
-      return unauthorizedResponse();
-    }
+    const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
+    if (denied) return denied;
     return fetchRequestHandler({
       req,
       endpoint,
@@ -543,6 +597,47 @@ function maybeStartTunnelClient(opts: StartAgentOptions): TunnelClient | null {
   return tunnelClient;
 }
 
+// Async best-effort subsystems (mDNS Bonjour probes, the tunnel
+// client's reconnect loop, telemetry flushers) can throw
+// unhandled rejections + uncaughtExceptions hours after startup.
+// In a TTY those land as stderr noise; under launchd the default
+// handler kills the process even though the HTTP server is fine.
+// Make the agent resilient: log + continue. Once installed, this
+// covers ANY future async-leak the agent picks up — not just mDNS.
+const captureFatal =
+  (kind: string) =>
+  (err: unknown): void => {
+    process.stderr.write(
+      `${kind}: ${err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err)}\n`,
+    );
+  };
+
+function warnNoAuthEnabled(allowPlainHttp: boolean): void {
+  const transport = allowPlainHttp ? "Serving plain HTTP (no TLS)." : "Serving HTTPS.";
+  process.stderr.write(
+    `[agent] WARNING: --no-auth flag enabled. Bearer token validation BYPASSED for /v1/* connections from 127.0.0.1. All other routes (including /trpc) still require bearer auth. ${transport}\n`,
+  );
+}
+
+function maybeStartPeerSnapshotPoller(opts: StartAgentOptions): (() => void) | null {
+  if (!opts.peerSnapshotPoll) return null;
+  return startPeerSnapshotPoller(
+    opts.peerSnapshotPollIntervalMs ? { intervalMs: opts.peerSnapshotPollIntervalMs } : {},
+  );
+}
+
+function maybeCreateTunnelServer(opts: StartAgentOptions): TunnelServer | null {
+  if (!opts.tunnelCentral) return null;
+  return createTunnelServer({
+    expectedBearerHash: opts.tunnelCentral.expectedBearerHash,
+    onNodeConnect: opts.tunnelCentral.onNodeConnect,
+    onNodeDisconnect: opts.tunnelCentral.onNodeDisconnect,
+    // journal.ts resolves undefined → the default path; we just
+    // pass through so callers can force a tempfile in tests.
+    journalPath: opts.tunnelJournalPath,
+  });
+}
+
 /**
  * Starts a Bun HTTP(S) server that exposes the llamactl tRPC router
  * behind bearer-token auth. The fetchRequestHandler is the same surface
@@ -556,37 +651,16 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const noAuth = opts.noAuth === true;
   const allowPlainHttp = noAuth && isLoopbackAddress(bindHost);
 
-  // Async best-effort subsystems (mDNS Bonjour probes, the tunnel
-  // client's reconnect loop, telemetry flushers) can throw
-  // unhandled rejections + uncaughtExceptions hours after startup.
-  // In a TTY those land as stderr noise; under launchd the default
-  // handler kills the process even though the HTTP server is fine.
-  // Make the agent resilient: log + continue. Once installed, this
-  // covers ANY future async-leak the agent picks up — not just mDNS.
-  const captureFatal =
-    (kind: string) =>
-    (err: unknown): void => {
-      process.stderr.write(
-        `${kind}: ${err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err)}\n`,
-      );
-    };
   process.on("uncaughtException", captureFatal("uncaughtException"));
   process.on("unhandledRejection", captureFatal("unhandledRejection"));
 
   runStartupMigration();
   if (noAuth) {
-    const transport = allowPlainHttp ? "Serving plain HTTP (no TLS)." : "Serving HTTPS.";
-    process.stderr.write(
-      `[agent] WARNING: --no-auth flag enabled. Bearer token validation BYPASSED for /v1/* connections from 127.0.0.1. All other routes (including /trpc) still require bearer auth. ${transport}\n`,
-    );
+    warnNoAuthEnabled(allowPlainHttp);
   }
 
   startSearchIngest().catch(() => undefined);
-  const stopPeerSnapshotPoller = opts.peerSnapshotPoll
-    ? startPeerSnapshotPoller(
-        opts.peerSnapshotPollIntervalMs ? { intervalMs: opts.peerSnapshotPollIntervalMs } : {},
-      )
-    : null;
+  const stopPeerSnapshotPoller = maybeStartPeerSnapshotPoller(opts);
   agentInfo.set(
     {
       node_name: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? "agent",
@@ -595,16 +669,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     1,
   );
 
-  const tunnelServer: TunnelServer | null = opts.tunnelCentral
-    ? createTunnelServer({
-        expectedBearerHash: opts.tunnelCentral.expectedBearerHash,
-        onNodeConnect: opts.tunnelCentral.onNodeConnect,
-        onNodeDisconnect: opts.tunnelCentral.onNodeDisconnect,
-        // journal.ts resolves undefined → the default path; we just
-        // pass through so callers can force a tempfile in tests.
-        journalPath: opts.tunnelJournalPath,
-      })
-    : null;
+  const tunnelServer: TunnelServer | null = maybeCreateTunnelServer(opts);
 
   const gate = makeNoAuthGate(noAuth, bindHost);
 

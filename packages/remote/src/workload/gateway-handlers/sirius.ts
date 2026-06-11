@@ -1,4 +1,5 @@
 import type { ApplyResult } from "../apply.js";
+import type { ApplyConflict } from "../gateway-catalog/index.js";
 import type { GatewayApplyOptions, GatewayHandler } from "./types.js";
 
 import { currentContext, loadConfig, resolveToken } from "../../config/kubeconfig.js";
@@ -34,49 +35,52 @@ import {
  * sirius-providers.yaml shape today.
  */
 
+function siriusConflictResult(
+  opts: GatewayApplyOptions,
+  conflicts: ApplyConflict[],
+  now: string,
+): ApplyResult {
+  const [c] = conflicts;
+  if (!c) throw new Error("gateway conflict list unexpectedly empty");
+  const reason = c.kind === "name" ? "SiriusUpstreamNameCollision" : "SiriusUpstreamShapeMismatch";
+  const message =
+    c.kind === "name"
+      ? `entry '${c.name}' already exists as an operator-authored provider; remove it or change composite spec`
+      : `entry '${c.name}': ${c.detail}`;
+  return pending(opts, reason, message, now);
+}
+
 function resolveSiriusCatalog(
   opts: GatewayApplyOptions,
   now: string,
 ): { ok: false; result: ApplyResult } | { ok: true; changed: boolean } {
-  let changed = false;
-  if (opts.composite) {
-    const derived = deriveSiriusEntries(opts.composite);
-    const current = readGatewayCatalog("sirius");
-    const result = applyCompositeEntries({
-      kind: "sirius",
-      compositeName: opts.composite.compositeName,
-      derived,
-      current,
-    });
-    if (result.conflicts.length > 0) {
-      const [c] = result.conflicts;
-      if (!c) throw new Error("gateway conflict list unexpectedly empty");
-      const reason =
-        c.kind === "name" ? "SiriusUpstreamNameCollision" : "SiriusUpstreamShapeMismatch";
-      const message =
-        c.kind === "name"
-          ? `entry '${c.name}' already exists as an operator-authored provider; remove it or change composite spec`
-          : `entry '${c.name}': ${c.detail}`;
-      return { ok: false, result: pending(opts, reason, message, now) };
-    }
-    if (result.changed) {
-      try {
-        writeGatewayCatalog("sirius", result.next);
-        changed = true;
-      } catch (err) {
-        return {
-          ok: false,
-          result: failure(
-            opts,
-            "SiriusCatalogWriteFailed",
-            `could not write sirius-providers.yaml: ${(err as Error).message}`,
-            now,
-          ),
-        };
-      }
-    }
+  if (!opts.composite) return { ok: true, changed: false };
+  const derived = deriveSiriusEntries(opts.composite);
+  const current = readGatewayCatalog("sirius");
+  const result = applyCompositeEntries({
+    kind: "sirius",
+    compositeName: opts.composite.compositeName,
+    derived,
+    current,
+  });
+  if (result.conflicts.length > 0) {
+    return { ok: false, result: siriusConflictResult(opts, result.conflicts, now) };
   }
-  return { ok: true, changed };
+  if (!result.changed) return { ok: true, changed: false };
+  try {
+    writeGatewayCatalog("sirius", result.next);
+    return { ok: true, changed: true };
+  } catch (err) {
+    return {
+      ok: false,
+      result: failure(
+        opts,
+        "SiriusCatalogWriteFailed",
+        `could not write sirius-providers.yaml: ${(err as Error).message}`,
+        now,
+      ),
+    };
+  }
 }
 
 function resolveSiriusUpstream(
