@@ -204,6 +204,17 @@ async function main(): Promise<void> {
       timeoutMs: 30_000,
     });
 
+    // The window exists before the renderer bundle runs; evaluating
+    // window.useTabStore against a not-yet-booted renderer races to
+    // undefined. dashboard-root mounting is the boot-complete signal
+    // every other flow waits on.
+    await client.call("electron_wait_for_selector", {
+      sessionId: eSessionId,
+      selector: '[data-testid="dashboard-root"]',
+      state: "visible",
+      timeout: 10_000,
+    });
+
     // Open the session directly via evaluation
     await client.call("electron_evaluate_renderer", {
       sessionId: eSessionId,

@@ -10,15 +10,24 @@ function readPackageJson(path: string): { scripts?: Record<string, string> } {
 }
 
 describe("strict lint rollout baselines", () => {
-  test("bunx eslint on this test file exits cleanly or with lint violations only", () => {
-    const proc = spawnSync("bunx", ["eslint", "scripts/tooling/strict-lint-rollout.test.ts"], {
-      cwd: root,
-      encoding: "utf8",
-    });
+  // Cold bunx resolution on a fresh CI runner takes >5s on its own, which
+  // trips bun:test's default per-test timeout before eslint even runs
+  // (seen in cross-repo-smoke, where no warm cache exists) — hence the
+  // explicit generous timeout.
+  const eslintBaselineTimeoutMs = 120_000;
+  test(
+    "bunx eslint on this test file exits cleanly or with lint violations only",
+    () => {
+      const proc = spawnSync("bunx", ["eslint", "scripts/tooling/strict-lint-rollout.test.ts"], {
+        cwd: root,
+        encoding: "utf8",
+      });
 
-    expect(proc.status).not.toBe(2);
-    expect(proc.status === 0 || proc.status === 1).toBe(true);
-  });
+      expect(proc.status).not.toBe(2);
+      expect(proc.status === 0 || proc.status === 1).toBe(true);
+    },
+    eslintBaselineTimeoutMs,
+  );
 
   test("root typecheck covers every TypeScript package", () => {
     const pkg = readPackageJson("package.json");
