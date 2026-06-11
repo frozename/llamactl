@@ -52,71 +52,124 @@ function slug(s: string): string {
   );
 }
 
-function parseFlags(args: string[]): ExposeFlags | { error: string } {
-  let target = "";
-  let nodeFlag: string | null = null;
-  let workloadName: string | null = null;
-  let extraArgs: string[] = [];
-  let timeoutSeconds = 60;
-  let json = false;
+interface ExposeParseState {
+  target: string;
+  nodeFlag: string | null;
+  workloadName: string | null;
+  extraArgs: string[];
+  timeoutSeconds: number;
+  json: boolean;
+}
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = required(args[i]);
-    if (arg === "--json") {
-      json = true;
-      continue;
+type ExposeArgStep = { next: number } | { error: string };
+
+function splitExtraArgs(raw: string): string[] {
+  return raw.trim().length > 0 ? raw.trim().split(/\s+/) : [];
+}
+
+/** Space-separated value flags (--node <n>, --name <w>, --extra-args "..."). */
+function applyValueExposeFlag(
+  arg: string,
+  args: string[],
+  i: number,
+  state: ExposeParseState,
+): ExposeArgStep | null {
+  if (arg === "--node" || arg === "-n") {
+    state.nodeFlag = args[i + 1] ?? "";
+    if (!state.nodeFlag) return { error: "expose: --node requires a value" };
+    return { next: i + 2 };
+  }
+  if (arg === "--name") {
+    state.workloadName = args[i + 1] ?? "";
+    if (!state.workloadName) return { error: "expose: --name requires a value" };
+    return { next: i + 2 };
+  }
+  if (arg === "--extra-args") {
+    state.extraArgs = splitExtraArgs(args[i + 1] ?? "");
+    return { next: i + 2 };
+  }
+  return null;
+}
+
+/** Inline `--key=value` flags. True → handled; false → not an inline flag. */
+function applyInlineExposeFlag(arg: string, state: ExposeParseState): boolean | { error: string } {
+  if (arg.startsWith("--node=")) {
+    state.nodeFlag = arg.slice("--node=".length);
+    return true;
+  }
+  if (arg.startsWith("--name=")) {
+    state.workloadName = arg.slice("--name=".length);
+    return true;
+  }
+  if (arg.startsWith("--extra-args=")) {
+    state.extraArgs = splitExtraArgs(arg.slice("--extra-args=".length));
+    return true;
+  }
+  if (arg.startsWith("--timeout=")) {
+    const n = Number.parseInt(arg.slice("--timeout=".length), 10);
+    if (!Number.isFinite(n) || n <= 0) {
+      return { error: `expose: invalid --timeout: ${arg}` };
     }
-    if (arg === "-h" || arg === "--help") return { error: "help" };
-    if (arg === "--node" || arg === "-n") {
-      nodeFlag = args[++i] ?? "";
-      if (!nodeFlag) return { error: "expose: --node requires a value" };
-      continue;
-    }
-    if (arg.startsWith("--node=")) {
-      nodeFlag = arg.slice("--node=".length);
-      continue;
-    }
-    if (arg === "--name") {
-      workloadName = args[++i] ?? "";
-      if (!workloadName) return { error: "expose: --name requires a value" };
-      continue;
-    }
-    if (arg.startsWith("--name=")) {
-      workloadName = arg.slice("--name=".length);
-      continue;
-    }
-    if (arg.startsWith("--extra-args=")) {
-      const raw = arg.slice("--extra-args=".length);
-      extraArgs = raw.trim().length > 0 ? raw.trim().split(/\s+/) : [];
-      continue;
-    }
-    if (arg === "--extra-args") {
-      const raw = args[++i] ?? "";
-      extraArgs = raw.trim().length > 0 ? raw.trim().split(/\s+/) : [];
-      continue;
-    }
-    if (arg.startsWith("--timeout=")) {
-      const n = Number.parseInt(arg.slice("--timeout=".length), 10);
-      if (!Number.isFinite(n) || n <= 0) {
-        return { error: `expose: invalid --timeout: ${arg}` };
-      }
-      timeoutSeconds = n;
-      continue;
-    }
-    if (arg.startsWith("-")) {
-      return { error: `expose: unknown flag ${arg}` };
-    }
-    if (!target) {
-      target = arg;
-      continue;
-    }
-    return { error: `expose: unexpected positional ${arg}` };
+    state.timeoutSeconds = n;
+    return true;
+  }
+  return false;
+}
+
+function applyExposePositional(arg: string, i: number, state: ExposeParseState): ExposeArgStep {
+  if (arg.startsWith("-")) {
+    return { error: `expose: unknown flag ${arg}` };
+  }
+  if (!state.target) {
+    state.target = arg;
+    return { next: i + 1 };
+  }
+  return { error: `expose: unexpected positional ${arg}` };
+}
+
+function applyExposeArg(args: string[], i: number, state: ExposeParseState): ExposeArgStep {
+  const arg = required(args[i]);
+  if (arg === "--json") {
+    state.json = true;
+    return { next: i + 1 };
+  }
+  if (arg === "-h" || arg === "--help") return { error: "help" };
+  const valueFlag = applyValueExposeFlag(arg, args, i, state);
+  if (valueFlag !== null) return valueFlag;
+  const inline = applyInlineExposeFlag(arg, state);
+  if (typeof inline === "object") return inline;
+  if (inline) return { next: i + 1 };
+  return applyExposePositional(arg, i, state);
+}
+
+function parseFlags(args: string[]): ExposeFlags | { error: string } {
+  const state: ExposeParseState = {
+    target: "",
+    nodeFlag: null,
+    workloadName: null,
+    extraArgs: [],
+    timeoutSeconds: 60,
+    json: false,
+  };
+
+  let i = 0;
+  while (i < args.length) {
+    const step = applyExposeArg(args, i, state);
+    if ("error" in step) return step;
+    i = step.next;
   }
 
-  if (!target) return { error: "expose: missing <target>" };
-  const node = nodeFlag ?? resolveEffectiveNodeName();
-  const name = workloadName ?? slug(target);
-  return { target, node, workloadName: name, extraArgs, timeoutSeconds, json };
+  if (!state.target) return { error: "expose: missing <target>" };
+  const node = state.nodeFlag ?? resolveEffectiveNodeName();
+  const name = state.workloadName ?? slug(state.target);
+  return {
+    target: state.target,
+    node,
+    workloadName: name,
+    extraArgs: state.extraArgs,
+    timeoutSeconds: state.timeoutSeconds,
+    json: state.json,
+  };
 }
 
 export async function runExpose(args: string[]): Promise<number> {
@@ -151,28 +204,8 @@ export async function runExpose(args: string[]): Promise<number> {
     },
   };
 
-  let result: workloadApply.ApplyResult;
-  try {
-    const cfg = kubecfg.loadConfig();
-    result = await workloadApply.applyOne(
-      manifest,
-      (n) => getNodeClientByName(n),
-      undefined,
-      undefined,
-      {
-        resolveNodeIdentity: (n) => {
-          try {
-            return kubecfg.resolveNode(cfg, n).node.endpoint || null;
-          } catch {
-            return null;
-          }
-        },
-      },
-    );
-  } catch (err) {
-    process.stderr.write(`expose: apply failed: ${(err as Error).message}\n`);
-    return 1;
-  }
+  const result = await applyExposeManifest(manifest);
+  if (result === null) return 1;
   if (result.error) {
     process.stderr.write(`expose: ${result.error}\n`);
     return 1;
@@ -185,17 +218,11 @@ export async function runExpose(args: string[]): Promise<number> {
   // applyOne populated statusSection.endpoint from the startServer
   // result, but that's the bind URL; we specifically want the
   // advertised one for ember synth.
-  let advertised = result.statusSection.endpoint ?? null;
-  try {
-    // A version-skewed agent can omit the field over the wire despite the
-    // non-optional static type; never clear the endpoint we already have.
-    const status: { advertisedEndpoint?: string | null } = await getNodeClientByName(
-      node,
-    ).serverStatus.query({ workload: workloadName });
-    advertised = status.advertisedEndpoint ?? advertised;
-  } catch {
-    // Not fatal — fall back to whatever applyOne recorded.
-  }
+  const advertised = await fetchAdvertisedEndpoint(
+    node,
+    workloadName,
+    result.statusSection.endpoint ?? null,
+  );
   const openaiUrl = advertised ? `${advertised}/v1` : null;
 
   if (json) {
@@ -216,6 +243,63 @@ export async function runExpose(args: string[]): Promise<number> {
     return 0;
   }
 
+  printExposeSummary({ result, workloadName, node, savedPath, advertised, openaiUrl });
+  return 0;
+}
+
+async function applyExposeManifest(
+  manifest: workloadSchema.ModelRun,
+): Promise<workloadApply.ApplyResult | null> {
+  try {
+    const cfg = kubecfg.loadConfig();
+    return await workloadApply.applyOne(
+      manifest,
+      (n) => getNodeClientByName(n),
+      undefined,
+      undefined,
+      {
+        resolveNodeIdentity: (n) => {
+          try {
+            return kubecfg.resolveNode(cfg, n).node.endpoint || null;
+          } catch {
+            return null;
+          }
+        },
+      },
+    );
+  } catch (err) {
+    process.stderr.write(`expose: apply failed: ${(err as Error).message}\n`);
+    return null;
+  }
+}
+
+async function fetchAdvertisedEndpoint(
+  node: string,
+  workloadName: string,
+  fallback: string | null,
+): Promise<string | null> {
+  try {
+    // A version-skewed agent can omit the field over the wire despite the
+    // non-optional static type; never clear the endpoint we already have.
+    const status: { advertisedEndpoint?: string | null } = await getNodeClientByName(
+      node,
+    ).serverStatus.query({ workload: workloadName });
+    return status.advertisedEndpoint ?? fallback;
+  } catch {
+    // Not fatal — fall back to whatever applyOne recorded.
+    return fallback;
+  }
+}
+
+function printExposeSummary(opts: {
+  result: workloadApply.ApplyResult;
+  workloadName: string;
+  node: string;
+  savedPath: string;
+  advertised: string | null;
+  openaiUrl: string | null;
+}): void {
+  const { result, workloadName, node, savedPath, advertised, openaiUrl } = opts;
   process.stdout.write(`${result.action} modelrun/${workloadName} on node ${node}\n`);
   process.stdout.write(`  manifest:  ${savedPath}\n`);
   if (result.statusSection.serverPid) {
@@ -229,5 +313,4 @@ export async function runExpose(args: string[]): Promise<number> {
       `Point OpenAI-compatible clients (ember synth, etc.) at:\n  ${openaiUrl}\n`,
     );
   }
-  return 0;
 }

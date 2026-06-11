@@ -73,6 +73,104 @@ export interface DoctorResult {
   error?: string;
 }
 
+function resolveDoctorAgents(nodeFilter: string | undefined): ClusterNode[] | { error: string } {
+  let cfg: Config;
+  try {
+    cfg = kubecfg.loadConfig();
+  } catch (err) {
+    return { error: `agent cli doctor: ${(err as Error).message}\n` };
+  }
+
+  const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
+  if (!ctx) {
+    return { error: `agent cli doctor: no current context\n` };
+  }
+  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
+  if (!cluster) {
+    return { error: `agent cli doctor: cluster '${ctx.cluster}' not found\n` };
+  }
+
+  const agents = cluster.nodes.filter(
+    (n): n is ClusterNode =>
+      resolveNodeKind(n) === "agent" && (!nodeFilter || n.name === nodeFilter),
+  );
+  if (agents.length === 0) {
+    return {
+      error: `agent cli doctor: no agent nodes match${nodeFilter ? ` --node=${nodeFilter}` : ""}\n`,
+    };
+  }
+  return agents;
+}
+
+async function probeCliBinding(
+  agent: ClusterNode,
+  binding: NonNullable<ClusterNode["cli"]>[number],
+): Promise<DoctorResult> {
+  const provider = createCliSubprocessProvider({
+    agentName: agent.name,
+    binding,
+  });
+  if (!provider.healthCheck) {
+    return {
+      agent: agent.name,
+      binding: binding.name,
+      preset: binding.preset,
+      state: "unknown",
+      latencyMs: null,
+      error: "healthCheck not implemented",
+    };
+  }
+  try {
+    const h = await provider.healthCheck();
+    const entry: DoctorResult = {
+      agent: agent.name,
+      binding: binding.name,
+      preset: binding.preset,
+      state: h.state,
+      latencyMs: typeof h.latencyMs === "number" ? h.latencyMs : null,
+    };
+    if (h.error) entry.error = h.error;
+    return entry;
+  } catch (err) {
+    return {
+      agent: agent.name,
+      binding: binding.name,
+      preset: binding.preset,
+      state: "unhealthy",
+      latencyMs: null,
+      error: (err as Error).message,
+    };
+  }
+}
+
+async function collectDoctorResults(agents: ClusterNode[]): Promise<DoctorResult[]> {
+  const results: DoctorResult[] = [];
+  for (const agent of agents) {
+    for (const binding of agent.cli ?? []) {
+      results.push(await probeCliBinding(agent, binding));
+    }
+  }
+  return results;
+}
+
+function printDoctorResults(results: DoctorResult[], json: boolean): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ results })}\n`);
+    return;
+  }
+  if (results.length === 0) {
+    process.stdout.write("(no CLI bindings declared on any agent)\n");
+    return;
+  }
+  for (const r of results) {
+    const mark = r.state === "healthy" ? "ok" : r.state;
+    const latency = r.latencyMs !== null ? `${String(r.latencyMs)}ms` : "—";
+    process.stdout.write(
+      `[${mark}] ${r.agent}.${r.binding} (${r.preset}) · ${latency}${r.error ? ` · ${r.error}` : ""}\n`,
+    );
+  }
+}
+
 async function runDoctor(args: string[]): Promise<number> {
   const parsed = parseDoctor(args);
   if ("error" in parsed) {
@@ -84,93 +182,14 @@ async function runDoctor(args: string[]): Promise<number> {
     return 1;
   }
 
-  let cfg: Config;
-  try {
-    cfg = kubecfg.loadConfig();
-  } catch (err) {
-    process.stderr.write(`agent cli doctor: ${(err as Error).message}\n`);
+  const agents = resolveDoctorAgents(parsed.node);
+  if ("error" in agents) {
+    process.stderr.write(agents.error);
     return 1;
   }
 
-  const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
-  if (!ctx) {
-    process.stderr.write(`agent cli doctor: no current context\n`);
-    return 1;
-  }
-  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
-  if (!cluster) {
-    process.stderr.write(`agent cli doctor: cluster '${ctx.cluster}' not found\n`);
-    return 1;
-  }
-
-  const agents = cluster.nodes.filter(
-    (n): n is ClusterNode =>
-      resolveNodeKind(n) === "agent" && (!parsed.node || n.name === parsed.node),
-  );
-  if (agents.length === 0) {
-    process.stderr.write(
-      `agent cli doctor: no agent nodes match${parsed.node ? ` --node=${parsed.node}` : ""}\n`,
-    );
-    return 1;
-  }
-
-  const results: DoctorResult[] = [];
-  for (const agent of agents) {
-    for (const binding of agent.cli ?? []) {
-      const provider = createCliSubprocessProvider({
-        agentName: agent.name,
-        binding,
-      });
-      if (!provider.healthCheck) {
-        results.push({
-          agent: agent.name,
-          binding: binding.name,
-          preset: binding.preset,
-          state: "unknown",
-          latencyMs: null,
-          error: "healthCheck not implemented",
-        });
-        continue;
-      }
-      try {
-        const h = await provider.healthCheck();
-        const entry: DoctorResult = {
-          agent: agent.name,
-          binding: binding.name,
-          preset: binding.preset,
-          state: h.state,
-          latencyMs: typeof h.latencyMs === "number" ? h.latencyMs : null,
-        };
-        if (h.error) entry.error = h.error;
-        results.push(entry);
-      } catch (err) {
-        results.push({
-          agent: agent.name,
-          binding: binding.name,
-          preset: binding.preset,
-          state: "unhealthy",
-          latencyMs: null,
-          error: (err as Error).message,
-        });
-      }
-    }
-  }
-
-  if (parsed.json) {
-    process.stdout.write(`${JSON.stringify({ results })}\n`);
-  } else {
-    if (results.length === 0) {
-      process.stdout.write("(no CLI bindings declared on any agent)\n");
-    } else {
-      for (const r of results) {
-        const mark = r.state === "healthy" ? "ok" : r.state;
-        const latency = r.latencyMs !== null ? `${String(r.latencyMs)}ms` : "—";
-        process.stdout.write(
-          `[${mark}] ${r.agent}.${r.binding} (${r.preset}) · ${latency}${r.error ? ` · ${r.error}` : ""}\n`,
-        );
-      }
-    }
-  }
+  const results = await collectDoctorResults(agents);
+  printDoctorResults(results, parsed.json);
 
   const anyBad = results.some((r) => r.state !== "healthy");
   return anyBad ? 2 : 0;

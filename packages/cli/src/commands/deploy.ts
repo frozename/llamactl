@@ -39,6 +39,38 @@ function inferCentralUrl(): string | null {
   }
 }
 
+/** Apply one deploy arg; false → stop parsing (help or error already printed). */
+function applyDeployFlag(arg: string, flags: DeployFlags): boolean {
+  if (arg === "--help" || arg === "-h") {
+    process.stdout.write(USAGE);
+    return false;
+  }
+  const eq = arg.indexOf("=");
+  if (!arg.startsWith("--") || eq < 0) {
+    process.stderr.write(`deploy-node: unknown arg ${arg}\n\n${USAGE}`);
+    return false;
+  }
+  const key = arg.slice(2, eq);
+  const value = arg.slice(eq + 1);
+  switch (key) {
+    case "central-url":
+      flags.centralUrl = value;
+      return true;
+    case "ttl": {
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        process.stderr.write(`deploy-node: --ttl must be a positive integer (minutes)\n`);
+        return false;
+      }
+      flags.ttlMinutes = parsed;
+      return true;
+    }
+    default:
+      process.stderr.write(`deploy-node: unknown flag --${key}\n\n${USAGE}`);
+      return false;
+  }
+}
+
 function parseFlags(
   argv: string[],
 ): { mode: "deploy"; flags: DeployFlags } | { mode: "list" } | { mode: "prune" } | null {
@@ -62,34 +94,7 @@ function parseFlags(
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === undefined) continue;
-    if (arg === "--help" || arg === "-h") {
-      process.stdout.write(USAGE);
-      return null;
-    }
-    const eq = arg.indexOf("=");
-    if (!arg.startsWith("--") || eq < 0) {
-      process.stderr.write(`deploy-node: unknown arg ${arg}\n\n${USAGE}`);
-      return null;
-    }
-    const key = arg.slice(2, eq);
-    const value = arg.slice(eq + 1);
-    switch (key) {
-      case "central-url":
-        flags.centralUrl = value;
-        break;
-      case "ttl": {
-        const parsed = Number.parseInt(value, 10);
-        if (!Number.isFinite(parsed) || parsed <= 0) {
-          process.stderr.write(`deploy-node: --ttl must be a positive integer (minutes)\n`);
-          return null;
-        }
-        flags.ttlMinutes = parsed;
-        break;
-      }
-      default:
-        process.stderr.write(`deploy-node: unknown flag --${key}\n\n${USAGE}`);
-        return null;
-    }
+    if (!applyDeployFlag(arg, flags)) return null;
   }
   return { mode: "deploy", flags };
 }

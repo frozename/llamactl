@@ -110,7 +110,7 @@ function readJournalEntries(
   return entries;
 }
 
-export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<number> {
+function resolveFleetDeps(deps: FleetDeps): Required<FleetDeps> {
   const readLocalSnapshot =
     deps.readLocalSnapshot ??
     // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
@@ -123,11 +123,90 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
       const fetcher = createPeerFetch(peer);
       return await fetcher();
     });
-  const fullDeps: Required<FleetDeps> = {
-    readLocalSnapshot,
-    readPeers,
-    fetchPeerSnapshot,
+  return { readLocalSnapshot, readPeers, fetchPeerSnapshot };
+}
+
+async function runFleetSnapshot(rest: string[], fullDeps: Required<FleetDeps>): Promise<number> {
+  const all = rest.includes("--all");
+  if (!all) {
+    const local = await fullDeps.readLocalSnapshot();
+    if (!local) {
+      console.error("fleet snapshot: no local fleet-snapshot entry found");
+      return 1;
+    }
+    process.stdout.write(`${JSON.stringify(local)}\n`);
+    return 0;
+  }
+
+  const rows = await buildRows(fullDeps);
+  printRowsTable(rows);
+  return 0;
+}
+
+function runFleetJournalTail(rest: string[]): number {
+  const journalPath = parseFlagValue(rest, "--journal") ?? defaultFleetJournalPath();
+  const typeFilter = parseFlagValue(rest, "--type");
+  const limitRaw = parseFlagValue(rest, "--limit");
+  const limit = limitRaw ? Number.parseInt(limitRaw, 10) : 20;
+  const entries = readJournalEntries(journalPath)
+    .filter((entry) => (typeFilter ? entry.kind === typeFilter : true))
+    .slice(-Math.max(1, limit));
+  for (const entry of entries) {
+    const prefix = `${entry.ts ?? "-"} ${entry.kind ?? "unknown"} ${entry.node ?? "-"}`;
+    process.stdout.write(`${prefix} ${entry.raw}\n`);
+  }
+  return 0;
+}
+
+async function runFleetAggregatorServe(
+  rest: string[],
+  readPeers: () => PeerNode[],
+): Promise<number> {
+  const once = rest.includes("--once");
+  const dbPath = parseFlagValue(rest, "--db") ?? defaultAggregatorDbPath();
+  const peers = readPeers();
+  const db = openAggregatorDb(dbPath);
+  const aggregator = new FleetAggregator({
+    peers,
+    fetchSnapshot: async (peer): Promise<FleetSnapshotEntry | null> => {
+      const fetcher = createPeerFetch(peer);
+      return await fetcher();
+    },
+  });
+
+  const persist = (): void => {
+    for (const row of aggregator.getAll()) {
+      if (row.snapshot === null) continue;
+      writeSnapshot(db, row.nodeId, row.snapshot);
+    }
   };
+
+  if (once) {
+    await aggregator.pollNow();
+    persist();
+    db.close();
+    return 0;
+  }
+
+  const running = aggregator.start();
+  const interval = setInterval(() => {
+    persist();
+  }, 30_000);
+  const stop = (): never => {
+    clearInterval(interval);
+    running.stop();
+    db.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+  return await new Promise<number>(() => {
+    // long-running
+  });
+}
+
+export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<number> {
+  const fullDeps = resolveFleetDeps(deps);
 
   const [sub, ...rest] = args;
   if (!sub || sub === "--help" || sub === "-h") {
@@ -136,20 +215,7 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
   }
 
   if (sub === "snapshot") {
-    const all = rest.includes("--all");
-    if (!all) {
-      const local = await fullDeps.readLocalSnapshot();
-      if (!local) {
-        console.error("fleet snapshot: no local fleet-snapshot entry found");
-        return 1;
-      }
-      process.stdout.write(`${JSON.stringify(local)}\n`);
-      return 0;
-    }
-
-    const rows = await buildRows(fullDeps);
-    printRowsTable(rows);
-    return 0;
+    return await runFleetSnapshot(rest, fullDeps);
   }
 
   if (sub === "status") {
@@ -159,62 +225,11 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
   }
 
   if (sub === "journal-tail") {
-    const journalPath = parseFlagValue(rest, "--journal") ?? defaultFleetJournalPath();
-    const typeFilter = parseFlagValue(rest, "--type");
-    const limitRaw = parseFlagValue(rest, "--limit");
-    const limit = limitRaw ? Number.parseInt(limitRaw, 10) : 20;
-    const entries = readJournalEntries(journalPath)
-      .filter((entry) => (typeFilter ? entry.kind === typeFilter : true))
-      .slice(-Math.max(1, limit));
-    for (const entry of entries) {
-      const prefix = `${entry.ts ?? "-"} ${entry.kind ?? "unknown"} ${entry.node ?? "-"}`;
-      process.stdout.write(`${prefix} ${entry.raw}\n`);
-    }
-    return 0;
+    return runFleetJournalTail(rest);
   }
 
   if (sub === "aggregator" && rest[0] === "serve") {
-    const once = rest.includes("--once");
-    const dbPath = parseFlagValue(rest, "--db") ?? defaultAggregatorDbPath();
-    const peers = readPeers();
-    const db = openAggregatorDb(dbPath);
-    const aggregator = new FleetAggregator({
-      peers,
-      fetchSnapshot: async (peer): Promise<FleetSnapshotEntry | null> => {
-        const fetcher = createPeerFetch(peer);
-        return await fetcher();
-      },
-    });
-
-    const persist = (): void => {
-      for (const row of aggregator.getAll()) {
-        if (row.snapshot === null) continue;
-        writeSnapshot(db, row.nodeId, row.snapshot);
-      }
-    };
-
-    if (once) {
-      await aggregator.pollNow();
-      persist();
-      db.close();
-      return 0;
-    }
-
-    const running = aggregator.start();
-    const interval = setInterval(() => {
-      persist();
-    }, 30_000);
-    const stop = (): never => {
-      clearInterval(interval);
-      running.stop();
-      db.close();
-      process.exit(0);
-    };
-    process.on("SIGINT", stop);
-    process.on("SIGTERM", stop);
-    return await new Promise<number>(() => {
-      // long-running
-    });
+    return await runFleetAggregatorServe(rest, fullDeps.readPeers);
   }
 
   console.error(`Unknown fleet subcommand: ${sub}`);

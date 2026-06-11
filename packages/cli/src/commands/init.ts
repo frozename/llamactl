@@ -277,6 +277,33 @@ async function applyComposite(yamlPath: string): Promise<{ ok: boolean; message?
 
 // ---- helpers -------------------------------------------------------------
 
+function applyInitValueArg(arg: string, a: InitArgs): void {
+  if (arg.startsWith("--runtime=")) {
+    const v = arg.slice("--runtime=".length);
+    if (v === "docker" || v === "kubernetes" || v === "auto") a.runtime = v;
+    return;
+  }
+  if (arg.startsWith("--template=")) {
+    const v = arg.slice("--template=".length) as TemplateKey;
+    if ((TEMPLATE_ORDER as readonly string[]).includes(v)) {
+      a.template = v;
+    }
+    return;
+  }
+  if (arg.startsWith("--name=")) {
+    const v = arg.slice("--name=".length).trim();
+    if (v.length > 0) a.name = v;
+  }
+}
+
+function applyInitArg(arg: string, a: InitArgs): void {
+  if (arg === "-h" || arg === "--help") a.help = true;
+  else if (arg === "-y" || arg === "--yes") a.yes = true;
+  else if (arg === "--force") a.force = true;
+  else if (arg === "--no-apply") a.noApply = true;
+  else applyInitValueArg(arg, a);
+}
+
 function parseArgs(argv: string[]): InitArgs {
   const a: InitArgs = {
     help: false,
@@ -288,22 +315,7 @@ function parseArgs(argv: string[]): InitArgs {
     name: "quickstart",
   };
   for (const arg of argv) {
-    if (arg === "-h" || arg === "--help") a.help = true;
-    else if (arg === "-y" || arg === "--yes") a.yes = true;
-    else if (arg === "--force") a.force = true;
-    else if (arg === "--no-apply") a.noApply = true;
-    else if (arg.startsWith("--runtime=")) {
-      const v = arg.slice("--runtime=".length);
-      if (v === "docker" || v === "kubernetes" || v === "auto") a.runtime = v;
-    } else if (arg.startsWith("--template=")) {
-      const v = arg.slice("--template=".length) as TemplateKey;
-      if ((TEMPLATE_ORDER as readonly string[]).includes(v)) {
-        a.template = v;
-      }
-    } else if (arg.startsWith("--name=")) {
-      const v = arg.slice("--name=".length).trim();
-      if (v.length > 0) a.name = v;
-    }
+    applyInitArg(arg, a);
   }
   return a;
 }

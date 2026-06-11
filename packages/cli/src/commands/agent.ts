@@ -447,53 +447,161 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
   return flags;
 }
 
+interface ServeWiring {
+  dialUrl: string | undefined;
+  dialBearer: string | undefined;
+  tunnelCentralOn: boolean;
+  tunnelCentralBearer: string | undefined;
+}
+
+// --dial-central / --central-bearer must travel together. The
+// bearer can also come from LLAMACTL_TUNNEL_BEARER so the CLI line
+// doesn't need to embed secrets. Either both are present (and we
+// wire tunnelDial below) or neither is.
+function checkDialFlags(
+  parsed: ServeFlags,
+  dialUrl: string | undefined,
+  dialBearer: string | undefined,
+): string | null {
+  if (dialUrl || parsed.centralBearer) {
+    if (!dialUrl || !dialBearer) {
+      return "--dial-central and --central-bearer must be provided together (or set LLAMACTL_TUNNEL_BEARER for the bearer)\n";
+    }
+  }
+  return null;
+}
+
+function checkNoAuthBind(parsed: ServeFlags): string | null {
+  if (!parsed.noAuth) return null;
+  const bindHost = parsed.bindHost ?? "127.0.0.1";
+  if (bindHost !== "127.0.0.1" && bindHost !== "localhost") {
+    return `agent serve: --no-auth is restricted to 127.0.0.1 or localhost binds; got ${bindHost}\n`;
+  }
+  return null;
+}
+
+// --tunnel-central=true mounts /tunnel (WS) + /tunnel-relay on this
+// agent so NAT'd dialing nodes can reach its tRPC router. The bearer
+// is a distinct credential from tokenHash and from LLAMACTL_TUNNEL_BEARER
+// (that env is the dial-side secret). Bearer-without-central is a
+// warning, not a failure — the bearer is harmless when unused.
+function checkTunnelCentral(
+  parsed: ServeFlags,
+  tunnelCentralOn: boolean,
+  tunnelCentralBearer: string | undefined,
+): string | null {
+  if (tunnelCentralOn) {
+    if (!tunnelCentralBearer) {
+      return "--tunnel-central=true requires --tunnel-bearer (or set LLAMACTL_TUNNEL_CENTRAL_BEARER)\n";
+    }
+    return null;
+  }
+  if (parsed.tunnelBearer) {
+    process.stderr.write("warning: --tunnel-bearer set without --tunnel-central=true; ignoring\n");
+  }
+  return null;
+}
+
+function validateServeWiring(parsed: ServeFlags): ServeWiring | { error: string } {
+  const dialUrl = parsed.dialCentral;
+  const dialBearer = parsed.centralBearer ?? process.env.LLAMACTL_TUNNEL_BEARER;
+  const dialErr = checkDialFlags(parsed, dialUrl, dialBearer);
+  if (dialErr) return { error: dialErr };
+
+  const noAuthErr = checkNoAuthBind(parsed);
+  if (noAuthErr) return { error: noAuthErr };
+
+  const tunnelCentralOn = parsed.tunnelCentral === true;
+  const tunnelCentralBearer = parsed.tunnelBearer ?? process.env.LLAMACTL_TUNNEL_CENTRAL_BEARER;
+  const tunnelErr = checkTunnelCentral(parsed, tunnelCentralOn, tunnelCentralBearer);
+  if (tunnelErr) return { error: tunnelErr };
+
+  return { dialUrl, dialBearer, tunnelCentralOn, tunnelCentralBearer };
+}
+
+function buildServeOptions(
+  parsed: ServeFlags,
+  cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
+  wiring: ServeWiring,
+  dialNodeName: string,
+): Parameters<typeof startAgentServer>[0] {
+  const { dialUrl, dialBearer, tunnelCentralOn, tunnelCentralBearer } = wiring;
+  const serverOptions = {
+    bindHost: parsed.bindHost ?? cfg.bindHost,
+    port: parsed.port ?? cfg.port,
+    tokenHash: cfg.tokenHash,
+    tls: { certPath: cfg.certPath, keyPath: cfg.keyPath },
+    // Publish cluster peers' fleet snapshots so peer models route through this
+    // proxy with prefix-cache. No-op when listPeers() is empty (single-node).
+    peerSnapshotPoll: true,
+    // Undefined → journal.ts resolves the default path (honors
+    // $LLAMACTL_TUNNEL_JOURNAL and $DEV_STORAGE).
+    ...(parsed.tunnelJournal ? { tunnelJournalPath: parsed.tunnelJournal } : {}),
+    ...(dialUrl && dialBearer
+      ? {
+          tunnelDial: {
+            url: dialUrl,
+            bearer: dialBearer,
+            nodeName: dialNodeName,
+            // Stderr-only diagnostics — never include the bearer or
+            // central URL in the transition line.
+            onStateChange: (s): void => {
+              process.stderr.write(`tunnel: ${s}\n`);
+            },
+          },
+        }
+      : {}),
+    ...(tunnelCentralOn && tunnelCentralBearer
+      ? {
+          tunnelCentral: {
+            expectedBearerHash: auth.hashToken(tunnelCentralBearer),
+            // onNodeConnect/onNodeDisconnect land in Slice D (journal).
+          },
+        }
+      : {}),
+  } as Parameters<typeof startAgentServer>[0];
+  (serverOptions as Parameters<typeof startAgentServer>[0] & { noAuth?: boolean }).noAuth =
+    parsed.noAuth;
+  return serverOptions;
+}
+
+/** Report a recognized startup failure to stderr; false → rethrow. */
+function reportServeStartFailure(
+  err: unknown,
+  parsed: ServeFlags,
+  cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
+): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  if (
+    (message.includes("EADDRINUSE") || (message.includes("port") && message.includes("in use"))) &&
+    typeof parsed.port === "number"
+  ) {
+    process.stderr.write(
+      `agent: port ${String(parsed.port)} already in use, exiting (launchd will retry)\n`,
+    );
+    return true;
+  }
+  if (
+    (message.includes("EPERM") || message.includes("ENOENT")) &&
+    (message.includes(cfg.certPath) || message.includes(cfg.keyPath))
+  ) {
+    const path = message.includes(cfg.certPath) ? cfg.certPath : cfg.keyPath;
+    process.stderr.write(`agent: cannot read cert path ${path}, exiting (launchd will retry)\n`);
+    return true;
+  }
+  return false;
+}
+
 async function runServe(args: string[]): Promise<number> {
   const parsed = parseServeFlags(args);
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 1;
   }
-  // --dial-central / --central-bearer must travel together. The
-  // bearer can also come from LLAMACTL_TUNNEL_BEARER so the CLI line
-  // doesn't need to embed secrets. Either both are present (and we
-  // wire tunnelDial below) or neither is.
-  const dialUrl = parsed.dialCentral;
-  const dialBearer = parsed.centralBearer ?? process.env.LLAMACTL_TUNNEL_BEARER;
-  if (dialUrl || parsed.centralBearer) {
-    if (!dialUrl || !dialBearer) {
-      process.stderr.write(
-        "--dial-central and --central-bearer must be provided together (or set LLAMACTL_TUNNEL_BEARER for the bearer)\n",
-      );
-      return 1;
-    }
-  }
-
-  if (parsed.noAuth) {
-    const bindHost = parsed.bindHost ?? "127.0.0.1";
-    if (bindHost !== "127.0.0.1" && bindHost !== "localhost") {
-      process.stderr.write(
-        `agent serve: --no-auth is restricted to 127.0.0.1 or localhost binds; got ${bindHost}\n`,
-      );
-      return 1;
-    }
-  }
-
-  // --tunnel-central=true mounts /tunnel (WS) + /tunnel-relay on this
-  // agent so NAT'd dialing nodes can reach its tRPC router. The bearer
-  // is a distinct credential from tokenHash and from LLAMACTL_TUNNEL_BEARER
-  // (that env is the dial-side secret). Bearer-without-central is a
-  // warning, not a failure — the bearer is harmless when unused.
-  const tunnelCentralOn = parsed.tunnelCentral === true;
-  const tunnelCentralBearer = parsed.tunnelBearer ?? process.env.LLAMACTL_TUNNEL_CENTRAL_BEARER;
-  if (tunnelCentralOn) {
-    if (!tunnelCentralBearer) {
-      process.stderr.write(
-        "--tunnel-central=true requires --tunnel-bearer (or set LLAMACTL_TUNNEL_CENTRAL_BEARER)\n",
-      );
-      return 1;
-    }
-  } else if (parsed.tunnelBearer) {
-    process.stderr.write("warning: --tunnel-bearer set without --tunnel-central=true; ignoring\n");
+  const wiring = validateServeWiring(parsed);
+  if ("error" in wiring) {
+    process.stderr.write(wiring.error);
+    return 1;
   }
 
   const cfgPath = join(parsed.dir, "agent.yaml");
@@ -505,63 +613,9 @@ async function runServe(args: string[]): Promise<number> {
 
   let running;
   try {
-    const serverOptions = {
-      bindHost: parsed.bindHost ?? cfg.bindHost,
-      port: parsed.port ?? cfg.port,
-      tokenHash: cfg.tokenHash,
-      tls: { certPath: cfg.certPath, keyPath: cfg.keyPath },
-      // Publish cluster peers' fleet snapshots so peer models route through this
-      // proxy with prefix-cache. No-op when listPeers() is empty (single-node).
-      peerSnapshotPoll: true,
-      // Undefined → journal.ts resolves the default path (honors
-      // $LLAMACTL_TUNNEL_JOURNAL and $DEV_STORAGE).
-      ...(parsed.tunnelJournal ? { tunnelJournalPath: parsed.tunnelJournal } : {}),
-      ...(dialUrl && dialBearer
-        ? {
-            tunnelDial: {
-              url: dialUrl,
-              bearer: dialBearer,
-              nodeName: dialNodeName,
-              // Stderr-only diagnostics — never include the bearer or
-              // central URL in the transition line.
-              onStateChange: (s): void => {
-                process.stderr.write(`tunnel: ${s}\n`);
-              },
-            },
-          }
-        : {}),
-      ...(tunnelCentralOn && tunnelCentralBearer
-        ? {
-            tunnelCentral: {
-              expectedBearerHash: auth.hashToken(tunnelCentralBearer),
-              // onNodeConnect/onNodeDisconnect land in Slice D (journal).
-            },
-          }
-        : {}),
-    } as Parameters<typeof startAgentServer>[0];
-    (serverOptions as Parameters<typeof startAgentServer>[0] & { noAuth?: boolean }).noAuth =
-      parsed.noAuth;
-    running = startAgentServer(serverOptions);
+    running = startAgentServer(buildServeOptions(parsed, cfg, wiring, dialNodeName));
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (
-      (message.includes("EADDRINUSE") ||
-        (message.includes("port") && message.includes("in use"))) &&
-      typeof parsed.port === "number"
-    ) {
-      process.stderr.write(
-        `agent: port ${String(parsed.port)} already in use, exiting (launchd will retry)\n`,
-      );
-      return 1;
-    }
-    if (
-      (message.includes("EPERM") || message.includes("ENOENT")) &&
-      (message.includes(cfg.certPath) || message.includes(cfg.keyPath))
-    ) {
-      const path = message.includes(cfg.certPath) ? cfg.certPath : cfg.keyPath;
-      process.stderr.write(`agent: cannot read cert path ${path}, exiting (launchd will retry)\n`);
-      return 1;
-    }
+    if (reportServeStartFailure(err, parsed, cfg)) return 1;
     throw err;
   }
 

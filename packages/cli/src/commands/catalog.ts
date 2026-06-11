@@ -11,7 +11,14 @@ import {
   target as targetMod,
 } from "@llamactl/core";
 
-import { fanOut, getGlobals, getNodeClient, isFanOut, isLocalDispatch } from "../dispatcher.js";
+import {
+  fanOut,
+  type FanOutResult,
+  getGlobals,
+  getNodeClient,
+  isFanOut,
+  isLocalDispatch,
+} from "../dispatcher.js";
 type CuratedModel = schemas.CuratedModel;
 
 type Format = "tsv" | "json";
@@ -58,6 +65,46 @@ function parseList(args: string[]): ParsedListFlags | { error: string } {
   return { scope, format };
 }
 
+function printFanOutCatalogRows(r: FanOutResult<unknown>): void {
+  if (!r.ok) {
+    process.stderr.write(`[${r.node}] error: ${String(r.error)}\n`);
+    return;
+  }
+  const rows = r.data as CuratedModel[];
+  if (rows.length === 0) return;
+  // Prefix each TSV row with the node name so output stays grep-able.
+  for (const line of catalog.formatCatalogTsv(rows).split("\n")) {
+    if (line) process.stdout.write(`${r.node}\t${line}\n`);
+  }
+}
+
+// `-n all` fans out across every node in the current context.
+async function runListFanOut(parsed: ParsedListFlags): Promise<number> {
+  const results = await fanOut((client) => client.catalogList.query(parsed.scope));
+  if (parsed.format === "json") {
+    process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
+    return results.some((r) => !r.ok) ? 2 : 0;
+  }
+  for (const r of results) {
+    printFanOutCatalogRows(r);
+  }
+  return results.some((r) => !r.ok) ? 2 : 0;
+}
+
+async function fetchCatalogEntries(scope: Scope): Promise<CuratedModel[] | null> {
+  if (isLocalDispatch()) {
+    return catalog.listCatalog(scope);
+  }
+  try {
+    return await getNodeClient().catalogList.query(scope);
+  } catch (err) {
+    process.stderr.write(
+      `catalog list: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+    );
+    return null;
+  }
+}
+
 async function runList(args: string[]): Promise<number> {
   const parsed = parseList(args);
   if ("error" in parsed) {
@@ -65,41 +112,12 @@ async function runList(args: string[]): Promise<number> {
     return 1;
   }
 
-  // `-n all` fans out across every node in the current context.
   if (isFanOut()) {
-    const results = await fanOut((client) => client.catalogList.query(parsed.scope));
-    if (parsed.format === "json") {
-      process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
-      return results.some((r) => !r.ok) ? 2 : 0;
-    }
-    for (const r of results) {
-      if (!r.ok) {
-        process.stderr.write(`[${r.node}] error: ${String(r.error)}\n`);
-        continue;
-      }
-      const rows = r.data as CuratedModel[];
-      if (rows.length === 0) continue;
-      // Prefix each TSV row with the node name so output stays grep-able.
-      for (const line of catalog.formatCatalogTsv(rows).split("\n")) {
-        if (line) process.stdout.write(`${r.node}\t${line}\n`);
-      }
-    }
-    return results.some((r) => !r.ok) ? 2 : 0;
+    return await runListFanOut(parsed);
   }
 
-  let entries: CuratedModel[];
-  if (isLocalDispatch()) {
-    entries = catalog.listCatalog(parsed.scope);
-  } else {
-    try {
-      entries = await getNodeClient().catalogList.query(parsed.scope);
-    } catch (err) {
-      process.stderr.write(
-        `catalog list: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
-      );
-      return 1;
-    }
-  }
+  const entries = await fetchCatalogEntries(parsed.scope);
+  if (entries === null) return 1;
 
   if (parsed.format === "json") {
     process.stdout.write(`${JSON.stringify(entries, null, 2)}\n`);
@@ -262,6 +280,11 @@ async function runStatus(args: string[]): Promise<number> {
     return 0;
   }
 
+  printStatusReport(report);
+  return 0;
+}
+
+function printStatusReport(report: StatusReport): void {
   const c = report.catalog;
   process.stdout.write(
     [
@@ -285,7 +308,6 @@ async function runStatus(args: string[]): Promise<number> {
       "",
     ].join("\n"),
   );
-  return 0;
 }
 
 async function runAdd(args: string[]): Promise<number> {
@@ -337,33 +359,49 @@ async function runPromote(args: string[]): Promise<number> {
     return 1;
   }
 
-  let rel: string;
-  if (targetArg && (targetArg.endsWith(".gguf") || targetArg.includes("/"))) {
-    rel = targetArg;
-  } else {
-    const resolved = targetMod.resolveTarget(targetArg);
-    if (!resolved) {
-      process.stderr.write(`Unknown model target: ${String(targetArg)}\n`);
-      return 1;
-    }
-    rel = resolved;
+  const rel = resolvePromoteRel(targetArg);
+  if (typeof rel !== "string") {
+    process.stderr.write(rel.error);
+    return 1;
   }
 
-  if (isLocalDispatch()) {
-    presets.writePresetOverride(normalized, preset, rel);
-  } else {
-    try {
-      await getNodeClient().promote.mutate({ profile: normalized, preset, rel });
-    } catch (err) {
-      process.stderr.write(
-        `promote: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
-      );
-      return 1;
-    }
-  }
+  const ok = await executePromote(normalized, preset, rel);
+  if (!ok) return 1;
+
   process.stdout.write(`Promoted ${rel}\n`);
   process.stdout.write(`profile=${normalized} preset=${preset}\n`);
   return 0;
+}
+
+function resolvePromoteRel(targetArg: string | undefined): string | { error: string } {
+  if (targetArg && (targetArg.endsWith(".gguf") || targetArg.includes("/"))) {
+    return targetArg;
+  }
+  const resolved = targetMod.resolveTarget(targetArg);
+  if (!resolved) {
+    return { error: `Unknown model target: ${String(targetArg)}\n` };
+  }
+  return resolved;
+}
+
+async function executePromote(
+  normalized: NonNullable<ReturnType<typeof profileMod.normalizeProfile>>,
+  preset: "balanced" | "best" | "fast" | "vision",
+  rel: string,
+): Promise<boolean> {
+  if (isLocalDispatch()) {
+    presets.writePresetOverride(normalized, preset, rel);
+    return true;
+  }
+  try {
+    await getNodeClient().promote.mutate({ profile: normalized, preset, rel });
+    return true;
+  } catch (err) {
+    process.stderr.write(
+      `promote: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+    );
+    return false;
+  }
 }
 
 async function runPromotions(args: string[]): Promise<number> {

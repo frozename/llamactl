@@ -81,62 +81,44 @@ function parseApplyFlags(args: string[]): ApplyFlags | { error: string } {
   return { file, dryRun };
 }
 
-async function runApply(args: string[]): Promise<number> {
-  const parsed = parseApplyFlags(args);
-  if ("error" in parsed) {
-    const stream = parsed.error === "help" ? process.stdout : process.stderr;
-    stream.write(parsed.error === "help" ? USAGE : `${parsed.error}\n\n${USAGE}`);
-    return parsed.error === "help" ? 0 : 1;
-  }
-  const manifestPath = resolvePath(parsed.file);
-  if (!existsSync(manifestPath)) {
-    process.stderr.write(`composite apply: file not found: ${manifestPath}\n`);
-    return 1;
-  }
-  const manifestYaml = readFileSync(manifestPath, "utf8");
+/** Shared help/usage handling for parse errors from the flag parsers. */
+function reportParseError(error: string): number {
+  const stream = error === "help" ? process.stdout : process.stderr;
+  stream.write(error === "help" ? USAGE : `${error}\n\n${USAGE}`);
+  return error === "help" ? 0 : 1;
+}
 
-  const client = getNodeClient();
-  let result: unknown;
-  try {
-    result = await client.compositeApply.mutate({
-      manifestYaml,
-      dryRun: parsed.dryRun,
-    });
-  } catch (err) {
-    process.stderr.write(`composite apply: ${(err as Error).message}\n`);
-    return 1;
-  }
-
-  if (parsed.dryRun) {
-    const r = result as {
-      dryRun: true;
-      manifest: { metadata: { name: string } };
-      order: { kind: string; name: string }[];
-      impliedEdges: {
-        from: { kind: string; name: string };
-        to: { kind: string; name: string };
-      }[];
-    };
-    process.stdout.write(`dry-run composite/${r.manifest.metadata.name}\n`);
-    process.stdout.write(`  topological order (${String(r.order.length)} components):\n`);
-    if (r.order.length === 0) {
-      process.stdout.write(`    (none)\n`);
-    } else {
-      for (const [i, ref] of r.order.entries()) {
-        process.stdout.write(`    ${String(i + 1)}. ${ref.kind}/${ref.name}\n`);
-      }
+function printApplyDryRun(result: unknown): number {
+  const r = result as {
+    dryRun: true;
+    manifest: { metadata: { name: string } };
+    order: { kind: string; name: string }[];
+    impliedEdges: {
+      from: { kind: string; name: string };
+      to: { kind: string; name: string };
+    }[];
+  };
+  process.stdout.write(`dry-run composite/${r.manifest.metadata.name}\n`);
+  process.stdout.write(`  topological order (${String(r.order.length)} components):\n`);
+  if (r.order.length === 0) {
+    process.stdout.write(`    (none)\n`);
+  } else {
+    for (const [i, ref] of r.order.entries()) {
+      process.stdout.write(`    ${String(i + 1)}. ${ref.kind}/${ref.name}\n`);
     }
-    if (r.impliedEdges.length > 0) {
-      process.stdout.write(`  implied edges (${String(r.impliedEdges.length)}):\n`);
-      for (const edge of r.impliedEdges) {
-        process.stdout.write(
-          `    ${edge.from.kind}/${edge.from.name} → ${edge.to.kind}/${edge.to.name}\n`,
-        );
-      }
-    }
-    return 0;
   }
+  if (r.impliedEdges.length > 0) {
+    process.stdout.write(`  implied edges (${String(r.impliedEdges.length)}):\n`);
+    for (const edge of r.impliedEdges) {
+      process.stdout.write(
+        `    ${edge.from.kind}/${edge.from.name} → ${edge.to.kind}/${edge.to.name}\n`,
+      );
+    }
+  }
+  return 0;
+}
 
+function printApplyResult(result: unknown): number {
   const r = result as {
     dryRun: false;
     ok: boolean;
@@ -166,6 +148,36 @@ async function runApply(args: string[]): Promise<number> {
     process.stdout.write(`rolledBack: true\n`);
   }
   return r.ok ? 0 : 1;
+}
+
+async function runApply(args: string[]): Promise<number> {
+  const parsed = parseApplyFlags(args);
+  if ("error" in parsed) {
+    return reportParseError(parsed.error);
+  }
+  const manifestPath = resolvePath(parsed.file);
+  if (!existsSync(manifestPath)) {
+    process.stderr.write(`composite apply: file not found: ${manifestPath}\n`);
+    return 1;
+  }
+  const manifestYaml = readFileSync(manifestPath, "utf8");
+
+  const client = getNodeClient();
+  let result: unknown;
+  try {
+    result = await client.compositeApply.mutate({
+      manifestYaml,
+      dryRun: parsed.dryRun,
+    });
+  } catch (err) {
+    process.stderr.write(`composite apply: ${(err as Error).message}\n`);
+    return 1;
+  }
+
+  if (parsed.dryRun) {
+    return printApplyDryRun(result);
+  }
+  return printApplyResult(result);
 }
 
 // ---- destroy -------------------------------------------------------
@@ -200,12 +212,51 @@ function parseDestroyFlags(args: string[]): DestroyFlags | { error: string } {
   return { name, dryRun, purgeVolumes };
 }
 
+function printDestroyDryRun(result: unknown): number {
+  const r = result as {
+    dryRun: true;
+    name: string;
+    wouldRemove: { kind: string; name: string }[];
+  };
+  process.stdout.write(`dry-run destroy composite/${r.name}\n`);
+  process.stdout.write(`  would remove (reverse-topo, ${String(r.wouldRemove.length)}):\n`);
+  if (r.wouldRemove.length === 0) {
+    process.stdout.write(`    (none)\n`);
+  } else {
+    for (const [i, ref] of r.wouldRemove.entries()) {
+      process.stdout.write(`    ${String(i + 1)}. ${ref.kind}/${ref.name}\n`);
+    }
+  }
+  return 0;
+}
+
+function printDestroyResult(result: unknown, name: string): number {
+  const r = result as {
+    dryRun: false;
+    ok: boolean;
+    removed: { kind: string; name: string }[];
+    errors: { ref: { kind: string; name: string }; message: string }[];
+  };
+  process.stdout.write(`destroyed composite/${name}\n`);
+  if (r.removed.length > 0) {
+    process.stdout.write(`  removed (${String(r.removed.length)}):\n`);
+    for (const ref of r.removed) {
+      process.stdout.write(`    ✓ ${ref.kind}/${ref.name}\n`);
+    }
+  }
+  if (r.errors.length > 0) {
+    process.stdout.write(`  errors (${String(r.errors.length)}):\n`);
+    for (const e of r.errors) {
+      process.stdout.write(`    ✗ ${e.ref.kind}/${e.ref.name} — ${e.message}\n`);
+    }
+  }
+  return r.ok && r.errors.length === 0 ? 0 : 1;
+}
+
 async function runDestroy(args: string[]): Promise<number> {
   const parsed = parseDestroyFlags(args);
   if ("error" in parsed) {
-    const stream = parsed.error === "help" ? process.stdout : process.stderr;
-    stream.write(parsed.error === "help" ? USAGE : `${parsed.error}\n\n${USAGE}`);
-    return parsed.error === "help" ? 0 : 1;
+    return reportParseError(parsed.error);
   }
 
   const client = getNodeClient();
@@ -222,43 +273,9 @@ async function runDestroy(args: string[]): Promise<number> {
   }
 
   if (parsed.dryRun) {
-    const r = result as {
-      dryRun: true;
-      name: string;
-      wouldRemove: { kind: string; name: string }[];
-    };
-    process.stdout.write(`dry-run destroy composite/${r.name}\n`);
-    process.stdout.write(`  would remove (reverse-topo, ${String(r.wouldRemove.length)}):\n`);
-    if (r.wouldRemove.length === 0) {
-      process.stdout.write(`    (none)\n`);
-    } else {
-      for (const [i, ref] of r.wouldRemove.entries()) {
-        process.stdout.write(`    ${String(i + 1)}. ${ref.kind}/${ref.name}\n`);
-      }
-    }
-    return 0;
+    return printDestroyDryRun(result);
   }
-
-  const r = result as {
-    dryRun: false;
-    ok: boolean;
-    removed: { kind: string; name: string }[];
-    errors: { ref: { kind: string; name: string }; message: string }[];
-  };
-  process.stdout.write(`destroyed composite/${parsed.name}\n`);
-  if (r.removed.length > 0) {
-    process.stdout.write(`  removed (${String(r.removed.length)}):\n`);
-    for (const ref of r.removed) {
-      process.stdout.write(`    ✓ ${ref.kind}/${ref.name}\n`);
-    }
-  }
-  if (r.errors.length > 0) {
-    process.stdout.write(`  errors (${String(r.errors.length)}):\n`);
-    for (const e of r.errors) {
-      process.stdout.write(`    ✗ ${e.ref.kind}/${e.ref.name} — ${e.message}\n`);
-    }
-  }
-  return r.ok && r.errors.length === 0 ? 0 : 1;
+  return printDestroyResult(result, parsed.name);
 }
 
 // ---- list ----------------------------------------------------------
@@ -402,76 +419,59 @@ export function formatStatusEvent(e: unknown): string | null {
   }
 }
 
-async function runStatus(args: string[]): Promise<number> {
+function parseStatusName(args: string[]): { name: string } | { exit: number } {
   let name = "";
   for (const arg of args) {
     if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
-      return 0;
+      return { exit: 0 };
     }
     if (arg.startsWith("-")) {
       process.stderr.write(`composite status: unknown flag ${arg}\n`);
-      return 1;
+      return { exit: 1 };
     }
     if (!name) name = arg;
     else {
       process.stderr.write(`composite status: unexpected argument ${arg}\n`);
-      return 1;
+      return { exit: 1 };
     }
   }
   if (!name) {
     process.stderr.write("composite status: <name> is required\n");
-    return 1;
+    return { exit: 1 };
   }
+  return { name };
+}
 
-  const client = getNodeClient();
-  // tRPC local-caller proxy returns an async iterable directly from
-  // `.subscribe(input)` (see `proxyFromCaller` in remote/client).
-  // Remote proxies expose the `{onData,onError,onComplete}` handler
-  // shape. Branch so both paths emit the same lines + honour SIGINT.
-  // Cast to relax the single-argument subscribe surface — the local
-  // caller proxy accepts a single input and returns an AsyncGenerator.
-  const subscribeFn = client.compositeStatus.subscribe as unknown as (
-    ...args: unknown[]
-  ) => unknown;
-  let streamable: unknown;
+// Local caller path: async iterable.
+async function streamStatusLocal(iter: AsyncIterable<unknown>): Promise<number> {
+  const aborted = { value: false };
+  const abort = (): void => {
+    aborted.value = true;
+  };
+  process.on("SIGINT", abort);
+  process.on("SIGTERM", abort);
   try {
-    streamable = subscribeFn({ name });
+    for await (const ev of iter) {
+      if (aborted.value) break;
+      const line = formatStatusEvent(ev);
+      if (line !== null) process.stdout.write(`${line}\n`);
+    }
   } catch (err) {
     process.stderr.write(`composite status: ${(err as Error).message}\n`);
     return 1;
+  } finally {
+    process.off("SIGINT", abort);
+    process.off("SIGTERM", abort);
   }
+  return 0;
+}
 
-  // Local caller path: async iterable.
-  if (
-    streamable &&
-    typeof streamable === "object" &&
-    Symbol.asyncIterator in (streamable as Record<PropertyKey, unknown>)
-  ) {
-    const iter = streamable as AsyncIterable<unknown>;
-    const aborted = { value: false };
-    const abort = (): void => {
-      aborted.value = true;
-    };
-    process.on("SIGINT", abort);
-    process.on("SIGTERM", abort);
-    try {
-      for await (const ev of iter) {
-        if (aborted.value) break;
-        const line = formatStatusEvent(ev);
-        if (line !== null) process.stdout.write(`${line}\n`);
-      }
-    } catch (err) {
-      process.stderr.write(`composite status: ${(err as Error).message}\n`);
-      return 1;
-    } finally {
-      process.off("SIGINT", abort);
-      process.off("SIGTERM", abort);
-    }
-    return 0;
-  }
-
-  // Remote path: handler-based subscription with unsubscribe().
+// Remote path: handler-based subscription with unsubscribe().
+async function streamStatusRemote(
+  subscribeFn: (...args: unknown[]) => unknown,
+  name: string,
+): Promise<number> {
   return await new Promise<number>((resolve) => {
     let settled = false;
     const sub = subscribeFn(
@@ -511,4 +511,38 @@ async function runStatus(args: string[]): Promise<number> {
     process.on("SIGINT", abort);
     process.on("SIGTERM", abort);
   });
+}
+
+async function runStatus(args: string[]): Promise<number> {
+  const parsed = parseStatusName(args);
+  if ("exit" in parsed) return parsed.exit;
+  const name = parsed.name;
+
+  const client = getNodeClient();
+  // tRPC local-caller proxy returns an async iterable directly from
+  // `.subscribe(input)` (see `proxyFromCaller` in remote/client).
+  // Remote proxies expose the `{onData,onError,onComplete}` handler
+  // shape. Branch so both paths emit the same lines + honour SIGINT.
+  // Cast to relax the single-argument subscribe surface — the local
+  // caller proxy accepts a single input and returns an AsyncGenerator.
+  const subscribeFn = client.compositeStatus.subscribe as unknown as (
+    ...args: unknown[]
+  ) => unknown;
+  let streamable: unknown;
+  try {
+    streamable = subscribeFn({ name });
+  } catch (err) {
+    process.stderr.write(`composite status: ${(err as Error).message}\n`);
+    return 1;
+  }
+
+  if (
+    streamable &&
+    typeof streamable === "object" &&
+    Symbol.asyncIterator in (streamable as Record<PropertyKey, unknown>)
+  ) {
+    return await streamStatusLocal(streamable as AsyncIterable<unknown>);
+  }
+
+  return await streamStatusRemote(subscribeFn, name);
 }

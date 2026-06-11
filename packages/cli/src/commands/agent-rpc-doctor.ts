@@ -114,6 +114,49 @@ export function parseRpcDoctorFlags(argv: string[]): RpcDoctorFlags | { error: s
   return flags;
 }
 
+/** Run the check locally, or remotely when --node was given. Null → remote call failed. */
+async function fetchRpcDoctorResult(
+  node: string | undefined,
+  deps: RpcDoctorDeps,
+): Promise<rpcServerMod.RpcServerDoctorResult | null> {
+  if (!node) {
+    return deps.checkLocal(deps.env);
+  }
+  try {
+    const cfg = deps.loadConfig(deps.defaultConfigPath());
+    const client = deps.createNodeClient(cfg, { nodeName: node });
+    return await client.rpcServerDoctor.query({});
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    deps.stderr(`rpc-doctor: remote call to ${node} failed: ${msg}\n`);
+    return null;
+  }
+}
+
+function printRpcDoctorResult(
+  result: rpcServerMod.RpcServerDoctorResult,
+  json: boolean,
+  deps: RpcDoctorDeps,
+): void {
+  if (json) {
+    deps.stdout(`${JSON.stringify(result)}\n`);
+    return;
+  }
+  if (result.ok) {
+    deps.stdout(
+      `ok\n` +
+        `  path: ${result.path ?? "(none)"}\n` +
+        `  LLAMA_CPP_BIN: ${result.llamaCppBin ?? "(none)"}\n`,
+    );
+    return;
+  }
+  deps.stderr(
+    `rpc-server not available\n` +
+      `  reason: ${result.reason ?? "(unknown)"}\n` +
+      `  hint: ${result.hint ?? "(no hint)"}\n`,
+  );
+}
+
 export async function runRpcDoctor(
   argv: string[],
   depsOverride?: Partial<RpcDoctorDeps>,
@@ -132,35 +175,9 @@ export async function runRpcDoctor(
     return 1;
   }
 
-  let result: rpcServerMod.RpcServerDoctorResult;
-  if (parsed.node) {
-    try {
-      const cfg = deps.loadConfig(deps.defaultConfigPath());
-      const client = deps.createNodeClient(cfg, { nodeName: parsed.node });
-      result = await client.rpcServerDoctor.query({});
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      deps.stderr(`rpc-doctor: remote call to ${parsed.node} failed: ${msg}\n`);
-      return 1;
-    }
-  } else {
-    result = deps.checkLocal(deps.env);
-  }
+  const result = await fetchRpcDoctorResult(parsed.node, deps);
+  if (result === null) return 1;
 
-  if (parsed.json) {
-    deps.stdout(`${JSON.stringify(result)}\n`);
-  } else if (result.ok) {
-    deps.stdout(
-      `ok\n` +
-        `  path: ${result.path ?? "(none)"}\n` +
-        `  LLAMA_CPP_BIN: ${result.llamaCppBin ?? "(none)"}\n`,
-    );
-  } else {
-    deps.stderr(
-      `rpc-server not available\n` +
-        `  reason: ${result.reason ?? "(unknown)"}\n` +
-        `  hint: ${result.hint ?? "(no hint)"}\n`,
-    );
-  }
+  printRpcDoctorResult(result, parsed.json, deps);
   return result.ok ? 0 : 1;
 }

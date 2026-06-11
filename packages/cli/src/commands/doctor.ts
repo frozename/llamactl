@@ -314,6 +314,32 @@ async function probeLabeledNodes(client: KubernetesClient): Promise<CheckResult>
   }
 }
 
+function kubeconfigNotLoadedResult(intent: boolean, err: unknown): CheckResult {
+  return {
+    system: "kubernetes",
+    status: intent ? "warn" : "info",
+    message: intent
+      ? `kubeconfig not loaded: ${truncate((err as Error).message, 80)}`
+      : "no kubeconfig — k8s backend stays dormant",
+    fix: intent
+      ? "compositesSpec.runtime=kubernetes needs a reachable cluster; put a kubeconfig at ~/.kube/config or set KUBECONFIG"
+      : "no action — set LLAMACTL_RUNTIME_BACKEND=kubernetes or add a composite with spec.runtime:kubernetes to enable probes",
+  };
+}
+
+function clusterUnreachableResult(intent: boolean, err: unknown): CheckResult {
+  return {
+    system: "kubernetes",
+    status: intent ? "warn" : "info",
+    message: intent
+      ? `cluster unreachable: ${truncate((err as Error).message, 80)}`
+      : `cluster not reachable via current kubeconfig (k8s backend not invoked)`,
+    fix: intent
+      ? "check `kubectl get nodes` reaches the cluster; refresh credentials if expired"
+      : "no action needed — probed because ~/.kube/config exists, not because llamactl wants the cluster",
+  };
+}
+
 async function checkKubernetes(): Promise<CheckResult[]> {
   const intent = hasKubernetesIntent();
   const out: CheckResult[] = [];
@@ -322,16 +348,7 @@ async function checkKubernetes(): Promise<CheckResult[]> {
     const { KubernetesBackend } = await import("@llamactl/remote");
     backend = new KubernetesBackend();
   } catch (err) {
-    out.push({
-      system: "kubernetes",
-      status: intent ? "warn" : "info",
-      message: intent
-        ? `kubeconfig not loaded: ${truncate((err as Error).message, 80)}`
-        : "no kubeconfig — k8s backend stays dormant",
-      fix: intent
-        ? "compositesSpec.runtime=kubernetes needs a reachable cluster; put a kubeconfig at ~/.kube/config or set KUBECONFIG"
-        : "no action — set LLAMACTL_RUNTIME_BACKEND=kubernetes or add a composite with spec.runtime:kubernetes to enable probes",
-    });
+    out.push(kubeconfigNotLoadedResult(intent, err));
     return out;
   }
 
@@ -343,16 +360,7 @@ async function checkKubernetes(): Promise<CheckResult[]> {
       message: `cluster reachable (context: ${backend.currentContext})`,
     });
   } catch (err) {
-    out.push({
-      system: "kubernetes",
-      status: intent ? "warn" : "info",
-      message: intent
-        ? `cluster unreachable: ${truncate((err as Error).message, 80)}`
-        : `cluster not reachable via current kubeconfig (k8s backend not invoked)`,
-      fix: intent
-        ? "check `kubectl get nodes` reaches the cluster; refresh credentials if expired"
-        : "no action needed — probed because ~/.kube/config exists, not because llamactl wants the cluster",
-    });
+    out.push(clusterUnreachableResult(intent, err));
     return out;
   }
 
@@ -475,6 +483,25 @@ interface DoctorArgs {
   skip: Set<"agent" | "docker" | "kubernetes" | "secrets">;
 }
 
+function applySkipArg(v: string, a: DoctorArgs): void {
+  if (v === "agent" || v === "docker" || v === "kubernetes" || v === "secrets") {
+    a.skip.add(v);
+  } else if (v === "k8s") {
+    a.skip.add("kubernetes");
+  }
+}
+
+function applyDoctorArg(arg: string, a: DoctorArgs): void {
+  if (arg === "-h" || arg === "--help") a.help = true;
+  else if (arg === "-v" || arg === "--verbose") a.verbose = true;
+  else if (arg.startsWith("--timeout=")) {
+    const n = Number.parseInt(arg.slice("--timeout=".length), 10);
+    if (Number.isFinite(n) && n > 0) a.timeoutMs = n * 1000;
+  } else if (arg.startsWith("--skip=")) {
+    applySkipArg(arg.slice("--skip=".length), a);
+  }
+}
+
 function parseArgs(argv: string[]): DoctorArgs {
   const a: DoctorArgs = {
     help: false,
@@ -483,19 +510,7 @@ function parseArgs(argv: string[]): DoctorArgs {
     skip: new Set(),
   };
   for (const arg of argv) {
-    if (arg === "-h" || arg === "--help") a.help = true;
-    else if (arg === "-v" || arg === "--verbose") a.verbose = true;
-    else if (arg.startsWith("--timeout=")) {
-      const n = Number.parseInt(arg.slice("--timeout=".length), 10);
-      if (Number.isFinite(n) && n > 0) a.timeoutMs = n * 1000;
-    } else if (arg.startsWith("--skip=")) {
-      const v = arg.slice("--skip=".length);
-      if (v === "agent" || v === "docker" || v === "kubernetes" || v === "secrets") {
-        a.skip.add(v);
-      } else if (v === "k8s") {
-        a.skip.add("kubernetes");
-      }
-    }
+    applyDoctorArg(arg, a);
   }
   return a;
 }

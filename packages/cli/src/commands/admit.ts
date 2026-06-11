@@ -53,131 +53,175 @@ interface AdmitFlags {
   quiet: boolean;
 }
 
+function applyAdmitFlag(raw: string, flags: AdmitFlags): void {
+  if (raw === "--json") {
+    flags.emitJson = true;
+    return;
+  }
+  if (raw === "--quiet") {
+    flags.quiet = true;
+    return;
+  }
+  if (raw.startsWith("--headroom-mb=")) {
+    flags.headroomMb = requireFinite(Number(raw.slice("--headroom-mb=".length)), "--headroom-mb");
+    return;
+  }
+  if (raw.startsWith("--safety-factor=")) {
+    flags.safetyFactor = requireFinite(
+      Number(raw.slice("--safety-factor=".length)),
+      "--safety-factor",
+    );
+    return;
+  }
+  // alias for back-compat
+  if (raw.startsWith("--overhead-factor=")) {
+    flags.safetyFactor = requireFinite(
+      Number(raw.slice("--overhead-factor=".length)),
+      "--overhead-factor",
+    );
+    return;
+  }
+  if (raw.startsWith("--compressor-max-mb=")) {
+    flags.compressorMaxMb = requireFinite(
+      Number(raw.slice("--compressor-max-mb=".length)),
+      "--compressor-max-mb",
+    );
+  }
+}
+
 function parseAdmitFlags(args: string[]): AdmitFlags | { error: string } {
-  let headroomMb = 1024;
-  let safetyFactor = 1.3;
-  let compressorMaxMb: number | undefined;
-  let emitJson = false;
-  let quiet = false;
+  const flags: AdmitFlags = {
+    headroomMb: 1024,
+    safetyFactor: 1.3,
+    compressorMaxMb: undefined,
+    emitJson: false,
+    quiet: false,
+  };
   try {
     for (const raw of args) {
-      if (raw === "--json") {
-        emitJson = true;
-        continue;
-      }
-      if (raw === "--quiet") {
-        quiet = true;
-        continue;
-      }
-      if (raw.startsWith("--headroom-mb=")) {
-        headroomMb = requireFinite(Number(raw.slice("--headroom-mb=".length)), "--headroom-mb");
-        continue;
-      }
-      if (raw.startsWith("--safety-factor=")) {
-        safetyFactor = requireFinite(
-          Number(raw.slice("--safety-factor=".length)),
-          "--safety-factor",
-        );
-        continue;
-      }
-      // alias for back-compat
-      if (raw.startsWith("--overhead-factor=")) {
-        safetyFactor = requireFinite(
-          Number(raw.slice("--overhead-factor=".length)),
-          "--overhead-factor",
-        );
-        continue;
-      }
-      if (raw.startsWith("--compressor-max-mb=")) {
-        compressorMaxMb = requireFinite(
-          Number(raw.slice("--compressor-max-mb=".length)),
-          "--compressor-max-mb",
-        );
-        continue;
-      }
+      applyAdmitFlag(raw, flags);
     }
   } catch (err) {
     return { error: (err as Error).message };
   }
-  return { headroomMb, safetyFactor, compressorMaxMb, emitJson, quiet };
+  return flags;
 }
 
-function printAdmitResult(
-  opts: {
-    name: string;
-    nodeMem: { free_mb: number; compressor_mb: number };
-    expectedMemoryGiB: number;
-    result: { allowed: boolean; reason?: string; projectedFreeGiB: number; source: string };
-  } & AdmitFlags & { measured: { peakMb: number } | null },
-): void {
-  const {
-    name,
-    nodeMem,
-    expectedMemoryGiB,
-    result,
-    headroomMb,
-    safetyFactor,
-    compressorMaxMb,
-    emitJson,
-    quiet,
-    measured,
-  } = opts;
+type AdmitPrintOpts = {
+  name: string;
+  nodeMem: { free_mb: number; compressor_mb: number };
+  expectedMemoryGiB: number;
+  result: { allowed: boolean; reason?: string; projectedFreeGiB: number; source: string };
+} & AdmitFlags & { measured: { peakMb: number } | null };
+
+function printAdmitJson(opts: AdmitPrintOpts): void {
+  const { name, nodeMem, expectedMemoryGiB, result, headroomMb, safetyFactor, measured } = opts;
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        workload: name,
+        currentFreeMb: nodeMem.free_mb,
+        currentFreeGiB: nodeMem.free_mb / 1024,
+        currentCompressorMb: nodeMem.compressor_mb,
+        compressorMaxMb: opts.compressorMaxMb ?? null,
+        expectedMemoryGiB,
+        safetyFactor,
+        measuredPeakMb: measured?.peakMb ?? null,
+        headroomMinMb: headroomMb,
+        projectedFreeGiB: result.projectedFreeGiB,
+        allowed: result.allowed,
+        reason: result.allowed ? null : result.reason,
+        source: result.source,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+function printAdmitQuiet(opts: AdmitPrintOpts): void {
+  const { name, result, headroomMb } = opts;
+  process.stdout.write(
+    `${
+      result.allowed
+        ? `allow ${name}`
+        : `deny ${name} — ${result.reason ?? ""} (projected_free=${result.projectedFreeGiB.toFixed(2)}GiB, min=${(headroomMb / 1024).toFixed(2)}GiB)`
+    }\n`,
+  );
+}
+
+function printAdmitNarrative(opts: AdmitPrintOpts): void {
+  const { name, nodeMem, expectedMemoryGiB, result, headroomMb, safetyFactor, measured } = opts;
   const currentFreeGiB = nodeMem.free_mb / 1024;
 
-  if (emitJson) {
+  process.stdout.write(`workload:          ${name}\n`);
+  process.stdout.write(
+    `current free:      ${nodeMem.free_mb.toFixed(0)} MiB (${currentFreeGiB.toFixed(2)} GiB)\n`,
+  );
+  if (opts.compressorMaxMb !== undefined) {
     process.stdout.write(
-      `${JSON.stringify(
-        {
-          workload: name,
-          currentFreeMb: nodeMem.free_mb,
-          currentFreeGiB,
-          currentCompressorMb: nodeMem.compressor_mb,
-          compressorMaxMb: compressorMaxMb ?? null,
-          expectedMemoryGiB,
-          safetyFactor,
-          measuredPeakMb: measured?.peakMb ?? null,
-          headroomMinMb: headroomMb,
-          projectedFreeGiB: result.projectedFreeGiB,
-          allowed: result.allowed,
-          reason: result.allowed ? null : result.reason,
-          source: result.source,
-        },
-        null,
-        2,
-      )}\n`,
+      `compressor:        ${nodeMem.compressor_mb.toFixed(0)} MiB (max ${String(opts.compressorMaxMb)})\n`,
     );
-  } else if (quiet) {
+  }
+  if (measured) {
     process.stdout.write(
-      `${
-        result.allowed
-          ? `allow ${name}`
-          : `deny ${name} — ${result.reason ?? ""} (projected_free=${result.projectedFreeGiB.toFixed(2)}GiB, min=${(headroomMb / 1024).toFixed(2)}GiB)`
-      }\n`,
+      `measured peak:     ${measured.peakMb.toFixed(1)} MiB × 1.05 safety = ${((measured.peakMb * 1.05) / 1024).toFixed(2)} GiB  [source: measured]\n`,
     );
   } else {
-    process.stdout.write(`workload:          ${name}\n`);
     process.stdout.write(
-      `current free:      ${nodeMem.free_mb.toFixed(0)} MiB (${currentFreeGiB.toFixed(2)} GiB)\n`,
+      `expected to load:  ${String(expectedMemoryGiB)} GiB × ${String(safetyFactor)} safety = ${(expectedMemoryGiB * safetyFactor).toFixed(2)} GiB  [source: declared]\n`,
     );
-    if (compressorMaxMb !== undefined) {
-      process.stdout.write(
-        `compressor:        ${nodeMem.compressor_mb.toFixed(0)} MiB (max ${String(compressorMaxMb)})\n`,
-      );
-    }
-    if (measured) {
-      process.stdout.write(
-        `measured peak:     ${measured.peakMb.toFixed(1)} MiB × 1.05 safety = ${((measured.peakMb * 1.05) / 1024).toFixed(2)} GiB  [source: measured]\n`,
-      );
-    } else {
-      process.stdout.write(
-        `expected to load:  ${String(expectedMemoryGiB)} GiB × ${String(safetyFactor)} safety = ${(expectedMemoryGiB * safetyFactor).toFixed(2)} GiB  [source: declared]\n`,
-      );
-    }
-    process.stdout.write(`projected free:    ${result.projectedFreeGiB.toFixed(2)} GiB\n`);
-    process.stdout.write(`headroom min:      ${(headroomMb / 1024).toFixed(2)} GiB\n`);
-    process.stdout.write(`decision:          ${result.allowed ? "ALLOW" : "DENY"}\n`);
-    if (!result.allowed) process.stdout.write(`reason:            ${result.reason ?? ""}\n`);
   }
+  process.stdout.write(`projected free:    ${result.projectedFreeGiB.toFixed(2)} GiB\n`);
+  process.stdout.write(`headroom min:      ${(headroomMb / 1024).toFixed(2)} GiB\n`);
+  process.stdout.write(`decision:          ${result.allowed ? "ALLOW" : "DENY"}\n`);
+  if (!result.allowed) process.stdout.write(`reason:            ${result.reason ?? ""}\n`);
+}
+
+function printAdmitResult(opts: AdmitPrintOpts): void {
+  if (opts.emitJson) {
+    printAdmitJson(opts);
+    return;
+  }
+  if (opts.quiet) {
+    printAdmitQuiet(opts);
+    return;
+  }
+  printAdmitNarrative(opts);
+}
+
+type AdmitManifest = {
+  kind?: string;
+  spec?: {
+    resources?: { expectedMemoryGiB?: number };
+    target?: { value?: string };
+    hostedModels?: { rel?: string }[];
+  };
+  metadata?: { name?: string };
+};
+
+function readAdmitManifest(
+  path: string,
+): { ok: true; manifest: AdmitManifest } | { ok: false; error: string } {
+  try {
+    const parsedYaml: unknown = yaml.parse(readFileSync(path, "utf8"));
+    return { ok: true, manifest: isAdmitManifest(parsedYaml) ? parsedYaml : {} };
+  } catch (err) {
+    return { ok: false, error: `admit: failed to read ${path}: ${(err as Error).message}` };
+  }
+}
+
+// Build cache key to look up any prior `llamactl admit measure` result.
+function buildAdmitModelKey(manifest: AdmitManifest): string | undefined {
+  if (manifest.kind === "ModelRun") {
+    const val = manifest.spec?.target?.value;
+    return val ? `${val}::` : undefined;
+  }
+  if (manifest.kind === "ModelHost") {
+    const rel = manifest.spec?.hostedModels?.[0]?.rel;
+    return rel ? `${rel}::` : undefined;
+  }
+  return undefined;
 }
 
 export async function runAdmit(args: string[]): Promise<number> {
@@ -194,22 +238,12 @@ export async function runAdmit(args: string[]): Promise<number> {
   }
 
   const path = target.endsWith(".yaml") ? target : `templates/workloads/${target}.yaml`;
-  let manifest: {
-    kind?: string;
-    spec?: {
-      resources?: { expectedMemoryGiB?: number };
-      target?: { value?: string };
-      hostedModels?: { rel?: string }[];
-    };
-    metadata?: { name?: string };
-  };
-  try {
-    const parsedYaml: unknown = yaml.parse(readFileSync(path, "utf8"));
-    manifest = isAdmitManifest(parsedYaml) ? parsedYaml : {};
-  } catch (err) {
-    console.error(`admit: failed to read ${path}: ${(err as Error).message}`);
+  const read = readAdmitManifest(path);
+  if (!read.ok) {
+    console.error(read.error);
     return 2;
   }
+  const manifest = read.manifest;
   const name = manifest.metadata?.name ?? target;
   const expectedMemoryGiB = manifest.spec?.resources?.expectedMemoryGiB;
   if (typeof expectedMemoryGiB !== "number") {
@@ -219,15 +253,7 @@ export async function runAdmit(args: string[]): Promise<number> {
     return 2;
   }
 
-  // Build cache key to look up any prior `llamactl admit measure` result.
-  let modelKey: string | undefined;
-  if (manifest.kind === "ModelRun") {
-    const val = manifest.spec?.target?.value;
-    if (val) modelKey = `${val}::`;
-  } else if (manifest.kind === "ModelHost") {
-    const rel = manifest.spec?.hostedModels?.[0]?.rel;
-    if (rel) modelKey = `${rel}::`;
-  }
+  const modelKey = buildAdmitModelKey(manifest);
   const measured = modelKey ? readMeasuredMemoryCache(modelKey) : null;
 
   const nodeMem = await probeNodeMem({
@@ -265,14 +291,6 @@ export async function runAdmit(args: string[]): Promise<number> {
   return result.allowed ? 0 : 1;
 }
 
-function isAdmitManifest(value: unknown): value is {
-  kind?: string;
-  spec?: {
-    resources?: { expectedMemoryGiB?: number };
-    target?: { value?: string };
-    hostedModels?: { rel?: string }[];
-  };
-  metadata?: { name?: string };
-} {
+function isAdmitManifest(value: unknown): value is AdmitManifest {
   return isRecord(value);
 }

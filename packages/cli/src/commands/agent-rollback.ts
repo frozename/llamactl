@@ -1,3 +1,5 @@
+import type { Config } from "@llamactl/remote";
+
 import { config as cfgMod, makePinnedFetch } from "@llamactl/remote";
 
 import { getGlobals, isLocalDispatch } from "../dispatcher.js";
@@ -37,33 +39,83 @@ interface ParsedArgs {
   json: boolean;
 }
 
+function applyRollbackFlag(arg: string, out: ParsedArgs): { error: string } | null {
+  if (arg === "--help" || arg === "-h") return { error: "__help" };
+  if (arg === "--json") {
+    out.json = true;
+    return null;
+  }
+  const eq = arg.indexOf("=");
+  if (!arg.startsWith("--") || eq < 0) {
+    return { error: `agent rollback: flags must be --key=value (${arg})` };
+  }
+  const key = arg.slice(2, eq);
+  const value = arg.slice(eq + 1);
+  if (key !== "readiness-timeout") {
+    return { error: `agent rollback: unknown flag --${key}` };
+  }
+  const n = Number.parseInt(value, 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    return {
+      error: `agent rollback: --readiness-timeout must be a positive integer (got ${value})`,
+    };
+  }
+  out.readinessTimeoutSec = n;
+  return null;
+}
+
 function parseArgs(argv: string[]): ParsedArgs | { error: string } {
   const out: ParsedArgs = { readinessTimeoutSec: 30, json: false };
   for (const arg of argv) {
-    if (arg === "--help" || arg === "-h") return { error: "__help" };
-    if (arg === "--json") {
-      out.json = true;
-      continue;
-    }
-    const eq = arg.indexOf("=");
-    if (!arg.startsWith("--") || eq < 0) {
-      return { error: `agent rollback: flags must be --key=value (${arg})` };
-    }
-    const key = arg.slice(2, eq);
-    const value = arg.slice(eq + 1);
-    if (key === "readiness-timeout") {
-      const n = Number.parseInt(value, 10);
-      if (!Number.isFinite(n) || n <= 0) {
-        return {
-          error: `agent rollback: --readiness-timeout must be a positive integer (got ${value})`,
-        };
-      }
-      out.readinessTimeoutSec = n;
-    } else {
-      return { error: `agent rollback: unknown flag --${key}` };
-    }
+    const err = applyRollbackFlag(arg, out);
+    if (err) return err;
   }
   return out;
+}
+
+type KubeNode = Config["clusters"][number]["nodes"][number];
+
+interface RollbackResponse {
+  ok: boolean;
+  restoredAt: string;
+  newSha256: string;
+  rolledOutSha256: string;
+}
+
+function resolveRollbackNode(
+  nodeName: string,
+  contextName: string | null | undefined,
+): { node: KubeNode; token: string } | { error: string } {
+  const cfg = cfgMod.loadConfig();
+  const ctx = cfg.contexts.find((c) => c.name === (contextName ?? cfg.currentContext));
+  if (!ctx) {
+    return { error: "agent rollback: context not found in kubeconfig" };
+  }
+  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
+  const node = cluster?.nodes.find((n) => n.name === nodeName);
+  if (!node) {
+    return { error: `agent rollback: node '${nodeName}' not found in current context` };
+  }
+  if (node.endpoint.startsWith("inproc://")) {
+    return {
+      error: `agent rollback: '${nodeName}' is a local in-proc node — nothing to roll back`,
+    };
+  }
+  const user = cfg.users.find((u) => u.name === ctx.user);
+  if (!user) {
+    return { error: `agent rollback: user '${ctx.user}' not found in kubeconfig` };
+  }
+  return { node, token: cfgMod.resolveToken(user) };
+}
+
+function parseRollbackResponse(text: string): RollbackResponse | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!isAgentRollbackResponse(parsed)) throw new Error("invalid rollback response");
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 export async function runAgentRollback(argv: string[]): Promise<number> {
@@ -83,30 +135,12 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
     return 1;
   }
   const nodeName = required(globals.nodeName);
-  const cfg = cfgMod.loadConfig();
-  const ctx = cfg.contexts.find((c) => c.name === (globals.contextName ?? cfg.currentContext));
-  if (!ctx) {
-    process.stderr.write(`agent rollback: context not found in kubeconfig\n`);
+  const resolved = resolveRollbackNode(nodeName, globals.contextName);
+  if ("error" in resolved) {
+    process.stderr.write(`${resolved.error}\n`);
     return 1;
   }
-  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
-  const node = cluster?.nodes.find((n) => n.name === nodeName);
-  if (!node) {
-    process.stderr.write(`agent rollback: node '${nodeName}' not found in current context\n`);
-    return 1;
-  }
-  if (node.endpoint.startsWith("inproc://")) {
-    process.stderr.write(
-      `agent rollback: '${nodeName}' is a local in-proc node — nothing to roll back\n`,
-    );
-    return 1;
-  }
-  const user = cfg.users.find((u) => u.name === ctx.user);
-  if (!user) {
-    process.stderr.write(`agent rollback: user '${ctx.user}' not found in kubeconfig\n`);
-    return 1;
-  }
-  const token = cfgMod.resolveToken(user);
+  const { node, token } = resolved;
 
   const url = `${node.endpoint.replace(/\/$/, "")}/agent/rollback`;
   process.stderr.write(`agent rollback: requesting swap on ${url}\n`);
@@ -127,17 +161,8 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
     process.stderr.write(`agent rollback: agent rejected (${String(res.status)}): ${text}\n`);
     return 1;
   }
-  let result: {
-    ok: boolean;
-    restoredAt: string;
-    newSha256: string;
-    rolledOutSha256: string;
-  };
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (!isAgentRollbackResponse(parsed)) throw new Error("invalid rollback response");
-    result = parsed;
-  } catch {
+  const result = parseRollbackResponse(text);
+  if (result === null) {
     process.stderr.write(`agent rollback: invalid response: ${text}\n`);
     return 1;
   }
@@ -151,7 +176,16 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
     `agent rollback: waiting for respawn (timeout ${String(parsed.readinessTimeoutSec)}s)\u2026\n`,
   );
   const deadline = Date.now() + parsed.readinessTimeoutSec * 1000;
-  let healthy = false;
+  const healthy = await pollAgentHealth(pinnedFetch, healthUrl, token, deadline);
+  return reportRollbackOutcome(healthy, result, parsed);
+}
+
+async function pollAgentHealth(
+  pinnedFetch: ReturnType<typeof makePinnedFetch>,
+  healthUrl: string,
+  token: string,
+  deadline: number,
+): Promise<boolean> {
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 1000));
     try {
@@ -160,13 +194,20 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
         headers: { authorization: `Bearer ${token}` },
       });
       if (probe.ok) {
-        healthy = true;
-        break;
+        return true;
       }
     } catch {
       // launchd respawning — keep polling
     }
   }
+  return false;
+}
+
+function reportRollbackOutcome(
+  healthy: boolean,
+  result: RollbackResponse,
+  parsed: ParsedArgs,
+): number {
   if (!healthy) {
     process.stderr.write(
       `agent rollback: WARNING \u2014 agent did not come back within ${String(parsed.readinessTimeoutSec)}s.\n` +
@@ -184,12 +225,7 @@ export async function runAgentRollback(argv: string[]): Promise<number> {
   return 0;
 }
 
-function isAgentRollbackResponse(value: unknown): value is {
-  ok: boolean;
-  restoredAt: string;
-  newSha256: string;
-  rolledOutSha256: string;
-} {
+function isAgentRollbackResponse(value: unknown): value is RollbackResponse {
   return (
     isRecord(value) &&
     hasBoolean(value, "ok") &&

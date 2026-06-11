@@ -110,83 +110,103 @@ export async function runController(args: string[]): Promise<number> {
   const wakeRef: { wake: (() => void) | null } = { wake: null };
   const { isStopping, onSignal } = setupSignalHandlers(stopping, wakeRef);
 
-  const runOnePass = async (): Promise<void> => {
-    // ModelRun pass — converges llama-server lifecycle per manifest.
-    const modelrunResult = await workloadReconciler.reconcileOnce({
-      workloadsDir,
-      getClient: (nodeName) => getNodeClientByName(nodeName),
-      resolveNodeIdentity,
-      onEvent: (e) => {
-        process.stdout.write(`[${new Date().toISOString()}] ${e.name}: ${e.message}\n`);
-      },
-    });
-    // NodeRun pass — converges infra inventory per manifest.
-    const noderunResult = await noderunReconciler.reconcileNodeRunsOnce({
-      workloadsDir,
-      getClient: (nodeName) => getNodeClientByName(nodeName),
-      getArtifactResolver: (_node, client) =>
-        makeSpecArtifactResolver({
-          client: client as unknown as Parameters<typeof makeSpecArtifactResolver>[0]["client"],
-        }),
-      onReport: (r) => {
-        const tail = r.error ? ` error=${r.error}` : "";
-        const actions = r.actions > 0 ? ` actions=${String(r.actions)}` : "";
-        process.stdout.write(
-          `[${new Date().toISOString()}] noderun/${r.name} on ${r.node}: ${r.phase}${actions}${tail}\n`,
-        );
-      },
-    });
-    if (modelrunResult.reports.length === 0 && noderunResult.reports.length === 0) {
-      process.stdout.write(
-        `[${new Date().toISOString()}] idle (no manifests in ${workloadsDir})\n`,
-      );
-      return;
-    }
-    for (const r of modelrunResult.reports) {
-      const tail = r.error ? ` error=${r.error}` : "";
-      process.stdout.write(
-        `[${new Date().toISOString()}] modelrun/${r.name} on ${r.node}: ${r.action}${tail}\n`,
-      );
-    }
-  };
+  const runOnePass = (): Promise<void> => runReconcilePass(workloadsDir, resolveNodeIdentity);
 
   try {
     if (parsed.once) {
       await runOnePass();
       return 0;
     }
-    // Loop forever. Interval is measured between pass START times so
-    // slow passes don't bunch up on a naive "sleep N after finish".
-    while (!stopping.value) {
-      const start = Date.now();
-      try {
-        await runOnePass();
-      } catch (err) {
-        process.stderr.write(
-          `[${new Date().toISOString()}] reconcile error: ${(err as Error).message}\n`,
-        );
-      }
-      if (isStopping()) break;
-      const elapsed = Date.now() - start;
-      const sleepMs = Math.max(100, parsed.intervalMs - elapsed);
-      // Race the sleep against a SIGTERM-triggered `wake()` so the
-      // loop exits promptly even during a long --interval.
-      await new Promise<void>((r) => {
-        const timer = setTimeout(() => {
-          wakeRef.wake = null;
-          r();
-        }, sleepMs);
-        wakeRef.wake = (): void => {
-          clearTimeout(timer);
-          wakeRef.wake = null;
-          r();
-        };
-      });
-    }
+    await runServeLoop(parsed, stopping, wakeRef, isStopping, runOnePass);
     return 0;
   } finally {
     workloadLock.releaseLock(acquired);
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
+  }
+}
+
+async function runReconcilePass(
+  workloadsDir: string,
+  resolveNodeIdentity: (n: string) => string | null,
+): Promise<void> {
+  // ModelRun pass — converges llama-server lifecycle per manifest.
+  const modelrunResult = await workloadReconciler.reconcileOnce({
+    workloadsDir,
+    getClient: (nodeName) => getNodeClientByName(nodeName),
+    resolveNodeIdentity,
+    onEvent: (e) => {
+      process.stdout.write(`[${new Date().toISOString()}] ${e.name}: ${e.message}\n`);
+    },
+  });
+  // NodeRun pass — converges infra inventory per manifest.
+  const noderunResult = await noderunReconciler.reconcileNodeRunsOnce({
+    workloadsDir,
+    getClient: (nodeName) => getNodeClientByName(nodeName),
+    getArtifactResolver: (_node, client) =>
+      makeSpecArtifactResolver({
+        client: client as unknown as Parameters<typeof makeSpecArtifactResolver>[0]["client"],
+      }),
+    onReport: (r) => {
+      const tail = r.error ? ` error=${r.error}` : "";
+      const actions = r.actions > 0 ? ` actions=${String(r.actions)}` : "";
+      process.stdout.write(
+        `[${new Date().toISOString()}] noderun/${r.name} on ${r.node}: ${r.phase}${actions}${tail}\n`,
+      );
+    },
+  });
+  if (modelrunResult.reports.length === 0 && noderunResult.reports.length === 0) {
+    process.stdout.write(`[${new Date().toISOString()}] idle (no manifests in ${workloadsDir})\n`);
+    return;
+  }
+  for (const r of modelrunResult.reports) {
+    const tail = r.error ? ` error=${r.error}` : "";
+    process.stdout.write(
+      `[${new Date().toISOString()}] modelrun/${r.name} on ${r.node}: ${r.action}${tail}\n`,
+    );
+  }
+}
+
+// Race the sleep against a SIGTERM-triggered `wake()` so the
+// loop exits promptly even during a long --interval.
+async function sleepInterruptible(
+  sleepMs: number,
+  wakeRef: { wake: (() => void) | null },
+): Promise<void> {
+  await new Promise<void>((r) => {
+    const timer = setTimeout(() => {
+      wakeRef.wake = null;
+      r();
+    }, sleepMs);
+    wakeRef.wake = (): void => {
+      clearTimeout(timer);
+      wakeRef.wake = null;
+      r();
+    };
+  });
+}
+
+// Loop forever. Interval is measured between pass START times so
+// slow passes don't bunch up on a naive "sleep N after finish".
+async function runServeLoop(
+  parsed: ControllerFlags,
+  stopping: { value: boolean },
+  wakeRef: { wake: (() => void) | null },
+  isStopping: () => boolean,
+  runOnePass: () => Promise<void>,
+): Promise<void> {
+  while (!stopping.value) {
+    const start = Date.now();
+    try {
+      await runOnePass();
+    } catch (err) {
+      process.stderr.write(
+        `[${new Date().toISOString()}] reconcile error: ${(err as Error).message}\n`,
+      );
+    }
+    if (isStopping()) break;
+    const elapsed = Date.now() - start;
+    const sleepMs = Math.max(100, parsed.intervalMs - elapsed);
+    await sleepInterruptible(sleepMs, wakeRef);
   }
 }

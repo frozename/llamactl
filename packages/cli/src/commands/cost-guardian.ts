@@ -59,6 +59,49 @@ interface TickFlags {
   autoTier3: boolean;
 }
 
+/** Apply one tick arg; false → stop parsing (help or error already printed). */
+function applyTickFlag(arg: string, flags: TickFlags): boolean {
+  if (arg === "--help" || arg === "-h") {
+    process.stdout.write(USAGE);
+    return false;
+  }
+  if (arg === "--skip-journal") {
+    flags.skipJournal = true;
+    return true;
+  }
+  if (arg === "--auto") {
+    flags.autoTier2 = true;
+    flags.autoTier3 = true;
+    return true;
+  }
+  if (arg === "--auto-tier-2") {
+    flags.autoTier2 = true;
+    return true;
+  }
+  if (arg === "--auto-tier-3") {
+    flags.autoTier3 = true;
+    return true;
+  }
+  const eq = arg.indexOf("=");
+  if (!arg.startsWith("--") || eq < 0) {
+    process.stderr.write(`cost-guardian: unknown arg ${arg}\n\n${USAGE}`);
+    return false;
+  }
+  const key = arg.slice(2, eq);
+  const value = arg.slice(eq + 1);
+  switch (key) {
+    case "config":
+      flags.configPath = value;
+      return true;
+    case "journal":
+      flags.journalPath = value;
+      return true;
+    default:
+      process.stderr.write(`cost-guardian: unknown flag --${key}\n\n${USAGE}`);
+      return false;
+  }
+}
+
 function parseFlags(argv: string[]): TickFlags | null {
   const flags: TickFlags = {
     configPath: defaultCostGuardianConfigPath(),
@@ -68,45 +111,7 @@ function parseFlags(argv: string[]): TickFlags | null {
     autoTier3: false,
   };
   for (const arg of argv) {
-    if (arg === "--help" || arg === "-h") {
-      process.stdout.write(USAGE);
-      return null;
-    }
-    if (arg === "--skip-journal") {
-      flags.skipJournal = true;
-      continue;
-    }
-    if (arg === "--auto") {
-      flags.autoTier2 = true;
-      flags.autoTier3 = true;
-      continue;
-    }
-    if (arg === "--auto-tier-2") {
-      flags.autoTier2 = true;
-      continue;
-    }
-    if (arg === "--auto-tier-3") {
-      flags.autoTier3 = true;
-      continue;
-    }
-    const eq = arg.indexOf("=");
-    if (!arg.startsWith("--") || eq < 0) {
-      process.stderr.write(`cost-guardian: unknown arg ${arg}\n\n${USAGE}`);
-      return null;
-    }
-    const key = arg.slice(2, eq);
-    const value = arg.slice(eq + 1);
-    switch (key) {
-      case "config":
-        flags.configPath = value;
-        break;
-      case "journal":
-        flags.journalPath = value;
-        break;
-      default:
-        process.stderr.write(`cost-guardian: unknown flag --${key}\n\n${USAGE}`);
-        return null;
-    }
+    if (!applyTickFlag(arg, flags)) return null;
   }
   return flags;
 }

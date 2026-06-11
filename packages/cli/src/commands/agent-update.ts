@@ -1,3 +1,5 @@
+import type { Config } from "@llamactl/remote";
+
 import { config as cfgMod, makePinnedFetch } from "@llamactl/remote";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -58,6 +60,43 @@ interface ParsedArgs {
   json: boolean;
 }
 
+function applyUpdateFlag(arg: string, out: ParsedArgs): { error: string } | null {
+  if (arg === "--help" || arg === "-h") return { error: "__help" };
+  if (arg === "--json") {
+    out.json = true;
+    return null;
+  }
+  const eq = arg.indexOf("=");
+  if (!arg.startsWith("--") || eq < 0) {
+    return { error: `agent update: flags must be --key=value (${arg})` };
+  }
+  const key = arg.slice(2, eq);
+  const value = arg.slice(eq + 1);
+  switch (key) {
+    case "binary":
+      out.binary = value;
+      return null;
+    case "from-release":
+      out.fromRelease = value;
+      return null;
+    case "repo":
+      out.repo = value;
+      return null;
+    case "readiness-timeout": {
+      const n = Number.parseInt(value, 10);
+      if (!Number.isFinite(n) || n <= 0) {
+        return {
+          error: `agent update: --readiness-timeout must be a positive integer (got ${value})`,
+        };
+      }
+      out.readinessTimeoutSec = n;
+      return null;
+    }
+    default:
+      return { error: `agent update: unknown flag --${key}` };
+  }
+}
+
 function parseArgs(argv: string[]): ParsedArgs | { error: string } {
   const out: ParsedArgs = {
     repo: "frozename/llamactl",
@@ -65,40 +104,8 @@ function parseArgs(argv: string[]): ParsedArgs | { error: string } {
     json: false,
   };
   for (const arg of argv) {
-    if (arg === "--help" || arg === "-h") return { error: "__help" };
-    if (arg === "--json") {
-      out.json = true;
-      continue;
-    }
-    const eq = arg.indexOf("=");
-    if (!arg.startsWith("--") || eq < 0) {
-      return { error: `agent update: flags must be --key=value (${arg})` };
-    }
-    const key = arg.slice(2, eq);
-    const value = arg.slice(eq + 1);
-    switch (key) {
-      case "binary":
-        out.binary = value;
-        break;
-      case "from-release":
-        out.fromRelease = value;
-        break;
-      case "repo":
-        out.repo = value;
-        break;
-      case "readiness-timeout": {
-        const n = Number.parseInt(value, 10);
-        if (!Number.isFinite(n) || n <= 0) {
-          return {
-            error: `agent update: --readiness-timeout must be a positive integer (got ${value})`,
-          };
-        }
-        out.readinessTimeoutSec = n;
-        break;
-      }
-      default:
-        return { error: `agent update: unknown flag --${key}` };
-    }
+    const err = applyUpdateFlag(arg, out);
+    if (err) return err;
   }
   if (!out.binary && !out.fromRelease) {
     return { error: "agent update: pass --binary=<path> or --from-release=<tag>" };
@@ -163,6 +170,71 @@ async function pollAgentHealth(
   return false;
 }
 
+type KubeNode = Config["clusters"][number]["nodes"][number];
+
+function resolveUpdateNode(
+  nodeName: string,
+  contextName: string | null | undefined,
+): { node: KubeNode; token: string } | { error: string } {
+  const cfg = cfgMod.loadConfig();
+  const ctx = cfg.contexts.find((c) => c.name === (contextName ?? cfg.currentContext));
+  if (!ctx) {
+    return { error: "agent update: context not found in kubeconfig" };
+  }
+  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
+  const node = cluster?.nodes.find((n) => n.name === nodeName);
+  if (!node) {
+    return { error: `agent update: node '${nodeName}' not found in current context` };
+  }
+  if (node.endpoint.startsWith("inproc://")) {
+    return { error: `agent update: '${nodeName}' is a local in-proc node — cannot self-replace` };
+  }
+  const user = cfg.users.find((u) => u.name === ctx.user);
+  if (!user) {
+    return { error: `agent update: user '${ctx.user}' not found in kubeconfig` };
+  }
+  return { node, token: cfgMod.resolveToken(user) };
+}
+
+interface UpdateResponse {
+  ok: boolean;
+  oldSha256: string;
+  newSha256: string;
+  oldSize: number;
+  newSize: number;
+  installedAt: string;
+  previousAt: string;
+}
+
+function parseUpdateResponse(text: string): UpdateResponse | null {
+  try {
+    const parsedResponse: unknown = JSON.parse(text);
+    if (!isAgentUpdateResponse(parsedResponse)) throw new Error("invalid update response");
+    return parsedResponse;
+  } catch {
+    return null;
+  }
+}
+
+function reportUpdateOutcome(healthy: boolean, result: UpdateResponse, parsed: ParsedArgs): number {
+  if (!healthy) {
+    process.stderr.write(
+      `agent update: WARNING — agent did not come back within ${String(parsed.readinessTimeoutSec)}s.\n` +
+        `  rollback hint (run on the target node):\n` +
+        `    mv ${result.previousAt} ${result.installedAt} && launchctl kickstart -k gui/$(id -u)/com.llamactl.agent\n`,
+    );
+    if (parsed.json) {
+      process.stdout.write(`${JSON.stringify({ ...result, healthy: false }, null, 2)}\n`);
+    }
+    return 1;
+  }
+  process.stderr.write(`agent update: ok — agent back online\n`);
+  if (parsed.json) {
+    process.stdout.write(`${JSON.stringify({ ...result, healthy: true }, null, 2)}\n`);
+  }
+  return 0;
+}
+
 export async function runAgentUpdate(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
   if ("error" in parsed) {
@@ -180,30 +252,12 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
     return 1;
   }
   const nodeName = required(globals.nodeName);
-  const cfg = cfgMod.loadConfig();
-  const ctx = cfg.contexts.find((c) => c.name === (globals.contextName ?? cfg.currentContext));
-  if (!ctx) {
-    process.stderr.write(`agent update: context not found in kubeconfig\n`);
+  const resolved = resolveUpdateNode(nodeName, globals.contextName);
+  if ("error" in resolved) {
+    process.stderr.write(`${resolved.error}\n`);
     return 1;
   }
-  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
-  const node = cluster?.nodes.find((n) => n.name === nodeName);
-  if (!node) {
-    process.stderr.write(`agent update: node '${nodeName}' not found in current context\n`);
-    return 1;
-  }
-  if (node.endpoint.startsWith("inproc://")) {
-    process.stderr.write(
-      `agent update: '${nodeName}' is a local in-proc node — cannot self-replace\n`,
-    );
-    return 1;
-  }
-  const user = cfg.users.find((u) => u.name === ctx.user);
-  if (!user) {
-    process.stderr.write(`agent update: user '${ctx.user}' not found in kubeconfig\n`);
-    return 1;
-  }
-  const token = cfgMod.resolveToken(user);
+  const { node, token } = resolved;
 
   const binaryPath = await resolveUpdateBinary(parsed, node);
   if (typeof binaryPath !== "string") {
@@ -240,20 +294,8 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
     process.stderr.write(`agent update: agent rejected push (${String(res.status)}): ${text}\n`);
     return 1;
   }
-  let result: {
-    ok: boolean;
-    oldSha256: string;
-    newSha256: string;
-    oldSize: number;
-    newSize: number;
-    installedAt: string;
-    previousAt: string;
-  };
-  try {
-    const parsedResponse: unknown = JSON.parse(text);
-    if (!isAgentUpdateResponse(parsedResponse)) throw new Error("invalid update response");
-    result = parsedResponse;
-  } catch {
+  const result = parseUpdateResponse(text);
+  if (result === null) {
     process.stderr.write(`agent update: invalid response from agent: ${text}\n`);
     return 1;
   }
@@ -270,33 +312,10 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
   );
   const healthUrl = `${node.endpoint.replace(/\/$/, "")}/healthz`;
   const healthy = await pollAgentHealth(pinnedFetch, healthUrl, token, parsed.readinessTimeoutSec);
-  if (!healthy) {
-    process.stderr.write(
-      `agent update: WARNING — agent did not come back within ${String(parsed.readinessTimeoutSec)}s.\n` +
-        `  rollback hint (run on the target node):\n` +
-        `    mv ${result.previousAt} ${result.installedAt} && launchctl kickstart -k gui/$(id -u)/com.llamactl.agent\n`,
-    );
-    if (parsed.json) {
-      process.stdout.write(`${JSON.stringify({ ...result, healthy: false }, null, 2)}\n`);
-    }
-    return 1;
-  }
-  process.stderr.write(`agent update: ok — agent back online\n`);
-  if (parsed.json) {
-    process.stdout.write(`${JSON.stringify({ ...result, healthy: true }, null, 2)}\n`);
-  }
-  return 0;
+  return reportUpdateOutcome(healthy, result, parsed);
 }
 
-function isAgentUpdateResponse(value: unknown): value is {
-  ok: boolean;
-  oldSha256: string;
-  newSha256: string;
-  oldSize: number;
-  newSize: number;
-  installedAt: string;
-  previousAt: string;
-} {
+function isAgentUpdateResponse(value: unknown): value is UpdateResponse {
   return (
     isRecord(value) &&
     hasBoolean(value, "ok") &&

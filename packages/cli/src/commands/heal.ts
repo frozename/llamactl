@@ -117,73 +117,80 @@ function parseFlags(argv: string[]): HealFlags | null {
     executeProposalId: null,
   };
   for (const arg of argv) {
-    if (arg === "--help" || arg === "-h") {
-      process.stdout.write(USAGE);
-      return null;
-    }
-    if (arg === "--once") {
-      flags.once = true;
-      continue;
-    }
-    if (arg === "--quiet") {
-      flags.quiet = true;
-      continue;
-    }
-    if (arg === "--use-facade") {
-      flags.useFacade = true;
-      continue;
-    }
-    if (arg === "--no-use-facade") {
-      flags.useFacade = false;
-      continue;
-    }
-    if (arg === "--auto") {
-      flags.auto = true;
-      continue;
-    }
-    const eq = arg.indexOf("=");
-    if (!arg.startsWith("--") || eq < 0) {
-      process.stderr.write(`unknown arg: ${arg}\n\n${USAGE}`);
-      return null;
-    }
-    const key = arg.slice(2, eq);
-    const value = arg.slice(eq + 1);
-    switch (key) {
-      case "interval":
-        flags.intervalSec = Math.max(1, Number.parseInt(value, 10) || 30);
-        break;
-      case "timeout":
-        flags.timeoutMs = Math.max(100, Number.parseInt(value, 10) || 1500);
-        break;
-      case "journal":
-        flags.journalPath = value;
-        break;
-      case "kubeconfig":
-        flags.kubeconfigPath = value;
-        break;
-      case "providers-file":
-        flags.providersPath = value;
-        break;
-      case "severity-threshold": {
-        const parsed = Number.parseInt(value, 10);
-        if (parsed !== 1 && parsed !== 2 && parsed !== 3) {
-          process.stderr.write(
-            `invalid --severity-threshold: ${value} (must be 1, 2, or 3)\n\n${USAGE}`,
-          );
-          return null;
-        }
-        flags.severityThreshold = parsed;
-        break;
-      }
-      case "execute":
-        flags.executeProposalId = value;
-        break;
-      default:
-        process.stderr.write(`unknown flag: --${key}\n\n${USAGE}`);
-        return null;
-    }
+    if (!applyHealFlag(arg, flags)) return null;
   }
   return flags;
+}
+
+/** Apply one heal arg; false → stop parsing (help or error already printed). */
+function applyHealFlag(arg: string, flags: HealFlags): boolean {
+  if (arg === "--help" || arg === "-h") {
+    process.stdout.write(USAGE);
+    return false;
+  }
+  if (arg === "--once") {
+    flags.once = true;
+    return true;
+  }
+  if (arg === "--quiet") {
+    flags.quiet = true;
+    return true;
+  }
+  if (arg === "--use-facade") {
+    flags.useFacade = true;
+    return true;
+  }
+  if (arg === "--no-use-facade") {
+    flags.useFacade = false;
+    return true;
+  }
+  if (arg === "--auto") {
+    flags.auto = true;
+    return true;
+  }
+  const eq = arg.indexOf("=");
+  if (!arg.startsWith("--") || eq < 0) {
+    process.stderr.write(`unknown arg: ${arg}\n\n${USAGE}`);
+    return false;
+  }
+  return applyHealKeyValue(arg.slice(2, eq), arg.slice(eq + 1), flags);
+}
+
+function applyHealKeyValue(key: string, value: string, flags: HealFlags): boolean {
+  switch (key) {
+    case "interval":
+      flags.intervalSec = Math.max(1, Number.parseInt(value, 10) || 30);
+      return true;
+    case "timeout":
+      flags.timeoutMs = Math.max(100, Number.parseInt(value, 10) || 1500);
+      return true;
+    case "journal":
+      flags.journalPath = value;
+      return true;
+    case "kubeconfig":
+      flags.kubeconfigPath = value;
+      return true;
+    case "providers-file":
+      flags.providersPath = value;
+      return true;
+    case "severity-threshold": {
+      const parsed = Number.parseInt(value, 10);
+      if (parsed !== 1 && parsed !== 2 && parsed !== 3) {
+        process.stderr.write(
+          `invalid --severity-threshold: ${value} (must be 1, 2, or 3)\n\n${USAGE}`,
+        );
+        return false;
+      }
+      flags.severityThreshold = parsed;
+      return true;
+    }
+    case "execute":
+      flags.executeProposalId = value;
+      return true;
+    default:
+      process.stderr.write(`unknown flag: --${key}\n\n${USAGE}`);
+      return false;
+  }
 }
 
 /**

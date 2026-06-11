@@ -355,53 +355,112 @@ function runList(argv: string[]): number {
   return 0;
 }
 
-function runShowPath(argv: string[]): number {
-  const current = currentPlatform();
-  let target: Platform | null = current;
-  let dir = defaultArtifactsDir();
-  for (const arg of argv) {
-    if (arg === "--help" || arg === "-h") {
-      process.stdout.write(USAGE);
-      return 0;
-    }
-    const eq = arg.indexOf("=");
-    if (eq < 0) {
-      process.stderr.write(`artifacts show-path: unknown arg ${arg}\n`);
-      return 1;
-    }
-    const key = arg.slice(2, eq);
-    const value = arg.slice(eq + 1);
-    if (key === "target") {
-      if (!ALLOWED_PLATFORMS.includes(value as Platform)) {
-        process.stderr.write(`artifacts show-path: unsupported --target ${value}\n`);
-        return 1;
-      }
-      target = value as Platform;
-    } else if (key === "dir") {
-      dir = value;
-    } else {
-      process.stderr.write(`artifacts show-path: unknown flag --${key}\n`);
-      return 1;
-    }
+interface ShowPathState {
+  target: Platform | null;
+  dir: string;
+}
+
+/** Apply one show-path arg; returns an exit code to propagate, or null to continue. */
+function applyShowPathFlag(arg: string, state: ShowPathState): number | null {
+  if (arg === "--help" || arg === "-h") {
+    process.stdout.write(USAGE);
+    return 0;
   }
-  if (!target) {
+  const eq = arg.indexOf("=");
+  if (eq < 0) {
+    process.stderr.write(`artifacts show-path: unknown arg ${arg}\n`);
+    return 1;
+  }
+  const key = arg.slice(2, eq);
+  const value = arg.slice(eq + 1);
+  if (key === "target") {
+    if (!ALLOWED_PLATFORMS.includes(value as Platform)) {
+      process.stderr.write(`artifacts show-path: unsupported --target ${value}\n`);
+      return 1;
+    }
+    state.target = value as Platform;
+    return null;
+  }
+  if (key === "dir") {
+    state.dir = value;
+    return null;
+  }
+  process.stderr.write(`artifacts show-path: unknown flag --${key}\n`);
+  return 1;
+}
+
+function runShowPath(argv: string[]): number {
+  const state: ShowPathState = { target: currentPlatform(), dir: defaultArtifactsDir() };
+  for (const arg of argv) {
+    const exit = applyShowPathFlag(arg, state);
+    if (exit !== null) return exit;
+  }
+  if (!state.target) {
     process.stderr.write(
       `artifacts show-path: could not detect current platform (${nodePlatform()}/${nodeArch()}); pass --target=<p>.\n`,
     );
     return 1;
   }
-  process.stdout.write(`${agentBinaryPath(target, dir)}\n`);
+  process.stdout.write(`${agentBinaryPath(state.target, state.dir)}\n`);
   return 0;
 }
 
+interface FetchFlags {
+  version: string;
+  target: string | undefined;
+  repo: string;
+  dir: string;
+  verifySig: "skip" | "best-effort" | "require";
+}
+
+/** Apply one fetch arg; returns an exit code to propagate, or null to continue. */
+function applyFetchFlag(arg: string, flags: FetchFlags): number | null {
+  if (arg === "--help" || arg === "-h") {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+  // --verify-sig without a value means best-effort.
+  if (arg === "--verify-sig") {
+    flags.verifySig = "best-effort";
+    return null;
+  }
+  const eq = arg.indexOf("=");
+  if (!arg.startsWith("--") || eq < 0) {
+    process.stderr.write(`artifacts fetch: flags must be --key=value (${arg})\n`);
+    return 1;
+  }
+  const key = arg.slice(2, eq);
+  const value = arg.slice(eq + 1);
+  switch (key) {
+    case "version":
+      flags.version = value;
+      return null;
+    case "target":
+      flags.target = value;
+      return null;
+    case "repo":
+      flags.repo = value;
+      return null;
+    case "dir":
+      flags.dir = value;
+      return null;
+    case "verify-sig":
+      if (value !== "skip" && value !== "best-effort" && value !== "require") {
+        process.stderr.write(
+          `artifacts fetch: --verify-sig must be skip|best-effort|require (got ${value})\n`,
+        );
+        return 1;
+      }
+      flags.verifySig = value;
+      return null;
+    default:
+      process.stderr.write(`artifacts fetch: unknown flag --${key}\n`);
+      return 1;
+  }
+}
+
 async function runFetch(argv: string[]): Promise<number> {
-  const flags: {
-    version: string;
-    target: string | undefined;
-    repo: string;
-    dir: string;
-    verifySig: "skip" | "best-effort" | "require";
-  } = {
+  const flags: FetchFlags = {
     version: "latest",
     target: (currentPlatform() as string | null) ?? undefined,
     repo: "frozename/llamactl",
@@ -409,48 +468,8 @@ async function runFetch(argv: string[]): Promise<number> {
     verifySig: "skip",
   };
   for (const arg of argv) {
-    if (arg === "--help" || arg === "-h") {
-      process.stdout.write(USAGE);
-      return 0;
-    }
-    // --verify-sig without a value means best-effort.
-    if (arg === "--verify-sig") {
-      flags.verifySig = "best-effort";
-      continue;
-    }
-    const eq = arg.indexOf("=");
-    if (!arg.startsWith("--") || eq < 0) {
-      process.stderr.write(`artifacts fetch: flags must be --key=value (${arg})\n`);
-      return 1;
-    }
-    const key = arg.slice(2, eq);
-    const value = arg.slice(eq + 1);
-    switch (key) {
-      case "version":
-        flags.version = value;
-        break;
-      case "target":
-        flags.target = value;
-        break;
-      case "repo":
-        flags.repo = value;
-        break;
-      case "dir":
-        flags.dir = value;
-        break;
-      case "verify-sig":
-        if (value !== "skip" && value !== "best-effort" && value !== "require") {
-          process.stderr.write(
-            `artifacts fetch: --verify-sig must be skip|best-effort|require (got ${value})\n`,
-          );
-          return 1;
-        }
-        flags.verifySig = value;
-        break;
-      default:
-        process.stderr.write(`artifacts fetch: unknown flag --${key}\n`);
-        return 1;
-    }
+    const exit = applyFetchFlag(arg, flags);
+    if (exit !== null) return exit;
   }
   if (!flags.target) {
     process.stderr.write(
@@ -488,70 +507,64 @@ async function runFetch(argv: string[]): Promise<number> {
   return 0;
 }
 
-function runPrune(argv: string[]): number {
-  const flags: {
-    target: string | undefined;
-    keep: number;
-    dir: string;
-    execute: boolean;
-  } = {
-    target: undefined,
-    keep: 3,
-    dir: defaultArtifactsDir(),
-    execute: false,
-  };
-  for (const arg of argv) {
-    if (arg === "--help" || arg === "-h") {
-      process.stdout.write(USAGE);
-      return 0;
-    }
-    if (arg === "--execute") {
-      flags.execute = true;
-      continue;
-    }
-    const eq = arg.indexOf("=");
-    if (!arg.startsWith("--") || eq < 0) {
-      process.stderr.write(`artifacts prune: flags must be --key=value (${arg})\n`);
-      return 1;
-    }
-    const key = arg.slice(2, eq);
-    const value = arg.slice(eq + 1);
-    switch (key) {
-      case "target":
-        if (!ALLOWED_PLATFORMS.includes(value as Platform)) {
-          process.stderr.write(
-            `artifacts prune: unsupported --target ${value} (allowed: ${ALLOWED_PLATFORMS.join(", ")})\n`,
-          );
-          return 1;
-        }
-        flags.target = value;
-        break;
-      case "keep":
-        {
-          const n = Number.parseInt(value, 10);
-          if (!Number.isFinite(n) || n < 0) {
-            process.stderr.write(
-              `artifacts prune: --keep must be a non-negative integer (got ${value})\n`,
-            );
-            return 1;
-          }
-          flags.keep = n;
-        }
-        break;
-      case "dir":
-        flags.dir = value;
-        break;
-      default:
-        process.stderr.write(`artifacts prune: unknown flag --${key}\n`);
-        return 1;
-    }
+interface PruneFlags {
+  target: string | undefined;
+  keep: number;
+  dir: string;
+  execute: boolean;
+}
+
+/** Apply one prune arg; returns an exit code to propagate, or null to continue. */
+function applyPruneFlag(arg: string, flags: PruneFlags): number | null {
+  if (arg === "--help" || arg === "-h") {
+    process.stdout.write(USAGE);
+    return 0;
   }
-  const result = infraArtifactsFetch.pruneAgentArtifacts({
-    artifactsDir: flags.dir,
-    ...(flags.target !== undefined ? { target: flags.target } : {}),
-    keep: flags.keep,
-    execute: flags.execute,
-  });
+  if (arg === "--execute") {
+    flags.execute = true;
+    return null;
+  }
+  const eq = arg.indexOf("=");
+  if (!arg.startsWith("--") || eq < 0) {
+    process.stderr.write(`artifacts prune: flags must be --key=value (${arg})\n`);
+    return 1;
+  }
+  const key = arg.slice(2, eq);
+  const value = arg.slice(eq + 1);
+  switch (key) {
+    case "target":
+      if (!ALLOWED_PLATFORMS.includes(value as Platform)) {
+        process.stderr.write(
+          `artifacts prune: unsupported --target ${value} (allowed: ${ALLOWED_PLATFORMS.join(", ")})\n`,
+        );
+        return 1;
+      }
+      flags.target = value;
+      return null;
+    case "keep": {
+      const n = Number.parseInt(value, 10);
+      if (!Number.isFinite(n) || n < 0) {
+        process.stderr.write(
+          `artifacts prune: --keep must be a non-negative integer (got ${value})\n`,
+        );
+        return 1;
+      }
+      flags.keep = n;
+      return null;
+    }
+    case "dir":
+      flags.dir = value;
+      return null;
+    default:
+      process.stderr.write(`artifacts prune: unknown flag --${key}\n`);
+      return 1;
+  }
+}
+
+function printPruneReport(
+  result: ReturnType<typeof infraArtifactsFetch.pruneAgentArtifacts>,
+  flags: PruneFlags,
+): number {
   if (result.inspected.length === 0) {
     process.stdout.write(`no versioned agent artifacts under ${flags.dir}\n`);
     return 0;
@@ -579,6 +592,26 @@ function runPrune(argv: string[]): number {
     return 1;
   }
   return 0;
+}
+
+function runPrune(argv: string[]): number {
+  const flags: PruneFlags = {
+    target: undefined,
+    keep: 3,
+    dir: defaultArtifactsDir(),
+    execute: false,
+  };
+  for (const arg of argv) {
+    const exit = applyPruneFlag(arg, flags);
+    if (exit !== null) return exit;
+  }
+  const result = infraArtifactsFetch.pruneAgentArtifacts({
+    artifactsDir: flags.dir,
+    ...(flags.target !== undefined ? { target: flags.target } : {}),
+    keep: flags.keep,
+    execute: flags.execute,
+  });
+  return printPruneReport(result, flags);
 }
 
 export async function runArtifacts(argv: string[]): Promise<number> {

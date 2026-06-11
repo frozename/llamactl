@@ -51,70 +51,56 @@ function printCompareTable(rows: readonly bench.BenchCompareRow[]): void {
   }
 }
 
-async function runTest(args: string[]): Promise<number> {
+interface CandidateTestArgs {
+  positional: string[];
+  json: boolean;
+}
+
+function parseCandidateTestArgs(args: string[]): CandidateTestArgs | { exit: number } {
   const positional: string[] = [];
   let json = false;
   for (const arg of args) {
     if (arg === "--json") json = true;
     else if (arg === "-h" || arg === "--help") {
       process.stdout.write(USAGE);
-      return 0;
+      return { exit: 0 };
     } else if (arg.startsWith("--")) {
       process.stderr.write(`Unknown flag: ${arg}\n`);
-      return 1;
+      return { exit: 1 };
     } else positional.push(arg);
   }
-  const [repo, file, profile] = positional;
-  if (!repo) {
-    process.stderr.write(
-      "Usage: llamactl candidate test <hf-repo> [gguf-file] [profile] [--json]\n",
-    );
-    return 1;
-  }
+  return { positional, json };
+}
 
-  let result: Awaited<ReturnType<typeof candidateTest.candidateTest>>;
-  if (isLocalDispatch()) {
-    result = await candidateTest.candidateTest({
-      repo,
-      file,
-      profile,
+async function runCandidateTestRemote(
+  repo: string,
+  file: string | undefined,
+  profile: string | undefined,
+): Promise<Awaited<ReturnType<typeof candidateTest.candidateTest>> | null> {
+  try {
+    const input: { repo: string; file?: string; profile?: string } = { repo };
+    if (file !== undefined) input.file = file;
+    if (profile !== undefined) input.profile = profile;
+    return await subscribeRemote<
+      pull.PullEvent | bench.BenchEvent,
+      Awaited<ReturnType<typeof candidateTest.candidateTest>>
+    >({
+      subscribe: (handlers) => getNodeClient().candidateTestRun.subscribe(input, handlers),
       onEvent: forwardStream,
+      extractDone:
+        matchDoneEvent<Awaited<ReturnType<typeof candidateTest.candidateTest>>>(
+          "done-candidate-test",
+        ),
     });
-  } else {
-    try {
-      const input: { repo: string; file?: string; profile?: string } = { repo };
-      if (file !== undefined) input.file = file;
-      if (profile !== undefined) input.profile = profile;
-      result = await subscribeRemote<
-        pull.PullEvent | bench.BenchEvent,
-        Awaited<ReturnType<typeof candidateTest.candidateTest>>
-      >({
-        subscribe: (handlers) => getNodeClient().candidateTestRun.subscribe(input, handlers),
-        onEvent: forwardStream,
-        extractDone:
-          matchDoneEvent<Awaited<ReturnType<typeof candidateTest.candidateTest>>>(
-            "done-candidate-test",
-          ),
-      });
-    } catch (err) {
-      process.stderr.write(
-        `candidate test: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
-      );
-      return 1;
-    }
+  } catch (err) {
+    process.stderr.write(
+      `candidate test: remote call to '${getGlobals().nodeName ?? ""}' failed: ${(err as Error).message}\n`,
+    );
+    return null;
   }
+}
 
-  if ("error" in result) {
-    if (json) process.stdout.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
-    else process.stderr.write(`${result.error}\n`);
-    return 1;
-  }
-
-  if (json) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return 0;
-  }
-
+function printCandidateSummary(result: candidateTest.CandidateTestResult): void {
   process.stdout.write(
     [
       `rel=${result.rel}`,
@@ -145,6 +131,45 @@ async function runTest(args: string[]): Promise<number> {
 
   process.stdout.write("\ncompare:\n");
   printCompareTable(result.compare);
+}
+
+async function runTest(args: string[]): Promise<number> {
+  const parsed = parseCandidateTestArgs(args);
+  if ("exit" in parsed) return parsed.exit;
+  const [repo, file, profile] = parsed.positional;
+  if (!repo) {
+    process.stderr.write(
+      "Usage: llamactl candidate test <hf-repo> [gguf-file] [profile] [--json]\n",
+    );
+    return 1;
+  }
+
+  let result: Awaited<ReturnType<typeof candidateTest.candidateTest>>;
+  if (isLocalDispatch()) {
+    result = await candidateTest.candidateTest({
+      repo,
+      file,
+      profile,
+      onEvent: forwardStream,
+    });
+  } else {
+    const remote = await runCandidateTestRemote(repo, file, profile);
+    if (remote === null) return 1;
+    result = remote;
+  }
+
+  if ("error" in result) {
+    if (parsed.json) process.stdout.write(`${JSON.stringify({ error: result.error }, null, 2)}\n`);
+    else process.stderr.write(`${result.error}\n`);
+    return 1;
+  }
+
+  if (parsed.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  }
+
+  printCandidateSummary(result);
   return 0;
 }
 

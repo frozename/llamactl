@@ -185,18 +185,18 @@ function readLaunchConfig(target: string, manifestPath: string): LaunchConfig | 
   return { engineKind, binary, launchArgs, modelKey, healthPath, timeoutSecs, workloadName };
 }
 
-export async function runAdmitMeasure(args: string[]): Promise<number> {
-  const target = args[0];
-  if (!target || target === "--help" || target === "-h") {
-    process.stdout.write(`${MEASURE_USAGE}\n`);
-    return target ? 0 : 2;
-  }
+interface MeasureFlags {
+  overridePort: number | undefined;
+  steadyStateSecs: number;
+  samples: number;
+}
 
+function parseMeasureFlags(args: string[]): MeasureFlags {
   let overridePort: number | undefined;
   let steadyStateSecs = 30;
   let samples = 6;
 
-  for (const raw of args.slice(1)) {
+  for (const raw of args) {
     if (raw.startsWith("--port=")) {
       overridePort = parseInt(raw.slice("--port=".length), 10);
     } else if (raw.startsWith("--steady-state-seconds=")) {
@@ -205,6 +205,53 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
       samples = parseInt(raw.slice("--samples=".length), 10);
     }
   }
+
+  return { overridePort, steadyStateSecs, samples };
+}
+
+async function awaitSandboxHealth(
+  proc: ChildProcess,
+  pid: number,
+  healthUrl: string,
+  timeoutSecs: number,
+): Promise<boolean> {
+  try {
+    process.stdout.write(
+      `waiting for health at ${healthUrl} (pid ${String(pid)}, timeout ${String(timeoutSecs)}s)...\n`,
+    );
+    await waitForHealth(healthUrl, timeoutSecs * 1000);
+    return true;
+  } catch (err) {
+    console.error(`admit measure: ${(err as Error).message}`);
+    proc.kill("SIGKILL");
+    return false;
+  }
+}
+
+async function collectRssSamples(
+  pid: number,
+  samples: number,
+  intervalMs: number,
+  hasExitedEarly: () => boolean,
+): Promise<number[]> {
+  const rssSamples: number[] = [];
+  for (let i = 0; i < samples; i++) {
+    if (i > 0) await new Promise<void>((r) => setTimeout(r, intervalMs));
+    if (hasExitedEarly()) break;
+    const rss = sampleRssMb(pid);
+    if (rss !== null) rssSamples.push(rss);
+  }
+  return rssSamples;
+}
+
+export async function runAdmitMeasure(args: string[]): Promise<number> {
+  const target = args[0];
+  if (!target || target === "--help" || target === "-h") {
+    process.stdout.write(`${MEASURE_USAGE}\n`);
+    return target ? 0 : 2;
+  }
+
+  const { overridePort, steadyStateSecs, samples } = parseMeasureFlags(args.slice(1));
 
   const manifestPath = target.endsWith(".yaml") ? target : `templates/workloads/${target}.yaml`;
   const config = readLaunchConfig(target, manifestPath);
@@ -232,16 +279,8 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
   });
   const hasExitedEarly = (): boolean => exitedEarly.value;
 
-  try {
-    process.stdout.write(
-      `waiting for health at ${healthUrl} (pid ${String(pid)}, timeout ${String(config.timeoutSecs)}s)...\n`,
-    );
-    await waitForHealth(healthUrl, config.timeoutSecs * 1000);
-  } catch (err) {
-    console.error(`admit measure: ${(err as Error).message}`);
-    proc.kill("SIGKILL");
-    return 1;
-  }
+  const healthy = await awaitSandboxHealth(proc, pid, healthUrl, config.timeoutSecs);
+  if (!healthy) return 1;
 
   if (exitedEarly.value) {
     console.error("admit measure: process exited before health check passed");
@@ -252,14 +291,7 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
     `sampling RSS over ${String(steadyStateSecs)}s (${String(samples)} samples)...\n`,
   );
   const intervalMs = Math.max(1000, Math.round((steadyStateSecs * 1000) / Math.max(samples, 1)));
-  const rssSamples: number[] = [];
-
-  for (let i = 0; i < samples; i++) {
-    if (i > 0) await new Promise<void>((r) => setTimeout(r, intervalMs));
-    if (hasExitedEarly()) break;
-    const rss = sampleRssMb(pid);
-    if (rss !== null) rssSamples.push(rss);
-  }
+  const rssSamples = await collectRssSamples(pid, samples, intervalMs, hasExitedEarly);
 
   process.stdout.write("terminating sandbox...\n");
   const cleanExit = await killGracefully(proc);

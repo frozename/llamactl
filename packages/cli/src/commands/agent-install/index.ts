@@ -191,94 +191,111 @@ export interface InstallLaunchdFlags {
   force: boolean;
 }
 
-export function parseInstallLaunchdFlags(argv: string[]): InstallLaunchdFlags | { error: string } {
-  let scope: "user" | "system" = "user";
-  let binaryPath: string | undefined;
-  let releaseTag: string | undefined;
-  let fromSource = false;
-  let installPath = "/usr/local/bin/llamactl-agent";
-  let dir: string | undefined;
-  let logDir: string | undefined;
-  const envOverrides: Record<string, string> = {};
-  let label: string | undefined;
-  let repo = "frozename/llamactl";
-  let dryRun = false;
-  let force = false;
+interface InstallFlagState {
+  scope: "user" | "system";
+  binaryPath: string | undefined;
+  releaseTag: string | undefined;
+  fromSource: boolean;
+  installPath: string;
+  dir: string | undefined;
+  logDir: string | undefined;
+  envOverrides: Record<string, string>;
+  label: string | undefined;
+  repo: string;
+  dryRun: boolean;
+  force: boolean;
+}
 
-  for (const arg of argv) {
-    if (arg === "--help" || arg === "-h") {
-      return { error: "__help" };
-    }
-    if (arg === "--dry-run") {
-      dryRun = true;
-      continue;
-    }
-    if (arg === "--force") {
-      force = true;
-      continue;
-    }
-    if (arg === "--from-source") {
-      fromSource = true;
-      continue;
-    }
-    const [k, v] = splitFlag(arg);
-    if (v === undefined) {
-      return {
-        error: `agent install-launchd: flag must be --key=value (or a known bare flag): ${arg}`,
-      };
-    }
-    switch (k) {
-      case "--scope":
-        if (v !== "user" && v !== "system") {
-          return { error: `agent install-launchd: --scope must be user|system (got ${v})` };
-        }
-        scope = v;
-        break;
-      case "--binary":
-        binaryPath = v;
-        break;
-      case "--from-release":
-        if (v.length === 0) {
-          return { error: "agent install-launchd: --from-release requires a tag (e.g. v0.4.0)" };
-        }
-        releaseTag = v;
-        break;
-      case "--install-path":
-        installPath = v;
-        break;
-      case "--dir":
-        dir = v;
-        break;
-      case "--log-dir":
-        logDir = v;
-        break;
-      case "--env": {
-        const eq = v.indexOf("=");
-        if (eq <= 0) {
-          return { error: `agent install-launchd: --env must be KEY=VAL (got ${v})` };
-        }
-        const key = v.slice(0, eq);
-        const value = v.slice(eq + 1);
-        envOverrides[key] = value;
-        break;
-      }
-      case "--label":
-        label = v;
-        break;
-      case "--repo":
-        repo = v;
-        break;
-      default:
-        return { error: `agent install-launchd: unknown flag ${k}` };
-    }
+function applyScopeFlag(v: string, state: InstallFlagState): { error: string } | null {
+  if (v !== "user" && v !== "system") {
+    return { error: `agent install-launchd: --scope must be user|system (got ${v})` };
   }
+  state.scope = v;
+  return null;
+}
 
-  // Mutual exclusivity — at most one of --binary, --from-release,
-  // --from-source. If none set, default to --from-source.
+function applyEnvFlag(v: string, state: InstallFlagState): { error: string } | null {
+  const eq = v.indexOf("=");
+  if (eq <= 0) {
+    return { error: `agent install-launchd: --env must be KEY=VAL (got ${v})` };
+  }
+  const key = v.slice(0, eq);
+  const value = v.slice(eq + 1);
+  state.envOverrides[key] = value;
+  return null;
+}
+
+function applyInstallKeyValueFlag(
+  k: string,
+  v: string,
+  state: InstallFlagState,
+): { error: string } | null {
+  switch (k) {
+    case "--scope":
+      return applyScopeFlag(v, state);
+    case "--binary":
+      state.binaryPath = v;
+      return null;
+    case "--from-release":
+      if (v.length === 0) {
+        return { error: "agent install-launchd: --from-release requires a tag (e.g. v0.4.0)" };
+      }
+      state.releaseTag = v;
+      return null;
+    case "--install-path":
+      state.installPath = v;
+      return null;
+    case "--dir":
+      state.dir = v;
+      return null;
+    case "--log-dir":
+      state.logDir = v;
+      return null;
+    case "--env":
+      return applyEnvFlag(v, state);
+    case "--label":
+      state.label = v;
+      return null;
+    case "--repo":
+      state.repo = v;
+      return null;
+    default:
+      return { error: `agent install-launchd: unknown flag ${k}` };
+  }
+}
+
+function applyInstallArg(arg: string, state: InstallFlagState): { error: string } | null {
+  if (arg === "--help" || arg === "-h") {
+    return { error: "__help" };
+  }
+  if (arg === "--dry-run") {
+    state.dryRun = true;
+    return null;
+  }
+  if (arg === "--force") {
+    state.force = true;
+    return null;
+  }
+  if (arg === "--from-source") {
+    state.fromSource = true;
+    return null;
+  }
+  const [k, v] = splitFlag(arg);
+  if (v === undefined) {
+    return {
+      error: `agent install-launchd: flag must be --key=value (or a known bare flag): ${arg}`,
+    };
+  }
+  return applyInstallKeyValueFlag(k, v, state);
+}
+
+// Mutual exclusivity — at most one of --binary, --from-release,
+// --from-source. If none set, default to --from-source.
+function resolveFlaggedBinarySource(state: InstallFlagState): BinarySource | { error: string } {
   const sourceFlags = [
-    binaryPath !== undefined ? "binary" : null,
-    releaseTag !== undefined ? "release" : null,
-    fromSource ? "source" : null,
+    state.binaryPath !== undefined ? "binary" : null,
+    state.releaseTag !== undefined ? "release" : null,
+    state.fromSource ? "source" : null,
   ].filter((x): x is string => x !== null);
   if (sourceFlags.length > 1) {
     return {
@@ -287,26 +304,50 @@ export function parseInstallLaunchdFlags(argv: string[]): InstallLaunchdFlags | 
         `(got: ${sourceFlags.join(", ")})`,
     };
   }
-  let source: BinarySource;
-  if (binaryPath !== undefined) {
-    source = { kind: "binary", path: binaryPath };
-  } else if (releaseTag !== undefined) {
-    source = { kind: "release", tag: releaseTag };
-  } else {
-    source = { kind: "source" };
+  if (state.binaryPath !== undefined) {
+    return { kind: "binary", path: state.binaryPath };
+  }
+  if (state.releaseTag !== undefined) {
+    return { kind: "release", tag: state.releaseTag };
+  }
+  return { kind: "source" };
+}
+
+export function parseInstallLaunchdFlags(argv: string[]): InstallLaunchdFlags | { error: string } {
+  const state: InstallFlagState = {
+    scope: "user",
+    binaryPath: undefined,
+    releaseTag: undefined,
+    fromSource: false,
+    installPath: "/usr/local/bin/llamactl-agent",
+    dir: undefined,
+    logDir: undefined,
+    envOverrides: {},
+    label: undefined,
+    repo: "frozename/llamactl",
+    dryRun: false,
+    force: false,
+  };
+
+  for (const arg of argv) {
+    const err = applyInstallArg(arg, state);
+    if (err) return err;
   }
 
+  const source = resolveFlaggedBinarySource(state);
+  if ("error" in source) return source;
+
   return {
-    scope,
+    scope: state.scope,
     source,
-    installPath,
-    dir,
-    logDir,
-    envOverrides,
-    label,
-    repo,
-    dryRun,
-    force,
+    installPath: state.installPath,
+    dir: state.dir,
+    logDir: state.logDir,
+    envOverrides: state.envOverrides,
+    label: state.label,
+    repo: state.repo,
+    dryRun: state.dryRun,
+    force: state.force,
   };
 }
 
@@ -589,6 +630,31 @@ export interface PollResult {
  * after the deadline. The heuristic is conservative — we only declare
  * healthy when launchd reports both signals.
  */
+/**
+ * One `launchctl print` probe. Returns the healthy PID when launchd
+ * reports both `state = running` and a positive PID, else null.
+ */
+function probeLaunchctlOnce(
+  target: string,
+  deps: InstallLaunchdDeps,
+): { pid: number | null; stdout: string } {
+  // stdout is typed string via the encoding overload but is null at
+  // runtime when the spawn itself fails; keep polling instead of throwing.
+  const res: { status: number | null; stdout: string | null } = deps.spawnSync(
+    "launchctl",
+    ["print", target],
+    { encoding: "utf8" },
+  );
+  const stdout = res.stdout ?? "";
+  if (res.status !== 0) return { pid: null, stdout };
+  const pidMatch = /\bpid = (\d+)\b/.exec(stdout);
+  const stateRunning = stdout.includes("state = running");
+  if (!stateRunning || !pidMatch) return { pid: null, stdout };
+  const pid = Number.parseInt(required(pidMatch[1]), 10);
+  if (Number.isFinite(pid) && pid > 0) return { pid, stdout };
+  return { pid: null, stdout };
+}
+
 export async function pollLaunchctlHealthy(
   label: string,
   scope: "user" | "system",
@@ -600,23 +666,10 @@ export async function pollLaunchctlHealthy(
   const target = scope === "system" ? `system/${label}` : `gui/${String(deps.getuid())}/${label}`;
   let lastStdout = "";
   while (deps.now() < deadline) {
-    // stdout is typed string via the encoding overload but is null at
-    // runtime when the spawn itself fails; keep polling instead of throwing.
-    const res: { status: number | null; stdout: string | null } = deps.spawnSync(
-      "launchctl",
-      ["print", target],
-      { encoding: "utf8" },
-    );
-    lastStdout = res.stdout ?? "";
-    if (res.status === 0) {
-      const pidMatch = /\bpid = (\d+)\b/.exec(lastStdout);
-      const stateRunning = lastStdout.includes("state = running");
-      if (stateRunning && pidMatch) {
-        const pid = Number.parseInt(required(pidMatch[1]), 10);
-        if (Number.isFinite(pid) && pid > 0) {
-          return { ok: true, pid };
-        }
-      }
+    const probe = probeLaunchctlOnce(target, deps);
+    lastStdout = probe.stdout;
+    if (probe.pid !== null) {
+      return { ok: true, pid: probe.pid };
     }
     await deps.sleep(pollIntervalMs);
   }
@@ -644,21 +697,41 @@ function readStderrTail(logDir: string, deps: InstallLaunchdDeps): string {
 // Top-level handler
 // -----------------------------------------------------------------------------
 
-export async function runAgentInstallLaunchd(
-  argv: string[],
-  depsOverride?: Partial<InstallLaunchdDeps>,
-): Promise<number> {
-  const deps: InstallLaunchdDeps = { ...defaultDeps(), ...(depsOverride ?? {}) };
-  const parsed = parseInstallLaunchdFlags(argv);
-  if ("error" in parsed) {
-    if (parsed.error === "__help") {
-      deps.stdout(INSTALL_LAUNCHD_USAGE);
-      return 0;
-    }
-    deps.stderr(`${parsed.error}\n\n${INSTALL_LAUNCHD_USAGE}`);
-    return 1;
-  }
+interface InstallTargets {
+  label: string;
+  homeDir: string;
+  logDir: string;
+  dirArg: string;
+  plistPath: string;
+}
 
+function resolveInstallTargets(
+  deps: InstallLaunchdDeps,
+  parsed: InstallLaunchdFlags,
+): InstallTargets {
+  const label =
+    parsed.label ??
+    (parsed.scope === "system" ? "com.llamactl.agent.daemon" : "com.llamactl.agent");
+  const homeDir = deps.env.HOME ?? "";
+  const logDir =
+    parsed.logDir ??
+    (homeDir ? join(homeDir, ".llamactl-launchd-logs") : "/tmp/llamactl-launchd-logs");
+  const dirArg = parsed.dir ?? defaultAgentDir(deps, homeDir);
+  const plistPath =
+    parsed.scope === "system"
+      ? `/Library/LaunchDaemons/${label}.plist`
+      : join(homeDir, "Library", "LaunchAgents", `${label}.plist`);
+  return { label, homeDir, logDir, dirArg, plistPath };
+}
+
+/**
+ * Pre-flight guards before any subprocess runs. Returns an exit code to
+ * propagate, or null when the install may proceed.
+ */
+function checkInstallPreconditions(
+  deps: InstallLaunchdDeps,
+  parsed: InstallLaunchdFlags,
+): number | null {
   // install-launchd is macOS-only — launchctl doesn't exist elsewhere.
   // Allow --dry-run on any platform so operators can preview from linux
   // CI boxes, but block the live path.
@@ -675,23 +748,15 @@ export async function runAgentInstallLaunchd(
     deps.stderr(`agent install-launchd: --scope=system requires root. Re-run with sudo.\n`);
     return 1;
   }
+  return null;
+}
 
-  const label =
-    parsed.label ??
-    (parsed.scope === "system" ? "com.llamactl.agent.daemon" : "com.llamactl.agent");
-  const homeDir = deps.env.HOME ?? "";
-  const logDir =
-    parsed.logDir ??
-    (homeDir ? join(homeDir, ".llamactl-launchd-logs") : "/tmp/llamactl-launchd-logs");
-  const dirArg = parsed.dir ?? defaultAgentDir(deps, homeDir);
-  const plistPath =
-    parsed.scope === "system"
-      ? `/Library/LaunchDaemons/${label}.plist`
-      : join(homeDir, "Library", "LaunchAgents", `${label}.plist`);
-
-  let installedPath: string;
+async function resolveBinaryOrReport(
+  deps: InstallLaunchdDeps,
+  parsed: InstallLaunchdFlags,
+): Promise<string | null> {
   try {
-    installedPath = await resolveBinary({
+    return await resolveBinary({
       source: parsed.source,
       installPath: parsed.installPath,
       scope: parsed.scope,
@@ -701,34 +766,77 @@ export async function runAgentInstallLaunchd(
     });
   } catch (err) {
     deps.stderr(`${(err as Error).message}\n`);
-    return 1;
+    return null;
   }
+}
 
+function buildPlistForInstall(
+  deps: InstallLaunchdDeps,
+  parsed: InstallLaunchdFlags,
+  targets: InstallTargets,
+  installedPath: string,
+): string {
   const who = currentUserAndGroup(deps);
   const plistEnv = buildPlistEnv(deps.env, parsed.envOverrides);
   const plistOpts = assemblePlistOptions({
-    label,
+    label: targets.label,
     installPath: installedPath,
-    dirArg,
-    logDir,
+    dirArg: targets.dirArg,
+    logDir: targets.logDir,
     env: plistEnv,
     scope: parsed.scope,
     ...(parsed.scope === "system" ? { user: who.user, group: who.group } : {}),
   });
-  const plistBody =
-    parsed.scope === "system" ? buildSystemPlist(plistOpts) : buildUserPlist(plistOpts);
+  return parsed.scope === "system" ? buildSystemPlist(plistOpts) : buildUserPlist(plistOpts);
+}
+
+function printDryRunPlan(
+  deps: InstallLaunchdDeps,
+  parsed: InstallLaunchdFlags,
+  plistBody: string,
+  plistPath: string,
+  label: string,
+): void {
+  deps.stdout(plistBody);
+  deps.stdout("\n");
+  deps.stdout(`# plist path: ${plistPath}\n`);
+  if (parsed.scope === "system") {
+    deps.stdout(`# launchctl bootout system/${label} 2>/dev/null || true\n`);
+    deps.stdout(`# launchctl bootstrap system ${plistPath}\n`);
+  } else {
+    deps.stdout(`# launchctl unload ${plistPath} 2>/dev/null || true\n`);
+    deps.stdout(`# launchctl load ${plistPath}\n`);
+  }
+}
+
+export async function runAgentInstallLaunchd(
+  argv: string[],
+  depsOverride?: Partial<InstallLaunchdDeps>,
+): Promise<number> {
+  const deps: InstallLaunchdDeps = { ...defaultDeps(), ...(depsOverride ?? {}) };
+  const parsed = parseInstallLaunchdFlags(argv);
+  if ("error" in parsed) {
+    if (parsed.error === "__help") {
+      deps.stdout(INSTALL_LAUNCHD_USAGE);
+      return 0;
+    }
+    deps.stderr(`${parsed.error}\n\n${INSTALL_LAUNCHD_USAGE}`);
+    return 1;
+  }
+
+  const preconditionExit = checkInstallPreconditions(deps, parsed);
+  if (preconditionExit !== null) return preconditionExit;
+
+  const targets = resolveInstallTargets(deps, parsed);
+  const { label, logDir, plistPath } = targets;
+
+  const installedPath = await resolveBinaryOrReport(deps, parsed);
+  if (installedPath === null) return 1;
+
+  const plistBody = buildPlistForInstall(deps, parsed, targets, installedPath);
 
   if (parsed.dryRun) {
-    deps.stdout(plistBody);
-    deps.stdout("\n");
-    deps.stdout(`# plist path: ${plistPath}\n`);
-    if (parsed.scope === "system") {
-      deps.stdout(`# launchctl bootout system/${label} 2>/dev/null || true\n`);
-      deps.stdout(`# launchctl bootstrap system ${plistPath}\n`);
-    } else {
-      deps.stdout(`# launchctl unload ${plistPath} 2>/dev/null || true\n`);
-      deps.stdout(`# launchctl load ${plistPath}\n`);
-    }
+    printDryRunPlan(deps, parsed, plistBody, plistPath, label);
     return 0;
   }
 
@@ -781,6 +889,62 @@ interface ExecuteInstallResult {
   pid?: number;
 }
 
+/**
+ * Validate the plist syntax before asking launchd to load it —
+ * syntax errors surface as an opaque "service inactive" otherwise.
+ */
+function lintPlistOrCleanup(deps: InstallLaunchdDeps, plistPath: string): boolean {
+  if (deps.platform !== "darwin") {
+    deps.stderr(`warning: skipping plutil -lint on ${deps.platform}\n`);
+    return true;
+  }
+  const lint = deps.spawnSync("plutil", ["-lint", plistPath], { encoding: "utf8" });
+  if (lint.status === 0) return true;
+  try {
+    deps.fs.unlinkSync(plistPath);
+  } catch {
+    // best-effort cleanup
+  }
+  deps.stderr(
+    `plutil -lint rejected the plist; deleted ${plistPath}. Output:\n${
+      lint.stdout + lint.stderr
+    }\n`,
+  );
+  return false;
+}
+
+/**
+ * Unload any previous version so the fresh one takes effect. Errors
+ * are expected (first install) and are intentionally ignored.
+ */
+function bootstrapLaunchdService(
+  deps: InstallLaunchdDeps,
+  scope: "user" | "system",
+  label: string,
+  plistPath: string,
+): boolean {
+  if (scope === "system") {
+    deps.spawnSync("launchctl", ["bootout", `system/${label}`], { encoding: "utf8" });
+    const loadRes = deps.spawnSync("launchctl", ["bootstrap", "system", plistPath], {
+      encoding: "utf8",
+    });
+    if (loadRes.status !== 0) {
+      deps.stderr(`launchctl bootstrap failed: ${loadRes.stderr || loadRes.stdout}\n`);
+      return false;
+    }
+    return true;
+  }
+  deps.spawnSync("launchctl", ["unload", plistPath], { encoding: "utf8" });
+  const loadRes = deps.spawnSync("launchctl", ["load", plistPath], {
+    encoding: "utf8",
+  });
+  if (loadRes.status !== 0) {
+    deps.stderr(`launchctl load failed: ${loadRes.stderr || loadRes.stdout}\n`);
+    return false;
+  }
+  return true;
+}
+
 async function executeInstallWithResult(opts: ExecuteInstallOpts): Promise<ExecuteInstallResult> {
   const { deps, parsed, plistPath, plistBody, logDir, label } = opts;
 
@@ -797,47 +961,12 @@ async function executeInstallWithResult(opts: ExecuteInstallOpts): Promise<Execu
   deps.fs.mkdirSync(logDir, { recursive: true });
   deps.fs.writeFileSync(plistPath, plistBody, { encoding: "utf8", mode: 0o644 });
 
-  // Validate the plist syntax before asking launchd to load it —
-  // syntax errors surface as an opaque "service inactive" otherwise.
-  if (deps.platform === "darwin") {
-    const lint = deps.spawnSync("plutil", ["-lint", plistPath], { encoding: "utf8" });
-    if (lint.status !== 0) {
-      try {
-        deps.fs.unlinkSync(plistPath);
-      } catch {
-        // best-effort cleanup
-      }
-      deps.stderr(
-        `plutil -lint rejected the plist; deleted ${plistPath}. Output:\n${
-          lint.stdout + lint.stderr
-        }\n`,
-      );
-      return { code: 1 };
-    }
-  } else {
-    deps.stderr(`warning: skipping plutil -lint on ${deps.platform}\n`);
+  if (!lintPlistOrCleanup(deps, plistPath)) {
+    return { code: 1 };
   }
 
-  // Unload any previous version so the fresh one takes effect. Errors
-  // are expected (first install) and are intentionally ignored.
-  if (parsed.scope === "system") {
-    deps.spawnSync("launchctl", ["bootout", `system/${label}`], { encoding: "utf8" });
-    const loadRes = deps.spawnSync("launchctl", ["bootstrap", "system", plistPath], {
-      encoding: "utf8",
-    });
-    if (loadRes.status !== 0) {
-      deps.stderr(`launchctl bootstrap failed: ${loadRes.stderr || loadRes.stdout}\n`);
-      return { code: 1 };
-    }
-  } else {
-    deps.spawnSync("launchctl", ["unload", plistPath], { encoding: "utf8" });
-    const loadRes = deps.spawnSync("launchctl", ["load", plistPath], {
-      encoding: "utf8",
-    });
-    if (loadRes.status !== 0) {
-      deps.stderr(`launchctl load failed: ${loadRes.stderr || loadRes.stdout}\n`);
-      return { code: 1 };
-    }
+  if (!bootstrapLaunchdService(deps, parsed.scope, label, plistPath)) {
+    return { code: 1 };
   }
 
   const pollResult = await pollLaunchctlHealthy(label, parsed.scope, deps);

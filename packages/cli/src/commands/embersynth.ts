@@ -131,13 +131,13 @@ async function runShow(argv: string[]): Promise<number> {
   return 0;
 }
 
-// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
-async function runConnect(argv: string[]): Promise<number> {
-  const url = argv[0];
-  if (!url || url.startsWith("--")) {
-    process.stderr.write(`embersynth connect: base URL is required\n\n${USAGE}`);
-    return 1;
-  }
+interface ConnectFlags {
+  name: string;
+  apiKeyRef: string | undefined;
+}
+
+/** Parse `embersynth connect` flags (argv[0] is the URL; flags start at index 1). */
+function parseConnectFlags(argv: string[]): ConnectFlags | { exit: number } {
   let name = "embersynth";
   let apiKeyRef: string | undefined;
   for (let i = 1; i < argv.length; i++) {
@@ -146,18 +146,31 @@ async function runConnect(argv: string[]): Promise<number> {
       name = argv[++i] ?? "";
       if (!name) {
         process.stderr.write(`--name requires a value\n`);
-        return 1;
+        return { exit: 1 };
       }
     } else if (arg === "--api-key-ref") {
       apiKeyRef = argv[++i];
     } else if (arg === "--help" || arg === "-h") {
       process.stdout.write(USAGE);
-      return 0;
+      return { exit: 0 };
     } else {
       process.stderr.write(`unknown flag: ${String(arg)}\n\n${USAGE}`);
-      return 1;
+      return { exit: 1 };
     }
   }
+  return { name, apiKeyRef };
+}
+
+// eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
+async function runConnect(argv: string[]): Promise<number> {
+  const url = argv[0];
+  if (!url || url.startsWith("--")) {
+    process.stderr.write(`embersynth connect: base URL is required\n\n${USAGE}`);
+    return 1;
+  }
+  const flags = parseConnectFlags(argv);
+  if ("exit" in flags) return flags.exit;
+  const { name, apiKeyRef } = flags;
   const normalized = url.endsWith("/") ? url.slice(0, -1) : url;
   const baseUrl = normalized.endsWith("/v1") ? normalized : `${normalized}/v1`;
   const cfgPath = kubecfg.defaultConfigPath();
