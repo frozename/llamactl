@@ -23,6 +23,19 @@ import { recommendationsForProfile } from "../src/recommendations.js";
  * a small fudge-factor below for KV cache + Metal compute buffers.
  */
 
+/**
+ * The fit-envelope contract is about the SHIPPED ladder (builtin
+ * presets + the qwen profile tables), not whatever the operator has
+ * promoted on the machine running the suite. `LLAMACTL_TEST_PROFILE`
+ * reroots every runtime path — including LOCAL_AI_PRESET_OVERRIDES_FILE
+ * — under a directory that does not exist, so both override layers
+ * (env vars and the promotions file) resolve empty and the assertions
+ * below always see the builtin defaults.
+ */
+const HERMETIC_ENV: NodeJS.ProcessEnv = {
+  LLAMACTL_TEST_PROFILE: "/nonexistent/llamactl-fit-envelope-test",
+};
+
 const MAX_MODEL_SIZE_BY_PROFILE_GB: Record<string, number> = {
   "mac-mini-16g": 11.5,
   // balanced ≈ 32 GiB profile; Metal cap there is ~24 GB. Leave room for KV/buffers.
@@ -78,7 +91,7 @@ function estimateRelSizeGb(rel: string): number {
 describe("recommendationsForProfile — fit-envelope guarantees", () => {
   for (const profile of ["mac-mini-16g", "balanced", "macbook-pro-48g"] as const) {
     test(`every rel for ${profile} fits the profile's max model size`, () => {
-      const rows = recommendationsForProfile(profile);
+      const rows = recommendationsForProfile(profile, HERMETIC_ENV);
       const ceiling = MAX_MODEL_SIZE_BY_PROFILE_GB[profile]!;
       for (const row of rows) {
         const sizeGb = estimateRelSizeGb(row.rel);
@@ -93,25 +106,29 @@ describe("recommendationsForProfile — fit-envelope guarantees", () => {
   }
 
   test("mac-mini-16g qwen slot picks IQ2_M (proven-fit on M4)", () => {
-    const rows = recommendationsForProfile("mac-mini-16g");
+    const rows = recommendationsForProfile("mac-mini-16g", HERMETIC_ENV);
     const qwen = rows.find((r) => r.target === "qwen");
     expect(qwen).toBeDefined();
     expect(qwen!.rel).toBe("Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ2_M.gguf");
   });
 
   test("mac-mini-16g qwen27 slot picks the 16g-fit rel, not Q5_K_XL", () => {
-    const rows = recommendationsForProfile("mac-mini-16g");
+    const rows = recommendationsForProfile("mac-mini-16g", HERMETIC_ENV);
     const qwen27 = rows.find((r) => r.target === "qwen27");
     expect(qwen27).toBeDefined();
     expect(qwen27!.rel).toBe("Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf");
   });
 
   test("balanced + macbook-pro-48g still get the larger qwen rels", () => {
-    const balancedQwen = recommendationsForProfile("balanced").find((r) => r.target === "qwen");
+    const balancedQwen = recommendationsForProfile("balanced", HERMETIC_ENV).find(
+      (r) => r.target === "qwen",
+    );
     expect(balancedQwen!.rel).toBe("Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf");
-    const proQwen = recommendationsForProfile("macbook-pro-48g").find((r) => r.target === "qwen");
+    const proQwen = recommendationsForProfile("macbook-pro-48g", HERMETIC_ENV).find(
+      (r) => r.target === "qwen",
+    );
     expect(proQwen!.rel).toBe("Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf");
-    const proQwen27 = recommendationsForProfile("macbook-pro-48g").find(
+    const proQwen27 = recommendationsForProfile("macbook-pro-48g", HERMETIC_ENV).find(
       (r) => r.target === "qwen27",
     );
     expect(proQwen27!.rel).toBe("Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf");
