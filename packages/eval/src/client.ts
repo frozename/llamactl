@@ -106,12 +106,19 @@ export async function completeChat(
   timeoutMs: number = COMPLETION_TIMEOUT_MS,
 ): Promise<{ resp: CompletionResponse; wallMs: number }> {
   const t0 = performance.now();
-  const r = await fetch(`${url}/v1/chat/completions`, {
+  // Bun's fetch enforces an internal 5-minute timeout INDEPENDENT of the
+  // caller's AbortSignal (verified empirically: a 30-minute signal still
+  // died at exactly 300s). The non-standard `timeout: false` extension is
+  // the only way to disable it; the AbortSignal then provides the real
+  // per-request ceiling.
+  const init = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req.body),
     signal: AbortSignal.timeout(timeoutMs),
-  });
+    timeout: false,
+  } satisfies RequestInit & { timeout?: boolean };
+  const r = await fetch(`${url}/v1/chat/completions`, init);
   if (!r.ok) {
     throw new Error(`HTTP ${String(r.status)}: ${await r.text()}`);
   }
