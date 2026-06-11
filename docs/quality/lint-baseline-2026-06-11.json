@@ -1,36 +1,12 @@
 {
   "totals": {
     "errors": 0,
-    "warnings": 1430
+    "warnings": 1372
   },
   "byRule": {
     "security/detect-non-literal-fs-filename": {
       "errors": 0,
       "warnings": 1369
-    },
-    "perfectionist/sort-imports": {
-      "errors": 0,
-      "warnings": 37
-    },
-    "perfectionist/sort-named-imports": {
-      "errors": 0,
-      "warnings": 9
-    },
-    "unicorn/no-for-loop": {
-      "errors": 0,
-      "warnings": 1
-    },
-    "react-hooks/exhaustive-deps": {
-      "errors": 0,
-      "warnings": 2
-    },
-    "unicorn/prefer-set-has": {
-      "errors": 0,
-      "warnings": 2
-    },
-    "security/detect-non-literal-regexp": {
-      "errors": 0,
-      "warnings": 7
     },
     "no-warning-comments": {
       "errors": 0,
@@ -456,15 +432,15 @@
     },
     "packages/app/src/modules/knowledge/components.tsx": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/src/modules/knowledge/embedder-panel.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/modules/knowledge/helpers.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/modules/knowledge/index.tsx": {
       "errors": 0,
@@ -472,11 +448,11 @@
     },
     "packages/app/src/modules/knowledge/indexing-tab.tsx": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/src/modules/knowledge/pipeline-components.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/modules/knowledge/pipeline-logic.ts": {
       "errors": 0,
@@ -488,7 +464,7 @@
     },
     "packages/app/src/modules/knowledge/pipeline-wizard-steps.tsx": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 0
     },
     "packages/app/src/modules/knowledge/pipeline-wizard.tsx": {
       "errors": 0,
@@ -508,11 +484,11 @@
     },
     "packages/app/src/modules/knowledge/query-tab.tsx": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/app/src/modules/knowledge/source-editor.tsx": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/app/src/modules/knowledge/types.ts": {
       "errors": 0,
@@ -540,7 +516,7 @@
     },
     "packages/app/src/modules/nodes/node-components.tsx": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/modules/nodes/register-panels.tsx": {
       "errors": 0,
@@ -680,7 +656,7 @@
     },
     "packages/app/src/modules/projects/hooks.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/modules/projects/index.tsx": {
       "errors": 0,
@@ -724,7 +700,7 @@
     },
     "packages/app/src/modules/server/use-server-control.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/modules/settings/index.tsx": {
       "errors": 0,
@@ -768,7 +744,7 @@
     },
     "packages/app/src/modules/workloads/workload-row.tsx": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/app/src/shell/beacon/activity-rail.tsx": {
       "errors": 0,
@@ -884,7 +860,7 @@
     },
     "packages/app/src/shell/node-selection.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/app/src/shell/node-selector.tsx": {
       "errors": 0,
@@ -944,7 +920,7 @@
     },
     "packages/app/src/ui/button-classes.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/app/src/ui/button.tsx": {
       "errors": 0,
@@ -1204,7 +1180,7 @@
     },
     "packages/cli/src/commands/doctor.ts": {
       "errors": 0,
-      "warnings": 7
+      "warnings": 6
     },
     "packages/cli/src/commands/embersynth.ts": {
       "errors": 0,
@@ -1236,7 +1212,7 @@
     },
     "packages/cli/src/commands/infra.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/cli/src/commands/init.ts": {
       "errors": 0,
@@ -2092,7 +2068,7 @@
     },
     "packages/eval/src/matrix/workloads/reasoning-mc.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/eval/src/matrix/workloads/task-refiner-rubric.ts": {
       "errors": 0,
@@ -2396,15 +2372,15 @@
     },
     "packages/mcp/src/server.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/mcp/src/tools/composites.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/mcp/src/tools/embersynth.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/mcp/src/tools/fleet.ts": {
       "errors": 0,
@@ -2416,19 +2392,19 @@
     },
     "packages/mcp/src/tools/mutations.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 0
     },
     "packages/mcp/src/tools/operator.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/mcp/src/tools/rag.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/mcp/src/tools/reads.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 0
     },
     "packages/mcp/src/tools/shared.ts": {
       "errors": 0,
@@ -2492,7 +2468,7 @@
     },
     "packages/remote/src/composite/apply.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/composite/dag.ts": {
       "errors": 0,
@@ -2688,7 +2664,7 @@
     },
     "packages/remote/src/rag/pipeline/draft.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/rag/pipeline/event-bus.ts": {
       "errors": 0,
@@ -2696,11 +2672,11 @@
     },
     "packages/remote/src/rag/pipeline/fetchers/filesystem.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/remote/src/rag/pipeline/fetchers/git.ts": {
       "errors": 0,
-      "warnings": 2
+      "warnings": 1
     },
     "packages/remote/src/rag/pipeline/fetchers/http.ts": {
       "errors": 0,
@@ -2788,7 +2764,7 @@
     },
     "packages/remote/src/runtime/kubernetes/client.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/runtime/kubernetes/labels.ts": {
       "errors": 0,
@@ -2828,7 +2804,7 @@
     },
     "packages/remote/src/search/rag-bridge.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/src/search/rag-node.ts": {
       "errors": 0,
@@ -3108,7 +3084,7 @@
     },
     "packages/remote/test/artifacts-fetch.test.ts": {
       "errors": 0,
-      "warnings": 37
+      "warnings": 36
     },
     "packages/remote/test/artifacts.test.ts": {
       "errors": 0,
@@ -3172,7 +3148,7 @@
     },
     "packages/remote/test/composite-destroy-catalog-cleanup.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/composite-e2e.test.ts": {
       "errors": 0,
@@ -3212,7 +3188,7 @@
     },
     "packages/remote/test/config-secret.test.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 3
     },
     "packages/remote/test/config/env-paths.test.ts": {
       "errors": 0,
@@ -3260,11 +3236,11 @@
     },
     "packages/remote/test/gateway-handler-embersynth-composite.test.ts": {
       "errors": 0,
-      "warnings": 4
+      "warnings": 3
     },
     "packages/remote/test/gateway-handler-sirius-composite.test.ts": {
       "errors": 0,
-      "warnings": 3
+      "warnings": 2
     },
     "packages/remote/test/gateway-handlers.test.ts": {
       "errors": 0,
@@ -3420,7 +3396,7 @@
     },
     "packages/remote/test/rag-chat-endpoint.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/rag-chroma-adapter.test.ts": {
       "errors": 0,
@@ -3528,7 +3504,7 @@
     },
     "packages/remote/test/search-ingest-sessions.test.ts": {
       "errors": 0,
-      "warnings": 1
+      "warnings": 0
     },
     "packages/remote/test/search-knowledge.test.ts": {
       "errors": 0,
