@@ -134,6 +134,40 @@ interface PullEvent {
   };
 }
 
+/** Log line for the simple log-only pull events; null for the
+ *  done-variants (which also mutate card state) and unknown types. */
+function logLineForPullEvent(e: PullEvent): LogLine | null {
+  if (e.type === "start")
+    return {
+      kind: "start",
+      text: `$ ${String(e.command)} ${Array.isArray(e.args) ? e.args.join(" ") : ""}`,
+    };
+  if (e.type === "stdout") return { kind: "stdout", text: String(e.line) };
+  if (e.type === "stderr") return { kind: "stderr", text: String(e.line) };
+  if (e.type === "exit") return { kind: "exit", text: `(exit ${String(e.code)})` };
+  if (e.type === "profile-start")
+    return { kind: "profile", text: `-- profile=${String(e.profile)} --` };
+  if (e.type === "profile-done")
+    return {
+      kind: "profile",
+      text: `-- profile=${String(e.profile)} gen_ts=${String(e.gen_ts)} prompt_ts=${String(e.prompt_ts)} --`,
+    };
+  if (e.type === "profile-fail")
+    return {
+      kind: "error",
+      text: `-- profile=${String(e.profile)} failed (code=${String(e.code)}) --`,
+    };
+  return null;
+}
+
+function doneSummary(e: PullEvent): string {
+  return `rel=${e.result?.rel ?? "?"} wasMissing=${e.result?.wasMissing ? "yes" : "no"}${e.result?.mmproj ? ` mmproj=${JSON.stringify(e.result.mmproj)}` : ""}`;
+}
+
+function candidateTestSummary(e: PullEvent): string {
+  return `rel=${String(e.result?.rel)} curated_added=${String(e.result?.curatedAdded)} preset=${e.result?.preset?.ran ? "ran" : (e.result?.preset?.reason ?? "skipped")} vision=${e.result?.vision?.ran ? "ran" : (e.result?.vision?.reason ?? "skipped")}`;
+}
+
 function usePullSubscriptions(opts: {
   spec: PullCardSpec;
   state: string;
@@ -143,41 +177,28 @@ function usePullSubscriptions(opts: {
   appendLog: (v: LogLine) => void;
   onDone: () => void;
 }): void {
+  const finishWithSummary = (s: string): void => {
+    opts.setSummary(s);
+    opts.setState("done");
+    opts.appendLog({ kind: "done", text: s });
+    opts.onDone();
+  };
   const handleData = (evt: unknown): void => {
     const e = evt as PullEvent;
-    if (e.type === "start")
-      opts.appendLog({
-        kind: "start",
-        text: `$ ${String(e.command)} ${Array.isArray(e.args) ? e.args.join(" ") : ""}`,
-      });
-    else if (e.type === "stdout") opts.appendLog({ kind: "stdout", text: String(e.line) });
-    else if (e.type === "stderr") opts.appendLog({ kind: "stderr", text: String(e.line) });
-    else if (e.type === "exit") opts.appendLog({ kind: "exit", text: `(exit ${String(e.code)})` });
-    else if (e.type === "profile-start")
-      opts.appendLog({ kind: "profile", text: `-- profile=${String(e.profile)} --` });
-    else if (e.type === "profile-done")
-      opts.appendLog({
-        kind: "profile",
-        text: `-- profile=${String(e.profile)} gen_ts=${String(e.gen_ts)} prompt_ts=${String(e.prompt_ts)} --`,
-      });
-    else if (e.type === "profile-fail")
-      opts.appendLog({
-        kind: "error",
-        text: `-- profile=${String(e.profile)} failed (code=${String(e.code)}) --`,
-      });
-    else if (e.type === "done" || e.type === "done-candidate") {
-      const s = `rel=${e.result?.rel ?? "?"} wasMissing=${e.result?.wasMissing ? "yes" : "no"}${e.result?.mmproj ? ` mmproj=${JSON.stringify(e.result.mmproj)}` : ""}`;
-      opts.setSummary(s);
-      opts.setState("done");
-      opts.appendLog({ kind: "done", text: s });
-      opts.onDone();
-    } else if (e.type === "done-candidate-test") {
-      const s = `rel=${String(e.result?.rel)} curated_added=${String(e.result?.curatedAdded)} preset=${e.result?.preset?.ran ? "ran" : (e.result?.preset?.reason ?? "skipped")} vision=${e.result?.vision?.ran ? "ran" : (e.result?.vision?.reason ?? "skipped")}`;
-      opts.setSummary(s);
-      opts.setState("done");
-      opts.appendLog({ kind: "done", text: s });
-      opts.onDone();
-    } else opts.appendLog({ kind: "stdout", text: JSON.stringify(e) });
+    const line = logLineForPullEvent(e);
+    if (line) {
+      opts.appendLog(line);
+      return;
+    }
+    if (e.type === "done" || e.type === "done-candidate") {
+      finishWithSummary(doneSummary(e));
+      return;
+    }
+    if (e.type === "done-candidate-test") {
+      finishWithSummary(candidateTestSummary(e));
+      return;
+    }
+    opts.appendLog({ kind: "stdout", text: JSON.stringify(e) });
   };
   const handleError = (err: { message: string }): void => {
     opts.appendLog({ kind: "error", text: err.message });

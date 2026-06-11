@@ -674,6 +674,17 @@ export function collectLatestSnapshots(
   return [...latest.values()];
 }
 
+function proposalMatches(
+  e: FleetProposalEntry,
+  opts: { node?: string; pendingOnly?: boolean; sinceIsoTs?: string },
+  executedIds: Set<string>,
+): boolean {
+  if (opts.node !== undefined && e.node !== opts.node) return false;
+  if (opts.sinceIsoTs !== undefined && e.ts < opts.sinceIsoTs) return false;
+  if ((opts.pendingOnly ?? true) && executedIds.has(e.proposalId)) return false;
+  return true;
+}
+
 export function collectProposals(
   entries: FleetJournalEntry[],
   opts: { node?: string; pendingOnly?: boolean; sinceIsoTs?: string } = {},
@@ -686,10 +697,7 @@ export function collectProposals(
   const out: FleetProposalEntry[] = [];
   for (const e of entries) {
     if (e.kind !== "fleet-proposal") continue;
-    if (opts.node !== undefined && e.node !== opts.node) continue;
-    if (opts.sinceIsoTs !== undefined && e.ts < opts.sinceIsoTs) continue;
-    if ((opts.pendingOnly ?? true) && executedIds.has(e.proposalId)) continue;
-    out.push(e);
+    if (proposalMatches(e, opts, executedIds)) out.push(e);
   }
   out.sort((a, b) => b.ts.localeCompare(a.ts));
   return out;

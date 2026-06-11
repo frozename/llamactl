@@ -142,112 +142,129 @@ async function runWorkloadRows(
   return { predictions, rowMetrics, wallMsArr, totalCompletionTokens, totalWallMs, errors };
 }
 
+function numberOrZero(value: number | undefined): number {
+  return typeof value === "number" ? value : 0;
+}
+
+function isPositiveNumber(value: number | undefined): boolean {
+  return typeof value === "number" && value > 0;
+}
+
+function meanOrZero(sum: number, n: number): number {
+  return n > 0 ? sum / n : 0;
+}
+
+function aggregateComposite(rowMetrics: Record<string, number>[]): WorkloadAggregate {
+  const sums = {
+    intent_preservation: 0,
+    contract_clarity: 0,
+    noise_removal: 0,
+    n_scored: 0,
+    n_parse_error: 0,
+  };
+  let compositeSum = 0;
+  for (const metrics of rowMetrics) {
+    sums.intent_preservation += numberOrZero(metrics.intent_preservation);
+    sums.contract_clarity += numberOrZero(metrics.contract_clarity);
+    sums.noise_removal += numberOrZero(metrics.noise_removal);
+    if (isPositiveNumber(metrics.parse_error)) sums.n_parse_error += 1;
+    compositeSum += metrics.composite ?? 0;
+    sums.n_scored += 1;
+  }
+  return {
+    primary_metric_value: meanOrZero(compositeSum, sums.n_scored),
+    per_class_metrics_json: JSON.stringify({
+      mean_intent_preservation: meanOrZero(sums.intent_preservation, sums.n_scored),
+      mean_contract_clarity: meanOrZero(sums.contract_clarity, sums.n_scored),
+      mean_noise_removal: meanOrZero(sums.noise_removal, sums.n_scored),
+      n_scored: sums.n_scored,
+      n_parse_error: sums.n_parse_error,
+    }),
+  };
+}
+
+function aggregateMeanExactMatch(rowMetrics: Record<string, number>[]): WorkloadAggregate {
+  let sum = 0;
+  let n = 0;
+  for (const metrics of rowMetrics) {
+    if (typeof metrics.exact_match === "number") {
+      sum += metrics.exact_match;
+      n += 1;
+    }
+  }
+  const mean = meanOrZero(sum, n);
+  return {
+    primary_metric_value: mean,
+    per_class_metrics_json: JSON.stringify({ mean_exact_match: mean, n_scored: n }),
+  };
+}
+
+function aggregateMeanNdcg5(rowMetrics: Record<string, number>[]): WorkloadAggregate {
+  let sum = 0;
+  let recallSum = 0;
+  let n = 0;
+  let nParseErrors = 0;
+  let nFallback = 0;
+  for (const metrics of rowMetrics) {
+    if (typeof metrics.ndcg5 === "number") {
+      sum += metrics.ndcg5;
+      recallSum += numberOrZero(metrics.recall5);
+      n += 1;
+    }
+    if (isPositiveNumber(metrics.parse_error)) nParseErrors += 1;
+    if (isPositiveNumber(metrics.fallback)) nFallback += 1;
+  }
+  const mean = meanOrZero(sum, n);
+  return {
+    primary_metric_value: mean,
+    per_class_metrics_json: JSON.stringify({
+      mean_ndcg5: mean,
+      mean_recall5: meanOrZero(recallSum, n),
+      n_scored: n,
+      n_parse_error: nParseErrors,
+      n_fallback: nFallback,
+    }),
+  };
+}
+
+function aggregateMeanBriefQuality(rowMetrics: Record<string, number>[]): WorkloadAggregate {
+  let sum = 0;
+  let n = 0;
+  let sumTcs = 0;
+  let sumSs = 0;
+  let sumPs = 0;
+  for (const metrics of rowMetrics) {
+    if (typeof metrics.brief_quality === "number") {
+      sum += metrics.brief_quality;
+      sumTcs += metrics.token_count_score ?? 0;
+      sumSs += metrics.structure_score ?? 0;
+      sumPs += metrics.paragraph_score ?? 0;
+      n += 1;
+    }
+  }
+  const mean = meanOrZero(sum, n);
+  return {
+    primary_metric_value: mean,
+    per_class_metrics_json: JSON.stringify({
+      mean_brief_quality: mean,
+      mean_token_count_score: meanOrZero(sumTcs, n),
+      mean_structure_score: meanOrZero(sumSs, n),
+      mean_paragraph_score: meanOrZero(sumPs, n),
+      n_scored: n,
+    }),
+  };
+}
+
 function aggregateWorkloadMetrics(
   workload: WorkloadEval,
   predictions: { pred: string; gold: string }[],
   rowMetrics: Record<string, number>[],
 ): WorkloadAggregate {
   const metricName = workload.primary_metric_name;
-  if (metricName === "composite") {
-    const sums = {
-      intent_preservation: 0,
-      contract_clarity: 0,
-      noise_removal: 0,
-      n_scored: 0,
-      n_parse_error: 0,
-    };
-    let compositeSum = 0;
-    for (const metrics of rowMetrics) {
-      if (typeof metrics.intent_preservation === "number")
-        sums.intent_preservation += metrics.intent_preservation;
-      if (typeof metrics.contract_clarity === "number")
-        sums.contract_clarity += metrics.contract_clarity;
-      if (typeof metrics.noise_removal === "number") sums.noise_removal += metrics.noise_removal;
-      if (typeof metrics.parse_error === "number" && metrics.parse_error > 0)
-        sums.n_parse_error += 1;
-      compositeSum += metrics.composite ?? 0;
-      sums.n_scored += 1;
-    }
-    return {
-      primary_metric_value: sums.n_scored > 0 ? compositeSum / sums.n_scored : 0,
-      per_class_metrics_json: JSON.stringify({
-        mean_intent_preservation: sums.n_scored > 0 ? sums.intent_preservation / sums.n_scored : 0,
-        mean_contract_clarity: sums.n_scored > 0 ? sums.contract_clarity / sums.n_scored : 0,
-        mean_noise_removal: sums.n_scored > 0 ? sums.noise_removal / sums.n_scored : 0,
-        n_scored: sums.n_scored,
-        n_parse_error: sums.n_parse_error,
-      }),
-    };
-  }
-  if (metricName === "mean_exact_match") {
-    let sum = 0;
-    let n = 0;
-    for (const metrics of rowMetrics) {
-      if (typeof metrics.exact_match === "number") {
-        sum += metrics.exact_match;
-        n += 1;
-      }
-    }
-    const mean = n > 0 ? sum / n : 0;
-    return {
-      primary_metric_value: mean,
-      per_class_metrics_json: JSON.stringify({ mean_exact_match: mean, n_scored: n }),
-    };
-  }
-  if (metricName === "mean_ndcg5") {
-    let sum = 0;
-    let recallSum = 0;
-    let n = 0;
-    let nParseErrors = 0;
-    let nFallback = 0;
-    for (const metrics of rowMetrics) {
-      if (typeof metrics.ndcg5 === "number") {
-        sum += metrics.ndcg5;
-        recallSum += typeof metrics.recall5 === "number" ? metrics.recall5 : 0;
-        n += 1;
-      }
-      if (typeof metrics.parse_error === "number" && metrics.parse_error > 0) nParseErrors += 1;
-      if (typeof metrics.fallback === "number" && metrics.fallback > 0) nFallback += 1;
-    }
-    const mean = n > 0 ? sum / n : 0;
-    return {
-      primary_metric_value: mean,
-      per_class_metrics_json: JSON.stringify({
-        mean_ndcg5: mean,
-        mean_recall5: n > 0 ? recallSum / n : 0,
-        n_scored: n,
-        n_parse_error: nParseErrors,
-        n_fallback: nFallback,
-      }),
-    };
-  }
-  if (metricName === "mean_brief_quality") {
-    let sum = 0;
-    let n = 0;
-    let sumTcs = 0;
-    let sumSs = 0;
-    let sumPs = 0;
-    for (const metrics of rowMetrics) {
-      if (typeof metrics.brief_quality === "number") {
-        sum += metrics.brief_quality;
-        sumTcs += metrics.token_count_score ?? 0;
-        sumSs += metrics.structure_score ?? 0;
-        sumPs += metrics.paragraph_score ?? 0;
-        n += 1;
-      }
-    }
-    const mean = n > 0 ? sum / n : 0;
-    return {
-      primary_metric_value: mean,
-      per_class_metrics_json: JSON.stringify({
-        mean_brief_quality: mean,
-        mean_token_count_score: n > 0 ? sumTcs / n : 0,
-        mean_structure_score: n > 0 ? sumSs / n : 0,
-        mean_paragraph_score: n > 0 ? sumPs / n : 0,
-        n_scored: n,
-      }),
-    };
-  }
+  if (metricName === "composite") return aggregateComposite(rowMetrics);
+  if (metricName === "mean_exact_match") return aggregateMeanExactMatch(rowMetrics);
+  if (metricName === "mean_ndcg5") return aggregateMeanNdcg5(rowMetrics);
+  if (metricName === "mean_brief_quality") return aggregateMeanBriefQuality(rowMetrics);
   const aggregate = aggregateMetrics(predictions);
   return {
     primary_metric_value: aggregate.macro_f1,
@@ -287,6 +304,81 @@ function recordBootError(
   return cellsWritten;
 }
 
+async function runWorkloadCell(
+  opts: RunMatrixOpts,
+  model: ModelSpec,
+  workload: WorkloadEval,
+  runId: string,
+  concurrency: number,
+): Promise<void> {
+  let judgeBoot: Awaited<ReturnType<typeof ensureModelServing>> | undefined;
+  if (workload.judge_model) {
+    judgeBoot = await ensureModelServing(workload.judge_model);
+  }
+  const started = new Date().toISOString();
+  const { rows, errors: corpusErrors } = await loadCorpusRows(workload, opts.corpusOverrides);
+  try {
+    const result = await runWorkloadRows(model, workload, rows, concurrency, runId, opts.db);
+    const finished = new Date().toISOString();
+    const agg = aggregateWorkloadMetrics(workload, result.predictions, result.rowMetrics);
+    const wallSec = result.totalWallMs / 1000;
+    const throughput = wallSec > 0 ? result.totalCompletionTokens / wallSec : 0;
+    insertCellRow(opts.db, {
+      run_id: runId,
+      runner_version: 1,
+      model_name: model.name,
+      workload_name: workload.name,
+      model_spec_json: JSON.stringify(model),
+      n_rows: rows.length,
+      primary_metric_name: workload.primary_metric_name ?? "macro_f1",
+      primary_metric_value: agg.primary_metric_value,
+      per_class_metrics_json: agg.per_class_metrics_json,
+      latency_p50_ms: percentile(result.wallMsArr, 50),
+      latency_p95_ms: percentile(result.wallMsArr, 95),
+      throughput_tps: throughput,
+      errors: corpusErrors + result.errors,
+      started_at: started,
+      finished_at: finished,
+      host_machine: os.hostname(),
+    });
+  } finally {
+    if (judgeBoot) {
+      await teardownIfOwned(judgeBoot);
+    }
+  }
+}
+
+/** Boot one model, run every workload cell against it, and tear the
+ *  boot down. Returns the number of cells written (boot failures are
+ *  recorded as error cells). */
+async function runModelCells(
+  opts: RunMatrixOpts,
+  model: ModelSpec,
+  runId: string,
+  concurrency: number,
+): Promise<number> {
+  let boot: Awaited<ReturnType<typeof ensureModelServing>> | undefined;
+  try {
+    boot = await ensureModelServing(model);
+  } catch (err) {
+    const cellsWritten = recordBootError(model, opts.workloads, runId, opts.db);
+    console.warn(
+      `[matrix] failed to boot ${model.name}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return cellsWritten;
+  }
+  let cellsWritten = 0;
+  try {
+    for (const workload of opts.workloads) {
+      await runWorkloadCell(opts, model, workload, runId, concurrency);
+      cellsWritten += 1;
+    }
+  } finally {
+    await teardownIfOwned(boot);
+  }
+  return cellsWritten;
+}
+
 export async function runMatrix(
   opts: RunMatrixOpts,
 ): Promise<{ runId: string; cellsWritten: number }> {
@@ -305,58 +397,7 @@ export async function runMatrix(
   let cellsWritten = 0;
 
   for (const model of opts.models) {
-    let boot: Awaited<ReturnType<typeof ensureModelServing>> | undefined;
-    try {
-      boot = await ensureModelServing(model);
-    } catch (err) {
-      cellsWritten += recordBootError(model, opts.workloads, runId, opts.db);
-      console.warn(
-        `[matrix] failed to boot ${model.name}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      continue;
-    }
-    try {
-      for (const workload of opts.workloads) {
-        let judgeBoot: Awaited<ReturnType<typeof ensureModelServing>> | undefined;
-        if (workload.judge_model) {
-          judgeBoot = await ensureModelServing(workload.judge_model);
-        }
-        const started = new Date().toISOString();
-        const { rows, errors: corpusErrors } = await loadCorpusRows(workload, opts.corpusOverrides);
-        try {
-          const result = await runWorkloadRows(model, workload, rows, concurrency, runId, opts.db);
-          const finished = new Date().toISOString();
-          const agg = aggregateWorkloadMetrics(workload, result.predictions, result.rowMetrics);
-          const wallSec = result.totalWallMs / 1000;
-          const throughput = wallSec > 0 ? result.totalCompletionTokens / wallSec : 0;
-          insertCellRow(opts.db, {
-            run_id: runId,
-            runner_version: 1,
-            model_name: model.name,
-            workload_name: workload.name,
-            model_spec_json: JSON.stringify(model),
-            n_rows: rows.length,
-            primary_metric_name: workload.primary_metric_name ?? "macro_f1",
-            primary_metric_value: agg.primary_metric_value,
-            per_class_metrics_json: agg.per_class_metrics_json,
-            latency_p50_ms: percentile(result.wallMsArr, 50),
-            latency_p95_ms: percentile(result.wallMsArr, 95),
-            throughput_tps: throughput,
-            errors: corpusErrors + result.errors,
-            started_at: started,
-            finished_at: finished,
-            host_machine: os.hostname(),
-          });
-          cellsWritten += 1;
-        } finally {
-          if (judgeBoot) {
-            await teardownIfOwned(judgeBoot);
-          }
-        }
-      }
-    } finally {
-      await teardownIfOwned(boot);
-    }
+    cellsWritten += await runModelCells(opts, model, runId, concurrency);
   }
 
   return { runId, cellsWritten };

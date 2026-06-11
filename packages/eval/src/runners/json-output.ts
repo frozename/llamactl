@@ -30,20 +30,33 @@ function isJsonPayload(value: unknown): value is JsonPayload {
   return Object.values(value as Record<string, unknown>).every(isJsonPayload);
 }
 
-export function extractJsonPayload(text: string): JsonPayload {
+/** The ``` fenced block's contents (with any `json` prefix stripped),
+ *  or null when the text carries no complete fence. */
+function fencedCandidate(text: string): string | null {
   const fenceStart = text.indexOf("```");
   const fenceEnd = fenceStart >= 0 ? text.indexOf("```", fenceStart + 3) : -1;
-  const fenced =
-    fenceStart >= 0 && fenceEnd > fenceStart ? text.slice(fenceStart + 3, fenceEnd).trim() : null;
+  if (fenceStart < 0 || fenceEnd <= fenceStart) return null;
+  const fenced = text.slice(fenceStart + 3, fenceEnd).trim();
+  return fenced.toLowerCase().startsWith("json") ? fenced.slice(4).trim() : fenced;
+}
+
+/** The outermost `{...}` slice, or null when no braces pair up. */
+function objectCandidate(text: string): string | null {
   const jsonStart = text.indexOf("{");
   const jsonEnd = text.lastIndexOf("}");
-  const objectCandidate =
-    jsonStart >= 0 && jsonEnd > jsonStart ? text.slice(jsonStart, jsonEnd + 1) : null;
-  const candidates =
-    fenced !== null
-      ? [fenced.toLowerCase().startsWith("json") ? fenced.slice(4).trim() : fenced]
-      : [text, ...(objectCandidate === null ? [] : [objectCandidate])];
-  for (const candidate of candidates) {
+  if (jsonStart < 0 || jsonEnd <= jsonStart) return null;
+  return text.slice(jsonStart, jsonEnd + 1);
+}
+
+function candidateStrings(text: string): string[] {
+  const fenced = fencedCandidate(text);
+  if (fenced !== null) return [fenced];
+  const objCandidate = objectCandidate(text);
+  return objCandidate === null ? [text] : [text, objCandidate];
+}
+
+export function extractJsonPayload(text: string): JsonPayload {
+  for (const candidate of candidateStrings(text)) {
     try {
       const parsed: unknown = JSON.parse(candidate);
       if (isJsonPayload(parsed)) return parsed;
@@ -52,6 +65,31 @@ export function extractJsonPayload(text: string): JsonPayload {
     }
   }
   return null;
+}
+
+function hasRequiredKeys(record: Record<string, unknown>, required: readonly string[]): boolean {
+  for (const key of required) if (!(key in record)) return false;
+  return true;
+}
+
+function propertiesValid(
+  record: Record<string, unknown>,
+  properties: Record<string, JsonSchema>,
+): boolean {
+  for (const [key, child] of Object.entries(properties)) {
+    if (key in record && !validateJsonAgainstSchema(record[key], child)) return false;
+  }
+  return true;
+}
+
+function validateObjectSchema(
+  value: unknown,
+  schema: { type: "object"; required?: readonly string[]; properties?: Record<string, JsonSchema> },
+): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (!hasRequiredKeys(record, schema.required ?? [])) return false;
+  return propertiesValid(record, schema.properties ?? {});
 }
 
 export function validateJsonAgainstSchema(value: unknown, schema: JsonSchema): boolean {
@@ -66,13 +104,7 @@ export function validateJsonAgainstSchema(value: unknown, schema: JsonSchema): b
     return (
       Array.isArray(value) && value.every((item) => validateJsonAgainstSchema(item, schema.items))
     );
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  for (const key of schema.required ?? []) if (!(key in record)) return false;
-  for (const [key, child] of Object.entries(schema.properties ?? {})) {
-    if (key in record && !validateJsonAgainstSchema(record[key], child)) return false;
-  }
-  return true;
+  return validateObjectSchema(value, schema);
 }
 
 export interface JsonOutputFixture {

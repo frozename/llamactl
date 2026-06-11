@@ -125,6 +125,18 @@ export async function askPlanner(
     };
   }
 
+  const unwrapped = unwrapPlannerEnvelope(raw);
+  if (!unwrapped.ok) return unwrapped;
+  return plannerResultFromEnvelope(unwrapped.envelope);
+}
+
+/** Unwrap the MCP text-content envelope into the untrusted planner
+ *  payload. Any malformed envelope becomes a typed failure result. */
+function unwrapPlannerEnvelope(
+  raw: McpCallResult,
+):
+  | { ok: true; envelope: UntrustedPlannerEnvelope }
+  | { ok: false; reason: string; message: string } {
   if (raw.isError === true) {
     const text = firstTextBlock(raw) ?? "nova.operator.plan returned isError";
     return { ok: false, reason: "call-failed", message: text.slice(0, 500) };
@@ -155,7 +167,12 @@ export async function askPlanner(
       message: "nova.operator.plan: envelope is not an object",
     };
   }
-  const inner = parsed as UntrustedPlannerEnvelope;
+  return { ok: true, envelope: parsed };
+}
+
+/** Narrow the untrusted planner payload into the typed result the
+ *  loop consumes; every field is runtime-checked before use. */
+function plannerResultFromEnvelope(inner: UntrustedPlannerEnvelope): AskPlannerResult {
   if (inner.ok !== true) {
     return {
       ok: false,

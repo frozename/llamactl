@@ -40,6 +40,43 @@ function isAuditEntry(value: unknown): value is AuditEntry {
   );
 }
 
+function matchesAuditFilters(
+  entry: AuditEntry,
+  opts: AuditReadOptions | undefined,
+  sinceMs: number,
+): boolean {
+  if (opts?.tool && entry.tool !== opts.tool) return false;
+  if (opts?.outcome && entry.outcome !== opts.outcome) return false;
+  const entryMs = Date.parse(entry.ts);
+  if (!Number.isNaN(sinceMs) && !Number.isNaN(entryMs) && entryMs < sinceMs) return false;
+  return true;
+}
+
+async function collectFilteredEntries(
+  rl: readline.Interface,
+  opts: AuditReadOptions | undefined,
+  sinceMs: number,
+): Promise<{ filtered: AuditEntry[]; malformedLines: number }> {
+  const filtered: AuditEntry[] = [];
+  let malformedLines = 0;
+  try {
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line) as unknown;
+        if (!isAuditEntry(entry)) continue;
+        if (!matchesAuditFilters(entry, opts, sinceMs)) continue;
+        filtered.push(entry);
+      } catch {
+        malformedLines++;
+      }
+    }
+  } finally {
+    rl.close();
+  }
+  return { filtered, malformedLines };
+}
+
 export async function readAuditEntries(opts?: AuditReadOptions): Promise<AuditReadResult> {
   const auditPath = opts?.auditPath ?? defaultFleetAuditPath();
   const limit = Math.max(1, Math.min(opts?.limit ?? 50, 500));
@@ -50,32 +87,9 @@ export async function readAuditEntries(opts?: AuditReadOptions): Promise<AuditRe
 
   const stream = fs.createReadStream(auditPath, { encoding: "utf8" });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-
-  const filtered: AuditEntry[] = [];
-  let malformedLines = 0;
   const sinceMs = opts?.since ? Date.parse(opts.since) : NaN;
 
-  try {
-    for await (const line of rl) {
-      if (!line.trim()) continue;
-      try {
-        const entry = JSON.parse(line) as unknown;
-        if (!isAuditEntry(entry)) continue;
-
-        if (opts?.tool && entry.tool !== opts.tool) continue;
-        if (opts?.outcome && entry.outcome !== opts.outcome) continue;
-
-        const entryMs = Date.parse(entry.ts);
-        if (!Number.isNaN(sinceMs) && !Number.isNaN(entryMs) && entryMs < sinceMs) continue;
-
-        filtered.push(entry);
-      } catch (err) {
-        malformedLines++;
-      }
-    }
-  } finally {
-    rl.close();
-  }
+  const { filtered, malformedLines } = await collectFilteredEntries(rl, opts, sinceMs);
 
   filtered.sort((a, b) => b.ts.localeCompare(a.ts));
   const total = filtered.length;

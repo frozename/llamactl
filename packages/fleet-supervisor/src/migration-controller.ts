@@ -110,22 +110,12 @@ export class MigrationController {
     await new Promise<void>((resolve) => setTimeout(resolve, ms));
   }
 
-  async evaluateMove(
-    workload: MigrationWorkload,
-    snapshot: NodeSnapshot,
-  ): Promise<MoveProposal | null> {
-    if (this.deps.leaseholder !== snapshot.schedulerLeaseHolder) return null;
-    if (workload.spec?.placement === "pinned") return null;
-    if (this.isInMoveCooldown(workload.name)) return null;
-
-    const fromNode = snapshot.node ?? workload.node;
-    if (!fromNode) return null;
-
-    let bestNode: string | null = null;
-    let bestFreeMb = -1;
-    const workloadMemoryMb = workload.spec?.resources?.memoryMb;
-    const requiredFreeMb = this.minRequiredFreeMb(workloadMemoryMb);
-
+  /** Highest-free-memory viable peer for a move off `fromNode`, or
+   *  null when no peer is NORMAL with enough free memory. */
+  private async findBestDestination(
+    fromNode: string,
+    requiredFreeMb: number,
+  ): Promise<string | null> {
     const peerSnapshots = await Promise.all(
       this.deps.peers
         .filter((peer) => peer !== fromNode)
@@ -138,6 +128,8 @@ export class MigrationController {
         }),
     );
 
+    let bestNode: string | null = null;
+    let bestFreeMb = -1;
     for (const peerSnapshotEntry of peerSnapshots) {
       if (!peerSnapshotEntry) continue;
       const { peer, snapshot: peerSnapshot } = peerSnapshotEntry;
@@ -155,7 +147,24 @@ export class MigrationController {
         bestNode = peer;
       }
     }
+    return bestNode;
+  }
 
+  async evaluateMove(
+    workload: MigrationWorkload,
+    snapshot: NodeSnapshot,
+  ): Promise<MoveProposal | null> {
+    if (this.deps.leaseholder !== snapshot.schedulerLeaseHolder) return null;
+    if (workload.spec?.placement === "pinned") return null;
+    if (this.isInMoveCooldown(workload.name)) return null;
+
+    const fromNode = snapshot.node ?? workload.node;
+    if (!fromNode) return null;
+
+    const workloadMemoryMb = workload.spec?.resources?.memoryMb;
+    const requiredFreeMb = this.minRequiredFreeMb(workloadMemoryMb);
+
+    const bestNode = await this.findBestDestination(fromNode, requiredFreeMb);
     if (!bestNode) return null;
 
     const proposalId = `move-${workload.name}-${String(this.nowMs)}`;

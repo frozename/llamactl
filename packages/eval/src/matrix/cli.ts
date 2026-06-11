@@ -104,6 +104,28 @@ export function parseArgs(argv: string[]): MatrixCliArgs {
   };
 }
 
+function isStringArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isValidRequiredField(field: keyof ModelSpec, value: unknown): boolean {
+  if (field === "port") return typeof value === "number";
+  if (field === "extra_args") return isStringArray(value);
+  return typeof value === "string";
+}
+
+type OptionalModelSpecField = keyof Pick<
+  ModelSpec,
+  "binary" | "start_args" | "managed" | "structured_outputs_supported"
+>;
+
+function isValidOptionalField(field: OptionalModelSpecField, value: unknown): boolean {
+  if (value === undefined) return true;
+  if (field === "binary") return typeof value === "string";
+  if (field === "start_args") return isStringArray(value);
+  return typeof value === "boolean";
+}
+
 function validateModelSpec(value: unknown): ModelSpec {
   if (typeof value !== "object" || value === null) {
     throw new Error("invalid ModelSpec: missing/bad field name");
@@ -122,31 +144,18 @@ function validateModelSpec(value: unknown): ModelSpec {
     "extra_args",
   ];
   for (const field of required) {
-    const fieldValue = spec[field];
-    const ok =
-      field === "port"
-        ? typeof fieldValue === "number"
-        : field === "extra_args"
-          ? Array.isArray(fieldValue) && fieldValue.every((item) => typeof item === "string")
-          : typeof fieldValue === "string";
-    if (!ok) {
+    if (!isValidRequiredField(field, spec[field])) {
       throw new Error(`invalid ModelSpec: missing/bad field ${field}`);
     }
   }
-  const optional: (keyof Pick<
-    ModelSpec,
-    "binary" | "start_args" | "managed" | "structured_outputs_supported"
-  >)[] = ["binary", "start_args", "managed", "structured_outputs_supported"];
+  const optional: OptionalModelSpecField[] = [
+    "binary",
+    "start_args",
+    "managed",
+    "structured_outputs_supported",
+  ];
   for (const field of optional) {
-    const fieldValue = spec[field];
-    const ok =
-      field === "binary"
-        ? fieldValue === undefined || typeof fieldValue === "string"
-        : field === "start_args"
-          ? fieldValue === undefined ||
-            (Array.isArray(fieldValue) && fieldValue.every((item) => typeof item === "string"))
-          : fieldValue === undefined || typeof fieldValue === "boolean";
-    if (!ok) {
+    if (!isValidOptionalField(field, spec[field])) {
       throw new Error(`invalid ModelSpec: missing/bad field ${field}`);
     }
   }
@@ -167,6 +176,65 @@ function getKnownWorkloads(): Record<string, WorkloadEval> {
     "reasoning-gsm8k": reasoningGsm8kWorkload,
     "reasoning-arc": reasoningArcWorkload,
   };
+}
+
+async function loadModels(modelsPath: string): Promise<ModelSpec[]> {
+  const models = ((await Bun.file(modelsPath).json()) as unknown[]).map(validateModelSpec);
+  if (models.length === 0) {
+    throw new Error(`--models points to an empty list (${modelsPath}); nothing to bench`);
+  }
+  return models;
+}
+
+function resolveWorkloads(
+  workloadsArg: string,
+  corpusOverrides: Map<string, string> | undefined,
+): WorkloadEval[] {
+  const knownWorkloads = getKnownWorkloads();
+  const workloads = workloadsArg.split(",").map((name) => {
+    const workload = knownWorkloads[name];
+    if (!workload) {
+      throw new Error(`unknown workload: ${name}`);
+    }
+    return workload;
+  });
+  if (corpusOverrides) {
+    const requested = new Set(workloads.map((w) => w.name));
+    for (const overrideName of corpusOverrides.keys()) {
+      if (!requested.has(overrideName)) {
+        throw new Error(
+          `--corpus-override references workload ${overrideName} which is not in --workloads`,
+        );
+      }
+    }
+  }
+  return workloads;
+}
+
+async function writeReport(opts: {
+  report: "md" | "csv" | "both";
+  reportOut: string | undefined;
+  db: Database;
+  runId: string;
+  reportAllRuns: boolean;
+}): Promise<void> {
+  if (!opts.reportOut) {
+    throw new Error("--report-out is required when --report is set");
+  }
+  const cells = opts.reportAllRuns
+    ? listCellRows(opts.db)
+    : listCellRows(opts.db, { run_id: opts.runId });
+  const reportOpts = opts.reportAllRuns ? {} : { runId: opts.runId };
+  if (opts.report === "md") {
+    await Bun.write(opts.reportOut, renderMarkdownReport(cells, reportOpts));
+    return;
+  }
+  if (opts.report === "csv") {
+    await Bun.write(opts.reportOut, renderCsvReport(cells, reportOpts));
+    return;
+  }
+  await Bun.write(`${opts.reportOut}.md`, renderMarkdownReport(cells, reportOpts));
+  await Bun.write(`${opts.reportOut}.csv`, renderCsvReport(cells, reportOpts));
 }
 
 async function main(): Promise<void> {
@@ -199,45 +267,13 @@ async function main(): Promise<void> {
     corpusOverrides,
   } = parseArgs(process.argv.slice(2));
 
-  const models = ((await Bun.file(modelsPath).json()) as unknown[]).map(validateModelSpec);
-  if (models.length === 0) {
-    throw new Error(`--models points to an empty list (${modelsPath}); nothing to bench`);
-  }
-  const knownWorkloads = getKnownWorkloads();
-  const workloads = workloadsArg.split(",").map((name) => {
-    const workload = knownWorkloads[name];
-    if (!workload) {
-      throw new Error(`unknown workload: ${name}`);
-    }
-    return workload;
-  });
-  if (corpusOverrides) {
-    const requested = new Set(workloads.map((w) => w.name));
-    for (const overrideName of corpusOverrides.keys()) {
-      if (!requested.has(overrideName)) {
-        throw new Error(
-          `--corpus-override references workload ${overrideName} which is not in --workloads`,
-        );
-      }
-    }
-  }
+  const models = await loadModels(modelsPath);
+  const workloads = resolveWorkloads(workloadsArg, corpusOverrides);
 
   const db = new Database(outDb);
   const result = await runMatrix({ models, workloads, db, runId, corpusOverrides, concurrency });
   if (report) {
-    if (!reportOut) {
-      throw new Error("--report-out is required when --report is set");
-    }
-    const cells = reportAllRuns ? listCellRows(db) : listCellRows(db, { run_id: result.runId });
-    const reportOpts = reportAllRuns ? {} : { runId: result.runId };
-    if (report === "md") {
-      await Bun.write(reportOut, renderMarkdownReport(cells, reportOpts));
-    } else if (report === "csv") {
-      await Bun.write(reportOut, renderCsvReport(cells, reportOpts));
-    } else {
-      await Bun.write(`${reportOut}.md`, renderMarkdownReport(cells, reportOpts));
-      await Bun.write(`${reportOut}.csv`, renderCsvReport(cells, reportOpts));
-    }
+    await writeReport({ report, reportOut, db, runId: result.runId, reportAllRuns });
   }
   process.stdout.write(`runId=${result.runId} cellsWritten=${String(result.cellsWritten)}\n`);
   if (reportAllRuns) {

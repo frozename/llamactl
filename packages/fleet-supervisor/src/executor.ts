@@ -78,6 +78,59 @@ export async function runExecutor(opts: ExecutorOptions): Promise<FleetExecution
   return results;
 }
 
+type ExecutionEntryBase = Pick<
+  FleetExecutionEntry,
+  "action" | "kind" | "node" | "proposalId" | "ts"
+>;
+
+async function executeRestart(
+  workload: string,
+  opts: ExecutorOptions,
+  base: ExecutionEntryBase,
+): Promise<FleetExecutionEntry> {
+  const disableCode = await opts.disable(workload);
+  if (disableCode !== 0) {
+    return {
+      ...base,
+      status: "failed",
+      exitCode: disableCode,
+      reason: "disable phase failed",
+    };
+  }
+  const enableCode = await opts.enable(workload);
+  return {
+    ...base,
+    status: enableCode === 0 ? "executed" : "failed",
+    exitCode: enableCode,
+  };
+}
+
+async function executeAction(
+  action: FleetProposalEntry["action"],
+  opts: ExecutorOptions,
+  base: ExecutionEntryBase,
+): Promise<FleetExecutionEntry> {
+  try {
+    if (action.type === "mark-degraded") {
+      return { ...base, status: "executed" };
+    }
+
+    if (action.type === "evict") {
+      const exitCode = await opts.disable(action.workload);
+      return { ...base, status: exitCode === 0 ? "executed" : "failed", exitCode };
+    }
+
+    if (action.type === "restart") {
+      return await executeRestart(action.workload, opts, base);
+    }
+  } catch (err) {
+    return { ...base, status: "failed", reason: (err as Error).message };
+  }
+
+  // TypeScript exhaustive guard — unreachable with current action union
+  return { ...base, status: "skipped", reason: "unknown action type" };
+}
+
 async function executeOne(
   proposal: FleetProposalEntry,
   opts: ExecutorOptions,
@@ -87,8 +140,8 @@ async function executeOne(
   const isManualOverride = opts.executeId === proposal.proposalId;
   const shouldExecute = isManualOverride || (opts.auto && tier <= opts.severityThreshold);
 
-  const base = {
-    kind: "fleet-execution" as const,
+  const base: ExecutionEntryBase = {
+    kind: "fleet-execution",
     ts,
     node: opts.node,
     proposalId: proposal.proposalId,
@@ -104,57 +157,7 @@ async function executeOne(
     return entry;
   }
 
-  try {
-    if (proposal.action.type === "mark-degraded") {
-      const entry: FleetExecutionEntry = { ...base, status: "executed" };
-      opts.writeJournal(entry);
-      return entry;
-    }
-
-    if (proposal.action.type === "evict") {
-      const exitCode = await opts.disable(proposal.action.workload);
-      const entry: FleetExecutionEntry = {
-        ...base,
-        status: exitCode === 0 ? "executed" : "failed",
-        exitCode,
-      };
-      opts.writeJournal(entry);
-      return entry;
-    }
-
-    if (proposal.action.type === "restart") {
-      const disableCode = await opts.disable(proposal.action.workload);
-      if (disableCode !== 0) {
-        const entry: FleetExecutionEntry = {
-          ...base,
-          status: "failed",
-          exitCode: disableCode,
-          reason: "disable phase failed",
-        };
-        opts.writeJournal(entry);
-        return entry;
-      }
-      const enableCode = await opts.enable(proposal.action.workload);
-      const entry: FleetExecutionEntry = {
-        ...base,
-        status: enableCode === 0 ? "executed" : "failed",
-        exitCode: enableCode,
-      };
-      opts.writeJournal(entry);
-      return entry;
-    }
-  } catch (err) {
-    const entry: FleetExecutionEntry = {
-      ...base,
-      status: "failed",
-      reason: (err as Error).message,
-    };
-    opts.writeJournal(entry);
-    return entry;
-  }
-
-  // TypeScript exhaustive guard — unreachable with current action union
-  const entry: FleetExecutionEntry = { ...base, status: "skipped", reason: "unknown action type" };
+  const entry = await executeAction(proposal.action, opts, base);
   opts.writeJournal(entry);
   return entry;
 }

@@ -64,22 +64,31 @@ const judgeModel = {
   managed: true,
 } as const;
 
+/** Strip the `@@metadata ... @@end` envelope some judges wrap around
+ *  their verdict, keeping only the payload between the markers. */
+function stripJudgeEnvelope(text: string): string {
+  if (!text.includes("@@metadata")) return text;
+  let s = text;
+  const parts = s.split("@@metadata", 2);
+  if (parts.length > 1) s = parts[1] ?? "";
+  const endParts = s.split("@@end", 1);
+  if (endParts.length > 0) s = endParts[0] ?? "";
+  return s;
+}
+
+/** Unwrap a ``` fenced block (optionally ```json-prefixed) when present. */
+function stripJudgeCodeFence(s: string): string {
+  const fenceStart = s.indexOf("```");
+  const fenceEnd = fenceStart >= 0 ? s.indexOf("```", fenceStart + 3) : -1;
+  if (fenceStart < 0 || fenceEnd <= fenceStart) return s;
+  const fenced = s.slice(fenceStart + 3, fenceEnd).trim();
+  return fenced.startsWith("json") ? fenced.slice(4).trim() : fenced;
+}
+
 function parseJudgeJson(
   text: string,
 ): { intent_preservation: number; contract_clarity: number; noise_removal: number } | null {
-  let s = text;
-  if (s.includes("@@metadata")) {
-    const parts = s.split("@@metadata", 2);
-    if (parts.length > 1) s = parts[1] ?? "";
-    const endParts = s.split("@@end", 1);
-    if (endParts.length > 0) s = endParts[0] ?? "";
-  }
-  const fenceStart = s.indexOf("```");
-  const fenceEnd = fenceStart >= 0 ? s.indexOf("```", fenceStart + 3) : -1;
-  if (fenceStart >= 0 && fenceEnd > fenceStart) {
-    const fenced = s.slice(fenceStart + 3, fenceEnd).trim();
-    s = fenced.startsWith("json") ? fenced.slice(4).trim() : fenced;
-  }
+  const s = stripJudgeCodeFence(stripJudgeEnvelope(text));
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start < 0 || end <= start) return null;

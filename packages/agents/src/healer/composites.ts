@@ -55,21 +55,25 @@ function firstTextBlock(result: McpCallResult): string | undefined {
   return first.text;
 }
 
+interface CompositeListComponent {
+  ref?: { kind?: string; name?: string };
+  state?: string;
+  message?: string;
+}
+
+interface CompositeListEntry {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: { name?: string };
+  status?: {
+    phase?: string;
+    components?: CompositeListComponent[];
+  };
+}
+
 interface CompositeListEnvelope {
   count?: number;
-  composites?: {
-    apiVersion?: string;
-    kind?: string;
-    metadata?: { name?: string };
-    status?: {
-      phase?: string;
-      components?: {
-        ref?: { kind?: string; name?: string };
-        state?: string;
-        message?: string;
-      }[];
-    };
-  }[];
+  composites?: CompositeListEntry[];
 }
 
 function parseEnvelope(result: McpCallResult): CompositeListEnvelope {
@@ -131,6 +135,30 @@ function normalizePhase(raw: string | undefined): CompositeSummary["phase"] {
   return "Unknown";
 }
 
+function toComponentSummary(c: CompositeListComponent): CompositeComponentSummary {
+  const summary: CompositeComponentSummary = {
+    kind: normalizeComponentKind(c.ref?.kind),
+    name: typeof c.ref?.name === "string" ? c.ref.name : "",
+    state: normalizeComponentState(c.state),
+  };
+  if (typeof c.message === "string" && c.message.length > 0) {
+    summary.message = c.message;
+  }
+  return summary;
+}
+
+function toCompositeSummary(entry: CompositeListEntry): CompositeSummary | undefined {
+  const name = entry.metadata?.name;
+  if (typeof name !== "string" || name.length === 0) return undefined;
+  const components = (entry.status?.components ?? []).map(toComponentSummary);
+  return {
+    name,
+    phase: normalizePhase(entry.status?.phase),
+    components,
+    manifestYaml: toManifestYaml(entry),
+  };
+}
+
 export async function fetchComposites(toolClient: RunbookToolClient): Promise<CompositeSummary[]> {
   const raw = (await toolClient.callTool({
     name: "llamactl.composite.list",
@@ -143,30 +171,10 @@ export async function fetchComposites(toolClient: RunbookToolClient): Promise<Co
   }
 
   const env = parseEnvelope(raw);
-  const list = env.composites ?? [];
   const out: CompositeSummary[] = [];
-  for (const entry of list) {
-    const name = entry.metadata?.name;
-    if (typeof name !== "string" || name.length === 0) continue;
-    const phase = normalizePhase(entry.status?.phase);
-    const components: CompositeComponentSummary[] = [];
-    for (const c of entry.status?.components ?? []) {
-      const summary: CompositeComponentSummary = {
-        kind: normalizeComponentKind(c.ref?.kind),
-        name: typeof c.ref?.name === "string" ? c.ref.name : "",
-        state: normalizeComponentState(c.state),
-      };
-      if (typeof c.message === "string" && c.message.length > 0) {
-        summary.message = c.message;
-      }
-      components.push(summary);
-    }
-    out.push({
-      name,
-      phase,
-      components,
-      manifestYaml: toManifestYaml(entry),
-    });
+  for (const entry of env.composites ?? []) {
+    const summary = toCompositeSummary(entry);
+    if (summary) out.push(summary);
   }
   return out;
 }

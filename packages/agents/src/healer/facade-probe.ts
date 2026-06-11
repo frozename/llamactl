@@ -89,6 +89,33 @@ function stateFromOk(ok: boolean): ProbeState {
   return ok ? "healthy" : "unhealthy";
 }
 
+function toGatewayProbe(g: NovaHealthcheckGateway): ProbeResult {
+  const entry: ProbeResult = {
+    name: g.name,
+    kind: "gateway",
+    baseUrl: g.baseUrl,
+    state: stateFromOk(g.ok),
+    status: typeof g.status === "number" ? g.status : 0,
+    latencyMs: 0,
+  };
+  if (typeof g.error === "string" && g.error.length > 0) entry.error = g.error;
+  return entry;
+}
+
+function toProviderProbe(p: NovaHealthcheckProvider): ProbeResult & { providerKind?: string } {
+  const entry: ProbeResult & { providerKind?: string } = {
+    name: p.name,
+    kind: "provider",
+    baseUrl: p.baseUrl,
+    state: stateFromOk(p.ok),
+    status: typeof p.status === "number" ? p.status : 0,
+    latencyMs: 0,
+  };
+  if (typeof p.error === "string" && p.error.length > 0) entry.error = p.error;
+  if (typeof p.kind === "string" && p.kind.length > 0) entry.providerKind = p.kind;
+  return entry;
+}
+
 export async function probeFleetViaNova(toolClient: RunbookToolClient): Promise<ProbeReport> {
   const raw = (await toolClient.callTool({
     name: "nova.ops.healthcheck",
@@ -102,35 +129,8 @@ export async function probeFleetViaNova(toolClient: RunbookToolClient): Promise<
 
   const env = parseEnvelope(raw);
   const probes: ProbeResult[] = [];
-
-  for (const g of env.gateways ?? []) {
-    const state = stateFromOk(g.ok);
-    const entry: ProbeResult = {
-      name: g.name,
-      kind: "gateway",
-      baseUrl: g.baseUrl,
-      state,
-      status: typeof g.status === "number" ? g.status : 0,
-      latencyMs: 0,
-    };
-    if (typeof g.error === "string" && g.error.length > 0) entry.error = g.error;
-    probes.push(entry);
-  }
-
-  for (const p of env.siriusProviders ?? []) {
-    const state = stateFromOk(p.ok);
-    const entry: ProbeResult & { providerKind?: string } = {
-      name: p.name,
-      kind: "provider",
-      baseUrl: p.baseUrl,
-      state,
-      status: typeof p.status === "number" ? p.status : 0,
-      latencyMs: 0,
-    };
-    if (typeof p.error === "string" && p.error.length > 0) entry.error = p.error;
-    if (typeof p.kind === "string" && p.kind.length > 0) entry.providerKind = p.kind;
-    probes.push(entry);
-  }
+  for (const g of env.gateways ?? []) probes.push(toGatewayProbe(g));
+  for (const p of env.siriusProviders ?? []) probes.push(toProviderProbe(p));
 
   const unhealthy = probes.filter((p) => p.state === "unhealthy").length;
   return {

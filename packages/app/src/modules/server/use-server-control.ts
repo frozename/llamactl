@@ -146,6 +146,36 @@ interface ServerStartEvent {
   result?: { ok: boolean; pid?: number; endpoint?: string; error?: string };
 }
 
+function waitingLogLine(e: ServerStartEvent): LogLine | null {
+  if (typeof e.attempt === "number" && e.attempt % 5 === 0) {
+    return {
+      kind: "waiting",
+      text: `waiting attempt=${String(e.attempt)} http=${String(e.httpCode ?? "n/a")}`,
+    };
+  }
+  return null;
+}
+
+/** Log line for the log-only start events; null for `done` (which
+ *  also mutates card state), throttled `waiting`, and unknown types. */
+function logLineForServerEvent(e: ServerStartEvent): LogLine | null {
+  if (e.type === "launch")
+    return {
+      kind: "launch",
+      text: `launched pid=${String(e.pid)} — ${String(e.command)} ${Array.isArray(e.args) ? e.args.join(" ") : ""}`,
+    };
+  if (e.type === "waiting") return waitingLogLine(e);
+  if (e.type === "retry") return { kind: "retry", text: `retry: ${String(e.reason)}` };
+  if (e.type === "ready")
+    return {
+      kind: "ready",
+      text: `ready pid=${String(e.pid)} endpoint=${String(e.endpoint)}`,
+    };
+  if (e.type === "timeout") return { kind: "timeout", text: `timeout pid=${String(e.pid)}` };
+  if (e.type === "exited") return { kind: "exited", text: `exited code=${String(e.code ?? "?")}` };
+  return null;
+}
+
 function useServerStartSubscription(opts: {
   starting: { target: string; timeoutSeconds: number; skipTuned: boolean } | null;
   workload?: string;
@@ -154,43 +184,27 @@ function useServerStartSubscription(opts: {
   appendLog: (v: LogLine) => void;
   queryClient: ReturnType<typeof useQueryClient>;
 }): void {
+  const handleDone = (e: ServerStartEvent): void => {
+    if (e.result?.ok)
+      opts.appendLog({
+        kind: "done",
+        text: `started pid=${String(e.result.pid)} endpoint=${String(e.result.endpoint)}`,
+      });
+    else {
+      opts.appendLog({ kind: "error", text: e.result?.error ?? "start failed" });
+      opts.setError(e.result?.error ?? "start failed");
+    }
+    opts.setStarting(null);
+    void opts.queryClient.invalidateQueries({ queryKey: [["serverStatus"], { type: "query" }] });
+  };
   const handleEvent = (evt: unknown): void => {
     const e = evt as ServerStartEvent;
-    if (e.type === "launch")
-      opts.appendLog({
-        kind: "launch",
-        text: `launched pid=${String(e.pid)} — ${String(e.command)} ${Array.isArray(e.args) ? e.args.join(" ") : ""}`,
-      });
-    else if (e.type === "waiting") {
-      if (typeof e.attempt === "number" && e.attempt % 5 === 0)
-        opts.appendLog({
-          kind: "waiting",
-          text: `waiting attempt=${String(e.attempt)} http=${String(e.httpCode ?? "n/a")}`,
-        });
-    } else if (e.type === "retry")
-      opts.appendLog({ kind: "retry", text: `retry: ${String(e.reason)}` });
-    else if (e.type === "ready")
-      opts.appendLog({
-        kind: "ready",
-        text: `ready pid=${String(e.pid)} endpoint=${String(e.endpoint)}`,
-      });
-    else if (e.type === "timeout")
-      opts.appendLog({ kind: "timeout", text: `timeout pid=${String(e.pid)}` });
-    else if (e.type === "exited")
-      opts.appendLog({ kind: "exited", text: `exited code=${String(e.code ?? "?")}` });
-    else if (e.type === "done") {
-      if (e.result?.ok)
-        opts.appendLog({
-          kind: "done",
-          text: `started pid=${String(e.result.pid)} endpoint=${String(e.result.endpoint)}`,
-        });
-      else {
-        opts.appendLog({ kind: "error", text: e.result?.error ?? "start failed" });
-        opts.setError(e.result?.error ?? "start failed");
-      }
-      opts.setStarting(null);
-      void opts.queryClient.invalidateQueries({ queryKey: [["serverStatus"], { type: "query" }] });
+    if (e.type === "done") {
+      handleDone(e);
+      return;
     }
+    const line = logLineForServerEvent(e);
+    if (line) opts.appendLog(line);
   };
   trpc.serverStart.useSubscription(
     opts.starting && opts.workload ? { ...opts.starting, workload: opts.workload } : skipToken,

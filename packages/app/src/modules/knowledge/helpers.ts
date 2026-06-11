@@ -19,49 +19,58 @@ export function truncateContent(content: string, max = 300): string {
   return `${content.slice(0, max).trimEnd()}…`;
 }
 
-export function parseIndexInput(raw: string): {
+type ParseIndexResult = {
   documents: IndexDocumentInput[];
   error: string | null;
-} {
-  const trimmed = raw.trim();
-  if (!trimmed) return { documents: [], error: "Input is empty." };
-  if (trimmed.startsWith("[")) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch (err) {
-      return { documents: [], error: `Invalid JSON: ${(err as Error).message}` };
-    }
-    if (!Array.isArray(parsed)) {
+};
+
+function isInvalidDocEntry(entry: unknown): boolean {
+  return (
+    !entry ||
+    typeof entry !== "object" ||
+    typeof (entry as { id?: unknown }).id !== "string" ||
+    typeof (entry as { content?: unknown }).content !== "string"
+  );
+}
+
+function toIndexDocument(entry: unknown): IndexDocumentInput {
+  const e = entry as { id: string; content: string; metadata?: Record<string, unknown> };
+  return {
+    id: e.id,
+    content: e.content,
+    metadata: e.metadata && typeof e.metadata === "object" ? e.metadata : undefined,
+  };
+}
+
+function parseJsonDocuments(trimmed: string): ParseIndexResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (err) {
+    return { documents: [], error: `Invalid JSON: ${(err as Error).message}` };
+  }
+  if (!Array.isArray(parsed)) {
+    return {
+      documents: [],
+      error: "JSON input must be an array of {id, content, metadata?} objects.",
+    };
+  }
+  const docs: IndexDocumentInput[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const entry: unknown = parsed[i];
+    if (isInvalidDocEntry(entry)) {
       return {
         documents: [],
-        error: "JSON input must be an array of {id, content, metadata?} objects.",
+        error: `Entry [${String(i)}] must have string 'id' and string 'content' fields.`,
       };
     }
-    const docs: IndexDocumentInput[] = [];
-    for (let i = 0; i < parsed.length; i++) {
-      const entry: unknown = parsed[i];
-      if (
-        !entry ||
-        typeof entry !== "object" ||
-        typeof (entry as { id?: unknown }).id !== "string" ||
-        typeof (entry as { content?: unknown }).content !== "string"
-      ) {
-        return {
-          documents: [],
-          error: `Entry [${String(i)}] must have string 'id' and string 'content' fields.`,
-        };
-      }
-      const e = entry as { id: string; content: string; metadata?: Record<string, unknown> };
-      docs.push({
-        id: e.id,
-        content: e.content,
-        metadata: e.metadata && typeof e.metadata === "object" ? e.metadata : undefined,
-      });
-    }
-    if (docs.length === 0) return { documents: [], error: "JSON array is empty." };
-    return { documents: docs, error: null };
+    docs.push(toIndexDocument(entry));
   }
+  if (docs.length === 0) return { documents: [], error: "JSON array is empty." };
+  return { documents: docs, error: null };
+}
+
+function parseParagraphDocuments(trimmed: string): ParseIndexResult {
   const paragraphs = trimmed
     .split(/\n\s*\n/)
     .map((p) => p.trim())
@@ -75,4 +84,11 @@ export function parseIndexInput(raw: string): {
     return { id: `doc-${uuid}`, content };
   });
   return { documents: docs, error: null };
+}
+
+export function parseIndexInput(raw: string): ParseIndexResult {
+  const trimmed = raw.trim();
+  if (!trimmed) return { documents: [], error: "Input is empty." };
+  if (trimmed.startsWith("[")) return parseJsonDocuments(trimmed);
+  return parseParagraphDocuments(trimmed);
 }

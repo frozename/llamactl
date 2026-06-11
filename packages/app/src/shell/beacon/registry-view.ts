@@ -52,6 +52,20 @@ function dynamicSourceFor(leafId: string): keyof DynamicSources | undefined {
  * sources (workloads, nodes). Pure — no side effects, easy to test.
  * Hidden-group leaves are filtered out; empty groups are dropped.
  */
+function leafForModule(mod: AppModule, sources: DynamicSources): ExplorerLeaf {
+  const leaf: ExplorerLeaf = {
+    id: mod.id,
+    title: mod.labelKey,
+    kind: mod.beaconKind ?? "static",
+    order: mod.beaconOrder ?? 1000,
+  };
+  if (leaf.kind === "dynamic-group") {
+    const src = dynamicSourceFor(leaf.id);
+    leaf.instances = src ? sources[src] : [];
+  }
+  return leaf;
+}
+
 export function buildExplorerTree(
   modules: readonly AppModule[],
   sources: DynamicSources,
@@ -63,18 +77,8 @@ export function buildExplorerTree(
     const g = mod.beaconGroup;
     if (!g || g === "hidden" || g === "settings") continue;
     if (!GROUP_ORDER.includes(g)) continue;
-    const leaf: ExplorerLeaf = {
-      id: mod.id,
-      title: mod.labelKey,
-      kind: mod.beaconKind ?? "static",
-      order: mod.beaconOrder ?? 1000,
-    };
-    if (leaf.kind === "dynamic-group") {
-      const src = dynamicSourceFor(leaf.id);
-      leaf.instances = src ? sources[src] : [];
-    }
     const group = byGroup.get(g);
-    if (group) group.push(leaf);
+    if (group) group.push(leafForModule(mod, sources));
   }
 
   return GROUP_ORDER.map((id) => {

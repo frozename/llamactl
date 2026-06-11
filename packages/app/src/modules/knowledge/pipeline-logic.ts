@@ -1,4 +1,4 @@
-import type { FormState, SourceState } from "./pipeline-types";
+import type { FormState, GitSource, HttpSource, SourceState } from "./pipeline-types";
 
 export function parseTagString(raw: string): Record<string, unknown> | undefined {
   if (!raw.trim()) return undefined;
@@ -21,29 +21,28 @@ export function parseTagString(raw: string): Record<string, unknown> | undefined
   return undefined;
 }
 
-export function buildSource(s: SourceState): Record<string, unknown> {
-  const tag = s.tag ? parseTagString(s.tag) : undefined;
-  if (s.kind === "filesystem")
-    return {
-      kind: "filesystem",
-      root: s.root.trim(),
-      glob: s.glob.trim() || "**/*",
-      ...(tag ? { tag } : {}),
-    };
-  if (s.kind === "http") {
-    const out: Record<string, unknown> = {
-      kind: "http",
-      url: s.url.trim(),
-      max_depth: s.max_depth,
-      same_origin: s.same_origin,
-      ignore_robots: s.ignore_robots,
-      rate_limit_per_sec: s.rate_limit_per_sec,
-      timeout_ms: s.timeout_ms,
-    };
-    if (s.tokenRef?.trim()) out.auth = { tokenRef: s.tokenRef.trim() };
-    if (tag) out.tag = tag;
-    return out;
-  }
+function buildHttpSource(
+  s: HttpSource,
+  tag: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    kind: "http",
+    url: s.url.trim(),
+    max_depth: s.max_depth,
+    same_origin: s.same_origin,
+    ignore_robots: s.ignore_robots,
+    rate_limit_per_sec: s.rate_limit_per_sec,
+    timeout_ms: s.timeout_ms,
+  };
+  if (s.tokenRef?.trim()) out.auth = { tokenRef: s.tokenRef.trim() };
+  if (tag) out.tag = tag;
+  return out;
+}
+
+function buildGitSource(
+  s: GitSource,
+  tag: Record<string, unknown> | undefined,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {
     kind: "git",
     repo: s.repo.trim(),
@@ -54,6 +53,19 @@ export function buildSource(s: SourceState): Record<string, unknown> {
   if (s.tokenRef?.trim()) out.auth = { tokenRef: s.tokenRef.trim() };
   if (tag) out.tag = tag;
   return out;
+}
+
+export function buildSource(s: SourceState): Record<string, unknown> {
+  const tag = s.tag ? parseTagString(s.tag) : undefined;
+  if (s.kind === "filesystem")
+    return {
+      kind: "filesystem",
+      root: s.root.trim(),
+      glob: s.glob.trim() || "**/*",
+      ...(tag ? { tag } : {}),
+    };
+  if (s.kind === "http") return buildHttpSource(s, tag);
+  return buildGitSource(s, tag);
 }
 
 export function buildManifest(form: FormState): unknown {
@@ -79,6 +91,13 @@ export function buildManifest(form: FormState): unknown {
   };
 }
 
+function sourceFieldError(s: SourceState, i: number): string | null {
+  if (s.kind === "filesystem" && !s.root.trim()) return `sources[${String(i)}].root is required`;
+  if (s.kind === "http" && !s.url.trim()) return `sources[${String(i)}].url is required`;
+  if (s.kind === "git" && !s.repo.trim()) return `sources[${String(i)}].repo is required`;
+  return null;
+}
+
 export function validate(form: FormState): string[] {
   const errs: string[] = [];
   if (!form.name.trim()) errs.push("name is required");
@@ -86,10 +105,8 @@ export function validate(form: FormState): string[] {
   if (!form.collection.trim()) errs.push("destination.collection is required");
   if (form.sources.length === 0) errs.push("at least one source is required");
   for (const [i, s] of form.sources.entries()) {
-    if (s.kind === "filesystem" && !s.root.trim())
-      errs.push(`sources[${String(i)}].root is required`);
-    if (s.kind === "http" && !s.url.trim()) errs.push(`sources[${String(i)}].url is required`);
-    if (s.kind === "git" && !s.repo.trim()) errs.push(`sources[${String(i)}].repo is required`);
+    const err = sourceFieldError(s, i);
+    if (err) errs.push(err);
   }
   return errs;
 }

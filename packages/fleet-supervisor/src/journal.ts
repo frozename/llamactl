@@ -40,6 +40,42 @@ export function readCurrentLeaseHolder(journalPath: string): string | null {
   return latest?.holder ?? null;
 }
 
+interface JournalMoveLine {
+  kind?: string;
+  workload?: string;
+  ts?: string;
+  action?: { type?: string };
+  transition?: { subject?: string };
+}
+
+function moveWorkloadFrom(parsed: JournalMoveLine): string | null {
+  if (parsed.kind === "fleet-move") {
+    return typeof parsed.workload === "string" ? parsed.workload : null;
+  }
+  if (
+    parsed.kind === "fleet-proposal" &&
+    parsed.action?.type === "move" &&
+    typeof parsed.transition?.subject === "string"
+  ) {
+    return parsed.transition.subject;
+  }
+  return null;
+}
+
+function parseMoveLine(trimmed: string): { workload: string; movedAtMs: number } | null {
+  try {
+    const parsed = JSON.parse(trimmed) as JournalMoveLine;
+    const workload = moveWorkloadFrom(parsed);
+    if (!workload || typeof parsed.ts !== "string") return null;
+    const movedAtMs = Date.parse(parsed.ts);
+    if (!Number.isFinite(movedAtMs)) return null;
+    return { workload, movedAtMs };
+  } catch {
+    // Best-effort scan: malformed lines are ignored.
+    return null;
+  }
+}
+
 export function readRecentMovesFromJournal(
   journalPath: string,
 ): { workload: string; movedAtMs: number }[] {
@@ -50,33 +86,11 @@ export function readRecentMovesFromJournal(
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    try {
-      const parsed = JSON.parse(trimmed) as {
-        kind?: string;
-        workload?: string;
-        ts?: string;
-        action?: { type?: string };
-        transition?: { subject?: string };
-      };
-      let workload: string | null = null;
-      if (parsed.kind === "fleet-move") {
-        workload = typeof parsed.workload === "string" ? parsed.workload : null;
-      } else if (
-        parsed.kind === "fleet-proposal" &&
-        parsed.action?.type === "move" &&
-        typeof parsed.transition?.subject === "string"
-      ) {
-        workload = parsed.transition.subject;
-      }
-      if (!workload || typeof parsed.ts !== "string") continue;
-      const movedAtMs = Date.parse(parsed.ts);
-      if (!Number.isFinite(movedAtMs)) continue;
-      const prior = latestByWorkload.get(workload);
-      if (prior === undefined || movedAtMs > prior) {
-        latestByWorkload.set(workload, movedAtMs);
-      }
-    } catch {
-      // Best-effort scan: malformed lines are ignored.
+    const move = parseMoveLine(trimmed);
+    if (!move) continue;
+    const prior = latestByWorkload.get(move.workload);
+    if (prior === undefined || move.movedAtMs > prior) {
+      latestByWorkload.set(move.workload, move.movedAtMs);
     }
   }
 

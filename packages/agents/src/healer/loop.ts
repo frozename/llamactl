@@ -22,7 +22,7 @@ import {
   type ProbeState,
   stateTransitions,
 } from "./probe.js";
-import { askPlanner, buildGoal, proposalId } from "./remediation.js";
+import { askPlanner, buildGoal, proposalId, type Transition } from "./remediation.js";
 import { gatePlan, type PlanLike, type Tier } from "./severity.js";
 
 /**
@@ -100,97 +100,77 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
       ...(opts.now ? { now: opts.now } : {}),
     });
 
+  // Acquire one probe report, preferring the nova facade and falling
+  // back to the direct probe when the facade call fails. Direct-probe
+  // failures propagate to the caller.
+  const acquireReport = async (): Promise<{ report: ProbeReport; source: "nova" | "direct" }> => {
+    const toolClient = opts.toolClient;
+    if (!toolClient) return { report: await runDirectProbe(), source: "direct" };
+    try {
+      return { report: await probeFleetViaNova(toolClient), source: "nova" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `healer: facade health call failed: ${msg}; falling back to direct probe\n`,
+      );
+      return { report: await runDirectProbe(), source: "direct" };
+    }
+  };
+
+  const writeEntry = (entry: JournalEntry): void => {
+    writeJournal(entry, journalPath);
+  };
+
+  const journalProbeError = (err: unknown): void => {
+    writeEntry({
+      kind: "error",
+      ts: new Date((opts.now ?? Date.now)()).toISOString(),
+      message: (err as Error).message,
+    });
+  };
+
+  const runTick = async (): Promise<"stop" | "continue"> => {
+    let acquired: { report: ProbeReport; source: "nova" | "direct" };
+    try {
+      acquired = await acquireReport();
+    } catch (err) {
+      journalProbeError(err);
+      return opts.once ? "stop" : "continue";
+    }
+    const { report, source } = acquired;
+
+    const transitions = stateTransitions(previous, report);
+    journalTransitions(transitions, report.ts, writeEntry);
+    writeEntry({ kind: "tick", ts: report.ts, report, source });
+    previous = report;
+    opts.onTick?.(report, transitions);
+
+    // Remediation path — propose on every healthy→unhealthy/degraded
+    // flip. Only fires when a toolClient is wired (the planner lives
+    // under nova-mcp); operators running without the facade skip this
+    // block entirely. The scheduler is sequential, so a long-running
+    // executePlan completes before the loop sleeps and starts the next tick.
+    if (opts.toolClient) {
+      await runRemediations({
+        toolClient: opts.toolClient,
+        transitions,
+        source,
+        mode,
+        severityThreshold,
+        writeJournal: writeEntry,
+        onProposal: opts.onProposal,
+      });
+    }
+
+    return opts.once || stopped ? "stop" : "continue";
+  };
+
   const done = (async (): Promise<void> => {
     for (;;) {
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Mutated through the returned handle between awaited ticks.
       if (stopped) return;
-      let report: ProbeReport;
-      const toolClient = opts.toolClient;
-      let source: "nova" | "direct" = toolClient ? "nova" : "direct";
-      try {
-        if (toolClient) {
-          try {
-            report = await probeFleetViaNova(toolClient);
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            process.stderr.write(
-              `healer: facade health call failed: ${msg}; falling back to direct probe\n`,
-            );
-            source = "direct";
-            report = await runDirectProbe();
-          }
-        } else {
-          report = await runDirectProbe();
-        }
-      } catch (err) {
-        writeJournal(
-          {
-            kind: "error",
-            ts: new Date((opts.now ?? Date.now)()).toISOString(),
-            message: (err as Error).message,
-          },
-          journalPath,
-        );
-        if (opts.once) return;
-        await sleep(intervalMs);
-        continue;
-      }
-
-      const transitions = stateTransitions(previous, report);
-      for (const t of transitions) {
-        writeJournal(
-          {
-            kind: "transition",
-            ts: report.ts,
-            name: t.name,
-            resourceKind: t.kind,
-            from: t.from,
-            to: t.to,
-          },
-          journalPath,
-        );
-      }
-      writeJournal({ kind: "tick", ts: report.ts, report, source }, journalPath);
-      previous = report;
-      opts.onTick?.(report, transitions);
-
-      // Remediation path — propose on every healthy→unhealthy/degraded
-      // flip. Only fires when a toolClient is wired (the planner lives
-      // under nova-mcp); operators running without the facade skip this
-      // block entirely. The scheduler is sequential, so a long-running
-      // executePlan completes before the loop sleeps and starts the next tick.
-      if (toolClient) {
-        await remediate({
-          toolClient,
-          transitions,
-          source,
-          mode,
-          severityThreshold,
-          writeJournal: (entry) => {
-            writeJournal(entry, journalPath);
-          },
-          onProposal: opts.onProposal,
-        });
-        // Slice D — composite remediation. Runs on the same tick as
-        // probe remediation and shares the propose/auto gating. Any
-        // composite in Degraded/Failed (or with a Failed component)
-        // gets a hardcoded tier-2 `llamactl.composite.apply` plan
-        // emitted against the journal, with the same executePlan +
-        // severity-gate path as the planner-produced variants.
-        await remediateComposites({
-          toolClient,
-          source,
-          mode,
-          severityThreshold,
-          writeJournal: (entry) => {
-            writeJournal(entry, journalPath);
-          },
-          onProposal: opts.onProposal,
-        });
-      }
-
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Mutated through the returned handle between awaited ticks.
-      if (opts.once || stopped) return;
+      const outcome = await runTick();
+      if (outcome === "stop") return;
       await sleep(intervalMs);
     }
   })();
@@ -205,6 +185,41 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function journalTransitions(
+  transitions: ReturnType<typeof stateTransitions>,
+  ts: string,
+  writeEntry: (entry: JournalEntry) => void,
+): void {
+  for (const t of transitions) {
+    writeEntry({
+      kind: "transition",
+      ts,
+      name: t.name,
+      resourceKind: t.kind,
+      from: t.from,
+      to: t.to,
+    });
+  }
+}
+
+async function runRemediations(opts: RemediateOptions): Promise<void> {
+  await remediate(opts);
+  // Slice D — composite remediation. Runs on the same tick as
+  // probe remediation and shares the propose/auto gating. Any
+  // composite in Degraded/Failed (or with a Failed component)
+  // gets a hardcoded tier-2 `llamactl.composite.apply` plan
+  // emitted against the journal, with the same executePlan +
+  // severity-gate path as the planner-produced variants.
+  await remediateComposites({
+    toolClient: opts.toolClient,
+    source: opts.source,
+    mode: opts.mode,
+    severityThreshold: opts.severityThreshold,
+    writeJournal: opts.writeJournal,
+    onProposal: opts.onProposal,
+  });
 }
 
 /** Predicate: which probe-state flips should trigger a remediation
@@ -231,79 +246,88 @@ interface RemediateOptions {
 async function remediate(opts: RemediateOptions): Promise<void> {
   for (const t of opts.transitions) {
     if (!shouldRemediate(t.from, t.to)) continue;
-    const snapshot: JournalTransitionSnapshot = {
-      name: t.name,
-      resourceKind: t.kind,
-      from: t.from,
-      to: t.to,
-    };
-    const goal = buildGoal(t);
-    const ask = await askPlanner(opts.toolClient, goal);
-    const ts = new Date().toISOString();
-    if (!ask.ok) {
-      opts.writeJournal({
-        kind: "plan-failed",
-        ts,
-        transition: snapshot,
-        reason: ask.reason,
-        message: ask.message,
-      });
-      continue;
-    }
+    await remediateTransition(opts, t);
+  }
+}
 
-    const id = proposalId(ask.plan);
-    const proposal: JournalProposalEntry = {
-      kind: "proposal",
+async function remediateTransition(opts: RemediateOptions, t: Transition): Promise<void> {
+  const snapshot: JournalTransitionSnapshot = {
+    name: t.name,
+    resourceKind: t.kind,
+    from: t.from,
+    to: t.to,
+  };
+  const goal = buildGoal(t);
+  const ask = await askPlanner(opts.toolClient, goal);
+  const ts = new Date().toISOString();
+  if (!ask.ok) {
+    opts.writeJournal({
+      kind: "plan-failed",
       ts,
       transition: snapshot,
-      plan: ask.plan,
-      proposalId: id,
-      source: opts.source,
-    };
-    opts.writeJournal(proposal);
-    opts.onProposal?.(proposal);
-
-    if (opts.mode === "propose") continue;
-
-    // Auto mode — planner-owned confirmation flag is absolute.
-    if (ask.plan.requiresConfirmation) {
-      opts.writeJournal({
-        kind: "refused",
-        ts: new Date().toISOString(),
-        proposalId: id,
-        reason: "planner-requires-confirmation",
-      });
-      continue;
-    }
-
-    // Severity gate. If the plan has any tier-3 step, refuse with
-    // the destructive-specific reason regardless of threshold.
-    const gate = gatePlan(ask.plan, opts.severityThreshold);
-    const hasDestructive = gate.refusedSteps.some((s) => s.tier === 3);
-    if (!gate.allowed) {
-      opts.writeJournal({
-        kind: "refused",
-        ts: new Date().toISOString(),
-        proposalId: id,
-        reason: hasDestructive ? "destructive-requires-manual-approval" : "severity-exceeded",
-        refusedSteps: gate.refusedSteps,
-      });
-      continue;
-    }
-
-    const exec = await executePlan(ask.plan, {
-      toolClient: opts.toolClient,
-      dryRun: false,
+      reason: ask.reason,
+      message: ask.message,
     });
-    const executed = {
-      kind: "executed" as const,
+    return;
+  }
+
+  const id = proposalId(ask.plan);
+  const proposal: JournalProposalEntry = {
+    kind: "proposal",
+    ts,
+    transition: snapshot,
+    plan: ask.plan,
+    proposalId: id,
+    source: opts.source,
+  };
+  opts.writeJournal(proposal);
+  opts.onProposal?.(proposal);
+
+  if (opts.mode === "propose") return;
+
+  await autoExecutePlan(opts, ask.plan, id);
+}
+
+/** Auto mode — confirmation flag + severity gate, then execution. */
+async function autoExecutePlan(opts: RemediateOptions, plan: PlanLike, id: string): Promise<void> {
+  // Planner-owned confirmation flag is absolute.
+  if (plan.requiresConfirmation) {
+    opts.writeJournal({
+      kind: "refused",
       ts: new Date().toISOString(),
       proposalId: id,
-      steps: exec.steps,
-      ...(exec.stoppedAt !== undefined ? { stoppedAt: exec.stoppedAt } : {}),
-    };
-    opts.writeJournal(executed);
+      reason: "planner-requires-confirmation",
+    });
+    return;
   }
+
+  // Severity gate. If the plan has any tier-3 step, refuse with
+  // the destructive-specific reason regardless of threshold.
+  const gate = gatePlan(plan, opts.severityThreshold);
+  if (!gate.allowed) {
+    const hasDestructive = gate.refusedSteps.some((s) => s.tier === 3);
+    opts.writeJournal({
+      kind: "refused",
+      ts: new Date().toISOString(),
+      proposalId: id,
+      reason: hasDestructive ? "destructive-requires-manual-approval" : "severity-exceeded",
+      refusedSteps: gate.refusedSteps,
+    });
+    return;
+  }
+
+  const exec = await executePlan(plan, {
+    toolClient: opts.toolClient,
+    dryRun: false,
+  });
+  const executed = {
+    kind: "executed" as const,
+    ts: new Date().toISOString(),
+    proposalId: id,
+    steps: exec.steps,
+    ...(exec.stoppedAt !== undefined ? { stoppedAt: exec.stoppedAt } : {}),
+  };
+  opts.writeJournal(executed);
 }
 
 interface RemediateCompositesOptions {

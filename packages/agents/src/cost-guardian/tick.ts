@@ -118,41 +118,62 @@ export async function runCostGuardianTick(
   }
   await postWebhookIfApplicable(opts, decision);
 
+  if (opts.skipJournal) return decision;
+
   // A failed force-private wet-run blocks any subsequent tier-3
   // wet-run in the same tick (one-action-attempt invariant).
-  let tier2WetRunFailed = false;
-  if (!opts.skipJournal && (decision.tier === "force_private" || decision.tier === "deregister")) {
-    const dryOk = await runForcePrivateDryRun(opts, decision);
-    if (dryOk && opts.config.auto_force_private) {
-      const wetOk = await runForcePrivateWetRun(opts, decision);
-      if (!wetOk) tier2WetRunFailed = true;
-    }
-  }
-
-  if (!opts.skipJournal && decision.tier === "deregister" && decision.deregisterTarget) {
-    const provider = decision.deregisterTarget;
-    const dryOk = await runDeregisterDryRun(opts, decision, provider);
-    if (dryOk && opts.config.auto_deregister && !tier2WetRunFailed) {
-      if (opts.config.protectedProviders.includes(provider)) {
-        const refused: CostJournalActionEntry = {
-          kind: "action",
-          ts: decision.ts,
-          action: "deregister-refused",
-          ok: true,
-          detail: {
-            reason: "provider-protected",
-            provider,
-            protectedProviders: opts.config.protectedProviders,
-          },
-        };
-        appendCostJournal(refused, opts.journalPath);
-      } else {
-        await runDeregisterWetRun(opts, decision, provider);
-      }
-    }
-  }
+  const tier2WetRunFailed = await runTier2Escalation(opts, decision);
+  await runTier3Escalation(opts, decision, tier2WetRunFailed);
 
   return decision;
+}
+
+/** Tier-2 dry-run + optional wet-run. Returns true when the wet-run
+ *  was attempted and failed (which blocks the tier-3 wet-run). */
+async function runTier2Escalation(
+  opts: RunCostGuardianTickOptions,
+  decision: GuardianDecision,
+): Promise<boolean> {
+  if (decision.tier !== "force_private" && decision.tier !== "deregister") return false;
+  const dryOk = await runForcePrivateDryRun(opts, decision);
+  if (!dryOk || !opts.config.auto_force_private) return false;
+  const wetOk = await runForcePrivateWetRun(opts, decision);
+  return !wetOk;
+}
+
+async function runTier3Escalation(
+  opts: RunCostGuardianTickOptions,
+  decision: GuardianDecision,
+  tier2WetRunFailed: boolean,
+): Promise<void> {
+  if (decision.tier !== "deregister" || !decision.deregisterTarget) return;
+  const provider = decision.deregisterTarget;
+  const dryOk = await runDeregisterDryRun(opts, decision, provider);
+  if (!dryOk || !opts.config.auto_deregister || tier2WetRunFailed) return;
+  if (opts.config.protectedProviders.includes(provider)) {
+    journalDeregisterRefusal(opts, decision, provider);
+    return;
+  }
+  await runDeregisterWetRun(opts, decision, provider);
+}
+
+function journalDeregisterRefusal(
+  opts: RunCostGuardianTickOptions,
+  decision: GuardianDecision,
+  provider: string,
+): void {
+  const refused: CostJournalActionEntry = {
+    kind: "action",
+    ts: decision.ts,
+    action: "deregister-refused",
+    ok: true,
+    detail: {
+      reason: "provider-protected",
+      provider,
+      protectedProviders: opts.config.protectedProviders,
+    },
+  };
+  appendCostJournal(refused, opts.journalPath);
 }
 
 async function postWebhookIfApplicable(

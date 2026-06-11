@@ -98,6 +98,55 @@ const tierRank: Record<CostGuardianTier, number> = {
   deregister: 3,
 };
 
+function fractionOfBudget(
+  cost: number | undefined,
+  budget: number | undefined,
+): number | undefined {
+  if (cost === undefined || budget === undefined || budget <= 0) return undefined;
+  return cost / budget;
+}
+
+function horizonReason(
+  label: "daily" | "weekly",
+  cost: number | undefined,
+  budget: number | undefined,
+  fraction: number,
+): string {
+  return `${label} spend $${(cost ?? 0).toFixed(4)} of $${(budget ?? 0).toFixed(2)} budget = ${(fraction * 100).toFixed(1)}%`;
+}
+
+function buildReason(
+  daily: { cost?: number; budget?: number; fraction?: number },
+  weekly: { cost?: number; budget?: number; fraction?: number },
+): string {
+  const reasonParts: string[] = [];
+  if (daily.fraction !== undefined) {
+    reasonParts.push(horizonReason("daily", daily.cost, daily.budget, daily.fraction));
+  }
+  if (weekly.fraction !== undefined) {
+    reasonParts.push(horizonReason("weekly", weekly.cost, weekly.budget, weekly.fraction));
+  }
+  if (reasonParts.length === 0) {
+    return "no budget configured or no pricing data — nothing to evaluate";
+  }
+  return reasonParts.join("; ");
+}
+
+function attachSpendFields(
+  decision: GuardianDecision,
+  fields: {
+    dailyFraction?: number;
+    weeklyFraction?: number;
+    dailyCost?: number;
+    weeklyCost?: number;
+  },
+): void {
+  if (fields.dailyFraction !== undefined) decision.dailyFraction = fields.dailyFraction;
+  if (fields.weeklyFraction !== undefined) decision.weeklyFraction = fields.weeklyFraction;
+  if (fields.dailyCost !== undefined) decision.dailyUsd = fields.dailyCost;
+  if (fields.weeklyCost !== undefined) decision.weeklyUsd = fields.weeklyCost;
+}
+
 export function decideGuardianAction(input: GuardianDecisionInput): GuardianDecision {
   const now = input.now ? input.now() : new Date();
   const ts = now.toISOString();
@@ -108,35 +157,14 @@ export function decideGuardianAction(input: GuardianDecisionInput): GuardianDeci
   const dailyBudget = config.budget.daily_usd;
   const weeklyBudget = config.budget.weekly_usd;
 
-  const dailyFraction =
-    dailyCost !== undefined && dailyBudget !== undefined && dailyBudget > 0
-      ? dailyCost / dailyBudget
-      : undefined;
-  const weeklyFraction =
-    weeklyCost !== undefined && weeklyBudget !== undefined && weeklyBudget > 0
-      ? weeklyCost / weeklyBudget
-      : undefined;
+  const dailyFraction = fractionOfBudget(dailyCost, dailyBudget);
+  const weeklyFraction = fractionOfBudget(weeklyCost, weeklyBudget);
 
   const dailyTier = tierForFraction(dailyFraction, config.thresholds);
   const weeklyTier = tierForFraction(weeklyFraction, config.thresholds);
 
   // Stricter of the two wins.
   const winning = tierRank[dailyTier.tier] >= tierRank[weeklyTier.tier] ? dailyTier : weeklyTier;
-
-  let reasonParts: string[] = [];
-  if (dailyFraction !== undefined) {
-    reasonParts.push(
-      `daily spend $${(dailyCost ?? 0).toFixed(4)} of $${(dailyBudget ?? 0).toFixed(2)} budget = ${(dailyFraction * 100).toFixed(1)}%`,
-    );
-  }
-  if (weeklyFraction !== undefined) {
-    reasonParts.push(
-      `weekly spend $${(weeklyCost ?? 0).toFixed(4)} of $${(weeklyBudget ?? 0).toFixed(2)} budget = ${(weeklyFraction * 100).toFixed(1)}%`,
-    );
-  }
-  if (reasonParts.length === 0) {
-    reasonParts = ["no budget configured or no pricing data — nothing to evaluate"];
-  }
 
   const deregisterTarget =
     winning.tier === "deregister"
@@ -146,13 +174,13 @@ export function decideGuardianAction(input: GuardianDecisionInput): GuardianDeci
   const decision: GuardianDecision = {
     ts,
     tier: winning.tier,
-    reason: reasonParts.join("; "),
+    reason: buildReason(
+      { cost: dailyCost, budget: dailyBudget, fraction: dailyFraction },
+      { cost: weeklyCost, budget: weeklyBudget, fraction: weeklyFraction },
+    ),
     thresholdCrossed: winning.crossed,
     deregisterTarget,
   };
-  if (dailyFraction !== undefined) decision.dailyFraction = dailyFraction;
-  if (weeklyFraction !== undefined) decision.weeklyFraction = weeklyFraction;
-  if (dailyCost !== undefined) decision.dailyUsd = dailyCost;
-  if (weeklyCost !== undefined) decision.weeklyUsd = weeklyCost;
+  attachSpendFields(decision, { dailyFraction, weeklyFraction, dailyCost, weeklyCost });
   return decision;
 }

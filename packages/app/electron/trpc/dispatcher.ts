@@ -472,40 +472,46 @@ const uiRouter = t.router({
         mtimeMs: number;
       }
       const hits: Entry[] = [];
+      const listDirOrNull = (dir: string): string[] | null => {
+        try {
+          return readdirSync(dir);
+        } catch {
+          return null;
+        }
+      };
+      const recordRepo = (dir: string): void => {
+        try {
+          const st = statSync(dir);
+          hits.push({
+            path: dir,
+            name: dir.split("/").slice(-1)[0] ?? dir,
+            mtimeMs: st.mtimeMs,
+          });
+        } catch {
+          /* unreadable — skip */
+        }
+      };
+      const isDirectory = (child: string): boolean => {
+        try {
+          return statSync(child).isDirectory();
+        } catch {
+          return false;
+        }
+      };
       const walk = (dir: string, depth: number): void => {
         if (depth > input.maxDepth) return;
-        let items: string[];
-        try {
-          items = readdirSync(dir);
-        } catch {
-          return;
-        }
+        const items = listDirOrNull(dir);
+        if (items === null) return;
         // If this dir is itself a repo, don't descend (avoid
         // returning submodules + siblings with the same mtime).
         if (items.includes(".git")) {
-          try {
-            const st = statSync(dir);
-            hits.push({
-              path: dir,
-              name: dir.split("/").slice(-1)[0] ?? dir,
-              mtimeMs: st.mtimeMs,
-            });
-          } catch {
-            /* unreadable — skip */
-          }
+          recordRepo(dir);
           return;
         }
         for (const item of items) {
-          if (item.startsWith(".")) continue;
-          if (item === "node_modules") continue;
+          if (item.startsWith(".") || item === "node_modules") continue;
           const child = join(dir, item);
-          try {
-            const st = statSync(child);
-            if (!st.isDirectory()) continue;
-          } catch {
-            continue;
-          }
-          walk(child, depth + 1);
+          if (isDirectory(child)) walk(child, depth + 1);
         }
       };
       walk(expandedRoot, 0);
@@ -685,6 +691,116 @@ function wrapQueryOrMutation(
   return (type === "query" ? base.query(resolver) : base.mutation(resolver)) as AnyProcedure;
 }
 
+/**
+ * Local half of `wrapSubscription`. The base subscription resolver
+ * needs a real AbortSignal (`bridgeEventStream` in @llamactl/remote
+ * calls `signal.addEventListener('abort', ...)` unconditionally).
+ * electron-trpc's v10 `callProcedure` path doesn't forward a signal
+ * through `opts`, so we construct our own controller and build a
+ * fresh caller bound to it. When the renderer unsubscribes, our
+ * outer Observable teardown invokes `iterator.return()` on this
+ * generator, which lands in the `finally` and aborts the controller
+ * — letting the inner subscription's cleanup fire.
+ */
+async function* runLocalSubscription(
+  path: string,
+  input: unknown,
+  clientSignal: AbortSignal | undefined,
+): AsyncGenerator<unknown, void> {
+  const controller = new AbortController();
+  if (clientSignal?.aborted) controller.abort();
+  const onOuterAbort = (): void => {
+    controller.abort();
+  };
+  clientSignal?.addEventListener("abort", onOuterAbort);
+  try {
+    const localCaller = baseRouter.createCaller(
+      {},
+      { signal: controller.signal },
+    ) as unknown as LocalCaller;
+    const iterable = (await localProcedure(localCaller, path)(input)) as AsyncIterable<unknown>;
+    for await (const ev of iterable) {
+      if (controller.signal.aborted) break;
+      yield ev;
+    }
+  } finally {
+    clientSignal?.removeEventListener("abort", onOuterAbort);
+    controller.abort();
+  }
+}
+
+/**
+ * Remote half of `wrapSubscription`: bridge the tRPC client's
+ * callback subscription into an async generator, honoring client
+ * disconnects.
+ */
+async function* runRemoteSubscription(
+  client: RemoteClient,
+  path: string,
+  input: unknown,
+  clientSignal: AbortSignal | undefined,
+): AsyncGenerator<unknown, void> {
+  const queue: unknown[] = [];
+  const state = { done: false };
+  let err: unknown = null;
+  let wake: (() => void) | null = null;
+  const drain = (): void => {
+    const w = wake;
+    wake = null;
+    w?.();
+  };
+
+  const sub = remoteProcedure(client, path).subscribe(input, {
+    onData: (ev: unknown) => {
+      queue.push(ev);
+      drain();
+    },
+    onError: (e: unknown) => {
+      err = e;
+      state.done = true;
+      drain();
+    },
+    onComplete: () => {
+      state.done = true;
+      drain();
+    },
+  });
+
+  const onClientAbort = (): void => {
+    try {
+      sub.unsubscribe();
+    } catch {
+      // best effort
+    }
+    state.done = true;
+    drain();
+  };
+  clientSignal?.addEventListener("abort", onClientAbort);
+
+  try {
+    for (;;) {
+      if (queue.length > 0) {
+        const next = queue.shift();
+        yield next;
+        continue;
+      }
+      if (state.done) break;
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+    }
+    if (err instanceof Error) throw err;
+    if (err) throw new Error(formatUnknownError(err));
+  } finally {
+    clientSignal?.removeEventListener("abort", onClientAbort);
+    try {
+      sub.unsubscribe();
+    } catch {
+      // best effort
+    }
+  }
+}
+
 function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): AnyProcedure {
   // Same rationale as `wrapQueryOrMutation` above: electron-trpc's
   // IPC serializer expects an `.input()` declaration on every wrapped
@@ -695,105 +811,12 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): AnyPr
   // undefined"`. Pass-through semantics preserved via `z.unknown()`.
   return t.procedure.input(z.unknown()).subscription(async function* (opts) {
     const target = resolveDispatchTarget(path);
-    const clientSignal = opts.signal;
     if (target.kind === "local") {
-      // The base subscription resolver needs a real AbortSignal
-      // (`bridgeEventStream` in @llamactl/remote calls
-      // `signal.addEventListener('abort', ...)` unconditionally).
-      // electron-trpc's v10 `callProcedure` path doesn't forward a
-      // signal through `opts`, so we construct our own controller
-      // and build a fresh caller bound to it. When the renderer
-      // unsubscribes, our outer Observable teardown invokes
-      // `iterator.return()` on this generator, which lands in the
-      // `finally` and aborts the controller — letting the inner
-      // subscription's cleanup fire.
-      const controller = new AbortController();
-      if (clientSignal?.aborted) controller.abort();
-      const onOuterAbort = (): void => {
-        controller.abort();
-      };
-      clientSignal?.addEventListener("abort", onOuterAbort);
-      try {
-        const localCaller = baseRouter.createCaller(
-          {},
-          { signal: controller.signal },
-        ) as unknown as LocalCaller;
-        const iterable = (await localProcedure(
-          localCaller,
-          path,
-        )(opts.input)) as AsyncIterable<unknown>;
-        for await (const ev of iterable) {
-          if (controller.signal.aborted) break;
-          yield ev;
-        }
-      } finally {
-        clientSignal?.removeEventListener("abort", onOuterAbort);
-        controller.abort();
-      }
+      yield* runLocalSubscription(path, opts.input, opts.signal);
       return;
     }
-    // Remote: bridge tRPC client's callback subscription into an
-    // async generator, honoring client disconnects.
     const client = buildRemoteClient(target, fetchFactory);
-    const queue: unknown[] = [];
-    const state = { done: false };
-    let err: unknown = null;
-    let wake: (() => void) | null = null;
-    const drain = (): void => {
-      const w = wake;
-      wake = null;
-      w?.();
-    };
-
-    const sub = remoteProcedure(client, path).subscribe(opts.input, {
-      onData: (ev: unknown) => {
-        queue.push(ev);
-        drain();
-      },
-      onError: (e: unknown) => {
-        err = e;
-        state.done = true;
-        drain();
-      },
-      onComplete: () => {
-        state.done = true;
-        drain();
-      },
-    });
-
-    const onClientAbort = (): void => {
-      try {
-        sub.unsubscribe();
-      } catch {
-        // best effort
-      }
-      state.done = true;
-      drain();
-    };
-    clientSignal?.addEventListener("abort", onClientAbort);
-
-    try {
-      for (;;) {
-        if (queue.length > 0) {
-          const next = queue.shift();
-          yield next;
-          continue;
-        }
-        if (state.done) break;
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
-      }
-      if (err instanceof Error) throw err;
-      if (err) throw new Error(formatUnknownError(err));
-    } finally {
-      clientSignal?.removeEventListener("abort", onClientAbort);
-      try {
-        sub.unsubscribe();
-      } catch {
-        // best effort
-      }
-    }
+    yield* runRemoteSubscription(client, path, opts.input, opts.signal);
   }) as AnyProcedure;
 }
 
@@ -809,6 +832,24 @@ function wrapSubscription(path: string, fetchFactory: PinnedFetchFactory): AnyPr
  * from `@llamactl/remote`) so the self-signed cert round-trips
  * without needing Node's HTTPS agent.
  */
+/**
+ * tRPC v11 exposes the procedure kind on `_def.type`. Older paths
+ * used `_def.query`/`_def.mutation`/`_def.subscription` booleans
+ * — check both to stay robust across tRPC point releases.
+ */
+function procedureKind(def: CompatProcedureDef): ProcedureKind | undefined {
+  // Widen deliberately: at runtime `type` may be absent or carry an
+  // unexpected value on other tRPC releases, despite the v11 typing.
+  const rawType: string | undefined = def.type;
+  if (rawType === "query" || rawType === "mutation" || rawType === "subscription") {
+    return rawType;
+  }
+  if (def.query) return "query";
+  if (def.mutation) return "mutation";
+  if (def.subscription) return "subscription";
+  return undefined;
+}
+
 export function buildDispatcherRouter(
   fetchFactory: PinnedFetchFactory = makeNodePinnedFetch,
 ): BaseAppRouter {
@@ -816,23 +857,7 @@ export function buildDispatcherRouter(
   const baseDef = (baseRouter as unknown as RouterWithCompat)._def;
   const source = baseDef.procedures as Record<string, CompatProcedure>;
   for (const [name, orig] of Object.entries(source)) {
-    // tRPC v11 exposes the procedure kind on `_def.type`. Older paths
-    // used `_def.query`/`_def.mutation`/`_def.subscription` booleans
-    // — check both to stay robust across tRPC point releases.
-    const def = orig._def;
-    // Widen deliberately: at runtime `type` may be absent or carry an
-    // unexpected value on other tRPC releases, despite the v11 typing.
-    const rawType: string | undefined = def.type;
-    let kind: ProcedureKind | undefined;
-    if (rawType === "query" || rawType === "mutation" || rawType === "subscription") {
-      kind = rawType;
-    } else if (def.query) {
-      kind = "query";
-    } else if (def.mutation) {
-      kind = "mutation";
-    } else if (def.subscription) {
-      kind = "subscription";
-    }
+    const kind = procedureKind(orig._def);
     if (kind === "subscription") {
       procs[name] = wrapSubscription(name, fetchFactory);
     } else if (kind !== undefined) {

@@ -27,22 +27,31 @@ function buildUserMessage(row: CorpusRow): string {
   return `${ctx}Query: ${row.query}\n\nCandidates:\n${cands}\n\nReturn the ranked IDs as JSON.`;
 }
 
-function parseRanking(text: string): string[] | null {
-  let s = text.trim();
-  if (s.includes("@@metadata")) {
-    const parts = s.split("@@metadata", 2);
-    if (parts.length > 1 && parts[1] !== undefined) s = parts[1];
-    if (s.includes("@@end")) {
-      const head = s.split("@@end", 1)[0];
-      if (head !== undefined) s = head;
-    }
+/** Strip the `@@metadata ... @@end` envelope some models wrap around
+ *  their answer, keeping only the payload between the markers. */
+function stripMetadataEnvelope(s: string): string {
+  if (!s.includes("@@metadata")) return s;
+  let out = s;
+  const parts = out.split("@@metadata", 2);
+  if (parts.length > 1 && parts[1] !== undefined) out = parts[1];
+  if (out.includes("@@end")) {
+    const head = out.split("@@end", 1)[0];
+    if (head !== undefined) out = head;
   }
+  return out;
+}
+
+/** Unwrap a ``` fenced block (optionally ```json-prefixed) when present. */
+function stripCodeFence(s: string): string {
   const fenceStart = s.indexOf("```");
   const fenceEnd = fenceStart >= 0 ? s.indexOf("```", fenceStart + 3) : -1;
-  if (fenceStart >= 0 && fenceEnd > fenceStart) {
-    const fenced = s.slice(fenceStart + 3, fenceEnd).trim();
-    s = fenced.startsWith("json") ? fenced.slice(4).trim() : fenced;
-  }
+  if (fenceStart < 0 || fenceEnd <= fenceStart) return s;
+  const fenced = s.slice(fenceStart + 3, fenceEnd).trim();
+  return fenced.startsWith("json") ? fenced.slice(4).trim() : fenced;
+}
+
+function parseRanking(text: string): string[] | null {
+  const s = stripCodeFence(stripMetadataEnvelope(text.trim()));
   const start = s.indexOf("{");
   const end = s.lastIndexOf("}");
   if (start < 0 || end <= start) return null;

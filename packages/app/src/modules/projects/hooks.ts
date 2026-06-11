@@ -80,29 +80,16 @@ export function useGitRepoScanner(): {
       const allRepos: DetectedRepo[] = [];
       const rootsShown: string[] = [];
       for (const root of candidateRoots) {
-        try {
-          const result = await trpcUIClient.uiScanGitRepos.query({
-            root,
-            maxDepth: 2,
-            limit: 30,
-          });
-          if (cancelled) return;
-          if (result.repos.length > 0) {
-            rootsShown.push(result.root);
-            allRepos.push(...result.repos);
-          }
-        } catch (err) {
-          if (!cancelled) console.warn("scan failed:", root, err);
+        const result = await scanSingleRoot(root, () => cancelled);
+        if (result === null) continue;
+        if (cancelled) return;
+        if (result.repos.length > 0) {
+          rootsShown.push(result.root);
+          allRepos.push(...result.repos);
         }
       }
       if (cancelled) return;
-      const seen = new Map<string, DetectedRepo>();
-      for (const r of allRepos) {
-        const prior = seen.get(r.path);
-        if (!prior || prior.mtimeMs < r.mtimeMs) seen.set(r.path, r);
-      }
-      const repos = Array.from(seen.values()).sort((a, b) => b.mtimeMs - a.mtimeMs);
-      setState({ kind: "ready", repos, rootsShown });
+      setState({ kind: "ready", repos: dedupeReposByLatest(allRepos), rootsShown });
     };
     void scan();
     return (): void => {
@@ -111,4 +98,30 @@ export function useGitRepoScanner(): {
   }, [debouncedProjectScanRootsText]);
 
   return { state, expanded, setExpanded };
+}
+
+async function scanSingleRoot(
+  root: string,
+  isCancelled: () => boolean,
+): Promise<{ root: string; repos: DetectedRepo[] } | null> {
+  try {
+    return await trpcUIClient.uiScanGitRepos.query({
+      root,
+      maxDepth: 2,
+      limit: 30,
+    });
+  } catch (err) {
+    if (!isCancelled()) console.warn("scan failed:", root, err);
+    return null;
+  }
+}
+
+/** Keep the most recently touched entry per repo path, newest first. */
+function dedupeReposByLatest(allRepos: DetectedRepo[]): DetectedRepo[] {
+  const seen = new Map<string, DetectedRepo>();
+  for (const r of allRepos) {
+    const prior = seen.get(r.path);
+    if (!prior || prior.mtimeMs < r.mtimeMs) seen.set(r.path, r);
+  }
+  return Array.from(seen.values()).sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
