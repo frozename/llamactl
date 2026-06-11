@@ -1,0 +1,15 @@
+[
+  {
+    "name": "diffusiongemma-26B-A4B-it-mxfp4",
+    "engine": "omlx",
+    "family": "diffusiongemma",
+    "quant": "mxfp4",
+    "size_params": "26B-A4B",
+    "host": "127.0.0.1",
+    "port": 8196,
+    "mlx_model_dir": "/Volumes/WorkSSD/ai-models/mlx",
+    "request_model_id": "mlx-community/diffusiongemma-26B-A4B-it-mxfp4",
+    "extra_args": [],
+    "managed": false
+  }
+]
