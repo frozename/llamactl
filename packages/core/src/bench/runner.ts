@@ -156,6 +156,26 @@ export function formatBenchTimestamp(date: Date = new Date()): string {
  * Returns `'-1'` for missing metrics so the shell's comparator idiom
  * (`-gt` on printf %.0f) stays wire-compatible.
  */
+interface BenchJsonlRow {
+  n_gen?: number;
+  n_prompt?: number;
+  avg_ts?: number;
+}
+
+function parseBenchJsonlRow(line: string): BenchJsonlRow | null {
+  const trimmed = line.trim();
+  if (trimmed === "") return null;
+  try {
+    return JSON.parse(trimmed) as BenchJsonlRow;
+  } catch {
+    return null;
+  }
+}
+
+function benchStatString(value: number | null): string {
+  return value === null ? "-1" : String(value);
+}
+
 export function parseBenchJsonlStats(output: string): {
   gen_ts: string;
   prompt_ts: string;
@@ -163,24 +183,17 @@ export function parseBenchJsonlStats(output: string): {
   let gen: number | null = null;
   let prompt: number | null = null;
   for (const line of output.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === "") continue;
-    let row: { n_gen?: number; n_prompt?: number; avg_ts?: number };
-    try {
-      row = JSON.parse(trimmed) as typeof row;
-    } catch {
-      continue;
-    }
+    const row = parseBenchJsonlRow(line);
+    if (row?.avg_ts === undefined) continue;
     const nGen = row.n_gen ?? 0;
     const nPrompt = row.n_prompt ?? 0;
     const avg = row.avg_ts;
-    if (avg === undefined) continue;
     if (gen === null && nGen > 0) gen = avg;
     if (prompt === null && nPrompt > 0 && nGen === 0) prompt = avg;
   }
   return {
-    gen_ts: gen === null ? "-1" : String(gen),
-    prompt_ts: prompt === null ? "-1" : String(prompt),
+    gen_ts: benchStatString(gen),
+    prompt_ts: benchStatString(prompt),
   };
 }
 
@@ -190,39 +203,52 @@ export function parseBenchJsonlStats(output: string): {
  * of the shell helper so re-runs inside a single stderr don't clobber
  * earlier values.
  */
+const MTMD_MS_PATTERN = /([0-9]+(?:\.[0-9]+)?)\s+ms/;
+const MTMD_TPS_PATTERN = /([0-9]+(?:\.[0-9]+)?)\s+tokens per second/;
+
+interface MtmdScanState {
+  load: string | null;
+  encode: string | null;
+  prompt: string | null;
+  gen: string | null;
+}
+
+function extractMetric(raw: string, pattern: RegExp): string | null {
+  const m = pattern.exec(raw);
+  return m?.[1] ?? null;
+}
+
+/** Fill each still-null metric from one stderr line; first match wins. */
+function scanMtmdLine(stats: MtmdScanState, raw: string): void {
+  if (stats.load === null && raw.includes("load time =")) {
+    stats.load = extractMetric(raw, MTMD_MS_PATTERN);
+  }
+  if (stats.encode === null && raw.includes("image slice encoded in")) {
+    stats.encode = extractMetric(raw, MTMD_MS_PATTERN);
+  }
+  if (stats.prompt === null && raw.includes("prompt eval time =")) {
+    stats.prompt = extractMetric(raw, MTMD_TPS_PATTERN);
+  }
+  if (stats.gen === null && !raw.includes("prompt") && raw.includes("eval time =")) {
+    stats.gen = extractMetric(raw, MTMD_TPS_PATTERN);
+  }
+}
+
 export function parseMtmdCliStats(stderr: string): {
   load_ms: string;
   image_encode_ms: string;
   prompt_tps: string;
   gen_tps: string;
 } {
-  let load: string | null = null;
-  let encode: string | null = null;
-  let prompt: string | null = null;
-  let gen: string | null = null;
+  const stats: MtmdScanState = { load: null, encode: null, prompt: null, gen: null };
   for (const raw of stderr.split("\n")) {
-    if (load === null && raw.includes("load time =")) {
-      const m = /([0-9]+(?:\.[0-9]+)?)\s+ms/.exec(raw);
-      if (m?.[1]) load = m[1];
-    }
-    if (encode === null && raw.includes("image slice encoded in")) {
-      const m = /([0-9]+(?:\.[0-9]+)?)\s+ms/.exec(raw);
-      if (m?.[1]) encode = m[1];
-    }
-    if (prompt === null && raw.includes("prompt eval time =")) {
-      const m = /([0-9]+(?:\.[0-9]+)?)\s+tokens per second/.exec(raw);
-      if (m?.[1]) prompt = m[1];
-    }
-    if (gen === null && !raw.includes("prompt") && raw.includes("eval time =")) {
-      const m = /([0-9]+(?:\.[0-9]+)?)\s+tokens per second/.exec(raw);
-      if (m?.[1]) gen = m[1];
-    }
+    scanMtmdLine(stats, raw);
   }
   return {
-    load_ms: load ?? "0",
-    image_encode_ms: encode ?? "0",
-    prompt_tps: prompt ?? "",
-    gen_tps: gen ?? "",
+    load_ms: stats.load ?? "0",
+    image_encode_ms: stats.encode ?? "0",
+    prompt_tps: stats.prompt ?? "",
+    gen_tps: stats.gen ?? "",
   };
 }
 
@@ -419,6 +445,20 @@ function compareNumericStrings(a: string, b: string): number {
   return x - y;
 }
 
+/** Pick the faster attempt by gen_ts, tie-breaking on prompt_ts. */
+function betterAttempt(
+  best: BenchPresetAttempt | null,
+  attempt: BenchPresetAttempt,
+): BenchPresetAttempt {
+  if (!best) return attempt;
+  const genCmp = compareNumericStrings(attempt.gen_ts, best.gen_ts);
+  if (genCmp > 0) return attempt;
+  if (genCmp === 0 && compareNumericStrings(attempt.prompt_ts, best.prompt_ts) > 0) {
+    return attempt;
+  }
+  return best;
+}
+
 /**
  * Run `llama-bench` across the three canonical profiles (default,
  * throughput, conservative) for a given rel, pick the fastest by
@@ -493,16 +533,7 @@ export async function benchPreset(
     attempts.push(attempt);
     opts.onEvent?.({ type: "profile-done", profile, gen_ts, prompt_ts });
 
-    if (!best) {
-      best = attempt;
-    } else {
-      const genCmp = compareNumericStrings(attempt.gen_ts, best.gen_ts);
-      if (genCmp > 0) best = attempt;
-      else if (genCmp === 0) {
-        const promptCmp = compareNumericStrings(attempt.prompt_ts, best.prompt_ts);
-        if (promptCmp > 0) best = attempt;
-      }
-    }
+    best = betterAttempt(best, attempt);
   }
 
   if (!best) return { error: `No successful benchmark profiles for ${rel}` };

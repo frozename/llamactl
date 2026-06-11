@@ -118,6 +118,34 @@ interface FetchWithCacheOpts {
  * Returns null when HF is disabled, the network failed, AND no cache
  * entry exists at all.
  */
+/**
+ * Live-fetch a JSON document and cache it. Returns the body on success
+ * and null on a non-2xx status (after logging it); network/read errors
+ * propagate to the caller so it can fall back to a stale cache entry.
+ */
+async function fetchAndCache(url: string, cacheFile: string): Promise<string | null> {
+  const res = await fetch(url, {
+    headers: { Accept: "application/json", "User-Agent": "llamactl" },
+  });
+  if (!res.ok) {
+    process.stderr.write(`llamactl: HF returned status ${String(res.status)} for ${url}\n`);
+    return null;
+  }
+  const body = await res.text();
+  try {
+    writeJsonFile(cacheFile, body);
+  } catch (err) {
+    // Cache write failed (full disk, permission problem, cross-fs
+    // surprise). Still return the fetched body — we'd rather do the
+    // work of hitting HF again next time than hide the actual data
+    // from the caller right now.
+    process.stderr.write(
+      `llamactl: failed to cache ${cacheFile}: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+  }
+  return body;
+}
+
 async function fetchWithCache(opts: FetchWithCacheOpts): Promise<string | null> {
   const { url, cacheFile, ttlSeconds } = opts;
 
@@ -127,25 +155,8 @@ async function fetchWithCache(opts: FetchWithCacheOpts): Promise<string | null> 
   }
 
   try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "llamactl" },
-    });
-    if (res.ok) {
-      const body = await res.text();
-      try {
-        writeJsonFile(cacheFile, body);
-      } catch (err) {
-        // Cache write failed (full disk, permission problem, cross-fs
-        // surprise). Still return the fetched body — we'd rather do the
-        // work of hitting HF again next time than hide the actual data
-        // from the caller right now.
-        process.stderr.write(
-          `llamactl: failed to cache ${cacheFile}: ${err instanceof Error ? err.message : String(err)}\n`,
-        );
-      }
-      return body;
-    }
-    process.stderr.write(`llamactl: HF returned status ${String(res.status)} for ${url}\n`);
+    const fetched = await fetchAndCache(url, cacheFile);
+    if (fetched !== null) return fetched;
   } catch (err) {
     process.stderr.write(
       `llamactl: HF fetch failed for ${url}: ${err instanceof Error ? err.message : String(err)}\n`,

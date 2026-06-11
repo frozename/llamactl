@@ -9,33 +9,36 @@ const OMLX_MAX_MODEL_MEMORY_GIB_BY_PROFILE: Record<MachineProfile, number> = {
   "macbook-pro-48g": 32,
 };
 
+function darwinMemoryBytes(): number | null {
+  try {
+    const out = execSync("sysctl -n hw.memsize", {
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+    }).trim();
+    const n = Number.parseInt(out, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function linuxMemoryBytes(): number | null {
+  try {
+    const meminfo = readFileSync("/proc/meminfo", "utf8");
+    const m = /^MemTotal:\s+(\d+)\s+kB/m.exec(meminfo);
+    if (!m?.[1]) return null;
+    const kb = Number.parseInt(m[1], 10);
+    if (Number.isFinite(kb) && kb > 0) return kb * 1024;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Total physical memory in bytes, detected per platform. */
 export function detectMemoryBytes(): number | null {
-  if (process.platform === "darwin") {
-    try {
-      const out = execSync("sysctl -n hw.memsize", {
-        stdio: ["ignore", "pipe", "ignore"],
-        encoding: "utf8",
-      }).trim();
-      const n = Number.parseInt(out, 10);
-      return Number.isFinite(n) && n > 0 ? n : null;
-    } catch {
-      return null;
-    }
-  }
-  if (process.platform === "linux") {
-    try {
-      const meminfo = readFileSync("/proc/meminfo", "utf8");
-      const m = /^MemTotal:\s+(\d+)\s+kB/m.exec(meminfo);
-      if (m?.[1]) {
-        const kb = Number.parseInt(m[1], 10);
-        if (Number.isFinite(kb) && kb > 0) return kb * 1024;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
+  if (process.platform === "darwin") return darwinMemoryBytes();
+  if (process.platform === "linux") return linuxMemoryBytes();
   return null;
 }
 

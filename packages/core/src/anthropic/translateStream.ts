@@ -217,56 +217,69 @@ function addOutputEmission(state: StreamState): void {
   if (!state.sawUsageCompletionTokens) state.outputTokens += 1;
 }
 
-function handleChunk(state: StreamState, parsed: UpstreamChunk, emit: StreamEmit): void {
-  if (parsed.id) state.messageId = parsed.id;
+function applyUsage(state: StreamState, parsed: UpstreamChunk): void {
   const usageTokens = parsed.usage?.completion_tokens;
   if (typeof usageTokens === "number" && Number.isFinite(usageTokens)) {
     state.sawUsageCompletionTokens = true;
     state.outputTokens = usageTokens;
   }
+}
 
-  const choice = parsed.choices?.[0];
-  if (!choice) return;
-
+function recordStopMetadata(state: StreamState, choice: UpstreamChoice): void {
   if (choice.finish_reason !== undefined && choice.finish_reason !== null) {
     state.lastFinishReason = choice.finish_reason;
   }
   if (choice.stop_sequence !== undefined && choice.stop_sequence !== null) {
     state.lastStopSequence = choice.stop_sequence;
   }
+}
 
-  const content = choice.delta?.content;
-  if (typeof content === "string" && content.length > 0) {
-    const block = ensureTextBlock(state, emit);
+function emitTextDelta(state: StreamState, content: string | undefined, emit: StreamEmit): void {
+  if (typeof content !== "string" || content.length === 0) return;
+  const block = ensureTextBlock(state, emit);
+  emit("content_block_delta", {
+    type: "content_block_delta",
+    index: block.index,
+    delta: {
+      type: "text_delta",
+      text: content,
+    },
+  });
+  addOutputEmission(state);
+}
+
+function emitToolCallDeltas(
+  state: StreamState,
+  toolCalls: UpstreamToolCall[] | undefined,
+  emit: StreamEmit,
+): void {
+  if (!Array.isArray(toolCalls)) return;
+  for (const toolCall of toolCalls) {
+    const block = ensureToolBlock(state, toolCall, emit);
+    const partialJson = toolCall.function?.arguments;
+    if (typeof partialJson !== "string" || partialJson.length === 0) continue;
     emit("content_block_delta", {
       type: "content_block_delta",
       index: block.index,
       delta: {
-        type: "text_delta",
-        text: content,
+        type: "input_json_delta",
+        partial_json: partialJson,
       },
     });
     addOutputEmission(state);
   }
+}
 
-  const toolCalls = choice.delta?.tool_calls;
-  if (Array.isArray(toolCalls) && toolCalls.length > 0) {
-    for (const toolCall of toolCalls) {
-      const block = ensureToolBlock(state, toolCall, emit);
-      const partialJson = toolCall.function?.arguments;
-      if (typeof partialJson === "string" && partialJson.length > 0) {
-        emit("content_block_delta", {
-          type: "content_block_delta",
-          index: block.index,
-          delta: {
-            type: "input_json_delta",
-            partial_json: partialJson,
-          },
-        });
-        addOutputEmission(state);
-      }
-    }
-  }
+function handleChunk(state: StreamState, parsed: UpstreamChunk, emit: StreamEmit): void {
+  if (parsed.id) state.messageId = parsed.id;
+  applyUsage(state, parsed);
+
+  const choice = parsed.choices?.[0];
+  if (!choice) return;
+
+  recordStopMetadata(state, choice);
+  emitTextDelta(state, choice.delta?.content, emit);
+  emitToolCallDeltas(state, choice.delta?.tool_calls, emit);
 }
 
 function processEvent(

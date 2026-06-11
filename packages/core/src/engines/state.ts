@@ -81,6 +81,35 @@ export function writeModelHostState(
   writeFileSync(modelhostStateFile(resolved, key), JSON.stringify(state, null, 2));
 }
 
+function validModelAliases(modelAliases: unknown): modelAliases is string[] {
+  if (!Array.isArray(modelAliases) || modelAliases.length === 0) return false;
+  return !modelAliases.some(
+    (alias) => typeof alias !== "string" || alias.length === 0 || /[\t\r\n]/.test(alias),
+  );
+}
+
+function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState | null {
+  if (parsed.kind !== "ModelHost") return null;
+  const { engine, host, modelAliases, pid, port, startedAt } = parsed;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
+  if (typeof host !== "string" || !LOOPBACK_HOSTS.has(host)) return null;
+  if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+  if (engine !== "llamacpp" && engine !== "omlx") return null;
+  if (typeof startedAt !== "string" || Number.isNaN(Date.parse(startedAt))) return null;
+  if (!validModelAliases(modelAliases)) return null;
+  return {
+    kind: "ModelHost",
+    engine,
+    pid,
+    host,
+    port,
+    modelAliases,
+    startedAt,
+    slotSavePath: typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null,
+    ...(typeof parsed.specHash === "string" ? { specHash: parsed.specHash } : {}),
+  };
+}
+
 export function readModelHostState(
   key: WorkloadKey,
   resolved: ResolvedEnv = resolveEnv(),
@@ -89,33 +118,7 @@ export function readModelHostState(
   if (!existsSync(path)) return null;
   try {
     const raw = readFileSync(path, "utf8");
-    const parsed = JSON.parse(raw) as Partial<ModelHostState>;
-    if (parsed.kind !== "ModelHost") return null;
-    const { engine, host, modelAliases, pid, port, startedAt } = parsed;
-    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
-    if (typeof host !== "string" || !LOOPBACK_HOSTS.has(host)) return null;
-    if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535)
-      return null;
-    if (engine !== "llamacpp" && engine !== "omlx") return null;
-    if (typeof startedAt !== "string" || Number.isNaN(Date.parse(startedAt))) return null;
-    if (!Array.isArray(modelAliases) || modelAliases.length === 0) return null;
-    if (
-      modelAliases.some(
-        (alias) => typeof alias !== "string" || alias.length === 0 || /[\t\r\n]/.test(alias),
-      )
-    )
-      return null;
-    return {
-      kind: "ModelHost",
-      engine,
-      pid,
-      host,
-      port,
-      modelAliases,
-      startedAt,
-      slotSavePath: typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null,
-      ...(typeof parsed.specHash === "string" ? { specHash: parsed.specHash } : {}),
-    };
+    return validateModelHostState(JSON.parse(raw) as Partial<ModelHostState>);
   } catch {
     return null;
   }

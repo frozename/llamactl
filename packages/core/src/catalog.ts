@@ -161,6 +161,29 @@ export interface CatalogLoadOptions {
  * are skipped with a warning on stderr so one malformed append never
  * blows up the whole list.
  */
+function parseCustomCatalogRow(line: string, lineNo: number, file: string): CuratedModel | null {
+  const cols = splitTsvRow(line);
+  if (cols.length < curatedTsvFields.length - 1) return null;
+
+  const record: Record<string, string> = {};
+  for (const [j, field] of curatedTsvFields.entries()) {
+    if (field === "format" && (cols[j] === undefined || cols[j] === "")) {
+      record[field] = "gguf";
+      continue;
+    }
+    record[field] = cols[j] ?? "";
+  }
+
+  const parsed = CuratedModel.safeParse(record);
+  if (!parsed.success) {
+    process.stderr.write(
+      `llamactl: skipping invalid catalog row in ${file}:${String(lineNo)} (${parsed.error.issues.map((i) => i.message).join("; ")})\n`,
+    );
+    return null;
+  }
+  return parsed.data;
+}
+
 export function readCustomCatalog(file: string): CuratedModel[] {
   let raw: string;
   try {
@@ -170,31 +193,12 @@ export function readCustomCatalog(file: string): CuratedModel[] {
   }
 
   const out: CuratedModel[] = [];
-  const lines = raw.split("\n");
-  for (const [i, line] of lines.entries()) {
+  for (const [i, line] of raw.split("\n").entries()) {
     const trimmed = line.trim();
     if (trimmed === "" || trimmed.startsWith("#")) continue;
 
-    const cols = splitTsvRow(line);
-    if (cols.length < curatedTsvFields.length - 1) continue;
-
-    const record: Record<string, string> = {};
-    for (const [j, field] of curatedTsvFields.entries()) {
-      if (field === "format" && (cols[j] === undefined || cols[j] === "")) {
-        record[field] = "gguf";
-        continue;
-      }
-      record[field] = cols[j] ?? "";
-    }
-
-    const parsed = CuratedModel.safeParse(record);
-    if (!parsed.success) {
-      process.stderr.write(
-        `llamactl: skipping invalid catalog row in ${file}:${String(i + 1)} (${parsed.error.issues.map((i) => i.message).join("; ")})\n`,
-      );
-      continue;
-    }
-    out.push(parsed.data);
+    const parsed = parseCustomCatalogRow(line, i + 1, file);
+    if (parsed) out.push(parsed);
   }
   return out;
 }

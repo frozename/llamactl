@@ -231,11 +231,13 @@ export async function rpcServerStatus(
   if (storedPid && !pid) clearTracking(resolved);
   const persisted = readState(resolved);
   if (persisted && !pid) clearTracking(resolved);
-  const state: RpcServerStatus["state"] = pid !== null ? "up" : "down";
-  const host = pid && persisted ? persisted.host : null;
-  const port = pid && persisted ? persisted.port : null;
+  if (pid === null) {
+    return { state: "down", endpoint: null, pid: null, host: null, port: null };
+  }
+  const host = persisted ? persisted.host : null;
+  const port = persisted ? persisted.port : null;
   return {
-    state,
+    state: "up",
     endpoint: host && port ? `${host}:${String(port)}` : null,
     pid,
     host,

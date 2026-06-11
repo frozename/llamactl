@@ -57,6 +57,18 @@ async function resolveClass(repo: string, provided: string | undefined): Promise
   return classifyRepo(repo, pipeline, tags);
 }
 
+function nonEmptyOr(value: string | undefined, fallback: string): string {
+  return value && value.length > 0 ? value : fallback;
+}
+
+/** Name of the first field containing a TSV control character, if any. */
+function findIllegalField(fields: Record<string, string>): string | null {
+  for (const [field, value] of Object.entries(fields)) {
+    if (/[\t\n\r]/.test(value)) return field;
+  }
+  return null;
+}
+
 /**
  * Append a row to the custom catalog TSV. Guards against duplicates
  * (builtin or custom) so repeated `curated add` calls on the same
@@ -80,22 +92,20 @@ export async function addCurated(input: AddCuratedInput): Promise<AddCuratedResu
   }
 
   const fileBasename = rel.slice(rel.lastIndexOf("/") + 1);
-  const label =
-    input.label && input.label.length > 0 ? input.label : fileBasename.replace(/\.gguf$/i, "");
-  const family = input.family && input.family.length > 0 ? input.family : deriveFamily(repo);
+  const label = nonEmptyOr(input.label, fileBasename.replace(/\.gguf$/i, ""));
+  const family = nonEmptyOr(input.family, deriveFamily(repo));
   const klass = await resolveClass(repo, input.class);
-  const scope = input.scope && input.scope.length > 0 ? input.scope : "candidate";
+  const scope = nonEmptyOr(input.scope, "candidate");
   const id = deriveEntryId(repoBase, rel);
   const format = /\.gguf$/i.test(fileBasename) ? "gguf" : "mlx";
 
   const fields = { id, label, family, class: klass, scope, rel, repo, format };
-  for (const [field, value] of Object.entries(fields)) {
-    if (/[\t\n\r]/.test(value)) {
-      return {
-        ok: false,
-        error: `catalog field '${field}' contains illegal control character (\\t/\\n/\\r)`,
-      };
-    }
+  const illegalField = findIllegalField(fields);
+  if (illegalField !== null) {
+    return {
+      ok: false,
+      error: `catalog field '${illegalField}' contains illegal control character (\\t/\\n/\\r)`,
+    };
   }
 
   const resolved = resolveEnv();

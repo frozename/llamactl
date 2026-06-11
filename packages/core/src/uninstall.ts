@@ -1,6 +1,8 @@
 import { existsSync, readdirSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
+import type { ResolvedEnv } from "./types.js";
+
 import { benchHistoryFile, benchProfileFile, benchVisionFile } from "./bench/store.js";
 import { findByRel } from "./catalog.js";
 import { resolveEnv } from "./env.js";
@@ -106,34 +108,52 @@ export function uninstall(opts: UninstallOptions): UninstallReport {
     `Uninstalling ${rel} (scope=${report.scope ?? "unknown"}, force=${String(force ? 1 : 0)})`,
   );
 
+  removeModelArtifacts(modelPath, modelDir, resolved.LLAMA_CPP_MODELS, report);
+  pruneRelRows(resolved, rel, force, report);
+
+  return report;
+}
+
+/** True when the repo dir still holds a non-mmproj GGUF (or can't be read). */
+function hasRemainingGguf(modelDir: string): boolean {
+  try {
+    const entries = readdirSync(modelDir);
+    return entries.some((name) => {
+      const lower = name.toLowerCase();
+      return lower.endsWith(".gguf") && !lower.includes("mmproj");
+    });
+  } catch {
+    return true;
+  }
+}
+
+/** Step 2: remove the model file; sweep the repo dir when no other GGUF remains. */
+function removeModelArtifacts(
+  modelPath: string,
+  modelDir: string,
+  modelsRoot: string,
+  report: UninstallReport,
+): void {
   if (existsSync(modelPath)) {
     unlinkSync(modelPath);
     report.actions.push(`  removed ${modelPath}`);
   }
 
-  if (
-    resolved.LLAMA_CPP_MODELS &&
-    modelDir.startsWith(`${resolved.LLAMA_CPP_MODELS}/`) &&
-    existsSync(modelDir)
-  ) {
-    let remainingGguf = false;
-    try {
-      const entries = readdirSync(modelDir);
-      remainingGguf = entries.some((name) => {
-        const lower = name.toLowerCase();
-        return lower.endsWith(".gguf") && !lower.includes("mmproj");
-      });
-    } catch {
-      remainingGguf = true;
-    }
-    if (!remainingGguf) {
-      rmSync(modelDir, { recursive: true, force: true });
-      if (!existsSync(modelDir)) {
-        report.actions.push(`  removed empty dir ${modelDir} (including mmproj + hf cache)`);
-      }
-    }
+  if (!modelsRoot || !modelDir.startsWith(`${modelsRoot}/`) || !existsSync(modelDir)) return;
+  if (hasRemainingGguf(modelDir)) return;
+  rmSync(modelDir, { recursive: true, force: true });
+  if (!existsSync(modelDir)) {
+    report.actions.push(`  removed empty dir ${modelDir} (including mmproj + hf cache)`);
   }
+}
 
+/** Steps 3-4: prune rel-matching rows from the bench TSVs + custom catalog. */
+function pruneRelRows(
+  resolved: ResolvedEnv,
+  rel: string,
+  force: boolean,
+  report: UninstallReport,
+): void {
   if (pruneTsv(benchProfileFile(resolved), (cols) => cols[0] === rel || cols[1] === rel)) {
     report.actions.push(`  pruned bench profile rows for ${rel}`);
   }
@@ -147,11 +167,7 @@ export function uninstall(opts: UninstallOptions): UninstallReport {
     report.actions.push(`  pruned custom catalog entries for ${rel}`);
   }
 
-  if (force) {
-    if (pruneTsv(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE, (cols) => cols[2] === rel)) {
-      report.actions.push(`  pruned promotion overrides for ${rel}`);
-    }
+  if (force && pruneTsv(resolved.LOCAL_AI_PRESET_OVERRIDES_FILE, (cols) => cols[2] === rel)) {
+    report.actions.push(`  pruned promotion overrides for ${rel}`);
   }
-
-  return report;
 }

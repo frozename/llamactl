@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { BenchCompareRow } from "./bench/compare.js";
-import type { ResolvedEnv } from "./types.js";
+import type { BenchMode, ResolvedEnv } from "./types.js";
 
 import { autoVisionBenchEnabled } from "./autotune.js";
 import {
@@ -74,6 +74,116 @@ export interface CandidateTestResult {
   compare: BenchCompareRow[];
 }
 
+interface BenchProfileKey {
+  machine: string;
+  rel: string;
+  mode: BenchMode;
+  ctx: string;
+  build: string;
+}
+
+/**
+ * Step 4 of `candidateTest`: run `benchPreset` unless the binary is
+ * missing or a tuned record already covers the key. A bench failure
+ * short-circuits the composite flow via the `error` shape.
+ */
+async function runPresetStep(
+  opts: CandidateTestOptions,
+  resolved: ResolvedEnv,
+  key: BenchProfileKey,
+): Promise<CandidateTestStep<BenchPresetResult> | { error: string }> {
+  const benchBin = join(resolved.LLAMA_CPP_BIN, "llama-bench");
+  if (!existsSync(benchBin)) {
+    return { ran: false, reason: `llama-bench binary not found: ${benchBin}` };
+  }
+
+  const profileRows = readBenchProfiles(benchProfileFile(resolved));
+  const existing = findLatestProfile(profileRows, key);
+  if (existing) {
+    return {
+      ran: false,
+      reason: `Reusing tuned profile for ${key.rel} (mode=${key.mode} ctx=${key.ctx} build=${key.build})`,
+    };
+  }
+
+  const out = await benchPreset({
+    target: key.rel,
+    mode: key.mode,
+    onEvent: opts.onEvent,
+    runCli: opts.runCli,
+    resolved,
+    signal: opts.signal,
+  });
+  if ("error" in out) return { error: out.error };
+  return { ran: true, result: out };
+}
+
+interface VisionStepContext {
+  rel: string;
+  machine: string;
+  build: string;
+  entryClass: "multimodal" | "reasoning" | "general" | "custom" | undefined;
+  localMmproj: string | null;
+}
+
+/**
+ * Step 5 of `candidateTest`: run `benchVision` when the rel is
+ * multimodal, the binary + mmproj are present, vision-auto is on, and
+ * no existing record covers (machine, rel, build). Vision errors are
+ * reported as a skip reason rather than short-circuiting the flow.
+ */
+async function runVisionStep(
+  opts: CandidateTestOptions,
+  resolved: ResolvedEnv,
+  env: NodeJS.ProcessEnv,
+  ctx: VisionStepContext,
+): Promise<CandidateTestStep<BenchVisionResult>> {
+  // Catalog class can lag the runtime signal: a freshly-pulled rel may
+  // have its mmproj sibling on disk before the classifier knows it's
+  // multimodal (e.g. HF model_info `pipeline_tag` empty for new
+  // releases, or the qwen-→-reasoning heuristic firing on Qwen 3.6
+  // before its multimodal status is reflected in HF metadata). Treat
+  // presence of a local mmproj as authoritative — if the projector is
+  // on disk, vision benches can run.
+  const isMultimodal = ctx.entryClass === "multimodal" || ctx.localMmproj !== null;
+  if (!isMultimodal) {
+    return { ran: false, reason: `Not multimodal (class=${ctx.entryClass ?? "unknown"})` };
+  }
+
+  const mtmdBin = join(resolved.LLAMA_CPP_BIN, "llama-mtmd-cli");
+  if (!existsSync(mtmdBin)) {
+    return { ran: false, reason: `llama-mtmd-cli binary not found: ${mtmdBin}` };
+  }
+  if (!autoVisionBenchEnabled(env)) {
+    return { ran: false, reason: "LLAMA_CPP_AUTO_BENCH_VISION=off" };
+  }
+  if (!ctx.localMmproj) {
+    return { ran: false, reason: `No local mmproj sibling for ${ctx.rel}` };
+  }
+
+  const visionRows = readBenchVision(benchVisionFile(resolved));
+  const existing = findLatestVision(visionRows, {
+    machine: ctx.machine,
+    rel: ctx.rel,
+    build: ctx.build,
+  });
+  if (existing) {
+    return { ran: false, reason: `Reusing vision bench record for ${ctx.rel}` };
+  }
+
+  const out = await benchVision({
+    target: ctx.rel,
+    onEvent: opts.onEvent,
+    runCli: opts.runCli,
+    resolved,
+    signal: opts.signal,
+  });
+  if ("error" in out) {
+    return { ran: false, reason: out.error };
+  }
+  return { ran: true, result: out };
+}
+
 /**
  * Composite flow that mirrors the shell `llama-candidate-test`:
  *
@@ -139,77 +249,19 @@ export async function candidateTest(
   const machine = machineLabel(resolved);
 
   // --- preset ------------------------------------------------------------
-  let preset: CandidateTestStep<BenchPresetResult> = { ran: false };
-  const benchBin = join(resolved.LLAMA_CPP_BIN, "llama-bench");
-  if (!existsSync(benchBin)) {
-    preset = { ran: false, reason: `llama-bench binary not found: ${benchBin}` };
-  } else {
-    const profileRows = readBenchProfiles(benchProfileFile(resolved));
-    const existing = findLatestProfile(profileRows, { machine, rel, mode, ctx, build });
-    if (existing) {
-      preset = {
-        ran: false,
-        reason: `Reusing tuned profile for ${rel} (mode=${mode} ctx=${ctx} build=${build})`,
-      };
-    } else {
-      const out = await benchPreset({
-        target: rel,
-        mode,
-        onEvent: opts.onEvent,
-        runCli: opts.runCli,
-        resolved,
-        signal: opts.signal,
-      });
-      if ("error" in out) return { error: out.error };
-      preset = { ran: true, result: out };
-    }
-  }
+  const preset = await runPresetStep(opts, resolved, { machine, rel, mode, ctx, build });
+  if ("error" in preset) return { error: preset.error };
 
   // --- vision ------------------------------------------------------------
-  let vision: CandidateTestStep<BenchVisionResult> = { ran: false };
   const entry = findByRel(rel);
   const localMmproj = findLocalMmprojForRel(resolved.LLAMA_CPP_MODELS, rel);
-  // Catalog class can lag the runtime signal: a freshly-pulled rel may
-  // have its mmproj sibling on disk before the classifier knows it's
-  // multimodal (e.g. HF model_info `pipeline_tag` empty for new
-  // releases, or the qwen-→-reasoning heuristic firing on Qwen 3.6
-  // before its multimodal status is reflected in HF metadata). Treat
-  // presence of a local mmproj as authoritative — if the projector is
-  // on disk, vision benches can run.
-  const isMultimodal = entry?.class === "multimodal" || localMmproj !== null;
-  const mtmdBin = join(resolved.LLAMA_CPP_BIN, "llama-mtmd-cli");
-  const visionAutoOn = autoVisionBenchEnabled(env);
-  if (!isMultimodal) {
-    vision = { ran: false, reason: `Not multimodal (class=${entry?.class ?? "unknown"})` };
-  } else if (!existsSync(mtmdBin)) {
-    vision = { ran: false, reason: `llama-mtmd-cli binary not found: ${mtmdBin}` };
-  } else if (!visionAutoOn) {
-    vision = { ran: false, reason: "LLAMA_CPP_AUTO_BENCH_VISION=off" };
-  } else if (!localMmproj) {
-    vision = { ran: false, reason: `No local mmproj sibling for ${rel}` };
-  } else {
-    const visionRows = readBenchVision(benchVisionFile(resolved));
-    const existing = findLatestVision(visionRows, { machine, rel, build });
-    if (existing) {
-      vision = {
-        ran: false,
-        reason: `Reusing vision bench record for ${rel}`,
-      };
-    } else {
-      const out = await benchVision({
-        target: rel,
-        onEvent: opts.onEvent,
-        runCli: opts.runCli,
-        resolved,
-        signal: opts.signal,
-      });
-      if ("error" in out) {
-        vision = { ran: false, reason: out.error };
-      } else {
-        vision = { ran: true, result: out };
-      }
-    }
-  }
+  const vision = await runVisionStep(opts, resolved, env, {
+    rel,
+    machine,
+    build,
+    entryClass: entry?.class,
+    localMmproj,
+  });
 
   const compare = benchCompare({ classFilter: entry?.class ?? "all", scopeFilter: "all" }, env);
 

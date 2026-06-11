@@ -100,6 +100,50 @@ function lookupScope(params: {
   } as const;
 }
 
+function chatResponseForMode(
+  mode: "json" | "sse" | "json_error" | "sse_partial",
+  calls: number,
+  body: string,
+): Response {
+  if (mode === "sse") {
+    return new Response(
+      `data: ${JSON.stringify({ id: String(calls), echoed: body })}\n\ndata: [DONE]\n\n`,
+      {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      },
+    );
+  }
+  if (mode === "sse_partial") {
+    return new Response(`data: ${JSON.stringify({ id: String(calls), echoed: body })}\n\n`, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  }
+  if (mode === "json_error") {
+    return Response.json({
+      error: {
+        message: "upstream failure",
+        type: "upstream_error",
+      },
+    });
+  }
+  return Response.json({
+    id: `chatcmpl-${String(calls)}`,
+    object: "chat.completion",
+    model: "claude-compatible",
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: `hit-${String(calls)}` },
+        finish_reason: "stop",
+      },
+    ],
+    usage: { prompt_tokens: 1, completion_tokens: 1 },
+    echoed: body,
+  });
+}
+
 function startUpstream(mode: "json" | "sse" | "json_error" | "sse_partial"): Promise<TestUpstream> {
   let calls = 0;
   const baseUrl = "http://127.0.0.1:19501";
@@ -112,51 +156,7 @@ function startUpstream(mode: "json" | "sse" | "json_error" | "sse_partial"): Pro
     if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
       calls += 1;
       const body = typeof init?.body === "string" ? init.body : "";
-      if (mode === "sse") {
-        return Promise.resolve(
-          new Response(
-            `data: ${JSON.stringify({ id: String(calls), echoed: body })}\n\ndata: [DONE]\n\n`,
-            {
-              status: 200,
-              headers: { "content-type": "text/event-stream" },
-            },
-          ),
-        );
-      }
-      if (mode === "sse_partial") {
-        return Promise.resolve(
-          new Response(`data: ${JSON.stringify({ id: String(calls), echoed: body })}\n\n`, {
-            status: 200,
-            headers: { "content-type": "text/event-stream" },
-          }),
-        );
-      }
-      if (mode === "json_error") {
-        return Promise.resolve(
-          Response.json({
-            error: {
-              message: "upstream failure",
-              type: "upstream_error",
-            },
-          }),
-        );
-      }
-      return Promise.resolve(
-        Response.json({
-          id: `chatcmpl-${String(calls)}`,
-          object: "chat.completion",
-          model: "claude-compatible",
-          choices: [
-            {
-              index: 0,
-              message: { role: "assistant", content: `hit-${String(calls)}` },
-              finish_reason: "stop",
-            },
-          ],
-          usage: { prompt_tokens: 1, completion_tokens: 1 },
-          echoed: body,
-        }),
-      );
+      return Promise.resolve(chatResponseForMode(mode, calls, body));
     }
     return Promise.resolve(new Response("", { status: 404 }));
   }) as typeof fetch;

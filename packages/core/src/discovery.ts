@@ -1,5 +1,5 @@
 import type { HFModelInfo } from "./schemas.js";
-import type { MachineProfile, ModelClass } from "./types.js";
+import type { MachineProfile, ModelClass, ResolvedEnv } from "./types.js";
 
 import {
   type CuratedStatus,
@@ -252,40 +252,45 @@ function quantFallbackFit(file: string): DiscoveryFit {
  * mac-mini is upgraded to `excellent`, a 70B+ on anything smaller than
  * the 48 GiB machine is clamped to `poor`.
  */
+function macMini16gOverrides(base: DiscoveryFit, repoL: string, file: string): DiscoveryFit {
+  let fit = base;
+  if (/Q2|Q3_K_S|Q3_K_M/.test(file)) fit = "excellent";
+  else if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(file)) fit = "good";
+  else if (file.includes("Q8_0")) fit = "fair";
+
+  if (/35b-a3b|31b|27b|26b/.test(repoL)) {
+    return /Q2|Q3_K_S|Q3_K_M/.test(file) ? "good" : "poor";
+  }
+  if (/671b|405b|123b|120b|72b|70b|v3|v4/.test(repoL)) {
+    return "poor";
+  }
+  return fit;
+}
+
+function balancedOverrides(base: DiscoveryFit, repoL: string, file: string): DiscoveryFit {
+  let fit = base;
+  if (file.includes("Q2")) fit = "fair";
+  else if (/Q3_K_S|Q3_K_M/.test(file)) fit = "good";
+  else if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(file)) fit = "excellent";
+
+  if (/671b|405b|123b|120b|72b|70b/.test(repoL)) return "poor";
+  return fit;
+}
+
 function applyRepoQuantOverrides(
   base: DiscoveryFit,
   profile: MachineProfile,
   repoL: string,
   file: string,
 ): DiscoveryFit {
-  let fit = base;
-
   switch (profile) {
-    case "mac-mini-16g": {
-      if (/Q2|Q3_K_S|Q3_K_M/.test(file)) fit = "excellent";
-      else if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(file)) fit = "good";
-      else if (file.includes("Q8_0")) fit = "fair";
-      if (/35b-a3b|31b|27b|26b/.test(repoL)) {
-        fit = /Q2|Q3_K_S|Q3_K_M/.test(file) ? "good" : "poor";
-      } else if (/671b|405b|123b|120b|72b|70b|v3|v4/.test(repoL)) {
-        fit = "poor";
-      }
-      break;
-    }
-    case "balanced": {
-      if (file.includes("Q2")) fit = "fair";
-      else if (/Q3_K_S|Q3_K_M/.test(file)) fit = "good";
-      else if (/Q4_K_M|UD-Q4_K_M|UD-Q4_K_XL/.test(file)) fit = "excellent";
-      if (/671b|405b|123b|120b|72b|70b/.test(repoL)) fit = "poor";
-      break;
-    }
-    case "macbook-pro-48g": {
-      if (/671b|405b|123b|120b/.test(repoL)) fit = "poor";
-      break;
-    }
+    case "mac-mini-16g":
+      return macMini16gOverrides(base, repoL, file);
+    case "balanced":
+      return balancedOverrides(base, repoL, file);
+    case "macbook-pro-48g":
+      return /671b|405b|123b|120b/.test(repoL) ? "poor" : base;
   }
-
-  return fit;
 }
 
 /**
@@ -392,6 +397,61 @@ export interface DiscoverOptions {
   search?: string;
 }
 
+function resolveVisionStatus(
+  klass: ModelClass,
+  mmproj: string | null,
+): DiscoveryRow["visionStatus"] {
+  if (klass !== "multimodal") return "text";
+  return mmproj ? "ready" : "needs-mmproj";
+}
+
+/**
+ * Classify + pick + fit one feed entry. Returns null when the repo has
+ * no eligible GGUF candidate or doesn't match the requested filter.
+ */
+async function buildDiscoveryRow(
+  repoInfo: HFModelInfo,
+  filter: string,
+  profile: MachineProfile,
+  resolved: ResolvedEnv,
+  env: NodeJS.ProcessEnv,
+): Promise<DiscoveryRow | null> {
+  const repo = repoInfo.id;
+  if (!repo) return null;
+  const siblings = eligibleGgufSiblings(repoInfo);
+  if (siblings.length === 0) return null;
+
+  const pipeline = repoInfo.pipeline_tag ?? repoInfo.pipelineTag ?? "";
+  const tags = (repoInfo.tags ?? []).join("|");
+  const klass = classifyRepo(repo, pipeline, tags);
+  const file = pickFile(profile, siblings);
+  if (!file) return null;
+  const rel = relFromRepoAndFile(repo, file);
+  const fit = await discoveryFit(profile, repo, klass, file);
+  if (!filterMatches(filter, klass, repo, fit)) return null;
+
+  const bytes = await estimatedBytes(repo, file, klass);
+  const info = await fetchModelInfo(repo, resolved, env);
+  const mmproj = info ? mmprojFileForRepo(info) : null;
+
+  return {
+    fit,
+    fitScore: fitScore(fit),
+    class: klass,
+    catalogStatus: curatedStatusForRepoFile(repo, file),
+    repo,
+    file,
+    rel,
+    quant: quantFromRel(rel),
+    downloads: repoInfo.downloads ?? 0,
+    likes: repoInfo.likes ?? 0,
+    updated: repoInfo.lastModified ?? "",
+    pipeline: pipeline || "n/a",
+    estimatedSize: humanSize(bytes),
+    visionStatus: resolveVisionStatus(klass, mmproj),
+  };
+}
+
 /**
  * Run a full discovery pass: fetch the feed, classify + pick + fit for
  * each repo, filter, and return the rows sorted the same way the shell
@@ -415,42 +475,8 @@ export async function discover(
 
   const rows: DiscoveryRow[] = [];
   for (const repoInfo of feed) {
-    const repo = repoInfo.id;
-    if (!repo) continue;
-    const siblings = eligibleGgufSiblings(repoInfo);
-    if (siblings.length === 0) continue;
-
-    const pipeline = repoInfo.pipeline_tag ?? repoInfo.pipelineTag ?? "";
-    const tags = (repoInfo.tags ?? []).join("|");
-    const klass = classifyRepo(repo, pipeline, tags);
-    const file = pickFile(profile, siblings);
-    if (!file) continue;
-    const rel = relFromRepoAndFile(repo, file);
-    const fit = await discoveryFit(profile, repo, klass, file);
-    if (!filterMatches(filter, klass, repo, fit)) continue;
-
-    const bytes = await estimatedBytes(repo, file, klass);
-    const info = await fetchModelInfo(repo, resolved, env);
-    const mmproj = info ? mmprojFileForRepo(info) : null;
-    const visionStatus: DiscoveryRow["visionStatus"] =
-      klass === "multimodal" ? (mmproj ? "ready" : "needs-mmproj") : "text";
-
-    rows.push({
-      fit,
-      fitScore: fitScore(fit),
-      class: klass,
-      catalogStatus: curatedStatusForRepoFile(repo, file),
-      repo,
-      file,
-      rel,
-      quant: quantFromRel(rel),
-      downloads: repoInfo.downloads ?? 0,
-      likes: repoInfo.likes ?? 0,
-      updated: repoInfo.lastModified ?? "",
-      pipeline: pipeline || "n/a",
-      estimatedSize: humanSize(bytes),
-      visionStatus,
-    });
+    const row = await buildDiscoveryRow(repoInfo, filter, profile, resolved, env);
+    if (row !== null) rows.push(row);
   }
 
   rows.sort((a, b) => {

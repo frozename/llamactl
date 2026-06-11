@@ -616,28 +616,40 @@ function slotClientFor(
   return client;
 }
 
+/** Integer value from an inline `<flag>=<value>` token, if any flag matches. */
+function inlineFlagInteger(token: string, flags: readonly string[]): number | null {
+  for (const flag of flags) {
+    if (!token.startsWith(`${flag}=`)) continue;
+    const value = token.slice(flag.length + 1);
+    if (Number.isInteger(Number.parseInt(value, 10))) return Number.parseInt(value, 10);
+  }
+  return null;
+}
+
+/** First integer following one of `flags` (separate or inline form). */
+function readIntegerAfterFlag(
+  extraArgs: readonly string[],
+  flags: readonly string[],
+): number | null {
+  for (let i = 0; i < extraArgs.length; i += 1) {
+    const token = extraArgs[i];
+    if (token === undefined) continue;
+    if (flags.includes(token)) {
+      const value = extraArgs[i + 1];
+      if (value && Number.isInteger(Number.parseInt(value, 10))) {
+        return Number.parseInt(value, 10);
+      }
+      continue;
+    }
+    const inline = inlineFlagInteger(token, flags);
+    if (inline !== null) return inline;
+  }
+  return null;
+}
+
 function parseContextWindow(extraArgs: readonly string[] | undefined, fallback: number): number {
   if (!extraArgs || extraArgs.length === 0) return fallback;
-  const readAfterFlag = (...flags: string[]): number | null => {
-    for (let i = 0; i < extraArgs.length; i += 1) {
-      const token = extraArgs[i];
-      if (token === undefined) continue;
-      if (flags.includes(token)) {
-        const value = extraArgs[i + 1];
-        if (value && Number.isInteger(Number.parseInt(value, 10))) {
-          return Number.parseInt(value, 10);
-        }
-        continue;
-      }
-      for (const flag of flags) {
-        if (!token.startsWith(`${flag}=`)) continue;
-        const value = token.slice(flag.length + 1);
-        if (Number.isInteger(Number.parseInt(value, 10))) return Number.parseInt(value, 10);
-      }
-    }
-    return null;
-  };
-  return readAfterFlag("-c", "--ctx-size") ?? fallback;
+  return readIntegerAfterFlag(extraArgs, ["-c", "--ctx-size"]) ?? fallback;
 }
 
 function quantBitsFromModelId(model: string): number {
@@ -791,28 +803,35 @@ function cacheHitResponse(entry: ResponseCacheEntry): Response {
   });
 }
 
+/**
+ * Workload epoch used in the response-cache key:
+ *  - local workloads use their tracked epoch (changes on restart);
+ *  - peer routes have no local epoch, so key on a synthetic epoch
+ *    (peer node + model id + the peer's boot token `revision`). The revision
+ *    is the peer server's /v1/models `created` (start time), carried in the
+ *    peer snapshot; it changes when the peer restarts — including a model/quant
+ *    swap under the same alias — so the cache invalidates automatically. When a
+ *    peer doesn't advertise a revision (older node / engine without `created`),
+ *    the epoch falls back to node+model (today's behaviour: stable, no
+ *    restart-invalidation).
+ */
+function responseCacheEpochForRoute(route: RoutedEntry, resolved: ResolvedEnv): string | null {
+  const isPeer = "isPeer" in route && route.isPeer;
+  if (!isPeer) return readWorkloadEpoch({ name: route.workload }, resolved);
+  const peerRevision = "revision" in route && route.revision ? `:${route.revision}` : "";
+  return `peer:${route.targetNodeId ?? route.workload}:${route.model}${peerRevision}`;
+}
+
 // eslint-disable-next-line @typescript-eslint/require-await -- Pipeline stages share an async contract.
 async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyContext> {
   if (!shouldUseResponseCachePath(context)) return context;
   // Response-cache metadata is resolved independently of the KV *slot* path
   // (resolveRouteKvMetadata, local-only) so this can also cover cross-node peer
-  // routes. The key needs a workload epoch for invalidation:
-  //  - local workloads use their tracked epoch (changes on restart);
-  //  - peer routes have no local epoch, so key on a synthetic epoch
-  //    (peer node + model id + the peer's boot token `revision`). The revision
-  //    is the peer server's /v1/models `created` (start time), carried in the
-  //    peer snapshot; it changes when the peer restarts — including a model/quant
-  //    swap under the same alias — so the cache invalidates automatically. When a
-  //    peer doesn't advertise a revision (older node / engine without `created`),
-  //    the epoch falls back to node+model (today's behaviour: stable, no
-  //    restart-invalidation).
+  // routes. The key needs a workload epoch for invalidation — see
+  // responseCacheEpochForRoute.
   const route = context.route;
   if (!route || !isRouteKvEligible(route)) return context;
-  const isPeer = "isPeer" in route && route.isPeer;
-  const peerRevision = isPeer && "revision" in route && route.revision ? `:${route.revision}` : "";
-  const workloadEpoch = isPeer
-    ? `peer:${route.targetNodeId ?? route.workload}:${route.model}${peerRevision}`
-    : readWorkloadEpoch({ name: route.workload }, context.resolved);
+  const workloadEpoch = responseCacheEpochForRoute(route, context.resolved);
   if (!workloadEpoch) return context;
   const bodyText = context.bodyText;
   if (bodyText === undefined) return context;
@@ -888,21 +907,20 @@ function normalizeFirstResponseToken(text: string): string | null {
   return trimmed.slice(0, FIRST_RESPONSE_TOKEN_FINGERPRINT_CHARS);
 }
 
+function firstTokenFromContentPart(part: unknown): string | null {
+  if (typeof part === "string") return normalizeFirstResponseToken(part);
+  if (!part || typeof part !== "object") return null;
+  const partText = (part as { text?: unknown }).text;
+  if (typeof partText !== "string") return null;
+  return normalizeFirstResponseToken(partText);
+}
+
 function firstTokenTextFromContent(content: unknown): string | null {
   if (typeof content === "string") return normalizeFirstResponseToken(content);
-  if (Array.isArray(content)) {
-    for (const part of content) {
-      if (typeof part === "string") {
-        const fromString = normalizeFirstResponseToken(part);
-        if (fromString) return fromString;
-        continue;
-      }
-      if (!part || typeof part !== "object") continue;
-      const partText = (part as { text?: unknown }).text;
-      if (typeof partText !== "string") continue;
-      const normalized = normalizeFirstResponseToken(partText);
-      if (normalized) return normalized;
-    }
+  if (!Array.isArray(content)) return null;
+  for (const part of content) {
+    const token = firstTokenFromContentPart(part);
+    if (token) return token;
   }
   return null;
 }
@@ -931,6 +949,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function collectToolCallEntries(toolCalls: unknown[], out: Record<string, string>): void {
+  for (const rawCall of toolCalls) {
+    if (!isRecord(rawCall)) continue;
+    if (rawCall.type !== "function" || typeof rawCall.id !== "string") continue;
+    const fn = rawCall.function;
+    if (!isRecord(fn) || typeof fn.name !== "string" || typeof fn.arguments !== "string") continue;
+    out[rawCall.id] = JSON.stringify({
+      id: rawCall.id,
+      type: "function",
+      function: {
+        name: fn.name,
+        arguments: fn.arguments,
+      },
+    });
+  }
+}
+
 function extractToolMapFromJson(payload: unknown): Record<string, string> {
   if (!isRecord(payload)) return {};
   const choices = payload.choices;
@@ -942,21 +977,7 @@ function extractToolMapFromJson(payload: unknown): Record<string, string> {
     if (!isRecord(message)) continue;
     const toolCalls = message.tool_calls;
     if (!Array.isArray(toolCalls)) continue;
-    for (const rawCall of toolCalls) {
-      if (!isRecord(rawCall)) continue;
-      if (rawCall.type !== "function" || typeof rawCall.id !== "string") continue;
-      const fn = rawCall.function;
-      if (!isRecord(fn) || typeof fn.name !== "string" || typeof fn.arguments !== "string")
-        continue;
-      out[rawCall.id] = JSON.stringify({
-        id: rawCall.id,
-        type: "function",
-        function: {
-          name: fn.name,
-          arguments: fn.arguments,
-        },
-      });
-    }
+    collectToolCallEntries(toolCalls, out);
   }
   return out;
 }
@@ -1164,6 +1185,62 @@ function buildKvRequestState(
   };
 }
 
+type WarmHitReplay =
+  | { kind: "none" }
+  | { kind: "mismatch" }
+  | { kind: "replayed"; sha: string; prefixMetric: number };
+
+/**
+ * For Anthropic requests whose warm hit recorded a tool map, re-translate
+ * the request with the exact recorded tool-call bytes and swap the proxy
+ * body to the replay text. `mismatch` means the replayed bytes no longer
+ * hash to the hit's sha — the caller must abandon (and drop) the hit.
+ */
+function applyAnthropicToolMapReplay(
+  context: ProxyContext,
+  runtime: KvRuntime,
+  hit: NonNullable<ReturnType<typeof longestPrefixLookup>>,
+  workload: string,
+): WarmHitReplay {
+  if (
+    !context.isAnthropic ||
+    !context.anthropicRequest ||
+    (hit.extFlags & EXT_FLAG_TOOL_MAP) === 0
+  ) {
+    return { kind: "none" };
+  }
+  const trailer = readTrailer(hit.upstreamSlotFile);
+  const toolMap = trailer?.toolMap;
+  if (!toolMap || Object.keys(toolMap).length === 0) return { kind: "none" };
+
+  const replayBodyText = JSON.stringify(
+    translateAnthropicRequest(context.anthropicRequest, { toolMap }),
+  );
+  const replaySha = boundaryNaiveBytePrefixSha(replayBodyText);
+  if (replaySha !== hit.sha) {
+    runtime.storage.kv_replay_mismatch_total += 1;
+    console.warn(
+      JSON.stringify({
+        event: "kv_replay_mismatch",
+        workload,
+        expected: hit.sha,
+        got: replaySha,
+      }),
+    );
+    return { kind: "mismatch" };
+  }
+  context.bodyText = replayBodyText;
+  context.init = {
+    ...context.init,
+    body: replayBodyText,
+  };
+  return {
+    kind: "replayed",
+    sha: replaySha,
+    prefixMetric: Buffer.byteLength(replayBodyText, "utf8"),
+  };
+}
+
 async function applyWarmKvHit(
   context: ProxyContext,
   metadata: NonNullable<ReturnType<typeof resolveRouteKvMetadata>>,
@@ -1205,59 +1282,15 @@ async function applyWarmKvHit(
     if (!restore.ok) runtime.storage.safeWrite(() => runtime.registry.delete(hit.sha));
     return null;
   }
-  if (context.isAnthropic && context.anthropicRequest && (hit.extFlags & EXT_FLAG_TOOL_MAP) !== 0) {
-    const trailer = readTrailer(hit.upstreamSlotFile);
-    const toolMap = trailer?.toolMap;
-    if (toolMap && Object.keys(toolMap).length > 0) {
-      const replayBodyText = JSON.stringify(
-        translateAnthropicRequest(context.anthropicRequest, { toolMap }),
-      );
-      const replaySha = boundaryNaiveBytePrefixSha(replayBodyText);
-      if (replaySha !== hit.sha) {
-        runtime.storage.kv_replay_mismatch_total += 1;
-        console.warn(
-          JSON.stringify({
-            event: "kv_replay_mismatch",
-            workload: metadata.workload,
-            expected: hit.sha,
-            got: replaySha,
-          }),
-        );
-        runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
-        lease.release();
-        runtime.storage.safeWrite(() => runtime.registry.tryDelete(hit.sha));
-        return null;
-      }
-      context.bodyText = replayBodyText;
-      context.init = {
-        ...context.init,
-        body: replayBodyText,
-      };
-      await maybeInjectOmlxRestoreBind(
-        context,
-        slotClient,
-        metadata.workload,
-        metadata.model,
-        hit.sha,
-        hit.upstreamSlotFile,
-        restore.restore_epoch,
-      );
-      runtime.registry.bumpHit(hit.sha, Date.now());
-      context.kv = buildKvRequestState(
-        metadata,
-        runtime,
-        replaySha,
-        Buffer.byteLength(replayBodyText, "utf8"),
-        enforceFirstTokenEquivalence,
-        {
-          warmHitSha: hit.sha,
-          warmHitLease: lease,
-          warmHitExpectedFirstResponseToken: hit.firstResponseToken,
-        },
-      );
-      return context;
-    }
+  const replay = applyAnthropicToolMapReplay(context, runtime, hit, metadata.workload);
+  if (replay.kind === "mismatch") {
+    runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
+    lease.release();
+    runtime.storage.safeWrite(() => runtime.registry.tryDelete(hit.sha));
+    return null;
   }
+  const effectiveSha = replay.kind === "replayed" ? replay.sha : sha;
+  const effectivePrefixMetric = replay.kind === "replayed" ? replay.prefixMetric : prefixMetric;
   await maybeInjectOmlxRestoreBind(
     context,
     slotClient,
@@ -1271,8 +1304,8 @@ async function applyWarmKvHit(
   context.kv = buildKvRequestState(
     metadata,
     runtime,
-    sha,
-    prefixMetric,
+    effectiveSha,
+    effectivePrefixMetric,
     enforceFirstTokenEquivalence,
     {
       warmHitSha: hit.sha,
@@ -1371,6 +1404,47 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
   return context;
 }
 
+/** True when a 200 JSON body is actually an error envelope (never cached). */
+function isErrorEnvelope(bodyBytes: Uint8Array, responseCache: ResponseCacheRequestState): boolean {
+  try {
+    const parsed = JSON.parse(Buffer.from(bodyBytes).toString("utf8")) as { error?: unknown };
+    if (typeof parsed === "object" && parsed.error) {
+      console.warn(
+        JSON.stringify({
+          event: "response_cache_skip_error_envelope",
+          sha: responseCache.sha,
+          model: responseCache.model,
+        }),
+      );
+      return true;
+    }
+  } catch {
+    // Invalid JSON responses are still replayed but not cached as JSON envelopes.
+  }
+  return false;
+}
+
+/** True when an SSE body carries a terminal marker (partial streams are never cached). */
+function isCompleteSseBody(
+  bodyBytes: Uint8Array,
+  responseCache: ResponseCacheRequestState,
+): boolean {
+  const sseBody = Buffer.from(bodyBytes).toString("utf8");
+  const hasOpenAiDone = sseBody.includes("data: [DONE]\n");
+  const hasAnthropicDone = sseBody.includes("event: message_stop");
+  if (!hasOpenAiDone && !hasAnthropicDone) {
+    console.warn(
+      JSON.stringify({
+        event: "response_cache_skip_partial_sse",
+        sha: responseCache.sha,
+        model: responseCache.model,
+      }),
+    );
+    return false;
+  }
+  return true;
+}
+
 async function maybePersistResponseCache(
   context: ProxyContext,
   upstream: Response,
@@ -1390,38 +1464,8 @@ async function maybePersistResponseCache(
     headers: upstream.headers,
   });
   if (upstream.status !== 200 || !responseCache.deterministic || !cacheableType) return replay;
-  if (isJson) {
-    try {
-      const parsed = JSON.parse(Buffer.from(bodyBytes).toString("utf8")) as { error?: unknown };
-      if (typeof parsed === "object" && parsed.error) {
-        console.warn(
-          JSON.stringify({
-            event: "response_cache_skip_error_envelope",
-            sha: responseCache.sha,
-            model: responseCache.model,
-          }),
-        );
-        return replay;
-      }
-    } catch {
-      // Invalid JSON responses are still replayed but not cached as JSON envelopes.
-    }
-  }
-  if (isSse) {
-    const sseBody = Buffer.from(bodyBytes).toString("utf8");
-    const hasOpenAiDone = sseBody.includes("data: [DONE]\n");
-    const hasAnthropicDone = sseBody.includes("event: message_stop");
-    if (!hasOpenAiDone && !hasAnthropicDone) {
-      console.warn(
-        JSON.stringify({
-          event: "response_cache_skip_partial_sse",
-          sha: responseCache.sha,
-          model: responseCache.model,
-        }),
-      );
-      return replay;
-    }
-  }
+  if (isJson && isErrorEnvelope(bodyBytes, responseCache)) return replay;
+  if (isSse && !isCompleteSseBody(bodyBytes, responseCache)) return replay;
 
   const totalBytes = responseCache.requestBodyBytes + bodyBytes.byteLength;
   if (totalBytes > responseCacheMaxEntryBytes()) return replay;
@@ -1466,50 +1510,60 @@ function releaseWarmHitLease(context: ProxyContext): void {
   warmHitLease?.release();
 }
 
-async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Response> {
-  const { req, resolved } = context;
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    const contentType = req.headers.get("content-type");
-    if (isJsonContentType(contentType)) {
-      if (context.bodyText === undefined) {
-        if (isOversizedJsonBody(req)) {
-          return new Response("Payload Too Large", { status: 413 });
-        }
-        const bodyText = await context.req.text();
-        if (bodyText.length > MAX_JSON_BODY_BYTES) {
-          return new Response("Payload Too Large", { status: 413 });
-        }
-        context = {
-          ...context,
-          bodyText,
-          init: {
-            ...context.init,
-            body: bodyText,
-          },
-        };
-      }
-      const bodyText = context.bodyText;
-      const model = bodyText ? requestedModelFromBody(bodyText) : undefined;
-      if (model) {
-        const routedTarget = routedEndpointForModel(
-          model,
-          context.pathname,
-          context.search,
-          resolved,
-        );
-        if (routedTarget) {
-          context.target = routedTarget.target;
-          context.route = routedTarget;
-        }
-      }
-      return context;
+/**
+ * Route a JSON request by its body `model` field. Reads (and size-caps)
+ * the body when it hasn't been read yet; leaves the default target in
+ * place when the model is absent or unrouted.
+ */
+async function resolveJsonBodyRoute(context: ProxyContext): Promise<ProxyContext | Response> {
+  if (context.bodyText === undefined) {
+    if (isOversizedJsonBody(context.req)) {
+      return new Response("Payload Too Large", { status: 413 });
     }
-    context.init = {
-      ...context.init,
-      body: req.body,
+    const bodyText = await context.req.text();
+    if (bodyText.length > MAX_JSON_BODY_BYTES) {
+      return new Response("Payload Too Large", { status: 413 });
+    }
+    context = {
+      ...context,
+      bodyText,
+      init: {
+        ...context.init,
+        body: bodyText,
+      },
     };
-    (context.init as unknown as { duplex: string }).duplex = "half";
   }
+  const bodyText = context.bodyText;
+  const model = bodyText ? requestedModelFromBody(bodyText) : undefined;
+  if (model) {
+    const routedTarget = routedEndpointForModel(
+      model,
+      context.pathname,
+      context.search,
+      context.resolved,
+    );
+    if (routedTarget) {
+      context.target = routedTarget.target;
+      context.route = routedTarget;
+    }
+  }
+  return context;
+}
+
+async function resolveRoute(context: ProxyContext): Promise<ProxyContext | Response> {
+  const { req } = context;
+  if (req.method === "GET" || req.method === "HEAD") return context;
+
+  const contentType = req.headers.get("content-type");
+  if (isJsonContentType(contentType)) {
+    return await resolveJsonBodyRoute(context);
+  }
+
+  context.init = {
+    ...context.init,
+    body: req.body,
+  };
+  (context.init as unknown as { duplex: string }).duplex = "half";
   return context;
 }
 
@@ -1697,19 +1751,91 @@ async function saveSlotUpstream(
   return slotFile;
 }
 
+async function parseUpstreamJsonBody(upstream: Response, shouldParse: boolean): Promise<unknown> {
+  if (!shouldParse) return null;
+  try {
+    return await upstream.clone().json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * oMLX save requires the save-by-handle path; if this server can't do it,
+ * skip before acquiring a lease (avoids the slot_serialize_failed noise that
+ * 4e101c7 removed, and a leaked lease). Gate the probe to the omlx engine.
+ */
+async function saveHandleSupportedForRoute(
+  context: ProxyContext,
+  kv: KvRequestState,
+): Promise<boolean> {
+  if (context.route?.engine !== "omlx") return true;
+  const saveProbeClient = slotClientFor(
+    kv.runtime,
+    kv.workload,
+    kv.host,
+    kv.port,
+    context.route.engine,
+  );
+  return await saveProbeClient.supportsSaveHandle();
+}
+
+function purgeStaleEpochEntries(kv: KvRequestState): void {
+  try {
+    kv.runtime.registry.deleteEpochStale(kv.workload, kv.workloadEpoch);
+  } catch (error) {
+    console.warn(
+      `[kvstore] stale epoch purge failed for workload='${kv.workload}': ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function sweepOrphanSlots(kv: KvRequestState, now: number): void {
+  try {
+    sweepOrphanSlotFiles({
+      slotDir: kv.slotDir,
+      registry: kv.runtime.registry,
+      ttlMs: 24 * 60 * 60 * 1000,
+      now,
+    });
+  } catch (error) {
+    console.warn(
+      `[kvstore] orphan sweep failed for workload='${kv.workload}': ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/** Save the slot upstream, commit it to the registry, then run eviction + maintenance. */
+async function persistSlotAndMaintain(
+  context: ProxyContext,
+  kv: KvRequestState,
+  slotId: number,
+  firstResponseToken: string | null,
+  upstreamJson: unknown,
+): Promise<void> {
+  const slotFile = await saveSlotUpstream(context, kv, slotId);
+  if (slotFile === null) return;
+  const committed = commitSlotToRegistry(context, kv, slotFile, firstResponseToken, upstreamJson);
+  if (committed === null) return;
+  const { now } = committed;
+
+  const eviction = runEvictionIfOverBudget(kv.runtime.registry, kv.workload, kvBudgetBytes(), now);
+  for (const blockedSha of eviction.blockedActive) {
+    logSlotInjectionEvent("slot_eviction_blocked_active_request", {
+      workload: kv.workload,
+      sha: blockedSha,
+    });
+  }
+  purgeStaleEpochEntries(kv);
+  sweepOrphanSlots(kv, now);
+}
+
 async function maybePersistKv(context: ProxyContext, upstream: Response): Promise<void> {
   const kv = context.kv;
   if (!kv) return;
   const contentType = upstream.headers.get("content-type");
   const shouldParseJson = upstream.status === 200 && isJsonContentType(contentType);
-  let upstreamJson: unknown = null;
-  if (shouldParseJson) {
-    try {
-      upstreamJson = await upstream.clone().json();
-    } catch {
-      upstreamJson = null;
-    }
-  }
+  const upstreamJson: unknown = await parseUpstreamJsonBody(upstream, shouldParseJson);
   const firstResponseToken = upstreamJson
     ? extractFirstResponseTokenFromJson(upstreamJson)
     : await readFirstResponseToken(upstream);
@@ -1720,76 +1846,63 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
     // TODO(phase9): defer KV save for streams until exact replay boundaries are captured.
     if (contentType?.toLowerCase().startsWith("text/event-stream")) return;
     if (upstream.status !== 200 || !isJsonContentType(contentType) || upstreamJson === null) return;
+    if (!(await saveHandleSupportedForRoute(context, kv))) return;
 
-    // oMLX save requires the save-by-handle path; if this server can't do it,
-    // skip before acquiring a lease (avoids the slot_serialize_failed noise that
-    // 4e101c7 removed, and a leaked lease). Gate the probe to the omlx engine.
-    if (context.route?.engine === "omlx") {
-      const saveProbeClient = slotClientFor(
-        kv.runtime,
-        kv.workload,
-        kv.host,
-        kv.port,
-        context.route.engine,
-      );
-      if (!(await saveProbeClient.supportsSaveHandle())) return;
-    }
     const allocator = slotAllocatorFor(kv.runtime, kv.workload);
     const lease = allocator.acquire();
     if (!lease) return;
     try {
-      const slotFile = await saveSlotUpstream(context, kv, lease.slotId);
-      if (slotFile === null) return;
-      const committed = commitSlotToRegistry(
-        context,
-        kv,
-        slotFile,
-        firstResponseToken,
-        upstreamJson,
-      );
-      if (committed === null) return;
-      const { now } = committed;
-
-      const eviction = runEvictionIfOverBudget(
-        kv.runtime.registry,
-        kv.workload,
-        kvBudgetBytes(),
-        now,
-      );
-      for (const blockedSha of eviction.blockedActive) {
-        // eslint-disable-next-line no-console -- Structured debug event consumed by tests and local diagnostics.
-        console.debug(
-          JSON.stringify({
-            event: "slot_eviction_blocked_active_request",
-            workload: kv.workload,
-            sha: blockedSha,
-          }),
-        );
-      }
-      try {
-        kv.runtime.registry.deleteEpochStale(kv.workload, kv.workloadEpoch);
-      } catch (error) {
-        console.warn(
-          `[kvstore] stale epoch purge failed for workload='${kv.workload}': ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      try {
-        sweepOrphanSlotFiles({
-          slotDir: kv.slotDir,
-          registry: kv.runtime.registry,
-          ttlMs: 24 * 60 * 60 * 1000,
-          now,
-        });
-      } catch (error) {
-        console.warn(
-          `[kvstore] orphan sweep failed for workload='${kv.workload}': ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+      await persistSlotAndMaintain(context, kv, lease.slotId, firstResponseToken, upstreamJson);
     } finally {
       lease.release();
     }
   } finally {
     releaseWarmHitLease(context);
+  }
+}
+
+/** Copy upstream headers, dropping the hop-by-hop ones the proxy must not forward. */
+function sanitizedResponseHeaders(upstream: Response): Headers {
+  const respHeaders = new Headers();
+  for (const [key, value] of upstream.headers.entries()) {
+    const lower = key.toLowerCase();
+    if (lower === "transfer-encoding" || lower === "connection") continue;
+    respHeaders.set(key, value);
+  }
+  return respHeaders;
+}
+
+function translateAnthropicSseResponse(context: ProxyContext, upstream: Response): Response {
+  if (!upstream.body) return upstream;
+  const respHeaders = sanitizedResponseHeaders(upstream);
+  respHeaders.set("content-type", "text/event-stream");
+  return new Response(
+    translateOpenAIStreamToAnthropic(upstream.body, {
+      model: context.anthropicModel ?? "claude-compatible",
+    }),
+    {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: respHeaders,
+    },
+  );
+}
+
+async function translateAnthropicJsonResponse(upstream: Response): Promise<Response> {
+  try {
+    const translated = translateOpenAIResponse((await upstream.clone().json()) as never);
+    const respHeaders = sanitizedResponseHeaders(upstream);
+    return Response.json(translated, { status: upstream.status, headers: respHeaders });
+  } catch (error) {
+    return Response.json(
+      {
+        error: {
+          message: error instanceof Error ? error.message : "anthropic response translation failed",
+          type: "anthropic_response_translation_error",
+        },
+      },
+      { status: 502 },
+    );
   }
 }
 
@@ -1799,59 +1912,47 @@ async function maybeTranslateResponse(
 ): Promise<Response> {
   const contentType = upstream.headers.get("content-type");
   if (context.isAnthropic && contentType?.toLowerCase().startsWith("text/event-stream")) {
-    if (!upstream.body) return upstream;
-    const respHeaders = new Headers();
-    for (const [key, value] of upstream.headers.entries()) {
-      const lower = key.toLowerCase();
-      if (lower === "transfer-encoding" || lower === "connection") continue;
-      respHeaders.set(key, value);
-    }
-    respHeaders.set("content-type", "text/event-stream");
-    return new Response(
-      translateOpenAIStreamToAnthropic(upstream.body, {
-        model: context.anthropicModel ?? "claude-compatible",
-      }),
-      {
-        status: upstream.status,
-        statusText: upstream.statusText,
-        headers: respHeaders,
-      },
-    );
+    return translateAnthropicSseResponse(context, upstream);
   }
   if (context.isAnthropic && upstream.ok && contentType && isJsonContentType(contentType)) {
-    try {
-      const translated = translateOpenAIResponse((await upstream.clone().json()) as never);
-      const respHeaders = new Headers();
-      for (const [key, value] of upstream.headers.entries()) {
-        const lower = key.toLowerCase();
-        if (lower === "transfer-encoding" || lower === "connection") continue;
-        respHeaders.set(key, value);
-      }
-      return Response.json(translated, { status: upstream.status, headers: respHeaders });
-    } catch (error) {
-      return Response.json(
-        {
-          error: {
-            message:
-              error instanceof Error ? error.message : "anthropic response translation failed",
-            type: "anthropic_response_translation_error",
-          },
-        },
-        { status: 502 },
-      );
-    }
-  }
-  const respHeaders = new Headers();
-  for (const [key, value] of upstream.headers.entries()) {
-    const lower = key.toLowerCase();
-    if (lower === "transfer-encoding" || lower === "connection") continue;
-    respHeaders.set(key, value);
+    return await translateAnthropicJsonResponse(upstream);
   }
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,
-    headers: respHeaders,
+    headers: sanitizedResponseHeaders(upstream),
   });
+}
+
+/** Strip user-supplied oMLX vendor fields from a JSON body in place on the context. */
+function stripVendorFieldsFromBody(routed: ProxyContext): void {
+  if (!routed.bodyText) return;
+  let parsedBody: unknown;
+  try {
+    parsedBody = JSON.parse(routed.bodyText);
+  } catch {
+    parsedBody = null;
+  }
+  if (!isRecord(parsedBody)) return;
+  stripUserSuppliedOmlxVendorFields(
+    parsedBody,
+    requestedModelFromBody(routed.bodyText) ?? routed.route?.model ?? "unknown",
+    routed.route?.workload ?? "unknown",
+  );
+  const strippedBodyText = JSON.stringify(parsedBody);
+  if (strippedBodyText !== routed.bodyText) {
+    routed.bodyText = strippedBodyText;
+    routed.init = {
+      ...routed.init,
+      body: strippedBodyText,
+    };
+  }
+}
+
+function warnKvStageFailure(stage: "lookup" | "persist", error: unknown): void {
+  console.warn(
+    `[openaiProxy] kv ${stage} failed: ${error instanceof Error ? error.message : String(error)}`,
+  );
 }
 
 /**
@@ -1872,29 +1973,7 @@ export async function proxyOpenAI(
   if (routed.route?.isPeer && requestBodyContainsOmlxRequestHandle(routed.bodyText)) {
     return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
   }
-  if (routed.bodyText) {
-    let parsedBody: unknown;
-    try {
-      parsedBody = JSON.parse(routed.bodyText);
-    } catch {
-      parsedBody = null;
-    }
-    if (isRecord(parsedBody)) {
-      stripUserSuppliedOmlxVendorFields(
-        parsedBody,
-        requestedModelFromBody(routed.bodyText) ?? routed.route?.model ?? "unknown",
-        routed.route?.workload ?? "unknown",
-      );
-      const strippedBodyText = JSON.stringify(parsedBody);
-      if (strippedBodyText !== routed.bodyText) {
-        routed.bodyText = strippedBodyText;
-        routed.init = {
-          ...routed.init,
-          body: strippedBodyText,
-        };
-      }
-    }
-  }
+  stripVendorFieldsFromBody(routed);
   const withResponseCacheLookup = await maybeResponseCacheLookup(routed);
   if (withResponseCacheLookup.responseCacheHit) {
     return withResponseCacheLookup.responseCacheHit;
@@ -1904,18 +1983,14 @@ export async function proxyOpenAI(
   try {
     withKvLookup = await maybeKvLookup(withResponseCacheLookup);
   } catch (error) {
-    console.warn(
-      `[openaiProxy] kv lookup failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    warnKvStageFailure("lookup", error);
   }
   try {
     const upstream = await forward(withKvLookup);
     try {
       await maybePersistKv(withKvLookup, upstream);
     } catch (error) {
-      console.warn(
-        `[openaiProxy] kv persist failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      warnKvStageFailure("persist", error);
     }
     const translatedResponse = await maybeTranslateResponse(withKvLookup, upstream);
     return await maybePersistResponseCache(withKvLookup, translatedResponse);

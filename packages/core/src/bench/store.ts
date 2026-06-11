@@ -60,6 +60,32 @@ function readLines(file: string): string[] {
   return raw.split("\n");
 }
 
+function recordFromColumns(cols: string[], fields: readonly string[]): Record<string, string> {
+  const record: Record<string, string> = {};
+  for (const [i, field] of fields.entries()) {
+    record[field] = cols[i] ?? "";
+  }
+  return record;
+}
+
+function collectBenchProfileRow(cols: string[], out: BenchProfileRows): void {
+  if (cols.length >= benchProfileFields.length) {
+    const parsed = BenchProfile.safeParse(recordFromColumns(cols, benchProfileFields));
+    if (parsed.success) out.current.push(parsed.data);
+    return;
+  }
+  if (cols.length !== 5) return;
+  const [rel, profile, gen, prompt, updated] = cols;
+  const parsed = BenchProfileLegacy.safeParse({
+    rel,
+    profile,
+    gen_ts: gen,
+    prompt_ts: prompt,
+    updated_at: updated,
+  });
+  if (parsed.success) out.legacy.push(parsed.data);
+}
+
 /**
  * Parse bench-profiles.tsv. Rows with 9+ fields load into the current
  * schema; rows with exactly 5 fields load as legacy (rel, profile,
@@ -70,27 +96,7 @@ export function readBenchProfiles(file: string): BenchProfileRows {
   const out: BenchProfileRows = { current: [], legacy: [] };
   for (const line of readLines(file)) {
     if (line.trim() === "") continue;
-    const cols = splitTsvRow(line);
-    if (cols.length >= benchProfileFields.length) {
-      const record: Record<string, string> = {};
-      for (const [i, field] of benchProfileFields.entries()) {
-        record[field] = cols[i] ?? "";
-      }
-      const parsed = BenchProfile.safeParse(record);
-      if (parsed.success) out.current.push(parsed.data);
-      continue;
-    }
-    if (cols.length === 5) {
-      const [rel, profile, gen, prompt, updated] = cols;
-      const parsed = BenchProfileLegacy.safeParse({
-        rel,
-        profile,
-        gen_ts: gen,
-        prompt_ts: prompt,
-        updated_at: updated,
-      });
-      if (parsed.success) out.legacy.push(parsed.data);
-    }
+    collectBenchProfileRow(splitTsvRow(line), out);
   }
   return out;
 }
@@ -175,6 +181,24 @@ export function findLatestVision(
   return match;
 }
 
+function collectBenchHistoryRow(cols: string[], out: BenchHistoryRows): void {
+  if (cols.length >= benchHistoryFields.length) {
+    const parsed = BenchHistoryEntry.safeParse(recordFromColumns(cols, benchHistoryFields));
+    if (parsed.success) out.current.push(parsed.data);
+    return;
+  }
+  if (cols.length !== 6) return;
+  const [updatedAt, rel, profile, gen, prompt, launchArgs] = cols;
+  out.legacy.push({
+    updated_at: updatedAt ?? "",
+    rel: rel ?? "",
+    profile: profile ?? "",
+    gen_ts: gen ?? "",
+    prompt_ts: prompt ?? "",
+    launch_args: launchArgs ?? "",
+  });
+}
+
 /**
  * Parse bench-history.tsv. Rows with 10+ fields load into the current
  * schema; rows with exactly 6 fields load as legacy. Legacy rows look
@@ -184,27 +208,7 @@ export function readBenchHistory(file: string): BenchHistoryRows {
   const out: BenchHistoryRows = { current: [], legacy: [] };
   for (const line of readLines(file)) {
     if (line.trim() === "") continue;
-    const cols = splitTsvRow(line);
-    if (cols.length >= benchHistoryFields.length) {
-      const record: Record<string, string> = {};
-      for (const [i, field] of benchHistoryFields.entries()) {
-        record[field] = cols[i] ?? "";
-      }
-      const parsed = BenchHistoryEntry.safeParse(record);
-      if (parsed.success) out.current.push(parsed.data);
-      continue;
-    }
-    if (cols.length === 6) {
-      const [updatedAt, rel, profile, gen, prompt, launchArgs] = cols;
-      out.legacy.push({
-        updated_at: updatedAt ?? "",
-        rel: rel ?? "",
-        profile: profile ?? "",
-        gen_ts: gen ?? "",
-        prompt_ts: prompt ?? "",
-        launch_args: launchArgs ?? "",
-      });
-    }
+    collectBenchHistoryRow(splitTsvRow(line), out);
   }
   return out;
 }

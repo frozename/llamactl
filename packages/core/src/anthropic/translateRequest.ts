@@ -1,4 +1,5 @@
 import type {
+  AnthropicContentBlock,
   AnthropicImageContentBlock,
   AnthropicImageSource,
   AnthropicMessage,
@@ -202,27 +203,21 @@ function normalizeSystemContent(system: AnthropicMessagesRequest["system"]): str
   return parts.join("");
 }
 
-function translateMessageContent(
-  message: AnthropicMessage,
+interface CollectedMessageParts {
+  textParts: string[];
+  imageParts: OpenAIImagePart[];
+  toolCalls: OpenAIAssistantToolCall[];
+}
+
+function collectMessageParts(
+  blocks: AnthropicContentBlock[],
   options?: TranslateAnthropicRequestOptions,
-): OpenAIChatMessage[] {
-  if (typeof message.content === "string") {
-    return [{ role: message.role, content: message.content }];
-  }
-
-  if (
-    message.role === "user" &&
-    message.content.length > 0 &&
-    message.content.every((block) => block.type === "tool_result")
-  ) {
-    return message.content.map((block) => toolMessageFromBlock(block));
-  }
-
+): CollectedMessageParts {
   const textParts: string[] = [];
   const imageParts: OpenAIImagePart[] = [];
   const toolCalls: OpenAIAssistantToolCall[] = [];
 
-  for (const block of message.content) {
+  for (const block of blocks) {
     switch (block.type) {
       case "text":
         textParts.push(block.text);
@@ -241,6 +236,27 @@ function translateMessageContent(
         throw new AnthropicTranslationError(`unsupported content block type: ${blockType(block)}`);
     }
   }
+
+  return { textParts, imageParts, toolCalls };
+}
+
+function translateMessageContent(
+  message: AnthropicMessage,
+  options?: TranslateAnthropicRequestOptions,
+): OpenAIChatMessage[] {
+  if (typeof message.content === "string") {
+    return [{ role: message.role, content: message.content }];
+  }
+
+  if (
+    message.role === "user" &&
+    message.content.length > 0 &&
+    message.content.every((block) => block.type === "tool_result")
+  ) {
+    return message.content.map((block) => toolMessageFromBlock(block));
+  }
+
+  const { textParts, imageParts, toolCalls } = collectMessageParts(message.content, options);
 
   const joinedText = textParts.join("");
   const content: string | (OpenAITextPart | OpenAIImagePart)[] =

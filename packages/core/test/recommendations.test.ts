@@ -38,34 +38,40 @@ const MAX_MODEL_SIZE_BY_PROFILE_GB: Record<string, number> = {
  * depend on network. Tuned against the actual unsloth GGUF sizes
  * for the families we recommend today.
  */
+/** Family base parameter counts (B params). */
+function familyParamsB(rel: string): number {
+  if (rel.startsWith("Qwen3.6-35B-A3B-GGUF/")) return 35;
+  if (rel.startsWith("Qwen3.5-27B-GGUF/")) return 27;
+  if (rel.startsWith("gemma-4-E4B-it-GGUF/")) return 7.5;
+  if (rel.startsWith("gemma-4-26B-A4B-it-GGUF/")) return 26;
+  if (rel.startsWith("gemma-4-31B-it-GGUF/")) return 31;
+  throw new Error(`unknown family for size estimate: ${rel}`);
+}
+
+/**
+ * Bits per weight by quant tag, biased high so we err toward
+ * marking a recommendation as too-large rather than too-small.
+ */
+function quantBitsPerWeight(rel: string, fname: string): number {
+  if (fname.includes("IQ1_M")) return 2.3;
+  if (/IQ2_(?:M|XS|XXS)/.test(fname)) return 2.6;
+  if (fname.includes("Q2_K")) return 2.85;
+  if (/IQ3|Q3_K_S/.test(fname)) return 3.5;
+  if (fname.includes("Q3_K_M")) return 3.85;
+  if (fname.includes("Q3_K_XL")) return 4.0;
+  if (/IQ4|Q4_0|Q4_K_S/.test(fname)) return 4.65;
+  if (/Q4_K_M|Q4_K_XL|Q4_1/.test(fname)) return 5.0;
+  if (fname.includes("Q5_K")) return 5.85;
+  if (fname.includes("Q6_K")) return 6.85;
+  if (/Q8_0|Q8_K_XL/.test(fname)) return 8.5;
+  if (/BF16|F16/.test(fname)) return 16;
+  throw new Error(`unknown quant for size estimate: ${rel}`);
+}
+
 function estimateRelSizeGb(rel: string): number {
   const fname = rel.split("/").pop() ?? rel;
-  // Family base parameter counts (B params).
-  let paramsB: number;
-  if (rel.startsWith("Qwen3.6-35B-A3B-GGUF/")) paramsB = 35;
-  else if (rel.startsWith("Qwen3.5-27B-GGUF/")) paramsB = 27;
-  else if (rel.startsWith("gemma-4-E4B-it-GGUF/")) paramsB = 7.5;
-  else if (rel.startsWith("gemma-4-26B-A4B-it-GGUF/")) paramsB = 26;
-  else if (rel.startsWith("gemma-4-31B-it-GGUF/")) paramsB = 31;
-  else throw new Error(`unknown family for size estimate: ${rel}`);
-
-  // Bits per weight by quant tag, biased high so we err toward
-  // marking a recommendation as too-large rather than too-small.
-  let bpw: number;
-  if (fname.includes("IQ1_M")) bpw = 2.3;
-  else if (/IQ2_(?:M|XS|XXS)/.test(fname)) bpw = 2.6;
-  else if (fname.includes("Q2_K")) bpw = 2.85;
-  else if (/IQ3|Q3_K_S/.test(fname)) bpw = 3.5;
-  else if (fname.includes("Q3_K_M")) bpw = 3.85;
-  else if (fname.includes("Q3_K_XL")) bpw = 4.0;
-  else if (/IQ4|Q4_0|Q4_K_S/.test(fname)) bpw = 4.65;
-  else if (/Q4_K_M|Q4_K_XL|Q4_1/.test(fname)) bpw = 5.0;
-  else if (fname.includes("Q5_K")) bpw = 5.85;
-  else if (fname.includes("Q6_K")) bpw = 6.85;
-  else if (/Q8_0|Q8_K_XL/.test(fname)) bpw = 8.5;
-  else if (/BF16|F16/.test(fname)) bpw = 16;
-  else throw new Error(`unknown quant for size estimate: ${rel}`);
-
+  const paramsB = familyParamsB(rel);
+  const bpw = quantBitsPerWeight(rel, fname);
   return (paramsB * 1e9 * bpw) / 8 / 1e9;
 }
 

@@ -106,36 +106,47 @@ function walkForGguf(root: string, relative: string, depth: number, acc: LMStudi
     return;
   }
   for (const name of entries) {
-    const full = join(root, relative, name);
-    const nextRel = relative ? `${relative}/${name}` : name;
-    let st;
-    try {
-      st = statSync(full);
-    } catch {
-      continue;
-    }
-    if (st.isDirectory()) {
-      walkForGguf(root, nextRel, depth + 1, acc);
-      continue;
-    }
-    if (!st.isFile()) continue;
-    if (!gguf(name)) continue;
-
-    const parts = nextRel.split("/");
-    const publisher = parts[0] ?? "unknown";
-    const second = parts[1] ?? "";
-    const repo = toRepo(publisher, second);
-    const repoBase = repo.slice(repo.lastIndexOf("/") + 1);
-    acc.push({
-      path: full,
-      relativePath: nextRel,
-      publisher,
-      repo,
-      file: name,
-      rel: `${repoBase}/${name}`,
-      sizeBytes: st.size,
-    });
+    visitLMStudioEntry(root, relative, name, depth, acc);
   }
+}
+
+/** Recurse into directories; collect plain GGUF files into `acc`. */
+function visitLMStudioEntry(
+  root: string,
+  relative: string,
+  name: string,
+  depth: number,
+  acc: LMStudioModel[],
+): void {
+  const full = join(root, relative, name);
+  const nextRel = relative ? `${relative}/${name}` : name;
+  let st;
+  try {
+    st = statSync(full);
+  } catch {
+    return;
+  }
+  if (st.isDirectory()) {
+    walkForGguf(root, nextRel, depth + 1, acc);
+    return;
+  }
+  if (!st.isFile()) return;
+  if (!gguf(name)) return;
+
+  const parts = nextRel.split("/");
+  const publisher = parts[0] ?? "unknown";
+  const second = parts[1] ?? "";
+  const repo = toRepo(publisher, second);
+  const repoBase = repo.slice(repo.lastIndexOf("/") + 1);
+  acc.push({
+    path: full,
+    relativePath: nextRel,
+    publisher,
+    repo,
+    file: name,
+    rel: `${repoBase}/${name}`,
+    sizeBytes: st.size,
+  });
 }
 
 export interface ScanOptions {
@@ -246,6 +257,39 @@ export interface ImportResult {
 }
 
 /**
+ * Clear the way for a fresh symlink at `targetPath`: refuse to clobber
+ * real files but clean up stale or broken symlinks from previous runs.
+ */
+function removeStaleTarget(targetPath: string): void {
+  if (!existsSync(targetPath)) return;
+  try {
+    const st = statSync(targetPath);
+    if (!st.isFile()) unlinkSync(targetPath);
+  } catch {
+    // Broken symlink → drop it so we can replace cleanly.
+    try {
+      unlinkSync(targetPath);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** Symlink the LM Studio file into `$LLAMA_CPP_MODELS/<rel>`. Returns an error message on failure. */
+function linkModelIntoModels(resolved: ResolvedEnv, item: ImportPlanItem): string | null {
+  try {
+    mkdirSync(join(resolved.LLAMA_CPP_MODELS, item.rel.split("/")[0] ?? ""), {
+      recursive: true,
+    });
+    removeStaleTarget(item.targetPath);
+    symlinkSync(item.source.path, item.targetPath);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+/**
  * Materialize the plan: for each `link-and-add` item, symlink the
  * LM Studio .gguf into `$LLAMA_CPP_MODELS/<rel>`; for `add`, leave
  * the file alone and just register the catalog row. Curated adds
@@ -274,31 +318,9 @@ export async function applyImport(opts: ImportOptions = {}): Promise<ImportResul
     }
 
     if (item.action === "link-and-add") {
-      try {
-        mkdirSync(join(resolved.LLAMA_CPP_MODELS, item.rel.split("/")[0] ?? ""), {
-          recursive: true,
-        });
-        if (existsSync(item.targetPath)) {
-          // A stale symlink might linger from a previous run; refuse to clobber
-          // real files but clean up broken links.
-          try {
-            const st = statSync(item.targetPath);
-            if (!st.isFile()) unlinkSync(item.targetPath);
-          } catch {
-            // Broken symlink → drop it so we can replace cleanly.
-            try {
-              unlinkSync(item.targetPath);
-            } catch {
-              // ignore
-            }
-          }
-        }
-        symlinkSync(item.source.path, item.targetPath);
-      } catch (err) {
-        result.errors.push({
-          rel: item.rel,
-          error: err instanceof Error ? err.message : String(err),
-        });
+      const linkError = linkModelIntoModels(resolved, item);
+      if (linkError !== null) {
+        result.errors.push({ rel: item.rel, error: linkError });
         continue;
       }
     }

@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import type { CuratedModel } from "../schemas.js";
 import type { ModelClass } from "../types.js";
+import type { BenchProfileRows } from "./store.js";
 
 import { resolveBuildId } from "../build.js";
 import { listCatalog } from "../catalog.js";
@@ -58,6 +59,57 @@ export interface BenchCompareOptions {
   scopeFilter?: string;
 }
 
+interface TunedResolution {
+  tuned: BenchCompareRow["tuned"];
+  mode: string;
+  ctx: string;
+  build: string;
+}
+
+/**
+ * Resolve the tuned bench record for a catalog entry: prefer the
+ * current-schema match on the full key, fall back to a legacy rel-only
+ * row, otherwise report no tuned record with the env-derived key.
+ */
+function resolveTunedRecord(
+  profiles: BenchProfileRows,
+  key: { machine: string; rel: string; mode: string; ctx: string; build: string },
+): TunedResolution {
+  const latest = findLatestProfile(profiles, key);
+  if (latest) {
+    return {
+      tuned: {
+        profile: latest.profile,
+        gen_tps: latest.gen_ts,
+        prompt_tps: latest.prompt_ts,
+        updated_at: latest.updated_at,
+        legacy: false,
+      },
+      mode: latest.mode,
+      ctx: latest.ctx,
+      build: latest.build,
+    };
+  }
+
+  const legacy = findLegacyProfile(profiles, key.rel);
+  if (legacy) {
+    return {
+      tuned: {
+        profile: legacy.profile,
+        gen_tps: legacy.gen_ts,
+        prompt_tps: legacy.prompt_ts,
+        updated_at: legacy.updated_at,
+        legacy: true,
+      },
+      mode: "legacy",
+      ctx: "legacy",
+      build: "legacy",
+    };
+  }
+
+  return { tuned: null, mode: key.mode, ctx: key.ctx, build: key.build };
+}
+
 /**
  * Build the compare table rows. No I/O beyond reading the TSVs + probing
  * for installed rels. Consumers (CLI formatter, Electron renderer via
@@ -85,44 +137,7 @@ export function benchCompare(
     const mode = defaultModeForRel(rel, resolved);
     const ctx = ctxForModel(rel, resolved);
 
-    const latest = findLatestProfile(profiles, {
-      machine,
-      rel,
-      mode,
-      ctx,
-      build,
-    });
-
-    let tuned: BenchCompareRow["tuned"] = null;
-    let effectiveMode: string = mode;
-    let effectiveCtx: string = ctx;
-    let effectiveBuild: string = build;
-    if (latest) {
-      tuned = {
-        profile: latest.profile,
-        gen_tps: latest.gen_ts,
-        prompt_tps: latest.prompt_ts,
-        updated_at: latest.updated_at,
-        legacy: false,
-      };
-      effectiveMode = latest.mode;
-      effectiveCtx = latest.ctx;
-      effectiveBuild = latest.build;
-    } else {
-      const legacy = findLegacyProfile(profiles, rel);
-      if (legacy) {
-        tuned = {
-          profile: legacy.profile,
-          gen_tps: legacy.gen_ts,
-          prompt_tps: legacy.prompt_ts,
-          updated_at: legacy.updated_at,
-          legacy: true,
-        };
-        effectiveMode = "legacy";
-        effectiveCtx = "legacy";
-        effectiveBuild = "legacy";
-      }
-    }
+    const resolvedTuned = resolveTunedRecord(profiles, { machine, rel, mode, ctx, build });
 
     const visionRow = findLatestVision(vision, { machine, rel, build });
 
@@ -132,11 +147,11 @@ export function benchCompare(
       scope: entry.scope,
       rel,
       installed,
-      mode: effectiveMode,
-      ctx: effectiveCtx,
-      build: effectiveBuild,
+      mode: resolvedTuned.mode,
+      ctx: resolvedTuned.ctx,
+      build: resolvedTuned.build,
       machine,
-      tuned,
+      tuned: resolvedTuned.tuned,
       vision: visionRow
         ? {
             load_ms: visionRow.load_ms,

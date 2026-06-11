@@ -61,30 +61,39 @@ function parseAnthropicSse(text: string): ParsedEvent[] {
   });
 }
 
+function numericEventIndex(event: ParsedEvent): number {
+  const index = event.data.index;
+  if (typeof index !== "number") {
+    throw new Error(`${event.event} missing numeric index`);
+  }
+  return index;
+}
+
+function applyContentBlockEvent(open: Map<number, boolean>, event: ParsedEvent): void {
+  if (event.event === "content_block_start") {
+    const index = numericEventIndex(event);
+    if (open.get(index)) throw new Error(`content block index already open: ${String(index)}`);
+    open.set(index, true);
+    return;
+  }
+
+  if (event.event === "content_block_delta") {
+    const index = numericEventIndex(event);
+    if (!open.get(index)) throw new Error(`delta outside open block: ${String(index)}`);
+    return;
+  }
+
+  if (event.event === "content_block_stop") {
+    const index = numericEventIndex(event);
+    if (!open.get(index)) throw new Error(`stop outside open block: ${String(index)}`);
+    open.delete(index);
+  }
+}
+
 function assertContentBlockDeltaInvariant(events: ParsedEvent[]): void {
   const open = new Map<number, boolean>();
   for (const event of events) {
-    if (event.event === "content_block_start") {
-      const index = event.data.index;
-      if (typeof index !== "number") throw new Error("content_block_start missing numeric index");
-      if (open.get(index)) throw new Error(`content block index already open: ${String(index)}`);
-      open.set(index, true);
-      continue;
-    }
-
-    if (event.event === "content_block_delta") {
-      const index = event.data.index;
-      if (typeof index !== "number") throw new Error("content_block_delta missing numeric index");
-      if (!open.get(index)) throw new Error(`delta outside open block: ${String(index)}`);
-      continue;
-    }
-
-    if (event.event === "content_block_stop") {
-      const index = event.data.index;
-      if (typeof index !== "number") throw new Error("content_block_stop missing numeric index");
-      if (!open.get(index)) throw new Error(`stop outside open block: ${String(index)}`);
-      open.delete(index);
-    }
+    applyContentBlockEvent(open, event);
   }
 
   if (open.size > 0) {

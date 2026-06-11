@@ -119,6 +119,127 @@ function writeModelHostWorkload(
   );
 }
 
+interface UpstreamMockContext {
+  events: string[];
+  slotBaseDir: string;
+  saveMode: "ok" | "invalid";
+  restoreMode: "ok" | "http_error";
+  supportsRequestHandle: boolean;
+  supportsSaveHandle: boolean;
+  restoreEpoch: string | null;
+  chatMode: "json" | "sse";
+  firstJsonToken: string;
+  toolCalls: { id: string; name: string; arguments: string }[];
+}
+
+function handleSlotAction(ctx: UpstreamMockContext, parsed: URL, init?: RequestInit): Response {
+  const action = parsed.searchParams.get("action");
+  const body = typeof init?.body === "string" ? init.body : "";
+  const filename = filenameFromBody(body);
+  const absPath = join(ctx.slotBaseDir, filename);
+  if (action === "restore") {
+    ctx.events.push("slot-restore");
+    if (ctx.restoreMode === "http_error") {
+      return Response.json({ error: "restore-fail" }, { status: 500 });
+    }
+    if (!existsSync(absPath)) return Response.json({ error: "missing" }, { status: 404 });
+    return Response.json({ n_restored: 123, restore_epoch: ctx.restoreEpoch });
+  }
+  if (action === "save") {
+    ctx.events.push("slot-save");
+    mkdirSync(dirname(absPath), { recursive: true });
+    writeFileSync(absPath, "slot");
+    if (ctx.saveMode === "invalid") return Response.json({ ok: true });
+    return Response.json({ n_saved: 321 });
+  }
+  return Response.json({ error: "bad action" }, { status: 400 });
+}
+
+function handleChatCompletion(ctx: UpstreamMockContext, init?: RequestInit): Response {
+  ctx.events.push("chat-forward");
+  const body = typeof init?.body === "string" ? init.body : "";
+  if (ctx.chatMode === "sse") {
+    return new Response(`data: ${JSON.stringify({ id: "evt", body })}\n\n`, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  }
+  return Response.json({
+    id: "chatcmpl-1",
+    object: "chat.completion",
+    model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: `${ctx.firstJsonToken} world` }],
+          ...(ctx.toolCalls.length > 0
+            ? {
+                tool_calls: ctx.toolCalls.map((call) => ({
+                  id: call.id,
+                  type: "function",
+                  function: {
+                    name: call.name,
+                    arguments: call.arguments,
+                  },
+                })),
+              }
+            : {}),
+        },
+        finish_reason: "stop",
+      },
+    ],
+    echoed: body,
+  });
+}
+
+function requestUrlOf(input: Request | URL | string): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function requestMethodOf(input: Request | URL | string, init?: RequestInit): string {
+  if (init?.method !== undefined) return init.method;
+  if (typeof input === "object" && "method" in input) return input.method;
+  return "GET";
+}
+
+function mockUpstreamResponse(
+  ctx: UpstreamMockContext,
+  input: Request | URL | string,
+  init?: RequestInit,
+): Response {
+  const method = requestMethodOf(input, init);
+  const parsed = new URL(requestUrlOf(input));
+  if (method === "POST" && parsed.pathname.startsWith("/slots/")) {
+    return handleSlotAction(ctx, parsed, init);
+  }
+  if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
+    return handleChatCompletion(ctx, init);
+  }
+  if (method === "GET" && parsed.pathname === "/props") {
+    return Response.json({
+      slots: {
+        api_version: ctx.supportsRequestHandle ? 2 : 1,
+        supports_request_handle: ctx.supportsRequestHandle,
+      },
+    });
+  }
+  // oMLX advertises slot capabilities here instead of /props.
+  if (method === "GET" && parsed.pathname === "/v1/slots/capabilities") {
+    return Response.json({
+      slots: {
+        api_version: 2,
+        supports_request_handle: true,
+        supports_save_handle: ctx.supportsSaveHandle,
+      },
+    });
+  }
+  return new Response("", { status: 404 });
+}
+
 function startUpstream(opts: {
   slotBaseDir: string;
   saveMode?: "ok" | "invalid";
@@ -131,110 +252,21 @@ function startUpstream(opts: {
   toolCalls?: { id: string; name: string; arguments: string }[];
 }): Promise<TestUpstream> {
   const events: string[] = [];
-  const saveMode = opts.saveMode ?? "ok";
-  const restoreMode = opts.restoreMode ?? "ok";
-  const supportsRequestHandle = opts.supportsRequestHandle ?? false;
-  const supportsSaveHandle = opts.supportsSaveHandle ?? false;
-  const restoreEpoch = opts.restoreEpoch ?? null;
-  const chatMode = opts.chatMode ?? "json";
-  const firstJsonToken = opts.firstJsonToken ?? "Hello";
-  const toolCalls = opts.toolCalls ?? [];
-  const slotBaseDir = opts.slotBaseDir;
+  const ctx: UpstreamMockContext = {
+    events,
+    slotBaseDir: opts.slotBaseDir,
+    saveMode: opts.saveMode ?? "ok",
+    restoreMode: opts.restoreMode ?? "ok",
+    supportsRequestHandle: opts.supportsRequestHandle ?? false,
+    supportsSaveHandle: opts.supportsSaveHandle ?? false,
+    restoreEpoch: opts.restoreEpoch ?? null,
+    chatMode: opts.chatMode ?? "json",
+    firstJsonToken: opts.firstJsonToken ?? "Hello",
+    toolCalls: opts.toolCalls ?? [],
+  };
   const baseUrl = "http://127.0.0.1:19502";
-  globalThis.fetch = ((input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-    const url =
-      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const method =
-      init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
-    const parsed = new URL(url);
-    if (method === "POST" && parsed.pathname.startsWith("/slots/")) {
-      const action = parsed.searchParams.get("action");
-      const body = typeof init?.body === "string" ? init.body : "";
-      const filename = filenameFromBody(body);
-      const absPath = join(slotBaseDir, filename);
-      if (action === "restore") {
-        events.push("slot-restore");
-        if (restoreMode === "http_error")
-          return Promise.resolve(Response.json({ error: "restore-fail" }, { status: 500 }));
-        if (!existsSync(absPath))
-          return Promise.resolve(Response.json({ error: "missing" }, { status: 404 }));
-        return Promise.resolve(Response.json({ n_restored: 123, restore_epoch: restoreEpoch }));
-      }
-      if (action === "save") {
-        events.push("slot-save");
-        mkdirSync(dirname(absPath), { recursive: true });
-        writeFileSync(absPath, "slot");
-        if (saveMode === "invalid") return Promise.resolve(Response.json({ ok: true }));
-        return Promise.resolve(Response.json({ n_saved: 321 }));
-      }
-      return Promise.resolve(Response.json({ error: "bad action" }, { status: 400 }));
-    }
-    if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
-      events.push("chat-forward");
-      const body = typeof init?.body === "string" ? init.body : "";
-      if (chatMode === "sse") {
-        return Promise.resolve(
-          new Response(`data: ${JSON.stringify({ id: "evt", body })}\n\n`, {
-            status: 200,
-            headers: { "content-type": "text/event-stream" },
-          }),
-        );
-      }
-      return Promise.resolve(
-        Response.json({
-          id: "chatcmpl-1",
-          object: "chat.completion",
-          model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: "assistant",
-                content: [{ type: "text", text: `${firstJsonToken} world` }],
-                ...(toolCalls.length > 0
-                  ? {
-                      tool_calls: toolCalls.map((call) => ({
-                        id: call.id,
-                        type: "function",
-                        function: {
-                          name: call.name,
-                          arguments: call.arguments,
-                        },
-                      })),
-                    }
-                  : {}),
-              },
-              finish_reason: "stop",
-            },
-          ],
-          echoed: body,
-        }),
-      );
-    }
-    if (method === "GET" && parsed.pathname === "/props") {
-      return Promise.resolve(
-        Response.json({
-          slots: {
-            api_version: supportsRequestHandle ? 2 : 1,
-            supports_request_handle: supportsRequestHandle,
-          },
-        }),
-      );
-    }
-    // oMLX advertises slot capabilities here instead of /props.
-    if (method === "GET" && parsed.pathname === "/v1/slots/capabilities") {
-      return Promise.resolve(
-        Response.json({
-          slots: {
-            api_version: 2,
-            supports_request_handle: true,
-            supports_save_handle: supportsSaveHandle,
-          },
-        }),
-      );
-    }
-    return Promise.resolve(new Response("", { status: 404 }));
-  }) as typeof fetch;
+  globalThis.fetch = ((input: Request | URL | string, init?: RequestInit): Promise<Response> =>
+    Promise.resolve(mockUpstreamResponse(ctx, input, init))) as typeof fetch;
 
   return Promise.resolve({
     baseUrl,

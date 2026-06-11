@@ -19,23 +19,40 @@ import { normalizeProfile, resolveProfile } from "./profile.js";
  *      can surface, rather than hanging on a non-existent command.
  * Exported so the Electron UI can report which binary was chosen.
  */
+function findBinaryInDir(
+  dir: string,
+  candidates: readonly string[],
+  extensions: readonly string[],
+): string | null {
+  for (const name of candidates) {
+    for (const ext of extensions) {
+      const full = join(dir, `${name}${ext}`);
+      if (existsSync(full)) return full;
+    }
+  }
+  return null;
+}
+
+function findBinaryOnPath(
+  path: string,
+  candidates: readonly string[],
+  extensions: readonly string[],
+): string | null {
+  for (const dir of path.split(delimiter)) {
+    if (!dir) continue;
+    const hit = findBinaryInDir(dir, candidates, extensions);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 export function resolveHfBin(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LOCAL_AI_HF_BIN;
   if (override && override.length > 0) return override;
   const path = env.PATH ?? "";
-  const candidates = ["hf", "huggingface-cli"];
   const extensions =
     process.platform === "win32" ? (env.PATHEXT ?? ".EXE;.BAT;.CMD").split(";") : [""];
-  for (const dir of path.split(delimiter)) {
-    if (!dir) continue;
-    for (const name of candidates) {
-      for (const ext of extensions) {
-        const full = join(dir, `${name}${ext}`);
-        if (existsSync(full)) return full;
-      }
-    }
-  }
-  return "hf";
+  return findBinaryOnPath(path, ["hf", "huggingface-cli"], extensions) ?? "hf";
 }
 
 export function resolveHfToken(): string | undefined {

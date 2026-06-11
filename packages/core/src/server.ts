@@ -282,6 +282,35 @@ function removeServerState(resolved: ResolvedEnv, key: WorkloadKey): void {
   }
 }
 
+type SidecarStatusFields = Pick<
+  ServerStatus,
+  "binary" | "extraArgs" | "host" | "port" | "rel" | "startedAt" | "tunedProfile"
+>;
+
+/** Status fields derived from a trusted sidecar; empty defaults otherwise. */
+function sidecarStatusFields(sidecar: ServerState | null, valid: boolean): SidecarStatusFields {
+  if (!valid || sidecar === null) {
+    return {
+      rel: null,
+      extraArgs: [],
+      startedAt: null,
+      host: null,
+      port: null,
+      binary: null,
+      tunedProfile: null,
+    };
+  }
+  return {
+    rel: sidecar.rel,
+    extraArgs: sidecar.extraArgs,
+    startedAt: sidecar.startedAt,
+    host: sidecar.host,
+    port: Number.parseInt(sidecar.port, 10) || null,
+    binary: sidecar.binary || null,
+    tunedProfile: sidecar.tunedProfile,
+  };
+}
+
 /**
  * Report whether a local llama-server is reachable. Combines the stored
  * PID (if any, and alive) with a live `GET /health` probe so the status
@@ -326,13 +355,7 @@ export async function serverStatus(
     advertisedEndpoint: advertisedEndpoint(resolved, endpointOverride),
     pid,
     health: { httpCode, reachable },
-    rel: validSidecar ? sidecar.rel : null,
-    extraArgs: validSidecar ? sidecar.extraArgs : [],
-    startedAt: validSidecar ? sidecar.startedAt : null,
-    host: validSidecar ? sidecar.host : null,
-    port: validSidecar ? Number.parseInt(sidecar.port, 10) || null : null,
-    binary: validSidecar ? sidecar.binary || null : null,
-    tunedProfile: validSidecar ? sidecar.tunedProfile : null,
+    ...sidecarStatusFields(sidecar, validSidecar),
   };
 }
 
@@ -584,6 +607,74 @@ interface PollReadyResult {
   portConflict?: boolean;
 }
 
+type HealthProbeOutcome =
+  | { kind: "ready"; httpCode: string }
+  | { kind: "exited"; httpCode: string | null }
+  | { kind: "waiting"; httpCode: string | null; nonLoading: boolean };
+
+/** One /health probe attempt. Emits the `waiting` event for non-terminal outcomes. */
+async function probeHealthOnce(
+  pid: number,
+  healthUrl: string,
+  attempt: number,
+  onEvent?: (e: ServerEvent) => void,
+): Promise<HealthProbeOutcome> {
+  try {
+    const res = await fetch(healthUrl, {
+      method: "GET",
+      signal: AbortSignal.timeout(1000),
+    });
+    const httpCode = String(res.status);
+    if (res.status === 200) return { kind: "ready", httpCode };
+    // 503 is the documented "loading" code llama-server emits
+    // while loading the model. Any other non-200 (401/403/404)
+    // almost always means *something else* is bound to the same
+    // port and we're polling the wrong process.
+    if (res.status === 503) {
+      onEvent?.({ type: "waiting", attempt, httpCode });
+      return { kind: "waiting", httpCode, nonLoading: false };
+    }
+    if (!isProcessAlive(pid)) return { kind: "exited", httpCode };
+    onEvent?.({ type: "waiting", attempt, httpCode });
+    return { kind: "waiting", httpCode, nonLoading: true };
+  } catch {
+    if (!isProcessAlive(pid)) return { kind: "exited", httpCode: null };
+    onEvent?.({ type: "waiting", attempt, httpCode: null });
+    return { kind: "waiting", httpCode: null, nonLoading: false };
+  }
+}
+
+/** Interruptible sleep so SIGTERM + abort react within ~1s. */
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+function pollTimedOutResult(
+  pid: number,
+  lastHttpCode: string | null,
+  nonLoadingHttpCount: number,
+  timeoutSeconds: number,
+): PollReadyResult {
+  const alive = isProcessAlive(pid);
+  const portConflict = nonLoadingHttpCount >= Math.max(3, timeoutSeconds - 1);
+  const result: PollReadyResult = {
+    outcome: alive ? "timeout" : "exited",
+  };
+  if (lastHttpCode !== null) result.lastHttpCode = lastHttpCode;
+  if (portConflict) result.portConflict = true;
+  return result;
+}
+
 async function pollReady(
   pid: number,
   healthUrl: string,
@@ -595,53 +686,17 @@ async function pollReady(
   let nonLoadingHttpCount = 0;
   for (let attempt = 0; attempt < timeoutSeconds; attempt += 1) {
     if (signal?.aborted) return { outcome: "aborted" };
-    let httpCode: string | null = null;
-    try {
-      const res = await fetch(healthUrl, {
-        method: "GET",
-        signal: AbortSignal.timeout(1000),
-      });
-      httpCode = String(res.status);
-      lastHttpCode = httpCode;
-      if (res.status === 200) return { outcome: "ready", lastHttpCode: httpCode };
-      // 503 is the documented "loading" code llama-server emits
-      // while loading the model. Any other non-200 (401/403/404)
-      // almost always means *something else* is bound to the same
-      // port and we're polling the wrong process.
-      if (res.status === 503) {
-        onEvent?.({ type: "waiting", attempt, httpCode });
-      } else {
-        nonLoadingHttpCount += 1;
-        if (!isProcessAlive(pid)) return { outcome: "exited", lastHttpCode: httpCode };
-        onEvent?.({ type: "waiting", attempt, httpCode });
-      }
-    } catch {
-      if (!isProcessAlive(pid))
-        return { outcome: "exited", lastHttpCode: lastHttpCode ?? undefined };
-      onEvent?.({ type: "waiting", attempt, httpCode });
+    const probe = await probeHealthOnce(pid, healthUrl, attempt, onEvent);
+    lastHttpCode = probe.httpCode ?? lastHttpCode;
+    if (probe.kind === "ready") return { outcome: "ready", lastHttpCode: probe.httpCode };
+    if (probe.kind === "exited") {
+      return { outcome: "exited", lastHttpCode: lastHttpCode ?? undefined };
     }
-    // Interruptible sleep so SIGTERM + abort react within ~1s.
-    await new Promise<void>((resolve) => {
-      const t = setTimeout(resolve, 1000);
-      signal?.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(t);
-          resolve();
-        },
-        { once: true },
-      );
-    });
+    if (probe.nonLoading) nonLoadingHttpCount += 1;
+    await abortableSleep(1000, signal);
   }
   if (signal?.aborted) return { outcome: "aborted" };
-  const alive = isProcessAlive(pid);
-  const portConflict = nonLoadingHttpCount >= Math.max(3, timeoutSeconds - 1);
-  const result: PollReadyResult = {
-    outcome: alive ? "timeout" : "exited",
-  };
-  if (lastHttpCode !== null) result.lastHttpCode = lastHttpCode;
-  if (portConflict) result.portConflict = true;
-  return result;
+  return pollTimedOutResult(pid, lastHttpCode, nonLoadingHttpCount, timeoutSeconds);
 }
 
 /** Build the success result for `startServer`, emitting the `ready` event. */
@@ -952,6 +1007,13 @@ async function launchAndRecordServer(
   return pid;
 }
 
+/** Run `killOnAbort` when the signal fires (or immediately if already aborted). */
+function wireAbortToKill(signal: AbortSignal | undefined, killOnAbort: () => void): void {
+  if (!signal) return;
+  if (signal.aborted) killOnAbort();
+  else signal.addEventListener("abort", killOnAbort, { once: true });
+}
+
 /**
  * Start llama-server in the background. Mirrors the shell `llama-start`:
  *
@@ -1018,10 +1080,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
       // already gone
     }
   };
-  if (opts.signal) {
-    if (opts.signal.aborted) killOnAbort();
-    else opts.signal.addEventListener("abort", killOnAbort, { once: true });
-  }
+  wireAbortToKill(opts.signal, killOnAbort);
 
   const timeoutSeconds = opts.timeoutSeconds ?? 60;
   const healthUrl = `${endpoint(resolved, launchEndpoint)}/health`;

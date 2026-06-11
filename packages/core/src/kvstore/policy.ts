@@ -14,6 +14,21 @@ export interface LookupParams {
   workloadEpoch: string;
 }
 
+function entryMatchesCandidate(
+  entry: KvEntry,
+  candidate: LookupParams["candidatePrefixes"][number],
+  params: LookupParams,
+): boolean {
+  if (entry.quarantined === 1) return false;
+  if (entry.workload !== params.workload) return false;
+  if (entry.quantBits !== params.quantBits) return false;
+  if (entry.ctxSize !== params.ctxSize) return false;
+  if (entry.prefixByteLength !== candidate.prefixByteLength) return false;
+  if (entry.tokens !== candidate.tokenCount) return false;
+  if (entry.workloadEpoch !== params.workloadEpoch) return false;
+  return true;
+}
+
 export function longestPrefixLookup(registry: KvRegistry, params: LookupParams): KvEntry | null {
   const sortedCandidates = [...params.candidatePrefixes].sort(
     (a, b) => b.prefixByteLength - a.prefixByteLength,
@@ -21,14 +36,7 @@ export function longestPrefixLookup(registry: KvRegistry, params: LookupParams):
   for (const candidate of sortedCandidates) {
     const entry = registry.findBySha(candidate.sha);
     if (!entry) continue;
-    if (entry.quarantined === 1) continue;
-    if (entry.workload !== params.workload) continue;
-    if (entry.quantBits !== params.quantBits) continue;
-    if (entry.ctxSize !== params.ctxSize) continue;
-    if (entry.prefixByteLength !== candidate.prefixByteLength) continue;
-    if (entry.tokens !== candidate.tokenCount) continue;
-    if (entry.workloadEpoch !== params.workloadEpoch) continue;
-    return entry;
+    if (entryMatchesCandidate(entry, candidate, params)) return entry;
   }
   return null;
 }

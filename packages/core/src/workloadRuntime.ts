@@ -78,6 +78,40 @@ function endpointPortForUrl(url: URL): number {
   return url.protocol === "https:" ? 443 : 80;
 }
 
+/** Append routes for one healthy peer snapshot, deduplicating on model id. */
+function appendPeerRoutes(
+  routes: ClusterRoute[],
+  seenModels: Set<string>,
+  peer: ClusterConfigPeer,
+  snapshot: PeerSnapshot,
+): void {
+  let endpoint: URL;
+  try {
+    endpoint = new URL(peer.endpoint);
+  } catch {
+    return;
+  }
+
+  for (const workload of snapshot.workloads) {
+    if (seenModels.has(workload.modelId)) continue;
+    seenModels.add(workload.modelId);
+    routes.push({
+      workload: `${peer.id}:${workload.modelId}`,
+      model: workload.modelId,
+      host: endpoint.hostname,
+      port: endpointPortForUrl(endpoint),
+      engine: "llamacpp",
+      kind: "ModelRun",
+      isPeer: true,
+      peerEndpoint: peer.endpoint,
+      certificate: peer.certificate,
+      token: peer.token,
+      targetNodeId: peer.id,
+      revision: workload.revision ?? null,
+    });
+  }
+}
+
 export function listClusterRoutes(
   localRoutes: LocalRoute[],
   peerSnapshots: Map<string, PeerSnapshot>,
@@ -92,32 +126,7 @@ export function listClusterRoutes(
     if (!snapshot) continue;
     if (snapshot.pressure === "HIGH") continue;
     if (now - snapshot.fetchedAt > PEER_ROUTE_STALE_MS) continue;
-
-    let endpoint: URL;
-    try {
-      endpoint = new URL(peer.endpoint);
-    } catch {
-      continue;
-    }
-
-    for (const workload of snapshot.workloads) {
-      if (seenModels.has(workload.modelId)) continue;
-      seenModels.add(workload.modelId);
-      routes.push({
-        workload: `${peer.id}:${workload.modelId}`,
-        model: workload.modelId,
-        host: endpoint.hostname,
-        port: endpointPortForUrl(endpoint),
-        engine: "llamacpp",
-        kind: "ModelRun",
-        isPeer: true,
-        peerEndpoint: peer.endpoint,
-        certificate: peer.certificate,
-        token: peer.token,
-        targetNodeId: peer.id,
-        revision: workload.revision ?? null,
-      });
-    }
+    appendPeerRoutes(routes, seenModels, peer, snapshot);
   }
 
   return routes;
@@ -187,56 +196,74 @@ function aliasesFromExtraArgs(extraArgs: readonly string[] | undefined): string[
   return out;
 }
 
+/**
+ * Routes for a live ModelHost in this workload dir, or null when the
+ * dir has no trusted ModelHost (caller falls through to the ModelRun
+ * path). A trusted host with zero aliases yields an empty array — the
+ * dir is still "handled" and must not produce ModelRun routes.
+ */
+function modelHostRoutesForDir(name: string, resolved: ResolvedEnv): LocalRoute[] | null {
+  const key = { name };
+  const hostPid = readPidFile(modelhostPidFile(resolved, key));
+  if (hostPid === null || !isProcessAlive(hostPid)) return null;
+  const state = readModelHostState(key, resolved);
+  if (state?.pid !== hostPid) return null;
+  const out: LocalRoute[] = [];
+  for (const alias of state.modelAliases) {
+    out.push({
+      workload: name,
+      model: alias,
+      host: state.host,
+      port: state.port,
+      engine: state.engine,
+      kind: "ModelHost",
+      pid: hostPid,
+    });
+  }
+  return out;
+}
+
+/** ModelRun routes for one workload dir (empty when no live tracked server). */
+function modelRunRoutesForDir(name: string, root: string, resolved: ResolvedEnv): LocalRoute[] {
+  const runPid = readPidFile(join(root, name, "llama-server.pid"));
+  if (runPid === null || !isProcessAlive(runPid)) return [];
+  const state = readServerState({ name }, resolved);
+  if (!state?.rel || !state.host) return [];
+  // Route by the model rel AND any `--alias` the server advertises. The
+  // server reports its alias (not the rel) on /v1/models, so peer snapshots
+  // and clients that use the alias must resolve to a real route rather than
+  // falling through to the node's default endpoint (wrong model).
+  const models = [state.rel, ...aliasesFromExtraArgs(state.extraArgs)];
+  const seen = new Set<string>();
+  const out: LocalRoute[] = [];
+  for (const model of models) {
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    out.push({
+      workload: name,
+      model,
+      host: state.host,
+      port: Number(state.port),
+      engine: "llamacpp",
+      kind: "ModelRun",
+      pid: runPid,
+    });
+  }
+  return out;
+}
+
 export function listLocalRoutes(resolved: ResolvedEnv = resolveEnv()): LocalRoute[] {
   const root = workloadRuntimeRoot(resolved);
   if (!existsSync(root)) return [];
   const out: LocalRoute[] = [];
   for (const dirent of readdirSync(root, { withFileTypes: true })) {
     if (!dirent.isDirectory()) continue;
-    const key = { name: dirent.name };
-
-    const hostPid = readPidFile(modelhostPidFile(resolved, key));
-    if (hostPid !== null && isProcessAlive(hostPid)) {
-      const state = readModelHostState(key, resolved);
-      if (state?.pid === hostPid) {
-        for (const alias of state.modelAliases) {
-          out.push({
-            workload: dirent.name,
-            model: alias,
-            host: state.host,
-            port: state.port,
-            engine: state.engine,
-            kind: "ModelHost",
-            pid: hostPid,
-          });
-        }
-        continue;
-      }
+    const hostRoutes = modelHostRoutesForDir(dirent.name, resolved);
+    if (hostRoutes !== null) {
+      out.push(...hostRoutes);
+      continue;
     }
-
-    const runPid = readPidFile(join(root, dirent.name, "llama-server.pid"));
-    if (runPid === null || !isProcessAlive(runPid)) continue;
-    const state = readServerState(key, resolved);
-    if (!state?.rel || !state.host) continue;
-    // Route by the model rel AND any `--alias` the server advertises. The
-    // server reports its alias (not the rel) on /v1/models, so peer snapshots
-    // and clients that use the alias must resolve to a real route rather than
-    // falling through to the node's default endpoint (wrong model).
-    const models = [state.rel, ...aliasesFromExtraArgs(state.extraArgs)];
-    const seen = new Set<string>();
-    for (const model of models) {
-      if (!model || seen.has(model)) continue;
-      seen.add(model);
-      out.push({
-        workload: dirent.name,
-        model,
-        host: state.host,
-        port: Number(state.port),
-        engine: "llamacpp",
-        kind: "ModelRun",
-        pid: runPid,
-      });
-    }
+    out.push(...modelRunRoutesForDir(dirent.name, root, resolved));
   }
   return out;
 }
