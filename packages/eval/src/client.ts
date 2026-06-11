@@ -90,15 +90,27 @@ export function buildCompletionRequest(opts: {
   };
 }
 
+/**
+ * Per-request ceiling for one completion. Bun's fetch defaults to a
+ * 5-minute timeout when no signal is provided, which block-diffusion
+ * hosts exceed on worst-case rows (a full multi-canvas denoise +
+ * post-fill edit pass can run 10+ minutes at batch 1 on M-series).
+ * One slow row must time out at the row level, not poison every row
+ * queued behind it on a serial host with a silent mid-run abort.
+ */
+const COMPLETION_TIMEOUT_MS = 1_800_000;
+
 export async function completeChat(
   url: string,
   req: CompletionRequest,
+  timeoutMs: number = COMPLETION_TIMEOUT_MS,
 ): Promise<{ resp: CompletionResponse; wallMs: number }> {
   const t0 = performance.now();
   const r = await fetch(`${url}/v1/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req.body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!r.ok) {
     throw new Error(`HTTP ${String(r.status)}: ${await r.text()}`);
