@@ -117,15 +117,13 @@ function throughputDetails(result: Awaited<ReturnType<typeof runThroughput>>): {
   };
 }
 
-async function runEvalRun(args: string[]): Promise<number> {
-  const model = args[0];
-  if (!model) {
-    process.stderr.write(`${USAGE}\n`);
-    return 1;
-  }
-  // --node is a llamactl-global flag consumed by extractGlobalFlags
-  // before this function sees args; read it from the globals store.
-  const node = getGlobals().nodeName ?? "local";
+interface EvalRunFlags {
+  ub: 256 | 512;
+  all: boolean;
+  remoteUrl: string | null;
+}
+
+function parseEvalRunFlags(args: string[]): EvalRunFlags | { error: string } | { help: true } {
   let ub: 256 | 512 = 512;
   let all = false;
   let remoteUrl: string | null = null;
@@ -137,125 +135,170 @@ async function runEvalRun(args: string[]): Promise<number> {
     else if (arg === "--url") remoteUrl = args[++i] ?? null;
     else if (arg.startsWith("--url=")) remoteUrl = arg.slice("--url=".length);
     else if (arg === "-h" || arg === "--help") {
-      process.stdout.write(USAGE);
-      return 0;
+      return { help: true };
     } else {
-      process.stderr.write(`Unknown flag: ${arg}\n`);
-      return 1;
+      return { error: `Unknown flag: ${arg}` };
     }
   }
+  return { ub, all, remoteUrl };
+}
+
+async function runSingleUb(opts: {
+  model: string;
+  node: string;
+  currentUb: 256 | 512;
+  remoteUrl: string | null;
+  binary: string;
+  modelPath: string;
+  runDir: string;
+  db: Database;
+  runTs: string;
+}): Promise<void> {
+  const { model, node, currentUb, remoteUrl, binary, modelPath, runDir, db, runTs } = opts;
+  const server = remoteUrl
+    ? { proc: null, url: remoteUrl, logPath: "" }
+    : spawnServer(
+        binary,
+        { modelPath, port: 18181, ub: currentUb, ctxSize: 20480 },
+        join(runDir, `server-ub${String(currentUb)}.log`),
+      );
+  try {
+    if (!remoteUrl && server.proc) await waitForHealth(server.url, server.proc);
+    const throughput = await runThroughput(server.url);
+    const toolCalling = await runToolCalling(server.url);
+    const contextRetrieval = await runContextRetrieval(server.url);
+    const jsonOutput = await runJsonOutput(server.url);
+    const row = {
+      model,
+      node,
+      ub: currentUb,
+      throughput_tps: throughput.mean_tps,
+      ttft_ms: throughput.total_wall_ms / Math.max(1, throughput.samples.length),
+      tool_call_score: toolCalling.tool_call_score,
+      context_8k_score: contextRetrieval.context_8192_score,
+      context_16k_score: contextRetrieval.context_16384_score,
+      json_score: jsonOutput.json_score,
+      composite: composite({
+        throughput_tps: throughput.mean_tps,
+        tool_call_score: toolCalling.tool_call_score,
+        context_8k_score: contextRetrieval.context_8192_score,
+        context_16k_score: contextRetrieval.context_16384_score,
+        json_score: jsonOutput.json_score,
+      }),
+      asof: new Date().toISOString(),
+    };
+    upsertRow(db, row);
+    await Bun.write(
+      join(runDir, `${basename(model)}-ub${String(currentUb)}.json`),
+      JSON.stringify({ throughput, toolCalling, contextRetrieval, jsonOutput, row }, null, 2),
+    );
+    const subBenches: SubBenchDetail[] = [
+      {
+        name: "Throughput",
+        scores: row,
+        throughput: throughputDetails(throughput),
+      },
+      {
+        name: "Tool-Calling",
+        scores: row,
+        toolCalling: {
+          score: toolCalling.tool_call_score,
+          failures: toolCallingFailures(toolCalling),
+        },
+      },
+      {
+        name: "Context Retrieval",
+        scores: row,
+        contextRetrieval: {
+          scores: contextDetails(contextRetrieval),
+        },
+      },
+      {
+        name: "JSON Output",
+        scores: row,
+        jsonOutput: {
+          score: jsonOutput.json_score,
+          failures: jsonOutputFailures(jsonOutput),
+        },
+      },
+    ];
+    const rows = queryRows(db, { node, sort_by: "composite" }).filter((r) => r.model === model);
+    const card = renderCard({
+      modelId: model,
+      source: {
+        ggufPath: modelPath || `(remote: ${String(remoteUrl)})`,
+        fileSizeBytes: modelPath ? Bun.file(modelPath).size : 0,
+        hfRepo: null,
+        hfSha: null,
+      },
+      hwMatrix: rows,
+      subBenches,
+    });
+    const cardPath = join(
+      "docs",
+      "superpowers",
+      "specs",
+      `${runTs.slice(0, 10)}-model-eval-${basename(model, ".gguf")}.md`,
+    );
+    await Bun.write(cardPath, card);
+    process.stdout.write(`${cardPath}\n`);
+  } finally {
+    if (server.proc) await killServer(server);
+  }
+}
+
+async function runEvalRun(args: string[]): Promise<number> {
+  const model = args[0];
+  if (!model) {
+    process.stderr.write(`${USAGE}\n`);
+    return 1;
+  }
+  // --node is a llamactl-global flag consumed by extractGlobalFlags
+  // before this function sees args; read it from the globals store.
+  const node = getGlobals().nodeName ?? "local";
+  const parsed = parseEvalRunFlags(args);
+  if ("error" in parsed) {
+    process.stderr.write(`${parsed.error}\n`);
+    return 1;
+  }
+  if ("help" in parsed) {
+    process.stdout.write(USAGE);
+    return 0;
+  }
+
   const evalRoot = ensureEvalRoot();
   const runTs = new Date().toISOString().replaceAll(/[:.]/g, "-");
   const runDir = join(evalRoot, runTs);
   mkdirSync(runDir, { recursive: true });
   const dbPath = join(evalRoot, "leaderboard.sqlite");
   const db = new Database(dbPath);
-  const modelPath = remoteUrl ? "" : modelPathForRel(model);
-  if (!remoteUrl && !existsSync(modelPath)) {
+  const modelPath = parsed.remoteUrl ? "" : modelPathForRel(model);
+  if (!parsed.remoteUrl && !existsSync(modelPath)) {
     process.stderr.write(`missing model: ${modelPath}\n`);
     db.close();
     return 1;
   }
   const binaryRoot = envValue("LLAMA_CPP_BIN");
-  if (!remoteUrl && !binaryRoot) {
+  if (!parsed.remoteUrl && !binaryRoot) {
     process.stderr.write("LLAMA_CPP_BIN is not set\n");
     db.close();
     return 1;
   }
-  const binary = remoteUrl ? "" : join(binaryRoot, "llama-server");
-  const ubs: (256 | 512)[] = all ? [256, 512] : [ub];
+  const binary = parsed.remoteUrl ? "" : join(binaryRoot, "llama-server");
+  const ubs: (256 | 512)[] = parsed.all ? [256, 512] : [parsed.ub];
   try {
     for (const currentUb of ubs) {
-      const server = remoteUrl
-        ? { proc: null, url: remoteUrl, logPath: "" }
-        : spawnServer(
-            binary,
-            { modelPath, port: 18181, ub: currentUb, ctxSize: 20480 },
-            join(runDir, `server-ub${String(currentUb)}.log`),
-          );
-      try {
-        if (!remoteUrl && server.proc) await waitForHealth(server.url, server.proc);
-        const throughput = await runThroughput(server.url);
-        const toolCalling = await runToolCalling(server.url);
-        const contextRetrieval = await runContextRetrieval(server.url);
-        const jsonOutput = await runJsonOutput(server.url);
-        const row = {
-          model,
-          node,
-          ub: currentUb,
-          throughput_tps: throughput.mean_tps,
-          ttft_ms: throughput.total_wall_ms / Math.max(1, throughput.samples.length),
-          tool_call_score: toolCalling.tool_call_score,
-          context_8k_score: contextRetrieval.context_8192_score,
-          context_16k_score: contextRetrieval.context_16384_score,
-          json_score: jsonOutput.json_score,
-          composite: composite({
-            throughput_tps: throughput.mean_tps,
-            tool_call_score: toolCalling.tool_call_score,
-            context_8k_score: contextRetrieval.context_8192_score,
-            context_16k_score: contextRetrieval.context_16384_score,
-            json_score: jsonOutput.json_score,
-          }),
-          asof: new Date().toISOString(),
-        };
-        upsertRow(db, row);
-        await Bun.write(
-          join(runDir, `${basename(model)}-ub${String(currentUb)}.json`),
-          JSON.stringify({ throughput, toolCalling, contextRetrieval, jsonOutput, row }, null, 2),
-        );
-        const subBenches: SubBenchDetail[] = [
-          {
-            name: "Throughput",
-            scores: row,
-            throughput: throughputDetails(throughput),
-          },
-          {
-            name: "Tool-Calling",
-            scores: row,
-            toolCalling: {
-              score: toolCalling.tool_call_score,
-              failures: toolCallingFailures(toolCalling),
-            },
-          },
-          {
-            name: "Context Retrieval",
-            scores: row,
-            contextRetrieval: {
-              scores: contextDetails(contextRetrieval),
-            },
-          },
-          {
-            name: "JSON Output",
-            scores: row,
-            jsonOutput: {
-              score: jsonOutput.json_score,
-              failures: jsonOutputFailures(jsonOutput),
-            },
-          },
-        ];
-        const rows = queryRows(db, { node, sort_by: "composite" }).filter((r) => r.model === model);
-        const card = renderCard({
-          modelId: model,
-          source: {
-            ggufPath: modelPath || `(remote: ${String(remoteUrl)})`,
-            fileSizeBytes: modelPath ? Bun.file(modelPath).size : 0,
-            hfRepo: null,
-            hfSha: null,
-          },
-          hwMatrix: rows,
-          subBenches,
-        });
-        const cardPath = join(
-          "docs",
-          "superpowers",
-          "specs",
-          `${runTs.slice(0, 10)}-model-eval-${basename(model, ".gguf")}.md`,
-        );
-        await Bun.write(cardPath, card);
-        process.stdout.write(`${cardPath}\n`);
-      } finally {
-        if (server.proc) await killServer(server);
-      }
+      await runSingleUb({
+        model,
+        node,
+        currentUb,
+        remoteUrl: parsed.remoteUrl,
+        binary,
+        modelPath,
+        runDir,
+        db,
+        runTs,
+      });
     }
     return 0;
   } finally {

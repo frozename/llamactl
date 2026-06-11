@@ -109,6 +109,60 @@ function parseArgs(argv: string[]): ParsedArgs | { error: string } {
   return out;
 }
 
+async function resolveUpdateBinary(
+  parsed: ParsedArgs,
+  node: { facts?: { platform?: string } },
+): Promise<string | { error: string }> {
+  let binaryPath = parsed.binary;
+  if (parsed.fromRelease) {
+    const { infraArtifactsFetch } = await import("@llamactl/remote");
+    const target = node.facts?.platform ?? "darwin-arm64";
+    process.stderr.write(
+      `agent update: fetching ${parsed.repo} ${parsed.fromRelease} for ${target}…\n`,
+    );
+    const fetchResult = await infraArtifactsFetch.fetchAgentRelease({
+      repo: parsed.repo,
+      version: parsed.fromRelease,
+      target,
+      verifySig: "best-effort",
+    });
+    if (!fetchResult.ok) {
+      return {
+        error: `agent update: fetch failed: ${fetchResult.reason} — ${fetchResult.message}`,
+      };
+    }
+    binaryPath = fetchResult.path;
+  }
+  if (!binaryPath || !existsSync(binaryPath)) {
+    return { error: `agent update: binary not found at ${String(binaryPath)}` };
+  }
+  return binaryPath;
+}
+
+async function pollAgentHealth(
+  pinnedFetch: ReturnType<typeof makePinnedFetch>,
+  healthUrl: string,
+  token: string,
+  timeoutSec: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutSec * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1000));
+    try {
+      const probe = await pinnedFetch(healthUrl, {
+        method: "GET",
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (probe.ok) {
+        return true;
+      }
+    } catch {
+      // connection refused while launchd respawns — keep polling.
+    }
+  }
+  return false;
+}
+
 export async function runAgentUpdate(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
   if ("error" in parsed) {
@@ -151,30 +205,9 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
   }
   const token = cfgMod.resolveToken(user);
 
-  // Resolve binary path: explicit --binary or fetched via 'artifacts fetch'.
-  let binaryPath = parsed.binary;
-  if (parsed.fromRelease) {
-    const { infraArtifactsFetch } = await import("@llamactl/remote");
-    const target = node.facts?.platform ?? "darwin-arm64";
-    process.stderr.write(
-      `agent update: fetching ${parsed.repo} ${parsed.fromRelease} for ${target}…\n`,
-    );
-    const fetchResult = await infraArtifactsFetch.fetchAgentRelease({
-      repo: parsed.repo,
-      version: parsed.fromRelease,
-      target,
-      verifySig: "best-effort",
-    });
-    if (!fetchResult.ok) {
-      process.stderr.write(
-        `agent update: fetch failed: ${fetchResult.reason} — ${fetchResult.message}\n`,
-      );
-      return 1;
-    }
-    binaryPath = fetchResult.path;
-  }
-  if (!binaryPath || !existsSync(binaryPath)) {
-    process.stderr.write(`agent update: binary not found at ${String(binaryPath)}\n`);
+  const binaryPath = await resolveUpdateBinary(parsed, node);
+  if (typeof binaryPath !== "string") {
+    process.stderr.write(`${binaryPath.error}\n`);
     return 1;
   }
   const bytes = readFileSync(binaryPath);
@@ -217,9 +250,9 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
     previousAt: string;
   };
   try {
-    const parsed: unknown = JSON.parse(text);
-    if (!isAgentUpdateResponse(parsed)) throw new Error("invalid update response");
-    result = parsed;
+    const parsedResponse: unknown = JSON.parse(text);
+    if (!isAgentUpdateResponse(parsedResponse)) throw new Error("invalid update response");
+    result = parsedResponse;
   } catch {
     process.stderr.write(`agent update: invalid response from agent: ${text}\n`);
     return 1;
@@ -236,23 +269,7 @@ export async function runAgentUpdate(argv: string[]): Promise<number> {
     `agent update: waiting for respawn (timeout ${String(parsed.readinessTimeoutSec)}s)…\n`,
   );
   const healthUrl = `${node.endpoint.replace(/\/$/, "")}/healthz`;
-  const deadline = Date.now() + parsed.readinessTimeoutSec * 1000;
-  let healthy = false;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 1000));
-    try {
-      const probe = await pinnedFetch(healthUrl, {
-        method: "GET",
-        headers: { authorization: `Bearer ${token}` },
-      });
-      if (probe.ok) {
-        healthy = true;
-        break;
-      }
-    } catch {
-      // connection refused while launchd respawns — keep polling.
-    }
-  }
+  const healthy = await pollAgentHealth(pinnedFetch, healthUrl, token, parsed.readinessTimeoutSec);
   if (!healthy) {
     process.stderr.write(
       `agent update: WARNING — agent did not come back within ${String(parsed.readinessTimeoutSec)}s.\n` +

@@ -45,20 +45,22 @@ EXIT CODES:
   2 — usage error / file not found / spec missing expectedMemoryGiB
 `;
 
-export async function runAdmit(args: string[]): Promise<number> {
-  if (args[0] === "measure") return await runAdmitMeasure(args.slice(1));
-  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
-    process.stdout.write(`${USAGE}\n`);
-    return args.length === 0 ? 2 : 0;
-  }
-  const target = required(args[0]);
+interface AdmitFlags {
+  headroomMb: number;
+  safetyFactor: number;
+  compressorMaxMb: number | undefined;
+  emitJson: boolean;
+  quiet: boolean;
+}
+
+function parseAdmitFlags(args: string[]): AdmitFlags | { error: string } {
   let headroomMb = 1024;
   let safetyFactor = 1.3;
   let compressorMaxMb: number | undefined;
   let emitJson = false;
   let quiet = false;
   try {
-    for (const raw of args.slice(1)) {
+    for (const raw of args) {
       if (raw === "--json") {
         emitJson = true;
         continue;
@@ -95,7 +97,99 @@ export async function runAdmit(args: string[]): Promise<number> {
       }
     }
   } catch (err) {
-    console.error((err as Error).message);
+    return { error: (err as Error).message };
+  }
+  return { headroomMb, safetyFactor, compressorMaxMb, emitJson, quiet };
+}
+
+function printAdmitResult(
+  opts: {
+    name: string;
+    nodeMem: { free_mb: number; compressor_mb: number };
+    expectedMemoryGiB: number;
+    result: { allowed: boolean; reason?: string; projectedFreeGiB: number; source: string };
+  } & AdmitFlags & { measured: { peakMb: number } | null },
+): void {
+  const {
+    name,
+    nodeMem,
+    expectedMemoryGiB,
+    result,
+    headroomMb,
+    safetyFactor,
+    compressorMaxMb,
+    emitJson,
+    quiet,
+    measured,
+  } = opts;
+  const currentFreeGiB = nodeMem.free_mb / 1024;
+
+  if (emitJson) {
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          workload: name,
+          currentFreeMb: nodeMem.free_mb,
+          currentFreeGiB,
+          currentCompressorMb: nodeMem.compressor_mb,
+          compressorMaxMb: compressorMaxMb ?? null,
+          expectedMemoryGiB,
+          safetyFactor,
+          measuredPeakMb: measured?.peakMb ?? null,
+          headroomMinMb: headroomMb,
+          projectedFreeGiB: result.projectedFreeGiB,
+          allowed: result.allowed,
+          reason: result.allowed ? null : result.reason,
+          source: result.source,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else if (quiet) {
+    process.stdout.write(
+      `${
+        result.allowed
+          ? `allow ${name}`
+          : `deny ${name} — ${result.reason ?? ""} (projected_free=${result.projectedFreeGiB.toFixed(2)}GiB, min=${(headroomMb / 1024).toFixed(2)}GiB)`
+      }\n`,
+    );
+  } else {
+    process.stdout.write(`workload:          ${name}\n`);
+    process.stdout.write(
+      `current free:      ${nodeMem.free_mb.toFixed(0)} MiB (${currentFreeGiB.toFixed(2)} GiB)\n`,
+    );
+    if (compressorMaxMb !== undefined) {
+      process.stdout.write(
+        `compressor:        ${nodeMem.compressor_mb.toFixed(0)} MiB (max ${String(compressorMaxMb)})\n`,
+      );
+    }
+    if (measured) {
+      process.stdout.write(
+        `measured peak:     ${measured.peakMb.toFixed(1)} MiB × 1.05 safety = ${((measured.peakMb * 1.05) / 1024).toFixed(2)} GiB  [source: measured]\n`,
+      );
+    } else {
+      process.stdout.write(
+        `expected to load:  ${String(expectedMemoryGiB)} GiB × ${String(safetyFactor)} safety = ${(expectedMemoryGiB * safetyFactor).toFixed(2)} GiB  [source: declared]\n`,
+      );
+    }
+    process.stdout.write(`projected free:    ${result.projectedFreeGiB.toFixed(2)} GiB\n`);
+    process.stdout.write(`headroom min:      ${(headroomMb / 1024).toFixed(2)} GiB\n`);
+    process.stdout.write(`decision:          ${result.allowed ? "ALLOW" : "DENY"}\n`);
+    if (!result.allowed) process.stdout.write(`reason:            ${result.reason ?? ""}\n`);
+  }
+}
+
+export async function runAdmit(args: string[]): Promise<number> {
+  if (args[0] === "measure") return await runAdmitMeasure(args.slice(1));
+  if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
+    process.stdout.write(`${USAGE}\n`);
+    return args.length === 0 ? 2 : 0;
+  }
+  const target = required(args[0]);
+  const parsed = parseAdmitFlags(args.slice(1));
+  if ("error" in parsed) {
+    console.error(parsed.error);
     return 2;
   }
 
@@ -110,8 +204,8 @@ export async function runAdmit(args: string[]): Promise<number> {
     metadata?: { name?: string };
   };
   try {
-    const parsed: unknown = yaml.parse(readFileSync(path, "utf8"));
-    manifest = isAdmitManifest(parsed) ? parsed : {};
+    const parsedYaml: unknown = yaml.parse(readFileSync(path, "utf8"));
+    manifest = isAdmitManifest(parsedYaml) ? parsedYaml : {};
   } catch (err) {
     console.error(`admit: failed to read ${path}: ${(err as Error).message}`);
     return 2;
@@ -152,68 +246,22 @@ export async function runAdmit(args: string[]): Promise<number> {
   const result = projectAdmissionHeadroom({
     currentFreeGiB,
     expectedMemoryGiB,
-    headroomMinGiB: headroomMb / 1024,
-    safetyFactor,
+    headroomMinGiB: parsed.headroomMb / 1024,
+    safetyFactor: parsed.safetyFactor,
     ...(measured ? { measuredPeakMb: measured.peakMb } : {}),
-    ...(compressorMaxMb !== undefined
-      ? { currentCompressorGiB, compressorMaxGiB: compressorMaxMb / 1024 }
+    ...(parsed.compressorMaxMb !== undefined
+      ? { currentCompressorGiB, compressorMaxGiB: parsed.compressorMaxMb / 1024 }
       : {}),
   });
 
-  if (emitJson) {
-    process.stdout.write(
-      `${JSON.stringify(
-        {
-          workload: name,
-          currentFreeMb: nodeMem.free_mb,
-          currentFreeGiB,
-          currentCompressorMb: nodeMem.compressor_mb,
-          compressorMaxMb: compressorMaxMb ?? null,
-          expectedMemoryGiB,
-          safetyFactor,
-          measuredPeakMb: measured?.peakMb ?? null,
-          headroomMinMb: headroomMb,
-          projectedFreeGiB: result.projectedFreeGiB,
-          allowed: result.allowed,
-          reason: result.allowed ? null : result.reason,
-          source: result.source,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-  } else if (quiet) {
-    process.stdout.write(
-      `${
-        result.allowed
-          ? `allow ${name}`
-          : `deny ${name} — ${result.reason} (projected_free=${result.projectedFreeGiB.toFixed(2)}GiB, min=${(headroomMb / 1024).toFixed(2)}GiB)`
-      }\n`,
-    );
-  } else {
-    process.stdout.write(`workload:          ${name}\n`);
-    process.stdout.write(
-      `current free:      ${nodeMem.free_mb.toFixed(0)} MiB (${currentFreeGiB.toFixed(2)} GiB)\n`,
-    );
-    if (compressorMaxMb !== undefined) {
-      process.stdout.write(
-        `compressor:        ${nodeMem.compressor_mb.toFixed(0)} MiB (max ${String(compressorMaxMb)})\n`,
-      );
-    }
-    if (measured) {
-      process.stdout.write(
-        `measured peak:     ${measured.peakMb.toFixed(1)} MiB × 1.05 safety = ${((measured.peakMb * 1.05) / 1024).toFixed(2)} GiB  [source: measured]\n`,
-      );
-    } else {
-      process.stdout.write(
-        `expected to load:  ${String(expectedMemoryGiB)} GiB × ${String(safetyFactor)} safety = ${(expectedMemoryGiB * safetyFactor).toFixed(2)} GiB  [source: declared]\n`,
-      );
-    }
-    process.stdout.write(`projected free:    ${result.projectedFreeGiB.toFixed(2)} GiB\n`);
-    process.stdout.write(`headroom min:      ${(headroomMb / 1024).toFixed(2)} GiB\n`);
-    process.stdout.write(`decision:          ${result.allowed ? "ALLOW" : "DENY"}\n`);
-    if (!result.allowed) process.stdout.write(`reason:            ${result.reason}\n`);
-  }
+  printAdmitResult({
+    name,
+    nodeMem,
+    expectedMemoryGiB,
+    result,
+    ...parsed,
+    measured,
+  });
   return result.allowed ? 0 : 1;
 }
 

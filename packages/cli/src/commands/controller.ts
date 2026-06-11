@@ -45,6 +45,25 @@ function parseFlags(args: string[]): ControllerFlags | { error: string } {
   return { intervalMs, once };
 }
 
+function setupSignalHandlers(
+  stopping: { value: boolean },
+  wakeRef: { wake: (() => void) | null },
+): {
+  isStopping: () => boolean;
+  onSignal: (sig: NodeJS.Signals) => void;
+} {
+  const onSignal = (sig: NodeJS.Signals): void => {
+    if (stopping.value) return;
+    stopping.value = true;
+    process.stdout.write(`controller: received ${sig}, exiting after current reconcile\n`);
+    wakeRef.wake?.();
+  };
+  const isStopping = (): boolean => stopping.value;
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+  return { isStopping, onSignal };
+}
+
 export async function runController(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   if (sub === undefined || sub === "-h" || sub === "--help" || sub === "help") {
@@ -88,16 +107,8 @@ export async function runController(args: string[]): Promise<number> {
   );
 
   const stopping = { value: false };
-  let wake: (() => void) | null = null;
-  const onSignal = (sig: NodeJS.Signals): void => {
-    if (stopping.value) return;
-    stopping.value = true;
-    process.stdout.write(`controller: received ${sig}, exiting after current reconcile\n`);
-    wake?.();
-  };
-  const isStopping = (): boolean => stopping.value;
-  process.on("SIGINT", onSignal);
-  process.on("SIGTERM", onSignal);
+  const wakeRef: { wake: (() => void) | null } = { wake: null };
+  const { isStopping, onSignal } = setupSignalHandlers(stopping, wakeRef);
 
   const runOnePass = async (): Promise<void> => {
     // ModelRun pass — converges llama-server lifecycle per manifest.
@@ -162,12 +173,12 @@ export async function runController(args: string[]): Promise<number> {
       // loop exits promptly even during a long --interval.
       await new Promise<void>((r) => {
         const timer = setTimeout(() => {
-          wake = null;
+          wakeRef.wake = null;
           r();
         }, sleepMs);
-        wake = (): void => {
+        wakeRef.wake = (): void => {
           clearTimeout(timer);
-          wake = null;
+          wakeRef.wake = null;
           r();
         };
       });

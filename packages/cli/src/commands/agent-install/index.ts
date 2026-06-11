@@ -732,10 +732,62 @@ export async function runAgentInstallLaunchd(
     return 0;
   }
 
+  const installResult = await executeInstallWithResult({
+    deps,
+    parsed,
+    plistPath,
+    plistBody,
+    logDir,
+    label,
+    installedPath,
+  });
+  if (installResult.code !== 0) return installResult.code;
+
+  deps.stdout(
+    `Installed:\n` +
+      `  binary:     ${installedPath}\n` +
+      `  plist:      ${plistPath}\n` +
+      `  label:      ${label}\n` +
+      `  log dir:    ${logDir}\n` +
+      `  scope:      ${parsed.scope}\n` +
+      `  pid:        ${String(installResult.pid)}\n` +
+      `\n` +
+      `Tail logs with:\n` +
+      `  tail -f ${join(logDir, "stderr.log")}\n` +
+      `\n` +
+      `If the agent needs access to external volumes (e.g. /Volumes/AI-MODELS),\n` +
+      `grant Full Disk Access to the binary via:\n` +
+      `  System Settings -> Privacy & Security -> Full Disk Access -> + -> ${installedPath}\n` +
+      `The binary path is stable across reinstalls so the grant persists.\n`,
+  );
+  return 0;
+}
+
+interface ExecuteInstallOpts {
+  deps: InstallLaunchdDeps;
+  parsed: InstallLaunchdFlags;
+  plistPath: string;
+  plistBody: string;
+  logDir: string;
+  label: string;
+  installedPath: string;
+}
+
+// The original code used `pollResult` in the success block. Since
+// the extracted helper now returns only a code, we capture the
+// pid separately via a wrapper that yields the pid.
+interface ExecuteInstallResult {
+  code: number;
+  pid?: number;
+}
+
+async function executeInstallWithResult(opts: ExecuteInstallOpts): Promise<ExecuteInstallResult> {
+  const { deps, parsed, plistPath, plistBody, logDir, label } = opts;
+
   // Overwrite protection.
   if (deps.fs.existsSync(plistPath) && !parsed.force) {
     deps.stderr(`plist already exists at ${plistPath}; pass --force to overwrite.\n`);
-    return 1;
+    return { code: 1 };
   }
 
   // Ensure parent dir exists + log dir exists (launchd writes to
@@ -760,7 +812,7 @@ export async function runAgentInstallLaunchd(
           lint.stdout + lint.stderr
         }\n`,
       );
-      return 1;
+      return { code: 1 };
     }
   } else {
     deps.stderr(`warning: skipping plutil -lint on ${deps.platform}\n`);
@@ -775,7 +827,7 @@ export async function runAgentInstallLaunchd(
     });
     if (loadRes.status !== 0) {
       deps.stderr(`launchctl bootstrap failed: ${loadRes.stderr || loadRes.stdout}\n`);
-      return 1;
+      return { code: 1 };
     }
   } else {
     deps.spawnSync("launchctl", ["unload", plistPath], { encoding: "utf8" });
@@ -784,7 +836,7 @@ export async function runAgentInstallLaunchd(
     });
     if (loadRes.status !== 0) {
       deps.stderr(`launchctl load failed: ${loadRes.stderr || loadRes.stdout}\n`);
-      return 1;
+      return { code: 1 };
     }
   }
 
@@ -795,27 +847,10 @@ export async function runAgentInstallLaunchd(
     deps.stderr(
       `agent install-launchd: service did not become healthy — ${String(pollResult.reason)}${tailBlock}`,
     );
-    return 1;
+    return { code: 1 };
   }
 
-  deps.stdout(
-    `Installed:\n` +
-      `  binary:     ${installedPath}\n` +
-      `  plist:      ${plistPath}\n` +
-      `  label:      ${label}\n` +
-      `  log dir:    ${logDir}\n` +
-      `  scope:      ${parsed.scope}\n` +
-      `  pid:        ${String(pollResult.pid)}\n` +
-      `\n` +
-      `Tail logs with:\n` +
-      `  tail -f ${join(logDir, "stderr.log")}\n` +
-      `\n` +
-      `If the agent needs access to external volumes (e.g. /Volumes/AI-MODELS),\n` +
-      `grant Full Disk Access to the binary via:\n` +
-      `  System Settings -> Privacy & Security -> Full Disk Access -> + -> ${installedPath}\n` +
-      `The binary path is stable across reinstalls so the grant persists.\n`,
-  );
-  return 0;
+  return { code: 0, pid: pollResult.pid };
 }
 
 function defaultAgentDir(deps: InstallLaunchdDeps, homeDir: string): string {

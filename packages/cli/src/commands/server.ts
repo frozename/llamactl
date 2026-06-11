@@ -66,7 +66,16 @@ function forwardEvent(e: server.ServerEvent): void {
   }
 }
 
-async function runStart(args: string[]): Promise<number> {
+interface StartFlags {
+  target: string;
+  extra: string[];
+  json: boolean;
+  skipTuned: boolean;
+  timeoutSeconds: number;
+  workloadExplicit?: string;
+}
+
+function parseStartFlags(args: string[]): StartFlags | { error: string } | { help: true } {
   const positional: string[] = [];
   const extra: string[] = [];
   let json = false;
@@ -96,42 +105,52 @@ async function runStart(args: string[]): Promise<number> {
     } else if (arg === "--name") {
       workloadExplicit = args[i + 1];
       if (!workloadExplicit) {
-        process.stderr.write("server start: --name requires a value\n");
-        return 1;
+        return { error: "server start: --name requires a value" };
       }
       i += 1;
       continue;
     } else if (arg.startsWith("--name=")) {
       workloadExplicit = arg.slice("--name=".length);
       if (!workloadExplicit) {
-        process.stderr.write("server start: --name requires a value\n");
-        return 1;
+        return { error: "server start: --name requires a value" };
       }
       continue;
     } else if (arg === "-h" || arg === "--help") {
-      process.stdout.write(USAGE);
-      return 0;
+      return { help: true };
     } else if (arg.startsWith("--")) {
-      process.stderr.write(`Unknown flag: ${arg}\n`);
-      return 1;
+      return { error: `Unknown flag: ${arg}` };
     } else {
       positional.push(arg);
     }
   }
   const target = positional[0] ?? "current";
   if (positional.length > 1) {
-    process.stderr.write(
-      `Extra positional args need to follow \`--\`: ${positional.slice(1).join(" ")}\n`,
-    );
+    return {
+      error: `Extra positional args need to follow \`--\`: ${positional.slice(1).join(" ")}`,
+    };
+  }
+  return { target, extra, json, skipTuned, timeoutSeconds, workloadExplicit };
+}
+
+async function runStart(args: string[]): Promise<number> {
+  const parsed = parseStartFlags(args);
+  if ("error" in parsed) {
+    process.stderr.write(`${parsed.error}\n`);
     return 1;
+  }
+  if ("help" in parsed) {
+    process.stdout.write(USAGE);
+    return 0;
   }
 
   const resolved = envMod.resolveEnv();
   const node = resolveEffectiveNodeName();
-  const workload = resolveWorkloadName(workloadExplicit, resolved, { synthesizeIfEmpty: true });
+  const workload = resolveWorkloadName(parsed.workloadExplicit, resolved, {
+    synthesizeIfEmpty: true,
+  });
 
   const workloadKind: "rel" | "alias" =
-    target.includes("/") || target.endsWith(".gguf") ? "rel" : "alias";
+    parsed.target.includes("/") || parsed.target.endsWith(".gguf") ? "rel" : "alias";
   const manifest: workloadSchema.ModelRun = {
     apiVersion: "llamactl/v1",
     kind: "ModelRun",
@@ -139,11 +158,11 @@ async function runStart(args: string[]): Promise<number> {
     spec: {
       node,
       enabled: true,
-      target: { kind: workloadKind, value: target },
-      extraArgs: extra,
+      target: { kind: workloadKind, value: parsed.target },
+      extraArgs: parsed.extra,
       workers: [],
       restartPolicy: "Always",
-      timeoutSeconds,
+      timeoutSeconds: parsed.timeoutSeconds,
       gateway: false,
       allowExternalBind: false,
     },
@@ -154,10 +173,10 @@ async function runStart(args: string[]): Promise<number> {
   if (isLocalDispatch()) {
     result = await server.startServer({
       key: { name: workload },
-      target,
-      extraArgs: extra,
-      timeoutSeconds,
-      skipTuned,
+      target: parsed.target,
+      extraArgs: parsed.extra,
+      timeoutSeconds: parsed.timeoutSeconds,
+      skipTuned: parsed.skipTuned,
       onEvent: forwardEvent,
       resolved,
     });
@@ -170,12 +189,12 @@ async function runStart(args: string[]): Promise<number> {
       skipTuned?: boolean;
     } = {
       workload,
-      target,
+      target: parsed.target,
     };
     try {
-      if (extra.length > 0) input.extraArgs = extra;
-      if (timeoutSeconds !== 60) input.timeoutSeconds = timeoutSeconds;
-      if (skipTuned) input.skipTuned = skipTuned;
+      if (parsed.extra.length > 0) input.extraArgs = parsed.extra;
+      if (parsed.timeoutSeconds !== 60) input.timeoutSeconds = parsed.timeoutSeconds;
+      if (parsed.skipTuned) input.skipTuned = parsed.skipTuned;
       result = await subscribeRemote<
         server.ServerEvent,
         Awaited<ReturnType<typeof server.startServer>>
@@ -192,7 +211,7 @@ async function runStart(args: string[]): Promise<number> {
     }
   }
 
-  if (json) {
+  if (parsed.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else if (!result.ok) {
     process.stderr.write(`${result.error ?? "server failed to start"}\n`);

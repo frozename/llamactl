@@ -118,35 +118,22 @@ function killGracefully(proc: ChildProcess): Promise<boolean> {
   });
 }
 
-export async function runAdmitMeasure(args: string[]): Promise<number> {
-  const target = args[0];
-  if (!target || target === "--help" || target === "-h") {
-    process.stdout.write(`${MEASURE_USAGE}\n`);
-    return target ? 0 : 2;
-  }
+interface LaunchConfig {
+  engineKind: "llama.cpp" | "oMLX";
+  binary: string;
+  launchArgs: string[];
+  modelKey: string;
+  healthPath: string;
+  timeoutSecs: number;
+  workloadName: string;
+}
 
-  let overridePort: number | undefined;
-  let steadyStateSecs = 30;
-  let samples = 6;
-
-  for (const raw of args.slice(1)) {
-    if (raw.startsWith("--port=")) {
-      overridePort = parseInt(raw.slice("--port=".length), 10);
-    } else if (raw.startsWith("--steady-state-seconds=")) {
-      steadyStateSecs = parseInt(raw.slice("--steady-state-seconds=".length), 10);
-    } else if (raw.startsWith("--samples=")) {
-      samples = parseInt(raw.slice("--samples=".length), 10);
-    }
-  }
-
-  const manifestPath = target.endsWith(".yaml") ? target : `templates/workloads/${target}.yaml`;
-
+function readLaunchConfig(target: string, manifestPath: string): LaunchConfig | { error: string } {
   let raw: string;
   try {
     raw = readFileSync(manifestPath, "utf8");
   } catch (err) {
-    console.error(`admit measure: cannot read ${manifestPath}: ${(err as Error).message}`);
-    return 2;
+    return { error: `admit measure: cannot read ${manifestPath}: ${(err as Error).message}` };
   }
 
   const m = yaml.parse(raw) as Record<string, unknown>;
@@ -177,14 +164,12 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
   } else if (kind === "ModelHost") {
     const engine = spec["engine"] as string | undefined;
     if (engine !== "omlx") {
-      console.error(`admit measure: unsupported ModelHost engine '${engine ?? "none"}'`);
-      return 2;
+      return { error: `admit measure: unsupported ModelHost engine '${engine ?? "none"}'` };
     }
     engineKind = "oMLX";
     binary = (spec["binary"] as string | undefined) ?? "";
     if (!binary) {
-      console.error("admit measure: ModelHost spec.binary is required");
-      return 2;
+      return { error: "admit measure: ModelHost spec.binary is required" };
     }
     const hostedModels = (spec["hostedModels"] as Record<string, unknown>[] | undefined) ?? [];
     const modelRel = (hostedModels[0]?.["rel"] as string | undefined) ?? "";
@@ -194,17 +179,47 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
     healthPath = "/v1/models";
     timeoutSecs = (spec["timeoutSeconds"] as number | undefined) ?? 60;
   } else {
-    console.error(`admit measure: unsupported manifest kind '${kind ?? "none"}'`);
+    return { error: `admit measure: unsupported manifest kind '${kind ?? "none"}'` };
+  }
+
+  return { engineKind, binary, launchArgs, modelKey, healthPath, timeoutSecs, workloadName };
+}
+
+export async function runAdmitMeasure(args: string[]): Promise<number> {
+  const target = args[0];
+  if (!target || target === "--help" || target === "-h") {
+    process.stdout.write(`${MEASURE_USAGE}\n`);
+    return target ? 0 : 2;
+  }
+
+  let overridePort: number | undefined;
+  let steadyStateSecs = 30;
+  let samples = 6;
+
+  for (const raw of args.slice(1)) {
+    if (raw.startsWith("--port=")) {
+      overridePort = parseInt(raw.slice("--port=".length), 10);
+    } else if (raw.startsWith("--steady-state-seconds=")) {
+      steadyStateSecs = parseInt(raw.slice("--steady-state-seconds=".length), 10);
+    } else if (raw.startsWith("--samples=")) {
+      samples = parseInt(raw.slice("--samples=".length), 10);
+    }
+  }
+
+  const manifestPath = target.endsWith(".yaml") ? target : `templates/workloads/${target}.yaml`;
+  const config = readLaunchConfig(target, manifestPath);
+  if ("error" in config) {
+    console.error(config.error);
     return 2;
   }
 
   const port = overridePort ?? (await findFreePort(18000));
-  const healthUrl = `http://127.0.0.1:${String(port)}${healthPath}`;
-  const cmdArgs = [...launchArgs, "--port", String(port), "--host", "127.0.0.1"];
+  const healthUrl = `http://127.0.0.1:${String(port)}${config.healthPath}`;
+  const cmdArgs = [...config.launchArgs, "--port", String(port), "--host", "127.0.0.1"];
 
-  process.stdout.write(`launching: ${binary} ... --port ${String(port)}\n`);
+  process.stdout.write(`launching: ${config.binary} ... --port ${String(port)}\n`);
 
-  const proc = spawn(binary, cmdArgs, { stdio: "ignore", detached: false });
+  const proc = spawn(config.binary, cmdArgs, { stdio: "ignore", detached: false });
   const pid = proc.pid;
   if (pid === undefined) {
     console.error("admit measure: failed to spawn process (no PID)");
@@ -219,9 +234,9 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
 
   try {
     process.stdout.write(
-      `waiting for health at ${healthUrl} (pid ${String(pid)}, timeout ${String(timeoutSecs)}s)...\n`,
+      `waiting for health at ${healthUrl} (pid ${String(pid)}, timeout ${String(config.timeoutSecs)}s)...\n`,
     );
-    await waitForHealth(healthUrl, timeoutSecs * 1000);
+    await waitForHealth(healthUrl, config.timeoutSecs * 1000);
   } catch (err) {
     console.error(`admit measure: ${(err as Error).message}`);
     proc.kill("SIGKILL");
@@ -259,21 +274,21 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
   const rssPeakMb = Math.max(...rssSamples);
 
   const entry: MeasuredMemoryEntry = {
-    workloadName,
+    workloadName: config.workloadName,
     measuredAt: new Date().toISOString(),
     rssMeanMb,
     rssPeakMb,
     sampleCount: rssSamples.length,
-    engineKind,
-    binary,
+    engineKind: config.engineKind,
+    binary: config.binary,
   };
 
-  writeMeasuredMemoryCache(modelKey, entry);
+  writeMeasuredMemoryCache(config.modelKey, entry);
 
   const cachePath =
     process.env["LLAMACTL_MEASURED_MEMORY_PATH"] ?? "~/.llamactl/measured-memory.json";
-  process.stdout.write(`\nmeasured: ${workloadName}\n`);
-  process.stdout.write(`  model key:  ${modelKey}\n`);
+  process.stdout.write(`\nmeasured: ${config.workloadName}\n`);
+  process.stdout.write(`  model key:  ${config.modelKey}\n`);
   process.stdout.write(`  peak RSS:   ${rssPeakMb.toFixed(1)} MiB\n`);
   process.stdout.write(`  mean RSS:   ${rssMeanMb.toFixed(1)} MiB\n`);
   process.stdout.write(`  samples:    ${String(rssSamples.length)}\n`);

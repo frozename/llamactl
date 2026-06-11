@@ -275,6 +275,186 @@ export function buildTunnelSend(opts: {
  * iterator.return()-s the subscription, shipping a `stream-cancel`
  * frame to the agent.
  */
+interface SafeCallbacks {
+  safeError: (err: unknown) => void;
+  safeComplete: () => void;
+  isAborted: () => boolean;
+}
+
+function makeSafeCallbacks(
+  handlers: Parameters<TunnelSubscribeFn>[2],
+  settledRef: { value: boolean },
+  abort: AbortController,
+): SafeCallbacks {
+  const safeError = (err: unknown): void => {
+    if (settledRef.value) return;
+    settledRef.value = true;
+    try {
+      handlers.onError(err);
+    } catch {
+      // ignore
+    }
+  };
+  const safeComplete = (): void => {
+    if (settledRef.value) return;
+    settledRef.value = true;
+    try {
+      handlers.onComplete();
+    } catch {
+      // ignore
+    }
+  };
+  const isAborted = (): boolean => abort.signal.aborted;
+  return { safeError, safeComplete, isAborted };
+}
+
+function parseSseChunk(
+  chunk: string,
+  handlers: Parameters<TunnelSubscribeFn>[2],
+  safe: SafeCallbacks,
+): { action: "complete" | "error" | "continue"; err?: Error } {
+  let eventName = "";
+  let dataPayload = "";
+  for (const line of chunk.split("\n")) {
+    if (line.startsWith("event:")) eventName = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataPayload = line.slice(5).trim();
+  }
+  if (eventName === "done") {
+    let parsed: { ok: boolean; error?: { code: string; message: string } };
+    try {
+      const value: unknown = JSON.parse(dataPayload);
+      if (!isDoneFrame(value)) {
+        return { action: "error", err: new Error("tunnel-relay SSE: invalid done frame") };
+      }
+      parsed = value;
+    } catch {
+      return { action: "error", err: new Error("tunnel-relay SSE: malformed done frame") };
+    }
+    if (parsed.ok) {
+      return { action: "complete" };
+    }
+    const err = Object.assign(new Error(parsed.error?.message ?? "subscription error"), {
+      code: parsed.error?.code,
+    });
+    return { action: "error", err };
+  }
+  if (!eventName) {
+    // default 'message' event
+    let data: unknown;
+    try {
+      data = JSON.parse(dataPayload);
+    } catch {
+      return { action: "error", err: new Error("tunnel-relay SSE: malformed data frame") };
+    }
+    // Buffered frames can remain after unsubscribe/SIGINT; do
+    // not deliver data once the subscription is aborted.
+    if (safe.isAborted()) return { action: "continue" };
+    try {
+      handlers.onData(data);
+    } catch {
+      // caller handler threw; continue pumping — their
+      // subscribeRemote catches and surfaces.
+    }
+  }
+  return { action: "continue" };
+}
+
+async function pumpTunnelSse(
+  fetchImpl: FetchLike,
+  opts: {
+    centralUrl: string;
+    nodeName: string;
+    bearer: string;
+    pinnedCa?: string;
+    expectedFingerprint?: string;
+    insecure?: boolean;
+  },
+  method: string,
+  input: unknown,
+  handlers: Parameters<TunnelSubscribeFn>[2],
+  abort: AbortController,
+  safe: SafeCallbacks,
+): Promise<void> {
+  let built: BuiltRelayRequest;
+  try {
+    built = buildRelayFetchInit(
+      opts.centralUrl,
+      opts.nodeName,
+      {
+        method,
+        type: "subscription",
+        input,
+        bearer: opts.bearer,
+        signal: abort.signal,
+        ...(opts.pinnedCa ? { pinnedCa: opts.pinnedCa } : {}),
+        ...(opts.expectedFingerprint ? { expectedFingerprint: opts.expectedFingerprint } : {}),
+        ...(opts.insecure ? { insecure: opts.insecure } : {}),
+      },
+      { stream: "true" },
+    );
+  } catch (err) {
+    safe.safeError(err);
+    return;
+  }
+  let res: Response;
+  try {
+    res = await fetchImpl(built.url, built.init);
+  } catch (err) {
+    if (abort.signal.aborted) {
+      safe.safeComplete();
+      return;
+    }
+    safe.safeError(err);
+    return;
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    safe.safeError(new Error(`tunnel-relay ${String(res.status)}: ${text || res.statusText}`));
+    return;
+  }
+  handlers.onStarted?.();
+  if (!res.body) {
+    safe.safeError(new Error("tunnel-relay SSE returned an empty body"));
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      if (abort.signal.aborted) break;
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // Parse one SSE frame at a time — standard \n\n separator.
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        const chunk = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        if (!chunk) continue;
+        const result = parseSseChunk(chunk, handlers, safe);
+        if (result.action === "complete") {
+          safe.safeComplete();
+          return;
+        }
+        if (result.action === "error") {
+          safe.safeError(result.err ?? new Error("tunnel-relay SSE: unknown error"));
+          return;
+        }
+      }
+    }
+    // Stream ended without a done frame (server closed body).
+    if (abort.signal.aborted) safe.safeComplete();
+    else safe.safeError(new Error("tunnel-relay SSE: stream closed without a done frame"));
+  } catch (err) {
+    if (abort.signal.aborted) {
+      safe.safeComplete();
+      return;
+    }
+    safe.safeError(err);
+  }
+}
+
 export function buildTunnelSubscribe(opts: {
   centralUrl: string;
   bearer: string;
@@ -287,159 +467,15 @@ export function buildTunnelSubscribe(opts: {
   const fetchImpl: FetchLike = opts.fetchImpl ?? fetch;
   return (method, input, handlers) => {
     const abort = new AbortController();
-    // Read through a call so control-flow narrowing from the read loop's
-    // top check doesn't treat re-checks as unreachable: abort can flip
-    // while buffered frames are still being drained.
-    const isAborted = (): boolean => abort.signal.aborted;
-    let settled = false;
-    const safeError = (err: unknown): void => {
-      if (settled) return;
-      settled = true;
-      try {
-        handlers.onError(err);
-      } catch {
-        // ignore
-      }
-    };
-    const safeComplete = (): void => {
-      if (settled) return;
-      settled = true;
-      try {
-        handlers.onComplete();
-      } catch {
-        // ignore
-      }
-    };
-    const pump = async (): Promise<void> => {
-      let built: BuiltRelayRequest;
-      try {
-        built = buildRelayFetchInit(
-          opts.centralUrl,
-          opts.nodeName,
-          {
-            method,
-            type: "subscription",
-            input,
-            bearer: opts.bearer,
-            signal: abort.signal,
-            ...(opts.pinnedCa ? { pinnedCa: opts.pinnedCa } : {}),
-            ...(opts.expectedFingerprint ? { expectedFingerprint: opts.expectedFingerprint } : {}),
-            ...(opts.insecure ? { insecure: opts.insecure } : {}),
-          },
-          { stream: "true" },
-        );
-      } catch (err) {
-        safeError(err);
-        return;
-      }
-      let res: Response;
-      try {
-        res = await fetchImpl(built.url, built.init);
-      } catch (err) {
-        if (abort.signal.aborted) {
-          safeComplete();
-          return;
-        }
-        safeError(err);
-        return;
-      }
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        safeError(new Error(`tunnel-relay ${String(res.status)}: ${text || res.statusText}`));
-        return;
-      }
-      handlers.onStarted?.();
-      if (!res.body) {
-        safeError(new Error("tunnel-relay SSE returned an empty body"));
-        return;
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      try {
-        for (;;) {
-          if (abort.signal.aborted) break;
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          // Parse one SSE frame at a time — standard \n\n separator.
-          let idx: number;
-          while ((idx = buf.indexOf("\n\n")) !== -1) {
-            const chunk = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            if (!chunk) continue;
-            let eventName = "";
-            let dataPayload = "";
-            for (const line of chunk.split("\n")) {
-              if (line.startsWith("event:")) eventName = line.slice(6).trim();
-              else if (line.startsWith("data:")) dataPayload = line.slice(5).trim();
-            }
-            if (eventName === "done") {
-              let parsed: { ok: boolean; error?: { code: string; message: string } };
-              try {
-                const value: unknown = JSON.parse(dataPayload);
-                if (!isDoneFrame(value)) {
-                  safeError(new Error("tunnel-relay SSE: invalid done frame"));
-                  return;
-                }
-                parsed = value;
-              } catch {
-                safeError(new Error("tunnel-relay SSE: malformed done frame"));
-                return;
-              }
-              if (parsed.ok) {
-                safeComplete();
-              } else {
-                const err = Object.assign(
-                  new Error(parsed.error?.message ?? "subscription error"),
-                  {
-                    code: parsed.error?.code,
-                  },
-                );
-                safeError(err);
-              }
-              return;
-            }
-            if (!eventName) {
-              // default 'message' event
-              let data: unknown;
-              try {
-                data = JSON.parse(dataPayload);
-              } catch {
-                // Corrupted frame; surface as error.
-                safeError(new Error("tunnel-relay SSE: malformed data frame"));
-                return;
-              }
-              // Buffered frames can remain after unsubscribe/SIGINT; do
-              // not deliver data once the subscription is aborted.
-              if (isAborted()) return;
-              try {
-                handlers.onData(data);
-              } catch {
-                // caller handler threw; continue pumping — their
-                // subscribeRemote catches and surfaces.
-              }
-            }
-          }
-        }
-        // Stream ended without a done frame (server closed body).
-        if (abort.signal.aborted) safeComplete();
-        else safeError(new Error("tunnel-relay SSE: stream closed without a done frame"));
-      } catch (err) {
-        if (abort.signal.aborted) {
-          safeComplete();
-          return;
-        }
-        safeError(err);
-      }
-    };
-    void pump();
+    const settledRef = { value: false };
+    const safe = makeSafeCallbacks(handlers, settledRef, abort);
+    void pumpTunnelSse(fetchImpl, opts, method, input, handlers, abort, safe);
     return {
       unsubscribe(): void {
-        if (settled) return;
+        if (settledRef.value) return;
         // Mark settled so duplicate unsubscribe is a no-op and the
         // pump's next path observes an aborted signal cleanly.
-        settled = true;
+        settledRef.value = true;
         try {
           abort.abort();
         } catch {

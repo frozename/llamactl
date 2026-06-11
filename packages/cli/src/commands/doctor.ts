@@ -14,6 +14,7 @@
  *                 StorageClass + llamactl-labelled nodes
  *   [secrets]     macOS Keychain availability (Darwin only)
  */
+import type { KubernetesClient } from "@llamactl/remote";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
@@ -245,6 +246,74 @@ function hasKubernetesIntent(env: NodeJS.ProcessEnv = process.env): boolean {
   return false;
 }
 
+async function probeRbac(client: KubernetesClient): Promise<CheckResult> {
+  const probeName = `llamactl-doctor-probe-${Date.now().toString(36)}`;
+  try {
+    await client.core.createNamespace({
+      body: {
+        apiVersion: "v1",
+        kind: "Namespace",
+        metadata: {
+          name: probeName,
+          labels: {
+            "app.kubernetes.io/managed-by": "llamactl",
+            "llamactl.io/probe": "doctor",
+          },
+        },
+      },
+    });
+    await client.core.deleteNamespace({ name: probeName }).catch(() => {
+      return;
+    });
+    return {
+      system: "kubernetes",
+      status: "ok",
+      message: "RBAC: create+delete namespace confirmed",
+    };
+  } catch (err) {
+    return {
+      system: "kubernetes",
+      status: "warn",
+      message: `RBAC: cannot create namespace (${truncate((err as Error).message, 80)})`,
+      fix: "grant the kubeconfig user `create`/`delete` on `namespaces` in the target cluster",
+    };
+  }
+}
+
+async function probeLabeledNodes(client: KubernetesClient): Promise<CheckResult> {
+  try {
+    const res = await client.core.listNode({
+      labelSelector: "llamactl.io/node",
+    });
+    const count = res.items.length;
+    if (count > 0) {
+      const names = res.items
+        .map(
+          (n: { metadata?: { labels?: Record<string, string> } }) =>
+            n.metadata?.labels?.["llamactl.io/node"] ?? "<unlabeled>",
+        )
+        .slice(0, 5);
+      return {
+        system: "kubernetes",
+        status: "ok",
+        message: `${String(count)} llamactl-labelled node(s): ${names.join(", ")}`,
+      };
+    }
+    return {
+      system: "kubernetes",
+      status: "info",
+      message: "0 llamactl-labelled nodes",
+      fix: "`kubectl label node <kubelet-host> llamactl.io/node=local` to enable node-affinity",
+    };
+  } catch (err) {
+    return {
+      system: "kubernetes",
+      status: "info",
+      message: `node list failed: ${truncate((err as Error).message, 80)}`,
+    };
+  }
+}
+
 async function checkKubernetes(): Promise<CheckResult[]> {
   const intent = hasKubernetesIntent();
   const out: CheckResult[] = [];
@@ -287,44 +356,10 @@ async function checkKubernetes(): Promise<CheckResult[]> {
     return out;
   }
 
-  // RBAC probe: create + delete a throwaway namespace. The list path
-  // doesn't prove create-permission; namespace-creation is the
-  // privilege composite apply relies on. Skip on surprise failure —
-  // warn with a hint if we can't confirm it.
   try {
     const { createKubernetesClient } = await import("@llamactl/remote");
     const client = createKubernetesClient();
-    const probeName = `llamactl-doctor-probe-${Date.now().toString(36)}`;
-    try {
-      await client.core.createNamespace({
-        body: {
-          apiVersion: "v1",
-          kind: "Namespace",
-          metadata: {
-            name: probeName,
-            labels: {
-              "app.kubernetes.io/managed-by": "llamactl",
-              "llamactl.io/probe": "doctor",
-            },
-          },
-        },
-      });
-      await client.core.deleteNamespace({ name: probeName }).catch(() => {
-        return;
-      });
-      out.push({
-        system: "kubernetes",
-        status: "ok",
-        message: "RBAC: create+delete namespace confirmed",
-      });
-    } catch (err) {
-      out.push({
-        system: "kubernetes",
-        status: "warn",
-        message: `RBAC: cannot create namespace (${truncate((err as Error).message, 80)})`,
-        fix: "grant the kubeconfig user `create`/`delete` on `namespaces` in the target cluster",
-      });
-    }
+    out.push(await probeRbac(client));
 
     // StorageClass enumeration is deferred — checking it from the CLI
     // requires pulling StorageV1Api, and the PVC-bind failure it
@@ -338,39 +373,7 @@ async function checkKubernetes(): Promise<CheckResult[]> {
       fix: "cluster needs a default StorageClass for PVC-backed services (k3s ships local-path; Docker Desktop ships hostpath)",
     });
 
-    // llamactl-labelled nodes
-    try {
-      const res = await client.core.listNode({
-        labelSelector: "llamactl.io/node",
-      });
-      const count = res.items.length;
-      if (count > 0) {
-        const names = res.items
-          .map(
-            (n: { metadata?: { labels?: Record<string, string> } }) =>
-              n.metadata?.labels?.["llamactl.io/node"] ?? "<unlabeled>",
-          )
-          .slice(0, 5);
-        out.push({
-          system: "kubernetes",
-          status: "ok",
-          message: `${String(count)} llamactl-labelled node(s): ${names.join(", ")}`,
-        });
-      } else {
-        out.push({
-          system: "kubernetes",
-          status: "info",
-          message: "0 llamactl-labelled nodes",
-          fix: "`kubectl label node <kubelet-host> llamactl.io/node=local` to enable node-affinity",
-        });
-      }
-    } catch (err) {
-      out.push({
-        system: "kubernetes",
-        status: "info",
-        message: `node list failed: ${truncate((err as Error).message, 80)}`,
-      });
-    }
+    out.push(await probeLabeledNodes(client));
   } catch (err) {
     out.push({
       system: "kubernetes",

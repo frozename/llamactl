@@ -414,7 +414,19 @@ async function runTest(args: string[]): Promise<number> {
  * hand-editing the kubeconfig — the `.refine()` validator on
  * `ClusterNodeSchema` catches bad provider/missing-rag combinations.
  */
-function runAddRag(args: string[]): number {
+interface AddRagFlags {
+  name: string;
+  provider: "chroma" | "pgvector";
+  endpoint: string;
+  collection?: string;
+  embedderNode?: string;
+  embedderModel?: string;
+  passwordEnv?: string;
+  passwordRef?: string;
+  extraArgs: string[];
+}
+
+function parseAddRagFlags(args: string[]): AddRagFlags | { error: string } | { help: true } {
   let name: string | undefined;
   let provider: "chroma" | "pgvector" | undefined;
   let endpoint: string | undefined;
@@ -438,17 +450,15 @@ function runAddRag(args: string[]): number {
         name = flag;
         continue;
       }
-      process.stderr.write(`node add-rag: unexpected positional ${flag}\n`);
-      return 1;
+      return { error: `node add-rag: unexpected positional ${flag}` };
     }
     switch (flag) {
       case "--provider": {
         const v = takeValue();
         if (v !== "chroma" && v !== "pgvector") {
-          process.stderr.write(
-            `node add-rag: --provider must be 'chroma' or 'pgvector' (got ${v ?? "<empty>"})\n`,
-          );
-          return 1;
+          return {
+            error: `node add-rag: --provider must be 'chroma' or 'pgvector' (got ${v ?? "<empty>"})`,
+          };
         }
         provider = v;
         break;
@@ -481,50 +491,67 @@ function runAddRag(args: string[]): number {
       }
       case "-h":
       case "--help":
-        process.stdout.write(USAGE);
-        return 0;
+        return { help: true };
       default:
-        process.stderr.write(`node add-rag: unknown flag ${flag}\n`);
-        return 1;
+        return { error: `node add-rag: unknown flag ${flag}` };
     }
   }
 
   if (!name) {
-    process.stderr.write("node add-rag: missing <name>\n");
-    return 1;
+    return { error: "node add-rag: missing <name>" };
   }
   if (!provider) {
-    process.stderr.write("node add-rag: --provider is required\n");
-    return 1;
+    return { error: "node add-rag: --provider is required" };
   }
   if (!endpoint) {
-    process.stderr.write("node add-rag: --endpoint is required\n");
-    return 1;
+    return { error: "node add-rag: --endpoint is required" };
   }
   if ((embedderNode === undefined) !== (embedderModel === undefined)) {
-    process.stderr.write(
-      "node add-rag: --embedder-node and --embedder-model must be set together\n",
-    );
-    return 1;
+    return {
+      error: "node add-rag: --embedder-node and --embedder-model must be set together",
+    };
   }
   if (passwordEnv && passwordRef) {
-    process.stderr.write("node add-rag: pass only one of --password-env / --password-ref\n");
+    return { error: "node add-rag: pass only one of --password-env / --password-ref" };
+  }
+
+  return {
+    name,
+    provider,
+    endpoint,
+    collection,
+    embedderNode,
+    embedderModel,
+    passwordEnv,
+    passwordRef,
+    extraArgs,
+  };
+}
+
+function runAddRag(args: string[]): number {
+  const parsed = parseAddRagFlags(args);
+  if ("error" in parsed) {
+    process.stderr.write(`${parsed.error}\n`);
     return 1;
+  }
+  if ("help" in parsed) {
+    process.stdout.write(USAGE);
+    return 0;
   }
 
   const binding: Record<string, unknown> = {
-    provider,
-    endpoint,
-    extraArgs,
+    provider: parsed.provider,
+    endpoint: parsed.endpoint,
+    extraArgs: parsed.extraArgs,
   };
-  if (collection) binding.collection = collection;
-  if (embedderNode && embedderModel) {
-    binding.embedder = { node: embedderNode, model: embedderModel };
+  if (parsed.collection) binding.collection = parsed.collection;
+  if (parsed.embedderNode && parsed.embedderModel) {
+    binding.embedder = { node: parsed.embedderNode, model: parsed.embedderModel };
   }
-  if (passwordEnv) {
-    binding.auth = { tokenEnv: passwordEnv };
-  } else if (passwordRef) {
-    binding.auth = { tokenRef: passwordRef };
+  if (parsed.passwordEnv) {
+    binding.auth = { tokenEnv: parsed.passwordEnv };
+  } else if (parsed.passwordRef) {
+    binding.auth = { tokenRef: parsed.passwordRef };
   }
 
   const cfgPath = kubecfg.defaultConfigPath();
@@ -533,7 +560,7 @@ function runAddRag(args: string[]): number {
   let next;
   try {
     next = kubecfg.upsertNode(cfg, ctx.cluster, {
-      name,
+      name: parsed.name,
       endpoint: "",
       kind: "rag",
       rag: configSchema.RagBindingSchema.parse(binding),
@@ -543,7 +570,9 @@ function runAddRag(args: string[]): number {
     return 1;
   }
   kubecfg.saveConfig(next, cfgPath);
-  process.stdout.write(`added rag node '${name}' (${provider}) to context '${ctx.name}'\n`);
+  process.stdout.write(
+    `added rag node '${parsed.name}' (${parsed.provider}) to context '${ctx.name}'\n`,
+  );
   return 0;
 }
 
