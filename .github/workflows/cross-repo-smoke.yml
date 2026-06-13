@@ -55,7 +55,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       # `file:` deps in sirius-gateway and embersynth point at
       # ../nova/packages/*. GitHub's actions/checkout parks each repo
