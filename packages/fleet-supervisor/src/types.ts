@@ -8,6 +8,17 @@ export interface NodeMemSnapshot {
   swap_out: number;
 }
 
+export interface CompletionProbeSnapshot {
+  /** False on ticks between the per-workload cadence — the prior result is sticky. */
+  ran: boolean;
+  ok: boolean;
+  /** HTTP status of the last completion probe; null on timeout / network error. */
+  status: number | null;
+  /** Wedge counter (5xx/timeout despite /health 200). The degradation detector reads this. */
+  consecutiveFailures: number;
+  latencyMs: number;
+}
+
 export interface WorkloadSnapshot {
   name: string;
   kind: "ModelHost" | "ModelRun";
@@ -28,6 +39,12 @@ export interface WorkloadSnapshot {
    * Optional for back-compat: snapshots from older nodes omit it.
    */
   revision?: string | null;
+  /**
+   * Last completion-liveness probe result, sticky between probe ticks. Present
+   * only when the workload opted into the completion probe. Catches the wedge
+   * mode where /health stays 200 but completions return 5xx.
+   */
+  completionProbe?: CompletionProbeSnapshot;
 }
 
 export interface FleetSnapshotEntry {

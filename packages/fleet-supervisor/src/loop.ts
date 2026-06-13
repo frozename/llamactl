@@ -1,6 +1,7 @@
 import type { MigrationController } from "./migration-controller.js";
 import type { DegradationThresholds, PressureThresholds, WorkloadHealthState } from "./policy.js";
 import type {
+  CompletionProbeSnapshot,
   FleetHeartbeatEntry,
   FleetJournalEntry,
   FleetSnapshotEntry,
@@ -33,6 +34,7 @@ export const DEFAULT_PRESSURE_THRESHOLDS: PressureThresholds = {
 export const DEFAULT_DEGRADATION_THRESHOLDS: DegradationThresholds = {
   consecutiveErrorsForDegraded: 3,
   p95DegradedMs: 5000,
+  consecutiveCompletionErrorsForDegraded: 2,
 };
 
 export interface SupervisorLoopOptions {
@@ -159,6 +161,11 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const migrationController = opts.migrationController ?? null;
 
   const consecutiveErrors = new Map<string, number>();
+  const completionState = {
+    consecutiveFailures: new Map<string, number>(),
+    tickCounter: new Map<string, number>(),
+    lastResult: new Map<string, CompletionProbeSnapshot>(),
+  };
   const state: TickState = {
     consecutiveClearTicks: 0,
     enteredHighAt: null,
@@ -172,7 +179,12 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const writeJournalEntry = makeDedupJournalWriter(writeJournal, new Set<string>());
   const probeWorkloadFn =
     opts.probeWorkload ??
-    makeDefaultProbeFn({ fetch: opts.fetch, timeoutMs: probeTimeoutMs, consecutiveErrors });
+    makeDefaultProbeFn({
+      fetch: opts.fetch,
+      timeoutMs: probeTimeoutMs,
+      consecutiveErrors,
+      completion: completionState,
+    });
   const unreachableFallback = makeUnreachableFallback(consecutiveErrors);
 
   let stopped = false;

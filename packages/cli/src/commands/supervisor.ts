@@ -3,6 +3,7 @@ import { listPeers, workloadStore } from "@llamactl/remote";
 
 import {
   appendFleetJournal,
+  type CompletionProbeConfig,
   createMigrationController,
   createPeerFetch,
   DEFAULT_PRESSURE_THRESHOLDS,
@@ -47,6 +48,9 @@ FLAGS:
   --clear-ticks=<n>           Pressure clear-tick hysteresis window. Default 5.
   --p95-degraded-ms=<n>       Per-workload p95 degradation threshold. Default 5000.
   --consecutive-errors=<n>    Per-workload consecutive-errors threshold. Default 3.
+  --consecutive-completion-errors=<n>
+                              Completion-probe wedge failures (5xx/timeout
+                              despite /health 200) before recycling. Default 2.
   --no-workloads              Skip workload probing (mem-only mode).
   --workload=<name@url>       Add a workload target (repeatable).
                               Format: name@url, e.g. mlx-qwen36-35b@http://127.0.0.1:8096
@@ -256,6 +260,7 @@ function buildSupervisorLoopOptions(
     degradationThresholds: {
       consecutiveErrorsForDegraded: flags.consecutiveErrors,
       p95DegradedMs: flags.p95DegradedMs,
+      consecutiveCompletionErrorsForDegraded: flags.consecutiveCompletionErrors,
     },
     migrationController,
     onTick: executorEnabled
@@ -397,6 +402,7 @@ interface Flags {
   clearTicks?: number;
   p95DegradedMs: number;
   consecutiveErrors: number;
+  consecutiveCompletionErrors: number;
   workloads: WorkloadTarget[];
   noWorkloadsConflict: boolean;
   quiet: boolean;
@@ -454,6 +460,32 @@ export function resolveWorkloadUrl(
   return fallbackUrl;
 }
 
+/**
+ * Reads the workload's deployed manifest and maps an enabled `spec.completionProbe`
+ * to the supervisor's resolved config (seconds → ms). Returns undefined when the
+ * probe is off or the manifest can't be read — the supervisor simply skips it.
+ */
+export function resolveCompletionProbe(
+  name: string,
+  deps: ResolveWorkloadUrlDeps = {},
+): CompletionProbeConfig | undefined {
+  const load = deps.loadWorkloadByName ?? workloadStore.loadWorkloadByName;
+  try {
+    const cp = load(name).spec.completionProbe;
+    if (!cp?.enabled) return undefined;
+    return {
+      path: cp.path,
+      prompt: cp.prompt,
+      maxTokens: cp.maxTokens,
+      timeoutMs: cp.timeoutSeconds * 1000,
+      everyNTicks: cp.everyNTicks,
+      ...(cp.model ? { model: cp.model } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export function resolveWorkloadTargetsAtStartup(
   workloads: WorkloadTarget[],
   env: NodeJS.ProcessEnv = process.env,
@@ -463,8 +495,13 @@ export function resolveWorkloadTargetsAtStartup(
   const loggedOverrides = new Map<string, string>();
 
   return workloads.map((target) => {
+    // completionProbe is a ModelRun-only field; skipping non-ModelRun targets
+    // avoids loading + ModelRunSchema-parsing (which throws) a ModelHost manifest.
+    const completionProbe =
+      target.kind === "ModelRun" ? resolveCompletionProbe(target.name, deps) : undefined;
+    const withProbe = completionProbe ? { ...target, completionProbe } : target;
     const resolvedEndpoint = resolveWorkloadUrl(target.name, target.endpoint, env, deps);
-    if (resolvedEndpoint === target.endpoint) return target;
+    if (resolvedEndpoint === target.endpoint) return withProbe;
 
     const signature = `${target.endpoint}->${resolvedEndpoint}`;
     const prev = loggedOverrides.get(target.name);
@@ -474,7 +511,7 @@ export function resolveWorkloadTargetsAtStartup(
       );
       loggedOverrides.set(target.name, signature);
     }
-    return { ...target, endpoint: resolvedEndpoint };
+    return { ...withProbe, endpoint: resolvedEndpoint };
   });
 }
 
@@ -543,6 +580,7 @@ function parsePressureFlags(
     clearTicks?: number;
     p95DegradedMs: number;
     consecutiveErrors: number;
+    consecutiveCompletionErrors: number;
   },
 ): void {
   if (raw.startsWith("--interval=")) {
@@ -584,6 +622,10 @@ function parsePressureFlags(
     current.consecutiveErrors = num(raw, "--consecutive-errors=", 3);
     return;
   }
+  if (raw.startsWith("--consecutive-completion-errors=")) {
+    current.consecutiveCompletionErrors = num(raw, "--consecutive-completion-errors=", 2);
+    return;
+  }
 }
 
 const AUDIT_FLAG_PREFIXES: readonly string[] = [
@@ -605,6 +647,7 @@ const PRESSURE_FLAG_PREFIXES: readonly string[] = [
   "--clear-ticks=",
   "--p95-degraded-ms=",
   "--consecutive-errors=",
+  "--consecutive-completion-errors=",
 ];
 
 function hasPrefix(raw: string, prefixes: readonly string[]): boolean {
@@ -693,6 +736,7 @@ function parseFlags(argv: string[]): Flags {
     clearTicks: undefined as number | undefined,
     p95DegradedMs: 5000,
     consecutiveErrors: 3,
+    consecutiveCompletionErrors: 2,
   };
 
   for (const raw of argv) {
@@ -720,6 +764,7 @@ function parseFlags(argv: string[]): Flags {
     clearTicks: pressure.clearTicks,
     p95DegradedMs: pressure.p95DegradedMs,
     consecutiveErrors: pressure.consecutiveErrors,
+    consecutiveCompletionErrors: pressure.consecutiveCompletionErrors,
     workloads: toggles.noWorkloads ? [] : workloadState.workloads,
     noWorkloadsConflict: toggles.noWorkloads && workloadState.workloads.length > 0,
     quiet: toggles.quiet,

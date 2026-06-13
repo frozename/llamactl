@@ -107,6 +107,12 @@ function pickEvictionCandidate(workloads: WorkloadSnapshot[]): WorkloadSnapshot 
 export interface DegradationThresholds {
   consecutiveErrorsForDegraded: number;
   p95DegradedMs: number;
+  /**
+   * Consecutive completion-probe wedge failures (5xx/timeout despite /health
+   * 200) before recycling. Catches the granite/diffusion wedge the health probe
+   * cannot see.
+   */
+  consecutiveCompletionErrorsForDegraded: number;
 }
 
 export type WorkloadHealthState = "healthy" | "degraded";
@@ -128,10 +134,16 @@ export function detectDegradation(
   priorState: WorkloadHealthState,
   thresholds: DegradationThresholds,
 ): DegradationResult | null {
+  const completionFailures = workload.completionProbe?.consecutiveFailures ?? 0;
+  const completionWedged = completionFailures >= thresholds.consecutiveCompletionErrorsForDegraded;
   const unhealthy =
     workload.consecutiveErrors >= thresholds.consecutiveErrorsForDegraded ||
-    workload.p95_ms > thresholds.p95DegradedMs;
-  const recovered = workload.reachable && workload.consecutiveErrors === 0;
+    workload.p95_ms > thresholds.p95DegradedMs ||
+    completionWedged;
+  // A completion-wedged workload still answers /health 200 with consecutiveErrors
+  // 0, so recovery must also require the wedge to clear — otherwise it would
+  // oscillate degraded↔healthy on every tick.
+  const recovered = workload.reachable && workload.consecutiveErrors === 0 && !completionWedged;
 
   if (unhealthy && priorState !== "degraded") {
     const transition = {
@@ -144,8 +156,11 @@ export function detectDegradation(
     const action: FleetProposalAction = {
       type: "restart",
       workload: workload.name,
-      reason:
-        workload.consecutiveErrors >= thresholds.consecutiveErrorsForDegraded
+      reason: completionWedged
+        ? `completion probe failed ${String(completionFailures)}× despite /health 200 (last status ${String(
+            workload.completionProbe?.status ?? "none",
+          )})`
+        : workload.consecutiveErrors >= thresholds.consecutiveErrorsForDegraded
           ? `consecutive errors ${String(workload.consecutiveErrors)} ≥ ${String(
               thresholds.consecutiveErrorsForDegraded,
             )}`

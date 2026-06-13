@@ -4,12 +4,14 @@ import type {
   NodeSnapshot,
 } from "./migration-controller.js";
 import type {
+  DegradationThresholds,
   PressureResult,
   PressureThresholds,
   PressureWindow,
   WorkloadHealthState,
 } from "./policy.js";
 import type {
+  CompletionProbeSnapshot,
   FleetJournalEntry,
   FleetPressureStatusEntry,
   FleetProposalEntry,
@@ -17,8 +19,9 @@ import type {
   NodeMemSnapshot,
   WorkloadSnapshot,
 } from "./types.js";
-import type { WorkloadTarget } from "./workload-probe.js";
+import type { WorkloadProbeResult, WorkloadTarget } from "./workload-probe.js";
 
+import { probeCompletion as defaultProbeCompletion } from "./completion-probe.js";
 import { detectDegradation, isPressureHot } from "./policy.js";
 import { probeWorkload as defaultProbeWorkload, redactEndpoint } from "./workload-probe.js";
 
@@ -46,10 +49,69 @@ export function makeDedupJournalWriter(
   };
 }
 
+/** Per-workload state for the completion-liveness probe, held across ticks. */
+export interface CompletionProbeState {
+  consecutiveFailures: Map<string, number>;
+  tickCounter: Map<string, number>;
+  lastResult: Map<string, CompletionProbeSnapshot>;
+  /** Injectable for tests; defaults to the real completion probe. */
+  probe?: typeof defaultProbeCompletion;
+  allowPublicEndpoints?: boolean;
+}
+
 export interface ProbeFnDeps {
   fetch: typeof globalThis.fetch | undefined;
   timeoutMs: number;
   consecutiveErrors: Map<string, number>;
+  completion?: CompletionProbeState;
+}
+
+async function runCompletionProbe(
+  target: WorkloadTarget,
+  health: WorkloadProbeResult,
+  deps: ProbeFnDeps,
+): Promise<CompletionProbeSnapshot | undefined> {
+  const config = target.completionProbe;
+  const state = deps.completion;
+  if (!config || !state) return undefined;
+
+  // The completion probe only signals the wedge that hides behind /health 200.
+  // When /health itself fails, the health path drives degradation — clear the
+  // completion state so the wedge counter starts fresh on recovery.
+  if (!health.reachable) {
+    state.consecutiveFailures.delete(target.name);
+    state.tickCounter.delete(target.name);
+    state.lastResult.delete(target.name);
+    return undefined;
+  }
+
+  const tick = state.tickCounter.get(target.name) ?? 0;
+  state.tickCounter.set(target.name, tick + 1);
+  if (tick % config.everyNTicks !== 0) {
+    // Between cadence ticks the prior result is sticky so the degradation state
+    // machine stays consistent.
+    const last = state.lastResult.get(target.name);
+    return last ? { ...last, ran: false } : undefined;
+  }
+
+  const probe = state.probe ?? defaultProbeCompletion;
+  const result = await probe(target.endpoint, {
+    config,
+    models: health.models,
+    fetch: deps.fetch,
+    priorConsecutiveFailures: state.consecutiveFailures.get(target.name) ?? 0,
+    allowPublicEndpoints: state.allowPublicEndpoints,
+  });
+  state.consecutiveFailures.set(target.name, result.consecutiveFailures);
+  const snapshot: CompletionProbeSnapshot = {
+    ran: true,
+    ok: result.ok,
+    status: result.status,
+    consecutiveFailures: result.consecutiveFailures,
+    latencyMs: result.latencyMs,
+  };
+  state.lastResult.set(target.name, snapshot);
+  return snapshot;
 }
 
 export function makeDefaultProbeFn(
@@ -62,6 +124,7 @@ export function makeDefaultProbeFn(
       priorConsecutiveErrors: deps.consecutiveErrors.get(target.name) ?? 0,
     });
     deps.consecutiveErrors.set(target.name, result.consecutiveErrors);
+    const completionProbe = await runCompletionProbe(target, result, deps);
     return {
       name: target.name,
       kind: target.kind,
@@ -76,6 +139,7 @@ export function makeDefaultProbeFn(
       reachable: result.reachable,
       consecutiveErrors: result.consecutiveErrors,
       revision: result.revision,
+      ...(completionProbe ? { completionProbe } : {}),
     } satisfies WorkloadSnapshot;
   };
 }
@@ -239,7 +303,7 @@ export function applyWorkloadDegradation(
   ts: string,
   node: string,
   workloads: WorkloadSnapshot[],
-  degradationThresholds: { consecutiveErrorsForDegraded: number; p95DegradedMs: number },
+  degradationThresholds: DegradationThresholds,
   workloadHealth: Map<string, WorkloadHealthState>,
   writeJournalEntry: (entry: FleetJournalEntry) => void,
 ): void {

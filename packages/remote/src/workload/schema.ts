@@ -101,6 +101,30 @@ export const ModelRunSpecSchema = z.object({
    * `pinned` keeps the workload on its current node.
    */
   placement: z.enum(["auto", "pinned"]).optional(),
+  /**
+   * Opt-in completion-based liveness probe for the supervisor. When enabled,
+   * the supervisor periodically issues a tiny chat completion and recycles the
+   * workload after repeated 5xx/timeout despite `/health` still returning 200
+   * (the long-lived-server wedge the health probe alone cannot see). Default off.
+   *
+   * `timeoutSeconds` is capped at 30 so a stalled probe can't block the
+   * supervisor's tick (every workload is probed in one pass) beyond the default
+   * tick interval. The probe competes for the inference slot, so on a SINGLE-slot
+   * server under sustained long synchronous calls the probe can queue behind a
+   * legitimate request and time out — prefer multi-slot / mostly-idle workloads,
+   * or a generous `everyNTicks`. (Busy-aware probing is a follow-up.)
+   */
+  completionProbe: z
+    .object({
+      enabled: z.boolean().default(false),
+      path: z.string().default("/v1/chat/completions"),
+      prompt: z.string().default("ping"),
+      model: z.string().optional(),
+      maxTokens: z.number().int().positive().max(64).default(1),
+      timeoutSeconds: z.number().int().positive().max(30).default(20),
+      everyNTicks: z.number().int().positive().max(240).default(4),
+    })
+    .optional(),
 });
 
 export const ModelRunConditionSchema = z.object({

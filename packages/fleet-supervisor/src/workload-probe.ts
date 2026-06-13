@@ -1,9 +1,13 @@
+import type { CompletionProbeConfig } from "./completion-probe.js";
+
 export interface WorkloadTarget {
   name: string;
   endpoint: string;
   kind: "ModelHost" | "ModelRun";
   /** Eviction priority (0-100). Lower = evict first. Defaults to 50 when omitted. */
   priority?: number;
+  /** Resolved completion-liveness probe config; present only when the workload opted in. */
+  completionProbe?: CompletionProbeConfig;
 }
 
 export interface WorkloadProbeOptions {
