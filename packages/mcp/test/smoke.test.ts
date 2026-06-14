@@ -178,7 +178,6 @@ describe("@llamactl/mcp read surface", () => {
     const MCP_ONLY_EXCLUDED = new Set([
       "llamactl.embersynth.sync",
       "llamactl.embersynth.set-default-profile",
-      "llamactl.node.budget",
       "llamactl_admit_measure",
       "llamactl_fleet_audit",
       "llamactl_fleet_supervisor_audit",

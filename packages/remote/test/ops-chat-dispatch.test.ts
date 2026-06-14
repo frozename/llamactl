@@ -65,6 +65,19 @@ describe("operatorRunTool", () => {
     expect(typeof entry.durationMs).toBe("number");
   });
 
+  test("runs llamactl.node.budget as a read tool against the local node", async () => {
+    const caller = router.createCaller({});
+    const res = await caller.operatorRunTool({
+      name: "llamactl.node.budget",
+      arguments: { node: "local" },
+      dryRun: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.name).toBe("llamactl.node.budget");
+    expect(res.tier).toBe("read");
+    expect(res.result).toBeDefined();
+  });
+
   test("unknown tool names return structured error + audit failure", async () => {
     const caller = router.createCaller({});
     const res = await caller.operatorRunTool({

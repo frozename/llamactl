@@ -34,6 +34,7 @@ export const KNOWN_OPS_CHAT_TOOLS = [
   "llamactl.cost.snapshot",
   "llamactl.env",
   "llamactl.node.add",
+  "llamactl.node.budget",
   "llamactl.node.facts",
   "llamactl.node.ls",
   "llamactl.node.remove",
@@ -215,6 +216,8 @@ async function executeReadTool(
       return await caller.nodeList();
     case "llamactl.node.facts":
       return await caller.nodeFacts();
+    case "llamactl.node.budget":
+      return await caller.nodeBudget({ node: requireString(args, "node") });
     case "llamactl.promotions.list":
       return await caller.promotions();
     case "llamactl.workload.list":
