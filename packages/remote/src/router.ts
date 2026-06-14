@@ -578,8 +578,8 @@ async function* tailSessionEvents(
  * per completion via the fire-and-forget background writer, deferred
  * past the response with queueMicrotask so a slow disk can't add
  * latency to the user's request. Records nothing when the upstream
- * returned no usage block. Streaming (`chatStream`) usage capture via
- * the adapter's onUsage hook is a follow-up.
+ * returned no usage block. Streaming (`chatStream`) usage capture goes
+ * through `recordChatUsageSnapshot` via the adapter's onUsage hook.
  */
 export function recordChatUsage(
   response: {
@@ -604,6 +604,40 @@ export function recordChatUsage(
         latency_ms: response.latencyMs ?? 0,
       },
     });
+  });
+}
+
+/**
+ * Streaming sibling of `recordChatUsage`. The OpenAI-compat adapter
+ * fires `onUsage` with an `OpenAICompatUsageSnapshot` once the final
+ * stream frame carries a usage block. The snapshot's `provider` is the
+ * ADAPTER name (= node.name), NOT the canonical pricing-key kind, so
+ * the caller passes the canonical `provider` separately — mirroring how
+ * `chatComplete` derives it. Fire-and-forget through the same background
+ * writer; the call already sits inside the adapter's swallowing
+ * `fireUsage`, and `appendUsageBackground` never throws either.
+ */
+export function recordChatUsageSnapshot(
+  snapshot: {
+    model: string;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    latency_ms: number;
+  },
+  provider: string,
+): void {
+  appendUsageBackground({
+    record: {
+      ts: new Date().toISOString(),
+      provider,
+      model: snapshot.model,
+      kind: "chat",
+      prompt_tokens: snapshot.prompt_tokens,
+      completion_tokens: snapshot.completion_tokens,
+      total_tokens: snapshot.total_tokens,
+      latency_ms: snapshot.latency_ms,
+    },
   });
 }
 
@@ -1000,12 +1034,29 @@ export const router = t.router({
           name: "local",
           baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
           apiKey: "local",
+          onUsage: (snapshot) => {
+            recordChatUsageSnapshot(snapshot, "local");
+          },
         });
         yield* streamNodeChatEvents(provider, input.request as UnifiedAiRequest, signal);
         return;
       }
 
-      const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
+      // snapshot.provider is the adapter name (= node.name); map it to
+      // the canonical pricing-key kind the way chatComplete does before
+      // writing the UsageRecord. Fires when the final stream frame
+      // carries a usage block (upstream must honor stream_options:
+      // { include_usage: true }).
+      const canonicalProvider =
+        resolved.node.cloud?.provider ?? resolved.node.provider?.providerName ?? "local";
+      const provider = providerForNode({
+        node: resolved.node,
+        user: resolved.user,
+        cfg,
+        onUsage: (snapshot) => {
+          recordChatUsageSnapshot(snapshot, canonicalProvider);
+        },
+      });
       yield* streamNodeChatEvents(provider, input.request as UnifiedAiRequest, signal);
     }),
 

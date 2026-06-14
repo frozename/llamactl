@@ -2,6 +2,7 @@ import {
   type AiProvider,
   createOpenAICompatProvider,
   type ModelInfo,
+  type OpenAICompatOnUsage,
   type UnifiedAiRequest,
   type UnifiedStreamEvent,
 } from "@nova/contracts";
@@ -30,6 +31,7 @@ export function providerForCloudNode(
   node: ClusterNode,
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl?: typeof globalThis.fetch,
+  onUsage?: OpenAICompatOnUsage,
 ): AiProvider {
   if (!node.cloud) {
     throw new Error(`node '${node.name}' is not a cloud node`);
@@ -47,6 +49,7 @@ export function providerForCloudNode(
     baseUrl,
     apiKey,
     ...(fetchImpl ? { fetch: fetchImpl } : {}),
+    ...(onUsage ? { onUsage } : {}),
   });
   return applyProviderQuirks(base, providerName);
 }
@@ -191,8 +194,13 @@ export function providerForNode(opts: {
    *  CLI (Bun's native fetch picks up `tls.ca` from the link layer).
    *  Electron main passes `makeNodePinnedFetch`. */
   fetchFactory?: PinnedFetchFactory;
+  /** Usage telemetry hook forwarded into the OpenAI-compat adapter.
+   *  Fires for both createResponse and the final streaming usage
+   *  frame; the caller maps the adapter-named snapshot to a canonical
+   *  pricing-key provider before writing. */
+  onUsage?: OpenAICompatOnUsage;
 }): AiProvider {
-  const { node, user, cfg, env = process.env, fetchFactory } = opts;
+  const { node, user, cfg, env = process.env, fetchFactory, onUsage } = opts;
   const kind = resolveNodeKind(node);
 
   // Provider-kind virtual nodes resolve by walking to their parent
@@ -200,7 +208,7 @@ export function providerForNode(opts: {
   // node's name so telemetry / observers see `llamactl-sirius.openai`
   // rather than the parent gateway name.
   if (kind === "provider") {
-    return providerForVirtualNode(node, cfg, env);
+    return providerForVirtualNode(node, cfg, env, onUsage);
   }
 
   // Gateway + cloud-direct both carry a `cloud` binding and want
@@ -211,7 +219,8 @@ export function providerForNode(opts: {
   // llamactl agent endpoint and sends the agent's bearer instead
   // of the cloud API key. That's the "still erroring on gemini"
   // bug: transform was there, but unreachable.
-  if (kind === "gateway" || kind === "cloud") return providerForCloudNode(node, env);
+  if (kind === "gateway" || kind === "cloud")
+    return providerForCloudNode(node, env, undefined, onUsage);
 
   if (node.endpoint === LOCAL_NODE_ENDPOINT) {
     throw new Error(
@@ -227,6 +236,7 @@ export function providerForNode(opts: {
     baseUrl,
     apiKey: token,
     ...(fetchImpl ? { fetch: fetchImpl as typeof globalThis.fetch } : {}),
+    ...(onUsage ? { onUsage } : {}),
   });
 }
 
@@ -241,6 +251,7 @@ function providerForVirtualNode(
   node: ClusterNode,
   cfg: Config | undefined,
   env: NodeJS.ProcessEnv,
+  onUsage?: OpenAICompatOnUsage,
 ): AiProvider {
   if (!node.provider) {
     throw new Error(`provider-kind node '${node.name}' is missing provider{}`);
@@ -251,6 +262,9 @@ function providerForVirtualNode(
     );
   }
   const binding = node.provider;
+  // CLI-source virtual nodes dispatch to a subprocess adapter that
+  // doesn't speak the OpenAI-compat usage protocol — no onUsage to
+  // thread through.
   if (binding.source === "cli") {
     return buildCliProviderForNode({ node, cfg, env });
   }
@@ -268,6 +282,7 @@ function providerForVirtualNode(
     displayName: parent.cloud.displayName ?? node.name,
     baseUrl: parent.cloud.baseUrl,
     apiKey,
+    ...(onUsage ? { onUsage } : {}),
   });
 }
 
