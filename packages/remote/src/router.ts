@@ -21,6 +21,7 @@ import {
   pull,
   recommendations,
   rpcServer as rpcServerMod,
+  SAFETY_TIERS,
   serverLogs as serverLogsMod,
   server as serverMod,
   target as targetMod,
@@ -2339,7 +2340,7 @@ export const router = t.router({
             z.object({
               name: z.string().min(1),
               description: z.string(),
-              tier: z.enum(["read", "mutation-dry-run-safe", "mutation-destructive"]),
+              tier: z.enum(SAFETY_TIERS),
             }),
           )
           .optional(),
@@ -2716,7 +2717,7 @@ export const router = t.router({
             z.object({
               name: z.string().min(1),
               description: z.string(),
-              tier: z.enum(["read", "mutation-dry-run-safe", "mutation-destructive"]),
+              tier: z.enum(SAFETY_TIERS),
             }),
           )
           .optional(),

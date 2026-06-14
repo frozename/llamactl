@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { bench, env as envMod } from "@llamactl/core";
+import { bench, env as envMod, SAFETY_TIERS } from "@llamactl/core";
 import { createOpenAICompatProvider } from "@nova/contracts";
 import {
   computeCostSnapshot,
@@ -116,7 +116,7 @@ export function registerOperatorTools(server: McpServer): void {
             z.object({
               name: z.string().min(1),
               description: z.string(),
-              tier: z.enum(["read", "mutation-dry-run-safe", "mutation-destructive"]),
+              tier: z.enum(SAFETY_TIERS),
             }),
           )
           .optional(),

@@ -1,3 +1,5 @@
+import type { SafetyTier } from "@llamactl/core";
+
 import type { router as AppRouterType } from "../router.js";
 
 import { appendOpsChatAudit, hashArguments } from "./audit.js";
@@ -73,7 +75,7 @@ export type OpsChatToolName = (typeof KNOWN_OPS_CHAT_TOOLS)[number];
  * the wet-run button unlocks; `mutation-destructive` additionally asks
  * the operator to confirm by typing the tool name.
  */
-export type ToolTier = "read" | "mutation-dry-run-safe" | "mutation-destructive";
+export type ToolTier = SafetyTier;
 
 const DESTRUCTIVE_TOOL_NAMES = [
   "llamactl.node.remove",

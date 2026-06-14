@@ -1,3 +1,5 @@
+import type { SafetyTier } from "@llamactl/core";
+
 export type PlanStep = {
   tool: string;
   args?: Record<string, unknown>;
@@ -28,7 +30,7 @@ export type PlanResult =
 export interface ToolCatalogEntry {
   name: string;
   description: string;
-  tier: "read" | "mutation-dry-run-safe" | "mutation-destructive";
+  tier: SafetyTier;
 }
 
 export type Turn =

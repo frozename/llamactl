@@ -176,7 +176,7 @@ export function useOpsChat(
   defaultCatalog: {
     name: string;
     description: string;
-    tier: "read" | "mutation-dry-run-safe" | "mutation-destructive";
+    tier: ToolTier;
   }[],
 ): UseOpsChatReturn {
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);

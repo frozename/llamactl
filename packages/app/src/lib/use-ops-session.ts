@@ -5,11 +5,13 @@
 // modules/workloads/workers-panel.tsx). If the server schema drifts,
 // the tRPC inference at the useSubscription call site will surface
 // the mismatch.
+import type { SafetyTier } from "@llamactl/core";
+
 import * as React from "react";
 
 import { trpc } from "../lib/trpc";
 
-export type ToolTier = "read" | "mutation-dry-run-safe" | "mutation-destructive";
+export type ToolTier = SafetyTier;
 
 export type JournalEvent =
   | {

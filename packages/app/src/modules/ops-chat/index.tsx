@@ -1,3 +1,5 @@
+import type { SafetyTier } from "@llamactl/core";
+
 import * as React from "react";
 
 import { OpsExecutorPicker } from "@/modules/ops/ops-executor-picker";
@@ -47,7 +49,7 @@ const CANNED_PROMPTS: { label: string; prompt: string }[] = [
 const DEFAULT_CATALOG: {
   name: string;
   description: string;
-  tier: "read" | "mutation-dry-run-safe" | "mutation-destructive";
+  tier: SafetyTier;
 }[] = [
   {
     name: "llamactl.catalog.list",

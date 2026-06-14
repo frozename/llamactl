@@ -1,7 +1,8 @@
+import { SAFETY_TIERS } from "@llamactl/core";
 import { PlanStepSchema } from "@nova/mcp";
 import { z } from "zod";
 
-export const ToolTierEnum = z.enum(["read", "mutation-dry-run-safe", "mutation-destructive"]);
+export const ToolTierEnum = z.enum(SAFETY_TIERS);
 export type ToolTier = z.infer<typeof ToolTierEnum>;
 
 const Common = z.object({ ts: z.string().min(1) });

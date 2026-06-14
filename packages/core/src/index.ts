@@ -22,6 +22,7 @@ export * as quant from "./quant.js";
 export * as recommendations from "./recommendations.js";
 export * as responsecache from "./responsecache/index.js";
 export * as rpcServer from "./rpcServer.js";
+export * from "./safetyTier.js";
 export * as schemas from "./schemas.js";
 export * as server from "./server.js";
 export * as serverLogs from "./serverLogs.js";

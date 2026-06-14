@@ -1,3 +1,4 @@
+import { SAFETY_TIERS } from "@llamactl/core";
 import { PlanStepSchema } from "@nova/mcp";
 import { z } from "zod";
 
@@ -36,7 +37,7 @@ export const OpsChatPlanProposedSchema = z.object({
   step: PlanStepSchema,
   /** Tier of this step's tool, pre-computed server-side so the
    *  renderer doesn't have to duplicate the classifier. */
-  tier: z.enum(["read", "mutation-dry-run-safe", "mutation-destructive"]),
+  tier: z.enum(SAFETY_TIERS),
   /** Short free-form model reasoning for the whole plan — attached to
    *  the first step of each iteration so the UI can surface it. Empty
    *  string on subsequent iterations from the same plan. */

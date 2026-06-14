@@ -1,3 +1,5 @@
+import type { SafetyTier } from "@llamactl/core";
+
 export type PlanStep = {
   tool: string;
   args?: Record<string, unknown>;
@@ -5,7 +7,7 @@ export type PlanStep = {
   annotation: string;
 };
 
-export type ToolTier = "read" | "mutation-dry-run-safe" | "mutation-destructive";
+export type ToolTier = SafetyTier;
 
 export interface ToolCallOutcome {
   ok: boolean;
