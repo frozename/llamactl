@@ -287,9 +287,15 @@ async function runStart(args: string[]): Promise<number> {
 
   const resolved = envMod.resolveEnv();
   const node = resolveEffectiveNodeName();
-  const workload = resolveWorkloadName(parsed.workloadExplicit, resolved, {
-    synthesizeIfEmpty: true,
-  });
+  let workload: string;
+  try {
+    workload = resolveWorkloadName(parsed.workloadExplicit, resolved, {
+      synthesizeIfEmpty: true,
+    });
+  } catch (err) {
+    process.stderr.write(`server start: ${(err as Error).message}\n`);
+    return 1;
+  }
 
   workloadStore.saveWorkload(buildStartManifest(workload, node, parsed));
 
