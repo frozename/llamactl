@@ -238,6 +238,7 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.rag.search",
       "llamactl.rag.store",
       "llamactl.server.status",
+      "llamactl.workload.apply",
       "llamactl.workload.delete",
       "llamactl.workload.list",
       "llamactl_admit_measure",
@@ -400,6 +401,47 @@ describe("@llamactl/mcp read surface", () => {
     expect(row).toBeDefined();
     expect(row?.endpoint).toBe("127.0.0.1:8181");
     expect(row?.phase).toBe("Pending");
+  });
+
+  test("llamactl.workload.apply dry-run previews kind/name/node without applying", async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: "llamactl.workload.apply",
+      arguments: {
+        yaml: [
+          "apiVersion: llamactl/v1",
+          "kind: ModelRun",
+          "metadata:",
+          "  name: wl-apply-preview",
+          "spec:",
+          "  node: local",
+          "  target:",
+          "    kind: rel",
+          "    value: fake-org/fake-model.gguf",
+          "",
+        ].join("\n"),
+        dryRun: true,
+      },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      dryRun: boolean;
+      would: { kind: string; name: string; node: string };
+    };
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.would.kind).toBe("ModelRun");
+    expect(parsed.would.name).toBe("wl-apply-preview");
+    expect(parsed.would.node).toBe("local");
+  });
+
+  test("llamactl.workload.apply dry-run rejects an invalid manifest", async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: "llamactl.workload.apply",
+      arguments: { yaml: "kind: Nonsense\nfoo: bar", dryRun: true },
+    });
+    const parsed = JSON.parse(textOf(result)) as { ok?: boolean; error?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toMatch(/invalid workload manifest/);
   });
 
   test('llamactl.workload.delete dry-run reports "no manifest" when absent', async () => {
@@ -792,15 +834,16 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
 
   test("empty pipelines dir does not break tool registration", async () => {
     // No LLAMACTL_MCP_PIPELINES_DIR content; MCP server boots cleanly
-    // and the baseline 33 llamactl.* tools remain advertised (22 from
+    // and the baseline llamactl.* tools remain advertised (22 from
     // before + 4 from the Phase 5 composite surface + 5 from the R1
     // rag-pipeline surface + 1 from the R3.a draft tool + 1 from
-    // the Aliveness-Slice-3 rag-bench tool).
+    // the Aliveness-Slice-3 rag-bench tool + 1 from the workload.apply
+    // surface-parity tool).
     const { client } = await connected();
     const list = await client.listTools();
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
-    expect(llamactlTools.length).toBe(34);
+    expect(llamactlTools.length).toBe(35);
   });
 });

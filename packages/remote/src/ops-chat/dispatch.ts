@@ -58,6 +58,7 @@ export const KNOWN_OPS_CHAT_TOOLS = [
   "llamactl.rag.search",
   "llamactl.rag.store",
   "llamactl.server.status",
+  "llamactl.workload.apply",
   "llamactl.workload.delete",
   "llamactl.workload.list",
 ] as const;
@@ -95,6 +96,7 @@ const MUTATION_DRY_RUN_TOOL_NAMES = [
   "llamactl.composite.apply",
   "llamactl.project.apply",
   "llamactl.project.index",
+  "llamactl.workload.apply",
 ] as const satisfies readonly OpsChatToolName[];
 
 type MutationDryRunToolName = (typeof MUTATION_DRY_RUN_TOOL_NAMES)[number];
@@ -413,6 +415,16 @@ async function executeMutationDryRunTool(
         dryRun,
         { dryRun: true, wouldIndex: { project: name, pipelineName: `project-${name}` } },
         async (): Promise<unknown> => await caller.projectIndex({ name }),
+      );
+    }
+    case "llamactl.workload.apply": {
+      // workloadApply validates + applies + persists; it has no native
+      // dry-run, so the preview just reports the manifest byte length.
+      const yaml = requireString(args, "yaml");
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldApply: { bytes: yaml.length } },
+        async (): Promise<unknown> => await caller.workloadApply({ yaml }),
       );
     }
   }

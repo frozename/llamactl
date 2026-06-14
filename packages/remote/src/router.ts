@@ -318,6 +318,30 @@ export const BUILT_IN_PLANNER_TOOLS: readonly PlannerToolDescriptor[] = [
     },
     tier: "mutation-dry-run-safe",
   },
+  {
+    name: "llamactl.workload.apply",
+    description:
+      "Apply a single ModelRun or ModelHost manifest (YAML) to its target node — validate, run admission, place + start the server, and persist the manifest. This is the narrow single-workload tool the composite.apply guidance points to: prefer it for single-model or single-service asks instead of wrapping one model in a Composite. `dryRun` validates and reports the parsed kind/name/node without applying.",
+    inputSchema: {
+      type: "object",
+      required: ["yaml"],
+      properties: {
+        yaml: {
+          type: "string",
+          minLength: 1,
+          description:
+            "The full ModelRun or ModelHost YAML manifest (apiVersion: llamactl/v1). Includes spec.node + spec.target.",
+        },
+        dryRun: {
+          type: "boolean",
+          default: false,
+          description:
+            "When true, validate the manifest and report kind/name/node without applying. Use on first emission so the operator can review before wet-run.",
+        },
+      },
+    },
+    tier: "mutation-dry-run-safe",
+  },
 ];
 
 /**

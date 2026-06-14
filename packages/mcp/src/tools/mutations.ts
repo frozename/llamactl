@@ -1,7 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { env as envMod, presets } from "@llamactl/core";
-import { agentConfig, type ClusterNode, config as kubecfg, workloadStore } from "@llamactl/remote";
+import {
+  agentConfig,
+  type ClusterNode,
+  config as kubecfg,
+  router,
+  workloadStore,
+} from "@llamactl/remote";
 import { appendAudit, toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
 
@@ -15,9 +21,72 @@ import {
 export function registerMutationTools(server: McpServer): void {
   registerNodeAdd(server);
   registerNodeRemove(server);
+  registerWorkloadApply(server);
   registerWorkloadDelete(server);
   registerCatalogPromote(server);
   registerCatalogPromoteDelete(server);
+}
+
+function registerWorkloadApply(server: McpServer): void {
+  server.registerTool(
+    "llamactl.workload.apply",
+    {
+      title: "Apply a workload manifest",
+      description:
+        "Apply a ModelRun or ModelHost manifest (YAML) to its target node: validate, run admission, place + start the server, and persist the manifest to the workloads store. `dryRun: true` validates and reports the parsed kind/name/node without applying. The narrow single-workload counterpart to llamactl.composite.apply — prefer this for single-model or single-service asks.",
+      inputSchema: {
+        yaml: z.string().min(1).describe("Raw YAML body of a ModelRun or ModelHost manifest."),
+        dryRun: z.boolean().default(false),
+      },
+    },
+    async (input) => {
+      const { yaml, dryRun } = input;
+      if (dryRun) {
+        let preview: { kind: string; name: string; node: string };
+        try {
+          const manifest = workloadStore.parseManifestYaml(yaml) as {
+            kind: string;
+            metadata: { name: string };
+            spec: { node: string };
+          };
+          preview = { kind: manifest.kind, name: manifest.metadata.name, node: manifest.spec.node };
+        } catch (err) {
+          appendAudit({
+            server: SERVER_SLUG,
+            tool: "llamactl.workload.apply",
+            input: { dryRun },
+            dryRun: true,
+            result: { error: (err as Error).message },
+          });
+          return toTextContent({
+            ok: false,
+            error: `invalid workload manifest: ${(err as Error).message}`,
+          });
+        }
+        appendAudit({
+          server: SERVER_SLUG,
+          tool: "llamactl.workload.apply",
+          input: { dryRun, ...preview },
+          dryRun: true,
+        });
+        return toTextContent({
+          dryRun: true,
+          would: preview,
+          message: `would apply ${preview.kind} ${preview.name} on node ${preview.node}`,
+        });
+      }
+      const caller = router.createCaller({});
+      const result = await caller.workloadApply({ yaml });
+      appendAudit({
+        server: SERVER_SLUG,
+        tool: "llamactl.workload.apply",
+        input: { dryRun, bytes: yaml.length },
+        dryRun: false,
+        result: { name: (result as { name?: string }).name ?? null },
+      });
+      return toTextContent(result);
+    },
+  );
 }
 
 function registerNodeAdd(server: McpServer): void {
