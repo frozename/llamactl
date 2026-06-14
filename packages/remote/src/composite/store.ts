@@ -7,17 +7,17 @@
  * relocate llamactl state can redirect all of them uniformly).
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { atomicWriteFileSync } from "../atomic-write.js";
+import { llamactlHome } from "../config/env.js";
 import { type Composite, CompositeSchema } from "./schema.js";
 
 export function defaultCompositesDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_COMPOSITES_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return join(base, "composites");
 }
 

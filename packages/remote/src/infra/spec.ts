@@ -1,8 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+
+import { llamactlHome } from "../config/env.js";
 
 /**
  * Package spec format for infra deployments. One YAML file per
@@ -79,7 +80,7 @@ export type InfraPackageSpec = z.infer<typeof InfraPackageSpecSchema>;
 export function defaultInfraPackagesDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_INFRA_PACKAGES_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return join(base, "packages");
 }
 

@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { homedir, platform as nodePlatform } from "node:os";
 import { basename, dirname, join } from "node:path";
 
+import { llamactlHome } from "../config/env.js";
 import { infraCurrentSymlink } from "./layout.js";
 
 /**
@@ -58,7 +59,7 @@ export function infraServiceUnitPath(
 export function defaultInfraLogsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_INFRA_LOGS_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return join(base, "logs");
 }
 

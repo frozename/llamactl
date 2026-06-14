@@ -8,8 +8,9 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+
+import { llamactlHome } from "../config/env.js";
 
 /**
  * Versioned side-by-side layout for infra packages on an agent host.
@@ -34,7 +35,7 @@ import { basename, dirname, join } from "node:path";
 export function defaultInfraDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_INFRA_DIR?.trim();
   if (override) return override;
-  const base = env.DEV_STORAGE?.trim() ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return join(base, "infra");
 }
 
