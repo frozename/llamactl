@@ -176,17 +176,29 @@ describe("@llamactl/mcp read surface", () => {
     // doesn't need the MCP round-trip).
     const { KNOWN_OPS_CHAT_TOOLS } = await import("@llamactl/remote");
     const MCP_ONLY_EXCLUDED = new Set([
-      "llamactl.embersynth.sync",
+      "llamactl.admit.measure",
       "llamactl.embersynth.set-default-profile",
+      "llamactl.embersynth.sync",
+      "llamactl.fleet.audit",
+      "llamactl.fleet.executions",
+      "llamactl.fleet.journal.tail",
+      "llamactl.fleet.pressure",
+      "llamactl.fleet.pressure.status",
+      "llamactl.fleet.proposals",
+      "llamactl.fleet.snapshot",
+      "llamactl.fleet.supervisor.audit",
+      "llamactl.fleet.supervisor.status",
+      "llamactl.models.leaderboard",
+      "llamactl.supervisor.execute",
       "llamactl_admit_measure",
       "llamactl_fleet_audit",
-      "llamactl_fleet_supervisor_audit",
       "llamactl_fleet_executions",
       "llamactl_fleet_journal_tail",
       "llamactl_fleet_pressure",
       "llamactl_fleet_pressure_status",
       "llamactl_fleet_proposals",
       "llamactl_fleet_snapshot",
+      "llamactl_fleet_supervisor_audit",
       "llamactl_fleet_supervisor_status",
       "llamactl_models_leaderboard",
       "llamactl_supervisor_execute",
@@ -199,6 +211,7 @@ describe("@llamactl/mcp read surface", () => {
     expect(mcpEligible).toEqual(opsChatEligible);
 
     expect(names).toEqual([
+      "llamactl.admit.measure",
       "llamactl.bench.compare",
       "llamactl.bench.history",
       "llamactl.catalog.list",
@@ -212,6 +225,16 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.embersynth.set-default-profile",
       "llamactl.embersynth.sync",
       "llamactl.env",
+      "llamactl.fleet.audit",
+      "llamactl.fleet.executions",
+      "llamactl.fleet.journal.tail",
+      "llamactl.fleet.pressure",
+      "llamactl.fleet.pressure.status",
+      "llamactl.fleet.proposals",
+      "llamactl.fleet.snapshot",
+      "llamactl.fleet.supervisor.audit",
+      "llamactl.fleet.supervisor.status",
+      "llamactl.models.leaderboard",
       "llamactl.node.add",
       "llamactl.node.budget",
       "llamactl.node.facts",
@@ -239,6 +262,7 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.reconciler.kick",
       "llamactl.server.status",
       "llamactl.server.stop",
+      "llamactl.supervisor.execute",
       "llamactl.workload.apply",
       "llamactl.workload.delete",
       "llamactl.workload.list",
@@ -887,12 +911,14 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
     // rag-pipeline surface + 1 from the R3.a draft tool + 1 from
     // the Aliveness-Slice-3 rag-bench tool + 1 from the workload.apply
     // surface-parity tool + 6 from the project surface-parity tools +
-    // 2 from the server/reconciler control tools).
+    // 2 from the server/reconciler control tools + 12 from the dotted
+    // fleet/admit/supervisor/models surface; the retained underscore
+    // aliases use the `llamactl_` prefix and are not counted here).
     const { client } = await connected();
     const list = await client.listTools();
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
-    expect(llamactlTools.length).toBe(43);
+    expect(llamactlTools.length).toBe(55);
   });
 });

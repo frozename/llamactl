@@ -438,7 +438,7 @@ describe("llamactl_fleet_pressure_status", () => {
       expect(aliasedSecond).toEqual(expected);
       const warningLines = errorLines.filter((line) =>
         line.includes(
-          "[llamactl-mcp] deprecated: llamactl_fleet_supervisor_status -> llamactl_fleet_pressure_status; will be removed",
+          "[llamactl-mcp] deprecated: llamactl_fleet_supervisor_status -> llamactl.fleet.supervisor.status; will be removed",
         ),
       );
       expect(warningLines).toHaveLength(1);

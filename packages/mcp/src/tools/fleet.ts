@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import {
   appendFleetJournal,
@@ -53,6 +53,34 @@ function warnDeprecatedToolAlias(oldName: string, newName: string): void {
   if (deprecatedToolWarnings.has(oldName)) return;
   deprecatedToolWarnings.add(oldName);
   console.error(`[llamactl-mcp] deprecated: ${oldName} -> ${newName}; will be removed`);
+}
+
+type ToolContent = { content: { type: "text"; text: string }[] };
+
+function registerDeprecatedAlias(
+  server: McpServer,
+  oldName: string,
+  newName: string,
+  title: string,
+  inputSchema: z.ZodRawShape,
+  handler: (input: never) => ToolContent | Promise<ToolContent>,
+): void {
+  // The alias schema is identical to the primary tool's schema, so the
+  // SDK-inferred callback arg matches the shared handler's input type; the
+  // SDK's ToolCallback generic is too constrained to express that directly.
+  const wrapped = ((input: never) => {
+    warnDeprecatedToolAlias(oldName, newName);
+    return handler(input);
+  }) as unknown as ToolCallback<z.ZodRawShape>;
+  server.registerTool(
+    oldName,
+    {
+      title: `${title} (deprecated)`,
+      description: `[DEPRECATED — use ${newName}] Backward-compatible alias for ${newName}.`,
+      inputSchema,
+    },
+    wrapped,
+  );
 }
 
 function appendAudit(
@@ -248,6 +276,68 @@ const auditInputSchema = {
   limit: z.number().optional(),
 };
 
+const snapshotInputSchema = {
+  node: z.string().optional(),
+  all: z.boolean().optional(),
+  journalPath: z.string().optional(),
+};
+
+const pressureInputSchema = {
+  node: z.string().optional(),
+  journalPath: z.string().optional(),
+};
+
+const proposalsInputSchema = {
+  node: z.string().optional(),
+  pendingOnly: z.boolean().optional(),
+  sinceIsoTs: z.string().optional(),
+  limit: z.number().optional(),
+  journalPath: z.string().optional(),
+};
+
+const executionsInputSchema = {
+  node: z.string().optional(),
+  sinceIsoTs: z.string().optional(),
+  limit: z.number().optional(),
+  journalPath: z.string().optional(),
+};
+
+const journalTailInputSchema = {
+  node: z.string().optional(),
+  kinds: z
+    .array(
+      z.enum([
+        "fleet-snapshot",
+        "fleet-heartbeat",
+        "fleet-transition",
+        "fleet-proposal",
+        "fleet-execution",
+        "fleet-pressure-status",
+        "fleet-placement",
+        "fleet-move",
+        "fleet-lease-election",
+      ]),
+    )
+    .optional(),
+  limit: z.number().optional(),
+  journalPath: z.string().optional(),
+};
+
+const admitMeasureInputSchema = {
+  workload: z.string(),
+  node: z.string().optional(),
+  timeoutMs: z.number().int().positive().optional(),
+};
+
+const supervisorExecuteInputSchema = {
+  proposalId: z.string().optional(),
+  auto: z.boolean().optional(),
+  severityThreshold: z.number().int().min(1).max(3).optional(),
+  node: z.string().optional(),
+  confirm: z.boolean().optional(),
+  timeoutMs: z.number().int().positive().optional(),
+};
+
 async function handleFleetAudit({
   auditPath,
   tool,
@@ -263,6 +353,101 @@ async function handleFleetAudit({
 }): Promise<{ content: { type: "text"; text: string }[] }> {
   const result = await readAuditEntries({ auditPath, tool, outcome, since, limit });
   return toTextContent(result);
+}
+
+function handleFleetSnapshot({
+  node,
+  all,
+  journalPath,
+}: {
+  node?: string;
+  all?: boolean;
+  journalPath?: string;
+}):
+  | Promise<{ content: { type: "text"; text: string }[] }>
+  | { content: { type: "text"; text: string }[] } {
+  if (all) {
+    const peers = listPeers();
+    const aggregator = new FleetAggregator({
+      peers,
+      fetchSnapshot: (peer): Promise<FleetSnapshotEntry | null> => createPeerFetch(peer)(),
+    });
+    return aggregator.pollNow().then(() => toTextContent({ snapshots: aggregator.getAll() }));
+  }
+  const path = journalPath ?? defaultFleetJournalPath();
+  const entries = readJournal(path);
+  return toTextContent({ snapshots: collectLatestSnapshots(entries, node) });
+}
+
+function handleFleetProposals({
+  node,
+  pendingOnly = true,
+  limit = 50,
+  sinceIsoTs,
+  journalPath,
+}: {
+  node?: string;
+  pendingOnly?: boolean;
+  limit?: number;
+  sinceIsoTs?: string;
+  journalPath?: string;
+}): { content: { type: "text"; text: string }[] } {
+  const path = journalPath ?? defaultFleetJournalPath();
+  const entries = readJournal(path);
+  const proposals = collectProposals(entries, { node, pendingOnly, sinceIsoTs });
+  const total = proposals.length;
+  return toTextContent({ proposals: proposals.slice(0, limit), total });
+}
+
+function handleFleetExecutions({
+  node,
+  sinceIsoTs,
+  limit = 50,
+  journalPath,
+}: {
+  node?: string;
+  sinceIsoTs?: string;
+  limit?: number;
+  journalPath?: string;
+}): { content: { type: "text"; text: string }[] } {
+  const path = journalPath ?? defaultFleetJournalPath();
+  const entries = readJournal(path);
+
+  const executions: FleetExecutionEntry[] = [];
+  for (const e of entries) {
+    if (e.kind !== "fleet-execution") continue;
+    if (node !== undefined && e.node !== node) continue;
+    if (sinceIsoTs !== undefined && e.ts < sinceIsoTs) continue;
+    executions.push(e);
+  }
+
+  executions.sort((a, b) => b.ts.localeCompare(a.ts));
+  const total = executions.length;
+  return toTextContent({ executions: executions.slice(0, limit), total });
+}
+
+function handleFleetJournalTail({
+  node,
+  kinds,
+  limit = 20,
+  journalPath,
+}: {
+  node?: string;
+  kinds?: FleetJournalEntry["kind"][];
+  limit?: number;
+  journalPath?: string;
+}): { content: { type: "text"; text: string }[] } {
+  const path = journalPath ?? defaultFleetJournalPath();
+  const entries = readJournal(path);
+  const kindSet = kinds ? new Set(kinds) : null;
+
+  const filtered = entries.filter((e) => {
+    if (node !== undefined && e.node !== node) return false;
+    if (kindSet && !kindSet.has(e.kind)) return false;
+    return true;
+  });
+
+  return toTextContent({ entries: filtered.slice(-limit) });
 }
 
 function handleFleetPressure({ node, journalPath }: { node?: string; journalPath?: string }): {
@@ -425,49 +610,47 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     ((): Promise<{ running: boolean; pid?: number }> => detectExistingSupervisorDefault(spawnFn));
 
   server.registerTool(
-    "llamactl_fleet_snapshot",
+    "llamactl.fleet.snapshot",
     {
       title: "Fleet snapshot",
       description:
         "Return the latest fleet snapshot per node from the fleet-supervisor journal. When node is set, returns at most one snapshot for that node.",
-      inputSchema: {
-        node: z.string().optional(),
-        all: z.boolean().optional(),
-        journalPath: z.string().optional(),
-      },
+      inputSchema: snapshotInputSchema,
     },
-    async ({ node, all, journalPath }) => {
-      if (all) {
-        const peers = listPeers();
-        const aggregator = new FleetAggregator({
-          peers,
-          fetchSnapshot: (peer): Promise<FleetSnapshotEntry | null> => createPeerFetch(peer)(),
-        });
-        await aggregator.pollNow();
-        return toTextContent({ snapshots: aggregator.getAll() });
-      }
-      const path = journalPath ?? defaultFleetJournalPath();
-      const entries = readJournal(path);
-      return toTextContent({ snapshots: collectLatestSnapshots(entries, node) });
-    },
+    handleFleetSnapshot,
+  );
+
+  registerDeprecatedAlias(
+    server,
+    "llamactl_fleet_snapshot",
+    "llamactl.fleet.snapshot",
+    "Fleet snapshot",
+    snapshotInputSchema,
+    handleFleetSnapshot,
   );
 
   server.registerTool(
-    "llamactl_fleet_pressure",
+    "llamactl.fleet.pressure",
     {
       title: "Fleet pressure state",
       description:
         "Current pressure state (NORMAL | HIGH) per node, derived from fleet-transition entries where subjectKind=node and signal in (pressure, pressure-cleared). Nodes that never transitioned appear as NORMAL with lastTransitionAt: null.",
-      inputSchema: {
-        node: z.string().optional(),
-        journalPath: z.string().optional(),
-      },
+      inputSchema: pressureInputSchema,
     },
     (input) => handleFleetPressure(input),
   );
 
+  registerDeprecatedAlias(
+    server,
+    "llamactl_fleet_pressure",
+    "llamactl.fleet.pressure",
+    "Fleet pressure state",
+    pressureInputSchema,
+    handleFleetPressure,
+  );
+
   server.registerTool(
-    "llamactl_fleet_audit",
+    "llamactl.fleet.audit",
     {
       title: "Fleet supervisor audit",
       description:
@@ -477,170 +660,179 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     handleFleetAudit,
   );
 
-  server.registerTool(
-    "llamactl_fleet_supervisor_audit",
-    {
-      title: "Fleet supervisor audit (deprecated)",
-      description:
-        "[DEPRECATED — use llamactl_fleet_audit] Backward-compatible alias for llamactl_fleet_audit.",
-      inputSchema: auditInputSchema,
-    },
-    (input) => {
-      warnDeprecatedToolAlias("llamactl_fleet_supervisor_audit", "llamactl_fleet_audit");
-      return handleFleetAudit(input);
-    },
+  registerDeprecatedAlias(
+    server,
+    "llamactl_fleet_audit",
+    "llamactl.fleet.audit",
+    "Fleet supervisor audit",
+    auditInputSchema,
+    handleFleetAudit,
   );
 
   server.registerTool(
-    "llamactl_fleet_pressure_status",
+    "llamactl.fleet.supervisor.audit",
+    {
+      title: "Fleet supervisor audit",
+      description:
+        "Read recent MCP write-tool audit entries from the fleet-supervisor audit log. Supports filters by tool name, outcome, and timestamp.",
+      inputSchema: auditInputSchema,
+    },
+    handleFleetAudit,
+  );
+
+  registerDeprecatedAlias(
+    server,
+    "llamactl_fleet_supervisor_audit",
+    "llamactl.fleet.supervisor.audit",
+    "Fleet supervisor audit",
+    auditInputSchema,
+    handleFleetAudit,
+  );
+
+  server.registerTool(
+    "llamactl.fleet.pressure.status",
     {
       title: "Fleet supervisor status",
       description:
-        "Current pressure status per node derived from the fleet-supervisor journal: state, time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status entries. Complementary to llamactl_fleet_pressure (transition-derived current state). This tool returns richer periodic fields: time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status journal entries.",
+        "Current pressure status per node derived from the fleet-supervisor journal: state, time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status entries. Complementary to llamactl.fleet.pressure (transition-derived current state). This tool returns richer periodic fields: time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status journal entries.",
       inputSchema: pressureStatusInputSchema,
     },
     handleFleetPressureStatus,
   );
 
-  server.registerTool(
-    "llamactl_fleet_supervisor_status",
-    {
-      title: "Fleet supervisor status (deprecated)",
-      description:
-        "[DEPRECATED — use llamactl_fleet_pressure_status] Backward-compatible alias for llamactl_fleet_pressure_status.",
-      inputSchema: pressureStatusInputSchema,
-    },
-    (input) => {
-      warnDeprecatedToolAlias("llamactl_fleet_supervisor_status", "llamactl_fleet_pressure_status");
-      return handleFleetPressureStatus(input);
-    },
+  registerDeprecatedAlias(
+    server,
+    "llamactl_fleet_pressure_status",
+    "llamactl.fleet.pressure.status",
+    "Fleet supervisor status",
+    pressureStatusInputSchema,
+    handleFleetPressureStatus,
   );
 
   server.registerTool(
-    "llamactl_fleet_proposals",
+    "llamactl.fleet.supervisor.status",
+    {
+      title: "Fleet supervisor status",
+      description:
+        "Current pressure status per node derived from the fleet-supervisor journal: state, time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status entries. Complementary to llamactl.fleet.pressure (transition-derived current state). This tool returns richer periodic fields: time-in-state, clear-tick progress, latest breach flags, and recent fleet-pressure-status journal entries.",
+      inputSchema: pressureStatusInputSchema,
+    },
+    handleFleetPressureStatus,
+  );
+
+  registerDeprecatedAlias(
+    server,
+    "llamactl_fleet_supervisor_status",
+    "llamactl.fleet.supervisor.status",
+    "Fleet supervisor status",
+    pressureStatusInputSchema,
+    handleFleetPressureStatus,
+  );
+
+  server.registerTool(
+    "llamactl.fleet.proposals",
     {
       title: "Fleet proposals",
       description:
         "List fleet proposals from the journal. pendingOnly=true (default) returns only proposals with no matching fleet-execution entry. Ordered most-recent-first; limit applied after filtering.",
-      inputSchema: {
-        node: z.string().optional(),
-        pendingOnly: z.boolean().optional(),
-        sinceIsoTs: z.string().optional(),
-        limit: z.number().optional(),
-        journalPath: z.string().optional(),
-      },
+      inputSchema: proposalsInputSchema,
     },
-    ({ node, pendingOnly = true, limit = 50, sinceIsoTs, journalPath }) => {
-      const path = journalPath ?? defaultFleetJournalPath();
-      const entries = readJournal(path);
-      const proposals = collectProposals(entries, { node, pendingOnly, sinceIsoTs });
-      const total = proposals.length;
-      return toTextContent({ proposals: proposals.slice(0, limit), total });
-    },
+    handleFleetProposals,
+  );
+
+  registerDeprecatedAlias(
+    server,
+    "llamactl_fleet_proposals",
+    "llamactl.fleet.proposals",
+    "Fleet proposals",
+    proposalsInputSchema,
+    handleFleetProposals,
   );
 
   server.registerTool(
-    "llamactl_fleet_executions",
+    "llamactl.fleet.executions",
     {
       title: "Fleet executions",
       description:
         "List fleet executor actions from the journal. Ordered most-recent-first; total is post-filter pre-limit count.",
-      inputSchema: {
-        node: z.string().optional(),
-        sinceIsoTs: z.string().optional(),
-        limit: z.number().optional(),
-        journalPath: z.string().optional(),
-      },
+      inputSchema: executionsInputSchema,
     },
-    ({ node, sinceIsoTs, limit = 50, journalPath }) => {
-      const path = journalPath ?? defaultFleetJournalPath();
-      const entries = readJournal(path);
+    handleFleetExecutions,
+  );
 
-      const executions: FleetExecutionEntry[] = [];
-      for (const e of entries) {
-        if (e.kind !== "fleet-execution") continue;
-        if (node !== undefined && e.node !== node) continue;
-        if (sinceIsoTs !== undefined && e.ts < sinceIsoTs) continue;
-        executions.push(e);
-      }
-
-      executions.sort((a, b) => b.ts.localeCompare(a.ts));
-      const total = executions.length;
-      return toTextContent({ executions: executions.slice(0, limit), total });
-    },
+  registerDeprecatedAlias(
+    server,
+    "llamactl_fleet_executions",
+    "llamactl.fleet.executions",
+    "Fleet executions",
+    executionsInputSchema,
+    handleFleetExecutions,
   );
 
   server.registerTool(
-    "llamactl_fleet_journal_tail",
+    "llamactl.fleet.journal.tail",
     {
       title: "Fleet journal tail",
       description:
         "Return raw recent journal entries, optionally filtered by node and/or entry kind. Returns the last `limit` (default 20) matching entries in chronological order.",
-      inputSchema: {
-        node: z.string().optional(),
-        kinds: z
-          .array(
-            z.enum([
-              "fleet-snapshot",
-              "fleet-heartbeat",
-              "fleet-transition",
-              "fleet-proposal",
-              "fleet-execution",
-              "fleet-pressure-status",
-              "fleet-placement",
-              "fleet-move",
-              "fleet-lease-election",
-            ]),
-          )
-          .optional(),
-        limit: z.number().optional(),
-        journalPath: z.string().optional(),
-      },
+      inputSchema: journalTailInputSchema,
     },
-    ({ node, kinds, limit = 20, journalPath }) => {
-      const path = journalPath ?? defaultFleetJournalPath();
-      const entries = readJournal(path);
-      const kindSet = kinds ? new Set(kinds) : null;
+    handleFleetJournalTail,
+  );
 
-      const filtered = entries.filter((e) => {
-        if (node !== undefined && e.node !== node) return false;
-        if (kindSet && !kindSet.has(e.kind)) return false;
-        return true;
-      });
-
-      return toTextContent({ entries: filtered.slice(-limit) });
-    },
+  registerDeprecatedAlias(
+    server,
+    "llamactl_fleet_journal_tail",
+    "llamactl.fleet.journal.tail",
+    "Fleet journal tail",
+    journalTailInputSchema,
+    handleFleetJournalTail,
   );
 
   server.registerTool(
-    "llamactl_admit_measure",
+    "llamactl.admit.measure",
     {
       title: "Admit Measure",
       description: "Probe peak RSS for a workload via `admit measure`.",
-      inputSchema: {
-        workload: z.string(),
-        node: z.string().optional(),
-        timeoutMs: z.number().int().positive().optional(),
-      },
+      inputSchema: admitMeasureInputSchema,
     },
     (input) => handleAdmitMeasure(spawnFn, input),
   );
 
+  registerDeprecatedAlias(
+    server,
+    "llamactl_admit_measure",
+    "llamactl.admit.measure",
+    "Admit Measure",
+    admitMeasureInputSchema,
+    (input: { workload: string; node?: string; timeoutMs?: number }) =>
+      handleAdmitMeasure(spawnFn, input),
+  );
+
   server.registerTool(
-    "llamactl_supervisor_execute",
+    "llamactl.supervisor.execute",
     {
       title: "Supervisor Execute",
       description: "Execute a supervisor proposal or run auto mode (single tick via --once).",
-      inputSchema: {
-        proposalId: z.string().optional(),
-        auto: z.boolean().optional(),
-        severityThreshold: z.number().int().min(1).max(3).optional(),
-        node: z.string().optional(),
-        confirm: z.boolean().optional(),
-        timeoutMs: z.number().int().positive().optional(),
-      },
+      inputSchema: supervisorExecuteInputSchema,
     },
     (input) => handleSupervisorExecute(spawnFn, detectExistingSupervisor, input),
+  );
+
+  registerDeprecatedAlias(
+    server,
+    "llamactl_supervisor_execute",
+    "llamactl.supervisor.execute",
+    "Supervisor Execute",
+    supervisorExecuteInputSchema,
+    (input: {
+      proposalId?: string;
+      auto?: boolean;
+      severityThreshold?: number;
+      node?: string;
+      confirm?: boolean;
+      timeoutMs?: number;
+    }) => handleSupervisorExecute(spawnFn, detectExistingSupervisor, input),
   );
 }
 
