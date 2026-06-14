@@ -20,56 +20,6 @@ import { appendOpsChatAudit, hashArguments } from "./audit.js";
 export type Caller = ReturnType<typeof AppRouterType.createCaller>;
 
 /**
- * Tools this dispatch knows how to run. Keep alphabetized so the
- * coverage test output is readable.
- */
-export const KNOWN_OPS_CHAT_TOOLS = [
-  "llamactl.bench.compare",
-  "llamactl.bench.history",
-  "llamactl.catalog.list",
-  "llamactl.catalog.promote",
-  "llamactl.catalog.promoteDelete",
-  "llamactl.composite.apply",
-  "llamactl.composite.destroy",
-  "llamactl.composite.get",
-  "llamactl.composite.list",
-  "llamactl.cost.snapshot",
-  "llamactl.env",
-  "llamactl.node.add",
-  "llamactl.node.budget",
-  "llamactl.node.facts",
-  "llamactl.node.ls",
-  "llamactl.node.remove",
-  "llamactl.operator.plan",
-  "llamactl.project.apply",
-  "llamactl.project.get",
-  "llamactl.project.index",
-  "llamactl.project.list",
-  "llamactl.project.remove",
-  "llamactl.project.resolveRouting",
-  "llamactl.promotions.list",
-  "llamactl.rag.bench",
-  "llamactl.rag.delete",
-  "llamactl.rag.listCollections",
-  "llamactl.rag.pipeline.apply",
-  "llamactl.rag.pipeline.draft",
-  "llamactl.rag.pipeline.get",
-  "llamactl.rag.pipeline.list",
-  "llamactl.rag.pipeline.remove",
-  "llamactl.rag.pipeline.run",
-  "llamactl.rag.search",
-  "llamactl.rag.store",
-  "llamactl.reconciler.kick",
-  "llamactl.server.status",
-  "llamactl.server.stop",
-  "llamactl.workload.apply",
-  "llamactl.workload.delete",
-  "llamactl.workload.list",
-] as const;
-
-export type OpsChatToolName = (typeof KNOWN_OPS_CHAT_TOOLS)[number];
-
-/**
  * Tier classification drives the UI's approval flow. `read` tools can
  * auto-run; `mutation-dry-run-safe` shows a dry-run preview card before
  * the wet-run button unlocks; `mutation-destructive` additionally asks
@@ -77,52 +27,89 @@ export type OpsChatToolName = (typeof KNOWN_OPS_CHAT_TOOLS)[number];
  */
 export type ToolTier = SafetyTier;
 
-const DESTRUCTIVE_TOOL_NAMES = [
-  "llamactl.node.remove",
-  "llamactl.workload.delete",
-  "llamactl.catalog.promoteDelete",
-  "llamactl.rag.delete",
-  "llamactl.rag.pipeline.remove",
-  "llamactl.composite.destroy",
-  "llamactl.project.remove",
-] as const satisfies readonly OpsChatToolName[];
+/**
+ * Capability registry for the Ops Chat surface: one typed `(name, tier)`
+ * list that the known-names list, the `OpsChatToolName` union, and the
+ * `toolTier` classifier are all derived from. Co-locating each tool's
+ * approval tier with its name gives a single place to add or re-tier a
+ * tool, replacing the three parallel lists (known-names + destructive +
+ * dry-run) that previously had to be hand-kept in sync — the seed of the
+ * cross-surface capability registry (audit Move #11). Keep alphabetized so
+ * the coverage test output stays readable.
+ */
+const OPS_CHAT_TOOLS = [
+  { name: "llamactl.bench.compare", tier: "read" },
+  { name: "llamactl.bench.history", tier: "read" },
+  { name: "llamactl.catalog.list", tier: "read" },
+  { name: "llamactl.catalog.promote", tier: "mutation-dry-run-safe" },
+  { name: "llamactl.catalog.promoteDelete", tier: "mutation-destructive" },
+  { name: "llamactl.composite.apply", tier: "mutation-dry-run-safe" },
+  { name: "llamactl.composite.destroy", tier: "mutation-destructive" },
+  { name: "llamactl.composite.get", tier: "read" },
+  { name: "llamactl.composite.list", tier: "read" },
+  { name: "llamactl.cost.snapshot", tier: "read" },
+  { name: "llamactl.env", tier: "read" },
+  { name: "llamactl.node.add", tier: "mutation-dry-run-safe" },
+  { name: "llamactl.node.budget", tier: "read" },
+  { name: "llamactl.node.facts", tier: "read" },
+  { name: "llamactl.node.ls", tier: "read" },
+  { name: "llamactl.node.remove", tier: "mutation-destructive" },
+  { name: "llamactl.operator.plan", tier: "read" },
+  { name: "llamactl.project.apply", tier: "mutation-dry-run-safe" },
+  { name: "llamactl.project.get", tier: "read" },
+  { name: "llamactl.project.index", tier: "mutation-dry-run-safe" },
+  { name: "llamactl.project.list", tier: "read" },
+  { name: "llamactl.project.remove", tier: "mutation-destructive" },
+  { name: "llamactl.project.resolveRouting", tier: "read" },
+  { name: "llamactl.promotions.list", tier: "read" },
+  { name: "llamactl.rag.bench", tier: "read" },
+  { name: "llamactl.rag.delete", tier: "mutation-destructive" },
+  { name: "llamactl.rag.listCollections", tier: "read" },
+  { name: "llamactl.rag.pipeline.apply", tier: "mutation-dry-run-safe" },
+  { name: "llamactl.rag.pipeline.draft", tier: "read" },
+  { name: "llamactl.rag.pipeline.get", tier: "read" },
+  { name: "llamactl.rag.pipeline.list", tier: "read" },
+  { name: "llamactl.rag.pipeline.remove", tier: "mutation-destructive" },
+  { name: "llamactl.rag.pipeline.run", tier: "mutation-dry-run-safe" },
+  { name: "llamactl.rag.search", tier: "read" },
+  { name: "llamactl.rag.store", tier: "mutation-dry-run-safe" },
+  { name: "llamactl.reconciler.kick", tier: "mutation-dry-run-safe" },
+  { name: "llamactl.server.status", tier: "read" },
+  { name: "llamactl.server.stop", tier: "mutation-dry-run-safe" },
+  { name: "llamactl.workload.apply", tier: "mutation-dry-run-safe" },
+  { name: "llamactl.workload.delete", tier: "mutation-destructive" },
+  { name: "llamactl.workload.list", tier: "read" },
+] as const satisfies readonly { name: string; tier: ToolTier }[];
 
-type DestructiveToolName = (typeof DESTRUCTIVE_TOOL_NAMES)[number];
+export type OpsChatToolName = (typeof OPS_CHAT_TOOLS)[number]["name"];
 
-const DESTRUCTIVE_TOOLS = new Set<OpsChatToolName>(DESTRUCTIVE_TOOL_NAMES);
+/** Names this dispatch knows how to run (derived from the registry). */
+export const KNOWN_OPS_CHAT_TOOLS: readonly OpsChatToolName[] = OPS_CHAT_TOOLS.map((t) => t.name);
 
-const MUTATION_DRY_RUN_TOOL_NAMES = [
-  "llamactl.node.add",
-  "llamactl.catalog.promote",
-  "llamactl.rag.store",
-  "llamactl.rag.pipeline.apply",
-  "llamactl.rag.pipeline.run",
-  "llamactl.composite.apply",
-  "llamactl.project.apply",
-  "llamactl.project.index",
-  "llamactl.reconciler.kick",
-  "llamactl.server.stop",
-  "llamactl.workload.apply",
-] as const satisfies readonly OpsChatToolName[];
+const TIER_BY_NAME = new Map<OpsChatToolName, ToolTier>(
+  OPS_CHAT_TOOLS.map((t): [OpsChatToolName, ToolTier] => [t.name, t.tier]),
+);
 
-type MutationDryRunToolName = (typeof MUTATION_DRY_RUN_TOOL_NAMES)[number];
+export function toolTier(name: OpsChatToolName): ToolTier {
+  return TIER_BY_NAME.get(name) ?? "read";
+}
 
-const MUTATION_DRY_RUN_TOOLS = new Set<OpsChatToolName>(MUTATION_DRY_RUN_TOOL_NAMES);
-
-type ReadToolName = Exclude<OpsChatToolName, DestructiveToolName | MutationDryRunToolName>;
+/** Tool names of a given tier, derived from the registry — used to type
+ *  the dispatch handler groups so each switch arm sees only its tier. */
+type ToolNameOfTier<T extends ToolTier> = Extract<
+  (typeof OPS_CHAT_TOOLS)[number],
+  { tier: T }
+>["name"];
+type ReadToolName = ToolNameOfTier<"read">;
+type MutationDryRunToolName = ToolNameOfTier<"mutation-dry-run-safe">;
+type DestructiveToolName = ToolNameOfTier<"mutation-destructive">;
 
 function isDestructiveTool(name: OpsChatToolName): name is DestructiveToolName {
-  return DESTRUCTIVE_TOOLS.has(name);
+  return TIER_BY_NAME.get(name) === "mutation-destructive";
 }
 
 function isMutationDryRunTool(name: OpsChatToolName): name is MutationDryRunToolName {
-  return MUTATION_DRY_RUN_TOOLS.has(name);
-}
-
-export function toolTier(name: OpsChatToolName): ToolTier {
-  if (isDestructiveTool(name)) return "mutation-destructive";
-  if (isMutationDryRunTool(name)) return "mutation-dry-run-safe";
-  return "read";
+  return TIER_BY_NAME.get(name) === "mutation-dry-run-safe";
 }
 
 export interface OpsChatDispatchInput {

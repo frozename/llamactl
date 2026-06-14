@@ -127,6 +127,18 @@ describe("operatorRunTool", () => {
     expect(toolTier("llamactl.env")).toBe("read");
   });
 
+  test("the capability registry is the single source of truth: every known tool has a valid tier", () => {
+    // KNOWN_OPS_CHAT_TOOLS and toolTier both derive from one OPS_CHAT_TOOLS
+    // registry, so there can be no name without a tier (the drift the three
+    // former parallel lists allowed). Also pins the alphabetized invariant.
+    const tiers = ["read", "mutation-dry-run-safe", "mutation-destructive"];
+    for (const name of KNOWN_OPS_CHAT_TOOLS) {
+      expect(tiers).toContain(toolTier(name));
+    }
+    const sorted = [...KNOWN_OPS_CHAT_TOOLS].sort();
+    expect([...KNOWN_OPS_CHAT_TOOLS]).toEqual(sorted);
+  });
+
   test("RAG tool tiers match the retrieval-contract surface", () => {
     expect(toolTier("llamactl.rag.search")).toBe("read");
     expect(toolTier("llamactl.rag.listCollections")).toBe("read");
