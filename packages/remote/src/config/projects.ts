@@ -140,6 +140,26 @@ export function removeProject(projects: readonly Project[], name: string): Proje
 }
 
 /**
+ * Serialize read-modify-write transactions against the single
+ * projects.yaml. Projects live in one file, so a concurrent CLI +
+ * Electron upsert/remove can both `loadProjects` the same list and the
+ * second `saveProjects` clobbers the first writer's change. This
+ * in-process mutex serializes those transactions; the atomic write in
+ * `saveProjects` handles torn reads, this handles lost updates.
+ * In-process only — mirrors the workload store's mutex.
+ */
+let projectsMutex: Promise<unknown> = Promise.resolve();
+
+export function withProjectsMutex<T>(fn: () => T | Promise<T>): Promise<T> {
+  const run = projectsMutex.catch(() => undefined).then(fn);
+  projectsMutex = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/**
  * Resolve the routing target for a task kind against a project's
  * `spec.routing` map. No side effects, no node lookup — the caller
  * hands back whatever string is declared (or the default).

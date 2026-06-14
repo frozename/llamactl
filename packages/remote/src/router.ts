@@ -3065,8 +3065,14 @@ export const router = t.router({
     .input(z.object({ manifestYaml: z.string().min(1) }))
     .mutation(async ({ input }) => {
       const { parse: parseYaml } = await import("yaml");
-      const { ProjectSchema, loadProjects, saveProjects, upsertProject, defaultProjectsPath } =
-        await import("./config/projects.js");
+      const {
+        ProjectSchema,
+        loadProjects,
+        saveProjects,
+        upsertProject,
+        defaultProjectsPath,
+        withProjectsMutex,
+      } = await import("./config/projects.js");
       let parsedYaml: unknown;
       try {
         parsedYaml = parseYaml(input.manifestYaml);
@@ -3084,16 +3090,18 @@ export const router = t.router({
         });
       }
       const path = defaultProjectsPath();
-      const existing = loadProjects(path);
-      const created = !existing.some((p) => p.metadata.name === parsed.data.metadata.name);
-      const next = upsertProject(existing, parsed.data);
-      saveProjects(next, path);
-      return {
-        ok: true as const,
-        name: parsed.data.metadata.name,
-        path,
-        created,
-      };
+      return await withProjectsMutex(() => {
+        const existing = loadProjects(path);
+        const created = !existing.some((p) => p.metadata.name === parsed.data.metadata.name);
+        const next = upsertProject(existing, parsed.data);
+        saveProjects(next, path);
+        return {
+          ok: true as const,
+          name: parsed.data.metadata.name,
+          path,
+          created,
+        };
+      });
     }),
 
   projectList: t.procedure.query(async () => {
@@ -3118,17 +3126,19 @@ export const router = t.router({
   projectRemove: t.procedure
     .input(z.object({ name: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const { loadProjects, saveProjects, removeProject, defaultProjectsPath } =
+      const { loadProjects, saveProjects, removeProject, defaultProjectsPath, withProjectsMutex } =
         await import("./config/projects.js");
       const path = defaultProjectsPath();
-      const existing = loadProjects(path);
-      const next = removeProject(existing, input.name);
-      const removed = next.length !== existing.length;
-      if (removed) saveProjects(next, path);
-      // Mirrors ragPipelineRemove semantics: we never touch the
-      // already-indexed data in the rag node. Re-indexing requires
-      // an explicit `llamactl project index <name>` after re-adding.
-      return { ok: true as const, removed };
+      return await withProjectsMutex(() => {
+        const existing = loadProjects(path);
+        const next = removeProject(existing, input.name);
+        const removed = next.length !== existing.length;
+        if (removed) saveProjects(next, path);
+        // Mirrors ragPipelineRemove semantics: we never touch the
+        // already-indexed data in the rag node. Re-indexing requires
+        // an explicit `llamactl project index <name>` after re-adding.
+        return { ok: true as const, removed };
+      });
     }),
 
   projectIndex: t.procedure

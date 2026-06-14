@@ -10,6 +10,7 @@ import {
   removeProject,
   saveProjects,
   upsertProject,
+  withProjectsMutex,
 } from "../src/config/projects.js";
 
 /**
@@ -74,6 +75,35 @@ describe("defaultProjectsPath", () => {
       DEV_STORAGE: "/dev/store",
     } as NodeJS.ProcessEnv;
     expect(defaultProjectsPath(env)).toBe("/dev/store/projects.yaml");
+  });
+});
+
+describe("withProjectsMutex", () => {
+  test("serializes concurrent transactions in arrival order", async () => {
+    const order: string[] = [];
+    const first = withProjectsMutex(async () => {
+      order.push("a-start");
+      await new Promise((r) => setTimeout(r, 15));
+      order.push("a-end");
+    });
+    const second = withProjectsMutex(() => {
+      order.push("b-start");
+      order.push("b-end");
+    });
+    await Promise.all([first, second]);
+    expect(order).toEqual(["a-start", "a-end", "b-start", "b-end"]);
+  });
+
+  test("a rejected transaction does not wedge the queue", async () => {
+    let message = "";
+    try {
+      await withProjectsMutex(() => Promise.reject(new Error("boom")));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toBe("boom");
+    const after = await withProjectsMutex(() => Promise.resolve("ok"));
+    expect(after).toBe("ok");
   });
 });
 
