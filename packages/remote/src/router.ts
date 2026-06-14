@@ -42,6 +42,7 @@ import {
   runPlanner,
   stubPlannerExecutor,
 } from "@nova/mcp";
+import { appendUsageBackground } from "@nova/mcp-shared";
 import { createTRPCClient } from "@trpc/client";
 import { initTRPC, TRPCError } from "@trpc/server";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -569,6 +570,43 @@ async function* tailSessionEvents(
   }
 }
 
+/**
+ * Best-effort usage telemetry for a non-streaming chat completion.
+ * The cost corpus (~/.llamactl/usage/*.jsonl) that the Cost dashboard,
+ * cost-guardian, and project budgets all read had zero writers — every
+ * spend number was derived from an empty well. Append one UsageRecord
+ * per completion via the fire-and-forget background writer, deferred
+ * past the response with queueMicrotask so a slow disk can't add
+ * latency to the user's request. Records nothing when the upstream
+ * returned no usage block. Streaming (`chatStream`) usage capture via
+ * the adapter's onUsage hook is a follow-up.
+ */
+export function recordChatUsage(
+  response: {
+    usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    model: string;
+    latencyMs?: number;
+  },
+  provider: string,
+): void {
+  const usage = response.usage;
+  if (!usage) return;
+  queueMicrotask(() => {
+    appendUsageBackground({
+      record: {
+        ts: new Date().toISOString(),
+        provider,
+        model: response.model,
+        kind: "chat",
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens,
+        latency_ms: response.latencyMs ?? 0,
+      },
+    });
+  });
+}
+
 export const router = t.router({
   env: t.procedure.query(() => envMod.resolveEnv()),
 
@@ -903,12 +941,19 @@ export const router = t.router({
             message: `local chat ${String(res.status)}`,
           });
         }
-        return (await res.json()) as UnifiedAiResponse;
+        const response = (await res.json()) as UnifiedAiResponse;
+        recordChatUsage(response, "local");
+        return response;
       }
       const { providerForNode } = await import("./providers/factory.js");
 
       const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
-      return await provider.createResponse(input.request as UnifiedAiRequest);
+      const response = await provider.createResponse(input.request as UnifiedAiRequest);
+      recordChatUsage(
+        response,
+        resolved.node.cloud?.provider ?? resolved.node.provider?.providerName ?? "local",
+      );
+      return response;
     }),
 
   /**
