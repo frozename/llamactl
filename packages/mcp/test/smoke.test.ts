@@ -236,7 +236,9 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.rag.pipeline.run",
       "llamactl.rag.search",
       "llamactl.rag.store",
+      "llamactl.reconciler.kick",
       "llamactl.server.status",
+      "llamactl.server.stop",
       "llamactl.workload.apply",
       "llamactl.workload.delete",
       "llamactl.workload.list",
@@ -463,6 +465,31 @@ describe("@llamactl/mcp read surface", () => {
     };
     expect(parsed.dryRun).toBe(true);
     expect(parsed.wouldApply.bytes).toBeGreaterThan(0);
+  });
+
+  test("llamactl.reconciler.kick dry-run reports intent without reconciling", async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: "llamactl.reconciler.kick",
+      arguments: { dryRun: true },
+    });
+    const parsed = JSON.parse(textOf(result)) as { dryRun: boolean; wouldReconcile: boolean };
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.wouldReconcile).toBe(true);
+  });
+
+  test("llamactl.server.stop dry-run reports the target without stopping", async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: "llamactl.server.stop",
+      arguments: { workload: "ghost", dryRun: true },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      dryRun: boolean;
+      wouldStop: { workload: string };
+    };
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.wouldStop.workload).toBe("ghost");
   });
 
   test('llamactl.workload.delete dry-run reports "no manifest" when absent', async () => {
@@ -859,12 +886,13 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
     // before + 4 from the Phase 5 composite surface + 5 from the R1
     // rag-pipeline surface + 1 from the R3.a draft tool + 1 from
     // the Aliveness-Slice-3 rag-bench tool + 1 from the workload.apply
-    // surface-parity tool + 6 from the project surface-parity tools).
+    // surface-parity tool + 6 from the project surface-parity tools +
+    // 2 from the server/reconciler control tools).
     const { client } = await connected();
     const list = await client.listTools();
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
-    expect(llamactlTools.length).toBe(41);
+    expect(llamactlTools.length).toBe(43);
   });
 });

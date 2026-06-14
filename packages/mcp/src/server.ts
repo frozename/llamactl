@@ -12,6 +12,7 @@ import { registerOperatorTools } from "./tools/operator.js";
 import { registerProjectTools } from "./tools/projects.js";
 import { registerRagTools } from "./tools/rag.js";
 import { registerReadTools } from "./tools/reads.js";
+import { registerServerControlTools } from "./tools/server-control.js";
 
 export type { WorkloadDeleteDryRunResult };
 
@@ -28,6 +29,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   registerOperatorTools(server);
   registerRagTools(server);
   registerProjectTools(server);
+  registerServerControlTools(server);
   registerCompositeTools(server);
   registerPipelineTools(server);
   registerFleetTools(server);

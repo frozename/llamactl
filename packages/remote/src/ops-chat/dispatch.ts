@@ -57,7 +57,9 @@ export const KNOWN_OPS_CHAT_TOOLS = [
   "llamactl.rag.pipeline.run",
   "llamactl.rag.search",
   "llamactl.rag.store",
+  "llamactl.reconciler.kick",
   "llamactl.server.status",
+  "llamactl.server.stop",
   "llamactl.workload.apply",
   "llamactl.workload.delete",
   "llamactl.workload.list",
@@ -96,6 +98,8 @@ const MUTATION_DRY_RUN_TOOL_NAMES = [
   "llamactl.composite.apply",
   "llamactl.project.apply",
   "llamactl.project.index",
+  "llamactl.reconciler.kick",
+  "llamactl.server.stop",
   "llamactl.workload.apply",
 ] as const satisfies readonly OpsChatToolName[];
 
@@ -304,6 +308,23 @@ async function dryRunOr(
   return await run();
 }
 
+async function runServerStopDryRun(
+  caller: Caller,
+  args: Record<string, unknown>,
+  dryRun: boolean,
+): Promise<unknown> {
+  const workload = requireString(args, "workload");
+  const graceSeconds = typeof args.graceSeconds === "number" ? args.graceSeconds : undefined;
+  return await dryRunOr(
+    dryRun,
+    { dryRun: true, wouldStop: { workload, graceSeconds: graceSeconds ?? null } },
+    async (): Promise<unknown> =>
+      await caller.serverStop(
+        graceSeconds === undefined ? { workload } : { workload, graceSeconds },
+      ),
+  );
+}
+
 async function executeMutationDryRunTool(
   caller: Caller,
   name: MutationDryRunToolName,
@@ -427,6 +448,14 @@ async function executeMutationDryRunTool(
         async (): Promise<unknown> => await caller.workloadApply({ yaml }),
       );
     }
+    case "llamactl.reconciler.kick":
+      return await dryRunOr(
+        dryRun,
+        { dryRun: true, wouldReconcile: true },
+        async (): Promise<unknown> => await caller.reconcilerKick(),
+      );
+    case "llamactl.server.stop":
+      return await runServerStopDryRun(caller, args, dryRun);
   }
 }
 
