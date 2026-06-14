@@ -1,6 +1,6 @@
 import { infraArtifactsFetch } from "@llamactl/remote";
 import { existsSync, mkdirSync } from "node:fs";
-import { arch as nodeArch, platform as nodePlatform } from "node:os";
+import { homedir, arch as nodeArch, platform as nodePlatform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 const USAGE = `llamactl artifacts — manage pre-built llamactl-agent binaries
@@ -88,8 +88,8 @@ export function currentPlatform(): Platform | null {
 export function defaultArtifactsDir(): string {
   const override = process.env.LLAMACTL_ARTIFACTS_DIR?.trim();
   if (override) return override;
-  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
-  const base = process.env.DEV_STORAGE?.trim() || join(process.env.HOME ?? ".", ".llamactl");
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional ||: an empty-string DEV_STORAGE must fall back to the home dir.
+  const base = process.env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
   return join(base, "artifacts");
 }
 

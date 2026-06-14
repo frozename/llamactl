@@ -1,4 +1,9 @@
-import { noderunReconciler, workloadLock, workloadReconciler } from "@llamactl/remote";
+import {
+  noderunReconciler,
+  workloadLock,
+  workloadReconciler,
+  workloadStore,
+} from "@llamactl/remote";
 
 import { getNodeClientByName } from "../dispatcher.js";
 import { makeSpecArtifactResolver } from "./noderun-helpers.js";
@@ -82,12 +87,13 @@ export async function runController(args: string[]): Promise<number> {
     return parsed.error === "help" ? 0 : 1;
   }
 
-  const { default: path } = await import("node:path");
   const { config: kubecfg } = await import("@llamactl/remote");
   const cfgPath = process.env.LLAMACTL_CONFIG ?? kubecfg.defaultConfigPath();
-  const workloadsDir =
-    process.env.LLAMACTL_WORKLOADS_DIR ??
-    path.join(process.env.DEV_STORAGE ?? `${String(process.env.HOME)}/.llamactl`, "workloads");
+  // Reuse the canonical resolver instead of reinventing the
+  // DEV_STORAGE→~/.llamactl base (the inline copy used $HOME +
+  // `??`, which fed an "undefined/.llamactl" path when HOME was
+  // unset and kept an empty-string DEV_STORAGE).
+  const workloadsDir = workloadStore.defaultWorkloadsDir();
   const cfg = kubecfg.loadConfig(cfgPath);
   const resolveNodeIdentity = (n: string): string | null => {
     try {
