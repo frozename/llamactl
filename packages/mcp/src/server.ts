@@ -9,6 +9,7 @@ import { registerFleetTools } from "./tools/fleet.js";
 import { registerModelsLeaderboardTool } from "./tools/models-leaderboard.js";
 import { registerMutationTools } from "./tools/mutations.js";
 import { registerOperatorTools } from "./tools/operator.js";
+import { registerProjectTools } from "./tools/projects.js";
 import { registerRagTools } from "./tools/rag.js";
 import { registerReadTools } from "./tools/reads.js";
 
@@ -26,6 +27,7 @@ export function buildMcpServer(opts?: { name?: string; version?: string }): McpS
   registerEmbersynthTools(server);
   registerOperatorTools(server);
   registerRagTools(server);
+  registerProjectTools(server);
   registerCompositeTools(server);
   registerPipelineTools(server);
   registerFleetTools(server);

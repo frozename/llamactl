@@ -191,14 +191,7 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl_models_leaderboard",
       "llamactl_supervisor_execute",
     ]);
-    const OPS_CHAT_ONLY_EXCLUDED = new Set([
-      "llamactl.project.apply",
-      "llamactl.project.get",
-      "llamactl.project.index",
-      "llamactl.project.list",
-      "llamactl.project.remove",
-      "llamactl.project.resolveRouting",
-    ]);
+    const OPS_CHAT_ONLY_EXCLUDED = new Set<string>();
     const mcpEligible = names.filter((n) => !MCP_ONLY_EXCLUDED.has(n)).sort();
     const opsChatEligible = [...KNOWN_OPS_CHAT_TOOLS]
       .filter((n) => !OPS_CHAT_ONLY_EXCLUDED.has(n))
@@ -225,6 +218,12 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl.node.ls",
       "llamactl.node.remove",
       "llamactl.operator.plan",
+      "llamactl.project.apply",
+      "llamactl.project.get",
+      "llamactl.project.index",
+      "llamactl.project.list",
+      "llamactl.project.remove",
+      "llamactl.project.resolveRouting",
       "llamactl.promotions.list",
       "llamactl.rag.bench",
       "llamactl.rag.delete",
@@ -442,6 +441,28 @@ describe("@llamactl/mcp read surface", () => {
     const parsed = JSON.parse(textOf(result)) as { ok?: boolean; error?: string };
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toMatch(/invalid workload manifest/);
+  });
+
+  test("llamactl.project.list returns the registered projects", async () => {
+    const { client } = await connected();
+    const result = await client.callTool({ name: "llamactl.project.list", arguments: {} });
+    const parsed = JSON.parse(textOf(result)) as { ok: boolean; projects: unknown[] };
+    expect(parsed.ok).toBe(true);
+    expect(Array.isArray(parsed.projects)).toBe(true);
+  });
+
+  test("llamactl.project.apply dry-run reports bytes without writing", async () => {
+    const { client } = await connected();
+    const result = await client.callTool({
+      name: "llamactl.project.apply",
+      arguments: { manifestYaml: "apiVersion: llamactl/v1\nkind: Project\n", dryRun: true },
+    });
+    const parsed = JSON.parse(textOf(result)) as {
+      dryRun: boolean;
+      wouldApply: { bytes: number };
+    };
+    expect(parsed.dryRun).toBe(true);
+    expect(parsed.wouldApply.bytes).toBeGreaterThan(0);
   });
 
   test('llamactl.workload.delete dry-run reports "no manifest" when absent', async () => {
@@ -838,12 +859,12 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
     // before + 4 from the Phase 5 composite surface + 5 from the R1
     // rag-pipeline surface + 1 from the R3.a draft tool + 1 from
     // the Aliveness-Slice-3 rag-bench tool + 1 from the workload.apply
-    // surface-parity tool).
+    // surface-parity tool + 6 from the project surface-parity tools).
     const { client } = await connected();
     const list = await client.listTools();
     const llamactlTools = list.tools
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
-    expect(llamactlTools.length).toBe(35);
+    expect(llamactlTools.length).toBe(41);
   });
 });
