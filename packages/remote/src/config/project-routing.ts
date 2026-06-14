@@ -26,10 +26,9 @@
  */
 
 import { appendFile, mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { nonEmpty } from "./env.js";
+import { llamactlHome, nonEmpty } from "./env.js";
 import {
   defaultProjectsPath,
   loadProjects,
@@ -183,7 +182,7 @@ export async function resolveProjectNodeTarget(
 export function defaultProjectRoutingJournalPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = nonEmpty(env.LLAMACTL_PROJECT_ROUTING_JOURNAL);
   if (override) return override;
-  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return join(base, "project-routing.jsonl");
 }
 

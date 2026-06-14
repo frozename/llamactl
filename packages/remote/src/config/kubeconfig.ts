@@ -1,9 +1,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-import { nonEmpty } from "./env.js";
+import { llamactlHome, nonEmpty } from "./env.js";
 import {
   type ClusterNode,
   type Config,
@@ -18,7 +17,7 @@ import { resolveSecret } from "./secret.js";
 export function defaultConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = nonEmpty(env.LLAMACTL_CONFIG);
   if (override) return override;
-  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return join(base, "config");
 }
 

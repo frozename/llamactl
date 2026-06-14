@@ -1,12 +1,11 @@
 import type { ResolvedEnv } from "@llamactl/core";
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { atomicWriteFileSync } from "../atomic-write.js";
-import { nonEmpty } from "../config/env.js";
+import { llamactlHome } from "../config/env.js";
 import { estimateModelHostMemoryGiB } from "./admission.js";
 import { type ModelHostManifest, ModelHostManifestSchema } from "./modelhost-schema.js";
 import { type ModelRun, ModelRunSchema } from "./schema.js";
@@ -14,7 +13,7 @@ import { type ModelRun, ModelRunSchema } from "./schema.js";
 export function defaultWorkloadsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_WORKLOADS_DIR?.trim();
   if (override) return override;
-  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return join(base, "workloads");
 }
 

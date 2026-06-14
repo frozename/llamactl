@@ -1,10 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
-import { nonEmpty } from "../config/env.js";
+import { llamactlHome } from "../config/env.js";
 
 /**
  * Recurring bench schedules. The control plane stores them in
@@ -42,7 +41,7 @@ type BenchScheduleFile = z.infer<typeof BenchScheduleFileSchema>;
 export function defaultScheduleFilePath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_BENCH_SCHEDULES?.trim();
   if (override) return override;
-  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return join(base, "bench-schedules.yaml");
 }
 

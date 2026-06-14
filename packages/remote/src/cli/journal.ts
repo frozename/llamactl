@@ -18,10 +18,9 @@
  * subscription backends where USD tracking is meaningless.
  */
 import { appendFile, mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { nonEmpty } from "../config/env.js";
+import { llamactlHome, nonEmpty } from "../config/env.js";
 
 export interface CliJournalEntry {
   ts: string;
@@ -45,7 +44,7 @@ export interface CliJournalEntry {
 export function defaultCliJournalDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = nonEmpty(env.LLAMACTL_CLI_JOURNAL_DIR);
   if (override) return override;
-  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return join(base, "cli-journal");
 }
 

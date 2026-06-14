@@ -1,8 +1,7 @@
 import { existsSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { nonEmpty } from "../config/env.js";
+import { llamactlHome } from "../config/env.js";
 
 /**
  * Artifact server for the Sprint I-α bootstrap flow. Serves
@@ -25,7 +24,7 @@ const ALLOWED_PLATFORMS = new Set(["darwin-arm64", "darwin-x64", "linux-x64", "l
 export function defaultArtifactsDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.LLAMACTL_ARTIFACTS_DIR?.trim();
   if (override) return override;
-  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return join(base, "artifacts");
 }
 

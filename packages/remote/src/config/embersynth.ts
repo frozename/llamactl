@@ -1,12 +1,11 @@
 import { bench, env as envMod, type schemas } from "@llamactl/core";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
 import { CompositeOwnershipSchema } from "../workload/gateway-catalog/schema.js";
-import { nonEmpty } from "./env.js";
+import { llamactlHome, nonEmpty } from "./env.js";
 import { loadConfig, resolveToken } from "./kubeconfig.js";
 import { type ClusterNode, type Config, LOCAL_NODE_ENDPOINT, resolveNodeKind } from "./schema.js";
 import { loadSiriusProviders, type SiriusProvider } from "./sirius-providers.js";
@@ -123,7 +122,7 @@ export type EmbersynthProfile = z.infer<typeof EmbersynthProfileSchema>;
 export function defaultEmbersynthConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = nonEmpty(env.LLAMACTL_EMBERSYNTH_CONFIG);
   if (override) return override;
-  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return join(base, "embersynth.yaml");
 }
 

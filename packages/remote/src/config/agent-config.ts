@@ -1,10 +1,9 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
-import { nonEmpty } from "./env.js";
+import { llamactlHome, nonEmpty } from "./env.js";
 
 export const AgentConfigSchema = z.object({
   apiVersion: z.literal("llamactl/v1"),
@@ -23,7 +22,7 @@ export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export function defaultAgentDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = nonEmpty(env.LLAMACTL_AGENT_DIR);
   if (override) return override;
-  const base = nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
+  const base = llamactlHome(env);
   return base;
 }
 
