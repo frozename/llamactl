@@ -6,11 +6,12 @@
  * workloads / infra / kubeconfig stores, so ops tools that bulk-
  * relocate llamactl state can redirect all of them uniformly).
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { atomicWriteFileSync } from "../atomic-write.js";
 import { type Composite, CompositeSchema } from "./schema.js";
 
 export function defaultCompositesDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -48,7 +49,7 @@ export function saveComposite(manifest: Composite, dir: string = defaultComposit
   const validated = CompositeSchema.parse(manifest);
   mkdirSync(dir, { recursive: true });
   const path = compositePath(validated.metadata.name, dir);
-  writeFileSync(path, stringifyYaml(validated), "utf8");
+  atomicWriteFileSync(path, stringifyYaml(validated));
   return path;
 }
 

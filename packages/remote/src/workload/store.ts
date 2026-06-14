@@ -1,18 +1,11 @@
 import type { ResolvedEnv } from "@llamactl/core";
 
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { atomicWriteFileSync } from "../atomic-write.js";
 import { nonEmpty } from "../config/env.js";
 import { estimateModelHostMemoryGiB } from "./admission.js";
 import { type ModelHostManifest, ModelHostManifestSchema } from "./modelhost-schema.js";
@@ -109,13 +102,7 @@ export function saveWorkload(workload: ModelRun, dir: string = defaultWorkloadsD
   const validated = ModelRunSchema.parse(workload);
   mkdirSync(dir, { recursive: true });
   const path = workloadPath(validated.metadata.name, dir);
-  // Atomic write: a partial writeFileSync on the target can race with a
-  // concurrent reader (or a second writer for the same name) and leave
-  // truncated YAML on disk. Write to a sibling tmp file and rename over
-  // the target — POSIX rename on the same filesystem is atomic.
-  const tmp = `${path}.tmp.${String(process.pid)}.${Math.random().toString(36).slice(2, 10)}`;
-  writeFileSync(tmp, stringifyYaml(validated), "utf8");
-  renameSync(tmp, path);
+  atomicWriteFileSync(path, stringifyYaml(validated));
   return path;
 }
 

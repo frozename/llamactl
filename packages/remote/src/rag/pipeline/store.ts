@@ -13,7 +13,7 @@
  * + MCP + future Electron wizard. Tests override the root via
  * `LLAMACTL_RAG_PIPELINES_DIR`.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -21,6 +21,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { CompositeOwnership } from "../../workload/gateway-catalog/schema.js";
 import type { RunSummary } from "./runtime.js";
 
+import { atomicWriteFileSync } from "../../atomic-write.js";
 import { entrySpecHash } from "../../workload/gateway-catalog/hash.js";
 import { type RagPipelineManifest, RagPipelineManifestSchema } from "./schema.js";
 
@@ -136,7 +137,7 @@ function writeManifest(manifest: RagPipelineManifest, env: NodeJS.ProcessEnv): s
   const dir = pipelineDir(manifest.metadata.name, env);
   const path = specPath(manifest.metadata.name, env);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path, stringifyYaml(manifest), "utf8");
+  atomicWriteFileSync(path, stringifyYaml(manifest));
   return path;
 }
 
@@ -269,7 +270,7 @@ export function removePipeline(
     ownership: { ...cur.ownership, compositeNames: remaining },
   };
   const path = specPath(name, env);
-  writeFileSync(path, stringifyYaml(persisted), "utf8");
+  atomicWriteFileSync(path, stringifyYaml(persisted));
   return { ok: true, deleted: false };
 }
 
@@ -279,9 +280,8 @@ export function writeLastRun(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   mkdirSync(pipelineDir(name, env), { recursive: true });
-  writeFileSync(
+  atomicWriteFileSync(
     statePath(name, env),
     JSON.stringify({ at: new Date().toISOString(), summary }, null, 2),
-    "utf8",
   );
 }

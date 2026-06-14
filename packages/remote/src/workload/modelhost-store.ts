@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { atomicWriteFileSync } from "../atomic-write.js";
 import { type ModelHostManifest, ModelHostManifestSchema } from "./modelhost-schema.js";
 import { defaultWorkloadsDir } from "./store.js";
 
@@ -54,7 +55,7 @@ export function saveModelHost(
   const validated = ModelHostManifestSchema.parse(desired);
   mkdirSync(dir, { recursive: true });
   const path = ensureModelHostPathWithinDir(modelHostPath(validated.metadata.name, dir), dir);
-  writeFileSync(path, stringifyYaml(validated), "utf8");
+  atomicWriteFileSync(path, stringifyYaml(validated));
   return path;
 }
 
