@@ -1,12 +1,4 @@
 import {
-  type CostJournalEntry,
-  decideGuardianAction,
-  defaultCostGuardianConfigPath,
-  defaultCostJournalPath,
-  emptyCostGuardianConfig,
-  loadCostGuardianConfig,
-} from "@llamactl/agents";
-import {
   autotune as autotuneMod,
   bench,
   candidateTest as candidateMod,
@@ -27,6 +19,14 @@ import {
   target as targetMod,
   uninstall as uninstallMod,
 } from "@llamactl/core";
+import {
+  type CostJournalEntry,
+  decideGuardianAction,
+  defaultCostGuardianConfigPath,
+  defaultCostJournalPath,
+  emptyCostGuardianConfig,
+  loadCostGuardianConfig,
+} from "@llamactl/policy";
 import {
   type AiProvider,
   createOpenAICompatProvider,

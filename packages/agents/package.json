@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@llamactl/mcp": "workspace:*",
+    "@llamactl/policy": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@nova/contracts": "file:../../../nova/packages/contracts",
     "@nova/mcp": "file:../../../nova/packages/mcp",

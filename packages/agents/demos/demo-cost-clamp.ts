@@ -1,3 +1,5 @@
+import type { CostGuardianConfig } from "@llamactl/policy";
+
 /**
  * demo-cost-clamp — N.5 golden-path demo. Drives three cost-guardian
  * ticks with progressively higher simulated spend against a tight
@@ -14,7 +16,6 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { CostGuardianConfig } from "../src/cost-guardian/config.js";
 import type { RunbookToolClient, ToolCallInput } from "../src/types.js";
 
 import { runCostGuardianTick } from "../src/cost-guardian/tick.js";
@@ -101,6 +102,7 @@ async function main(): Promise<void> {
     // embersynth.set-default-profile mutation during tick 3.
     auto_force_private: true,
     auto_deregister: false,
+    protectedProviders: [],
   };
 
   const scenarios = [

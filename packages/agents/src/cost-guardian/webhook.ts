@@ -1,4 +1,4 @@
-import type { GuardianDecision } from "./state.js";
+import type { GuardianDecision } from "@llamactl/policy";
 
 /**
  * First real action on the cost-guardian foundation. Posts the

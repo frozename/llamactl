@@ -360,7 +360,7 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
  *
  * - healer:       packages/agents/src/healer/journal.ts
  *                 (`defaultHealerJournalPath`, also shared by
- *                 `packages/agents/src/cost-guardian/journal.ts`)
+ *                 `packages/policy/src/journal.ts`)
  * - ops-chat:     packages/remote/src/ops-chat/paths.ts
  *                 (`defaultOpsChatDir`)
  * - workloads:    packages/remote/src/workload/store.ts
