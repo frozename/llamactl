@@ -8,6 +8,8 @@ import {
   type Caller,
   dispatchOpsChatTool,
   KNOWN_OPS_CHAT_TOOLS,
+  OPS_CHAT_TOOLS,
+  toolSurfaces,
   toolTier,
 } from "../src/ops-chat/dispatch.js";
 import { router } from "../src/router.js";
@@ -137,6 +139,20 @@ describe("operatorRunTool", () => {
     }
     const sorted = [...KNOWN_OPS_CHAT_TOOLS].sort();
     expect([...KNOWN_OPS_CHAT_TOOLS]).toEqual(sorted);
+  });
+
+  test("the capability registry declares non-empty ops-chat surfaces without duplicates", () => {
+    for (const entry of OPS_CHAT_TOOLS) {
+      expect(entry.surfaces.length).toBeGreaterThan(0);
+      expect(entry.surfaces).toContain("ops-chat");
+      expect(new Set(entry.surfaces).size).toBe(entry.surfaces.length);
+    }
+  });
+
+  test("toolSurfaces returns the registry surfaces", () => {
+    for (const entry of OPS_CHAT_TOOLS) {
+      expect(toolSurfaces(entry.name)).toBe(entry.surfaces);
+    }
   });
 
   test("RAG tool tiers match the retrieval-contract surface", () => {

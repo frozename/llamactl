@@ -159,51 +159,52 @@ function auditLines(server: string): Record<string, unknown>[] {
   return out;
 }
 
+// MCP tools NOT in ops-chat dispatch (pure external-client surface).
+const MCP_ONLY_EXCLUDED = new Set([
+  "llamactl.admit.measure",
+  "llamactl.embersynth.set-default-profile",
+  "llamactl.embersynth.sync",
+  "llamactl.fleet.audit",
+  "llamactl.fleet.executions",
+  "llamactl.fleet.journal.tail",
+  "llamactl.fleet.pressure",
+  "llamactl.fleet.pressure.status",
+  "llamactl.fleet.proposals",
+  "llamactl.fleet.snapshot",
+  "llamactl.fleet.supervisor.audit",
+  "llamactl.fleet.supervisor.status",
+  "llamactl.models.leaderboard",
+  "llamactl.supervisor.execute",
+  "llamactl_admit_measure",
+  "llamactl_fleet_audit",
+  "llamactl_fleet_executions",
+  "llamactl_fleet_journal_tail",
+  "llamactl_fleet_pressure",
+  "llamactl_fleet_pressure_status",
+  "llamactl_fleet_proposals",
+  "llamactl_fleet_snapshot",
+  "llamactl_fleet_supervisor_audit",
+  "llamactl_fleet_supervisor_status",
+  "llamactl_models_leaderboard",
+  "llamactl_supervisor_execute",
+]);
+
+// Ops-chat tools NOT yet exposed as MCP server tools.
+const OPS_CHAT_ONLY_EXCLUDED = new Set<string>();
+
+async function listMcpToolNames(): Promise<string[]> {
+  const { client } = await connected();
+  const list = await client.listTools();
+  return list.tools.map((t) => t.name).sort();
+}
+
 describe("@llamactl/mcp read surface", () => {
   test("listTools advertises the full read + mutation surface", async () => {
-    const { client } = await connected();
-    const list = await client.listTools();
-    const names = list.tools.map((t) => t.name).sort();
+    const names = await listMcpToolNames();
     // Also assert that every llamactl.* tool (minus the two we
     // intentionally skip today) is wired into the Ops Chat dispatch.
     // Drift here = N.4 UI 404s on a tool the MCP server advertises.
-    //
-    // `MCP_ONLY_EXCLUDED` = MCP tools NOT in ops-chat dispatch (pure
-    // external-client surface).
-    // `OPS_CHAT_ONLY_EXCLUDED` = ops-chat tools NOT yet exposed as
-    // MCP server tools (the Phase 2 project.* surfaces land in MCP
-    // during Phase 3; renderer Ops Chat speaks tRPC directly and
-    // doesn't need the MCP round-trip).
-    const { KNOWN_OPS_CHAT_TOOLS } = await import("@llamactl/remote");
-    const MCP_ONLY_EXCLUDED = new Set([
-      "llamactl.admit.measure",
-      "llamactl.embersynth.set-default-profile",
-      "llamactl.embersynth.sync",
-      "llamactl.fleet.audit",
-      "llamactl.fleet.executions",
-      "llamactl.fleet.journal.tail",
-      "llamactl.fleet.pressure",
-      "llamactl.fleet.pressure.status",
-      "llamactl.fleet.proposals",
-      "llamactl.fleet.snapshot",
-      "llamactl.fleet.supervisor.audit",
-      "llamactl.fleet.supervisor.status",
-      "llamactl.models.leaderboard",
-      "llamactl.supervisor.execute",
-      "llamactl_admit_measure",
-      "llamactl_fleet_audit",
-      "llamactl_fleet_executions",
-      "llamactl_fleet_journal_tail",
-      "llamactl_fleet_pressure",
-      "llamactl_fleet_pressure_status",
-      "llamactl_fleet_proposals",
-      "llamactl_fleet_snapshot",
-      "llamactl_fleet_supervisor_audit",
-      "llamactl_fleet_supervisor_status",
-      "llamactl_models_leaderboard",
-      "llamactl_supervisor_execute",
-    ]);
-    const OPS_CHAT_ONLY_EXCLUDED = new Set<string>();
+    const { KNOWN_OPS_CHAT_TOOLS } = await import("../../remote/src/index.js");
     const mcpEligible = names.filter((n) => !MCP_ONLY_EXCLUDED.has(n)).sort();
     const opsChatEligible = [...KNOWN_OPS_CHAT_TOOLS]
       .filter((n) => !OPS_CHAT_ONLY_EXCLUDED.has(n))
@@ -279,6 +280,25 @@ describe("@llamactl/mcp read surface", () => {
       "llamactl_models_leaderboard",
       "llamactl_supervisor_execute",
     ]);
+  });
+
+  test("opsChatToolCoverage surface claims match the live MCP registry", async () => {
+    const names = await listMcpToolNames();
+    const mcpNameSet = new Set(names);
+    const { OPS_CHAT_TOOLS, toolSurfaces } = await import("../../remote/src/index.js");
+
+    for (const entry of OPS_CHAT_TOOLS) {
+      if (toolSurfaces(entry.name).includes("mcp")) {
+        expect(mcpNameSet.has(entry.name)).toBe(true);
+      }
+    }
+
+    const mcpEligible = names.filter((n) => !MCP_ONLY_EXCLUDED.has(n)).sort();
+    for (const name of mcpEligible) {
+      const entry = OPS_CHAT_TOOLS.find((candidate) => candidate.name === name);
+      expect(entry).toBeDefined();
+      expect(entry ? toolSurfaces(entry.name).includes("mcp") : false).toBe(true);
+    }
   });
 
   test("llamactl.env returns a resolved environment snapshot", async () => {

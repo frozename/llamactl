@@ -61,9 +61,14 @@ export { appendOpsChatAudit, type OpsChatAuditEntry, readOpsChatAudit } from "./
 export {
   dispatchOpsChatTool,
   KNOWN_OPS_CHAT_TOOLS,
+  OPS_CHAT_TOOLS,
+  type Surface as OpsChatSurface,
   type ToolTier as OpsChatTier,
   type OpsChatToolName,
+  toolSurfaces as opsChatToolSurfaces,
   toolTier as opsChatToolTier,
+  type Surface,
+  toolSurfaces,
 } from "./ops-chat/dispatch.js";
 export {
   type LoopExecutorOptions,

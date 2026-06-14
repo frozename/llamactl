@@ -27,59 +27,139 @@ export type Caller = ReturnType<typeof AppRouterType.createCaller>;
  */
 export type ToolTier = SafetyTier;
 
+export type Surface = "mcp" | "ops-chat";
+
+const OPS_CHAT_AND_MCP_SURFACES = ["mcp", "ops-chat"] as const satisfies readonly Surface[];
+
 /**
- * Capability registry for the Ops Chat surface: one typed `(name, tier)`
- * list that the known-names list, the `OpsChatToolName` union, and the
- * `toolTier` classifier are all derived from. Co-locating each tool's
- * approval tier with its name gives a single place to add or re-tier a
- * tool, replacing the three parallel lists (known-names + destructive +
- * dry-run) that previously had to be hand-kept in sync — the seed of the
- * cross-surface capability registry (audit Move #11). Keep alphabetized so
- * the coverage test output stays readable.
+ * Capability registry for the Ops Chat surface: one typed `(name, tier,
+ * surfaces)` list that the known-names list, the `OpsChatToolName` union,
+ * and the `toolTier`/`toolSurfaces` classifiers are all derived from.
+ * Co-locating each tool's approval tier and advertised surfaces with its
+ * name gives a single place to add, re-tier, or expose a tool, replacing
+ * parallel lists that previously had to be hand-kept in sync — the seed
+ * of the cross-surface capability registry (audit Move #11). Keep
+ * alphabetized so the coverage test output stays readable.
  */
-const OPS_CHAT_TOOLS = [
-  { name: "llamactl.bench.compare", tier: "read" },
-  { name: "llamactl.bench.history", tier: "read" },
-  { name: "llamactl.catalog.list", tier: "read" },
-  { name: "llamactl.catalog.promote", tier: "mutation-dry-run-safe" },
-  { name: "llamactl.catalog.promoteDelete", tier: "mutation-destructive" },
-  { name: "llamactl.composite.apply", tier: "mutation-dry-run-safe" },
-  { name: "llamactl.composite.destroy", tier: "mutation-destructive" },
-  { name: "llamactl.composite.get", tier: "read" },
-  { name: "llamactl.composite.list", tier: "read" },
-  { name: "llamactl.cost.snapshot", tier: "read" },
-  { name: "llamactl.env", tier: "read" },
-  { name: "llamactl.node.add", tier: "mutation-dry-run-safe" },
-  { name: "llamactl.node.budget", tier: "read" },
-  { name: "llamactl.node.facts", tier: "read" },
-  { name: "llamactl.node.ls", tier: "read" },
-  { name: "llamactl.node.remove", tier: "mutation-destructive" },
-  { name: "llamactl.operator.plan", tier: "read" },
-  { name: "llamactl.project.apply", tier: "mutation-dry-run-safe" },
-  { name: "llamactl.project.get", tier: "read" },
-  { name: "llamactl.project.index", tier: "mutation-dry-run-safe" },
-  { name: "llamactl.project.list", tier: "read" },
-  { name: "llamactl.project.remove", tier: "mutation-destructive" },
-  { name: "llamactl.project.resolveRouting", tier: "read" },
-  { name: "llamactl.promotions.list", tier: "read" },
-  { name: "llamactl.rag.bench", tier: "read" },
-  { name: "llamactl.rag.delete", tier: "mutation-destructive" },
-  { name: "llamactl.rag.listCollections", tier: "read" },
-  { name: "llamactl.rag.pipeline.apply", tier: "mutation-dry-run-safe" },
-  { name: "llamactl.rag.pipeline.draft", tier: "read" },
-  { name: "llamactl.rag.pipeline.get", tier: "read" },
-  { name: "llamactl.rag.pipeline.list", tier: "read" },
-  { name: "llamactl.rag.pipeline.remove", tier: "mutation-destructive" },
-  { name: "llamactl.rag.pipeline.run", tier: "mutation-dry-run-safe" },
-  { name: "llamactl.rag.search", tier: "read" },
-  { name: "llamactl.rag.store", tier: "mutation-dry-run-safe" },
-  { name: "llamactl.reconciler.kick", tier: "mutation-dry-run-safe" },
-  { name: "llamactl.server.status", tier: "read" },
-  { name: "llamactl.server.stop", tier: "mutation-dry-run-safe" },
-  { name: "llamactl.workload.apply", tier: "mutation-dry-run-safe" },
-  { name: "llamactl.workload.delete", tier: "mutation-destructive" },
-  { name: "llamactl.workload.list", tier: "read" },
-] as const satisfies readonly { name: string; tier: ToolTier }[];
+export const OPS_CHAT_TOOLS = [
+  { name: "llamactl.bench.compare", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  { name: "llamactl.bench.history", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  { name: "llamactl.catalog.list", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  {
+    name: "llamactl.catalog.promote",
+    tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  {
+    name: "llamactl.catalog.promoteDelete",
+    tier: "mutation-destructive",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  {
+    name: "llamactl.composite.apply",
+    tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  {
+    name: "llamactl.composite.destroy",
+    tier: "mutation-destructive",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  { name: "llamactl.composite.get", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  { name: "llamactl.composite.list", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  { name: "llamactl.cost.snapshot", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  { name: "llamactl.env", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  {
+    name: "llamactl.node.add",
+    tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  { name: "llamactl.node.budget", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  { name: "llamactl.node.facts", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  { name: "llamactl.node.ls", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  {
+    name: "llamactl.node.remove",
+    tier: "mutation-destructive",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  { name: "llamactl.operator.plan", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  {
+    name: "llamactl.project.apply",
+    tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  { name: "llamactl.project.get", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  {
+    name: "llamactl.project.index",
+    tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  { name: "llamactl.project.list", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  {
+    name: "llamactl.project.remove",
+    tier: "mutation-destructive",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  {
+    name: "llamactl.project.resolveRouting",
+    tier: "read",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  { name: "llamactl.promotions.list", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  { name: "llamactl.rag.bench", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  {
+    name: "llamactl.rag.delete",
+    tier: "mutation-destructive",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  { name: "llamactl.rag.listCollections", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  {
+    name: "llamactl.rag.pipeline.apply",
+    tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  { name: "llamactl.rag.pipeline.draft", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  { name: "llamactl.rag.pipeline.get", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  { name: "llamactl.rag.pipeline.list", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  {
+    name: "llamactl.rag.pipeline.remove",
+    tier: "mutation-destructive",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  {
+    name: "llamactl.rag.pipeline.run",
+    tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  { name: "llamactl.rag.search", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  {
+    name: "llamactl.rag.store",
+    tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  {
+    name: "llamactl.reconciler.kick",
+    tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  { name: "llamactl.server.status", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+  {
+    name: "llamactl.server.stop",
+    tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  {
+    name: "llamactl.workload.apply",
+    tier: "mutation-dry-run-safe",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  {
+    name: "llamactl.workload.delete",
+    tier: "mutation-destructive",
+    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+  },
+  { name: "llamactl.workload.list", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
+] as const satisfies readonly { name: string; tier: ToolTier; surfaces: readonly Surface[] }[];
 
 export type OpsChatToolName = (typeof OPS_CHAT_TOOLS)[number]["name"];
 
@@ -90,8 +170,16 @@ const TIER_BY_NAME = new Map<OpsChatToolName, ToolTier>(
   OPS_CHAT_TOOLS.map((t): [OpsChatToolName, ToolTier] => [t.name, t.tier]),
 );
 
+const SURFACES_BY_NAME = new Map<OpsChatToolName, readonly Surface[]>(
+  OPS_CHAT_TOOLS.map((t): [OpsChatToolName, readonly Surface[]] => [t.name, t.surfaces]),
+);
+
 export function toolTier(name: OpsChatToolName): ToolTier {
   return TIER_BY_NAME.get(name) ?? "read";
+}
+
+export function toolSurfaces(name: OpsChatToolName): readonly Surface[] {
+  return SURFACES_BY_NAME.get(name) ?? OPS_CHAT_AND_MCP_SURFACES;
 }
 
 /** Tool names of a given tier, derived from the registry — used to type
