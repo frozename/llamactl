@@ -588,6 +588,7 @@ export function recordChatUsage(
     latencyMs?: number;
   },
   provider: string,
+  route?: string,
 ): void {
   const usage = response.usage;
   if (!usage) return;
@@ -602,6 +603,7 @@ export function recordChatUsage(
         completion_tokens: usage.completion_tokens,
         total_tokens: usage.total_tokens,
         latency_ms: response.latencyMs ?? 0,
+        ...(route ? { route } : {}),
       },
     });
   });
@@ -626,6 +628,7 @@ export function recordChatUsageSnapshot(
     latency_ms: number;
   },
   provider: string,
+  route?: string,
 ): void {
   appendUsageBackground({
     record: {
@@ -637,6 +640,7 @@ export function recordChatUsageSnapshot(
       completion_tokens: snapshot.completion_tokens,
       total_tokens: snapshot.total_tokens,
       latency_ms: snapshot.latency_ms,
+      ...(route ? { route } : {}),
     },
   });
 }
@@ -952,12 +956,21 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const { resolveProjectNodeTarget, appendProjectRoutingJournal } =
-        await import("./config/project-routing.js");
-      const route = await resolveProjectNodeTarget(input.node);
+      const {
+        resolveProjectNodeTarget,
+        appendProjectRoutingJournal,
+        packRouteForUsage,
+        makeProjectBudgetChecker,
+      } = await import("./config/project-routing.js");
+      const route = await resolveProjectNodeTarget(input.node, {
+        checkBudget: makeProjectBudgetChecker(),
+      });
       if (route.decision) {
         await appendProjectRoutingJournal(route.decision);
       }
+      // Attribute the spend to the project + task-kind that routed it, so
+      // the budget the next request reads is fed by the calls it governs.
+      const usageRoute = route.decision ? packRouteForUsage(route.decision) : undefined;
       const cfg = kubecfg.loadConfig();
       const resolved = kubecfg.resolveNode(cfg, route.node);
       if (resolved.node.endpoint === "inproc://local") {
@@ -976,7 +989,7 @@ export const router = t.router({
           });
         }
         const response = (await res.json()) as UnifiedAiResponse;
-        recordChatUsage(response, "local");
+        recordChatUsage(response, "local", usageRoute);
         return response;
       }
       const { providerForNode } = await import("./providers/factory.js");
@@ -986,6 +999,7 @@ export const router = t.router({
       recordChatUsage(
         response,
         resolved.node.cloud?.provider ?? resolved.node.provider?.providerName ?? "local",
+        usageRoute,
       );
       return response;
     }),
@@ -1014,12 +1028,21 @@ export const router = t.router({
       }),
     )
     .subscription(async function* ({ input, signal }) {
-      const { resolveProjectNodeTarget, appendProjectRoutingJournal } =
-        await import("./config/project-routing.js");
-      const route = await resolveProjectNodeTarget(input.node);
+      const {
+        resolveProjectNodeTarget,
+        appendProjectRoutingJournal,
+        packRouteForUsage,
+        makeProjectBudgetChecker,
+      } = await import("./config/project-routing.js");
+      const route = await resolveProjectNodeTarget(input.node, {
+        checkBudget: makeProjectBudgetChecker(),
+      });
       if (route.decision) {
         await appendProjectRoutingJournal(route.decision);
       }
+      // Attribute the spend to the project + task-kind that routed it, so
+      // the budget the next request reads is fed by the calls it governs.
+      const usageRoute = route.decision ? packRouteForUsage(route.decision) : undefined;
       const cfg = kubecfg.loadConfig();
       const resolved = kubecfg.resolveNode(cfg, route.node);
       const { providerForNode } = await import("./providers/factory.js");
@@ -1035,7 +1058,7 @@ export const router = t.router({
           baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
           apiKey: "local",
           onUsage: (snapshot) => {
-            recordChatUsageSnapshot(snapshot, "local");
+            recordChatUsageSnapshot(snapshot, "local", usageRoute);
           },
         });
         yield* streamNodeChatEvents(provider, input.request as UnifiedAiRequest, signal);
@@ -1054,7 +1077,7 @@ export const router = t.router({
         user: resolved.user,
         cfg,
         onUsage: (snapshot) => {
-          recordChatUsageSnapshot(snapshot, canonicalProvider);
+          recordChatUsageSnapshot(snapshot, canonicalProvider, usageRoute);
         },
       });
       yield* streamNodeChatEvents(provider, input.request as UnifiedAiRequest, signal);

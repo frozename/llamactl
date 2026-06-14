@@ -10,6 +10,7 @@ import {
   appendProjectRoutingJournal,
   type BudgetSnapshot,
   defaultProjectRoutingJournalPath,
+  makeProjectBudgetChecker,
   packRouteForUsage,
   parseProjectNodeName,
   type ProjectRoutingDecision,
@@ -126,6 +127,15 @@ describe("resolveProjectNodeTarget — budget check", () => {
     expect(out.node).toBe("mac-mini.claude-pro");
     expect(out.decision!.reason).toBe("matched");
   });
+  test("spend exactly at the limit flips over-budget (boundary is inclusive)", async () => {
+    const project = makeProject({ budget: { usd_per_day: 1.0 } });
+    const out = await resolveProjectNodeTarget("project:novaflow/code_review", {
+      loadProjects: () => [project],
+      checkBudget: () => Promise.resolve({ usdToday: 1.0, usdLimit: 1.0 }),
+    });
+    expect(out.node).toBe("private-first");
+    expect(out.decision!.reason).toBe("over-budget");
+  });
   test("broken budget snapshotter does not block the dispatch", async () => {
     const project = makeProject({ budget: { usd_per_day: 1.0 } });
     const out = await resolveProjectNodeTarget("project:novaflow/code_review", {
@@ -155,6 +165,141 @@ describe("resolveProjectNodeTarget — budget check", () => {
     });
     expect(called).toBe(false);
     expect(out.decision!.reason).toBe("matched");
+  });
+});
+
+describe("makeProjectBudgetChecker", () => {
+  let usageDir = "";
+  let pricingDir = "";
+  // Mid-day on 2026-04-22 UTC; the day window starts at 00:00:00Z.
+  const NOW = Date.UTC(2026, 3, 22, 15, 0, 0);
+  const TODAY = "2026-04-22";
+
+  beforeEach(() => {
+    usageDir = mkdtempSync(join(tmpdir(), "budget-usage-"));
+    pricingDir = mkdtempSync(join(tmpdir(), "budget-pricing-"));
+  });
+  afterEach(() => {
+    rmSync(usageDir, { recursive: true, force: true });
+    rmSync(pricingDir, { recursive: true, force: true });
+  });
+
+  const writeUsage = (provider: string, date: string, records: Record<string, unknown>[]): void => {
+    writeFileSync(
+      join(usageDir, `${provider}-${date}.jsonl`),
+      `${records.map((r) => JSON.stringify(r)).join("\n")}\n`,
+      "utf8",
+    );
+  };
+  const writePricing = (
+    provider: string,
+    models: Record<
+      string,
+      { prompt_per_1k_tokens_usd: number; completion_per_1k_tokens_usd: number }
+    >,
+  ): void => {
+    writeFileSync(
+      join(pricingDir, `${provider}.yaml`),
+      stringifyYaml({ provider, models }),
+      "utf8",
+    );
+  };
+  const usageRow = (
+    route: string | undefined,
+    extra: Record<string, unknown>,
+  ): Record<string, unknown> => ({
+    ts: `${TODAY}T10:00:00Z`,
+    provider: "openai",
+    model: "gpt-4o",
+    kind: "chat",
+    prompt_tokens: 1000,
+    completion_tokens: 1000,
+    total_tokens: 2000,
+    latency_ms: 5,
+    ...(route ? { route } : {}),
+    ...extra,
+  });
+
+  test("sums today's project spend from a record's own estimated_cost_usd", async () => {
+    writeUsage("openai", TODAY, [
+      usageRow("project:novaflow/code_review/openai", { estimated_cost_usd: 0.3 }),
+      usageRow("project:novaflow/quick_qna/openai", { estimated_cost_usd: 0.2 }),
+      // Other project — must be excluded.
+      usageRow("project:other/code_review/openai", { estimated_cost_usd: 99 }),
+      // Sibling project sharing the name prefix — the trailing-slash guard
+      // must keep novaflow-staging's spend out of novaflow's budget.
+      usageRow("project:novaflow-staging/code_review/openai", { estimated_cost_usd: 88 }),
+      // No route — not attributable to any project, excluded.
+      usageRow(undefined, { estimated_cost_usd: 50 }),
+    ]);
+    const checker = makeProjectBudgetChecker({ now: () => NOW, usageDir, pricingDir });
+    const snap = await checker({ project: makeProject(), limit: 2 });
+    expect(snap).not.toBeNull();
+    expect(snap!.usdToday).toBeCloseTo(0.5, 6);
+    expect(snap!.usdLimit).toBe(2);
+  });
+
+  test("prices token counts via the catalog when a record lacks estimated_cost_usd", async () => {
+    // The production path: recordChatUsage writes token counts but no cost.
+    writePricing("openai", {
+      "gpt-4o": { prompt_per_1k_tokens_usd: 0.01, completion_per_1k_tokens_usd: 0.03 },
+    });
+    writeUsage("openai", TODAY, [usageRow("project:novaflow/code_review/openai", {})]);
+    // 1000/1000 * 0.01 + 1000/1000 * 0.03 = 0.04
+    const checker = makeProjectBudgetChecker({ now: () => NOW, usageDir, pricingDir });
+    const snap = await checker({ project: makeProject(), limit: 1 });
+    expect(snap!.usdToday).toBeCloseTo(0.04, 6);
+  });
+
+  test("excludes spend from earlier days", async () => {
+    writeUsage("openai", "2026-04-21", [
+      {
+        ...usageRow("project:novaflow/code_review/openai", { estimated_cost_usd: 7 }),
+        ts: "2026-04-21T23:59:00Z",
+      },
+    ]);
+    const checker = makeProjectBudgetChecker({ now: () => NOW, usageDir, pricingDir });
+    const snap = await checker({ project: makeProject(), limit: 1 });
+    expect(snap!.usdToday).toBe(0);
+  });
+
+  test("unpriceable records contribute zero instead of erroring", async () => {
+    // No pricing file for this provider/model and no estimated_cost_usd.
+    writeUsage("mystery", TODAY, [
+      {
+        ts: `${TODAY}T10:00:00Z`,
+        provider: "mystery",
+        model: "unknown-model",
+        kind: "chat",
+        prompt_tokens: 100,
+        completion_tokens: 100,
+        total_tokens: 200,
+        latency_ms: 5,
+        route: "project:novaflow/code_review/mystery",
+      },
+    ]);
+    const checker = makeProjectBudgetChecker({ now: () => NOW, usageDir, pricingDir });
+    const snap = await checker({ project: makeProject(), limit: 1 });
+    expect(snap!.usdToday).toBe(0);
+  });
+
+  test("integrates with resolveProjectNodeTarget to flip an over-budget project", async () => {
+    writePricing("openai", {
+      "gpt-4o": { prompt_per_1k_tokens_usd: 1, completion_per_1k_tokens_usd: 1 },
+    });
+    // 1000+1000 tokens at $1/1k each = $2 spent today on novaflow.
+    writeUsage("openai", TODAY, [usageRow("project:novaflow/code_review/openai", {})]);
+    const project = makeProject({ budget: { usd_per_day: 1.0 } });
+    const out = await resolveProjectNodeTarget("project:novaflow/code_review", {
+      loadProjects: () => [project],
+      checkBudget: makeProjectBudgetChecker({ now: () => NOW, usageDir, pricingDir }),
+    });
+    expect(out.node).toBe("private-first");
+    expect(out.decision!.reason).toBe("over-budget");
+    expect(out.decision!.budget?.usdToday).toBeCloseTo(2, 6);
+    // The usage route the dispatch path will attribute reflects where the
+    // call ACTUALLY went (private-first), not the would-be matched target.
+    expect(packRouteForUsage(out.decision!)).toBe("project:novaflow/code_review/private-first");
   });
 });
 

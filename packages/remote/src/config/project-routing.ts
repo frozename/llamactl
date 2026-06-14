@@ -25,6 +25,7 @@
  * JSONL, append-only, small-volume (one line per chat request).
  */
 
+import { estimateCostUsd, loadPricing, readUsage } from "@nova/mcp-shared";
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -219,4 +220,93 @@ export async function appendProjectRoutingJournal(
  */
 export function packRouteForUsage(decision: ProjectRoutingDecision): string {
   return `project:${decision.project}/${decision.taskKind}/${decision.target}`;
+}
+
+export interface ProjectBudgetCheckerOptions {
+  now?: () => number;
+  /** Override the usage corpus dir (defaults to the nova usage dir). */
+  usageDir?: string;
+  /** Override the pricing catalog dir (defaults to the nova pricing dir). */
+  pricingDir?: string;
+}
+
+/**
+ * USD cost of a single usage record: its own `estimated_cost_usd` when
+ * present, else the token counts priced via the catalog, else zero (an
+ * unknown provider/model or a non-numeric row must not break the rollup).
+ */
+function usageRecordCostUsd(
+  rec: Record<string, unknown>,
+  catalog: ReturnType<typeof loadPricing>["catalog"],
+): number {
+  if (typeof rec.estimated_cost_usd === "number") return rec.estimated_cost_usd;
+  const { provider, model, prompt_tokens: prompt, completion_tokens: completion } = rec;
+  if (
+    typeof provider !== "string" ||
+    typeof model !== "string" ||
+    typeof prompt !== "number" ||
+    typeof completion !== "number"
+  ) {
+    return 0;
+  }
+  return (
+    estimateCostUsd(
+      { provider, model, kind: "chat", prompt_tokens: prompt, completion_tokens: completion },
+      catalog,
+    ) ?? 0
+  );
+}
+
+/** Projects already warned this process about an unpriceable budget, so
+ *  the "can't enforce" notice fires once per project rather than per call. */
+const budgetPricingWarned = new Set<string>();
+
+/**
+ * Build the `checkBudget` snapshotter `resolveProjectNodeTarget` calls
+ * when a project declares `budget.usd_per_day`. It attributes today's USD
+ * spend to the project from the usage corpus the dispatch path now writes:
+ * read every record since the start of the current UTC day, keep the ones
+ * whose `route` was packed by `packRouteForUsage` for this project, and sum
+ * their cost. Synchronous I/O wrapped in a resolved Promise to satisfy the
+ * async snapshotter contract.
+ *
+ * Enforcement needs pricing: the dispatch writers record token counts, not
+ * USD, so spend is priced from the catalog. With NO pricing catalog every
+ * record prices to $0 and a budget would never trigger — so the first time
+ * a budgeted project is evaluated against an empty catalog we warn, turning
+ * silent non-enforcement into an operator-visible "seed pricing" signal.
+ *
+ * Cost note (first slice): the rollup re-reads + re-parses today's usage
+ * file and reloads the pricing catalog on every budgeted request, so per-
+ * request work grows with the day's request count. Fine at the modest
+ * volumes a per-project daily cap implies; an in-memory running-spend
+ * accumulator is the fast-follow if a hot budgeted project needs it.
+ */
+export function makeProjectBudgetChecker(
+  opts: ProjectBudgetCheckerOptions = {},
+): (args: { project: Project; limit: number }) => Promise<BudgetSnapshot | null> {
+  const now = opts.now ?? Date.now;
+  return ({ project, limit }) => {
+    const dayStart = new Date(now());
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const { records } = readUsage({
+      since: dayStart.toISOString(),
+      ...(opts.usageDir ? { dir: opts.usageDir } : {}),
+    });
+    const { catalog } = loadPricing(opts.pricingDir ? { dir: opts.pricingDir } : {});
+    if (catalog.size === 0 && !budgetPricingWarned.has(project.metadata.name)) {
+      budgetPricingWarned.add(project.metadata.name);
+      process.stderr.write(
+        `project-budget: pricing catalog is empty — usd_per_day for project ` +
+          `'${project.metadata.name}' cannot be enforced until pricing is seeded\n`,
+      );
+    }
+    const prefix = `project:${project.metadata.name}/`;
+    let usdToday = 0;
+    for (const rec of records) {
+      if (typeof rec.route !== "string" || !rec.route.startsWith(prefix)) continue;
+      usdToday += usageRecordCostUsd(rec, catalog);
+    }
+    return Promise.resolve({ usdToday, usdLimit: limit });
+  };
 }

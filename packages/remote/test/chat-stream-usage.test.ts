@@ -132,6 +132,17 @@ describe("recordChatUsageSnapshot", () => {
     expect(rec.latency_ms).toBe(123);
     expect(typeof rec.ts).toBe("string");
   });
+
+  test("attributes the project route when one is supplied", async () => {
+    recordChatUsageSnapshot(
+      { model: "gpt-4o", prompt_tokens: 5, completion_tokens: 5, total_tokens: 10, latency_ms: 9 },
+      "openai",
+      "project:novaflow/quick_qna/private-first",
+    );
+    await flush();
+    const rec = readSoleRecord();
+    expect(rec.route).toBe("project:novaflow/quick_qna/private-first");
+  });
 });
 
 describe("chatStream usage capture", () => {

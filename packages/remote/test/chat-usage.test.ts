@@ -75,4 +75,30 @@ describe("recordChatUsage", () => {
     };
     expect(rec.latency_ms).toBe(0);
   });
+
+  test("attributes the project route when one is supplied", async () => {
+    recordChatUsage(
+      { model: "gpt-4o", usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+      "openai",
+      "project:novaflow/code_review/mac-mini.claude-pro",
+    );
+    await flush();
+    const files = readdirSync(dir);
+    const rec = JSON.parse(readFileSync(join(dir, files[0]!), "utf8").trim()) as { route?: string };
+    expect(rec.route).toBe("project:novaflow/code_review/mac-mini.claude-pro");
+  });
+
+  test("omits route when the call was not project-scoped", async () => {
+    recordChatUsage(
+      { model: "m", usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+      "local",
+    );
+    await flush();
+    const files = readdirSync(dir);
+    const rec = JSON.parse(readFileSync(join(dir, files[0]!), "utf8").trim()) as Record<
+      string,
+      unknown
+    >;
+    expect("route" in rec).toBe(false);
+  });
 });
