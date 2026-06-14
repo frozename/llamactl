@@ -37,12 +37,15 @@ export const llamacppEngine: EngineAdapter = {
     if (!hostedModel) {
       throw new Error("hostedModels must have exactly one entry");
     }
-    const modelRel = hostedModel.rel;
     const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS ?? "/tmp/models";
-    const fullModelPath = resolve(modelsDir, modelRel);
-    if (!fullModelPath.startsWith(`${resolve(modelsDir)}${sep}`)) {
-      throw new Error(`hostedModel rel escapes models dir: ${modelRel}`);
-    }
+    const resolveInModelsDir = (rel: string, label: string): string => {
+      const full = resolve(modelsDir, rel);
+      if (!full.startsWith(`${resolve(modelsDir)}${sep}`)) {
+        throw new Error(`${label} escapes models dir: ${rel}`);
+      }
+      return full;
+    };
+    const fullModelPath = resolveInModelsDir(hostedModel.rel, "hostedModel rel");
     const args: string[] = [
       "--host",
       spec.endpoint.host,
@@ -50,8 +53,11 @@ export const llamacppEngine: EngineAdapter = {
       String(spec.endpoint.port),
       "-m",
       fullModelPath,
-      ...spec.extraArgs,
     ];
+    if (hostedModel.lora_path) {
+      args.push("--lora", resolveInModelsDir(hostedModel.lora_path, "hostedModel lora_path"));
+    }
+    args.push(...spec.extraArgs);
     return { binary: spec.binary, args };
   },
 

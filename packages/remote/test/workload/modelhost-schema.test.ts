@@ -70,6 +70,48 @@ describe("ModelHostManifestSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  test("accepts hostedModels[].lora_path (train -> serve adapter edge)", () => {
+    const manifest = {
+      ...valid,
+      spec: {
+        ...valid.spec,
+        engine: "llamacpp",
+        binary: "/usr/local/bin/llama-server",
+        hostedModels: [
+          {
+            rel: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+            lora_path: "adapters/granite-sql-lora.gguf",
+          },
+        ],
+      },
+    };
+    const result = ModelHostManifestSchema.safeParse(manifest);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.spec.hostedModels[0]?.lora_path).toBe("adapters/granite-sql-lora.gguf");
+    }
+  });
+
+  test("rejects empty lora_path string", () => {
+    const bad = {
+      ...valid,
+      spec: {
+        ...valid.spec,
+        hostedModels: [{ rel: "mlx-community/Qwen3-8B-MLX-4bit", lora_path: "" }],
+      },
+    };
+    const result = ModelHostManifestSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+  });
+
+  test("omitting lora_path leaves it undefined (back-compat)", () => {
+    const result = ModelHostManifestSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.spec.hostedModels[0]?.lora_path).toBeUndefined();
+    }
+  });
+
   test("rejects manifest with stray `target` field (ModelRun-only)", () => {
     const bad = {
       ...valid,

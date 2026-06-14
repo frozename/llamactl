@@ -12,6 +12,7 @@ export interface EngineBootEnv {
 
 export interface ModelHostHostedModel {
   rel: string;
+  lora_path?: string;
   dflash?: {
     enabled: boolean;
     dflash_enabled?: boolean;

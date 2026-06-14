@@ -63,6 +63,68 @@ describe("llamacpp engine adapter", () => {
     expect(jinjaIdx).toBeGreaterThan(portIdx);
   });
 
+  test("buildBootCommand omits --lora when no lora_path is set", () => {
+    const built = ENGINES.llamacpp.buildBootCommand(baseSpec, {
+      LLAMA_CPP_MODELS: "/tmp/models",
+    });
+    expect(built.args).not.toContain("--lora");
+  });
+
+  test("buildBootCommand emits --lora with the resolved path after -m when set", () => {
+    const spec: ModelHostSpecForEngine = {
+      ...baseSpec,
+      hostedModels: [
+        {
+          rel: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          lora_path: "adapters/granite-sql-lora.gguf",
+        },
+      ],
+    };
+    const built = ENGINES.llamacpp.buildBootCommand(spec, {
+      LLAMA_CPP_MODELS: "/tmp/models",
+    });
+    const loraIdx = built.args.indexOf("--lora");
+    expect(loraIdx).toBeGreaterThan(-1);
+    expect(built.args[loraIdx + 1]).toBe("/tmp/models/adapters/granite-sql-lora.gguf");
+    const modelIdx = built.args.indexOf("-m");
+    expect(loraIdx).toBeGreaterThan(modelIdx);
+  });
+
+  test("buildBootCommand keeps extraArgs after the --lora pair", () => {
+    const spec: ModelHostSpecForEngine = {
+      ...baseSpec,
+      hostedModels: [
+        {
+          rel: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          lora_path: "adapters/granite-sql-lora.gguf",
+        },
+      ],
+    };
+    const built = ENGINES.llamacpp.buildBootCommand(spec, {
+      LLAMA_CPP_MODELS: "/tmp/models",
+    });
+    const loraIdx = built.args.indexOf("--lora");
+    const jinjaIdx = built.args.indexOf("--jinja");
+    expect(jinjaIdx).toBeGreaterThan(loraIdx);
+  });
+
+  test("buildBootCommand rejects lora_path that escapes models dir", () => {
+    const bad: ModelHostSpecForEngine = {
+      ...baseSpec,
+      hostedModels: [
+        {
+          rel: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          lora_path: "../escape-lora.gguf",
+        },
+      ],
+    };
+    expect(() =>
+      ENGINES.llamacpp.buildBootCommand(bad, {
+        LLAMA_CPP_MODELS: "/tmp/models",
+      } satisfies EngineBootEnv),
+    ).toThrow(/lora_path escapes models dir/);
+  });
+
   test("buildBootCommand rejects hosted model rel escapes", () => {
     const bad = {
       ...baseSpec,

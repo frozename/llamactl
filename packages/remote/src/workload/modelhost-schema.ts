@@ -5,6 +5,10 @@ export const LOCAL_NODE_ID = "local" as const;
 export const ModelHostHostedModelSchema = z
   .object({
     rel: z.string().min(1),
+    // Optional LoRA adapter to serve alongside the base model. Resolved against
+    // the same models dir as `rel` (training in packages/train emits adapters
+    // there), so the engine can `--lora` an adapter without a second resolver.
+    lora_path: z.string().min(1).optional(),
     dflash: z
       .object({
         enabled: z.boolean(),
