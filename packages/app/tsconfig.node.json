@@ -3,7 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "moduleResolution": "Bundler",
-    "types": ["node"],
+    "types": ["node", "bun"],
     "noEmit": true
   },
   "include": ["electron.vite.config.ts", "vite.config.ts"]

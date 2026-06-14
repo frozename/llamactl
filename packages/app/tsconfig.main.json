@@ -5,7 +5,7 @@
     "rootDir": "./electron",
     "outDir": "./out/main",
     "moduleResolution": "Bundler",
-    "types": ["node"],
+    "types": ["node", "bun"],
     "jsx": "preserve"
   },
   "include": ["electron/**/*.ts"]
