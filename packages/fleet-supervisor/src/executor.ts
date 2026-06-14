@@ -21,6 +21,15 @@ export interface ExecutorOptions {
   disable: (workload: string) => Promise<number>;
   /** Enable a workload by name; returns exit code. */
   enable: (workload: string) => Promise<number>;
+  /**
+   * Resolve a workload's `spec.restartPolicy` from its manifest. When it returns
+   * "Never", evict/restart actions are skipped so the supervisor cannot thrash a
+   * workload the controller's reconcile loop deliberately leaves alone (see
+   * remote `reconcileLoop` — it filters Never-policy manifests out). Returning
+   * undefined (manifest missing / unreadable) means "no protection" and the
+   * action proceeds. Optional: when omitted, no restartPolicy gate is applied.
+   */
+  loadRestartPolicy?: (workload: string) => string | undefined;
 }
 
 function defaultReadJournal(path: string): FleetJournalEntry[] {
@@ -105,6 +114,16 @@ async function executeRestart(
   };
 }
 
+function isRestartPolicyNever(workload: string, opts: ExecutorOptions): boolean {
+  if (!opts.loadRestartPolicy) return false;
+  try {
+    return opts.loadRestartPolicy(workload) === "Never";
+  } catch {
+    // Manifest unreadable / missing → no protection signal, let the action run.
+    return false;
+  }
+}
+
 async function executeAction(
   action: FleetProposalEntry["action"],
   opts: ExecutorOptions,
@@ -116,11 +135,17 @@ async function executeAction(
     }
 
     if (action.type === "evict") {
+      if (isRestartPolicyNever(action.workload, opts)) {
+        return { ...base, status: "skipped", reason: "restartPolicy:Never" };
+      }
       const exitCode = await opts.disable(action.workload);
       return { ...base, status: exitCode === 0 ? "executed" : "failed", exitCode };
     }
 
     if (action.type === "restart") {
+      if (isRestartPolicyNever(action.workload, opts)) {
+        return { ...base, status: "skipped", reason: "restartPolicy:Never" };
+      }
       return await executeRestart(action.workload, opts, base);
     }
   } catch (err) {

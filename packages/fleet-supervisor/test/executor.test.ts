@@ -306,3 +306,117 @@ describe("runExecutor", () => {
     expect(results[0]!.status).toBe("executed");
   });
 });
+
+describe("runExecutor restartPolicy:Never gate", () => {
+  it("does NOT evict a Never-policy workload but still evicts a default-policy one", async () => {
+    const disabled: string[] = [];
+    const protectedProposal = makeProposal("p-never", "evict", "pinned-host");
+    const evictableProposal = makeProposal("p-default", "evict", "qwen-host");
+    const { opts, written } = makeOpts([protectedProposal, evictableProposal], {
+      auto: true,
+      severityThreshold: 3,
+      loadRestartPolicy: (name) => (name === "pinned-host" ? "Never" : "Always"),
+      disable: async (w) => {
+        disabled.push(w);
+        return 0;
+      },
+    });
+
+    const results = await runExecutor(opts);
+
+    const never = results.find((r) => r.proposalId === "p-never")!;
+    expect(never.status).toBe("skipped");
+    expect(never.reason).toBe("restartPolicy:Never");
+
+    const def = results.find((r) => r.proposalId === "p-default")!;
+    expect(def.status).toBe("executed");
+
+    expect(disabled).toEqual(["qwen-host"]);
+    const skipped = written.find(
+      (e): e is FleetExecutionEntry => e.kind === "fleet-execution" && e.proposalId === "p-never",
+    )!;
+    expect(skipped.status).toBe("skipped");
+  });
+
+  it("does NOT restart a Never-policy workload (no disable/enable calls)", async () => {
+    const calls: string[] = [];
+    const proposal = makeProposal("p1", "restart", "pinned-host");
+    const { opts } = makeOpts([proposal], {
+      auto: true,
+      severityThreshold: 3,
+      loadRestartPolicy: () => "Never",
+      disable: async (w) => {
+        calls.push(`disable:${w}`);
+        return 0;
+      },
+      enable: async (w) => {
+        calls.push(`enable:${w}`);
+        return 0;
+      },
+    });
+
+    const results = await runExecutor(opts);
+    expect(results[0]!.status).toBe("skipped");
+    expect(results[0]!.reason).toBe("restartPolicy:Never");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("restarts an OnFailure-policy workload (only Never is protected)", async () => {
+    const calls: string[] = [];
+    const proposal = makeProposal("p1", "restart", "granite-host");
+    const { opts } = makeOpts([proposal], {
+      auto: true,
+      severityThreshold: 3,
+      loadRestartPolicy: () => "OnFailure",
+      disable: async (w) => {
+        calls.push(`disable:${w}`);
+        return 0;
+      },
+      enable: async (w) => {
+        calls.push(`enable:${w}`);
+        return 0;
+      },
+    });
+
+    const results = await runExecutor(opts);
+    expect(results[0]!.status).toBe("executed");
+    expect(calls).toEqual(["disable:granite-host", "enable:granite-host"]);
+  });
+
+  it("evicts when loadRestartPolicy throws (manifest unreadable → no protection)", async () => {
+    const disabled: string[] = [];
+    const proposal = makeProposal("p1", "evict", "qwen-host");
+    const { opts } = makeOpts([proposal], {
+      auto: true,
+      severityThreshold: 3,
+      loadRestartPolicy: () => {
+        throw new Error("manifest not found");
+      },
+      disable: async (w) => {
+        disabled.push(w);
+        return 0;
+      },
+    });
+
+    const results = await runExecutor(opts);
+    expect(results[0]!.status).toBe("executed");
+    expect(disabled).toEqual(["qwen-host"]);
+  });
+
+  it("evicts normally when loadRestartPolicy is not provided (gate is opt-in)", async () => {
+    const disabled: string[] = [];
+    const proposal = makeProposal("p1", "evict", "qwen-host");
+    const { opts } = makeOpts([proposal], {
+      auto: true,
+      severityThreshold: 3,
+      disable: async (w) => {
+        disabled.push(w);
+        return 0;
+      },
+    });
+
+    const results = await runExecutor(opts);
+    expect(results[0]!.status).toBe("executed");
+    expect(disabled).toEqual(["qwen-host"]);
+  });
+});
