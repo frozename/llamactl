@@ -19,8 +19,11 @@ function tierStyle(tier: ToolTier): React.CSSProperties {
         color: "var(--color-warn,var(--color-ok))",
       };
     case "read":
-    default:
       return { borderColor: "var(--color-border)", color: "var(--color-text-secondary)" };
+    default: {
+      const _exhaustive: never = tier;
+      return { borderColor: "var(--color-border)", color: "var(--color-text-secondary)" };
+    }
   }
 }
 

@@ -46,7 +46,8 @@ const CANNED_PROMPTS: { label: string; prompt: string }[] = [
   },
 ];
 
-const DEFAULT_CATALOG: {
+// eslint-disable-next-line react-refresh/only-export-components -- exported for catalog parity tests.
+export const DEFAULT_CATALOG: {
   name: string;
   description: string;
   tier: SafetyTier;

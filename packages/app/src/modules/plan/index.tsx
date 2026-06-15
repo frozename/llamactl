@@ -57,8 +57,10 @@ function tierClass(tier: ToolCatalogEntry["tier"]): string {
       return "bg-[var(--color-err)] text-[color:var(--color-text-inverse)]";
     case "mutation-dry-run-safe":
       return "bg-[var(--color-warn,var(--color-ok))] text-[color:var(--color-text-inverse)]";
-    default:
+    default: {
+      const _exhaustive: never = tier;
       return "bg-[var(--color-surface-2)] text-[color:var(--color-text-secondary)]";
+    }
   }
 }
 
