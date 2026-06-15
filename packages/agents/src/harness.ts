@@ -1,3 +1,4 @@
+import { buildMcpServer } from "@llamactl/mcp";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildNovaMcpServer, type PlannerToolDescriptor } from "@nova/mcp";
@@ -119,13 +120,6 @@ export async function createDefaultToolClient(): Promise<DefaultToolClientHandle
 }
 
 async function defaultToolClient(): Promise<DefaultToolClientHandle> {
-  // Import the llamactl MCP server lazily. It (and its eval-backed tools)
-  // transitively pull in Bun-only modules (`bun`, `bun:sqlite`). A dynamic
-  // import keeps that code out of any non-Bun static bundle (notably the
-  // Electron main bundle, which reaches this package via @llamactl/remote);
-  // the chunk is only ever loaded under the Bun/CLI runtime that actually
-  // boots the harness.
-  const { buildMcpServer } = await import("@llamactl/mcp");
   const llamactl = await mountInProcess(
     buildMcpServer({ name: "llamactl-runbook-harness" }),
     "llamactl-runbook-harness",
