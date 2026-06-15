@@ -55,6 +55,9 @@ FLAGS:
   --workload=<name@url>       Add a workload target (repeatable).
                               Format: name@url, e.g. mlx-qwen36-35b@http://127.0.0.1:8096
   --kind=ModelHost|ModelRun   Kind for subsequent --workload entries. Default ModelHost.
+  --log-slot-progress         Read-only: poll each workload's /slots per tick and
+                              journal a fleet-slot-progress entry (busy-aware-probing
+                              data collection; drives nothing). Default off.
   --quiet                     Suppress per-tick stderr summary.
 
 STATUS FLAGS:
@@ -263,6 +266,7 @@ function buildSupervisorLoopOptions(
       consecutiveCompletionErrorsForDegraded: flags.consecutiveCompletionErrors,
     },
     migrationController,
+    logSlotProgress: flags.logSlotProgress,
     onTick: executorEnabled
       ? async (): Promise<void> => {
           const results = await runExecutor({
@@ -407,6 +411,7 @@ interface Flags {
   noWorkloadsConflict: boolean;
   quiet: boolean;
   auto: boolean;
+  logSlotProgress: boolean;
   severityThreshold: 1 | 2 | 3;
   executeId?: string;
 
@@ -659,6 +664,7 @@ interface ToggleFlags {
   noWorkloads: boolean;
   quiet: boolean;
   auto: boolean;
+  logSlotProgress: boolean;
 }
 
 function parseToggleFlags(raw: string, toggles: ToggleFlags, audit: AuditFlags): boolean {
@@ -674,6 +680,9 @@ function parseToggleFlags(raw: string, toggles: ToggleFlags, audit: AuditFlags):
       return true;
     case "--auto":
       toggles.auto = true;
+      return true;
+    case "--log-slot-progress":
+      toggles.logSlotProgress = true;
       return true;
     case "--json":
       audit.json = true;
@@ -718,7 +727,13 @@ function parseWorkloadFlags(
 }
 
 function parseFlags(argv: string[]): Flags {
-  const toggles: ToggleFlags = { once: false, noWorkloads: false, quiet: false, auto: false };
+  const toggles: ToggleFlags = {
+    once: false,
+    noWorkloads: false,
+    quiet: false,
+    auto: false,
+    logSlotProgress: false,
+  };
   const executor: { severityThreshold: 1 | 2 | 3; executeId?: string } = { severityThreshold: 2 };
   const workloadState: { kind: "ModelHost" | "ModelRun"; workloads: WorkloadTarget[] } = {
     kind: "ModelHost",
@@ -769,6 +784,7 @@ function parseFlags(argv: string[]): Flags {
     noWorkloadsConflict: toggles.noWorkloads && workloadState.workloads.length > 0,
     quiet: toggles.quiet,
     auto: toggles.auto,
+    logSlotProgress: toggles.logSlotProgress,
     severityThreshold: executor.severityThreshold,
 
     executeId: executor.executeId,

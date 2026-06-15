@@ -4,6 +4,7 @@ import { describe, expect, it } from "bun:test";
 import type {
   FleetJournalEntry,
   FleetPressureStatusEntry,
+  FleetSlotProgressEntry,
   FleetTransitionEntry,
   NodeMemSnapshot,
   WorkloadSnapshot,
@@ -119,6 +120,54 @@ describe("startSupervisorLoop", () => {
     const kinds = entries.map((e) => e.kind);
     expect(kinds).toContain("fleet-snapshot");
     expect(kinds).toContain("fleet-heartbeat");
+  });
+
+  it("logs fleet-slot-progress per workload when --log-slot-progress is on", async () => {
+    const entries: FleetJournalEntry[] = [];
+    const slotsFetch = (async (url: string) =>
+      url.endsWith("/slots")
+        ? new Response(JSON.stringify([{ id: 0, state: 1, n_past: 2048, n_decoded: 64 }]), {
+            status: 200,
+          })
+        : new Response("", { status: 404 })) as unknown as typeof globalThis.fetch;
+    const handle = startSupervisorLoop({
+      node: "local",
+      once: true,
+      workloads: [TARGET],
+      fetch: slotsFetch,
+      logSlotProgress: true,
+      probeNodeMem: async () => FAKE_NODE_MEM,
+      probeWorkload: async (t) => makeReachableLocal(t),
+      writeJournal: (entry) => entries.push(entry),
+    });
+    await handle.done;
+    const progress = entries.filter(
+      (e): e is FleetSlotProgressEntry => e.kind === "fleet-slot-progress",
+    );
+    expect(progress).toHaveLength(1);
+    expect(progress[0]?.workload).toBe(TARGET.name);
+    expect(progress[0]?.available).toBe(true);
+    expect(progress[0]?.slots[0]).toEqual({
+      id: 0,
+      state: 1,
+      processing: true,
+      nPast: 2048,
+      nDecoded: 64,
+    });
+  });
+
+  it("emits no fleet-slot-progress when the flag is off", async () => {
+    const entries: FleetJournalEntry[] = [];
+    const handle = startSupervisorLoop({
+      node: "local",
+      once: true,
+      workloads: [TARGET],
+      probeNodeMem: async () => FAKE_NODE_MEM,
+      probeWorkload: async (t) => makeReachableLocal(t),
+      writeJournal: (entry) => entries.push(entry),
+    });
+    await handle.done;
+    expect(entries.some((e) => e.kind === "fleet-slot-progress")).toBe(false);
   });
 
   it("snapshot carries node_mem + workload payload", async () => {

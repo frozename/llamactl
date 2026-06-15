@@ -4,6 +4,7 @@ import type {
   CompletionProbeSnapshot,
   FleetHeartbeatEntry,
   FleetJournalEntry,
+  FleetSlotProgressEntry,
   FleetSnapshotEntry,
   NodeMemSnapshot,
   WorkloadSnapshot,
@@ -23,6 +24,7 @@ import {
 } from "./loop-helpers.js";
 import { probeNodeMem as defaultProbeNodeMem } from "./node-probe.js";
 import { detectPressure, PressureWindow } from "./policy.js";
+import { readSlotProgress } from "./slot-progress.js";
 
 export const DEFAULT_PRESSURE_THRESHOLDS: PressureThresholds = {
   headroomMinMb: 512,
@@ -53,6 +55,12 @@ export interface SupervisorLoopOptions {
   degradationThresholds?: DegradationThresholds;
   pressureStatusEveryTicks?: number;
   migrationController?: MigrationController | null;
+  /**
+   * Read-only: poll each workload's `/slots` per tick and journal a
+   * fleet-slot-progress entry. Drives nothing — data collection for the
+   * busy-aware-probing design. Default off (`--log-slot-progress`).
+   */
+  logSlotProgress?: boolean;
 }
 
 export interface SupervisorLoopHandle {
@@ -63,6 +71,32 @@ export interface SupervisorLoopHandle {
 interface TickState extends PressureTransitionResult {
   pressureWindow: PressureWindow;
   workloadHealth: Map<string, WorkloadHealthState>;
+}
+
+async function logSlotProgressForWorkloads(
+  opts: SupervisorLoopOptions,
+  ts: string,
+  writeJournalEntry: (entry: FleetJournalEntry) => void,
+): Promise<void> {
+  const timeoutMs = opts.probeTimeoutMs ?? 5_000;
+  await Promise.all(
+    opts.workloads.map(async (target) => {
+      const reading = await readSlotProgress(target.endpoint, {
+        fetch: opts.fetch,
+        timeoutMs,
+      });
+      const entry: FleetSlotProgressEntry = {
+        kind: "fleet-slot-progress",
+        ts,
+        node: opts.node,
+        workload: target.name,
+        available: reading.available,
+        slots: reading.slots,
+      };
+      if (reading.reason !== undefined) entry.reason = reading.reason;
+      writeJournalEntry(entry);
+    }),
+  );
 }
 
 async function runTick(
@@ -94,6 +128,10 @@ async function runTick(
   const heartbeat: FleetHeartbeatEntry = { kind: "fleet-heartbeat", ts, node: opts.node };
   writeJournalEntry(snapshot);
   writeJournalEntry(heartbeat);
+
+  if (opts.logSlotProgress) {
+    await logSlotProgressForWorkloads(opts, ts, writeJournalEntry);
+  }
 
   state.pressureWindow.push(node_mem, workloads);
   const pressure = detectPressure(state.pressureWindow, pressureThresholds);
