@@ -7,6 +7,7 @@ import {
 } from "@nova/mcp";
 import { describe, expect, test } from "bun:test";
 
+import { OPS_CHAT_TOOLS, toolSurfaces, toolTier } from "../src/ops-chat/dispatch.js";
 import { BUILT_IN_PLANNER_TOOLS, mergePlannerTools } from "../src/router.js";
 
 /**
@@ -276,5 +277,37 @@ describe("runPlanner + composite.apply", () => {
       "llamactl.workload.list",
       "llamactl.composite.apply",
     ]);
+  });
+});
+
+describe("planner<->registry bidirectional coverage", () => {
+  test("every BUILT_IN_PLANNER_TOOLS entry is in OPS_CHAT_TOOLS with planner surface and matching tier", () => {
+    for (const plannerTool of BUILT_IN_PLANNER_TOOLS) {
+      const registryMatches = OPS_CHAT_TOOLS.filter((t) => t.name === plannerTool.name);
+      expect(
+        registryMatches,
+        `OPS_CHAT_TOOLS must have exactly one entry for "${plannerTool.name}"`,
+      ).toHaveLength(1);
+      const surfaces = toolSurfaces(plannerTool.name as (typeof OPS_CHAT_TOOLS)[number]["name"]);
+      expect(surfaces, `toolSurfaces("${plannerTool.name}") must include "planner"`).toContain(
+        "planner",
+      );
+      const tier = toolTier(plannerTool.name as (typeof OPS_CHAT_TOOLS)[number]["name"]);
+      expect(
+        tier,
+        `toolTier("${plannerTool.name}") must match planner descriptor tier "${plannerTool.tier}"`,
+      ).toBe(plannerTool.tier);
+    }
+  });
+
+  test("every OPS_CHAT_TOOLS entry tagged planner has a corresponding BUILT_IN_PLANNER_TOOLS entry", () => {
+    for (const registryTool of OPS_CHAT_TOOLS) {
+      if (!(registryTool.surfaces as readonly string[]).includes("planner")) continue;
+      const plannerMatch = BUILT_IN_PLANNER_TOOLS.find((t) => t.name === registryTool.name);
+      expect(
+        plannerMatch,
+        `"${registryTool.name}" is tagged "planner" in OPS_CHAT_TOOLS but has no BUILT_IN_PLANNER_TOOLS entry`,
+      ).toBeDefined();
+    }
   });
 });

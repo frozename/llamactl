@@ -27,9 +27,15 @@ export type Caller = ReturnType<typeof AppRouterType.createCaller>;
  */
 export type ToolTier = SafetyTier;
 
-export type Surface = "mcp" | "ops-chat";
+export type Surface = "mcp" | "ops-chat" | "planner";
 
 const OPS_CHAT_AND_MCP_SURFACES = ["mcp", "ops-chat"] as const satisfies readonly Surface[];
+
+const OPS_CHAT_MCP_PLANNER_SURFACES = [
+  "mcp",
+  "ops-chat",
+  "planner",
+] as const satisfies readonly Surface[];
 
 /**
  * Capability registry for the Ops Chat surface: one typed `(name, tier,
@@ -38,8 +44,9 @@ const OPS_CHAT_AND_MCP_SURFACES = ["mcp", "ops-chat"] as const satisfies readonl
  * Co-locating each tool's approval tier and advertised surfaces with its
  * name gives a single place to add, re-tier, or expose a tool, replacing
  * parallel lists that previously had to be hand-kept in sync — the seed
- * of the cross-surface capability registry (audit Move #11). Keep
- * alphabetized so the coverage test output stays readable.
+ * of the cross-surface capability registry (audit Move #11). Surfaces
+ * currently tracked: mcp, ops-chat, planner. Keep alphabetized so the
+ * coverage test output stays readable.
  */
 export const OPS_CHAT_TOOLS = [
   { name: "llamactl.bench.compare", tier: "read", surfaces: OPS_CHAT_AND_MCP_SURFACES },
@@ -58,7 +65,7 @@ export const OPS_CHAT_TOOLS = [
   {
     name: "llamactl.composite.apply",
     tier: "mutation-dry-run-safe",
-    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+    surfaces: OPS_CHAT_MCP_PLANNER_SURFACES,
   },
   {
     name: "llamactl.composite.destroy",
@@ -151,7 +158,7 @@ export const OPS_CHAT_TOOLS = [
   {
     name: "llamactl.workload.apply",
     tier: "mutation-dry-run-safe",
-    surfaces: OPS_CHAT_AND_MCP_SURFACES,
+    surfaces: OPS_CHAT_MCP_PLANNER_SURFACES,
   },
   {
     name: "llamactl.workload.delete",
