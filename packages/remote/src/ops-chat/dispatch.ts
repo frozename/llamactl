@@ -1,8 +1,10 @@
-import type { SafetyTier } from "@llamactl/core";
+import type { MachineProfile, presets, SafetyTier } from "@llamactl/core";
 
 import type { router as AppRouterType } from "../router.js";
 
 import { appendOpsChatAudit, hashArguments } from "./audit.js";
+
+type PresetName = presets.PresetName;
 
 /**
  * N.4 — Ops Chat tool dispatch. Maps an MCP-style tool name +
@@ -185,6 +187,11 @@ export function toolTier(name: OpsChatToolName): ToolTier {
   return TIER_BY_NAME.get(name) ?? "read";
 }
 
+// Registry/coverage-only today: the `surfaces` dimension is parity-pinned
+// by tests + consumed by the cross-package smoke test, but no production
+// caller filters dispatch on it yet. Surface-gated dispatch is a future
+// slice; until it lands, treat this reader as a registry signal, not a
+// runtime gate.
 export function toolSurfaces(name: OpsChatToolName): readonly Surface[] {
   return SURFACES_BY_NAME.get(name) ?? OPS_CHAT_AND_MCP_SURFACES;
 }
@@ -418,8 +425,8 @@ async function executeMutationDryRunTool(
   switch (name) {
     case "llamactl.catalog.promote": {
       const payload = {
-        profile: requireString(args, "profile") as "mac-mini-16g" | "balanced" | "macbook-pro-48g",
-        preset: requireString(args, "preset") as "best" | "vision" | "balanced" | "fast",
+        profile: requireString(args, "profile") as MachineProfile,
+        preset: requireString(args, "preset") as PresetName,
         rel: requireString(args, "rel"),
       };
       // The underlying procedure doesn't accept a dryRun flag — it
@@ -552,8 +559,8 @@ async function executeMutationDestructiveTool(
   switch (name) {
     case "llamactl.catalog.promoteDelete": {
       const payload = {
-        profile: requireString(args, "profile") as "mac-mini-16g" | "balanced" | "macbook-pro-48g",
-        preset: requireString(args, "preset") as "best" | "vision" | "balanced" | "fast",
+        profile: requireString(args, "profile") as MachineProfile,
+        preset: requireString(args, "preset") as PresetName,
       };
       return await dryRunOr(
         dryRun,

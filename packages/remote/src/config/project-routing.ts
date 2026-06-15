@@ -232,14 +232,18 @@ export interface ProjectBudgetCheckerOptions {
 
 /**
  * USD cost of a single usage record: its own `estimated_cost_usd` when
- * present, else the token counts priced via the catalog, else zero (an
- * unknown provider/model or a non-numeric row must not break the rollup).
+ * present, else the token counts priced via the catalog. Returns `null`
+ * when token counts are usable but the catalog has no row for the
+ * (provider, model) — the rollup treats that as $0 but warns once so an
+ * operator notices spend is silently being under-counted.
  */
 function usageRecordCostUsd(
   rec: Record<string, unknown>,
   catalog: ReturnType<typeof loadPricing>["catalog"],
-): number {
-  if (typeof rec.estimated_cost_usd === "number") return rec.estimated_cost_usd;
+): { cost: number; underCounted: boolean; provider?: string; model?: string } {
+  if (typeof rec.estimated_cost_usd === "number") {
+    return { cost: rec.estimated_cost_usd, underCounted: false };
+  }
   const { provider, model, prompt_tokens: prompt, completion_tokens: completion } = rec;
   if (
     typeof provider !== "string" ||
@@ -247,19 +251,26 @@ function usageRecordCostUsd(
     typeof prompt !== "number" ||
     typeof completion !== "number"
   ) {
-    return 0;
+    return { cost: 0, underCounted: false };
   }
-  return (
-    estimateCostUsd(
-      { provider, model, kind: "chat", prompt_tokens: prompt, completion_tokens: completion },
-      catalog,
-    ) ?? 0
+  const estimated = estimateCostUsd(
+    { provider, model, kind: "chat", prompt_tokens: prompt, completion_tokens: completion },
+    catalog,
   );
+  if (estimated === undefined) {
+    return { cost: 0, underCounted: true, provider, model };
+  }
+  return { cost: estimated, underCounted: false };
 }
 
 /** Projects already warned this process about an unpriceable budget, so
  *  the "can't enforce" notice fires once per project rather than per call. */
 const budgetPricingWarned = new Set<string>();
+
+/** (project, provider/model) pairs already warned about silent under-counts,
+ *  so the per-record notice fires once per unpriced upstream rather than
+ *  per call. */
+const budgetUnderCountWarned = new Set<string>();
 
 /**
  * Build the `checkBudget` snapshotter `resolveProjectNodeTarget` calls
@@ -305,7 +316,19 @@ export function makeProjectBudgetChecker(
     let usdToday = 0;
     for (const rec of records) {
       if (typeof rec.route !== "string" || !rec.route.startsWith(prefix)) continue;
-      usdToday += usageRecordCostUsd(rec, catalog);
+      const priced = usageRecordCostUsd(rec, catalog);
+      if (priced.underCounted) {
+        const key = `${project.metadata.name}:${priced.provider ?? ""}/${priced.model ?? ""}`;
+        if (!budgetUnderCountWarned.has(key)) {
+          budgetUnderCountWarned.add(key);
+          process.stderr.write(
+            `project-budget: pricing catalog has no entry for ` +
+              `'${priced.provider ?? ""}/${priced.model ?? ""}' — spend for project ` +
+              `'${project.metadata.name}' is being under-counted until that model's pricing is seeded\n`,
+          );
+        }
+      }
+      usdToday += priced.cost;
     }
     return Promise.resolve({ usdToday, usdLimit: limit });
   };

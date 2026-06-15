@@ -283,6 +283,51 @@ describe("makeProjectBudgetChecker", () => {
     expect(snap!.usdToday).toBe(0);
   });
 
+  test("warns + under-counts when the catalog is non-empty but lacks the spend's (provider, model)", async () => {
+    // Seed pricing for ONE provider — catalog.size > 0 so the empty-
+    // catalog warn-once short-circuits — and route spend to a DIFFERENT
+    // unpriced provider. The earlier behavior (a flat `?? 0`) swallowed
+    // the under-count silently; the new per-record warning must fire,
+    // and the rollup must under-count the unpriced spend.
+    //
+    // Use a (provider, model) tuple distinct from any prior test in this
+    // file so the per-key warn-once cache is cold for this assertion.
+    writePricing("openai", {
+      "gpt-4o": { prompt_per_1k_tokens_usd: 1, completion_per_1k_tokens_usd: 1 },
+    });
+    writeUsage("untracked", TODAY, [
+      {
+        ts: `${TODAY}T10:00:00Z`,
+        provider: "untracked",
+        model: "untracked-llm",
+        kind: "chat",
+        prompt_tokens: 1000,
+        completion_tokens: 1000,
+        total_tokens: 2000,
+        latency_ms: 5,
+        route: "project:novaflow/code_review/untracked",
+      },
+    ]);
+    const stderrCalls: string[] = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: unknown): boolean => {
+      if (typeof chunk === "string") stderrCalls.push(chunk);
+      return true;
+    };
+    try {
+      const checker = makeProjectBudgetChecker({ now: () => NOW, usageDir, pricingDir });
+      const snap = await checker({ project: makeProject(), limit: 10 });
+      expect(snap!.usdToday).toBe(0);
+      const warned = stderrCalls.join("");
+      expect(warned).toContain("under-counted");
+      expect(warned).toContain("untracked/untracked-llm");
+      // Empty-catalog warn-once must NOT fire — the catalog HAS entries.
+      expect(warned).not.toContain("pricing catalog is empty");
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+  });
+
   test("integrates with resolveProjectNodeTarget to flip an over-budget project", async () => {
     writePricing("openai", {
       "gpt-4o": { prompt_per_1k_tokens_usd: 1, completion_per_1k_tokens_usd: 1 },

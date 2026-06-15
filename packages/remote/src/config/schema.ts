@@ -1,3 +1,4 @@
+import { MACHINE_PROFILES } from "@llamactl/core";
 import { z } from "zod";
 
 export const GpuFactsSchema = z.object({
@@ -7,7 +8,7 @@ export const GpuFactsSchema = z.object({
 });
 
 export const NodeFactsSchema = z.object({
-  profile: z.enum(["mac-mini-16g", "balanced", "macbook-pro-48g"]),
+  profile: z.enum(MACHINE_PROFILES),
   memBytes: z.number().nullable(),
   os: z.string(),
   arch: z.string(),

@@ -68,6 +68,9 @@ export function resolveWorkloadName(
     // start read an empty local runtime dir. stop/status/logs omit the
     // flag and still resolve the node's single assigned workload.
     const known = opts?.synthesizeIfEmpty ? [] : names;
+    if (known.length === 0 && !opts?.synthesizeIfEmpty) {
+      throw new Error(`no workloads assigned to node ${node}; pass --name <workload>`);
+    }
     return pickByPrecedence([], known, opts);
   }
 

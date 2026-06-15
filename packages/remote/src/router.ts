@@ -7,6 +7,7 @@ import {
   env as envMod,
   keepAlive as keepAliveMod,
   lmstudio as lmstudioMod,
+  MACHINE_PROFILES,
   type MachineProfile,
   nodeFacts as nodeFactsMod,
   presets,
@@ -392,6 +393,7 @@ type CandidateStreamEvent =
 // we started returning Date/Map/Set, but electron-trpc v0.7 doesn't pass
 // a transformer through ipcLink, so this keeps the pipeline uncomplicated.
 const t = initTRPC.create();
+
 const modelHostStatusInput = z.object({ workload: z.string().min(1) });
 const modelHostStopInput = z.object({
   workload: z.string().min(1),
@@ -1878,8 +1880,8 @@ export const router = t.router({
   promote: t.procedure
     .input(
       z.object({
-        profile: z.enum(["mac-mini-16g", "balanced", "macbook-pro-48g"]),
-        preset: z.enum(["best", "vision", "balanced", "fast"]),
+        profile: z.enum(MACHINE_PROFILES),
+        preset: z.enum(presets.PRESET_NAMES),
         rel: z.string().min(1),
       }),
     )
@@ -1892,8 +1894,8 @@ export const router = t.router({
   promoteDelete: t.procedure
     .input(
       z.object({
-        profile: z.enum(["mac-mini-16g", "balanced", "macbook-pro-48g"]),
-        preset: z.enum(["best", "vision", "balanced", "fast"]),
+        profile: z.enum(MACHINE_PROFILES),
+        preset: z.enum(presets.PRESET_NAMES),
       }),
     )
     .mutation(({ input }) => {
@@ -3379,8 +3381,11 @@ export const router = t.router({
   projectRoutePreview: t.procedure
     .input(z.object({ node: z.string().min(1) }))
     .query(async ({ input }) => {
-      const { resolveProjectNodeTarget } = await import("./config/project-routing.js");
-      const route = await resolveProjectNodeTarget(input.node);
+      const { resolveProjectNodeTarget, makeProjectBudgetChecker } =
+        await import("./config/project-routing.js");
+      const route = await resolveProjectNodeTarget(input.node, {
+        checkBudget: makeProjectBudgetChecker(),
+      });
       return { ok: true as const, ...route };
     }),
 

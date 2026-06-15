@@ -149,7 +149,7 @@ describe("resolveWorkloadName (remote / explicit-node path)", () => {
   test("errors when the target node has no workloads and synthesize is off", () => {
     const deps = remoteDeps("gpu1", [{ name: "elsewhere", node: "gpu2" }]);
     expect(() => resolveWorkloadName(undefined, resolved, undefined, deps)).toThrow(
-      "no live workloads; pass --name <workload>",
+      "no workloads assigned to node gpu1; pass --name <workload>",
     );
   });
 

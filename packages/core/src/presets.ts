@@ -10,6 +10,18 @@ import { PresetOverride, presetOverrideFields, splitTsvRow } from "./schemas.js"
 export type PresetName = "best" | "vision" | "balanced" | "fast";
 
 /**
+ * Runtime tuple of every preset name. `satisfies` pins the array to the
+ * canonical type so adding a preset to `PresetName` without extending
+ * the tuple fails to compile.
+ */
+export const PRESET_NAMES = [
+  "best",
+  "vision",
+  "balanced",
+  "fast",
+] as const satisfies readonly PresetName[];
+
+/**
  * Built-in mapping of (profile, preset) to the relative GGUF path that
  * should resolve for that slot. Mirrors the case ladder in the shell's
  * `_local_ai_profile_preset_model`. Values are the defaults shipped

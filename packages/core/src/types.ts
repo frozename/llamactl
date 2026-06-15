@@ -6,6 +6,18 @@
 export type MachineProfile = "mac-mini-16g" | "balanced" | "macbook-pro-48g";
 
 /**
+ * Runtime tuple of every machine profile. `satisfies` pins the array to
+ * the canonical type so adding a profile to `MachineProfile` without
+ * extending the tuple fails to compile — preventing hand-copied
+ * `z.enum([...])` lists from silently rejecting a new profile.
+ */
+export const MACHINE_PROFILES = [
+  "mac-mini-16g",
+  "balanced",
+  "macbook-pro-48g",
+] as const satisfies readonly MachineProfile[];
+
+/**
  * Which local AI provider is active. `llama.cpp` talks to a local
  * llama-server; `lmstudio` talks to LM Studio's OpenAI-compatible port.
  */

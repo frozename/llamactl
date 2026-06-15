@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { bench, env as envMod, SAFETY_TIERS } from "@llamactl/core";
+import { BUILT_IN_PLANNER_TOOLS, mergePlannerTools } from "@llamactl/remote";
 import { createOpenAICompatProvider } from "@nova/contracts";
 import {
   computeCostSnapshot,
@@ -149,12 +150,17 @@ export function registerOperatorTools(server: McpServer): void {
         });
         executor = createLlmExecutor({ provider, model: input.model });
       }
-      const plannerTools: PlannerToolDescriptor[] = (input.tools ?? []).map((t) => ({
+      const callerTools: PlannerToolDescriptor[] = (input.tools ?? []).map((t) => ({
         name: t.name,
         description: t.description,
         inputSchema: { type: "object" },
         tier: t.tier,
       }));
+      // Merge caller-supplied tools with the server-side built-ins so the
+      // direct-MCP planner sees the same catalog (composite.apply +
+      // workload.apply) as the tRPC operatorPlan path. Caller entries win
+      // on name collision, matching mergePlannerTools' contract.
+      const plannerTools = mergePlannerTools(callerTools, BUILT_IN_PLANNER_TOOLS);
       const history = input.history ?? [];
       const transcript = history
         .map((turn) => `${turn.role}: ${turn.text.trim()}`)

@@ -62,10 +62,8 @@ export {
   dispatchOpsChatTool,
   KNOWN_OPS_CHAT_TOOLS,
   OPS_CHAT_TOOLS,
-  type Surface as OpsChatSurface,
   type ToolTier as OpsChatTier,
   type OpsChatToolName,
-  toolSurfaces as opsChatToolSurfaces,
   toolTier as opsChatToolTier,
   type Surface,
   toolSurfaces,
@@ -142,7 +140,7 @@ export {
   removePipeline,
   writeLastRun,
 } from "./rag/pipeline/store.js";
-export { type AppRouter, router } from "./router.js";
+export { type AppRouter, BUILT_IN_PLANNER_TOOLS, mergePlannerTools, router } from "./router.js";
 export type {
   RemoveServiceOptions,
   RuntimeBackend,
