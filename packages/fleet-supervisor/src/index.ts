@@ -30,6 +30,7 @@ export * from "./node-probe.js";
 export * from "./peer-fetch.js";
 export { chooseBestNode, makePlacementDecision, scoreNodes } from "./placement.js";
 export * from "./policy.js";
+export * from "./slot-progress.js";
 export * from "./snapshot-reader.js";
 export * from "./status-reader.js";
 export * from "./types.js";

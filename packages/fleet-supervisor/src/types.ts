@@ -19,6 +19,35 @@ export interface CompletionProbeSnapshot {
   latencyMs: number;
 }
 
+/**
+ * One slot's progress, defensively extracted from a llama.cpp `GET /slots`
+ * response. The /slots schema varies across engine builds, so every field is
+ * nullable — we keep whatever numeric progress signal exists and leave the rest
+ * null. Read-only: this feeds the busy-aware-probing data plan, nothing acts on
+ * it yet. See docs/notes/2026-06-15-busy-aware-probing-design.md.
+ */
+export interface SlotProgress {
+  /** Slot id if present. */
+  id: number | null;
+  /** Raw `state` field if present (older llama.cpp: 0 idle / non-0 processing). */
+  state: number | null;
+  /** Whether the slot is processing: from `is_processing`, else derived from `state !== 0`. */
+  processing: boolean | null;
+  /** Prompt tokens processed so far (n_past / n_prompt_tokens_processed). */
+  nPast: number | null;
+  /** Tokens decoded/generated so far (n_decoded / tokens_predicted). */
+  nDecoded: number | null;
+}
+
+/** Result of one read-only slot-progress poll against a workload's `/slots`. */
+export interface SlotProgressReading {
+  /** True when the engine returned a parseable `/slots` array. */
+  available: boolean;
+  /** Why unavailable: HTTP status, parse failure, or endpoint rejection. */
+  reason?: string;
+  slots: SlotProgress[];
+}
+
 export interface WorkloadSnapshot {
   name: string;
   kind: "ModelHost" | "ModelRun";
@@ -173,6 +202,22 @@ export interface FleetLeaseElectionEntry {
   holder: string;
 }
 
+/**
+ * Read-only per-workload slot-progress sample (busy-aware-probing data plan).
+ * Emitted only when the supervisor runs with `--log-slot-progress`. Never drives
+ * a proposal — it exists to characterize busy-vs-wedged signatures before the
+ * busy-guard is designed. See docs/notes/2026-06-15-busy-aware-probing-design.md.
+ */
+export interface FleetSlotProgressEntry {
+  kind: "fleet-slot-progress";
+  ts: string;
+  node: string;
+  workload: string;
+  available: boolean;
+  reason?: string;
+  slots: SlotProgress[];
+}
+
 export interface MoveProposal {
   workload: string;
   fromNode: string;
@@ -193,4 +238,5 @@ export type FleetJournalEntry =
   | FleetPressureStatusEntry
   | FleetPlacementEntry
   | FleetMoveEntry
-  | FleetLeaseElectionEntry;
+  | FleetLeaseElectionEntry
+  | FleetSlotProgressEntry;
