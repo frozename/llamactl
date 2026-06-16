@@ -205,6 +205,22 @@ function aggregateMeanExactMatch(rowMetrics: Record<string, number>[]): Workload
   };
 }
 
+export function aggregateMeanPassAt1(rowMetrics: Record<string, number>[]): WorkloadAggregate {
+  let sum = 0;
+  let n = 0;
+  for (const metrics of rowMetrics) {
+    if (typeof metrics.pass === "number") {
+      sum += metrics.pass;
+      n += 1;
+    }
+  }
+  const mean = meanOrZero(sum, n);
+  return {
+    primary_metric_value: mean,
+    per_class_metrics_json: JSON.stringify({ mean_pass_at_1: mean, n_scored: n }),
+  };
+}
+
 function aggregateMeanNdcg5(rowMetrics: Record<string, number>[]): WorkloadAggregate {
   let sum = 0;
   let recallSum = 0;
@@ -269,6 +285,7 @@ function aggregateWorkloadMetrics(
   const metricName = workload.primary_metric_name;
   if (metricName === "composite") return aggregateComposite(rowMetrics);
   if (metricName === "mean_exact_match") return aggregateMeanExactMatch(rowMetrics);
+  if (metricName === "mean_pass_at_1") return aggregateMeanPassAt1(rowMetrics);
   if (metricName === "mean_ndcg5") return aggregateMeanNdcg5(rowMetrics);
   if (metricName === "mean_brief_quality") return aggregateMeanBriefQuality(rowMetrics);
   const aggregate = aggregateMetrics(predictions);
