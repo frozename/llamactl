@@ -6,6 +6,7 @@ import { renderCsvReport, renderMarkdownReport } from "./report.js";
 import { runMatrix } from "./runner.js";
 import { listCellRows } from "./store.js";
 import { codeHumanevalWorkload } from "./workloads/code-humaneval.js";
+import { codeMbppWorkload } from "./workloads/code-mbpp.js";
 import {
   kvWarmBenchWorkload,
   parseKvWarmBenchRunArgs,
@@ -166,6 +167,7 @@ function validateModelSpec(value: unknown): ModelSpec {
 function getKnownWorkloads(): Record<string, WorkloadEval> {
   return {
     "code-humaneval": codeHumanevalWorkload,
+    "code-mbpp": codeMbppWorkload,
     "kv-warm-bench": kvWarmBenchWorkload,
     "memory-efficacy-binary": memoryEfficacyBinaryWorkload,
     "memory-efficacy-4way": memoryEfficacy4wayWorkload,
