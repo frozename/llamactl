@@ -23,6 +23,12 @@ os.remove = None
 os.removedirs = None
 os.rmdir = None
 os.unlink = None
+os.fork = None
+os.forkpty = None
+os.posix_spawn = None
+os.execv = None
+os.execve = None
+os.execvp = None
 shutil.rmtree = None
 subprocess.Popen = None
 builtins.help = None
@@ -30,11 +36,64 @@ builtins.quit = None
 builtins.exit = None
 `;
 
-function extractFencedCode(completion: string): string | null {
-  const pythonFence = /```(?:python|py)[^\n]*\n([\s\S]*?)```/i.exec(completion);
-  if (pythonFence) return pythonFence[1] ?? "";
-  const genericFence = /```[^\n]*\n([\s\S]*?)```/.exec(completion);
-  return genericFence ? (genericFence[1] ?? "") : null;
+function definesEntryPoint(code: string, entryPoint: string): boolean {
+  const lines = code.split("\n");
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    const withoutAsync = trimmed.startsWith("async ") ? trimmed.slice(6).trimStart() : trimmed;
+    if (withoutAsync.startsWith("def ")) {
+      const rest = withoutAsync.slice(4).trimStart();
+      if (rest.startsWith(entryPoint)) {
+        const afterName = rest.slice(entryPoint.length).trimStart();
+        if (afterName.startsWith("(")) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function extractAllBlocks(completion: string, regex: RegExp): string[] {
+  const blocks: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(completion)) !== null) {
+    const content = match[1];
+    if (content !== undefined) {
+      blocks.push(content);
+    }
+  }
+  return blocks;
+}
+
+function pickBestBlock(blocks: string[], entryPoint: string): string | null {
+  if (blocks.length === 0) return null;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i];
+    if (block !== undefined && definesEntryPoint(block, entryPoint)) {
+      return block;
+    }
+  }
+  return blocks[blocks.length - 1] ?? null;
+}
+
+function extractFencedCode(completion: string, entryPoint: string): string | null {
+  const pythonBlocks = extractAllBlocks(completion, /```(?:python|py)[^\n]*\n([\s\S]*?)```/gi);
+  if (pythonBlocks.length > 0) {
+    return pickBestBlock(pythonBlocks, entryPoint);
+  }
+
+  const genericBlocks = extractAllBlocks(completion, /```[^\n]*\n([\s\S]*?)```/g);
+  if (genericBlocks.length > 0) {
+    return pickBestBlock(genericBlocks, entryPoint);
+  }
+
+  const unclosedMatch = /```(?:python|py)?[^\n]*\n([\s\S]*)$/i.exec(completion);
+  if (unclosedMatch) {
+    return unclosedMatch[1] ?? "";
+  }
+
+  return null;
 }
 
 function stderrTail(text: string): string | undefined {
@@ -44,11 +103,11 @@ function stderrTail(text: string): string | undefined {
 }
 
 export function extractCode(completion: string, entryPoint: string, promptSource: string): string {
-  const extracted = extractFencedCode(completion) ?? completion;
-  if (extracted.includes(`def ${entryPoint}`)) {
-    return extracted;
+  const result = extractFencedCode(completion, entryPoint) ?? completion;
+  if (definesEntryPoint(result, entryPoint)) {
+    return result;
   }
-  return `${promptSource}${extracted}`;
+  return `${promptSource}${result}`;
 }
 
 export function buildProgram(
@@ -79,11 +138,15 @@ export async function runCandidate(
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
     ]);
+
     if (exitCode === 0) {
       return { passed: true, status: "pass" };
     }
-    if (proc.signalCode !== null) {
+    if (proc.signalCode === "SIGKILL") {
       return { passed: false, status: "timeout", detail: stderrTail(stderr) };
+    }
+    if (proc.signalCode !== null) {
+      return { passed: false, status: "fail", detail: stderrTail(stderr) };
     }
     return { passed: false, status: "fail", detail: stderrTail(stderr) };
   } catch (err) {
@@ -98,7 +161,7 @@ export const codeHumanevalWorkload: WorkloadEval = {
   name: "code-humaneval",
   corpus_path: "packages/eval/corpora/code-humaneval/v0/test.jsonl",
   primary_metric_name: "mean_pass_at_1",
-  maxTokens: 768,
+  maxTokens: 1024,
   temperature: 0,
   prompt_builder: (row) => {
     const r = row as HumanEvalRow;
@@ -118,6 +181,11 @@ export const codeHumanevalWorkload: WorkloadEval = {
     const code = extractCode(completion, r.entry_point, r.prompt);
     const program = buildProgram(code, r.test, r.entry_point);
     const result = await runCandidate(program);
+
+    if (result.status === "error") {
+      throw new Error(`code-humaneval sandbox error: ${result.detail ?? "unknown"}`);
+    }
+
     return {
       prediction: result.status,
       gold: "pass",
