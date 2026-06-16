@@ -17,6 +17,13 @@ export interface CompletionProbeSnapshot {
   /** Wedge counter (5xx/timeout despite /health 200). The degradation detector reads this. */
   consecutiveFailures: number;
   latencyMs: number;
+  reason?: "busy" | "stall-below-threshold" | "wedge" | "idle-wedge";
+  effectiveTimeoutMs?: number;
+  /** Forensic: the busy-guard's observed slot counters + stall count when it ran on a
+   *  wedge, so a (now-prevented) false-recycle is auditable from the journal. */
+  nPast?: number | null;
+  nDecoded?: number | null;
+  stallChecks?: number;
 }
 
 /**

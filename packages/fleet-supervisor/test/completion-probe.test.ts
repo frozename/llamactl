@@ -3,7 +3,12 @@ import { describe, expect, it } from "bun:test";
 
 import type { CompletionProbeConfig } from "../src/completion-probe.js";
 
-import { probeCompletion } from "../src/completion-probe.js";
+import {
+  effectiveTimeout,
+  percentile,
+  probeCompletion,
+  pushLatencySample,
+} from "../src/completion-probe.js";
 
 const CONFIG: CompletionProbeConfig = {
   path: "/v1/chat/completions",
@@ -128,5 +133,64 @@ describe("probeCompletion", () => {
     });
     expect(result.classification).toBe("misconfigured");
     expect(result.consecutiveFailures).toBe(2);
+  });
+});
+
+describe("adaptive completion probe timeout", () => {
+  it("uses the base timeout until the minimum sample count is reached", () => {
+    expect(
+      effectiveTimeout({
+        samples: [100, 200, 300, 400],
+        base: 500,
+        k: 3,
+        max: 600_000,
+        minSamples: 5,
+      }),
+    ).toBe(500);
+  });
+
+  it("scales p95 by k once enough samples exist", () => {
+    expect(percentile([100, 200, 300, 400, 500], 0.95)).toBe(500);
+    expect(
+      effectiveTimeout({
+        samples: [100, 200, 300, 400, 500],
+        base: 500,
+        k: 3,
+        max: 600_000,
+        minSamples: 5,
+      }),
+    ).toBe(1_500);
+  });
+
+  it("clamps the effective timeout up to the base", () => {
+    expect(
+      effectiveTimeout({
+        samples: [50, 60, 70, 80, 90],
+        base: 500,
+        k: 3,
+        max: 600_000,
+        minSamples: 5,
+      }),
+    ).toBe(500);
+  });
+
+  it("clamps the effective timeout down to the maximum", () => {
+    expect(
+      effectiveTimeout({
+        samples: [100_000, 200_000, 300_000, 400_000, 500_000],
+        base: 500,
+        k: 3,
+        max: 600_000,
+        minSamples: 5,
+      }),
+    ).toBe(600_000);
+  });
+
+  it("keeps a bounded FIFO latency ring", () => {
+    const ring = [100, 200, 300];
+
+    pushLatencySample(ring, 400, 3);
+
+    expect(ring).toEqual([200, 300, 400]);
   });
 });

@@ -203,6 +203,13 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     consecutiveFailures: new Map<string, number>(),
     tickCounter: new Map<string, number>(),
     lastResult: new Map<string, CompletionProbeSnapshot>(),
+    lastSlotProgress: new Map<
+      string,
+      { nPast: number | null; nDecoded: number | null; stallChecks: number; lastAdvanceAt: number }
+    >(),
+    latencySamples: new Map<string, number[]>(),
+    lastRevision: new Map<string, string | null>(),
+    readSlotProgress,
   };
   const state: TickState = {
     consecutiveClearTicks: 0,
