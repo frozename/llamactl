@@ -160,6 +160,26 @@ function meanOrZero(sum: number, n: number): number {
   return n > 0 ? sum / n : 0;
 }
 
+function aggregateSingleMetricMean(
+  rowMetrics: Record<string, number>[],
+  metricKey: string,
+  meanLabel: string,
+): WorkloadAggregate {
+  let sum = 0;
+  let n = 0;
+  for (const metrics of rowMetrics) {
+    if (typeof metrics[metricKey] === "number") {
+      sum += metrics[metricKey];
+      n += 1;
+    }
+  }
+  const mean = meanOrZero(sum, n);
+  return {
+    primary_metric_value: mean,
+    per_class_metrics_json: JSON.stringify({ [meanLabel]: mean, n_scored: n }),
+  };
+}
+
 function aggregateComposite(rowMetrics: Record<string, number>[]): WorkloadAggregate {
   const sums = {
     intent_preservation: 0,
@@ -190,35 +210,11 @@ function aggregateComposite(rowMetrics: Record<string, number>[]): WorkloadAggre
 }
 
 function aggregateMeanExactMatch(rowMetrics: Record<string, number>[]): WorkloadAggregate {
-  let sum = 0;
-  let n = 0;
-  for (const metrics of rowMetrics) {
-    if (typeof metrics.exact_match === "number") {
-      sum += metrics.exact_match;
-      n += 1;
-    }
-  }
-  const mean = meanOrZero(sum, n);
-  return {
-    primary_metric_value: mean,
-    per_class_metrics_json: JSON.stringify({ mean_exact_match: mean, n_scored: n }),
-  };
+  return aggregateSingleMetricMean(rowMetrics, "exact_match", "mean_exact_match");
 }
 
 export function aggregateMeanPassAt1(rowMetrics: Record<string, number>[]): WorkloadAggregate {
-  let sum = 0;
-  let n = 0;
-  for (const metrics of rowMetrics) {
-    if (typeof metrics.pass === "number") {
-      sum += metrics.pass;
-      n += 1;
-    }
-  }
-  const mean = meanOrZero(sum, n);
-  return {
-    primary_metric_value: mean,
-    per_class_metrics_json: JSON.stringify({ mean_pass_at_1: mean, n_scored: n }),
-  };
+  return aggregateSingleMetricMean(rowMetrics, "pass", "mean_pass_at_1");
 }
 
 function aggregateMeanNdcg5(rowMetrics: Record<string, number>[]): WorkloadAggregate {
