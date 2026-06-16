@@ -62,9 +62,12 @@ export interface CompletionProbeState {
   lastResult: Map<string, CompletionProbeSnapshot>;
   lastSlotProgress?: Map<
     string,
-    { nPast: number | null; nDecoded: number | null; stallChecks: number }
+    { nPast: number | null; nDecoded: number | null; stallChecks: number; lastAdvanceAt: number }
   >;
   latencySamples?: Map<string, number[]>;
+  /** Last-seen server boot revision per workload; a change with /health still 200
+   *  invalidates the stale latency ring (a fast restart that never dropped health). */
+  lastRevision?: Map<string, string | null>;
   /** Injectable for tests; defaults to the real completion probe. */
   probe?: typeof defaultProbeCompletion;
   readSlotProgress?: typeof defaultReadSlotProgress;
@@ -84,6 +87,29 @@ function clearCompletionProbeState(state: CompletionProbeState, name: string): v
   state.lastResult.delete(name);
   state.lastSlotProgress?.delete(name);
   state.latencySamples?.delete(name);
+  state.lastRevision?.delete(name);
+}
+
+// A fast restart that never dropped /health 200 leaves a stale, possibly inflated
+// latency ring (and stale slot counters) that would mask a wedge on the new boot. The
+// revision boot-token flips on restart — when it changes, drop the stale ring before it
+// widens the adaptive timeout for the new model.
+function invalidateStaleRingOnRestart(
+  state: CompletionProbeState,
+  name: string,
+  revision: string | null,
+): void {
+  if (!state.lastRevision) return;
+  const prevRevision = state.lastRevision.get(name);
+  if (
+    typeof prevRevision === "string" &&
+    typeof revision === "string" &&
+    prevRevision !== revision
+  ) {
+    state.latencySamples?.delete(name);
+    state.lastSlotProgress?.delete(name);
+  }
+  state.lastRevision.set(name, revision);
 }
 
 async function applyCompletionBusyGuard(
@@ -93,14 +119,21 @@ async function applyCompletionBusyGuard(
   state: CompletionProbeState,
   deps: ProbeFnDeps,
   priorConsecutiveFailures: number,
-): Promise<{ consecutiveFailures: number; reason?: CompletionProbeSnapshot["reason"] }> {
+  effectiveTimeoutMs: number,
+): Promise<{
+  consecutiveFailures: number;
+  reason?: CompletionProbeSnapshot["reason"];
+  progress?: { nPast: number | null; nDecoded: number | null; stallChecks: number };
+}> {
   if (result.classification !== "wedge" || !state.readSlotProgress) {
     return { consecutiveFailures: result.consecutiveFailures };
   }
 
   const reading = await state.readSlotProgress(target.endpoint, {
     fetch: deps.fetch,
-    timeoutMs: config.timeoutMs,
+    // Use the generous (effective) bound, not the small base, so the /slots read
+    // itself does not time out on the very busy server mechanism A exists to judge.
+    timeoutMs: Math.max(config.timeoutMs, effectiveTimeoutMs),
     allowPublicEndpoints: state.allowPublicEndpoints,
   });
   const guarded = applyBusyGuard({
@@ -109,11 +142,25 @@ async function applyCompletionBusyGuard(
     reading,
     lastProgress: state.lastSlotProgress?.get(target.name),
     busyStallChecks: config.busyStallChecks ?? 2,
+    now: Date.now(),
+    minStallIntervalMs: config.minStallIntervalMs ?? 8000,
   });
   if (guarded.nextProgress) {
     state.lastSlotProgress?.set(target.name, guarded.nextProgress);
   }
-  return { consecutiveFailures: guarded.consecutiveFailures, reason: guarded.reason };
+  return {
+    consecutiveFailures: guarded.consecutiveFailures,
+    reason: guarded.reason,
+    ...(guarded.nextProgress
+      ? {
+          progress: {
+            nPast: guarded.nextProgress.nPast,
+            nDecoded: guarded.nextProgress.nDecoded,
+            stallChecks: guarded.nextProgress.stallChecks,
+          },
+        }
+      : {}),
+  };
 }
 
 async function runCompletionProbe(
@@ -141,6 +188,8 @@ async function runCompletionProbe(
     const last = state.lastResult.get(target.name);
     return last ? { ...last, ran: false } : undefined;
   }
+
+  invalidateStaleRingOnRestart(state, target.name, health.revision);
 
   const probe = state.probe ?? defaultProbeCompletion;
   const priorConsecutiveFailures = state.consecutiveFailures.get(target.name) ?? 0;
@@ -172,6 +221,7 @@ async function runCompletionProbe(
     state,
     deps,
     priorConsecutiveFailures,
+    effectiveTimeoutMs,
   );
   if (result.ok) {
     state.lastSlotProgress?.delete(target.name);
@@ -186,6 +236,13 @@ async function runCompletionProbe(
     latencyMs: result.latencyMs,
     ...(guarded.reason ? { reason: guarded.reason } : {}),
     ...(sampleCountBeforeProbe >= (config.minSamples ?? 5) ? { effectiveTimeoutMs } : {}),
+    ...(guarded.progress
+      ? {
+          nPast: guarded.progress.nPast,
+          nDecoded: guarded.progress.nDecoded,
+          stallChecks: guarded.progress.stallChecks,
+        }
+      : {}),
   };
   state.lastResult.set(target.name, snapshot);
   return snapshot;

@@ -23,6 +23,7 @@ export interface CompletionProbeConfig {
   minSamples?: number;
   latencyRingSize?: number;
   busyStallChecks?: number;
+  minStallIntervalMs?: number;
 }
 
 export type CompletionProbeClassification = "ok" | "wedge" | "misconfigured";
@@ -50,6 +51,10 @@ export interface BusyGuardProgress {
   nPast: number | null;
   nDecoded: number | null;
   stallChecks: number;
+  /** Wall-clock ms of the last observed advance/activity; the stall window is
+   *  measured from here so two fast polls inside one prompt-eval batch gap can't
+   *  both count as a stall. */
+  lastAdvanceAt: number;
 }
 
 export type BusyGuardReason = "busy" | "stall-below-threshold" | "wedge" | "idle-wedge";
@@ -60,6 +65,12 @@ export interface BusyGuardInput {
   reading: SlotProgressReading;
   lastProgress: BusyGuardProgress | undefined;
   busyStallChecks: number;
+  /** Wall-clock ms now (Date.now()), used to gate the stall window. */
+  now: number;
+  /** Minimum elapsed wall-clock since the last advance before a stalled probe may
+   *  increment the stall counter. Must exceed one prompt-eval batch interval so a
+   *  healthy mid-prompt-eval flat read is never mistaken for a wedge. */
+  minStallIntervalMs: number;
 }
 
 export interface BusyGuardResult {
@@ -99,7 +110,9 @@ export function effectiveTimeout(input: {
 }): number {
   const { samples, base, k, max, minSamples } = input;
   if (samples.length < minSamples) return base;
-  return Math.min(max, Math.max(base, percentile(samples, 0.95) * k));
+  // base is the guaranteed floor (max() is the OUTER op): even if a misconfigured
+  // base exceeds max, the probe never tightens below its configured base timeout.
+  return Math.max(base, Math.min(max, percentile(samples, 0.95) * k));
 }
 
 export function pushLatencySample(ring: number[], value: number, cap: number): void {
@@ -129,21 +142,27 @@ function maxProgress(reading: SlotProgressReading): {
   return { processing, ambiguousProcessing, nPast, nDecoded };
 }
 
-function advanced(current: BusyGuardProgress, last: BusyGuardProgress): boolean {
+type ProgressCounters = { nPast: number | null; nDecoded: number | null };
+
+// Mechanism A treats EITHER counter advancing as progress, so a partial wedge that
+// keeps one counter ticking (e.g. nPast++ each poll) while the other is frozen and no
+// tokens reach the client is NOT caught here — mechanism D (adaptive timeout) is the
+// backstop for that mode.
+function advanced(current: ProgressCounters, last: ProgressCounters): boolean {
   return (
     (current.nPast !== null && last.nPast !== null && current.nPast > last.nPast) ||
     (current.nDecoded !== null && last.nDecoded !== null && current.nDecoded > last.nDecoded)
   );
 }
 
-function lowered(current: BusyGuardProgress, last: BusyGuardProgress): boolean {
+function lowered(current: ProgressCounters, last: ProgressCounters): boolean {
   return (
     (current.nPast !== null && last.nPast !== null && current.nPast < last.nPast) ||
     (current.nDecoded !== null && last.nDecoded !== null && current.nDecoded < last.nDecoded)
   );
 }
 
-function ambiguous(current: BusyGuardProgress, last: BusyGuardProgress): boolean {
+function ambiguous(current: ProgressCounters, last: ProgressCounters): boolean {
   return (
     (current.nPast === null && last.nPast !== null) ||
     (current.nDecoded === null && last.nDecoded !== null)
@@ -151,7 +170,12 @@ function ambiguous(current: BusyGuardProgress, last: BusyGuardProgress): boolean
 }
 
 export function applyBusyGuard(input: BusyGuardInput): BusyGuardResult {
-  const { classification, prior, reading, lastProgress, busyStallChecks } = input;
+  const { classification, prior, reading, lastProgress, busyStallChecks, now, minStallIntervalMs } =
+    input;
+  // Non-wedge classifications return the caller-supplied `prior` unchanged. The
+  // ok->0 reset is the loop caller's responsibility (loop-helpers.ts), not this
+  // reducer's — the two paths diverge deliberately so the guard only ever decides
+  // the wedge-vs-busy question.
   if (classification !== "wedge") {
     return { consecutiveFailures: prior, reason: undefined, nextProgress: lastProgress };
   }
@@ -171,30 +195,56 @@ export function applyBusyGuard(input: BusyGuardInput): BusyGuardResult {
     };
   }
 
-  const nextProgress = {
-    nPast: progress.nPast,
-    nDecoded: progress.nDecoded,
-    stallChecks: 0,
-  };
-  if (!lastProgress) {
-    return { consecutiveFailures: prior, reason: "busy", nextProgress };
-  }
-  if (lowered(nextProgress, lastProgress) || ambiguous(nextProgress, lastProgress)) {
-    return { consecutiveFailures: prior, reason: "busy", nextProgress };
-  }
-  if (advanced(nextProgress, lastProgress)) {
-    return { consecutiveFailures: prior, reason: "busy", nextProgress };
+  const observed = { nPast: progress.nPast, nDecoded: progress.nDecoded };
+  // First wedge while processing, or any activity (advance / lower / counter-now-null)
+  // counts as a fresh advance: reset the stall window to `now` and hold (busy).
+  if (
+    !lastProgress ||
+    advanced(observed, lastProgress) ||
+    lowered(observed, lastProgress) ||
+    ambiguous(observed, lastProgress)
+  ) {
+    return {
+      consecutiveFailures: prior,
+      reason: "busy",
+      nextProgress: { ...observed, stallChecks: 0, lastAdvanceAt: now },
+    };
   }
 
+  // Stalled: processing but counters flat vs the last reading. The stall counter may
+  // only advance once at least minStallIntervalMs of wall clock has elapsed since the
+  // last real advance — long enough to span a healthy prompt-eval inter-batch gap,
+  // where nPast/nDecoded legitimately read flat. Two fast polls in one gap therefore
+  // do NOT both count (the false-recycle fix). lastAdvanceAt is carried, never reset,
+  // so the window keeps accumulating across stalled probes.
+  if (now - lastProgress.lastAdvanceAt < minStallIntervalMs) {
+    return {
+      consecutiveFailures: prior,
+      reason: "stall-below-threshold",
+      nextProgress: {
+        ...observed,
+        stallChecks: lastProgress.stallChecks,
+        lastAdvanceAt: lastProgress.lastAdvanceAt,
+      },
+    };
+  }
   const stallChecks = lastProgress.stallChecks + 1;
   if (stallChecks < busyStallChecks) {
     return {
       consecutiveFailures: prior,
       reason: "stall-below-threshold",
-      nextProgress: { ...nextProgress, stallChecks },
+      nextProgress: { ...observed, stallChecks, lastAdvanceAt: lastProgress.lastAdvanceAt },
     };
   }
-  return { consecutiveFailures: prior + 1, reason: "wedge", nextProgress };
+  // Genuine wedge: processing, no progress for >= minStallIntervalMs across
+  // >= busyStallChecks checks. Keep lastAdvanceAt (do not reset) so each subsequent
+  // fully-stalled probe keeps incrementing at a steady cadence rather than resetting
+  // the accounting on every increment.
+  return {
+    consecutiveFailures: prior + 1,
+    reason: "wedge",
+    nextProgress: { ...observed, stallChecks, lastAdvanceAt: lastProgress.lastAdvanceAt },
+  };
 }
 
 export async function probeCompletion(

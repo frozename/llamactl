@@ -19,6 +19,11 @@ export interface CompletionProbeSnapshot {
   latencyMs: number;
   reason?: "busy" | "stall-below-threshold" | "wedge" | "idle-wedge";
   effectiveTimeoutMs?: number;
+  /** Forensic: the busy-guard's observed slot counters + stall count when it ran on a
+   *  wedge, so a (now-prevented) false-recycle is auditable from the journal. */
+  nPast?: number | null;
+  nDecoded?: number | null;
+  stallChecks?: number;
 }
 
 /**

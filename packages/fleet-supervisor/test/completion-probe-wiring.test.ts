@@ -183,7 +183,12 @@ describe("makeDefaultProbeFn completion wiring", () => {
     });
     const state = freshState();
     state.consecutiveFailures.set("granite-judge", 1);
-    state.lastSlotProgress.set("granite-judge", { nPast: 4096, nDecoded: 128, stallChecks: 0 });
+    state.lastSlotProgress.set("granite-judge", {
+      nPast: 4096,
+      nDecoded: 128,
+      stallChecks: 0,
+      lastAdvanceAt: 0,
+    });
 
     const probeFn = makeDefaultProbeFn({
       fetch: healthyFetch() as unknown as typeof fetch,
@@ -201,13 +206,15 @@ describe("makeDefaultProbeFn completion wiring", () => {
       consecutiveFailures: 1,
       latencyMs: 500,
       reason: "busy",
-    });
-    expect(state.consecutiveFailures.get("granite-judge")).toBe(1);
-    expect(state.lastSlotProgress.get("granite-judge")).toEqual({
+      // F3: forensic slot counters surfaced on the snapshot when the guard ran.
       nPast: 4096,
       nDecoded: 200,
       stallChecks: 0,
     });
+    expect(state.consecutiveFailures.get("granite-judge")).toBe(1);
+    const stored = state.lastSlotProgress.get("granite-judge");
+    expect(stored).toMatchObject({ nPast: 4096, nDecoded: 200, stallChecks: 0 });
+    expect(typeof stored?.lastAdvanceAt).toBe("number");
   });
 
   it("feeds the guarded snapshot counter to degradation policy", async () => {
@@ -286,7 +293,12 @@ describe("makeDefaultProbeFn completion wiring", () => {
     });
     const state = freshState();
     state.consecutiveFailures.set("granite-judge", 1);
-    state.lastSlotProgress.set("granite-judge", { nPast: 4096, nDecoded: 128, stallChecks: 1 });
+    state.lastSlotProgress.set("granite-judge", {
+      nPast: 4096,
+      nDecoded: 128,
+      stallChecks: 1,
+      lastAdvanceAt: 0,
+    });
 
     const probeFn = makeDefaultProbeFn({
       fetch: healthyFetch() as unknown as typeof fetch,
@@ -313,7 +325,12 @@ describe("makeDefaultProbeFn completion wiring", () => {
     const state = freshState();
     state.consecutiveFailures.set("granite-judge", 1);
     state.tickCounter.set("granite-judge", 1);
-    state.lastSlotProgress.set("granite-judge", { nPast: 4096, nDecoded: 128, stallChecks: 1 });
+    state.lastSlotProgress.set("granite-judge", {
+      nPast: 4096,
+      nDecoded: 128,
+      stallChecks: 1,
+      lastAdvanceAt: 0,
+    });
     state.latencySamples.set("granite-judge", [80, 90, 100]);
 
     const downFetch = async (): Promise<Response> => new Response("down", { status: 503 });
@@ -389,5 +406,93 @@ describe("makeDefaultProbeFn completion wiring", () => {
     await probeFn(TARGET);
 
     expect(state.latencySamples.get("granite-judge")).toEqual([100, 200, 300, 400, 500]);
+  });
+
+  it("reads /slots with the generous effective timeout, not the small base (M1)", async () => {
+    let slotsTimeout = -1;
+    const fakeProbe = async (
+      _endpoint: string,
+      opts: { priorConsecutiveFailures?: number },
+    ): Promise<CompletionProbeResult> => ({
+      ok: false,
+      status: null,
+      latencyMs: 500,
+      classification: "wedge",
+      consecutiveFailures: (opts.priorConsecutiveFailures ?? 0) + 1,
+    });
+    const fakeSlots = async (
+      _endpoint: string,
+      opts?: { timeoutMs?: number },
+    ): Promise<SlotProgressReading> => {
+      slotsTimeout = opts?.timeoutMs ?? -1;
+      return {
+        available: true,
+        slots: [{ id: 0, state: 1, processing: true, nPast: 5000, nDecoded: 300 }],
+      };
+    };
+    const state = freshState();
+    // 5 samples >= minSamples -> p95 2000 * k 3 = 6000 effective timeout (> base 500)
+    state.latencySamples.set("granite-judge", [2_000, 2_000, 2_000, 2_000, 2_000]);
+
+    const probeFn = makeDefaultProbeFn({
+      fetch: healthyFetch() as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+      completion: { ...state, probe: fakeProbe, readSlotProgress: fakeSlots },
+    });
+
+    await probeFn({
+      ...TARGET,
+      completionProbe: { ...PROBE_CONFIG, k: 3, minSamples: 5, maxTimeoutMs: 600_000 },
+    });
+
+    expect(slotsTimeout).toBe(6_000);
+  });
+
+  it("clears the stale latency ring when the revision changes with /health still 200 (M2)", async () => {
+    const fakeProbe = async (
+      _endpoint: string,
+      opts: { priorConsecutiveFailures?: number },
+    ): Promise<CompletionProbeResult> => ({
+      ok: false,
+      status: null,
+      latencyMs: 500,
+      classification: "wedge",
+      consecutiveFailures: (opts.priorConsecutiveFailures ?? 0) + 1,
+    });
+    const fetchWithCreated =
+      (created: number) =>
+      async (url: string): Promise<Response> => {
+        if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+        if (url.endsWith("/v1/models"))
+          return new Response(JSON.stringify({ data: [{ id: "granite-3b", created }] }), {
+            status: 200,
+          });
+        return new Response("", { status: 404 });
+      };
+    const state = { ...freshState(), lastRevision: new Map<string, string | null>() };
+    const target = { ...TARGET, completionProbe: { ...PROBE_CONFIG, everyNTicks: 1 } };
+
+    await makeDefaultProbeFn({
+      fetch: fetchWithCreated(1_000) as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+      completion: { ...state, probe: fakeProbe },
+    })(target);
+    expect(state.lastRevision.get("granite-judge")).toBe("1000");
+
+    // a stale ring from the old boot, then the server restarts (revision flips) without
+    // /health ever dropping — the ring must be invalidated so it can't mask a wedge.
+    state.latencySamples.set("granite-judge", [9_000, 9_000, 9_000, 9_000, 9_000]);
+
+    await makeDefaultProbeFn({
+      fetch: fetchWithCreated(2_000) as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+      completion: { ...state, probe: fakeProbe },
+    })(target);
+
+    expect(state.lastRevision.get("granite-judge")).toBe("2000");
+    expect(state.latencySamples.has("granite-judge")).toBe(false);
   });
 });
