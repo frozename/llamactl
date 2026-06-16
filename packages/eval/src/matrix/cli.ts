@@ -5,6 +5,7 @@ import type { ModelSpec, WorkloadEval } from "./types.js";
 import { renderCsvReport, renderMarkdownReport } from "./report.js";
 import { runMatrix } from "./runner.js";
 import { listCellRows } from "./store.js";
+import { codeHumanevalWorkload } from "./workloads/code-humaneval.js";
 import {
   kvWarmBenchWorkload,
   parseKvWarmBenchRunArgs,
@@ -164,17 +165,18 @@ function validateModelSpec(value: unknown): ModelSpec {
 
 function getKnownWorkloads(): Record<string, WorkloadEval> {
   return {
+    "code-humaneval": codeHumanevalWorkload,
+    "kv-warm-bench": kvWarmBenchWorkload,
     "memory-efficacy-binary": memoryEfficacyBinaryWorkload,
     "memory-efficacy-4way": memoryEfficacy4wayWorkload,
     "memory-efficacy-4way-balanced": memoryEfficacy4wayBalancedWorkload,
-    "task-refiner-rubric": taskRefinerRubricWorkload,
-    "tool-call-grammar": toolCallGrammarWorkload,
     "memory-recall": memoryRecallWorkload,
     "project-brief-gen": projectBriefGenWorkload,
-    "kv-warm-bench": kvWarmBenchWorkload,
-    "reasoning-mmlu-pro": reasoningMmluProWorkload,
-    "reasoning-gsm8k": reasoningGsm8kWorkload,
     "reasoning-arc": reasoningArcWorkload,
+    "reasoning-gsm8k": reasoningGsm8kWorkload,
+    "reasoning-mmlu-pro": reasoningMmluProWorkload,
+    "task-refiner-rubric": taskRefinerRubricWorkload,
+    "tool-call-grammar": toolCallGrammarWorkload,
   };
 }
 
