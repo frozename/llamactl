@@ -72,6 +72,43 @@ ${GOOD_FUNCTION}\`\`\``;
 
     expect(code).toBe(GOOD_FUNCTION);
   });
+
+  test("prepends the prompt when the body contains a nested helper with same prefix", () => {
+    // entry_point is "has_close_elements"
+    // body contains "def has_close_elements_inner"
+    const bodyWithNested = `    def has_close_elements_inner():
+        return True
+    return has_close_elements_inner()`;
+
+    const code = extractCode(bodyWithNested, ROW.entry_point, ROW.prompt);
+
+    // Should prepend because "def has_close_elements" (the entry point) is NOT defined at top level
+    expect(code).toBe(`${ROW.prompt}${bodyWithNested}`);
+  });
+
+  test("extracts the last python block that defines the entry point", () => {
+    const completion = `Here is an example:
+\`\`\`python
+def other_function():
+    pass
+\`\`\`
+And the solution:
+\`\`\`python
+${GOOD_FUNCTION}\`\`\``;
+
+    const code = extractCode(completion, ROW.entry_point, ROW.prompt);
+
+    expect(code).toBe(GOOD_FUNCTION);
+  });
+
+  test("extracts code from an unclosed python fence", () => {
+    const completion = `\`\`\`python
+${GOOD_FUNCTION}`; // No closing fence
+
+    const code = extractCode(completion, ROW.entry_point, ROW.prompt);
+
+    expect(code).toBe(GOOD_FUNCTION);
+  });
 });
 
 describe("HumanEval candidate execution", () => {
