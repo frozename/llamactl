@@ -4,6 +4,8 @@
 // repeated 5xx-despite-health-200 must be detected here and turned into a
 // restart proposal by the policy layer.
 
+import type { SlotProgressReading } from "./types.js";
+
 import { InvalidEndpointError, validateProbeEndpoint } from "./workload-probe.js";
 
 export interface CompletionProbeConfig {
@@ -16,6 +18,11 @@ export interface CompletionProbeConfig {
   timeoutMs: number;
   /** Run the probe every N supervisor ticks (load control for single-slot servers). */
   everyNTicks: number;
+  k?: number;
+  maxTimeoutMs?: number;
+  minSamples?: number;
+  latencyRingSize?: number;
+  busyStallChecks?: number;
 }
 
 export type CompletionProbeClassification = "ok" | "wedge" | "misconfigured";
@@ -39,6 +46,28 @@ export interface CompletionProbeResult {
   consecutiveFailures: number;
 }
 
+export interface BusyGuardProgress {
+  nPast: number | null;
+  nDecoded: number | null;
+  stallChecks: number;
+}
+
+export type BusyGuardReason = "busy" | "stall-below-threshold" | "wedge" | "idle-wedge";
+
+export interface BusyGuardInput {
+  classification: CompletionProbeClassification;
+  prior: number;
+  reading: SlotProgressReading;
+  lastProgress: BusyGuardProgress | undefined;
+  busyStallChecks: number;
+}
+
+export interface BusyGuardResult {
+  consecutiveFailures: number;
+  reason?: BusyGuardReason;
+  nextProgress?: BusyGuardProgress;
+}
+
 // 2xx is healthy. 4xx is a configuration error (wrong model/path/auth) — recycling
 // won't fix it, so it must never drive a restart. Everything else (5xx, and the
 // anomalous 1xx/3xx on a POST completion) is a wedge signal.
@@ -52,6 +81,120 @@ function nextFailures(prior: number, classification: CompletionProbeClassificati
   if (classification === "ok") return 0;
   if (classification === "wedge") return prior + 1;
   return prior;
+}
+
+export function percentile(samples: number[], p: number): number {
+  if (samples.length === 0) return 0;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1));
+  return sorted[index] ?? 0;
+}
+
+export function effectiveTimeout(input: {
+  samples: number[];
+  base: number;
+  k: number;
+  max: number;
+  minSamples: number;
+}): number {
+  const { samples, base, k, max, minSamples } = input;
+  if (samples.length < minSamples) return base;
+  return Math.min(max, Math.max(base, percentile(samples, 0.95) * k));
+}
+
+export function pushLatencySample(ring: number[], value: number, cap: number): void {
+  ring.push(value);
+  while (ring.length > cap) {
+    ring.shift();
+  }
+}
+
+function maxProgress(reading: SlotProgressReading): {
+  processing: boolean;
+  ambiguousProcessing: boolean;
+  nPast: number | null;
+  nDecoded: number | null;
+} {
+  let processing = false;
+  let ambiguousProcessing = false;
+  let nPast: number | null = null;
+  let nDecoded: number | null = null;
+  for (const slot of reading.slots) {
+    if (slot.processing === null) ambiguousProcessing = true;
+    if (slot.processing !== true) continue;
+    processing = true;
+    if (slot.nPast !== null) nPast = Math.max(nPast ?? slot.nPast, slot.nPast);
+    if (slot.nDecoded !== null) nDecoded = Math.max(nDecoded ?? slot.nDecoded, slot.nDecoded);
+  }
+  return { processing, ambiguousProcessing, nPast, nDecoded };
+}
+
+function advanced(current: BusyGuardProgress, last: BusyGuardProgress): boolean {
+  return (
+    (current.nPast !== null && last.nPast !== null && current.nPast > last.nPast) ||
+    (current.nDecoded !== null && last.nDecoded !== null && current.nDecoded > last.nDecoded)
+  );
+}
+
+function lowered(current: BusyGuardProgress, last: BusyGuardProgress): boolean {
+  return (
+    (current.nPast !== null && last.nPast !== null && current.nPast < last.nPast) ||
+    (current.nDecoded !== null && last.nDecoded !== null && current.nDecoded < last.nDecoded)
+  );
+}
+
+function ambiguous(current: BusyGuardProgress, last: BusyGuardProgress): boolean {
+  return (
+    (current.nPast === null && last.nPast !== null) ||
+    (current.nDecoded === null && last.nDecoded !== null)
+  );
+}
+
+export function applyBusyGuard(input: BusyGuardInput): BusyGuardResult {
+  const { classification, prior, reading, lastProgress, busyStallChecks } = input;
+  if (classification !== "wedge") {
+    return { consecutiveFailures: prior, reason: undefined, nextProgress: lastProgress };
+  }
+  if (!reading.available) {
+    return { consecutiveFailures: prior, reason: undefined, nextProgress: lastProgress };
+  }
+
+  const progress = maxProgress(reading);
+  if (!progress.processing) {
+    if (progress.ambiguousProcessing) {
+      return { consecutiveFailures: prior, reason: undefined, nextProgress: lastProgress };
+    }
+    return {
+      consecutiveFailures: prior + 1,
+      reason: "idle-wedge",
+      nextProgress: lastProgress,
+    };
+  }
+
+  const nextProgress = {
+    nPast: progress.nPast,
+    nDecoded: progress.nDecoded,
+    stallChecks: 0,
+  };
+  if (!lastProgress) {
+    return { consecutiveFailures: prior, reason: "busy", nextProgress };
+  }
+  if (lowered(nextProgress, lastProgress) || ambiguous(nextProgress, lastProgress)) {
+    return { consecutiveFailures: prior, reason: "busy", nextProgress };
+  }
+  if (advanced(nextProgress, lastProgress)) {
+    return { consecutiveFailures: prior, reason: "busy", nextProgress };
+  }
+
+  const stallChecks = lastProgress.stallChecks + 1;
+  if (stallChecks < busyStallChecks) {
+    return {
+      consecutiveFailures: prior,
+      reason: "stall-below-threshold",
+      nextProgress: { ...nextProgress, stallChecks },
+    };
+  }
+  return { consecutiveFailures: prior + 1, reason: "wedge", nextProgress };
 }
 
 export async function probeCompletion(

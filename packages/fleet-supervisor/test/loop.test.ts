@@ -5,6 +5,7 @@ import type {
   FleetJournalEntry,
   FleetPressureStatusEntry,
   FleetSlotProgressEntry,
+  FleetSnapshotEntry,
   FleetTransitionEntry,
   NodeMemSnapshot,
   WorkloadSnapshot,
@@ -168,6 +169,172 @@ describe("startSupervisorLoop", () => {
     });
     await handle.done;
     expect(entries.some((e) => e.kind === "fleet-slot-progress")).toBe(false);
+  });
+
+  it("holds a completion wedge in the real loop when /slots shows a busy server", async () => {
+    const snapshots: FleetSnapshotEntry[] = [];
+    let completionCalls = 0;
+    const fetch = (async (url: string, init?: RequestInit): Promise<Response> => {
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      if (url.endsWith("/v1/models"))
+        return new Response(JSON.stringify({ data: [{ id: "granite-judge" }] }), { status: 200 });
+      if (url.endsWith("/slots"))
+        return new Response(
+          JSON.stringify([{ id: 0, state: 1, is_processing: true, n_past: 4096, n_decoded: 256 }]),
+          { status: 200 },
+        );
+      if (url.endsWith("/v1/chat/completions") && init?.method === "POST") {
+        completionCalls++;
+        if (completionCalls <= 5) {
+          await Bun.sleep(10);
+          return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+            status: 200,
+          });
+        }
+        throw new Error("completion timed out");
+      }
+      return new Response("", { status: 404 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const handle = startSupervisorLoop({
+      node: "local",
+      intervalMs: 1,
+      workloads: [
+        {
+          ...TARGET,
+          endpoint: "http://127.0.0.1:8090",
+          completionProbe: {
+            path: "/v1/chat/completions",
+            prompt: "ping",
+            maxTokens: 1,
+            timeoutMs: 1,
+            everyNTicks: 1,
+            minSamples: 5,
+            k: 3,
+          },
+        },
+      ],
+      fetch,
+      probeNodeMem: async () => FAKE_NODE_MEM,
+      writeJournal: (entry) => {
+        void entry;
+      },
+      onTick: (snapshot) => {
+        snapshots.push(snapshot);
+        if (snapshots.length >= 6) handle.stop();
+      },
+    });
+    await handle.done;
+
+    const completionProbe = snapshots.at(-1)?.workloads[0]?.completionProbe;
+    expect(completionProbe).toMatchObject({
+      ran: true,
+      ok: false,
+      consecutiveFailures: 0,
+      reason: "busy",
+    });
+    expect(completionProbe?.effectiveTimeoutMs).toBeGreaterThan(1);
+  });
+
+  it("widens timeout for long-but-ok completion probes in the real loop", async () => {
+    const snapshots: FleetSnapshotEntry[] = [];
+    let completionCalls = 0;
+    const fetch = (async (url: string): Promise<Response> => {
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      if (url.endsWith("/v1/models"))
+        return new Response(JSON.stringify({ data: [{ id: "omlx-judge" }] }), { status: 200 });
+      if (url.endsWith("/slots")) return new Response("not found", { status: 404 });
+      if (url.endsWith("/v1/chat/completions")) {
+        completionCalls++;
+        await Bun.sleep(completionCalls === 6 ? 50 : 10);
+        return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+          status: 200,
+        });
+      }
+      return new Response("", { status: 404 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const handle = startSupervisorLoop({
+      node: "local",
+      intervalMs: 1,
+      workloads: [
+        {
+          ...TARGET,
+          endpoint: "http://127.0.0.1:8090",
+          completionProbe: {
+            path: "/v1/chat/completions",
+            prompt: "ping",
+            maxTokens: 1,
+            timeoutMs: 1,
+            everyNTicks: 1,
+            minSamples: 5,
+            k: 3,
+          },
+        },
+      ],
+      fetch,
+      probeNodeMem: async () => FAKE_NODE_MEM,
+      writeJournal: (entry) => {
+        void entry;
+      },
+      onTick: (snapshot) => {
+        snapshots.push(snapshot);
+        if (snapshots.length >= 7) handle.stop();
+      },
+    });
+    await handle.done;
+
+    const sixth = snapshots[5]?.workloads[0]?.completionProbe;
+    const seventh = snapshots[6]?.workloads[0]?.completionProbe;
+    expect(sixth?.ok).toBe(true);
+    expect(sixth?.consecutiveFailures).toBe(0);
+    expect(sixth?.effectiveTimeoutMs).toBeGreaterThan(1);
+    expect(seventh?.effectiveTimeoutMs).toBeGreaterThan(sixth?.effectiveTimeoutMs ?? 0);
+  });
+
+  it("holds a completion network failure in the real loop when /slots is unavailable", async () => {
+    const snapshots: FleetSnapshotEntry[] = [];
+    const fetch = (async (url: string): Promise<Response> => {
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      if (url.endsWith("/v1/models"))
+        return new Response(JSON.stringify({ data: [{ id: "omlx-judge" }] }), { status: 200 });
+      if (url.endsWith("/slots")) return new Response("not found", { status: 404 });
+      if (url.endsWith("/v1/chat/completions")) throw new Error("network timeout");
+      return new Response("", { status: 404 });
+    }) as unknown as typeof globalThis.fetch;
+    const handle = startSupervisorLoop({
+      node: "local",
+      once: true,
+      workloads: [
+        {
+          ...TARGET,
+          endpoint: "http://127.0.0.1:8090",
+          completionProbe: {
+            path: "/v1/chat/completions",
+            prompt: "ping",
+            maxTokens: 1,
+            timeoutMs: 1,
+            everyNTicks: 1,
+          },
+        },
+      ],
+      fetch,
+      probeNodeMem: async () => FAKE_NODE_MEM,
+      writeJournal: (entry) => {
+        void entry;
+      },
+      onTick: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+    await handle.done;
+
+    expect(snapshots[0]?.workloads[0]?.completionProbe).toMatchObject({
+      ran: true,
+      ok: false,
+      status: null,
+      consecutiveFailures: 0,
+    });
   });
 
   it("snapshot carries node_mem + workload payload", async () => {

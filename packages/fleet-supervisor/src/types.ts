@@ -17,6 +17,8 @@ export interface CompletionProbeSnapshot {
   /** Wedge counter (5xx/timeout despite /health 200). The degradation detector reads this. */
   consecutiveFailures: number;
   latencyMs: number;
+  reason?: "busy" | "stall-below-threshold" | "wedge" | "idle-wedge";
+  effectiveTimeoutMs?: number;
 }
 
 /**

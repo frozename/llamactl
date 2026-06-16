@@ -10,6 +10,7 @@ import type {
   PressureWindow,
   WorkloadHealthState,
 } from "./policy.js";
+import type { readSlotProgress as defaultReadSlotProgress } from "./slot-progress.js";
 import type {
   CompletionProbeSnapshot,
   FleetJournalEntry,
@@ -21,7 +22,12 @@ import type {
 } from "./types.js";
 import type { WorkloadProbeResult, WorkloadTarget } from "./workload-probe.js";
 
-import { probeCompletion as defaultProbeCompletion } from "./completion-probe.js";
+import {
+  applyBusyGuard,
+  probeCompletion as defaultProbeCompletion,
+  effectiveTimeout,
+  pushLatencySample,
+} from "./completion-probe.js";
 import { detectDegradation, isPressureHot } from "./policy.js";
 import { probeWorkload as defaultProbeWorkload, redactEndpoint } from "./workload-probe.js";
 
@@ -54,8 +60,14 @@ export interface CompletionProbeState {
   consecutiveFailures: Map<string, number>;
   tickCounter: Map<string, number>;
   lastResult: Map<string, CompletionProbeSnapshot>;
+  lastSlotProgress?: Map<
+    string,
+    { nPast: number | null; nDecoded: number | null; stallChecks: number }
+  >;
+  latencySamples?: Map<string, number[]>;
   /** Injectable for tests; defaults to the real completion probe. */
   probe?: typeof defaultProbeCompletion;
+  readSlotProgress?: typeof defaultReadSlotProgress;
   allowPublicEndpoints?: boolean;
 }
 
@@ -64,6 +76,44 @@ export interface ProbeFnDeps {
   timeoutMs: number;
   consecutiveErrors: Map<string, number>;
   completion?: CompletionProbeState;
+}
+
+function clearCompletionProbeState(state: CompletionProbeState, name: string): void {
+  state.consecutiveFailures.delete(name);
+  state.tickCounter.delete(name);
+  state.lastResult.delete(name);
+  state.lastSlotProgress?.delete(name);
+  state.latencySamples?.delete(name);
+}
+
+async function applyCompletionBusyGuard(
+  target: WorkloadTarget,
+  config: NonNullable<WorkloadTarget["completionProbe"]>,
+  result: Awaited<ReturnType<typeof defaultProbeCompletion>>,
+  state: CompletionProbeState,
+  deps: ProbeFnDeps,
+  priorConsecutiveFailures: number,
+): Promise<{ consecutiveFailures: number; reason?: CompletionProbeSnapshot["reason"] }> {
+  if (result.classification !== "wedge" || !state.readSlotProgress) {
+    return { consecutiveFailures: result.consecutiveFailures };
+  }
+
+  const reading = await state.readSlotProgress(target.endpoint, {
+    fetch: deps.fetch,
+    timeoutMs: config.timeoutMs,
+    allowPublicEndpoints: state.allowPublicEndpoints,
+  });
+  const guarded = applyBusyGuard({
+    classification: result.classification,
+    prior: priorConsecutiveFailures,
+    reading,
+    lastProgress: state.lastSlotProgress?.get(target.name),
+    busyStallChecks: config.busyStallChecks ?? 2,
+  });
+  if (guarded.nextProgress) {
+    state.lastSlotProgress?.set(target.name, guarded.nextProgress);
+  }
+  return { consecutiveFailures: guarded.consecutiveFailures, reason: guarded.reason };
 }
 
 async function runCompletionProbe(
@@ -79,9 +129,7 @@ async function runCompletionProbe(
   // When /health itself fails, the health path drives degradation — clear the
   // completion state so the wedge counter starts fresh on recovery.
   if (!health.reachable) {
-    state.consecutiveFailures.delete(target.name);
-    state.tickCounter.delete(target.name);
-    state.lastResult.delete(target.name);
+    clearCompletionProbeState(state, target.name);
     return undefined;
   }
 
@@ -95,20 +143,49 @@ async function runCompletionProbe(
   }
 
   const probe = state.probe ?? defaultProbeCompletion;
+  const priorConsecutiveFailures = state.consecutiveFailures.get(target.name) ?? 0;
+  const latencySamples = state.latencySamples?.get(target.name) ?? [];
+  const sampleCountBeforeProbe = latencySamples.length;
+  const effectiveTimeoutMs = effectiveTimeout({
+    samples: latencySamples,
+    base: config.timeoutMs,
+    k: config.k ?? 3,
+    max: config.maxTimeoutMs ?? 600_000,
+    minSamples: config.minSamples ?? 5,
+  });
   const result = await probe(target.endpoint, {
-    config,
+    config: { ...config, timeoutMs: effectiveTimeoutMs },
     models: health.models,
     fetch: deps.fetch,
-    priorConsecutiveFailures: state.consecutiveFailures.get(target.name) ?? 0,
+    priorConsecutiveFailures,
     allowPublicEndpoints: state.allowPublicEndpoints,
   });
-  state.consecutiveFailures.set(target.name, result.consecutiveFailures);
+  if (result.ok && state.latencySamples) {
+    const ring = state.latencySamples.get(target.name) ?? [];
+    pushLatencySample(ring, result.latencyMs, config.latencyRingSize ?? 20);
+    state.latencySamples.set(target.name, ring);
+  }
+  const guarded = await applyCompletionBusyGuard(
+    target,
+    config,
+    result,
+    state,
+    deps,
+    priorConsecutiveFailures,
+  );
+  if (result.ok) {
+    state.lastSlotProgress?.delete(target.name);
+  }
+
+  state.consecutiveFailures.set(target.name, guarded.consecutiveFailures);
   const snapshot: CompletionProbeSnapshot = {
     ran: true,
     ok: result.ok,
     status: result.status,
-    consecutiveFailures: result.consecutiveFailures,
+    consecutiveFailures: guarded.consecutiveFailures,
     latencyMs: result.latencyMs,
+    ...(guarded.reason ? { reason: guarded.reason } : {}),
+    ...(sampleCountBeforeProbe >= (config.minSamples ?? 5) ? { effectiveTimeoutMs } : {}),
   };
   state.lastResult.set(target.name, snapshot);
   return snapshot;
