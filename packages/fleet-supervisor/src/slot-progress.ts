@@ -28,6 +28,19 @@ function deriveProcessing(obj: Record<string, unknown>, state: number | null): b
   return state !== 0;
 }
 
+function nestedDecoded(obj: Record<string, unknown>): number | null {
+  const nextToken: readonly unknown[] | undefined = Object.prototype.hasOwnProperty.call(
+    obj,
+    "next_token",
+  )
+    ? (obj as { next_token: readonly unknown[] }).next_token
+    : undefined;
+  if (!Array.isArray(nextToken) || nextToken.length === 0) return null;
+  const first: unknown = nextToken[0];
+  if (first === null || typeof first !== "object") return null;
+  return numField(first as Record<string, unknown>, DECODED_KEYS);
+}
+
 /**
  * Parse a llama.cpp `GET /slots` body into per-slot progress. Pure and
  * defensive: a non-array yields [], and any missing/non-numeric field becomes
@@ -42,12 +55,13 @@ export function parseSlotsResponse(body: unknown): SlotProgress[] {
     const obj = raw as Record<string, unknown>;
     const id = typeof obj.id === "number" && Number.isFinite(obj.id) ? obj.id : null;
     const state = typeof obj.state === "number" && Number.isFinite(obj.state) ? obj.state : null;
+    const nDecoded = numField(obj, DECODED_KEYS) ?? nestedDecoded(obj);
     return {
       id,
       state,
       processing: deriveProcessing(obj, state),
       nPast: numField(obj, PAST_KEYS),
-      nDecoded: numField(obj, DECODED_KEYS),
+      nDecoded,
     };
   });
 }

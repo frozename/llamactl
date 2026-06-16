@@ -37,6 +37,22 @@ describe("parseSlotsResponse", () => {
     });
   });
 
+  it("reads decode progress from nested next_token when the top level is absent", () => {
+    const body = [{ id: 0, next_token: [{ n_decoded: 42, n_remain: 5 }] }];
+    expect(parseSlotsResponse(body)[0]?.nDecoded).toBe(42);
+  });
+
+  it("prefers top-level decode progress over nested next_token", () => {
+    const body = [{ id: 0, n_decoded: 7, next_token: [{ n_decoded: 42 }] }];
+    expect(parseSlotsResponse(body)[0]?.nDecoded).toBe(7);
+  });
+
+  it("treats missing or malformed next_token as null decode progress", () => {
+    expect(parseSlotsResponse([{ id: 0, next_token: [] }])[0]?.nDecoded).toBeNull();
+    expect(parseSlotsResponse([{ id: 0 }])[0]?.nDecoded).toBeNull();
+    expect(parseSlotsResponse([{ id: 0, next_token: [null] }])[0]?.nDecoded).toBeNull();
+  });
+
   it("nulls missing or non-numeric fields without throwing", () => {
     const body = [{}, { id: "x", state: "busy", n_past: "lots" }, null];
     expect(parseSlotsResponse(body)).toEqual([
