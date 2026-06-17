@@ -258,17 +258,25 @@ function logLine(resolved: ResolvedEnv, line: string): void {
  * so `keep-alive status` can show "ready / restart-pending / …"
  * without running commands itself.
  */
-function sleepWithAbort(s: number, signal?: AbortSignal): Promise<void> {
+/**
+ * Sleep for `s` seconds, resolving early if `signal` aborts.
+ *
+ * Exported as a test seam: callers loop over a long-lived signal, so the
+ * abort listener must detach on EVERY resolve path (timer or abort), not
+ * just the abort path — otherwise the signal's listener list grows without
+ * bound (MaxListenersExceededWarning + memory growth).
+ */
+export function sleepWithAbort(s: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, s * 1000);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, s * 1000);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 

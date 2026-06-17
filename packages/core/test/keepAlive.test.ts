@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import {
   keepAliveStopFile,
   readKeepAlivePid,
   readKeepAliveState,
+  sleepWithAbort,
   stopKeepAlive,
 } from "../src/keepAlive.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
@@ -111,6 +112,48 @@ describe("keepAliveStatus", () => {
     expect(status.running).toBe(false);
     expect(status.pid).toBeNull();
     expect(existsSync(keepAlivePidFile())).toBe(false);
+  });
+});
+
+describe("sleepWithAbort", () => {
+  test("detaches the abort listener on the timer path (balanced add/remove)", async () => {
+    const controller = new AbortController();
+    const addSpy = spyOn(controller.signal, "addEventListener");
+    const removeSpy = spyOn(controller.signal, "removeEventListener");
+
+    // tiny duration so the real timer fires fast; controller never aborts.
+    await sleepWithAbort(0.001, controller.signal);
+
+    // Listener registered exactly once and removed exactly once: no leak.
+    expect(addSpy).toHaveBeenCalledTimes(1);
+    expect(removeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("resolves and clears the timer on the abort path", async () => {
+    const controller = new AbortController();
+    const clearSpy = spyOn(globalThis, "clearTimeout");
+    try {
+      // long timer so abort is what resolves the promise.
+      const p = sleepWithAbort(60, controller.signal);
+      controller.abort();
+      let settled = false;
+      await p.then(() => {
+        settled = true;
+      });
+      expect(settled).toBe(true);
+      // onAbort must cancel the pending 60s timer, not just resolve.
+      expect(clearSpy).toHaveBeenCalled();
+    } finally {
+      clearSpy.mockRestore();
+    }
+  });
+
+  test("resolves on timer with no signal", async () => {
+    let settled = false;
+    await sleepWithAbort(0.001).then(() => {
+      settled = true;
+    });
+    expect(settled).toBe(true);
   });
 });
 
