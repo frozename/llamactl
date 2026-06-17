@@ -5,7 +5,13 @@ import {
   runRollback,
   runRollout,
 } from "@llamactl/fleet-supervisor";
-import { infraSpec, listPeers, makeInfraClient, type PeerNode } from "@llamactl/remote";
+import {
+  infraServices,
+  infraSpec,
+  listPeers,
+  makeInfraClient,
+  type PeerNode,
+} from "@llamactl/remote";
 
 import { getGlobals, getNodeClient } from "../dispatcher.js";
 
@@ -44,6 +50,7 @@ USAGE:
   llamactl infra list-specs [--packages-dir=<path>]\n  llamactl infra rollout <pkg> --version <v> --tarball-url <url> --sha256 <hex> [--nodes <glob>] [--strategy=one-at-a-time|all] [--health-timeout=<s>]\n  llamactl infra rollback <pkg> --previous-version <v> [--nodes <glob>]
   llamactl infra service write-unit <pkg>  [--env=<K=V>] [--node <n>]
   llamactl infra service <start|stop|reload|status> <pkg> [--node <n>]
+  llamactl infra restart-control-plane [--dry-run]   Restart local com.llamactl.* launchd services (darwin only; not --node-aware; hard-restarts the proxy, dropping in-flight requests). --dry-run previews targets.
 
 When --tarball-url + --sha256 are omitted, central looks up the pkg
 spec under <LLAMACTL_INFRA_PACKAGES_DIR or DEV_STORAGE/packages or
@@ -378,6 +385,49 @@ async function runRollbackMain(argv: string[]): Promise<number> {
   return res.ok ? 0 : 1;
 }
 
+async function runRestartControlPlane(argv: string[]): Promise<number> {
+  if (argv.some((a) => a === "--node" || a.startsWith("--node="))) {
+    process.stderr.write(
+      "infra restart-control-plane: --node is not supported — launchd is per-machine; run this command on each node's shell.\n",
+    );
+    return 1;
+  }
+  const dryRun = argv.includes("--dry-run");
+  const result = await infraServices.restartControlPlane({ dryRun });
+
+  if (result.skippedReason) {
+    process.stdout.write(`${result.skippedReason}\n`);
+    return 0;
+  }
+
+  if (result.restarted.length === 0) {
+    process.stdout.write(
+      "infra: no control-plane services found (looked for com.llamactl.* in launchctl list)\n",
+    );
+    return 0;
+  }
+
+  if (result.dryRun) {
+    for (const svc of result.restarted) {
+      process.stdout.write(`would restart ${svc.label}\n`);
+    }
+    return 0;
+  }
+
+  let failed = false;
+  for (const svc of result.restarted) {
+    if (svc.code === 0) {
+      process.stdout.write(`restarted ${svc.label}\n`);
+    } else {
+      failed = true;
+      process.stdout.write(
+        `FAILED ${svc.label} (exit ${String(svc.code)}): ${svc.stderr.trim()}\n`,
+      );
+    }
+  }
+  return failed ? 1 : 0;
+}
+
 export async function runInfra(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   if (!sub || sub === "--help" || sub === "-h" || sub === "help") {
@@ -403,6 +453,8 @@ export async function runInfra(argv: string[]): Promise<number> {
       return await runRolloutMain(rest);
     case "rollback":
       return await runRollbackMain(rest);
+    case "restart-control-plane":
+      return await runRestartControlPlane(rest);
     default:
       process.stderr.write(`infra: unknown subcommand ${sub}\n\n${USAGE}`);
       return 1;

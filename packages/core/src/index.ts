@@ -26,6 +26,7 @@ export * from "./safetyTier.js";
 export * as schemas from "./schemas.js";
 export * as server from "./server.js";
 export * as serverLogs from "./serverLogs.js";
+export * as sourceRevision from "./sourceRevision.js";
 export * as target from "./target.js";
 export * from "./types.js";
 export * as uninstall from "./uninstall.js";

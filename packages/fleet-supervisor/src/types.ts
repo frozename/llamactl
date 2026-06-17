@@ -225,6 +225,21 @@ export interface FleetSlotProgressEntry {
   slots: SlotProgress[];
 }
 
+/**
+ * Emitted at a loop boundary when the running source's git HEAD differs from the
+ * sha captured at startup — the process is executing stale code. Emitted on EVERY
+ * stale boundary (so the warning can't be missed); `reloading` is true on the
+ * boundary where the debounce is satisfied and the service exits to be reloaded.
+ */
+export interface FleetSourceStaleEntry {
+  kind: "fleet-source-stale";
+  ts: string;
+  node: string;
+  startupRev: string;
+  currentRev: string;
+  reloading: boolean;
+}
+
 export interface MoveProposal {
   workload: string;
   fromNode: string;
@@ -246,4 +261,5 @@ export type FleetJournalEntry =
   | FleetPlacementEntry
   | FleetMoveEntry
   | FleetLeaseElectionEntry
-  | FleetSlotProgressEntry;
+  | FleetSlotProgressEntry
+  | FleetSourceStaleEntry;

@@ -6,6 +6,7 @@ import type {
   FleetPressureStatusEntry,
   FleetSlotProgressEntry,
   FleetSnapshotEntry,
+  FleetSourceStaleEntry,
   FleetTransitionEntry,
   NodeMemSnapshot,
   WorkloadSnapshot,
@@ -730,3 +731,153 @@ function makeReachable(target: WorkloadTarget): WorkloadSnapshot {
     consecutiveErrors: 0,
   };
 }
+
+describe("startSupervisorLoop source staleness", () => {
+  it("journals every stale boundary and reloads once debounced, after the tick", async () => {
+    const entries: FleetJournalEntry[] = [];
+    let reloadCalls = 0;
+    let staleCalls = 0;
+    let ticks = 0;
+    const handle = startSupervisorLoop({
+      node: "local",
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        if (++ticks >= 2) handle.stop();
+        return FAKE_NODE_MEM;
+      },
+      probeWorkload: async (t) => makeReachableLocal(t),
+      writeJournal: (e) => entries.push(e),
+      startupRev: "aaa",
+      checkSourceStale: () => ({ currentRev: "bbb", shouldReload: ++staleCalls >= 2 }),
+      onSourceReload: () => {
+        reloadCalls++;
+      },
+    });
+    await handle.done;
+
+    const stale = entries.filter(
+      (e): e is FleetSourceStaleEntry => e.kind === "fleet-source-stale",
+    );
+    // two boundaries differ in `reloading` (false then true), so both emit on
+    // transition — log-on-transition collapses only identical consecutive sigs
+    expect(stale.length).toBe(2);
+    expect(stale.every((e) => e.startupRev === "aaa" && e.currentRev === "bbb")).toBe(true);
+    expect(stale[0]?.reloading).toBe(false); // below the debounce on the first boundary
+    expect(stale[1]?.reloading).toBe(true);
+    expect(reloadCalls).toBe(1); // reload only once the debounce is satisfied
+    // the reload boundary fired strictly AFTER the tick journaled its snapshot
+    const kinds = entries.map((e) => e.kind);
+    expect(kinds.lastIndexOf("fleet-source-stale")).toBeGreaterThan(
+      kinds.lastIndexOf("fleet-snapshot"),
+    );
+  });
+
+  it("warns but does not reload when reloadOnSourceChange is false", async () => {
+    const entries: FleetJournalEntry[] = [];
+    let reloadCalls = 0;
+    let ticks = 0;
+    const handle = startSupervisorLoop({
+      node: "local",
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        if (++ticks >= 2) handle.stop();
+        return FAKE_NODE_MEM;
+      },
+      probeWorkload: async (t) => makeReachableLocal(t),
+      writeJournal: (e) => entries.push(e),
+      startupRev: "aaa",
+      checkSourceStale: () => ({ currentRev: "bbb", shouldReload: true }),
+      onSourceReload: () => {
+        reloadCalls++;
+      },
+      reloadOnSourceChange: false,
+    });
+    await handle.done;
+
+    const stale = entries.filter(
+      (e): e is FleetSourceStaleEntry => e.kind === "fleet-source-stale",
+    );
+    // the warning fires once per (rev,reloading) transition, not every boundary —
+    // both ticks share the same (bbb, reloading=false) sig, so they collapse to one
+    expect(stale.length).toBe(1);
+    expect(stale.every((e) => !e.reloading)).toBe(true);
+    expect(reloadCalls).toBe(0); // but no reload
+  });
+
+  it("does not warn or reload when the source is unchanged", async () => {
+    const entries: FleetJournalEntry[] = [];
+    let reloadCalls = 0;
+    let ticks = 0;
+    const handle = startSupervisorLoop({
+      node: "local",
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        if (++ticks >= 2) handle.stop();
+        return FAKE_NODE_MEM;
+      },
+      probeWorkload: async (t) => makeReachableLocal(t),
+      writeJournal: (e) => entries.push(e),
+      startupRev: "aaa",
+      checkSourceStale: () => ({ currentRev: "aaa", shouldReload: false }),
+      onSourceReload: () => {
+        reloadCalls++;
+      },
+    });
+    await handle.done;
+    expect(entries.some((e) => e.kind === "fleet-source-stale")).toBe(false);
+    expect(reloadCalls).toBe(0);
+  });
+
+  it("never reloads on a null current revision (read failure)", async () => {
+    const entries: FleetJournalEntry[] = [];
+    let reloadCalls = 0;
+    let ticks = 0;
+    const handle = startSupervisorLoop({
+      node: "local",
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        if (++ticks >= 2) handle.stop();
+        return FAKE_NODE_MEM;
+      },
+      probeWorkload: async (t) => makeReachableLocal(t),
+      writeJournal: (e) => entries.push(e),
+      startupRev: "aaa",
+      checkSourceStale: () => ({ currentRev: null, shouldReload: false }),
+      onSourceReload: () => {
+        reloadCalls++;
+      },
+    });
+    await handle.done;
+    expect(entries.some((e) => e.kind === "fleet-source-stale")).toBe(false);
+    expect(reloadCalls).toBe(0);
+  });
+
+  it("is inert when startupRev is not set (feature off)", async () => {
+    const entries: FleetJournalEntry[] = [];
+    let staleCalls = 0;
+    let ticks = 0;
+    const handle = startSupervisorLoop({
+      node: "local",
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        if (++ticks >= 2) handle.stop();
+        return FAKE_NODE_MEM;
+      },
+      probeWorkload: async (t) => makeReachableLocal(t),
+      writeJournal: (e) => entries.push(e),
+      // startupRev intentionally omitted; the check fn must never be consulted
+      checkSourceStale: () => {
+        staleCalls++;
+        return { currentRev: "bbb", shouldReload: true };
+      },
+    });
+    await handle.done;
+    expect(staleCalls).toBe(0);
+    expect(entries.some((e) => e.kind === "fleet-source-stale")).toBe(false);
+  });
+});

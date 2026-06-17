@@ -61,6 +61,19 @@ export interface SupervisorLoopOptions {
    * busy-aware-probing design. Default off (`--log-slot-progress`).
    */
   logSlotProgress?: boolean;
+  /**
+   * Source-staleness auto-reload. OFF unless `startupRev` is set (the CLI sets it
+   * in serve mode only). At each loop boundary — after a tick fully resolves,
+   * before the next sleep — if the injected `checkSourceStale` reports the running
+   * source changed, a `fleet-source-stale` entry is journaled on EVERY stale
+   * boundary; once the change is debounced (`shouldReload`) and
+   * `reloadOnSourceChange` is on, the service exits via `onSourceReload` so launchd
+   * reloads fresh code. The reducer/read live in the injected fn (core-free loop).
+   */
+  startupRev?: string | null;
+  checkSourceStale?: (startupRev: string) => { shouldReload: boolean; currentRev: string | null };
+  onSourceReload?: () => void;
+  reloadOnSourceChange?: boolean;
 }
 
 export interface SupervisorLoopHandle {
@@ -240,6 +253,47 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const isStopped = (): boolean => stopped;
 
   const intervalMs = opts.intervalMs ?? 30_000;
+  const startupRev = opts.startupRev;
+  const reloadOnSourceChange = opts.reloadOnSourceChange ?? true;
+  const onSourceReload =
+    opts.onSourceReload ??
+    ((): void => {
+      process.exit(0);
+    });
+  // Last emitted `(currentRev, reloading)` signature — suppress identical
+  // consecutive stale boundaries so the warning fires once per transition, not
+  // every poll (otherwise --no-reload-on-source-change spams an unrotated stderr
+  // file unboundedly since currentRev stays != startupRev forever).
+  let lastSourceStaleSig: string | null = null;
+
+  // Loop boundary: after a tick fully resolves, check whether the running source
+  // changed since startup; if so, warn — but only when the (rev,reloading)
+  // signature changes (log on transition, not on every boundary) — and once the
+  // change is debounced, exit so launchd reloads fresh code. Inert unless
+  // startupRev is set.
+  const checkSourceBoundary = (): void => {
+    if (startupRev === undefined || startupRev === null || !opts.checkSourceStale) return;
+    const { shouldReload, currentRev } = opts.checkSourceStale(startupRev);
+    if (currentRev === null || currentRev === startupRev) return;
+    const reloading = shouldReload && reloadOnSourceChange;
+    const sig = `${currentRev}|${String(reloading)}`;
+    if (sig === lastSourceStaleSig) return;
+    lastSourceStaleSig = sig;
+    writeJournalEntry({
+      kind: "fleet-source-stale",
+      ts: new Date().toISOString(),
+      node: opts.node,
+      startupRev,
+      currentRev,
+      reloading,
+    });
+    process.stderr.write(
+      `supervisor: source revision changed since startup (was ${startupRev}, now ${currentRev})${
+        reloading ? " — reloading" : ""
+      }\n`,
+    );
+    if (reloading) onSourceReload();
+  };
 
   const tick = (): Promise<void> =>
     runTick(
@@ -257,11 +311,13 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
   const run = async (): Promise<void> => {
     try {
       await tick();
+      checkSourceBoundary();
       if (opts.once || isStopped()) return;
       while (!isStopped()) {
         await new Promise<void>((res) => setTimeout(res, intervalMs));
         if (isStopped()) break;
         await tick();
+        checkSourceBoundary();
       }
     } finally {
       resolveDone?.();

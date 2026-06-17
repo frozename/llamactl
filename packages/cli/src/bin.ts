@@ -209,6 +209,10 @@ Agentic operations:
       --version=<v> [--node <n>]              a specific installed version
   llamactl infra uninstall <pkg>              Remove a version (or the whole
       [--version=<v>] [--node <n>]            package when --version omitted)
+  llamactl infra restart-control-plane        Restart local com.llamactl.* launchd
+      [--dry-run]                             services (darwin only; not --node-aware;
+                                              hard-restarts the proxy, dropping
+                                              in-flight requests). --dry-run previews.
   llamactl tunnel pin-central                 Capture the central agent's TLS
       [--context=<name>] [--url=<url>]        cert + fingerprint and pin the
                                               /tunnel-relay POST against it.

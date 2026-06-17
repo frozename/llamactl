@@ -1,4 +1,4 @@
-import { env as envMod } from "@llamactl/core";
+import { env as envMod, sourceRevision } from "@llamactl/core";
 import { listPeers, workloadStore } from "@llamactl/remote";
 
 import {
@@ -59,6 +59,8 @@ FLAGS:
                               journal a fleet-slot-progress entry (busy-aware-probing
                               data collection; drives nothing). Default off.
   --quiet                     Suppress per-tick stderr summary.
+  --no-reload-on-source-change Do not auto-exit (→ launchd reload) when the running
+                              git source changes after startup. Warning still logs.
 
 STATUS FLAGS:
   --json                      Emit JSON instead of human format.
@@ -248,12 +250,33 @@ function buildSupervisorLoopOptions(
 
   const executorEnabled = flags.auto || flags.executeId !== undefined;
 
+  // Source-staleness auto-reload (serve mode only). Capture the running source's
+  // revision once at startup; the loop consults the stateful closure at each
+  // boundary and exits (→ launchd reloads) once a confirmed change is debounced.
+  const startupRev = once ? undefined : sourceRevision.getSourceRevision();
+  if (!once) {
+    process.stderr.write(
+      startupRev
+        ? `supervisor: source-staleness reload ARMED at ${startupRev}\n`
+        : `supervisor: source-staleness reload OFF — no git checkout resolved (compiled binary or non-git deploy); run 'llamactl infra restart-control-plane' after deploys\n`,
+    );
+  }
+  let staleState: sourceRevision.StaleStreakState = { streak: 0 };
+  const checkSourceStale = (rev: string): { shouldReload: boolean; currentRev: string | null } => {
+    const r = sourceRevision.checkSourceStale(rev, staleState);
+    staleState = r.state;
+    return { shouldReload: r.shouldReload, currentRev: r.currentRev };
+  };
+
   return {
     node: flags.node,
     workloads: flags.workloads,
     once,
     intervalMs: flags.intervalMs,
     writeJournal,
+    startupRev,
+    checkSourceStale,
+    reloadOnSourceChange: flags.reloadOnSourceChange,
     pressureThresholds: {
       headroomMinMb: flags.headroomMb,
       compressorWarnMb: flags.compressorMb,
@@ -412,6 +435,7 @@ interface Flags {
   quiet: boolean;
   auto: boolean;
   logSlotProgress: boolean;
+  reloadOnSourceChange: boolean;
   severityThreshold: 1 | 2 | 3;
   executeId?: string;
 
@@ -665,6 +689,7 @@ interface ToggleFlags {
   quiet: boolean;
   auto: boolean;
   logSlotProgress: boolean;
+  reloadOnSourceChange: boolean;
 }
 
 function parseToggleFlags(raw: string, toggles: ToggleFlags, audit: AuditFlags): boolean {
@@ -683,6 +708,9 @@ function parseToggleFlags(raw: string, toggles: ToggleFlags, audit: AuditFlags):
       return true;
     case "--log-slot-progress":
       toggles.logSlotProgress = true;
+      return true;
+    case "--no-reload-on-source-change":
+      toggles.reloadOnSourceChange = false;
       return true;
     case "--json":
       audit.json = true;
@@ -733,6 +761,7 @@ function parseFlags(argv: string[]): Flags {
     quiet: false,
     auto: false,
     logSlotProgress: false,
+    reloadOnSourceChange: true,
   };
   const executor: { severityThreshold: 1 | 2 | 3; executeId?: string } = { severityThreshold: 2 };
   const workloadState: { kind: "ModelHost" | "ModelRun"; workloads: WorkloadTarget[] } = {
@@ -785,6 +814,7 @@ function parseFlags(argv: string[]): Flags {
     quiet: toggles.quiet,
     auto: toggles.auto,
     logSlotProgress: toggles.logSlotProgress,
+    reloadOnSourceChange: toggles.reloadOnSourceChange,
     severityThreshold: executor.severityThreshold,
 
     executeId: executor.executeId,

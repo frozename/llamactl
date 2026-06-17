@@ -332,6 +332,124 @@ export async function runServiceLifecycle(
   return { host, label, cmd, code, stdout, stderr };
 }
 
+// ---- Control-plane bulk restart (restart-on-deploy) -------------
+//
+// llamactl's long-running control-plane services (controller,
+// fleet-supervisor, internal-proxy/node-agent) have no reconcile
+// loop on their HTTP servers — the only way to reload fresh code
+// after a deploy is to kickstart the launchd jobs. Labels are
+// discovered at RUNTIME from `launchctl list`, NOT from repo plist
+// files, because at least one service (the controller) is registered
+// live-only with no repo plist.
+
+const DEFAULT_CONTROL_PLANE_PREFIX = "com.llamactl.";
+
+/**
+ * The known long-running control-plane launchd services. restart-control-plane
+ * restricts to this allowlist (fail-closed) so a stray com.llamactl.* job — e.g. a
+ * StartInterval cleanup cron — is never force-restarted. The controller is listed
+ * even though it has no repo plist (registered live-only): only its label is needed.
+ */
+export const CONTROL_PLANE_LABELS: readonly string[] = [
+  "com.llamactl.controller",
+  "com.llamactl.fleet-supervisor",
+  "com.llamactl.internal-proxy",
+  "com.llamactl.node-agent",
+];
+
+/**
+ * Parse `launchctl list` stdout (tab-separated `PID\tStatus\tLabel`
+ * with a header row) and return the set of labels whose 3rd column
+ * starts with `prefix`, DEDUPED and SORTED ascending. The header row
+ * (`...\tLabel`) won't match the prefix, but blank lines and short
+ * rows are skipped defensively too.
+ */
+export function parseControlPlaneLabels(
+  launchctlListStdout: string,
+  prefix: string = DEFAULT_CONTROL_PLANE_PREFIX,
+): string[] {
+  const labels = new Set<string>();
+  for (const line of launchctlListStdout.split("\n")) {
+    if (line.trim() === "") continue;
+    const cols = line.split("\t");
+    if (cols.length < 3) continue;
+    // Strip a trailing \r so CRLF-terminated launchctl output doesn't leave a
+    // stray carriage return on the label (which still passes startsWith but then
+    // corrupts the gui/<uid>/<label> kickstart arg into an opaque failure).
+    const label = cols[2]?.replace(/\r$/, "");
+    if (label?.startsWith(prefix)) labels.add(label);
+  }
+  return [...labels].sort();
+}
+
+export interface RestartControlPlaneResult {
+  host: ServiceHost | null;
+  restarted: { label: string; code: number; stdout: string; stderr: string }[];
+  dryRun: boolean;
+  skippedReason?: string;
+}
+
+export interface RestartControlPlaneOptions {
+  runner?: SubprocessRunner;
+  prefix?: string;
+  allowlist?: readonly string[];
+  host?: ServiceHost; // override for tests
+  dryRun?: boolean;
+  uid?: number; // override for tests; default process.getuid?.() ?? 501
+}
+
+/**
+ * Restart every running com.llamactl.* launchd service so they reload
+ * fresh code after a deploy. Discovers labels from `launchctl list` at
+ * runtime, then `launchctl kickstart -k`s each in order, collecting
+ * every outcome (never aborts on a single failure). darwin-only —
+ * a no-op (not an error) elsewhere.
+ */
+export async function restartControlPlane(
+  opts?: RestartControlPlaneOptions,
+): Promise<RestartControlPlaneResult> {
+  const host = opts?.host ?? currentServiceHost();
+  if (host !== "darwin") {
+    return {
+      host: host ?? null,
+      restarted: [],
+      dryRun: !!opts?.dryRun,
+      skippedReason:
+        "restart-control-plane is darwin-only (launchctl); nothing to restart on this host",
+    };
+  }
+
+  const runner = opts?.runner ?? defaultRunner;
+  const list = await runner(["launchctl", "list"]);
+  const discovered = parseControlPlaneLabels(list.stdout, opts?.prefix);
+  // Fail-closed: only restart known control-plane services. A stray com.llamactl.*
+  // job (e.g. a StartInterval cleanup cron) matches the prefix but must never be
+  // force-kickstarted off its schedule.
+  const allowlist = opts?.allowlist ?? CONTROL_PLANE_LABELS;
+  const labels = discovered.filter((l) => allowlist.includes(l));
+
+  if (opts?.dryRun) {
+    return {
+      host,
+      restarted: labels.map((label) => ({ label, code: 0, stdout: "", stderr: "" })),
+      dryRun: true,
+    };
+  }
+
+  const uid = String(opts?.uid ?? process.getuid?.() ?? 501);
+  const restarted: RestartControlPlaneResult["restarted"] = [];
+  for (const label of labels) {
+    const { code, stdout, stderr } = await runner([
+      "launchctl",
+      "kickstart",
+      "-k",
+      `gui/${uid}/${label}`,
+    ]);
+    restarted.push({ label, code, stdout, stderr });
+  }
+  return { host, restarted, dryRun: false };
+}
+
 // Re-export dirname for the tRPC handler that wants to ensure the
 // parent dir before writing, without having to add a node:path import
 // to router.ts just for that.
