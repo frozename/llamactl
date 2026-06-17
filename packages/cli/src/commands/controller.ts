@@ -1,3 +1,4 @@
+import { sourceRevision } from "@llamactl/core";
 import {
   noderunReconciler,
   workloadLock,
@@ -20,6 +21,10 @@ converges:
 Flags:
   --interval=<s>   Seconds between reconcile passes (default 10).
   --once           Run one pass then exit (useful for cron-driven setups).
+  --no-reload-on-source-change
+                   Keep running even when the controller's own git HEAD
+                   moves after startup. Default: exit on a debounced change
+                   so launchd reloads fresh code (avoids serving stale logic).
 
 A lock file at $LLAMACTL_WORKLOADS_DIR/.controller.lock guards against
 two controllers racing on the same directory. Stale locks from
@@ -29,13 +34,16 @@ crashed controllers are stolen automatically when their PID is gone.
 interface ControllerFlags {
   intervalMs: number;
   once: boolean;
+  reloadOnSourceChange: boolean;
 }
 
-function parseFlags(args: string[]): ControllerFlags | { error: string } {
+export function parseFlags(args: string[]): ControllerFlags | { error: string } {
   let intervalMs = 10_000;
   let once = false;
+  let reloadOnSourceChange = true;
   for (const arg of args) {
     if (arg === "--once") once = true;
+    else if (arg === "--no-reload-on-source-change") reloadOnSourceChange = false;
     else if (arg === "-h" || arg === "--help") return { error: "help" };
     else if (arg.startsWith("--interval=")) {
       const n = Number.parseFloat(arg.slice("--interval=".length));
@@ -47,7 +55,35 @@ function parseFlags(args: string[]): ControllerFlags | { error: string } {
       return { error: `controller: unknown flag ${arg}` };
     }
   }
-  return { intervalMs, once };
+  return { intervalMs, once, reloadOnSourceChange };
+}
+
+/**
+ * The reconcile-loop boundary check (exported for unit testing without the slow
+ * spawn-e2e). Advances the stale streak via the shared core reducer and reports
+ * whether the running source changed and whether the change is debounced enough to
+ * warrant a reload. `startupRev` null/undefined ⇒ feature off (inert).
+ */
+export function applyControllerSourceGate(
+  state: sourceRevision.StaleStreakState,
+  opts: {
+    startupRev: string | null | undefined;
+    readSourceRevision?: () => string | null;
+    reloadStaleChecks?: number;
+  },
+): {
+  nextState: sourceRevision.StaleStreakState;
+  shouldReload: boolean;
+  currentRev: string | null;
+} {
+  if (opts.startupRev === null || opts.startupRev === undefined) {
+    return { nextState: state, shouldReload: false, currentRev: null };
+  }
+  const r = sourceRevision.checkSourceStale(opts.startupRev, state, {
+    ...(opts.readSourceRevision ? { readSourceRevision: opts.readSourceRevision } : {}),
+    ...(opts.reloadStaleChecks !== undefined ? { reloadStaleChecks: opts.reloadStaleChecks } : {}),
+  });
+  return { nextState: r.state, shouldReload: r.shouldReload, currentRev: r.currentRev };
 }
 
 function setupSignalHandlers(
@@ -112,6 +148,12 @@ export async function runController(args: string[]): Promise<number> {
     `controller started pid=${String(process.pid)} workloads=${workloadsDir} cfg=${cfgPath}\n`,
   );
 
+  // Source-staleness auto-reload: capture the running source revision once; the
+  // serve loop exits (→ launchd reload) once a confirmed post-startup change is
+  // debounced. null (not a git checkout) ⇒ detection disabled.
+  const startupRev = sourceRevision.getSourceRevision();
+  process.stdout.write(`controller: source revision ${startupRev ?? "none"}\n`);
+
   const stopping = { value: false };
   const wakeRef: { wake: (() => void) | null } = { wake: null };
   const { isStopping, onSignal } = setupSignalHandlers(stopping, wakeRef);
@@ -123,7 +165,7 @@ export async function runController(args: string[]): Promise<number> {
       await runOnePass();
       return 0;
     }
-    await runServeLoop(parsed, stopping, wakeRef, isStopping, runOnePass);
+    await runServeLoop(parsed, stopping, wakeRef, isStopping, runOnePass, startupRev);
     return 0;
   } finally {
     workloadLock.releaseLock(acquired);
@@ -173,6 +215,28 @@ async function runReconcilePass(
   }
 }
 
+/**
+ * One loop-boundary source check: advance the stale streak, and if the running
+ * source changed since startup, warn — exiting (→ launchd reload) once the change
+ * is debounced and reload is enabled. Returns the next streak state. Extracted
+ * from runServeLoop to keep that loop body under the complexity budget.
+ */
+function controllerSourceBoundary(
+  staleState: sourceRevision.StaleStreakState,
+  startupRev: string | null,
+  reloadOnSourceChange: boolean,
+): sourceRevision.StaleStreakState {
+  const gate = applyControllerSourceGate(staleState, { startupRev });
+  if (gate.currentRev !== null && gate.currentRev !== startupRev) {
+    const reloading = gate.shouldReload && reloadOnSourceChange;
+    process.stderr.write(
+      `controller: source revision changed since startup (was ${String(startupRev)}, now ${gate.currentRev})${reloading ? " — reloading" : ""}\n`,
+    );
+    if (reloading) process.exit(0);
+  }
+  return gate.nextState;
+}
+
 // Race the sleep against a SIGTERM-triggered `wake()` so the
 // loop exits promptly even during a long --interval.
 async function sleepInterruptible(
@@ -200,7 +264,9 @@ async function runServeLoop(
   wakeRef: { wake: (() => void) | null },
   isStopping: () => boolean,
   runOnePass: () => Promise<void>,
+  startupRev: string | null,
 ): Promise<void> {
+  let staleState: sourceRevision.StaleStreakState = { streak: 0 };
   while (!stopping.value) {
     const start = Date.now();
     try {
@@ -211,6 +277,9 @@ async function runServeLoop(
       );
     }
     if (isStopping()) break;
+    // Loop boundary (after a completed pass): if the running source changed, warn
+    // every boundary and — once debounced — exit so launchd reloads fresh code.
+    staleState = controllerSourceBoundary(staleState, startupRev, parsed.reloadOnSourceChange);
     const elapsed = Date.now() - start;
     const sleepMs = Math.max(100, parsed.intervalMs - elapsed);
     await sleepInterruptible(sleepMs, wakeRef);
