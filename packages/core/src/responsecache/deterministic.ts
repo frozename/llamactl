@@ -7,5 +7,5 @@ export function isDeterministic(parsedBody: unknown): boolean {
     body.temperature === 0
   )
     return true;
-  return body.seed !== null && body.seed !== undefined;
+  return typeof body.seed === "number" && Number.isFinite(body.seed);
 }

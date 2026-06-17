@@ -1119,6 +1119,41 @@ test("peer route cache survives a peer re-poll (stable synthetic epoch, no re-fo
   }
 });
 
+test("a response-cache DB failure on lookup degrades to upstream pass-through (no 500)", async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream("json");
+  // findBySha is the bare DB read inside maybeResponseCacheLookup. A concurrent
+  // WAL writer raises SQLITE_BUSY; the proxy must degrade to a cold miss, not 500.
+  const findSpy = spyOn(ResponseCacheRegistry.prototype, "findBySha").mockImplementation(() => {
+    throw new Error("SQLITE_BUSY: database is locked");
+  });
+  try {
+    const url = new URL(upstream.baseUrl);
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+    const body = JSON.stringify({
+      model,
+      messages: [{ role: "user", content: "db busy lookup" }],
+      temperature: 0,
+    });
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+      runtime.env,
+    );
+    expect(response.status).toBe(200);
+    expect(upstream.calls).toBe(1);
+  } finally {
+    findSpy.mockRestore();
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
 test("peer route cache invalidates when the peer revision changes (restart/swap)", async () => {
   const runtime = makeTempRuntime();
   const upstream = await startUpstream("json");
