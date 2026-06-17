@@ -66,8 +66,8 @@ export function runEvictionIfOverBudget(
   }
 
   const sorted = [...workloadEntries].sort((a, b) => {
-    const scoreA = evictionScore(a, 0, null, null, now);
-    const scoreB = evictionScore(b, 0, null, null, now);
+    const scoreA = evictionScore(a, now);
+    const scoreB = evictionScore(b, now);
     return scoreB - scoreA;
   });
 
