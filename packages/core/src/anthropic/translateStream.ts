@@ -352,14 +352,17 @@ async function processUpstreamStream(
     let pendingRead: ReturnType<typeof reader.read> | null = reader.read();
 
     while (!done) {
+      let pingTimer: ReturnType<typeof setTimeout> | undefined;
+      const pingPromise = new Promise<{ kind: "ping" }>((resolve) => {
+        pingTimer = setTimeout(() => {
+          resolve({ kind: "ping" });
+        }, PING_INTERVAL_MS);
+      });
       const readResult = await Promise.race([
         pendingRead.then((value) => ({ kind: "read" as const, value })),
-        new Promise<{ kind: "ping" }>((resolve) => {
-          setTimeout(() => {
-            resolve({ kind: "ping" });
-          }, PING_INTERVAL_MS);
-        }),
+        pingPromise,
       ]);
+      clearTimeout(pingTimer);
 
       if (readResult.kind === "ping") {
         emit("ping", { type: "ping" });

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 
 import {
   __parseAnthropicSseEventPayloadForTests,
@@ -466,4 +466,56 @@ test("upstream mid-stream error emits clean terminal message_delta + message_sto
     delta: { stop_reason: "end_turn" },
     usage: { output_tokens: 1 },
   });
+});
+
+test("ping timer is cleared each read iteration (no per-chunk setTimeout leak)", async () => {
+  // Drive several chunks that resolve immediately so the READ arm of the
+  // Promise.race wins every loop iteration and the 15s ping never fires.
+  // Each iteration creates a ping setTimeout(15000); the leak is that the
+  // handle is never cleared when the read arm wins. Pin it: every ping timer
+  // id returned by setTimeout must be passed to clearTimeout.
+  const PING_DELAY_MS = 15_000;
+
+  const pingTimerIds: unknown[] = [];
+  const clearedIds = new Set<unknown>();
+
+  const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const realClearTimeout = globalThis.clearTimeout.bind(globalThis);
+
+  const setTimeoutSpy = spyOn(globalThis, "setTimeout");
+  setTimeoutSpy.mockImplementation(((handler: () => void, timeout?: number, ...args: unknown[]) => {
+    const id = realSetTimeout(handler, timeout, ...args);
+    if (timeout === PING_DELAY_MS) {
+      pingTimerIds.push(id);
+    }
+    return id;
+  }) as unknown as typeof setTimeout);
+
+  const clearTimeoutSpy = spyOn(globalThis, "clearTimeout");
+  clearTimeoutSpy.mockImplementation(((id?: Parameters<typeof clearTimeout>[0]) => {
+    clearedIds.add(id);
+    realClearTimeout(id);
+  }) as unknown as typeof clearTimeout);
+
+  try {
+    const upstream = makeSseStream([
+      'data: {"id":"msg_p","choices":[{"delta":{"content":"a"},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"b"},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"c"},"finish_reason":null}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":3}}\n\n',
+      "data: [DONE]\n\n",
+    ]);
+
+    const translated = translateOpenAIStreamToAnthropic(upstream, { model: "claude-3-7-sonnet" });
+    await readStreamText(translated);
+  } finally {
+    setTimeoutSpy.mockRestore();
+    clearTimeoutSpy.mockRestore();
+  }
+
+  // At least one ping timer was created per read iteration.
+  expect(pingTimerIds.length).toBeGreaterThan(0);
+  // Every ping timer must have been cleared — pre-fix none are, so this is RED.
+  const leaked = pingTimerIds.filter((id) => !clearedIds.has(id));
+  expect(leaked).toEqual([]);
 });
