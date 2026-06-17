@@ -876,7 +876,9 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
     return context;
   }
   runtime.storage.response_cache_hit_total += 1;
-  runtime.registry.bumpHit(lookup, Date.now());
+  runtime.storage.safeWrite(() => {
+    runtime.registry.bumpHit(lookup, Date.now());
+  });
   context.responseCacheHit = cacheHitResponse(hit);
   return context;
 }
@@ -884,7 +886,7 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
 function shouldEnforceFirstTokenEquivalence(bodyText: string): boolean {
   try {
     const parsed = JSON.parse(bodyText) as { temperature?: unknown; seed?: unknown };
-    if (parsed.seed !== null && parsed.seed !== undefined) return true;
+    if (typeof parsed.seed === "number" && Number.isFinite(parsed.seed)) return true;
     if (
       typeof parsed.temperature === "number" &&
       Number.isFinite(parsed.temperature) &&
@@ -1490,12 +1492,18 @@ async function maybePersistResponseCache(
   });
   if (!wrote.ok) return replay;
 
-  const eviction = runResponseCacheEvictionIfOverBudget(
-    responseCache.runtime.registry,
-    responseCacheBudgetBytes(),
-    now,
-  );
-  responseCache.runtime.storage.response_cache_evict_total += eviction.deleted.length;
+  try {
+    const eviction = runResponseCacheEvictionIfOverBudget(
+      responseCache.runtime.registry,
+      responseCacheBudgetBytes(),
+      now,
+    );
+    responseCache.runtime.storage.response_cache_evict_total += eviction.deleted.length;
+  } catch (error) {
+    // The body was already read and the replay built; an eviction-sweep DB
+    // failure must not cost the served response. Degrade by skipping eviction.
+    warnResponseCacheStageFailure("persist", error);
+  }
   return replay;
 }
 
@@ -1955,6 +1963,12 @@ function warnKvStageFailure(stage: "lookup" | "persist", error: unknown): void {
   );
 }
 
+function warnResponseCacheStageFailure(stage: "lookup" | "persist", error: unknown): void {
+  console.warn(
+    `[openaiProxy] response-cache ${stage} failed: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+
 /**
  * Proxy an OpenAI-style request (chat/completions, completions,
  * embeddings, etc.) to the local llama-server. JSON bodies can route
@@ -1974,7 +1988,14 @@ export async function proxyOpenAI(
     return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
   }
   stripVendorFieldsFromBody(routed);
-  const withResponseCacheLookup = await maybeResponseCacheLookup(routed);
+  let withResponseCacheLookup = routed;
+  try {
+    withResponseCacheLookup = await maybeResponseCacheLookup(routed);
+  } catch (error) {
+    // A cache DB failure (e.g. SQLITE_BUSY) must never 500 a chat — degrade to
+    // a cold miss using the unchanged routed context and fall through to upstream.
+    warnResponseCacheStageFailure("lookup", error);
+  }
   if (withResponseCacheLookup.responseCacheHit) {
     return withResponseCacheLookup.responseCacheHit;
   }

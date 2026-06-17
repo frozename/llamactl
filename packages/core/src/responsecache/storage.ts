@@ -18,6 +18,7 @@ export function openResponseCacheStorage(dataRoot: string): ResponseCacheStorage
   mkdirSync(cacheDir, { recursive: true });
   const db = new Database(join(cacheDir, "responses.db"));
   db.run("PRAGMA journal_mode = WAL");
+  db.run("PRAGMA busy_timeout = 5000");
   migrate(db);
   const storage: ResponseCacheStorage = {
     db,
