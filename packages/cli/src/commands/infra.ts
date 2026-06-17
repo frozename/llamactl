@@ -50,7 +50,7 @@ USAGE:
   llamactl infra list-specs [--packages-dir=<path>]\n  llamactl infra rollout <pkg> --version <v> --tarball-url <url> --sha256 <hex> [--nodes <glob>] [--strategy=one-at-a-time|all] [--health-timeout=<s>]\n  llamactl infra rollback <pkg> --previous-version <v> [--nodes <glob>]
   llamactl infra service write-unit <pkg>  [--env=<K=V>] [--node <n>]
   llamactl infra service <start|stop|reload|status> <pkg> [--node <n>]
-  llamactl infra restart-control-plane [--dry-run]   Restart all com.llamactl.* launchd services (controller, supervisor, proxy) so they reload fresh code after a deploy. --dry-run lists targets without restarting.
+  llamactl infra restart-control-plane [--dry-run]   Restart local com.llamactl.* launchd services (darwin only; not --node-aware; hard-restarts the proxy, dropping in-flight requests). --dry-run previews targets.
 
 When --tarball-url + --sha256 are omitted, central looks up the pkg
 spec under <LLAMACTL_INFRA_PACKAGES_DIR or DEV_STORAGE/packages or
@@ -386,6 +386,12 @@ async function runRollbackMain(argv: string[]): Promise<number> {
 }
 
 async function runRestartControlPlane(argv: string[]): Promise<number> {
+  if (argv.some((a) => a === "--node" || a.startsWith("--node="))) {
+    process.stderr.write(
+      "infra restart-control-plane: --node is not supported — launchd is per-machine; run this command on each node's shell.\n",
+    );
+    return 1;
+  }
   const dryRun = argv.includes("--dry-run");
   const result = await infraServices.restartControlPlane({ dryRun });
 

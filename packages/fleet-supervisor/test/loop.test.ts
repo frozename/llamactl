@@ -759,7 +759,8 @@ describe("startSupervisorLoop source staleness", () => {
     const stale = entries.filter(
       (e): e is FleetSourceStaleEntry => e.kind === "fleet-source-stale",
     );
-    // a warning on every stale boundary (two ticks); dedup must not collapse them
+    // two boundaries differ in `reloading` (false then true), so both emit on
+    // transition — log-on-transition collapses only identical consecutive sigs
     expect(stale.length).toBe(2);
     expect(stale.every((e) => e.startupRev === "aaa" && e.currentRev === "bbb")).toBe(true);
     expect(stale[0]?.reloading).toBe(false); // below the debounce on the first boundary
@@ -798,8 +799,10 @@ describe("startSupervisorLoop source staleness", () => {
     const stale = entries.filter(
       (e): e is FleetSourceStaleEntry => e.kind === "fleet-source-stale",
     );
-    expect(stale.length).toBe(2); // the warning still fires every boundary
-    expect(stale.every((e) => e.reloading === false)).toBe(true);
+    // the warning fires once per (rev,reloading) transition, not every boundary —
+    // both ticks share the same (bbb, reloading=false) sig, so they collapse to one
+    expect(stale.length).toBe(1);
+    expect(stale.every((e) => !e.reloading)).toBe(true);
     expect(reloadCalls).toBe(0); // but no reload
   });
 

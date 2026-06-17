@@ -260,15 +260,25 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     ((): void => {
       process.exit(0);
     });
+  // Last emitted `(currentRev, reloading)` signature — suppress identical
+  // consecutive stale boundaries so the warning fires once per transition, not
+  // every poll (otherwise --no-reload-on-source-change spams an unrotated stderr
+  // file unboundedly since currentRev stays != startupRev forever).
+  let lastSourceStaleSig: string | null = null;
 
   // Loop boundary: after a tick fully resolves, check whether the running source
-  // changed since startup; if so, warn (every boundary) and — once the change is
-  // debounced — exit so launchd reloads fresh code. Inert unless startupRev is set.
+  // changed since startup; if so, warn — but only when the (rev,reloading)
+  // signature changes (log on transition, not on every boundary) — and once the
+  // change is debounced, exit so launchd reloads fresh code. Inert unless
+  // startupRev is set.
   const checkSourceBoundary = (): void => {
     if (startupRev === undefined || startupRev === null || !opts.checkSourceStale) return;
     const { shouldReload, currentRev } = opts.checkSourceStale(startupRev);
     if (currentRev === null || currentRev === startupRev) return;
     const reloading = shouldReload && reloadOnSourceChange;
+    const sig = `${currentRev}|${String(reloading)}`;
+    if (sig === lastSourceStaleSig) return;
+    lastSourceStaleSig = sig;
     writeJournalEntry({
       kind: "fleet-source-stale",
       ts: new Date().toISOString(),

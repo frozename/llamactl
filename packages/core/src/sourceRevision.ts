@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,7 +75,7 @@ export function findRepoRoot(
   }
 }
 
-export type ExecFn = (command: string) => string;
+export type ExecFn = (file: string, args: string[]) => string;
 
 export interface GetSourceRevisionOptions {
   exec?: ExecFn;
@@ -92,15 +92,20 @@ export interface GetSourceRevisionOptions {
 export function getSourceRevision(opts: GetSourceRevisionOptions = {}): string | null {
   const exec =
     opts.exec ??
-    ((command: string): string =>
-      execSync(command, { stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" }));
+    ((file: string, args: string[]): string =>
+      execFileSync(file, args, { stdio: ["ignore", "pipe", "ignore"], encoding: "utf8" }));
+  // The repo root is resolved from the INSTALLED @llamactl/core location
+  // (MODULE_DIR), which is correct only while core and the running service share
+  // ONE git checkout (true in this monorepo). If core is ever published/installed
+  // to a separate tree, this resolves the wrong .git (or null) and staleness
+  // silently tracks the wrong repo / disables.
   const root =
     opts.repoRoot !== undefined
       ? opts.repoRoot
       : findRepoRoot(MODULE_DIR, opts.existsFn ? { existsFn: opts.existsFn } : {});
   if (root === null) return null;
   try {
-    const out = exec(`git -C ${JSON.stringify(root)} rev-parse HEAD`).trim();
+    const out = exec("git", ["-C", root, "rev-parse", "HEAD"]).trim();
     return out.length > 0 ? out : null;
   } catch {
     return null;

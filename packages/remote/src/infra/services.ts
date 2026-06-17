@@ -345,6 +345,19 @@ export async function runServiceLifecycle(
 const DEFAULT_CONTROL_PLANE_PREFIX = "com.llamactl.";
 
 /**
+ * The known long-running control-plane launchd services. restart-control-plane
+ * restricts to this allowlist (fail-closed) so a stray com.llamactl.* job — e.g. a
+ * StartInterval cleanup cron — is never force-restarted. The controller is listed
+ * even though it has no repo plist (registered live-only): only its label is needed.
+ */
+export const CONTROL_PLANE_LABELS: readonly string[] = [
+  "com.llamactl.controller",
+  "com.llamactl.fleet-supervisor",
+  "com.llamactl.internal-proxy",
+  "com.llamactl.node-agent",
+];
+
+/**
  * Parse `launchctl list` stdout (tab-separated `PID\tStatus\tLabel`
  * with a header row) and return the set of labels whose 3rd column
  * starts with `prefix`, DEDUPED and SORTED ascending. The header row
@@ -360,7 +373,10 @@ export function parseControlPlaneLabels(
     if (line.trim() === "") continue;
     const cols = line.split("\t");
     if (cols.length < 3) continue;
-    const label = cols[2];
+    // Strip a trailing \r so CRLF-terminated launchctl output doesn't leave a
+    // stray carriage return on the label (which still passes startsWith but then
+    // corrupts the gui/<uid>/<label> kickstart arg into an opaque failure).
+    const label = cols[2]?.replace(/\r$/, "");
     if (label?.startsWith(prefix)) labels.add(label);
   }
   return [...labels].sort();
@@ -376,6 +392,7 @@ export interface RestartControlPlaneResult {
 export interface RestartControlPlaneOptions {
   runner?: SubprocessRunner;
   prefix?: string;
+  allowlist?: readonly string[];
   host?: ServiceHost; // override for tests
   dryRun?: boolean;
   uid?: number; // override for tests; default process.getuid?.() ?? 501
@@ -404,7 +421,12 @@ export async function restartControlPlane(
 
   const runner = opts?.runner ?? defaultRunner;
   const list = await runner(["launchctl", "list"]);
-  const labels = parseControlPlaneLabels(list.stdout, opts?.prefix);
+  const discovered = parseControlPlaneLabels(list.stdout, opts?.prefix);
+  // Fail-closed: only restart known control-plane services. A stray com.llamactl.*
+  // job (e.g. a StartInterval cleanup cron) matches the prefix but must never be
+  // force-kickstarted off its schedule.
+  const allowlist = opts?.allowlist ?? CONTROL_PLANE_LABELS;
+  const labels = discovered.filter((l) => allowlist.includes(l));
 
   if (opts?.dryRun) {
     return {

@@ -60,6 +60,18 @@ describe("parseControlPlaneLabels", () => {
       "com.apple.foo",
     ]);
   });
+
+  test("strips a trailing \\r from CRLF-terminated lines", () => {
+    const stdout = [
+      "PID\tStatus\tLabel",
+      "501\t0\tcom.llamactl.controller",
+      "1234\t0\tcom.llamactl.internal-proxy",
+    ].join("\r\n");
+    const labels = parseControlPlaneLabels(stdout);
+    expect(labels).toEqual(["com.llamactl.controller", "com.llamactl.internal-proxy"]);
+    // No label carries a stray carriage return that would corrupt the kickstart arg.
+    expect(labels.every((l) => !l.includes("\r"))).toBe(true);
+  });
 });
 
 describe("restartControlPlane", () => {
@@ -139,6 +151,44 @@ describe("restartControlPlane", () => {
       "com.llamactl.internal-proxy",
       "com.llamactl.node-agent",
     ]);
+  });
+
+  test("fail-closed allowlist: never kickstarts a stray com.llamactl.* cron job", async () => {
+    // A StartInterval cleanup cron matches the prefix but is NOT a control-plane
+    // service; restart-control-plane must restrict to the real services.
+    const listWithCron = [
+      "PID\tStatus\tLabel",
+      "501\t0\tcom.llamactl.controller",
+      "-\t0\tcom.llamactl.fleet-supervisor",
+      "1234\t0\tcom.llamactl.internal-proxy",
+      "1235\t0\tcom.llamactl.node-agent",
+      "-\t0\tcom.llamactl.memory-cleanup",
+    ].join("\n");
+    const captured: string[][] = [];
+    const runner: SubprocessRunner = async (cmd) => {
+      await Promise.resolve();
+      captured.push(cmd);
+      if (cmd[1] === "list") return { code: 0, stdout: listWithCron, stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    };
+
+    const result = await restartControlPlane({ host: "darwin", runner, uid: 501 });
+
+    // Only the 4 real control-plane labels are kickstarted, never the cron.
+    expect(result.restarted.map((r) => r.label)).toEqual([
+      "com.llamactl.controller",
+      "com.llamactl.fleet-supervisor",
+      "com.llamactl.internal-proxy",
+      "com.llamactl.node-agent",
+    ]);
+    const kickstartArgs = captured.slice(1).map((c) => c[c.length - 1]);
+    expect(kickstartArgs).toEqual([
+      "gui/501/com.llamactl.controller",
+      "gui/501/com.llamactl.fleet-supervisor",
+      "gui/501/com.llamactl.internal-proxy",
+      "gui/501/com.llamactl.node-agent",
+    ]);
+    expect(captured.some((c) => c.join(" ").includes("memory-cleanup"))).toBe(false);
   });
 
   test("non-darwin host is a no-op with skippedReason and no runner calls", async () => {

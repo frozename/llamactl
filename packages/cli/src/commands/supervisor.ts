@@ -254,6 +254,13 @@ function buildSupervisorLoopOptions(
   // revision once at startup; the loop consults the stateful closure at each
   // boundary and exits (→ launchd reloads) once a confirmed change is debounced.
   const startupRev = once ? undefined : sourceRevision.getSourceRevision();
+  if (!once) {
+    process.stderr.write(
+      startupRev
+        ? `supervisor: source-staleness reload ARMED at ${startupRev}\n`
+        : `supervisor: source-staleness reload OFF — no git checkout resolved (compiled binary or non-git deploy); run 'llamactl infra restart-control-plane' after deploys\n`,
+    );
+  }
   let staleState: sourceRevision.StaleStreakState = { streak: 0 };
   const checkSourceStale = (rev: string): { shouldReload: boolean; currentRev: string | null } => {
     const r = sourceRevision.checkSourceStale(rev, staleState);

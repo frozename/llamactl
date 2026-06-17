@@ -152,7 +152,11 @@ export async function runController(args: string[]): Promise<number> {
   // serve loop exits (→ launchd reload) once a confirmed post-startup change is
   // debounced. null (not a git checkout) ⇒ detection disabled.
   const startupRev = sourceRevision.getSourceRevision();
-  process.stdout.write(`controller: source revision ${startupRev ?? "none"}\n`);
+  process.stdout.write(
+    startupRev
+      ? `controller: source-staleness reload ARMED at ${startupRev}\n`
+      : `controller: source-staleness reload OFF — no git checkout resolved (compiled binary or non-git deploy); run 'llamactl infra restart-control-plane' after deploys\n`,
+  );
 
   const stopping = { value: false };
   const wakeRef: { wake: (() => void) | null } = { wake: null };
@@ -218,23 +222,33 @@ async function runReconcilePass(
 /**
  * One loop-boundary source check: advance the stale streak, and if the running
  * source changed since startup, warn — exiting (→ launchd reload) once the change
- * is debounced and reload is enabled. Returns the next streak state. Extracted
- * from runServeLoop to keep that loop body under the complexity budget.
+ * is debounced and reload is enabled. Returns the next streak state plus the next
+ * log signature. To avoid per-boundary stderr spam (e.g. under
+ * --no-reload-on-source-change, where currentRev stays != startupRev forever), the
+ * warning is emitted only when the `(currentRev, reloading)` signature CHANGES from
+ * the last emitted one — log on transition, not on every poll. The first stale
+ * boundary and the reload-flip boundary both have a new signature, so both emit.
+ * Extracted from runServeLoop to keep that loop body under the complexity budget.
  */
 function controllerSourceBoundary(
   staleState: sourceRevision.StaleStreakState,
   startupRev: string | null,
   reloadOnSourceChange: boolean,
-): sourceRevision.StaleStreakState {
+  lastSig: string | null,
+): { nextState: sourceRevision.StaleStreakState; nextSig: string | null } {
   const gate = applyControllerSourceGate(staleState, { startupRev });
   if (gate.currentRev !== null && gate.currentRev !== startupRev) {
     const reloading = gate.shouldReload && reloadOnSourceChange;
-    process.stderr.write(
-      `controller: source revision changed since startup (was ${String(startupRev)}, now ${gate.currentRev})${reloading ? " — reloading" : ""}\n`,
-    );
-    if (reloading) process.exit(0);
+    const sig = `${gate.currentRev}|${String(reloading)}`;
+    if (sig !== lastSig) {
+      process.stderr.write(
+        `controller: source revision changed since startup (was ${String(startupRev)}, now ${gate.currentRev})${reloading ? " — reloading" : ""}\n`,
+      );
+      if (reloading) process.exit(0);
+      return { nextState: gate.nextState, nextSig: sig };
+    }
   }
-  return gate.nextState;
+  return { nextState: gate.nextState, nextSig: lastSig };
 }
 
 // Race the sleep against a SIGTERM-triggered `wake()` so the
@@ -267,6 +281,7 @@ async function runServeLoop(
   startupRev: string | null,
 ): Promise<void> {
   let staleState: sourceRevision.StaleStreakState = { streak: 0 };
+  let lastSourceStaleSig: string | null = null;
   while (!stopping.value) {
     const start = Date.now();
     try {
@@ -278,8 +293,16 @@ async function runServeLoop(
     }
     if (isStopping()) break;
     // Loop boundary (after a completed pass): if the running source changed, warn
-    // every boundary and — once debounced — exit so launchd reloads fresh code.
-    staleState = controllerSourceBoundary(staleState, startupRev, parsed.reloadOnSourceChange);
+    // on each (rev,reloading) transition and — once debounced — exit so launchd
+    // reloads fresh code.
+    const boundary = controllerSourceBoundary(
+      staleState,
+      startupRev,
+      parsed.reloadOnSourceChange,
+      lastSourceStaleSig,
+    );
+    staleState = boundary.nextState;
+    lastSourceStaleSig = boundary.nextSig;
     const elapsed = Date.now() - start;
     const sleepMs = Math.max(100, parsed.intervalMs - elapsed);
     await sleepInterruptible(sleepMs, wakeRef);
