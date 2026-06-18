@@ -43,4 +43,15 @@ export const sessionEventBus = {
     e.removeAllListeners();
     channels.delete(sessionId);
   },
+  /**
+   * Number of "event" listeners currently attached to a session's
+   * channel (0 when the channel has never been created). Exposed so a
+   * subscriber that parks on the bus can be checked for listener leaks:
+   * after the subscriber disconnects, the count must return to its
+   * pre-subscribe value. Returns the live emitter listener count, not a
+   * cached one, so it never drifts from reality.
+   */
+  listenerCount(sessionId: string): number {
+    return channels.get(sessionId)?.listenerCount("event") ?? 0;
+  },
 };
