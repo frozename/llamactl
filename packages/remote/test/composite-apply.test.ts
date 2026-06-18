@@ -17,6 +17,7 @@ import type {
 import type { ApplyResult, WorkloadClient } from "../src/workload/apply.js";
 
 import { applyComposite, destroyComposite } from "../src/composite/apply.js";
+import { CompositeSchema } from "../src/composite/schema.js";
 import { saveConfig } from "../src/config/kubeconfig.js";
 import { freshConfig } from "../src/config/schema.js";
 
@@ -109,9 +110,11 @@ function makeFakeWorkloadClient(): {
   client: WorkloadClient;
   stopped: number;
   started: number;
+  stopKeys: string[];
 } {
   let stopped = 0;
   let started = 0;
+  const stopKeys: string[] = [];
   const c: WorkloadClient = {
     serverStatus: {
       async query() {
@@ -129,9 +132,10 @@ function makeFakeWorkloadClient(): {
       },
     },
     serverStop: {
-      async mutate() {
+      async mutate(input: { workload: string; graceSeconds?: number }) {
         await Promise.resolve();
         stopped++;
+        stopKeys.push(input.workload);
         return {};
       },
     },
@@ -214,6 +218,10 @@ function makeFakeWorkloadClient(): {
     },
     get started(): number {
       return started;
+    },
+    // Captured `input.workload` for every serverStop call, in order.
+    get stopKeys(): string[] {
+      return stopKeys;
     },
   };
 }
@@ -684,6 +692,126 @@ describe("destroyComposite — reverses the DAG", () => {
     const cfg = loadConfig(configPath);
     const kbStillThere = cfg.clusters[0]?.nodes.find((n) => n.name === "kb");
     expect(kbStillThere).toBeUndefined();
+  });
+});
+
+describe("workload teardown stops by the node key, not the composite name", () => {
+  // synthesizeModelRun sets metadata.name = spec.node, so the workload's
+  // llama-server is keyed by the NODE. Both teardown paths must call
+  // serverStop with that node key — stopping the composite name targets a
+  // nonexistent key (core stopServer no-ops) and orphans the GPU-pinned
+  // process, so a re-apply hits a PortCollision.
+  function workloadComposite(): Composite {
+    // Parse through the real schema so ModelRunSpec defaults (enabled:true,
+    // etc.) populate exactly as in production — otherwise a raw cast leaves
+    // `enabled` undefined and the workload short-circuits to "disabled".
+    return CompositeSchema.parse({
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "stack" }, // composite name (the WRONG key)
+      spec: {
+        services: [],
+        workloads: [
+          {
+            node: "local", // node name == the right stop key
+            target: { kind: "rel", value: "m.gguf" },
+          },
+        ],
+        ragNodes: [],
+        gateways: [],
+        pipelines: [],
+        dependencies: [],
+        onFailure: "rollback",
+      },
+    });
+  }
+
+  test("destroyComposite stops the workload by its node key ('local'), not the composite name ('stack')", async () => {
+    const backend = new FakeRuntimeBackend();
+    const fake = makeFakeWorkloadClient();
+    const manifest = workloadComposite();
+
+    await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => fake.client,
+      configPath,
+      compositesDir,
+    });
+
+    const result = await destroyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => fake.client,
+      configPath,
+      compositesDir,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fake.stopKeys.length).toBeGreaterThan(0);
+    // The captured stop key MUST be the node, never the composite name.
+    expect(fake.stopKeys).toContain("local");
+    expect(fake.stopKeys).not.toContain("stack");
+  });
+
+  test("rollback teardown stops the workload by its node key ('local'), not the composite name ('stack')", async () => {
+    const backend = new FakeRuntimeBackend();
+    const fake = makeFakeWorkloadClient();
+    // Composite: workload (node 'local') then a service that fails →
+    // rollback walks back through the started workload and tears it down.
+    // The dependency makes the workload (the `to` side) apply first; the
+    // service (`from`) applies second and its ensure throws.
+    const manifest = CompositeSchema.parse({
+      apiVersion: "llamactl/v1",
+      kind: "Composite",
+      metadata: { name: "stack" },
+      spec: {
+        services: [
+          {
+            kind: "chroma",
+            name: "chroma-1",
+            node: "local",
+            runtime: "docker",
+            port: 8001,
+            image: { repository: "chromadb/chroma", tag: "1.5.8" },
+          },
+        ],
+        workloads: [
+          {
+            node: "local",
+            target: { kind: "rel", value: "m.gguf" },
+          },
+        ],
+        ragNodes: [],
+        gateways: [],
+        pipelines: [],
+        dependencies: [
+          {
+            from: { kind: "service", name: "chroma-1" },
+            to: { kind: "workload", name: "local" },
+          },
+        ],
+        onFailure: "rollback",
+      },
+    });
+
+    // Workload applies first (topo: dep service→workload means workload
+    // comes first), then the service ensure throws → rollback tears the
+    // started workload back down.
+    backend.failNextEnsure = "boom";
+
+    const result = await applyComposite({
+      manifest,
+      backend,
+      getWorkloadClient: () => fake.client,
+      configPath,
+      compositesDir,
+    });
+
+    expect(result.rolledBack).toBe(true);
+    expect(fake.stopKeys.length).toBeGreaterThan(0);
+    expect(fake.stopKeys).toContain("local");
+    expect(fake.stopKeys).not.toContain("stack");
   });
 });
 
