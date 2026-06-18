@@ -15,6 +15,7 @@
  * don't replace a real search-engine extractor.
  */
 import type { Fetcher, FetcherContext, RawDoc } from "../types.js";
+import type { HostResolver } from "./ssrf-guard.js";
 
 import { resolveSecret } from "../../../config/secret.js";
 import { HttpSourceSpecSchema } from "../schema.js";
@@ -41,6 +42,12 @@ interface CrawlState {
   authHeader: string | undefined;
   visited: Set<string>;
   queue: QueueItem[];
+  /** Test-only DNS seam: when set, every `assertPublicUrl` (start, each
+   *  redirect hop, and the robots fetch) resolves hostnames through it
+   *  instead of real DNS, so a test can make a host resolve to a public
+   *  address while a robots redirect still targets a private literal.
+   *  Undefined in production → the guard's default resolver. */
+  resolve: HostResolver | undefined;
 }
 
 /**
@@ -67,7 +74,7 @@ function resolveAuthHeader(
 
 async function robotsAllows(url: URL, itemUrl: string, state: CrawlState): Promise<boolean> {
   if (state.spec.ignore_robots) return true;
-  const allowed = await state.robots.isAllowed(url, state.ctx, state.spec.timeout_ms);
+  const allowed = await state.robots.isAllowed(url, state);
   if (!allowed) {
     state.ctx.log({
       level: "info",
@@ -127,7 +134,10 @@ async function guardedFetch(startUrl: string, state: CrawlState): Promise<Respon
   let currentUrl = startUrl;
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    await assertPublicUrl(currentUrl, { allowPrivate: state.spec.allow_private_targets });
+    await assertPublicUrl(currentUrl, {
+      allowPrivate: state.spec.allow_private_targets,
+      resolve: state.resolve,
+    });
 
     // Only carry the bearer to the same origin as the original request.
     const sameOrigin = new URL(currentUrl).origin === originOrigin;
@@ -189,7 +199,10 @@ async function crawlOne(
   // SSRF gate first — before robots.txt is even fetched — so a private
   // target never produces any outbound request (robots or page).
   try {
-    await assertPublicUrl(item.url, { allowPrivate: state.spec.allow_private_targets });
+    await assertPublicUrl(item.url, {
+      allowPrivate: state.spec.allow_private_targets,
+      resolve: state.resolve,
+    });
   } catch (err) {
     if (err instanceof SsrfBlockedError) {
       state.ctx.log({
@@ -234,35 +247,59 @@ async function crawlOne(
   return { stop: false, doc };
 }
 
+async function* runCrawl(
+  ctx: FetcherContext,
+  resolve: HostResolver | undefined,
+): AsyncGenerator<RawDoc> {
+  const spec = HttpSourceSpecSchema.parse(ctx.spec);
+  const auth = resolveAuthHeader(spec, ctx);
+  if (!auth.ok) return;
+
+  const state: CrawlState = {
+    spec,
+    ctx,
+    origin: new URL(spec.url).origin,
+    rate: new RateLimiter(spec.rate_limit_per_sec),
+    robots: new RobotsCache(),
+    authHeader: auth.header,
+    visited: new Set<string>([canonicalize(spec.url)]),
+    queue: [{ url: canonicalize(spec.url), depth: 0 }],
+    resolve,
+  };
+
+  while (state.queue.length > 0) {
+    if (ctx.signal.aborted) return;
+    const item = state.queue.shift();
+    if (item === undefined) break;
+
+    const { stop, doc } = await crawlOne(item, state);
+    if (stop) return;
+    if (doc) yield doc;
+  }
+}
+
 export const httpFetcher: Fetcher = {
   kind: "http",
-  async *fetch(ctx) {
-    const spec = HttpSourceSpecSchema.parse(ctx.spec);
-    const auth = resolveAuthHeader(spec, ctx);
-    if (!auth.ok) return;
-
-    const state: CrawlState = {
-      spec,
-      ctx,
-      origin: new URL(spec.url).origin,
-      rate: new RateLimiter(spec.rate_limit_per_sec),
-      robots: new RobotsCache(),
-      authHeader: auth.header,
-      visited: new Set<string>([canonicalize(spec.url)]),
-      queue: [{ url: canonicalize(spec.url), depth: 0 }],
-    };
-
-    while (state.queue.length > 0) {
-      if (ctx.signal.aborted) return;
-      const item = state.queue.shift();
-      if (item === undefined) break;
-
-      const { stop, doc } = await crawlOne(item, state);
-      if (stop) return;
-      if (doc) yield doc;
-    }
+  fetch(ctx) {
+    // Production: real DNS via the guard's default resolver.
+    return runCrawl(ctx, undefined);
   },
 };
+
+/**
+ * Test-only crawl entry that injects a DNS resolver into the SSRF
+ * guard for every hop (start, redirect, and robots). Lets a test make
+ * a hostname resolve to a public address while a robots/page redirect
+ * still targets a private literal — proving the per-hop guard (now
+ * applied to robots too) refuses the private hop. Not part of the
+ * public Fetcher surface.
+ */
+export function __crawlWithResolver(
+  ctx: FetcherContext,
+  resolve: HostResolver,
+): AsyncGenerator<RawDoc> {
+  return runCrawl(ctx, resolve);
+}
 
 function canonicalize(urlStr: string): string {
   try {
@@ -396,19 +433,17 @@ class RobotsCache {
   private readonly disallows = new Map<string, string[]>();
   private readonly fetched = new Set<string>();
 
-  async isAllowed(
-    url: URL,
-    ctx: {
-      signal: AbortSignal;
-      log: (e: { level: "info" | "warn" | "error"; msg: string; data?: unknown }) => void;
-    },
-    timeoutMs: number,
-  ): Promise<boolean> {
+  async isAllowed(url: URL, state: CrawlState): Promise<boolean> {
     const host = url.origin;
     if (!this.fetched.has(host)) {
       this.fetched.add(host);
       try {
-        const res = await fetchWithTimeout(`${host}/robots.txt`, { signal: ctx.signal }, timeoutMs);
+        // Route robots.txt through the same guarded fetch the page path
+        // uses (manual redirects + per-hop assertPublicUrl + hop cap), so
+        // a public host whose /robots.txt 302s to a private target
+        // (loopback admin, 169.254.169.254) has that hop refused before
+        // it is issued, instead of being auto-followed unguarded.
+        const res = await guardedFetch(`${host}/robots.txt`, state);
         if (res.ok) {
           const body = await res.text();
           this.disallows.set(host, parseRobots(body));
@@ -416,6 +451,10 @@ class RobotsCache {
           this.disallows.set(host, []);
         }
       } catch {
+        // Any failure (transport, timeout, or an SSRF-blocked redirect)
+        // leaves the host with no Disallow rules — permissive, matching
+        // the prior missing-robots behavior. The blocked private target
+        // is never fetched: guardedFetch checks each hop before issuing.
         this.disallows.set(host, []);
       }
     }

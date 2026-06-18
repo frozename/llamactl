@@ -217,8 +217,16 @@ export async function assertPublicUrl(
     throw new SsrfBlockedError(`SSRF guard: non-http(s) scheme rejected: ${url.protocol}`);
   }
 
-  // URL strips brackets from IPv6 literals in `hostname`.
-  const host = url.hostname;
+  // WHATWG `URL.hostname` keeps the brackets on an IPv6 literal
+  // (`new URL('http://[::1]/').hostname === '[::1]'`), and `isIP('[::1]')`
+  // is 0 — so an unstripped bracketed literal is misclassified as a
+  // hostname and routed to DNS, letting `[::1]`, `[::ffff:127.0.0.1]`,
+  // and IPv4-mapped metadata (`[::ffff:169.254.169.254]`) slip past the
+  // literal-IP check. Strip a single leading `[` / trailing `]` so the
+  // bare address reaches `isIP`/`isBlockedIp` and is classified by the
+  // IPv6 path (IPv4-mapped tails are checked against their embedded v4).
+  const rawHost = url.hostname;
+  const host = rawHost.startsWith("[") && rawHost.endsWith("]") ? rawHost.slice(1, -1) : rawHost;
 
   if (isLiteralLoopbackHost(host)) {
     throw new SsrfBlockedError(`SSRF guard: loopback host rejected: ${host}`);

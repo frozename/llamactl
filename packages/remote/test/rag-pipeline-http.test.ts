@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { RawDoc } from "../src/rag/pipeline/types.js";
 
 import {
+  __crawlWithResolver,
   extractLinks,
   extractReadableText,
   httpFetcher,
@@ -400,6 +401,28 @@ describe("assertPublicUrl (SSRF guard)", () => {
     await expectBlocked("http://[::ffff:127.0.0.1]/");
   });
 
+  test("rejects bracketed IPv6 literals via the literal path, not DNS fallback", async () => {
+    // WHATWG `new URL('http://[::1]/').hostname` keeps the brackets
+    // ('[::1]'), so a naive `isIP(host)` returns 0 and the literal
+    // would fall through to DNS resolution as if it were a hostname.
+    // Inject a resolver that returns a PUBLIC IP: if the guard ever
+    // consulted DNS for one of these literals it would WRONGLY allow
+    // it. A rejection here proves the bracket-stripping literal path
+    // classifies and blocks the address before any resolver is asked.
+    const resolvePublic = (): Promise<string[]> => Promise.resolve(["93.184.216.34"]);
+    for (const url of [
+      "http://[::1]/",
+      "http://[::ffff:127.0.0.1]/",
+      // IPv4-mapped cloud metadata (169.254.169.254) — must be checked
+      // against its embedded IPv4 class, not treated as a hostname.
+      "http://[::ffff:169.254.169.254]/",
+      "http://[fc00::1]/",
+      "http://[fe80::1]/",
+    ]) {
+      await expectBlocked(url, { resolve: resolvePublic });
+    }
+  });
+
   test("rejects non-http(s) schemes", async () => {
     await expectBlocked("file:///etc/passwd");
     await expectBlocked("gopher://example.com/");
@@ -540,5 +563,102 @@ describe("httpFetcher cross-origin redirect token handling", () => {
     const landingCalls = srv.calls.filter((c) => c.path === "/landing");
     expect(landingCalls.length).toBeGreaterThan(0);
     expect(landingCalls.every((c) => c.auth === "Bearer secret-token")).toBe(true);
+  });
+});
+
+describe("httpFetcher robots.txt redirect is guarded", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  test("a robots.txt that 302s to a private target is refused, target never fetched", async () => {
+    // Model a PUBLIC host (resolves to a public IP, so the SSRF guard
+    // admits the start and its /robots.txt) whose /robots.txt 302s to a
+    // private literal (cloud metadata). The page path follows redirects
+    // through the guarded fetch; before this fix the robots path used a
+    // bare `fetch` with the default 'follow' redirect mode and no
+    // per-hop guard, so the private target was fetched unguarded.
+    const PUBLIC_HOST = "http://docs.public.test";
+    const PRIVATE = "http://169.254.169.254/robots.txt";
+    const fetched: string[] = [];
+
+    // Resolve one URL to a Response (no redirect-following — the caller
+    // models 'manual' vs 'follow' below).
+    const respondTo = (u: string): Response => {
+      if (u === `${PUBLIC_HOST}/robots.txt`) {
+        // Redirect robots.txt to the private metadata endpoint.
+        return new Response("", { status: 302, headers: { location: PRIVATE } });
+      }
+      if (u === PRIVATE) {
+        // If the guard is bypassed this serves a permissive robots —
+        // reaching here at all (fetched) is the vulnerability.
+        return new Response("User-agent: *\nDisallow:\n", {
+          status: 200,
+          headers: { "content-type": "text/plain" },
+        });
+      }
+      if (u === `${PUBLIC_HOST}/`) {
+        return new Response("<html><body>public page</body></html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    // Emulate the platform `fetch` faithfully: with the default
+    // `redirect: 'follow'` (or any non-'manual' mode) a 3xx is followed
+    // automatically, issuing a real request to the Location — so an
+    // UNGUARDED robots fetch would hit the private target. With
+    // `redirect: 'manual'` the 3xx is returned as-is, letting the caller
+    // re-check the guard before the next hop. `fetched` records every URL
+    // actually requested.
+    const isRedirectStatus = (s: number): boolean =>
+      s === 301 || s === 302 || s === 303 || s === 307 || s === 308;
+    globalThis.fetch = ((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      let u =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const mode = init?.redirect ?? "follow";
+      for (let i = 0; i < 5; i++) {
+        fetched.push(u);
+        const res = respondTo(u);
+        if (mode === "manual" || !isRedirectStatus(res.status)) return Promise.resolve(res);
+        const loc = res.headers.get("location");
+        if (loc === null || loc === "") return Promise.resolve(res);
+        u = new URL(loc, u).toString();
+      }
+      return Promise.resolve(new Response("too many redirects", { status: 599 }));
+    }) as typeof fetch;
+
+    // The injected resolver makes the public host resolve to a public IP,
+    // so the guard admits the start and the robots host; the private
+    // literal in the redirect Location is still classified directly.
+    const resolve = (host: string): Promise<string[]> =>
+      host === "docs.public.test" ? Promise.resolve(["93.184.216.34"]) : Promise.resolve([]);
+
+    const ctx = {
+      spec: {
+        kind: "http",
+        url: `${PUBLIC_HOST}/`,
+        max_depth: 0,
+        rate_limit_per_sec: 1000,
+      },
+      log: (): number => 0,
+      signal: new AbortController().signal,
+      env: process.env,
+    };
+
+    const docs: RawDoc[] = [];
+    for await (const doc of __crawlWithResolver(ctx, resolve)) docs.push(doc);
+
+    // The private metadata endpoint must NEVER be fetched — the guard
+    // refuses the redirect hop before issuing the request.
+    expect(fetched).not.toContain(PRIVATE);
+    // The crawl still proceeds: robots resolution failing closed leaves
+    // the host permissive, and the public page is fetched and yielded.
+    expect(fetched).toContain(`${PUBLIC_HOST}/`);
+    expect(docs).toHaveLength(1);
+    expect(docs[0]!.content).toContain("public page");
   });
 });
