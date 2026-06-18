@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -340,6 +340,44 @@ test("integrity scan self-heals quarantined rows when the slot file reappears an
     expect(healedRow?.quarantined).toBe(0);
     const missingRow = new KvRegistry(reopened).get("missing");
     expect(missingRow).toBeNull();
+    reopened.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("openKvStorage closes the db handle when migrate() throws on a newer schema", () => {
+  const t = makeTempRoot();
+  try {
+    const kvDir = join(t.root, "kvstore");
+    mkdirSync(kvDir, { recursive: true });
+    const dbPath = join(kvDir, "registry.db");
+    // Seed a schema_version GREATER than the code's SCHEMA_VERSION (5) so
+    // migrate() throws "newer than supported" during open.
+    const seed = new Database(dbPath);
+    seed.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+    seed.query("INSERT INTO schema_version (version) VALUES (99)").run();
+    seed.close();
+
+    const closeSpy = spyOn(Database.prototype, "close");
+    try {
+      expect(() => openKvStorage(t.root)).toThrow(/newer than supported/);
+      // The handle opened inside openKvStorage must be closed on the
+      // failure path so it does not leak (WAL lock + fd leak otherwise).
+      expect(closeSpy).toHaveBeenCalled();
+    } finally {
+      closeSpy.mockRestore();
+    }
+
+    // Hermetic proof the lock is released: a subsequent in-process open of
+    // the same path must not hang on a lingering WAL lock. We reset the
+    // seeded version to 0 so openKvStorage replays the full 0->5 migration
+    // chain (creating kv_entries) and succeeds.
+    const fix = new Database(dbPath);
+    fix.query("UPDATE schema_version SET version = 0").run();
+    fix.close();
+    const reopened = openKvStorage(t.root);
+    expect(reopened.db).toBeDefined();
     reopened.close();
   } finally {
     t.cleanup();

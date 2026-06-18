@@ -239,6 +239,18 @@ export interface ServerStatus {
 }
 
 /**
+ * Whether a sidecar `port` value parses to a finite number. Ports are
+ * persisted as numeric strings (`ServerState.port: string`), but tolerate a
+ * JSON number too — the downstream consumer already does
+ * `Number.parseInt(sidecar.port, 10)`, which coerces both. Rejects undefined,
+ * non-numeric strings, and any other shape so a corrupt sidecar fails closed.
+ */
+function portParsesFinite(value: unknown): boolean {
+  if (typeof value !== "string" && typeof value !== "number") return false;
+  return Number.isFinite(Number.parseInt(String(value), 10));
+}
+
+/**
  * Read the sidecar state file written at startServer time. Returns
  * null when absent or malformed — callers should treat that as "no
  * live server metadata available", which is the same user experience
@@ -257,7 +269,15 @@ export function readServerState(
       typeof parsed.rel === "string" &&
       Array.isArray(parsed.extraArgs) &&
       typeof parsed.pid === "number" &&
-      typeof parsed.startedAt === "string"
+      typeof parsed.startedAt === "string" &&
+      typeof parsed.host === "string" &&
+      parsed.host.length > 0 &&
+      // port is persisted as a numeric string but legacy/foreign writers may
+      // emit a JSON number; accept either and reject anything that does not
+      // parse to a finite number, matching the consumer at sidecarStatusFields
+      // (Number.parseInt(sidecar.port, 10)). A missing or NaN port would
+      // otherwise flow into the health-probe URL as NaN.
+      portParsesFinite(parsed.port)
     ) {
       if (typeof parsed.binary !== "string") parsed.binary = "";
       parsed.slotSavePath = typeof parsed.slotSavePath === "string" ? parsed.slotSavePath : null;

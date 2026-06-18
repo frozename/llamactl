@@ -17,20 +17,29 @@ export function openResponseCacheStorage(dataRoot: string): ResponseCacheStorage
   const cacheDir = join(dataRoot, "responsecache");
   mkdirSync(cacheDir, { recursive: true });
   const db = new Database(join(cacheDir, "responses.db"));
-  db.run("PRAGMA journal_mode = WAL");
-  db.run("PRAGMA busy_timeout = 5000");
-  migrate(db);
-  const storage: ResponseCacheStorage = {
-    db,
-    response_cache_hit_total: 0,
-    response_cache_miss_total: 0,
-    response_cache_evict_total: 0,
-    safeWrite: (fn) => safeWrite(storage, fn),
-    close: () => {
-      db.close();
-    },
-  };
-  return storage;
+  // Any throw during post-construction init (pragmas, migrate) must close the
+  // freshly-opened handle, or it leaks a file descriptor and holds the WAL
+  // lock. Close on the failure path only; on success the handle stays open and
+  // is owned by the returned storage.
+  try {
+    db.run("PRAGMA journal_mode = WAL");
+    db.run("PRAGMA busy_timeout = 5000");
+    migrate(db);
+    const storage: ResponseCacheStorage = {
+      db,
+      response_cache_hit_total: 0,
+      response_cache_miss_total: 0,
+      response_cache_evict_total: 0,
+      safeWrite: (fn) => safeWrite(storage, fn),
+      close: () => {
+        db.close();
+      },
+    };
+    return storage;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 export function safeWrite(
