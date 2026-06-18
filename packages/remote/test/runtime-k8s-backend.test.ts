@@ -846,6 +846,72 @@ describe("KubernetesBackend.ensureService — StatefulSet happy path", () => {
     expect(result.specHash).toBe("hash-v1");
     expect(replaceCalled).toBe(false);
   });
+
+  test("StatefulSet path resolves each secret exactly once across ensureService→ensureStatefulSet", async () => {
+    // ensureService resolves secrets, then hands the spec to
+    // ensureStatefulSet. The bug re-resolved them a second time inside
+    // ensureStatefulSet → two keychain hits per apply. Assert the
+    // injected resolver fires exactly once per secret ref.
+    const spec = sampleSpec({
+      name: "pg-main",
+      image: { repository: "pgvector/pgvector", tag: "0.8.2-pg18-trixie" },
+      specHash: "hash-v1",
+      ports: [{ containerPort: 5432 }],
+      controllerKind: "statefulset",
+      secrets: { POSTGRES_PASSWORD: { ref: "keychain:pg-pw" } },
+    });
+
+    let statefulSetReadCount = 0;
+    const stub = stubKubeConfig({
+      handlers: {
+        "core.readNamespace": () => ({ metadata: { name: "llamactl-kb" } }),
+        "core.readNamespacedSecret": () => {
+          throw notFound();
+        },
+        "core.createNamespacedSecret": (p) => p.body,
+        "core.readNamespacedService": () => {
+          throw notFound();
+        },
+        "core.createNamespacedService": (p) => p.body,
+        "apps.readNamespacedStatefulSet": () => {
+          statefulSetReadCount++;
+          if (statefulSetReadCount === 1) throw notFound();
+          return {
+            apiVersion: "apps/v1",
+            kind: "StatefulSet",
+            metadata: {
+              name: spec.name,
+              namespace: "llamactl-kb",
+              annotations: { [K8S_ANNOTATION_KEYS.specHash]: spec.specHash },
+              creationTimestamp: new Date("2026-04-21T10:00:00Z"),
+            },
+            status: { readyReplicas: 1, replicas: 1 },
+          } satisfies V1StatefulSet;
+        },
+        "apps.createNamespacedStatefulSet": (p) => p.body,
+      },
+    });
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 5,
+      readinessTimeoutMs: 500,
+    });
+
+    // Spy the private secret resolver via a typed cast (same escape
+    // hatch the makeApiClient stub uses). Count invocations per ref.
+    const resolverCalls: string[] = [];
+    (backend as unknown as { secretResolver: (ref: string) => string }).secretResolver = (
+      ref: string,
+    ): string => {
+      resolverCalls.push(ref);
+      return "resolved-pw";
+    };
+
+    await backend.ensureService(spec);
+
+    // Exactly ONE resolution of the single secret ref — not two.
+    expect(resolverCalls).toEqual(["keychain:pg-pw"]);
+  });
 });
 
 describe("KubernetesBackend.removeService", () => {
@@ -944,6 +1010,67 @@ describe("KubernetesBackend.removeService", () => {
     await backend.removeService({ name: "chroma-main" }, { purgeVolumes: true });
     // Only the matching PVC deleted; unrelated PVC ignored.
     expect(pvcDeletes).toEqual(["chroma-main-data"]);
+  });
+
+  test("purgeVolumes scoped to target StatefulSet — co-resident sibling PVC untouched", async () => {
+    // Two StatefulSets share one composite namespace: 'db' and
+    // 'web-db'. Each owns a single volumeClaimTemplate named 'data',
+    // so k8s materializes `data-db-0` and `data-web-db-0`. Removing
+    // 'db' with purgeVolumes must delete ONLY `data-db-0`. The old
+    // unanchored `pvcName.includes('-db-')` substring match also
+    // matched `data-web-db-0` → cross-service data loss.
+    const pvcDeletes: string[] = [];
+    const stub = stubKubeConfig({
+      handlers: {
+        "apps.listDeploymentForAllNamespaces": () => ({ items: [] }),
+        "apps.listStatefulSetForAllNamespaces": () => ({
+          items: [
+            {
+              apiVersion: "apps/v1",
+              kind: "StatefulSet",
+              metadata: { name: "db", namespace: "llamactl-kb" },
+              spec: {
+                replicas: 1,
+                volumeClaimTemplates: [{ metadata: { name: "data" } }],
+              },
+            },
+            {
+              apiVersion: "apps/v1",
+              kind: "StatefulSet",
+              metadata: { name: "web-db", namespace: "llamactl-kb" },
+              spec: {
+                replicas: 1,
+                volumeClaimTemplates: [{ metadata: { name: "data" } }],
+              },
+            },
+          ],
+        }),
+        "apps.deleteNamespacedStatefulSet": () => ({}),
+        "core.listNamespacedService": () => ({ items: [] }),
+        "core.deleteNamespacedSecret": () => {
+          throw notFound();
+        },
+        "core.listNamespacedPersistentVolumeClaim": () => ({
+          items: [
+            { metadata: { name: "data-db-0", namespace: "llamactl-kb" } },
+            { metadata: { name: "data-web-db-0", namespace: "llamactl-kb" } },
+          ],
+        }),
+        "core.deleteNamespacedPersistentVolumeClaim": (p) => {
+          pvcDeletes.push(p.name as string);
+          return {};
+        },
+      },
+    });
+    const backend = new KubernetesBackend({
+      kubeConfig: stub.kubeConfig,
+      readinessPollMs: 5,
+      readinessTimeoutMs: 500,
+    });
+    await backend.removeService({ name: "db" }, { purgeVolumes: true });
+    // ONLY db's PVC deleted; web-db's PVC must survive.
+    expect(pvcDeletes).toEqual(["data-db-0"]);
+    expect(pvcDeletes).not.toContain("data-web-db-0");
   });
 
   test("falls back to StatefulSet when no Deployment matches", async () => {

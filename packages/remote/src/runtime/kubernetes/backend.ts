@@ -148,7 +148,10 @@ export class KubernetesBackend implements RuntimeBackend {
     if (kind === "deployment") {
       return await this.ensureDeployment(spec, namespace, compositeName, resolvedSecrets);
     }
-    return await this.ensureStatefulSet(spec);
+    // Thread the already-resolved secrets (+ the resolved namespace /
+    // composite) into the StatefulSet path so it doesn't hit the
+    // keychain a second time for the same refs.
+    return await this.ensureStatefulSet(spec, namespace, compositeName, resolvedSecrets);
   }
 
   /**
@@ -171,7 +174,7 @@ export class KubernetesBackend implements RuntimeBackend {
   async removeService(ref: ServiceRef, opts?: RemoveServiceOptions): Promise<void> {
     const located = await this.locateService(ref.name);
     if (!located) return;
-    const { namespace, controllerKind } = located;
+    const { namespace, controllerKind, controller } = located;
     const purgeVolumes = opts?.purgeVolumes ?? false;
 
     // 1. Controller first — removing it stops the pods before we
@@ -197,14 +200,20 @@ export class KubernetesBackend implements RuntimeBackend {
       }
     }
 
-    // 4. PVCs — opt-in only. Deployment path emits a standalone PVC;
-    //    StatefulSet's volumeClaimTemplates materialize as
-    //    PVCs named `<template>-<statefulset>-<ordinal>` which carry
-    //    no managed-by label (k8s generates them). Scope by name
-    //    prefix when the controller is a StatefulSet; Deployment
-    //    path deletes the named PVC directly.
+    // 4. PVCs — opt-in only. Deployment path emits a standalone PVC
+    //    named `<name>-data`. StatefulSet's volumeClaimTemplates
+    //    materialize as PVCs named `<template>-<statefulset>-<ordinal>`
+    //    which k8s generates WITHOUT our managed-by/instance labels,
+    //    so we can't scope the delete by a label selector. Instead we
+    //    derive the EXACT set of PVC names this controller owns — from
+    //    its own `volumeClaimTemplates` × `replicas` — and delete only
+    //    those. This is fail-closed: a name we didn't enumerate is
+    //    never touched, so a co-resident sibling whose name merely
+    //    contains the target as a substring (e.g. `data-web-db-0` vs
+    //    service `db`) survives.
     if (purgeVolumes) {
-      await this.purgeServicePvcs(ref.name, namespace);
+      const owns = pvcOwnershipPredicate(ref.name, controllerKind, controller);
+      await this.purgeServicePvcs(owns, namespace);
     }
   }
 
@@ -265,20 +274,32 @@ export class KubernetesBackend implements RuntimeBackend {
     }
   }
 
-  /** Delete every PVC owned by the service; 404-tolerant. */
-  private async purgeServicePvcs(name: string, namespace: string): Promise<void> {
+  /**
+   * Delete every PVC the located controller owns; 404-tolerant.
+   * `owns` is the EXACT-name ownership predicate built from the
+   * controller's own volumeClaimTemplates (StatefulSet) or its
+   * `<name>-data` convention (Deployment) — never a loose substring
+   * match, so a sibling service's PVC sharing a namespace is never
+   * deleted. We still list-then-filter (rather than delete-by-derived-
+   * name) so scale-down orphans whose ordinal exceeds the current
+   * replica count are still reclaimed.
+   */
+  private async purgeServicePvcs(
+    owns: (pvcName: string) => boolean,
+    namespace: string,
+  ): Promise<void> {
     try {
       const pvcs = await this.client.core.listNamespacedPersistentVolumeClaim({
         namespace,
       });
       for (const pvc of pvcs.items) {
         const n = pvc.metadata?.name;
-        if (!n || !pvcBelongsToService(n, name)) continue;
+        if (!n || !owns(n)) continue;
         await this.deletePvc(n, namespace);
       }
     } catch (err) {
       if (!isNotFound(err)) {
-        throw wrapBackend(err, `list pvcs for '${name}'`);
+        throw wrapBackend(err, `list pvcs in '${namespace}'`);
       }
     }
   }
@@ -481,11 +502,12 @@ export class KubernetesBackend implements RuntimeBackend {
    * references a missing headless Service on its first scheduling
    * pass.
    */
-  private async ensureStatefulSet(spec: ServiceDeployment): Promise<ServiceInstance> {
-    const compositeName = spec.labels?.[K8S_LABEL_KEYS.composite] ?? "default";
-    const namespace = this.namespaceFor(compositeName);
-    const resolvedSecrets = this.resolveSecrets(spec);
-
+  private async ensureStatefulSet(
+    spec: ServiceDeployment,
+    namespace: string,
+    compositeName: string,
+    resolvedSecrets: Record<string, string>,
+  ): Promise<ServiceInstance> {
     const translated = translateToStatefulSet(spec, {
       namespace,
       compositeName,
@@ -1235,15 +1257,52 @@ export class KubernetesBackend implements RuntimeBackend {
 // --- helpers ------------------------------------------------------
 
 /**
- * Deployment case: exactly `${name}-data`.
- * StatefulSet case: `*-${name}-<ordinal>` (k8s convention).
+ * Build the EXACT-name PVC ownership predicate for the located
+ * controller. No substring matching — a sibling service co-resident
+ * in the same namespace whose PVC name merely *contains* the target
+ * name (e.g. service `db` vs `data-web-db-0`) must never match, or
+ * purgeVolumes destroys the sibling's data.
+ *
+ *  - Deployment: the backend emits exactly one standalone PVC named
+ *    `${serviceName}-data`.
+ *  - StatefulSet: k8s materializes one PVC per (volumeClaimTemplate ×
+ *    pod ordinal), named `${template}-${statefulSetName}-${ordinal}`.
+ *    We enumerate the controller's OWN `volumeClaimTemplates[*].
+ *    metadata.name` and accept a PVC only when it parses exactly as
+ *    `${template}-${serviceName}-${ordinal}` for one of those template
+ *    names and a non-negative integer ordinal. Listing-then-filtering
+ *    (rather than deriving names from the current replica count) keeps
+ *    scale-down orphans (ordinal ≥ replicas) reclaimable.
  */
-function pvcBelongsToService(pvcName: string, serviceName: string): boolean {
-  return (
-    pvcName === `${serviceName}-data` ||
-    pvcName.endsWith(`-${serviceName}-0`) ||
-    pvcName.includes(`-${serviceName}-`)
-  );
+function pvcOwnershipPredicate(
+  serviceName: string,
+  controllerKind: "deployment" | "statefulset",
+  controller: V1Deployment | V1StatefulSet,
+): (pvcName: string) => boolean {
+  if (controllerKind === "deployment") {
+    const exact = `${serviceName}-data`;
+    return (pvcName: string): boolean => pvcName === exact;
+  }
+  const templates = (controller as V1StatefulSet).spec?.volumeClaimTemplates ?? [];
+  const templateNames = templates
+    .map((t) => t.metadata?.name)
+    .filter((n): n is string => typeof n === "string" && n.length > 0);
+  return (pvcName: string): boolean =>
+    templateNames.some((template) => isStatefulSetPvcName(pvcName, template, serviceName));
+}
+
+/**
+ * True iff `pvcName` is exactly `${template}-${serviceName}-${ordinal}`
+ * with `ordinal` a non-negative integer (no leading-zero ambiguity
+ * beyond a bare `0`). Anchored on both ends — `data-web-db-0` does NOT
+ * match (template `data`, service `db`) because the residue between
+ * the template prefix and the ordinal suffix is `web-db`, not `db`.
+ */
+function isStatefulSetPvcName(pvcName: string, template: string, serviceName: string): boolean {
+  const prefix = `${template}-${serviceName}-`;
+  if (!pvcName.startsWith(prefix)) return false;
+  const ordinal = pvcName.slice(prefix.length);
+  return /^(?:0|[1-9][0-9]*)$/.test(ordinal);
 }
 
 function isNotFound(err: unknown): boolean {
