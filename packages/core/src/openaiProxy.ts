@@ -459,6 +459,13 @@ export function __getOpenAIProxyResponseCacheEvictTotalForTests(resolved: Resolv
   return responseCacheRuntimeFor(resolved).storage.response_cache_evict_total;
 }
 
+export function __getOpenAIProxySlotAllocatorInUseForTests(
+  resolved: ResolvedEnv,
+  workload: string,
+): number {
+  return slotAllocatorFor(kvRuntimeFor(resolved), workload).inUse().length;
+}
+
 function anthropicTranslationErrorResponse(error: unknown): Response {
   return Response.json(
     {
@@ -1298,7 +1305,13 @@ async function applyWarmKvHit(
     hit.upstreamSlotFile,
     restore.restore_epoch,
   );
-  runtime.registry.bumpHit(hit.sha, Date.now());
+  // Best-effort recency/analytics bump — must never throw past this point, or
+  // the lease acquired above would be skipped from context.kv (below) and
+  // orphaned (releaseWarmHitLease short-circuits on `!kv`), permanently
+  // disabling the single-slot allocator. Mirror the response-cache sibling.
+  runtime.storage.safeWrite(() => {
+    runtime.registry.bumpHit(hit.sha, Date.now());
+  });
   context.kv = buildKvRequestState(
     metadata,
     runtime,
