@@ -1026,10 +1026,19 @@ async function startCoordinator(
 }
 
 async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
-  const { manifest, client, getClient, onEvent, now, status, matches, desiredArgs } = ctx;
+  const { manifest, client, getClient, onEvent, now, status, matches, desiredArgs, evictTargets } =
+    ctx;
   const admission = admitServerBudget(ctx);
   if (!admission.ok) return admission.result;
   const adm = admission.adm;
+
+  // Evict only AFTER admission succeeds and from INSIDE the node lock.
+  // Eviction is destructive: stopping the victims for a workload that
+  // is then rejected (budget/admission fail) would tear down running
+  // servers to make room for a server that never starts. The budget
+  // computation already excludes evictTargets from `living`, so an
+  // admitted workload has accounted for the freed capacity here.
+  await stopEvictTargets(manifest, client, evictTargets, onEvent);
 
   if (matches) {
     onEvent?.({
@@ -1173,7 +1182,6 @@ export async function applyOne(
 
   const now = new Date().toISOString();
   const evictTargets = parseEvictTargets(manifest);
-  await stopEvictTargets(manifest, client, evictTargets, onEvent);
 
   return await withNodeLock(
     manifest.spec.node,

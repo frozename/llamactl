@@ -195,6 +195,36 @@ test("evict annotation stops named workload before starting incoming", async () 
   expect(result.action).toBe("started");
 });
 
+test("rejected admission does NOT evict its targets (destructive eviction guard)", async () => {
+  // "a" is the eviction target (running). "c" is another living
+  // workload on the same node that the incoming "b" does NOT evict —
+  // its 8 GiB plus b's 8 GiB exceeds the 10 GiB node budget, so
+  // admission fails. The eviction of "a" must NOT happen for a
+  // workload that is then rejected. RED before the reorder: "a" was
+  // stopped before admission ran, so a rejected apply still destroyed
+  // the victim.
+  const state = new Map([
+    ["a", { up: true, rel: "a.gguf", args: [] }],
+    ["c", { up: true, rel: "c.gguf", args: [] }],
+  ]);
+  const result = await applyOne(
+    mkManifest("b", { annotations: { "llamactl.io/evict": "a" }, port: 8090, ram: 8 }),
+    () => makeClient(state),
+    undefined,
+    undefined,
+    {
+      getNodeBudgetGiB: () => 10,
+      listManifests: () => [mkManifest("a", { ram: 8 }), mkManifest("c", { ram: 8 })],
+    },
+  );
+  expect(result.action).toBe("pending");
+  expect(result.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+  // The victim must still be running — a rejected workload may not
+  // evict anything.
+  expect(state.has("a")).toBe(true);
+  expect(state.has("b")).toBe(false);
+});
+
 test("budget overflow returns pending with BudgetExceeded unless force-admit", async () => {
   const state = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
   const result = await applyOne(

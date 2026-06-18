@@ -4,7 +4,7 @@ import type { GatewayApplyOptions, GatewayHandler } from "./types.js";
 
 import { currentContext, loadConfig, resolveToken } from "../../config/kubeconfig.js";
 import { type ClusterNode, resolveNodeKind } from "../../config/schema.js";
-import { loadSiriusProviders } from "../../config/sirius-providers.js";
+import { loadSiriusProviders, type SiriusProvider } from "../../config/sirius-providers.js";
 import {
   applyCompositeEntries,
   deriveSiriusEntries,
@@ -50,11 +50,24 @@ function siriusConflictResult(
   return pending(opts, reason, message, now);
 }
 
-function resolveSiriusCatalog(
+/**
+ * Compute the catalog union WITHOUT writing it. Detecting name/shape
+ * conflicts is pure (no side effect), so it runs in the validate phase
+ * before any disk write. `next` is the union of current + derived
+ * entries — validation reads it so a composite's just-derived upstream
+ * is visible without persisting a (possibly-doomed) catalog first.
+ *
+ * The actual `writeGatewayCatalog` is deferred to `writeSiriusCatalog`
+ * and only fires once the upstream / baseUrl / token all validate — so
+ * a rejected apply leaves no broken catalog on disk.
+ */
+function computeSiriusCatalog(
   opts: GatewayApplyOptions,
   now: string,
-): { ok: false; result: ApplyResult } | { ok: true; changed: boolean } {
-  if (!opts.composite) return { ok: true, changed: false };
+):
+  | { ok: false; result: ApplyResult }
+  | { ok: true; changed: boolean; next: SiriusProvider[] | null } {
+  if (!opts.composite) return { ok: true, changed: false, next: null };
   const derived = deriveSiriusEntries(opts.composite);
   const current = readGatewayCatalog("sirius");
   const result = applyCompositeEntries({
@@ -66,10 +79,22 @@ function resolveSiriusCatalog(
   if (result.conflicts.length > 0) {
     return { ok: false, result: siriusConflictResult(opts, result.conflicts, now) };
   }
-  if (!result.changed) return { ok: true, changed: false };
+  return { ok: true, changed: result.changed, next: result.next };
+}
+
+/**
+ * Persist the computed catalog union. The LAST side effect of a
+ * successful apply — called only after the upstream / baseUrl / token
+ * have all validated, so an invalid config never writes a catalog.
+ */
+function writeSiriusCatalog(
+  opts: GatewayApplyOptions,
+  next: SiriusProvider[],
+  now: string,
+): { ok: false; result: ApplyResult } | { ok: true } {
   try {
-    writeGatewayCatalog("sirius", result.next);
-    return { ok: true, changed: true };
+    writeGatewayCatalog("sirius", next);
+    return { ok: true };
   } catch (err) {
     return {
       ok: false,
@@ -86,6 +111,15 @@ function resolveSiriusCatalog(
 function resolveSiriusUpstream(
   opts: GatewayApplyOptions,
   now: string,
+  /**
+   * Computed catalog union (current + composite-derived) when this
+   * apply originates from a composite, else null. Validating against
+   * the union lets a composite's just-derived upstream satisfy the
+   * "exists" check WITHOUT first persisting the catalog — so the disk
+   * write can be deferred to the end and skipped on rejection. For a
+   * plain (non-composite) apply this is null and we read disk as before.
+   */
+  computedProviders: SiriusProvider[] | null,
 ): { ok: false; result: ApplyResult } | { ok: true; upstream: string; modelId: string } {
   const targetValue = opts.manifest.spec.target.value;
   const slash = targetValue.indexOf("/");
@@ -113,19 +147,27 @@ function resolveSiriusUpstream(
   // host-side validation stays the first line of defense whenever
   // the operator maintains their own `sirius-providers.yaml` via
   // `llamactl sirius add-provider`.
-  let providers;
-  try {
-    providers = loadSiriusProviders();
-  } catch (err) {
-    return {
-      ok: false,
-      result: failure(
-        opts,
-        "SiriusProvidersUnreadable",
-        `failed to read sirius-providers.yaml: ${(err as Error).message}`,
-        now,
-      ),
-    };
+  // Composite applies validate against the computed union (which
+  // already includes the just-derived upstream) so no catalog write is
+  // needed before this check. Plain applies read the operator-maintained
+  // file from disk exactly as before.
+  let providers: SiriusProvider[];
+  if (computedProviders !== null) {
+    providers = computedProviders;
+  } else {
+    try {
+      providers = loadSiriusProviders();
+    } catch (err) {
+      return {
+        ok: false,
+        result: failure(
+          opts,
+          "SiriusProvidersUnreadable",
+          `failed to read sirius-providers.yaml: ${(err as Error).message}`,
+          now,
+        ),
+      };
+    }
   }
   if (providers.length === 0) {
     opts.onEvent?.({
@@ -221,10 +263,16 @@ export const siriusHandler: GatewayHandler = {
   async apply(opts: GatewayApplyOptions): Promise<ApplyResult> {
     const now = new Date().toISOString();
 
-    const catalogResult = resolveSiriusCatalog(opts, now);
+    // VALIDATE FIRST, WRITE LAST. The catalog write is a persistent
+    // side effect: a bad config (unreachable upstream, missing baseUrl,
+    // unresolvable token) must NOT leave a broken sirius-providers.yaml
+    // on disk. So compute the catalog union here (pure — no write),
+    // run every validation against it, and only persist once all checks
+    // pass, just before the reload.
+    const catalogResult = computeSiriusCatalog(opts, now);
     if (!catalogResult.ok) return catalogResult.result;
 
-    const upstreamResult = resolveSiriusUpstream(opts, now);
+    const upstreamResult = resolveSiriusUpstream(opts, now, catalogResult.next);
     if (!upstreamResult.ok) return upstreamResult.result;
 
     const baseUrl = opts.node.cloud?.baseUrl;
@@ -251,6 +299,14 @@ export const siriusHandler: GatewayHandler = {
         `could not resolve bearer token for sirius reload: ${(err as Error).message}`,
         now,
       );
+    }
+
+    // All validation passed — NOW persist the catalog (last side effect
+    // before the reload). Only composites with a real diff write; plain
+    // applies (next === null) never touch the file.
+    if (catalogResult.changed && catalogResult.next) {
+      const written = writeSiriusCatalog(opts, catalogResult.next, now);
+      if (!written.ok) return written.result;
     }
 
     if (!opts.composite || catalogResult.changed) {
