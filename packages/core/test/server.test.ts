@@ -469,6 +469,78 @@ describe("server.stopServer", () => {
   });
 });
 
+describe("server.readServerState (host/port validation)", () => {
+  let temp: ReturnType<typeof makeTempRuntime>;
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    temp = makeTempRuntime();
+    originalEnv = { ...process.env };
+    for (const [k, v] of Object.entries(envForTemp(temp))) {
+      if (v !== undefined) process.env[k] = v;
+    }
+    mkdirSync(temp.runtimeDir, { recursive: true });
+  });
+  afterEach(() => {
+    process.env = originalEnv;
+    temp.cleanup();
+  });
+
+  function writeSidecar(fields: Record<string, unknown>): void {
+    const dir = ensureWorkloadRuntimeDir(resolveEnv(), TEST_KEY);
+    writeFileSync(join(dir, "llama-server.state"), JSON.stringify(fields, null, 2));
+  }
+
+  const validSidecar = {
+    rel: "Demo/demo.gguf",
+    extraArgs: [],
+    host: "127.0.0.1",
+    port: "8080",
+    binary: "",
+    pid: 4242,
+    startedAt: "2026-06-17T00:00:00.000Z",
+    tunedProfile: null,
+  };
+
+  test("accepts a well-formed sidecar with a numeric-string port", () => {
+    writeSidecar(validSidecar);
+    const state = readServerState(TEST_KEY);
+    expect(state).not.toBeNull();
+    expect(state?.host).toBe("127.0.0.1");
+    expect(state?.port).toBe("8080");
+  });
+
+  test("accepts a sidecar whose port is a JSON number (legacy/foreign writer)", () => {
+    // Real writers (listLocalRoutes fixtures, older sidecars) emit port as a
+    // JSON number, not a string; the read boundary must still accept it since
+    // the consumer coerces with Number.parseInt.
+    writeSidecar({ ...validSidecar, port: 8090 });
+    expect(readServerState(TEST_KEY)).not.toBeNull();
+  });
+
+  test("returns null when the port does not parse to a finite number", () => {
+    writeSidecar({ ...validSidecar, port: "not-a-number" });
+    expect(readServerState(TEST_KEY)).toBeNull();
+  });
+
+  test("returns null when the port is missing", () => {
+    const { port: _port, ...withoutPort } = validSidecar;
+    writeSidecar(withoutPort);
+    expect(readServerState(TEST_KEY)).toBeNull();
+  });
+
+  test("returns null when the host is missing", () => {
+    const { host: _host, ...withoutHost } = validSidecar;
+    writeSidecar(withoutHost);
+    expect(readServerState(TEST_KEY)).toBeNull();
+  });
+
+  test("returns null when the host is an empty string", () => {
+    writeSidecar({ ...validSidecar, host: "" });
+    expect(readServerState(TEST_KEY)).toBeNull();
+  });
+});
+
 describe("server per-workload isolation", () => {
   let temp: ReturnType<typeof makeTempRuntime>;
   let originalEnv: NodeJS.ProcessEnv;

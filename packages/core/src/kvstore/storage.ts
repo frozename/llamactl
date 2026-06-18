@@ -19,23 +19,32 @@ export function openKvStorage(dataRoot: string): KvStorage {
   const kvDir = join(dataRoot, "kvstore");
   mkdirSync(kvDir, { recursive: true });
   const db = new Database(join(kvDir, "registry.db"));
-  db.run("PRAGMA journal_mode = WAL");
-  db.run("PRAGMA busy_timeout = 5000");
-  migrate(db);
-  const storage: KvStorage = {
-    db,
-    registry_integrity_errors_total: 0,
-    registry_write_fail_total: 0,
-    kv_false_hit_total: 0,
-    kv_replay_mismatch_total: 0,
-    kv_model_mismatch_total: 0,
-    safeWrite: (fn) => safeWrite(storage, fn),
-    close: () => {
-      db.close();
-    },
-  };
-  runIntegrityScan(storage);
-  return storage;
+  // Any throw during post-construction init (pragmas, migrate,
+  // runIntegrityScan) must close the freshly-opened handle, or it leaks a
+  // file descriptor and holds the WAL lock. Close on the failure path only;
+  // on success the handle stays open and is owned by the returned storage.
+  try {
+    db.run("PRAGMA journal_mode = WAL");
+    db.run("PRAGMA busy_timeout = 5000");
+    migrate(db);
+    const storage: KvStorage = {
+      db,
+      registry_integrity_errors_total: 0,
+      registry_write_fail_total: 0,
+      kv_false_hit_total: 0,
+      kv_replay_mismatch_total: 0,
+      kv_model_mismatch_total: 0,
+      safeWrite: (fn) => safeWrite(storage, fn),
+      close: () => {
+        db.close();
+      },
+    };
+    runIntegrityScan(storage);
+    return storage;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 export function safeWrite(

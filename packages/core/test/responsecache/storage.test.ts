@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -269,6 +269,43 @@ test("responsecache migration recovers when schema_version lags behind already-a
       .get() as { sha: string; model: string; hits: number } | null;
     expect(row).toBeNull();
     storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("openResponseCacheStorage closes the db handle when migrate() throws on a newer schema", () => {
+  const t = makeTempRoot();
+  try {
+    const cacheDir = join(t.root, "responsecache");
+    mkdirSync(cacheDir, { recursive: true });
+    const dbPath = join(cacheDir, "responses.db");
+    // Seed a schema_version GREATER than the code's SCHEMA_VERSION (2) so
+    // migrate() throws "newer than supported" during open.
+    const seed = new Database(dbPath);
+    seed.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+    seed.query("INSERT INTO schema_version (version) VALUES (99)").run();
+    seed.close();
+
+    const closeSpy = spyOn(Database.prototype, "close");
+    try {
+      expect(() => openResponseCacheStorage(t.root)).toThrow(/newer than supported/);
+      // The handle opened inside openResponseCacheStorage must be closed on
+      // the failure path so it does not leak (WAL lock + fd leak otherwise).
+      expect(closeSpy).toHaveBeenCalled();
+    } finally {
+      closeSpy.mockRestore();
+    }
+
+    // Hermetic proof the lock is released: a subsequent in-process open of
+    // the same path must not hang on a lingering WAL lock. We bump the
+    // seeded version down to a supported value so this open succeeds.
+    const fix = new Database(dbPath);
+    fix.query("UPDATE schema_version SET version = 2").run();
+    fix.close();
+    const reopened = openResponseCacheStorage(t.root);
+    expect(reopened.db).toBeDefined();
+    reopened.close();
   } finally {
     t.cleanup();
   }
