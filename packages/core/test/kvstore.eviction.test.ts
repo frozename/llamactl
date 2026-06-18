@@ -29,46 +29,24 @@ function baseEntry(overrides: Partial<KvEntry> = {}): KvEntry {
   };
 }
 
-test("protected entry is never evicted", () => {
+test("score equals ageComponent + sizeComponent - hitProtection", () => {
   const now = 1716576000 + 60_000;
-  const score = evictionScore(baseEntry({ sha: "protected" }), 0, null, "protected", now);
-  expect(score).toBe(Number.NEGATIVE_INFINITY);
-});
+  const entry = baseEntry({ hits: 3, payloadBytes: 4 * 1024 * 1024, lastUsed: now - 60_000 });
 
-test("live-prefix-matching entry scores far below idle entry of the same age", () => {
-  const now = 1716576000 + 60_000;
-  const idle = evictionScore(
-    baseEntry({ sha: "idle", hits: 1, lastUsed: now - 60_000 }),
-    0,
-    null,
-    null,
-    now,
-  );
-  const live = evictionScore(
-    baseEntry({ sha: "live", hits: 1, lastUsed: now - 60_000 }),
-    0,
-    "live",
-    null,
-    now,
-  );
+  const ageMs = now - entry.lastUsed;
+  const decayedHits = entry.hits * Math.pow(0.5, ageMs / (6 * 3600 * 1000));
+  const ageComponent = ageMs / (60 * 60 * 1000);
+  const hitProtection = decayedHits * 25;
+  const sizeComponent = entry.payloadBytes / (1024 * 1024);
 
-  expect(live).toBeLessThan(idle - 500);
+  expect(evictionScore(entry, now)).toBe(ageComponent + sizeComponent - hitProtection);
 });
 
 test("hits decay with a 6h half-life", () => {
   const now = 1716576000 + 60_000;
-  const recent = evictionScore(
-    baseEntry({ sha: "recent", hits: 10, lastUsed: now - 60_000 }),
-    0,
-    null,
-    null,
-    now,
-  );
+  const recent = evictionScore(baseEntry({ sha: "recent", hits: 10, lastUsed: now - 60_000 }), now);
   const stale = evictionScore(
     baseEntry({ sha: "stale", hits: 10, lastUsed: now - 6 * 3600 * 1000 }),
-    0,
-    null,
-    null,
     now,
   );
 
@@ -77,18 +55,9 @@ test("hits decay with a 6h half-life", () => {
 
 test("larger payloads score higher than smaller ones at the same recency and hits", () => {
   const now = 1716576000 + 60_000;
-  const small = evictionScore(
-    baseEntry({ sha: "small", hits: 2, payloadBytes: 1024 * 1024 }),
-    0,
-    null,
-    null,
-    now,
-  );
+  const small = evictionScore(baseEntry({ sha: "small", hits: 2, payloadBytes: 1024 * 1024 }), now);
   const large = evictionScore(
     baseEntry({ sha: "large", hits: 2, payloadBytes: 8 * 1024 * 1024 }),
-    0,
-    null,
-    null,
     now,
   );
 
@@ -97,34 +66,15 @@ test("larger payloads score higher than smaller ones at the same recency and hit
 
 test("never-used entries are more evictable than used entries of the same recency", () => {
   const now = 1716576000 + 60_000;
-  const unused = evictionScore(
-    baseEntry({ sha: "unused", hits: 0, lastUsed: now - 60_000 }),
-    0,
-    null,
-    null,
-    now,
-  );
-  const used = evictionScore(
-    baseEntry({ sha: "used", hits: 4, lastUsed: now - 60_000 }),
-    0,
-    null,
-    null,
-    now,
-  );
+  const unused = evictionScore(baseEntry({ sha: "unused", hits: 0, lastUsed: now - 60_000 }), now);
+  const used = evictionScore(baseEntry({ sha: "used", hits: 4, lastUsed: now - 60_000 }), now);
 
   expect(unused).toBeGreaterThan(used);
 });
 
-test("relative ordering matches protection, recency, size, and live-prefix rules", () => {
+test("relative ordering matches recency and size rules", () => {
   const now = 1716576000 + 60_000;
   const entries = [
-    baseEntry({ sha: "protected", hits: 20, payloadBytes: 32 * 1024 * 1024 }),
-    baseEntry({
-      sha: "live",
-      hits: 1,
-      payloadBytes: 16 * 1024 * 1024,
-      lastUsed: now - 6 * 3600 * 1000,
-    }),
     baseEntry({
       sha: "recent-popular",
       hits: 10,
@@ -136,9 +86,9 @@ test("relative ordering matches protection, recency, size, and live-prefix rules
   ];
 
   const ranked = entries
-    .map((entry) => ({ sha: entry.sha, score: evictionScore(entry, 0, "live", "protected", now) }))
+    .map((entry) => ({ sha: entry.sha, score: evictionScore(entry, now) }))
     .sort((a, b) => a.score - b.score)
     .map((item) => item.sha);
 
-  expect(ranked).toEqual(["protected", "live", "recent-popular", "smaller", "bigger"]);
+  expect(ranked).toEqual(["recent-popular", "smaller", "bigger"]);
 });
