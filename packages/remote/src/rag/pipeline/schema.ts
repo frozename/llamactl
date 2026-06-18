@@ -25,6 +25,17 @@ export const HttpSourceSpecSchema = z.object({
   rate_limit_per_sec: z.number().positive().default(2),
   timeout_ms: z.number().int().positive().default(10_000),
   auth: z.object({ tokenRef: z.string().min(1) }).optional(),
+  /**
+   * SSRF escape hatch. The fetcher rejects targets that resolve to
+   * loopback / link-local (cloud metadata 169.254.169.254) / RFC1918
+   * private / unique-local addresses on every request and redirect
+   * hop, so a manifest URL (or a link it crawls into, or a redirect
+   * Location it follows) cannot reach internal infrastructure. Set
+   * this true ONLY to knowingly crawl an internal host (e.g. an
+   * intranet docs site on a private network). Defaults false —
+   * fail closed.
+   */
+  allow_private_targets: z.boolean().default(false),
   tag: z.record(z.string(), z.unknown()).optional(),
 });
 
