@@ -143,7 +143,12 @@ export async function resolveProjectNodeTarget(
   // follow-up slice. Tests + future cost wiring inject via
   // `opts.checkBudget`.
   const limit = project.spec.budget?.usd_per_day;
-  if (limit !== undefined && limit > 0 && opts.checkBudget) {
+  // Gate on `>= 0`, NOT `> 0`: `usd_per_day: 0` is the STRICTEST ceiling an
+  // operator can declare (block all paid spend), so it must enforce rather
+  // than be treated as falsy and skipped — skipping it fails open to
+  // UNLIMITED spend. An UNDEFINED limit means 'no USD cap configured' =
+  // unlimited, and the budget gate stays off.
+  if (limit !== undefined && limit >= 0 && opts.checkBudget) {
     try {
       const snap = await opts.checkBudget({ project, limit });
       if (snap && snap.usdToday >= snap.usdLimit) {
@@ -263,6 +268,17 @@ function usageRecordCostUsd(
   return { cost: estimated, underCounted: false };
 }
 
+/**
+ * Clamp a per-record cost before it joins the daily total. A crafted/corrupt
+ * record carrying a NEGATIVE (or non-finite) cost must NEVER subtract from the
+ * running total — that would let it erase prior spend and bypass the cap. A
+ * negative / NaN / Infinity cost contributes 0; only a finite, non-negative
+ * cost is kept (0 is a legitimate free/cached-call cost).
+ */
+function nonNegativeCost(cost: number): number {
+  return Number.isFinite(cost) && cost > 0 ? cost : 0;
+}
+
 /** Projects already warned this process about an unpriceable budget, so
  *  the "can't enforce" notice fires once per project rather than per call. */
 const budgetPricingWarned = new Set<string>();
@@ -328,7 +344,9 @@ export function makeProjectBudgetChecker(
           );
         }
       }
-      usdToday += priced.cost;
+      // Clamp before accumulating so a negative / non-finite cost can never
+      // subtract from the running total and bypass the cap (see nonNegativeCost).
+      usdToday += nonNegativeCost(priced.cost);
     }
     return Promise.resolve({ usdToday, usdLimit: limit });
   };

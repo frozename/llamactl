@@ -166,6 +166,57 @@ describe("resolveProjectNodeTarget — budget check", () => {
     expect(called).toBe(false);
     expect(out.decision!.reason).toBe("matched");
   });
+
+  test("usd_per_day: 0 is the strictest ceiling — any spend is over budget", async () => {
+    // 0 is the most restrictive ceiling an operator can set: block ALL
+    // paid spend. A falsy-0 gate would skip enforcement and yield UNLIMITED
+    // spend — the exact fail-open this guards. The checker is consulted and
+    // the inclusive >= comparator flips a 0-limit project to private-first.
+    const project = makeProject({ budget: { usd_per_day: 0 } });
+    let called = false;
+    const out = await resolveProjectNodeTarget("project:novaflow/code_review", {
+      loadProjects: () => [project],
+      checkBudget: async () => {
+        await Promise.resolve();
+        called = true;
+        return { usdToday: 0, usdLimit: 0 };
+      },
+    });
+    expect(called).toBe(true);
+    expect(out.node).toBe("private-first");
+    expect(out.decision!.reason).toBe("over-budget");
+    expect(out.decision!.matched).toBe(true);
+  });
+
+  test("undefined usd_per_day remains unlimited (checker never consulted)", async () => {
+    // No USD ceiling declared — the budget gate must stay off. This pins the
+    // 'undefined === unlimited' contract so the 0-handling fix above does not
+    // bleed into projects that simply never opted into a USD cap.
+    const project = makeProject();
+    let called = false;
+    const out = await resolveProjectNodeTarget("project:novaflow/code_review", {
+      loadProjects: () => [project],
+      checkBudget: async () => {
+        await Promise.resolve();
+        called = true;
+        return { usdToday: 999, usdLimit: 0 };
+      },
+    });
+    expect(called).toBe(false);
+    expect(out.node).toBe("mac-mini.claude-pro");
+    expect(out.decision!.reason).toBe("matched");
+  });
+
+  test("a positive usd_per_day limit still enforces normally", async () => {
+    // Regression guard: the 0-handling fix must not weaken positive limits.
+    const project = makeProject({ budget: { usd_per_day: 2.0 } });
+    const out = await resolveProjectNodeTarget("project:novaflow/code_review", {
+      loadProjects: () => [project],
+      checkBudget: () => Promise.resolve({ usdToday: 3.0, usdLimit: 2.0 }),
+    });
+    expect(out.node).toBe("private-first");
+    expect(out.decision!.reason).toBe("over-budget");
+  });
 });
 
 describe("makeProjectBudgetChecker", () => {
@@ -237,6 +288,34 @@ describe("makeProjectBudgetChecker", () => {
     expect(snap).not.toBeNull();
     expect(snap!.usdToday).toBeCloseTo(0.5, 6);
     expect(snap!.usdLimit).toBe(2);
+  });
+
+  test("a negative estimated_cost_usd contributes 0 — it cannot erase prior spend", async () => {
+    // A crafted/corrupt record with a NEGATIVE cost must NOT subtract from the
+    // running daily total — that would let an attacker drive usdToday below the
+    // cap and bypass the budget. The negative record clamps to 0; only the real
+    // positive spend accumulates.
+    writeUsage("openai", TODAY, [
+      usageRow("project:novaflow/code_review/openai", { estimated_cost_usd: 0.8 }),
+      usageRow("project:novaflow/quick_qna/openai", { estimated_cost_usd: -5 }),
+    ]);
+    const checker = makeProjectBudgetChecker({ now: () => NOW, usageDir, pricingDir });
+    const snap = await checker({ project: makeProject(), limit: 2 });
+    // 0.8 + max(0, -5) = 0.8, NOT 0.8 + (-5) = -4.2.
+    expect(snap!.usdToday).toBeCloseTo(0.8, 6);
+  });
+
+  test("a zero estimated_cost_usd is summed without distorting the total", async () => {
+    // 0 is a legitimate priced value (a free/cached call). The negative-cost
+    // clamp must treat 0 as a real contribution of 0 — not reject it — so a
+    // mix of zero and positive records sums to exactly the positive spend.
+    writeUsage("openai", TODAY, [
+      usageRow("project:novaflow/code_review/openai", { estimated_cost_usd: 0 }),
+      usageRow("project:novaflow/quick_qna/openai", { estimated_cost_usd: 0.6 }),
+    ]);
+    const checker = makeProjectBudgetChecker({ now: () => NOW, usageDir, pricingDir });
+    const snap = await checker({ project: makeProject(), limit: 2 });
+    expect(snap!.usdToday).toBeCloseTo(0.6, 6);
   });
 
   test("prices token counts via the catalog when a record lacks estimated_cost_usd", async () => {
