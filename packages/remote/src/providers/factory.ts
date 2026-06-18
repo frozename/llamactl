@@ -277,13 +277,22 @@ function providerForVirtualNode(
     );
   }
   const apiKey = parent.cloud.apiKeyRef ? resolveApiKeyRef(parent.cloud.apiKeyRef, env) : "";
-  return createOpenAICompatProvider({
+  // Mirror the DIRECT cloud path (providerForCloudNode): normalize the
+  // base URL (append /v1 when absent, honor the gemini /openai shim
+  // shape) and layer the provider quirks (gemini models/-strip +
+  // hardcoded-catalog fallback, anthropic listing fallback). Without
+  // this, virtual nodes hit the wrong endpoint shape and lose the
+  // quirks the direct path has for the same upstream.
+  const providerName: CloudProvider = parent.cloud.provider;
+  const baseUrl = normalizeOpenAICompatBaseUrl(parent.cloud.baseUrl, providerName);
+  const base = createOpenAICompatProvider({
     name: node.name,
     displayName: parent.cloud.displayName ?? node.name,
-    baseUrl: parent.cloud.baseUrl,
+    baseUrl,
     apiKey,
     ...(onUsage ? { onUsage } : {}),
   });
+  return applyProviderQuirks(base, providerName);
 }
 
 /**
