@@ -117,4 +117,24 @@ describe("rpcServer", () => {
     expect(types[types.length - 1]).toBe("ready");
     await stopRpcServer({ resolved });
   });
+
+  test("reaps stale tracking when the process dies before becoming ready (timeout path)", async () => {
+    // A binary that exits immediately without ever binding the port: the TCP
+    // probe never succeeds, so startRpcServer times out — and because the pid
+    // is already dead, the stale pid+state files must be reaped rather than
+    // left pointing at a defunct process.
+    const binDir = resolved.LLAMA_CPP_BIN;
+    writeFileSync(join(binDir, "rpc-server"), "#!/bin/bash\nexit 0\n", { mode: 0o755 });
+    const pidFile = join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.pid");
+    const stateFile = join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.state");
+
+    const port = pickPort();
+    const result = await startRpcServer({ host: "127.0.0.1", port, timeoutSeconds: 1 });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("timeout");
+    // The dead pid's tracking files are gone, not orphaned.
+    expect(existsSync(pidFile)).toBe(false);
+    expect(existsSync(stateFile)).toBe(false);
+  });
 });

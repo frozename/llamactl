@@ -305,14 +305,12 @@ export async function startRpcServer(opts: StartRpcServerOptions): Promise<Start
     opts.onEvent?.({ type: "ready", pid, endpoint });
     return { ok: true, pid, endpoint };
   }
-  if (outcome === "exited") {
-    clearTracking(resolved);
-    opts.onEvent?.({ type: "exited", code: null });
-    return { ok: false, pid, endpoint, error: "rpc-server exited before becoming ready" };
-  }
   opts.onEvent?.({ type: "timeout", pid });
-  // Leave the process alive; caller can explicitly stop. Tests treat
-  // timeout as failure and call stopRpcServer in afterEach.
+  // If the spawned process already died (e.g. crashed before binding the
+  // port), the tracking files point at a stale pid; reap them. When the
+  // pid is still alive, leave it — the caller can explicitly stop it, and
+  // tests treat timeout as failure and call stopRpcServer in afterEach.
+  if (!isAlive(pid)) clearTracking(resolved);
   return { ok: false, pid, endpoint, error: "rpc-server readiness timeout" };
 }
 
@@ -363,7 +361,7 @@ async function pollTcp(
   timeoutSeconds: number,
   onEvent?: (e: RpcServerEvent) => void,
   signal?: AbortSignal,
-): Promise<"ready" | "exited" | "timeout"> {
+): Promise<"ready" | "timeout"> {
   const deadline = Date.now() + timeoutSeconds * 1000;
   let attempt = 0;
   while (Date.now() < deadline) {

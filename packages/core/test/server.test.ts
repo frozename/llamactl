@@ -7,6 +7,7 @@ import type { ResolvedEnv } from "../src/types.js";
 
 import { resolveEnv } from "../src/env.js";
 import {
+  abortableSleep,
   advertisedEndpoint,
   endpoint,
   filterProfileArgs,
@@ -539,6 +540,25 @@ describe("server.readServerState (host/port validation)", () => {
     writeSidecar({ ...validSidecar, host: "" });
     expect(readServerState(TEST_KEY)).toBeNull();
   });
+
+  test("accepts a sidecar whose extraArgs are all strings", () => {
+    writeSidecar({ ...validSidecar, extraArgs: ["--alias", "local"] });
+    const state = readServerState(TEST_KEY);
+    expect(state).not.toBeNull();
+    expect(state?.extraArgs).toEqual(["--alias", "local"]);
+  });
+
+  test("returns null when an extraArgs element is not a string", () => {
+    // A foreign/corrupt sidecar with a non-string element would otherwise
+    // pass the guard and throw a TypeError in token.startsWith(...) consumers.
+    writeSidecar({ ...validSidecar, extraArgs: ["--alias", 5] });
+    expect(readServerState(TEST_KEY)).toBeNull();
+  });
+
+  test("returns null when an extraArgs element is null", () => {
+    writeSidecar({ ...validSidecar, extraArgs: ["--alias", null] });
+    expect(readServerState(TEST_KEY)).toBeNull();
+  });
 });
 
 describe("server per-workload isolation", () => {
@@ -622,5 +642,53 @@ describe("server.filterProfileArgs", () => {
         ["--flash-attn", "off", "-b", "4096", "--ubatch-size", "1024"],
       ),
     ).toEqual([]);
+  });
+});
+
+describe("server.abortableSleep", () => {
+  test("does not leak an abort listener per call on the timer path", async () => {
+    // pollReady loops over one long-lived signal; each timer-path resolve
+    // must detach its listener, else the count grows ~1 per iteration and
+    // trips MaxListenersExceededWarning. Track net add/remove balance.
+    const controller = new AbortController();
+    let live = 0;
+    const addSpy = spyOn(controller.signal, "addEventListener").mockImplementation(() => {
+      live++;
+    });
+    const removeSpy = spyOn(controller.signal, "removeEventListener").mockImplementation(() => {
+      live--;
+    });
+
+    try {
+      for (let i = 0; i < 15; i++) {
+        // tiny duration so the real timer fires fast; controller never aborts.
+        await abortableSleep(1, controller.signal);
+      }
+      // Each call adds exactly one listener and removes it on the timer path,
+      // so the net live count is 0 — not 15.
+      expect(addSpy).toHaveBeenCalledTimes(15);
+      expect(removeSpy).toHaveBeenCalledTimes(15);
+      expect(live).toBe(0);
+    } finally {
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    }
+  });
+
+  test("resolves and clears the timer on the abort path", async () => {
+    const controller = new AbortController();
+    const clearSpy = spyOn(globalThis, "clearTimeout");
+    try {
+      const p = abortableSleep(60_000, controller.signal);
+      controller.abort();
+      let settled = false;
+      await p.then(() => {
+        settled = true;
+      });
+      expect(settled).toBe(true);
+      expect(clearSpy).toHaveBeenCalled();
+    } finally {
+      clearSpy.mockRestore();
+    }
   });
 });
