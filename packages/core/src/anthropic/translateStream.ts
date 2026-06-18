@@ -87,7 +87,7 @@ type StreamState = {
   messageId: string;
   model: string;
   openBlock: OpenBlockState | null;
-  textBlockCount: number;
+  nextBlockIndex: number;
   toolIndexMap: Map<number, number>;
   lastFinishReason: string | null;
   lastStopSequence: string | null;
@@ -103,7 +103,7 @@ function createStreamState(ctx: TranslatorContext): StreamState {
     messageId: ctx.requestId ?? generateMessageId(),
     model: ctx.model,
     openBlock: null,
-    textBlockCount: 0,
+    nextBlockIndex: 0,
     toolIndexMap: new Map(),
     lastFinishReason: null,
     lastStopSequence: null,
@@ -149,8 +149,8 @@ function ensureTextBlock(
   if (state.openBlock?.kind === "text") return state.openBlock;
   closeOpenBlock(state, emit);
   ensureMessageStart(state, emit);
-  const index = state.textBlockCount;
-  state.textBlockCount += 1;
+  const index = state.nextBlockIndex;
+  state.nextBlockIndex += 1;
   state.openBlock = { kind: "text", index };
   emit("content_block_start", {
     type: "content_block_start",
@@ -166,9 +166,10 @@ function ensureTextBlock(
 function computeToolBlockIndex(state: StreamState, toolIndex: number): number {
   const existing = state.toolIndexMap.get(toolIndex);
   if (existing !== undefined) return existing;
-  const computed = toolIndex + state.textBlockCount;
-  state.toolIndexMap.set(toolIndex, computed);
-  return computed;
+  const assigned = state.nextBlockIndex;
+  state.nextBlockIndex += 1;
+  state.toolIndexMap.set(toolIndex, assigned);
+  return assigned;
 }
 
 function ensureToolBlock(

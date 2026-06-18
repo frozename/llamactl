@@ -254,6 +254,110 @@ test("mixed text and tool streaming closes text block before opening tool block"
   });
 });
 
+function contentBlockStartIndices(events: ParsedEvent[]): number[] {
+  return events
+    .filter((event) => event.event === "content_block_start")
+    .map((event) => numericEventIndex(event));
+}
+
+test("tool-call before text assigns unique monotonic content-block indices", async () => {
+  // Upstream emits the tool_call FIRST, then assistant text. The tool must land
+  // at content index 0 and the later text at index 1 — they must NOT collide on
+  // the same index, which would let an index-keyed client overwrite the
+  // tool_use block's input_json with the text.
+  const upstream = makeSseStream([
+    'data: {"id":"msg_tt","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_first","function":{"name":"do_it","arguments":"{\\"a\\":1}"}}]},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"completion_tokens":2}}\n\n',
+    "data: [DONE]\n\n",
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: "claude-3-7-sonnet" });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  // No two content_block_start events may share an index, and they must be a
+  // contiguous monotonic 0,1,... sequence (positions in the final content[]).
+  const startIndices = contentBlockStartIndices(events);
+  expect(new Set(startIndices).size).toBe(startIndices.length);
+  expect(startIndices).toEqual([0, 1]);
+
+  // The tool opened first → index 0; the text opened second → index 1.
+  const toolStart = events.find(
+    (event) =>
+      event.event === "content_block_start" &&
+      (event.data.content_block as { type?: string }).type === "tool_use",
+  );
+  const textStart = events.find(
+    (event) =>
+      event.event === "content_block_start" &&
+      (event.data.content_block as { type?: string }).type === "text",
+  );
+  expect(toolStart!.data).toMatchObject({
+    index: 0,
+    content_block: { type: "tool_use", id: "call_first", name: "do_it" },
+  });
+  expect(textStart!.data).toMatchObject({ index: 1, content_block: { type: "text" } });
+
+  // The whole stream still satisfies the open/close pairing invariant.
+  assertContentBlockDeltaInvariant(events);
+});
+
+test("text before tool (regression) still yields text@0, tool@1", async () => {
+  const upstream = makeSseStream([
+    'data: {"id":"msg_rt","choices":[{"delta":{"content":"hello"},"finish_reason":null}],"usage":{"completion_tokens":1}}\n\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_after","function":{"name":"do_it","arguments":"{\\"a\\":1}"}}]},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"completion_tokens":2}}\n\n',
+    "data: [DONE]\n\n",
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: "claude-3-7-sonnet" });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  expect(contentBlockStartIndices(events)).toEqual([0, 1]);
+
+  const textStart = events.find(
+    (event) =>
+      event.event === "content_block_start" &&
+      (event.data.content_block as { type?: string }).type === "text",
+  );
+  const toolStart = events.find(
+    (event) =>
+      event.event === "content_block_start" &&
+      (event.data.content_block as { type?: string }).type === "tool_use",
+  );
+  expect(textStart!.data).toMatchObject({ index: 0, content_block: { type: "text" } });
+  expect(toolStart!.data).toMatchObject({
+    index: 1,
+    content_block: { type: "tool_use", id: "call_after", name: "do_it" },
+  });
+});
+
+test("two tool calls with no text get distinct blocks @0 and @1", async () => {
+  const upstream = makeSseStream([
+    'data: {"id":"msg_2t","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"alpha","arguments":"{\\"x\\":1}"}}]},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_b","function":{"name":"beta","arguments":"{\\"y\\":2}"}}]},"finish_reason":null}]}\n\n',
+    'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"completion_tokens":2}}\n\n',
+    "data: [DONE]\n\n",
+  ]);
+
+  const translated = translateOpenAIStreamToAnthropic(upstream, { model: "claude-3-7-sonnet" });
+  const events = parseAnthropicSse(await readStreamText(translated));
+
+  const startIndices = contentBlockStartIndices(events);
+  expect(new Set(startIndices).size).toBe(startIndices.length);
+  expect(startIndices).toEqual([0, 1]);
+
+  const starts = events.filter((event) => event.event === "content_block_start");
+  expect(starts[0]!.data).toMatchObject({
+    index: 0,
+    content_block: { type: "tool_use", id: "call_a", name: "alpha" },
+  });
+  expect(starts[1]!.data).toMatchObject({
+    index: 1,
+    content_block: { type: "tool_use", id: "call_b", name: "beta" },
+  });
+});
+
 test("state invariant: content_block_delta always appears inside a matching open/close pair", async () => {
   const fixtures = [
     [
