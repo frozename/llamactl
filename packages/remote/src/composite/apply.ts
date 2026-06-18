@@ -660,8 +660,13 @@ async function teardownComponent(
       const manifestWorkload = manifest.spec.workloads.find((w) => w.node === rec.ref.name);
       if (!manifestWorkload) return;
       const client = opts.getWorkloadClient(manifestWorkload.node);
+      // The workload's llama-server is keyed by its NODE (synthesizeModelRun
+      // sets metadata.name = spec.node, and serverStart launches under that
+      // key). Stop by the node — `manifest.metadata.name` is the COMPOSITE
+      // name, which targets a nonexistent key (core stopServer no-ops) and
+      // orphans the GPU-pinned process.
       await client.serverStop
-        .mutate({ workload: manifest.metadata.name, graceSeconds: 10 })
+        .mutate({ workload: manifestWorkload.node, graceSeconds: 10 })
         .catch(() => undefined);
       return;
     }
@@ -867,7 +872,11 @@ async function destroyWorkloadComponent(
   const manifestWorkload = manifest.spec.workloads.find((w) => w.node === ref.name);
   if (!manifestWorkload) return;
   const client = opts.getWorkloadClient(manifestWorkload.node);
-  await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 10 });
+  // Stop by the workload's NODE key — synthesizeModelRun sets
+  // metadata.name = spec.node, so the running llama-server is keyed by the
+  // node, not the composite name. `manifest.metadata.name` would target a
+  // nonexistent key (core stopServer no-ops) and orphan the GPU process.
+  await client.serverStop.mutate({ workload: manifestWorkload.node, graceSeconds: 10 });
 }
 
 function destroyRagComponent(ref: ComponentRef, opts: CompositeDestroyOptions): void {
