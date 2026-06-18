@@ -203,6 +203,108 @@ describe("DockerBackend.ensureService — happy path (create fresh)", () => {
   });
 });
 
+/**
+ * Build a responder for the create-fresh path where `startContainer`
+ * fails. The image inspect + create succeed; the start returns
+ * `startStatus`/`startMessage`; the cleanup stop+delete both return
+ * `cleanupStatus`. Each branch is a small table lookup so the
+ * per-test responder stays under the cognitive-complexity gate.
+ */
+function startFailureResponder(args: {
+  startStatus: number;
+  startMessage: string;
+  cleanupStatus: number;
+}): Responder {
+  const routes: { match: (req: Recorded) => boolean; res: MockResponse }[] = [
+    {
+      match: (req) => req.url.includes("/containers/test-service/json"),
+      res: { status: 404, body: jsonBody({ message: "No such container" }) },
+    },
+    {
+      match: (req) => req.url.includes("/images/") && req.url.endsWith("/json"),
+      res: { status: 200, body: jsonBody({ Architecture: "amd64", Os: "linux" }) },
+    },
+    {
+      match: (req) => req.url.includes("/images/create") && req.method === "POST",
+      res: { status: 200, body: "{}" },
+    },
+    {
+      match: (req) => req.url.includes("/containers/create") && req.method === "POST",
+      res: { status: 201, body: jsonBody({ Id: "c123" }) },
+    },
+    {
+      // The just-created container fails to start.
+      match: (req) => req.url.includes("/containers/c123/start") && req.method === "POST",
+      res: { status: args.startStatus, body: jsonBody({ message: args.startMessage }) },
+    },
+    {
+      // removeService cleanup of the orphan: stop then delete.
+      match: (req) => req.url.includes("/containers/test-service/stop") && req.method === "POST",
+      res: { status: args.cleanupStatus, body: "" },
+    },
+    {
+      match: (req) => req.method === "DELETE" && req.url.includes("/containers/test-service"),
+      res: { status: args.cleanupStatus, body: "" },
+    },
+  ];
+  return (req) => {
+    const route = routes.find((r) => r.match(req));
+    if (!route) throw new Error(`unexpected request: ${req.method} ${req.url}`);
+    return route.res;
+  };
+}
+
+describe("DockerBackend.ensureService — start failure cleanup", () => {
+  test("startContainer fails → orphaned container removed before the error propagates", async () => {
+    const recorded: Recorded[] = [];
+    const backend = new DockerBackend({
+      fetch: makeMockFetch(
+        startFailureResponder({
+          startStatus: 500,
+          startMessage: "port is already allocated",
+          cleanupStatus: 204,
+        }),
+        recorded,
+      ),
+      hostArch: "amd64",
+      hostOs: "linux",
+    });
+
+    // The original start-failed error must still propagate.
+    expectErrorMessage(await rejectionOf(backend.ensureService(sampleSpec())), /start/i);
+
+    // The orphan was removed: a DELETE on test-service ran AFTER the
+    // failing start.
+    const methodsAndPaths = recorded.map((r) => `${r.method} ${new URL(r.url).pathname}`);
+    const startIdx = methodsAndPaths.indexOf("POST /v1.54/containers/c123/start");
+    const deleteIdx = methodsAndPaths.indexOf("DELETE /v1.54/containers/test-service");
+    expect(startIdx).toBeGreaterThanOrEqual(0);
+    expect(deleteIdx).toBeGreaterThan(startIdx);
+  });
+
+  test("cleanup is 404-tolerant — a missing orphan during removeService does not mask the start error", async () => {
+    const recorded: Recorded[] = [];
+    const backend = new DockerBackend({
+      fetch: makeMockFetch(
+        startFailureResponder({
+          startStatus: 500,
+          startMessage: "no such image",
+          cleanupStatus: 404,
+        }),
+        recorded,
+      ),
+      hostArch: "amd64",
+      hostOs: "linux",
+    });
+
+    const err = await rejectionOf(backend.ensureService(sampleSpec()));
+    // The propagated error is the START failure, not a cleanup error.
+    expectErrorMessage(err, /no such image/);
+    const methodsAndPaths = recorded.map((r) => `${r.method} ${new URL(r.url).pathname}`);
+    expect(methodsAndPaths).toContain("DELETE /v1.54/containers/test-service");
+  });
+});
+
 describe("DockerBackend.ensureService — hash match (skip)", () => {
   test("running container with matching specHash → no-op", async () => {
     const recorded: Recorded[] = [];

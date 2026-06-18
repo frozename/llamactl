@@ -651,8 +651,15 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const noAuth = opts.noAuth === true;
   const allowPlainHttp = noAuth && isLoopbackAddress(bindHost);
 
-  process.on("uncaughtException", captureFatal("uncaughtException"));
-  process.on("unhandledRejection", captureFatal("unhandledRejection"));
+  // Capture the handler references so stop() can remove exactly the
+  // pair this call installed. Anonymous re-registration on every
+  // startAgentServer would otherwise leak two process listeners per
+  // call across restart/test cycles (MaxListeners warning + each
+  // still-installed handler firing once per fatal).
+  const onUncaughtException = captureFatal("uncaughtException");
+  const onUnhandledRejection = captureFatal("unhandledRejection");
+  process.on("uncaughtException", onUncaughtException);
+  process.on("unhandledRejection", onUnhandledRejection);
 
   runStartupMigration();
   if (noAuth) {
@@ -707,6 +714,10 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       });
     },
     stop: async (): Promise<void> => {
+      // Remove exactly the process handlers this call installed so
+      // repeated start/stop cycles don't accumulate listeners.
+      process.off("uncaughtException", onUncaughtException);
+      process.off("unhandledRejection", onUnhandledRejection);
       stopSearchIngest();
       stopPeerSnapshotPoller?.();
       // Best-effort — never let a tunnel-client teardown error

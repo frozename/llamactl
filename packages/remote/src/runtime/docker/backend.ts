@@ -136,7 +136,17 @@ export class DockerBackend implements RuntimeBackend {
 
     await this.ensureImageCompatible(spec.image);
     const id = await this.createContainer(spec);
-    await this.startContainer(id);
+    try {
+      await this.startContainer(id);
+    } catch (err) {
+      // The container was created but failed to start (port conflict,
+      // bad image, etc.). Leaving it would orphan a stopped container
+      // that future ensureService calls would treat as drift. Remove
+      // it (404/not-found tolerant) before rethrowing the ORIGINAL
+      // start failure — cleanup errors must not mask it.
+      await this.removeService({ name: spec.name }).catch(() => undefined);
+      throw err;
+    }
     const inspected = await this.inspectService({ name: spec.name });
     if (!inspected) {
       throw new RuntimeError(
