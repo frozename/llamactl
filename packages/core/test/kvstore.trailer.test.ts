@@ -108,6 +108,47 @@ test("writeTrailer returns enospc and increments storage write-fail counter", ()
   }
 });
 
+test("readTrailer returns null (not throws) for corrupt/truncated trailer", () => {
+  const t = makeTempRoot();
+  try {
+    const slotFile = join(t.root, "slots", "wl-a", "corrupt.kvslot");
+    const trailerFile = `${slotFile}.trailer.json`;
+    fs.mkdirSync(join(t.root, "slots", "wl-a"), { recursive: true });
+    fs.writeFileSync(trailerFile, "{not json");
+    expect(readTrailer(slotFile)).toBeNull();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("readTrailer returns null when extFlags is missing or not a number", () => {
+  const t = makeTempRoot();
+  try {
+    const slotFile = join(t.root, "slots", "wl-a", "badflags.kvslot");
+    const trailerFile = `${slotFile}.trailer.json`;
+    fs.mkdirSync(join(t.root, "slots", "wl-a"), { recursive: true });
+    fs.writeFileSync(trailerFile, JSON.stringify({ sessionTitle: "x" }));
+    expect(readTrailer(slotFile)).toBeNull();
+    fs.writeFileSync(trailerFile, JSON.stringify({ extFlags: "1" }));
+    expect(readTrailer(slotFile)).toBeNull();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("readTrailer returns null when toolMap has a non-string value", () => {
+  const t = makeTempRoot();
+  try {
+    const slotFile = join(t.root, "slots", "wl-a", "badmap.kvslot");
+    const trailerFile = `${slotFile}.trailer.json`;
+    fs.mkdirSync(join(t.root, "slots", "wl-a"), { recursive: true });
+    fs.writeFileSync(trailerFile, JSON.stringify({ extFlags: 1, toolMap: { toolu_1: 42 } }));
+    expect(readTrailer(slotFile)).toBeNull();
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("ext flag bit operations are additive and independent", () => {
   const combined = EXT_FLAG_TOOL_MAP | EXT_FLAG_SESSION_TITLE;
   expect((combined & EXT_FLAG_TOOL_MAP) !== 0).toBe(true);
