@@ -26,12 +26,26 @@ export function extractBearer(req: Request): string | null {
   return rest.length > 0 ? rest : null;
 }
 
-export function verifyBearer(req: Request, expectedHashHex: string): boolean {
-  const token = extractBearer(req);
-  if (!token) return false;
+/**
+ * Constant-time check that a plaintext bearer token hashes to the
+ * expected sha-256 hex digest. Mirrors {@link verifyBearer} so every
+ * bearer comparison in the codebase routes through the same
+ * `timingSafeEqual` path — a `===` on the hex digest leaks a timing
+ * side channel (byte-by-byte short-circuit) that distinguishes a
+ * near-correct token from a wholly wrong one. The length guard keeps
+ * `timingSafeEqual` from throwing on unequal-length buffers; an
+ * unexpected length is itself a mismatch.
+ */
+export function bearerHashMatches(token: string, expectedHashHex: string): boolean {
   const actualHex = hashToken(token);
   if (actualHex.length !== expectedHashHex.length) return false;
   return timingSafeEqual(Buffer.from(actualHex, "hex"), Buffer.from(expectedHashHex, "hex"));
+}
+
+export function verifyBearer(req: Request, expectedHashHex: string): boolean {
+  const token = extractBearer(req);
+  if (!token) return false;
+  return bearerHashMatches(token, expectedHashHex);
 }
 
 /**

@@ -176,39 +176,53 @@ async function closeIterator<T>(iterator: AsyncIterator<T>): Promise<void> {
 // Race each next() against the abort signal so a mid-stream
 // client disconnect terminates the read loop without waiting
 // for the next event from the node.
-async function pumpSubscriptionEvents<T>(
+export async function pumpSubscriptionEvents<T>(
   iterator: AsyncIterator<T>,
   controller: ReadableStreamDefaultController<Uint8Array>,
   encoder: TextEncoder,
   signal: AbortSignal,
 ): Promise<void> {
-  for (;;) {
-    if (signal.aborted) {
-      await closeIterator(iterator);
-      break;
+  // Register the abort listener ONCE for the whole stream and reuse a
+  // single abort promise across every iteration. Adding the listener
+  // inside the loop (one per event) accumulates listeners for the
+  // stream's lifetime — a MaxListeners warning + memory growth on a
+  // long stream. `removeEventListener` in a finally guarantees the
+  // handler is detached when the pump exits for any reason.
+  let abortResolve: (() => void) | null = null;
+  const abortPromise = new Promise<{ aborted: true }>((resolve) => {
+    abortResolve = (): void => {
+      resolve({ aborted: true });
+    };
+  });
+  const onAbort = (): void => {
+    abortResolve?.();
+  };
+  if (signal.aborted) onAbort();
+  else signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    for (;;) {
+      if (signal.aborted) {
+        await closeIterator(iterator);
+        break;
+      }
+      const nextPromise = iterator.next();
+      const step = await Promise.race([nextPromise.then((r) => ({ step: r })), abortPromise]);
+      if ("aborted" in step) {
+        await closeIterator(iterator);
+        break;
+      }
+      const { step: result } = step;
+      if (result.done) break;
+      try {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(result.value)}\n\n`));
+      } catch {
+        // controller closed (downstream sink gone). Bail out.
+        await closeIterator(iterator);
+        break;
+      }
     }
-    const nextPromise = iterator.next();
-    const abortPromise = new Promise<{ aborted: true }>((resolve) => {
-      const handler = (): void => {
-        resolve({ aborted: true });
-      };
-      if (signal.aborted) handler();
-      else signal.addEventListener("abort", handler, { once: true });
-    });
-    const step = await Promise.race([nextPromise.then((r) => ({ step: r })), abortPromise]);
-    if ("aborted" in step) {
-      await closeIterator(iterator);
-      break;
-    }
-    const { step: result } = step;
-    if (result.done) break;
-    try {
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(result.value)}\n\n`));
-    } catch {
-      // controller closed (downstream sink gone). Bail out.
-      await closeIterator(iterator);
-      break;
-    }
+  } finally {
+    signal.removeEventListener("abort", onAbort);
   }
 }
 

@@ -1,4 +1,4 @@
-import { hashToken } from "../server/auth.js";
+import { bearerHashMatches } from "../server/auth.js";
 import {
   appendTunnelJournal,
   defaultTunnelJournalPath,
@@ -55,6 +55,11 @@ interface SubscriptionHandlers {
 
 const HELLO_TIMEOUT_MS = 5000;
 const TUNNEL_CLOSE_REPLACED = 4409;
+/** Default per-request timeout for `send()` / registry `send`. A
+ *  connected-but-silent peer that never ships a `res` frame would
+ *  otherwise hang the relay request forever and leak the pending
+ *  entry. Override via {@link TunnelServerOptions.requestTimeoutMs}. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
 export interface TunnelRegistryEntry {
   nodeName: string;
@@ -94,6 +99,13 @@ export interface TunnelServerOptions {
    *  Every connect, disconnect, unauthorized hello, and replaced
    *  connection emits one line. */
   journalPath?: string;
+  /** Per-request timeout (ms) for `send()`/registry `send`. A
+   *  connected-but-silent peer that never ships a `res` frame would
+   *  otherwise hang the relay request forever and leak the pending
+   *  entry. On expiry the pending entry is deleted and the promise
+   *  rejects with a `tunnel-request-timeout`-coded error. Defaults to
+   *  {@link DEFAULT_REQUEST_TIMEOUT_MS}. */
+  requestTimeoutMs?: number;
 }
 
 export interface TunnelServer {
@@ -122,6 +134,11 @@ export interface TunnelServer {
   /** Force-close a node's tunnel; primarily for tests + operator
    *  "agent tunnel kick" tooling. */
   disconnect: (nodeName: string, reason?: string) => boolean;
+  /** Number of in-flight request/response correlations awaiting a
+   *  `res` frame for the given node. Exposed for leak assertions —
+   *  a timed-out or settled request must leave this at the steady
+   *  state, never accumulate. Returns 0 for an unknown node. */
+  pendingCount: (nodeName: string) => number;
 }
 
 /**
@@ -245,6 +262,65 @@ function getState(ws: BunServerWebSocket): ConnectionState {
   return ws.data as ConnectionState;
 }
 
+/**
+ * Register a pending request/response correlation guarded by a
+ * timeout. Without this, a connected-but-silent peer that never ships
+ * a `res` frame leaves the awaiting promise hanging forever and leaks
+ * the pending-map entry (the disconnect path that rejects pending
+ * never fires for a peer that is alive but mute).
+ *
+ * The stored resolve/reject are wrapped so that whichever settles
+ * first — a `res` frame (resolvePendingRes), a disconnect
+ * (failPending), the send-side throw, or this timeout — clears the
+ * timer and deletes the map entry exactly once. On expiry we delete
+ * the entry and reject with a `tunnel-request-timeout`-coded error.
+ */
+function registerPendingWithTimeout(
+  state: ConnectionState,
+  id: string,
+  resolve: (r: TunnelRes) => void,
+  reject: (err: Error) => void,
+  timeoutMs: number,
+): void {
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const finish = (): void => {
+    settled = true;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    // Only clear OUR entry — a later same-id registration must not be
+    // clobbered by a stale settle (ids are unique per in-flight req,
+    // but stay defensive).
+    if (state.pending.get(id) === entry) state.pending.delete(id);
+  };
+  const wrappedResolve = (r: TunnelRes): void => {
+    if (settled) return;
+    finish();
+    resolve(r);
+  };
+  const wrappedReject = (err: Error): void => {
+    if (settled) return;
+    finish();
+    reject(err);
+  };
+  const entry = { resolve: wrappedResolve, reject: wrappedReject };
+  state.pending.set(id, entry);
+  if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+    timer = setTimeout(() => {
+      wrappedReject(
+        Object.assign(
+          new Error(`tunnel-request-timeout: no response within ${String(timeoutMs)}ms`),
+          {
+            code: "tunnel-request-timeout",
+          },
+        ),
+      );
+    }, timeoutMs);
+  }
+}
+
 function closeQuietly(ws: BunServerWebSocket, code: number, reason: string): void {
   try {
     ws.close(code, reason);
@@ -259,6 +335,8 @@ interface TunnelServerContext {
   clock: () => Date;
   nodes: Map<string, BunServerWebSocket>;
   journal: (entry: TunnelJournalEntry) => void;
+  /** Resolved per-request timeout (ms) for send()/registry send. */
+  requestTimeoutMs: number;
 }
 
 function registerNode(ctx: TunnelServerContext, ws: BunServerWebSocket, nodeName: string): void {
@@ -341,7 +419,7 @@ function handleHello(
     closeQuietly(ws, TUNNEL_CLOSE_UNAUTHORIZED, "hello required first");
     return;
   }
-  if (hashToken(msg.bearer) !== ctx.opts.expectedBearerHash) {
+  if (!bearerHashMatches(msg.bearer, ctx.opts.expectedBearerHash)) {
     // Hello parsed cleanly so the nodeName is known; journal it
     // so operators can see WHICH node is presenting a stale
     // bearer (common after a central-side bearer rotation).
@@ -472,12 +550,14 @@ function buildRegistry(ctx: TunnelServerContext): TunnelRegistryEntry[] {
       connectedAt: ctx.clock().toISOString(),
       send: (req) =>
         new Promise<TunnelRes>((resolve, reject) => {
-          state.pending.set(req.id, { resolve, reject });
+          registerPendingWithTimeout(state, req.id, resolve, reject, ctx.requestTimeoutMs);
           try {
             ws.send(encodeTunnelMessage(req));
           } catch (err) {
-            state.pending.delete(req.id);
-            reject(err instanceof Error ? err : new Error(String(err)));
+            // The wrapped reject (installed by registerPendingWithTimeout)
+            // clears the timer + deletes the pending entry exactly once.
+            const wrapped = state.pending.get(req.id);
+            wrapped?.reject(err instanceof Error ? err : new Error(String(err)));
           }
         }),
       close: (code, reason) => {
@@ -508,7 +588,8 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       // swallowed; appendTunnelJournal already stderr-warns once.
     }
   };
-  const ctx: TunnelServerContext = { opts, clock, nodes, journal };
+  const requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const ctx: TunnelServerContext = { opts, clock, nodes, journal, requestTimeoutMs };
 
   return {
     handleUpgrade(req, server): Response | undefined {
@@ -573,12 +654,14 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       const state = getState(ws);
       const full: TunnelReq = { type: "req", ...req };
       return await new Promise<TunnelRes>((resolve, reject) => {
-        state.pending.set(full.id, { resolve, reject });
+        registerPendingWithTimeout(state, full.id, resolve, reject, ctx.requestTimeoutMs);
         try {
           ws.send(encodeTunnelMessage(full));
         } catch (err) {
-          state.pending.delete(full.id);
-          reject(err instanceof Error ? err : new Error(String(err)));
+          // The wrapped reject (installed by registerPendingWithTimeout)
+          // clears the timer + deletes the pending entry exactly once.
+          const wrapped = state.pending.get(full.id);
+          wrapped?.reject(err instanceof Error ? err : new Error(String(err)));
         }
       });
     },
@@ -606,6 +689,11 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         // ignore
       }
       return true;
+    },
+    pendingCount(nodeName): number {
+      const ws = nodes.get(nodeName);
+      if (!ws) return 0;
+      return getState(ws).pending.size;
     },
   };
 }
