@@ -202,6 +202,40 @@ async function* bridgeEventStream<T>(
   }
 }
 
+/**
+ * Default per-node deadline for the fan-out in `workloadList` (FIX [6]).
+ * One black-holed or unreachable node used to hang the WHOLE list
+ * response forever, because each per-node `serverStatus` query was
+ * awaited with no deadline. 5s is generous for a healthy node yet
+ * bounds the worst case for a dead one.
+ */
+const WORKLOAD_LIST_NODE_TIMEOUT_MS = 5000;
+
+/**
+ * Race a per-node `serverStatus` query against a deadline so a single
+ * unreachable node cannot block the aggregate list. On timeout this
+ * REJECTS (rather than resolving a sentinel) so the caller's existing
+ * catch maps it to `phase: "Unreachable"` — the node is reported as
+ * unreachable, never silently dropped. The losing timer is cleared on
+ * the success path so it can't keep the event loop alive.
+ */
+export async function queryServerStatusWithTimeout<T>(
+  query: () => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`node status query timed out after ${String(timeoutMs)}ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([query(), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
   const resolved = kubecfg.resolveNode(cfg, nodeName);
   if (resolved.node.endpoint.startsWith("inproc://")) {
@@ -539,37 +573,216 @@ async function* streamNodeChatEvents(
 }
 
 /**
+ * Stable identity key for a journal event, used to dedup a journal
+ * replay against bus events buffered across the read-then-subscribe gap
+ * (FIX [5]). Every event is `appendJournalEvent`-ed (JSON.stringify'd,
+ * Zod-reparsed) AND `publish`-ed from the same source object, so an
+ * event can legitimately appear in both the journal snapshot and the
+ * buffer. A key over the event's own keys SORTED makes the match
+ * order-independent (Zod reparse may not preserve insertion order), so
+ * the journal twin and the bus twin collapse to one delivery.
+ */
+function journalDedupKey(event: JournalEvent): string {
+  return JSON.stringify(event, Object.keys(event).sort());
+}
+
+/**
+ * Pre-attached bus subscription handed from `opsSessionWatch` to
+ * `tailSessionEvents` so the live tail continues from the SAME listener
+ * that buffered events across the read-then-subscribe gap (FIX [5]) —
+ * no second subscribe, no second gap. `buffer` is the shared queue the
+ * caller's listener keeps pushing onto; `setWake` lets the generator
+ * install its park-resolver into that listener.
+ */
+interface PreSubscribedTail {
+  buffer: JournalEvent[];
+  off: () => void;
+  setWake: (wake: () => void) => void;
+}
+
+/**
  * Live-tail a session's event bus: park until the publisher pushes
  * events, drain the queue in arrival order, and stop on a terminal
  * event or when the subscriber disconnects.
+ *
+ * The park is woken by BOTH a bus push AND the request's abort signal
+ * (FIX [4]) — without the abort wake, a park entered on an empty queue
+ * would never resolve on disconnect, leaking the generator and its bus
+ * listener until the process exits. The bus subscription + abort
+ * handler are always released in the `finally`.
  */
-async function* tailSessionEvents(
+export async function* tailSessionEvents(
   sessionId: string,
   signal: AbortSignal | undefined,
+  preSubscribed?: PreSubscribedTail,
 ): AsyncGenerator<JournalEvent> {
-  const queue: JournalEvent[] = [];
+  const queue: JournalEvent[] = preSubscribed ? preSubscribed.buffer : [];
   let resolve: (() => void) | null = null;
-  const off = sessionEventBus.subscribe(sessionId, (event) => {
-    queue.push(event);
+  const wake = (): void => {
     resolve?.();
-  });
+  };
+  const off = preSubscribed
+    ? preSubscribed.off
+    : sessionEventBus.subscribe(sessionId, (event) => {
+        queue.push(event);
+        wake();
+      });
+  preSubscribed?.setWake(wake);
+
+  const onAbort = (): void => {
+    wake();
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
   try {
+    // Already aborted before the first park: drain finally, stop.
     while (!signal?.aborted) {
       if (queue.length === 0) {
         await new Promise<void>((r) => {
           resolve = r;
         });
         resolve = null;
+        // An abort-driven wake leaves the queue empty; fall through to
+        // the while guard, which exits.
+        if (signal?.aborted) break;
       }
-      while (queue.length > 0) {
-        const ev = queue.shift();
-        if (ev === undefined) continue;
-        yield ev;
-        if (isTerminal(ev)) return;
-      }
+      const terminal = yield* drainQueue(queue);
+      if (terminal) return;
     }
   } finally {
     off();
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+/**
+ * Yield every queued event in arrival order, returning true the moment
+ * a terminal event is yielded (so the caller stops the stream). Pulled
+ * out of `tailSessionEvents` to keep that generator's branching below
+ * the cognitive-complexity gate.
+ */
+function* drainQueue(queue: JournalEvent[]): Generator<JournalEvent, boolean> {
+  while (queue.length > 0) {
+    const ev = queue.shift();
+    if (ev === undefined) continue;
+    yield ev;
+    if (isTerminal(ev)) return true;
+  }
+  return false;
+}
+
+/**
+ * Yield the persisted journal, recording each event's dedup key in
+ * `seen`. Returns "aborted" if the request signal fired, "terminal" if
+ * a terminal event was reached (caller stops), else "open".
+ */
+function* replayJournal(
+  persisted: JournalEvent[],
+  seen: Set<string>,
+  signal: AbortSignal | undefined,
+): Generator<JournalEvent, "aborted" | "terminal" | "open"> {
+  for (const e of persisted) {
+    if (signal?.aborted) return "aborted";
+    seen.add(journalDedupKey(e));
+    yield e;
+    if (isTerminal(e)) return "terminal";
+  }
+  return "open";
+}
+
+/**
+ * No-live-channel tail: the producer already finished (or never
+ * started), so nothing more will be published. Yield whatever the
+ * buffer caught in the read→subscribe gap (deduped against the journal
+ * via `seen`), then emit a terminal `aborted` only if neither the
+ * journal nor the buffer carried a terminal — so a hung client still
+ * gets a stream-ending event.
+ */
+function* drainGapBuffer(
+  buffer: JournalEvent[],
+  seen: Set<string>,
+  signal: AbortSignal | undefined,
+): Generator<JournalEvent> {
+  let sawTerminal = false;
+  for (const e of buffer) {
+    const key = journalDedupKey(e);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (signal?.aborted) return;
+    yield e;
+    if (isTerminal(e)) {
+      sawTerminal = true;
+      break;
+    }
+  }
+  if (!sawTerminal) {
+    yield { type: "aborted", ts: new Date().toISOString(), reason: "signal" };
+  }
+}
+
+/**
+ * Dedup `buffer` against the journal (`seen`) IN PLACE so the array
+ * identity is preserved — the bus listener keeps pushing live events
+ * onto this same `buffer`, which is what `tailSessionEvents` drains. A
+ * fresh filtered copy would orphan every post-handoff event.
+ */
+function dedupBufferInPlace(buffer: JournalEvent[], seen: Set<string>): void {
+  for (let i = buffer.length - 1; i >= 0; i--) {
+    const e = buffer[i];
+    if (e === undefined) continue;
+    const key = journalDedupKey(e);
+    if (seen.has(key)) buffer.splice(i, 1);
+    else seen.add(key);
+  }
+}
+
+/**
+ * FIX [5] — close the read-then-subscribe race in `opsSessionWatch`.
+ * Previously the journal was read FIRST and the bus subscribed only
+ * inside `tailSessionEvents`, so an event published in the gap between
+ * the snapshot and the subscribe (loop-executor appends THEN publishes)
+ * was lost forever — a terminal `done` in that window hung the client.
+ *
+ * Subscribe FIRST so every publish from now on is buffered, THEN read
+ * the journal, replay it, and either drain the gap buffer (no live
+ * channel) or hand the already-attached subscription to
+ * `tailSessionEvents` for the live tail — deduping the buffer against
+ * the journal so nothing in the gap is dropped or delivered twice.
+ */
+async function* watchSession(
+  sessionId: string,
+  signal: AbortSignal | undefined,
+): AsyncGenerator<JournalEvent> {
+  const buffer: JournalEvent[] = [];
+  let wake: (() => void) | null = null;
+  const off = sessionEventBus.subscribe(sessionId, (event) => {
+    buffer.push(event);
+    wake?.();
+  });
+  let handedOff = false;
+  try {
+    const persisted = await readJournal(sessionId);
+    const seen = new Set<string>();
+    const replay = yield* replayJournal(persisted, seen, signal);
+    if (replay !== "open") return;
+
+    if (!sessionEventBus.hasChannel(sessionId)) {
+      yield* drainGapBuffer(buffer, seen, signal);
+      return;
+    }
+
+    dedupBufferInPlace(buffer, seen);
+    handedOff = true;
+    yield* tailSessionEvents(sessionId, signal, {
+      buffer,
+      off,
+      setWake: (w) => {
+        wake = w;
+      },
+    });
+  } finally {
+    // tailSessionEvents owns `off` once handed off; otherwise we must
+    // release the bus subscription ourselves.
+    if (!handedOff) off();
   }
 }
 
@@ -1245,7 +1458,14 @@ export const router = t.router({
         let endpoint: string | null = null;
         try {
           const client = clientForNode(cfg, nodeName);
-          const status = await client.serverStatus.query({ workload: manifest.metadata.name });
+          // FIX [6] — per-node deadline. Without it, one black-holed
+          // node hangs the entire list. A timeout rejects and lands in
+          // the catch below, so the slow node is marked Unreachable
+          // alongside the other nodes' real data, not dropped.
+          const status = await queryServerStatusWithTimeout(
+            () => client.serverStatus.query({ workload: manifest.metadata.name }),
+            WORKLOAD_LIST_NODE_TIMEOUT_MS,
+          );
           const desired = manifest.spec.target.value;
           if (status.state === "up" && status.rel === desired) phase = "Running";
           else if (status.state === "up" && status.rel !== desired) phase = "Mismatch";
@@ -2658,23 +2878,7 @@ export const router = t.router({
 
   opsSessionWatch: t.procedure
     .input(z.object({ sessionId: z.string().min(1) }))
-    .subscription(async function* ({ input, signal }) {
-      const persisted = await readJournal(input.sessionId);
-      for (const e of persisted) {
-        if (signal?.aborted) return;
-        yield e;
-      }
-      if (persisted.some(isTerminal)) return;
-      if (!sessionEventBus.hasChannel(input.sessionId)) {
-        yield {
-          type: "aborted" as const,
-          ts: new Date().toISOString(),
-          reason: "signal" as const,
-        };
-        return;
-      }
-      yield* tailSessionEvents(input.sessionId, signal);
-    }),
+    .subscription(({ input, signal }) => watchSession(input.sessionId, signal)),
 
   opsSessionDelete: t.procedure
     .input(z.object({ sessionId: z.string().min(1) }))
