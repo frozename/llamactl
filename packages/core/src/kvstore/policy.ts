@@ -55,12 +55,16 @@ export function runEvictionIfOverBudget(
   now: number,
 ): EvictionRunResult {
   const workloadEntries = registry.listAll().filter((entry) => entry.workload === workload);
-  let totalPayloadBytes = workloadEntries.reduce((sum, entry) => sum + entry.payloadBytes, 0);
+  const totalPayloadBytesBefore = workloadEntries.reduce(
+    (sum, entry) => sum + entry.payloadBytes,
+    0,
+  );
+  let totalPayloadBytes = totalPayloadBytesBefore;
   if (totalPayloadBytes <= byteBudget) {
     return {
       deleted: [],
       blockedActive: [],
-      totalPayloadBytesBefore: totalPayloadBytes,
+      totalPayloadBytesBefore,
       totalPayloadBytesAfter: totalPayloadBytes,
     };
   }
@@ -86,7 +90,7 @@ export function runEvictionIfOverBudget(
   return {
     deleted,
     blockedActive,
-    totalPayloadBytesBefore: workloadEntries.reduce((sum, entry) => sum + entry.payloadBytes, 0),
+    totalPayloadBytesBefore,
     totalPayloadBytesAfter: totalPayloadBytes,
   };
 }

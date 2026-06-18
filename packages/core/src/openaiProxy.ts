@@ -547,10 +547,6 @@ async function parseIncoming(
   };
 }
 
-function maybeTranslate(context: ProxyContext): ProxyContext {
-  return context;
-}
-
 const kvRuntimeByDataRoot = new Map<string, KvRuntime>();
 const responseCacheRuntimeByDataRoot = new Map<string, ResponseCacheRuntime>();
 
@@ -1641,7 +1637,6 @@ function checkFalseHit(kv: KvRequestState, firstResponseToken: string | null): b
     }),
   );
   const staleSha = kv.warmHitSha;
-  kv.warmHitSha = null;
   kv.runtime.storage.safeWrite(() => {
     kv.runtime.registry.release(staleSha);
     kv.runtime.registry.tryDelete(staleSha);
@@ -1981,8 +1976,7 @@ export async function proxyOpenAI(
 ): Promise<Response> {
   const parsed = await parseIncoming(req, resolved);
   if (parsed instanceof Response) return parsed;
-  const translated = maybeTranslate(parsed);
-  const routed = await resolveRoute(translated);
+  const routed = await resolveRoute(parsed);
   if (routed instanceof Response) return routed;
   if (routed.route?.isPeer && requestBodyContainsOmlxRequestHandle(routed.bodyText)) {
     return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
