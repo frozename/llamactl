@@ -91,6 +91,61 @@ describe("GitSourceSpecSchema", () => {
   test("rejects empty repo", () => {
     expect(() => GitSourceSpecSchema.parse({ kind: "git", repo: "" })).toThrow();
   });
+
+  test("rejects a repo that begins with a dash (flag injection)", () => {
+    expect(() =>
+      GitSourceSpecSchema.parse({ kind: "git", repo: "--upload-pack=touch /tmp/x" }),
+    ).toThrow();
+  });
+
+  test("rejects a ref that begins with a dash (flag injection)", () => {
+    expect(() =>
+      GitSourceSpecSchema.parse({
+        kind: "git",
+        repo: "https://github.com/acme/docs.git",
+        ref: "--foo",
+      }),
+    ).toThrow();
+  });
+
+  test("rejects a dangerous ext:: transport remote-helper", () => {
+    expect(() => GitSourceSpecSchema.parse({ kind: "git", repo: "ext::sh -c id" })).toThrow();
+  });
+
+  test("rejects a dangerous fd:: transport remote-helper", () => {
+    expect(() => GitSourceSpecSchema.parse({ kind: "git", repo: "fd::3" })).toThrow();
+  });
+
+  test("rejects a non-allowlisted scheme", () => {
+    expect(() =>
+      GitSourceSpecSchema.parse({ kind: "git", repo: "ftp://example.com/repo.git" }),
+    ).toThrow();
+  });
+
+  test("accepts allowlisted transports (https, ssh, git, scp-form, local path)", () => {
+    const allowed = [
+      "https://github.com/acme/docs.git",
+      "http://internal.example/repo.git",
+      "ssh://git@github.com/acme/docs.git",
+      "git://example.com/repo.git",
+      "git@github.com:acme/docs.git",
+      "/srv/repos/docs.git",
+      "./local/repo",
+      "file:///srv/repos/docs.git",
+    ];
+    for (const repo of allowed) {
+      expect(() => GitSourceSpecSchema.parse({ kind: "git", repo })).not.toThrow();
+    }
+  });
+
+  test("still accepts a normal https repo with a normal branch ref", () => {
+    const parsed = GitSourceSpecSchema.parse({
+      kind: "git",
+      repo: "https://github.com/acme/docs.git",
+      ref: "release/2.0",
+    });
+    expect(parsed.ref).toBe("release/2.0");
+  });
 });
 
 describe("SourceSpecSchema discriminated union", () => {

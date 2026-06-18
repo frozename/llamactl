@@ -28,34 +28,90 @@ export const HttpSourceSpecSchema = z.object({
   tag: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const GitSourceSpecSchema = z.object({
-  kind: z.literal("git"),
-  /**
-   * Anything `git clone` accepts — https://host/org/repo.git,
-   * git@host:org/repo.git, or a bare path to a local checkout. The
-   * fetcher shallow-clones to a tmpdir, walks the tree, and removes
-   * the checkout when the source completes.
-   */
-  repo: z.string().min(1),
-  /**
-   * Branch, tag, or commit SHA. Omitted → the remote's default
-   * branch (typically `main`/`master`). Shallow clone depth is
-   * forced to 1; callers wanting full history should stage through
-   * a filesystem source instead.
-   */
-  ref: z.string().optional(),
-  /** Restrict the walk to a subtree of the repo (e.g. `docs/`). */
-  subpath: z.string().optional(),
-  /** Glob applied under `root = clone/subpath`. Defaults to markdown. */
-  glob: z.string().default("**/*.md"),
-  /**
-   * Optional token reference. Resolved via the same env:/keychain:/file:
-   * grammar as the http source; injected as `https://x-access-token:
-   * <token>@...` for GitHub-style auth. Omitted → public repo.
-   */
-  auth: z.object({ tokenRef: z.string().min(1) }).optional(),
-  tag: z.record(z.string(), z.unknown()).optional(),
-});
+/**
+ * Transport allowlist for a git `repo`. `git clone` will happily drive
+ * arbitrary remote-helpers (`ext::sh -c <cmd>`, `fd::<n>`) and treat a
+ * leading-dash value as an option (`--upload-pack=<cmd>`), turning an
+ * operator-supplied manifest string into command execution. We accept
+ * only the transports a docs-ingestion pipeline actually needs and
+ * reject everything else (fail closed):
+ *   - https:// / http://         — token-auth or public web clones
+ *   - ssh://                     — explicit ssh transport
+ *   - git://                     — anonymous git protocol
+ *   - git@host:org/repo.git      — scp-form ssh shorthand
+ *   - file:// and bare local paths (absolute or ./|../ relative)
+ * Anything that isn't on this list — including `ext::`, `fd::`, and a
+ * leading-dash flag-injection value — is rejected.
+ */
+const SCP_FORM_RE = /^[^/@\s]+@[^/:\s]+:.+$/;
+const GIT_ALLOWED_SCHEMES = new Set(["https", "http", "ssh", "git", "file"]);
+
+function gitRepoTransportIsAllowed(repo: string): boolean {
+  if (repo.startsWith("-")) return false;
+  // Bare local checkout: absolute path or explicit ./ ../ relative path.
+  if (repo.startsWith("/") || repo.startsWith("./") || repo.startsWith("../")) return true;
+  // scp-form ssh shorthand: user@host:path (no scheme).
+  if (SCP_FORM_RE.test(repo)) return true;
+  // Scheme-bearing URLs: only the allowlisted set.
+  const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//.exec(repo);
+  if (schemeMatch) {
+    const scheme = (schemeMatch[1] ?? "").toLowerCase();
+    return GIT_ALLOWED_SCHEMES.has(scheme);
+  }
+  // Anything else — `ext::sh -c id`, `fd::3`, `host:path` ambiguous
+  // forms, etc. — is rejected.
+  return false;
+}
+
+export const GitSourceSpecSchema = z
+  .object({
+    kind: z.literal("git"),
+    /**
+     * A git remote on the transport allowlist — https://host/org/repo.git,
+     * http://, ssh://, git://, the scp-form `git@host:org/repo.git`, or a
+     * bare local path / file:// URL. Dangerous remote-helpers (`ext::`,
+     * `fd::`) and leading-dash flag-injection values are rejected. The
+     * fetcher shallow-clones to a tmpdir, walks the tree, and removes the
+     * checkout when the source completes.
+     */
+    repo: z.string().min(1),
+    /**
+     * Branch, tag, or commit SHA. Omitted → the remote's default
+     * branch (typically `main`/`master`). Shallow clone depth is
+     * forced to 1; callers wanting full history should stage through
+     * a filesystem source instead. Must not begin with `-` (would be
+     * parsed as a git option).
+     */
+    ref: z.string().optional(),
+    /** Restrict the walk to a subtree of the repo (e.g. `docs/`). */
+    subpath: z.string().optional(),
+    /** Glob applied under `root = clone/subpath`. Defaults to markdown. */
+    glob: z.string().default("**/*.md"),
+    /**
+     * Optional token reference. Resolved via the same env:/keychain:/file:
+     * grammar as the http source; injected as `https://x-access-token:
+     * <token>@...` for GitHub-style auth. Omitted → public repo.
+     */
+    auth: z.object({ tokenRef: z.string().min(1) }).optional(),
+    tag: z.record(z.string(), z.unknown()).optional(),
+  })
+  .superRefine((spec, ctx) => {
+    if (!gitRepoTransportIsAllowed(spec.repo)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["repo"],
+        message:
+          "git repo must use an allowlisted transport (https/http/ssh/git/file URL, scp-form git@host:path, or a local path) and must not begin with '-'; dangerous remote-helpers like ext::/fd:: are rejected",
+      });
+    }
+    if (spec.ref?.startsWith("-")) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ref"],
+        message: "git ref must not begin with '-' (would be parsed as a git option)",
+      });
+    }
+  });
 
 export const SourceSpecSchema = z.discriminatedUnion("kind", [
   FilesystemSourceSpecSchema,

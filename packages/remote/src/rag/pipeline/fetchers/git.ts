@@ -66,6 +66,31 @@ function removeTmpCheckout(tmp: string): void {
   }
 }
 
+/**
+ * Build the `git clone` argv. Defense-in-depth against git's own
+ * option parser (argv-array spawn stops shell metacharacters but does
+ * nothing against `--upload-pack=`/`ext::`-style flag/transport
+ * injection):
+ *   - the `ref` is passed via the single-arg `--branch=<ref>` form so
+ *     it can never be split into a separate token, and
+ *   - a literal `--` end-of-options marker sits immediately before the
+ *     positional `<cloneUrl> <tmp>` so neither can be consumed as a
+ *     flag even if it begins with a dash.
+ * The schema (`GitSourceSpecSchema`) rejects leading-dash and
+ * dangerous-transport repos/refs at parse time; this is the second
+ * layer so a future caller that bypasses the schema still fails safe.
+ */
+export function buildCloneArgs(
+  spec: { ref?: string | undefined },
+  cloneUrl: string,
+  tmp: string,
+): string[] {
+  const cloneArgs = ["clone", "--depth=1", "--quiet"];
+  if (spec.ref) cloneArgs.push(`--branch=${spec.ref}`);
+  cloneArgs.push("--", cloneUrl, tmp);
+  return cloneArgs;
+}
+
 export const gitFetcher: Fetcher = {
   kind: "git",
   async *fetch(ctx) {
@@ -73,9 +98,7 @@ export const gitFetcher: Fetcher = {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-rag-git-"));
     try {
       const cloneUrl = resolveCloneUrl(spec, ctx);
-      const cloneArgs = ["clone", "--depth=1", "--quiet"];
-      if (spec.ref) cloneArgs.push("--branch", spec.ref);
-      cloneArgs.push(cloneUrl, tmp);
+      const cloneArgs = buildCloneArgs(spec, cloneUrl, tmp);
       const cloneResult = await runGit(cloneArgs, { cwd: process.cwd() });
       if (!cloneResult.ok) {
         ctx.log({
