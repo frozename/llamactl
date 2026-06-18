@@ -19,6 +19,7 @@ import {
 } from "../src/kvstore/index.js";
 import {
   __getOpenAIProxyKvModelMismatchTotalForTests,
+  __getOpenAIProxySlotAllocatorInUseForTests,
   isRouteKvEligible,
 } from "../src/openaiProxy.js";
 
@@ -616,6 +617,94 @@ test("warm hit restores slot before upstream forward", async () => {
     );
     expect(upstream.events).toEqual(["slot-restore", "chat-forward"]);
   } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test("warm hit survives a bumpHit write failure without leaking the slot lease", async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, "kvstore", "slots", "wl-a");
+  const upstream = await startUpstream({ slotBaseDir });
+  // The best-effort hit-count bump must not be load-bearing: a transient DB
+  // write failure (SQLITE_BUSY / ENOSPC) on bumpHit must still let the warm
+  // hit serve AND must not orphan the acquired slot lease. On the bare call
+  // (no safeWrite), the throw skips storing the lease in context.kv, so the
+  // top-level releaseWarmHitLease (`if (!kv) return`) never frees it and the
+  // single-slot allocator stays busy forever.
+  const bumpHitSpy = spyOn(KvRegistry.prototype, "bumpHit").mockImplementationOnce(() => {
+    throw new Error("simulated bumpHit write failure (SQLITE_BUSY)");
+  });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
+    const body = JSON.stringify({
+      model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+      messages: [{ role: "user", content: "warm-bumphit-throw" }],
+    });
+    const sha = shaForBody(body);
+    const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
+    mkdirSync(dirname(slotFile), { recursive: true });
+    writeFileSync(slotFile, "slot");
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(
+      entryTemplate({
+        sha,
+        workload: "wl-a",
+        upstreamSlotFile: slotFile,
+        tokens: Buffer.byteLength(body, "utf8"),
+        prefixByteLength: Buffer.byteLength(body, "utf8"),
+        workloadEpoch: workloadEpoch!,
+        payloadBytes: Buffer.byteLength(body, "utf8"),
+        textBytes: Buffer.byteLength(body, "utf8"),
+        lastUsed: Date.now() - 10_000,
+        createdAt: Date.now() - 10_000,
+        firstResponseToken: "Hello world",
+      }),
+    );
+    storage.close();
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+      runtime.env,
+    );
+    // (a) The bumpHit throw was exercised, and the warm hit still served — the
+    // slot was restored before the upstream forward despite the failed write.
+    expect(bumpHitSpy).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(200);
+    expect(upstream.events).toEqual(["slot-restore", "chat-forward"]);
+
+    // (b) No lease leak: the single-slot allocator returned to idle once the
+    // request completed, so a subsequent warm hit can still acquire the slot.
+    expect(__getOpenAIProxySlotAllocatorInUseForTests(runtime.env, "wl-a")).toBe(0);
+
+    // And prove the slot is genuinely re-acquirable: a second identical warm
+    // hit restores again (the allocator was not permanently disabled).
+    const secondResponse = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+      runtime.env,
+    );
+    expect(secondResponse.status).toBe(200);
+    expect(upstream.events).toEqual([
+      "slot-restore",
+      "chat-forward",
+      "slot-restore",
+      "chat-forward",
+    ]);
+    expect(__getOpenAIProxySlotAllocatorInUseForTests(runtime.env, "wl-a")).toBe(0);
+  } finally {
+    bumpHitSpy.mockRestore();
     await upstream.close();
     runtime.cleanup();
   }
