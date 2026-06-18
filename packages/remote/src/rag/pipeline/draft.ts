@@ -100,6 +100,9 @@ export function draftPipeline(description: string, ctx: DraftContext = {}): Draf
       ignore_robots: false,
       rate_limit_per_sec: 2,
       timeout_ms: 10_000,
+      // Fail closed: a drafted http source crawls public targets only.
+      // An operator who needs an internal host flips this in the YAML.
+      allow_private_targets: false,
     });
   }
   for (const root of paths) {

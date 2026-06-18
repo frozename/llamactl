@@ -18,6 +18,10 @@ import type { Fetcher, FetcherContext, RawDoc } from "../types.js";
 
 import { resolveSecret } from "../../../config/secret.js";
 import { HttpSourceSpecSchema } from "../schema.js";
+import { assertPublicUrl, SsrfBlockedError } from "./ssrf-guard.js";
+
+/** Cap on redirect hops we will follow before giving up. */
+const MAX_REDIRECTS = 5;
 
 type HttpSourceSpec = ReturnType<typeof HttpSourceSpecSchema.parse>;
 
@@ -73,23 +77,23 @@ async function robotsAllows(url: URL, itemUrl: string, state: CrawlState): Promi
   return allowed;
 }
 
-/** Fetch one page; `null` means skip it (transport error or non-2xx
- *  status — both logged). */
+/** Fetch one page; `null` means skip it (transport error, non-2xx
+ *  status, or an SSRF-guard rejection — all logged). Redirects are
+ *  followed manually so the SSRF guard runs on every hop and the
+ *  Authorization header is dropped when a hop crosses origins. */
 async function fetchPage(url: string, state: CrawlState): Promise<Response | null> {
   let res: Response;
   try {
-    res = await fetchWithTimeout(
-      url,
-      {
-        headers: {
-          ...(state.authHeader ? { Authorization: state.authHeader } : {}),
-          "User-Agent": "llamactl-pipeline/1",
-        },
-        signal: state.ctx.signal,
-      },
-      state.spec.timeout_ms,
-    );
+    res = await guardedFetch(url, state);
   } catch (err) {
+    if (err instanceof SsrfBlockedError) {
+      state.ctx.log({
+        level: "warn",
+        msg: `SSRF guard blocked ${url}`,
+        data: { error: err.message },
+      });
+      return null;
+    }
     state.ctx.log({
       level: "warn",
       msg: `fetch failed: ${url}`,
@@ -105,6 +109,50 @@ async function fetchPage(url: string, state: CrawlState): Promise<Response | nul
     return null;
   }
   return res;
+}
+
+/**
+ * Fetch with the SSRF guard enforced on every hop and manual redirect
+ * following. On each hop the target is re-checked against the guard
+ * (`assertPublicUrl`) — so a public start URL that 302s to a private
+ * address (cloud metadata, loopback admin) is refused — and the
+ * Authorization header is stripped when the redirect Location's origin
+ * differs from the *original* request origin, so the bearer token is
+ * never leaked to a different host. Throws `SsrfBlockedError` when a
+ * hop targets a non-public address; returns the final non-redirect
+ * Response otherwise.
+ */
+async function guardedFetch(startUrl: string, state: CrawlState): Promise<Response> {
+  const originOrigin = new URL(startUrl).origin;
+  let currentUrl = startUrl;
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    await assertPublicUrl(currentUrl, { allowPrivate: state.spec.allow_private_targets });
+
+    // Only carry the bearer to the same origin as the original request.
+    const sameOrigin = new URL(currentUrl).origin === originOrigin;
+    const headers: Record<string, string> = { "User-Agent": "llamactl-pipeline/1" };
+    if (state.authHeader && sameOrigin) headers.Authorization = state.authHeader;
+
+    const res = await fetchWithTimeout(
+      currentUrl,
+      { headers, redirect: "manual", signal: state.ctx.signal },
+      state.spec.timeout_ms,
+    );
+
+    if (!isRedirect(res.status)) return res;
+
+    const location = res.headers.get("location");
+    if (location === null || location === "") return res;
+    // Resolve the Location relative to the current URL (may be relative).
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+
+  throw new Error(`too many redirects (>${String(MAX_REDIRECTS)}) starting at ${startUrl}`);
+}
+
+function isRedirect(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
 /** Same-origin + protocol + dedupe filter over extracted links;
@@ -137,6 +185,22 @@ async function crawlOne(
   state: CrawlState,
 ): Promise<{ stop: boolean; doc?: RawDoc }> {
   const url = new URL(item.url);
+
+  // SSRF gate first — before robots.txt is even fetched — so a private
+  // target never produces any outbound request (robots or page).
+  try {
+    await assertPublicUrl(item.url, { allowPrivate: state.spec.allow_private_targets });
+  } catch (err) {
+    if (err instanceof SsrfBlockedError) {
+      state.ctx.log({
+        level: "warn",
+        msg: `SSRF guard blocked ${item.url}`,
+        data: { error: err.message },
+      });
+      return { stop: false };
+    }
+    throw err;
+  }
 
   if (!(await robotsAllows(url, item.url, state))) return { stop: false };
 
