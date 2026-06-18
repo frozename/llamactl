@@ -42,7 +42,11 @@ function sortJsonValue(value: unknown): unknown {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
+        // Deterministic codepoint total order — localeCompare is
+        // locale/ICU-dependent, so it would make this cross-node cache
+        // identity SHA diverge across nodes/locales (silent cache misses)
+        // and admits byte-distinct keys comparing equal.
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
         .map(([key, nested]) => [key, sortJsonValue(nested)]),
     );
   }

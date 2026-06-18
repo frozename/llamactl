@@ -268,6 +268,11 @@ export function readServerState(
     if (
       typeof parsed.rel === "string" &&
       Array.isArray(parsed.extraArgs) &&
+      // Each element must be a string: ServerState types extraArgs as
+      // string[], and consumers call token.startsWith(...) on them. A
+      // foreign/corrupt sidecar with a non-string element would otherwise
+      // pass the guard and throw a TypeError downstream.
+      parsed.extraArgs.every((a) => typeof a === "string") &&
       typeof parsed.pid === "number" &&
       typeof parsed.startedAt === "string" &&
       typeof parsed.host === "string" &&
@@ -664,18 +669,28 @@ async function probeHealthOnce(
   }
 }
 
-/** Interruptible sleep so SIGTERM + abort react within ~1s. */
-function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+/**
+ * Interruptible sleep so SIGTERM + abort react within ~1s.
+ *
+ * pollReady loops over one long-lived signal, so the abort listener must
+ * detach on EVERY resolve path (timer or abort), not just the abort path —
+ * {once:true} only auto-detaches when abort fires, so the common timer path
+ * would otherwise retain a listener per call (MaxListenersExceededWarning +
+ * unbounded growth). Mirrors sleepWithAbort in keepAlive.ts.
+ *
+ * Exported as a test seam so the listener-balance can be asserted directly.
+ */
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = (): void => {
+      clearTimeout(t);
+      resolve();
+    };
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
