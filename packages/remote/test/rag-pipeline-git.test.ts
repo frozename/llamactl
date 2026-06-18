@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import type { FetcherContext, RawDoc } from "../src/rag/pipeline/types.js";
 
-import { gitFetcher } from "../src/rag/pipeline/fetchers/git.js";
+import { buildCloneArgs, gitFetcher } from "../src/rag/pipeline/fetchers/git.js";
 
 /**
  * The git fetcher shells out to the real `git` binary — Bun tests
@@ -111,6 +111,30 @@ describe("gitFetcher", () => {
     expect(readme.metadata.repo).toBe(`file://${bareRepo}`);
     expect(readme.metadata.ref).toBe("main");
     expect(readme.metadata.team).toBe("platform");
+  });
+
+  test("clone argv carries a -- end-of-options marker right before the repo positional", () => {
+    const args = buildCloneArgs({}, "https://github.com/acme/docs.git", "/tmp/checkout");
+    const sep = args.indexOf("--");
+    const repoIdx = args.indexOf("https://github.com/acme/docs.git");
+    expect(sep).toBeGreaterThanOrEqual(0);
+    expect(repoIdx).toBeGreaterThanOrEqual(0);
+    // The separator sits immediately before the positional repo arg so
+    // git's option parser cannot consume the repo (or tmp) as a flag.
+    expect(sep).toBe(repoIdx - 1);
+    expect(args[args.length - 1]).toBe("/tmp/checkout");
+  });
+
+  test("clone argv passes the ref via the single-arg --branch=<ref> form", () => {
+    const args = buildCloneArgs(
+      { ref: "release/2.0" },
+      "https://github.com/acme/docs.git",
+      "/tmp/checkout",
+    );
+    expect(args).toContain("--branch=release/2.0");
+    // No bare two-arg "--branch" "<ref>" form that could let a ref be
+    // parsed as a separate token.
+    expect(args).not.toContain("--branch");
   });
 
   test("unreachable repo emits an error event and yields nothing", async () => {
