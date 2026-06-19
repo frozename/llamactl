@@ -1,9 +1,8 @@
 import { useMemo, useState } from "react";
 
-import { trpc } from "@/lib/trpc";
-
 import type { Pipeline, Stage } from "./types";
 
+import { trpc } from "../../lib/trpc";
 import { usePipelinesStore } from "./store";
 
 export interface UsePipelinesReturn {
@@ -39,13 +38,13 @@ type StreamInput = {
   };
 };
 
-interface ChatStreamEvent {
+export interface ChatStreamEvent {
   type: "chunk" | "error" | "done";
   chunk?: { choices?: { delta?: { content?: string } }[] };
   error?: { message?: string };
 }
 
-interface StageRunControls {
+export interface StageRunControls {
   setCurrentIdx: (v: number) => void;
   setOutputs: (update: (prev: string[]) => string[]) => void;
   setRunError: (v: string | null) => void;
@@ -74,7 +73,7 @@ function advanceStage(
   c.setStreamInput(buildStageRequest(nextStage, finalOutput));
 }
 
-function applyChatStreamEvent(
+export function applyChatStreamEvent(
   e: ChatStreamEvent,
   pipeline: Pipeline,
   currentIdx: number,
@@ -103,6 +102,17 @@ function applyChatStreamEvent(
       return prev;
     });
   }
+}
+
+// Resolve which pipeline should receive stream events.
+// Keyed on runningId so that switching the active pipeline mid-run
+// never redirects events to the newly-active pipeline.
+export function selectRunningPipeline(
+  pipelines: Record<string, Pipeline>,
+  runningId: string | null,
+): Pipeline | undefined {
+  if (!runningId) return undefined;
+  return pipelines[runningId];
 }
 
 function exportPipelineAsMcp(
@@ -176,8 +186,9 @@ export function usePipelines(): UsePipelinesReturn {
       enabled: !!streamInput,
       key: streamKey,
       onData: (evt) => {
-        if (!active || !runningId) return;
-        applyChatStreamEvent(evt as ChatStreamEvent, active, currentIdx, controls);
+        const running = selectRunningPipeline(store.pipelines, runningId);
+        if (!running) return;
+        applyChatStreamEvent(evt as ChatStreamEvent, running, currentIdx, controls);
       },
       onError: (err: { message: string }) => {
         setRunError(err.message);
