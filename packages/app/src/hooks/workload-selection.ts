@@ -12,11 +12,7 @@ export type WorkloadRow = {
 
 export function getLiveWorkloads(rows: WorkloadRow[]): LiveWorkload[] {
   return rows
-    .filter(
-      (m) =>
-        m.spec?.enabled !== false &&
-        (m.phase === "Running" || m.phase === "Pending"),
-    )
+    .filter((m) => m.spec?.enabled !== false && (m.phase === "Running" || m.phase === "Pending"))
     .map((m) => ({
       name: m.name ?? "",
       phase: (m.phase as "Running" | "Pending" | null | undefined) ?? null,
