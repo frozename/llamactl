@@ -1,6 +1,9 @@
 import type { NodeMemSnapshot } from "./types.js";
 
-const PAGE_FIELDS: Record<string, keyof NodeMemSnapshot> = {
+const PAGE_FIELDS: Record<
+  string,
+  "free_mb" | "active_mb" | "inactive_mb" | "wired_mb" | "compressor_mb"
+> = {
   "Pages free": "free_mb",
   "Pages active": "active_mb",
   "Pages inactive": "inactive_mb",
@@ -24,6 +27,7 @@ export function parseVmStatOutput(raw: string): NodeMemSnapshot {
     swap_out: 0,
   };
 
+  let matchedFields = 0;
   for (const line of raw.split("\n")) {
     const pageMatch = /^(.+?):\s+([\d.]+)\./.exec(line);
     if (!pageMatch) continue;
@@ -35,10 +39,20 @@ export function parseVmStatOutput(raw: string): NodeMemSnapshot {
     const field = PAGE_FIELDS[label];
     if (field) {
       snap[field] = toMb(count);
+      matchedFields++;
       continue;
     }
-    if (label === "Swapins") snap.swap_in = count;
-    if (label === "Swapouts") snap.swap_out = count;
+    if (label === "Swapins") {
+      snap.swap_in = count;
+      matchedFields++;
+    } else if (label === "Swapouts") {
+      snap.swap_out = count;
+      matchedFields++;
+    }
+  }
+
+  if (matchedFields === 0) {
+    snap.available = false;
   }
 
   return snap;
@@ -51,6 +65,7 @@ export async function probeNodeMem(opts?: {
     opts?.exec ??
     ((_cmd: string): Promise<string> => {
       const proc = Bun.spawnSync(["vm_stat"]);
+      if (proc.exitCode !== 0) return Promise.resolve("");
       return Promise.resolve(new TextDecoder().decode(proc.stdout));
     });
   return parseVmStatOutput(await exec("vm_stat"));
