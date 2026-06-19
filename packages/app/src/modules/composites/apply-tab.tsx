@@ -98,10 +98,14 @@ function useApplyForm(props: {
   const [wetResult, setWetResult] = useState<WetRunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dryRunYaml, setDryRunYaml] = useState<string | null>(null);
+  const seededEditKeyRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
-    if (mode === "edit" && existing.data) {
+    const editKey = selectedName ? `edit:${selectedName}` : null;
+    if (mode === "edit" && existing.data && editKey && seededEditKeyRef.current !== editKey) {
       const manifest = existing.data as CompositeShape;
+      if (manifest.metadata.name !== selectedName) return;
+      seededEditKeyRef.current = editKey;
       const serializable = {
         apiVersion: manifest.apiVersion,
         kind: manifest.kind,
@@ -116,13 +120,14 @@ function useApplyForm(props: {
         setDryRunYaml(null);
       });
     } else if (mode === "new") {
+      seededEditKeyRef.current = null;
       queueMicrotask(() => {
         setDryRunOk(null);
         setWetResult(null);
         setError(null);
       });
     }
-  }, [mode, existing.data]);
+  }, [mode, selectedName, existing.data]);
 
   const apply = trpc.compositeApply.useMutation({
     onError: (err) => {
