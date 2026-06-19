@@ -76,6 +76,9 @@ export interface TunnelRelayCallOptions {
   /** Bypass pin check with one stderr WARN. Only set when the
    *  operator passed `--insecure-tunnel-relay` on the CLI. */
   insecure?: boolean;
+  /** Milliseconds before the relay POST is aborted and a
+   *  `tunnel-timeout` error is thrown. Defaults to 30 000 ms. */
+  timeoutMs?: number;
 }
 
 interface TunnelResEnvelope {
@@ -179,18 +182,33 @@ function buildRelayFetchInit(
   return { url, init };
 }
 
+const RELAY_POST_TIMEOUT_MS = 30_000;
+
 export async function callViaTunnelRelay(opts: TunnelRelayCallOptions): Promise<unknown> {
   const fetchImpl: FetchLike = opts.fetchImpl ?? fetch;
+  const timeoutMs = opts.timeoutMs ?? RELAY_POST_TIMEOUT_MS;
   const built = buildRelayFetchInit(opts.centralUrl, opts.nodeName, {
     method: opts.method,
     type: opts.type ?? "query",
     input: opts.input,
     bearer: opts.bearer,
+    signal: AbortSignal.timeout(timeoutMs),
     ...(opts.pinnedCa ? { pinnedCa: opts.pinnedCa } : {}),
     ...(opts.expectedFingerprint ? { expectedFingerprint: opts.expectedFingerprint } : {}),
     ...(opts.insecure ? { insecure: opts.insecure } : {}),
   });
-  const res = await fetchImpl(built.url, built.init);
+  let res: Response;
+  try {
+    res = await fetchImpl(built.url, built.init);
+  } catch (err) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      const te = Object.assign(new Error(`tunnel-relay timed out after ${String(timeoutMs)}ms`), {
+        code: "tunnel-timeout",
+      });
+      throw te;
+    }
+    throw err;
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`tunnel-relay ${String(res.status)}: ${text || res.statusText}`);
