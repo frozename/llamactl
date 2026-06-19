@@ -560,7 +560,7 @@ async function tailRemoteLogs(
   follow: boolean,
   onLine: (e: serverLogsMod.LogLineEvent) => void,
 ): Promise<number> {
-  await new Promise<void>((resolve, reject) => {
+  return await new Promise<number>((resolve, reject) => {
     const sub = getNodeClient().serverLogs.subscribe(
       { workload, lines, follow },
       {
@@ -574,14 +574,14 @@ async function tailRemoteLogs(
         },
         onComplete: () => {
           cleanup();
-          resolve();
+          resolve(0);
         },
       },
     );
     const abort = (): void => {
       sub.unsubscribe();
       cleanup();
-      resolve();
+      resolve(0);
     };
     const cleanup = (): void => {
       process.off("SIGINT", abort);
@@ -596,7 +596,6 @@ async function tailRemoteLogs(
     );
     return 1;
   });
-  return 0;
 }
 
 async function runLogs(args: string[]): Promise<number> {

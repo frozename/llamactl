@@ -20,6 +20,7 @@ import { buildTunnelSend, buildTunnelSubscribe, type FetchLike } from "./tunnel-
 export interface DispatcherTestSeams {
   config?: Config;
   fetchImpl?: FetchLike;
+  nodeClient?: NodeClient;
 }
 
 let testSeams: DispatcherTestSeams = {};
@@ -271,6 +272,7 @@ export function getNodeClient(
   globals: Globals = currentGlobals,
   env: NodeJS.ProcessEnv = process.env,
 ): NodeClient {
+  if (testSeams.nodeClient) return testSeams.nodeClient;
   const cfg = loadConfigForDispatch(globals, env);
   const opts: Parameters<typeof createNodeClient>[1] = {};
   if (globals.nodeName) opts.nodeName = globals.nodeName;
