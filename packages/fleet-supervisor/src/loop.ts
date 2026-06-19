@@ -86,6 +86,48 @@ interface TickState extends PressureTransitionResult {
   workloadHealth: Map<string, WorkloadHealthState>;
 }
 
+function asMessage(error: unknown): string {
+  return error instanceof Error
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : "unknown tick error";
+}
+
+function writeTickError(
+  writeJournalEntry: (entry: FleetJournalEntry) => void,
+  node: string,
+  error: unknown,
+): void {
+  const message = asMessage(error);
+  try {
+    writeJournalEntry({
+      kind: "fleet-tick-error",
+      ts: new Date().toISOString(),
+      node,
+      message,
+    });
+  } catch {
+    try {
+      process.stderr.write(`supervisor: failed to write tick error journal entry: ${message}\n`);
+    } catch {
+      // Best-effort logging only.
+    }
+  }
+}
+
+async function runTickWithRecovery(
+  tick: () => Promise<void>,
+  writeJournalEntry: (entry: FleetJournalEntry) => void,
+  node: string,
+): Promise<void> {
+  try {
+    await tick();
+  } catch (error) {
+    writeTickError(writeJournalEntry, node, error);
+  }
+}
+
 async function logSlotProgressForWorkloads(
   opts: SupervisorLoopOptions,
   ts: string,
@@ -310,13 +352,13 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
 
   const run = async (): Promise<void> => {
     try {
-      await tick();
+      await runTickWithRecovery(tick, writeJournalEntry, opts.node);
       checkSourceBoundary();
       if (opts.once || isStopped()) return;
       while (!isStopped()) {
         await new Promise<void>((res) => setTimeout(res, intervalMs));
         if (isStopped()) break;
-        await tick();
+        await runTickWithRecovery(tick, writeJournalEntry, opts.node);
         checkSourceBoundary();
       }
     } finally {
