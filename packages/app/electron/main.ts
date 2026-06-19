@@ -38,6 +38,49 @@ function seedEnvFromResolver(): void {
 
 seedEnvFromResolver();
 
+/**
+ * Returns true when `frameUrl` is from the same trusted origin as
+ * `trustedUrl`. In dev mode the trusted URL is the Vite dev-server
+ * origin (http://localhost:NNNN); in prod it is "file://" — any
+ * file: renderer URL is accepted. Both `will-navigate` and the IPC
+ * createContext guard use this function.
+ *
+ * Exported for unit testing without a live Electron environment.
+ */
+export function isTrustedRendererOrigin(frameUrl: string, trustedUrl: string): boolean {
+  if (!frameUrl) return false;
+  try {
+    const frame = new URL(frameUrl);
+    const trusted = new URL(trustedUrl);
+    if (trusted.protocol === "file:") {
+      return frame.protocol === "file:";
+    }
+    return frame.origin === trusted.origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds the createContext guard for createIPCHandler. Throws when the
+ * sender frame's URL is not from the trusted renderer origin, so IPC
+ * invocations from injected or navigated-away frames are rejected before
+ * any procedure runs.
+ *
+ * Exported for unit testing without a live Electron environment.
+ */
+export function makeIpcCreateContext(
+  trustedUrl: string,
+): (opts: { event: { senderFrame?: { url: string } | null } }) => object {
+  return (opts) => {
+    const frameUrl = opts.event.senderFrame?.url ?? "";
+    if (!isTrustedRendererOrigin(frameUrl, trustedUrl)) {
+      throw new Error("IPC from untrusted origin rejected");
+    }
+    return {};
+  };
+}
+
 function createWindow(): BrowserWindow {
   // Test harnesses (scripts/audit.sh) pin an explicit window size so
   // screenshots have identical geometry everywhere: CI runners' virtual
@@ -62,9 +105,30 @@ function createWindow(): BrowserWindow {
   });
 
   const router = buildDispatcherRouter() as unknown as IPCHandlerOptions["router"];
-  createIPCHandler({ router, windows: [win] });
 
   const devUrl = process.env["ELECTRON_RENDERER_URL"];
+  // In prod the renderer loads from file://, so any file: frame is trusted.
+  const trustedUrl = devUrl ?? "file://";
+
+  createIPCHandler({
+    router,
+    windows: [win],
+    createContext: makeIpcCreateContext(trustedUrl) as IPCHandlerOptions["createContext"],
+  });
+
+  // Prevent the renderer from navigating to untrusted URLs. This fires
+  // for script- or user-initiated in-page navigations; it does NOT fire
+  // for programmatic loadURL / loadFile calls from the main process.
+  win.webContents.on("will-navigate", (e, url) => {
+    if (!isTrustedRendererOrigin(url, trustedUrl)) {
+      e.preventDefault();
+    }
+  });
+
+  // Deny all new-window opens; external links must go through
+  // shell.openExternal in a dedicated handler if needed.
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
   if (devUrl) {
     void win.loadURL(devUrl);
     win.webContents.openDevTools({ mode: "detach" });
