@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runInit } from "../src/commands/init.js";
+import { captureProcessIo } from "./helpers.js";
 
 /**
  * `llamactl init` non-interactive path tests. `--yes` + explicit
@@ -176,5 +177,36 @@ describe("init bad args", () => {
     expect(result).toBe(0);
     const yaml = readFileSync(join(process.env.LLAMACTL_COMPOSITES_DIR!, "fallback.yaml"), "utf8");
     expect(yaml).toContain("chroma-only");
+  });
+});
+
+describe("init --name path-traversal guard", () => {
+  const baseFlags = ["--yes", "--no-apply", "--runtime=docker", "--template=chroma-only"];
+
+  test("--name=../evil exits 1 with a validation error and writes nothing", async () => {
+    const { result, cap } = await captureProcessIo(() => runInit([...baseFlags, "--name=../evil"]));
+    expect(result).toBe(1);
+    expect(cap.err).toMatch(/invalid.*name|name.*invalid/i);
+    expect(existsSync(join(tmp, "composites"))).toBe(false);
+  });
+
+  test("--name=a/b exits 1 and writes nothing", async () => {
+    const { result, cap } = await captureProcessIo(() => runInit([...baseFlags, "--name=a/b"]));
+    expect(result).toBe(1);
+    expect(cap.err).toMatch(/invalid.*name|name.*invalid/i);
+    expect(existsSync(join(tmp, "composites"))).toBe(false);
+  });
+
+  test("--name=.. exits 1 and writes nothing", async () => {
+    const { result, cap } = await captureProcessIo(() => runInit([...baseFlags, "--name=.."]));
+    expect(result).toBe(1);
+    expect(cap.err).toMatch(/invalid.*name|name.*invalid/i);
+    expect(existsSync(join(tmp, "composites"))).toBe(false);
+  });
+
+  test("--name=mystack succeeds normally", async () => {
+    const { result } = await captureProcessIo(() => runInit([...baseFlags, "--name=mystack"]));
+    expect(result).toBe(0);
+    expect(existsSync(join(process.env.LLAMACTL_COMPOSITES_DIR!, "mystack.yaml"))).toBe(true);
   });
 });
