@@ -342,7 +342,8 @@ function consumeStopArg(
     process.stderr.write(`Unknown flag: ${arg}\n`);
     return { exit: 1 };
   }
-  return { next: i + 1 };
+  process.stderr.write(`Unexpected argument '${arg}'; use --name <workload>\n`);
+  return { exit: 1 };
 }
 
 async function fetchStopResult(
@@ -422,7 +423,8 @@ function consumeStatusArg(
     process.stderr.write(`Unknown flag: ${arg}\n`);
     return { exit: 1 };
   }
-  return { next: i + 1 };
+  process.stderr.write(`Unexpected argument '${arg}'; use --name <workload>\n`);
+  return { exit: 1 };
 }
 
 async function fetchServerStatus(
@@ -518,7 +520,8 @@ function consumeServerLogsArg(
     process.stderr.write(`Unknown flag: ${arg}\n`);
     return { exit: 1 };
   }
-  return { next: i + 1 };
+  process.stderr.write(`Unexpected argument '${arg}'; use --name <workload>\n`);
+  return { exit: 1 };
 }
 
 async function tailLocalLogs(
