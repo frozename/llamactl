@@ -830,6 +830,12 @@ export async function runAgentInstallLaunchd(
   const targets = resolveInstallTargets(deps, parsed);
   const { label, logDir, plistPath } = targets;
 
+  // Guard before touching disk: --force must control both plist and binary.
+  if (!parsed.dryRun && deps.fs.existsSync(plistPath) && !parsed.force) {
+    deps.stderr(`plist already exists at ${plistPath}; pass --force to overwrite.\n`);
+    return 1;
+  }
+
   const installedPath = await resolveBinaryOrReport(deps, parsed);
   if (installedPath === null) return 1;
 

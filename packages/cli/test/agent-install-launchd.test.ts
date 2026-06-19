@@ -822,6 +822,145 @@ describe("runAgentInstallLaunchd", () => {
     }
   });
 
+  test("overwrite protection: binary NOT modified when plist exists without --force", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "install-launchd-binary-guard-"));
+    try {
+      const srcBinary = join(tmpDir, "src-agent");
+      writeFileSync(srcBinary, "#!/bin/sh\necho new-binary\n", { mode: 0o755 });
+      chmodSync(srcBinary, 0o755);
+
+      // Pre-installed binary at the target location — should not be touched.
+      const installedBinary = join(tmpDir, "bin", "llamactl-agent");
+      mkdirSync(join(tmpDir, "bin"), { recursive: true });
+      writeFileSync(installedBinary, "#!/bin/sh\necho old-binary\n");
+      const originalContent = readFileSync(installedBinary, "utf8");
+
+      // Existing plist triggers the guard.
+      const home = tmpDir;
+      const laDir = join(home, "Library", "LaunchAgents");
+      mkdirSync(laDir, { recursive: true });
+      writeFileSync(join(laDir, "com.llamactl.agent.plist"), "<!-- existing -->");
+
+      const { deps, stderrChunks } = makeTestDeps({
+        spawnSync: makeSpawnStub({}).spawn,
+        env: { HOME: home, USER: "tester" },
+        fs: {
+          ...defaultFs(),
+          existsSync,
+          mkdirSync,
+          chmodSync,
+          accessSync: accessFromDisk,
+          writeFileSync: writeFileFromDisk,
+          copyFileSync: copyFileThrough,
+        },
+      });
+
+      const code = await runAgentInstallLaunchd(
+        [`--binary=${srcBinary}`, `--install-path=${installedBinary}`],
+        deps,
+      );
+      expect(code).toBe(1);
+      expect(stderrChunks.join("")).toContain("already exists");
+      // Binary content must be identical to pre-install state.
+      expect(readFileSync(installedBinary, "utf8")).toBe(originalContent);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("--force with existing plist: binary IS overwritten and install completes", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "install-launchd-force-overwrite-"));
+    try {
+      const srcBinary = join(tmpDir, "src-agent");
+      writeFileSync(srcBinary, "#!/bin/sh\necho new-binary\n", { mode: 0o755 });
+      chmodSync(srcBinary, 0o755);
+
+      // Pre-installed binary with stale content.
+      const installedBinary = join(tmpDir, "bin", "llamactl-agent");
+      mkdirSync(join(tmpDir, "bin"), { recursive: true });
+      writeFileSync(installedBinary, "#!/bin/sh\necho old-binary\n");
+
+      // Existing plist — force must bypass the guard.
+      const home = tmpDir;
+      const laDir = join(home, "Library", "LaunchAgents");
+      mkdirSync(laDir, { recursive: true });
+      writeFileSync(join(laDir, "com.llamactl.agent.plist"), "<!-- existing -->");
+
+      const stub = makeSpawnStub({
+        responses: [
+          {
+            match: (c, a): boolean => c === "plutil" && a[0] === "-lint",
+            response: {
+              pid: 0,
+              output: ["OK\n", "", ""],
+              stdout: "OK\n",
+              stderr: "",
+              status: 0,
+              signal: null,
+            },
+          },
+          {
+            match: (c, a): boolean => c === "launchctl" && a[0] === "unload",
+            response: {
+              pid: 0,
+              output: ["", "", ""],
+              stdout: "",
+              stderr: "",
+              status: 0,
+              signal: null,
+            },
+          },
+          {
+            match: (c, a): boolean => c === "launchctl" && a[0] === "load",
+            response: {
+              pid: 0,
+              output: ["", "", ""],
+              stdout: "",
+              stderr: "",
+              status: 0,
+              signal: null,
+            },
+          },
+        ],
+        fallback: {
+          pid: 0,
+          output: ["", "", ""],
+          stdout: "state = running\npid = 42\n",
+          stderr: "",
+          status: 0,
+          signal: null,
+        },
+      });
+
+      const { deps, stdoutChunks } = makeTestDeps({
+        spawnSync: stub.spawn,
+        env: { HOME: home, USER: "tester" },
+        fs: {
+          ...defaultFs(),
+          existsSync,
+          mkdirSync,
+          chmodSync,
+          accessSync: accessFromDisk,
+          writeFileSync: writeFileFromDisk,
+          copyFileSync: copyFileThrough,
+          unlinkSync: (): void => {
+            /* not expected on success */
+          },
+        } as unknown as FsLike,
+      });
+
+      const code = await runAgentInstallLaunchd(
+        [`--binary=${srcBinary}`, `--install-path=${installedBinary}`, "--force"],
+        deps,
+      );
+      expect(code).toBe(0);
+      expect(readFileSync(installedBinary, "utf8")).toContain("new-binary");
+      expect(stdoutChunks.join("")).toContain("Installed:");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   test("polling failure reads stderr.log and includes contents in error", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "install-launchd-pollfail-"));
     try {
