@@ -5,6 +5,7 @@ export interface LiveWorkload {
 
 export type WorkloadRow = {
   name?: string;
+  phase?: string | null;
   spec?: { enabled?: boolean };
   status?: { phase?: string | null } | null;
 };
@@ -14,11 +15,11 @@ export function getLiveWorkloads(rows: WorkloadRow[]): LiveWorkload[] {
     .filter(
       (m) =>
         m.spec?.enabled !== false &&
-        (!m.status || m.status.phase === "Running" || m.status.phase === "Pending"),
+        (m.phase === "Running" || m.phase === "Pending"),
     )
     .map((m) => ({
       name: m.name ?? "",
-      phase: (m.status?.phase as "Running" | "Pending" | null | undefined) ?? null,
+      phase: (m.phase as "Running" | "Pending" | null | undefined) ?? null,
     }))
     .filter((m) => m.name)
     .sort((a, b) => a.name.localeCompare(b.name));

@@ -18,7 +18,7 @@ describe("useActiveWorkload helpers", () => {
 
   test("single live workload resolves and stays selectable", () => {
     const live = getLiveWorkloads([
-      { name: "gemma", spec: { enabled: true }, status: { phase: "Running" } },
+      { name: "gemma", phase: "Running", spec: { enabled: true }, status: { phase: "Running" } },
     ]);
     expect(live).toEqual([{ name: "gemma", phase: "Running" } satisfies LiveWorkload]);
     expect(selectActiveWorkload(null, live)).toBe("gemma");
@@ -27,8 +27,8 @@ describe("useActiveWorkload helpers", () => {
 
   test("stored selection wins until cleared, then falls back alphabetically", () => {
     const live = getLiveWorkloads([
-      { name: "granite", spec: { enabled: true }, status: { phase: "Running" } },
-      { name: "gemma", spec: { enabled: true }, status: { phase: "Pending" } },
+      { name: "granite", phase: "Running", spec: { enabled: true }, status: { phase: "Running" } },
+      { name: "gemma", phase: "Pending", spec: { enabled: true }, status: { phase: "Pending" } },
     ]);
     expect(live.map((w) => w.name)).toEqual(["gemma", "granite"]);
     expect(selectActiveWorkload("granite", live)).toBe("granite");
