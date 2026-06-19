@@ -450,7 +450,8 @@ const uiRouter = t.router({
       }),
     )
     .query(async ({ input }) => {
-      const { existsSync, statSync, readdirSync } = await import("node:fs");
+      const { existsSync } = await import("node:fs");
+      const { readdir, stat } = await import("node:fs/promises");
       const { join } = await import("node:path");
       // Under a hermetic test profile, reroot `~` to the profile dir —
       // the operator's real home (and its git repos) must not leak into
@@ -472,16 +473,16 @@ const uiRouter = t.router({
         mtimeMs: number;
       }
       const hits: Entry[] = [];
-      const listDirOrNull = (dir: string): string[] | null => {
+      const listDirOrNull = async (dir: string): Promise<string[] | null> => {
         try {
-          return readdirSync(dir);
+          return await readdir(dir);
         } catch {
           return null;
         }
       };
-      const recordRepo = (dir: string): void => {
+      const recordRepo = async (dir: string): Promise<void> => {
         try {
-          const st = statSync(dir);
+          const st = await stat(dir);
           hits.push({
             path: dir,
             name: dir.split("/").slice(-1)[0] ?? dir,
@@ -491,30 +492,30 @@ const uiRouter = t.router({
           /* unreadable — skip */
         }
       };
-      const isDirectory = (child: string): boolean => {
+      const isDirectory = async (child: string): Promise<boolean> => {
         try {
-          return statSync(child).isDirectory();
+          return (await stat(child)).isDirectory();
         } catch {
           return false;
         }
       };
-      const walk = (dir: string, depth: number): void => {
+      const walk = async (dir: string, depth: number): Promise<void> => {
         if (depth > input.maxDepth) return;
-        const items = listDirOrNull(dir);
+        const items = await listDirOrNull(dir);
         if (items === null) return;
         // If this dir is itself a repo, don't descend (avoid
         // returning submodules + siblings with the same mtime).
         if (items.includes(".git")) {
-          recordRepo(dir);
+          await recordRepo(dir);
           return;
         }
         for (const item of items) {
           if (item.startsWith(".") || item === "node_modules") continue;
           const child = join(dir, item);
-          if (isDirectory(child)) walk(child, depth + 1);
+          if (await isDirectory(child)) await walk(child, depth + 1);
         }
       };
-      walk(expandedRoot, 0);
+      await walk(expandedRoot, 0);
       hits.sort((a, b) => b.mtimeMs - a.mtimeMs);
       return {
         root: expandedRoot,
