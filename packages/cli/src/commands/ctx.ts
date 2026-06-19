@@ -1,6 +1,8 @@
 import { config as kubecfg } from "@llamactl/remote";
 import { existsSync, readFileSync } from "node:fs";
 
+import { getGlobals } from "../dispatcher.js";
+
 const USAGE = `Usage: llamactl ctx <subcommand>
 
 Subcommands:
@@ -38,7 +40,8 @@ function runCurrent(args: string[]): number {
     process.stderr.write(`ctx current: unexpected argument ${String(args[0])}\n`);
     return 1;
   }
-  const cfg = kubecfg.loadConfig();
+  const cfgPath = getGlobals().configPath ?? kubecfg.defaultConfigPath();
+  const cfg = kubecfg.loadConfig(cfgPath);
   process.stdout.write(`${cfg.currentContext}\n`);
   return 0;
 }
@@ -53,7 +56,7 @@ function runUse(args: string[]): number {
     process.stderr.write(`ctx use: unexpected argument ${String(rest[0])}\n`);
     return 1;
   }
-  const cfgPath = kubecfg.defaultConfigPath();
+  const cfgPath = getGlobals().configPath ?? kubecfg.defaultConfigPath();
   const cfg = kubecfg.loadConfig(cfgPath);
   const found = cfg.contexts.find((c) => c.name === name);
   if (!found) {
@@ -71,7 +74,7 @@ function runGet(args: string[]): number {
     process.stderr.write(`ctx get: unexpected argument ${String(args[0])}\n`);
     return 1;
   }
-  const cfgPath = kubecfg.defaultConfigPath();
+  const cfgPath = getGlobals().configPath ?? kubecfg.defaultConfigPath();
   if (!existsSync(cfgPath)) {
     // Load will produce a fresh default; surface that but don't write
     // — `get` is a read-only view.
