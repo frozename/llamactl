@@ -33,9 +33,7 @@ void mock.module("electron-trpc/main", () => ({
   createIPCHandler: (): object => ({}),
 }));
 
-const { isTrustedRendererOrigin, makeIpcCreateContext } = await import(
-  "../../electron/main.js"
-);
+const { isTrustedRendererOrigin, makeIpcCreateContext } = await import("../../electron/main.js");
 
 describe("isTrustedRendererOrigin", () => {
   describe("dev mode (http origin)", () => {
@@ -66,9 +64,7 @@ describe("isTrustedRendererOrigin", () => {
     const trusted = "file://";
 
     test("accepts file: URL", () => {
-      expect(
-        isTrustedRendererOrigin("file:///app/renderer/index.html", trusted),
-      ).toBe(true);
+      expect(isTrustedRendererOrigin("file:///app/renderer/index.html", trusted)).toBe(true);
     });
 
     test("rejects http: URL", () => {
@@ -82,9 +78,7 @@ describe("isTrustedRendererOrigin", () => {
     });
 
     test("rejects non-URL string", () => {
-      expect(isTrustedRendererOrigin("not-a-url", "http://localhost:5173")).toBe(
-        false,
-      );
+      expect(isTrustedRendererOrigin("not-a-url", "http://localhost:5173")).toBe(false);
     });
   });
 });
@@ -101,9 +95,9 @@ describe("makeIpcCreateContext", () => {
 
     test("throws for untrusted origin — the IPC origin bug", () => {
       const ctx = makeIpcCreateContext(trusted);
-      expect(() =>
-        ctx({ event: { senderFrame: { url: "http://attacker.example/" } } }),
-      ).toThrow("IPC from untrusted origin rejected");
+      expect(() => ctx({ event: { senderFrame: { url: "http://attacker.example/" } } })).toThrow(
+        "IPC from untrusted origin rejected",
+      );
     });
 
     test("throws when senderFrame is null", () => {
@@ -128,9 +122,9 @@ describe("makeIpcCreateContext", () => {
 
     test("throws for http: origin", () => {
       const ctx = makeIpcCreateContext("file://");
-      expect(() =>
-        ctx({ event: { senderFrame: { url: "http://attacker.example/" } } }),
-      ).toThrow("IPC from untrusted origin rejected");
+      expect(() => ctx({ event: { senderFrame: { url: "http://attacker.example/" } } })).toThrow(
+        "IPC from untrusted origin rejected",
+      );
     });
   });
 });
