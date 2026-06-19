@@ -30,7 +30,7 @@ async function runTier2Search(
   parsed: ParsedQuery,
   utils: ReturnType<typeof trpc.useUtils>,
   setResults: React.Dispatch<React.SetStateAction<GroupedResults>>,
-  setStatus: React.Dispatch<React.SetStateAction<"idle" | "searching">>,
+  onComplete: () => void,
 ): Promise<void> {
   const tasks: Promise<unknown>[] = [];
   const allow = (s: string): boolean => !parsed.surfaceFilter || parsed.surfaceFilter === s;
@@ -71,7 +71,7 @@ async function runTier2Search(
     );
   }
   await Promise.allSettled(tasks);
-  if (queryToken.current === token) setStatus("idle");
+  onComplete();
 }
 
 export function useGlobalSearch(input: string): {
@@ -124,17 +124,36 @@ export function useGlobalSearch(input: string): {
       setResults(initial);
     });
 
+    // Both tiers are pre-counted so that cleanup can decrement for any
+    // timer that is cleared before it fires, and only the final decrement
+    // (when remaining reaches 0 with a matching token) sets idle.
+    let remaining = 2;
+    const onTierDone = (): void => {
+      remaining--;
+      if (remaining === 0 && queryToken.current === token) setStatus("idle");
+    };
+
     tier2Timer.current = setTimeout(() => {
-      void runTier2Search(token, queryToken, parsed, utils, setResults, setStatus);
+      tier2Timer.current = null;
+      void runTier2Search(token, queryToken, parsed, utils, setResults, onTierDone);
     }, TIER2_MS);
 
     tier3Timer.current = setTimeout(() => {
-      void runTier3Search(token, queryToken, parsed, ragStatus.data, utils, setResults);
+      tier3Timer.current = null;
+      void runTier3Search(token, queryToken, parsed, ragStatus.data, utils, setResults, onTierDone);
     }, TIER3_MS);
 
     return (): void => {
-      if (tier2Timer.current) clearTimeout(tier2Timer.current);
-      if (tier3Timer.current) clearTimeout(tier3Timer.current);
+      if (tier2Timer.current) {
+        clearTimeout(tier2Timer.current);
+        tier2Timer.current = null;
+        onTierDone();
+      }
+      if (tier3Timer.current) {
+        clearTimeout(tier3Timer.current);
+        tier3Timer.current = null;
+        onTierDone();
+      }
       ctrl.abort();
     };
   }, [input, tabs, closed, workloadsQ.data, nodesQ.data, ragStatus.data, utils]);
