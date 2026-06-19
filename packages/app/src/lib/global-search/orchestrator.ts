@@ -63,6 +63,35 @@ export interface MergeServerHitsOpts {
   unreachableNodes?: string[];
 }
 
+function hitKey(h: Hit): string {
+  return `${h.parentId}\x00${h.match?.where ?? ""}\x00${h.match?.snippet ?? ""}`;
+}
+
+function dedupeHits(existing: Hit[], incoming: Hit[]): Hit[] {
+  const seen = new Map<string, number>();
+  const result: Hit[] = [];
+  for (const h of existing) {
+    seen.set(hitKey(h), result.length);
+    result.push(h);
+  }
+  for (const h of incoming) {
+    const k = hitKey(h);
+    const idx = seen.get(k);
+    if (idx !== undefined) {
+      const prev = result[idx];
+      if (prev !== undefined) {
+        const matchKind =
+          prev.matchKind === "semantic" || h.matchKind === "semantic" ? "semantic" : "exact";
+        result[idx] = { ...prev, matchKind, score: Math.max(prev.score, h.score) };
+      }
+    } else {
+      seen.set(k, result.length);
+      result.push(h);
+    }
+  }
+  return result;
+}
+
 export function mergeServerHits(
   current: GroupedResults,
   surface: SurfaceKind,
@@ -71,7 +100,7 @@ export function mergeServerHits(
 ): GroupedResults {
   const out = current.map((g) => {
     if (g.surface !== surface) return g;
-    const merged = opts.append ? [...g.hits, ...hits] : hits;
+    const merged = opts.append ? dedupeHits(g.hits, hits) : hits;
     let top = 0;
     for (const h of merged) {
       const f = applySurfaceBias(h);

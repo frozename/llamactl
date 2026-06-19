@@ -54,10 +54,13 @@ export async function runTier3Search(
     | undefined,
   utils: ReturnType<typeof trpc.useUtils>,
   setResults: React.Dispatch<React.SetStateAction<GroupedResults>>,
+  onComplete: () => void,
 ): Promise<void> {
-  if (queryToken.current !== token) return;
   const status = ragStatus;
-  if (!status?.defaultNode) return;
+  if (queryToken.current !== token || !status?.defaultNode) {
+    onComplete();
+    return;
+  }
 
   const allow = (s: string): boolean => !parsed.surfaceFilter || parsed.surfaceFilter === s;
   const tasks: Promise<unknown>[] = [];
@@ -164,4 +167,5 @@ export async function runTier3Search(
   }
 
   await Promise.allSettled(tasks);
+  onComplete();
 }
