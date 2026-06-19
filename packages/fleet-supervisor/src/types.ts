@@ -240,6 +240,13 @@ export interface FleetSourceStaleEntry {
   reloading: boolean;
 }
 
+export interface FleetTickErrorEntry {
+  kind: "fleet-tick-error";
+  ts: string;
+  node: string;
+  message: string;
+}
+
 export interface MoveProposal {
   workload: string;
   fromNode: string;
@@ -262,4 +269,5 @@ export type FleetJournalEntry =
   | FleetMoveEntry
   | FleetLeaseElectionEntry
   | FleetSlotProgressEntry
-  | FleetSourceStaleEntry;
+  | FleetSourceStaleEntry
+  | FleetTickErrorEntry;

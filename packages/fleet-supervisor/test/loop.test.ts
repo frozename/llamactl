@@ -7,6 +7,7 @@ import type {
   FleetSlotProgressEntry,
   FleetSnapshotEntry,
   FleetSourceStaleEntry,
+  FleetTickErrorEntry,
   FleetTransitionEntry,
   NodeMemSnapshot,
   WorkloadSnapshot,
@@ -408,6 +409,37 @@ describe("startSupervisorLoop", () => {
       expect(bad?.reachable).toBe(false);
       expect(bad?.consecutiveErrors).toBe(1);
     }
+  });
+
+  it("continues looping when a tick fails and records fleet-tick-error", async () => {
+    const entries: FleetJournalEntry[] = [];
+    let probeCalls = 0;
+    let successfulTicks = 0;
+    const handle = startSupervisorLoop({
+      node: "local",
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        probeCalls++;
+        if (probeCalls === 2) throw new Error("simulated node probe failure");
+        return FAKE_NODE_MEM;
+      },
+      probeWorkload: async (t) => makeReachable(t),
+      onTick: () => {
+        successfulTicks++;
+        if (successfulTicks >= 3) handle.stop();
+      },
+      writeJournal: (entry) => entries.push(entry),
+    });
+    await handle.done;
+    expect(successfulTicks).toBe(3);
+    expect(probeCalls).toBe(4);
+    const tickErrors = entries.filter(
+      (e): e is FleetTickErrorEntry => e.kind === "fleet-tick-error",
+    );
+    expect(tickErrors).toHaveLength(1);
+    expect(tickErrors[0]?.message).toBe("simulated node probe failure");
+    expect(entries.filter((e) => e.kind === "fleet-snapshot")).toHaveLength(3);
   });
 
   it("emits fleet-transition + fleet-proposal on NORMAL→HIGH pressure flip", async () => {

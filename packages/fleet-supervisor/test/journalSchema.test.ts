@@ -3,8 +3,6 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import type { FleetJournalEntry } from "../src/types.js";
-
 import { runFleet } from "../../cli/src/commands/fleet.js";
 import { collectLatestSnapshots, collectProposals } from "../../mcp/src/tools/fleet.js";
 
@@ -45,7 +43,9 @@ describe("journal schema forward-compat", () => {
         workloads: [],
       },
     ];
-    const snapshots = collectLatestSnapshots(entries as unknown as FleetJournalEntry[]);
+    const snapshots = collectLatestSnapshots(
+      entries as unknown as Parameters<typeof collectLatestSnapshots>[0],
+    );
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]?.node).toBe("local");
   });
@@ -68,9 +68,12 @@ describe("journal schema forward-compat", () => {
         action: { type: "evict", workload: "w1", reason: "test" },
       },
     ];
-    const proposals = collectProposals(entries as unknown as FleetJournalEntry[], {
-      pendingOnly: false,
-    });
+    const proposals = collectProposals(
+      entries as unknown as Parameters<typeof collectProposals>[0],
+      {
+        pendingOnly: false,
+      },
+    );
     expect(proposals).toHaveLength(1);
     expect(proposals[0]?.proposalId).toBe("p1");
   });
