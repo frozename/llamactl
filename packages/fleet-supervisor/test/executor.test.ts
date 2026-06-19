@@ -307,6 +307,45 @@ describe("runExecutor", () => {
   });
 });
 
+describe("executeRestart enable-failure recovery", () => {
+  it("restart: enable failure triggers bounded recovery re-enable; recovery succeeds → status=executed", async () => {
+    let enableCallCount = 0;
+    const proposal = makeProposal("p1", "restart", "test-host");
+    const { opts, written } = makeOpts([proposal], {
+      auto: true,
+      severityThreshold: 3,
+      disable: async () => 0,
+      enable: async () => {
+        enableCallCount++;
+        if (enableCallCount === 1) return 1;
+        return 0;
+      },
+    });
+    const results = await runExecutor(opts);
+    expect(enableCallCount).toBe(2);
+    expect(results[0]!.status).toBe("executed");
+    expect(written).toHaveLength(1);
+  });
+
+  it("restart: enable failure + recovery re-enable failure → no journal entry (proposal retryable next tick)", async () => {
+    let enableCallCount = 0;
+    const proposal = makeProposal("p1", "restart", "test-host");
+    const { opts, written } = makeOpts([proposal], {
+      auto: true,
+      severityThreshold: 3,
+      disable: async () => 0,
+      enable: async () => {
+        enableCallCount++;
+        return 1;
+      },
+    });
+    const results = await runExecutor(opts);
+    expect(enableCallCount).toBe(2);
+    expect(written).toHaveLength(0);
+    expect(results).toHaveLength(0);
+  });
+});
+
 describe("runExecutor restartPolicy:Never gate", () => {
   it("does NOT evict a Never-policy workload but still evicts a default-policy one", async () => {
     const disabled: string[] = [];

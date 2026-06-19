@@ -82,7 +82,8 @@ export async function runExecutor(opts: ExecutorOptions): Promise<FleetExecution
         continue;
       }
     }
-    results.push(await executeOne(proposal, opts));
+    const result = await executeOne(proposal, opts);
+    if (result !== null) results.push(result);
   }
   return results;
 }
@@ -92,11 +93,14 @@ type ExecutionEntryBase = Pick<
   "action" | "kind" | "node" | "proposalId" | "ts"
 >;
 
+// Returns null when both the initial enable and the recovery re-enable fail after
+// a successful disable — null suppresses journaling so the proposal stays
+// retryable on the next supervisor tick instead of being permanently deduped.
 async function executeRestart(
   workload: string,
   opts: ExecutorOptions,
   base: ExecutionEntryBase,
-): Promise<FleetExecutionEntry> {
+): Promise<FleetExecutionEntry | null> {
   const disableCode = await opts.disable(workload);
   if (disableCode !== 0) {
     return {
@@ -107,11 +111,18 @@ async function executeRestart(
     };
   }
   const enableCode = await opts.enable(workload);
-  return {
-    ...base,
-    status: enableCode === 0 ? "executed" : "failed",
-    exitCode: enableCode,
-  };
+  if (enableCode === 0) {
+    return { ...base, status: "executed", exitCode: enableCode };
+  }
+  // Enable failed after disable — attempt one bounded recovery re-enable to
+  // avoid stranding the workload in the disabled state.
+  const recoveryCode = await opts.enable(workload);
+  if (recoveryCode === 0) {
+    return { ...base, status: "executed", exitCode: recoveryCode };
+  }
+  // Both enable attempts failed; return null to suppress the journal write so
+  // the proposal is not permanently deduped and the next tick can retry.
+  return null;
 }
 
 function isRestartPolicyNever(workload: string, opts: ExecutorOptions): boolean {
@@ -128,7 +139,7 @@ async function executeAction(
   action: FleetProposalEntry["action"],
   opts: ExecutorOptions,
   base: ExecutionEntryBase,
-): Promise<FleetExecutionEntry> {
+): Promise<FleetExecutionEntry | null> {
   try {
     if (action.type === "mark-degraded") {
       return { ...base, status: "executed" };
@@ -159,7 +170,7 @@ async function executeAction(
 async function executeOne(
   proposal: FleetProposalEntry,
   opts: ExecutorOptions,
-): Promise<FleetExecutionEntry> {
+): Promise<FleetExecutionEntry | null> {
   const ts = new Date().toISOString();
   const tier = actionTier(proposal.action);
   const isManualOverride = opts.executeId === proposal.proposalId;
@@ -183,6 +194,8 @@ async function executeOne(
   }
 
   const entry = await executeAction(proposal.action, opts, base);
-  opts.writeJournal(entry);
+  if (entry !== null) {
+    opts.writeJournal(entry);
+  }
   return entry;
 }
