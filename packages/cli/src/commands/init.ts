@@ -39,6 +39,9 @@ import { required } from "../required.js";
 type RuntimeKind = "docker" | "kubernetes";
 type TemplateKey = "chroma-only" | "pgvector-with-embedder" | "chroma-plus-workload";
 
+// Rejects path separators, '..', leading dots/dashes — prevents path traversal via --name.
+const COMPOSITE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
 const TEMPLATE_ORDER: readonly TemplateKey[] = [
   "chroma-only",
   "pgvector-with-embedder",
@@ -60,6 +63,13 @@ export async function runInit(argv: string[]): Promise<number> {
   if (args.help) {
     process.stdout.write(USAGE);
     return 0;
+  }
+
+  if (!COMPOSITE_NAME_RE.test(args.name)) {
+    process.stderr.write(
+      `invalid composite name '${args.name}': use only letters, digits, dots, underscores, and hyphens, starting with a letter or digit\n`,
+    );
+    return 1;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-conversion -- Preserve existing CLI/test semantics while clearing strict lint debt.
