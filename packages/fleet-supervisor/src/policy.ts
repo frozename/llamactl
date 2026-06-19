@@ -23,6 +23,7 @@ export class PressureWindow {
   private buf: PressureWindowEntry[] = [];
   constructor(private readonly capacity: number) {}
   push(node_mem: NodeMemSnapshot, workloads: WorkloadSnapshot[]): void {
+    if (node_mem.available === false) return;
     this.buf.push({ node_mem, workloads });
     if (this.buf.length > this.capacity) this.buf.shift();
   }

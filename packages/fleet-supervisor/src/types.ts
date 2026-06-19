@@ -6,6 +6,8 @@ export interface NodeMemSnapshot {
   compressor_mb: number;
   swap_in: number;
   swap_out: number;
+  /** False when the probe failed or produced no parseable data. Absent means available. */
+  available?: boolean;
 }
 
 export interface CompletionProbeSnapshot {
