@@ -4,7 +4,7 @@ import {
   makePinnedFetch,
   type PinnedFetch,
 } from "@llamactl/remote";
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import type { buildDispatcherRouter } from "../electron/trpc/dispatcher";
 
@@ -21,6 +21,10 @@ function fetchInputLabel(input: Parameters<PinnedFetch>[0]): string {
   if (input instanceof URL) return input.href;
   return input.url;
 }
+
+beforeAll(async () => {
+  cluster = await makeCluster({ nodes: [{ name: "remote1" }] });
+}, 60_000);
 
 afterAll(async () => {
   await cluster?.cleanup();
@@ -53,8 +57,7 @@ describe("Electron dispatcher router", () => {
   }
 
   test("forwards query to remote when that node is default", async () => {
-    const c = cluster ?? (await makeCluster({ nodes: [{ name: "remote1" }] }));
-    cluster = c;
+    const c = cluster!;
     process.env["LLAMACTL_CONFIG"] = c.clusterConfigPath;
     kubecfg.saveConfig(
       kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), "remote1"),
@@ -74,8 +77,7 @@ describe("Electron dispatcher router", () => {
   }, 15_000);
 
   test("falls through locally when default is local", async () => {
-    const c = cluster ?? (await makeCluster({ nodes: [{ name: "remote1" }] }));
-    cluster = c;
+    const c = cluster!;
     process.env["LLAMACTL_CONFIG"] = c.clusterConfigPath;
     kubecfg.saveConfig(
       kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), "local"),
@@ -99,8 +101,7 @@ describe("Electron dispatcher router", () => {
   }, 15_000);
 
   test("forwards subscription events from remote", async () => {
-    const c = cluster ?? (await makeCluster({ nodes: [{ name: "remote1" }] }));
-    cluster = c;
+    const c = cluster!;
     process.env["LLAMACTL_CONFIG"] = c.clusterConfigPath;
     kubecfg.saveConfig(
       kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), "remote1"),
@@ -130,8 +131,7 @@ describe("Electron dispatcher router", () => {
   }, 15_000);
 
   test("UI active-node override takes precedence over kubeconfig", async () => {
-    const c = cluster ?? (await makeCluster({ nodes: [{ name: "remote1" }] }));
-    cluster = c;
+    const c = cluster!;
     process.env["LLAMACTL_CONFIG"] = c.clusterConfigPath;
     // Kubeconfig says LOCAL, override says REMOTE → dispatcher must
     // forward (override wins).
@@ -156,8 +156,7 @@ describe("Electron dispatcher router", () => {
   }, 15_000);
 
   test("control-plane-only procedures bypass dispatch", async () => {
-    const c = cluster ?? (await makeCluster({ nodes: [{ name: "remote1" }] }));
-    cluster = c;
+    const c = cluster!;
     process.env["LLAMACTL_CONFIG"] = c.clusterConfigPath;
     kubecfg.saveConfig(
       kubecfg.setDefaultNode(kubecfg.loadConfig(c.clusterConfigPath), "remote1"),
