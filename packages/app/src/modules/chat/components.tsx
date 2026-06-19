@@ -417,6 +417,7 @@ function TranscriptHeader(props: {
   onModelChange: (model: string) => void;
   models: string[];
   modelsLoading: boolean;
+  controlsDisabled?: boolean;
   capabilities: string[];
   onToggleCapability: (tag: CapabilityTag) => void;
   headerExtras?: React.ReactNode;
@@ -438,6 +439,7 @@ function TranscriptHeader(props: {
       </Badge>
       <select
         value={props.node}
+        disabled={props.controlsDisabled}
         onChange={(e) => {
           props.onNodeChange(e.target.value);
         }}
@@ -460,7 +462,7 @@ function TranscriptHeader(props: {
         onChange={(e) => {
           props.onModelChange(e.target.value);
         }}
-        disabled={props.modelsLoading}
+        disabled={props.modelsLoading || props.controlsDisabled}
         style={{
           borderRadius: 4,
           border: "1px solid var(--color-border)",
@@ -513,6 +515,7 @@ export function TranscriptColumn(props: {
   nodes: { name: string; effectiveKind?: string }[];
   models: string[];
   modelsLoading: boolean;
+  controlsDisabled?: boolean;
   onNodeChange: (node: string) => void;
   onModelChange: (model: string) => void;
   onToggleCapability: (tag: CapabilityTag) => void;
@@ -537,6 +540,7 @@ export function TranscriptColumn(props: {
     >
       <TranscriptHeader
         capabilities={props.capabilities}
+        controlsDisabled={props.controlsDisabled}
         headerExtras={props.headerExtras}
         label={props.label}
         model={props.model}
@@ -635,6 +639,7 @@ export function ChatActiveView(props: {
   store: ChatStore;
 }): React.JSX.Element {
   const { active, nodes, models, modelsB, busyA, busyB, send, store } = props;
+  const controlsDisabled = busyA || busyB;
   return (
     <div style={{ display: "flex", height: "100%", flex: 1, flexDirection: "column" }}>
       <div style={{ display: "flex", flex: 1 }}>
@@ -647,6 +652,7 @@ export function ChatActiveView(props: {
           nodes={nodes}
           models={models}
           modelsLoading={false}
+          controlsDisabled={controlsDisabled}
           onNodeChange={(node) => {
             store.updateMeta(active.id, { node, model: "" });
           }}
@@ -698,6 +704,7 @@ export function ChatActiveView(props: {
             nodes={nodes}
             models={modelsB}
             modelsLoading={false}
+            controlsDisabled={controlsDisabled}
             onNodeChange={(node) => {
               store.updateCompareMeta(active.id, { node, model: "" });
             }}
