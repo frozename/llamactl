@@ -14,6 +14,16 @@ interface Schedule {
   enabled: boolean;
 }
 
+function formatInterval(intervalSeconds: number): string {
+  if (intervalSeconds < 3600) {
+    const minutes = Math.round(intervalSeconds / 60);
+    return `${String(minutes)} ${minutes === 1 ? "minute" : "minutes"}`;
+  }
+
+  const hours = Math.round(intervalSeconds / 3600);
+  return `${String(hours)} ${hours === 1 ? "hour" : "hours"}`;
+}
+
 function ScheduleRow(props: {
   s: Schedule;
   onToggle: (id: string, enabled: boolean) => void;
@@ -40,7 +50,7 @@ function ScheduleRow(props: {
         <span style={{ margin: "0 4px", color: "var(--color-text-secondary)" }}>·</span>
         <span style={{ fontFamily: "monospace", fontSize: 11 }}>{s.rel}</span>
         <div style={{ fontSize: 10, color: "var(--color-text-secondary)" }}>
-          every {Math.round(s.intervalSeconds / 3600)} hours · last {s.lastRunAt ?? "—"}
+          every {formatInterval(s.intervalSeconds)} · last {s.lastRunAt ?? "—"}
           {s.lastError && (
             <span style={{ marginLeft: 8, color: "var(--color-err)" }}>err: {s.lastError}</span>
           )}
