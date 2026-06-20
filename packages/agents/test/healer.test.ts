@@ -407,3 +407,41 @@ describe("startHealerLoop (facade path)", () => {
     expect(tick?.kind === "tick" ? tick.source : null).toBe("direct");
   });
 });
+
+describe("startHealerLoop (tick-level error recovery)", () => {
+  test("tick that throws is isolated; loop continues to the next tick and journals an error entry", async () => {
+    const { kubeconfigPath, siriusProvidersPath } = seedYamls({ providers: [] });
+    const fakeFetch = async (): Promise<Response> => new Response("ok", { status: 200 });
+    const journaled: JournalEntry[] = [];
+    let callCount = 0;
+    let resolveSecondTick!: () => void;
+    const secondTickDone = new Promise<void>((res) => {
+      resolveSecondTick = res;
+    });
+
+    const handle = startHealerLoop({
+      kubeconfigPath,
+      siriusProvidersPath,
+      intervalMs: 1,
+      fetch: fakeFetch as unknown as typeof globalThis.fetch,
+      writeJournal: (entry) => journaled.push(entry),
+      onTick: () => {
+        callCount++;
+        if (callCount === 1) throw new Error("simulated tick failure");
+        handle.stop();
+        resolveSecondTick();
+      },
+    });
+
+    await secondTickDone;
+    await handle.done;
+
+    expect(callCount).toBe(2);
+    const errors = journaled.filter((e) => e.kind === "error");
+    expect(errors).toHaveLength(1);
+    const firstError = errors[0];
+    if (firstError?.kind === "error") {
+      expect(firstError.message).toContain("simulated tick failure");
+    }
+  });
+});
