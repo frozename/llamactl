@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { hostname } from "node:os";
 
 import type { MachineProfile } from "./types.js";
@@ -179,7 +179,7 @@ function detectLlamaCppRev(env: NodeJS.ProcessEnv): string | null {
   const resolved = safeResolveEnv(env);
   if (!resolved) return null;
   try {
-    const out = execSync(`git -C ${JSON.stringify(resolved.LLAMA_CPP_SRC)} rev-parse HEAD`, {
+    const out = execFileSync("git", ["-C", resolved.LLAMA_CPP_SRC, "rev-parse", "HEAD"], {
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8",
       timeout: 2000,
