@@ -235,6 +235,61 @@ describe("streamResponse — journal write", () => {
 });
 
 describe("streamResponse — cancellation", () => {
+  test("iterator return aborts the subprocess and clears the timeout", async () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const timeoutHandles: unknown[] = [];
+    const clearedHandles: unknown[] = [];
+    type TimeoutCallback = Parameters<typeof setTimeout>[0];
+    globalThis.setTimeout = ((handler: TimeoutCallback, timeout?: number, ...args: unknown[]) => {
+      const handle = { handler, timeout, args };
+      timeoutHandles.push(handle);
+      return handle as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((handle?: Parameters<typeof clearTimeout>[0]) => {
+      clearedHandles.push(handle);
+    }) as typeof clearTimeout;
+
+    let observedSignal: AbortSignal | undefined;
+    try {
+      const provider = createCliSubprocessProvider({
+        agentName: "mac-mini",
+        binding: claudeBinding({ timeoutMs: 60_000 }),
+        spawnStream: async (_argv, opts): Promise<SpawnStreamResult> => {
+          await Promise.resolve();
+          observedSignal = opts.signal;
+          return {
+            stdout: (async function* (): AsyncIterable<string> {
+              yield "first";
+              await new Promise<void>(() => {
+                /* keep the child open until iterator.return() aborts it */
+              });
+            })(),
+            stderrPromise: Promise.resolve(""),
+            exitedPromise: new Promise(() => {
+              /* unresolved child exit models an abandoned live subprocess */
+            }),
+          };
+        },
+        journalWrite: () => Promise.resolve(),
+      });
+
+      const iterator = provider.streamResponse!(minimalReq)[Symbol.asyncIterator]();
+      const first = await iterator.next();
+      expect(first.done).toBe(false);
+      if (!first.done) expect(first.value.type).toBe("chunk");
+
+      await iterator.return?.();
+
+      expect(observedSignal?.aborted).toBe(true);
+      expect(timeoutHandles).toHaveLength(1);
+      expect(clearedHandles).toEqual(timeoutHandles);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
   test("caller AbortSignal aborts mid-stream + yields timeout error + done", async () => {
     // Drive a "hung" stream: emit one line, then hang until the
     // signal fires. Caller aborts after the first chunk.

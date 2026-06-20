@@ -427,32 +427,39 @@ async function* streamCliResponse(
     return;
   }
 
+  let childSettled = false;
   try {
-    for await (const rawLine of stream.stdout) {
-      if (ctrl.signal.aborted) break;
-      // Re-attach the newline so concatenated deltas
-      // reconstruct the original output. The final
-      // \n is trimmed in consumers that display
-      // token-by-token.
-      const delta = `${rawLine}\n`;
-      responseBytes += Buffer.byteLength(delta, "utf8");
-      yield buildContentChunk(chunkId, request.model, startedAt, delta, yieldedRole);
-      yieldedRole = true;
+    try {
+      for await (const rawLine of stream.stdout) {
+        if (ctrl.signal.aborted) break;
+        // Re-attach the newline so concatenated deltas
+        // reconstruct the original output. The final
+        // \n is trimmed in consumers that display
+        // token-by-token.
+        const delta = `${rawLine}\n`;
+        responseBytes += Buffer.byteLength(delta, "utf8");
+        yield buildContentChunk(chunkId, request.model, startedAt, delta, yieldedRole);
+        yieldedRole = true;
+      }
+    } catch (err) {
+      yield buildStreamErrorEvent(providerId, err);
+      // Fall through to the journal write + done below.
     }
-  } catch (err) {
-    yield buildStreamErrorEvent(providerId, err);
-    // Fall through to the journal write + done below.
+
+    const { exitCode, aborted } = await stream.exitedPromise;
+    childSettled = true;
+    const stderrText = await stream.stderrPromise;
+    cleanup();
+
+    await journalWrite(
+      buildStreamJournalEntry(opts, startedAt, prompt, responseBytes, exitCode, aborted),
+    );
+
+    yield* exitStreamEvents(providerId, opts.binding.timeoutMs, exitCode, aborted, stderrText);
+  } finally {
+    if (!childSettled) ctrl.abort();
+    cleanup();
   }
-
-  const { exitCode, aborted } = await stream.exitedPromise;
-  const stderrText = await stream.stderrPromise;
-  cleanup();
-
-  await journalWrite(
-    buildStreamJournalEntry(opts, startedAt, prompt, responseBytes, exitCode, aborted),
-  );
-
-  yield* exitStreamEvents(providerId, opts.binding.timeoutMs, exitCode, aborted, stderrText);
 }
 
 async function cliHealthCheck(
