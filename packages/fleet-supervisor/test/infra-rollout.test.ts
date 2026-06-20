@@ -2,8 +2,15 @@
 import { describe, expect, it } from "bun:test";
 
 import type { PeerNode } from "../../remote/src/config/peers.js";
+import type { FleetSnapshotEntry } from "../src/types.js";
 
-import { type InfraClientLike, planRollout, runRollout } from "../src/infra-rollout.js";
+import {
+  healthGate,
+  type InfraClientLike,
+  planRollout,
+  runRollback,
+  runRollout,
+} from "../src/infra-rollout.js";
 
 function makePeer(id: string): PeerNode {
   return { id, endpoint: `https://${id}.example` };
@@ -222,5 +229,104 @@ describe("runRollout — activate failure mid-group (the no-rollback bug)", () =
 
     expect(threw).toBe(false);
     expect(result.ok).toBe(false);
+  });
+});
+
+// ── BUG: runRollback unconditionally returns ok:true ──────────────────────────
+//
+// runRollback uses Promise.all so a peer rejection throws out of the function
+// and the caller's error handler sees an exception rather than { ok: false }.
+// The fix must use Promise.allSettled and return { ok: false } on any rejection.
+
+describe("runRollback — ok/fail contract", () => {
+  it("returns ok:true when all peers roll back successfully", async () => {
+    const activated: string[] = [];
+    const factory = (peer: PeerNode): InfraClientLike =>
+      makeClient({
+        activate: async ({ version }) => {
+          activated.push(`${peer.id}@${version}`);
+        },
+      });
+    const result = await runRollback([makePeer("a"), makePeer("b")], factory, {
+      pkg: "llamactl-agent",
+      previousVersion: "1.0.0",
+    });
+    expect(result.ok).toBe(true);
+    expect(activated).toContain("a@1.0.0");
+    expect(activated).toContain("b@1.0.0");
+  });
+
+  it("returns ok:false when a peer's rollback activate rejects", async () => {
+    const factory = (peer: PeerNode): InfraClientLike =>
+      makeClient({
+        activate: async () => {
+          if (peer.id === "b") throw new Error("b: rollback refused");
+        },
+      });
+    // Bug: current code throws here instead of returning ok:false
+    const result = await runRollback([makePeer("a"), makePeer("b")], factory, {
+      pkg: "llamactl-agent",
+      previousVersion: "1.0.0",
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("does not throw when a peer's rollback activate rejects", async () => {
+    const factory = (peer: PeerNode): InfraClientLike =>
+      makeClient({
+        activate: async () => {
+          if (peer.id === "b") throw new Error("b: rollback refused");
+        },
+      });
+    let threw = false;
+    try {
+      await runRollback([makePeer("a"), makePeer("b")], factory, {
+        pkg: "llamactl-agent",
+        previousVersion: "1.0.0",
+      });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(false);
+  });
+});
+
+// ── BUG: healthGate treats zero-workload node as perpetually unhealthy ────────
+//
+// The condition `snapshot.workloads.length > 0` blocks a freshly-installed
+// node with no active workloads from ever passing the gate — it polls until
+// timeout. Fix: treat a reachable node with zero workloads as healthy.
+
+function emptyNodeSnapshot(): FleetSnapshotEntry {
+  return {
+    kind: "fleet-snapshot",
+    ts: new Date(0).toISOString(),
+    node: "node-a",
+    node_mem: {
+      free_mb: 0,
+      active_mb: 0,
+      inactive_mb: 0,
+      wired_mb: 0,
+      compressor_mb: 0,
+      swap_in: 0,
+      swap_out: 0,
+    },
+    workloads: [],
+  };
+}
+
+describe("healthGate — zero-workload node", () => {
+  it("returns healthy immediately for a reachable node with no workloads", async () => {
+    // Bug: current code requires workloads.length > 0 so this polls until timeout
+    const result = await healthGate(async () => emptyNodeSnapshot(), {
+      timeoutMs: 100,
+      pollIntervalMs: 10,
+    });
+    expect(result).toBe("healthy");
+  });
+
+  it("still returns timeout when fetchSnapshot returns null (node unreachable)", async () => {
+    const result = await healthGate(async () => null, { timeoutMs: 50, pollIntervalMs: 10 });
+    expect(result).toBe("timeout");
   });
 });
