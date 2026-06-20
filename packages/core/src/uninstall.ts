@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, rmSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 import type { ResolvedEnv } from "./types.js";
 
@@ -88,6 +88,13 @@ export function uninstall(opts: UninstallOptions): UninstallReport {
   const resolved = resolveEnv();
   const modelPath = join(resolved.LLAMA_CPP_MODELS, rel);
   const modelDir = join(resolved.LLAMA_CPP_MODELS, rel.slice(0, slash));
+
+  // Reject traversal before any disk access: rel must resolve inside the models root.
+  if (!resolve(modelPath).startsWith(resolve(resolved.LLAMA_CPP_MODELS) + sep)) {
+    report.code = 1;
+    report.error = `Invalid rel: path traversal not allowed`;
+    return report;
+  }
 
   const entry = findByRel(rel);
   report.scope = entry?.scope ?? null;

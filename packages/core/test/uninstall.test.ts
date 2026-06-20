@@ -133,4 +133,11 @@ describe("uninstall (integration)", () => {
     expect(report.code).toBe(1);
     expect(report.error).toMatch(/No catalog entry/);
   });
+
+  test("rejects path traversal in rel", () => {
+    const report = uninstall({ rel: "../../etc/passwd" });
+    expect(report.code).toBe(1);
+    expect(report.error).toMatch(/traversal/);
+    expect(existsSync(modelPath())).toBe(true);
+  });
 });
