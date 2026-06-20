@@ -212,4 +212,43 @@ describe("dispatcher — tunnelPreferred routing", () => {
       expect(e.code).toBe("downstream-threw");
     }
   });
+
+  test("token after -- does not enable insecure tunnel relay", () => {
+    const originalArgv = process.argv;
+    process.argv = ["bun", "llamactl", "server", "start", "--", "--insecure-tunnel-relay"];
+    try {
+      // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
+      const fetchImpl: FetchLike = async () => {
+        return new Response(
+          JSON.stringify({
+            type: "res",
+            id: "x",
+            result: { ok: true },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      };
+      __setTestSeams({
+        config: baseConfig({
+          tunnelPreferred: true,
+          tunnelCentralUrl: "https://127.0.0.1:7843",
+          withPinFields: false,
+        }),
+        fetchImpl,
+      });
+      const client = getNodeClientByName("gpu1", {
+        ...EMPTY_GLOBALS,
+        nodeName: "gpu1",
+      });
+      const tunnelClient = client as unknown as {
+        env: { query: (input: unknown) => Promise<unknown> };
+      };
+      const query = tunnelClient.env.query({ x: 1 });
+      expect(query).rejects.toThrow(
+        /must be set in kubeconfig context, or pass --insecure-tunnel-relay to bypass/,
+      );
+    } finally {
+      process.argv = originalArgv;
+    }
+  });
 });
