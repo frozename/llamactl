@@ -13,6 +13,7 @@ import {
   type RunbookToolClient,
   runCostGuardianTick,
   type ToolCallInput,
+  type WebhookFetcher,
 } from "../src/index.js";
 
 /* -------------------------------------------------------------------------- *
@@ -327,5 +328,69 @@ describe("runCostGuardianTick", () => {
     });
     expect(decision.tier).toBe("noop");
     expect(() => readFileSync(path, "utf8")).toThrow();
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ *  Journal write failure resilience
+ * -------------------------------------------------------------------------- */
+
+describe("runCostGuardianTick — journal write failure resilience", () => {
+  let dir = "";
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "guardian-jf-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Returns a journal path that will fail on every write: the parent-of-parent
+  // is a regular file, so mkdirSync throws ENOTDIR.
+  function brokenJournalPath(): string {
+    const blocker = join(dir, "blocker");
+    writeFileSync(blocker, "i am a file");
+    return join(blocker, "sub", "journal.jsonl");
+  }
+
+  test("disk failure in journal write does not abort the tick", async () => {
+    const { client } = makeClient({
+      "nova.ops.cost.snapshot": {
+        totalEstimatedCostUsd: 6, // warn tier (60% of 10)
+        windowSince: "x",
+        windowUntil: "y",
+      },
+    });
+    const decision = await runCostGuardianTick({
+      tools: client,
+      config: makeConfig({ budget: { daily_usd: 10 } }),
+      journalPath: brokenJournalPath(),
+      disableWebhook: true,
+    });
+    expect(decision.tier).toBe("warn");
+  });
+
+  test("webhook fires even when the journal write throws (ENOSPC/ENOTDIR)", async () => {
+    const { client } = makeClient({
+      "nova.ops.cost.snapshot": {
+        totalEstimatedCostUsd: 6, // warn tier (60% of 10)
+        windowSince: "x",
+        windowUntil: "y",
+      },
+    });
+    let webhookFired = false;
+    const fetcher: WebhookFetcher = async () => {
+      webhookFired = true;
+      return { ok: true, status: 200 };
+    };
+    await runCostGuardianTick({
+      tools: client,
+      config: makeConfig({
+        budget: { daily_usd: 10 },
+        webhook_url: "https://example.com/cost-alerts",
+      }),
+      journalPath: brokenJournalPath(),
+      webhookFetcher: fetcher,
+    });
+    expect(webhookFired).toBe(true);
   });
 });
