@@ -836,7 +836,7 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
   if (!route || !isRouteKvEligible(route)) return context;
   const workloadEpoch = responseCacheEpochForRoute(route, context.resolved);
   if (!workloadEpoch) return context;
-  const bodyText = context.bodyText;
+  let bodyText = context.bodyText;
   if (bodyText === undefined) return context;
   let parsedBody: unknown;
   try {
@@ -847,6 +847,19 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
   if (!isDeterministic(parsedBody)) return context;
   const model = requestModel(parsedBody);
   if (!model) return context;
+  // oMLX save-handle always forces stream:false upstream; normalize before
+  // computing the cache key so stream:true and stream:false callers share an entry.
+  if (
+    route.kind === "ModelHost" &&
+    route.engine === "omlx" &&
+    isRecord(parsedBody) &&
+    parsedBody.stream !== false
+  ) {
+    parsedBody.stream = false;
+    bodyText = JSON.stringify(parsedBody);
+    context.bodyText = bodyText;
+    context.init = { ...context.init, body: bodyText };
+  }
   const runtime = responseCacheRuntimeFor(context.resolved);
   const sha = canonicalRequestSha(bodyText);
   const protocolVariant = responseCacheProtocolVariant(context);
