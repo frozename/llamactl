@@ -2,6 +2,7 @@ import {
   appendCostJournal,
   type CostGuardianConfig,
   type CostJournalActionEntry,
+  type CostJournalEntry,
   type CostJournalTickEntry,
   type CostSnapshotSubset,
   decideGuardianAction,
@@ -10,6 +11,15 @@ import {
 
 import { parseToolJson, type RunbookToolClient } from "../types.js";
 import { postGuardianWebhook, type WebhookFetcher } from "./webhook.js";
+
+// Disk failures must not abort the tick or suppress the webhook alert.
+function writeJournal(entry: CostJournalEntry, path: string | undefined): void {
+  try {
+    appendCostJournal(entry, path);
+  } catch (err) {
+    process.stderr.write(`[cost-guardian] journal write failed: ${(err as Error).message}\n`);
+  }
+}
 
 /**
  * One-shot cost-guardian tick. Fetches the daily + (optional)
@@ -116,7 +126,7 @@ export async function runCostGuardianTick(
   });
   if (!opts.skipJournal) {
     const entry: CostJournalTickEntry = { kind: "tick", decision };
-    appendCostJournal(entry, opts.journalPath);
+    writeJournal(entry, opts.journalPath);
   }
   await postWebhookIfApplicable(opts, decision);
 
@@ -175,7 +185,7 @@ function journalDeregisterRefusal(
       protectedProviders: opts.config.protectedProviders,
     },
   };
-  appendCostJournal(refused, opts.journalPath);
+  writeJournal(refused, opts.journalPath);
 }
 
 async function postWebhookIfApplicable(
@@ -206,7 +216,7 @@ async function postWebhookIfApplicable(
           detail: { status: webhookResult.status },
           error: webhookResult.error,
         };
-    appendCostJournal(action, opts.journalPath);
+    writeJournal(action, opts.journalPath);
   }
 }
 
@@ -274,7 +284,7 @@ async function runForcePrivateDryRun(
     detail,
     ...(error ? { error } : {}),
   };
-  appendCostJournal(entry, opts.journalPath);
+  writeJournal(entry, opts.journalPath);
   return ok;
 }
 
@@ -336,7 +346,7 @@ async function runForcePrivateWetRun(
     detail: wetDetail,
     ...(wetError ? { error: wetError } : {}),
   };
-  appendCostJournal(wetEntry, opts.journalPath);
+  writeJournal(wetEntry, opts.journalPath);
   return wetOk;
 }
 
@@ -394,7 +404,7 @@ async function runDeregisterDryRun(
     detail,
     ...(error ? { error } : {}),
   };
-  appendCostJournal(entry, opts.journalPath);
+  writeJournal(entry, opts.journalPath);
   return ok;
 }
 
@@ -446,5 +456,5 @@ async function runDeregisterWetRun(
     detail: wetDetail,
     ...(wetError ? { error: wetError } : {}),
   };
-  appendCostJournal(wetEntry, opts.journalPath);
+  writeJournal(wetEntry, opts.journalPath);
 }

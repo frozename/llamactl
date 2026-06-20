@@ -61,6 +61,10 @@ export function appendCostJournal(
   entry: CostJournalEntry,
   path: string = defaultCostJournalPath(),
 ): void {
-  mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, `${JSON.stringify(entry)}\n`, "utf8");
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    appendFileSync(path, `${JSON.stringify(entry)}\n`, "utf8");
+  } catch (err) {
+    process.stderr.write(`[cost-guardian] journal write failed: ${(err as Error).message}\n`);
+  }
 }
