@@ -126,7 +126,7 @@ describe("applyBusyGuard", () => {
     });
   });
 
-  it("holds ambiguous null counters without incrementing", () => {
+  it("holds ambiguous null counters without incrementing and preserves stall state", () => {
     const guarded = applyBusyGuard({
       classification: "wedge",
       prior: 1,
@@ -142,8 +142,27 @@ describe("applyBusyGuard", () => {
       nPast: null,
       nDecoded: null,
       stallChecks: 0,
-      lastAdvanceAt: 10000,
+      lastAdvanceAt: 0,
     });
+  });
+
+  it("does not reset stall accumulation on ambiguous counter reading (flapping evasion fix)", () => {
+    // A server with accumulated stall (stallChecks=1, old lastAdvanceAt) drops its
+    // /slots counter (ambiguous). Bug: this resets stall state so the server evades
+    // wedge detection. Fix: ambiguous preserves stallChecks and lastAdvanceAt.
+    const guarded = applyBusyGuard({
+      classification: "wedge",
+      prior: 1,
+      reading: reading([{ ...BUSY, nPast: null, nDecoded: null }]),
+      lastProgress: { nPast: 4096, nDecoded: 128, stallChecks: 1, lastAdvanceAt: 0 },
+      busyStallChecks: 2,
+      now: 10000,
+      minStallIntervalMs: MIN_STALL,
+    });
+
+    expect(guarded.consecutiveFailures).toBe(1);
+    expect(guarded.nextProgress?.stallChecks).toBe(1);
+    expect(guarded.nextProgress?.lastAdvanceAt).toBe(0);
   });
 
   it("holds the first processing wedge and seeds progress", () => {

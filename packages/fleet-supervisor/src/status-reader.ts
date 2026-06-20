@@ -117,14 +117,12 @@ function buildNodeStatus(
   state: NodePressureAccumulator,
   now: number,
 ): NodePressureStatus {
-  // Determine duration: if NORMAL, it's 0. If HIGH, it's duration since enteredAt.
-  // However, if we just parse the log, `now` might not be the best reference for "duration" if the log is old,
-  // but the spec says "durationMs: now - enteredAt" which implies time since enteredAt until now.
+  const enteredAtMs = state.enteredAt !== null ? Date.parse(state.enteredAt) : NaN;
   return {
     name: node,
     state: state.state,
     enteredAt: state.enteredAt,
-    durationMs: state.enteredAt ? Math.max(0, now - new Date(state.enteredAt).getTime()) : 0,
+    durationMs: Number.isFinite(enteredAtMs) ? Math.max(0, now - enteredAtMs) : 0,
     consecutiveClearTicks: state.lastStatus ? state.lastStatus.consecutiveClearTicks : 0,
     clearTicksNeeded: state.lastStatus
       ? state.lastStatus.clearTicksNeeded

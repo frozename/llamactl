@@ -389,6 +389,33 @@ describe("status-reader", () => {
     });
   });
 
+  test("durationMs is 0 (not NaN) when enteredAt is unparseable", async () => {
+    const lines = [
+      JSON.stringify({
+        kind: "fleet-pressure-status",
+        ts: "2026-05-01T00:01:00Z",
+        node: "local",
+        state: "HIGH",
+        enteredAt: "BOGUS-TIMESTAMP",
+        durationMs: 0,
+        consecutiveClearTicks: 0,
+        clearTicksNeeded: 5,
+        free_mb: 100,
+        compressor_mb: 4000,
+        headroomBreach: true,
+        compressorBreach: true,
+      }),
+    ].join("\n");
+    await withTempJournal(lines, async (journalPath) => {
+      const res = await readSupervisorStatus({ journalPath });
+      expect(res.nodes.length).toBe(1);
+      const firstNode = res.nodes[0];
+      if (!firstNode) throw new Error("no nodes");
+      expect(Number.isNaN(firstNode.durationMs)).toBe(false);
+      expect(firstNode.durationMs).toBe(0);
+    });
+  });
+
   test("missing journal file returns empty nodes", async () => {
     await withTempJournal("", async (journalPath) => {
       fs.rmSync(journalPath, { force: true });
