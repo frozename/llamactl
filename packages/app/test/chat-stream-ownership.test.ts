@@ -321,6 +321,31 @@ describe("chat stream ownership", () => {
     expect(conversations[conversationB]?.messages).toEqual([]);
   });
 
+  test("appends each chunk to the latest content without reading from a stale render snapshot", async () => {
+    const convId = useChatStore.getState().create({ node: "node-a", model: "node-a-model" });
+
+    const chat = renderUseChat();
+    await chat.send("hello");
+    // Re-render so streamInputA state flows into the subscription (enabled: true)
+    renderUseChat();
+
+    const streamSub = chatStreamSubscriptions.find((s) => s.options.enabled);
+
+    // Two chunks before any re-render — the render snapshot captured in onData still
+    // has content="" so a stale read-modify-write computes "" + " world" = " world".
+    streamSub?.options.onData?.({
+      type: "chunk",
+      chunk: { choices: [{ delta: { content: "Hello" } }] },
+    });
+    streamSub?.options.onData?.({
+      type: "chunk",
+      chunk: { choices: [{ delta: { content: " world" } }] },
+    });
+
+    const content = useChatStore.getState().conversations[convId]?.messages.at(-1)?.content;
+    expect(content).toBe("Hello world");
+  });
+
   test("disables node and model selectors while a chat stream is busy", () => {
     const store = useChatStore.getState();
     const conversationId = store.create({ node: "node-a", model: "node-a-model" });
