@@ -1,4 +1,4 @@
-import type { Config } from "@llamactl/remote";
+import type { Config, infraArtifactsFetch } from "@llamactl/remote";
 
 import { config as cfgMod, makePinnedFetch } from "@llamactl/remote";
 import { createHash } from "node:crypto";
@@ -43,6 +43,12 @@ FLAGS:
   --from-release=<tag>   Fetch from GitHub Releases via 'artifacts fetch'
                          before pushing. Mutually exclusive with --binary.
   --repo=<owner/repo>    With --from-release; default: frozename/llamactl.
+  --platform=<target>    Target platform for --from-release when node facts
+                         are not yet populated (e.g. darwin-arm64, linux-x64).
+                         Derived automatically from node facts when available.
+  --no-verify            Skip cosign signature verification. Default is to
+                         require a valid signature; pass this flag only when
+                         you trust the checksum alone. Prints a loud warning.
   --readiness-timeout=<s> How long to wait for the new agent to come
                          back online after restart. Default: 30.
   --json                 Emit a single JSON record instead of human text.
@@ -56,14 +62,22 @@ interface ParsedArgs {
   binary?: string;
   fromRelease?: string;
   repo: string;
+  platform?: string;
   readinessTimeoutSec: number;
   json: boolean;
+  noVerify: boolean;
 }
+
+export type FetchAgentReleaseFn = typeof infraArtifactsFetch.fetchAgentRelease;
 
 function applyUpdateFlag(arg: string, out: ParsedArgs): { error: string } | null {
   if (arg === "--help" || arg === "-h") return { error: "__help" };
   if (arg === "--json") {
     out.json = true;
+    return null;
+  }
+  if (arg === "--no-verify") {
+    out.noVerify = true;
     return null;
   }
   const eq = arg.indexOf("=");
@@ -81,6 +95,9 @@ function applyUpdateFlag(arg: string, out: ParsedArgs): { error: string } | null
       return null;
     case "repo":
       out.repo = value;
+      return null;
+    case "platform":
+      out.platform = value;
       return null;
     case "readiness-timeout": {
       const n = Number.parseInt(value, 10);
@@ -102,6 +119,7 @@ function parseArgs(argv: string[]): ParsedArgs | { error: string } {
     repo: "frozename/llamactl",
     readinessTimeoutSec: 30,
     json: false,
+    noVerify: false,
   };
   for (const arg of argv) {
     const err = applyUpdateFlag(arg, out);
@@ -116,22 +134,50 @@ function parseArgs(argv: string[]): ParsedArgs | { error: string } {
   return out;
 }
 
-async function resolveUpdateBinary(
+function resolveTarget(
   parsed: ParsedArgs,
-  node: { facts?: { platform?: string } },
+  node: { facts?: { platform?: string; arch?: string } },
+): string | { error: string } {
+  if (parsed.platform) return parsed.platform;
+  const p = node.facts?.platform;
+  const a = node.facts?.arch;
+  if (p && a) return `${p}-${a}`;
+  return {
+    error:
+      "agent update: cannot determine target platform — node facts are unavailable; " +
+      "pass --platform=<target> (e.g. darwin-arm64, linux-x64, linux-arm64)",
+  };
+}
+
+export async function resolveUpdateBinary(
+  parsed: ParsedArgs,
+  node: { facts?: { platform?: string; arch?: string } },
+  deps?: { fetchAgentRelease: FetchAgentReleaseFn },
 ): Promise<string | { error: string }> {
   let binaryPath = parsed.binary;
   if (parsed.fromRelease) {
-    const { infraArtifactsFetch } = await import("@llamactl/remote");
-    const target = node.facts?.platform ?? "darwin-arm64";
+    const target = resolveTarget(parsed, node);
+    if (typeof target !== "string") return target;
+
+    const fetchFn =
+      deps?.fetchAgentRelease ??
+      (await import("@llamactl/remote")).infraArtifactsFetch.fetchAgentRelease;
+
+    if (parsed.noVerify) {
+      process.stderr.write(
+        `agent update: WARNING — signature verification disabled (--no-verify); ` +
+          `only SHA-256 checksum will be verified\n`,
+      );
+    }
+
     process.stderr.write(
       `agent update: fetching ${parsed.repo} ${parsed.fromRelease} for ${target}…\n`,
     );
-    const fetchResult = await infraArtifactsFetch.fetchAgentRelease({
+    const fetchResult = await fetchFn({
       repo: parsed.repo,
       version: parsed.fromRelease,
       target,
-      verifySig: "best-effort",
+      verifySig: parsed.noVerify ? "best-effort" : "require",
     });
     if (!fetchResult.ok) {
       return {
