@@ -168,6 +168,8 @@ export interface ApplyManifestOptions {
   getNodeBudgetGiB?: (nodeName: string) => number;
   /** Bubble up per-workload progress events for logging. */
   onEvent?: (event: ApplyEvent) => void;
+  /** Map a node name to a stable identity for port-collision detection across node aliases. */
+  resolveNodeIdentity?: (nodeName: string) => string | null;
   supervisor?: {
     currentFreeGiB: number;
     headroomMinGiB: number;
@@ -1230,7 +1232,11 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
   if (!opts.getClient) {
     return { ok: false, error: "applyManifest requires getClient for ModelRun manifests" };
   }
-  const result = await applyOne(manifest, opts.getClient);
+  const result = await applyOne(manifest, opts.getClient, opts.onEvent, undefined, {
+    workloadsDir: opts.workloadsDir,
+    getNodeBudgetGiB: opts.getNodeBudgetGiB,
+    resolveNodeIdentity: opts.resolveNodeIdentity,
+  });
   if (result.error) {
     return { ok: false, error: result.error };
   }
