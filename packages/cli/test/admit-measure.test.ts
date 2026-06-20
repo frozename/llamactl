@@ -50,6 +50,26 @@ describe("llamactl admit measure", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test("exits 2 for --port with non-numeric value", () => {
+    const r = spawnSync("bun", [BIN, "admit", "measure", yamlPath, "--port=abc"], {
+      encoding: "utf8",
+      env: { ...process.env, LLAMACTL_MEASURED_MEMORY_PATH: cachePath },
+      timeout: 10_000,
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/invalid.*port/i);
+  });
+
+  test("exits 2 for --port with negative value", () => {
+    const r = spawnSync("bun", [BIN, "admit", "measure", yamlPath, "--port=-1"], {
+      encoding: "utf8",
+      env: { ...process.env, LLAMACTL_MEASURED_MEMORY_PATH: cachePath },
+      timeout: 10_000,
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/invalid.*port/i);
+  });
+
   test("exits 2 for path traversal workload name (..) with validation message", () => {
     const r = spawnSync("bun", [BIN, "admit", "measure", "../../../etc/passwd"], {
       encoding: "utf8",

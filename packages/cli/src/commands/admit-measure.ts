@@ -185,6 +185,16 @@ function readLaunchConfig(target: string, manifestPath: string): LaunchConfig | 
   return { engineKind, binary, launchArgs, modelKey, healthPath, timeoutSecs, workloadName };
 }
 
+function isValidPort(port: number | undefined): boolean {
+  if (port === undefined) return true;
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
+function isValidWorkloadName(target: string): boolean {
+  if (target.endsWith(".yaml")) return true;
+  return /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(target) && !target.includes("..");
+}
+
 interface MeasureFlags {
   overridePort: number | undefined;
   steadyStateSecs: number;
@@ -253,10 +263,14 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
 
   const { overridePort, steadyStateSecs, samples } = parseMeasureFlags(args.slice(1));
 
-  if (
-    !target.endsWith(".yaml") &&
-    (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(target) || target.includes(".."))
-  ) {
+  if (!isValidPort(overridePort)) {
+    console.error(
+      `admit measure: invalid --port value (must be a positive integer 1–65535, got: ${String(overridePort)})`,
+    );
+    return 2;
+  }
+
+  if (!isValidWorkloadName(target)) {
     console.error(`admit measure: invalid workload name: ${target}`);
     return 2;
   }

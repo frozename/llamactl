@@ -272,6 +272,20 @@ describe("parseInstallLaunchdFlags", () => {
     const parsed = parseInstallLaunchdFlags(["--weird=foo"]);
     expect("error" in parsed).toBe(true);
   });
+
+  test("--label with path separator (traversal attempt) is rejected", () => {
+    const parsed = parseInstallLaunchdFlags(["--label=../../etc/evil"]);
+    expect("error" in parsed).toBe(true);
+    if ("error" in parsed) {
+      expect(parsed.error).toMatch(/invalid.*label/i);
+    }
+  });
+
+  test("--label with only safe chars is accepted", () => {
+    const parsed = parseInstallLaunchdFlags(["--label=com.example.my-agent_v2"]);
+    if ("error" in parsed) throw new Error(parsed.error);
+    expect(parsed.label).toBe("com.example.my-agent_v2");
+  });
 });
 
 // -----------------------------------------------------------------------------
