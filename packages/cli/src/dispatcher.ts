@@ -123,6 +123,7 @@ function maybeBuildTunnelDispatch(
  */
 function isInsecureTunnelRelay(argv: readonly string[] = process.argv): boolean {
   for (const raw of argv) {
+    if (raw === "--") break;
     if (raw === "--insecure-tunnel-relay") return true;
     if (raw === "--insecure-tunnel-relay=true") return true;
   }
