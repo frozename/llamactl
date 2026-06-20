@@ -6,6 +6,8 @@ export interface WorkloadTarget {
   kind: "ModelHost" | "ModelRun";
   /** Eviction priority (0-100). Lower = evict first. Defaults to 50 when omitted. */
   priority?: number;
+  /** Placement policy from the workload manifest. "pinned" prevents migration. */
+  placement?: string;
   /** Resolved completion-liveness probe config; present only when the workload opted in. */
   completionProbe?: CompletionProbeConfig;
 }

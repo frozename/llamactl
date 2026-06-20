@@ -86,8 +86,10 @@ describe("Arbitration conflicts", () => {
 
     const result = await controller.executeMove(proposal(), (entry) => journal.push(entry));
 
-    expect(result).toBe("executed");
+    expect(result).toBe("pending_health_check");
     expect(applyCalls).toBe(1);
+
+    await controller.advancePendingHealthPolls();
 
     const skipped = journal.filter(
       (entry): entry is FleetExecutionEntry =>

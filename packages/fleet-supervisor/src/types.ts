@@ -63,6 +63,8 @@ export interface WorkloadSnapshot {
   endpoint: string;
   /** Eviction priority (0-100). Lower = evict first. Defaults to 50 when omitted. */
   priority: number;
+  /** Placement policy from the workload manifest; carried through from WorkloadTarget.placement. */
+  placement?: string;
   rss_mb: number | null;
   request_rate_5m: number | null;
   error_rate_5m: number;

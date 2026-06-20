@@ -63,10 +63,12 @@ describe("MigrationController integration", () => {
     if (proposal === null) throw new Error("expected proposal");
 
     const result = await controller.executeMove(proposal, (entry) => journal.push(entry));
-    expect(result).toBe("executed");
+    expect(result).toBe("pending_health_check");
     expect(
       journal.some((entry) => entry.kind === "fleet-proposal" && entry.action.type === "move"),
     ).toBe(true);
+
+    await controller.advancePendingHealthPolls();
     expect(
       journal.some((entry) => entry.kind === "fleet-execution" && entry.status === "executed"),
     ).toBe(true);
