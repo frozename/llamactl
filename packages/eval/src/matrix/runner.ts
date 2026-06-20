@@ -26,7 +26,7 @@ interface RunMatrixOpts {
 async function loadCorpusRows(
   workload: WorkloadEval,
   corpusOverrides?: Map<string, string>,
-): Promise<{ rows: unknown[]; errors: number }> {
+): Promise<{ rows: unknown[]; errors: number; loadFailed: boolean }> {
   let rows: unknown[] = [];
   let errors = 0;
   try {
@@ -46,8 +46,9 @@ async function loadCorpusRows(
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[matrix] corpus load failed for ${workload.name}: ${message}`);
     errors += 1;
+    return { rows: [], errors, loadFailed: true };
   }
-  return { rows, errors };
+  return { rows, errors, loadFailed: false };
 }
 
 async function runWorkloadRows(
@@ -69,7 +70,6 @@ async function runWorkloadRows(
   const rowMetrics: Record<string, number>[] = [];
   const wallMsArr: number[] = [];
   let totalCompletionTokens = 0;
-  let totalWallMs = 0;
   let errors = 0;
   const runRow = async (rowIndex: number): Promise<void> => {
     const row = rows[rowIndex];
@@ -98,7 +98,6 @@ async function runWorkloadRows(
         req,
       );
       wallMsArr.push(wallMs);
-      totalWallMs += wallMs;
       totalCompletionTokens += resp.usage?.completion_tokens ?? 0;
       const _msg = resp.choices[0]?.message;
       const completion = `${_msg?.reasoning_content ?? ""}${_msg?.content ?? ""}`;
@@ -126,6 +125,7 @@ async function runWorkloadRows(
     }
   };
 
+  const batchStartMs = Date.now();
   if (concurrency === 1 || rows.length <= 1) {
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
       await runRow(rowIndex);
@@ -144,6 +144,7 @@ async function runWorkloadRows(
     });
     await Promise.all(workers);
   }
+  const totalWallMs = Date.now() - batchStartMs;
 
   return { predictions, rowMetrics, wallMsArr, totalCompletionTokens, totalWallMs, errors };
 }
@@ -332,11 +333,45 @@ async function runWorkloadCell(
 ): Promise<void> {
   let judgeBoot: Awaited<ReturnType<typeof ensureModelServing>> | undefined;
   if (workload.judge_model) {
-    judgeBoot = await ensureModelServing(workload.judge_model);
+    try {
+      judgeBoot = await ensureModelServing(workload.judge_model);
+    } catch (err) {
+      recordBootError(model, [workload], runId, opts.db);
+      console.warn(
+        `[matrix] failed to boot judge for ${workload.name}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
   }
   const started = new Date().toISOString();
-  const { rows, errors: corpusErrors } = await loadCorpusRows(workload, opts.corpusOverrides);
+  const {
+    rows,
+    errors: corpusErrors,
+    loadFailed,
+  } = await loadCorpusRows(workload, opts.corpusOverrides);
   try {
+    if (loadFailed) {
+      insertCellRow(opts.db, {
+        run_id: runId,
+        runner_version: 1,
+        model_name: model.name,
+        workload_name: workload.name,
+        model_spec_json: JSON.stringify(model),
+        n_rows: 0,
+        primary_metric_name: workload.primary_metric_name ?? "macro_f1",
+        // -1 is a sentinel: not a real score, signals "no data / corpus load failed".
+        primary_metric_value: -1,
+        per_class_metrics_json: JSON.stringify({ error: "corpus_load_failed" }),
+        latency_p50_ms: 0,
+        latency_p95_ms: 0,
+        throughput_tps: 0,
+        errors: corpusErrors,
+        started_at: started,
+        finished_at: new Date().toISOString(),
+        host_machine: os.hostname(),
+      });
+      return;
+    }
     const result = await runWorkloadRows(model, workload, rows, concurrency, runId, opts.db);
     const finished = new Date().toISOString();
     const agg = aggregateWorkloadMetrics(workload, result.predictions, result.rowMetrics);

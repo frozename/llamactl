@@ -217,7 +217,17 @@ export async function ensureModelServing(model: ModelSpec): Promise<BootResult> 
   }
   proc.stdout.resume();
   proc.stderr.on("data", pushStderr);
-  return await waitForHealthyBoot(model, proc, stderrTail);
+  const healthBoot = waitForHealthyBoot(model, proc, stderrTail);
+  // Prevent spawnErrorP's secondary rejection from becoming unhandled when
+  // spawnErrorP wins the race and healthBoot later rejects.
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  healthBoot.catch(() => {});
+  const spawnErrorP = new Promise<never>((_, reject) => {
+    proc.on("error", (err) => {
+      reject(new Error(`failed to spawn ${model.name}: ${err.message}`));
+    });
+  });
+  return await Promise.race([healthBoot, spawnErrorP]);
 }
 
 /** /v1 boot-probe for a server that just passed /health; tears the
