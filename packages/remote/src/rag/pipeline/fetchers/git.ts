@@ -16,7 +16,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 import type { Fetcher, FetcherContext } from "../types.js";
 
@@ -110,6 +110,17 @@ export const gitFetcher: Fetcher = {
       }
 
       const root = spec.subpath ? resolve(tmp, spec.subpath) : tmp;
+      if (spec.subpath) {
+        const guard = tmp.endsWith(sep) ? tmp : tmp + sep;
+        if (!root.startsWith(guard)) {
+          ctx.log({
+            level: "error",
+            msg: `git source: subpath escapes clone directory`,
+            data: { subpath: spec.subpath },
+          });
+          return;
+        }
+      }
       for await (const absPath of scanFiles(root, spec.glob)) {
         if (ctx.signal.aborted) return;
         const content = await readIngestibleFile(absPath, ctx);

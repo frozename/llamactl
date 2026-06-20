@@ -15,7 +15,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import type { CompositeOwnership } from "../../workload/gateway-catalog/schema.js";
@@ -34,7 +34,13 @@ export function defaultPipelinesDir(env: NodeJS.ProcessEnv = process.env): strin
 }
 
 export function pipelineDir(name: string, env: NodeJS.ProcessEnv = process.env): string {
-  return join(defaultPipelinesDir(env), name);
+  const base = defaultPipelinesDir(env);
+  const candidate = resolve(join(base, name));
+  const guard = base.endsWith(sep) ? base : base + sep;
+  if (!candidate.startsWith(guard)) {
+    throw new Error(`pipeline name escapes storage root: "${name}"`);
+  }
+  return candidate;
 }
 
 export function journalPathFor(name: string, env: NodeJS.ProcessEnv = process.env): string {

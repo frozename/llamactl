@@ -160,7 +160,14 @@ function registerRagPipelineCoreTools(server: McpServer): void {
       description:
         "Run an applied RagPipeline: fetch sources, chunk, embed, store into the destination rag node. `dryRun: true` walks fetch + chunk without calling adapter.store — useful for previewing ingestion.",
       inputSchema: {
-        name: z.string().min(1).describe("metadata.name of the pipeline."),
+        name: z
+          .string()
+          .min(1)
+          .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/, {
+            message:
+              "pipeline name must start with a letter or digit and contain only letters, digits, hyphens, and underscores",
+          })
+          .describe("metadata.name of the pipeline."),
         dryRun: z.boolean().default(false),
       },
     },
@@ -211,7 +218,13 @@ function registerRagPipelineCoreTools(server: McpServer): void {
       description:
         "Return a single RagPipeline manifest by name. Throws NOT_FOUND when absent. Read-only.",
       inputSchema: {
-        name: z.string().min(1),
+        name: z
+          .string()
+          .min(1)
+          .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/, {
+            message:
+              "pipeline name must start with a letter or digit and contain only letters, digits, hyphens, and underscores",
+          }),
       },
     },
     async (input) => {
@@ -235,7 +248,13 @@ function registerRagPipelineCoreTools(server: McpServer): void {
       description:
         "Delete the pipeline spec + journal + state. Does not touch already-stored documents in the destination rag node.",
       inputSchema: {
-        name: z.string().min(1),
+        name: z
+          .string()
+          .min(1)
+          .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/, {
+            message:
+              "pipeline name must start with a letter or digit and contain only letters, digits, hyphens, and underscores",
+          }),
       },
     },
     async (input) => {

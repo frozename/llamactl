@@ -119,6 +119,33 @@ describe("@llamactl/mcp RAG tool registration", () => {
     expect(schema.required).toContain("ids");
   });
 
+  test("llamactl.rag.pipeline.run name field has a safe-name regex pattern", async () => {
+    const { client } = await connected();
+    const list = await client.listTools();
+    const tool = list.tools.find((t) => t.name === "llamactl.rag.pipeline.run");
+    expect(tool).toBeDefined();
+    const schema = tool!.inputSchema as { properties?: Record<string, { pattern?: string }> };
+    expect(schema.properties?.name?.pattern).toBeDefined();
+  });
+
+  test("llamactl.rag.pipeline.get name field has a safe-name regex pattern", async () => {
+    const { client } = await connected();
+    const list = await client.listTools();
+    const tool = list.tools.find((t) => t.name === "llamactl.rag.pipeline.get");
+    expect(tool).toBeDefined();
+    const schema = tool!.inputSchema as { properties?: Record<string, { pattern?: string }> };
+    expect(schema.properties?.name?.pattern).toBeDefined();
+  });
+
+  test("llamactl.rag.pipeline.remove name field has a safe-name regex pattern", async () => {
+    const { client } = await connected();
+    const list = await client.listTools();
+    const tool = list.tools.find((t) => t.name === "llamactl.rag.pipeline.remove");
+    expect(tool).toBeDefined();
+    const schema = tool!.inputSchema as { properties?: Record<string, { pattern?: string }> };
+    expect(schema.properties?.name?.pattern).toBeDefined();
+  });
+
   test("llamactl.rag.listCollections advertises the node-only shape", async () => {
     const { client } = await connected();
     const list = await client.listTools();
