@@ -43,6 +43,35 @@ type FakeUpstream = {
   requests: UpstreamRequest[];
 };
 
+function guardedSseResponse(frames: readonly string[], status = 200): Response {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller): void {
+      let closed = false;
+      const enc = new TextEncoder();
+      const safeEnqueue = (frame: Uint8Array): void => {
+        if (closed) return;
+        try {
+          controller.enqueue(frame);
+        } catch {
+          closed = true;
+        }
+      };
+      const safeClose = (): void => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          /* controller already closed */
+        }
+      };
+      for (const frame of frames) safeEnqueue(enc.encode(frame));
+      safeClose();
+    },
+  });
+  return new Response(body, { status, headers: { "content-type": "text/event-stream" } });
+}
+
 let fakeUpstreams: FakeUpstream[] = [];
 let agent: RunningAgent | null = null;
 let devStorage = "";
@@ -83,22 +112,10 @@ beforeAll(async () => {
                 hasAuth: req.headers.has("authorization"),
               });
               if (req.method === "POST" && body.includes('"stream":true')) {
-                const stream = new ReadableStream({
-                  start(controller): void {
-                    const enc = new TextEncoder();
-                    controller.enqueue(
-                      enc.encode(
-                        `data: {"label":"${label}","choices":[{"delta":{"content":"hi"}}]}\n\n`,
-                      ),
-                    );
-                    controller.enqueue(enc.encode("data: [DONE]\n\n"));
-                    controller.close();
-                  },
-                });
-                return new Response(stream, {
-                  status: 200,
-                  headers: { "content-type": "text/event-stream" },
-                });
+                return guardedSseResponse([
+                  `data: {"label":"${label}","choices":[{"delta":{"content":"hi"}}]}\n\n`,
+                  "data: [DONE]\n\n",
+                ]);
               }
               return Response.json({
                 echoed: {
@@ -206,6 +223,12 @@ afterAll(async () => {
 
 afterEach(() => {
   void fingerprint; // pinned fingerprint currently unused below; keep for future assertions
+});
+
+test("guarded SSE helpers tolerate cancellation during stream setup", async () => {
+  const response = guardedSseResponse(["data: one\n\n", "data: two\n\n"]);
+  await response.body?.cancel();
+  expect(response.status).toBe(200);
 });
 
 function pinnedFetch(path: string, init?: RequestInit): Promise<Response> {
