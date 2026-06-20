@@ -1532,7 +1532,10 @@ export const router = t.router({
       let liveStatus: unknown;
       try {
         const client = clientForNode(cfg, manifest.spec.node);
-        liveStatus = await client.serverStatus.query({ workload: manifest.metadata.name });
+        liveStatus = await queryServerStatusWithTimeout(
+          () => client.serverStatus.query({ workload: manifest.metadata.name }),
+          WORKLOAD_LIST_NODE_TIMEOUT_MS,
+        );
       } catch (err) {
         liveStatus = { error: (err as Error).message };
       }
@@ -1689,7 +1692,10 @@ export const router = t.router({
         const cfg = kubecfg.loadConfig();
         try {
           const client = clientForNode(cfg, manifest.spec.node);
-          const status = await client.serverStatus.query({ workload: manifest.metadata.name });
+          const status = await queryServerStatusWithTimeout(
+            () => client.serverStatus.query({ workload: manifest.metadata.name }),
+            WORKLOAD_LIST_NODE_TIMEOUT_MS,
+          );
           if (status.state === "up" && status.rel === manifest.spec.target.value) {
             await client.serverStop.mutate({
               workload: manifest.metadata.name,
@@ -3697,6 +3703,11 @@ export const router = t.router({
           },
         });
         return { dryRun: false as const, ...result };
+      } catch (err) {
+        // applyComposite threw before emitting a terminal event — synthesize
+        // one so compositeStatus subscribers drain instead of hanging forever.
+        compositeEvents.emit(name, { type: "done", ok: false });
+        throw err;
       } finally {
         // Even on throw we want the bus to flip the run to `done` so
         // subscribers drain cleanly and the retention timer starts.
@@ -3789,6 +3800,7 @@ export const router = t.router({
             const finish = (): void => {
               if (settled) return;
               settled = true;
+              clientSignal.removeEventListener("abort", finish);
               unsub();
               resolve();
             };
