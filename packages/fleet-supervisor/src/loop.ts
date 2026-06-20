@@ -276,7 +276,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     workloadHealth: new Map(),
   };
 
-  const writeJournalEntry = makeDedupJournalWriter(writeJournal, new Set<string>());
+  const writeJournalEntry = makeDedupJournalWriter(writeJournal);
   const probeWorkloadFn =
     opts.probeWorkload ??
     makeDefaultProbeFn({

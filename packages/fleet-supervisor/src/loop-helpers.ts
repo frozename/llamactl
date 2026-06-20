@@ -39,17 +39,42 @@ export interface LoopState {
   enteredHighAt: string | null;
   ticksInHigh: number;
   workloadHealth: Map<string, WorkloadHealthState>;
-  seenProposalIds: Set<string>;
+}
+
+// Proposal IDs are timestamped (e.g. `pressure-${node}-${ts}`) so they are all
+// distinct across ticks. An unbounded Set grows by one per proposal forever.
+// Dedup only needs to catch duplicates within a short observation window; older
+// entries are safe to evict.
+const DEDUP_WINDOW_MAX = 256;
+
+// Insertion-ordered bounded set: O(1) lookup + bounded size, evicts oldest on overflow.
+class BoundedIdSet {
+  private readonly ids = new Set<string>();
+  private readonly ring: string[] = [];
+
+  has(id: string): boolean {
+    return this.ids.has(id);
+  }
+
+  add(id: string): void {
+    if (this.ids.has(id)) return;
+    this.ring.push(id);
+    this.ids.add(id);
+    if (this.ring.length > DEDUP_WINDOW_MAX) {
+      const evicted = this.ring.shift();
+      if (evicted !== undefined) this.ids.delete(evicted);
+    }
+  }
 }
 
 export function makeDedupJournalWriter(
   inner: (entry: FleetJournalEntry) => void,
-  seenProposalIds: Set<string>,
 ): (entry: FleetJournalEntry) => void {
+  const seen = new BoundedIdSet();
   return (entry: FleetJournalEntry): void => {
-    if (entry.kind === "fleet-proposal" && seenProposalIds.has(entry.proposalId)) return;
+    if (entry.kind === "fleet-proposal" && seen.has(entry.proposalId)) return;
     if (entry.kind === "fleet-proposal") {
-      seenProposalIds.add(entry.proposalId);
+      seen.add(entry.proposalId);
     }
     inner(entry);
   };
