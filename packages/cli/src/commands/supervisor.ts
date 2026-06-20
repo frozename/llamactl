@@ -546,14 +546,20 @@ export function resolveWorkloadTargetsAtStartup(
 
 const warnedDeprecatedAuditFlagNames = new Set<string>();
 
-function num(raw: string, prefix: string, fallback: number): number {
+export function num(raw: string | undefined, prefix: string, fallback: number): number {
+  if (raw === undefined) {
+    return fallback;
+  }
   const v = Number(raw.slice(prefix.length));
-  if (!Number.isFinite(v) || v < 0) {
+  if (!Number.isFinite(v)) {
+    return fallback;
+  }
+  if (v < 0) {
     throw new Error(
       `supervisor: ${prefix.replace(/=$/, "")} must be finite non-negative (got ${raw.slice(prefix.length)})`,
     );
   }
-  return v || fallback;
+  return v;
 }
 
 interface AuditFlags {
