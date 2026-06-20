@@ -289,6 +289,7 @@ export function makeDefaultProbeFn(
       kind: target.kind,
       endpoint: redactEndpoint(target.endpoint),
       priority: target.priority ?? 50,
+      ...(target.placement !== undefined ? { placement: target.placement } : {}),
       rss_mb: null,
       request_rate_5m: null,
       error_rate_5m: 0,
@@ -311,6 +312,7 @@ export function makeUnreachableFallback(
     kind: target.kind,
     endpoint: redactEndpoint(target.endpoint),
     priority: target.priority ?? 50,
+    ...(target.placement !== undefined ? { placement: target.placement } : {}),
     rss_mb: null,
     request_rate_5m: null,
     error_rate_5m: 1,
@@ -508,6 +510,8 @@ export async function evaluateMigrationWorkloads(
   migrationController: MigrationController,
   writeJournalEntry: (entry: FleetJournalEntry) => void,
 ): Promise<void> {
+  await migrationController.advancePendingHealthPolls();
+
   const nodeSnapshot: NodeSnapshot = {
     node,
     schedulerLeaseHolder: node,
@@ -519,7 +523,7 @@ export async function evaluateMigrationWorkloads(
     const migrationWorkload: MigrationWorkload = {
       name: workload.name,
       node,
-      spec: { placement: "auto" },
+      spec: { placement: workload.placement ?? "auto" },
       evictProposalId: `evict-${workload.name}-${ts}`,
     };
     const proposal = await migrationController.evaluateMove(migrationWorkload, nodeSnapshot);

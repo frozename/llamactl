@@ -183,7 +183,7 @@ describe("MigrationController", () => {
     expect(seeded.isInMoveCooldown("w1")).toBe(true);
   });
 
-  it("T7: executeMove writes one skipped-evict and one executed move record on success", async () => {
+  it("T7: executeMove deploys then advancePendingHealthPolls writes skipped-evict and executed move", async () => {
     snapshots.m2mini = {
       node: "m2mini",
       pressureState: "NORMAL",
@@ -193,8 +193,11 @@ describe("MigrationController", () => {
 
     const result = await controller.executeMove(proposal(), (entry) => journal.push(entry));
 
-    expect(result).toBe("executed");
+    expect(result).toBe("pending_health_check");
     expect(applyCalls).toHaveLength(1);
+    expect(deleteCalls).toHaveLength(0);
+
+    await controller.advancePendingHealthPolls();
     expect(deleteCalls).toHaveLength(1);
 
     const skipped = journal.filter(executionEntryMatches("skipped"));
@@ -207,7 +210,7 @@ describe("MigrationController", () => {
     expect(executed[0]?.proposalId).toBe("move-1");
   });
 
-  it("T8: executeMove writes failed execution and returns timed_out when destination never becomes reachable", async () => {
+  it("T8: advancePendingHealthPolls writes failed execution when destination never becomes reachable", async () => {
     snapshots.m2mini = {
       node: "m2mini",
       pressureState: "NORMAL",
@@ -217,7 +220,10 @@ describe("MigrationController", () => {
 
     const result = await controller.executeMove(proposal(), (entry) => journal.push(entry));
 
-    expect(result).toBe("timed_out");
+    expect(result).toBe("pending_health_check");
+    nowMs += 10; // advance past healthTimeoutMs (5ms)
+
+    await controller.advancePendingHealthPolls();
     expect(deleteCalls).toHaveLength(0);
     const failed = journal.find(executionEntryMatches("failed"));
     expect(failed).toBeTruthy();
@@ -339,7 +345,8 @@ describe("MigrationController", () => {
           entry.status === "skipped",
       ),
     ).toBe(false);
-    expect(failingController.isInMoveCooldown("model-a")).toBe(false);
+    // apply_failed now arms the cooldown to prevent tight per-tick retries
+    expect(failingController.isInMoveCooldown("model-a")).toBe(true);
   });
 
   it("F2: cooldown clears without getCurrentTick by falling back to elapsed time", () => {

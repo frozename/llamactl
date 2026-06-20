@@ -53,8 +53,15 @@ interface InFlightMoveState {
   tick?: number;
 }
 
+interface PendingHealthPoll {
+  proposal: MoveProposal;
+  writeJournalEntry: (entry: FleetJournalEntry) => void;
+  deployedAtMs: number;
+}
+
 export class MigrationController {
   private readonly inFlightMoves = new Map<string, InFlightMoveState>();
+  private readonly pendingHealthPolls = new Map<string, PendingHealthPoll>();
 
   constructor(private readonly deps: MigrationControllerDeps) {
     if (!deps.readRecentMoves) return;
@@ -100,14 +107,6 @@ export class MigrationController {
       return this.minDestinationFreeMb;
     }
     return Math.max(this.minDestinationFreeMb, workloadMemoryMb);
-  }
-
-  private async sleep(ms: number): Promise<void> {
-    if (this.deps.sleep) {
-      await this.deps.sleep(ms);
-      return;
-    }
-    await new Promise<void>((resolve) => setTimeout(resolve, ms));
   }
 
   /** Highest-free-memory viable peer for a move off `fromNode`, or
@@ -201,7 +200,9 @@ export class MigrationController {
   async executeMove(
     proposal: MoveProposal,
     writeJournalEntry: (entry: FleetJournalEntry) => void,
-  ): Promise<"executed" | "timed_out" | "destination_unavailable" | "apply_failed"> {
+  ): Promise<
+    "executed" | "timed_out" | "destination_unavailable" | "apply_failed" | "pending_health_check"
+  > {
     if (!this.deps.deployWorkload || !this.deps.removeWorkload) {
       return "destination_unavailable";
     }
@@ -232,13 +233,75 @@ export class MigrationController {
       await this.deps.deployWorkload(proposal.workload, proposal.toNode);
     } catch (err) {
       writeJournalEntry(this.buildDeployFailedEntry(proposal, (err as Error).message));
+      // Arm cooldown even on deploy failure to prevent a tight per-tick retry loop.
+      this.markMoveInFlight(proposal.workload);
       return "apply_failed";
     }
 
     this.writeSkippedEvictAndMoveProposal(proposal, ts, writeJournalEntry);
     this.markMoveInFlight(proposal.workload);
 
-    return await this.pollDestinationHealth(proposal, this.deps.removeWorkload, writeJournalEntry);
+    // Register a pending health poll so the tick returns immediately.
+    // advancePendingHealthPolls() advances one probe per tick until
+    // the workload is reachable or the deadline passes.
+    this.pendingHealthPolls.set(proposal.workload, {
+      proposal,
+      writeJournalEntry,
+      deployedAtMs: this.nowMs,
+    });
+
+    return "pending_health_check";
+  }
+
+  /** Advance all in-flight health polls by one probe each. Call once per
+   *  supervisor tick before evaluating new moves. */
+  async advancePendingHealthPolls(): Promise<void> {
+    if (!this.deps.removeWorkload) return;
+    const removeWorkload = this.deps.removeWorkload;
+
+    for (const [workloadName, poll] of this.pendingHealthPolls) {
+      const { proposal, writeJournalEntry, deployedAtMs } = poll;
+      const ts = new Date(this.nowMs).toISOString();
+      const action: FleetExecutionEntry["action"] = {
+        type: "move",
+        workload: proposal.workload,
+        fromNode: proposal.fromNode,
+        toNode: proposal.toNode,
+        reason: "rebalance",
+      };
+
+      if (this.nowMs > deployedAtMs + this.healthTimeoutMs) {
+        this.pendingHealthPolls.delete(workloadName);
+        writeJournalEntry({
+          kind: "fleet-execution",
+          ts,
+          node: this.deps.leaseholder,
+          proposalId: proposal.proposalId,
+          action,
+          status: "failed",
+          reason: "timeout waiting for destination health",
+        });
+        continue;
+      }
+
+      const snapshot = await this.safeFetchSnapshot(proposal.toNode);
+      const reachable = snapshot?.workloads?.some(
+        (entry) => entry.name === proposal.workload && entry.reachable,
+      );
+      if (reachable) {
+        this.pendingHealthPolls.delete(workloadName);
+        await removeWorkload(proposal.workload, proposal.fromNode);
+        writeJournalEntry({
+          kind: "fleet-execution",
+          ts,
+          node: this.deps.leaseholder,
+          proposalId: proposal.proposalId,
+          action,
+          status: "executed",
+        });
+      }
+      // else: still waiting — leave in pending for the next tick
+    }
   }
 
   private buildDeployFailedEntry(proposal: MoveProposal, errorMsg: string): FleetExecutionEntry {
@@ -301,58 +364,6 @@ export class MigrationController {
       expiresAt: proposal.expiresAt,
     };
     writeJournalEntry(moveProposalEntry);
-  }
-
-  private async pollDestinationHealth(
-    proposal: MoveProposal,
-    removeWorkload: (workloadName: string, fromNode: string) => Promise<void>,
-    writeJournalEntry: (entry: FleetJournalEntry) => void,
-  ): Promise<"executed" | "timed_out"> {
-    const deadline = this.nowMs + this.healthTimeoutMs;
-    while (this.nowMs <= deadline) {
-      const snapshot = await this.safeFetchSnapshot(proposal.toNode);
-      const reachable = snapshot?.workloads?.some(
-        (entry) => entry.name === proposal.workload && entry.reachable,
-      );
-      if (reachable) {
-        await removeWorkload(proposal.workload, proposal.fromNode);
-        writeJournalEntry({
-          kind: "fleet-execution",
-          ts: new Date(this.nowMs).toISOString(),
-          node: this.deps.leaseholder,
-          proposalId: proposal.proposalId,
-          action: {
-            type: "move",
-            workload: proposal.workload,
-            fromNode: proposal.fromNode,
-            toNode: proposal.toNode,
-            reason: "rebalance",
-          },
-          status: "executed",
-        });
-        return "executed";
-      }
-
-      await this.sleep(this.pollIntervalMs);
-    }
-
-    writeJournalEntry({
-      kind: "fleet-execution",
-      ts: new Date(this.nowMs).toISOString(),
-      node: this.deps.leaseholder,
-      proposalId: proposal.proposalId,
-      action: {
-        type: "move",
-        workload: proposal.workload,
-        fromNode: proposal.fromNode,
-        toNode: proposal.toNode,
-        reason: "rebalance",
-      },
-      status: "failed",
-      reason: "timeout waiting for destination health",
-    });
-
-    return "timed_out";
   }
 
   async onJournalEntry(
