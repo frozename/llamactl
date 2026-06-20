@@ -60,6 +60,7 @@ async function runGroup(
   opts: {
     pkg: string;
     version: string;
+    previousVersion?: string;
     tarballUrl: string;
     sha256: string;
     skipIfPresent: boolean;
@@ -67,7 +68,7 @@ async function runGroup(
     pollIntervalMs: number;
   },
 ): Promise<RolloutPlan> {
-  await Promise.all(
+  const installResults = await Promise.allSettled(
     group.map((peer) =>
       clientFactory(peer).install({
         pkg: opts.pkg,
@@ -79,14 +80,34 @@ async function runGroup(
       }),
     ),
   );
-  await Promise.all(
-    group.map((peer) =>
-      clientFactory(peer).activate({
-        pkg: opts.pkg,
-        version: opts.version,
-      }),
-    ),
+  if (installResults.some((r) => r.status === "rejected")) {
+    return { ok: false, reason: "install-failed" };
+  }
+
+  const activateOutcomes = await Promise.allSettled(
+    group.map(async (peer) => {
+      await clientFactory(peer).activate({ pkg: opts.pkg, version: opts.version });
+      return peer;
+    }),
   );
+  const activateFailed = activateOutcomes.some((r) => r.status === "rejected");
+  if (activateFailed) {
+    // Roll back peers that successfully activated to the prior version so the
+    // group doesn't remain split across two versions.
+    const previousVersion = opts.previousVersion;
+    if (previousVersion !== undefined) {
+      const switched = activateOutcomes
+        .filter((r): r is PromiseFulfilledResult<PeerNode> => r.status === "fulfilled")
+        .map((r) => r.value);
+      await Promise.allSettled(
+        switched.map((peer) =>
+          clientFactory(peer).activate({ pkg: opts.pkg, version: previousVersion }),
+        ),
+      );
+    }
+    return { ok: false, reason: "activate-failed" };
+  }
+
   const healths = await Promise.all(
     group.map((peer) =>
       clientFactory(peer).pollHealth({
@@ -107,6 +128,7 @@ export async function runRollout(
   opts: {
     pkg: string;
     version: string;
+    previousVersion?: string;
     tarballUrl: string;
     sha256: string;
     skipIfPresent: boolean;
