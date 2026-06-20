@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type { RunSummary } from "../src/rag/pipeline/runtime.js";
 import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
@@ -64,6 +64,35 @@ describe("defaultPipelinesDir / pipelineDir / journalPathFor", () => {
   test("DEV_STORAGE used when no override", () => {
     const onlyDev = { DEV_STORAGE: "/dev/store" } as NodeJS.ProcessEnv;
     expect(defaultPipelinesDir(onlyDev)).toBe("/dev/store/rag-pipelines");
+  });
+});
+
+describe("pipelineDir path-traversal guard", () => {
+  test("rejects a traversal name that escapes the storage root", () => {
+    expect(() => pipelineDir("../../outside", env)).toThrow(/escapes storage root/);
+  });
+
+  test("rejects a name that is just dot-dot", () => {
+    expect(() => pipelineDir("..", env)).toThrow(/escapes storage root/);
+  });
+
+  test("allows a normal name", () => {
+    expect(pipelineDir("my-pipeline", env)).toBe(join(tmp, "my-pipeline"));
+  });
+});
+
+describe("removePipeline path-traversal guard", () => {
+  test("throws and does not delete a directory outside the storage root", () => {
+    const siblingDir = join(dirname(tmp), "sibling-" + basename(tmp));
+    mkdirSync(siblingDir, { recursive: true });
+    try {
+      expect(() => removePipeline("../" + basename(siblingDir), { env })).toThrow(
+        /escapes storage root/,
+      );
+      expect(existsSync(siblingDir)).toBe(true);
+    } finally {
+      rmSync(siblingDir, { recursive: true, force: true });
+    }
   });
 });
 

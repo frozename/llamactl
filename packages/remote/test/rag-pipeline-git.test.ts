@@ -137,6 +137,26 @@ describe("gitFetcher", () => {
     expect(args).not.toContain("--branch");
   });
 
+  test("subpath traversal is rejected with an error log and yields nothing", async () => {
+    const events: { level: string; msg: string }[] = [];
+    const ctx: FetcherContext = {
+      spec: {
+        kind: "git",
+        repo: `file://${bareRepo}`,
+        subpath: "../..",
+        glob: "**/*.md",
+      },
+      log: (e) => events.push({ level: e.level, msg: e.msg }),
+      signal: new AbortController().signal,
+      env: process.env,
+    };
+    const docs = await collect(ctx);
+    expect(docs).toEqual([]);
+    expect(
+      events.some((e) => e.level === "error" && e.msg.includes("subpath escapes clone directory")),
+    ).toBe(true);
+  });
+
   test("unreachable repo emits an error event and yields nothing", async () => {
     const events: { level: string; msg: string }[] = [];
     const ctx: FetcherContext = {
