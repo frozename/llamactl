@@ -629,4 +629,60 @@ describe("runPipeline", () => {
       }
     }
   });
+
+  test("store failure does not write doc-ingested — failed doc retries on next run", async () => {
+    const journalPath = join(tmp, "journal.jsonl");
+    let storeCallCount = 0;
+    const openFailing = (): Promise<{
+      store: (req: StoreRequest) => Promise<StoreResponse>;
+      close: () => Promise<void>;
+    }> =>
+      Promise.resolve({
+        // eslint-disable-next-line @typescript-eslint/require-await -- async to satisfy the adapter interface; the mock throws/returns without awaiting
+        async store(req: StoreRequest): Promise<StoreResponse> {
+          storeCallCount++;
+          if (storeCallCount === 1) throw new Error("store boom");
+          return { ids: req.documents.map((d) => d.id), collection: req.collection ?? "docs" };
+        },
+        async close() {
+          await Promise.resolve();
+        },
+      });
+
+    // Run 1 — store throws; doc-ingested must NOT land in the journal.
+    {
+      const restore = installStubFetcher({ docs: [{ id: "x", content: "hello", metadata: {} }] });
+      try {
+        const summary = await runPipeline({
+          manifest: baseManifest(),
+          journalPath,
+          openAdapter: openFailing,
+        });
+        expect(summary.errors).toBe(1);
+      } finally {
+        restore();
+      }
+    }
+    const lines1 = readJournalLines(journalPath);
+    expect(lines1.some((l) => l.kind === "doc-ingested")).toBe(false);
+
+    // Run 2 — store now succeeds; doc must be retried, not skipped as a duplicate.
+    {
+      const restore = installStubFetcher({ docs: [{ id: "x", content: "hello", metadata: {} }] });
+      try {
+        const summary = await runPipeline({
+          manifest: baseManifest(),
+          journalPath,
+          openAdapter: openFailing,
+        });
+        expect(summary.total_docs).toBe(1);
+        expect(summary.skipped_docs).toBe(0);
+        expect(summary.errors).toBe(0);
+      } finally {
+        restore();
+      }
+    }
+    const lines2 = readJournalLines(journalPath);
+    expect(lines2.filter((l) => l.kind === "doc-ingested")).toHaveLength(1);
+  });
 });
