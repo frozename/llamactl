@@ -196,18 +196,27 @@ export function applyBusyGuard(input: BusyGuardInput): BusyGuardResult {
   }
 
   const observed = { nPast: progress.nPast, nDecoded: progress.nDecoded };
-  // First wedge while processing, or any activity (advance / lower / counter-now-null)
-  // counts as a fresh advance: reset the stall window to `now` and hold (busy).
-  if (
-    !lastProgress ||
-    advanced(observed, lastProgress) ||
-    lowered(observed, lastProgress) ||
-    ambiguous(observed, lastProgress)
-  ) {
+  // First wedge while processing, or real activity (advance / lower) resets stall state.
+  if (!lastProgress || advanced(observed, lastProgress) || lowered(observed, lastProgress)) {
     return {
       consecutiveFailures: prior,
       reason: "busy",
       nextProgress: { ...observed, stallChecks: 0, lastAdvanceAt: now },
+    };
+  }
+
+  // Counter dropped from non-null to null: hold stall state without resetting it.
+  // A flapping /slots counter must not allow a wedged server to evade detection by
+  // intermittently dropping the counter and resetting the stall accumulation.
+  if (ambiguous(observed, lastProgress)) {
+    return {
+      consecutiveFailures: prior,
+      reason: "busy",
+      nextProgress: {
+        ...observed,
+        stallChecks: lastProgress.stallChecks,
+        lastAdvanceAt: lastProgress.lastAdvanceAt,
+      },
     };
   }
 
