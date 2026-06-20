@@ -80,8 +80,14 @@ function tierForFraction(
   fraction: number | undefined,
   thresholds: CostGuardianConfig["thresholds"],
 ): { tier: CostGuardianTier; crossed: number } {
-  if (fraction === undefined || !Number.isFinite(fraction)) {
+  if (fraction === undefined || Number.isNaN(fraction)) {
     return { tier: "noop", crossed: 0 };
+  }
+  if (!Number.isFinite(fraction)) {
+    // Positive infinity = unbounded overspend → fail closed at highest tier.
+    return fraction > 0
+      ? { tier: "deregister", crossed: thresholds.deregister }
+      : { tier: "noop", crossed: 0 };
   }
   if (fraction >= thresholds.deregister)
     return { tier: "deregister", crossed: thresholds.deregister };
@@ -103,7 +109,8 @@ function fractionOfBudget(
   budget: number | undefined,
 ): number | undefined {
   if (cost === undefined || budget === undefined || budget <= 0) return undefined;
-  return cost / budget;
+  const effectiveCost = cost < 0 ? 0 : cost;
+  return effectiveCost / budget;
 }
 
 function horizonReason(
@@ -163,12 +170,16 @@ export function decideGuardianAction(input: GuardianDecisionInput): GuardianDeci
   const dailyTier = tierForFraction(dailyFraction, config.thresholds);
   const weeklyTier = tierForFraction(weeklyFraction, config.thresholds);
 
-  // Stricter of the two wins.
-  const winning = tierRank[dailyTier.tier] >= tierRank[weeklyTier.tier] ? dailyTier : weeklyTier;
+  // Stricter of the two wins. Track which horizon drove the decision so
+  // deregisterTarget points at the right provider.
+  const winnerIsDaily = tierRank[dailyTier.tier] >= tierRank[weeklyTier.tier];
+  const winning = winnerIsDaily ? dailyTier : weeklyTier;
+  const winningSnapshot = winnerIsDaily ? daily?.snapshot : weekly?.snapshot;
+  const fallbackSnapshot = winnerIsDaily ? weekly?.snapshot : daily?.snapshot;
 
   const deregisterTarget =
     winning.tier === "deregister"
-      ? (daily?.snapshot.topProvider?.key ?? weekly?.snapshot.topProvider?.key ?? null)
+      ? (winningSnapshot?.topProvider?.key ?? fallbackSnapshot?.topProvider?.key ?? null)
       : null;
 
   const decision: GuardianDecision = {
