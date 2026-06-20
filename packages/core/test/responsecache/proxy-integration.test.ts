@@ -1207,3 +1207,122 @@ test("peer route cache invalidates when the peer revision changes (restart/swap)
     runtime.cleanup();
   }
 });
+
+function writeModelHostWorkload(
+  runtimeRoot: string,
+  workload: string,
+  port: number,
+  engine: "omlx" | "llamacpp",
+  modelAliases: string[],
+): void {
+  const dir = join(runtimeRoot, "workloads", workload);
+  const slotDir = join(runtimeRoot, "kvstore", "slots", workload);
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(slotDir, { recursive: true });
+  writeFileSync(join(dir, "modelhost.pid"), `${String(process.pid)}\n`);
+  writeFileSync(
+    join(dir, "modelhost.state"),
+    JSON.stringify({
+      kind: "ModelHost",
+      engine,
+      pid: process.pid,
+      host: "127.0.0.1",
+      port,
+      modelAliases,
+      startedAt: "2026-05-24T00:00:00.000Z",
+      slotSavePath: slotDir,
+    }),
+  );
+}
+
+test("oMLX save-handle: response-cache key normalized to stream:false so stream:true and stream:false share a cache entry", async () => {
+  const runtime = makeTempRuntime();
+  const model = "mlx-community/Qwen3-8B-MLX-4bit";
+  const port = 19503;
+  writeModelHostWorkload(runtime.root, "wl-omlx", port, "omlx", [model]);
+
+  let upstreamChatCalls = 0;
+  const capturedStreamValues: unknown[] = [];
+  function omlxUpstreamResponse(pathname: string, method: string, init?: RequestInit): Response {
+    if (method === "GET" && pathname === "/v1/slots/capabilities") {
+      return Response.json({
+        slots: { api_version: 2, supports_request_handle: true, supports_save_handle: true },
+      });
+    }
+    if (method === "POST" && pathname === "/v1/chat/completions") {
+      upstreamChatCalls += 1;
+      const body = typeof init?.body === "string" ? init.body : "";
+      try {
+        capturedStreamValues.push((JSON.parse(body) as { stream?: unknown }).stream);
+      } catch {
+        /* ignore */
+      }
+      return Response.json({
+        id: "chatcmpl-omlx",
+        object: "chat.completion",
+        model,
+        choices: [
+          { index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    }
+    return new Response("", { status: 404 });
+  }
+  globalThis.fetch = ((input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method =
+      init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
+    return Promise.resolve(omlxUpstreamResponse(new URL(url).pathname, method, init));
+  }) as typeof fetch;
+
+  try {
+    const baseMessages = [{ role: "user", content: "omlx cache normalize stream" }];
+
+    // Request 1: stream:true — the save-handle path forces stream:false upstream.
+    // The response-cache key must be computed over the normalized (stream:false)
+    // body so request 2 can produce the same key and get a cache hit.
+    const resp1 = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: baseMessages,
+          temperature: 0,
+          stream: true,
+        }),
+      }),
+      runtime.env,
+    );
+    expect(resp1.status).toBe(200);
+    expect(upstreamChatCalls).toBe(1);
+    // The proxy must have sent stream:false to upstream (save-handle forces it).
+    expect(capturedStreamValues[0]).toBe(false);
+
+    // Request 2: stream:false — identical logical content. After the fix the
+    // cache key (SHA over stream:false body) matches the entry from request 1.
+    const resp2 = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: baseMessages,
+          temperature: 0,
+          stream: false,
+        }),
+      }),
+      runtime.env,
+    );
+    const resp2Json = (await resp2.json()) as { id?: string };
+    expect(resp2.status).toBe(200);
+    // Upstream must NOT be called a second time — this is a cache hit.
+    expect(upstreamChatCalls).toBe(1);
+    expect(resp2Json.id).toBe("chatcmpl-omlx");
+    expect(openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(runtime.env)).toBe(1);
+  } finally {
+    runtime.cleanup();
+  }
+});
