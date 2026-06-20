@@ -68,6 +68,24 @@ describe("readMeasuredMemoryCache", () => {
     expect(readMeasuredMemoryCache("some/model.gguf::")).toBeNull();
   });
 
+  test("returns null when rssPeakMb is negative or non-finite", () => {
+    writeFileSync(
+      cachePath,
+      JSON.stringify({
+        "some/model.gguf::": makeEntry("test", 4200),
+        "neg/model.gguf::": { ...makeEntry("neg", 100), rssPeakMb: -5 },
+        "nan/model.gguf::": { ...makeEntry("nan", 100), rssPeakMb: Number.NaN },
+        "inf/model.gguf::": { ...makeEntry("inf", 100), rssPeakMb: Number.POSITIVE_INFINITY },
+      }),
+      "utf8",
+    );
+
+    expect(readMeasuredMemoryCache("some/model.gguf::")).toEqual({ peakMb: 4200 });
+    expect(readMeasuredMemoryCache("neg/model.gguf::")).toBeNull();
+    expect(readMeasuredMemoryCache("nan/model.gguf::")).toBeNull();
+    expect(readMeasuredMemoryCache("inf/model.gguf::")).toBeNull();
+  });
+
   test("returns { peakMb } when key is present and valid", () => {
     writeFileSync(
       cachePath,
