@@ -580,6 +580,32 @@ describe("@llamactl/mcp read surface", () => {
     expect(parsed.message).toContain("gemma4-run-a");
   });
 
+  test("llamactl.workload.delete rejects path-traversal names (dry-run)", async () => {
+    const { client } = await connected();
+    for (const name of ["../escape", "../../etc/passwd", "../etc/x"]) {
+      const result = await client.callTool({
+        name: "llamactl.workload.delete",
+        arguments: { name, dryRun: true },
+      });
+      const parsed = JSON.parse(textOf(result)) as { ok: boolean; error?: string };
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error).toMatch(/invalid workload name/i);
+    }
+  });
+
+  test("llamactl.workload.delete rejects path-traversal names (wet-run)", async () => {
+    const { client } = await connected();
+    for (const name of ["../escape", "../../etc/passwd", "../etc/x"]) {
+      const result = await client.callTool({
+        name: "llamactl.workload.delete",
+        arguments: { name, dryRun: false },
+      });
+      const parsed = JSON.parse(textOf(result)) as { ok: boolean; error?: string };
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error).toMatch(/invalid workload name/i);
+    }
+  });
+
   test("llamactl.workload.delete wet-run reports the deleted manifest kind", async () => {
     seedModelHostFixture();
     const { client } = await connected();
