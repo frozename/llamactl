@@ -144,4 +144,30 @@ describe("matrix report", () => {
     const md = renderMarkdownReport(cells);
     expect(md).toContain("| model-b | - | 0.9000 |");
   });
+
+  test("markdown cells count matches rendered latest cells", () => {
+    const cells = [
+      makeCell({
+        run_id: "run-old",
+        model_name: "model-a",
+        workload_name: "workload-a",
+        primary_metric_name: "accuracy",
+        primary_metric_value: 0.5,
+        finished_at: "2026-05-17T00:01:00.000Z",
+      }),
+      makeCell({
+        run_id: "run-new",
+        model_name: "model-a",
+        workload_name: "workload-a",
+        primary_metric_name: "accuracy",
+        primary_metric_value: 0.75,
+        finished_at: "2026-05-17T00:02:00.000Z",
+      }),
+    ];
+
+    const md = renderMarkdownReport(cells);
+    expect(md).toContain("Cells: 1");
+    expect(md).toContain("| model-a | 0.7500 |");
+    expect(md).not.toContain("| model-a | 0.5000 |");
+  });
 });

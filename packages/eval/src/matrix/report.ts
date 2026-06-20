@@ -120,7 +120,7 @@ export function renderMarkdownReport(cells: CellRow[], opts: ReportOpts = {}): s
     "# Matrix report",
     "",
     `Run: ${opts.runId ?? "all"}`,
-    `Cells: ${String(filtered.length)}`,
+    `Cells: ${String(lookup.size)}`,
     "",
     `## Primary metric (${primaryMetricName})`,
     "",

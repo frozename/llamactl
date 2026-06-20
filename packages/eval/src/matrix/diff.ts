@@ -110,6 +110,17 @@ function fmt(n: number, digits: number): string {
   return Number.isFinite(n) ? n.toFixed(digits) : String(n);
 }
 
+function mdField(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("|", "\\|");
+}
+
+function csvField(value: string): string {
+  if (/[,"\n\r]/.test(value)) {
+    return `"${value.replaceAll('"', '""')}"`;
+  }
+  return value;
+}
+
 export function renderMd(cells: Cell[]): string {
   const sorted = [...cells].sort(
     (a, b) =>
@@ -123,7 +134,16 @@ export function renderMd(cells: Cell[]): string {
   ];
   for (const c of sorted) {
     lines.push(
-      `| ${c.workload_name} | ${c.model_name} | ${String(c.n_rows)} | ${c.primary_metric_name} | ${fmt(c.primary_metric_value, 4)} | ${fmt(c.throughput_tps, 2)} | ${fmt(c.latency_p50_ms, 0)} | ${String(c.errors)} |`,
+      `| ${[
+        mdField(c.workload_name),
+        mdField(c.model_name),
+        String(c.n_rows),
+        mdField(c.primary_metric_name),
+        fmt(c.primary_metric_value, 4),
+        fmt(c.throughput_tps, 2),
+        fmt(c.latency_p50_ms, 0),
+        String(c.errors),
+      ].join(" | ")} |`,
     );
   }
   return lines.join("\n") + "\n";
@@ -131,9 +151,21 @@ export function renderMd(cells: Cell[]): string {
 
 export function renderCsv(cells: Cell[]): string {
   const header = "workload,model,n,metric,value,tps,p50_ms,errors,run_id,started_at";
-  const rows = cells.map(
-    (c) =>
-      `${c.workload_name},${c.model_name},${String(c.n_rows)},${c.primary_metric_name},${fmt(c.primary_metric_value, 4)},${fmt(c.throughput_tps, 2)},${fmt(c.latency_p50_ms, 0)},${String(c.errors)},${c.run_id},${c.started_at}`,
+  const rows = cells.map((c) =>
+    [
+      c.workload_name,
+      c.model_name,
+      String(c.n_rows),
+      c.primary_metric_name,
+      fmt(c.primary_metric_value, 4),
+      fmt(c.throughput_tps, 2),
+      fmt(c.latency_p50_ms, 0),
+      String(c.errors),
+      c.run_id,
+      c.started_at,
+    ]
+      .map(csvField)
+      .join(","),
   );
   return [header, ...rows].join("\n") + "\n";
 }

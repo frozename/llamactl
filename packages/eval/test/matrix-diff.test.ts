@@ -4,10 +4,59 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadCells, parseArgs, renderCsv, renderMd } from "../src/matrix/diff.js";
+import { type Cell, loadCells, parseArgs, renderCsv, renderMd } from "../src/matrix/diff.js";
 
 let tmp: string;
 let dbPath: string;
+
+function makeCell(row: Partial<Cell> & Pick<Cell, "model_name" | "workload_name">): Cell {
+  const { model_name, workload_name, ...rest } = row;
+  return {
+    run_id: "run-escape",
+    model_name,
+    workload_name,
+    n_rows: 10,
+    primary_metric_name: "mean_accuracy",
+    primary_metric_value: 0.75,
+    throughput_tps: 25,
+    latency_p50_ms: 100,
+    errors: 0,
+    started_at: "2026-05-19T00:00:00Z",
+    ...rest,
+  };
+}
+
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line.charAt(i);
+    if (char === '"') {
+      if (quoted && line.charAt(i + 1) === '"') {
+        field += '"';
+        i++;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === "," && !quoted) {
+      fields.push(field);
+      field = "";
+    } else {
+      field += char;
+    }
+  }
+  fields.push(field);
+  return fields;
+}
+
+function markdownCellCount(row: string): number {
+  let separators = 0;
+  for (let i = 0; i < row.length; i++) {
+    if (row.charAt(i) === "|" && row.charAt(i - 1) !== "\\") separators++;
+  }
+  return separators - 1;
+}
 
 function seedDb(path: string): void {
   const db = new Database(path);
@@ -187,5 +236,46 @@ describe("matrix/diff renderers", () => {
       "workload,model,n,metric,value,tps,p50_ms,errors,run_id,started_at",
     );
     expect(csv.trim().split("\n").length).toBe(1 + cells.length);
+  });
+
+  test("renderCsv escapes fields so commas do not shift columns", () => {
+    const csv = renderCsv([
+      makeCell({
+        model_name: "gemma,4",
+        workload_name: "memory-recall",
+        primary_metric_name: 'ndcg"5',
+      }),
+    ]);
+    const [header, row] = csv.trim().split("\n");
+
+    expect(parseCsvLine(row ?? "")).toEqual([
+      "memory-recall",
+      "gemma,4",
+      "10",
+      'ndcg"5',
+      "0.7500",
+      "25.00",
+      "100",
+      "0",
+      "run-escape",
+      "2026-05-19T00:00:00Z",
+    ]);
+    expect(parseCsvLine(row ?? "")).toHaveLength(parseCsvLine(header ?? "").length);
+  });
+
+  test("renderMd escapes pipe characters inside cells", () => {
+    const md = renderMd([
+      makeCell({
+        model_name: "gemma|mtp",
+        workload_name: "memory|recall",
+        primary_metric_name: "mean|ndcg5",
+      }),
+    ]);
+    const row = md.split("\n").find((line) => line.includes("gemma"));
+
+    expect(row).toContain("memory\\|recall");
+    expect(row).toContain("gemma\\|mtp");
+    expect(row).toContain("mean\\|ndcg5");
+    expect(markdownCellCount(row ?? "")).toBe(8);
   });
 });
