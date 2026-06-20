@@ -18,9 +18,7 @@ describe("appendCostJournal", () => {
   test("writes a JSONL line and creates missing parent dirs", () => {
     const path = join(dir, "sub", "journal.jsonl");
     appendCostJournal({ kind: "error", ts: "2026-01-01T00:00:00Z", message: "test-error" }, path);
-    const parsed: { kind: string; message: string } = JSON.parse(
-      readFileSync(path, "utf8").trim(),
-    );
+    const parsed: { kind: string; message: string } = JSON.parse(readFileSync(path, "utf8").trim());
     expect(parsed.kind).toBe("error");
     expect(parsed.message).toBe("test-error");
   });
