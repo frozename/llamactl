@@ -136,6 +136,9 @@ async function runPipeline(
       choices?: { message?: { content?: string } }[];
     };
     const finalContent = response.choices?.[0]?.message?.content ?? "";
+    if (!finalContent) {
+      throw new Error(`pipeline stage ${String(i)} returned empty output`);
+    }
     stages.push({ stage: i, output: finalContent });
     pending = finalContent;
   }
