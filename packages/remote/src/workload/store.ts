@@ -1,7 +1,7 @@
 import type { ResolvedEnv } from "@llamactl/core";
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { atomicWriteFileSync } from "../atomic-write.js";
@@ -19,6 +19,18 @@ export function defaultWorkloadsDir(env: NodeJS.ProcessEnv = process.env): strin
 
 export function workloadPath(name: string, dir: string = defaultWorkloadsDir()): string {
   return join(dir, `${name}.yaml`);
+}
+
+function ensureWorkloadPathWithinDir(path: string, dir: string): string {
+  const resolvedDir = resolve(dir);
+  const resolvedPath = resolve(path);
+  const allowedPrefix = `${resolvedDir}${sep}`;
+  if (resolvedPath !== resolvedDir && !resolvedPath.startsWith(allowedPrefix)) {
+    throw new Error(
+      `workload path escapes workloads dir: ${resolvedPath} not within ${resolvedDir}`,
+    );
+  }
+  return resolvedPath;
 }
 
 /**
@@ -71,14 +83,14 @@ export function loadWorkload(path: string): ModelRun {
 }
 
 export function loadWorkloadByName(name: string, dir: string = defaultWorkloadsDir()): ModelRun {
-  return loadWorkload(workloadPath(name, dir));
+  return loadWorkload(ensureWorkloadPathWithinDir(workloadPath(name, dir), dir));
 }
 
 export function loadWorkloadByNameAny(
   name: string,
   dir: string = defaultWorkloadsDir(),
 ): ModelRun | ModelHostManifest {
-  const path = workloadPath(name, dir);
+  const path = ensureWorkloadPathWithinDir(workloadPath(name, dir), dir);
   if (!existsSync(path)) {
     throw new Error(`workload manifest not found: ${path}`);
   }
@@ -100,7 +112,7 @@ export function loadWorkloadByNameAny(
 export function saveWorkload(workload: ModelRun, dir: string = defaultWorkloadsDir()): string {
   const validated = ModelRunSchema.parse(workload);
   mkdirSync(dir, { recursive: true });
-  const path = workloadPath(validated.metadata.name, dir);
+  const path = ensureWorkloadPathWithinDir(workloadPath(validated.metadata.name, dir), dir);
   atomicWriteFileSync(path, stringifyYaml(validated));
   return path;
 }
@@ -255,7 +267,7 @@ export function listAnyWorkloadsForAdmission(
 }
 
 export function deleteWorkload(name: string, dir: string = defaultWorkloadsDir()): boolean {
-  const path = workloadPath(name, dir);
+  const path = ensureWorkloadPathWithinDir(workloadPath(name, dir), dir);
   if (!existsSync(path)) return false;
   rmSync(path, { force: true });
   return true;

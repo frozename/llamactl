@@ -18,6 +18,8 @@ import {
   type WorkloadDeleteDryRunResult,
 } from "./shared.js";
 
+const SAFE_WORKLOAD_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 export function registerMutationTools(server: McpServer): void {
   registerNodeAdd(server);
   registerNodeRemove(server);
@@ -238,6 +240,9 @@ function registerWorkloadDelete(server: McpServer): void {
     },
     (input) => {
       const { name, dryRun } = input;
+      if (!SAFE_WORKLOAD_NAME_RE.test(name) || name.includes("..")) {
+        return toTextContent({ ok: false, error: "invalid workload name" });
+      }
       const manifests = workloadStore.listAnyWorkloadsForAdmission();
       const match = manifests.find((m) => m.metadata.name === name);
       const manifest = match ? workloadStore.loadWorkloadByNameAny(name) : null;
