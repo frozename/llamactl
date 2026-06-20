@@ -82,7 +82,10 @@ describe("llamactl_admit_measure", () => {
     const spawnFn = mockSpawn({ code: 0, stdout: '{"peakMb":1024}' }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
-    const result = await call(client, "llamactl_admit_measure", { workload: "gemma4" });
+    const result = await call(client, "llamactl_admit_measure", {
+      workload: "gemma4",
+      confirm: true,
+    });
     const parsed = JSON.parse(textOf(result)) as { ok: boolean; stdout: string };
     expect(parsed.ok).toBe(true);
     expect(parsed.stdout).toBe('{"peakMb":1024}');
@@ -98,7 +101,10 @@ describe("llamactl_admit_measure", () => {
     const spawnFn = mockSpawn({ code: 1, stderr: "workload not found" });
     const { client } = await connected({ spawn: spawnFn });
 
-    const result = await call(client, "llamactl_admit_measure", { workload: "missing-wl" });
+    const result = await call(client, "llamactl_admit_measure", {
+      workload: "missing-wl",
+      confirm: true,
+    });
     const parsed = JSON.parse(textOf(result)) as {
       ok: boolean;
       code: number;
@@ -115,7 +121,11 @@ describe("llamactl_admit_measure", () => {
     const spawnFn = mockSpawn({ code: 0 }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
-    await call(client, "llamactl_admit_measure", { workload: "granite", node: "mac-mini" });
+    await call(client, "llamactl_admit_measure", {
+      workload: "granite",
+      node: "mac-mini",
+      confirm: true,
+    });
     expect(calls[0]!.args).toContain("--node=mac-mini");
   });
 
@@ -124,9 +134,9 @@ describe("llamactl_admit_measure", () => {
     const spawnFn = mockSpawn({ code: 0, stdout: "ok", holdOpenMs: 15 }, calls);
     const { client } = await connected({ spawn: spawnFn });
 
-    const first = call(client, "llamactl_admit_measure", { workload: "gemma4" });
+    const first = call(client, "llamactl_admit_measure", { workload: "gemma4", confirm: true });
     const second = Promise.resolve().then(() =>
-      call(client, "llamactl_admit_measure", { workload: "gemma4" }),
+      call(client, "llamactl_admit_measure", { workload: "gemma4", confirm: true }),
     );
     const [, rawSecond] = await Promise.all([first, second]);
     const parsedSecond = JSON.parse(textOf(rawSecond)) as { ok: boolean; error?: string };
@@ -143,7 +153,10 @@ describe("llamactl_admit_measure", () => {
     const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0, stdout: '{"peakMb":1024}' }, calls);
     const { client } = await connected({ spawn: spawnFn });
-    const result = await call(client, "llamactl_admit_measure", { workload: "granite" });
+    const result = await call(client, "llamactl_admit_measure", {
+      workload: "granite",
+      confirm: true,
+    });
     const parsed = JSON.parse(textOf(result)) as { ok: boolean };
     expect(parsed.ok).toBe(true);
 
@@ -162,6 +175,90 @@ describe("llamactl_admit_measure", () => {
       process.env.LLAMACTL_FLEET_DIR = original;
     }
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // ── security: path traversal (defect 1) ──────────────────────────────────
+
+  test("path traversal in workload name is rejected without spawning", async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const spawnFn = mockSpawn({ code: 0 }, calls);
+    const { client } = await connected({ spawn: spawnFn });
+
+    const result = await call(client, "llamactl_admit_measure", {
+      workload: "../../../etc/passwd",
+      confirm: true,
+    });
+    const parsed = JSON.parse(textOf(result)) as { ok: boolean; error?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toMatch(/invalid workload/i);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("absolute path in workload name is rejected without spawning", async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const spawnFn = mockSpawn({ code: 0 }, calls);
+    const { client } = await connected({ spawn: spawnFn });
+
+    const result = await call(client, "llamactl_admit_measure", {
+      workload: "/etc/passwd",
+      confirm: true,
+    });
+    const parsed = JSON.parse(textOf(result)) as { ok: boolean; error?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toMatch(/invalid workload/i);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("workload with path separator is rejected without spawning", async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const spawnFn = mockSpawn({ code: 0 }, calls);
+    const { client } = await connected({ spawn: spawnFn });
+
+    const result = await call(client, "llamactl_admit_measure", {
+      workload: "foo/bar",
+      confirm: true,
+    });
+    const parsed = JSON.parse(textOf(result)) as { ok: boolean; error?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toMatch(/invalid workload/i);
+    expect(calls).toHaveLength(0);
+  });
+
+  // ── security: confirm gate (defect 2) ────────────────────────────────────
+
+  test("requires confirm:true before dispatching", async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const spawnFn = mockSpawn({ code: 0 }, calls);
+    const { client } = await connected({ spawn: spawnFn });
+
+    const result = await call(client, "llamactl_admit_measure", { workload: "gemma4" });
+    const parsed = JSON.parse(textOf(result)) as { ok: boolean; error?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toMatch(/confirm/i);
+    expect(calls).toHaveLength(0);
+  });
+
+  // ── security: global concurrency cap (defect 2) ──────────────────────────
+
+  test("global concurrency cap rejects excess admits", async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const spawnFn = mockSpawn({ code: 0, holdOpenMs: 40 }, calls);
+    const { client } = await connected({ spawn: spawnFn });
+
+    const p1 = call(client, "llamactl_admit_measure", { workload: "wl-cap-a", confirm: true });
+    const p2 = Promise.resolve().then(() =>
+      call(client, "llamactl_admit_measure", { workload: "wl-cap-b", confirm: true }),
+    );
+    const p3 = Promise.resolve().then(() =>
+      Promise.resolve().then(() =>
+        call(client, "llamactl_admit_measure", { workload: "wl-cap-c", confirm: true }),
+      ),
+    );
+    const [, , rawThird] = await Promise.all([p1, p2, p3]);
+    const parsed = JSON.parse(textOf(rawThird)) as { ok: boolean; error?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toMatch(/concurrent/i);
+    expect(calls.length).toBeLessThan(3);
   });
 });
 
@@ -292,5 +389,22 @@ describe("llamactl_supervisor_execute", () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe(2);
     expect(parsed.error).toBe("proposal not found");
+  });
+
+  // ── security: empty proposalId no-op-as-success (defect 3) ───────────────
+
+  test("empty proposalId is rejected with an error not no-op success", async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const spawnFn = mockSpawn({ code: 0 }, calls);
+    const { client } = await connected({ spawn: spawnFn });
+
+    const result = await call(client, "llamactl_supervisor_execute", {
+      proposalId: "",
+      confirm: true,
+    });
+    const parsed = JSON.parse(textOf(result)) as { ok: boolean; error?: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toMatch(/proposalId|invalid|empty/i);
+    expect(calls).toHaveLength(0);
   });
 });

@@ -50,6 +50,24 @@ describe("llamactl admit measure", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test("exits 2 for path traversal workload name (..) with validation message", () => {
+    const r = spawnSync("bun", [BIN, "admit", "measure", "../../../etc/passwd"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/invalid workload name/i);
+  });
+
+  test("exits 2 for workload name containing path separator with validation message", () => {
+    const r = spawnSync("bun", [BIN, "admit", "measure", "foo/bar"], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/invalid workload name/i);
+  });
+
   test("exits 2 for a workload name that resolves to a missing yaml", () => {
     const r = spawnSync("bun", [BIN, "admit", "measure", "nonexistent-workload-xyz-abc"], {
       encoding: "utf8",
