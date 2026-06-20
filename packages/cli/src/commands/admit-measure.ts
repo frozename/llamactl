@@ -253,6 +253,14 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
 
   const { overridePort, steadyStateSecs, samples } = parseMeasureFlags(args.slice(1));
 
+  if (
+    !target.endsWith(".yaml") &&
+    (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(target) || target.includes(".."))
+  ) {
+    console.error(`admit measure: invalid workload name: ${target}`);
+    return 2;
+  }
+
   const manifestPath = target.endsWith(".yaml") ? target : `templates/workloads/${target}.yaml`;
   const config = readLaunchConfig(target, manifestPath);
   if ("error" in config) {

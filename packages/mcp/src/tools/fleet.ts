@@ -33,6 +33,7 @@ function ensureCliBin(): void {
 }
 
 const MAX_OUTPUT_BYTES = 512 * 1024;
+const MAX_ADMIT_CONCURRENT = 2;
 const MAX_TIMEOUT_MS_ADMIT = 300_000;
 const MAX_TIMEOUT_MS_EXECUTE = 120_000;
 const MAX_TIMEOUT_FOLLOWUP_MS = 5_000;
@@ -323,10 +324,13 @@ const journalTailInputSchema = {
   journalPath: z.string().optional(),
 };
 
+const SAFE_WORKLOAD_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
 const admitMeasureInputSchema = {
   workload: z.string(),
   node: z.string().optional(),
   timeoutMs: z.number().int().positive().optional(),
+  confirm: z.boolean().optional(),
 };
 
 const supervisorExecuteInputSchema = {
@@ -490,9 +494,33 @@ function handleFleetPressure({ node, journalPath }: { node?: string; journalPath
 
 async function handleAdmitMeasure(
   spawnFn: SpawnFn,
-  input: { workload: string; node?: string; timeoutMs?: number },
+  input: { workload: string; node?: string; timeoutMs?: number; confirm?: boolean },
 ): Promise<{ content: { type: "text"; text: string }[] }> {
-  const { workload, node, timeoutMs } = input;
+  const { workload, node, timeoutMs, confirm } = input;
+
+  if (!SAFE_WORKLOAD_RE.test(workload) || workload.includes("..")) {
+    const outcome = {
+      ok: false,
+      error: "invalid workload name: must not contain path separators, .., or start with . - or /",
+    };
+    appendAudit("llamactl_admit_measure", snapshotInput({ workload, node }), "denied", outcome);
+    return toTextContent(outcome);
+  }
+
+  if (confirm !== true) {
+    const preview = snapshotInput({ workload, node });
+    const outcome = { ok: false, error: "destructive operation requires confirm:true", preview };
+    appendAudit("llamactl_admit_measure", preview, "denied", outcome);
+    return toTextContent(outcome);
+  }
+
+  if (admitMeasureInFlight.size >= MAX_ADMIT_CONCURRENT) {
+    const preview = snapshotInput({ workload, node });
+    const outcome = { ok: false, error: "too many concurrent admit-measure runs", preview };
+    appendAudit("llamactl_admit_measure", preview, "denied", outcome);
+    return toTextContent(outcome);
+  }
+
   const snapshot = snapshotInput({ workload, node });
   const key = `${workload}:${node ?? ""}`;
   if (admitMeasureInFlight.has(key)) {
@@ -537,6 +565,22 @@ async function handleSupervisorExecute(
   },
 ): Promise<{ content: { type: "text"; text: string }[] }> {
   const { proposalId, auto, severityThreshold, node, confirm, timeoutMs } = input;
+
+  if (proposalId?.trim() === "") {
+    const outcome = {
+      ok: false,
+      error: "proposalId must not be empty",
+      preview: snapshotInput({ proposalId, auto, severityThreshold, node }),
+    };
+    appendAudit(
+      "llamactl_supervisor_execute",
+      snapshotInput({ proposalId, auto, severityThreshold, node }),
+      "denied",
+      outcome,
+    );
+    return toTextContent(outcome);
+  }
+
   const hasProposalId = proposalId !== undefined;
   const hasAuto = auto === true;
   if (hasProposalId === hasAuto) {
@@ -805,7 +849,7 @@ export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): voi
     "llamactl.admit.measure",
     "Admit Measure",
     admitMeasureInputSchema,
-    (input: { workload: string; node?: string; timeoutMs?: number }) =>
+    (input: { workload: string; node?: string; timeoutMs?: number; confirm?: boolean }) =>
       handleAdmitMeasure(spawnFn, input),
   );
 
