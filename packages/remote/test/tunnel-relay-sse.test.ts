@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { hashToken } from "../src/server/auth.js";
 import { handleTunnelRelay } from "../src/server/tunnel-relay.js";
 import {
   createTunnelClient,
   createTunnelServer,
+  type TunnelJournalEntry,
   type TunnelReq,
   type TunnelSubscription,
 } from "../src/tunnel/index.js";
@@ -78,6 +82,7 @@ async function startHarness(script: {
   events: unknown[];
   delayMs?: number;
   throwErr?: Error;
+  journalPath?: string;
 }): Promise<RunningHarness> {
   const bearer = "relay-bearer";
   const tunnelBearer = "tunnel-bearer";
@@ -96,7 +101,7 @@ async function startHarness(script: {
         return tunnelSrv.handleUpgrade(req, server) ?? new Response("no", { status: 400 });
       }
       if (url.pathname.startsWith("/tunnel-relay/")) {
-        return await handleTunnelRelay(req, url, tunnelSrv, bearerHash);
+        return await handleTunnelRelay(req, url, tunnelSrv, bearerHash, script.journalPath);
       }
       return new Response("404", { status: 404 });
     },
@@ -260,6 +265,59 @@ describe("tunnel-relay SSE", () => {
       },
     );
     expect(res.status).toBe(401);
+  });
+
+  test("client abort journals as error, not ok:true", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "relay-sse-abort-"));
+    const journalPath = join(dir, "relay.jsonl");
+    harness = await startHarness({
+      events: Array.from({ length: 50 }, (_, i) => ({ i })),
+      delayMs: 20,
+      journalPath,
+    });
+    const ac = new AbortController();
+    const res = await fetch(
+      `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/node1?stream=true`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${harness.bearer}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ method: "stream", type: "subscription", input: null }),
+        signal: ac.signal,
+      },
+    );
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    await reader.read();
+    ac.abort();
+    try {
+      await reader.cancel();
+    } catch {
+      /* aborted reader */
+    }
+    let entry: TunnelJournalEntry | undefined;
+    const deadline = Date.now() + 2000;
+    while (!entry && Date.now() < deadline) {
+      try {
+        entry = readFileSync(journalPath, "utf8")
+          .split("\n")
+          .filter((l) => l.length > 0)
+          .map((l) => JSON.parse(l) as TunnelJournalEntry)
+          .find((e) => e.kind === "tunnel-relay-call" || e.kind === "tunnel-relay-error");
+      } catch {
+        /* file not yet created */
+      }
+      if (!entry) await new Promise((r) => setTimeout(r, 10));
+    }
+    rmSync(dir, { recursive: true, force: true });
+    expect(entry).toBeDefined();
+    // aborted stream must NOT be journaled as a successful call
+    expect(entry?.kind).toBe("tunnel-relay-error");
+    if (entry?.kind === "tunnel-relay-error") {
+      expect(entry.code).toBe("client-aborted");
+    }
   });
 
   test("SSE against disconnected node ships an error done frame", async () => {

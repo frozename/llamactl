@@ -119,11 +119,25 @@ describe("tRPC v11 + Bun.serve + fetchRequestHandler", () => {
   const router = createSpikeRouter(probe);
   let svr: ReturnType<typeof startServer>;
 
+  // tRPC's SSE adapter races Bun closing the response stream on client
+  // disconnect: it may enqueue a completion event after the controller is
+  // already gone. Suppress that specific unhandled rejection; surface
+  // anything else in afterAll so the suite still fails on unexpected errors.
+  const extraRejections: unknown[] = [];
+  const suppressControllerClosed = (reason: unknown): void => {
+    if (reason instanceof TypeError && reason.message.includes("Controller is already closed"))
+      return;
+    extraRejections.push(reason);
+  };
+
   beforeAll(() => {
     svr = startServer(router);
+    process.on("unhandledRejection", suppressControllerClosed);
   });
   afterAll(() => {
     svr.stop();
+    process.off("unhandledRejection", suppressControllerClosed);
+    if (extraRejections.length > 0) throw extraRejections[0];
   });
 
   test("query round-trips with createTRPCClient (v11 rename)", async () => {

@@ -267,7 +267,9 @@ function handleStream(
       try {
         const iterator = iter[Symbol.asyncIterator]();
         await pumpSubscriptionEvents(iterator, controller, encoder, abort.signal);
-        if (!abort.signal.aborted) {
+        if (abort.signal.aborted) {
+          finish(false, "client-aborted", "client disconnected");
+        } else {
           try {
             controller.enqueue(
               encoder.encode(`event: done\ndata: ${JSON.stringify({ ok: true })}\n\n`),
@@ -275,8 +277,8 @@ function handleStream(
           } catch {
             /* controller closed */
           }
+          finish(true);
         }
-        finish(true);
       } catch (err) {
         const message = (err as Error).message;
         const code =
