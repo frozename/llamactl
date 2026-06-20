@@ -469,7 +469,7 @@ export function formatEvalScript(
   const bin = resolved.LLAMA_CPP_BIN;
   if (bin) {
     lines.push(
-      `if [ -d ${shellEscape(bin)} ]; then case ":$PATH:" in *:${bin}:*) ;; *) export PATH=${shellEscape(bin)}:$PATH ;; esac; fi`,
+      `if [ -d ${shellEscape(bin)} ]; then case ":$PATH:" in *:${shellEscape(bin)}:*) ;; *) export PATH=${shellEscape(bin)}:$PATH ;; esac; fi`,
     );
   }
 

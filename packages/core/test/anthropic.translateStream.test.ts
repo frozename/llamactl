@@ -29,6 +29,21 @@ function makeSseStream(events: string[], options?: { crash?: Error }): ReadableS
   });
 }
 
+function makeNeverEndingSseStream(onCancel: () => void): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller): void {
+      controller.enqueue(
+        encoder.encode(
+          'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}\n\n',
+        ),
+      );
+    },
+    cancel(): void {
+      onCancel();
+    },
+  });
+}
+
 async function readStreamText(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -453,6 +468,24 @@ test("fuzz: fragmented tool argument JSON reconstructs exactly for 20 seeds", as
 
     expect(JSON.parse(partials)).toEqual(JSON.parse(sourceJson));
   }
+});
+
+test("canceling the translated stream stops upstream reads", async () => {
+  let canceled = false;
+  const translated = translateOpenAIStreamToAnthropic(
+    makeNeverEndingSseStream(() => {
+      canceled = true;
+    }),
+    { model: "claude-3-7-sonnet" },
+  );
+
+  const reader = translated.getReader();
+  const first = await reader.read();
+  expect(first.done).toBe(false);
+  await reader.cancel();
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(canceled).toBe(true);
 });
 
 test("unknown upstream SSE data increments counter but stream still terminates cleanly", async () => {

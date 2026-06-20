@@ -109,4 +109,20 @@ describe("catalogWriter.addCurated (integration)", () => {
     if (r.ok) return;
     expect(r.error).toMatch(/illegal control character/i);
   });
+
+  test("rejects an invalid class before writing the catalog row", async () => {
+    const r = await addCurated({
+      repo: "unsloth/Bad-Class-GGUF",
+      fileOrRel: "bad-class.gguf",
+      class: "not-a-class",
+    });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/invalid class/i);
+    expect(existsSync(resultFile(temp))).toBe(false);
+  });
 });
+
+function resultFile(temp: ReturnType<typeof makeTempRuntime>): string {
+  return temp.runtimeDir + "/curated-models.tsv";
+}

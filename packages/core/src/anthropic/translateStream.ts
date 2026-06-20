@@ -333,10 +333,12 @@ function emitMessageStop(emit: StreamEmit): void {
   emit("message_stop", { type: "message_stop" });
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity
 async function processUpstreamStream(
   upstream: ReadableStream<Uint8Array>,
   controller: ReadableStreamDefaultController<Uint8Array>,
   ctx: TranslatorContext,
+  signal?: AbortSignal,
 ): Promise<void> {
   const encoder = new TextEncoder();
   const emit: StreamEmit = (event, payload) => {
@@ -353,18 +355,38 @@ async function processUpstreamStream(
     let pendingRead: ReturnType<typeof reader.read> | null = reader.read();
 
     while (!done) {
+      if (signal?.aborted) break;
       let pingTimer: ReturnType<typeof setTimeout> | undefined;
       const pingPromise = new Promise<{ kind: "ping" }>((resolve) => {
         pingTimer = setTimeout(() => {
           resolve({ kind: "ping" });
         }, PING_INTERVAL_MS);
       });
+      const abortPromise =
+        signal === undefined
+          ? null
+          : new Promise<{ kind: "abort" }>((resolve) => {
+              if (signal.aborted) {
+                resolve({ kind: "abort" });
+                return;
+              }
+              signal.addEventListener(
+                "abort",
+                () => {
+                  resolve({ kind: "abort" });
+                },
+                { once: true },
+              );
+            });
       const readResult = await Promise.race([
         pendingRead.then((value) => ({ kind: "read" as const, value })),
         pingPromise,
+        ...(abortPromise ? [abortPromise] : []),
       ]);
       clearTimeout(pingTimer);
 
+      if (signal?.aborted) break;
+      if (readResult.kind === "abort") break;
       if (readResult.kind === "ping") {
         emit("ping", { type: "ping" });
         continue;
@@ -386,6 +408,10 @@ async function processUpstreamStream(
 
       let boundary = buffer.indexOf("\n\n");
       while (boundary !== -1) {
+        if (signal?.aborted) {
+          done = true;
+          break;
+        }
         const eventPayload = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
         const status = processEvent(state, eventPayload, emit);
@@ -398,12 +424,17 @@ async function processUpstreamStream(
     }
 
     if (buffer.trim().length > 0) {
-      processEvent(state, buffer, emit);
+      if (!signal?.aborted) {
+        processEvent(state, buffer, emit);
+      }
     }
-    emitTerminalDelta(state, emit, state.lastFinishReason);
-    emitMessageStop(emit);
-    controller.close();
+    if (!signal?.aborted) {
+      emitTerminalDelta(state, emit, state.lastFinishReason);
+      emitMessageStop(emit);
+      controller.close();
+    }
   } catch (error) {
+    if (signal?.aborted) return;
     console.error(
       JSON.stringify({
         event: "anthropic_stream_upstream_error",
@@ -460,9 +491,13 @@ export function translateOpenAIStreamToAnthropic(
   upstream: ReadableStream<Uint8Array>,
   ctx: TranslatorContext,
 ): ReadableStream<Uint8Array> {
+  const abortController = new AbortController();
   return new ReadableStream<Uint8Array>({
     async start(controller): Promise<void> {
-      await processUpstreamStream(upstream, controller, ctx);
+      await processUpstreamStream(upstream, controller, ctx, abortController.signal);
+    },
+    cancel(): void {
+      abortController.abort();
     },
   });
 }

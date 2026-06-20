@@ -43,6 +43,14 @@ function sanitizeSearch(search: string): string {
   return search.replaceAll(/[^A-Za-z0-9._-]/g, "_");
 }
 
+export function hfApiModelUrl(repo: string): string {
+  return `https://huggingface.co/api/models/${encodeURIComponent(repo)}`;
+}
+
+export function hfApiRepoTreeUrl(repo: string): string {
+  return `${hfApiModelUrl(repo)}/tree/main?recursive=1&expand=1`;
+}
+
 export function modelInfoCacheFile(runtimeDir: string, repo: string): string {
   return join(runtimeDir, `hf-model-info-${sanitizeRepo(repo)}.json`);
 }
@@ -176,7 +184,7 @@ export async function fetchModelInfo(
   if (!hfEnabled(env)) return null;
   const cacheFile = modelInfoCacheFile(resolved.LOCAL_AI_RUNTIME_DIR, repo);
   const body = await fetchWithCache({
-    url: `https://huggingface.co/api/models/${repo}`,
+    url: hfApiModelUrl(repo),
     cacheFile,
     ttlSeconds: cacheTtlSeconds(env),
   });
@@ -197,7 +205,7 @@ export async function fetchRepoTree(
   if (!hfEnabled(env)) return null;
   const cacheFile = repoTreeCacheFile(resolved.LOCAL_AI_RUNTIME_DIR, repo);
   const body = await fetchWithCache({
-    url: `https://huggingface.co/api/models/${repo}/tree/main?recursive=1&expand=1`,
+    url: hfApiRepoTreeUrl(repo),
     cacheFile,
     ttlSeconds: cacheTtlSeconds(env),
   });

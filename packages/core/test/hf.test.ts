@@ -5,6 +5,8 @@ import type { HFModelInfo, HFTree } from "../src/schemas.js";
 import {
   discoveryCacheFile,
   fileSizeFromTree,
+  hfApiModelUrl,
+  hfApiRepoTreeUrl,
   hfEnabled,
   humanSize,
   mmprojFileForRepo,
@@ -12,6 +14,14 @@ import {
   repoTreeCacheFile,
   siblingForFile,
 } from "../src/hf.js";
+test("model-info and tree requests encode repo ids in the URL path", () => {
+  expect(hfApiModelUrl("org/name with spaces")).toBe(
+    "https://huggingface.co/api/models/org%2Fname%20with%20spaces",
+  );
+  expect(hfApiRepoTreeUrl("org/name with spaces")).toBe(
+    "https://huggingface.co/api/models/org%2Fname%20with%20spaces/tree/main?recursive=1&expand=1",
+  );
+});
 
 describe("hf.hfEnabled", () => {
   test("default / unset -> true", () => {
