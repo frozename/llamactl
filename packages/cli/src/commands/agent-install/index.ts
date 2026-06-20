@@ -254,6 +254,11 @@ function applyInstallKeyValueFlag(
     case "--env":
       return applyEnvFlag(v, state);
     case "--label":
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(v)) {
+        return {
+          error: `agent install-launchd: invalid --label "${v}" (use alphanumeric, dots, hyphens, underscores only; no path separators)`,
+        };
+      }
       state.label = v;
       return null;
     case "--repo":
