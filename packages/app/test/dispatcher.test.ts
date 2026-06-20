@@ -24,7 +24,10 @@ function fetchInputLabel(input: Parameters<PinnedFetch>[0]): string {
 
 beforeAll(async () => {
   cluster = await makeCluster({ nodes: [{ name: "remote1" }] });
-}, 60_000);
+  // Cluster startup does real TLS cert generation + an agent-server bind; on a
+  // loaded CI runner that occasionally exceeds 60s. A generous budget keeps the
+  // one-time setup off the per-test clock without masking a real hang.
+}, 120_000);
 
 afterAll(async () => {
   await cluster?.cleanup();
