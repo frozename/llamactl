@@ -113,10 +113,6 @@ export const codeHumanevalWorkload: WorkloadEval = {
     const program = buildProgram(code, r.test, r.entry_point);
     const result = await runCandidate(program);
 
-    if (result.status === "error") {
-      throw new Error(`code-humaneval sandbox error: ${result.detail ?? "unknown"}`);
-    }
-
     return {
       prediction: result.status,
       gold: "pass",

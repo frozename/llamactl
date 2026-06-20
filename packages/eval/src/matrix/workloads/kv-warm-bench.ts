@@ -349,11 +349,7 @@ export function readKvCountersFromRegistry(dataRoot: string): KvWarmBenchCounter
     const warm = db.query("SELECT COALESCE(SUM(hits), 0) AS n FROM kv_entries").get() as {
       n: number;
     } | null;
-    const cold = db
-      .query(
-        "SELECT COALESCE(SUM(CASE WHEN reason='cold' THEN 1 ELSE 0 END), 0) AS n FROM kv_entries",
-      )
-      .get() as { n: number } | null;
+    const cold = db.query("SELECT COUNT(*) AS n FROM kv_entries").get() as { n: number } | null;
     return {
       kv_warm_hit_total: warm?.n ?? 0,
       kv_cold_miss_total: cold?.n ?? 0,
@@ -365,13 +361,17 @@ export function readKvCountersFromRegistry(dataRoot: string): KvWarmBenchCounter
   }
 }
 
-export async function runKvWarmBench(args: KvWarmBenchArgs): Promise<{
+export async function runKvWarmBench(
+  args: KvWarmBenchArgs,
+  opts?: { counterReader?: (dataRoot: string) => KvWarmBenchCounterSnapshot },
+): Promise<{
   rows: KvWarmBenchRow[];
   markdown: string;
   csv: string;
   outputPath: string;
 }> {
   const normalized = normalizeArgs(args);
+  const readCounters = opts?.counterReader ?? readKvCountersFromRegistry;
   const rows: KvWarmBenchRow[] = [];
   const tokenize = await createTokenizeClient({
     proxyBaseUrl: normalized.proxyBaseUrl,
@@ -379,6 +379,8 @@ export async function runKvWarmBench(args: KvWarmBenchArgs): Promise<{
   });
 
   for (const frontier of normalized.frontiers) {
+    const snapshotBefore = readCounters(normalized.dataRoot);
+
     const prompt = tokenize
       ? await buildFrontierPrompt({
           frontierTokens: frontier,
@@ -407,7 +409,7 @@ export async function runKvWarmBench(args: KvWarmBenchArgs): Promise<{
       warms.push(warm.completeMs);
     }
 
-    const counters = readKvCountersFromRegistry(normalized.dataRoot);
+    const snapshotAfter = readCounters(normalized.dataRoot);
     const tWarmMinMs = warms.length > 0 ? Math.min(...warms) : 0;
     const tWarmP50Ms = percentile(warms, 50);
     const tWarmP95Ms = percentile(warms, 95);
@@ -420,9 +422,9 @@ export async function runKvWarmBench(args: KvWarmBenchArgs): Promise<{
       tWarmP50Ms,
       tWarmP95Ms,
       ratioColdOverWarm: tWarmP50Ms > 0 ? cold.completeMs / tWarmP50Ms : 0,
-      kvWarmHitTotal: counters.kv_warm_hit_total,
-      kvColdMissTotal: counters.kv_cold_miss_total,
-      kvFalseHitTotal: counters.kv_false_hit_total,
+      kvWarmHitTotal: snapshotAfter.kv_warm_hit_total - snapshotBefore.kv_warm_hit_total,
+      kvColdMissTotal: snapshotAfter.kv_cold_miss_total - snapshotBefore.kv_cold_miss_total,
+      kvFalseHitTotal: snapshotAfter.kv_false_hit_total - snapshotBefore.kv_false_hit_total,
     });
   }
 

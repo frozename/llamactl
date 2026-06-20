@@ -1,12 +1,19 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   buildDeterministicPrompt,
   buildFrontierPrompt,
   createTokenizeClient,
   formatKvWarmBenchCsvRow,
+  type KvWarmBenchCounterSnapshot,
   type KvWarmBenchRow,
+  readKvCountersFromRegistry,
   renderKvWarmBenchMarkdown,
+  runKvWarmBench,
 } from "../src/matrix/workloads/kv-warm-bench.js";
 
 describe("buildDeterministicPrompt", () => {
@@ -148,5 +155,87 @@ describe("renderKvWarmBenchMarkdown", () => {
     expect(md).toContain(
       "- [ ] False-hit rate (`kv_false_hit_total / kv_warm_hit_total`) ≤ 1% → no equivalence work needed",
     );
+  });
+});
+
+describe("readKvCountersFromRegistry", () => {
+  test("cold-miss count includes entries whose reason was updated from 'cold'", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "kv-cold-miss-test-"));
+    try {
+      mkdirSync(join(tmp, "kvstore"), { recursive: true });
+      const db = new Database(join(tmp, "kvstore", "registry.db"));
+      db.run(
+        "CREATE TABLE kv_entries (sha TEXT PRIMARY KEY, hits INTEGER NOT NULL DEFAULT 0, reason TEXT NOT NULL DEFAULT 'cold')",
+      );
+      // Entry 1: still reason='cold' (never re-saved)
+      db.run("INSERT INTO kv_entries (sha, hits, reason) VALUES ('sha1', 0, 'cold')");
+      // Entry 2: originally a cold miss, but reason was later updated to 'evict'
+      db.run("INSERT INTO kv_entries (sha, hits, reason) VALUES ('sha2', 3, 'evict')");
+      db.close();
+
+      const counters = readKvCountersFromRegistry(tmp);
+      // Both entries represent cold-miss events; only counting reason='cold' misses one
+      expect(counters.kv_cold_miss_total).toBe(2);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runKvWarmBench counter deltas", () => {
+  test("each frontier row shows its own counter delta, not the cumulative total", async () => {
+    const origFetch = globalThis.fetch;
+    const outDir = mkdtempSync(join(tmpdir(), "kv-warm-bench-out-"));
+
+    try {
+      globalThis.fetch = ((input: Request | string | URL) => {
+        const url =
+          typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+        if (url.endsWith("/v1/tokenize")) {
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }
+        return Promise.resolve(
+          new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+        );
+      }) as unknown as typeof fetch;
+
+      // Four snapshots: before-f1, after-f1, before-f2, after-f2
+      const snapshots: KvWarmBenchCounterSnapshot[] = [
+        { kv_warm_hit_total: 5, kv_cold_miss_total: 1, kv_false_hit_total: 0 },
+        { kv_warm_hit_total: 8, kv_cold_miss_total: 2, kv_false_hit_total: 0 },
+        { kv_warm_hit_total: 8, kv_cold_miss_total: 2, kv_false_hit_total: 0 },
+        { kv_warm_hit_total: 10, kv_cold_miss_total: 3, kv_false_hit_total: 0 },
+      ];
+      let callIndex = 0;
+      const counterReader = (_dataRoot: string): KvWarmBenchCounterSnapshot =>
+        // snapshots always has 4 entries; callIndex stays in range for this test
+        snapshots[callIndex++]!;
+
+      const result = await runKvWarmBench(
+        {
+          model: "test-model",
+          frontiers: [64, 128],
+          warmRuns: 1,
+          dataRoot: "/tmp/noop",
+          outPath: join(outDir, "out.md"),
+        },
+        { counterReader },
+      );
+
+      const row0 = result.rows[0];
+      const row1 = result.rows[1];
+      if (!row0 || !row1) throw new Error("expected 2 rows");
+
+      // Frontier 1 delta: snapshots[1] - snapshots[0] = {3, 1, 0}
+      expect(row0.kvWarmHitTotal).toBe(3);
+      expect(row0.kvColdMissTotal).toBe(1);
+
+      // Frontier 2 delta: snapshots[3] - snapshots[2] = {2, 1, 0}
+      expect(row1.kvWarmHitTotal).toBe(2);
+      expect(row1.kvColdMissTotal).toBe(1);
+    } finally {
+      globalThis.fetch = origFetch;
+      rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });
