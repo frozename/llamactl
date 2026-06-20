@@ -45,10 +45,77 @@ export class InvalidEndpointError extends Error {
   }
 }
 
+function parseIPv4Octets(host: string): [number, number, number, number] | null {
+  const parts = host.split(".");
+  if (parts.length !== 4) return null;
+  const octets = parts.map(Number);
+  if (octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) return null;
+  return octets as [number, number, number, number];
+}
+
+function isPrivateOrLoopbackIPv4([a, b]: [number, number, number, number]): boolean {
+  return (
+    a === 127 || // loopback 127.0.0.0/8
+    a === 10 || // RFC1918 10.0.0.0/8
+    (a === 192 && b === 168) || // RFC1918 192.168.0.0/16
+    (a === 172 && b >= 16 && b <= 31) // RFC1918 172.16.0.0/12
+  );
+}
+
+function ssrfError(host: string): InvalidEndpointError {
+  return new InvalidEndpointError(
+    `host ${host} not in loopback/RFC1918/.local/.lan — pass allowPublicEndpoints to override`,
+  );
+}
+
+// Validates an IPv4 literal against link-local and (unless allowPublic) private ranges.
+// Numeric checks prevent DNS hostnames like 10.0.0.1.evil.com from bypassing the allowlist.
+function assertIPv4Allowed(
+  host: string,
+  octets: [number, number, number, number],
+  allowPublic: boolean,
+): void {
+  if (octets[0] === 169 && octets[1] === 254) {
+    throw new InvalidEndpointError(
+      `link-local host ${host} not allowed (likely metadata endpoint)`,
+    );
+  }
+  if (!allowPublic && !isPrivateOrLoopbackIPv4(octets)) {
+    throw ssrfError(host);
+  }
+}
+
+function assertIPv6Allowed(host: string, allowPublic: boolean): void {
+  if (host.startsWith("fe80:") || host.startsWith("[fe80:")) {
+    throw new InvalidEndpointError(`link-local IPv6 host ${host} not allowed`);
+  }
+  if (!allowPublic && host !== "::1" && host !== "[::1]") {
+    throw ssrfError(host);
+  }
+}
+
+function assertDnsAllowed(host: string, allowPublic: boolean): void {
+  if (allowPublic) return;
+  const loopback = host === "localhost" || host.endsWith(".localhost");
+  const localDomain =
+    host.endsWith(".local") ||
+    host.endsWith(".lan") ||
+    host.endsWith(".home") ||
+    host.endsWith(".internal");
+  if (!loopback && !localDomain) {
+    throw ssrfError(host);
+  }
+}
+
 /**
  * Validates an endpoint URL for SSRF safety. Rejects non-http(s) schemes,
  * link-local (169.254.0.0/16, fe80::/10), unspecified (0.0.0.0, ::),
  * and (unless allowPublic) non-loopback non-private hosts.
+ *
+ * IP literal hosts are validated numerically against actual address ranges.
+ * DNS hostnames are only allowed when they match explicit local forms
+ * (localhost, *.localhost, *.local, *.lan, *.home, *.internal) — a hostname
+ * that merely starts with '10.' or '192.168.' is not admitted.
  */
 export function validateProbeEndpoint(endpoint: string, allowPublic = false): void {
   let url: URL;
@@ -64,36 +131,13 @@ export function validateProbeEndpoint(endpoint: string, allowPublic = false): vo
   if (host === "0.0.0.0" || host === "::" || host === "[::]") {
     throw new InvalidEndpointError(`unspecified host ${host} not allowed`);
   }
-  // Link-local IPv4
-  if (host.startsWith("169.254.")) {
-    throw new InvalidEndpointError(
-      `link-local host ${host} not allowed (likely metadata endpoint)`,
-    );
-  }
-  // Link-local IPv6
-  if (host.startsWith("fe80:") || host.startsWith("[fe80:")) {
-    throw new InvalidEndpointError(`link-local IPv6 host ${host} not allowed`);
-  }
-  if (allowPublic) return;
-  const loopback =
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "[::1]" ||
-    host === "::1" ||
-    host.endsWith(".localhost");
-  const privateIPv4 =
-    host.startsWith("10.") ||
-    host.startsWith("192.168.") ||
-    /^172\.(?:1[6-9]|2[0-9]|3[01])\./.test(host);
-  const localDomain =
-    host.endsWith(".local") ||
-    host.endsWith(".lan") ||
-    host.endsWith(".home") ||
-    host.endsWith(".internal");
-  if (!loopback && !privateIPv4 && !localDomain) {
-    throw new InvalidEndpointError(
-      `host ${host} not in loopback/RFC1918/.local/.lan — pass allowPublicEndpoints to override`,
-    );
+  const ipv4Octets = parseIPv4Octets(host);
+  if (ipv4Octets) {
+    assertIPv4Allowed(host, ipv4Octets, allowPublic);
+  } else if (host.includes(":") || host.startsWith("[")) {
+    assertIPv6Allowed(host, allowPublic);
+  } else {
+    assertDnsAllowed(host, allowPublic);
   }
 }
 

@@ -71,6 +71,29 @@ describe("validateProbeEndpoint", () => {
       validateProbeEndpoint("http://example.com", true);
     }).not.toThrow();
   });
+
+  it("rejects hostnames that start with RFC1918 prefix but are DNS names (SSRF bypass)", () => {
+    // String-prefix match on '10.' wrongly admits 10.0.0.1.evil.com
+    expect(() => {
+      validateProbeEndpoint("http://10.0.0.1.evil.com/");
+    }).toThrow(InvalidEndpointError);
+    // String-prefix match on '192.168.' wrongly admits 192.168.1.attacker.net
+    expect(() => {
+      validateProbeEndpoint("http://192.168.1.attacker.net/");
+    }).toThrow(InvalidEndpointError);
+  });
+
+  it("still accepts real RFC1918 IP literals after hostname-prefix fix", () => {
+    expect(() => {
+      validateProbeEndpoint("http://10.1.2.3/");
+    }).not.toThrow();
+    expect(() => {
+      validateProbeEndpoint("http://192.168.0.1/");
+    }).not.toThrow();
+    expect(() => {
+      validateProbeEndpoint("http://172.20.0.1/");
+    }).not.toThrow();
+  });
 });
 
 describe("redactEndpoint", () => {
