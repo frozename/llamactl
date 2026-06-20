@@ -421,6 +421,23 @@ describe("handleRagChatCompletions — validation", () => {
     expect(body.error.message).toContain("invalid JSON");
   });
 
+  test("non-object JSON body → 400", async () => {
+    const cases = [null, 42, "not an object", []];
+    for (const value of cases) {
+      const caller = makeStubCaller();
+      const res = await handleRagChatCompletions(makeRequest(value), {
+        appRouter,
+        caller,
+        log: () => undefined,
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { message: string } };
+      expect(body.error.message).toContain("invalid request body");
+      expect(caller.ragCalls).toHaveLength(0);
+      expect(caller.chatCalls).toHaveLength(0);
+    }
+  });
+
   test("rag.node missing → 400", async () => {
     const caller = makeStubCaller();
     const res = await handleRagChatCompletions(

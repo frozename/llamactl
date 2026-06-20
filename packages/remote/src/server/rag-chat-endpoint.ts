@@ -518,7 +518,18 @@ async function readJsonBody(
     };
   }
   try {
-    return { ok: true, bodyText, body: JSON.parse(bodyText) as RagChatRequestBody };
+    const body = JSON.parse(bodyText) as unknown;
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return {
+        ok: false,
+        response: jsonError(
+          400,
+          "invalid request body: expected a JSON object",
+          "invalid_request_error",
+        ),
+      };
+    }
+    return { ok: true, bodyText, body: body as RagChatRequestBody };
   } catch (err) {
     return {
       ok: false,
