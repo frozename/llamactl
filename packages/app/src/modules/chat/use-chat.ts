@@ -42,7 +42,9 @@ function handleStreamChunk(id: string, isB: boolean, store: ChatStore, chunk: St
   if (!delta?.content) return;
   const piece = delta.content;
 
-  const conv = store.conversations[id];
+  // store.conversations is a render snapshot; getState() reads the live state so concurrent
+  // chunks before a re-render don't compute content from a stale baseline.
+  const conv = useChatStore.getState().conversations[id];
   if (!conv) return;
 
   const msgs = isB ? conv.messagesB : conv.messages;
