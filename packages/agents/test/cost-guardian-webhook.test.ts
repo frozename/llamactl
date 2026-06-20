@@ -1110,4 +1110,97 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
     expect(dry.ok).toBe(false);
     expect(entries.some((e) => e.action === "force-private-wet")).toBe(false);
   });
+
+  test("protectedProviders case-insensitive: ['OpenAI'] must protect provider key 'openai'", async () => {
+    const calls: ToolCallInput[] = [];
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        calls.push(input);
+        if (input.name === "nova.ops.cost.snapshot") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 9.8,
+                  windowSince: "x",
+                  windowUntil: "y",
+                  byProvider: [{ key: "openai", estimatedCostUsd: 9.7 }],
+                }),
+              },
+            ],
+          };
+        }
+        if (input.name === "llamactl.embersynth.set-default-profile") {
+          return makeForcePrivateResponse();
+        }
+        if (input.name === "sirius.providers.deregister") {
+          return makeDeregisterResponse({ mode: input.arguments?.dryRun ? "dry-run" : "wet" });
+        }
+        throw new Error(`unexpected: ${input.name}`);
+      },
+    };
+    const journalPath = join(dir, "cg-case.jsonl");
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig({ auto_deregister: true, protectedProviders: ["OpenAI"] }),
+      journalPath,
+      disableWebhook: true,
+    });
+    const deregisterCalls = calls.filter((c) => c.name === "sirius.providers.deregister");
+    // Only the dry-run — wet-run must be refused because "OpenAI" matches "openai".
+    expect(deregisterCalls).toHaveLength(1);
+    expect(deregisterCalls[0]!.arguments).toEqual({ name: "openai", dryRun: true });
+    const entries = readJournal(journalPath);
+    const refused = entries.find((e) => e.action === "deregister-refused");
+    expect(refused).toBeDefined();
+    const refusedDetail = refused!.detail as { reason: string; provider: string };
+    expect(refusedDetail.reason).toBe("provider-protected");
+    expect(refusedDetail.provider).toBe("openai");
+    expect(entries.some((e) => e.action === "deregister-wet")).toBe(false);
+  });
+
+  test("protectedProviders whitespace-insensitive: [' openai '] must protect provider key 'openai'", async () => {
+    const calls: ToolCallInput[] = [];
+    const tools: RunbookToolClient = {
+      async callTool(input) {
+        calls.push(input);
+        if (input.name === "nova.ops.cost.snapshot") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  totalEstimatedCostUsd: 9.8,
+                  windowSince: "x",
+                  windowUntil: "y",
+                  byProvider: [{ key: "openai", estimatedCostUsd: 9.7 }],
+                }),
+              },
+            ],
+          };
+        }
+        if (input.name === "llamactl.embersynth.set-default-profile") {
+          return makeForcePrivateResponse();
+        }
+        if (input.name === "sirius.providers.deregister") {
+          return makeDeregisterResponse({ mode: input.arguments?.dryRun ? "dry-run" : "wet" });
+        }
+        throw new Error(`unexpected: ${input.name}`);
+      },
+    };
+    const journalPath = join(dir, "cg-ws.jsonl");
+    await runCostGuardianTick({
+      tools,
+      config: makeConfig({ auto_deregister: true, protectedProviders: [" openai "] }),
+      journalPath,
+      disableWebhook: true,
+    });
+    const deregisterCalls = calls.filter((c) => c.name === "sirius.providers.deregister");
+    expect(deregisterCalls).toHaveLength(1);
+    expect(deregisterCalls[0]!.arguments).toEqual({ name: "openai", dryRun: true });
+    const entries = readJournal(journalPath);
+    expect(entries.find((e) => e.action === "deregister-refused")).toBeDefined();
+    expect(entries.some((e) => e.action === "deregister-wet")).toBe(false);
+  });
 });
