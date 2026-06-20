@@ -57,7 +57,16 @@ async function mountInProcess(
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   const client = new Client({ name: clientName, version: "0.0.0" });
-  await client.connect(clientTransport);
+  try {
+    await client.connect(clientTransport);
+  } catch (err) {
+    try {
+      await server.close();
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  }
   return {
     client,
     close: async (): Promise<void> => {
@@ -124,10 +133,16 @@ async function defaultToolClient(): Promise<DefaultToolClientHandle> {
     buildMcpServer({ name: "llamactl-runbook-harness" }),
     "llamactl-runbook-harness",
   );
-  const nova = await mountInProcess(
-    buildNovaMcpServer({ name: "nova-runbook-harness" }),
-    "nova-runbook-harness",
-  );
+  let nova: MountedServer;
+  try {
+    nova = await mountInProcess(
+      buildNovaMcpServer({ name: "nova-runbook-harness" }),
+      "nova-runbook-harness",
+    );
+  } catch (err) {
+    await llamactl.close();
+    throw err;
+  }
   const client: RunbookToolClient = {
     async callTool(input: ToolCallInput) {
       const target = input.name.startsWith("nova.") ? nova.client : llamactl.client;
