@@ -190,6 +190,16 @@ describe("env.formatEvalScript", () => {
     const script = formatEvalScript(resolved);
     expect(script).toContain(`export LLAMA_CPP_SERVER_ALIAS='name with '\\''quotes'\\'''`);
   });
+
+  test("quotes LLAMA_CPP_BIN inside the PATH guard case pattern", () => {
+    const resolved = resolveEnv({
+      DEV_STORAGE: "/tmp/ds",
+      LLAMA_CPP_MACHINE_PROFILE: "macbook-pro-48g",
+      LLAMA_CPP_BIN: "/tmp/bin with spaces/[]",
+    });
+    const script = formatEvalScript(resolved);
+    expect(script).toContain("case \":$PATH:\" in *:'/tmp/bin with spaces/[]':*)");
+  });
 });
 
 describe("env.resolveEnv — process.env seed shape", () => {

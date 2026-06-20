@@ -7,6 +7,13 @@ import { appendLine } from "./fsAtomic.js";
 import { fetchModelInfo } from "./hf.js";
 import { quantFromRel } from "./quant.js";
 
+const VALID_CLASSES = new Set<CuratedModel["class"]>([
+  "multimodal",
+  "reasoning",
+  "general",
+  "custom",
+]);
+
 export interface AddCuratedInput {
   repo: string;
   /** Either a bare GGUF filename or a rel path (`<dir>/<file>`). */
@@ -57,6 +64,12 @@ async function resolveClass(repo: string, provided: string | undefined): Promise
   return classifyRepo(repo, pipeline, tags);
 }
 
+function validateClass(value: string): CuratedModel["class"] | null {
+  return VALID_CLASSES.has(value as CuratedModel["class"])
+    ? (value as CuratedModel["class"])
+    : null;
+}
+
 function nonEmptyOr(value: string | undefined, fallback: string): string {
   return value && value.length > 0 ? value : fallback;
 }
@@ -95,11 +108,18 @@ export async function addCurated(input: AddCuratedInput): Promise<AddCuratedResu
   const label = nonEmptyOr(input.label, fileBasename.replace(/\.gguf$/i, ""));
   const family = nonEmptyOr(input.family, deriveFamily(repo));
   const klass = await resolveClass(repo, input.class);
+  const validatedClass = validateClass(klass);
+  if (validatedClass === null) {
+    return {
+      ok: false,
+      error: `invalid class '${klass}'`,
+    };
+  }
   const scope = nonEmptyOr(input.scope, "candidate");
   const id = deriveEntryId(repoBase, rel);
   const format = /\.gguf$/i.test(fileBasename) ? "gguf" : "mlx";
 
-  const fields = { id, label, family, class: klass, scope, rel, repo, format };
+  const fields = { id, label, family, class: validatedClass, scope, rel, repo, format };
   const illegalField = findIllegalField(fields);
   if (illegalField !== null) {
     return {
@@ -110,12 +130,12 @@ export async function addCurated(input: AddCuratedInput): Promise<AddCuratedResu
 
   const resolved = resolveEnv();
   const file = resolved.LOCAL_AI_CUSTOM_CATALOG_FILE;
-  appendLine(file, [id, label, family, klass, scope, rel, repo, format].join("\t"));
+  appendLine(file, [id, label, family, validatedClass, scope, rel, repo, format].join("\t"));
 
   const entry: CuratedModel = {
     ...fields,
-    class: klass as CuratedModel["class"],
-    format: format,
+    class: validatedClass,
+    format,
   };
 
   // `findByRel` reads the catalog each call so subsequent writers in the
