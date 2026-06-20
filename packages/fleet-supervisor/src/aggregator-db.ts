@@ -49,7 +49,7 @@ export function writeSnapshot(db: Database, node: string, snapshot: FleetSnapsho
   });
 }
 
-export function getLatestPerNode(db: Database): SnapshotRow[] {
+export function getLatestPerNode(db: Database, opts?: { freshAfterTs?: string }): SnapshotRow[] {
   ensureSchema(db);
   const rows = db
     .query(
@@ -65,11 +65,16 @@ export function getLatestPerNode(db: Database): SnapshotRow[] {
     `,
     )
     .all() as { node: string; ts: string; snapshot_json: string }[];
-  return rows.map((row) => ({
+  const mapped = rows.map((row) => ({
     node: row.node,
     ts: row.ts,
     snapshot: JSON.parse(row.snapshot_json) as FleetSnapshotEntry,
   }));
+  const { freshAfterTs } = opts ?? {};
+  if (freshAfterTs !== undefined) {
+    return mapped.filter((row) => row.ts >= freshAfterTs);
+  }
+  return mapped;
 }
 
 export function getHistoricalForNode(

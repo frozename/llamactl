@@ -178,6 +178,8 @@ export interface ApplyManifestOptions {
     journalPath?: string;
     headroomMinMb?: number;
     modelFilePenaltyMb?: number;
+    /** Nodes whose latest snapshot is older than this many ms are excluded. Default 150000 (5× 30s tick). staleCutoffMs <= 0 disables filtering. */
+    staleCutoffMs?: number;
   };
 }
 
@@ -187,6 +189,7 @@ interface PlacementContext {
   journalPath: string;
   headroomMinMb: number;
   modelFilePenaltyMb: number;
+  staleCutoffMs?: number;
 }
 
 function shouldAutoPlace(manifest: ModelRun): boolean {
@@ -199,7 +202,12 @@ function runPlacement(
   let db;
   try {
     db = openAggregatorDb(context.dbPath);
-    const rows = getLatestPerNode(db);
+    // staleCutoffMs <= 0 disables filtering (callers that need all nodes, e.g. debug paths).
+    // Default 150000ms = 5× the 30s supervisor tick — keeps stale snapshots out of placement.
+    const effectiveCutoffMs = context.staleCutoffMs ?? 150_000;
+    const freshAfterTs =
+      effectiveCutoffMs > 0 ? new Date(Date.now() - effectiveCutoffMs).toISOString() : undefined;
+    const rows = getLatestPerNode(db, freshAfterTs !== undefined ? { freshAfterTs } : undefined);
     const scores = scoreNodes(rows, {
       workload: context.manifest.metadata.name,
       targetModel: context.manifest.spec.target.value,
@@ -1214,6 +1222,7 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
       journalPath: opts.placement?.journalPath ?? defaultFleetJournalPath(),
       headroomMinMb: opts.placement?.headroomMinMb ?? 512,
       modelFilePenaltyMb: opts.placement?.modelFilePenaltyMb ?? 128,
+      staleCutoffMs: opts.placement?.staleCutoffMs,
     });
     if (!placement.ok) return { ok: false, error: placement.error };
     manifest = placement.manifest;

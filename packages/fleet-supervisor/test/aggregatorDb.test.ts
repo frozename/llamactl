@@ -92,4 +92,47 @@ describe("aggregator db", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("getLatestPerNode with freshAfterTs excludes rows older than the cutoff", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
+    const dbPath = join(dir, "cluster.db");
+    try {
+      const db = openAggregatorDb(dbPath);
+      writeSnapshot(db, "stale", snapshot("stale", "2026-01-01T00:00:00Z", 1000));
+      writeSnapshot(db, "fresh", snapshot("fresh", "2026-01-01T01:00:00Z", 2000));
+      const rows = getLatestPerNode(db, { freshAfterTs: "2026-01-01T00:30:00Z" });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.node).toBe("fresh");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("getLatestPerNode with freshAfterTs includes rows at or after the cutoff", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
+    const dbPath = join(dir, "cluster.db");
+    try {
+      const db = openAggregatorDb(dbPath);
+      writeSnapshot(db, "node-a", snapshot("node-a", "2026-01-01T01:00:00Z", 1000));
+      const rows = getLatestPerNode(db, { freshAfterTs: "2026-01-01T01:00:00Z" });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.node).toBe("node-a");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("getLatestPerNode without opts returns all latest rows (backward-compat)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
+    const dbPath = join(dir, "cluster.db");
+    try {
+      const db = openAggregatorDb(dbPath);
+      writeSnapshot(db, "stale", snapshot("stale", "2020-01-01T00:00:00Z", 1000));
+      writeSnapshot(db, "fresh", snapshot("fresh", "2026-01-01T01:00:00Z", 2000));
+      const rows = getLatestPerNode(db);
+      expect(rows).toHaveLength(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

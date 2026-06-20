@@ -818,10 +818,11 @@ describe("applyManifest — kind dispatch", () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelrun-placement-"));
     const dbPath = join(tmp, "cluster.db");
     const journalPath = join(tmp, "fleet-placement-journal.jsonl");
-    writeClusterSnapshot(dbPath, "node-a", "2026-05-25T00:00:00Z", 7000, [
+    const now = Date.now();
+    writeClusterSnapshot(dbPath, "node-a", new Date(now - 20_000).toISOString(), 7000, [
       { name: "alpha", models: [] },
     ]);
-    writeClusterSnapshot(dbPath, "node-b", "2026-05-25T00:00:10Z", 12000, [
+    writeClusterSnapshot(dbPath, "node-b", new Date(now - 10_000).toISOString(), 12000, [
       { name: "beta", models: ["qwen3.6-35b-MTP-Q4_0-Q6_K.gguf"] },
     ]);
 
@@ -924,7 +925,7 @@ describe("applyManifest — kind dispatch", () => {
   test("no viable placement returns error before apply", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelrun-placement-none-"));
     const dbPath = join(tmp, "cluster.db");
-    writeClusterSnapshot(dbPath, "node-a", "2026-05-25T00:00:00Z", 200, [
+    writeClusterSnapshot(dbPath, "node-a", new Date(Date.now() - 10_000).toISOString(), 200, [
       { name: "alpha", models: [] },
     ]);
 
