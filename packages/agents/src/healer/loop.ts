@@ -121,6 +121,23 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
     writeJournal(entry, journalPath);
   };
 
+  const writeTickError = (err: unknown): void => {
+    const message = err instanceof Error ? err.message : String(err);
+    try {
+      writeEntry({
+        kind: "error",
+        ts: new Date((opts.now ?? Date.now)()).toISOString(),
+        message,
+      });
+    } catch {
+      try {
+        process.stderr.write(`healer: failed to write tick error journal entry: ${message}\n`);
+      } catch {
+        // Best-effort only.
+      }
+    }
+  };
+
   const journalProbeError = (err: unknown): void => {
     writeEntry({
       kind: "error",
@@ -169,7 +186,13 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
     for (;;) {
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Mutated through the returned handle between awaited ticks.
       if (stopped) return;
-      const outcome = await runTick();
+      let outcome: "stop" | "continue";
+      try {
+        outcome = await runTick();
+      } catch (err) {
+        writeTickError(err);
+        outcome = opts.once ? "stop" : "continue";
+      }
       if (outcome === "stop") return;
       await sleep(intervalMs);
     }
