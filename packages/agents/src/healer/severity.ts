@@ -86,11 +86,9 @@ const TIER_3_SUFFIXES = [".remove", ".delete", ".drain", ".deregister", ".destro
  *      tool like `foo.remove` never slips into tier 2.
  *   3. Mutation suffixes (tier 2).
  *   4. Read suffixes (tier 1).
- *   5. Unknown → 2 (conservative — assume mutation, which also lines
- *      up with the harness's `inferTier` fallback via `'read'` being
- *      treated as the safe default there but upgraded to "assume
- *      mutation" here since the healer gate must be stricter than the
- *      planner allowlist).
+ *   5. Unknown → 3 (fail-closed — unknown verbs default to the most
+ *      restrictive tier so the gate refuses auto-execution for any
+ *      tool name the classifier has not explicitly mapped).
  */
 export function tierOf(toolName: string): Tier {
   const runbookTier = RUNBOOK_TIERS[toolName];
@@ -108,7 +106,7 @@ export function tierOf(toolName: string): Tier {
   for (const suffix of TIER_1_SUFFIXES) {
     if (toolName.includes(suffix)) return 1;
   }
-  return 2;
+  return 3;
 }
 
 /** Minimal PlanStep shape the severity gate consumes. Matches the

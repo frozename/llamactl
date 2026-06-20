@@ -50,6 +50,9 @@ export interface HealerLoopOptions extends Omit<ProbeFleetOptions, "fetch" | "no
   /** Inject fetch / clock for tests. */
   fetch?: typeof globalThis.fetch;
   now?: () => number;
+  /** Inject sleep for tests. The clamped intervalMs is passed through.
+   *  When omitted, production defaults to real setTimeout-based sleep. */
+  sleep?: (ms: number) => Promise<void>;
   /** Injectable journal writer — tests assert against the entries it
    *  receives instead of touching disk. */
   writeJournal?: (entry: JournalEntry, path: string) => void;
@@ -88,8 +91,12 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
   const intervalMs = Math.max(1000, opts.intervalMs ?? 30_000);
   const mode: "propose" | "auto" = opts.mode ?? "propose";
   const severityThreshold: Tier = opts.severityThreshold ?? 2;
+  const sleepFn: (ms: number) => Promise<void> =
+    opts.sleep ??
+    ((ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   let stopped = false;
   let previous: ProbeReport | null = null;
+  const previousCompositeRemediation = new Map<string, boolean>();
 
   const runDirectProbe = (): Promise<ProbeReport> =>
     probeFleet({
@@ -176,6 +183,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
         severityThreshold,
         writeJournal: writeEntry,
         onProposal: opts.onProposal,
+        prevCompositeRemediation: previousCompositeRemediation,
       });
     }
 
@@ -194,7 +202,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
         outcome = opts.once ? "stop" : "continue";
       }
       if (outcome === "stop") return;
-      await sleep(intervalMs);
+      await sleepFn(intervalMs);
     }
   })();
 
@@ -204,10 +212,6 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
     },
     done,
   };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function journalTransitions(
@@ -242,6 +246,7 @@ async function runRemediations(opts: RemediateOptions): Promise<void> {
     severityThreshold: opts.severityThreshold,
     writeJournal: opts.writeJournal,
     onProposal: opts.onProposal,
+    prevRemediation: opts.prevCompositeRemediation,
   });
 }
 
@@ -264,6 +269,7 @@ interface RemediateOptions {
   severityThreshold: Tier;
   writeJournal: (entry: JournalEntry) => void;
   onProposal?: (entry: JournalProposalEntry) => void;
+  prevCompositeRemediation: Map<string, boolean>;
 }
 
 async function remediate(opts: RemediateOptions): Promise<void> {
@@ -360,6 +366,7 @@ interface RemediateCompositesOptions {
   severityThreshold: Tier;
   writeJournal: (entry: JournalEntry) => void;
   onProposal?: (entry: JournalProposalEntry) => void;
+  prevRemediation: Map<string, boolean>;
 }
 
 /**
@@ -412,63 +419,89 @@ async function remediateComposites(opts: RemediateCompositesOptions): Promise<vo
     return;
   }
 
+  const seenThisTick = new Set<string>();
   for (const summary of composites) {
-    if (!shouldRemediateComposite(summary)) continue;
-    const snapshot: JournalTransitionSnapshot = {
-      name: summary.name,
-      resourceKind: "composite",
-      // `from` isn't tracked across ticks for composites yet — the
-      // loop doesn't maintain a prev-phase cache the way it does for
-      // gateway/provider probes. Using the current phase on both
-      // sides keeps the snapshot honest (no synthetic transition) and
-      // still threads into the existing JournalTransitionSnapshot
-      // shape so proposal entries stay uniform.
-      from: summary.phase,
-      to: summary.phase,
-    };
-    const plan = buildCompositeApplyPlan(summary);
-    const id = proposalId(plan);
-    const proposal: JournalProposalEntry = {
-      kind: "proposal",
-      ts: new Date().toISOString(),
-      transition: snapshot,
-      plan,
-      proposalId: id,
-      source: opts.source,
-    };
-    opts.writeJournal(proposal);
-    opts.onProposal?.(proposal);
-
-    if (opts.mode === "propose") continue;
-
-    // Severity gate — tier-2 by construction, so the default
-    // threshold (2) allows it and `--severity-threshold=1` refuses
-    // it. The `requiresConfirmation:false` flag on the plan means
-    // the planner-confirmation short-circuit in `gatePlan` doesn't
-    // trip here.
-    const gate = gatePlan(plan, opts.severityThreshold);
-    if (!gate.allowed) {
-      opts.writeJournal({
-        kind: "refused",
-        ts: new Date().toISOString(),
-        proposalId: id,
-        reason: "severity-exceeded",
-        refusedSteps: gate.refusedSteps,
-      });
-      continue;
-    }
-
-    const exec = await executePlan(plan, {
-      toolClient: opts.toolClient,
-      dryRun: false,
-    });
-    const executed = {
-      kind: "executed" as const,
-      ts: new Date().toISOString(),
-      proposalId: id,
-      steps: exec.steps,
-      ...(exec.stoppedAt !== undefined ? { stoppedAt: exec.stoppedAt } : {}),
-    };
-    opts.writeJournal(executed);
+    seenThisTick.add(summary.name);
+    const needsRemediation = shouldRemediateComposite(summary);
+    const wasRemediatable = opts.prevRemediation.get(summary.name) ?? false;
+    opts.prevRemediation.set(summary.name, needsRemediation);
+    // Transition-gate: only act on the first tick the composite enters
+    // a remediatable state, not on every subsequent tick it remains there.
+    if (!needsRemediation || wasRemediatable) continue;
+    await remediateOneComposite(summary, opts);
   }
+
+  // Expire map entries for composites absent from this tick so that
+  // a composite that disappears and re-appears degraded fires again.
+  expireAbsentComposites(seenThisTick, opts.prevRemediation);
+}
+
+function expireAbsentComposites(
+  seenThisTick: Set<string>,
+  prevRemediation: Map<string, boolean>,
+): void {
+  for (const name of [...prevRemediation.keys()]) {
+    if (!seenThisTick.has(name)) prevRemediation.delete(name);
+  }
+}
+
+async function remediateOneComposite(
+  summary: CompositeSummary,
+  opts: RemediateCompositesOptions,
+): Promise<void> {
+  const snapshot: JournalTransitionSnapshot = {
+    name: summary.name,
+    resourceKind: "composite",
+    // `from` isn't tracked across ticks for composites yet — the
+    // loop doesn't maintain a prev-phase cache the way it does for
+    // gateway/provider probes. Using the current phase on both
+    // sides keeps the snapshot honest (no synthetic transition) and
+    // still threads into the existing JournalTransitionSnapshot
+    // shape so proposal entries stay uniform.
+    from: summary.phase,
+    to: summary.phase,
+  };
+  const plan = buildCompositeApplyPlan(summary);
+  const id = proposalId(plan);
+  const proposal: JournalProposalEntry = {
+    kind: "proposal",
+    ts: new Date().toISOString(),
+    transition: snapshot,
+    plan,
+    proposalId: id,
+    source: opts.source,
+  };
+  opts.writeJournal(proposal);
+  opts.onProposal?.(proposal);
+
+  if (opts.mode === "propose") return;
+
+  // Severity gate — tier-2 by construction, so the default
+  // threshold (2) allows it and `--severity-threshold=1` refuses
+  // it. The `requiresConfirmation:false` flag on the plan means
+  // the planner-confirmation short-circuit in `gatePlan` doesn't
+  // trip here.
+  const gate = gatePlan(plan, opts.severityThreshold);
+  if (!gate.allowed) {
+    opts.writeJournal({
+      kind: "refused",
+      ts: new Date().toISOString(),
+      proposalId: id,
+      reason: "severity-exceeded",
+      refusedSteps: gate.refusedSteps,
+    });
+    return;
+  }
+
+  const exec = await executePlan(plan, {
+    toolClient: opts.toolClient,
+    dryRun: false,
+  });
+  opts.writeJournal({
+    kind: "executed" as const,
+    ts: new Date().toISOString(),
+    proposalId: id,
+    steps: exec.steps,
+    ...(exec.stoppedAt !== undefined ? { stoppedAt: exec.stoppedAt } : {}),
+  });
 }
