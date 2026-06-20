@@ -157,34 +157,38 @@ export function registerPipelineTools(
   const tools = discoverPipelineTools(opts);
   const registered: string[] = [];
   for (const tool of tools) {
-    server.registerTool(
-      tool.name,
-      {
-        title: tool.title,
-        description:
-          tool.description ||
-          `Multi-stage pipeline with ${String(tool.stages.length)} stage${tool.stages.length === 1 ? "" : "s"}.`,
-        inputSchema: {
-          input: z.string().min(1).describe("Initial user content."),
+    try {
+      server.registerTool(
+        tool.name,
+        {
+          title: tool.title,
+          description:
+            tool.description ||
+            `Multi-stage pipeline with ${String(tool.stages.length)} stage${tool.stages.length === 1 ? "" : "s"}.`,
+          inputSchema: {
+            input: z.string().min(1).describe("Initial user content."),
+          },
         },
-      },
-      async ({ input }) => {
-        try {
-          const result = await runPipeline(tool, input);
-          return toTextContent({
-            ok: true,
-            finalOutput: result.finalOutput,
-            stages: result.stages,
-          });
-        } catch (err) {
-          return toTextContent({
-            ok: false,
-            error: (err as Error).message,
-          });
-        }
-      },
-    );
-    registered.push(tool.name);
+        async ({ input }) => {
+          try {
+            const result = await runPipeline(tool, input);
+            return toTextContent({
+              ok: true,
+              finalOutput: result.finalOutput,
+              stages: result.stages,
+            });
+          } catch (err) {
+            return toTextContent({
+              ok: false,
+              error: (err as Error).message,
+            });
+          }
+        },
+      );
+      registered.push(tool.name);
+    } catch (err) {
+      opts?.onWarn?.(`pipeline-tool: skipped ${tool.name} — ${(err as Error).message}`);
+    }
   }
   return registered;
 }
