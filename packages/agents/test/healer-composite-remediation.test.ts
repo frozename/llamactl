@@ -395,6 +395,57 @@ describe("healer composite remediation — auto mode", () => {
   });
 });
 
+describe("healer composite remediation — transition gating", () => {
+  test("composite stays Degraded across 3 ticks — apply fires exactly once, not N times", async () => {
+    const { kubeconfigPath, siriusProvidersPath } = seedYamls();
+    const composites = [
+      manifestFixture("sky-persistent", "Degraded", [
+        { kind: "service", name: "chroma", state: "Failed" },
+      ]),
+    ];
+    let applyCalls = 0;
+    const { client } = makeMockClient(async (input) => {
+      if (input.name === "nova.ops.healthcheck") return HEALTHY_HEALTHCHECK;
+      if (input.name === "llamactl.composite.list") {
+        return envelope({ count: composites.length, composites });
+      }
+      if (input.name === "llamactl.composite.apply") {
+        applyCalls++;
+        return envelope({ ok: true });
+      }
+      throw new Error(`unexpected tool call: ${input.name}`);
+    });
+    const journaled: JournalEntry[] = [];
+    let tickCount = 0;
+    const callbackRef: { stop?: () => void } = {};
+    const handle = startHealerLoop({
+      kubeconfigPath,
+      siriusProvidersPath,
+      once: false,
+      sleep: (_ms) => Promise.resolve(),
+      toolClient: client,
+      mode: "auto",
+      severityThreshold: 2,
+      writeJournal: (e) => journaled.push(e),
+      onTick: () => {
+        tickCount++;
+        if (tickCount >= 3) callbackRef.stop?.();
+      },
+    });
+    callbackRef.stop = handle.stop.bind(handle);
+    await handle.done;
+
+    expect(tickCount).toBeGreaterThanOrEqual(3);
+    // Transition-gated: only the first tick (fresh → Degraded) should trigger apply.
+    expect(applyCalls).toBe(1);
+    const compositeProposals = journaled.filter(
+      (e): e is JournalProposalEntry =>
+        e.kind === "proposal" && e.transition.resourceKind === "composite",
+    );
+    expect(compositeProposals).toHaveLength(1);
+  });
+});
+
 describe("healer composite remediation — list failure", () => {
   test("throw from llamactl.composite.list is journaled as plan-failed + loop continues", async () => {
     const { kubeconfigPath, siriusProvidersPath } = seedYamls();

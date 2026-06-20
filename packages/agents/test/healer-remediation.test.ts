@@ -13,6 +13,7 @@ import {
   gatePlan,
   type JournalEntry,
   type JournalProposalEntry,
+  type JournalRefusedEntry,
   type PlanLike,
   proposalId,
   type RunbookToolClient,
@@ -159,8 +160,8 @@ describe("severity classifier", () => {
     expect(tierOf("cost-snapshot")).toBe(1);
   });
 
-  test("unknown tool falls back to tier 2 (mutation-conservative)", () => {
-    expect(tierOf("llamactl.mystery.action")).toBe(2);
+  test("unknown tool fails closed to tier 3 (no auto-execute)", () => {
+    expect(tierOf("llamactl.mystery.action")).toBe(3);
   });
 
   test("destructive suffix beats tier-2 heuristics", () => {
@@ -400,6 +401,39 @@ describe("startHealerLoop remediation — auto mode", () => {
       "planner-requires-confirmation",
     );
     expect(journaled.find((e) => e.kind === "executed")).toBeUndefined();
+  });
+
+  test("unknown-suffix tool refused at threshold-2 — fails closed to tier-3", async () => {
+    const { kubeconfigPath, siriusProvidersPath } = seedYamls();
+    const canned: PlanLike = {
+      steps: [{ tool: "llamactl.mystery.action", args: {}, annotation: "???" }],
+      reasoning: "unknown remediation",
+      requiresConfirmation: false,
+    };
+    const { client, calls } = makeMockClient(async (input) => {
+      if (input.name === "nova.ops.healthcheck") return UNHEALTHY_HEALTHCHECK;
+      if (input.name === "nova.operator.plan") return plannerResponse(canned);
+      throw new Error(`should not execute unknown tool: ${input.name}`);
+    });
+    const journaled: JournalEntry[] = [];
+    const handle = startHealerLoop({
+      kubeconfigPath,
+      siriusProvidersPath,
+      once: true,
+      toolClient: client,
+      mode: "auto",
+      severityThreshold: 2,
+      writeJournal: (e) => journaled.push(e),
+    });
+    await handle.done;
+
+    const refused = journaled.find((e): e is JournalRefusedEntry => e.kind === "refused");
+    expect(refused).toBeDefined();
+    expect(refused?.reason).toBe("destructive-requires-manual-approval");
+    expect(refused?.refusedSteps?.[0]?.tool).toBe("llamactl.mystery.action");
+    expect(refused?.refusedSteps?.[0]?.tier).toBe(3);
+    expect(journaled.find((e) => e.kind === "executed")).toBeUndefined();
+    expect(calls.map((c) => c.name)).not.toContain("llamactl.mystery.action");
   });
 
   test("planner returns ok:false → plan-failed journal entry, no execution", async () => {
