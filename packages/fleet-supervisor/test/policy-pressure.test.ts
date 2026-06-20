@@ -68,9 +68,9 @@ describe("detectPressure", () => {
     const result = detectPressure(window, THRESHOLDS);
     expect(result).not.toBeNull();
     expect(result!.level).toBe("HIGH");
-    expect(result!.proposal.action.type).toBe("evict");
-    if (result!.proposal.action.type === "evict") {
-      expect(result!.proposal.action.workload).toBe("gains-host-35b-local");
+    expect(result!.proposal!.action.type).toBe("evict");
+    if (result!.proposal!.action.type === "evict") {
+      expect(result!.proposal!.action.workload).toBe("gains-host-35b-local");
     }
   });
 
@@ -98,8 +98,8 @@ describe("detectPressure", () => {
     for (let i = 0; i < 3; i++) window.push(HIGH, tied);
     const result = detectPressure(window, THRESHOLDS);
     expect(result).not.toBeNull();
-    if (result!.proposal.action.type === "evict") {
-      expect(result!.proposal.action.workload).toBe("aaa");
+    if (result!.proposal!.action.type === "evict") {
+      expect(result!.proposal!.action.workload).toBe("aaa");
     }
   });
 
@@ -112,8 +112,8 @@ describe("detectPressure", () => {
     for (let i = 0; i < 3; i++) window.push(HIGH, mixed);
     const result = detectPressure(window, THRESHOLDS);
     expect(result).not.toBeNull();
-    if (result!.proposal.action.type === "evict") {
-      expect(result!.proposal.action.workload).toBe("sacrificial-small");
+    if (result!.proposal!.action.type === "evict") {
+      expect(result!.proposal!.action.workload).toBe("sacrificial-small");
     }
   });
 
@@ -126,9 +126,22 @@ describe("detectPressure", () => {
     for (let i = 0; i < 3; i++) window.push(HIGH, mixed);
     const result = detectPressure(window, THRESHOLDS);
     expect(result).not.toBeNull();
-    if (result!.proposal.action.type === "evict") {
-      expect(result!.proposal.action.workload).toBe("granite-3b-local");
+    if (result!.proposal!.action.type === "evict") {
+      expect(result!.proposal!.action.workload).toBe("granite-3b-local");
     }
+  });
+
+  it("all workloads unreachable: HIGH pressure detected, no evict proposal", () => {
+    const window = new PressureWindow(3);
+    const allUnreachable: WorkloadSnapshot[] = [
+      { ...WLS[0]!, reachable: false },
+      { ...WLS[1]!, reachable: false },
+    ];
+    for (let i = 0; i < 3; i++) window.push(HIGH, allUnreachable);
+    const result = detectPressure(window, THRESHOLDS);
+    expect(result).not.toBeNull();
+    expect(result!.level).toBe("HIGH");
+    expect(result!.proposal).toBeUndefined();
   });
 });
 

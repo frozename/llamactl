@@ -330,15 +330,17 @@ export function applyPressureTransition(
       to: "HIGH",
     };
     writeJournalEntry(transition);
-    const proposal: FleetProposalEntry = {
-      kind: "fleet-proposal",
-      ts,
-      node,
-      proposalId: `pressure-${node}-${ts}`,
-      transition: pressure.transition,
-      action: pressure.proposal.action,
-    };
-    writeJournalEntry(proposal);
+    if (pressure.proposal) {
+      const proposal: FleetProposalEntry = {
+        kind: "fleet-proposal",
+        ts,
+        node,
+        proposalId: `pressure-${node}-${ts}`,
+        transition: pressure.transition,
+        action: pressure.proposal.action,
+      };
+      writeJournalEntry(proposal);
+    }
     lastPressureLevel = "HIGH";
     consecutiveClearTicks = 0;
     enteredHighAt = ts;
