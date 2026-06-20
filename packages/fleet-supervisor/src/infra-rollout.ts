@@ -43,8 +43,8 @@ export async function healthGate(
     const snapshot = await fetchSnapshot();
     if (
       snapshot !== null &&
-      snapshot.workloads.length > 0 &&
-      snapshot.workloads.every((workload) => workload.reachable)
+      (snapshot.workloads.length === 0 ||
+        snapshot.workloads.every((workload) => workload.reachable))
     ) {
       return "healthy";
     }
@@ -154,7 +154,7 @@ export async function runRollback(
   clientFactory: (peer: PeerNode) => InfraClientLike,
   opts: { pkg: string; previousVersion: string },
 ): Promise<RolloutPlan> {
-  await Promise.all(
+  const results = await Promise.allSettled(
     peers.map((peer) =>
       clientFactory(peer).activate({
         pkg: opts.pkg,
@@ -162,5 +162,8 @@ export async function runRollback(
       }),
     ),
   );
+  if (results.some((r) => r.status === "rejected")) {
+    return { ok: false, reason: "rollback-failed" };
+  }
   return { ok: true };
 }
