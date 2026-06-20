@@ -252,7 +252,7 @@ function snapshotInput(input: unknown): Record<string, unknown> {
 const pressureStatusInputSchema = {
   journalPath: z.string().optional(),
   node: z.string().optional(),
-  limit: z.number().optional(),
+  limit: z.number().int().nonnegative().optional(),
 };
 
 async function handleFleetPressureStatus({
@@ -274,7 +274,7 @@ const auditInputSchema = {
   tool: z.string().optional(),
   outcome: z.enum(["denied", "success", "error"]).optional(),
   since: z.string().optional(),
-  limit: z.number().optional(),
+  limit: z.number().int().nonnegative().optional(),
 };
 
 const snapshotInputSchema = {
@@ -292,14 +292,14 @@ const proposalsInputSchema = {
   node: z.string().optional(),
   pendingOnly: z.boolean().optional(),
   sinceIsoTs: z.string().optional(),
-  limit: z.number().optional(),
+  limit: z.number().int().nonnegative().optional(),
   journalPath: z.string().optional(),
 };
 
 const executionsInputSchema = {
   node: z.string().optional(),
   sinceIsoTs: z.string().optional(),
-  limit: z.number().optional(),
+  limit: z.number().int().nonnegative().optional(),
   journalPath: z.string().optional(),
 };
 
@@ -320,7 +320,7 @@ const journalTailInputSchema = {
       ]),
     )
     .optional(),
-  limit: z.number().optional(),
+  limit: z.number().int().nonnegative().optional(),
   journalPath: z.string().optional(),
 };
 

@@ -351,6 +351,21 @@ describe("llamactl_fleet_proposals", () => {
     expect(parsed.total).toBe(10);
     expect(parsed.proposals[0]!.ts > parsed.proposals[1]!.ts).toBe(true);
   });
+
+  test("negative limit is rejected with isError", async () => {
+    const entries = [
+      proposal("node-a", "2026-01-01T00:01:00Z", "prop-neg-1"),
+      proposal("node-a", "2026-01-01T00:02:00Z", "prop-neg-2"),
+    ];
+    const path = writeJournal(entries);
+    const { client } = await connected();
+    const result = await call(client, "llamactl_fleet_proposals", {
+      journalPath: path,
+      pendingOnly: false,
+      limit: -5,
+    });
+    expect((result as { isError?: boolean }).isError).toBe(true);
+  });
 });
 
 // ── llamactl_fleet_executions ────────────────────────────────────────────────
@@ -400,6 +415,16 @@ describe("llamactl_fleet_pressure_status", () => {
     expect(parsed.nodes[0]!.state).toBe("HIGH");
     expect(parsed.nodes[0]!.consecutiveClearTicks).toBe(2);
     expect(parsed.nodes[0]!.recent).toHaveLength(1);
+  });
+
+  test("negative limit is rejected with isError", async () => {
+    const path = writeJournal([]);
+    const { client } = await connected();
+    const result = await call(client, "llamactl_fleet_pressure_status", {
+      journalPath: path,
+      limit: -5,
+    });
+    expect((result as { isError?: boolean }).isError).toBe(true);
   });
 
   test("deprecated alias returns same shape and warns once", async () => {
@@ -480,6 +505,13 @@ describe("llamactl_fleet_audit", () => {
     expect(parsed.entries[0]!.tool).toBe("test-tool");
     expect(parsed.total).toBe(1);
   });
+
+  test("negative limit is rejected with isError", async () => {
+    const path = writeJournal([]);
+    const { client } = await connected();
+    const result = await call(client, "llamactl_fleet_audit", { auditPath: path, limit: -5 });
+    expect((result as { isError?: boolean }).isError).toBe(true);
+  });
 });
 
 describe("llamactl_fleet_executions", () => {
@@ -541,6 +573,19 @@ describe("llamactl_fleet_executions", () => {
     const parsed = JSON.parse(textOf(result)) as { executions: FleetExecutionEntry[] };
     expect(parsed.executions).toHaveLength(1);
     expect(parsed.executions[0]!.proposalId).toBe("new");
+  });
+
+  test("negative limit is rejected with isError", async () => {
+    const path = writeJournal([
+      execution("node-a", "2026-01-01T00:01:00Z", "pe-1"),
+      execution("node-a", "2026-01-01T00:02:00Z", "pe-2"),
+    ]);
+    const { client } = await connected();
+    const result = await call(client, "llamactl_fleet_executions", {
+      journalPath: path,
+      limit: -5,
+    });
+    expect((result as { isError?: boolean }).isError).toBe(true);
   });
 });
 
@@ -624,5 +669,18 @@ describe("llamactl_fleet_journal_tail", () => {
     expect(parsed.entries).toHaveLength(2);
     expect(parsed.entries.every((e) => e.kind === "fleet-snapshot")).toBe(true);
     expect(parsed.entries.every((e) => (e as FleetSnapshotEntry).node === "node-a")).toBe(true);
+  });
+
+  test("negative limit is rejected with isError", async () => {
+    const path = writeJournal([
+      snapshot("node-a", "2026-01-01T00:01:00Z"),
+      snapshot("node-a", "2026-01-01T00:02:00Z"),
+    ]);
+    const { client } = await connected();
+    const result = await call(client, "llamactl_fleet_journal_tail", {
+      journalPath: path,
+      limit: -5,
+    });
+    expect((result as { isError?: boolean }).isError).toBe(true);
   });
 });
