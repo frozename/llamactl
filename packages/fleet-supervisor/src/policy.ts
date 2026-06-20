@@ -45,7 +45,8 @@ export function isPressureHot(entry: PressureWindowEntry, thresholds: PressureTh
 export interface PressureResult {
   level: "HIGH";
   transition: Pick<FleetTransitionEntry, "subject" | "subjectKind" | "signal" | "from" | "to">;
-  proposal: Pick<FleetProposalEntry, "transition" | "action">;
+  /** Absent when the node is under sustained pressure but has no reachable eviction target. */
+  proposal?: Pick<FleetProposalEntry, "transition" | "action">;
 }
 
 /**
@@ -64,9 +65,21 @@ export function detectPressure(
 
   const last = tail.at(-1);
   if (!last) return null;
-  const lastWorkloads = last.workloads;
-  const evictTarget = pickEvictionCandidate(lastWorkloads);
-  if (!evictTarget) return null;
+
+  const transition = {
+    subject: "node",
+    subjectKind: "node" as const,
+    signal: "pressure" as const,
+    from: "NORMAL",
+    to: "HIGH",
+  };
+
+  const evictTarget = pickEvictionCandidate(last.workloads);
+  if (!evictTarget) {
+    // Pressure is real but no reachable target to evict — signal HIGH without a proposal
+    // rather than suppressing detection entirely.
+    return { level: "HIGH", transition };
+  }
 
   const action: FleetProposalAction = {
     type: "evict",
@@ -74,13 +87,6 @@ export function detectPressure(
     reason: `sustained memory pressure: ${String(
       thresholds.consecutiveTicks,
     )} ticks below headroom + above compressor threshold`,
-  };
-  const transition = {
-    subject: "node",
-    subjectKind: "node" as const,
-    signal: "pressure" as const,
-    from: "NORMAL",
-    to: "HIGH",
   };
   return {
     level: "HIGH",

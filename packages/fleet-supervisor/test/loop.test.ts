@@ -653,6 +653,47 @@ describe("startSupervisorLoop", () => {
     expect(entries.filter((entry) => entry.kind === "fleet-proposal").length).toBe(1);
   });
 
+  it("emits fleet-transition on NORMAL→HIGH even when all workloads are unreachable", async () => {
+    const entries: FleetJournalEntry[] = [];
+    const HIGH_MEM: NodeMemSnapshot = {
+      free_mb: 30,
+      compressor_mb: 4000,
+      active_mb: 0,
+      inactive_mb: 0,
+      wired_mb: 0,
+      swap_in: 0,
+      swap_out: 0,
+    };
+    let tickIdx = 0;
+    const handle = startSupervisorLoop({
+      node: "local",
+      once: false,
+      intervalMs: 1,
+      workloads: [TARGET],
+      probeNodeMem: async () => {
+        if (tickIdx++ >= 3) handle.stop();
+        return HIGH_MEM;
+      },
+      probeWorkload: async () => {
+        throw new Error("workload unreachable");
+      },
+      writeJournal: (entry) => entries.push(entry),
+      pressureThresholds: {
+        headroomMinMb: 512,
+        compressorWarnMb: 2048,
+        consecutiveTicks: 3,
+        clearTicks: 5,
+      },
+    });
+    await handle.done;
+    const transitions = entries.filter(isTransition).filter((e) => e.subjectKind === "node");
+    const proposals = entries.filter((e) => e.kind === "fleet-proposal");
+    expect(transitions.length).toBe(1);
+    expect(transitions[0]!.from).toBe("NORMAL");
+    expect(transitions[0]!.to).toBe("HIGH");
+    expect(proposals.length).toBe(0);
+  });
+
   it("emits fleet-transition + fleet-proposal on healthy→degraded workload flip", async () => {
     const entries: FleetJournalEntry[] = [];
     let calls = 0;
