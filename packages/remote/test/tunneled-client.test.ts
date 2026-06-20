@@ -57,7 +57,7 @@ function baseConfig(overrides: Partial<Config["clusters"][number]["nodes"][numbe
             name: "gpu1",
             endpoint: "https://gpu1.lan:7843",
             kind: "agent",
-            certificateFingerprint: "sha256:aaaaaaaa",
+            certificate: "-----BEGIN CERTIFICATE-----\nMIIBtest\n-----END CERTIFICATE-----\n",
             tunnelPreferred: true,
             ...overrides,
           },

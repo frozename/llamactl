@@ -33,7 +33,7 @@ describe("createNodeClient (local sentinel path)", () => {
     cfg = upsertNodeInConfig(cfg, "home", {
       name: "gpu1",
       endpoint: "https://gpu1.lan:7843",
-      certificateFingerprint: "sha256:aa",
+      certificate: "-----BEGIN CERTIFICATE-----\nMIIBtest\n-----END CERTIFICATE-----\n",
     });
     // Client construction for a remote node must not throw just because
     // the host is unreachable — we only connect on first call.
