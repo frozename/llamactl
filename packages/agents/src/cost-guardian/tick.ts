@@ -162,7 +162,11 @@ async function runTier3Escalation(
   const provider = decision.deregisterTarget;
   const dryOk = await runDeregisterDryRun(opts, decision, provider);
   if (!dryOk || !opts.config.auto_deregister || tier2WetRunFailed) return;
-  if (opts.config.protectedProviders.includes(provider)) {
+  if (
+    opts.config.protectedProviders.some(
+      (p) => p.trim().toLowerCase() === provider.trim().toLowerCase(),
+    )
+  ) {
     journalDeregisterRefusal(opts, decision, provider);
     return;
   }
