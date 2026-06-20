@@ -75,7 +75,11 @@ function baseConfig(
             name: "gpu1",
             endpoint: "https://gpu1.lan:7843",
             kind: "agent",
-            certificateFingerprint: "sha256:aaaaaaaa",
+            // A remote node must carry its pinned certificate (and a matching
+            // fingerprint); makePinnedFetch now fails closed without one,
+            // matching the Electron client. Use the real generated pair.
+            certificateFingerprint: pinFingerprint,
+            certificate: pinPem,
             ...(overrides.tunnelPreferred !== undefined
               ? { tunnelPreferred: overrides.tunnelPreferred }
               : {}),

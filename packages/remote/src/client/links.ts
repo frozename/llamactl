@@ -4,8 +4,7 @@ import type { FetchLike } from "eventsource";
 import { httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
 import { EventSource } from "eventsource";
 
-import type { ClusterNode } from "../config/schema.js";
-
+import { type ClusterNode, LOCAL_NODE_ENDPOINT } from "../config/schema.js";
 import { computeFingerprint, fingerprintsEqual } from "../server/tls.js";
 
 /**
@@ -42,6 +41,16 @@ export function assertFingerprintMatch(node: ClusterNode): void {
   }
 }
 
+function isLocalEndpoint(endpoint: string): boolean {
+  if (endpoint === LOCAL_NODE_ENDPOINT || endpoint.startsWith("inproc://")) return true;
+  try {
+    const { hostname } = new URL(endpoint);
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Bun-native pinned fetch. Uses Bun's `tls.ca` fetch option, which
  * ignores system roots and trusts only the supplied CA. Node runtimes
@@ -51,6 +60,9 @@ export function assertFingerprintMatch(node: ClusterNode): void {
 export function makePinnedFetch(node: ClusterNode): PinnedFetch {
   assertFingerprintMatch(node);
   const ca = node.certificate;
+  if (!ca && !isLocalEndpoint(node.endpoint)) {
+    throw new Error(`node '${node.name}' has no pinned certificate; refusing to connect`);
+  }
   return async (input, init) => {
     const extraInit = ca ? { tls: { ca } } : {};
     return await fetch(input, { ...init, ...extraInit });
