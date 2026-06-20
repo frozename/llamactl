@@ -33,9 +33,9 @@ export const CostGuardianBudgetSchema = z.object({
 
 export const CostGuardianThresholdsSchema = z
   .object({
-    warn: z.number().min(0).max(1).default(0.5),
-    force_private: z.number().min(0).max(1).default(0.8),
-    deregister: z.number().min(0).max(1).default(0.95),
+    warn: z.number().positive().max(1).default(0.5),
+    force_private: z.number().positive().max(1).default(0.8),
+    deregister: z.number().positive().max(1).default(0.95),
   })
   .refine((t) => t.warn <= t.force_private && t.force_private <= t.deregister, {
     message: "thresholds must be non-decreasing: warn ≤ force_private ≤ deregister",
