@@ -9,6 +9,7 @@ import {
   getHistoricalForNode,
   getLatestPerNode,
   openAggregatorDb,
+  SNAPSHOT_RETENTION_PER_NODE,
   writeSnapshot,
 } from "../src/aggregator-db.js";
 
@@ -131,6 +132,43 @@ describe("aggregator db", () => {
       writeSnapshot(db, "fresh", snapshot("fresh", "2026-01-01T01:00:00Z", 2000));
       const rows = getLatestPerNode(db);
       expect(rows).toHaveLength(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("writeSnapshot prunes old rows beyond SNAPSHOT_RETENTION_PER_NODE, preserving latest", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
+    const dbPath = join(dir, "cluster.db");
+    try {
+      const db = openAggregatorDb(dbPath);
+      const n = SNAPSHOT_RETENTION_PER_NODE;
+      // Write one more than the retention bound using sequential minute-offset timestamps
+      for (let i = 0; i <= n; i++) {
+        const ts = new Date(Date.UTC(2026, 0, 1, 0, i, 0)).toISOString();
+        writeSnapshot(db, "mac-mini", snapshot("mac-mini", ts, i));
+      }
+
+      // Table must not exceed the retention bound
+      const { count } = db
+        .query<
+          { count: number },
+          []
+        >("SELECT COUNT(*) as count FROM node_snapshots WHERE node = 'mac-mini'")
+        .get()!;
+      expect(count).toBeLessThanOrEqual(n);
+
+      // The latest row is still present
+      const latest = getLatestPerNode(db);
+      expect(latest).toHaveLength(1);
+      const expectedLatestTs = new Date(Date.UTC(2026, 0, 1, 0, n, 0)).toISOString();
+      expect(latest[0]?.ts).toBe(expectedLatestTs);
+      expect(latest[0]?.snapshot.node_mem.free_mb).toBe(n);
+
+      // getHistoricalForNode returns the retained recent history (default limit 50)
+      const history = getHistoricalForNode(db, "mac-mini");
+      expect(history.length).toBe(50);
+      expect(history[0]?.ts).toBe(expectedLatestTs);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

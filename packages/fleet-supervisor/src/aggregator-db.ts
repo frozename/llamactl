@@ -5,6 +5,10 @@ import { dirname, join } from "node:path";
 
 import type { FleetSnapshotEntry } from "./types.js";
 
+// Keep this many most-recent rows per node. getHistoricalForNode defaults to limit 50,
+// so the bound must be comfortably above that to avoid losing retained history.
+export const SNAPSHOT_RETENTION_PER_NODE = 200;
+
 export interface SnapshotRow {
   node: string;
   ts: string;
@@ -47,6 +51,18 @@ export function writeSnapshot(db: Database, node: string, snapshot: FleetSnapsho
     $ts: snapshot.ts,
     $snapshot_json: JSON.stringify(snapshot),
   });
+  db.query(
+    `
+      DELETE FROM node_snapshots
+      WHERE node = $node
+        AND ts NOT IN (
+          SELECT ts FROM node_snapshots
+          WHERE node = $node
+          ORDER BY ts DESC
+          LIMIT $retention
+        )
+    `,
+  ).run({ $node: node, $retention: SNAPSHOT_RETENTION_PER_NODE });
 }
 
 export function getLatestPerNode(db: Database, opts?: { freshAfterTs?: string }): SnapshotRow[] {
