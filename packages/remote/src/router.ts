@@ -3689,11 +3689,11 @@ export const router = t.router({
       // `compositeStatus` subscribers can stream live progress.
       const { applyComposite } = await import("./composite/apply.js");
       const { compositeEvents } = await import("./composite/event-bus.js");
-      const kind = resolveCompositeRuntimeKind(manifest.spec.runtime);
-      const backend = await getCompositeRuntime(kind);
       const name = manifest.metadata.name;
       compositeEvents.startRun(name);
       try {
+        const kind = resolveCompositeRuntimeKind(manifest.spec.runtime);
+        const backend = await getCompositeRuntime(kind);
         const result = await applyComposite({
           manifest,
           backend,
@@ -3704,8 +3704,8 @@ export const router = t.router({
         });
         return { dryRun: false as const, ...result };
       } catch (err) {
-        // applyComposite threw before emitting a terminal event — synthesize
-        // one so compositeStatus subscribers drain instead of hanging forever.
+        // any failure (runtime-resolution or applier) synthesizes done so
+        // compositeStatus subscribers drain instead of hanging forever.
         compositeEvents.emit(name, { type: "done", ok: false });
         throw err;
       } finally {

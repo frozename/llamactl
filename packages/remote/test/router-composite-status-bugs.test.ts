@@ -43,12 +43,24 @@ await mock.module("../src/composite/apply.js", () => ({
   },
 }));
 
-// Fake RuntimeBackend returned by getCompositeRuntime so tests never need
-// a live Docker daemon — the backend is only forwarded to the mocked
-// applyComposite anyway.
+// Controllable fake backend: default returns {} (success); when
+// runtimeControl.shouldBlock is true, blocks until reject() is called.
+const runtimeControl: { shouldBlock: boolean; reject: (err: Error) => void } = {
+  shouldBlock: false,
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  reject: (): void => {},
+};
+
 await mock.module("../src/runtime/factory.js", () => ({
   // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-  createRuntimeBackend: () => ({}),
+  createRuntimeBackend: () => {
+    if (runtimeControl.shouldBlock) {
+      return new Promise<never>((_, reject) => {
+        runtimeControl.reject = reject;
+      });
+    }
+    return {};
+  },
 }));
 
 // ---------------------------------------------------------------------------
@@ -69,6 +81,24 @@ function minimalCompositeYaml(name: string): string {
       pipelines: [],
       dependencies: [],
       onFailure: "rollback",
+    },
+  });
+}
+
+function minimalCompositeYamlWithRuntime(name: string, runtime: "docker" | "kubernetes"): string {
+  return stringifyYaml({
+    apiVersion: "llamactl/v1",
+    kind: "Composite",
+    metadata: { name },
+    spec: {
+      services: [],
+      workloads: [],
+      ragNodes: [],
+      gateways: [],
+      pipelines: [],
+      dependencies: [],
+      onFailure: "rollback",
+      runtime,
     },
   });
 }
@@ -95,6 +125,9 @@ beforeEach(() => {
   applyControl.started = false;
   // eslint-disable-next-line @typescript-eslint/no-empty-function
   applyControl.reject = (): void => {};
+  runtimeControl.shouldBlock = false;
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  runtimeControl.reject = (): void => {};
   resetCompositeEvents();
 });
 
@@ -148,6 +181,76 @@ describe("Bug 1 — compositeStatus drains when applyComposite throws", () => {
 
     // Trigger the throw — this is the exact condition that caused the hang.
     applyControl.reject(new Error("simulated-backend-fail"));
+    await applyP;
+
+    const events = await collectP;
+    expect(events.at(-1)).toEqual({ type: "done", ok: false });
+  }, 3_000);
+});
+
+// ===========================================================================
+// Bug 2: compositeStatus hangs when getCompositeRuntime throws (startRun
+//        was called before the try block in the old code, so a subscriber
+//        that attached after startRun would never receive the done event)
+// ===========================================================================
+describe("Bug 2 — compositeStatus drains when getCompositeRuntime throws", () => {
+  test("subscriber receives {type:done,ok:false} instead of hanging forever", async () => {
+    // Use kubernetes kind so this test gets a fresh cache entry — the
+    // docker backend was cached by Bug 1's test run.
+    runtimeControl.shouldBlock = true;
+    const caller = router.createCaller({});
+    const name = "runtime-err-stack";
+
+    // Start the wet-run. It blocks inside the mocked createRuntimeBackend
+    // until runtimeControl.reject() fires.
+    const applyP = caller
+      .compositeApply({
+        manifestYaml: minimalCompositeYamlWithRuntime(name, "kubernetes"),
+        dryRun: false,
+      })
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      .catch((): void => {});
+
+    // With the fix, startRun is called before getCompositeRuntime so the
+    // live run appears on the bus before the blocking createRuntimeBackend
+    // call. Poll until currentRun is non-null (times out if startRun is
+    // never called before the blocking point, which is the bug).
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        const id = setInterval(() => {
+          if (compositeEvents.currentRun(name) !== null) {
+            clearInterval(id);
+            resolve();
+          }
+        }, 5);
+      }),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("TIMEOUT: startRun never called before getCompositeRuntime blocked"));
+        }, 300);
+      }),
+    ]);
+
+    // Subscribe while the run is live.
+    const iter = (await caller.compositeStatus({
+      name,
+    })) as AsyncIterable<CompositeApplyEvent>;
+
+    const collectP = Promise.race([
+      collectEvents(iter),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("TIMEOUT: compositeStatus subscriber hung"));
+        }, 500);
+      }),
+    ]);
+
+    await new Promise<void>((r) => {
+      setTimeout(r, 10);
+    });
+
+    // Trigger the throw — exactly the condition that caused the hang.
+    runtimeControl.reject(new Error("mock-runtime-fail"));
     await applyP;
 
     const events = await collectP;
