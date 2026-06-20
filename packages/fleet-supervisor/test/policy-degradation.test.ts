@@ -95,6 +95,24 @@ describe("detectDegradation", () => {
     expect(result!.proposal).toBeUndefined();
   });
 
+  it("p95-only degradation does not recover while latency stays high", () => {
+    const workload: WorkloadSnapshot = {
+      name: "slow-judge",
+      kind: "ModelHost",
+      priority: 50,
+      endpoint: "http://x",
+      rss_mb: 1024,
+      request_rate_5m: 0.5,
+      error_rate_5m: 0,
+      p50_ms: 3000,
+      p95_ms: 8000,
+      models: [],
+      reachable: true,
+      consecutiveErrors: 0,
+    };
+    expect(detectDegradation(workload, "degraded", THRESHOLDS)).toBeNull();
+  });
+
   it("p95 over threshold → degraded with p95 reason", () => {
     const workload: WorkloadSnapshot = {
       name: "slow-judge",
