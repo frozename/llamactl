@@ -35,6 +35,15 @@ describe("ndcgAtK", () => {
     // At K=6, 'a' appears at position 6: DCG = 1/log2(7) ≈ 0.3562; IDCG = 1
     expect(ndcgAtK(ranking, gold, 6)).toBeCloseTo(1 / Math.log2(7), 4);
   });
+
+  test("repeated gold ID in top-K is credited at most once, NDCG stays ≤ 1.0", () => {
+    // "a" at positions 0 and 2 — goldIds = ["a"] — double-credit would push NDCG > 1.0
+    const ranking = ["a", "b", "a", "c", "d"];
+    const gold = ["a"];
+    const result = ndcgAtK(ranking, gold, 5);
+    expect(result).toBeGreaterThanOrEqual(0);
+    expect(result).toBeLessThanOrEqual(1.0);
+  });
 });
 
 describe("memoryRecallWorkload.scorer", () => {

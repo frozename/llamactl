@@ -69,11 +69,14 @@ function parseRanking(text: string): string[] | null {
 export function ndcgAtK(ranking: string[], goldIds: string[], k = 5): number {
   if (goldIds.length === 0) return 0;
   const goldSet = new Set(goldIds);
+  const credited = new Set<string>();
   let dcg = 0;
   for (let i = 0; i < Math.min(k, ranking.length); i++) {
     const id = ranking[i];
-    const rel = id !== undefined && goldSet.has(id) ? 1 : 0;
-    dcg += rel / Math.log2(i + 2);
+    if (id !== undefined && goldSet.has(id) && !credited.has(id)) {
+      dcg += 1 / Math.log2(i + 2);
+      credited.add(id);
+    }
   }
   let idcg = 0;
   for (let i = 0; i < Math.min(k, goldIds.length); i++) {

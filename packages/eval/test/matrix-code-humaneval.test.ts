@@ -166,6 +166,22 @@ ${GOOD_FUNCTION}\`\`\``;
   });
 });
 
+describe("HumanEval scorer sandbox infra error", () => {
+  test("sandbox infra error returns non-pass instead of throwing, keeping denominator intact", async () => {
+    const origSpawn = Bun.spawn;
+    (Bun as unknown as { spawn: unknown }).spawn = (): never => {
+      throw new Error("mock-spawn-infra-failure");
+    };
+
+    try {
+      const result = await codeHumanevalWorkload.scorer(ROW, GOOD_BODY);
+      expect(result.metrics.pass).toBe(0);
+    } finally {
+      (Bun as unknown as { spawn: unknown }).spawn = origSpawn;
+    }
+  });
+});
+
 describe("HumanEval pass@1 aggregation", () => {
   test("averages pass metrics", () => {
     const result = aggregateMeanPassAt1([{ pass: 1 }, { pass: 0 }, { pass: 1 }]);
