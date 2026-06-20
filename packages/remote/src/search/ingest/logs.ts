@@ -13,6 +13,7 @@ export interface LogsIngestOpts {
 
 interface FileCursor {
   offset: number;
+  pending: string;
 }
 
 export function startLogsIngest(opts: LogsIngestOpts): () => void {
@@ -24,8 +25,11 @@ export function startLogsIngest(opts: LogsIngestOpts): () => void {
     for (const f of opts.files) {
       if (!existsSync(f.path)) continue;
       const size = statSync(f.path).size;
-      const cur = cursors.get(f.path) ?? { offset: 0 };
-      if (cur.offset > size) cur.offset = 0; // log was rotated
+      const cur = cursors.get(f.path) ?? { offset: 0, pending: "" };
+      if (cur.offset > size) {
+        cur.offset = 0;
+        cur.pending = "";
+      } // log was rotated
       if (cur.offset === size) {
         cursors.set(f.path, cur);
         continue;
@@ -34,8 +38,15 @@ export function startLogsIngest(opts: LogsIngestOpts): () => void {
       try {
         const buf = Buffer.alloc(size - cur.offset);
         readSync(fd, buf, 0, buf.length, cur.offset);
-        const text = buf.toString("utf8");
-        const lines = text.split("\n").filter((l) => l.length > 0);
+        const text = cur.pending + buf.toString("utf8");
+        // Split at the last newline: everything before is complete lines,
+        // everything after is a partial line buffered for the next read.
+        const boundary = text.lastIndexOf("\n") + 1;
+        cur.pending = text.slice(boundary);
+        const lines = text
+          .slice(0, boundary)
+          .split("\n")
+          .filter((l) => l.length > 0);
         const records: IngestRecord[] = lines.map((line, idx) => ({
           id: `${f.label}::${String(cur.offset)}::${String(idx)}`,
           content: line,

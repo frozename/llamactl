@@ -497,15 +497,17 @@ async function processDoc(args: {
     errored = errored || storeFailed;
   }
 
-  await journal.append({
-    kind: dryRun ? "doc-would-ingest" : "doc-ingested",
-    ts: new Date().toISOString(),
-    source: label,
-    doc_id: rawDoc.id,
-    sha,
-    chunks: storedChunks.length,
-    chunk_ids: chunkIds,
-  });
+  if (!errored) {
+    await journal.append({
+      kind: dryRun ? "doc-would-ingest" : "doc-ingested",
+      ts: new Date().toISOString(),
+      source: label,
+      doc_id: rawDoc.id,
+      sha,
+      chunks: storedChunks.length,
+      chunk_ids: chunkIds,
+    });
+  }
 
   return { skipped: false, errored, chunks: storedChunks.length };
 }
