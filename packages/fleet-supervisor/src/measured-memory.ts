@@ -30,7 +30,13 @@ export function readMeasuredMemoryCache(modelKey: string): { peakMb: number } | 
     const raw = readFileSync(measuredMemoryCachePath(), "utf8");
     const parsed = JSON.parse(raw) as MeasuredMemoryCache;
     const entry = parsed[modelKey];
-    if (!entry || typeof entry.rssPeakMb !== "number") return null;
+    if (
+      !entry ||
+      typeof entry.rssPeakMb !== "number" ||
+      !Number.isFinite(entry.rssPeakMb) ||
+      entry.rssPeakMb < 0
+    )
+      return null;
     return { peakMb: entry.rssPeakMb };
   } catch {
     return null;
