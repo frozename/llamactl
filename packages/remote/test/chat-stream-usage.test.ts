@@ -29,6 +29,40 @@ import { recordChatUsageSnapshot } from "../src/router.js";
 let dir = "";
 const originalEnv = { ...process.env };
 
+function guardedSseFetch(frames: readonly string[]): typeof globalThis.fetch {
+  const make = (): Promise<Response> => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller): void {
+        let closed = false;
+        const enc = new TextEncoder();
+        const safeEnqueue = (frame: Uint8Array): void => {
+          if (closed) return;
+          try {
+            controller.enqueue(frame);
+          } catch {
+            closed = true;
+          }
+        };
+        const safeClose = (): void => {
+          if (closed) return;
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            /* controller already closed */
+          }
+        };
+        for (const f of frames) safeEnqueue(enc.encode(f));
+        safeClose();
+      },
+    });
+    return Promise.resolve(
+      new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    );
+  };
+  return make as unknown as typeof globalThis.fetch;
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "chat-stream-usage-"));
   process.env.LLAMACTL_USAGE_DIR = dir;
@@ -46,23 +80,6 @@ function readSoleRecord(): Record<string, unknown> {
   const files = readdirSync(dir);
   expect(files).toHaveLength(1);
   return JSON.parse(readFileSync(join(dir, files[0]!), "utf8").trim()) as Record<string, unknown>;
-}
-
-/** Wrap SSE frames into a fetch impl that returns one streaming Response. */
-function sseFetch(frames: readonly string[]): typeof globalThis.fetch {
-  const make = (): Promise<Response> => {
-    const body = new ReadableStream<Uint8Array>({
-      start(controller): void {
-        const enc = new TextEncoder();
-        for (const f of frames) controller.enqueue(enc.encode(f));
-        controller.close();
-      },
-    });
-    return Promise.resolve(
-      new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } }),
-    );
-  };
-  return make as unknown as typeof globalThis.fetch;
 }
 
 /** Two chat chunks + a trailing usage frame + [DONE] — fires onUsage. */
@@ -146,6 +163,30 @@ describe("recordChatUsageSnapshot", () => {
 });
 
 describe("chatStream usage capture", () => {
+  test("guarded SSE helpers tolerate cancellation during stream setup", async () => {
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller): void {
+          let closed = false;
+          try {
+            controller.enqueue(new TextEncoder().encode("data: one\n\n"));
+          } catch {
+            closed = true;
+          }
+          if (closed) return;
+          try {
+            controller.close();
+          } catch {
+            /* controller already closed */
+          }
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    );
+    await response.body?.cancel();
+    expect(response.status).toBe(200);
+  });
+
   test("a stream that yields a usage frame records a UsageRecord via the onUsage hook", async () => {
     // Mirror exactly what the chatStream subscription installs: derive
     // the canonical provider from the node, then forward an onUsage
@@ -154,7 +195,7 @@ describe("chatStream usage capture", () => {
     const provider = providerForCloudNode(
       cloudNode,
       process.env,
-      sseFetch(usageFrames({ prompt_tokens: 20, completion_tokens: 13, total_tokens: 33 })),
+      guardedSseFetch(usageFrames({ prompt_tokens: 20, completion_tokens: 13, total_tokens: 33 })),
       (snapshot) => {
         recordChatUsageSnapshot(snapshot, canonicalProvider);
       },
@@ -186,7 +227,7 @@ describe("chatStream usage capture", () => {
     const provider = providerForCloudNode(
       cloudNode,
       process.env,
-      sseFetch(noUsageFrames),
+      guardedSseFetch(noUsageFrames),
       (snapshot) => {
         recordChatUsageSnapshot(snapshot, cloudNode.cloud!.provider);
       },
