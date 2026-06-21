@@ -6,6 +6,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { EventSource } from "eventsource";
 import { z } from "zod";
 
+import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
+
 /**
  * Phase B.1 day-1 spike. Validates that the tRPC v11 migration target
  * works on Bun for all three operation types before we rewrite
@@ -121,23 +123,18 @@ describe("tRPC v11 + Bun.serve + fetchRequestHandler", () => {
 
   // tRPC's SSE adapter races Bun closing the response stream on client
   // disconnect: it may enqueue a completion event after the controller is
-  // already gone. Suppress that specific unhandled rejection; surface
-  // anything else in afterAll so the suite still fails on unexpected errors.
-  const extraRejections: unknown[] = [];
-  const suppressControllerClosed = (reason: unknown): void => {
-    if (reason instanceof TypeError && reason.message.includes("Controller is already closed"))
-      return;
-    extraRejections.push(reason);
-  };
+  // already gone. The shared guard suppresses that specific unhandled
+  // rejection and re-throws anything else on dispose, so the suite still
+  // fails on unexpected errors.
+  let guard: ControllerClosedGuard;
 
   beforeAll(() => {
     svr = startServer(router);
-    process.on("unhandledRejection", suppressControllerClosed);
+    guard = installControllerClosedGuard();
   });
   afterAll(() => {
     svr.stop();
-    process.off("unhandledRejection", suppressControllerClosed);
-    if (extraRejections.length > 0) throw extraRejections[0];
+    guard.dispose();
   });
 
   test("query round-trips with createTRPCClient (v11 rename)", async () => {

@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "../sr
 import { generateToken } from "../src/server/auth.js";
 import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
+import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
 
 /**
  * End-to-end test for the agent's OpenAI gateway. Stands up:
@@ -86,7 +87,14 @@ const WORKLOAD_HOST_PORT = 52004;
 
 const originalEnv = { ...process.env };
 
+// The proxy streams SSE pass-through from the live agent; callers cancel the
+// response body mid-stream, so on disconnect a benign
+// Controller-is-already-closed rejection can leak at teardown. The shared
+// guard swallows only that and re-throws anything else on dispose.
+let controllerGuard: ControllerClosedGuard;
+
 beforeAll(async () => {
+  controllerGuard = installControllerClosedGuard();
   devStorage = mkdtempSync(join(tmpdir(), "llamactl-openai-proxy-"));
   runtimeDir = join(devStorage, "ai-models", "local-ai");
   mkdirSync(runtimeDir, { recursive: true });
@@ -219,6 +227,8 @@ afterAll(async () => {
   rmSync(devStorage, { recursive: true, force: true });
   for (const key of Object.keys(process.env)) Reflect.deleteProperty(process.env, key);
   Object.assign(process.env, originalEnv);
+  // Dispose last so cleanup runs before any re-thrown non-benign rejection.
+  controllerGuard.dispose();
 });
 
 afterEach(() => {

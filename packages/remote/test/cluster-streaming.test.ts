@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../sr
 import { generateToken } from "../src/server/auth.js";
 import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
+import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
 
 /**
  * End-to-end test for Phase B.2.x streaming: runs the production
@@ -57,6 +58,18 @@ let certPem = "";
 let agentToken = "";
 let fingerprint = "";
 const originalEnv: NodeJS.ProcessEnv = { ...process.env };
+
+// The live pullFile subscription streams over SSE against a real agent; on
+// client disconnect tRPC's SSE adapter can leak a benign
+// Controller-is-already-closed rejection at teardown. The shared guard
+// swallows only that and re-throws anything else on dispose.
+let controllerGuard: ControllerClosedGuard;
+beforeAll(() => {
+  controllerGuard = installControllerClosedGuard();
+});
+afterAll(() => {
+  controllerGuard.dispose();
+});
 
 beforeEach(async () => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-stream-"));
