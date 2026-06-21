@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +12,7 @@ import {
   type TunnelReq,
   type TunnelSubscription,
 } from "../src/tunnel/index.js";
+import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
 
 /**
  * B.4 coverage — end-to-end SSE relay. Boots a central agent with
@@ -159,6 +160,19 @@ async function startHarness(script: {
     },
   };
 }
+
+// The relay streams its SSE body to a `getReader()` consumer that may stop
+// draining early (frame cap or a `done` frame), so on disconnect the
+// server-side stream can leak a benign Controller-is-already-closed
+// rejection at teardown. The shared guard swallows only that and re-throws
+// anything else on dispose.
+let controllerGuard: ControllerClosedGuard;
+beforeAll(() => {
+  controllerGuard = installControllerClosedGuard();
+});
+afterAll(() => {
+  controllerGuard.dispose();
+});
 
 describe("tunnel-relay SSE", () => {
   let harness: RunningHarness | undefined;

@@ -1,13 +1,14 @@
 import type { ClusterNode } from "@llamactl/core/config/schema";
 import type { UnifiedAiRequest, UnifiedStreamEvent } from "@nova/contracts";
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { providerForCloudNode } from "../src/providers/factory.js";
 import { recordChatUsageSnapshot } from "../src/router.js";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "../src/safe-fs.js";
+import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
 
 /**
  * Streaming-path cost-corpus coverage. The non-streaming writer
@@ -61,6 +62,18 @@ function guardedSseFetch(frames: readonly string[]): typeof globalThis.fetch {
   };
   return make as unknown as typeof globalThis.fetch;
 }
+
+// The streaming adapter consumes an SSE ReadableStream that callers cancel
+// mid-stream; on disconnect a benign Controller-is-already-closed rejection
+// can leak at teardown. The shared guard swallows only that and re-throws
+// anything else on dispose.
+let controllerGuard: ControllerClosedGuard;
+beforeAll(() => {
+  controllerGuard = installControllerClosedGuard();
+});
+afterAll(() => {
+  controllerGuard.dispose();
+});
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "chat-stream-usage-"));

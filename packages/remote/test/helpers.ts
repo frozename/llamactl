@@ -13,6 +13,50 @@ import {
 } from "../src/index.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
+/**
+ * A live tRPC subscription / SSE link / HTTP-body stream consumed against
+ * a server the test starts can leak a benign unhandled rejection at
+ * teardown: tRPC's SSE adapter races Bun closing the response stream on
+ * client disconnect and may enqueue a completion event after the
+ * ReadableStream controller is already gone, surfacing as a process-level
+ * `TypeError: ... Controller is already closed`. That single rejection
+ * fails the whole `bun test` run with exit 1 even though no test asserts
+ * failed — a library teardown race, not a product bug.
+ *
+ * `installControllerClosedGuard()` installs a scoped
+ * `process.on('unhandledRejection')` listener immediately and returns a
+ * `dispose()` that removes it. The guard swallows ONLY the
+ * Controller-is-already-closed TypeError; every OTHER rejection is
+ * captured and re-thrown by `dispose()`, so the suite still fails on
+ * unexpected rejections. Install in `beforeAll`, dispose in `afterAll`.
+ *
+ * Extracted from the inline suppressor introduced in PR #96; faithful to
+ * its semantics.
+ */
+export interface ControllerClosedGuard {
+  /** Remove the listener and re-throw the first non-suppressed rejection. */
+  dispose(): void;
+}
+
+function isControllerClosedRejection(reason: unknown): boolean {
+  return reason instanceof TypeError && reason.message.includes("Controller is already closed");
+}
+
+export function installControllerClosedGuard(): ControllerClosedGuard {
+  const extraRejections: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown): void => {
+    if (isControllerClosedRejection(reason)) return;
+    extraRejections.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+  return {
+    dispose: (): void => {
+      process.off("unhandledRejection", onUnhandledRejection);
+      if (extraRejections.length > 0) throw extraRejections[0];
+    },
+  };
+}
+
 export interface ClusterNodeHandle {
   name: string;
   url: string;
