@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
+import { atomicWriteFileSync } from "../atomic-write.js";
 import { CompositeOwnershipSchema } from "../workload/gateway-catalog/schema.js";
 
 /**
@@ -87,7 +88,7 @@ export function saveSiriusProviders(
     kind: "SiriusProviderList",
     providers: providers.map((p) => SiriusProviderSchema.parse(p)),
   };
-  writeFileSync(path, stringifyYaml(file), "utf8");
+  atomicWriteFileSync(path, stringifyYaml(file));
 }
 
 export function upsertSiriusProvider(

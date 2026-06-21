@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -109,6 +109,11 @@ describe("NodeRun store", () => {
     const loaded = loadNodeRunByName(m.metadata.name, dir);
     expect(loaded.spec.node).toBe("gpu1");
     expect(loaded.spec.infra[1]!.pkg).toBe("embersynth");
+  });
+
+  test("saveNodeRun leaves no tmp residue", () => {
+    saveNodeRun(sampleManifest(), dir);
+    expect(readdirSync(dir).filter((entry) => entry.includes(".tmp."))).toEqual([]);
   });
 
   test("listNodeRuns filters by kind — ignores ModelRun peers", () => {

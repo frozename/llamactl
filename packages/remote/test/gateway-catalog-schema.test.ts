@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -70,6 +70,11 @@ describe("SiriusProvider schema with ownership", () => {
     const out = loadSiriusProviders();
     expect(out[0]!.name).toBe("openai");
     expect(out[0]!.ownership).toBeUndefined();
+  });
+
+  test("saveSiriusProviders leaves no tmp residue", () => {
+    saveSiriusProviders([{ name: "openai", kind: "openai", apiKeyRef: "$OPENAI" }]);
+    expect(readdirSync(tmp).filter((entry) => entry.includes(".tmp."))).toEqual([]);
   });
 });
 
