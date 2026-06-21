@@ -1,3 +1,7 @@
+import { readModelHostState } from "@llamactl/core/engines/state";
+import { resolveEnv } from "@llamactl/core/env";
+import { formatEndpoint, probeHealthEndpoint } from "@llamactl/core/probe";
+import { workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import {
   type ClusterNode,
   config as kubecfg,
@@ -10,18 +14,14 @@ import {
   type workloadSchema,
   workloadStore,
 } from "@llamactl/remote";
-import { resolve as resolvePath } from "node:path";
-import { parse as parseYaml } from "yaml";
-
-import { readModelHostState } from "../../../core/src/engines/state.js";
-import { resolveEnv } from "../../../core/src/env.js";
-import { formatEndpoint, probeHealthEndpoint } from "../../../core/src/probe.js";
-import { workloadRuntimeDir } from "../../../core/src/workloadRuntime.js";
 import {
   type ModelHostManifest,
   ModelHostManifestSchema,
-} from "../../../remote/src/workload/modelhost-schema.js";
-import { listModelHosts, saveModelHost } from "../../../remote/src/workload/modelhost-store.js";
+} from "@llamactl/remote/workload/modelhost-schema";
+import { listModelHosts, saveModelHost } from "@llamactl/remote/workload/modelhost-store";
+import { resolve as resolvePath } from "node:path";
+import { parse as parseYaml } from "yaml";
+
 import { getNodeClientByName } from "../dispatcher.js";
 import { required } from "../required.js";
 import { existsSync, readFileSync, rmSync } from "../safe-fs.js";

@@ -1,8 +1,14 @@
-import type { ClusterNode } from "../config/schema.js";
+import type { ClusterNode } from "@llamactl/core/config/schema";
 
-import { decodeBootstrap } from "../config/agent-config.js";
+import { decodeBootstrap } from "@llamactl/core/config/agent-config";
+import {
+  currentContext,
+  loadConfig,
+  saveConfig,
+  upsertNode,
+} from "@llamactl/core/config/kubeconfig";
+
 import { consumeBootstrapToken, type ConsumeOptions } from "../config/bootstrap-tokens.js";
-import { currentContext, loadConfig, saveConfig, upsertNode } from "../config/kubeconfig.js";
 
 /**
  * HTTP handler for POST /register. Unauthenticated by design —

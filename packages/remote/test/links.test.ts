@@ -1,7 +1,7 @@
+import { type ClusterNode, LOCAL_NODE_ENDPOINT } from "@llamactl/core/config/schema";
 import { describe, expect, test } from "bun:test";
 
 import { makePinnedFetch } from "../src/client/links.js";
-import { type ClusterNode, LOCAL_NODE_ENDPOINT } from "../src/config/schema.js";
 
 const FAKE_CERT = "-----BEGIN CERTIFICATE-----\nMIIBxxx\n-----END CERTIFICATE-----\n";
 

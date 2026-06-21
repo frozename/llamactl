@@ -1,5 +1,15 @@
+import type { ClusterNode, Config } from "@llamactl/core/config/schema";
+
+import {
+  resolveNode as kubecfgResolveNode,
+  loadConfig,
+  removeNode,
+  saveConfig,
+  upsertNode,
+} from "@llamactl/core/config/kubeconfig";
+import { resolveInternalProxyEndpoint } from "@llamactl/core/env";
+
 import type { EmbersynthNode } from "../config/embersynth.js";
-import type { ClusterNode, Config } from "../config/schema.js";
 import type { SiriusProvider } from "../config/sirius-providers.js";
 import type { RuntimeBackend, ServiceInstance, ServiceRef } from "../runtime/backend.js";
 import type { ApplyEvent, WorkloadClient } from "../workload/apply.js";
@@ -17,14 +27,6 @@ import type {
   CompositeComponentResult,
 } from "./types.js";
 
-import { resolveInternalProxyEndpoint } from "../../../core/src/env.js";
-import {
-  resolveNode as kubecfgResolveNode,
-  loadConfig,
-  removeNode,
-  saveConfig,
-  upsertNode,
-} from "../config/kubeconfig.js";
 import { findServiceHandler } from "../service/handlers/registry.js";
 import { applyOne } from "../workload/apply.js";
 /**

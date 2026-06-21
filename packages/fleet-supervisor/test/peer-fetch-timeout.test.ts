@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import type { PeerNode } from "@llamactl/core/config/peers";
 
-import type { PeerNode } from "../../remote/src/config/peers.js";
+import { afterEach, describe, expect, test } from "bun:test";
 
 import { createPeerFetch } from "../src/peer-fetch.js";
 

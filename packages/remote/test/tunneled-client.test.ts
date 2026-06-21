@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import type { Config } from "@llamactl/core/config/schema";
 
-import type { Config } from "../src/config/schema.js";
+import { describe, expect, test } from "bun:test";
 
 import { createNodeClient, type TunnelSendFn } from "../src/client/node-client.js";
 

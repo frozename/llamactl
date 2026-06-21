@@ -17,9 +17,8 @@
  * an embedder binding, not to compete with dedicated IR benchmarks.
  */
 
+import { nonEmpty } from "@llamactl/core/config/env";
 import { z } from "zod";
-
-import { nonEmpty } from "../config/env.js";
 
 export const RagBenchQuerySchema = z
   .object({

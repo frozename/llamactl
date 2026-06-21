@@ -1,3 +1,4 @@
+import { defaultAgentDir } from "@llamactl/core/config/agent-config";
 import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
@@ -12,7 +13,6 @@ import {
   rmSync,
   writeFileSync,
 } from "../safe-fs.js";
-import { defaultAgentDir } from "./agent-config.js";
 
 /**
  * Bootstrap tokens — single-use, short-lived secrets the operator

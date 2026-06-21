@@ -1,7 +1,3 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import {
   currentContext,
   defaultConfigPath,
@@ -12,13 +8,17 @@ import {
   saveConfig,
   upsertCluster,
   upsertNode,
-} from "../src/config/kubeconfig.js";
+} from "@llamactl/core/config/kubeconfig";
 import {
   ConfigSchema,
   freshConfig,
   LOCAL_NODE_ENDPOINT,
   LOCAL_NODE_NAME,
-} from "../src/config/schema.js";
+} from "@llamactl/core/config/schema";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 let tmp: string;

@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { ClusterNode, Config, User } from "@llamactl/core/config/schema";
 
-import type { ClusterNode, Config, User } from "../src/config/schema.js";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { providerForNode } from "../src/providers/factory.js";
 

@@ -1,10 +1,10 @@
 import type { TRPCLink } from "@trpc/client";
 import type { FetchLike } from "eventsource";
 
+import { type ClusterNode, LOCAL_NODE_ENDPOINT } from "@llamactl/core/config/schema";
 import { httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
 import { EventSource } from "eventsource";
 
-import { type ClusterNode, LOCAL_NODE_ENDPOINT } from "../config/schema.js";
 import { computeFingerprint, fingerprintsEqual } from "../server/tls.js";
 
 /**

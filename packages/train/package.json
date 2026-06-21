@@ -6,5 +6,6 @@
   "scripts": {
     "test:bridge": "python3 -m pytest test/test_mlx_to_peft.py -q",
     "check:syntax": "bash -n scripts/eval-classifier.sh && bash -n scripts/eval-tool-calls.sh && bash -n scripts/train-lora.sh && python3 -c 'import ast; [ast.parse(open(p).read()) for p in [\"corpora/memory-efficacy/prep.py\", \"corpora/memory-efficacy/prep_chat.py\", \"corpora/tool-call-grammar/prep.py\", \"src/bridge/mlx_to_peft.py\"]]'"
-  }
+  },
+  "dependencies": {}
 }

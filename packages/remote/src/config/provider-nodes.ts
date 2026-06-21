@@ -1,5 +1,11 @@
+import {
+  type CliBinding,
+  type ClusterNode,
+  type Config,
+  resolveNodeKind,
+} from "@llamactl/core/config/schema";
+
 import { listSyntheticModelIds, loadEmbersynthConfig } from "./embersynth.js";
-import { type CliBinding, type ClusterNode, type Config, resolveNodeKind } from "./schema.js";
 import { loadSiriusProviders, type SiriusProvider } from "./sirius-providers.js";
 
 /**

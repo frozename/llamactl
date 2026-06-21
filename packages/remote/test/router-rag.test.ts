@@ -9,12 +9,12 @@ import type {
   StoreResponse,
 } from "@nova/contracts";
 
+import { saveConfig, upsertNode } from "@llamactl/core/config/kubeconfig";
+import { freshConfig } from "@llamactl/core/config/schema";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { saveConfig, upsertNode } from "../src/config/kubeconfig.js";
-import { freshConfig } from "../src/config/schema.js";
 import { router } from "../src/router.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
@@ -311,7 +311,7 @@ describe("router ragX → createRagAdapter options passthrough", () => {
       loadConfig,
       saveConfig,
       upsertNode: upsert,
-    } = await import("../src/config/kubeconfig.js");
+    } = await import("@llamactl/core/config/kubeconfig");
     const { join } = await import("node:path");
     const cfgPath = join(tmp, "config");
     const cfg = loadConfig(cfgPath);
@@ -359,7 +359,7 @@ describe("router nodeUpdateRagBinding", () => {
       node: "sirius",
       model: "text-embedding-3-small",
     });
-    const { loadConfig } = await import("../src/config/kubeconfig.js");
+    const { loadConfig } = await import("@llamactl/core/config/kubeconfig");
     const cfg = loadConfig(join(tmp, "config"));
     const node = cfg.clusters
       .find((c) => c.name === "home")!
@@ -379,7 +379,7 @@ describe("router nodeUpdateRagBinding", () => {
       loadConfig,
       saveConfig,
       upsertNode: upsert,
-    } = await import("../src/config/kubeconfig.js");
+    } = await import("@llamactl/core/config/kubeconfig");
     const cfgPath = join(tmp, "config");
     const seeded = upsert(loadConfig(cfgPath), "home", {
       name: "kb-pg",

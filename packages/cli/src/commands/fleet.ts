@@ -1,3 +1,4 @@
+import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
 import {
   createPeerFetch,
   DEFAULT_PRESSURE_THRESHOLDS,
@@ -8,8 +9,8 @@ import {
   openAggregatorDb,
   readLatestFleetSnapshotFromJournal,
   writeSnapshot,
-} from "../../../fleet-supervisor/src/index.js";
-import { listPeers, type PeerNode } from "../../../remote/src/config/peers.js";
+} from "@llamactl/fleet-supervisor";
+
 import { existsSync, readFileSync } from "../safe-fs.js";
 
 const USAGE = `Usage: llamactl fleet <subcommand>

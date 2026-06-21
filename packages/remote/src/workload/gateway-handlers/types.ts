@@ -1,4 +1,5 @@
-import type { ClusterNode } from "../../config/schema.js";
+import type { ClusterNode } from "@llamactl/core/config/schema";
+
 import type { ApplyEvent, ApplyResult, WorkloadClient } from "../apply.js";
 import type { ProviderConfigCommon } from "../gateway-catalog/schema.js";
 import type { ModelRun } from "../schema.js";

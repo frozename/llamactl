@@ -1,3 +1,4 @@
+import type { ClusterNode, Config } from "@llamactl/core/config/schema";
 /**
  * RAG adapter factory. Nodes with `kind: 'rag'` carry a `rag` binding
  * that picks the backend; this module materializes the right
@@ -8,7 +9,6 @@
  */
 import type { RetrievalProvider } from "@nova/contracts";
 
-import type { ClusterNode, Config } from "../config/schema.js";
 import type { Embedder } from "./embedding.js";
 
 import { createChromaAdapter } from "./chroma/index.js";

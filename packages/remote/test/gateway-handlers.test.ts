@@ -1,6 +1,7 @@
+import type { ClusterNode } from "@llamactl/core/config/schema";
+
 import { describe, expect, test } from "bun:test";
 
-import type { ClusterNode } from "../src/config/schema.js";
 import type { ModelRun } from "../src/workload/schema.js";
 
 import { type ApplyEvent, applyOne, type WorkloadClient } from "../src/workload/apply.js";

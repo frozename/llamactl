@@ -31,26 +31,14 @@ export {
   type TunnelSendFn,
   type TunnelSubscribeFn,
 } from "./client/node-client.js";
-export * as agentConfig from "./config/agent-config.js";
 export * as bootstrapTokens from "./config/bootstrap-tokens.js";
 export * as embersynth from "./config/embersynth.js";
-export * as config from "./config/kubeconfig.js";
-export { listPeers, type PeerNode } from "./config/peers.js";
 export * as providerNodes from "./config/provider-nodes.js";
 export {
   findCliBindingForNode,
   parseProviderNodeName,
   synthesizeProviderNodes,
 } from "./config/provider-nodes.js";
-export * as configSchema from "./config/schema.js";
-export type { ClusterNode, Config, NodeKind } from "./config/schema.js";
-export { LOCAL_NODE_ENDPOINT, LOCAL_NODE_NAME, resolveNodeKind } from "./config/schema.js";
-export {
-  type CliBinding,
-  CliBindingSchema,
-  type CliPreset,
-  CliPresetSchema,
-} from "./config/schema.js";
 export * as siriusProviders from "./config/sirius-providers.js";
 export * as infraArtifactsFetch from "./infra/artifacts-fetch.js";
 export * as infraInstall from "./infra/install.js";
@@ -172,14 +160,30 @@ export * as tunnel from "./tunnel/index.js";
 export * as workloadApply from "./workload/apply.js";
 export * as workloadGatewayHandlers from "./workload/gateway-handlers/index.js";
 export * as workloadLock from "./workload/lock.js";
-
 export * as modelHostStore from "./workload/modelhost-store.js";
 export * as noderunApply from "./workload/noderun-apply.js";
 export * as noderunReconciler from "./workload/noderun-reconciler.js";
-
 export * as noderunSchema from "./workload/noderun-schema.js";
 export * as noderunStore from "./workload/noderun-store.js";
 export * as workloadReconciler from "./workload/reconciler.js";
-
 export * as workloadSchema from "./workload/schema.js";
+
 export * as workloadStore from "./workload/store.js";
+export * as agentConfig from "@llamactl/core/config/agent-config";
+export * as config from "@llamactl/core/config/kubeconfig";
+
+export { listPeers, type PeerNode } from "@llamactl/core/config/peers";
+export * as configSchema from "@llamactl/core/config/schema";
+export type { ClusterNode, Config, NodeKind } from "@llamactl/core/config/schema";
+
+export {
+  LOCAL_NODE_ENDPOINT,
+  LOCAL_NODE_NAME,
+  resolveNodeKind,
+} from "@llamactl/core/config/schema";
+export {
+  type CliBinding,
+  CliBindingSchema,
+  type CliPreset,
+  CliPresetSchema,
+} from "@llamactl/core/config/schema";

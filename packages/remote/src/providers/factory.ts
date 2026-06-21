@@ -1,3 +1,14 @@
+import { resolveApiKeyRef, resolveToken } from "@llamactl/core/config/kubeconfig";
+import {
+  type CloudBinding,
+  type CloudProvider,
+  type ClusterNode,
+  type Config,
+  DEFAULT_CLOUD_BASE_URLS,
+  LOCAL_NODE_ENDPOINT,
+  resolveNodeKind,
+  type User,
+} from "@llamactl/core/config/schema";
 import {
   type AiProvider,
   createOpenAICompatProvider,
@@ -8,18 +19,6 @@ import {
 } from "@nova/contracts";
 
 import type { PinnedFetchFactory } from "../client/links.js";
-
-import { resolveApiKeyRef, resolveToken } from "../config/kubeconfig.js";
-import {
-  type CloudBinding,
-  type CloudProvider,
-  type ClusterNode,
-  type Config,
-  DEFAULT_CLOUD_BASE_URLS,
-  LOCAL_NODE_ENDPOINT,
-  resolveNodeKind,
-  type User,
-} from "../config/schema.js";
 
 /**
  * Factory that turns a kubeconfig cloud node + resolved API key into

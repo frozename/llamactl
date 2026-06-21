@@ -1,9 +1,9 @@
+import { resolveSecret } from "@llamactl/core/config/secret";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
 import type { Fetcher, FetcherContext } from "../types.js";
 
-import { resolveSecret } from "../../../config/secret.js";
 import { readFile } from "../../../safe-fs-promises.js";
 /**
  * Git source fetcher. Shallow-clones the declared repo into a tmpdir,

@@ -1,6 +1,5 @@
+import { CliBindingSchema, ClusterNodeSchema } from "@llamactl/core/config/schema";
 import { describe, expect, test } from "bun:test";
-
-import { CliBindingSchema, ClusterNodeSchema } from "../src/config/schema.js";
 
 describe("CliBindingSchema", () => {
   test("applies preset defaults and accepts minimal shape", () => {

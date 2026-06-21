@@ -1,3 +1,4 @@
+import type { RagBinding } from "@llamactl/core/config/schema";
 import type {
   CollectionInfo,
   DeleteRequest,
@@ -12,7 +13,6 @@ import type {
   StoreResponse,
 } from "@nova/contracts";
 
-import type { RagBinding } from "../../config/schema.js";
 import type { Embedder } from "../embedding.js";
 import type { ChromaMcpClient, ChromaToolResult } from "./client.js";
 import type { HttpChromaClient } from "./http-client.js";

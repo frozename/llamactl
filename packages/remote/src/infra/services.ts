@@ -1,7 +1,7 @@
+import { llamactlHome } from "@llamactl/core/config/env";
 import { homedir, platform as nodePlatform } from "node:os";
 import { basename, dirname, join } from "node:path";
 
-import { llamactlHome } from "../config/env.js";
 import {
   chmodSync,
   existsSync,

@@ -1,3 +1,5 @@
+import { saveConfig } from "@llamactl/core/config/kubeconfig";
+import { freshConfig } from "@llamactl/core/config/schema";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,8 +19,6 @@ import type { ApplyResult, WorkloadClient } from "../src/workload/apply.js";
 
 import { applyComposite, destroyComposite } from "../src/composite/apply.js";
 import { CompositeSchema } from "../src/composite/schema.js";
-import { saveConfig } from "../src/config/kubeconfig.js";
-import { freshConfig } from "../src/config/schema.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
@@ -324,7 +324,7 @@ describe("applyComposite — happy path with rag + backingService", () => {
     expect(result.ok).toBe(true);
     // Service comes up first, then rag — verify rag component's
     // apply triggered an upsert to kubeconfig with the endpoint.
-    const { loadConfig } = await import("../src/config/kubeconfig.js");
+    const { loadConfig } = await import("@llamactl/core/config/kubeconfig");
     const cfg = loadConfig(configPath);
     const kbNode = cfg.clusters[0]?.nodes.find((n) => n.name === "kb");
     expect(kbNode).toBeDefined();
@@ -394,7 +394,7 @@ describe("applyComposite — happy path with rag + backingService", () => {
     });
     expect(result.ok).toBe(true);
 
-    const { loadConfig } = await import("../src/config/kubeconfig.js");
+    const { loadConfig } = await import("@llamactl/core/config/kubeconfig");
     const cfg = loadConfig(configPath);
     const kbNode = cfg.clusters[0]?.nodes.find((n) => n.name === "kb");
     expect(kbNode?.rag?.endpoint).toBe("http://localhost:31234");
@@ -688,7 +688,7 @@ describe("destroyComposite — reverses the DAG", () => {
     expect(removeServiceCalls).toHaveLength(1);
 
     // Rag node should be gone from kubeconfig.
-    const { loadConfig } = await import("../src/config/kubeconfig.js");
+    const { loadConfig } = await import("@llamactl/core/config/kubeconfig");
     const cfg = loadConfig(configPath);
     const kbStillThere = cfg.clusters[0]?.nodes.find((n) => n.name === "kb");
     expect(kbStillThere).toBeUndefined();
@@ -1063,7 +1063,7 @@ describe("destroyComposite — boundary-based destroy (k8s cascade)", () => {
 
     // Non-service components (rag node) still cleaned up via the
     // per-component loop.
-    const { loadConfig } = await import("../src/config/kubeconfig.js");
+    const { loadConfig } = await import("@llamactl/core/config/kubeconfig");
     const cfg = loadConfig(configPath);
     expect(cfg.clusters[0]?.nodes.find((n) => n.name === "kb")).toBeUndefined();
   });
@@ -1121,7 +1121,7 @@ describe("destroyComposite — boundary-based destroy (k8s cascade)", () => {
     expect(result.errors.length).toBeGreaterThan(0);
     expect(result.errors[0]?.message).toContain("cluster unreachable");
     // RAG node still got cleaned up.
-    const { loadConfig } = await import("../src/config/kubeconfig.js");
+    const { loadConfig } = await import("@llamactl/core/config/kubeconfig");
     const cfg = loadConfig(configPath);
     expect(cfg.clusters[0]?.nodes.find((n) => n.name === "kb")).toBeUndefined();
   });
@@ -1137,7 +1137,7 @@ describe("applyComposite — gateway upstream threading", () => {
       loadConfig,
       saveConfig: saveCfg,
       upsertNode,
-    } = await import("../src/config/kubeconfig.js");
+    } = await import("@llamactl/core/config/kubeconfig");
     const cfg0 = loadConfig(configPath);
     saveCfg(
       upsertNode(cfg0, "home", {
@@ -1251,7 +1251,7 @@ describe("applyComposite — gateway upstream threading", () => {
       loadConfig,
       saveConfig: saveCfg,
       upsertNode,
-    } = await import("../src/config/kubeconfig.js");
+    } = await import("@llamactl/core/config/kubeconfig");
     const cfg0 = loadConfig(configPath);
     saveCfg(
       upsertNode(cfg0, "home", {
@@ -1352,7 +1352,7 @@ describe("applyComposite — gateway upstream threading", () => {
       loadConfig,
       saveConfig: saveCfg,
       upsertNode,
-    } = await import("../src/config/kubeconfig.js");
+    } = await import("@llamactl/core/config/kubeconfig");
     const cfg0 = loadConfig(configPath);
     saveCfg(
       upsertNode(cfg0, "home", {
@@ -1453,7 +1453,7 @@ describe("applyComposite — gateway upstream threading", () => {
       loadConfig,
       saveConfig: saveCfg,
       upsertNode,
-    } = await import("../src/config/kubeconfig.js");
+    } = await import("@llamactl/core/config/kubeconfig");
     const cfg0 = loadConfig(configPath);
     saveCfg(
       upsertNode(cfg0, "home", {

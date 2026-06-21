@@ -1,11 +1,11 @@
 import { env as envMod, serverLogs as serverLogsMod } from "@llamactl/core";
+import { upsertNode as upsertNodeInConfig } from "@llamactl/core/config/kubeconfig";
+import { freshConfig } from "@llamactl/core/config/schema";
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { createNodeClient } from "../src/client/node-client.js";
-import { upsertNode as upsertNodeInConfig } from "../src/config/kubeconfig.js";
-import { freshConfig } from "../src/config/schema.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 describe("createNodeClient (local sentinel path)", () => {

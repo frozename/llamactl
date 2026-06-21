@@ -1,8 +1,8 @@
 import { probeNodeMem, projectAdmissionHeadroom } from "@llamactl/fleet-supervisor";
+import { readMeasuredMemoryCache } from "@llamactl/fleet-supervisor/measured-memory";
 import { spawnSync } from "node:child_process";
 import yaml from "yaml";
 
-import { readMeasuredMemoryCache } from "../../../fleet-supervisor/src/measured-memory.js";
 import { required } from "../required.js";
 import { isRecord } from "../runtime-shape.js";
 import { readFileSync } from "../safe-fs.js";

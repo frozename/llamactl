@@ -33,6 +33,8 @@ import type {
   V1StatefulSet,
 } from "@kubernetes/client-node";
 
+import { resolveSecret } from "@llamactl/core/config/secret";
+
 import type {
   ImageRef,
   RemoveServiceOptions,
@@ -43,7 +45,6 @@ import type {
   ServiceRef,
 } from "../backend.js";
 
-import { resolveSecret } from "../../config/secret.js";
 import { RuntimeError } from "../errors.js";
 import {
   createKubernetesClient,

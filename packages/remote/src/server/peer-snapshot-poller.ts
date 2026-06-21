@@ -1,15 +1,15 @@
+import type { ClusterNode } from "@llamactl/core/config/schema";
+import type { PeerSnapshot } from "@llamactl/core/workloadRuntime";
+
 // Import via '@llamactl/core' (NOT the relative core path) so this resolves to
 // the SAME openaiProxy module instance serve.ts uses. Under bun the symlinked
 // package path and the relative path are distinct module instances, so a
 // relative import would publish to a productionPeerSnapshots the proxy never
 // reads (routes silently never appear).
 import { openaiProxy } from "@llamactl/core";
-
-import type { PeerSnapshot } from "../../../core/src/workloadRuntime.js";
-import type { ClusterNode } from "../config/schema.js";
+import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
 
 import { makePinnedFetch } from "../client/links.js";
-import { listPeers, type PeerNode } from "../config/peers.js";
 
 /**
  * Production peer-snapshot poller. Periodically fetches each cluster peer's

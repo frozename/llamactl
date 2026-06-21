@@ -1,3 +1,4 @@
+import { resolveSecret } from "@llamactl/core/config/secret";
 /**
  * Docker Engine backend. Implements `RuntimeBackend` against the
  * Docker Engine API v1.54 over a unix socket.
@@ -35,7 +36,6 @@ import type {
   VolumeMount,
 } from "../backend.js";
 
-import { resolveSecret } from "../../config/secret.js";
 import { RuntimeError } from "../errors.js";
 import { LABEL_KEYS, MANAGED_BY_VALUE } from "../labels.js";
 import {

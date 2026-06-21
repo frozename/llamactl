@@ -1,8 +1,8 @@
+import type { RagBinding } from "@llamactl/core/config/schema";
+
+import { resolveSecret } from "@llamactl/core/config/secret";
 import postgres from "postgres";
 
-import type { RagBinding } from "../../config/schema.js";
-
-import { resolveSecret } from "../../config/secret.js";
 import { RagError } from "../errors.js";
 
 /**

@@ -1,9 +1,9 @@
+import { saveConfig, upsertNode } from "@llamactl/core/config/kubeconfig";
+import { freshConfig } from "@llamactl/core/config/schema";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { saveConfig, upsertNode } from "../src/config/kubeconfig.js";
-import { freshConfig } from "../src/config/schema.js";
 import { router } from "../src/router.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 

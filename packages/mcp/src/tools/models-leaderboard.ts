@@ -1,11 +1,11 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { type QueryFilter, queryRows } from "@llamactl/eval";
 import { toTextContent } from "@nova/mcp-shared";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { z } from "zod";
 
-import { type QueryFilter, queryRows } from "../../../eval/src/index.js";
 import { existsSync } from "../safe-fs.js";
 
 const deprecatedToolWarnings = new Set<string>();

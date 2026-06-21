@@ -1,5 +1,6 @@
-import { MACHINE_PROFILES } from "@llamactl/core";
 import { z } from "zod";
+
+import { MACHINE_PROFILES } from "../types.js";
 
 export const GpuFactsSchema = z.object({
   kind: z.enum(["metal", "cuda", "rocm", "cpu"]),

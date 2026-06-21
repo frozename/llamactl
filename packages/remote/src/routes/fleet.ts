@@ -1,7 +1,7 @@
 import {
   defaultFleetJournalPath,
   readLatestFleetSnapshotFromJournal,
-} from "../../../fleet-supervisor/src/index.js";
+} from "@llamactl/fleet-supervisor";
 
 export interface FleetSnapshotRouteOptions {
   journalPath?: string;

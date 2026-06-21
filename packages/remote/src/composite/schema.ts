@@ -1,3 +1,4 @@
+import { RagBindingSchema } from "@llamactl/core/config/schema";
 /**
  * Composite — a declarative multi-component manifest that bundles
  * supporting services (chroma, pgvector, …), llama.cpp workloads,
@@ -13,7 +14,6 @@
  */
 import { z } from "zod";
 
-import { RagBindingSchema } from "../config/schema.js";
 import { RagPipelineSpecSchema } from "../rag/pipeline/schema.js";
 import { ServiceSpecSchema } from "../service/schema.js";
 import { ProviderConfigCommonSchema } from "../workload/gateway-catalog/schema.js";

@@ -1,6 +1,5 @@
+import type { Config, RagBinding } from "@llamactl/core/config/schema";
 import type { RetrievalProvider } from "@nova/contracts";
-
-import type { Config, RagBinding } from "../../config/schema.js";
 
 import { createEmbedderFromBinding, type Embedder } from "../embedding.js";
 import { ChromaRagAdapter } from "./adapter.js";

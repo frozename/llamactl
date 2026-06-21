@@ -25,11 +25,11 @@
  * JSONL, append-only, small-volume (one line per chat request).
  */
 
+import { llamactlHome, nonEmpty } from "@llamactl/core/config/env";
 import { estimateCostUsd, loadPricing, readUsage } from "@nova/mcp-shared";
 import { dirname, join } from "node:path";
 
 import { appendFile, mkdir } from "../safe-fs-promises.js";
-import { llamactlHome, nonEmpty } from "./env.js";
 import {
   defaultProjectsPath,
   loadProjects,

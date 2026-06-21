@@ -1,8 +1,8 @@
 // packages/remote/src/workload/gateway-catalog/reload.ts
-import type { ClusterNode } from "../../config/schema.js";
+import type { ClusterNode } from "@llamactl/core/config/schema";
 
-import { loadConfig, resolveToken } from "../../config/kubeconfig.js";
-import { resolveNodeKind } from "../../config/schema.js";
+import { loadConfig, resolveToken } from "@llamactl/core/config/kubeconfig";
+import { resolveNodeKind } from "@llamactl/core/config/schema";
 
 type GatewayKind = "sirius" | "embersynth";
 

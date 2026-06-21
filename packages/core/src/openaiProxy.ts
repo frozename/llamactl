@@ -7,7 +7,6 @@ import type { AnthropicMessagesRequest } from "./anthropic/types.js";
 import type { ResolvedEnv } from "./types.js";
 import type { WorkloadKey } from "./workloadRuntime.js";
 
-import { listPeers, type PeerNode } from "../../remote/src/config/peers.js";
 import {
   AnthropicTranslationError,
   translateAnthropicRequest,
@@ -15,6 +14,7 @@ import {
 import { translateOpenAIResponse } from "./anthropic/translateResponse.js";
 import { translateOpenAIStreamToAnthropic } from "./anthropic/translateStream.js";
 import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from "./cache-identity/canonical.js";
+import { listPeers, type PeerNode } from "./config/peers.js";
 import { ctxForModel } from "./ctx.js";
 import { readModelHostState } from "./engines/state.js";
 import { resolveEnv } from "./env.js";

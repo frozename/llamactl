@@ -1,7 +1,7 @@
+import { resolveNode, resolveToken } from "@llamactl/core/config/kubeconfig";
+import { type ClusterNode, type Config, LOCAL_NODE_ENDPOINT } from "@llamactl/core/config/schema";
 import { createTRPCClient } from "@trpc/client";
 
-import { resolveNode, resolveToken } from "../config/kubeconfig.js";
-import { type ClusterNode, type Config, LOCAL_NODE_ENDPOINT } from "../config/schema.js";
 import { router as appRouter, type AppRouter } from "../router.js";
 import { buildPinnedLinks } from "./links.js";
 

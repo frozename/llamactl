@@ -13,7 +13,7 @@
     "build:agent": "bun run packages/cli/src/bin.ts artifacts build-agent",
     "build:agent:all": "scripts/build-all-targets.sh",
     "prepare": "husky",
-    "lint": "eslint . --max-warnings=0",
+    "lint": "bun scripts/lint/no-cross-package-relative.ts && eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
     "format": "prettier . --write",
     "format:check": "prettier . --check",

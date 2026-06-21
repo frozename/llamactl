@@ -1,5 +1,6 @@
 import type { McpServer, ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { listPeers } from "@llamactl/core/config/peers";
 import {
   appendFleetJournal,
   defaultFleetJournalPath,
@@ -10,19 +11,17 @@ import {
   readAuditEntries,
   readSupervisorStatus,
 } from "@llamactl/fleet-supervisor";
+import { FleetAggregator } from "@llamactl/fleet-supervisor/aggregator";
+import { defaultFleetAuditPath } from "@llamactl/fleet-supervisor/journal";
+import { createPeerFetch } from "@llamactl/fleet-supervisor/peer-fetch";
 import { toTextContent } from "@nova/mcp-shared";
 import { spawn } from "node:child_process";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { z } from "zod";
 
-import { FleetAggregator } from "../../../fleet-supervisor/src/aggregator.js";
-import { defaultFleetAuditPath } from "../../../fleet-supervisor/src/journal.js";
-import { createPeerFetch } from "../../../fleet-supervisor/src/peer-fetch.js";
-import { listPeers } from "../../../remote/src/config/peers.js";
 import { existsSync, readFileSync } from "../safe-fs.js";
 
-const CLI_BIN_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../cli/src/bin.ts");
+const CLI_BIN_PATH = createRequire(import.meta.url).resolve("@llamactl/cli/bin");
 let cliBinChecked = false;
 function ensureCliBin(): void {
   if (cliBinChecked) return;

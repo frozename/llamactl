@@ -1,7 +1,7 @@
+import type { RagBinding } from "@llamactl/core/config/schema";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-
-import type { RagBinding } from "../../config/schema.js";
 
 import { RagError } from "../errors.js";
 

@@ -1,14 +1,13 @@
+import type { MeasuredMemoryEntry } from "@llamactl/fleet-supervisor/measured-memory";
 import type { ChildProcess } from "node:child_process";
 
+// Relative import so the worktree's measured-memory module is used directly,
+// bypassing the node_modules symlink that points at the main checkout.
+import { writeMeasuredMemoryCache } from "@llamactl/fleet-supervisor/measured-memory";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import yaml from "yaml";
 
-import type { MeasuredMemoryEntry } from "../../../fleet-supervisor/src/measured-memory.js";
-
-// Relative import so the worktree's measured-memory module is used directly,
-// bypassing the node_modules symlink that points at the main checkout.
-import { writeMeasuredMemoryCache } from "../../../fleet-supervisor/src/measured-memory.js";
 import { required } from "../required.js";
 import { readFileSync } from "../safe-fs.js";
 

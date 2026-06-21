@@ -1,8 +1,8 @@
+import { llamactlHome } from "@llamactl/core/config/env";
 import { basename, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { atomicWriteFileSync } from "../atomic-write.js";
-import { llamactlHome } from "../config/env.js";
 /**
  * Composite manifest storage — file-per-manifest YAML pattern,
  * mirrors the workload store in `../workload/store.ts`. Default

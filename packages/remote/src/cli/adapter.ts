@@ -1,3 +1,4 @@
+import type { CliBinding } from "@llamactl/core/config/schema";
 import type {
   AiProvider,
   ChatMessage,
@@ -30,8 +31,6 @@ import type {
  *     Phase 5 adds it for presets that can line-buffer.
  */
 import { randomUUID } from "node:crypto";
-
-import type { CliBinding } from "../config/schema.js";
 
 import { appendCliJournal, type CliJournalEntry } from "./journal.js";
 import { expandArgs, resolvePreset } from "./presets.js";

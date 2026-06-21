@@ -1,5 +1,7 @@
 import type { RetrievalProvider } from "@nova/contracts";
 
+import { saveConfig, upsertNode } from "@llamactl/core/config/kubeconfig";
+import { freshConfig } from "@llamactl/core/config/schema";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,8 +10,6 @@ import { stringify as stringifyYaml } from "yaml";
 import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
 import type { Fetcher } from "../src/rag/pipeline/types.js";
 
-import { saveConfig, upsertNode } from "../src/config/kubeconfig.js";
-import { freshConfig } from "../src/config/schema.js";
 import { FETCHERS } from "../src/rag/pipeline/fetchers/registry.js";
 import { applyPipeline, pipelineDir } from "../src/rag/pipeline/store.js";
 import { router } from "../src/router.js";
