@@ -12,7 +12,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { handleAgentUpdate } from "../src/server/agent-update.js";
+import {
+  handleAgentUpdate,
+  runWatchdog,
+  type WatchdogConfig,
+  type WatchdogDeps,
+} from "../src/server/agent-update.js";
 
 /**
  * Agent self-update endpoint. Tests run handleAgentUpdate against a
@@ -199,3 +204,112 @@ describe("handleAgentUpdate — selfPath errors", () => {
 // we keep the import to make sure the test runner sees the same node:fs
 // surface the implementation uses.
 void copyFileSync;
+
+// ---------------------------------------------------------------------------
+// runWatchdog — unit tests for the injectable watchdog logic
+// ---------------------------------------------------------------------------
+
+const WD_BASE: WatchdogConfig = {
+  selfPath: "/tmp/wdtest-agent",
+  previousPath: "/tmp/wdtest-agent.previous",
+  host: "127.0.0.1",
+  port: 7843,
+  gracePeriodMs: 0,
+  pollIntervalMs: 0,
+  maxPollAttempts: 1,
+};
+
+function makeDeps(overrides: Partial<WatchdogDeps> = {}): {
+  copyFileCalls: [string, string][];
+  spawnCalls: string[];
+  stderrLines: string[];
+  deps: WatchdogDeps;
+} {
+  const copyFileCalls: [string, string][] = [];
+  const spawnCalls: string[] = [];
+  const stderrLines: string[] = [];
+  const base: WatchdogDeps = {
+    probe: () => Promise.resolve(false),
+    sleep: () => Promise.resolve(),
+    copyFile: (src, dst) => {
+      copyFileCalls.push([src, dst]);
+    },
+    spawn: (p) => {
+      spawnCalls.push(p);
+    },
+    stderr: (msg) => {
+      stderrLines.push(msg);
+    },
+  };
+  return { copyFileCalls, spawnCalls, stderrLines, deps: { ...base, ...overrides } };
+}
+
+describe("runWatchdog", () => {
+  test("probe returns true within attempts → clean exit, no restore/relaunch", async () => {
+    const { copyFileCalls, spawnCalls, deps } = makeDeps({ probe: () => Promise.resolve(true) });
+    await runWatchdog({ ...WD_BASE, maxPollAttempts: 3 }, deps);
+    expect(copyFileCalls).toHaveLength(0);
+    expect(spawnCalls).toHaveLength(0);
+  });
+
+  test("probe always false → restores .previous over selfPath and relaunches", async () => {
+    const { copyFileCalls, spawnCalls, deps } = makeDeps();
+    await runWatchdog(WD_BASE, deps);
+    expect(copyFileCalls).toEqual([["/tmp/wdtest-agent.previous", "/tmp/wdtest-agent"]]);
+    expect(spawnCalls).toEqual(["/tmp/wdtest-agent"]);
+  });
+
+  test("restore throws → spawn still called, error does not propagate", async () => {
+    const { spawnCalls, stderrLines, deps } = makeDeps({
+      copyFile: () => {
+        throw new Error("disk full");
+      },
+    });
+    let threw = false;
+    try {
+      await runWatchdog(WD_BASE, deps);
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(false);
+    expect(spawnCalls).toEqual(["/tmp/wdtest-agent"]);
+    expect(stderrLines.some((l) => l.includes("restore"))).toBe(true);
+  });
+});
+
+describe("handleAgentUpdate — watchdog spawn integration", () => {
+  test("calls _spawnWatchdog with correct config when watchdog option is set", async () => {
+    const newBytes = new Uint8Array(Buffer.from("#!/bin/sh\necho v2\n"));
+    let spawnedConfig: WatchdogConfig | undefined;
+    const res = await handleAgentUpdate(postReq(newBytes), {
+      tokenHash: TOKEN_HASH,
+      selfPath,
+      exitAfter: false,
+      watchdog: { host: "127.0.0.1", port: 7843 },
+      _spawnWatchdog: (cfg) => {
+        spawnedConfig = cfg;
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(spawnedConfig).toBeDefined();
+    expect(spawnedConfig!.host).toBe("127.0.0.1");
+    expect(spawnedConfig!.port).toBe(7843);
+    expect(spawnedConfig!.selfPath).toBe(selfPath);
+    expect(spawnedConfig!.previousPath).toBe(`${selfPath}.previous`);
+  });
+
+  test("does NOT call _spawnWatchdog when watchdog option is absent", async () => {
+    const newBytes = new Uint8Array(Buffer.from("#!/bin/sh\necho v2\n"));
+    let spawnCalled = false;
+    const res = await handleAgentUpdate(postReq(newBytes), {
+      tokenHash: TOKEN_HASH,
+      selfPath,
+      exitAfter: false,
+      _spawnWatchdog: () => {
+        spawnCalled = true;
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(spawnCalled).toBe(false);
+  });
+});
