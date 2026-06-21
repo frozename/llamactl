@@ -37,7 +37,7 @@ describe("maybeTuneAfterPull", () => {
     const binDir = join(temp.devStorage, "bin");
     mkdirSync(binDir, { recursive: true });
     writeFileSync(join(binDir, "llama-bench"), "");
-    process.env.LLAMA_CPP_BIN = binDir;
+    process.env["LLAMA_CPP_BIN"] = binDir;
     // And the model file so benchPreset's existence check passes.
     const modelDir = join(temp.modelsDir, "Demo");
     mkdirSync(modelDir, { recursive: true });
@@ -57,7 +57,7 @@ describe("maybeTuneAfterPull", () => {
   });
 
   test("skip when auto-tune env flag is disabled", async () => {
-    process.env.LLAMA_CPP_AUTO_TUNE_ON_PULL = "off";
+    process.env["LLAMA_CPP_AUTO_TUNE_ON_PULL"] = "off";
     const runCli: RunCli = () => Promise.resolve({ code: 0, stdout: "", stderr: "" });
     const report = await maybeTuneAfterPull({ rel, wasMissing: true, runCli });
     if (!report.preset.ran) {
@@ -68,7 +68,7 @@ describe("maybeTuneAfterPull", () => {
   });
 
   test("skip when llama-bench binary is missing", async () => {
-    process.env.LLAMA_CPP_BIN = join(temp.devStorage, "nonexistent-bin");
+    process.env["LLAMA_CPP_BIN"] = join(temp.devStorage, "nonexistent-bin");
     const runCli: RunCli = () => Promise.resolve({ code: 0, stdout: "", stderr: "" });
     const report = await maybeTuneAfterPull({ rel, wasMissing: true, runCli });
     if (!report.preset.ran) {

@@ -76,7 +76,7 @@ describe("agent serve tunnel-central validation", () => {
     initAgent(env);
     // Make sure env fallback is cleared so the test isolates the flag case.
     const runEnv: NodeJS.ProcessEnv = { ...env };
-    delete runEnv.LLAMACTL_TUNNEL_CENTRAL_BEARER;
+    delete runEnv["LLAMACTL_TUNNEL_CENTRAL_BEARER"];
     const r = runCli(["agent", "serve", "--tunnel-central=true"], runEnv);
     expect(r.code).toBe(1);
     expect(r.stderr).toContain("--tunnel-central=true requires --tunnel-bearer");

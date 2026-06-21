@@ -1317,9 +1317,9 @@ function isConflict(err: unknown): boolean {
 function readStatus(err: unknown): number | null {
   if (err && typeof err === "object") {
     const rec = err as Record<string, unknown>;
-    if (typeof rec.code === "number") return rec.code;
-    if (typeof rec.statusCode === "number") return rec.statusCode;
-    if (typeof rec.status === "number") return rec.status;
+    if (typeof rec["code"] === "number") return rec["code"];
+    if (typeof rec["statusCode"] === "number") return rec["statusCode"];
+    if (typeof rec["status"] === "number") return rec["status"];
   }
   return null;
 }

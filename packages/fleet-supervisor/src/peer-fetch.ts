@@ -37,7 +37,7 @@ async function doRequest(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_PEER_FETCH_TIMEOUT_MS;
   const headers: Record<string, string> = {};
   const token = resolvedPeerToken(peer);
-  if (token) headers.authorization = `Bearer ${token}`;
+  if (token) headers["authorization"] = `Bearer ${token}`;
   const target = new URL("/v1/fleet/snapshot", peer.endpoint);
   const controller = new AbortController();
   const timer = setTimeout(() => {

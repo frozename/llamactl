@@ -68,7 +68,7 @@ function pick(override: string | undefined, fallback: string): string {
  * through to the production defaults with zero behaviour change.
  */
 function testProfileDefaults(env: NodeJS.ProcessEnv): Record<string, string> | null {
-  const testProfile = env.LLAMACTL_TEST_PROFILE;
+  const testProfile = env["LLAMACTL_TEST_PROFILE"];
   if (!testProfile || testProfile.length === 0) return null;
   const llamaCppRoot = join(testProfile, "ai-models/llama.cpp");
   const hfHome = join(testProfile, "cache/huggingface");
@@ -130,46 +130,46 @@ function computeEnvBasics(
 ): EnvBasics {
   const t = (key: string): string | undefined => testProfile?.[key];
   const devStorage = pickWithTestProfile(
-    env.DEV_STORAGE,
+    env["DEV_STORAGE"],
     t("DEV_STORAGE"),
     detectDevStorageDefault(),
   );
   const hfHome = pickWithTestProfile(
-    env.HF_HOME,
+    env["HF_HOME"],
     t("HF_HOME"),
     join(devStorage, "cache/huggingface"),
   );
-  const llamaCppSrc = pick(env.LLAMA_CPP_SRC, join(devStorage, "src/llama.cpp"));
+  const llamaCppSrc = pick(env["LLAMA_CPP_SRC"], join(devStorage, "src/llama.cpp"));
   const llamaCppBin = pickWithTestProfile(
-    env.LLAMA_CPP_BIN,
+    env["LLAMA_CPP_BIN"],
     t("LLAMA_CPP_BIN"),
     join(llamaCppSrc, "build/bin"),
   );
   const llamaCppRoot = pickWithTestProfile(
-    env.LLAMA_CPP_ROOT,
+    env["LLAMA_CPP_ROOT"],
     t("LLAMA_CPP_ROOT"),
     join(devStorage, "ai-models/llama.cpp"),
   );
   const llamaCppModels = pickWithTestProfile(
-    env.LLAMA_CPP_MODELS,
+    env["LLAMA_CPP_MODELS"],
     t("LLAMA_CPP_MODELS"),
     join(llamaCppRoot, "models"),
   );
   const llamaCppCache = pickWithTestProfile(
-    env.LLAMA_CPP_CACHE,
+    env["LLAMA_CPP_CACHE"],
     t("LLAMA_CPP_CACHE"),
     join(llamaCppRoot, ".cache"),
   );
-  const host = pickWithTestProfile(env.LLAMA_CPP_HOST, t("LLAMA_CPP_HOST"), "127.0.0.1");
-  const port = pickWithTestProfile(env.LLAMA_CPP_PORT, t("LLAMA_CPP_PORT"), "8080");
-  const advertisedHost = pick(env.LLAMA_CPP_ADVERTISED_HOST, "");
-  const lmStudioHost = pick(env.LOCAL_AI_LMSTUDIO_HOST, "127.0.0.1");
-  const lmStudioPort = pick(env.LOCAL_AI_LMSTUDIO_PORT, "1234");
+  const host = pickWithTestProfile(env["LLAMA_CPP_HOST"], t("LLAMA_CPP_HOST"), "127.0.0.1");
+  const port = pickWithTestProfile(env["LLAMA_CPP_PORT"], t("LLAMA_CPP_PORT"), "8080");
+  const advertisedHost = pick(env["LLAMA_CPP_ADVERTISED_HOST"], "");
+  const lmStudioHost = pick(env["LOCAL_AI_LMSTUDIO_HOST"], "127.0.0.1");
+  const lmStudioPort = pick(env["LOCAL_AI_LMSTUDIO_PORT"], "1234");
   const lmStudioBaseUrl = pick(
-    env.LOCAL_AI_LMSTUDIO_BASE_URL,
+    env["LOCAL_AI_LMSTUDIO_BASE_URL"],
     `http://${lmStudioHost}:${lmStudioPort}/v1`,
   );
-  const llamaCppBaseUrl = pick(env.LOCAL_AI_LLAMA_CPP_BASE_URL, `http://${host}:${port}/v1`);
+  const llamaCppBaseUrl = pick(env["LOCAL_AI_LLAMA_CPP_BASE_URL"], `http://${host}:${port}/v1`);
   return {
     devStorage,
     hfHome,
@@ -204,19 +204,19 @@ function resolveProviderConfig(
   if (provider === "lmstudio") {
     return {
       providerUrl: lmStudioBaseUrl,
-      apiKey: pick(env.LM_API_TOKEN, "local"),
-      model: pick(env.LOCAL_AI_MODEL, `local/${sourceModel.split("/")[0] ?? sourceModel}`),
+      apiKey: pick(env["LM_API_TOKEN"], "local"),
+      model: pick(env["LOCAL_AI_MODEL"], `local/${sourceModel.split("/")[0] ?? sourceModel}`),
     };
   }
   return {
     providerUrl: llamaCppBaseUrl,
     apiKey: "local",
-    model: pick(env.LOCAL_AI_MODEL, pick(env.LLAMA_CPP_SERVER_ALIAS, "local")),
+    model: pick(env["LOCAL_AI_MODEL"], pick(env["LLAMA_CPP_SERVER_ALIAS"], "local")),
   };
 }
 
 export function resolveInternalProxyEndpoint(env: NodeJS.ProcessEnv = process.env): string {
-  return env.LLAMACTL_INTERNAL_PROXY_URL ?? "http://127.0.0.1:7944";
+  return env["LLAMACTL_INTERNAL_PROXY_URL"] ?? "http://127.0.0.1:7944";
 }
 
 function resolveDefaultModel(
@@ -224,7 +224,7 @@ function resolveDefaultModel(
   profile: MachineProfile,
   llamaCppModels: string,
 ): string {
-  const override = env.LLAMA_CPP_DEFAULT_MODEL;
+  const override = env["LLAMA_CPP_DEFAULT_MODEL"];
   if (override && override.length > 0) return override;
 
   for (const rel of DEFAULT_MODEL_CHOICES[profile]) {
@@ -261,17 +261,17 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
   const profile = resolveProfile(env);
 
   const runtimeDir = pickWithTestProfile(
-    env.LOCAL_AI_RUNTIME_DIR,
+    env["LOCAL_AI_RUNTIME_DIR"],
     testProfile?.["LOCAL_AI_RUNTIME_DIR"],
     join(basics.devStorage, "ai-models/local-ai"),
   );
   const defaultModel = resolveDefaultModel(env, profile, basics.llamaCppModels);
-  const gemmaCtx = pick(env.LLAMA_CPP_GEMMA_CTX_SIZE, GEMMA_CTX_BY_PROFILE[profile]);
-  const qwenCtx = pick(env.LLAMA_CPP_QWEN_CTX_SIZE, QWEN_CTX_BY_PROFILE[profile]);
+  const gemmaCtx = pick(env["LLAMA_CPP_GEMMA_CTX_SIZE"], GEMMA_CTX_BY_PROFILE[profile]);
+  const qwenCtx = pick(env["LLAMA_CPP_QWEN_CTX_SIZE"], QWEN_CTX_BY_PROFILE[profile]);
 
-  const provider = resolveProvider(env.LOCAL_AI_PROVIDER);
-  const sourceModel = pick(env.LOCAL_AI_SOURCE_MODEL, defaultModel);
-  const contextLength = pick(env.LOCAL_AI_CONTEXT_LENGTH, gemmaCtx);
+  const provider = resolveProvider(env["LOCAL_AI_PROVIDER"]);
+  const sourceModel = pick(env["LOCAL_AI_SOURCE_MODEL"], defaultModel);
+  const contextLength = pick(env["LOCAL_AI_CONTEXT_LENGTH"], gemmaCtx);
 
   const { providerUrl, apiKey, model } = resolveProviderConfig(
     provider,
@@ -285,12 +285,12 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
     DEV_STORAGE: basics.devStorage,
     HF_HOME: basics.hfHome,
     HUGGINGFACE_HUB_CACHE: pickWithTestProfile(
-      env.HUGGINGFACE_HUB_CACHE,
+      env["HUGGINGFACE_HUB_CACHE"],
       testProfile?.["HUGGINGFACE_HUB_CACHE"],
       join(basics.hfHome, "hub"),
     ),
     OLLAMA_MODELS: pickWithTestProfile(
-      env.OLLAMA_MODELS,
+      env["OLLAMA_MODELS"],
       testProfile?.["OLLAMA_MODELS"],
       join(basics.devStorage, "ai-models/ollama"),
     ),
@@ -300,7 +300,7 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
     LLAMA_CPP_MODELS: basics.llamaCppModels,
     LLAMA_CPP_CACHE: basics.llamaCppCache,
     LLAMA_CPP_LOGS: pickWithTestProfile(
-      env.LLAMA_CPP_LOGS,
+      env["LLAMA_CPP_LOGS"],
       testProfile?.["LLAMA_CPP_LOGS"],
       join(basics.devStorage, "logs/llama.cpp"),
     ),
@@ -311,33 +311,33 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
     LLAMA_CPP_GEMMA_CTX_SIZE: gemmaCtx,
     LLAMA_CPP_QWEN_CTX_SIZE: qwenCtx,
     LLAMA_CPP_DEFAULT_MODEL: defaultModel,
-    LLAMA_CPP_SERVER_ALIAS: pick(env.LLAMA_CPP_SERVER_ALIAS, "local"),
-    LLAMA_CACHE: pick(env.LLAMA_CACHE, basics.llamaCppCache),
+    LLAMA_CPP_SERVER_ALIAS: pick(env["LLAMA_CPP_SERVER_ALIAS"], "local"),
+    LLAMA_CACHE: pick(env["LLAMA_CACHE"], basics.llamaCppCache),
     LOCAL_AI_LMSTUDIO_HOST: basics.lmStudioHost,
     LOCAL_AI_LMSTUDIO_PORT: basics.lmStudioPort,
     LOCAL_AI_LMSTUDIO_BASE_URL: basics.lmStudioBaseUrl,
     LOCAL_AI_LLAMA_CPP_BASE_URL: basics.llamaCppBaseUrl,
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
-    LOCAL_AI_ENABLE_THINKING: pick(env.LOCAL_AI_ENABLE_THINKING, "false"),
-    LOCAL_AI_PRESERVE_THINKING: pick(env.LOCAL_AI_PRESERVE_THINKING, "true"),
-    LOCAL_AI_RECOMMENDATIONS_SOURCE: pick(env.LOCAL_AI_RECOMMENDATIONS_SOURCE, "hf"),
-    LOCAL_AI_HF_CACHE_TTL_SECONDS: pick(env.LOCAL_AI_HF_CACHE_TTL_SECONDS, "43200"),
-    LOCAL_AI_DISCOVERY_AUTHOR: pick(env.LOCAL_AI_DISCOVERY_AUTHOR, "unsloth"),
-    LOCAL_AI_DISCOVERY_LIMIT: pick(env.LOCAL_AI_DISCOVERY_LIMIT, "24"),
-    LOCAL_AI_DISCOVERY_SEARCH: pick(env.LOCAL_AI_DISCOVERY_SEARCH, "GGUF"),
+    LOCAL_AI_ENABLE_THINKING: pick(env["LOCAL_AI_ENABLE_THINKING"], "false"),
+    LOCAL_AI_PRESERVE_THINKING: pick(env["LOCAL_AI_PRESERVE_THINKING"], "true"),
+    LOCAL_AI_RECOMMENDATIONS_SOURCE: pick(env["LOCAL_AI_RECOMMENDATIONS_SOURCE"], "hf"),
+    LOCAL_AI_HF_CACHE_TTL_SECONDS: pick(env["LOCAL_AI_HF_CACHE_TTL_SECONDS"], "43200"),
+    LOCAL_AI_DISCOVERY_AUTHOR: pick(env["LOCAL_AI_DISCOVERY_AUTHOR"], "unsloth"),
+    LOCAL_AI_DISCOVERY_LIMIT: pick(env["LOCAL_AI_DISCOVERY_LIMIT"], "24"),
+    LOCAL_AI_DISCOVERY_SEARCH: pick(env["LOCAL_AI_DISCOVERY_SEARCH"], "GGUF"),
     LOCAL_AI_CUSTOM_CATALOG_FILE: pick(
-      env.LOCAL_AI_CUSTOM_CATALOG_FILE,
+      env["LOCAL_AI_CUSTOM_CATALOG_FILE"],
       join(runtimeDir, "curated-models.tsv"),
     ),
     LOCAL_AI_PRESET_OVERRIDES_FILE: pick(
-      env.LOCAL_AI_PRESET_OVERRIDES_FILE,
+      env["LOCAL_AI_PRESET_OVERRIDES_FILE"],
       join(runtimeDir, "preset-overrides.tsv"),
     ),
-    LLAMA_CPP_KEEP_ALIVE_INTERVAL: pick(env.LLAMA_CPP_KEEP_ALIVE_INTERVAL, "5"),
-    LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF: pick(env.LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF, "30"),
-    LLAMA_CPP_AUTO_TUNE_ON_PULL: pick(env.LLAMA_CPP_AUTO_TUNE_ON_PULL, "true"),
-    LLAMA_CPP_AUTO_BENCH_VISION: pick(env.LLAMA_CPP_AUTO_BENCH_VISION, "true"),
-    LOCAL_AI_BENCH_IMAGE: env.LOCAL_AI_BENCH_IMAGE ?? "",
+    LLAMA_CPP_KEEP_ALIVE_INTERVAL: pick(env["LLAMA_CPP_KEEP_ALIVE_INTERVAL"], "5"),
+    LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF: pick(env["LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF"], "30"),
+    LLAMA_CPP_AUTO_TUNE_ON_PULL: pick(env["LLAMA_CPP_AUTO_TUNE_ON_PULL"], "true"),
+    LLAMA_CPP_AUTO_BENCH_VISION: pick(env["LLAMA_CPP_AUTO_BENCH_VISION"], "true"),
+    LOCAL_AI_BENCH_IMAGE: env["LOCAL_AI_BENCH_IMAGE"] ?? "",
     LOCAL_AI_SOURCE_MODEL: sourceModel,
     LOCAL_AI_PROVIDER: provider,
     LOCAL_AI_CONTEXT_LENGTH: contextLength,
@@ -405,7 +405,7 @@ export function ensureDirs(resolved: ResolvedEnv, env: NodeJS.ProcessEnv = proce
   // Under a test profile, also precreate the (empty) bin dir. No
   // behaviour change in production: this branch only runs when
   // $LLAMACTL_TEST_PROFILE is set.
-  if (env.LLAMACTL_TEST_PROFILE && env.LLAMACTL_TEST_PROFILE.length > 0) {
+  if (env["LLAMACTL_TEST_PROFILE"] && env["LLAMACTL_TEST_PROFILE"].length > 0) {
     dirs.push(resolved.LLAMA_CPP_BIN);
   }
   for (const dir of dirs) {
@@ -455,7 +455,7 @@ export function formatEvalScript(
   // `eval "$(llamactl env --eval)"` precreates the same subsystem dirs
   // (healer, ops-chat, workloads, mcp/pipelines, mcp/audit, tunnel).
   managed.push(...subsystemDirs(resolved));
-  if (env.LLAMACTL_TEST_PROFILE && env.LLAMACTL_TEST_PROFILE.length > 0) {
+  if (env["LLAMACTL_TEST_PROFILE"] && env["LLAMACTL_TEST_PROFILE"].length > 0) {
     managed.push(resolved.LLAMA_CPP_BIN);
   }
   const dirs = managed.map(shellEscape);

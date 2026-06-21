@@ -46,12 +46,12 @@ function envFlagEnabled(raw: string | undefined, defaultOn: boolean): boolean {
 
 /** Whether auto-tune after pull is enabled (LLAMA_CPP_AUTO_TUNE_ON_PULL). */
 export function autoTuneEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return envFlagEnabled(env.LLAMA_CPP_AUTO_TUNE_ON_PULL, true);
+  return envFlagEnabled(env["LLAMA_CPP_AUTO_TUNE_ON_PULL"], true);
 }
 
 /** Whether auto vision bench after pull is enabled (LLAMA_CPP_AUTO_BENCH_VISION). */
 export function autoVisionBenchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return envFlagEnabled(env.LLAMA_CPP_AUTO_BENCH_VISION, true);
+  return envFlagEnabled(env["LLAMA_CPP_AUTO_BENCH_VISION"], true);
 }
 
 export interface MaybeTuneAfterPullOptions {

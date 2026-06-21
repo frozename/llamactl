@@ -609,9 +609,9 @@ function parseAssistantContent(stdout: string, format: "text" | "json"): string 
 function extractJsonAssistantText(parsed: unknown): string | undefined {
   if (!parsed || typeof parsed !== "object") return undefined;
   const obj = parsed as Record<string, unknown>;
-  if (typeof obj.response === "string") return obj.response;
-  if (typeof obj.content === "string") return obj.content;
-  const choices = obj.choices;
+  if (typeof obj["response"] === "string") return obj["response"];
+  if (typeof obj["content"] === "string") return obj["content"];
+  const choices = obj["choices"];
   if (!Array.isArray(choices) || !choices[0]) return undefined;
   const first = choices[0] as { message?: { content?: unknown } };
   return typeof first.message?.content === "string" ? first.message.content : undefined;

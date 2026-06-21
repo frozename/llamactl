@@ -101,7 +101,7 @@ describe("ChromaRagAdapter.search", () => {
     const adapter = makeAdapter(client, { collection: "kb" });
 
     await adapter.search({ query: "q", topK: 5, filter: { topic: "x" } });
-    expect(calls[0]!.arguments.where).toEqual({ topic: "x" });
+    expect(calls[0]!.arguments["where"]).toEqual({ topic: "x" });
   });
 
   test("uses binding default collection when caller omits one", async () => {
@@ -111,7 +111,7 @@ describe("ChromaRagAdapter.search", () => {
     const adapter = makeAdapter(client, { collection: "fallback-coll" });
     const res = await adapter.search({ query: "q", topK: 2 });
     expect(res.collection).toBe("fallback-coll");
-    expect(calls[0]!.arguments.collection_name).toBe("fallback-coll");
+    expect(calls[0]!.arguments["collection_name"]).toBe("fallback-coll");
   });
 });
 
@@ -144,7 +144,7 @@ describe("ChromaRagAdapter.store", () => {
     const adapter = makeAdapter(client);
     const res = await adapter.store({ documents: [{ id: "only", content: "c" }] });
     expect(res.ids).toEqual(["only"]);
-    expect((calls[0]!.arguments.documents as string[]).length).toBe(1);
+    expect((calls[0]!.arguments["documents"] as string[]).length).toBe(1);
   });
 });
 

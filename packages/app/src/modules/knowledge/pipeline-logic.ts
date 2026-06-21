@@ -34,8 +34,8 @@ function buildHttpSource(
     rate_limit_per_sec: s.rate_limit_per_sec,
     timeout_ms: s.timeout_ms,
   };
-  if (s.tokenRef?.trim()) out.auth = { tokenRef: s.tokenRef.trim() };
-  if (tag) out.tag = tag;
+  if (s.tokenRef?.trim()) out["auth"] = { tokenRef: s.tokenRef.trim() };
+  if (tag) out["tag"] = tag;
   return out;
 }
 
@@ -48,10 +48,10 @@ function buildGitSource(
     repo: s.repo.trim(),
     glob: s.glob.trim() || "**/*.md",
   };
-  if (s.ref?.trim()) out.ref = s.ref.trim();
-  if (s.subpath?.trim()) out.subpath = s.subpath.trim();
-  if (s.tokenRef?.trim()) out.auth = { tokenRef: s.tokenRef.trim() };
-  if (tag) out.tag = tag;
+  if (s.ref?.trim()) out["ref"] = s.ref.trim();
+  if (s.subpath?.trim()) out["subpath"] = s.subpath.trim();
+  if (s.tokenRef?.trim()) out["auth"] = { tokenRef: s.tokenRef.trim() };
+  if (tag) out["tag"] = tag;
   return out;
 }
 
@@ -82,7 +82,7 @@ export function buildManifest(form: FormState): unknown {
     ],
     on_duplicate: form.on_duplicate,
   };
-  if (form.schedule.trim()) spec.schedule = form.schedule.trim();
+  if (form.schedule.trim()) spec["schedule"] = form.schedule.trim();
   return {
     apiVersion: "llamactl/v1",
     kind: "RagPipeline",

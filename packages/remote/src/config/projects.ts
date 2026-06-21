@@ -103,7 +103,7 @@ type ProjectFile = z.infer<typeof ProjectFileSchema>;
  * `~/.llamactl/projects.yaml`.
  */
 export function defaultProjectsPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = nonEmpty(env.LLAMACTL_PROJECTS_FILE);
+  const override = nonEmpty(env["LLAMACTL_PROJECTS_FILE"]);
   if (override) return override;
   const base = llamactlHome(env);
   return join(base, "projects.yaml");

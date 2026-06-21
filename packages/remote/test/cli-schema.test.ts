@@ -30,7 +30,7 @@ describe("CliBindingSchema", () => {
       env: { CODEX_MODEL: "gpt-5" },
       subscription: "chatgpt-plus-alex",
     });
-    expect(b.env?.CODEX_MODEL).toBe("gpt-5");
+    expect(b.env?.["CODEX_MODEL"]).toBe("gpt-5");
     expect(b.subscription).toBe("chatgpt-plus-alex");
   });
 });

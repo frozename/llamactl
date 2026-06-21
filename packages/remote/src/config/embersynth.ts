@@ -125,7 +125,7 @@ export type EmbersynthProfile = z.infer<typeof EmbersynthProfileSchema>;
 // ---- Storage ---------------------------------------------------------
 
 export function defaultEmbersynthConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = nonEmpty(env.LLAMACTL_EMBERSYNTH_CONFIG);
+  const override = nonEmpty(env["LLAMACTL_EMBERSYNTH_CONFIG"]);
   if (override) return override;
   const base = llamactlHome(env);
   return join(base, "embersynth.yaml");

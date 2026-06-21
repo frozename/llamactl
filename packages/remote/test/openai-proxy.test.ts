@@ -149,15 +149,15 @@ beforeAll(async () => {
 
   // Point the agent's env at the fake llama-server. The proxy reads
   // LLAMA_CPP_HOST / LLAMA_CPP_PORT via resolveEnv() on every call.
-  process.env.DEV_STORAGE = devStorage;
+  process.env["DEV_STORAGE"] = devStorage;
   // The user's shell may export LOCAL_AI_RUNTIME_DIR globally. That
   // takes precedence over DEV_STORAGE in resolveEnv, so override it
   // here too — otherwise the sidecar writes we just did land in the
   // wrong directory.
-  process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
-  process.env.LLAMA_CPP_HOST = "127.0.0.1";
-  process.env.LLAMA_CPP_PORT = String(ENV_LLAMA_PORT);
-  process.env.LLAMACTL_NODE_NAME = "test-agent";
+  process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+  process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+  process.env["LLAMA_CPP_PORT"] = String(ENV_LLAMA_PORT);
+  process.env["LLAMACTL_NODE_NAME"] = "test-agent";
 
   // Write sidecar state files for two live workloads so `/v1/models`
   // still returns an entry and routing can choose between them.

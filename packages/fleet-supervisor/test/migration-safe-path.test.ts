@@ -83,7 +83,7 @@ describe("migration safe-path: non-blocking health poll, apply_failed cooldown, 
         throw new Error("cluster refused");
       },
     });
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
@@ -99,7 +99,7 @@ describe("migration safe-path: non-blocking health poll, apply_failed cooldown, 
 
   it("FIX1: executeMove returns pending_health_check without sleeping when destination not yet healthy", async () => {
     const ctrl = makeController({ healthTimeoutMs: 60_000 });
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
@@ -115,7 +115,7 @@ describe("migration safe-path: non-blocking health poll, apply_failed cooldown, 
 
   it("FIX1: advancePendingHealthPolls executes the move when destination becomes reachable", async () => {
     const ctrl = makeController();
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
@@ -125,8 +125,8 @@ describe("migration safe-path: non-blocking health poll, apply_failed cooldown, 
     await ctrl.executeMove(makeProposal(), (e) => journal.push(e));
     expect(deleteCalls).toHaveLength(0);
 
-    snapshots.m2mini = {
-      ...snapshots.m2mini,
+    snapshots["m2mini"] = {
+      ...snapshots["m2mini"],
       workloads: [{ name: "model-a", reachable: true }],
     };
 
@@ -141,7 +141,7 @@ describe("migration safe-path: non-blocking health poll, apply_failed cooldown, 
 
   it("FIX1: advancePendingHealthPolls journals timed_out failure when deadline passes without health", async () => {
     const ctrl = makeController({ healthTimeoutMs: 1_000 });
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
@@ -164,7 +164,7 @@ describe("migration safe-path: non-blocking health poll, apply_failed cooldown, 
 
   it("FIX1: advancePendingHealthPolls leaves poll pending when destination still unreachable within deadline", async () => {
     const ctrl = makeController({ healthTimeoutMs: 10_000 });
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
@@ -188,7 +188,7 @@ describe("migration safe-path: non-blocking health poll, apply_failed cooldown, 
 
   it("FIX3: evaluateMigrationWorkloads never proposes a move for a workload with placement=pinned", async () => {
     const ctrl = makeController();
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       schedulerLeaseHolder: "m4pro",
       pressureState: "NORMAL",

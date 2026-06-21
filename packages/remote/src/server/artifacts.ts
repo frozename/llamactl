@@ -22,7 +22,7 @@ import { existsSync, statSync } from "../safe-fs.js";
 const ALLOWED_PLATFORMS = new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"]);
 
 export function defaultArtifactsDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_ARTIFACTS_DIR?.trim();
+  const override = env["LLAMACTL_ARTIFACTS_DIR"]?.trim();
   if (override) return override;
   const base = llamactlHome(env);
   return join(base, "artifacts");

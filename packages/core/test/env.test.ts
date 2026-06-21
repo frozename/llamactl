@@ -248,10 +248,10 @@ describe("env.resolveEnv — process.env seed shape", () => {
       if (value === undefined) continue;
       procEnv[key] = String(value);
     }
-    expect(procEnv.DEV_STORAGE).toBe("/my/custom/storage");
+    expect(procEnv["DEV_STORAGE"]).toBe("/my/custom/storage");
     // LLAMA_CPP_ROOT fell through to the profile default since it
     // wasn't individually set — that's the whole point of the cascade.
-    expect(procEnv.LLAMA_CPP_ROOT).toBe("/tmp/hermetic-seed/ai-models/llama.cpp");
+    expect(procEnv["LLAMA_CPP_ROOT"]).toBe("/tmp/hermetic-seed/ai-models/llama.cpp");
   });
 
   test('no field stringifies to literal "undefined"', () => {

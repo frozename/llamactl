@@ -117,9 +117,9 @@ export type JournalEntry =
   | JournalPlanFailedEntry;
 
 export function defaultHealerJournalPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_HEALER_JOURNAL?.trim();
+  const override = env["LLAMACTL_HEALER_JOURNAL"]?.trim();
   if (override) return override;
-  const devStorage = env.DEV_STORAGE?.trim();
+  const devStorage = env["DEV_STORAGE"]?.trim();
   const base =
     devStorage !== undefined && devStorage.length > 0 ? devStorage : join(homedir(), ".llamactl");
   return join(base, "healer", "journal.jsonl");

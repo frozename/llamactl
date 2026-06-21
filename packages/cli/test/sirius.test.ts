@@ -54,7 +54,7 @@ afterEach(() => {
 
 describe("llamactl sirius export", () => {
   test("emits a JSON entry per agent node with token placeholders", async () => {
-    process.env.LLAMACTL_CONFIG = writeConfig(
+    process.env["LLAMACTL_CONFIG"] = writeConfig(
       [
         { name: "local", endpoint: "inproc://local" },
         {
@@ -69,13 +69,13 @@ describe("llamactl sirius export", () => {
     expect(code).toBe(0);
     const parsed = parseJsonArray(captured).map(requireRecord);
     expect(parsed).toHaveLength(1);
-    expect(parsed[0]!.name).toBe("gpu1");
-    expect(parsed[0]!.baseUrl).toBe("https://gpu1.lan:7843/v1");
-    expect(parsed[0]!.apiKey).toBe("${LLAMACTL_TOKEN_GPU1}");
+    expect(parsed[0]!["name"]).toBe("gpu1");
+    expect(parsed[0]!["baseUrl"]).toBe("https://gpu1.lan:7843/v1");
+    expect(parsed[0]!["apiKey"]).toBe("${LLAMACTL_TOKEN_GPU1}");
   });
 
   test("--token-inline resolves the actual token", async () => {
-    process.env.LLAMACTL_CONFIG = writeConfig(
+    process.env["LLAMACTL_CONFIG"] = writeConfig(
       [{ name: "gpu1", endpoint: "https://gpu1.lan:7843", certificateFingerprint: "sha256:aa" }],
       { name: "me", token: "super-secret" },
     );
@@ -86,7 +86,7 @@ describe("llamactl sirius export", () => {
   });
 
   test("--format env emits a shell-quoted export line", async () => {
-    process.env.LLAMACTL_CONFIG = writeConfig(
+    process.env["LLAMACTL_CONFIG"] = writeConfig(
       [{ name: "gpu1", endpoint: "https://gpu1.lan:7843", certificateFingerprint: "sha256:aa" }],
       { name: "me", token: "x" },
     );
@@ -98,7 +98,7 @@ describe("llamactl sirius export", () => {
   });
 
   test("--format yaml emits a llamactlNodes block", async () => {
-    process.env.LLAMACTL_CONFIG = writeConfig(
+    process.env["LLAMACTL_CONFIG"] = writeConfig(
       [{ name: "gpu1", endpoint: "https://gpu1.lan:7843", certificateFingerprint: "sha256:aa" }],
       { name: "me", token: "x" },
     );
@@ -109,8 +109,8 @@ describe("llamactl sirius export", () => {
   });
 
   test("add-provider writes YAML and list-providers reads it back", async () => {
-    process.env.DEV_STORAGE = tmp;
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, "providers.yaml");
+    process.env["DEV_STORAGE"] = tmp;
+    process.env["LLAMACTL_SIRIUS_PROVIDERS"] = join(tmp, "providers.yaml");
     const addCode = await runSirius(["add-provider", "openai", "--api-key-ref", "$OPENAI_API_KEY"]);
     expect(addCode).toBe(0);
     expect(captured).toContain("registered sirius provider 'openai'");
@@ -126,15 +126,15 @@ describe("llamactl sirius export", () => {
   });
 
   test("add-provider rejects a named provider without --api-key-ref", async () => {
-    process.env.DEV_STORAGE = tmp;
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, "providers.yaml");
+    process.env["DEV_STORAGE"] = tmp;
+    process.env["LLAMACTL_SIRIUS_PROVIDERS"] = join(tmp, "providers.yaml");
     const code = await runSirius(["add-provider", "anthropic"]);
     expect(code).toBe(1);
   });
 
   test("add-provider openai-compatible allows anonymous (no --api-key-ref)", async () => {
-    process.env.DEV_STORAGE = tmp;
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, "providers.yaml");
+    process.env["DEV_STORAGE"] = tmp;
+    process.env["LLAMACTL_SIRIUS_PROVIDERS"] = join(tmp, "providers.yaml");
     const code = await runSirius([
       "add-provider",
       "openai-compatible",
@@ -148,8 +148,8 @@ describe("llamactl sirius export", () => {
   });
 
   test("remove-provider deletes entries by name", async () => {
-    process.env.DEV_STORAGE = tmp;
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, "providers.yaml");
+    process.env["DEV_STORAGE"] = tmp;
+    process.env["LLAMACTL_SIRIUS_PROVIDERS"] = join(tmp, "providers.yaml");
     await runSirius(["add-provider", "openai", "--api-key-ref", "$X"]);
     captured = "";
     const removeCode = await runSirius(["remove-provider", "openai"]);
@@ -164,7 +164,7 @@ describe("llamactl sirius export", () => {
     // Gateway nodes (sirius, openai-compat aggregators) are sirius's
     // own upstreams — they must not be re-exported to sirius as
     // llamactl agents. Only `kind: agent` nodes show up.
-    process.env.LLAMACTL_CONFIG = writeConfig(
+    process.env["LLAMACTL_CONFIG"] = writeConfig(
       [
         {
           name: "sirius",

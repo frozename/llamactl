@@ -504,7 +504,7 @@ function checkTunnelCentral(
 
 function validateServeWiring(parsed: ServeFlags): ServeWiring | { error: string } {
   const dialUrl = parsed.dialCentral;
-  const dialBearer = parsed.centralBearer ?? process.env.LLAMACTL_TUNNEL_BEARER;
+  const dialBearer = parsed.centralBearer ?? process.env["LLAMACTL_TUNNEL_BEARER"];
   const dialErr = checkDialFlags(parsed, dialUrl, dialBearer);
   if (dialErr) return { error: dialErr };
 
@@ -512,7 +512,7 @@ function validateServeWiring(parsed: ServeFlags): ServeWiring | { error: string 
   if (noAuthErr) return { error: noAuthErr };
 
   const tunnelCentralOn = parsed.tunnelCentral === true;
-  const tunnelCentralBearer = parsed.tunnelBearer ?? process.env.LLAMACTL_TUNNEL_CENTRAL_BEARER;
+  const tunnelCentralBearer = parsed.tunnelBearer ?? process.env["LLAMACTL_TUNNEL_CENTRAL_BEARER"];
   const tunnelErr = checkTunnelCentral(parsed, tunnelCentralOn, tunnelCentralBearer);
   if (tunnelErr) return { error: tunnelErr };
 

@@ -11,13 +11,13 @@ describe("journal append + read", () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "ops-journal-"));
-    prevDevStorage = process.env.DEV_STORAGE;
-    process.env.DEV_STORAGE = tmp;
+    prevDevStorage = process.env["DEV_STORAGE"];
+    process.env["DEV_STORAGE"] = tmp;
   });
 
   afterEach(() => {
-    if (prevDevStorage === undefined) delete process.env.DEV_STORAGE;
-    else process.env.DEV_STORAGE = prevDevStorage;
+    if (prevDevStorage === undefined) delete process.env["DEV_STORAGE"];
+    else process.env["DEV_STORAGE"] = prevDevStorage;
     rmSync(tmp, { recursive: true, force: true });
   });
 

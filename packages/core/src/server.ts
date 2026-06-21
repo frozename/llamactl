@@ -118,7 +118,7 @@ export function advertisedEndpoint(
 }
 
 function useTunedArgsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env.LLAMA_CPP_USE_TUNED_ARGS ?? "true";
+  const raw = env["LLAMA_CPP_USE_TUNED_ARGS"] ?? "true";
   switch (raw) {
     case "0":
     case "false":

@@ -48,7 +48,7 @@ export function defaultServicesDir(
   host: ServiceHost,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const home = env.HOME ?? homedir();
+  const home = env["HOME"] ?? homedir();
   if (host === "darwin") return join(home, "Library", "LaunchAgents");
   return join(home, ".config", "systemd", "user");
 }
@@ -64,7 +64,7 @@ export function infraServiceUnitPath(
 }
 
 export function defaultInfraLogsDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_INFRA_LOGS_DIR?.trim();
+  const override = env["LLAMACTL_INFRA_LOGS_DIR"]?.trim();
   if (override) return override;
   const base = llamactlHome(env);
   return join(base, "logs");

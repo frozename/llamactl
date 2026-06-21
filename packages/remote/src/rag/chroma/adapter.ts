@@ -185,7 +185,7 @@ export class ChromaRagAdapter implements RetrievalProvider {
       n_results: request.topK,
       include: ["documents", "metadatas", "distances"],
     };
-    if (request.filter) args.where = request.filter;
+    if (request.filter) args["where"] = request.filter;
 
     const payload = await this.callTool<ChromaQueryResponse>(TOOL_QUERY, args);
     const ids = payload.ids?.[0] ?? [];
@@ -497,11 +497,11 @@ function normalizeListCollections(payload: unknown): CollectionInfo[] {
     if (typeof entry === "string") return { name: entry };
     if (entry && typeof entry === "object" && "name" in entry) {
       const obj = entry as Record<string, unknown>;
-      const info: CollectionInfo = { name: String(obj.name) };
-      if (typeof obj.count === "number") info.count = obj.count;
-      if (typeof obj.dimensions === "number") info.dimensions = obj.dimensions;
-      if (obj.metadata && typeof obj.metadata === "object") {
-        info.metadata = obj.metadata as Record<string, unknown>;
+      const info: CollectionInfo = { name: String(obj["name"]) };
+      if (typeof obj["count"] === "number") info.count = obj["count"];
+      if (typeof obj["dimensions"] === "number") info.dimensions = obj["dimensions"];
+      if (obj["metadata"] && typeof obj["metadata"] === "object") {
+        info.metadata = obj["metadata"] as Record<string, unknown>;
       }
       return info;
     }

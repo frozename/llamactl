@@ -23,7 +23,7 @@ function numField(obj: Record<string, unknown>, keys: readonly string[]): number
 }
 
 function deriveProcessing(obj: Record<string, unknown>, state: number | null): boolean | null {
-  if (typeof obj.is_processing === "boolean") return obj.is_processing;
+  if (typeof obj["is_processing"] === "boolean") return obj["is_processing"];
   if (state === null) return null;
   return state !== 0;
 }
@@ -53,8 +53,9 @@ export function parseSlotsResponse(body: unknown): SlotProgress[] {
       return { id: null, state: null, processing: null, nPast: null, nDecoded: null };
     }
     const obj = raw as Record<string, unknown>;
-    const id = typeof obj.id === "number" && Number.isFinite(obj.id) ? obj.id : null;
-    const state = typeof obj.state === "number" && Number.isFinite(obj.state) ? obj.state : null;
+    const id = typeof obj["id"] === "number" && Number.isFinite(obj["id"]) ? obj["id"] : null;
+    const state =
+      typeof obj["state"] === "number" && Number.isFinite(obj["state"]) ? obj["state"] : null;
     const nDecoded = numField(obj, DECODED_KEYS) ?? nestedDecoded(obj);
     return {
       id,

@@ -13,8 +13,8 @@ const origEnv = { ...process.env };
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-logs-"));
-  process.env.DEV_STORAGE = tmp;
-  process.env.LOCAL_AI_RUNTIME_DIR = tmp;
+  process.env["DEV_STORAGE"] = tmp;
+  process.env["LOCAL_AI_RUNTIME_DIR"] = tmp;
   resolved = resolveEnv();
   mkdirSync(join(tmp, "workloads", "test-workload"), { recursive: true });
   logPath = serverLogFile(resolved, { name: "test-workload" });

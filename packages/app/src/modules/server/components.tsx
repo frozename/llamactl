@@ -258,7 +258,7 @@ export function ServerControlForm({
         />
       </div>
       <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-text-secondary)" }}>
-        LLAMA_CPP_HOST={envData?.LLAMA_CPP_HOST ?? "?"}:{envData?.LLAMA_CPP_PORT ?? "?"}
+        LLAMA_CPP_HOST={envData?.["LLAMA_CPP_HOST"] ?? "?"}:{envData?.["LLAMA_CPP_PORT"] ?? "?"}
       </div>
     </form>
   );

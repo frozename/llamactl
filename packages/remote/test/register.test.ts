@@ -87,10 +87,10 @@ describe("handleRegister", () => {
       blob: makeBlob(),
     });
     expect(status).toBe(200);
-    expect(body.ok).toBe(true);
-    expect(body.nodeName).toBe("gpu1");
-    expect(body.cluster).toBe("home");
-    expect(body.context).toBe("default");
+    expect(body["ok"]).toBe(true);
+    expect(body["nodeName"]).toBe("gpu1");
+    expect(body["cluster"]).toBe("home");
+    expect(body["context"]).toBe("default");
 
     const cfg = loadConfig(kubeconfigPath);
     const cluster = cfg.clusters.find((c) => c.name === "home")!;
@@ -117,7 +117,7 @@ describe("handleRegister", () => {
       nodeName: "override-name",
     });
     expect(status).toBe(200);
-    expect(body.nodeName).toBe("override-name");
+    expect(body["nodeName"]).toBe("override-name");
     const cfg = loadConfig(kubeconfigPath);
     expect(cfg.clusters[0]!.nodes.some((n) => n.name === "override-name")).toBe(true);
   });
@@ -131,8 +131,8 @@ describe("handleRegister", () => {
     await callRegister({ bootstrapToken: token, blob: makeBlob() });
     const second = await callRegister({ bootstrapToken: token, blob: makeBlob() });
     expect(second.status).toBe(409);
-    expect(second.body.ok).toBe(false);
-    expect(String(second.body.error)).toMatch(/already-used/);
+    expect(second.body["ok"]).toBe(false);
+    expect(String(second.body["error"])).toMatch(/already-used/);
   });
 
   test("expired token rejected with 410", async () => {
@@ -168,8 +168,8 @@ describe("handleRegister", () => {
       blob: makeBlob(),
     });
     expect(status).toBe(401);
-    expect(body.ok).toBe(false);
-    expect(String(body.error)).toMatch(/not-found/);
+    expect(body["ok"]).toBe(false);
+    expect(String(body["error"])).toMatch(/not-found/);
   });
 
   test("malformed blob rejected with 400", async () => {
@@ -183,7 +183,7 @@ describe("handleRegister", () => {
       blob: "not-base64",
     });
     expect(status).toBe(400);
-    expect(String(body.error)).toMatch(/bootstrap blob invalid/);
+    expect(String(body["error"])).toMatch(/bootstrap blob invalid/);
   });
 
   test("GET rejected with 405", async () => {
@@ -195,6 +195,6 @@ describe("handleRegister", () => {
   test("missing bootstrapToken rejected with 400", async () => {
     const { status, body } = await callRegister({ blob: makeBlob() });
     expect(status).toBe(400);
-    expect(String(body.error)).toMatch(/bootstrapToken is required/);
+    expect(String(body["error"])).toMatch(/bootstrapToken is required/);
   });
 });

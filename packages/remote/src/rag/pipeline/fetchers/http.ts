@@ -143,7 +143,7 @@ async function guardedFetch(startUrl: string, state: CrawlState): Promise<Respon
     // Only carry the bearer to the same origin as the original request.
     const sameOrigin = new URL(currentUrl).origin === originOrigin;
     const headers: Record<string, string> = { "User-Agent": "llamactl-pipeline/1" };
-    if (state.authHeader && sameOrigin) headers.Authorization = state.authHeader;
+    if (state.authHeader && sameOrigin) headers["Authorization"] = state.authHeader;
 
     const res = await fetchWithTimeout(
       currentUrl,

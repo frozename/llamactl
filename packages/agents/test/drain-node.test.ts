@@ -46,8 +46,8 @@ describe("drain-node runbook", () => {
           { name: "gpu2-qwen", node: "gpu2" },
           { name: "gpu1-vision", node: "gpu1" },
         ]),
-      "llamactl.workload.delete": (args) => ({ dryRun: args.dryRun, name: args.name }),
-      "llamactl.node.remove": (args) => ({ dryRun: args.dryRun, name: args.name }),
+      "llamactl.workload.delete": (args) => ({ dryRun: args["dryRun"], name: args["name"] }),
+      "llamactl.node.remove": (args) => ({ dryRun: args["dryRun"], name: args["name"] }),
     });
 
     const result = await runRunbook(
@@ -68,11 +68,11 @@ describe("drain-node runbook", () => {
       "llamactl.node.remove",
     ]);
     const deletes = calls.filter((c) => c.name === "llamactl.workload.delete");
-    expect(deletes.map((c) => c.arguments.name).sort()).toEqual(["gpu1-llama", "gpu1-vision"]);
-    for (const d of deletes) expect(d.arguments.dryRun).toBe(true);
+    expect(deletes.map((c) => c.arguments["name"]).sort()).toEqual(["gpu1-llama", "gpu1-vision"]);
+    for (const d of deletes) expect(d.arguments["dryRun"]).toBe(true);
     const nodeRemove = calls.find((c) => c.name === "llamactl.node.remove")!;
-    expect(nodeRemove.arguments.node ?? nodeRemove.arguments.name).toBe("gpu1");
-    expect(nodeRemove.arguments.dryRun).toBe(true);
+    expect(nodeRemove.arguments["node"] ?? nodeRemove.arguments["name"]).toBe("gpu1");
+    expect(nodeRemove.arguments["dryRun"]).toBe(true);
 
     const summary = result.summary as {
       node: string;
@@ -108,7 +108,7 @@ describe("drain-node runbook", () => {
   test("no matching workloads still attempts node.remove", async () => {
     const { client, calls } = makeClient({
       "llamactl.workload.list": () => listPayload([{ name: "w1", node: "other" }]),
-      "llamactl.node.remove": (args) => ({ name: args.name }),
+      "llamactl.node.remove": (args) => ({ name: args["name"] }),
     });
     const result = await runRunbook(
       "drain-node",

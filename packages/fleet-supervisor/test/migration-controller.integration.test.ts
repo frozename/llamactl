@@ -5,7 +5,7 @@ import { createMigrationController, type FleetJournalEntry } from "../src/index.
 
 describe("MigrationController integration", () => {
   it("creates and executes a move flow without env gating", async () => {
-    delete process.env.LLAMACTL_FLEET_MOVE_ENABLED;
+    delete process.env["LLAMACTL_FLEET_MOVE_ENABLED"];
 
     let nowMs = 1_700_000_000_000;
     let tick = 10;

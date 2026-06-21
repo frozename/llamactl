@@ -551,13 +551,13 @@ function maybePublishAgentMdns(
   // bypasses it. Until bonjour-service is replaced, the env-var
   // escape hatch keeps long-lived launchd-managed agents stable.
   const mdnsDisabledByEnv =
-    process.env.LLAMACTL_DISABLE_MDNS === "1" || process.env.LLAMACTL_DISABLE_MDNS === "true";
+    process.env["LLAMACTL_DISABLE_MDNS"] === "1" || process.env["LLAMACTL_DISABLE_MDNS"] === "true";
   const shouldAdvertise = !mdnsDisabledByEnv && (opts.advertiseMdns ?? Boolean(opts.tls));
   if (!shouldAdvertise) return null;
   try {
     return publishAgentMdns({
       port: listenPort,
-      nodeName: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? "agent",
+      nodeName: opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent",
       fingerprint,
       version: opts.version ?? "0.0.0",
     });
@@ -670,7 +670,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
   const stopPeerSnapshotPoller = maybeStartPeerSnapshotPoller(opts);
   agentInfo.set(
     {
-      node_name: opts.nodeName ?? process.env.LLAMACTL_NODE_NAME ?? "agent",
+      node_name: opts.nodeName ?? process.env["LLAMACTL_NODE_NAME"] ?? "agent",
       version: opts.version ?? "0.0.0",
     },
     1,

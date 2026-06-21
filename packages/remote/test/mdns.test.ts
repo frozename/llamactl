@@ -84,7 +84,7 @@ void vi.mock("bonjour-service", () => {
  * by setting `LLAMACTL_SKIP_MDNS_TESTS=1`.
  */
 
-const SKIP = process.env.LLAMACTL_SKIP_MDNS_TESTS === "1";
+const SKIP = process.env["LLAMACTL_SKIP_MDNS_TESTS"] === "1";
 
 let tmp = "";
 const agents: { stop: () => Promise<void> }[] = [];

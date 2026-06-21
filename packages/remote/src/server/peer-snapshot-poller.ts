@@ -75,7 +75,7 @@ function computePeerPressure(nodeMem: RawFleetSnapshot["node_mem"]): PeerSnapsho
 
 async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSnapshot | null> {
   const headers: Record<string, string> = {};
-  if (peer.token) headers.authorization = `Bearer ${peer.token}`;
+  if (peer.token) headers["authorization"] = `Bearer ${peer.token}`;
   const pinnedFetch = makePinnedFetch({
     name: peer.id,
     endpoint: peer.endpoint,

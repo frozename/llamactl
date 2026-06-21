@@ -64,7 +64,7 @@ function guardedSseFetch(frames: readonly string[]): typeof globalThis.fetch {
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "chat-stream-usage-"));
-  process.env.LLAMACTL_USAGE_DIR = dir;
+  process.env["LLAMACTL_USAGE_DIR"] = dir;
 });
 
 afterEach(() => {
@@ -139,14 +139,14 @@ describe("recordChatUsageSnapshot", () => {
     expect(files).toHaveLength(1);
     expect(files[0]).toMatch(/^openai-\d{4}-\d{2}-\d{2}\.jsonl$/);
     const rec = readSoleRecord();
-    expect(rec.provider).toBe("openai");
-    expect(rec.model).toBe("gpt-4o");
-    expect(rec.kind).toBe("chat");
-    expect(rec.prompt_tokens).toBe(11);
-    expect(rec.completion_tokens).toBe(7);
-    expect(rec.total_tokens).toBe(18);
-    expect(rec.latency_ms).toBe(123);
-    expect(typeof rec.ts).toBe("string");
+    expect(rec["provider"]).toBe("openai");
+    expect(rec["model"]).toBe("gpt-4o");
+    expect(rec["kind"]).toBe("chat");
+    expect(rec["prompt_tokens"]).toBe(11);
+    expect(rec["completion_tokens"]).toBe(7);
+    expect(rec["total_tokens"]).toBe(18);
+    expect(rec["latency_ms"]).toBe(123);
+    expect(typeof rec["ts"]).toBe("string");
   });
 
   test("attributes the project route when one is supplied", async () => {
@@ -157,7 +157,7 @@ describe("recordChatUsageSnapshot", () => {
     );
     await flush();
     const rec = readSoleRecord();
-    expect(rec.route).toBe("project:novaflow/quick_qna/private-first");
+    expect(rec["route"]).toBe("project:novaflow/quick_qna/private-first");
   });
 });
 
@@ -205,13 +205,13 @@ describe("chatStream usage capture", () => {
 
     const rec = readSoleRecord();
     // Canonical pricing-key provider, NOT the adapter name ("openai-direct").
-    expect(rec.provider).toBe("openai");
-    expect(rec.model).toBe("served-model");
-    expect(rec.kind).toBe("chat");
-    expect(rec.prompt_tokens).toBe(20);
-    expect(rec.completion_tokens).toBe(13);
-    expect(rec.total_tokens).toBe(33);
-    expect(typeof rec.latency_ms).toBe("number");
+    expect(rec["provider"]).toBe("openai");
+    expect(rec["model"]).toBe("served-model");
+    expect(rec["kind"]).toBe("chat");
+    expect(rec["prompt_tokens"]).toBe(20);
+    expect(rec["completion_tokens"]).toBe(13);
+    expect(rec["total_tokens"]).toBe(33);
+    expect(typeof rec["latency_ms"]).toBe("number");
   });
 
   test("a stream without a usage frame records nothing", async () => {

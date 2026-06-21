@@ -209,7 +209,9 @@ function normalizeArgs(args: KvWarmBenchArgs): NormalizedKvWarmBenchArgs {
     frontiers,
     warmRuns,
     dataRoot:
-      args.dataRoot ?? process.env.LOCAL_AI_RUNTIME_DIR ?? join(os.homedir(), ".llamactl", "data"),
+      args.dataRoot ??
+      process.env["LOCAL_AI_RUNTIME_DIR"] ??
+      join(os.homedir(), ".llamactl", "data"),
     outPath: args.outPath ?? KV_WARM_BENCH_DEFAULT_MARKDOWN_PATH,
     seed: args.seed ?? 11,
   };

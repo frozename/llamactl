@@ -252,7 +252,7 @@ function persistUserToken(
       if (u.tokenRef) {
         // Write token to referenced file. Not caching the write here —
         // user-managed path semantics.
-        const tokenRef = u.tokenRef.replace(/^~(?=$|\/)/, process.env.HOME ?? "");
+        const tokenRef = u.tokenRef.replace(/^~(?=$|\/)/, process.env["HOME"] ?? "");
         try {
           mkdirSync(dirname(tokenRef), { recursive: true });
           writeFileSync(tokenRef, token, { mode: 0o600 });
@@ -612,14 +612,14 @@ function runAddRag(args: string[]): number {
     endpoint: parsed.endpoint,
     extraArgs: parsed.extraArgs,
   };
-  if (parsed.collection) binding.collection = parsed.collection;
+  if (parsed.collection) binding["collection"] = parsed.collection;
   if (parsed.embedderNode && parsed.embedderModel) {
-    binding.embedder = { node: parsed.embedderNode, model: parsed.embedderModel };
+    binding["embedder"] = { node: parsed.embedderNode, model: parsed.embedderModel };
   }
   if (parsed.passwordEnv) {
-    binding.auth = { tokenEnv: parsed.passwordEnv };
+    binding["auth"] = { tokenEnv: parsed.passwordEnv };
   } else if (parsed.passwordRef) {
-    binding.auth = { tokenRef: parsed.passwordRef };
+    binding["auth"] = { tokenRef: parsed.passwordRef };
   }
 
   const cfgPath = kubecfg.defaultConfigPath();

@@ -20,5 +20,5 @@ export function nonEmpty(value: string | undefined): string | undefined {
  * unset, so the fallback here stays ~/.llamactl.
  */
 export function llamactlHome(env: NodeJS.ProcessEnv = process.env): string {
-  return nonEmpty(env.DEV_STORAGE) ?? join(homedir(), ".llamactl");
+  return nonEmpty(env["DEV_STORAGE"]) ?? join(homedir(), ".llamactl");
 }

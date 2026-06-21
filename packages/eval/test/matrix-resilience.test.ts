@@ -150,7 +150,7 @@ describe("runMatrix resilience", () => {
       expect(row.primary_metric_value).not.toBe(0);
       // per_class_metrics_json must carry a machine-readable error indicator.
       const perClass = JSON.parse(row.per_class_metrics_json) as Record<string, unknown>;
-      expect(perClass.error).toBe("corpus_load_failed");
+      expect(perClass["error"]).toBe("corpus_load_failed");
     } finally {
       globalThis.fetch = origFetch;
     }

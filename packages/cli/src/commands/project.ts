@@ -281,18 +281,18 @@ function parseAddFlags(args: string[]): AddOpts | { error: string } {
 
 function buildProjectSpec(parsed: AddOpts): Record<string, unknown> {
   const spec: Record<string, unknown> = { path: parsed.path };
-  if (parsed.purpose) spec.purpose = parsed.purpose;
-  if (parsed.stack.length > 0) spec.stack = parsed.stack;
+  if (parsed.purpose) spec["purpose"] = parsed.purpose;
+  if (parsed.stack.length > 0) spec["stack"] = parsed.stack;
   if (parsed.ragNode && parsed.ragCollection) {
     const rag: Record<string, unknown> = {
       node: parsed.ragNode,
       collection: parsed.ragCollection,
     };
-    if (parsed.ragGlob) rag.docsGlob = parsed.ragGlob;
-    if (parsed.ragSchedule) rag.schedule = parsed.ragSchedule;
-    spec.rag = rag;
+    if (parsed.ragGlob) rag["docsGlob"] = parsed.ragGlob;
+    if (parsed.ragSchedule) rag["schedule"] = parsed.ragSchedule;
+    spec["rag"] = rag;
   }
-  if (Object.keys(parsed.routes).length > 0) spec.routing = parsed.routes;
+  if (Object.keys(parsed.routes).length > 0) spec["routing"] = parsed.routes;
   return spec;
 }
 

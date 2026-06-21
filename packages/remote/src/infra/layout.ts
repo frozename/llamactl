@@ -33,7 +33,7 @@ import {
  */
 
 export function defaultInfraDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_INFRA_DIR?.trim();
+  const override = env["LLAMACTL_INFRA_DIR"]?.trim();
   if (override) return override;
   const base = llamactlHome(env);
   return join(base, "infra");

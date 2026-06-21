@@ -9,7 +9,7 @@ import { readdirSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 const REVIEWS_DIR =
-  process.env.REVIEWS_DIR ?? "/Volumes/WorkSSD/repos/personal/penumbra/.penumbra/reviews";
+  process.env["REVIEWS_DIR"] ?? "/Volumes/WorkSSD/repos/personal/penumbra/.penumbra/reviews";
 
 const OUT_PATH = process.argv[2] ?? "./tools/memory-efficacy-bench/corpus/findings.json";
 

@@ -89,7 +89,7 @@ describe("llamactl node", () => {
     expect(ls.stdout).toContain("gpu1");
     expect(ls.stdout).toContain("https://fake.lan:7843");
 
-    const cfgRaw = readFileSync(env.LLAMACTL_CONFIG!, "utf8");
+    const cfgRaw = readFileSync(env["LLAMACTL_CONFIG"]!, "utf8");
     expect(cfgRaw).toContain("gpu1");
     expect(cfgRaw).toContain("certificateFingerprint");
   });
@@ -180,7 +180,7 @@ describe("llamactl agent", () => {
     );
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("llamactl node add probe --bootstrap ");
-    const dir = env.LLAMACTL_AGENT_DIR!;
+    const dir = env["LLAMACTL_AGENT_DIR"]!;
     expect(existsSync(join(dir, "agent.yaml"))).toBe(true);
     expect(existsSync(join(dir, "agent.crt"))).toBe(true);
     expect(existsSync(join(dir, "agent.key"))).toBe(true);

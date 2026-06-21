@@ -99,15 +99,15 @@ describe("checkRpcServerAvailable", () => {
 
   test("default arg uses process.env when no env passed", () => {
     // Preserve + restore to avoid leaking across tests.
-    const prior = process.env.LLAMA_CPP_BIN;
+    const prior = process.env["LLAMA_CPP_BIN"];
     try {
-      delete process.env.LLAMA_CPP_BIN;
+      delete process.env["LLAMA_CPP_BIN"];
       const result = checkRpcServerAvailable();
       expect(result.ok).toBe(false);
       expect(result.reason).toBe("LLAMA_CPP_BIN-unset");
     } finally {
-      if (prior === undefined) delete process.env.LLAMA_CPP_BIN;
-      else process.env.LLAMA_CPP_BIN = prior;
+      if (prior === undefined) delete process.env["LLAMA_CPP_BIN"];
+      else process.env["LLAMA_CPP_BIN"] = prior;
     }
   });
 });

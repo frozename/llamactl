@@ -145,7 +145,7 @@ describe("projectGet", () => {
     await caller.projectApply({ manifestYaml: manifestYaml("there") });
     const res = await caller.projectGet({ name: "there" });
     expect(res.project.metadata.name).toBe("there");
-    expect(res.project.spec.routing.quick_qna).toBe("mac-mini.claude-pro");
+    expect(res.project.spec.routing["quick_qna"]).toBe("mac-mini.claude-pro");
   });
 });
 
@@ -233,8 +233,8 @@ describe("projectIndex", () => {
     expect(parsed.spec.destination.collection).toBe("indexed_docs");
     expect(parsed.spec.sources[0]!.root).toBe("/abs/indexed");
     expect(parsed.spec.sources[0]!.glob).toBe("docs/**/*.md");
-    expect(parsed.spec.sources[0]!.tag.project).toBe("indexed");
-    expect(parsed.spec.sources[0]!.tag.purpose).toBe("demo project");
+    expect(parsed.spec.sources[0]!.tag["project"]).toBe("indexed");
+    expect(parsed.spec.sources[0]!.tag["purpose"]).toBe("demo project");
     expect(parsed.spec.transforms[0]!.kind).toBe("markdown-chunk");
     expect(parsed.spec.on_duplicate).toBe("replace");
   });

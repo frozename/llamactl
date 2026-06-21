@@ -167,7 +167,7 @@ export class UpstreamSlotClient implements SlotClient {
     const url = new URL(`/slots/${String(slotId)}`, this.baseUrl);
     url.searchParams.set("action", action);
     const payload: Record<string, unknown> = { filename };
-    if (opts?.model !== undefined) payload.model = opts.model;
+    if (opts?.model !== undefined) payload["model"] = opts.model;
     return await this.fetchWithTimeout(url, "POST", JSON.stringify(payload));
   }
 
@@ -271,20 +271,20 @@ function readStringField(value: unknown, key: string): string | null {
 
 function hasRequestHandleCapability(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
-  const slots = (value as Record<string, unknown>).slots;
+  const slots = (value as Record<string, unknown>)["slots"];
   if (!slots || typeof slots !== "object") return false;
-  const version = (slots as Record<string, unknown>).api_version;
+  const version = (slots as Record<string, unknown>)["api_version"];
   if (typeof version !== "number" || !Number.isFinite(version) || version < 2) return false;
-  return (slots as Record<string, unknown>).supports_request_handle === true;
+  return (slots as Record<string, unknown>)["supports_request_handle"] === true;
 }
 
 function hasSaveHandleCapability(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
-  const slots = (value as Record<string, unknown>).slots;
+  const slots = (value as Record<string, unknown>)["slots"];
   if (!slots || typeof slots !== "object") return false;
-  const version = (slots as Record<string, unknown>).api_version;
+  const version = (slots as Record<string, unknown>)["api_version"];
   if (typeof version !== "number" || !Number.isFinite(version) || version < 2) return false;
-  return (slots as Record<string, unknown>).supports_save_handle === true;
+  return (slots as Record<string, unknown>)["supports_save_handle"] === true;
 }
 
 function toError(error: unknown): Error {

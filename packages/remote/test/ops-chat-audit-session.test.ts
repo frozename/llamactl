@@ -14,13 +14,13 @@ describe("audit sessionId", () => {
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "ops-audit-"));
     path = join(tmp, "audit.jsonl");
-    prev = process.env.LLAMACTL_OPS_CHAT_AUDIT;
-    process.env.LLAMACTL_OPS_CHAT_AUDIT = path;
+    prev = process.env["LLAMACTL_OPS_CHAT_AUDIT"];
+    process.env["LLAMACTL_OPS_CHAT_AUDIT"] = path;
   });
 
   afterEach(() => {
-    if (prev === undefined) delete process.env.LLAMACTL_OPS_CHAT_AUDIT;
-    else process.env.LLAMACTL_OPS_CHAT_AUDIT = prev;
+    if (prev === undefined) delete process.env["LLAMACTL_OPS_CHAT_AUDIT"];
+    else process.env["LLAMACTL_OPS_CHAT_AUDIT"] = prev;
     rmSync(tmp, { recursive: true, force: true });
   });
 

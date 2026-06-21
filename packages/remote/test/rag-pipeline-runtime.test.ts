@@ -32,7 +32,7 @@ interface StubFetcherOptions {
  * the runtime dispatches to the stub instead of walking the disk.
  */
 function installStubFetcher(opts: StubFetcherOptions): () => void {
-  const original = FETCHERS.filesystem;
+  const original = FETCHERS["filesystem"];
   let thrown = false;
   const stub: Fetcher = {
     kind: "filesystem",
@@ -45,10 +45,10 @@ function installStubFetcher(opts: StubFetcherOptions): () => void {
       for (const d of opts.docs) yield d;
     },
   };
-  FETCHERS.filesystem = stub;
+  FETCHERS["filesystem"] = stub;
   return () => {
-    if (original) FETCHERS.filesystem = original;
-    else delete FETCHERS.filesystem;
+    if (original) FETCHERS["filesystem"] = original;
+    else delete FETCHERS["filesystem"];
   };
 }
 
@@ -161,10 +161,10 @@ describe("runPipeline", () => {
       expect(summary.per_source[0]!.chunks).toBe(2);
 
       const lines = readJournalLines(journalPath);
-      expect(lines[0]!.kind).toBe("run-started");
-      expect(lines[lines.length - 1]!.kind).toBe("run-complete");
-      expect(lines.some((l) => l.kind === "doc-ingested")).toBe(true);
-      expect(lines.some((l) => l.kind === "source-complete")).toBe(true);
+      expect(lines[0]!["kind"]).toBe("run-started");
+      expect(lines[lines.length - 1]!["kind"]).toBe("run-complete");
+      expect(lines.some((l) => l["kind"] === "doc-ingested")).toBe(true);
+      expect(lines.some((l) => l["kind"] === "source-complete")).toBe(true);
       expect(mock.calls.length).toBe(2);
       expect(mock.closed).toBe(1);
     } finally {
@@ -207,7 +207,7 @@ describe("runPipeline", () => {
       }
     }
     const lines = readJournalLines(journalPath);
-    const skipped = lines.filter((l) => l.kind === "doc-skipped");
+    const skipped = lines.filter((l) => l["kind"] === "doc-skipped");
     expect(skipped).toHaveLength(2);
     // No extra store calls on the second run.
     expect(mock.calls.length).toBe(2);
@@ -250,10 +250,10 @@ describe("runPipeline", () => {
       expect(summary.total_docs).toBe(1);
       expect(summary.total_chunks).toBeGreaterThan(1);
 
-      const ingested = readJournalLines(journalPath).find((l) => l.kind === "doc-ingested");
+      const ingested = readJournalLines(journalPath).find((l) => l["kind"] === "doc-ingested");
       expect(ingested).toBeDefined();
-      expect(typeof ingested!.chunks).toBe("number");
-      expect((ingested!.chunks as number) > 1).toBe(true);
+      expect(typeof ingested!["chunks"]).toBe("number");
+      expect((ingested!["chunks"] as number) > 1).toBe(true);
     } finally {
       restore();
     }
@@ -303,11 +303,11 @@ describe("runPipeline", () => {
         openAdapter: mock.open,
       });
       const lines = readJournalLines(journalPath);
-      const ingested = lines.filter((l) => l.kind === "doc-ingested").length;
-      const sourceComplete = lines.find((l) => l.kind === "source-complete")!;
+      const ingested = lines.filter((l) => l["kind"] === "doc-ingested").length;
+      const sourceComplete = lines.find((l) => l["kind"] === "source-complete")!;
       expect(ingested).toBe(summary.total_docs);
-      expect(sourceComplete.docs).toBe(summary.per_source[0]!.docs);
-      expect(sourceComplete.chunks).toBe(summary.per_source[0]!.chunks);
+      expect(sourceComplete["docs"]).toBe(summary.per_source[0]!.docs);
+      expect(sourceComplete["chunks"]).toBe(summary.per_source[0]!.chunks);
     } finally {
       restore();
     }
@@ -334,8 +334,8 @@ describe("runPipeline", () => {
       expect(mock.calls).toHaveLength(0);
       expect(mock.closed).toBe(1);
       const lines = readJournalLines(journalPath);
-      const would = lines.filter((l) => l.kind === "doc-would-ingest");
-      const ingested = lines.filter((l) => l.kind === "doc-ingested");
+      const would = lines.filter((l) => l["kind"] === "doc-would-ingest");
+      const ingested = lines.filter((l) => l["kind"] === "doc-ingested");
       expect(would).toHaveLength(2);
       expect(ingested).toHaveLength(0);
     } finally {
@@ -466,8 +466,8 @@ describe("runPipeline", () => {
       restore();
     }
     const lines = readJournalLines(journalPath);
-    const errs = lines.filter((l) => l.kind === "error");
-    expect(errs.some((e) => (e.message as string).includes("no delete binding"))).toBe(true);
+    const errs = lines.filter((l) => l["kind"] === "error");
+    expect(errs.some((e) => (e["message"] as string).includes("no delete binding"))).toBe(true);
     // Store still proceeded (no orphan-cleanup is worse than no ingest).
     expect(mock.calls).toHaveLength(2);
   });
@@ -610,8 +610,8 @@ describe("runPipeline", () => {
   test("missing fetcher for a kind journals an error and continues", async () => {
     // Temporarily delete the registered filesystem fetcher to prove
     // the runtime doesn't crash when the registry lookup misses.
-    const original = FETCHERS.filesystem;
-    delete FETCHERS.filesystem;
+    const original = FETCHERS["filesystem"];
+    delete FETCHERS["filesystem"];
     try {
       const journalPath = join(tmp, "journal.jsonl");
       const mock = makeMockAdapter();
@@ -622,10 +622,10 @@ describe("runPipeline", () => {
       });
       expect(summary.errors).toBe(1);
       const lines = readJournalLines(journalPath);
-      expect(lines.some((l) => l.kind === "error")).toBe(true);
+      expect(lines.some((l) => l["kind"] === "error")).toBe(true);
     } finally {
       if (original) {
-        FETCHERS.filesystem = original;
+        FETCHERS["filesystem"] = original;
       }
     }
   });
@@ -664,7 +664,7 @@ describe("runPipeline", () => {
       }
     }
     const lines1 = readJournalLines(journalPath);
-    expect(lines1.some((l) => l.kind === "doc-ingested")).toBe(false);
+    expect(lines1.some((l) => l["kind"] === "doc-ingested")).toBe(false);
 
     // Run 2 — store now succeeds; doc must be retried, not skipped as a duplicate.
     {
@@ -683,6 +683,6 @@ describe("runPipeline", () => {
       }
     }
     const lines2 = readJournalLines(journalPath);
-    expect(lines2.filter((l) => l.kind === "doc-ingested")).toHaveLength(1);
+    expect(lines2.filter((l) => l["kind"] === "doc-ingested")).toHaveLength(1);
   });
 });

@@ -175,7 +175,7 @@ export const pgvectorHandler: ServiceHandler<PgvectorServiceSpec> = {
     // other entries.
     const secrets: Record<string, { ref: string }> = {};
     if (passwordRef) {
-      secrets.POSTGRES_PASSWORD = { ref: passwordRef };
+      secrets["POSTGRES_PASSWORD"] = { ref: passwordRef };
     }
     if (spec.secrets) {
       for (const [k, v] of Object.entries(spec.secrets)) {

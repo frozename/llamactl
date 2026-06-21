@@ -171,9 +171,9 @@ describe("startAgentServer migration bootstrap", () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
-    process.env.DEV_STORAGE = dir;
+    process.env["DEV_STORAGE"] = dir;
     runtimeDir = join(dir, "runtime");
-    process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
+    process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
     mkdirSync(runtimeDir, { recursive: true });
     writeFileSync(join(runtimeDir, "llama-server.pid"), "12345\n");
     writeFileSync(

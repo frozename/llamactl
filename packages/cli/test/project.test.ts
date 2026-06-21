@@ -262,8 +262,8 @@ describe("project add", () => {
     expect(parsed.spec.stack).toEqual(["nestjs", "nextjs"]);
     expect(parsed.spec.rag!.node).toBe("kb-chroma");
     expect(parsed.spec.rag!.collection).toBe("novaflow_docs");
-    expect(parsed.spec.routing!.quick_qna).toBe("private-first");
-    expect(parsed.spec.routing!.code_review).toBe("mac-mini.claude-pro");
+    expect(parsed.spec.routing!["quick_qna"]).toBe("private-first");
+    expect(parsed.spec.routing!["code_review"]).toBe("mac-mini.claude-pro");
   });
 
   test("bad --route syntax → exit 1", async () => {
@@ -326,7 +326,7 @@ describe("project list", () => {
   test("--json emits structured doc", async () => {
     const { cap } = await captureStdio(() => runProject(["list", "--json"]));
     const parsed = parseJsonRecord(cap.out.trim());
-    expect(Array.isArray(parsed.projects)).toBe(true);
+    expect(Array.isArray(parsed["projects"])).toBe(true);
   });
 });
 
@@ -347,7 +347,7 @@ describe("project get", () => {
   test("--json emits JSON", async () => {
     const { cap } = await captureStdio(() => runProject(["get", "demo", "--json"]));
     const parsed = parseJsonRecord(cap.out.trim());
-    expect(requireRecordField(parsed, "metadata").name).toBe("demo");
+    expect(requireRecordField(parsed, "metadata")["name"]).toBe("demo");
   });
 });
 
@@ -440,8 +440,8 @@ describe("project route", () => {
     );
     expect(result).toBe(0);
     const parsed = parseJsonRecord(cap.out.trim());
-    expect(requireRecordField(parsed, "decision").reason).toBe("matched");
-    expect(parsed.node).toBe("mac-mini.claude-pro");
+    expect(requireRecordField(parsed, "decision")["reason"]).toBe("matched");
+    expect(parsed["node"]).toBe("mac-mini.claude-pro");
   });
 
   test("over-budget reason surfaces the budget annotation", async () => {

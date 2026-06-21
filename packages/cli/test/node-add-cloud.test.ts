@@ -105,7 +105,7 @@ function installUnreachableFetch(): { calls: string[] } {
 describe("node add-cloud — happy path", () => {
   test("valid flags → tRPC mutation persists gateway node", async () => {
     installHealthyFetch();
-    process.env.SIRIUS_API_KEY = "sk-test-fake";
+    process.env["SIRIUS_API_KEY"] = "sk-test-fake";
     const { code, stdout, stderr } = await capture(() =>
       runNode([
         "add-cloud",
@@ -160,7 +160,7 @@ describe("node add-cloud — happy path", () => {
 describe("node add-cloud — flag pass-through", () => {
   test("--api-key-ref env:FOO passes through unchanged to the binding", async () => {
     installHealthyFetch();
-    process.env.OPENAI_API_KEY = "sk-test-openai";
+    process.env["OPENAI_API_KEY"] = "sk-test-openai";
     const { code } = await capture(() =>
       runNode([
         "add-cloud",

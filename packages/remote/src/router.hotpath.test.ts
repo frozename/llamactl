@@ -17,14 +17,14 @@ let prevDevStorage: string | undefined;
 let tmpRoot: string;
 
 beforeEach(() => {
-  prevDevStorage = process.env.DEV_STORAGE;
+  prevDevStorage = process.env["DEV_STORAGE"];
   tmpRoot = mkdtempSync(join(tmpdir(), "router-hotpath-"));
-  process.env.DEV_STORAGE = tmpRoot;
+  process.env["DEV_STORAGE"] = tmpRoot;
 });
 
 afterEach(() => {
-  if (prevDevStorage === undefined) delete process.env.DEV_STORAGE;
-  else process.env.DEV_STORAGE = prevDevStorage;
+  if (prevDevStorage === undefined) delete process.env["DEV_STORAGE"];
+  else process.env["DEV_STORAGE"] = prevDevStorage;
   rmSync(tmpRoot, { recursive: true, force: true });
 });
 

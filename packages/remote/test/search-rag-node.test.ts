@@ -13,18 +13,18 @@ describe("resolveDefaultRagNode", () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "rag-node-"));
-    prev = process.env.DEV_STORAGE;
-    prevConfig = process.env.LLAMACTL_CONFIG;
-    delete process.env.LLAMACTL_CONFIG;
-    process.env.DEV_STORAGE = tmp;
+    prev = process.env["DEV_STORAGE"];
+    prevConfig = process.env["LLAMACTL_CONFIG"];
+    delete process.env["LLAMACTL_CONFIG"];
+    process.env["DEV_STORAGE"] = tmp;
   });
 
   afterEach(() => {
-    if (prev === undefined) delete process.env.DEV_STORAGE;
-    else process.env.DEV_STORAGE = prev;
+    if (prev === undefined) delete process.env["DEV_STORAGE"];
+    else process.env["DEV_STORAGE"] = prev;
 
-    if (prevConfig === undefined) delete process.env.LLAMACTL_CONFIG;
-    else process.env.LLAMACTL_CONFIG = prevConfig;
+    if (prevConfig === undefined) delete process.env["LLAMACTL_CONFIG"];
+    else process.env["LLAMACTL_CONFIG"] = prevConfig;
 
     rmSync(tmp, { recursive: true, force: true });
   });

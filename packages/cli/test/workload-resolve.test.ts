@@ -183,8 +183,8 @@ describe("resolveWorkloadName (remote / explicit-node path)", () => {
         "",
       ].join("\n"),
     );
-    const prev = process.env.LLAMACTL_WORKLOADS_DIR;
-    process.env.LLAMACTL_WORKLOADS_DIR = manifestsDir;
+    const prev = process.env["LLAMACTL_WORKLOADS_DIR"];
+    process.env["LLAMACTL_WORKLOADS_DIR"] = manifestsDir;
     try {
       const name = resolveWorkloadName(undefined, resolved, undefined, {
         isLocalDispatch: () => false,
@@ -193,8 +193,8 @@ describe("resolveWorkloadName (remote / explicit-node path)", () => {
       });
       expect(name).toBe("mlx-host");
     } finally {
-      if (prev === undefined) delete process.env.LLAMACTL_WORKLOADS_DIR;
-      else process.env.LLAMACTL_WORKLOADS_DIR = prev;
+      if (prev === undefined) delete process.env["LLAMACTL_WORKLOADS_DIR"];
+      else process.env["LLAMACTL_WORKLOADS_DIR"] = prev;
     }
   });
 });

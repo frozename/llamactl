@@ -147,11 +147,11 @@ function makeHostManifest(): ModelHostManifest {
 describe("reconcileOnce", () => {
   test("processes ModelRun and ModelHost manifests from the shared store", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-"));
-    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
     try {
       saveWorkload(makeRunManifest(), dir);
       saveModelHost(makeHostManifest(), dir);
-      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+      process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
       // Sidecar with matching specHash → reconciler skips applyOneModelHost.
       seedRunningSidecar(dir, makeHostManifest());
 
@@ -167,18 +167,18 @@ describe("reconcileOnce", () => {
       expect(result.reports.find((r) => r.name === "host-a")?.action).toBe("unchanged");
       expect(result.reports.find((r) => r.name === "run-a")?.action).toBe("started");
     } finally {
-      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
-      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+      else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("persists ModelHost status returned by the reconciler outcome", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-host-status-"));
-    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
     try {
       saveModelHost(makeHostManifest(), dir);
-      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+      process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
       const readSpy = spyOn(fs, "readFileSync");
 
       await reconcileOnce({
@@ -200,19 +200,19 @@ describe("reconcileOnce", () => {
       );
       expect(state?.pid).toBe(1234);
     } finally {
-      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
-      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+      else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("sweeps a stale sidecar for a disabled, non-running ModelHost", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-disabled-sweep-"));
-    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
     try {
       const base = makeHostManifest();
       saveModelHost({ ...base, spec: { ...base.spec, enabled: false } }, dir);
-      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+      process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
       // Leftover sidecar from a prior out-of-band exit (recorded pid now dead).
       seedRunningSidecar(dir, base);
       expect(
@@ -236,19 +236,19 @@ describe("reconcileOnce", () => {
         readModelHostState({ name: "host-a" }, resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir })),
       ).toBeNull();
     } finally {
-      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
-      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+      else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("skips ModelHost start when the persisted Running spec still matches", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-host-unchanged-"));
-    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
     const startCalls: unknown[] = [];
     try {
       saveModelHost(makeHostManifest(), dir);
-      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+      process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
       // Sidecar with matching specHash → reconciler skips applyOneModelHost.
       seedRunningSidecar(dir, makeHostManifest());
 
@@ -284,20 +284,20 @@ describe("reconcileOnce", () => {
       expect(result.reports[0]?.action).toBe("unchanged");
       expect(startCalls).toHaveLength(0);
     } finally {
-      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
-      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+      else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("restarts ModelHost when the persisted spec diverges from the desired manifest", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-host-restart-"));
-    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
     let startCalls = 0;
     const currentManifest = makeHostManifest();
     try {
       saveModelHost(currentManifest, dir);
-      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+      process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
 
       const result = await reconcileOnce({
         workloadsDir: dir,
@@ -349,15 +349,15 @@ describe("reconcileOnce", () => {
       expect(result.reports[0]?.action).toBe("restarted");
       expect(startCalls).toBe(1);
     } finally {
-      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
-      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+      else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("restarts ModelHost when restartPolicy changes on the desired manifest", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-host-restart-policy-"));
-    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
     let startCalls = 0;
     try {
       saveModelHost(
@@ -371,7 +371,7 @@ describe("reconcileOnce", () => {
         dir,
       );
       saveModelHost(makeHostManifest(), dir);
-      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+      process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
 
       const result = await reconcileOnce({
         workloadsDir: dir,
@@ -412,15 +412,15 @@ describe("reconcileOnce", () => {
       expect(result.reports[0]?.action).toBe("restarted");
       expect(startCalls).toBe(1);
     } finally {
-      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
-      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+      else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("skips disabling an already stopped ModelHost", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-host-stopped-"));
-    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
     const stopCalls: unknown[] = [];
     try {
       saveModelHost(
@@ -433,7 +433,7 @@ describe("reconcileOnce", () => {
         },
         dir,
       );
-      process.env.LOCAL_AI_RUNTIME_DIR = dir;
+      process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
 
       const result = await reconcileOnce({
         workloadsDir: dir,
@@ -456,8 +456,8 @@ describe("reconcileOnce", () => {
       expect(result.reports[0]?.action).toBe("unchanged");
       expect(stopCalls).toHaveLength(0);
     } finally {
-      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
-      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+      else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
       rmSync(dir, { recursive: true, force: true });
     }
   });

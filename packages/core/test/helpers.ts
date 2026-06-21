@@ -45,8 +45,8 @@ export function envForTemp(temp: ReturnType<typeof makeTempRuntime>): NodeJS.Pro
     LOCAL_AI_RECOMMENDATIONS_SOURCE: "off",
     LOCAL_AI_CUSTOM_CATALOG_FILE: join(temp.runtimeDir, "curated-models.tsv"),
     LOCAL_AI_PRESET_OVERRIDES_FILE: join(temp.runtimeDir, "preset-overrides.tsv"),
-    PATH: process.env.PATH ?? "",
-    HOME: process.env.HOME ?? "/tmp",
+    PATH: process.env["PATH"] ?? "",
+    HOME: process.env["HOME"] ?? "/tmp",
   };
 }
 

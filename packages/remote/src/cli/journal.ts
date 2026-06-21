@@ -42,7 +42,7 @@ export interface CliJournalEntry {
 }
 
 export function defaultCliJournalDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = nonEmpty(env.LLAMACTL_CLI_JOURNAL_DIR);
+  const override = nonEmpty(env["LLAMACTL_CLI_JOURNAL_DIR"]);
   if (override) return override;
   const base = llamactlHome(env);
   return join(base, "cli-journal");

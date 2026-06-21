@@ -56,7 +56,7 @@ export interface DockerClient {
 }
 
 export function createDockerClient(opts: DockerClientOptions = {}): DockerClient {
-  const socketPath = opts.socketPath ?? process.env.DOCKER_SOCKET ?? DEFAULT_SOCKET_PATH;
+  const socketPath = opts.socketPath ?? process.env["DOCKER_SOCKET"] ?? DEFAULT_SOCKET_PATH;
   const fetchImpl = opts.fetch ?? fetch;
 
   return {
@@ -203,8 +203,8 @@ function drainCompleteLines(
     if (line.length === 0) continue;
     const parsed = parseNdjsonLine(line);
     if (parsed === null) continue;
-    if (typeof parsed.error === "string") {
-      throw new RuntimeError(errorCode, `${context}: ${parsed.error}`);
+    if (typeof parsed["error"] === "string") {
+      throw new RuntimeError(errorCode, `${context}: ${parsed["error"]}`);
     }
     lines.push(parsed);
   }
@@ -226,8 +226,8 @@ function collectTrailingLine(
   if (trailing.length === 0) return;
   try {
     const parsed = JSON.parse(trailing) as Record<string, unknown>;
-    if (typeof parsed.error === "string") {
-      throw new RuntimeError(errorCode, `${context}: ${parsed.error}`);
+    if (typeof parsed["error"] === "string") {
+      throw new RuntimeError(errorCode, `${context}: ${parsed["error"]}`);
     }
     lines.push(parsed);
   } catch {

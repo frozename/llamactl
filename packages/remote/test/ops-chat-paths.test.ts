@@ -63,7 +63,7 @@ describe("defaultOpsChatAuditPath", () => {
 
   test("reads process.env by default", () => {
     const devStorage = join(tmp, "dev-storage-proc");
-    process.env.DEV_STORAGE = devStorage;
+    process.env["DEV_STORAGE"] = devStorage;
     expect(defaultOpsChatAuditPath()).toBe(join(devStorage, "ops-chat", "audit.jsonl"));
   });
 });

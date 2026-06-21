@@ -20,7 +20,7 @@ export const AgentConfigSchema = z.object({
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
 export function defaultAgentDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = nonEmpty(env.LLAMACTL_AGENT_DIR);
+  const override = nonEmpty(env["LLAMACTL_AGENT_DIR"]);
   if (override) return override;
   const base = llamactlHome(env);
   return base;
@@ -67,14 +67,14 @@ export function encodeBootstrap(blob: BootstrapBlob): string {
 export function decodeBootstrap(encoded: string): BootstrapBlob {
   const raw = Buffer.from(encoded, "base64url").toString("utf8");
   const parsed = JSON.parse(raw) as Record<string, unknown>;
-  if (typeof parsed.url !== "string") throw new Error("bootstrap: missing url");
-  if (typeof parsed.fingerprint !== "string") throw new Error("bootstrap: missing fingerprint");
-  if (typeof parsed.token !== "string") throw new Error("bootstrap: missing token");
-  if (typeof parsed.certificate !== "string") throw new Error("bootstrap: missing certificate");
+  if (typeof parsed["url"] !== "string") throw new Error("bootstrap: missing url");
+  if (typeof parsed["fingerprint"] !== "string") throw new Error("bootstrap: missing fingerprint");
+  if (typeof parsed["token"] !== "string") throw new Error("bootstrap: missing token");
+  if (typeof parsed["certificate"] !== "string") throw new Error("bootstrap: missing certificate");
   return {
-    url: parsed.url,
-    fingerprint: parsed.fingerprint,
-    token: parsed.token,
-    certificate: parsed.certificate,
+    url: parsed["url"],
+    fingerprint: parsed["fingerprint"],
+    token: parsed["token"],
+    certificate: parsed["certificate"],
   };
 }

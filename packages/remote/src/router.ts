@@ -301,7 +301,7 @@ const _compositeRuntimes = new Map<RuntimeKind, RuntimeBackend>();
 
 function resolveCompositeRuntimeKind(requested?: RuntimeKind): RuntimeKind {
   if (requested) return requested;
-  const envHint = process.env.LLAMACTL_RUNTIME_BACKEND?.trim();
+  const envHint = process.env["LLAMACTL_RUNTIME_BACKEND"]?.trim();
   if (envHint === "kubernetes") return "kubernetes";
   if (envHint === "docker") return "docker";
   return "docker";
@@ -2320,7 +2320,7 @@ export const router = t.router({
         };
       }
       const llamactlHome =
-        process.env.LLAMACTL_HOME ?? join(resolved.DEV_STORAGE, "repos", "personal", "llamactl");
+        process.env["LLAMACTL_HOME"] ?? join(resolved.DEV_STORAGE, "repos", "personal", "llamactl");
       const entry = join(llamactlHome, "packages", "cli", "src", "bin.ts");
       const child = spawn("bun", [entry, "keep-alive", "worker", input.target], {
         detached: true,
@@ -2773,9 +2773,9 @@ export const router = t.router({
       // Cascade: override > DEV_STORAGE (honours hermetic audits and
       // the resolver's test-profile re-root seeded in Electron main)
       // > production default under the operator's homedir.
-      const devStorage = nonEmpty(process.env.DEV_STORAGE);
+      const devStorage = nonEmpty(process.env["DEV_STORAGE"]);
       const baseDir =
-        nonEmpty(process.env.LLAMACTL_MCP_PIPELINES_DIR) ??
+        nonEmpty(process.env["LLAMACTL_MCP_PIPELINES_DIR"]) ??
         (devStorage
           ? join(devStorage, "mcp", "pipelines")
           : join(homedir(), ".llamactl", "mcp", "pipelines"));
@@ -3504,8 +3504,8 @@ export const router = t.router({
         glob: project.spec.rag.docsGlob,
       };
       const tag: Record<string, string> = { project: project.metadata.name };
-      if (project.spec.purpose) tag.purpose = project.spec.purpose;
-      source.tag = tag;
+      if (project.spec.purpose) tag["purpose"] = project.spec.purpose;
+      source["tag"] = tag;
       const pipelineManifest: Record<string, unknown> = {
         apiVersion: "llamactl/v1",
         kind: "RagPipeline",

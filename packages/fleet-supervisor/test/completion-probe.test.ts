@@ -120,8 +120,8 @@ describe("probeCompletion", () => {
     });
     expect(calledUrl).toBe("http://127.0.0.1:8086/v1/chat/completions");
     expect(calledMethod).toBe("POST");
-    expect(parsedBody.max_tokens).toBe(1);
-    expect(parsedBody.stream).toBe(false);
+    expect(parsedBody["max_tokens"]).toBe(1);
+    expect(parsedBody["stream"]).toBe(false);
   });
 
   it("rejects an SSRF endpoint as misconfigured without incrementing", async () => {

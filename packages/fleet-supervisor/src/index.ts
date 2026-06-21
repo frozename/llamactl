@@ -48,7 +48,7 @@ export function createEnabledMigrationController(
     fetchSnapshot: (node: string) => Promise<NodeSnapshot>;
   },
 ): MigrationController | null {
-  if (process.env.LLAMACTL_FLEET_MOVE_ENABLED !== "1") return null;
+  if (process.env["LLAMACTL_FLEET_MOVE_ENABLED"] !== "1") return null;
   return createMigrationController({
     ...deps,
     getNowMs: deps.getNowMs ?? ((): number => Date.now()),

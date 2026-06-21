@@ -201,10 +201,10 @@ describe("startPipelineScheduler", () => {
     });
     await h.done;
     const lines = readLines(join(tmp, "logged.jsonl"));
-    const fired = lines.filter((l) => l.kind === "schedule-fired");
+    const fired = lines.filter((l) => l["kind"] === "schedule-fired");
     expect(fired).toHaveLength(1);
-    expect(fired[0]!.schedule).toBe("@every 5m");
-    expect(typeof fired[0]!.next_at).toBe("string");
+    expect(fired[0]!["schedule"]).toBe("@every 5m");
+    expect(typeof fired[0]!["next_at"]).toBe("string");
   });
 
   test("journals schedule-skipped when a previous run is still in flight", async () => {
@@ -278,9 +278,9 @@ describe("startPipelineScheduler", () => {
     await h.done;
     expect((report as { unparseable: string[] }).unparseable).toEqual(["bogus"]);
     const lines = readLines(join(tmp, "bogus.jsonl"));
-    const skipped = lines.filter((l) => l.kind === "schedule-skipped");
+    const skipped = lines.filter((l) => l["kind"] === "schedule-skipped");
     expect(skipped).toHaveLength(1);
-    expect(skipped[0]!.reason).toBe("schedule-unparseable");
+    expect(skipped[0]!["reason"]).toBe("schedule-unparseable");
   });
 
   test("listPipelines failure is caught — loop continues", async () => {

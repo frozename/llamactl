@@ -44,7 +44,7 @@ describe("tool-call-grammar workload", () => {
         await toolCallGrammarWorkload.scorer(row, "", {
           tool_calls: [{ type: "function", function: { name: "ha_pulse", arguments: "{}" } }],
         })
-      ).metrics.exact_match,
+      ).metrics["exact_match"],
     ).toBe(1);
 
     expect(
@@ -52,7 +52,7 @@ describe("tool-call-grammar workload", () => {
         await toolCallGrammarWorkload.scorer(row, "", {
           tool_calls: [{ type: "function", function: { name: "different_tool", arguments: "{}" } }],
         })
-      ).metrics.exact_match,
+      ).metrics["exact_match"],
     ).toBe(0);
   });
 });

@@ -41,20 +41,20 @@ describe("destroyComposite catalog cleanup", () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "cd-"));
-    prevSp = process.env.LLAMACTL_SIRIUS_PROVIDERS;
-    prevEm = process.env.LLAMACTL_EMBERSYNTH_CONFIG;
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, "sp.yaml");
-    process.env.LLAMACTL_EMBERSYNTH_CONFIG = join(tmp, "em.yaml");
+    prevSp = process.env["LLAMACTL_SIRIUS_PROVIDERS"];
+    prevEm = process.env["LLAMACTL_EMBERSYNTH_CONFIG"];
+    process.env["LLAMACTL_SIRIUS_PROVIDERS"] = join(tmp, "sp.yaml");
+    process.env["LLAMACTL_EMBERSYNTH_CONFIG"] = join(tmp, "em.yaml");
     origFetch = globalThis.fetch;
     globalThis.fetch = (() =>
       Promise.resolve(new Response("ok", { status: 200 }))) as unknown as typeof globalThis.fetch;
   });
 
   afterEach(() => {
-    if (prevSp === undefined) delete process.env.LLAMACTL_SIRIUS_PROVIDERS;
-    else process.env.LLAMACTL_SIRIUS_PROVIDERS = prevSp;
-    if (prevEm === undefined) delete process.env.LLAMACTL_EMBERSYNTH_CONFIG;
-    else process.env.LLAMACTL_EMBERSYNTH_CONFIG = prevEm;
+    if (prevSp === undefined) delete process.env["LLAMACTL_SIRIUS_PROVIDERS"];
+    else process.env["LLAMACTL_SIRIUS_PROVIDERS"] = prevSp;
+    if (prevEm === undefined) delete process.env["LLAMACTL_EMBERSYNTH_CONFIG"];
+    else process.env["LLAMACTL_EMBERSYNTH_CONFIG"] = prevEm;
     globalThis.fetch = origFetch;
     rmSync(tmp, { recursive: true, force: true });
   });

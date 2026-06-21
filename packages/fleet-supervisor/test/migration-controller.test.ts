@@ -120,13 +120,13 @@ describe("MigrationController", () => {
   });
 
   it("T4: evaluateMove returns null when no viable destination node exists", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "HIGH",
       nodeMem: { freeMb: 200 },
       workloads: [],
     };
-    snapshots.m4pro = {
+    snapshots["m4pro"] = {
       node: "m4pro",
       pressureState: "HIGH",
       nodeMem: { freeMb: 100 },
@@ -138,7 +138,7 @@ describe("MigrationController", () => {
   });
 
   it("T5: evaluateMove returns MoveProposal with from/to and ttl fields when destination exists", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
@@ -184,7 +184,7 @@ describe("MigrationController", () => {
   });
 
   it("T7: executeMove deploys then advancePendingHealthPolls writes skipped-evict and executed move", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
@@ -211,7 +211,7 @@ describe("MigrationController", () => {
   });
 
   it("T8: advancePendingHealthPolls writes failed execution when destination never becomes reachable", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
@@ -230,7 +230,7 @@ describe("MigrationController", () => {
   });
 
   it("T9: executeMove returns destination_unavailable and does not skip evict when destination headroom is lost", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "HIGH",
       nodeMem: { freeMb: 100 },
@@ -252,7 +252,7 @@ describe("MigrationController", () => {
   });
 
   it("T10: onJournalEntry triggers evaluateMove on NORMAL→HIGH pressure transition", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
@@ -324,7 +324,7 @@ describe("MigrationController", () => {
       },
     });
 
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
@@ -429,7 +429,7 @@ describe("MigrationController", () => {
   });
 
   it("F6: executeMove returns timed_out when legacy proposal has unparseable expiresAt", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
@@ -451,7 +451,7 @@ describe("MigrationController", () => {
   });
 
   it("F13: evaluateMove rejects peer with non-finite freeMb", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: Number.NaN },
@@ -462,7 +462,7 @@ describe("MigrationController", () => {
   });
 
   it("F13: executeMove returns destination_unavailable when destination freeMb is non-finite", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: Number.NaN },
@@ -478,7 +478,7 @@ describe("MigrationController", () => {
   });
 
   it("F20: evaluateMove requires destination freeMb >= workload memory hint when provided", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 700 },
@@ -494,7 +494,7 @@ describe("MigrationController", () => {
   });
 
   it("F20: executeMove refuses destination when freeMb drops below workload memory hint", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 800 },
@@ -510,7 +510,7 @@ describe("MigrationController", () => {
   });
 
   it("F12: onJournalEntry ignores fleet-transition with subjectKind=workload", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },

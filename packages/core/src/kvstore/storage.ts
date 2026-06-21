@@ -176,7 +176,7 @@ function addColumnIfMissing(db: Database, table: string, column: string, sql: st
 
 function runIntegrityScan(storage: KvStorage): void {
   const graceMs = ((): number => {
-    const raw = process.env.LLAMACTL_KV_QUARANTINE_PURGE_HOURS;
+    const raw = process.env["LLAMACTL_KV_QUARANTINE_PURGE_HOURS"];
     const hours = raw ? Number.parseFloat(raw) : 24;
     return Number.isFinite(hours) && hours > 0 ? hours * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
   })();

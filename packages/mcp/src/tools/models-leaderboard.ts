@@ -17,7 +17,7 @@ function warnDeprecatedToolAlias(oldName: string, newName: string): void {
 }
 
 function leaderboardDbPath(): string {
-  const root = process.env.DEV_STORAGE ?? "";
+  const root = process.env["DEV_STORAGE"] ?? "";
   return join(root, "eval", "leaderboard.sqlite");
 }
 

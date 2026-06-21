@@ -130,9 +130,9 @@ function smallestGgufUnderRoot(root: string): GgufHit | null {
 
 function findSmallestLocalGguf(): GgufHit | null {
   const candidates: string[] = [];
-  const cppModels = process.env.LLAMA_CPP_MODELS?.trim();
+  const cppModels = process.env["LLAMA_CPP_MODELS"]?.trim();
   if (cppModels) candidates.push(cppModels);
-  const runtime = process.env.LOCAL_AI_RUNTIME_DIR?.trim();
+  const runtime = process.env["LOCAL_AI_RUNTIME_DIR"]?.trim();
   if (runtime) candidates.push(join(runtime, "ai-models", "local-ai"));
   // Keep the roots in priority order. The first root with any .gguf
   // wins — we don't merge across roots because the `target` field is
@@ -286,14 +286,14 @@ describeMaybe("multinode e2e: coordinator + worker via --rpc", () => {
     // share the one process.env; setting once here is sufficient.
     // Preserve the existing LLAMA_CPP_BIN since the doctor check
     // has already confirmed rpc-server lives there.
-    process.env.DEV_STORAGE = tmpRuntime;
-    process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
-    process.env.LLAMA_CPP_MODELS = ggufPath.modelsRoot;
-    process.env.LLAMA_CPP_LOGS = logsDir;
-    process.env.LLAMA_CPP_HOST = "127.0.0.1";
-    process.env.LLAMA_CPP_PORT = String(coordPort);
+    process.env["DEV_STORAGE"] = tmpRuntime;
+    process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+    process.env["LLAMA_CPP_MODELS"] = ggufPath.modelsRoot;
+    process.env["LLAMA_CPP_LOGS"] = logsDir;
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = String(coordPort);
     // Skip tuned-profile lookup: would require a seeded bench TSV.
-    process.env.LLAMA_CPP_USE_TUNED_ARGS = "false";
+    process.env["LLAMA_CPP_USE_TUNED_ARGS"] = "false";
 
     cluster = await makeCluster({
       nodes: [{ name: "coord" }, { name: "worker1" }],
@@ -303,8 +303,8 @@ describeMaybe("multinode e2e: coordinator + worker via --rpc", () => {
     // which reads $LLAMACTL_CONFIG. Point it at the cluster config
     // makeCluster just wrote so `clientForNode(name)` can resolve
     // every node in the topology.
-    process.env.LLAMACTL_CONFIG = cluster.clusterConfigPath;
-    process.env.LLAMACTL_WORKLOADS_DIR = workloadsDir;
+    process.env["LLAMACTL_CONFIG"] = cluster.clusterConfigPath;
+    process.env["LLAMACTL_WORKLOADS_DIR"] = workloadsDir;
 
     const [coord, worker] = cluster.nodes;
     if (!coord || !worker) throw new Error("unreachable: 2 nodes requested");

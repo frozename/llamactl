@@ -21,14 +21,14 @@ function trailerPath(slotFile: string): string {
 function isValidTrailer(parsed: unknown): parsed is KvTrailer {
   if (typeof parsed !== "object" || parsed === null) return false;
   const obj = parsed as Record<string, unknown>;
-  if (typeof obj.extFlags !== "number") return false;
-  if (obj.toolMap !== undefined) {
-    if (typeof obj.toolMap !== "object" || obj.toolMap === null) return false;
-    for (const value of Object.values(obj.toolMap)) {
+  if (typeof obj["extFlags"] !== "number") return false;
+  if (obj["toolMap"] !== undefined) {
+    if (typeof obj["toolMap"] !== "object" || obj["toolMap"] === null) return false;
+    for (const value of Object.values(obj["toolMap"])) {
       if (typeof value !== "string") return false;
     }
   }
-  if (obj.sessionTitle !== undefined && typeof obj.sessionTitle !== "string") return false;
+  if (obj["sessionTitle"] !== undefined && typeof obj["sessionTitle"] !== "string") return false;
   return true;
 }
 

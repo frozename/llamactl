@@ -25,7 +25,7 @@ describe("llamactl catalog", () => {
     const r = runCli(["catalog", "list", "--json"], temp.env);
     expect(r.code).toBe(0);
     const parsed = parseJsonArray(r.stdout);
-    expect(requireRecord(parsed[0]).rel).toContain(".gguf");
+    expect(requireRecord(parsed[0])["rel"]).toContain(".gguf");
   });
 
   test("catalog list bogus scope exits non-zero", () => {

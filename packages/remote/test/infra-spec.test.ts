@@ -75,7 +75,7 @@ describe("loadInfraPackageSpec", () => {
     expect(spec.name).toBe("llama-cpp");
     expect(Object.keys(spec.versions).sort()).toEqual(["b4500", "b4501"]);
     expect(spec.default).toBe("b4501");
-    expect(spec.versions.b4500!.platforms["darwin-arm64"]?.sha256).toBe("1".repeat(64));
+    expect(spec.versions["b4500"]!.platforms["darwin-arm64"]?.sha256).toBe("1".repeat(64));
   });
 
   test("throws when the file is missing", () => {
@@ -125,7 +125,7 @@ describe("loadInfraPackageSpec", () => {
     // 'unknown-platform' for bsd-ppc64 because that key isn't in
     // the InfraPlatformKind enum.
     const spec = loadInfraPackageSpec("pkg", dir);
-    expect(Object.keys(spec.versions.v1!.platforms)).toEqual(["darwin-arm64"]);
+    expect(Object.keys(spec.versions["v1"]!.platforms)).toEqual(["darwin-arm64"]);
   });
 });
 

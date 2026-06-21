@@ -15,12 +15,12 @@ export function DashboardStats({
 }): React.JSX.Element {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
-      <StatCard label="Profile" value={String(env?.LLAMA_CPP_MACHINE_PROFILE ?? "—")} />
-      <StatCard label="Provider" value={String(env?.LOCAL_AI_PROVIDER ?? "—")} />
-      <StatCard label="Default Model" value={String(env?.LLAMA_CPP_DEFAULT_MODEL ?? "—")} />
+      <StatCard label="Profile" value={String(env?.["LLAMA_CPP_MACHINE_PROFILE"] ?? "—")} />
+      <StatCard label="Provider" value={String(env?.["LOCAL_AI_PROVIDER"] ?? "—")} />
+      <StatCard label="Default Model" value={String(env?.["LLAMA_CPP_DEFAULT_MODEL"] ?? "—")} />
       <StatCard label="Active Model" value={activeModel} />
-      <StatCard label="Context Length" value={String(env?.LOCAL_AI_CONTEXT_LENGTH ?? "—")} />
-      <StatCard label="Provider URL" value={String(env?.LOCAL_AI_PROVIDER_URL ?? "—")} />
+      <StatCard label="Context Length" value={String(env?.["LOCAL_AI_CONTEXT_LENGTH"] ?? "—")} />
+      <StatCard label="Provider URL" value={String(env?.["LOCAL_AI_PROVIDER_URL"] ?? "—")} />
     </div>
   );
 }

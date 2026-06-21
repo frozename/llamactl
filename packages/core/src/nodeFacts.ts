@@ -53,7 +53,7 @@ const STARTED_AT = new Date().toISOString();
 const LLAMACTL_VERSION = "0.0.0";
 
 export function resolveNodeName(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_NODE_NAME?.trim();
+  const override = env["LLAMACTL_NODE_NAME"]?.trim();
   if (override) return override;
   const host = hostname().trim();
   return host || "local";

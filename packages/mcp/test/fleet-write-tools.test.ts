@@ -147,8 +147,8 @@ describe("llamactl_admit_measure", () => {
 
   test("writes mcp-audit entry on success with LLAMACTL_FLEET_DIR", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "llamactl-fleet-audit-"));
-    const original = process.env.LLAMACTL_FLEET_DIR;
-    process.env.LLAMACTL_FLEET_DIR = tmpDir;
+    const original = process.env["LLAMACTL_FLEET_DIR"];
+    process.env["LLAMACTL_FLEET_DIR"] = tmpDir;
 
     const calls: { cmd: string; args: string[] }[] = [];
     const spawnFn = mockSpawn({ code: 0, stdout: '{"peakMb":1024}' }, calls);
@@ -170,9 +170,9 @@ describe("llamactl_admit_measure", () => {
     expect(auditLine.tool).toBe("llamactl_admit_measure");
     expect(auditLine.outcome).toBe("success");
     if (original === undefined) {
-      delete process.env.LLAMACTL_FLEET_DIR;
+      delete process.env["LLAMACTL_FLEET_DIR"];
     } else {
-      process.env.LLAMACTL_FLEET_DIR = original;
+      process.env["LLAMACTL_FLEET_DIR"] = original;
     }
     rmSync(tmpDir, { recursive: true, force: true });
   });

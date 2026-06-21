@@ -126,7 +126,7 @@ describe("runMatrix", () => {
           additionalProperties?: boolean;
         }
       | undefined;
-    const classification = responseFormat?.json_schema?.schema?.properties?.classification as
+    const classification = responseFormat?.json_schema?.schema?.properties?.["classification"] as
       | { enum?: string[] }
       | undefined;
     expect(new Set(classification?.enum ?? [])).toEqual(
@@ -349,7 +349,7 @@ describe("runMatrix", () => {
       expect(cell.runner_version).toBe(1);
       expect(cell.n_rows).toBe(2);
       expect(cell.run_id).toMatch(/^\d{4}-\d{2}-\d{2}T.+-[0-9a-f]{8}$/);
-      expect(lastRequestBody?.response_format).toEqual(workload.response_format);
+      expect(lastRequestBody?.["response_format"]).toEqual(workload.response_format);
       const expected = aggregateMetrics([
         { pred: "missed_registration", gold: "missed_registration" },
         { pred: "missed_registration", gold: "not_memory_related" },
@@ -409,7 +409,7 @@ describe("runMatrix", () => {
         db,
       });
       expect(run.cellsWritten).toBe(1);
-      expect(lastRequestBody?.response_format).toBeUndefined();
+      expect(lastRequestBody?.["response_format"]).toBeUndefined();
     } finally {
       globalThis.fetch = origFetch;
       try {
@@ -616,7 +616,7 @@ describe("matrix CLI", () => {
     globalThis.fetch = (async (_url: Request | string | URL, init: RequestInit | undefined) => {
       const body =
         typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {};
-      const messages = Array.isArray(body.messages) ? body.messages : [];
+      const messages = Array.isArray(body["messages"]) ? body["messages"] : [];
       const userMessage = (messages[0] as { content?: string } | undefined)?.content ?? "";
       const match = /p(\d+)/.exec(userMessage);
       const idx = Number(match?.[1] ?? "0");

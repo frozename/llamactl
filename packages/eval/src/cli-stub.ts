@@ -11,9 +11,9 @@ if (!modelRel) {
   process.exit(2);
 }
 const ub = Number(ubArg) === 256 ? 256 : 512;
-const LLAMA_CPP_BIN = process.env.LLAMA_CPP_BIN ?? "";
-const LLAMA_CPP_MODELS = process.env.LLAMA_CPP_MODELS ?? "";
-const DEV_STORAGE = process.env.DEV_STORAGE ?? "";
+const LLAMA_CPP_BIN = process.env["LLAMA_CPP_BIN"] ?? "";
+const LLAMA_CPP_MODELS = process.env["LLAMA_CPP_MODELS"] ?? "";
+const DEV_STORAGE = process.env["DEV_STORAGE"] ?? "";
 if (!LLAMA_CPP_BIN || !LLAMA_CPP_MODELS || !DEV_STORAGE) {
   process.stderr.write('env not set; run: eval "$(bun packages/cli/src/bin.ts env --eval)"\n');
   process.exit(2);

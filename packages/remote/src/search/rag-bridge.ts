@@ -66,13 +66,13 @@ function normalizeHits(
         metadata?: Record<string, unknown>;
       };
       return {
-        sessionId: stringOr(hit.metadata?.sessionId, stringOr(hit.id, "")),
-        goal: stringOr(hit.metadata?.goal, ""),
-        status: stringOr(hit.metadata?.status, "live") as SessionHit["status"],
-        startedAt: stringOr(hit.metadata?.startedAt, ""),
+        sessionId: stringOr(hit.metadata?.["sessionId"], stringOr(hit.id, "")),
+        goal: stringOr(hit.metadata?.["goal"], ""),
+        status: stringOr(hit.metadata?.["status"], "live") as SessionHit["status"],
+        startedAt: stringOr(hit.metadata?.["startedAt"], ""),
         matches: [
           {
-            where: stringOr(hit.metadata?.where, "session content"),
+            where: stringOr(hit.metadata?.["where"], "session content"),
             snippet: stringOr(hit.content, "").slice(0, 200),
             spans: [],
           },
@@ -90,8 +90,8 @@ function normalizeHits(
         metadata?: Record<string, unknown>;
       };
       return {
-        entityId: stringOr(hit.metadata?.entityId, stringOr(hit.id, "")),
-        title: stringOr(hit.metadata?.title, stringOr(hit.id, "")),
+        entityId: stringOr(hit.metadata?.["entityId"], stringOr(hit.id, "")),
+        title: stringOr(hit.metadata?.["title"], stringOr(hit.id, "")),
         matches: [
           {
             where: "body",
@@ -110,12 +110,12 @@ function normalizeHits(
       metadata?: Record<string, unknown>;
     };
     return {
-      fileLabel: stringOr(hit.metadata?.fileLabel, "unknown"),
-      filePath: stringOr(hit.metadata?.filePath, ""),
+      fileLabel: stringOr(hit.metadata?.["fileLabel"], "unknown"),
+      filePath: stringOr(hit.metadata?.["filePath"], ""),
       matches: [
         {
-          lineNumber: numberOr(hit.metadata?.lineNumber, 0),
-          where: stringOr(hit.metadata?.where, ""),
+          lineNumber: numberOr(hit.metadata?.["lineNumber"], 0),
+          where: stringOr(hit.metadata?.["where"], ""),
           snippet: stringOr(hit.content, "").slice(0, 200),
           spans: [],
         },

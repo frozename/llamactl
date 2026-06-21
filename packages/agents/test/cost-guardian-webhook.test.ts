@@ -159,7 +159,7 @@ describe("runCostGuardianTick — webhook dispatch", () => {
     const entries = readJournal(journalPath);
     // Only the tick entry — no action entry.
     expect(entries).toHaveLength(1);
-    expect(entries[0]!.kind).toBe("tick");
+    expect(entries[0]!["kind"]).toBe("tick");
   });
 
   test("warn tier → webhook fires, action entry journaled with ok:true", async () => {
@@ -186,10 +186,10 @@ describe("runCostGuardianTick — webhook dispatch", () => {
     expect(captured).not.toBeNull();
     const entries = readJournal(journalPath);
     expect(entries).toHaveLength(2);
-    expect(entries[0]!.kind).toBe("tick");
-    expect(entries[1]!.kind).toBe("action");
-    expect(entries[1]!.action).toBe("webhook");
-    expect(entries[1]!.ok).toBe(true);
+    expect(entries[0]!["kind"]).toBe("tick");
+    expect(entries[1]!["kind"]).toBe("action");
+    expect(entries[1]!["action"]).toBe("webhook");
+    expect(entries[1]!["ok"]).toBe(true);
   });
 
   test("webhook failure → action entry journaled with ok:false + error", async () => {
@@ -214,8 +214,8 @@ describe("runCostGuardianTick — webhook dispatch", () => {
     });
     expect(decision.tier).toBe("deregister");
     const entries = readJournal(journalPath);
-    expect(entries[1]!.ok).toBe(false);
-    expect(entries[1]!.error).toContain("boom");
+    expect(entries[1]!["ok"]).toBe(false);
+    expect(entries[1]!["error"]).toContain("boom");
   });
 
   test("no webhook_url in config → webhook skipped even on force_private tier", async () => {
@@ -239,7 +239,7 @@ describe("runCostGuardianTick — webhook dispatch", () => {
     // No webhook action entry ever gets journaled when webhook_url
     // is absent — but the tier-2 force-private intent is still
     // journaled since that's a separate action surface.
-    expect(entries.some((e) => e.action === "webhook")).toBe(false);
+    expect(entries.some((e) => e["action"] === "webhook")).toBe(false);
   });
 
   test("disableWebhook=true short-circuits the action regardless of config", async () => {
@@ -306,9 +306,9 @@ describe("runCostGuardianTick — tier-3 deregister dry-run intent", () => {
     const entries = readJournal(journalPath);
     // tick + force-private intent + deregister-dry-run
     expect(entries).toHaveLength(3);
-    const action = entries.find((e) => e.action === "deregister-dry-run")!;
-    expect(action.ok).toBe(false);
-    const detail = action.detail as {
+    const action = entries.find((e) => e["action"] === "deregister-dry-run")!;
+    expect(action["ok"]).toBe(false);
+    const detail = action["detail"] as {
       provider: string;
       autoDeregisterEnabled: boolean;
       toolInvoked: boolean;
@@ -317,7 +317,7 @@ describe("runCostGuardianTick — tier-3 deregister dry-run intent", () => {
     expect(detail.provider).toBe("openai");
     expect(detail.toolInvoked).toBe(false);
     expect(detail.note).toContain("manual operator action required");
-    expect(action.error).toContain("sirius.providers.deregister not available");
+    expect(action["error"]).toContain("sirius.providers.deregister not available");
   });
 
   test("auto_deregister=true without sirius still flags toolInvoked:false", async () => {
@@ -337,8 +337,8 @@ describe("runCostGuardianTick — tier-3 deregister dry-run intent", () => {
       disableWebhook: true,
     });
     const entries = readJournal(journalPath);
-    const action = entries.find((e) => e.action === "deregister-dry-run")!;
-    const detail = action.detail as {
+    const action = entries.find((e) => e["action"] === "deregister-dry-run")!;
+    const detail = action["detail"] as {
       autoDeregisterEnabled: boolean;
       toolInvoked: boolean;
       note: string;
@@ -395,9 +395,9 @@ describe("runCostGuardianTick — tier-3 deregister dry-run intent", () => {
     expect(captured).not.toBeNull();
     expect(captured!.arguments).toEqual({ name: "openai", dryRun: true });
     const entries = readJournal(journalPath);
-    const action = entries.find((e) => e.action === "deregister-dry-run")!;
-    expect(action.ok).toBe(true);
-    const detail = action.detail as {
+    const action = entries.find((e) => e["action"] === "deregister-dry-run")!;
+    expect(action["ok"]).toBe(true);
+    const detail = action["detail"] as {
       provider: string;
       toolInvoked: boolean;
       mode: string;
@@ -452,9 +452,9 @@ describe("runCostGuardianTick — tier-3 deregister dry-run intent", () => {
       disableWebhook: true,
     });
     const entries = readJournal(journalPath);
-    const action = entries.find((e) => e.action === "deregister-dry-run")!;
-    expect(action.ok).toBe(false);
-    expect(action.error).toContain("wet-mode-not-implemented");
+    const action = entries.find((e) => e["action"] === "deregister-dry-run")!;
+    expect(action["ok"]).toBe(false);
+    expect(action["error"]).toContain("wet-mode-not-implemented");
   });
 
   test("deregister tier with no byProvider → no dry-run action (nothing to deregister)", async () => {
@@ -476,7 +476,7 @@ describe("runCostGuardianTick — tier-3 deregister dry-run intent", () => {
     expect(decision.tier).toBe("deregister");
     expect(decision.deregisterTarget).toBeNull();
     const entries = readJournal(journalPath);
-    expect(entries.some((e) => e.action === "deregister-dry-run")).toBe(false);
+    expect(entries.some((e) => e["action"] === "deregister-dry-run")).toBe(false);
   });
 
   test("warn tier never emits a deregister-dry-run entry", async () => {
@@ -496,7 +496,7 @@ describe("runCostGuardianTick — tier-3 deregister dry-run intent", () => {
       disableWebhook: true,
     });
     const entries = readJournal(journalPath);
-    expect(entries.some((e) => e.action === "deregister-dry-run")).toBe(false);
+    expect(entries.some((e) => e["action"] === "deregister-dry-run")).toBe(false);
   });
 });
 
@@ -531,11 +531,11 @@ describe("runCostGuardianTick — tier-2 force-private intent", () => {
     });
     expect(decision.tier).toBe("force_private");
     const entries = readJournal(journalPath);
-    const action = entries.find((e) => e.action === "force-private")!;
+    const action = entries.find((e) => e["action"] === "force-private")!;
     // Tool not available in this harness (no llamactl.* routed) →
     // ok:false + toolInvoked:false + manual-action note.
-    expect(action.ok).toBe(false);
-    const detail = action.detail as {
+    expect(action["ok"]).toBe(false);
+    const detail = action["detail"] as {
       autoForcePrivateEnabled: boolean;
       targetProfile: string;
       toolInvoked: boolean;
@@ -563,8 +563,8 @@ describe("runCostGuardianTick — tier-2 force-private intent", () => {
       disableWebhook: true,
     });
     const entries = readJournal(journalPath);
-    const action = entries.find((e) => e.action === "force-private")!;
-    const detail = action.detail as { autoForcePrivateEnabled: boolean; toolInvoked: boolean };
+    const action = entries.find((e) => e["action"] === "force-private")!;
+    const detail = action["detail"] as { autoForcePrivateEnabled: boolean; toolInvoked: boolean };
     expect(detail.autoForcePrivateEnabled).toBe(true);
     expect(detail.toolInvoked).toBe(false);
   });
@@ -621,9 +621,9 @@ describe("runCostGuardianTick — tier-2 force-private intent", () => {
       dryRun: true,
     });
     const entries = readJournal(journalPath);
-    const action = entries.find((e) => e.action === "force-private")!;
-    expect(action.ok).toBe(true);
-    const detail = action.detail as {
+    const action = entries.find((e) => e["action"] === "force-private")!;
+    expect(action["ok"]).toBe(true);
+    const detail = action["detail"] as {
       toolInvoked: boolean;
       mode: string;
       previous: string;
@@ -677,10 +677,10 @@ describe("runCostGuardianTick — tier-2 force-private intent", () => {
       disableWebhook: true,
     });
     const entries = readJournal(journalPath);
-    const action = entries.find((e) => e.action === "force-private")!;
-    expect(action.ok).toBe(false);
-    expect(action.error).toContain("unknown-profile");
-    const detail = action.detail as { availableProfiles: string[] };
+    const action = entries.find((e) => e["action"] === "force-private")!;
+    expect(action["ok"]).toBe(false);
+    expect(action["error"]).toContain("unknown-profile");
+    const detail = action["detail"] as { availableProfiles: string[] };
     expect(detail.availableProfiles).toEqual(["auto", "fast"]);
   });
 
@@ -701,8 +701,8 @@ describe("runCostGuardianTick — tier-2 force-private intent", () => {
       disableWebhook: true,
     });
     const entries = readJournal(journalPath);
-    expect(entries.some((e) => e.action === "force-private")).toBe(true);
-    expect(entries.some((e) => e.action === "deregister-dry-run")).toBe(true);
+    expect(entries.some((e) => e["action"] === "force-private")).toBe(true);
+    expect(entries.some((e) => e["action"] === "deregister-dry-run")).toBe(true);
   });
 
   test("warn + noop never emit a force-private entry", async () => {
@@ -721,7 +721,7 @@ describe("runCostGuardianTick — tier-2 force-private intent", () => {
       disableWebhook: true,
     });
     const entries = readJournal(journalPath);
-    expect(entries.some((e) => e.action === "force-private")).toBe(false);
+    expect(entries.some((e) => e["action"] === "force-private")).toBe(false);
   });
 });
 
@@ -795,7 +795,7 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
         }
         if (input.name === "llamactl.embersynth.set-default-profile") {
           return makeForcePrivateResponse({
-            mode: input.arguments?.dryRun ? "dry-run" : "wet",
+            mode: input.arguments?.["dryRun"] ? "dry-run" : "wet",
           });
         }
         throw new Error(`unexpected: ${input.name}`);
@@ -821,13 +821,13 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
       dryRun: false,
     });
     const entries = readJournal(journalPath);
-    const dryEntry = entries.find((e) => e.action === "force-private")!;
-    const wetEntry = entries.find((e) => e.action === "force-private-wet")!;
+    const dryEntry = entries.find((e) => e["action"] === "force-private")!;
+    const wetEntry = entries.find((e) => e["action"] === "force-private-wet")!;
     expect(dryEntry).toBeDefined();
     expect(wetEntry).toBeDefined();
-    expect(dryEntry.ok).toBe(true);
-    expect(wetEntry.ok).toBe(true);
-    const wetDetail = wetEntry.detail as {
+    expect(dryEntry["ok"]).toBe(true);
+    expect(wetEntry["ok"]).toBe(true);
+    const wetDetail = wetEntry["detail"] as {
       toolInvoked: boolean;
       mode: string;
       autoForcePrivateEnabled: boolean;
@@ -877,8 +877,8 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
       dryRun: true,
     });
     const entries = readJournal(journalPath);
-    expect(entries.some((e) => e.action === "force-private")).toBe(true);
-    expect(entries.some((e) => e.action === "force-private-wet")).toBe(false);
+    expect(entries.some((e) => e["action"] === "force-private")).toBe(true);
+    expect(entries.some((e) => e["action"] === "force-private-wet")).toBe(false);
   });
 
   test("tier-3 auto_deregister:true + non-protected provider → dry-run THEN wet-run", async () => {
@@ -906,7 +906,7 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
         }
         if (input.name === "sirius.providers.deregister") {
           return makeDeregisterResponse({
-            mode: input.arguments?.dryRun ? "dry-run" : "wet",
+            mode: input.arguments?.["dryRun"] ? "dry-run" : "wet",
           });
         }
         throw new Error(`unexpected: ${input.name}`);
@@ -930,12 +930,12 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
       dryRun: false,
     });
     const entries = readJournal(journalPath);
-    const dryEntry = entries.find((e) => e.action === "deregister-dry-run")!;
-    const wetEntry = entries.find((e) => e.action === "deregister-wet")!;
+    const dryEntry = entries.find((e) => e["action"] === "deregister-dry-run")!;
+    const wetEntry = entries.find((e) => e["action"] === "deregister-wet")!;
     expect(dryEntry).toBeDefined();
     expect(wetEntry).toBeDefined();
-    expect(wetEntry.ok).toBe(true);
-    const wetDetail = wetEntry.detail as {
+    expect(wetEntry["ok"]).toBe(true);
+    const wetDetail = wetEntry["detail"] as {
       provider: string;
       toolInvoked: boolean;
       mode: string;
@@ -944,7 +944,7 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
     expect(wetDetail.toolInvoked).toBe(true);
     expect(wetDetail.mode).toBe("wet");
     // No refusal entry — provider wasn't on the denylist.
-    expect(entries.some((e) => e.action === "deregister-refused")).toBe(false);
+    expect(entries.some((e) => e["action"] === "deregister-refused")).toBe(false);
   });
 
   test("tier-3 auto_deregister:true + protected provider → refused, no wet-run", async () => {
@@ -991,10 +991,10 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
       dryRun: true,
     });
     const entries = readJournal(journalPath);
-    const refused = entries.find((e) => e.action === "deregister-refused")!;
+    const refused = entries.find((e) => e["action"] === "deregister-refused")!;
     expect(refused).toBeDefined();
-    expect(refused.ok).toBe(true);
-    const refusedDetail = refused.detail as {
+    expect(refused["ok"]).toBe(true);
+    const refusedDetail = refused["detail"] as {
       reason: string;
       provider: string;
       protectedProviders: string[];
@@ -1002,7 +1002,7 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
     expect(refusedDetail.reason).toBe("provider-protected");
     expect(refusedDetail.provider).toBe("fleet-internal");
     expect(refusedDetail.protectedProviders).toContain("fleet-internal");
-    expect(entries.some((e) => e.action === "deregister-wet")).toBe(false);
+    expect(entries.some((e) => e["action"] === "deregister-wet")).toBe(false);
   });
 
   test("tier-3 auto_deregister:false + non-protected target → dry-run only (baseline unchanged)", async () => {
@@ -1048,9 +1048,9 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
       dryRun: true,
     });
     const entries = readJournal(journalPath);
-    expect(entries.some((e) => e.action === "deregister-dry-run")).toBe(true);
-    expect(entries.some((e) => e.action === "deregister-wet")).toBe(false);
-    expect(entries.some((e) => e.action === "deregister-refused")).toBe(false);
+    expect(entries.some((e) => e["action"] === "deregister-dry-run")).toBe(true);
+    expect(entries.some((e) => e["action"] === "deregister-wet")).toBe(false);
+    expect(entries.some((e) => e["action"] === "deregister-refused")).toBe(false);
   });
 
   test("tier-2 dry-run fails → auto flag ignored, no wet-run attempt", async () => {
@@ -1106,9 +1106,9 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
       dryRun: true,
     });
     const entries = readJournal(journalPath);
-    const dry = entries.find((e) => e.action === "force-private")!;
-    expect(dry.ok).toBe(false);
-    expect(entries.some((e) => e.action === "force-private-wet")).toBe(false);
+    const dry = entries.find((e) => e["action"] === "force-private")!;
+    expect(dry["ok"]).toBe(false);
+    expect(entries.some((e) => e["action"] === "force-private-wet")).toBe(false);
   });
 
   test("protectedProviders case-insensitive: ['OpenAI'] must protect provider key 'openai'", async () => {
@@ -1135,7 +1135,7 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
           return makeForcePrivateResponse();
         }
         if (input.name === "sirius.providers.deregister") {
-          return makeDeregisterResponse({ mode: input.arguments?.dryRun ? "dry-run" : "wet" });
+          return makeDeregisterResponse({ mode: input.arguments?.["dryRun"] ? "dry-run" : "wet" });
         }
         throw new Error(`unexpected: ${input.name}`);
       },
@@ -1152,12 +1152,12 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
     expect(deregisterCalls).toHaveLength(1);
     expect(deregisterCalls[0]!.arguments).toEqual({ name: "openai", dryRun: true });
     const entries = readJournal(journalPath);
-    const refused = entries.find((e) => e.action === "deregister-refused");
+    const refused = entries.find((e) => e["action"] === "deregister-refused");
     expect(refused).toBeDefined();
-    const refusedDetail = refused!.detail as { reason: string; provider: string };
+    const refusedDetail = refused!["detail"] as { reason: string; provider: string };
     expect(refusedDetail.reason).toBe("provider-protected");
     expect(refusedDetail.provider).toBe("openai");
-    expect(entries.some((e) => e.action === "deregister-wet")).toBe(false);
+    expect(entries.some((e) => e["action"] === "deregister-wet")).toBe(false);
   });
 
   test("protectedProviders whitespace-insensitive: [' openai '] must protect provider key 'openai'", async () => {
@@ -1184,7 +1184,7 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
           return makeForcePrivateResponse();
         }
         if (input.name === "sirius.providers.deregister") {
-          return makeDeregisterResponse({ mode: input.arguments?.dryRun ? "dry-run" : "wet" });
+          return makeDeregisterResponse({ mode: input.arguments?.["dryRun"] ? "dry-run" : "wet" });
         }
         throw new Error(`unexpected: ${input.name}`);
       },
@@ -1200,7 +1200,7 @@ describe("runCostGuardianTick — tier-2/tier-3 auto wet-run", () => {
     expect(deregisterCalls).toHaveLength(1);
     expect(deregisterCalls[0]!.arguments).toEqual({ name: "openai", dryRun: true });
     const entries = readJournal(journalPath);
-    expect(entries.find((e) => e.action === "deregister-refused")).toBeDefined();
-    expect(entries.some((e) => e.action === "deregister-wet")).toBe(false);
+    expect(entries.find((e) => e["action"] === "deregister-refused")).toBeDefined();
+    expect(entries.some((e) => e["action"] === "deregister-wet")).toBe(false);
   });
 });

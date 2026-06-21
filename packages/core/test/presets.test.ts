@@ -59,7 +59,7 @@ describe("presets.writePresetOverride (round-trip)", () => {
   afterEach(async () => {
     // Wipe any file we may have written so subsequent tests start empty.
     try {
-      const file = env.LOCAL_AI_PRESET_OVERRIDES_FILE!;
+      const file = env["LOCAL_AI_PRESET_OVERRIDES_FILE"]!;
       if (existsSync(file)) await Bun.write(file, "");
     } catch {
       // no-op
@@ -68,7 +68,7 @@ describe("presets.writePresetOverride (round-trip)", () => {
 
   test("new row appended on first write", () => {
     writePresetOverride("balanced", "best", "some/model.gguf", env);
-    const file = env.LOCAL_AI_PRESET_OVERRIDES_FILE!;
+    const file = env["LOCAL_AI_PRESET_OVERRIDES_FILE"]!;
     const body = readFileSync(file, "utf8");
     expect(body).toContain("balanced\tbest\tsome/model.gguf");
   });
@@ -76,7 +76,7 @@ describe("presets.writePresetOverride (round-trip)", () => {
   test("re-promote replaces in place (no row growth)", () => {
     writePresetOverride("balanced", "best", "first/model.gguf", env);
     writePresetOverride("balanced", "best", "second/model.gguf", env);
-    const rows = readPresetOverrides(env.LOCAL_AI_PRESET_OVERRIDES_FILE!);
+    const rows = readPresetOverrides(env["LOCAL_AI_PRESET_OVERRIDES_FILE"]!);
     expect(rows.length).toBe(1);
     expect(rows[0]?.rel).toBe("second/model.gguf");
   });
@@ -88,7 +88,7 @@ describe("presets.deletePresetOverride", () => {
 
   afterEach(async () => {
     try {
-      const file = env.LOCAL_AI_PRESET_OVERRIDES_FILE!;
+      const file = env["LOCAL_AI_PRESET_OVERRIDES_FILE"]!;
       if (existsSync(file)) await Bun.write(file, "");
     } catch {
       // no-op
@@ -99,7 +99,7 @@ describe("presets.deletePresetOverride", () => {
     writePresetOverride("balanced", "best", "a/one.gguf", env);
     writePresetOverride("balanced", "fast", "a/two.gguf", env);
     expect(deletePresetOverride("balanced", "best", env)).toBe(true);
-    const rows = readPresetOverrides(env.LOCAL_AI_PRESET_OVERRIDES_FILE!);
+    const rows = readPresetOverrides(env["LOCAL_AI_PRESET_OVERRIDES_FILE"]!);
     expect(rows.length).toBe(1);
     expect(rows[0]?.preset).toBe("fast");
   });
@@ -107,13 +107,13 @@ describe("presets.deletePresetOverride", () => {
   test("unlinks the file when the last row is removed", () => {
     writePresetOverride("balanced", "best", "only/one.gguf", env);
     expect(deletePresetOverride("balanced", "best", env)).toBe(true);
-    expect(existsSync(env.LOCAL_AI_PRESET_OVERRIDES_FILE!)).toBe(false);
+    expect(existsSync(env["LOCAL_AI_PRESET_OVERRIDES_FILE"]!)).toBe(false);
   });
 
   test("no-op when no row matches", () => {
     writePresetOverride("balanced", "best", "kept/row.gguf", env);
     expect(deletePresetOverride("macbook-pro-48g", "fast", env)).toBe(false);
-    const rows = readPresetOverrides(env.LOCAL_AI_PRESET_OVERRIDES_FILE!);
+    const rows = readPresetOverrides(env["LOCAL_AI_PRESET_OVERRIDES_FILE"]!);
     expect(rows.length).toBe(1);
   });
 

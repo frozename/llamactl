@@ -14,7 +14,7 @@ import { join } from "node:path";
  * Electron main (Fix 1) lights up every module at once.
  */
 function defaultOpsChatDir(env: NodeJS.ProcessEnv = process.env): string {
-  const devStorage = env.DEV_STORAGE?.trim();
+  const devStorage = env["DEV_STORAGE"]?.trim();
   if (devStorage) return join(devStorage, "ops-chat");
   return join(homedir(), ".llamactl", "ops-chat");
 }
@@ -25,13 +25,13 @@ function defaultOpsChatDir(env: NodeJS.ProcessEnv = process.env): string {
  * ~/.llamactl).
  */
 export function defaultOpsChatAuditPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_OPS_CHAT_AUDIT?.trim();
+  const override = env["LLAMACTL_OPS_CHAT_AUDIT"]?.trim();
   if (override) return override;
   return join(defaultOpsChatDir(env), "audit.jsonl");
 }
 
 export function defaultSessionsDir(env: NodeJS.ProcessEnv = process.env): string {
-  const devStorage = env.DEV_STORAGE?.trim();
+  const devStorage = env["DEV_STORAGE"]?.trim();
   if (devStorage) return join(devStorage, "ops-chat", "sessions");
   return join(homedir(), ".llamactl", "ops-chat", "sessions");
 }

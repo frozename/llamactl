@@ -53,14 +53,14 @@ describe("siriusHandler with composite context", () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "sh-"));
-    prevSp = process.env.LLAMACTL_SIRIUS_PROVIDERS;
-    prevKc = process.env.LLAMACTL_CONFIG;
+    prevSp = process.env["LLAMACTL_SIRIUS_PROVIDERS"];
+    prevKc = process.env["LLAMACTL_CONFIG"];
 
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, "sp.yaml");
-    process.env.LLAMACTL_CONFIG = join(tmp, "kubeconfig");
+    process.env["LLAMACTL_SIRIUS_PROVIDERS"] = join(tmp, "sp.yaml");
+    process.env["LLAMACTL_CONFIG"] = join(tmp, "kubeconfig");
 
     writeFileSync(
-      process.env.LLAMACTL_CONFIG,
+      process.env["LLAMACTL_CONFIG"],
       stringifyYaml({
         apiVersion: "llamactl/v1",
         kind: "Config",
@@ -79,11 +79,11 @@ describe("siriusHandler with composite context", () => {
   });
 
   afterEach(() => {
-    if (prevSp === undefined) delete process.env.LLAMACTL_SIRIUS_PROVIDERS;
-    else process.env.LLAMACTL_SIRIUS_PROVIDERS = prevSp;
+    if (prevSp === undefined) delete process.env["LLAMACTL_SIRIUS_PROVIDERS"];
+    else process.env["LLAMACTL_SIRIUS_PROVIDERS"] = prevSp;
 
-    if (prevKc === undefined) delete process.env.LLAMACTL_CONFIG;
-    else process.env.LLAMACTL_CONFIG = prevKc;
+    if (prevKc === undefined) delete process.env["LLAMACTL_CONFIG"];
+    else process.env["LLAMACTL_CONFIG"] = prevKc;
 
     globalThis.fetch = origFetch;
     rmSync(tmp, { recursive: true, force: true });
@@ -125,7 +125,7 @@ describe("siriusHandler with composite context", () => {
     // on disk (RED before the reorder: the write ran before the token
     // check, so the file persisted despite the failure).
     writeFileSync(
-      process.env.LLAMACTL_CONFIG!,
+      process.env["LLAMACTL_CONFIG"]!,
       stringifyYaml({
         apiVersion: "llamactl/v1",
         kind: "Config",
@@ -135,7 +135,7 @@ describe("siriusHandler with composite context", () => {
         clusters: [{ name: "local", server: "http://localhost" }],
       }),
     );
-    const catalogPath = process.env.LLAMACTL_SIRIUS_PROVIDERS!;
+    const catalogPath = process.env["LLAMACTL_SIRIUS_PROVIDERS"]!;
     expect(existsSync(catalogPath)).toBe(false);
 
     const r = await siriusHandler.apply({

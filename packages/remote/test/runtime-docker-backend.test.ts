@@ -387,7 +387,7 @@ describe("DockerBackend.ensureService — validation", () => {
 
 describe("DockerBackend.ensureService — secrets", () => {
   test("resolves env-ref secrets and merges them into the container env", async () => {
-    process.env.DOCKER_BACKEND_TEST_SECRET = "s3cr3t";
+    process.env["DOCKER_BACKEND_TEST_SECRET"] = "s3cr3t";
     const recorded: Recorded[] = [];
     let inspectCalls = 0;
     const responder: Responder = (req) => {
@@ -426,11 +426,11 @@ describe("DockerBackend.ensureService — secrets", () => {
     const body = JSON.parse(createCall!.body ?? "{}") as { Env?: string[] };
     expect(body.Env).toContain("OTHER=plain");
     expect(body.Env).toContain("POSTGRES_PASSWORD=s3cr3t");
-    delete process.env.DOCKER_BACKEND_TEST_SECRET;
+    delete process.env["DOCKER_BACKEND_TEST_SECRET"];
   });
 
   test("missing secret ref surfaces spec-invalid naming the env var", async () => {
-    delete process.env.DOCKER_BACKEND_TEST_MISSING;
+    delete process.env["DOCKER_BACKEND_TEST_MISSING"];
     const backend = new DockerBackend({
       fetch: makeMockFetch((req) => {
         if (req.url.includes("/containers/test-service/json")) {

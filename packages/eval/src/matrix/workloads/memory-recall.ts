@@ -57,7 +57,7 @@ function parseRanking(text: string): string[] | null {
   if (start < 0 || end <= start) return null;
   try {
     const obj = JSON.parse(s.slice(start, end + 1)) as Record<string, unknown>;
-    const r = obj.ranking;
+    const r = obj["ranking"];
     if (!Array.isArray(r)) return null;
     if (!r.every((v) => typeof v === "string")) return null;
     return r;

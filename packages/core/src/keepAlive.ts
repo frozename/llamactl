@@ -346,12 +346,12 @@ export async function runKeepAliveWorker(opts: RunKeepAliveWorkerOptions): Promi
   const key = opts.key;
   const intervalSeconds =
     opts.intervalSeconds ??
-    Math.max(1, Number.parseInt(env.LLAMA_CPP_KEEP_ALIVE_INTERVAL ?? "", 10) || 5);
+    Math.max(1, Number.parseInt(env["LLAMA_CPP_KEEP_ALIVE_INTERVAL"] ?? "", 10) || 5);
   const maxBackoff =
     opts.maxBackoff ??
     Math.max(
       intervalSeconds,
-      Number.parseInt(env.LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF ?? "", 10) || 30,
+      Number.parseInt(env["LLAMA_CPP_KEEP_ALIVE_MAX_BACKOFF"] ?? "", 10) || 30,
     );
 
   try {

@@ -87,10 +87,10 @@ export function currentPlatform(): Platform | null {
 }
 
 export function defaultArtifactsDir(): string {
-  const override = process.env.LLAMACTL_ARTIFACTS_DIR?.trim();
+  const override = process.env["LLAMACTL_ARTIFACTS_DIR"]?.trim();
   if (override) return override;
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional ||: an empty-string DEV_STORAGE must fall back to the home dir.
-  const base = process.env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = process.env["DEV_STORAGE"]?.trim() || join(homedir(), ".llamactl");
   return join(base, "artifacts");
 }
 
@@ -183,7 +183,7 @@ export async function buildAgentBinary(
   const code = await proc.exited;
   if (code !== 0) return { ok: false, outPath, code };
 
-  const identity = opts.signIdentity ?? process.env.LLAMACTL_SIGN_IDENTITY ?? "";
+  const identity = opts.signIdentity ?? process.env["LLAMACTL_SIGN_IDENTITY"] ?? "";
   if (identity && opts.target.startsWith("darwin")) {
     const signCode = await codesignBinary(outPath, identity);
     if (signCode !== 0) {
@@ -309,7 +309,7 @@ async function runBuildAgent(argv: string[]): Promise<number> {
   }
   process.stderr.write(`artifacts build-agent: wrote ${result.outPath}\n`);
   if (result.signCode === 0) {
-    const identity = parsed.signIdentity ?? process.env.LLAMACTL_SIGN_IDENTITY;
+    const identity = parsed.signIdentity ?? process.env["LLAMACTL_SIGN_IDENTITY"];
     process.stderr.write(
       `artifacts build-agent: re-signed with codesign -s '${String(identity)}'\n`,
     );

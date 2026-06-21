@@ -29,8 +29,8 @@ describe("onboard-new-gpu-node runbook", () => {
     const { client, calls } = makeClient({
       "llamactl.node.add": (args) => ({
         dryRun: true,
-        message: `would add node ${String(args.name)}`,
-        node: { name: args.name, endpoint: "https://gpu1:7843" },
+        message: `would add node ${String(args["name"])}`,
+        node: { name: args["name"], endpoint: "https://gpu1:7843" },
       }),
     });
 
@@ -42,7 +42,7 @@ describe("onboard-new-gpu-node runbook", () => {
 
     expect(result.ok).toBe(true);
     expect(calls.map((c) => c.name)).toEqual(["llamactl.node.add"]);
-    expect(calls[0]!.arguments.dryRun).toBe(true);
+    expect(calls[0]!.arguments["dryRun"]).toBe(true);
     const summary = result.summary as { dryRun: boolean; name: string };
     expect(summary.dryRun).toBe(true);
     expect(summary.name).toBe("gpu1");
@@ -51,9 +51,14 @@ describe("onboard-new-gpu-node runbook", () => {
   test("wet-run adds + confirms + syncs embersynth", async () => {
     const { client, calls } = makeClient({
       "llamactl.node.add": (args) =>
-        args.dryRun
-          ? { dryRun: true, message: "preview", node: { name: args.name } }
-          : { ok: true, name: args.name, endpoint: "https://gpu1:7843", fingerprint: "sha256:abc" },
+        args["dryRun"]
+          ? { dryRun: true, message: "preview", node: { name: args["name"] } }
+          : {
+              ok: true,
+              name: args["name"],
+              endpoint: "https://gpu1:7843",
+              fingerprint: "sha256:abc",
+            },
       "llamactl.node.ls": () => ({
         context: "default",
         cluster: "home",
@@ -79,10 +84,10 @@ describe("onboard-new-gpu-node runbook", () => {
       "llamactl.embersynth.sync",
     ]);
     // The first node.add call is a dry-run, second is wet.
-    expect(calls[0]!.arguments.dryRun).toBe(true);
-    expect(calls[1]!.arguments.dryRun).toBe(false);
+    expect(calls[0]!.arguments["dryRun"]).toBe(true);
+    expect(calls[1]!.arguments["dryRun"]).toBe(false);
     // embersynth.sync forwarded dryRun: false too.
-    expect(calls[3]!.arguments.dryRun).toBe(false);
+    expect(calls[3]!.arguments["dryRun"]).toBe(false);
     const summary = result.summary as { name: string; cluster: string; totalNodes: number };
     expect(summary.name).toBe("gpu1");
     expect(summary.cluster).toBe("home");
@@ -110,9 +115,9 @@ describe("onboard-new-gpu-node runbook", () => {
   test("failure mode: node missing after wet add", async () => {
     const { client } = makeClient({
       "llamactl.node.add": (args) =>
-        args.dryRun
-          ? { dryRun: true, message: "preview", node: { name: args.name } }
-          : { ok: true, name: args.name, endpoint: "https://gpu1:7843" },
+        args["dryRun"]
+          ? { dryRun: true, message: "preview", node: { name: args["name"] } }
+          : { ok: true, name: args["name"], endpoint: "https://gpu1:7843" },
       "llamactl.node.ls": () => ({
         context: "default",
         cluster: "home",

@@ -136,7 +136,7 @@ export async function runDoctor(argv: string[], deps: DoctorDeps = {}): Promise<
 // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 async function checkAgent(): Promise<CheckResult[]> {
   const out: CheckResult[] = [];
-  const cfgPath = process.env.LLAMACTL_CONFIG ?? join(homedir(), ".llamactl", "config");
+  const cfgPath = process.env["LLAMACTL_CONFIG"] ?? join(homedir(), ".llamactl", "config");
   if (!existsSync(cfgPath)) {
     out.push({
       system: "agent",
@@ -230,10 +230,10 @@ async function checkDocker(): Promise<CheckResult[]> {
  * pure-Docker lab don't see k8s warnings they don't care about.
  */
 function hasKubernetesIntent(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env.LLAMACTL_RUNTIME_BACKEND === "kubernetes") return true;
+  if (env["LLAMACTL_RUNTIME_BACKEND"] === "kubernetes") return true;
   const dir =
-    env.LLAMACTL_COMPOSITES_DIR ??
-    join(env.LLAMACTL_HOME ?? join(homedir(), ".llamactl"), "composites");
+    env["LLAMACTL_COMPOSITES_DIR"] ??
+    join(env["LLAMACTL_HOME"] ?? join(homedir(), ".llamactl"), "composites");
   try {
     const entries = readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {

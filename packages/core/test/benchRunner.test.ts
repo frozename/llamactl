@@ -142,9 +142,9 @@ describe("bench writers (integration)", () => {
   test("resolveReferenceImage honours LOCAL_AI_BENCH_IMAGE when the path exists", () => {
     const alt = join(temp.devStorage, "alt.png");
     writeFileSync(alt, Buffer.from("not-a-png"));
-    process.env.LOCAL_AI_BENCH_IMAGE = alt;
+    process.env["LOCAL_AI_BENCH_IMAGE"] = alt;
     expect(resolveReferenceImage()).toBe(alt);
-    delete process.env.LOCAL_AI_BENCH_IMAGE;
+    delete process.env["LOCAL_AI_BENCH_IMAGE"];
   });
 });
 
@@ -167,7 +167,7 @@ describe("bench.benchPreset (with injected runCli)", () => {
     const binDir = join(temp.devStorage, "bin");
     mkdirSync(binDir, { recursive: true });
     writeFileSync(join(binDir, "llama-bench"), "");
-    process.env.LLAMA_CPP_BIN = binDir;
+    process.env["LLAMA_CPP_BIN"] = binDir;
     mkdirSync(temp.runtimeDir, { recursive: true });
   });
   afterEach(() => {
@@ -220,7 +220,7 @@ describe("bench.benchVision (error shapes without a real binary)", () => {
     // Force LLAMA_CPP_BIN at an empty temp dir so the bin existence
     // check fires deterministically regardless of the developer's real
     // llama.cpp install.
-    process.env.LLAMA_CPP_BIN = join(temp.devStorage, "nonexistent-bin");
+    process.env["LLAMA_CPP_BIN"] = join(temp.devStorage, "nonexistent-bin");
   });
   afterEach(() => {
     process.env = originalEnv;

@@ -15,9 +15,9 @@ import { dirname } from "node:path";
 
 const CORPUS = process.argv[2] ?? "./tools/memory-efficacy-bench/corpus/findings.json";
 const OUT = process.argv[3] ?? "./tools/memory-efficacy-bench/corpus/gold-labels.json";
-const AGENT = process.env.LABELER_AGENT ?? "codex-acp-spark";
-const BATCH_SIZE = Number(process.env.BATCH_SIZE ?? 10);
-const RESUME = process.env.RESUME === "1";
+const AGENT = process.env["LABELER_AGENT"] ?? "codex-acp-spark";
+const BATCH_SIZE = Number(process.env["BATCH_SIZE"] ?? 10);
+const RESUME = process.env["RESUME"] === "1";
 
 const VALID = ["missed_registration", "recall_miss", "memory_ignored", "not_memory_related"];
 

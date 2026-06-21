@@ -107,10 +107,10 @@ describe("gitFetcher", () => {
     });
     const docs = await collect(ctx);
     const readme = docs.find((d) => d.id === "README.md")!;
-    expect(readme.metadata.source_kind).toBe("git");
-    expect(readme.metadata.repo).toBe(`file://${bareRepo}`);
-    expect(readme.metadata.ref).toBe("main");
-    expect(readme.metadata.team).toBe("platform");
+    expect(readme.metadata["source_kind"]).toBe("git");
+    expect(readme.metadata["repo"]).toBe(`file://${bareRepo}`);
+    expect(readme.metadata["ref"]).toBe("main");
+    expect(readme.metadata["team"]).toBe("platform");
   });
 
   test("clone argv carries a -- end-of-options marker right before the repo positional", () => {

@@ -240,15 +240,15 @@ describe("KubernetesBackend.ensureService — Deployment happy path", () => {
           throw notFound();
         },
         "core.createNamespace": (p) => {
-          namespaceCreated.push(p.body as V1Namespace);
-          return p.body;
+          namespaceCreated.push(p["body"] as V1Namespace);
+          return p["body"];
         },
         "core.readNamespacedService": () => {
           throw notFound();
         },
         "core.createNamespacedService": (p) => {
-          servicesCreated.push(p.body as V1Service);
-          return p.body;
+          servicesCreated.push(p["body"] as V1Service);
+          return p["body"];
         },
         "apps.readNamespacedDeployment": (p) => {
           // First call pre-create: 404. After create we poll — return
@@ -258,7 +258,7 @@ describe("KubernetesBackend.ensureService — Deployment happy path", () => {
           return readyDeployment(spec);
         },
         "apps.createNamespacedDeployment": (p) => {
-          deploymentsCreated.push(p.body as V1Deployment);
+          deploymentsCreated.push(p["body"] as V1Deployment);
           return readyDeployment(spec);
         },
       },
@@ -297,8 +297,8 @@ describe("KubernetesBackend.ensureService — Deployment happy path", () => {
     const spec = sampleSpec({
       secrets: { POSTGRES_PASSWORD: { ref: "env:TEST_SECRET_PW" } },
     });
-    const previousValue = process.env.TEST_SECRET_PW;
-    process.env.TEST_SECRET_PW = "rotating-pw";
+    const previousValue = process.env["TEST_SECRET_PW"];
+    process.env["TEST_SECRET_PW"] = "rotating-pw";
 
     const secretsCreated: V1Secret[] = [];
     const deploymentsCreated: V1Deployment[] = [];
@@ -310,19 +310,19 @@ describe("KubernetesBackend.ensureService — Deployment happy path", () => {
           throw notFound();
         },
         "core.createNamespacedSecret": (p) => {
-          secretsCreated.push(p.body as V1Secret);
-          return p.body;
+          secretsCreated.push(p["body"] as V1Secret);
+          return p["body"];
         },
         "core.readNamespacedService": () => {
           throw notFound();
         },
-        "core.createNamespacedService": (p) => p.body,
+        "core.createNamespacedService": (p) => p["body"],
         "apps.readNamespacedDeployment": () => {
           if (deploymentsCreated.length === 0) throw notFound();
           return readyDeployment(spec);
         },
         "apps.createNamespacedDeployment": (p) => {
-          deploymentsCreated.push(p.body as V1Deployment);
+          deploymentsCreated.push(p["body"] as V1Deployment);
           return readyDeployment(spec);
         },
       },
@@ -337,15 +337,15 @@ describe("KubernetesBackend.ensureService — Deployment happy path", () => {
       await backend.ensureService(spec);
     } finally {
       if (previousValue === undefined) {
-        delete process.env.TEST_SECRET_PW;
+        delete process.env["TEST_SECRET_PW"];
       } else {
-        process.env.TEST_SECRET_PW = previousValue;
+        process.env["TEST_SECRET_PW"] = previousValue;
       }
     }
 
     expect(secretsCreated).toHaveLength(1);
     expect(secretsCreated[0]?.type).toBe("Opaque");
-    expect(secretsCreated[0]?.data?.POSTGRES_PASSWORD).toBe(
+    expect(secretsCreated[0]?.data?.["POSTGRES_PASSWORD"]).toBe(
       Buffer.from("rotating-pw", "utf8").toString("base64"),
     );
 
@@ -375,8 +375,8 @@ describe("KubernetesBackend.ensureService — Deployment happy path", () => {
           return pvcsCreated[0];
         },
         "core.createNamespacedPersistentVolumeClaim": (p) => {
-          pvcsCreated.push(p.body as V1PersistentVolumeClaim);
-          return p.body;
+          pvcsCreated.push(p["body"] as V1PersistentVolumeClaim);
+          return p["body"];
         },
         "core.readNamespacedService": () => {
           if (!deploymentExists) throw notFound();
@@ -390,7 +390,7 @@ describe("KubernetesBackend.ensureService — Deployment happy path", () => {
             spec: { ports: [{ port: 8000 }] },
           };
         },
-        "core.createNamespacedService": (p) => p.body,
+        "core.createNamespacedService": (p) => p["body"],
         "apps.readNamespacedDeployment": () => {
           if (!deploymentExists) throw notFound();
           return existingDeployment();
@@ -445,19 +445,19 @@ describe("KubernetesBackend.ensureService — configMap volumes", () => {
           throw notFound();
         },
         "core.createNamespacedConfigMap": (p) => {
-          configMapsCreated.push({ body: p.body, order: ++tick });
-          return p.body;
+          configMapsCreated.push({ body: p["body"], order: ++tick });
+          return p["body"];
         },
         "core.readNamespacedService": () => {
           throw notFound();
         },
-        "core.createNamespacedService": (p) => p.body,
+        "core.createNamespacedService": (p) => p["body"],
         "apps.readNamespacedDeployment": () => {
           if (deploymentsCreated.length === 0) throw notFound();
           return readyDeployment(spec);
         },
         "apps.createNamespacedDeployment": (p) => {
-          deploymentsCreated.push({ body: p.body, order: ++tick });
+          deploymentsCreated.push({ body: p["body"], order: ++tick });
           return readyDeployment(spec);
         },
       },
@@ -562,7 +562,7 @@ describe("KubernetesBackend.ensureService — idempotency + drift", () => {
           },
           spec: { ports: [{ port: 8000 }], clusterIP: "10.0.0.1" },
         }),
-        "core.replaceNamespacedService": (p) => p.body,
+        "core.replaceNamespacedService": (p) => p["body"],
         "apps.readNamespacedDeployment": () => ({
           apiVersion: "apps/v1",
           kind: "Deployment",
@@ -575,7 +575,7 @@ describe("KubernetesBackend.ensureService — idempotency + drift", () => {
           status: { readyReplicas: 1, replicas: 1 },
         }),
         "apps.replaceNamespacedDeployment": (p) => {
-          replaced.push(p.body as V1Deployment);
+          replaced.push(p["body"] as V1Deployment);
           return readyDeployment(spec);
         },
       },
@@ -599,7 +599,7 @@ describe("KubernetesBackend.ensureService — idempotency + drift", () => {
 
 describe("KubernetesBackend.ensureService — validation + failure modes", () => {
   test("missing secret ref → spec-invalid naming the env var", async () => {
-    delete process.env.LL_TEST_MISSING_PW;
+    delete process.env["LL_TEST_MISSING_PW"];
     const spec = sampleSpec({
       secrets: { POSTGRES_PASSWORD: { ref: "env:LL_TEST_MISSING_PW" } },
     });
@@ -637,7 +637,7 @@ describe("KubernetesBackend.ensureService — validation + failure modes", () =>
         "core.readNamespacedService": () => {
           throw notFound();
         },
-        "core.createNamespacedService": (p) => p.body,
+        "core.createNamespacedService": (p) => p["body"],
         "apps.readNamespacedDeployment": () => {
           reads++;
           if (reads === 1) throw notFound();
@@ -653,7 +653,7 @@ describe("KubernetesBackend.ensureService — validation + failure modes", () =>
           };
         },
         "apps.createNamespacedDeployment": (p) => {
-          const body = p.body as V1Deployment;
+          const body = p["body"] as V1Deployment;
           const out = {} as V1Deployment;
           out.apiVersion = body.apiVersion;
           out.kind = body.kind;
@@ -713,7 +713,7 @@ describe("KubernetesBackend.ensureService — StatefulSet happy path", () => {
         POSTGRES_PASSWORD: { ref: "env:K8S_TEST_PG_PW" },
       },
     });
-    process.env.K8S_TEST_PG_PW = "super-secret";
+    process.env["K8S_TEST_PG_PW"] = "super-secret";
 
     let statefulSetReadCount = 0;
     const servicesCreated: string[] = [];
@@ -725,12 +725,12 @@ describe("KubernetesBackend.ensureService — StatefulSet happy path", () => {
         "core.readNamespace": () => {
           throw notFound();
         },
-        "core.createNamespace": (p) => p.body,
+        "core.createNamespace": (p) => p["body"],
         "core.readNamespacedSecret": () => {
           throw notFound();
         },
         "core.createNamespacedSecret": (p) => {
-          const body = p.body as V1Secret;
+          const body = p["body"] as V1Secret;
           secretCreated.push(body);
           return body;
         },
@@ -738,7 +738,7 @@ describe("KubernetesBackend.ensureService — StatefulSet happy path", () => {
           throw notFound();
         },
         "core.createNamespacedService": (p) => {
-          const body = p.body as V1Service;
+          const body = p["body"] as V1Service;
           if (body.metadata?.name) servicesCreated.push(body.metadata.name);
           return body;
         },
@@ -759,7 +759,7 @@ describe("KubernetesBackend.ensureService — StatefulSet happy path", () => {
           return ss;
         },
         "apps.createNamespacedStatefulSet": (p) => {
-          const body = p.body as V1StatefulSet;
+          const body = p["body"] as V1StatefulSet;
           statefulSetsCreated.push(body);
           return body;
         },
@@ -781,7 +781,7 @@ describe("KubernetesBackend.ensureService — StatefulSet happy path", () => {
     expect(servicesCreated).toContain("pg-main");
     // Secret materialized with base64 value — data keys include POSTGRES_PASSWORD.
     expect(secretCreated).toHaveLength(1);
-    expect(secretCreated[0]?.data?.POSTGRES_PASSWORD).toBeDefined();
+    expect(secretCreated[0]?.data?.["POSTGRES_PASSWORD"]).toBeDefined();
     // StatefulSet created with volumeClaimTemplates inline, not a separate PVC.
     expect(statefulSetsCreated).toHaveLength(1);
     const ss = statefulSetsCreated[0]!;
@@ -791,7 +791,7 @@ describe("KubernetesBackend.ensureService — StatefulSet happy path", () => {
       false,
     );
 
-    delete process.env.K8S_TEST_PG_PW;
+    delete process.env["K8S_TEST_PG_PW"];
   });
 
   test("statefulset hash match → no replace", async () => {
@@ -868,11 +868,11 @@ describe("KubernetesBackend.ensureService — StatefulSet happy path", () => {
         "core.readNamespacedSecret": () => {
           throw notFound();
         },
-        "core.createNamespacedSecret": (p) => p.body,
+        "core.createNamespacedSecret": (p) => p["body"],
         "core.readNamespacedService": () => {
           throw notFound();
         },
-        "core.createNamespacedService": (p) => p.body,
+        "core.createNamespacedService": (p) => p["body"],
         "apps.readNamespacedStatefulSet": () => {
           statefulSetReadCount++;
           if (statefulSetReadCount === 1) throw notFound();
@@ -888,7 +888,7 @@ describe("KubernetesBackend.ensureService — StatefulSet happy path", () => {
             status: { readyReplicas: 1, replicas: 1 },
           } satisfies V1StatefulSet;
         },
-        "apps.createNamespacedStatefulSet": (p) => p.body,
+        "apps.createNamespacedStatefulSet": (p) => p["body"],
       },
     });
     const backend = new KubernetesBackend({
@@ -936,22 +936,22 @@ describe("KubernetesBackend.removeService", () => {
           ],
         }),
         "apps.deleteNamespacedDeployment": (p) => {
-          deploymentDeletes.push(p.name as string);
+          deploymentDeletes.push(p["name"] as string);
           return { kind: "Status", status: "Success" };
         },
         "core.listNamespacedService": () => ({
           items: [{ metadata: { name: "chroma-main", namespace: "llamactl-kb" } }],
         }),
         "core.deleteNamespacedService": (p) => {
-          serviceDeletes.push(p.name as string);
+          serviceDeletes.push(p["name"] as string);
           return { kind: "Status", status: "Success" };
         },
         "core.deleteNamespacedSecret": (p) => {
-          secretDeletes.push(p.name as string);
+          secretDeletes.push(p["name"] as string);
           return { kind: "Status", status: "Success" };
         },
         "core.deleteNamespacedPersistentVolumeClaim": (p) => {
-          pvcDeletes.push(p.name as string);
+          pvcDeletes.push(p["name"] as string);
           return { kind: "Status", status: "Success" };
         },
       },
@@ -997,7 +997,7 @@ describe("KubernetesBackend.removeService", () => {
           ],
         }),
         "core.deleteNamespacedPersistentVolumeClaim": (p) => {
-          pvcDeletes.push(p.name as string);
+          pvcDeletes.push(p["name"] as string);
           return {};
         },
       },
@@ -1057,7 +1057,7 @@ describe("KubernetesBackend.removeService", () => {
           ],
         }),
         "core.deleteNamespacedPersistentVolumeClaim": (p) => {
-          pvcDeletes.push(p.name as string);
+          pvcDeletes.push(p["name"] as string);
           return {};
         },
       },
@@ -1091,7 +1091,7 @@ describe("KubernetesBackend.removeService", () => {
           ],
         }),
         "apps.deleteNamespacedStatefulSet": (p) => {
-          ssDeletes.push(p.name as string);
+          ssDeletes.push(p["name"] as string);
           return {};
         },
         "core.listNamespacedService": () => ({ items: [] }),
@@ -1195,7 +1195,7 @@ describe("KubernetesBackend.inspectService", () => {
           ],
         }),
         "core.readNamespacedService": (p) => {
-          expect(p.name).toBe("pg-main-client");
+          expect(p["name"]).toBe("pg-main-client");
           return {
             apiVersion: "v1",
             kind: "Service",
@@ -1250,7 +1250,7 @@ describe("KubernetesBackend.listServices", () => {
           ],
         }),
         "core.readNamespacedService": (p) => ({
-          metadata: { name: p.name, namespace: p.namespace },
+          metadata: { name: p["name"], namespace: p["namespace"] },
           spec: { ports: [{ port: 8000 }] },
         }),
       },
@@ -1274,7 +1274,7 @@ describe("KubernetesBackend.listServices", () => {
     const stub = stubKubeConfig({
       handlers: {
         "apps.listDeploymentForAllNamespaces": (p) => {
-          capturedSelector = p.labelSelector as string;
+          capturedSelector = p["labelSelector"] as string;
           return { items: [] };
         },
         "apps.listStatefulSetForAllNamespaces": () => ({ items: [] }),
@@ -1305,7 +1305,7 @@ describe("KubernetesBackend.destroyCompositeBoundary", () => {
     const stub = stubKubeConfig({
       handlers: {
         "core.deleteNamespace": (p) => {
-          deleted.push(p.name as string);
+          deleted.push(p["name"] as string);
           return { kind: "Status", status: "Success" };
         },
       },
@@ -1348,7 +1348,7 @@ describe("KubernetesBackend.resolveExternalServiceEndpoint", () => {
           items: [readyDeployment(spec)],
         }),
         "core.readNamespacedService": (p) => {
-          expect(p.name).toBe("chroma-main");
+          expect(p["name"]).toBe("chroma-main");
           return {
             spec: {
               type: "NodePort",
@@ -1385,7 +1385,7 @@ describe("KubernetesBackend.resolveExternalServiceEndpoint", () => {
           ],
         }),
         "core.readNamespacedService": (p) => {
-          expect(p.name).toBe("pg-main-client");
+          expect(p["name"]).toBe("pg-main-client");
           return {
             spec: {
               type: "NodePort",

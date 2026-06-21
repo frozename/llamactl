@@ -56,8 +56,8 @@ describe("ProjectSchema", () => {
         },
       },
     });
-    expect(parsed.spec.routing.quick_qna).toBe("private-first");
-    expect(parsed.spec.routing.code_review).toBe("mac-mini.claude-pro");
+    expect(parsed.spec.routing["quick_qna"]).toBe("private-first");
+    expect(parsed.spec.routing["code_review"]).toBe("mac-mini.claude-pro");
     expect(Object.keys(parsed.spec.routing).length).toBe(3);
   });
 

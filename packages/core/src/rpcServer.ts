@@ -52,7 +52,7 @@ export interface RpcServerDoctorResult {
 export function checkRpcServerAvailable(
   env: NodeJS.ProcessEnv = process.env,
 ): RpcServerDoctorResult {
-  const bin = env.LLAMA_CPP_BIN?.trim();
+  const bin = env["LLAMA_CPP_BIN"]?.trim();
   if (!bin) {
     return {
       ok: false,

@@ -33,7 +33,7 @@ import { mkdtempSync, rmSync } from "../src/safe-fs.js";
  * of the service + runtime surface.
  */
 
-const RUN_GATE = process.env.LLAMACTL_COMPOSITE_E2E === "1";
+const RUN_GATE = process.env["LLAMACTL_COMPOSITE_E2E"] === "1";
 
 // Defer the Docker ping to a beforeAll so the skipIf check below is
 // fast. If RUN_GATE is false we never ping.
@@ -57,8 +57,8 @@ beforeAll(async () => {
   configPath = join(tmp, "config");
   compositesDir = join(tmp, "composites");
   saveConfig(freshConfig(), configPath);
-  process.env.LLAMACTL_CONFIG = configPath;
-  process.env.LLAMACTL_COMPOSITES_DIR = compositesDir;
+  process.env["LLAMACTL_CONFIG"] = configPath;
+  process.env["LLAMACTL_COMPOSITES_DIR"] = compositesDir;
 });
 
 afterAll(() => {
@@ -90,7 +90,7 @@ function failingWorkloadClient(): WorkloadClient {
   };
 }
 
-const K8S_RUN_GATE = process.env.LLAMACTL_COMPOSITE_E2E_K8S === "1";
+const K8S_RUN_GATE = process.env["LLAMACTL_COMPOSITE_E2E_K8S"] === "1";
 let k8sReachable = false;
 
 beforeAll(async () => {
@@ -271,7 +271,7 @@ describe.skipIf(!K8S_RUN_GATE)("Composite E2E — kubernetes round-trip", () => 
       // the same key. We don't need to READ the value back — the
       // assertion is structural: the Secret exists with the right
       // key + the Deployment's env references it.
-      process.env.TEST_E2E_SECRET = "structural-only";
+      process.env["TEST_E2E_SECRET"] = "structural-only";
       const backend = createKubernetesBackend({
         readinessPollMs: 2_000,
         readinessTimeoutMs: 5 * 60_000,
@@ -324,9 +324,9 @@ describe.skipIf(!K8S_RUN_GATE)("Composite E2E — kubernetes round-trip", () => 
         name: "chroma-secret-secrets",
         namespace,
       });
-      expect(secret.data?.SIDEBAND_TOKEN).toBeDefined();
+      expect(secret.data?.["SIDEBAND_TOKEN"]).toBeDefined();
       // Base64 decode matches the env var we set.
-      const decoded = Buffer.from(secret.data!.SIDEBAND_TOKEN!, "base64").toString("utf8");
+      const decoded = Buffer.from(secret.data!["SIDEBAND_TOKEN"]!, "base64").toString("utf8");
       expect(decoded).toBe("structural-only");
 
       const dep = await client.apps.readNamespacedDeployment({
@@ -357,7 +357,7 @@ describe.skipIf(!K8S_RUN_GATE)("Composite E2E — kubernetes round-trip", () => 
         compositesDir,
       });
       expect(destroyResult.ok).toBe(true);
-      delete process.env.TEST_E2E_SECRET;
+      delete process.env["TEST_E2E_SECRET"];
     },
     10 * 60_000,
   );

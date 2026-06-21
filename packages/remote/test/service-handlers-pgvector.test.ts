@@ -160,7 +160,7 @@ describe("pgvectorHandler.toDeployment", () => {
     // POSTGRES_PASSWORD lives in `secrets` now — the backend resolves
     // the ref at apply time (Docker → env entry; k8s → Secret +
     // secretKeyRef).
-    expect(d.secrets?.POSTGRES_PASSWORD).toEqual({ ref: `env:${ENV_KEY}` });
+    expect(d.secrets?.["POSTGRES_PASSWORD"]).toEqual({ ref: `env:${ENV_KEY}` });
     expect(d.controllerKind).toBe("statefulset");
     // Exec form — no shell substitution at container runtime.
     expect(d.healthcheck?.test).toEqual(["CMD", "pg_isready", "-U", "postgres"]);
@@ -170,7 +170,7 @@ describe("pgvectorHandler.toDeployment", () => {
   test("omits POSTGRES_PASSWORD secret when passwordEnv unset", () => {
     const d = pgvectorHandler.toDeployment(spec(), { compositeName: "demo" });
     if (!d) throw new Error("expected deployment");
-    expect(d.secrets?.POSTGRES_PASSWORD).toBeUndefined();
+    expect(d.secrets?.["POSTGRES_PASSWORD"]).toBeUndefined();
   });
 
   test("stamps llamactl labels including spec.hash", () => {
@@ -191,7 +191,7 @@ describe("pgvectorHandler.toDeployment", () => {
     const d = pgvectorHandler.toDeployment(spec({ passwordEnv: ENV_KEY }), {
       compositeName: "demo",
     });
-    expect(d?.secrets?.POSTGRES_PASSWORD).toEqual({ ref: `env:${ENV_KEY}` });
+    expect(d?.secrets?.["POSTGRES_PASSWORD"]).toEqual({ ref: `env:${ENV_KEY}` });
   });
 
   test("honors custom user in pg_isready test", () => {
@@ -230,8 +230,8 @@ describe("pgvectorHandler.toDeployment", () => {
       { compositeName: "kb" },
     );
     if (!d) throw new Error("expected deployment");
-    expect(d.secrets?.POSTGRES_PASSWORD).toEqual({ ref: `env:${ENV_KEY}` });
-    expect(d.secrets?.PG_SSL_CERT_PASSPHRASE).toEqual({
+    expect(d.secrets?.["POSTGRES_PASSWORD"]).toEqual({ ref: `env:${ENV_KEY}` });
+    expect(d.secrets?.["PG_SSL_CERT_PASSPHRASE"]).toEqual({
       ref: "keychain:llamactl/pg-ssl",
     });
   });
@@ -248,7 +248,7 @@ describe("pgvectorHandler.toDeployment", () => {
     );
     if (!d) throw new Error("expected deployment");
     // Operator's explicit secrets entry wins.
-    expect(d.secrets?.POSTGRES_PASSWORD).toEqual({
+    expect(d.secrets?.["POSTGRES_PASSWORD"]).toEqual({
       ref: "keychain:llamactl/pg-main",
     });
   });

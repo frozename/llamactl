@@ -209,7 +209,7 @@ export function readCustomCatalog(file: string): CuratedModel[] {
  * resolution). `builtin` and `custom` are self-descriptive.
  */
 export function listCatalog(scope: CatalogScope, opts: CatalogLoadOptions = {}): CuratedModel[] {
-  const customFile = opts.customCatalogFile ?? process.env.LOCAL_AI_CUSTOM_CATALOG_FILE;
+  const customFile = opts.customCatalogFile ?? process.env["LOCAL_AI_CUSTOM_CATALOG_FILE"];
   switch (scope) {
     case "builtin":
       return [...BUILTIN_CATALOG];

@@ -4,18 +4,18 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { createEnabledMigrationController } from "../src/index.js";
 
 describe("migration controller wiring gate", () => {
-  const original = process.env.LLAMACTL_FLEET_MOVE_ENABLED;
+  const original = process.env["LLAMACTL_FLEET_MOVE_ENABLED"];
 
   afterEach(() => {
     if (original === undefined) {
-      delete process.env.LLAMACTL_FLEET_MOVE_ENABLED;
+      delete process.env["LLAMACTL_FLEET_MOVE_ENABLED"];
       return;
     }
-    process.env.LLAMACTL_FLEET_MOVE_ENABLED = original;
+    process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = original;
   });
 
   it("returns null when LLAMACTL_FLEET_MOVE_ENABLED is absent", () => {
-    delete process.env.LLAMACTL_FLEET_MOVE_ENABLED;
+    delete process.env["LLAMACTL_FLEET_MOVE_ENABLED"];
 
     const controller = createEnabledMigrationController({
       peers: [],
@@ -31,7 +31,7 @@ describe("migration controller wiring gate", () => {
   });
 
   it("constructs a controller when LLAMACTL_FLEET_MOVE_ENABLED=1", () => {
-    process.env.LLAMACTL_FLEET_MOVE_ENABLED = "1";
+    process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
 
     const controller = createEnabledMigrationController({
       peers: [],

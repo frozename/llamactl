@@ -91,7 +91,7 @@ export function normalizeProfile(raw: string | undefined): MachineProfile | null
  * the current machine profile without reading the environment directly.
  */
 export function resolveProfile(env: NodeJS.ProcessEnv = process.env): MachineProfile {
-  const override = normalizeProfile(env.LLAMA_CPP_MACHINE_PROFILE);
+  const override = normalizeProfile(env["LLAMA_CPP_MACHINE_PROFILE"]);
   if (override) return override;
   return profileFromMemory(detectMemoryBytes());
 }

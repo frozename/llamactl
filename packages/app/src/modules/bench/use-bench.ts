@@ -51,34 +51,34 @@ function handleBenchEvent(ev: unknown, h: BenchEventHandlers): void {
     case "start":
       h.appendLog({
         kind: "start",
-        text: `$ ${eventText(e.command)} ${
-          Array.isArray(e.args) ? e.args.map((arg) => eventText(arg)).join(" ") : ""
+        text: `$ ${eventText(e["command"])} ${
+          Array.isArray(e["args"]) ? e["args"].map((arg) => eventText(arg)).join(" ") : ""
         }`,
       });
       break;
     case "stdout":
-      h.appendLog({ kind: "stdout", text: eventText(e.line) });
+      h.appendLog({ kind: "stdout", text: eventText(e["line"]) });
       break;
     case "stderr":
-      h.appendLog({ kind: "stderr", text: eventText(e.line) });
+      h.appendLog({ kind: "stderr", text: eventText(e["line"]) });
       break;
     case "profile-start":
-      h.appendLog({ kind: "profile", text: `-- profile=${String(e.profile)} --` });
+      h.appendLog({ kind: "profile", text: `-- profile=${String(e["profile"])} --` });
       break;
     case "profile-done":
       h.appendLog({
         kind: "profile",
-        text: `-- profile=${String(e.profile)} gen_ts=${String(e.gen_ts)} prompt_ts=${String(e.prompt_ts)} --`,
+        text: `-- profile=${String(e["profile"])} gen_ts=${String(e["gen_ts"])} prompt_ts=${String(e["prompt_ts"])} --`,
       });
       break;
     case "profile-fail":
       h.appendLog({
         kind: "error",
-        text: `-- profile=${String(e.profile)} failed (code=${String(e.code)}) --`,
+        text: `-- profile=${String(e["profile"])} failed (code=${String(e["code"])}) --`,
       });
       break;
     case "done-preset": {
-      const r = e.result as {
+      const r = e["result"] as {
         bestProfile?: string;
         gen_ts?: string;
         prompt_ts?: string;
@@ -93,7 +93,7 @@ function handleBenchEvent(ev: unknown, h: BenchEventHandlers): void {
       break;
     }
     case "done-vision": {
-      const r = e.result as {
+      const r = e["result"] as {
         rel?: string;
         load_ms?: string;
         image_encode_ms?: string;

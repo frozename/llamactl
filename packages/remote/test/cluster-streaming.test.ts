@@ -72,14 +72,14 @@ beforeEach(async () => {
   // Point the in-process agent at the hermetic paths. The router reads
   // from process.env live, so setting here takes effect for all router
   // calls until we restore in afterEach.
-  process.env.DEV_STORAGE = devStorage;
-  process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
-  process.env.LLAMA_CPP_MODELS = modelsDir;
-  process.env.PATH = `${fakeBinDir}:${originalEnv.PATH ?? ""}`;
+  process.env["DEV_STORAGE"] = devStorage;
+  process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+  process.env["LLAMA_CPP_MODELS"] = modelsDir;
+  process.env["PATH"] = `${fakeBinDir}:${originalEnv["PATH"] ?? ""}`;
   // The pull procedure may call HF for mmproj resolution. Disable the
   // network fetch so this test runs offline.
-  process.env.LOCAL_AI_HF_MMPROJ_FETCH = "off";
-  process.env.LOCAL_AI_HF_CACHE_TTL_SECONDS = "0";
+  process.env["LOCAL_AI_HF_MMPROJ_FETCH"] = "off";
+  process.env["LOCAL_AI_HF_CACHE_TTL_SECONDS"] = "0";
 
   const cert = await generateSelfSignedCert({
     dir: tmp,
@@ -162,7 +162,7 @@ describe("cluster-streaming: pullFile subscription over SSE", () => {
     expect((doneResult as unknown as { code: number }).code).toBe(0);
     expect((doneResult as unknown as { rel: string }).rel).toBe("fake-repo/model-q4.gguf");
 
-    const expectedPath = join(process.env.LLAMA_CPP_MODELS!, "fake-repo", "model-q4.gguf");
+    const expectedPath = join(process.env["LLAMA_CPP_MODELS"]!, "fake-repo", "model-q4.gguf");
     expect(existsSync(expectedPath)).toBe(true);
   });
 
@@ -177,7 +177,7 @@ for i in $(seq 1 100); do
 done
 exit 0
 `;
-    const binPath = join(process.env.PATH!.split(":")[0]!, "hf");
+    const binPath = join(process.env["PATH"]!.split(":")[0]!, "hf");
     writeFileSync(binPath, slowHf, { mode: 0o755 });
 
     const client = createRemoteNodeClient({

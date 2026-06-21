@@ -26,15 +26,15 @@ let prevConfigEnv: string | undefined;
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-peers-"));
-  prevConfigEnv = process.env.LLAMACTL_CONFIG;
-  process.env.LLAMACTL_CONFIG = join(tmp, "config");
+  prevConfigEnv = process.env["LLAMACTL_CONFIG"];
+  process.env["LLAMACTL_CONFIG"] = join(tmp, "config");
 });
 
 afterEach(() => {
   if (prevConfigEnv === undefined) {
-    delete process.env.LLAMACTL_CONFIG;
+    delete process.env["LLAMACTL_CONFIG"];
   } else {
-    process.env.LLAMACTL_CONFIG = prevConfigEnv;
+    process.env["LLAMACTL_CONFIG"] = prevConfigEnv;
   }
   rmSync(tmp, { recursive: true, force: true });
 });
@@ -61,7 +61,7 @@ test("listPeers reads peers from current context", () => {
       { ...baseContext, name: baseContext.name, cluster: "other", user: baseContext.user },
     ],
   };
-  saveConfig(cfg, process.env.LLAMACTL_CONFIG);
+  saveConfig(cfg, process.env["LLAMACTL_CONFIG"]);
   const peers = listPeers();
   expect(peers).toHaveLength(1);
   expect(peers[0]).toMatchObject({ id: "other-peer", endpoint: "https://other.example:7843" });
@@ -77,7 +77,7 @@ test("listPeers excludes the local node and inproc peers", () => {
     name: "remote-node",
     endpoint: "https://remote-node.example:7843",
   });
-  saveConfig(cfg, process.env.LLAMACTL_CONFIG);
+  saveConfig(cfg, process.env["LLAMACTL_CONFIG"]);
   const peers = listPeers();
   expect(peers.some((peer) => peer.id === "remote-node")).toBe(true);
   expect(peers.some((peer) => peer.id === LOCAL_NODE_NAME)).toBe(false);
@@ -92,7 +92,7 @@ test("listPeers resolves tokenRef for configured user token", () => {
     name: "remote-node",
     endpoint: "https://remote-node.example:7843",
   });
-  saveConfig(cfg, process.env.LLAMACTL_CONFIG);
+  saveConfig(cfg, process.env["LLAMACTL_CONFIG"]);
   const peers = listPeers();
   expect(peers[0]!.token).toBe("token-from-file");
   expect(peers[0]!.tokenRef).toBe(tokenPath);
@@ -106,7 +106,7 @@ test("listPeers excludes non-https endpoints", () => {
   });
   cfg = upsertNode(cfg, "home", { name: "http-peer", endpoint: "http://peer-http.example:7843" });
   cfg = upsertNode(cfg, "home", { name: "bad-peer", endpoint: "not-a-url" });
-  saveConfig(cfg, process.env.LLAMACTL_CONFIG);
+  saveConfig(cfg, process.env["LLAMACTL_CONFIG"]);
   const peers = listPeers();
   expect(peers.map((peer) => peer.id).sort()).toEqual(["https-peer"]);
 });
@@ -118,7 +118,7 @@ test("listPeers honors explicit currentNodeName override", () => {
     name: "remote-node",
     endpoint: "https://remote-node.example:7843",
   });
-  saveConfig(cfg, process.env.LLAMACTL_CONFIG);
+  saveConfig(cfg, process.env["LLAMACTL_CONFIG"]);
   expect(
     listPeers({ currentNodeName: "my-self" })
       .map((peer) => peer.id)

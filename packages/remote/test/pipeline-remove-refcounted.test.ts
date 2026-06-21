@@ -26,12 +26,12 @@ describe("removePipeline ref-counted", () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "pipeline-rm-"));
-    prev = process.env.DEV_STORAGE;
-    process.env.DEV_STORAGE = tmp;
+    prev = process.env["DEV_STORAGE"];
+    process.env["DEV_STORAGE"] = tmp;
   });
   afterEach(() => {
-    if (prev === undefined) delete process.env.DEV_STORAGE;
-    else process.env.DEV_STORAGE = prev;
+    if (prev === undefined) delete process.env["DEV_STORAGE"];
+    else process.env["DEV_STORAGE"] = prev;
     rmSync(tmp, { recursive: true, force: true });
   });
 

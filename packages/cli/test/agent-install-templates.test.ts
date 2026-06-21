@@ -47,7 +47,7 @@ const CANONICAL_SYSTEM_OPTS: BuildPlistOptions = {
  * delete the fixture to regenerate.
  */
 function matchFixture(path: string, actual: string): void {
-  const shouldWrite = process.env.UPDATE_SNAPSHOTS === "1" || !existsSync(path);
+  const shouldWrite = process.env["UPDATE_SNAPSHOTS"] === "1" || !existsSync(path);
   if (shouldWrite) {
     writeFileSync(path, actual, "utf8");
   }

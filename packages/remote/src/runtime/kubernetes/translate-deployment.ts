@@ -308,7 +308,7 @@ function buildService(
       // `spec.serviceType` overrides the default for
       // NodePort / LoadBalancer exposure. Absence → ClusterIP.
       type: spec.serviceType ?? "ClusterIP",
-      selector: { app: podLabels.app ?? spec.name },
+      selector: { app: podLabels["app"] ?? spec.name },
       ports,
     },
   };

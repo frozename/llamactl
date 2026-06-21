@@ -105,9 +105,9 @@ export async function discoverAgents(timeoutMs = 2500): Promise<DiscoveredAgent[
         name: svc.name,
         host,
         port,
-        nodeName: txt.node ?? svc.name,
-        version: txt.version ?? null,
-        fingerprint: txt.fp ?? null,
+        nodeName: txt["node"] ?? svc.name,
+        version: txt["version"] ?? null,
+        fingerprint: txt["fp"] ?? null,
         addresses: Array.isArray(svc.addresses) ? svc.addresses : [],
       });
     });

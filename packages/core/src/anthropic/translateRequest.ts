@@ -106,7 +106,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function blockType(block: unknown): string {
-  return isRecord(block) && typeof block.type === "string" ? block.type : "unknown";
+  return isRecord(block) && typeof block["type"] === "string" ? block["type"] : "unknown";
 }
 
 function toDataUrl(source: AnthropicImageSource): string {
@@ -130,14 +130,14 @@ function toolCallFromExactBytes(raw: string): OpenAIAssistantToolCall {
   if (!isRecord(parsed)) {
     throw new AnthropicTranslationError("toolMap entry must decode to a tool call object");
   }
-  const id = parsed.id;
-  const kind = parsed.type;
-  const fn = parsed.function;
+  const id = parsed["id"];
+  const kind = parsed["type"];
+  const fn = parsed["function"];
   if (typeof id !== "string" || kind !== "function" || !isRecord(fn)) {
     throw new AnthropicTranslationError("toolMap entry missing required tool call fields");
   }
-  const name = fn.name;
-  const args = fn.arguments;
+  const name = fn["name"];
+  const args = fn["arguments"];
   if (typeof name !== "string" || typeof args !== "string") {
     throw new AnthropicTranslationError("toolMap entry function payload is invalid");
   }

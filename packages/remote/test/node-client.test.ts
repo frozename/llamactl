@@ -42,9 +42,9 @@ describe("createNodeClient (local sentinel path)", () => {
   });
 
   test("local subscribe bridges AsyncGenerator events into handlers", async () => {
-    const prevRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const prevRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
     const profile = mkdtempSync(join(tmpdir(), "llamactl-node-client-sub-"));
-    process.env.LOCAL_AI_RUNTIME_DIR = join(profile, "runtime");
+    process.env["LOCAL_AI_RUNTIME_DIR"] = join(profile, "runtime");
 
     try {
       const workload = `sub-bridge-${Date.now().toString(36)}`;
@@ -84,8 +84,8 @@ describe("createNodeClient (local sentinel path)", () => {
       expect(started).toBe(true);
       expect(got).toEqual(["line-a", "line-b"]);
     } finally {
-      if (prevRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
-      else process.env.LOCAL_AI_RUNTIME_DIR = prevRuntimeDir;
+      if (prevRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+      else process.env["LOCAL_AI_RUNTIME_DIR"] = prevRuntimeDir;
       rmSync(profile, { recursive: true, force: true });
     }
   });

@@ -59,14 +59,14 @@ describe("memoryRecallWorkload.scorer", () => {
 
   test("exact-match ranking scores 1.0", async () => {
     const out = await memoryRecallWorkload.scorer(row, '{"ranking": ["m1", "m2", "m3"]}');
-    expect(out.metrics.ndcg5).toBeCloseTo(1.0, 6);
-    expect(out.metrics.parse_error).toBe(0);
+    expect(out.metrics["ndcg5"]).toBeCloseTo(1.0, 6);
+    expect(out.metrics["parse_error"]).toBe(0);
   });
 
   test("parse error returns ndcg5=0 + parse_error=1", async () => {
     const out = await memoryRecallWorkload.scorer(row, "not json at all");
-    expect(out.metrics.ndcg5).toBe(0);
-    expect(out.metrics.parse_error).toBe(1);
+    expect(out.metrics["ndcg5"]).toBe(0);
+    expect(out.metrics["parse_error"]).toBe(1);
     expect(out.prediction).toBe("__parse_error__");
   });
 
@@ -75,12 +75,12 @@ describe("memoryRecallWorkload.scorer", () => {
       row,
       '```json\n{"ranking": ["m1", "m2", "m3"]}\n```',
     );
-    expect(out.metrics.ndcg5).toBeCloseTo(1.0, 6);
+    expect(out.metrics["ndcg5"]).toBeCloseTo(1.0, 6);
   });
 
   test("worst ranking (gold last) scores below ideal but above 0", async () => {
     const out = await memoryRecallWorkload.scorer(row, '{"ranking": ["m3", "m1", "m2"]}');
-    expect(out.metrics.ndcg5).toBeGreaterThan(0);
-    expect(out.metrics.ndcg5).toBeLessThan(1);
+    expect(out.metrics["ndcg5"]).toBeGreaterThan(0);
+    expect(out.metrics["ndcg5"]).toBeLessThan(1);
   });
 });

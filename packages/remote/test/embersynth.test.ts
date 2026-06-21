@@ -82,7 +82,7 @@ describe("embersynth config bridge", () => {
         ],
       }),
     );
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = siriusFile;
+    process.env["LLAMACTL_SIRIUS_PROVIDERS"] = siriusFile;
 
     const cfg = generateEmbersynthConfig({ cfg: makeCfgWithAgent() });
 

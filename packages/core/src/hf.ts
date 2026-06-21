@@ -14,7 +14,7 @@ const DEFAULT_TTL_SECONDS = 43_200; // 12h
  * HF lookups and downstream helpers degrade to local-only behaviour.
  */
 export function hfEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env.LOCAL_AI_RECOMMENDATIONS_SOURCE ?? "hf";
+  const raw = env["LOCAL_AI_RECOMMENDATIONS_SOURCE"] ?? "hf";
   switch (raw) {
     case "off":
     case "none":
@@ -29,7 +29,7 @@ export function hfEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 export function cacheTtlSeconds(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.LOCAL_AI_HF_CACHE_TTL_SECONDS;
+  const raw = env["LOCAL_AI_HF_CACHE_TTL_SECONDS"];
   if (!raw) return DEFAULT_TTL_SECONDS;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_TTL_SECONDS;
