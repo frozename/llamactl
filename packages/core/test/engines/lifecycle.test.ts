@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { gracefulShutdown } from "../../src/engines/lifecycle.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "../../src/safe-fs.js";
 
 function isAlive(pid: number): boolean {
   try {

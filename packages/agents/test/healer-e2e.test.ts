@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -12,6 +11,7 @@ import {
   type JournalTransitionEntry,
   startHealerLoop,
 } from "../src/index.js";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * Cross-cutting end-to-end test for the healer loop.

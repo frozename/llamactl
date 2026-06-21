@@ -1,9 +1,9 @@
 import { tls } from "@llamactl/remote";
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 import {
   __resetInsecureTunnelWarning,
   callViaTunnelRelay,

@@ -1,7 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
 
 import {
   aggregateMetrics,
@@ -19,6 +18,7 @@ import {
 } from "../src/index.js";
 import { memoryEfficacy4wayWorkload, memoryEfficacyBinaryWorkload } from "../src/index.js";
 import { parseArgs, parseCorpusOverrides } from "../src/matrix/cli.js";
+import { rmSync } from "../src/safe-fs.js";
 
 function makeModel(name: string): ModelSpec {
   return {

@@ -1,12 +1,4 @@
 import { spawn } from "node:child_process";
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { BenchMode, ResolvedEnv } from "../types.js";
@@ -15,6 +7,14 @@ import { resolveBuildId } from "../build.js";
 import { ctxForModel } from "../ctx.js";
 import { resolveEnv } from "../env.js";
 import { findLocalMmproj } from "../mmproj.js";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "../safe-fs.js";
 import { resolveTarget } from "../target.js";
 import { benchProfileArgs, serverProfileArgs } from "./launchArgs.js";
 import { defaultModeForRel, machineLabel } from "./mode.js";

@@ -1,5 +1,4 @@
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
 import type { EngineBootEnv, ModelHostSpecForEngine } from "../../../core/src/engines/types.js";
@@ -18,6 +17,7 @@ import {
   parseSlotSavePathFromCommand,
   resolveSlotSavePathArgs,
 } from "../../../core/src/kvstore/index.js";
+import { existsSync } from "../safe-fs.js";
 import { type ModelHostManifest, ModelHostManifestSchema } from "../workload/modelhost-schema.js";
 import { loadModelHostByName, saveModelHost } from "../workload/modelhost-store.js";
 

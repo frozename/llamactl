@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -12,6 +11,7 @@ import {
   resolveHfToken,
   type RunHf,
 } from "../src/pull.js";
+import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 describe("classifyRepoFormat", () => {

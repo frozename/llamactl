@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
 import type { ModelRun } from "../src/workload/schema.js";
 
+import { mkdtempSync, writeFileSync } from "../src/safe-fs.js";
 import { applyOne, type WorkloadClient } from "../src/workload/apply.js";
 import { parseWorkload } from "../src/workload/store.js";
 

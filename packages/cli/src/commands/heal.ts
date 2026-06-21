@@ -12,11 +12,11 @@ import {
   type stateTransitions,
   type Tier,
 } from "@llamactl/agents";
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { required } from "../required.js";
+import { readFileSync } from "../safe-fs.js";
 
 const USAGE = `llamactl heal — observe + journal fleet health + propose/auto-remediate
 

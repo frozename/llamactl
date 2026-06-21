@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+
+import { readdirSync, readFileSync, statSync } from "../src/safe-fs.js";
 
 /**
  * Renderer source (packages/app/src/**) is bundled into the Electron

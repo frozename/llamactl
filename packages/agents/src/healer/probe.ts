@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
+
+import { existsSync, readFileSync } from "../safe-fs.js";
 
 /**
  * Fleet health probe. Reads the operator YAMLs llamactl authors and

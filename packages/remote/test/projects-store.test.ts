@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +11,7 @@ import {
   upsertProject,
   withProjectsMutex,
 } from "../src/config/projects.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * On-disk persistence for the Project resource. Tests drive the

@@ -1,12 +1,12 @@
 import type { NodeClient } from "@llamactl/remote";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { __resetRagBenchTestSeams, __setRagBenchTestSeams } from "../src/commands/rag-bench.js";
 import { runRag } from "../src/commands/rag.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { parseJsonRecord } from "./helpers.js";
 
 /**

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -8,6 +7,7 @@ import type { ClusterNode } from "../src/config/schema.js";
 import type { GatewayApplyOptions } from "../src/workload/gateway-handlers/types.js";
 import type { ModelRun } from "../src/workload/schema.js";
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { readGatewayCatalog } from "../src/workload/gateway-catalog/io.js";
 import { embersynthHandler } from "../src/workload/gateway-handlers/embersynth.js";
 

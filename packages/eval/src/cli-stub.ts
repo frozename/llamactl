@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { runThroughput } from "./runners/throughput.js";
+import { existsSync, mkdirSync } from "./safe-fs.js";
 import { killServer, spawnServer, waitForHealth } from "./server.js";
 
 const [, , modelRel, ubArg = "512"] = process.argv;

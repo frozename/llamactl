@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 import { generateToken } from "../src/server/auth.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
 

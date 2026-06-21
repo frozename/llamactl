@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { sessionEventBus } from "../src/ops-chat/sessions/event-bus";
 import { appendJournalEvent } from "../src/ops-chat/sessions/journal";
 import { router } from "../src/router";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 describe("ops-session router", () => {
   let tmp: string;

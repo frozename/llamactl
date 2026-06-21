@@ -1,8 +1,9 @@
-import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { GuardianDecision } from "./state.js";
+
+import { appendFileSync, mkdirSync } from "./safe-fs.js";
 
 /**
  * Append-only JSONL journal for the cost-guardian loop. Sits

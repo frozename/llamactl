@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { RagPipelineManifest } from "../src/rag/pipeline/schema.js";
 
 import { applyPipeline, loadPipeline } from "../src/rag/pipeline/store.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 const baseManifest: RagPipelineManifest = {
   apiVersion: "llamactl/v1",

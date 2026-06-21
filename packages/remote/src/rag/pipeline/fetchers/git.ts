@@ -1,3 +1,10 @@
+import { tmpdir } from "node:os";
+import { join, relative, resolve, sep } from "node:path";
+
+import type { Fetcher, FetcherContext } from "../types.js";
+
+import { resolveSecret } from "../../../config/secret.js";
+import { readFile } from "../../../safe-fs-promises.js";
 /**
  * Git source fetcher. Shallow-clones the declared repo into a tmpdir,
  * walks the resulting tree (reusing the filesystem fetcher's scanner
@@ -13,14 +20,7 @@
  * URLs (`git@host:org/repo.git`) bypass the injection because their
  * auth is per-user SSH config, not a token.
  */
-import { mkdtempSync, rmSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
-
-import type { Fetcher, FetcherContext } from "../types.js";
-
-import { resolveSecret } from "../../../config/secret.js";
+import { mkdtempSync, rmSync } from "../../../safe-fs.js";
 import { GitSourceSpecSchema } from "../schema.js";
 import { looksBinary } from "./filesystem.js";
 

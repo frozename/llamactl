@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +13,14 @@ import {
   removeInfraVersion,
   resolveCurrentVersion,
 } from "../src/infra/layout.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+} from "../src/safe-fs.js";
 
 let dir = "";
 

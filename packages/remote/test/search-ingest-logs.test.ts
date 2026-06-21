@@ -1,9 +1,9 @@
 // packages/remote/test/search-ingest-logs.test.ts
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { startLogsIngest } from "../src/search/ingest/logs.js";
 
 describe("logs ingest", () => {

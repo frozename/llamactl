@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 import { hashToken } from "../src/server/auth.js";
 import { handleTunnelRelay } from "../src/server/tunnel-relay.js";
 import {

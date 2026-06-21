@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +9,7 @@ import {
   responseEvictionScore,
   runResponseCacheEvictionIfOverBudget,
 } from "../../src/responsecache/index.js";
+import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-responsecache-policy-"));

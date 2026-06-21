@@ -1,7 +1,6 @@
-import { existsSync } from "node:fs";
 // packages/remote/src/ops-chat/sessions/delete.ts
-import { rm } from "node:fs/promises";
-
+import { rm } from "../../safe-fs-promises.js";
+import { existsSync } from "../../safe-fs.js";
 import { defaultSessionDir } from "../paths.js";
 import { sessionEventBus } from "./event-bus.js";
 

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +11,7 @@ import {
   removeModelHostState,
   writeModelHostState,
 } from "../../src/engines/state.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
 const KEY = { name: "mlx-host-test" };
 

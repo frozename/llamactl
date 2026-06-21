@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- JSON.parse returns any; test fixtures inspect journal lines with explicit type annotations. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { appendCostJournal } from "../src/journal.js";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 describe("appendCostJournal", () => {
   let dir = "";

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +7,7 @@ import {
   defaultSessionDir,
   defaultSessionsDir,
 } from "../src/ops-chat/paths.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * State-isolation fix — ops-chat audit path must honour `$DEV_STORAGE`

@@ -1,7 +1,8 @@
-import type { WriteStream } from "node:fs";
-
 import { spawn, type Subprocess } from "bun";
-import { createWriteStream } from "node:fs";
+
+import type { WriteStream } from "./safe-fs.js";
+
+import { createWriteStream } from "./safe-fs.js";
 
 export interface ServerOptions {
   modelPath: string;

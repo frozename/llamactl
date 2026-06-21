@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +12,7 @@ import {
   toolTier,
 } from "../src/ops-chat/dispatch.js";
 import { router } from "../src/router.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * N.4.a — ops-chat tool dispatch. Every handler returns a

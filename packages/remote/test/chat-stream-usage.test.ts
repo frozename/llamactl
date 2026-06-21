@@ -1,7 +1,6 @@
 import type { UnifiedAiRequest, UnifiedStreamEvent } from "@nova/contracts";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +8,7 @@ import type { ClusterNode } from "../src/config/schema.js";
 
 import { providerForCloudNode } from "../src/providers/factory.js";
 import { recordChatUsageSnapshot } from "../src/router.js";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Streaming-path cost-corpus coverage. The non-streaming writer

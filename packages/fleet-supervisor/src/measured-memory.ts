@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+
+import { mkdirSync, readFileSync, writeFileSync } from "./safe-fs.js";
 
 export interface MeasuredMemoryEntry {
   workloadName: string;

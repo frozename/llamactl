@@ -1,6 +1,4 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
-import * as fs from "node:fs";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +12,8 @@ import {
   writeModelHostState,
 } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
+import * as fs from "../../src/safe-fs.js";
+import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { saveModelHost } from "../../src/workload/modelhost-store.js";
 import { reconcileOnce, type ReconcileResult } from "../../src/workload/reconciler.js";
 import { saveWorkload } from "../../src/workload/store.js";

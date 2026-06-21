@@ -1,8 +1,8 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "../safe-fs.js";
 import { llamactlHome, nonEmpty } from "./env.js";
 
 export const AgentConfigSchema = z.object({

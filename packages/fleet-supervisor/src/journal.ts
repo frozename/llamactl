@@ -1,8 +1,9 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 
 import type { FleetJournalEntry } from "./types.js";
+
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "./safe-fs.js";
 
 export function defaultFleetJournalPath(): string {
   const base = process.env["DEV_STORAGE"] ?? `${homedir()}/.llamactl`;

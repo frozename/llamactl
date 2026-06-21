@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +8,7 @@ import {
   resolveEnv,
   resolveInternalProxyEndpoint,
 } from "../src/env.js";
+import { existsSync, mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 describe("env.resolveEnv", () => {
   test("derives sensible defaults from just DEV_STORAGE", () => {

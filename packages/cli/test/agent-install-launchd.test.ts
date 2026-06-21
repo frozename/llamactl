@@ -1,15 +1,6 @@
 import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:child_process";
 
 import { describe, expect, test } from "bun:test";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,6 +15,15 @@ import {
   runAgentInstallLaunchd,
   type SpawnSyncLike,
 } from "../src/commands/agent-install/index.js";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../src/safe-fs.js";
 
 // ------------------------------------------------------------------
 // Shared fs-shim helpers. Typed once and reused so each test doesn't

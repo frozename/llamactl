@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

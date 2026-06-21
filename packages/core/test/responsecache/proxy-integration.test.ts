@@ -1,5 +1,4 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,6 +16,7 @@ import {
   openResponseCacheStorage,
   ResponseCacheRegistry,
 } from "../../src/responsecache/index.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
 interface TempRuntime {
   root: string;

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "../src/safe-fs.js";
 import { makeTempRuntime, runCli } from "./helpers.js";
 
 describe("llamactl uninstall", () => {

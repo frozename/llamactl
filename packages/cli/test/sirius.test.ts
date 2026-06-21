@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
 import { runSirius } from "../src/commands/sirius.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { makeWriteStub, parseJsonArray, requireRecord } from "./helpers.js";
 
 /**

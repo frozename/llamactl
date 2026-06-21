@@ -1,4 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
+import { join } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { z } from "zod";
+
 import {
   chmodSync,
   existsSync,
@@ -7,11 +11,7 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
-} from "node:fs";
-import { join } from "node:path";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import { z } from "zod";
-
+} from "../safe-fs.js";
 import { defaultAgentDir } from "./agent-config.js";
 
 /**

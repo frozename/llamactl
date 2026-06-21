@@ -1,7 +1,8 @@
-import { readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import type { KvRegistry } from "./registry.js";
+
+import { readdirSync, statSync, unlinkSync } from "../safe-fs.js";
 
 export interface SweepOrphanSlotFilesOptions {
   slotDir: string;

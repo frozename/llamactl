@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { readMeasuredMemoryCache, writeMeasuredMemoryCache } from "../src/measured-memory.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 const ORIG_ENV_KEY = "LLAMACTL_MEASURED_MEMORY_PATH";
 

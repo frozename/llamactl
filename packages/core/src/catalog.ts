@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-
+import { readFileSync } from "./safe-fs.js";
 import { CuratedModel, curatedTsvFields, formatTsvRow, splitTsvRow } from "./schemas.js";
 
 /**

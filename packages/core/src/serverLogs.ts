@@ -1,11 +1,11 @@
-import { createReadStream, existsSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { ResolvedEnv } from "./types.js";
 import type { WorkloadKey } from "./workloadRuntime.js";
 
 import { resolveEnv } from "./env.js";
+import { readFile, stat } from "./safe-fs-promises.js";
+import { createReadStream, existsSync } from "./safe-fs.js";
 import { workloadRuntimeDir } from "./workloadRuntime.js";
 
 /** Absolute path to the llama-server stdout/stderr capture file. */

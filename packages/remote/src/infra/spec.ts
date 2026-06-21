@@ -1,9 +1,9 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
 import { llamactlHome } from "../config/env.js";
+import { existsSync, readdirSync, readFileSync } from "../safe-fs.js";
 
 /**
  * Package spec format for infra deployments. One YAML file per

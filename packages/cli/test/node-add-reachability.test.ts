@@ -7,10 +7,11 @@ import {
 } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Targeted tests for Phase G.1: `node add` now probes the node for

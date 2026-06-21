@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-empty-function, @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression, @typescript-eslint/no-unsafe-member-access -- Healer tests use synchronous fetch/tool fakes, no-op journal writers, and Bun's rejects matcher is typed as void. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -14,6 +13,7 @@ import {
   stateTransitions,
   type ToolCallInput,
 } from "../src/index.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * Healer tests. Fetch + clock are injected so nothing leaves the

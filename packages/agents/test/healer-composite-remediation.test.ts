@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await -- Test tool-client fakes implement Promise-returning interfaces with synchronous fixtures. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -14,6 +13,7 @@ import {
   startHealerLoop,
   type ToolCallInput,
 } from "../src/index.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * Slice D — healer composite remediation. The loop, on every tick,

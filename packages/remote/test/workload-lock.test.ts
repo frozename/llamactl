@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 import { acquireLock, lockFilePath, releaseLock, writeStaleLock } from "../src/workload/lock.js";
 
 let dir: string;

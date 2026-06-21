@@ -1,7 +1,6 @@
 import type { UnifiedAiRequest } from "@nova/contracts";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +12,7 @@ import {
   type SpawnFn,
   type SpawnResult,
 } from "../src/cli/adapter.js";
+import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 function makeBinding(overrides: Partial<CliBinding> = {}): CliBinding {
   return {

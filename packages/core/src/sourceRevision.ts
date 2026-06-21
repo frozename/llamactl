@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { existsSync } from "./safe-fs.js";
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 

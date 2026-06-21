@@ -1,4 +1,3 @@
-import { existsSync, mkdirSync, readdirSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +6,14 @@ import type { ResolvedEnv } from "./types.js";
 import { findByRel } from "./catalog.js";
 import { addCurated } from "./catalogWriter.js";
 import { resolveEnv } from "./env.js";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+} from "./safe-fs.js";
 
 /**
  * Candidate LM Studio installation roots, probed in order. Mirrors

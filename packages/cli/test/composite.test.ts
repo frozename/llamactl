@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
 import { formatStatusEvent, runComposite } from "../src/commands/composite.js";
 import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * CLI coverage for `llamactl composite {apply,destroy,list,get,status}`.

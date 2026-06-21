@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -13,6 +12,7 @@ import {
   writeBenchProfile,
   writeBenchVision,
 } from "../src/bench/runner.js";
+import { mkdirSync, readFileSync, writeFileSync } from "../src/safe-fs.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 describe("bench.parseBenchJsonlStats", () => {

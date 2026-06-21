@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { router } from "../src/router.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 import { parseModelHost, saveModelHost } from "../src/workload/modelhost-store.js";
 import { saveNodeRun } from "../src/workload/noderun-store.js";
 import { parseWorkload, saveWorkload } from "../src/workload/store.js";

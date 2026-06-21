@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +11,7 @@ import {
   saveSchedules,
   updateSchedule,
 } from "../src/bench/schedule.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Round-trip + dueness checks for the bench scheduler store. The

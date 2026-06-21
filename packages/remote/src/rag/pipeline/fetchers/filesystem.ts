@@ -1,3 +1,7 @@
+import { join, relative } from "node:path";
+
+import type { Fetcher } from "../types.js";
+
 /**
  * Filesystem source fetcher. Walks a root directory with a glob
  * pattern, yields one RawDoc per text file, and skips binary files
@@ -7,11 +11,7 @@
  * minimal glob matcher when running under plain Node (dev-time test
  * runs on CI that haven't switched to Bun yet).
  */
-import { readdir, readFile } from "node:fs/promises";
-import { join, relative } from "node:path";
-
-import type { Fetcher } from "../types.js";
-
+import { readdir, readFile } from "../../../safe-fs-promises.js";
 import { FilesystemSourceSpecSchema } from "../schema.js";
 
 export const filesystemFetcher: Fetcher = {

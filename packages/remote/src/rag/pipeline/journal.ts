@@ -1,3 +1,5 @@
+import { dirname } from "node:path";
+
 /**
  * JSONL journal for a RAG ingestion run. Every pipeline run appends
  * events — `run-started`, per-source and per-doc outcomes,
@@ -12,8 +14,7 @@
  * available, and fall back to `node:fs/promises` otherwise — the
  * journal format itself is just newline-delimited JSON either way.
  */
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { appendFile, mkdir, readFile, writeFile } from "../../safe-fs-promises.js";
 
 export type JournalEntry =
   | { kind: "run-started"; ts: string; spec_hash: string; sources: string[] }

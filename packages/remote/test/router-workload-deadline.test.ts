@@ -8,13 +8,13 @@
  * error instead of hanging.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { saveConfig, upsertNode } from "../src/config/kubeconfig.js";
 import { freshConfig } from "../src/config/schema.js";
 import { router } from "../src/router.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 import { parseWorkload, saveWorkload } from "../src/workload/store.js";
 
 const WORKLOAD_YAML = `

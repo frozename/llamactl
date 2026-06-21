@@ -1,10 +1,10 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ModelRun } from "../../src/workload/schema.js";
 
+import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import * as workloadStore from "../../src/workload/store.js";
 import {
   deleteWorkload,

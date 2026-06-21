@@ -1,7 +1,6 @@
 import type { NodeClient } from "@llamactl/remote";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +9,7 @@ import {
   __setRagPipelineTestSeams,
 } from "../src/commands/rag-pipeline.js";
 import { runRag } from "../src/commands/rag.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { parseJsonRecord, requireRecordField } from "./helpers.js";
 
 /**

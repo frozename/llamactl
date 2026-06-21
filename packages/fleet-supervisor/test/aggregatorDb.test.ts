@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +11,7 @@ import {
   SNAPSHOT_RETENTION_PER_NODE,
   writeSnapshot,
 } from "../src/aggregator-db.js";
+import { existsSync, mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 const snapshot = (node: string, ts: string, freeMb: number): FleetSnapshotEntry => ({
   kind: "fleet-snapshot",

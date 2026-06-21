@@ -9,6 +9,7 @@ import { createConfiguration } from "@kubernetes/client-node/dist/gen/configurat
 import { ResponseContext } from "@kubernetes/client-node/dist/gen/http/http.js";
 import { Observable } from "@kubernetes/client-node/dist/gen/rxjsStub.js";
 import { ServerConfiguration } from "@kubernetes/client-node/dist/gen/servers.js";
+
 /**
  * Thin wrapper around `@kubernetes/client-node`'s KubeConfig +
  * typed API clients. Every k8s-backend entrypoint flows through
@@ -31,7 +32,7 @@ import { ServerConfiguration } from "@kubernetes/client-node/dist/gen/servers.js
  * re-passes them as Bun's native `tls:` init field. Under Node the
  * shim is bypassed — the library's default path works there.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync } from "../../safe-fs.js";
 
 export interface KubernetesClientOptions {
   /** Override the kubeconfig path. When unset, uses KubeConfig.loadFromDefault(). */

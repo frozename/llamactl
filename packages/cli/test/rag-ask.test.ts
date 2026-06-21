@@ -1,11 +1,11 @@
 import { configSchema, config as kubecfg, type NodeClient } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { __resetRagTestSeams, __setRagTestSeams, runRag } from "../src/commands/rag.js";
 import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 import {
   parseJsonRecord,
   requireArrayField,

@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ResolvedEnv } from "./types.js";
@@ -27,6 +26,7 @@ import { findByRel } from "./catalog.js";
 import { ctxForModel } from "./ctx.js";
 import { resolveEnv } from "./env.js";
 import { findLocalMmprojForRel } from "./mmproj.js";
+import { existsSync } from "./safe-fs.js";
 
 function envFlagEnabled(raw: string | undefined, defaultOn: boolean): boolean {
   const value = raw ?? (defaultOn ? "true" : "false");

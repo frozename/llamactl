@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +8,14 @@ import {
   openKvStorage,
   sweepOrphanSlotFiles,
 } from "../src/kvstore/index.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "../src/safe-fs.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-orphans-"));

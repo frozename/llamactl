@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { readFileSync, writeFileSync } from "../safe-fs.js";
 
 const root = join(import.meta.dir, "..", "..");
 const out = join(root, "docs/quality/lint-baseline-2026-06-10.json");

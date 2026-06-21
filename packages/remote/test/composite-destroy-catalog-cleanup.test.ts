@@ -1,6 +1,5 @@
 // packages/remote/test/composite-destroy-catalog-cleanup.test.ts
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +9,7 @@ import type { RuntimeBackend } from "../src/runtime/backend.js";
 import type { WorkloadClient } from "../src/workload/apply.js";
 
 import { destroyComposite } from "../src/composite/apply.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 import { readGatewayCatalog, writeGatewayCatalog } from "../src/workload/gateway-catalog/io.js";
 
 const manifest: Composite = {

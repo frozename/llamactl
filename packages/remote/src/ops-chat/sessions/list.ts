@@ -1,7 +1,6 @@
-import { existsSync } from "node:fs";
 // packages/remote/src/ops-chat/sessions/list.ts
-import { readdir } from "node:fs/promises";
-
+import { readdir } from "../../safe-fs-promises.js";
+import { existsSync } from "../../safe-fs.js";
 import { defaultSessionsDir } from "../paths.js";
 import { isTerminal } from "./journal-schema.js";
 import { readJournal } from "./journal.js";

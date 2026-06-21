@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { saveConfig, upsertNode } from "../src/config/kubeconfig.js";
 import { freshConfig } from "../src/config/schema.js";
 import { router } from "../src/router.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Phase 7 — RAG end-to-end smoke. Opt-in; default CI skips every block.

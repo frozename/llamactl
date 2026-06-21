@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { applyOne } from "../src/workload/apply.js";
 import { type ModelRun, ModelRunSchema } from "../src/workload/schema.js";
 import {

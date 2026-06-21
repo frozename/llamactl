@@ -1,9 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
 import { getNodeClient } from "../dispatcher.js";
 import { required } from "../required.js";
+import { existsSync, readFileSync } from "../safe-fs.js";
 
 const USAGE = `Usage: llamactl composite <subcommand>
 

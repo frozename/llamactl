@@ -1,8 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+
+import { existsSync, readFileSync } from "./safe-fs.js";
 
 /**
  * Cost-guardian configuration. Lives at `~/.llamactl/cost-guardian.yaml`

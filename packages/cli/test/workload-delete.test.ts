@@ -1,7 +1,6 @@
 import type { NodeClient } from "@llamactl/remote";
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +11,7 @@ import {
   __setWorkloadTestSeams,
   runDelete,
 } from "../src/commands/workload.js";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 let tmp = "";
 const originalEnv = { ...process.env };

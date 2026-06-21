@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -8,6 +7,7 @@ import {
   resolvePreset,
   writePresetOverride,
 } from "../src/presets.js";
+import { copyFileSync, existsSync, readFileSync } from "../src/safe-fs.js";
 import { envForTemp, FIXTURE_DIR, makeTempRuntime } from "./helpers.js";
 
 describe("presets.readPresetOverrides", () => {

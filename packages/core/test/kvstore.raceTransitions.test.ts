@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { type KvEntry, KvRegistry, openKvStorage } from "../src/kvstore/index.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-race-"));

@@ -9,11 +9,11 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
+import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 import { registerFleetTools } from "../src/tools/fleet.js";
 
 type SpawnFn = typeof spawn;

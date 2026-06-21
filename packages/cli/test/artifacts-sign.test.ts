@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { codesignBinary } from "../src/commands/artifacts.js";
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Smoke-test the codesign helper used by `artifacts build-agent

@@ -1,18 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import * as fs from "node:fs";
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  utimesSync,
-  writeFileSync as writeFileSyncNode,
-} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -31,6 +18,19 @@ import {
   parseShaLine,
   pruneAgentArtifacts,
 } from "../src/infra/artifacts-fetch.js";
+import * as fs from "../src/safe-fs.js";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync as writeFileSyncNode,
+} from "../src/safe-fs.js";
 import { agentBinaryPath } from "../src/server/artifacts.js";
 
 let dir = "";

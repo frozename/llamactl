@@ -1,5 +1,4 @@
 import { afterAll, afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +6,7 @@ import * as kubeconfigActual from "../../src/config/kubeconfig.js";
 import { saveConfig, upsertCluster, upsertNode } from "../../src/config/kubeconfig.js";
 import { listPeers } from "../../src/config/peers.js";
 import { freshConfig, LOCAL_NODE_NAME } from "../../src/config/schema.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
 // Snapshot the real exports at load time. mock.module retroactively
 // patches live bindings, so once the throwing mock below registers, the

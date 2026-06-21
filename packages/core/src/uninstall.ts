@@ -1,4 +1,3 @@
-import { existsSync, readdirSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
 import type { ResolvedEnv } from "./types.js";
@@ -7,6 +6,7 @@ import { benchHistoryFile, benchProfileFile, benchVisionFile } from "./bench/sto
 import { findByRel } from "./catalog.js";
 import { resolveEnv } from "./env.js";
 import { atomicWriteFile } from "./fsAtomic.js";
+import { existsSync, readdirSync, readFileSync, rmSync, unlinkSync } from "./safe-fs.js";
 
 export interface UninstallOptions {
   rel: string;

@@ -1,6 +1,3 @@
-import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
-
 import type { JournalEvent } from "../ops-chat/sessions/journal-schema.js";
 import type { TextMatch } from "./text-match.js";
 import type { MatchExcerpt, SessionHit } from "./types.js";
@@ -8,6 +5,8 @@ import type { MatchExcerpt, SessionHit } from "./types.js";
 import { defaultSessionsDir } from "../ops-chat/paths.js";
 import { readJournal } from "../ops-chat/sessions/journal.js";
 import { getSessionSummary } from "../ops-chat/sessions/list.js";
+import { readdir } from "../safe-fs-promises.js";
+import { existsSync } from "../safe-fs.js";
 import { findTextMatches } from "./text-match.js";
 
 export interface SearchSessionsOpts {

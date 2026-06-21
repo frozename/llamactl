@@ -1,4 +1,4 @@
-import { renameSync, writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "./safe-fs.js";
 
 /**
  * Write a file atomically. A bare `writeFileSync` on the target can race

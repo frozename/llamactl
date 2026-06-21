@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+
 import {
   closeSync,
   existsSync,
@@ -7,8 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
   writeSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
+} from "../safe-fs.js";
 
 /**
  * File-based mutex using exclusive-create. The pidfile's contents are

@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { BenchMode } from "../types.js";
@@ -6,6 +5,7 @@ import type { BenchMode } from "../types.js";
 import { findByRel } from "../catalog.js";
 import { resolveEnv } from "../env.js";
 import { findLocalMmproj } from "../mmproj.js";
+import { existsSync } from "../safe-fs.js";
 
 /**
  * Pick the bench mode label for a rel. Used to key bench records and

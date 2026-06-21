@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveEnv } from "../src/env.js";
 import { computeWorkloadEpoch, readWorkloadEpoch } from "../src/kvstore/index.js";
+import { writeFileSync } from "../src/safe-fs.js";
 import {
   ensureWorkloadRuntimeDir,
   type WorkloadKey,

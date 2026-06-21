@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -7,6 +6,7 @@ import { stringify as stringifyYaml } from "yaml";
 import type { ClusterNode } from "../src/config/schema.js";
 import type { ModelRun } from "../src/workload/schema.js";
 
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { embersynthHandler } from "../src/workload/gateway-handlers/embersynth.js";
 import { siriusHandler } from "../src/workload/gateway-handlers/sirius.js";
 

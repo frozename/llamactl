@@ -1,7 +1,7 @@
-import * as fs from "node:fs";
 import * as readline from "node:readline";
 
 import { defaultFleetAuditPath } from "./journal.js";
+import * as fs from "./safe-fs.js";
 
 export interface AuditEntry {
   kind: "mcp-audit";

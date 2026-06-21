@@ -1,6 +1,6 @@
-import { unlinkSync } from "node:fs";
-
 import type { KvStorage } from "./storage.js";
+
+import { unlinkSync } from "../safe-fs.js";
 
 export type KvEntryReason = "cold" | "continued" | "evict" | "shutdown" | "agentSession";
 export type KvEntryState = "idle" | "reserved" | "active";

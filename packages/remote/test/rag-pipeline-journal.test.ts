@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { openJournal } from "../src/rag/pipeline/journal.js";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 let tmp = "";
 

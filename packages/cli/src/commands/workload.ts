@@ -10,7 +10,6 @@ import {
   type workloadSchema,
   workloadStore,
 } from "@llamactl/remote";
-import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { parse as parseYaml } from "yaml";
 
@@ -25,6 +24,7 @@ import {
 import { listModelHosts, saveModelHost } from "../../../remote/src/workload/modelhost-store.js";
 import { getNodeClientByName } from "../dispatcher.js";
 import { required } from "../required.js";
+import { existsSync, readFileSync, rmSync } from "../safe-fs.js";
 import { makeSpecArtifactResolver } from "./noderun-helpers.js";
 
 const APPLY_USAGE = `Usage: llamactl apply -f <manifest.yaml> [--evict <name>]... [--force]

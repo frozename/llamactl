@@ -15,10 +15,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { registerFleetTools } from "../src/tools/fleet.js";
 
 let tmpDir = "";

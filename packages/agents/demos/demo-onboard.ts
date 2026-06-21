@@ -1,3 +1,8 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
+
+import { runRunbook } from "../src/index.js";
 /**
  * demo-onboard — N.5 golden-path demo. Scripted, reproducible run of
  * the onboard-new-gpu-node runbook against a fresh disposable fleet.
@@ -13,12 +18,7 @@
  * onboard-new-gpu-node both dry and wet, and prints the state
  * transition the operator would see.
  */
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { stringify as stringifyYaml } from "yaml";
-
-import { runRunbook } from "../src/index.js";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * Local copy of the bootstrap blob shape + encoder so this demo

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resolveBuildId } from "../src/build.js";
 import { resolveEnv } from "../src/env.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 describe("resolveBuildId", () => {
   test("returns a hex short-SHA from a real git checkout", () => {

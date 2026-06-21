@@ -1,7 +1,7 @@
-// packages/remote/src/search/ingest/logs.ts
-import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-
 import type { IngestRecord } from "./sessions.js";
+
+// packages/remote/src/search/ingest/logs.ts
+import { closeSync, existsSync, openSync, readSync, statSync } from "../../safe-fs.js";
 
 export interface LogsIngestOpts {
   files: { label: string; path: string }[];

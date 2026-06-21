@@ -1,13 +1,13 @@
 import type { PlannerExecutor } from "@nova/mcp";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runLoopExecutor } from "../src/ops-chat/loop-executor";
 import { sessionEventBus } from "../src/ops-chat/sessions/event-bus";
 import { readJournal } from "../src/ops-chat/sessions/journal";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 describe("loop-executor → journal + bus", () => {
   let tmp: string;

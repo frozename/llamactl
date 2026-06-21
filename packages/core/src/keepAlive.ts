@@ -1,11 +1,3 @@
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
 import { join } from "node:path";
 
 import type { ResolvedEnv } from "./types.js";
@@ -13,6 +5,14 @@ import type { WorkloadKey } from "./workloadRuntime.js";
 
 import { formatBenchTimestamp } from "./bench/runner.js";
 import { resolveEnv } from "./env.js";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "./safe-fs.js";
 import { endpoint, readServerPid, startServer, stopServer } from "./server.js";
 import { resolveTarget } from "./target.js";
 

@@ -1,7 +1,6 @@
 import type { ResolvedEnv } from "@llamactl/core";
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +8,7 @@ import {
   type ResolveWorkloadDeps,
   resolveWorkloadName,
 } from "../src/commands/_workload-resolve.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 const tempEnv = (): { runtimeDir: string; resolved: ResolvedEnv; cleanup: () => void } => {
   const dir = mkdtempSync(join(tmpdir(), "workload-resolve-"));

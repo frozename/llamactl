@@ -1,7 +1,6 @@
 import type { RetrievalProvider } from "@nova/contracts";
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -14,6 +13,7 @@ import { freshConfig } from "../src/config/schema.js";
 import { FETCHERS } from "../src/rag/pipeline/fetchers/registry.js";
 import { applyPipeline, pipelineDir } from "../src/rag/pipeline/store.js";
 import { router } from "../src/router.js";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * tRPC surfaces for `rag pipeline *`. Covers:

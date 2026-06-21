@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../safe-fs.js";
 import {
   activateInfraVersion,
   defaultInfraDir,

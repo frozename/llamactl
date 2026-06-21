@@ -10,7 +10,6 @@
  *   reference.
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -22,6 +21,7 @@ import {
   _resetForTests as resetCompositeEvents,
 } from "../src/composite/event-bus.js";
 import { router } from "../src/router.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 // ---------------------------------------------------------------------------
 // Controllable mock for applyComposite — lets tests trigger a throw at

@@ -47,7 +47,6 @@ import {
 import { appendUsageBackground } from "@nova/mcp-shared";
 import { createTRPCClient } from "@trpc/client";
 import { initTRPC, TRPCError } from "@trpc/server";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
@@ -79,6 +78,7 @@ import { readJournal } from "./ops-chat/sessions/journal.js";
 import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
 import { createRagAdapter } from "./rag/index.js";
 import { resolveRagNode } from "./rag/resolve.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "./safe-fs.js";
 import { searchLogs } from "./search/logs.js";
 import { resolveDefaultRagNode } from "./search/rag-node.js";
 import { searchSessions } from "./search/sessions.js";

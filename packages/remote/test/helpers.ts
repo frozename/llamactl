@@ -1,4 +1,3 @@
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +11,7 @@ import {
   startAgentServer,
   tls,
 } from "../src/index.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 export interface ClusterNodeHandle {
   name: string;

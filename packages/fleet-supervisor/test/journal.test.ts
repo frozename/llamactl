@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +9,7 @@ import {
   readCurrentLeaseHolder,
   readRecentMovesFromJournal,
 } from "../src/journal.js";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 describe("appendFleetJournal", () => {
   let dir: string;

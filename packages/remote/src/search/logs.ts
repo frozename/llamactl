@@ -1,7 +1,6 @@
-import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-
 import type { LogHit, MatchExcerpt } from "./types.js";
 
+import { closeSync, existsSync, openSync, readSync, statSync } from "../safe-fs.js";
 import { findTextMatches } from "./text-match.js";
 
 const DEFAULT_WINDOW = 5 * 1024 * 1024;

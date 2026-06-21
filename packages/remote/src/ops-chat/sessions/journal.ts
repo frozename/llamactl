@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { appendFile, mkdir, readFile } from "../../safe-fs-promises.js";
+import { existsSync } from "../../safe-fs.js";
 import { defaultSessionDir } from "../paths.js";
 import { type JournalEvent, JournalEventSchema } from "./journal-schema.js";
 

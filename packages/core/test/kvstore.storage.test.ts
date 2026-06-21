@@ -1,12 +1,19 @@
 import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resolveEnv } from "../src/env.js";
 import { type KvEntry, KvRegistry, openKvStorage } from "../src/kvstore/index.js";
 import { runMigrations } from "../src/kvstore/storage.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "../src/safe-fs.js";
 import { workloadRuntimeRoot } from "../src/workloadRuntime.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {

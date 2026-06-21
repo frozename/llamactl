@@ -1,10 +1,10 @@
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { HFDiscoveryFeed, HFModelInfo, HFModelSibling, HFTree } from "./schemas.js";
 
 import { findByRel } from "./catalog.js";
 import { resolveEnv } from "./env.js";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "./safe-fs.js";
 
 const DEFAULT_TTL_SECONDS = 43_200; // 12h
 

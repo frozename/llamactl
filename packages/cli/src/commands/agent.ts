@@ -1,9 +1,9 @@
 import { agentConfig as agentConfigMod, auth, startAgentServer, tls } from "@llamactl/remote";
-import { existsSync, constants as fsConstants, mkdirSync, readFileSync } from "node:fs";
-import { access } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
 
+import { access } from "../safe-fs-promises.js";
+import { existsSync, constants as fsConstants, mkdirSync, readFileSync } from "../safe-fs.js";
 import { runHeal } from "./heal.js";
 
 const USAGE = `Usage: llamactl agent <subcommand>

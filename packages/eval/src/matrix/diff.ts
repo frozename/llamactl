@@ -16,7 +16,8 @@
  */
 
 import { Database, type SQLQueryBindings } from "bun:sqlite";
-import { existsSync } from "node:fs";
+
+import { existsSync } from "../safe-fs.js";
 
 export interface DiffArgs {
   db: string;

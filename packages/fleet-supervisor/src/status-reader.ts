@@ -1,9 +1,9 @@
-import * as fs from "node:fs";
 import * as readline from "node:readline";
 
 import type { FleetJournalEntry, FleetPressureStatusEntry, FleetTransitionEntry } from "./types.js";
 
 import { DEFAULT_PRESSURE_THRESHOLDS } from "./loop.js";
+import * as fs from "./safe-fs.js";
 
 export interface NodePressureStatus {
   name: string;

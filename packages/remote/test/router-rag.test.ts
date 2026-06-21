@@ -10,13 +10,13 @@ import type {
 } from "@nova/contracts";
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { saveConfig, upsertNode } from "../src/config/kubeconfig.js";
 import { freshConfig } from "../src/config/schema.js";
 import { router } from "../src/router.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Phase 4 — RAG router procedures. Mocks `./rag/index.js` so the test

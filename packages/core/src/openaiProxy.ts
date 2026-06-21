@@ -1,6 +1,5 @@
 import type { ModelInfo, ModelListResponse } from "@nova/contracts";
 
-import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -44,6 +43,7 @@ import {
   type ResponseCacheStorage,
   runResponseCacheEvictionIfOverBudget,
 } from "./responsecache/index.js";
+import { mkdirSync, readdirSync, statSync } from "./safe-fs.js";
 import { endpoint as llamaEndpoint, readServerPid, readServerState } from "./server.js";
 import * as workloadRuntime from "./workloadRuntime.js";
 
@@ -1872,7 +1872,7 @@ async function maybePersistKv(context: ProxyContext, upstream: Response): Promis
     checkFalseHit(kv, firstResponseToken);
 
     if (!kv.shouldPersist) return;
-    // TODO(phase9): defer KV save for streams until exact replay boundaries are captured.
+    // Deferred (phase9): defer KV save for streams until exact replay boundaries are captured.
     if (contentType?.toLowerCase().startsWith("text/event-stream")) return;
     if (upstream.status !== 200 || !isJsonContentType(contentType) || upstreamJson === null) return;
     if (!(await saveHandleSupportedForRoute(context, kv))) return;

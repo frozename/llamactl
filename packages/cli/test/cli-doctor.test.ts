@@ -1,11 +1,11 @@
-import type * as nodeFs from "node:fs";
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type * as nodeFs from "../src/safe-fs.js";
+
 import { runAgent } from "../src/commands/agent.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 import { parseJsonRecord, requireArrayField, requireRecord } from "./helpers.js";
 
 /**

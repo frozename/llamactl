@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { runFleet } from "../../cli/src/commands/fleet.js";
 import { collectLatestSnapshots, collectProposals } from "../../mcp/src/tools/fleet.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 let dir = "";
 

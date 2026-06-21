@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import * as nodeFs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { buildDispatcherRouter } from "../electron/trpc/dispatcher.js";
+import * as nodeFs from "../src/safe-fs.js";
 
 type ScanCaller = ReturnType<ReturnType<typeof buildDispatcherRouter>["createCaller"]> & {
   uiScanGitRepos: (input: { limit: number; maxDepth: number; root: string }) => Promise<{

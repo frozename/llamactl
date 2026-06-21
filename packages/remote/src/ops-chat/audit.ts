@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
 import { defaultOpsChatAuditPath } from "./paths.js";
 
 /**

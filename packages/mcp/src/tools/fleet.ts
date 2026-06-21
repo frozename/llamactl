@@ -12,7 +12,6 @@ import {
 } from "@llamactl/fleet-supervisor";
 import { toTextContent } from "@nova/mcp-shared";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -21,6 +20,7 @@ import { FleetAggregator } from "../../../fleet-supervisor/src/aggregator.js";
 import { defaultFleetAuditPath } from "../../../fleet-supervisor/src/journal.js";
 import { createPeerFetch } from "../../../fleet-supervisor/src/peer-fetch.js";
 import { listPeers } from "../../../remote/src/config/peers.js";
+import { existsSync, readFileSync } from "../safe-fs.js";
 
 const CLI_BIN_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../cli/src/bin.ts");
 let cliBinChecked = false;

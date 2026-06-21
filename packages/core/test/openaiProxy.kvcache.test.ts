@@ -1,6 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -22,6 +21,7 @@ import {
   __getOpenAIProxySlotAllocatorInUseForTests,
   isRouteKvEligible,
 } from "../src/openaiProxy.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 interface TempRuntime {
   root: string;

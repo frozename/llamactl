@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { type FetchAgentReleaseFn, resolveUpdateBinary } from "../src/commands/agent-update.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 // Minimal parsed-args shape the helper needs for the fetch path.
 function makeReleaseParsed(

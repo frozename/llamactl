@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { RawDoc } from "../src/rag/pipeline/types.js";
 
 import { filesystemFetcher, looksBinary } from "../src/rag/pipeline/fetchers/filesystem.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 let tmp = "";
 

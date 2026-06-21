@@ -7,11 +7,11 @@ import {
   providerForNode,
   resolveNodeKind,
 } from "@llamactl/remote";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { getNodeClient } from "../dispatcher.js";
 import { required } from "../required.js";
+import { mkdirSync, readFileSync, writeFileSync } from "../safe-fs.js";
 
 const USAGE = `Usage: llamactl node <subcommand>
 

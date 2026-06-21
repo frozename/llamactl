@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { RunCli } from "../src/bench/runner.js";
 
 import { autoTuneEnabled, autoVisionBenchEnabled, maybeTuneAfterPull } from "../src/autotune.js";
+import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 describe("autotune env flags", () => {

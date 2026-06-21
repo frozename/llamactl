@@ -1,7 +1,6 @@
 import type { schemas } from "@llamactl/core";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -15,6 +14,7 @@ import {
   loadEmbersynthConfig,
   saveEmbersynthConfig,
 } from "../src/config/embersynth.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * Covers the llamactl → embersynth config bridge:

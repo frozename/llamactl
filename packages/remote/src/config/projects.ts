@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
 import { atomicWriteFileSync } from "../atomic-write.js";
+import { existsSync, mkdirSync, readFileSync } from "../safe-fs.js";
 import { llamactlHome, nonEmpty } from "./env.js";
 
 /**

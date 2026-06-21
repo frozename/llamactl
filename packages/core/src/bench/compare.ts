@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { CuratedModel } from "../schemas.js";
@@ -9,6 +8,7 @@ import { resolveBuildId } from "../build.js";
 import { listCatalog } from "../catalog.js";
 import { ctxForModel } from "../ctx.js";
 import { resolveEnv } from "../env.js";
+import { existsSync } from "../safe-fs.js";
 import { defaultModeForRel, machineLabel } from "./mode.js";
 import {
   benchProfileFile,

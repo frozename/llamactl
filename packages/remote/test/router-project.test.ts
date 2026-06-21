@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { router } from "../src/router.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * tRPC surfaces for `project *`. Covers:

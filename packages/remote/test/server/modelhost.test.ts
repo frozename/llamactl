@@ -1,11 +1,18 @@
 import type { spawn as nodeSpawn } from "node:child_process";
 
 import { describe, expect, mock, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ENGINES } from "../../../core/src/engines/index.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../../src/safe-fs.js";
 import { startModelHost, statusModelHost, stopModelHost } from "../../src/server/modelhost.js";
 
 interface ManifestFixture {

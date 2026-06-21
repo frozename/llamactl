@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,6 +19,7 @@ import {
   LOCAL_NODE_ENDPOINT,
   LOCAL_NODE_NAME,
 } from "../src/config/schema.js";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 let tmp: string;
 

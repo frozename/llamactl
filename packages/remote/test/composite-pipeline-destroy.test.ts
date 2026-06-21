@@ -7,7 +7,6 @@
  * apply test uses.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -27,6 +26,7 @@ import { applyComposite, destroyComposite } from "../src/composite/apply.js";
 import { saveConfig } from "../src/config/kubeconfig.js";
 import { freshConfig } from "../src/config/schema.js";
 import { loadPipeline } from "../src/rag/pipeline/store.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 let tmp = "";
 let configPath = "";
