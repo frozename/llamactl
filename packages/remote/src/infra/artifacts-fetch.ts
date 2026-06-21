@@ -28,7 +28,7 @@ import { agentBinaryPath, defaultArtifactsDir } from "../server/artifacts.js";
 
 export type ArtifactFetcher = (
   url: string,
-  opts?: { accept?: string },
+  opts?: { accept?: string; timeoutMs?: number },
 ) => Promise<{
   ok: boolean;
   status: number;
@@ -36,9 +36,11 @@ export type ArtifactFetcher = (
   text: () => string;
 }>;
 
+const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+
 async function defaultFetcher(
   url: string,
-  opts?: { accept?: string },
+  opts?: { accept?: string; timeoutMs?: number },
 ): Promise<{
   ok: boolean;
   status: number;
@@ -49,7 +51,22 @@ async function defaultFetcher(
   if (opts?.accept) headers.accept = opts.accept;
   const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
   if (token) headers.authorization = `Bearer ${token}`;
-  const res = await fetch(url, { headers });
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, { headers, signal: controller.signal });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`artifact fetch: ${url} timed out after ${String(timeoutMs)}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
   const arrayBuffer = await res.arrayBuffer();
   const body = new Uint8Array(arrayBuffer);
   return {
@@ -91,6 +108,8 @@ export interface FetchAgentReleaseOptions {
    *  three paths (binary, sig, cert) + repo + tag and returns
    *  verification result. */
   cosignVerifier?: CosignVerifier;
+  /** Timeout for the production GitHub fetcher. Default: 30s. */
+  fetchTimeoutMs?: number;
 }
 
 export interface CosignVerifyInput {
@@ -133,7 +152,8 @@ export type FetchAgentReleaseResult =
         | "asset-missing"
         | "download-failed"
         | "sha-mismatch"
-        | "sig-verify-failed";
+        | "sig-verify-failed"
+        | "pointer-update-failed";
       message: string;
       detail?: unknown;
     };
@@ -248,34 +268,24 @@ async function defaultCosignVerifier(
   }
 }
 
-export async function fetchAgentRelease(
-  opts: FetchAgentReleaseOptions,
-): Promise<FetchAgentReleaseResult> {
-  if (!ALLOWED_TARGETS.has(opts.target)) {
-    return {
-      ok: false,
-      reason: "unknown-target",
-      message: `unknown --target ${opts.target} (allowed: ${[...ALLOWED_TARGETS].sort().join(", ")})`,
-    };
+async function fetchAndVerifyAssets(
+  binUrl: string,
+  shaUrl: string,
+  fetcher: ArtifactFetcher,
+): Promise<
+  | { ok: true; binBytes: Uint8Array; shaText: string; actualSha: string }
+  | Extract<FetchAgentReleaseResult, { ok: false }>
+> {
+  let binRes: Awaited<ReturnType<ArtifactFetcher>>;
+  let shaRes: Awaited<ReturnType<ArtifactFetcher>>;
+  try {
+    [binRes, shaRes] = await Promise.all([
+      fetcher(binUrl, { accept: "application/octet-stream" }),
+      fetcher(shaUrl, { accept: "text/plain" }),
+    ]);
+  } catch (err) {
+    return { ok: false, reason: "download-failed", message: (err as Error).message };
   }
-  const fetcher = opts.fetcher ?? defaultFetcher;
-
-  let tag = opts.version;
-  if (tag === "latest") {
-    const resolved = await resolveLatestTag(opts.repo, fetcher);
-    if (!resolved.ok) {
-      return { ok: false, reason: "resolve-failed", message: resolved.message };
-    }
-    tag = resolved.tag;
-  }
-
-  const binUrl = agentAssetUrl(opts.repo, tag, opts.target);
-  const shaUrl = agentAssetShaUrl(opts.repo, tag, opts.target);
-
-  const [binRes, shaRes] = await Promise.all([
-    fetcher(binUrl, { accept: "application/octet-stream" }),
-    fetcher(shaUrl, { accept: "text/plain" }),
-  ]);
   if (!binRes.ok) {
     return {
       ok: false,
@@ -310,13 +320,52 @@ export async function fetchAgentRelease(
       detail: { expected: expectedSha, actual: actualSha, bytes: binRes.body.length },
     };
   }
+  return { ok: true, binBytes: binRes.body, shaText: shaRes.text(), actualSha };
+}
+
+export async function fetchAgentRelease(
+  opts: FetchAgentReleaseOptions,
+): Promise<FetchAgentReleaseResult> {
+  if (!ALLOWED_TARGETS.has(opts.target)) {
+    return {
+      ok: false,
+      reason: "unknown-target",
+      message: `unknown --target ${opts.target} (allowed: ${[...ALLOWED_TARGETS].sort().join(", ")})`,
+    };
+  }
+  const fetcher =
+    opts.fetcher ??
+    ((
+      url: string,
+      fetchOpts?: { accept?: string; timeoutMs?: number },
+    ): ReturnType<ArtifactFetcher> =>
+      defaultFetcher(url, {
+        ...fetchOpts,
+        timeoutMs: fetchOpts?.timeoutMs ?? opts.fetchTimeoutMs,
+      }));
+
+  let tag = opts.version;
+  if (tag === "latest") {
+    const resolved = await resolveLatestTag(opts.repo, fetcher);
+    if (!resolved.ok) {
+      return { ok: false, reason: "resolve-failed", message: resolved.message };
+    }
+    tag = resolved.tag;
+  }
+
+  const binUrl = agentAssetUrl(opts.repo, tag, opts.target);
+  const shaUrl = agentAssetShaUrl(opts.repo, tag, opts.target);
+
+  const assetResult = await fetchAndVerifyAssets(binUrl, shaUrl, fetcher);
+  if (!assetResult.ok) return assetResult;
+  const { binBytes, shaText, actualSha } = assetResult;
 
   const artifactsDir = opts.artifactsDir ?? defaultArtifactsDir();
   const topLevelPath = agentBinaryPath(opts.target, artifactsDir);
   const versionDir = agentVersionDir(opts.target, tag, artifactsDir);
   const versionedBin = join(versionDir, "llamactl-agent");
   mkdirSync(versionDir, { recursive: true });
-  writeFileSync(versionedBin, binRes.body);
+  writeFileSync(versionedBin, binBytes);
   try {
     chmodSync(versionedBin, 0o755);
   } catch {
@@ -324,10 +373,7 @@ export async function fetchAgentRelease(
   }
   // Also write the sha alongside so operators can re-verify later
   // with `shasum -a 256 -c`.
-  writeFileSync(
-    `${versionedBin}.sha256`,
-    shaRes.text().endsWith("\n") ? shaRes.text() : `${shaRes.text()}\n`,
-  );
+  writeFileSync(`${versionedBin}.sha256`, shaText.endsWith("\n") ? shaText : `${shaText}\n`);
 
   const verifyMode = opts.verifySig ?? "skip";
   const signature = await maybeVerifySignature({
@@ -354,7 +400,15 @@ export async function fetchAgentRelease(
   // that path are preserved by renaming them to `.legacy-<mtime>`
   // once so operators can recover if they need to; we only do this
   // the first time we see a plain file there.
-  linkCurrentVersion(topLevelPath, versionedBin);
+  const linked = linkCurrentVersion(topLevelPath, versionedBin);
+  if (!linked.ok) {
+    return {
+      ok: false,
+      reason: "pointer-update-failed",
+      message: linked.message,
+      detail: { topLevelPath, versionedBin },
+    };
+  }
 
   return {
     ok: true,
@@ -362,7 +416,7 @@ export async function fetchAgentRelease(
     target: opts.target,
     path: versionedBin,
     sha256: actualSha,
-    bytes: binRes.body.length,
+    bytes: binBytes.length,
     signature,
   };
 }
@@ -393,7 +447,10 @@ export function agentVersionDir(platform: string, tag: string, artifactsDir: str
  * always re-fetch. Falls back to a byte-copy on platforms where
  * symlinks aren't available.
  */
-function linkCurrentVersion(topLevel: string, target: string): void {
+function linkCurrentVersion(
+  topLevel: string,
+  target: string,
+): { ok: true } | { ok: false; message: string } {
   mkdirSync(dirname(topLevel), { recursive: true });
   const info = lstatSafe(topLevel);
   if (info) {
@@ -405,21 +462,23 @@ function linkCurrentVersion(topLevel: string, target: string): void {
   }
   try {
     symlinkSync(target, topLevel);
-    return;
-  } catch {
+    return { ok: true };
+  } catch (symlinkErr) {
     // Fallback — copy the bytes.
-  }
-  try {
-    writeFileSync(topLevel, readFileSync(target));
     try {
-      chmodSync(topLevel, 0o755);
-    } catch {
-      /* ignore */
+      writeFileSync(topLevel, readFileSync(target));
+      try {
+        chmodSync(topLevel, 0o755);
+      } catch {
+        /* ignore */
+      }
+      return { ok: true };
+    } catch (copyErr) {
+      return {
+        ok: false,
+        message: `failed to update top-level pointer ${topLevel}: symlink failed (${(symlinkErr as Error).message}); copy failed (${(copyErr as Error).message})`,
+      };
     }
-  } catch {
-    // If even the copy fails we've still written to versions/ — the
-    // next fetch or a manual `ln -s` will recover the top-level
-    // pointer. Don't fail the fetch result over this.
   }
 }
 

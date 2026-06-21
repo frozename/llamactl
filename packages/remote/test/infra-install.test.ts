@@ -27,6 +27,17 @@ let base = "";
 const FAKE_PAYLOAD = new TextEncoder().encode("fake-tarball-contents");
 const FAKE_SHA = createHash("sha256").update(FAKE_PAYLOAD).digest("hex");
 
+function failIfUnsettled<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(message));
+      }, ms);
+    }),
+  ]);
+}
+
 function stubFetcher(url: string, bytes: Uint8Array = FAKE_PAYLOAD): InfraFetcher {
   return async (reqUrl: string) => {
     await Promise.resolve();
@@ -217,6 +228,38 @@ describe("installInfraPackage", () => {
     if (result.ok) return;
     expect(result.reason).toBe("fetch-failed");
     expect(result.error).toContain("DNS fail");
+  });
+
+  test("default fetcher aborts a stalled tarball fetch after the configured timeout", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    }) as typeof fetch;
+    try {
+      const result = await failIfUnsettled(
+        installInfraPackage({
+          pkg: "llama-cpp",
+          version: "b4500",
+          tarballUrl: "https://pkgs.example.com/stall.tar.gz",
+          sha256: FAKE_SHA,
+          base,
+          fetchTimeoutMs: 20,
+          extractor: stubExtractor({ "bin/x": "x" }),
+        }),
+        250,
+        "installInfraPackage did not abort the stalled fetch",
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe("fetch-failed");
+      expect(result.error).toContain("timed out after 20ms");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("extractor failure leaves no partial version dir", async () => {

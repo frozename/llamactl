@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
+import * as fs from "node:fs";
 import {
   existsSync,
   lstatSync,
@@ -36,6 +37,18 @@ let dir = "";
 
 const FAKE_BODY = new TextEncoder().encode("pretend-this-is-a-compiled-binary");
 const FAKE_SHA = createHash("sha256").update(FAKE_BODY).digest("hex");
+const realWriteFileSync = writeFileSyncNode;
+
+function failIfUnsettled<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(message));
+      }, ms);
+    }),
+  ]);
+}
 
 function stubFetcher(
   responses: Record<string, { ok: boolean; status: number; body: Uint8Array }>,
@@ -271,6 +284,72 @@ describe("fetchAgentRelease", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("download-failed");
+  });
+
+  test("top-level pointer update failure returns an honest failure", async () => {
+    const { fetcher } = stubFetcher({
+      [BIN_URL]: { ok: true, status: 200, body: FAKE_BODY },
+      [SHA_URL]: {
+        ok: true,
+        status: 200,
+        body: new TextEncoder().encode(`${FAKE_SHA}\n`),
+      },
+    });
+    const topLevel = agentBinaryPath(TARGET, dir);
+    const symlinkSpy = spyOn(fs, "symlinkSync").mockImplementation(() => {
+      throw new Error("symlink denied");
+    });
+    const writeSpy = spyOn(fs, "writeFileSync").mockImplementation((path, data, options) => {
+      if (path === topLevel) throw new Error("copy denied");
+      realWriteFileSync(path, data, options);
+    });
+    try {
+      const result = await fetchAgentRelease({
+        repo: REPO,
+        version: TAG,
+        target: TARGET,
+        artifactsDir: dir,
+        fetcher,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.message).toContain("top-level pointer");
+      expect(result.message).toContain(topLevel);
+      expect(result.message).toContain("copy denied");
+      expect(existsSync(join(agentVersionDir(TARGET, TAG, dir), "llamactl-agent"))).toBe(true);
+    } finally {
+      writeSpy.mockRestore();
+      symlinkSpy.mockRestore();
+    }
+  });
+
+  test("default fetcher aborts a stalled asset fetch after the configured timeout", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    }) as typeof fetch;
+    try {
+      const result = await failIfUnsettled(
+        fetchAgentRelease({
+          repo: REPO,
+          version: TAG,
+          target: TARGET,
+          artifactsDir: dir,
+          fetchTimeoutMs: 20,
+        }),
+        250,
+        "fetchAgentRelease did not abort the stalled fetch",
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.message).toContain("timed out after 20ms");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
