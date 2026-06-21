@@ -7,6 +7,7 @@ import {
   applyPressureTransition,
   emitPeriodicPressureStatus,
   makeUnreachableFallback,
+  type PressureTransitionResult,
 } from "../src/loop-helpers.js";
 import { detectPressure, PressureWindow } from "../src/policy.js";
 
@@ -43,7 +44,7 @@ function makePressureWindow(mem: NodeMemSnapshot): PressureWindow {
   return w;
 }
 
-function makeInitialState() {
+function makeInitialState(): PressureTransitionResult {
   return {
     pressureDetected: false,
     lastPressureLevel: "NORMAL" as const,
@@ -105,7 +106,9 @@ describe("applyPressureTransition breach flags (M7)", () => {
       window,
       makeInitialState(),
       THRESHOLDS,
-      () => {},
+      () => {
+        /* journal not captured in this test */
+      },
     );
     // Tick 1: ticksInHigh becomes 1
     const state2 = applyPressureTransition(
@@ -116,7 +119,9 @@ describe("applyPressureTransition breach flags (M7)", () => {
       window,
       state,
       THRESHOLDS,
-      () => {},
+      () => {
+        /* journal not captured in this test */
+      },
     );
 
     const entries: FleetJournalEntry[] = [];
@@ -178,7 +183,9 @@ describe("emitPeriodicPressureStatus duplicate guard (M8)", () => {
       window,
       makeInitialState(),
       THRESHOLDS,
-      () => {},
+      () => {
+        /* journal not captured in this test */
+      },
     );
     // Tick +1 (ticksInHigh → 1)
     const state1 = applyPressureTransition(
@@ -189,7 +196,9 @@ describe("emitPeriodicPressureStatus duplicate guard (M8)", () => {
       window,
       state0,
       THRESHOLDS,
-      () => {},
+      () => {
+        /* journal not captured in this test */
+      },
     );
     // Tick +2 (ticksInHigh → 2; 2 % 2 === 0 and > 0 → should emit)
     const state2 = applyPressureTransition(
@@ -200,7 +209,9 @@ describe("emitPeriodicPressureStatus duplicate guard (M8)", () => {
       window,
       state1,
       THRESHOLDS,
-      () => {},
+      () => {
+        /* journal not captured in this test */
+      },
     );
 
     const entries: FleetJournalEntry[] = [];
