@@ -53,7 +53,9 @@ async function defaultFetcher(
   if (token) headers.authorization = `Bearer ${token}`;
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
   let res: Response;
   try {
     res = await fetch(url, { headers, signal: controller.signal });
@@ -266,36 +268,14 @@ async function defaultCosignVerifier(
   }
 }
 
-export async function fetchAgentRelease(
-  opts: FetchAgentReleaseOptions,
-): Promise<FetchAgentReleaseResult> {
-  if (!ALLOWED_TARGETS.has(opts.target)) {
-    return {
-      ok: false,
-      reason: "unknown-target",
-      message: `unknown --target ${opts.target} (allowed: ${[...ALLOWED_TARGETS].sort().join(", ")})`,
-    };
-  }
-  const fetcher =
-    opts.fetcher ??
-    ((url: string, fetchOpts?: { accept?: string; timeoutMs?: number }) =>
-      defaultFetcher(url, {
-        ...fetchOpts,
-        timeoutMs: fetchOpts?.timeoutMs ?? opts.fetchTimeoutMs,
-      }));
-
-  let tag = opts.version;
-  if (tag === "latest") {
-    const resolved = await resolveLatestTag(opts.repo, fetcher);
-    if (!resolved.ok) {
-      return { ok: false, reason: "resolve-failed", message: resolved.message };
-    }
-    tag = resolved.tag;
-  }
-
-  const binUrl = agentAssetUrl(opts.repo, tag, opts.target);
-  const shaUrl = agentAssetShaUrl(opts.repo, tag, opts.target);
-
+async function fetchAndVerifyAssets(
+  binUrl: string,
+  shaUrl: string,
+  fetcher: ArtifactFetcher,
+): Promise<
+  | { ok: true; binBytes: Uint8Array; shaText: string; actualSha: string }
+  | Extract<FetchAgentReleaseResult, { ok: false }>
+> {
   let binRes: Awaited<ReturnType<ArtifactFetcher>>;
   let shaRes: Awaited<ReturnType<ArtifactFetcher>>;
   try {
@@ -304,11 +284,7 @@ export async function fetchAgentRelease(
       fetcher(shaUrl, { accept: "text/plain" }),
     ]);
   } catch (err) {
-    return {
-      ok: false,
-      reason: "download-failed",
-      message: (err as Error).message,
-    };
+    return { ok: false, reason: "download-failed", message: (err as Error).message };
   }
   if (!binRes.ok) {
     return {
@@ -344,13 +320,52 @@ export async function fetchAgentRelease(
       detail: { expected: expectedSha, actual: actualSha, bytes: binRes.body.length },
     };
   }
+  return { ok: true, binBytes: binRes.body, shaText: shaRes.text(), actualSha };
+}
+
+export async function fetchAgentRelease(
+  opts: FetchAgentReleaseOptions,
+): Promise<FetchAgentReleaseResult> {
+  if (!ALLOWED_TARGETS.has(opts.target)) {
+    return {
+      ok: false,
+      reason: "unknown-target",
+      message: `unknown --target ${opts.target} (allowed: ${[...ALLOWED_TARGETS].sort().join(", ")})`,
+    };
+  }
+  const fetcher =
+    opts.fetcher ??
+    ((
+      url: string,
+      fetchOpts?: { accept?: string; timeoutMs?: number },
+    ): ReturnType<ArtifactFetcher> =>
+      defaultFetcher(url, {
+        ...fetchOpts,
+        timeoutMs: fetchOpts?.timeoutMs ?? opts.fetchTimeoutMs,
+      }));
+
+  let tag = opts.version;
+  if (tag === "latest") {
+    const resolved = await resolveLatestTag(opts.repo, fetcher);
+    if (!resolved.ok) {
+      return { ok: false, reason: "resolve-failed", message: resolved.message };
+    }
+    tag = resolved.tag;
+  }
+
+  const binUrl = agentAssetUrl(opts.repo, tag, opts.target);
+  const shaUrl = agentAssetShaUrl(opts.repo, tag, opts.target);
+
+  const assetResult = await fetchAndVerifyAssets(binUrl, shaUrl, fetcher);
+  if (!assetResult.ok) return assetResult;
+  const { binBytes, shaText, actualSha } = assetResult;
 
   const artifactsDir = opts.artifactsDir ?? defaultArtifactsDir();
   const topLevelPath = agentBinaryPath(opts.target, artifactsDir);
   const versionDir = agentVersionDir(opts.target, tag, artifactsDir);
   const versionedBin = join(versionDir, "llamactl-agent");
   mkdirSync(versionDir, { recursive: true });
-  writeFileSync(versionedBin, binRes.body);
+  writeFileSync(versionedBin, binBytes);
   try {
     chmodSync(versionedBin, 0o755);
   } catch {
@@ -358,10 +373,7 @@ export async function fetchAgentRelease(
   }
   // Also write the sha alongside so operators can re-verify later
   // with `shasum -a 256 -c`.
-  writeFileSync(
-    `${versionedBin}.sha256`,
-    shaRes.text().endsWith("\n") ? shaRes.text() : `${shaRes.text()}\n`,
-  );
+  writeFileSync(`${versionedBin}.sha256`, shaText.endsWith("\n") ? shaText : `${shaText}\n`);
 
   const verifyMode = opts.verifySig ?? "skip";
   const signature = await maybeVerifySignature({
@@ -404,7 +416,7 @@ export async function fetchAgentRelease(
     target: opts.target,
     path: versionedBin,
     sha256: actualSha,
-    bytes: binRes.body.length,
+    bytes: binBytes.length,
     signature,
   };
 }

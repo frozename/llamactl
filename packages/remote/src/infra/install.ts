@@ -33,7 +33,9 @@ async function defaultFetcher(
   timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
 ): Promise<Uint8Array> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
   let res: Response;
   try {
     res = await fetch(url, { signal: controller.signal });
@@ -97,7 +99,9 @@ export async function installInfraPackage(opts: InstallInfraOptions): Promise<In
   const base = opts.base ?? defaultInfraDir();
   const skipIfPresent = opts.skipIfPresent ?? true;
   const activate = opts.activate ?? true;
-  const fetcher = opts.fetcher ?? ((url: string) => defaultFetcher(url, opts.fetchTimeoutMs));
+  const fetcher =
+    opts.fetcher ??
+    ((url: string): ReturnType<InfraFetcher> => defaultFetcher(url, opts.fetchTimeoutMs));
   const extractor = opts.extractor ?? defaultExtractor;
 
   ensurePackageDir(opts.pkg, base);
