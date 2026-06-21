@@ -521,7 +521,6 @@ export async function evaluateMigrationWorkloads(
 
   const nodeSnapshot: NodeSnapshot = {
     node,
-    schedulerLeaseHolder: node,
     pressureState: pressureDetected ? "HIGH" : "NORMAL",
     nodeMem: { freeMb: nodeMem.free_mb },
     workloads,

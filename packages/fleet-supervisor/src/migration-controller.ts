@@ -7,7 +7,6 @@ import type {
 
 export interface NodeSnapshot {
   node?: string;
-  schedulerLeaseHolder?: string;
   pressureState: "NORMAL" | "HIGH";
   nodeMem?: { freeMb: number };
   workloads?: { name: string; reachable: boolean }[];
@@ -31,7 +30,15 @@ export interface MigrationControllerDeps {
   deployWorkload?: (workloadName: string, toNode: string) => Promise<void>;
   removeWorkload?: (workloadName: string, fromNode: string) => Promise<void>;
   readRecentMoves?: () => Iterable<unknown>;
-  leaseholder: string;
+  /** This node's own id. */
+  selfNode: string;
+  /**
+   * Returns the currently elected scheduler-lease holder, or null when no holder
+   * is elected. A move is only initiated when the holder is this node (`selfNode`).
+   * In PR-1 this is wired to `() => selfNode` (always self → behavior-preserving);
+   * PR-2 derives it from `electLeaseHolder` over peer snapshots.
+   */
+  getLeaseHolder: () => string | null;
   getNowMs?: () => number;
   getCurrentTick?: () => number;
   moveCooldownTicks?: number;
@@ -153,7 +160,8 @@ export class MigrationController {
     workload: MigrationWorkload,
     snapshot: NodeSnapshot,
   ): Promise<MoveProposal | null> {
-    if (this.deps.leaseholder !== snapshot.schedulerLeaseHolder) return null;
+    const holder = this.deps.getLeaseHolder();
+    if (holder === null || holder !== this.deps.selfNode) return null;
     if (workload.spec?.placement === "pinned") return null;
     if (this.isInMoveCooldown(workload.name)) return null;
 
@@ -275,7 +283,7 @@ export class MigrationController {
         writeJournalEntry({
           kind: "fleet-execution",
           ts,
-          node: this.deps.leaseholder,
+          node: this.deps.selfNode,
           proposalId: proposal.proposalId,
           action,
           status: "failed",
@@ -294,7 +302,7 @@ export class MigrationController {
         writeJournalEntry({
           kind: "fleet-execution",
           ts,
-          node: this.deps.leaseholder,
+          node: this.deps.selfNode,
           proposalId: proposal.proposalId,
           action,
           status: "executed",
@@ -308,7 +316,7 @@ export class MigrationController {
     return {
       kind: "fleet-execution",
       ts: new Date(this.nowMs).toISOString(),
-      node: this.deps.leaseholder,
+      node: this.deps.selfNode,
       proposalId: proposal.proposalId,
       action: {
         type: "move",
@@ -330,7 +338,7 @@ export class MigrationController {
     const skippedEvict: FleetExecutionEntry = {
       kind: "fleet-execution",
       ts,
-      node: this.deps.leaseholder,
+      node: this.deps.selfNode,
       proposalId: proposal.evictProposalId,
       action: {
         type: "evict",
@@ -345,7 +353,7 @@ export class MigrationController {
     const moveProposalEntry: FleetProposalEntry = {
       kind: "fleet-proposal",
       ts,
-      node: this.deps.leaseholder,
+      node: this.deps.selfNode,
       proposalId: proposal.proposalId,
       transition: {
         subject: proposal.workload,

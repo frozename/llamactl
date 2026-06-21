@@ -31,7 +31,8 @@ describe("Arbitration conflicts", () => {
         applyCalls += 1;
       },
       removeWorkload: async (): Promise<undefined> => undefined,
-      leaseholder: "m4pro",
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
       getNowMs: (): number => nowMs,
       healthTimeoutMs: 5,
       pollIntervalMs: 1,
@@ -181,7 +182,6 @@ describe("Arbitration conflicts", () => {
       },
       {
         node: "m4pro",
-        schedulerLeaseHolder: "m4pro",
         pressureState: "HIGH",
         nodeMem: { freeMb: 100 },
         workloads: [],

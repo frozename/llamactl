@@ -24,7 +24,8 @@ describe("migration controller wiring gate", () => {
         nodeMem: { freeMb: 4096 },
         workloads: [],
       }),
-      leaseholder: "m4pro",
+      selfNode: "m4pro",
+      getLeaseHolder: () => "m4pro",
     });
 
     expect(controller).toBeNull();
@@ -42,7 +43,8 @@ describe("migration controller wiring gate", () => {
       }),
       deployWorkload: async () => undefined,
       removeWorkload: async () => undefined,
-      leaseholder: "m4pro",
+      selfNode: "m4pro",
+      getLeaseHolder: () => "m4pro",
     });
 
     expect(controller).not.toBeNull();

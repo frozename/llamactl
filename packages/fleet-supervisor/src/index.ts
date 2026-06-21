@@ -42,9 +42,10 @@ export function createMigrationController(deps: MigrationControllerDeps): Migrat
 }
 
 export function createEnabledMigrationController(
-  deps: Omit<MigrationControllerDeps, "peers" | "fetchSnapshot" | "leaseholder"> & {
+  deps: Omit<MigrationControllerDeps, "peers" | "fetchSnapshot" | "selfNode" | "getLeaseHolder"> & {
     peers?: AggregatorPeer[];
-    leaseholder: string;
+    selfNode: string;
+    getLeaseHolder: () => string | null;
     fetchSnapshot: (node: string) => Promise<NodeSnapshot>;
   },
 ): MigrationController | null {
@@ -54,7 +55,8 @@ export function createEnabledMigrationController(
     getNowMs: deps.getNowMs ?? ((): number => Date.now()),
     peers: deps.peers?.map((peer) => peer.id) ?? listPeers().map((peer) => peer.id),
     fetchSnapshot: deps.fetchSnapshot,
-    leaseholder: deps.leaseholder,
+    selfNode: deps.selfNode,
+    getLeaseHolder: deps.getLeaseHolder,
     readRecentMoves:
       deps.readRecentMoves ??
       ((): { workload: string; movedAtMs: number }[] =>

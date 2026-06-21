@@ -17,7 +17,6 @@ import {
   type SupervisorLoopOptions,
   type WorkloadTarget,
 } from "@llamactl/fleet-supervisor";
-import { readCurrentLeaseHolder } from "@llamactl/fleet-supervisor/journal";
 import { listPeers, workloadStore } from "@llamactl/remote";
 
 import { getGlobals } from "../dispatcher.js";
@@ -234,7 +233,6 @@ function buildSupervisorLoopOptions(
           }
           return {
             node: snapshot.node,
-            schedulerLeaseHolder: readSchedulerLease(journalPath)?.holder ?? flags.node,
             pressureState: "NORMAL",
             nodeMem: { freeMb: snapshot.node_mem.free_mb },
             workloads: snapshot.workloads.map((workload) => ({
@@ -244,7 +242,13 @@ function buildSupervisorLoopOptions(
           };
         },
         readRecentMoves: () => readRecentMovesFromJournal(journalPath),
-        leaseholder: readSchedulerLease(journalPath)?.holder ?? flags.node,
+        selfNode: flags.node,
+        // PR-1: holder is always self — byte-identical to today's fall-through.
+        // The legacy journal lease was never written by production code, so the
+        // old `readSchedulerLease(...)?.holder ?? flags.node` always resolved to
+        // flags.node. PR-2 replaces this with the derived electLeaseHolder
+        // closure behind LLAMACTL_FLEET_LEASE_MODE.
+        getLeaseHolder: () => flags.node,
         getNowMs: () => Date.now(),
       })
     : null;
@@ -844,10 +848,4 @@ function parseFlags(argv: string[]): Flags {
     ...omitUndefined({ outcome: audit.outcome }),
     ...omitUndefined({ since: audit.since }),
   };
-}
-
-function readSchedulerLease(journalPath: string): { holder: string } | null {
-  const holder = readCurrentLeaseHolder(journalPath);
-  if (!holder) return null;
-  return { holder };
 }

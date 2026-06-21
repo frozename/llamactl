@@ -29,7 +29,6 @@ describe("migration supervisor integration", () => {
         if (node === "m2mini") {
           return {
             node: "m2mini",
-            schedulerLeaseHolder: "m4pro",
             pressureState: "NORMAL",
             nodeMem: { freeMb: 8192 },
             workloads: [{ name: "model-a", reachable: moved }],
@@ -38,7 +37,6 @@ describe("migration supervisor integration", () => {
 
         return {
           node: "m4pro",
-          schedulerLeaseHolder: "m4pro",
           pressureState: "HIGH",
           nodeMem: { freeMb: 128 },
           workloads: [],
@@ -48,7 +46,8 @@ describe("migration supervisor integration", () => {
         moved = true;
       },
       removeWorkload: async () => undefined,
-      leaseholder: "m4pro",
+      selfNode: "m4pro",
+      getLeaseHolder: () => "m4pro",
       getNowMs: () => 1_700_000_000_000,
     });
 
