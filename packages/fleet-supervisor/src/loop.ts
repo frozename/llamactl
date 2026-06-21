@@ -56,6 +56,16 @@ export interface SupervisorLoopOptions {
   pressureStatusEveryTicks?: number;
   migrationController?: MigrationController | null;
   /**
+   * Self-published scheduler-lease term + eligibility for the derived leader
+   * election. When `leaseTerm` is set, every per-tick fleet-snapshot carries a
+   * `lease` intent ({ candidate: node, term, eligible: leaseEligible, seq }) that
+   * peers replicate; `electLeaseHolder` is a pure function over those intents.
+   * Absent => no lease published (back-compat: legacy nodes are ineligible
+   * candidates, valid destinations). seq is a per-tick monotonic counter.
+   */
+  leaseTerm?: number;
+  leaseEligible?: boolean;
+  /**
    * Read-only: poll each workload's `/slots` per tick and journal a
    * fleet-slot-progress entry. Drives nothing — data collection for the
    * busy-aware-probing design. Default off (`--log-slot-progress`).
@@ -164,6 +174,7 @@ async function runTick(
   pressureStatusEveryTicks: number,
   migrationController: MigrationController | null,
   writeJournalEntry: (entry: FleetJournalEntry) => void,
+  tickSeq: number,
 ): Promise<void> {
   const ts = new Date().toISOString();
   const node_mem = await (opts.probeNodeMem ?? defaultProbeNodeMem)();
@@ -173,12 +184,25 @@ async function runTick(
     ),
   );
 
+  // Self-published lease intent rides the per-tick snapshot when a term is set.
+  // Conditional spread only (exactOptionalPropertyTypes: never `lease: undefined`).
+  const leaseIntent =
+    opts.leaseTerm !== undefined
+      ? {
+          candidate: opts.node,
+          term: opts.leaseTerm,
+          eligible: opts.leaseEligible ?? false,
+          seq: tickSeq,
+        }
+      : undefined;
+
   const snapshot: FleetSnapshotEntry = {
     kind: "fleet-snapshot",
     ts,
     node: opts.node,
     node_mem,
     workloads,
+    ...(leaseIntent ? { lease: leaseIntent } : {}),
   };
   const heartbeat: FleetHeartbeatEntry = { kind: "fleet-heartbeat", ts, node: opts.node };
   writeJournalEntry(snapshot);
@@ -337,6 +361,9 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
     if (reloading) onSourceReload();
   };
 
+  // Per-tick monotonic counter — the lease intent's seq (skew-independent
+  // liveness proof). `(tickSeq += 1)` advances once per tick.
+  let tickSeq = 0;
   const tick = (): Promise<void> =>
     runTick(
       opts,
@@ -348,6 +375,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       pressureStatusEveryTicks,
       migrationController,
       writeJournalEntry,
+      (tickSeq += 1),
     );
 
   const run = async (): Promise<void> => {

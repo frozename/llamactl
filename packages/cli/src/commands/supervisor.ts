@@ -2,17 +2,24 @@ import { env as envMod, sourceRevision } from "@llamactl/core";
 import { omitUndefined } from "@llamactl/core/object";
 import {
   appendFleetJournal,
+  bumpLeaseTerm,
   type CompletionProbeConfig,
   createMigrationController,
   createPeerFetch,
   DEFAULT_PRESSURE_THRESHOLDS,
   defaultFleetJournalPath,
+  defaultLeaseTermPath,
+  electLeaseHolder,
   type FleetJournalEntry,
+  type FleetSnapshotEntry,
+  getLatestPerNode,
+  openAggregatorDb,
   readAuditEntries,
   readRecentMovesFromJournal,
   readSupervisorStatus,
   redactEndpoint,
   runExecutor,
+  type SnapshotRow,
   startSupervisorLoop,
   type SupervisorLoopOptions,
   type WorkloadTarget,
@@ -206,6 +213,179 @@ async function runSupervisorAudit(flags: Flags): Promise<number> {
   return 0;
 }
 
+// Mirror of the aggregator's staleness convention (aggregator.ts
+// DEFAULT_STALE_AFTER_MS, ~3x tick). A peer snapshot older than this is treated
+// as a dead node by the election.
+const STALE_AFTER_MS = 90_000;
+
+/**
+ * Direct peer-fetch fallback for the lease election when the local aggregator
+ * process is down or its db is empty. Pulls each peer's /v1/fleet/snapshot
+ * directly (as findBestDestination does), carrying their `lease` intent, and
+ * shapes them into SnapshotRow[]. On TOTAL failure returns [] so electLeaseHolder
+ * yields null (no holder = safe) — NEVER degrades to always-self.
+ */
+async function directPeerFetchSnapshots(currentNodeName: string): Promise<SnapshotRow[]> {
+  const peers = listPeers({ currentNodeName });
+  const results = await Promise.all(
+    peers.map(async (peer): Promise<SnapshotRow | null> => {
+      try {
+        const snapshot = await createPeerFetch(peer)();
+        if (!snapshot) return null;
+        return { node: snapshot.node, ts: snapshot.ts, snapshot };
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return results.filter((row): row is SnapshotRow => row !== null);
+}
+
+/**
+ * Build this node's OWN lease intent row, shaped exactly as loop.ts publishes it
+ * into every per-tick snapshot, wrapped as a SnapshotRow for the election input.
+ *
+ * The local aggregator's cluster.db never contains the self row — listPeers()
+ * filters `node.name !== localNodeName` (packages/core/.../peers.ts), so a node's
+ * own aggregator only ever stores PEER snapshots. getLatestPerNode(cluster.db)
+ * therefore yields a SELF-EXCLUDED set. Feeding that directly to electLeaseHolder
+ * drops the only eligible candidate (self) and elects null even in the
+ * single-eligible-node prod case — which would freeze migrations (design §5
+ * forbids this: "single eligible node => unchanged behavior"). The election is a
+ * function over the replicated snapshots INCLUDING the node's own self-published
+ * lease, so the wiring must inject this self row before electing.
+ */
+function buildSelfLeaseRow(
+  selfNode: string,
+  term: number,
+  eligible: boolean,
+  seq: number,
+  nowMs: number,
+): SnapshotRow {
+  const ts = new Date(nowMs).toISOString();
+  const snapshot: FleetSnapshotEntry = {
+    kind: "fleet-snapshot",
+    ts,
+    node: selfNode,
+    node_mem: {
+      free_mb: 0,
+      active_mb: 0,
+      inactive_mb: 0,
+      wired_mb: 0,
+      compressor_mb: 0,
+      swap_in: 0,
+      swap_out: 0,
+    },
+    workloads: [],
+    lease: { candidate: selfNode, term, eligible, seq },
+  };
+  return { node: selfNode, ts, snapshot };
+}
+
+/** Injectable seam for makeGetLeaseHolder so the real wiring can be exercised in
+ *  tests over a self-excluded cluster.db without touching the user's $HOME db. */
+export interface GetLeaseHolderDeps {
+  selfNode: string;
+  /** Persisted monotonic lease term (bumpLeaseTerm at startup). */
+  selfLeaseTerm: number;
+  /** LLAMACTL_FLEET_MOVE_ENABLED === "1" — self's eligibility. */
+  selfEligible: boolean;
+  /** Override LLAMACTL_FLEET_LEASE_MODE (default reads process.env). */
+  leaseMode?: string;
+  /** Override the clock (default Date.now). */
+  now?: () => number;
+  /** Override the per-node-fresh peer view (default getLatestPerNode over the
+   *  local cluster.db). Returns null/[] when the aggregator is down/empty. */
+  loadPeerRows?: (freshAfterTs: string) => SnapshotRow[] | null;
+  /** Override the direct peer-fetch fallback (default createPeerFetch pull). */
+  directFetch?: (selfNode: string) => Promise<SnapshotRow[]>;
+}
+
+/**
+ * Build the scheduler-lease getLeaseHolder closure, gated by
+ * LLAMACTL_FLEET_LEASE_MODE.
+ *
+ * - `legacy-self`: restores PR-1 behavior — holder is always selfNode (instant
+ *   rollback without redeploy).
+ * - default (`derived`): elects over the self-INCLUSIVE replicated view — this
+ *   node's own freshly-minted lease intent PLUS the local aggregator's per-node
+ *   peer rows (getLatestPerNode). When the aggregator is down/empty we still
+ *   elect over [selfRow] synchronously (so an eligible self never spuriously
+ *   loses the lease) and kick an async direct peer-pull to refine the next tick.
+ *   On total peer failure the election still sees the self row — never degrades
+ *   to "no holder" for the common single-eligible case, and never to "always
+ *   self" when ineligible (self.eligible=false => null).
+ *
+ * In CURRENT prod (exactly one eligible node) the election returns that node, so
+ * holder === self → byte-identical to PR-1.
+ */
+export function makeGetLeaseHolder(deps: GetLeaseHolderDeps): () => string | null {
+  const { selfNode, selfLeaseTerm, selfEligible } = deps;
+  const leaseMode = deps.leaseMode ?? process.env["LLAMACTL_FLEET_LEASE_MODE"] ?? "derived";
+  if (leaseMode === "legacy-self") {
+    return (): string => selfNode;
+  }
+  const now = deps.now ?? ((): number => Date.now());
+  const loadPeerRows =
+    deps.loadPeerRows ??
+    ((freshAfterTs: string): SnapshotRow[] | null => {
+      try {
+        const db = openAggregatorDb();
+        return getLatestPerNode(db, { freshAfterTs });
+      } catch {
+        return null;
+      }
+    });
+  const directFetch = deps.directFetch ?? directPeerFetchSnapshots;
+
+  // The direct peer-fetch fallback is async but the guard is sync. The cache is
+  // scoped to THIS closure (never module-level shared state) and is purely an
+  // optimization: it only ever ADDS fresh peer rows to the election input. The
+  // self row is always present synchronously, so the holder is never spuriously
+  // null for an eligible self even on a cold cache.
+  let directFallbackCache: { rows: SnapshotRow[]; at: number } | null = null;
+  let directFallbackInFlight = false;
+
+  const refreshDirectFallback = (nowMs: number): void => {
+    if (directFallbackInFlight) return;
+    directFallbackInFlight = true;
+    void directFetch(selfNode)
+      .then((rows) => {
+        directFallbackCache = { rows, at: Date.now() };
+      })
+      .catch(() => {
+        directFallbackCache = { rows: [], at: Date.now() };
+      })
+      .finally(() => {
+        directFallbackInFlight = false;
+      });
+  };
+
+  return (): string | null => {
+    const nowMs = now();
+    const seq = Math.floor(nowMs / 1000);
+    const selfRow = buildSelfLeaseRow(selfNode, selfLeaseTerm, selfEligible, seq, nowMs);
+    const freshAfterTs = new Date(nowMs - STALE_AFTER_MS).toISOString();
+
+    const peerRows = loadPeerRows(freshAfterTs);
+    if (peerRows && peerRows.length > 0) {
+      // Aggregator healthy: elect over self + the per-node-fresh peer view.
+      return electLeaseHolder([selfRow, ...peerRows], nowMs, STALE_AFTER_MS);
+    }
+
+    // Aggregator down/empty: kick (or refresh) the async direct peer pull, but
+    // elect NOW over self + whatever fresh peer rows the last pull cached. The
+    // self row guarantees an eligible self still wins; the cache only refines the
+    // result once peers respond. Never returns a spurious null for eligible self.
+    refreshDirectFallback(nowMs);
+    const cachedPeers =
+      directFallbackCache && nowMs - directFallbackCache.at < STALE_AFTER_MS
+        ? directFallbackCache.rows
+        : [];
+    return electLeaseHolder([selfRow, ...cachedPeers], nowMs, STALE_AFTER_MS);
+  };
+}
+
 function buildSupervisorLoopOptions(
   flags: Flags,
   journalPath: string,
@@ -216,6 +396,8 @@ function buildSupervisorLoopOptions(
   };
 
   const migrationEnabled = process.env["LLAMACTL_FLEET_MOVE_ENABLED"] === "1";
+  // Acquire: bump the persisted monotonic term once at startup (design §2).
+  const leaseTerm = bumpLeaseTerm(defaultLeaseTermPath());
   const migrationController = migrationEnabled
     ? createMigrationController({
         peers: listPeers({ currentNodeName: flags.node }).map((peer) => peer.id),
@@ -243,12 +425,16 @@ function buildSupervisorLoopOptions(
         },
         readRecentMoves: () => readRecentMovesFromJournal(journalPath),
         selfNode: flags.node,
-        // PR-1: holder is always self — byte-identical to today's fall-through.
-        // The legacy journal lease was never written by production code, so the
-        // old `readSchedulerLease(...)?.holder ?? flags.node` always resolved to
-        // flags.node. PR-2 replaces this with the derived electLeaseHolder
-        // closure behind LLAMACTL_FLEET_LEASE_MODE.
-        getLeaseHolder: () => flags.node,
+        // Derived scheduler-lease election over the replicated peer snapshots,
+        // gated by LLAMACTL_FLEET_LEASE_MODE (default 'derived'; 'legacy-self'
+        // restores PR-1's always-self for instant rollback). In current prod
+        // (one eligible node) this elects that node → holder === self →
+        // byte-identical to PR-1.
+        getLeaseHolder: makeGetLeaseHolder({
+          selfNode: flags.node,
+          selfLeaseTerm: leaseTerm,
+          selfEligible: migrationEnabled,
+        }),
         getNowMs: () => Date.now(),
       })
     : null;
@@ -279,6 +465,11 @@ function buildSupervisorLoopOptions(
     once,
     intervalMs: flags.intervalMs,
     writeJournal,
+    // Publish the self lease intent in every per-tick snapshot so peers can run
+    // electLeaseHolder over the replicated view. eligible mirrors
+    // LLAMACTL_FLEET_MOVE_ENABLED (the existing eligibility gate).
+    leaseTerm,
+    leaseEligible: migrationEnabled,
     ...omitUndefined({ startupRev }),
     checkSourceStale,
     reloadOnSourceChange: flags.reloadOnSourceChange,
