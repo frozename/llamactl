@@ -60,7 +60,9 @@ async function tick(opts: ReconcileLoopOpts): Promise<void> {
       // point of the policy is "controller leaves this alone".
       filter: (m: ModelRun) => m.spec.restartPolicy !== "Never",
       getClient: opts.getClient,
-      resolveNodeIdentity: opts.resolveNodeIdentity,
+      ...(opts.resolveNodeIdentity !== undefined
+        ? { resolveNodeIdentity: opts.resolveNodeIdentity }
+        : {}),
       onEvent: (e) => {
         events.push({ ...e, ts: new Date().toISOString() });
       },
@@ -96,7 +98,12 @@ export function startReconcileLoop(opts: {
   state.running = true;
   state.intervalMs = opts.intervalMs ?? 10_000;
   // Kick immediately so the UI sees an initial pass without waiting.
-  void tick(opts);
+  void tick({
+    getClient: opts.getClient,
+    ...(opts.resolveNodeIdentity !== undefined
+      ? { resolveNodeIdentity: opts.resolveNodeIdentity }
+      : {}),
+  });
 }
 
 export function stopReconcileLoop(): void {

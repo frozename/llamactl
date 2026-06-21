@@ -16,12 +16,13 @@ export interface LogServerHit {
 export function mapLogHits(hits: LogServerHit[]): Hit[] {
   const out: Hit[] = [];
   for (const h of hits) {
+    const originNode = (h as { originNode?: string }).originNode;
     for (const m of h.matches) {
       out.push({
         surface: "logs",
         parentId: `${h.fileLabel}:${String(m.lineNumber)}`,
         parentTitle: `${h.fileLabel}:${String(m.lineNumber)}`,
-        originNode: (h as { originNode?: string }).originNode,
+        ...(originNode !== undefined ? { originNode } : {}),
         score: h.score,
         matchKind: "exact",
         match: { where: m.where, snippet: m.snippet, spans: m.spans },

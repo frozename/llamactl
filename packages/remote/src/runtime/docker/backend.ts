@@ -404,7 +404,7 @@ function translateMounts(volumes: VolumeMount[]): DockerMount[] {
       Type: v.hostPath ? "bind" : "volume",
       Source: v.hostPath ?? v.name ?? "",
       Target: v.containerPath,
-      ReadOnly: v.readOnly,
+      ...(v.readOnly !== undefined ? { ReadOnly: v.readOnly } : {}),
     };
   });
 }
@@ -509,7 +509,7 @@ function toServiceInstance(body: ContainerInspectResponse): ServiceInstance {
   return {
     ref: { name: trimContainerName(body.Name) },
     running: body.State.Running,
-    health,
+    ...(health !== undefined ? { health } : {}),
     specHash,
     createdAt: body.Created,
     endpoint,

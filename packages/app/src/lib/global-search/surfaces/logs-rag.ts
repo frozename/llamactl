@@ -24,7 +24,7 @@ export function mapLogRagHits(hits: LogRagServerHit[]): Hit[] {
         parentTitle: `${h.fileLabel}:${String(m.lineNumber)}`,
         score: h.score,
         matchKind: "semantic",
-        ragDistance: h.ragDistance,
+        ...(h.ragDistance !== undefined ? { ragDistance: h.ragDistance } : {}),
         match: { where: m.where, snippet: m.snippet, spans: m.spans },
         action: {
           kind: "open-tab",

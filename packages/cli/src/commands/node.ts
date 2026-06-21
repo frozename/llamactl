@@ -1,3 +1,4 @@
+import { omitUndefined } from "@llamactl/core/object";
 import {
   agentConfig as agentConfigMod,
   configSchema,
@@ -126,19 +127,19 @@ interface AddFlags {
 function assignAddFlag(flags: AddFlags, key: string, value: string | undefined): boolean {
   switch (key) {
     case "--bootstrap":
-      flags.bootstrap = value;
+      if (value !== undefined) flags.bootstrap = value;
       return true;
     case "--server":
-      flags.server = value;
+      if (value !== undefined) flags.server = value;
       return true;
     case "--fingerprint":
-      flags.fingerprint = value;
+      if (value !== undefined) flags.fingerprint = value;
       return true;
     case "--token":
-      flags.token = value;
+      if (value !== undefined) flags.token = value;
       return true;
     case "--token-file":
-      flags.tokenFile = value;
+      if (value !== undefined) flags.tokenFile = value;
       return true;
     default:
       return false;
@@ -473,6 +474,14 @@ function takeFlagValue(
   return { value: undefined, next: i + 1 };
 }
 
+function assignIfDefined<K extends keyof AddRagDraft>(
+  draft: AddRagDraft,
+  key: K,
+  value: AddRagDraft[K] | undefined,
+): void {
+  if (value !== undefined) draft[key] = value;
+}
+
 function assignAddRagValue(
   draft: AddRagDraft,
   flag: string,
@@ -489,22 +498,22 @@ function assignAddRagValue(
       return { ok: true };
     }
     case "--endpoint":
-      draft.endpoint = value;
+      assignIfDefined(draft, "endpoint", value);
       return { ok: true };
     case "--collection":
-      draft.collection = value;
+      assignIfDefined(draft, "collection", value);
       return { ok: true };
     case "--embedder-node":
-      draft.embedderNode = value;
+      assignIfDefined(draft, "embedderNode", value);
       return { ok: true };
     case "--embedder-model":
-      draft.embedderModel = value;
+      assignIfDefined(draft, "embedderModel", value);
       return { ok: true };
     case "--password-env":
-      draft.passwordEnv = value;
+      assignIfDefined(draft, "passwordEnv", value);
       return { ok: true };
     case "--password-ref":
-      draft.passwordRef = value;
+      assignIfDefined(draft, "passwordRef", value);
       return { ok: true };
     default:
       return { error: `node add-rag: unknown flag ${flag}` };
@@ -575,11 +584,11 @@ function validateAddRagDraft(draft: AddRagDraft): AddRagFlags | { error: string 
     name: draft.name,
     provider: draft.provider,
     endpoint: draft.endpoint,
-    collection: draft.collection,
-    embedderNode: draft.embedderNode,
-    embedderModel: draft.embedderModel,
-    passwordEnv: draft.passwordEnv,
-    passwordRef: draft.passwordRef,
+    ...omitUndefined({ collection: draft.collection }),
+    ...omitUndefined({ embedderNode: draft.embedderNode }),
+    ...omitUndefined({ embedderModel: draft.embedderModel }),
+    ...omitUndefined({ passwordEnv: draft.passwordEnv }),
+    ...omitUndefined({ passwordRef: draft.passwordRef }),
     extraArgs: draft.extraArgs,
   };
 }
@@ -701,13 +710,13 @@ function assignAddCloudValue(
       return { ok: true };
     }
     case "--base-url":
-      draft.baseUrl = value;
+      if (value !== undefined) draft.baseUrl = value;
       return { ok: true };
     case "--api-key-ref":
-      draft.apiKeyRef = value;
+      if (value !== undefined) draft.apiKeyRef = value;
       return { ok: true };
     case "--display-name":
-      draft.displayName = value;
+      if (value !== undefined) draft.displayName = value;
       return { ok: true };
     default:
       return { error: `node add-cloud: unknown flag ${flag}` };

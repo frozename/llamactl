@@ -65,7 +65,7 @@ function useEffectMock(effect: () => void, deps?: DependencyList): void {
 }
 
 function useMemoMock<T>(factory: () => T, deps?: DependencyList): T {
-  if (!hookHarnessActive) return ReactActual.useMemo(factory, deps);
+  if (!hookHarnessActive) return ReactActual.useMemo(factory, deps!);
   void deps;
   return factory();
 }
@@ -74,7 +74,7 @@ function useCallbackMock<T extends (...args: never[]) => unknown>(
   callback: T,
   deps?: DependencyList,
 ): T {
-  if (!hookHarnessActive) return ReactActual.useCallback(callback, deps);
+  if (!hookHarnessActive) return ReactActual.useCallback(callback, deps!);
   void deps;
   return callback;
 }

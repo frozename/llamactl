@@ -109,10 +109,10 @@ async function runPresetStep(
   const out = await benchPreset({
     target: key.rel,
     mode: key.mode,
-    onEvent: opts.onEvent,
-    runCli: opts.runCli,
+    ...(opts.onEvent !== undefined ? { onEvent: opts.onEvent } : {}),
+    ...(opts.runCli !== undefined ? { runCli: opts.runCli } : {}),
     resolved,
-    signal: opts.signal,
+    ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   });
   if ("error" in out) return { error: out.error };
   return { ran: true, result: out };
@@ -173,10 +173,10 @@ async function runVisionStep(
 
   const out = await benchVision({
     target: ctx.rel,
-    onEvent: opts.onEvent,
-    runCli: opts.runCli,
+    ...(opts.onEvent !== undefined ? { onEvent: opts.onEvent } : {}),
+    ...(opts.runCli !== undefined ? { runCli: opts.runCli } : {}),
     resolved,
-    signal: opts.signal,
+    ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   });
   if ("error" in out) {
     return { ran: false, reason: out.error };
@@ -211,8 +211,8 @@ export async function candidateTest(
 
   const pick = await pickCandidateFile({
     repo: opts.repo,
-    file: opts.file,
-    profile: opts.profile,
+    ...(opts.file !== undefined ? { file: opts.file } : {}),
+    ...(opts.profile !== undefined ? { profile: opts.profile } : {}),
     resolved,
   });
   if (!pick) return { error: `Unable to resolve a candidate file for ${opts.repo}` };
@@ -234,10 +234,10 @@ export async function candidateTest(
   const pulled = await pullRepoFile({
     repo: opts.repo,
     file: pick.file,
-    onEvent: opts.onEvent,
-    runHf: opts.runHf,
+    ...(opts.onEvent !== undefined ? { onEvent: opts.onEvent } : {}),
+    ...(opts.runHf !== undefined ? { runHf: opts.runHf } : {}),
     resolved,
-    signal: opts.signal,
+    ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   });
   if (pulled.code !== 0) {
     return { error: `Pull failed (code=${String(pulled.code)}) for ${rel}` };

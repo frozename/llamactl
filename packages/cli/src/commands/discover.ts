@@ -1,4 +1,5 @@
 import { discovery } from "@llamactl/core";
+import { omitUndefined } from "@llamactl/core/object";
 
 import { getNodeClient, isLocalDispatch } from "../dispatcher.js";
 
@@ -44,13 +45,13 @@ export async function runDiscover(args: string[]): Promise<number> {
   const result = !isLocalDispatch()
     ? await getNodeClient().discover.query({
         filter,
-        ...(requestedProfile !== undefined ? { profile: requestedProfile } : {}),
-        ...(limit !== undefined ? { limit } : {}),
+        ...omitUndefined({ profile: requestedProfile }),
+        ...omitUndefined({ limit }),
       })
     : await discovery.discover({
         filter,
-        requestedProfile,
-        limit,
+        ...omitUndefined({ requestedProfile }),
+        ...omitUndefined({ limit }),
       });
 
   if (!result) {

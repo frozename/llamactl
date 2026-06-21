@@ -180,7 +180,7 @@ export function PipelineWizardModal(props: {
       sources: f.sources.map((s, i) => {
         if (i !== idx) return s;
         if (patch.kind && patch.kind !== s.kind) {
-          return { ...emptySource(patch.kind), tag: s.tag };
+          return { ...emptySource(patch.kind), ...(s.tag !== undefined ? { tag: s.tag } : {}) };
         }
         return { ...s, ...patch } as SourceState;
       }),

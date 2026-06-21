@@ -175,7 +175,7 @@ export class MigrationController {
       evictProposalId: workload.evictProposalId ?? `evict-${workload.name}-${String(this.nowMs)}`,
       expiresAt: new Date(this.nowMs + MIGRATION_POLICY_DEFAULTS.moveProposalTtlMs).toISOString(),
       expiresAtMs: this.nowMs + MIGRATION_POLICY_DEFAULTS.moveProposalTtlMs,
-      workloadMemoryMb,
+      ...(workloadMemoryMb !== undefined ? { workloadMemoryMb } : {}),
     };
   }
 

@@ -136,7 +136,7 @@ function parseArgs(argv: string[]): ParsedArgs | { error: string } {
 
 function resolveTarget(
   parsed: ParsedArgs,
-  node: { facts?: { platform?: string; arch?: string } },
+  node: { facts?: { platform?: string | undefined; arch?: string | undefined } | undefined },
 ): string | { error: string } {
   if (parsed.platform) return parsed.platform;
   const p = node.facts?.platform;
@@ -151,7 +151,7 @@ function resolveTarget(
 
 export async function resolveUpdateBinary(
   parsed: ParsedArgs,
-  node: { facts?: { platform?: string; arch?: string } },
+  node: { facts?: { platform?: string | undefined; arch?: string | undefined } | undefined },
   deps?: { fetchAgentRelease: FetchAgentReleaseFn },
 ): Promise<string | { error: string }> {
   let binaryPath = parsed.binary;

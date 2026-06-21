@@ -40,9 +40,9 @@ export async function getSessionSummary(sessionId: string): Promise<SessionSumma
     status,
     iterations,
     startedAt: start.ts,
-    endedAt,
-    nodeId: start.nodeId,
-    model: start.model,
+    ...(endedAt !== undefined ? { endedAt } : {}),
+    ...(start.nodeId !== undefined ? { nodeId: start.nodeId } : {}),
+    ...(start.model !== undefined ? { model: start.model } : {}),
   };
 }
 
@@ -72,5 +72,5 @@ export async function listSessions(opts: {
   const page = filtered.slice(startIdx, startIdx + opts.limit);
   const nextCursor =
     startIdx + opts.limit < filtered.length ? page[page.length - 1]?.sessionId : undefined;
-  return { sessions: page, nextCursor };
+  return { sessions: page, ...(nextCursor !== undefined ? { nextCursor } : {}) };
 }

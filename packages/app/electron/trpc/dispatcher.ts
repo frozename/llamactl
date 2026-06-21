@@ -319,7 +319,7 @@ const uiRouter = t.router({
           return r.hits.map((h) => ({ ...h, originNode: node.name }));
         },
         perNodeTimeoutMs: input.perNodeTimeoutMs ?? 2000,
-        signal,
+        ...(signal !== undefined ? { signal } : {}),
       });
       return {
         hits: result.hits,
@@ -379,7 +379,7 @@ const uiRouter = t.router({
           return r.hits.map((h) => ({ ...h, originNode: node.name }));
         },
         perNodeTimeoutMs: input.perNodeTimeoutMs ?? 2000,
-        signal,
+        ...(signal !== undefined ? { signal } : {}),
       });
       return {
         hits: result.hits,
@@ -419,12 +419,12 @@ const uiRouter = t.router({
       const result = focused
         ? await dialog.showOpenDialog(focused, {
             title: input?.title ?? "Pick a project directory",
-            defaultPath: input?.defaultPath,
+            ...(input?.defaultPath !== undefined ? { defaultPath: input.defaultPath } : {}),
             properties: ["openDirectory", "createDirectory"],
           })
         : await dialog.showOpenDialog({
             title: input?.title ?? "Pick a project directory",
-            defaultPath: input?.defaultPath,
+            ...(input?.defaultPath !== undefined ? { defaultPath: input.defaultPath } : {}),
             properties: ["openDirectory", "createDirectory"],
           });
       const [firstPath] = result.filePaths;

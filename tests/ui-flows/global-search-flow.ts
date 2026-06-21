@@ -1,5 +1,5 @@
 // tests/ui-flows/global-search-flow.ts
-import { PilotDriver } from "./pilot-driver.js";
+import type { PilotDriver } from "./pilot-driver.js";
 
 export async function runGlobalSearchFlow(pilot: PilotDriver) {
   // 1. App loads, verify search box

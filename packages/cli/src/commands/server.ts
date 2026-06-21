@@ -184,7 +184,7 @@ function parseStartFlags(args: string[]): StartFlags | { error: string } | { hel
     json: draft.json,
     skipTuned: draft.skipTuned,
     timeoutSeconds: draft.timeoutSeconds,
-    workloadExplicit: draft.workloadExplicit,
+    ...(draft.workloadExplicit !== undefined ? { workloadExplicit: draft.workloadExplicit } : {}),
   };
 }
 

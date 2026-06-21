@@ -43,7 +43,7 @@ export interface VolumeMount {
   configMap?: {
     name: string;
     data: Record<string, string>;
-    defaultMode?: number;
+    defaultMode?: number | undefined;
   };
   containerPath: string;
   readOnly?: boolean;

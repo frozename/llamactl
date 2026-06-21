@@ -416,20 +416,20 @@ export async function pullCandidate(
 ): Promise<PullCandidateResult | { error: string }> {
   const pick = await pickCandidateFile({
     repo: opts.repo,
-    file: opts.file,
-    profile: opts.profile,
-    resolved: opts.resolved,
+    ...(opts.file !== undefined ? { file: opts.file } : {}),
+    ...(opts.profile !== undefined ? { profile: opts.profile } : {}),
+    ...(opts.resolved !== undefined ? { resolved: opts.resolved } : {}),
   });
   if (!pick) return { error: `Unable to resolve a candidate file for ${opts.repo}` };
 
   const pulled = await pullRepoFile({
     repo: opts.repo,
     file: pick.file,
-    onEvent: opts.onEvent,
-    runHf: opts.runHf,
-    resolved: opts.resolved,
-    signal: opts.signal,
-    skipMmproj: opts.skipMmproj,
+    ...(opts.onEvent !== undefined ? { onEvent: opts.onEvent } : {}),
+    ...(opts.runHf !== undefined ? { runHf: opts.runHf } : {}),
+    ...(opts.resolved !== undefined ? { resolved: opts.resolved } : {}),
+    ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+    ...(opts.skipMmproj !== undefined ? { skipMmproj: opts.skipMmproj } : {}),
   });
 
   return {

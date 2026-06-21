@@ -39,7 +39,7 @@ function buildThemeCommands(themeId: ThemeId, setThemeId: (id: ThemeId) => void)
       id: `theme:set:${t.id}`,
       label: `Theme: ${t.label}`,
       group: "Preferences",
-      hint: themeId === t.id ? "current" : undefined,
+      ...(themeId === t.id ? { hint: "current" } : {}),
       keywords: ["theme", "color", "palette", t.id, ...t.tagline.split(/\W+/)],
       run: (): void => {
         setThemeId(t.id);

@@ -1,3 +1,6 @@
+import type { ModelHostHostedModel, ModelHostSpecForEngine } from "@llamactl/core/engines/types";
+
+import { omitUndefined } from "@llamactl/core/object";
 import { z } from "zod";
 
 export const LOCAL_NODE_ID = "local" as const;
@@ -85,3 +88,93 @@ export const ModelHostManifestSchema = z
 
 export type ModelHostManifest = z.infer<typeof ModelHostManifestSchema>;
 export type ModelHostSpec = z.infer<typeof ModelHostSpecSchema>;
+
+/**
+ * Normalize a parsed `ModelHostSpec` so its optional `resources.expectedMemoryGiB`
+ * is ABSENT rather than `undefined`. Zod's `.optional()` infers `number | undefined`,
+ * but `computeModelHostSpecHash` (and other consumers) declare the field under
+ * `exactOptionalPropertyTypes` as `{ expectedMemoryGiB?: number }`. Reconstructing
+ * the object with a conditional-spread keeps the value JSON-identical (an undefined
+ * property is dropped by `JSON.stringify` either way) while satisfying the type.
+ */
+export function specForHash(
+  spec: ModelHostSpec,
+): Omit<ModelHostSpec, "resources"> & { resources?: { expectedMemoryGiB?: number } } {
+  const { resources, ...rest } = spec;
+  return {
+    ...rest,
+    ...(resources !== undefined
+      ? {
+          resources: {
+            ...(resources.expectedMemoryGiB !== undefined
+              ? { expectedMemoryGiB: resources.expectedMemoryGiB }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+/**
+ * Normalize a single parsed hosted-model entry into the engine-layer
+ * `ModelHostHostedModel` shape. Zod's `.optional()` infers each optional as
+ * `T | undefined`, but the engine interface (under exactOptionalPropertyTypes)
+ * declares them as absent-or-present. Reconstructing with conditional-spreads
+ * keeps the value runtime-identical (an undefined optional is equivalent to an
+ * absent one for the engine boot path) while satisfying the stricter type.
+ */
+function normalizeHostedModel(m: ModelHostSpec["hostedModels"][number]): ModelHostHostedModel {
+  const { dflash } = m;
+  return {
+    rel: m.rel,
+    ...omitUndefined({ lora_path: m.lora_path }),
+    ...(dflash !== undefined
+      ? {
+          dflash: {
+            enabled: dflash.enabled,
+            ...omitUndefined({
+              dflash_enabled: dflash.dflash_enabled,
+              dflash_draft_model: dflash.dflash_draft_model,
+              dflash_draft_quant_enabled: dflash.dflash_draft_quant_enabled,
+              dflash_draft_quant_weight_bits: dflash.dflash_draft_quant_weight_bits,
+              dflash_draft_quant_activation_bits: dflash.dflash_draft_quant_activation_bits,
+              dflash_draft_quant_group_size: dflash.dflash_draft_quant_group_size,
+              dflash_max_ctx: dflash.dflash_max_ctx,
+              dflash_in_memory_cache: dflash.dflash_in_memory_cache,
+              dflash_in_memory_cache_max_entries: dflash.dflash_in_memory_cache_max_entries,
+              dflash_in_memory_cache_max_bytes: dflash.dflash_in_memory_cache_max_bytes,
+              dflash_ssd_cache: dflash.dflash_ssd_cache,
+              dflash_draft_window_size: dflash.dflash_draft_window_size,
+              dflash_draft_sink_size: dflash.dflash_draft_sink_size,
+              dflash_verify_mode: dflash.dflash_verify_mode,
+            }),
+          },
+        }
+      : {}),
+  };
+}
+
+/**
+ * Normalize a parsed `ModelHostSpec` into the engine-layer `ModelHostSpecForEngine`
+ * shape. Bridges the zod-inferred `T | undefined` optionals (hosted-model and
+ * resources fields) to the engine interface's absent-or-present optionals.
+ */
+export function specForEngine(spec: ModelHostSpec): ModelHostSpecForEngine {
+  return {
+    engine: spec.engine,
+    binary: spec.binary,
+    endpoint: spec.endpoint,
+    hostedModels: spec.hostedModels.map(normalizeHostedModel),
+    extraArgs: spec.extraArgs,
+    timeoutSeconds: spec.timeoutSeconds,
+    ...(spec.resources !== undefined
+      ? {
+          resources: {
+            ...(spec.resources.expectedMemoryGiB !== undefined
+              ? { expectedMemoryGiB: spec.resources.expectedMemoryGiB }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}

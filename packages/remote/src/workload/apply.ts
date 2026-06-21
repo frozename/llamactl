@@ -8,6 +8,7 @@ import {
   writeModelHostState,
 } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
+import { omitUndefined } from "@llamactl/core/object";
 import {
   appendFleetJournal,
   chooseBestNode,
@@ -36,6 +37,8 @@ import {
   LOCAL_NODE_ID,
   type ModelHostManifest,
   ModelHostManifestSchema,
+  specForEngine,
+  specForHash,
 } from "./modelhost-schema.js";
 import { withNodeLock } from "./node-mutex.js";
 import { ModelRunSchema } from "./schema.js";
@@ -326,7 +329,9 @@ function validateModelHostAdmission(
       currentFreeGiB: opts.supervisor.currentFreeGiB,
       expectedMemoryGiB: manifest.spec.resources.expectedMemoryGiB,
       headroomMinGiB: opts.supervisor.headroomMinGiB,
-      safetyFactor: opts.supervisor.safetyFactor,
+      ...(opts.supervisor.safetyFactor !== undefined
+        ? { safetyFactor: opts.supervisor.safetyFactor }
+        : {}),
     });
     if (!projected.allowed) {
       return { ok: false, error: projected.reason };
@@ -334,15 +339,7 @@ function validateModelHostAdmission(
   }
   const engine = ENGINES[manifest.spec.engine];
   if (manifest.spec.node === "local") {
-    const validation = engine.validateSpec({
-      engine: manifest.spec.engine,
-      binary: manifest.spec.binary,
-      endpoint: manifest.spec.endpoint,
-      hostedModels: manifest.spec.hostedModels,
-      resources: manifest.spec.resources,
-      extraArgs: manifest.spec.extraArgs,
-      timeoutSeconds: manifest.spec.timeoutSeconds,
-    });
+    const validation = engine.validateSpec(specForEngine(manifest.spec));
     if (!validation.ok) {
       return { ok: false, error: validation.error };
     }
@@ -502,7 +499,7 @@ function writeModelHostSidecar(
         modelAliases,
         startedAt: new Date().toISOString(),
         slotSavePath: existing?.pid === status.pid ? (existing.slotSavePath ?? null) : null,
-        specHash: computeModelHostSpecHash(manifest.spec),
+        specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
       },
       { name: manifest.metadata.name },
       resolved,
@@ -565,11 +562,11 @@ export async function applyOneModelHost(
 ): Promise<ApplyManifestOutcome> {
   return await applyModelHostManifest(manifest, {
     getClient,
-    onEvent,
-    env: opts?.env,
-    workloadsDir: opts?.workloadsDir,
-    getNodeBudgetGiB: opts?.getNodeBudgetGiB,
-    supervisor: opts?.supervisor,
+    ...omitUndefined({ onEvent }),
+    ...(opts?.env !== undefined ? { env: opts.env } : {}),
+    ...(opts?.workloadsDir !== undefined ? { workloadsDir: opts.workloadsDir } : {}),
+    ...(opts?.getNodeBudgetGiB !== undefined ? { getNodeBudgetGiB: opts.getNodeBudgetGiB } : {}),
+    ...(opts?.supervisor !== undefined ? { supervisor: opts.supervisor } : {}),
   });
 }
 
@@ -1026,7 +1023,18 @@ async function startCoordinator(
           target: manifest.spec.target.value,
           ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
           ...(manifest.spec.allowExternalBind ? { allowExternalBind: true } : {}),
-          ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
+          ...(manifest.spec.endpoint
+            ? {
+                endpoint: {
+                  ...(manifest.spec.endpoint.host !== undefined
+                    ? { host: manifest.spec.endpoint.host }
+                    : {}),
+                  ...(manifest.spec.endpoint.port !== undefined
+                    ? { port: manifest.spec.endpoint.port }
+                    : {}),
+                },
+              }
+            : {}),
           ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
           timeoutSeconds: manifest.spec.timeoutSeconds,
         },
@@ -1162,7 +1170,11 @@ export async function applyOne(
 ): Promise<ApplyResult> {
   if (manifest.spec.gateway) {
     if (gatewayDispatch) {
-      const dispatched = await gatewayDispatch({ manifest, getClient, onEvent });
+      const dispatched = await gatewayDispatch({
+        manifest,
+        getClient,
+        ...omitUndefined({ onEvent }),
+      });
       // `null` from the dispatcher is the agent-gateway fallthrough
       // sentinel — spec.gateway:true pointed at an agent-kind node
       // runs through the regular serverStart path below.
@@ -1244,7 +1256,9 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
       journalPath: opts.placement?.journalPath ?? defaultFleetJournalPath(),
       headroomMinMb: opts.placement?.headroomMinMb ?? 512,
       modelFilePenaltyMb: opts.placement?.modelFilePenaltyMb ?? 128,
-      staleCutoffMs: opts.placement?.staleCutoffMs,
+      ...(opts.placement?.staleCutoffMs !== undefined
+        ? { staleCutoffMs: opts.placement.staleCutoffMs }
+        : {}),
     });
     if (!placement.ok) return { ok: false, error: placement.error };
     manifest = placement.manifest;
@@ -1253,9 +1267,11 @@ async function applyModelRunManifest(opts: ApplyManifestOptions): Promise<ApplyM
     return { ok: false, error: "applyManifest requires getClient for ModelRun manifests" };
   }
   const result = await applyOne(manifest, opts.getClient, opts.onEvent, undefined, {
-    workloadsDir: opts.workloadsDir,
-    getNodeBudgetGiB: opts.getNodeBudgetGiB,
-    resolveNodeIdentity: opts.resolveNodeIdentity,
+    ...omitUndefined({ workloadsDir: opts.workloadsDir }),
+    ...omitUndefined({ getNodeBudgetGiB: opts.getNodeBudgetGiB }),
+    ...(opts.resolveNodeIdentity !== undefined
+      ? { resolveNodeIdentity: opts.resolveNodeIdentity }
+      : {}),
   });
   if (result.error) {
     return { ok: false, error: result.error };

@@ -42,12 +42,14 @@ export function usePulls(): UsePullsReturn {
     }
     setError(null);
     const id = `${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
+    const fileValue = mode === "file" ? file.trim() : file.trim() || undefined;
+    const profileValue = mode === "file" ? undefined : profile || undefined;
     const spec: PullCardSpec = {
       id,
       mode,
       repo: r,
-      file: mode === "file" ? file.trim() : file.trim() || undefined,
-      profile: mode === "file" ? undefined : profile || undefined,
+      ...(fileValue !== undefined ? { file: fileValue } : {}),
+      ...(profileValue !== undefined ? { profile: profileValue } : {}),
     };
     setCards((prev) => [spec, ...prev]);
     setRepo("");

@@ -95,7 +95,11 @@ function collectAgentNodes(tokenInline: boolean): NodeEntry[] {
   return entries;
 }
 
-function tryResolveToken(user: { name: string; token?: string; tokenRef?: string }): string {
+function tryResolveToken(user: {
+  name: string;
+  token?: string | undefined;
+  tokenRef?: string | undefined;
+}): string {
   try {
     return kubecfg.resolveToken(user);
   } catch (err) {

@@ -172,10 +172,10 @@ export async function maybeTuneAfterPull(
   const presetOut = await benchPreset({
     target: opts.rel,
     mode,
-    onEvent: opts.onEvent,
-    runCli: opts.runCli,
+    ...(opts.onEvent !== undefined ? { onEvent: opts.onEvent } : {}),
+    ...(opts.runCli !== undefined ? { runCli: opts.runCli } : {}),
     resolved,
-    signal: opts.signal,
+    ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   });
   if ("error" in presetOut) {
     return {
@@ -195,11 +195,11 @@ export async function maybeTuneAfterPull(
     rel: opts.rel,
     machine,
     build,
-    onEvent: opts.onEvent,
-    runCli: opts.runCli,
+    ...(opts.onEvent !== undefined ? { onEvent: opts.onEvent } : {}),
+    ...(opts.runCli !== undefined ? { runCli: opts.runCli } : {}),
     resolved,
     env,
-    signal: opts.signal,
+    ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   });
 
   return {
@@ -276,10 +276,10 @@ async function maybeVisionBenchAfterPull(
 
   const out = await benchVision({
     target: args.rel,
-    onEvent: args.onEvent,
-    runCli: args.runCli,
+    ...(args.onEvent !== undefined ? { onEvent: args.onEvent } : {}),
+    ...(args.runCli !== undefined ? { runCli: args.runCli } : {}),
     resolved: args.resolved,
-    signal: args.signal,
+    ...(args.signal !== undefined ? { signal: args.signal } : {}),
   });
   if ("error" in out) {
     return { ran: false, reason: { kind: "error", message: out.error } };

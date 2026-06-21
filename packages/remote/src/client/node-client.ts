@@ -22,7 +22,7 @@ export type NodeClient = ReturnType<typeof createTRPCClient<AppRouter>>;
 export type TunnelSendFn = (req: { id: string; method: string; params: unknown }) => Promise<{
   id: string;
   result?: unknown;
-  error?: { code: string; message: string };
+  error?: { code: string; message: string } | undefined;
 }>;
 
 /**

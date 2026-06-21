@@ -76,13 +76,14 @@ export async function runCandidate(
     if (exitCode === 0) {
       return { passed: true, status: "pass" };
     }
+    const detail = stderrTail(stderr);
     if (proc.signalCode === "SIGKILL") {
-      return { passed: false, status: "timeout", detail: stderrTail(stderr) };
+      return { passed: false, status: "timeout", ...(detail !== undefined ? { detail } : {}) };
     }
     if (proc.signalCode !== null) {
-      return { passed: false, status: "fail", detail: stderrTail(stderr) };
+      return { passed: false, status: "fail", ...(detail !== undefined ? { detail } : {}) };
     }
-    return { passed: false, status: "fail", detail: stderrTail(stderr) };
+    return { passed: false, status: "fail", ...(detail !== undefined ? { detail } : {}) };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return { passed: false, status: "error", detail };

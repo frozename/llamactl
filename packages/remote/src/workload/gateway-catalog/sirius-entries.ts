@@ -5,9 +5,9 @@ export interface DerivedSiriusEntry {
   [k: string]: unknown;
   name: string;
   kind: "openai" | "anthropic" | "together" | "groq" | "mistral" | "openai-compatible";
-  baseUrl?: string;
-  apiKeyRef?: string;
-  displayName?: string;
+  baseUrl?: string | undefined;
+  apiKeyRef?: string | undefined;
+  displayName?: string | undefined;
 }
 
 export function deriveSiriusEntries(ctx: CompositeGatewayContext): DerivedSiriusEntry[] {
@@ -15,6 +15,8 @@ export function deriveSiriusEntries(ctx: CompositeGatewayContext): DerivedSirius
     name: `${ctx.compositeName}-${u.name}`,
     kind: "openai-compatible" as const,
     baseUrl: u.endpoint,
-    displayName: ctx.providerConfig.displayName,
+    ...(ctx.providerConfig.displayName !== undefined
+      ? { displayName: ctx.providerConfig.displayName }
+      : {}),
   }));
 }

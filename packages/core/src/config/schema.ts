@@ -302,7 +302,7 @@ export const ClusterNodeSchema = z
  * Without an explicit kind, infer from the block the node carries.
  */
 function nodeValidationKind(n: {
-  kind?: string;
+  kind?: string | undefined;
   provider?: unknown;
   rag?: unknown;
   cloud?: unknown;

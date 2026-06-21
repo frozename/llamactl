@@ -1,6 +1,6 @@
 import type { CompositeOwnership } from "./schema.js";
 
-type AnyEntry = Record<string, unknown> & { ownership?: CompositeOwnership };
+type AnyEntry = Record<string, unknown> & { ownership?: CompositeOwnership | undefined };
 
 export interface RemoveOpts<T> {
   kind: "sirius" | "embersynth";

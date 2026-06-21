@@ -35,6 +35,7 @@ import {
   UpstreamSlotClient,
   writeTrailer,
 } from "./kvstore/index.js";
+import { omitUndefined } from "./object.js";
 import {
   isDeterministic,
   openResponseCacheStorage,
@@ -372,10 +373,10 @@ function buildRouteMap(resolved: ResolvedEnv): Map<string, RouteEntry> {
       ? {
           isPeer: true as const,
           peerEndpoint: route.peerEndpoint,
-          certificate: route.certificate,
-          token: route.token,
+          ...omitUndefined({ certificate: route.certificate }),
+          ...omitUndefined({ token: route.token }),
           targetNodeId: route.targetNodeId,
-          revision: route.revision,
+          ...omitUndefined({ revision: route.revision }),
         }
       : {};
     winners.set(route.model, { kind: route.kind, workload: route.workload });
@@ -424,8 +425,8 @@ export function __setOpenAIProxyClusterRoutingForTests(input: {
   peerSnapshots?: Map<string, workloadRuntime.PeerSnapshot>;
 }): void {
   clusterRoutingOverrideForTests = {
-    clusterPeers: input.clusterPeers,
-    peerSnapshots: input.peerSnapshots,
+    ...omitUndefined({ clusterPeers: input.clusterPeers }),
+    ...omitUndefined({ peerSnapshots: input.peerSnapshots }),
   };
   routeMapCache = null;
   modelsResponseCache = null;

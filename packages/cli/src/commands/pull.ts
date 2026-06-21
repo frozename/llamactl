@@ -87,7 +87,7 @@ async function runPullRepo(args: string[]): Promise<number> {
 
   const result = await pull.pullRepo({
     repo,
-    targetDir: target,
+    ...(target !== undefined ? { targetDir: target } : {}),
     onEvent: forwardStream,
   });
   if (parsed.json) {
@@ -229,8 +229,8 @@ async function fetchPullCandidate(
   if (localDispatch) {
     return await pull.pullCandidate({
       repo,
-      file,
-      profile,
+      ...(file !== undefined ? { file } : {}),
+      ...(profile !== undefined ? { profile } : {}),
       onEvent: forwardStream,
     });
   }

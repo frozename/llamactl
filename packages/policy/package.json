@@ -12,6 +12,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@llamactl/core": "workspace:*",
     "yaml": "2.8.3",
     "zod": "4.3.6"
   },

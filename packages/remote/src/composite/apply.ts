@@ -9,8 +9,6 @@ import {
 } from "@llamactl/core/config/kubeconfig";
 import { resolveInternalProxyEndpoint } from "@llamactl/core/env";
 
-import type { EmbersynthNode } from "../config/embersynth.js";
-import type { SiriusProvider } from "../config/sirius-providers.js";
 import type { RuntimeBackend, ServiceInstance, ServiceRef } from "../runtime/backend.js";
 import type { ApplyEvent, WorkloadClient } from "../workload/apply.js";
 import type { GatewayHandler } from "../workload/gateway-handlers/types.js";
@@ -809,7 +807,7 @@ async function cleanupGatewayCatalogs(compositeName: string): Promise<void> {
     current: currentSirius,
   });
   if (resSirius.changed) {
-    writeGatewayCatalog("sirius", resSirius.next as SiriusProvider[]);
+    writeGatewayCatalog("sirius", resSirius.next);
     await reloadAllGatewayNodesOfKind("sirius");
   }
 
@@ -820,7 +818,7 @@ async function cleanupGatewayCatalogs(compositeName: string): Promise<void> {
     current: currentEmber,
   });
   if (resEmber.changed) {
-    writeGatewayCatalog("embersynth", resEmber.next as EmbersynthNode[]);
+    writeGatewayCatalog("embersynth", resEmber.next);
     await reloadAllGatewayNodesOfKind("embersynth");
   }
 }

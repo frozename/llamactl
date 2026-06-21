@@ -19,7 +19,7 @@ export function mapKnowledgeRagHits(hits: KnowledgeRagServerHit[]): Hit[] {
         parentTitle: h.title,
         score: h.score,
         matchKind: "semantic",
-        ragDistance: h.ragDistance,
+        ...(h.ragDistance !== undefined ? { ragDistance: h.ragDistance } : {}),
         match: m,
         action: {
           kind: "open-tab",

@@ -20,6 +20,7 @@ import {
   parseSlotSavePathFromCommand,
   resolveSlotSavePathArgs,
 } from "./kvstore/index.js";
+import { omitUndefined } from "./object.js";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
 import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from "./workloadRuntime.js";
@@ -710,6 +711,10 @@ function pollTimedOutResult(
   return result;
 }
 
+function exitedResult(lastHttpCode: string | null): PollReadyResult {
+  return { outcome: "exited", ...(lastHttpCode !== null ? { lastHttpCode } : {}) };
+}
+
 async function pollReady(
   pid: number,
   healthUrl: string,
@@ -724,9 +729,7 @@ async function pollReady(
     const probe = await probeHealthOnce(pid, healthUrl, attempt, onEvent);
     lastHttpCode = probe.httpCode ?? lastHttpCode;
     if (probe.kind === "ready") return { outcome: "ready", lastHttpCode: probe.httpCode };
-    if (probe.kind === "exited") {
-      return { outcome: "exited", lastHttpCode: lastHttpCode ?? undefined };
-    }
+    if (probe.kind === "exited") return exitedResult(lastHttpCode);
     if (probe.nonLoading) nonLoadingHttpCount += 1;
     await abortableSleep(1000, signal);
   }
@@ -918,10 +921,10 @@ async function retryWithMmprojSafeFlags(
     args: retryArgs,
     resolved,
     key,
-    allowExternalBind: opts.allowExternalBind,
+    ...omitUndefined({ allowExternalBind: opts.allowExternalBind }),
     host: ctx.launchHost,
     port: ctx.launchPort,
-    onEvent: opts.onEvent,
+    ...omitUndefined({ onEvent: opts.onEvent }),
   });
   writeServerPid(resolved, key, retryPid);
   const readyResult = await pollReady(
@@ -1022,10 +1025,10 @@ async function launchAndRecordServer(
     args: prepared.launchArgs,
     resolved,
     key: opts.key,
-    allowExternalBind: opts.allowExternalBind,
+    ...omitUndefined({ allowExternalBind: opts.allowExternalBind }),
     host: launchHost,
     port: launchPort,
-    onEvent: opts.onEvent,
+    ...omitUndefined({ onEvent: opts.onEvent }),
   });
   writeServerPid(resolved, opts.key, pid);
   writeServerState(resolved, opts.key, {

@@ -341,7 +341,9 @@ export async function fetchAgentRelease(
     ): ReturnType<ArtifactFetcher> =>
       defaultFetcher(url, {
         ...fetchOpts,
-        timeoutMs: fetchOpts?.timeoutMs ?? opts.fetchTimeoutMs,
+        ...((fetchOpts?.timeoutMs ?? opts.fetchTimeoutMs) !== undefined
+          ? { timeoutMs: fetchOpts?.timeoutMs ?? opts.fetchTimeoutMs }
+          : {}),
       }));
 
   let tag = opts.version;

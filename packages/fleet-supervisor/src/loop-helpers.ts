@@ -1,3 +1,5 @@
+import { omitUndefined } from "@llamactl/core/object";
+
 import type {
   MigrationController,
   MigrationWorkload,
@@ -155,11 +157,13 @@ async function applyCompletionBusyGuard(
   }
 
   const reading = await state.readSlotProgress(target.endpoint, {
-    fetch: deps.fetch,
+    ...omitUndefined({ fetch: deps.fetch }),
     // Use the generous (effective) bound, not the small base, so the /slots read
     // itself does not time out on the very busy server mechanism A exists to judge.
     timeoutMs: Math.max(config.timeoutMs, effectiveTimeoutMs),
-    allowPublicEndpoints: state.allowPublicEndpoints,
+    ...(state.allowPublicEndpoints !== undefined
+      ? { allowPublicEndpoints: state.allowPublicEndpoints }
+      : {}),
   });
   const guarded = applyBusyGuard({
     classification: result.classification,
@@ -230,9 +234,11 @@ async function runCompletionProbe(
   const result = await probe(target.endpoint, {
     config: { ...config, timeoutMs: effectiveTimeoutMs },
     models: health.models,
-    fetch: deps.fetch,
+    ...omitUndefined({ fetch: deps.fetch }),
     priorConsecutiveFailures,
-    allowPublicEndpoints: state.allowPublicEndpoints,
+    ...(state.allowPublicEndpoints !== undefined
+      ? { allowPublicEndpoints: state.allowPublicEndpoints }
+      : {}),
   });
   if (result.ok && state.latencySamples) {
     const ring = state.latencySamples.get(target.name) ?? [];
@@ -278,7 +284,7 @@ export function makeDefaultProbeFn(
 ): (target: WorkloadTarget) => Promise<WorkloadSnapshot> {
   return async (target): Promise<WorkloadSnapshot> => {
     const result = await defaultProbeWorkload(target, {
-      fetch: deps.fetch,
+      ...omitUndefined({ fetch: deps.fetch }),
       timeoutMs: deps.timeoutMs,
       priorConsecutiveErrors: deps.consecutiveErrors.get(target.name) ?? 0,
     });
@@ -289,7 +295,7 @@ export function makeDefaultProbeFn(
       kind: target.kind,
       endpoint: redactEndpoint(target.endpoint),
       priority: target.priority ?? 50,
-      ...(target.placement !== undefined ? { placement: target.placement } : {}),
+      ...omitUndefined({ placement: target.placement }),
       rss_mb: null,
       request_rate_5m: null,
       error_rate_5m: 0,
@@ -312,7 +318,7 @@ export function makeUnreachableFallback(
     kind: target.kind,
     endpoint: redactEndpoint(target.endpoint),
     priority: target.priority ?? 50,
-    ...(target.placement !== undefined ? { placement: target.placement } : {}),
+    ...omitUndefined({ placement: target.placement }),
     rss_mb: null,
     request_rate_5m: null,
     error_rate_5m: 1,

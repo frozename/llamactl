@@ -111,7 +111,7 @@ export function mergeServerHits(
       hits: merged,
       topScore: top,
       pending: false,
-      error: opts.error,
+      ...(opts.error !== undefined ? { error: opts.error } : {}),
       ...(opts.unreachableNodes || g.unreachableNodes
         ? { unreachableNodes: opts.unreachableNodes ?? g.unreachableNodes }
         : {}),
@@ -128,7 +128,7 @@ export function mergeServerHits(
       hits,
       topScore: top,
       pending: false,
-      error: opts.error,
+      ...(opts.error !== undefined ? { error: opts.error } : {}),
       ...(opts.unreachableNodes ? { unreachableNodes: opts.unreachableNodes } : {}),
     });
   }

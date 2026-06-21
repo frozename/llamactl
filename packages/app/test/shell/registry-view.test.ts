@@ -23,9 +23,10 @@ function m(
     icon: TestIcon,
     Component: TestComponent,
     activityBar: false,
-    beaconGroup: beaconGroup as AppModule["beaconGroup"],
+    beaconGroup: beaconGroup as NonNullable<AppModule["beaconGroup"]>,
     beaconKind,
     beaconOrder,
+    smokeAffordance: `${id}-root`,
   };
 }
 

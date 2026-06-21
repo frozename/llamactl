@@ -512,7 +512,7 @@ export class KubernetesBackend implements RuntimeBackend {
     const translated = translateToStatefulSet(spec, {
       namespace,
       compositeName,
-      storageClassName: this.storageClassName,
+      ...(this.storageClassName !== undefined ? { storageClassName: this.storageClassName } : {}),
       resolvedSecrets,
     });
 
@@ -541,8 +541,9 @@ export class KubernetesBackend implements RuntimeBackend {
 
   // pullImage is not exposed — k8s nodes pull on behalf of the pod.
   // Keeping the method off the class cleanly documents the contract:
-  // `RuntimeBackend.pullImage?` is optional and omitted here.
-  pullImage?: undefined = undefined;
+  // `RuntimeBackend.pullImage?` is optional and omitted here. Under
+  // exactOptionalPropertyTypes the property must be ABSENT (not present
+  // with an `undefined` value), so we deliberately declare nothing.
 
   /**
    * Composite-level teardown: deletes the composite's namespace and
@@ -736,7 +737,7 @@ export class KubernetesBackend implements RuntimeBackend {
     const translated = translateToDeployment(spec, {
       namespace,
       compositeName,
-      storageClassName: this.storageClassName,
+      ...(this.storageClassName !== undefined ? { storageClassName: this.storageClassName } : {}),
       resolvedSecrets,
     });
 

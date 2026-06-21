@@ -2,7 +2,7 @@ import type { ApplyConflict, CompositeOwnership } from "./schema.js";
 
 import { entrySpecHash } from "./hash.js";
 
-type AnyEntry = Record<string, unknown> & { ownership?: CompositeOwnership };
+type AnyEntry = Record<string, unknown> & { ownership?: CompositeOwnership | undefined };
 
 export interface ApplyOpts<T> {
   kind: "sirius" | "embersynth";

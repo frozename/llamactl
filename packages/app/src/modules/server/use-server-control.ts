@@ -68,7 +68,7 @@ export function useServerControl(): UseServerControlReturn {
 
   useServerStartSubscription({
     starting,
-    workload: workload ?? undefined,
+    ...(workload !== null ? { workload } : {}),
     setStarting,
     setError,
     appendLog,

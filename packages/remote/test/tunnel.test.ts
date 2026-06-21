@@ -33,7 +33,7 @@ function startServer(bearer: string, opts: { fixedTime?: string } = {}): Running
     expectedBearerHash: hashToken(bearer),
     onNodeConnect: (n) => connects.push(n),
     onNodeDisconnect: (n, r) => disconnects.push({ node: n, reason: r }),
-    clock: opts.fixedTime ? (): Date => new Date(opts.fixedTime!) : undefined,
+    ...(opts.fixedTime ? { clock: (): Date => new Date(opts.fixedTime!) } : {}),
   });
   const bun = Bun.serve({
     port: 0,

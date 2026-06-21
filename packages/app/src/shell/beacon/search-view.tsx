@@ -82,7 +82,7 @@ export function SearchView(): React.JSX.Element {
           <SearchResultsTree
             results={results}
             onActivate={onActivate}
-            connectedNode={connectedNode}
+            {...(connectedNode !== undefined ? { connectedNode } : {})}
           />
         )}
       </div>

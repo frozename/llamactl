@@ -800,9 +800,9 @@ async function* watchSession(
  */
 export function recordChatUsage(
   response: {
-    usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
     model: string;
-    latencyMs?: number;
+    latencyMs?: number | undefined;
   },
   provider: string,
   route?: string,
@@ -1660,7 +1660,7 @@ export const router = t.router({
     async ({ input }) =>
       await stopModelHost({
         key: { name: input.workload },
-        graceSeconds: input.graceSeconds,
+        ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
       }),
   ),
 
@@ -1671,8 +1671,8 @@ export const router = t.router({
     yield* bridgeEventStream(signal ?? new AbortController().signal, async (emit, subSignal) => {
       await startModelHost({
         key: { name: input.workload },
-        timeoutSeconds: input.timeoutSeconds,
-        manifest: input.manifest,
+        ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
+        ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
         signal: subSignal,
         onEvent: emit,
       });
@@ -2147,8 +2147,8 @@ export const router = t.router({
       yield* bridgeEventStream<serverLogsMod.LogLineEvent>(signal, (emit, sig) =>
         serverLogsMod.tailServerLog({
           key: { name: input.workload },
-          lines: input.lines,
-          follow: input.follow,
+          ...(input.lines !== undefined ? { lines: input.lines } : {}),
+          ...(input.follow !== undefined ? { follow: input.follow } : {}),
           signal: sig,
           onLine: emit,
         }),
@@ -2166,7 +2166,7 @@ export const router = t.router({
       async ({ input }) =>
         await serverMod.stopServer({
           key: { name: input.workload },
-          graceSeconds: input.graceSeconds,
+          ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
         }),
     ),
 
@@ -2193,12 +2193,21 @@ export const router = t.router({
         const result = await serverMod.startServer({
           key: { name: input.workload },
           target: input.target,
-          extraArgs: input.extraArgs,
-          allowExternalBind: input.allowExternalBind,
-          endpoint: input.endpoint,
-          binary: input.binary,
-          timeoutSeconds: input.timeoutSeconds,
-          skipTuned: input.skipTuned,
+          ...(input.extraArgs !== undefined ? { extraArgs: input.extraArgs } : {}),
+          ...(input.allowExternalBind !== undefined
+            ? { allowExternalBind: input.allowExternalBind }
+            : {}),
+          ...(input.endpoint !== undefined
+            ? {
+                endpoint: {
+                  ...(input.endpoint.host !== undefined ? { host: input.endpoint.host } : {}),
+                  ...(input.endpoint.port !== undefined ? { port: input.endpoint.port } : {}),
+                },
+              }
+            : {}),
+          ...(input.binary !== undefined ? { binary: input.binary } : {}),
+          ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
+          ...(input.skipTuned !== undefined ? { skipTuned: input.skipTuned } : {}),
           signal: sig,
           onEvent: emit,
         });
@@ -2208,7 +2217,9 @@ export const router = t.router({
 
   lmstudioScan: t.procedure
     .input(z.object({ root: z.string().optional() }).optional())
-    .query(({ input }) => lmstudioMod.scanLMStudio({ root: input?.root })),
+    .query(({ input }) =>
+      lmstudioMod.scanLMStudio({ ...(input?.root !== undefined ? { root: input.root } : {}) }),
+    ),
 
   lmstudioPlan: t.procedure
     .input(
@@ -2221,8 +2232,8 @@ export const router = t.router({
     )
     .query(({ input }) => {
       const plan = lmstudioMod.planImport({
-        root: input?.root,
-        link: input?.link,
+        ...(input?.root !== undefined ? { root: input.root } : {}),
+        ...(input?.link !== undefined ? { link: input.link } : {}),
       });
       // Surface the resolver's canonical default so the UI can show it
       // as a placeholder without recomputing paths client-side. Under
@@ -2238,7 +2249,11 @@ export const router = t.router({
       }),
     )
     .mutation(({ input }) =>
-      lmstudioMod.applyImport({ root: input.root, link: input.link, apply: true }),
+      lmstudioMod.applyImport({
+        ...(input.root !== undefined ? { root: input.root } : {}),
+        ...(input.link !== undefined ? { link: input.link } : {}),
+        apply: true,
+      }),
     ),
 
   keepAliveStatus: t.procedure.query(() => keepAliveMod.keepAliveStatus()),
@@ -2260,7 +2275,10 @@ export const router = t.router({
   rpcServerStop: t.procedure
     .input(z.object({ graceSeconds: z.number().int().positive().max(60).optional() }).optional())
     .mutation(
-      async ({ input }) => await rpcServerMod.stopRpcServer({ graceSeconds: input?.graceSeconds }),
+      async ({ input }) =>
+        await rpcServerMod.stopRpcServer({
+          ...(input?.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
+        }),
     ),
 
   rpcServerStart: t.procedure
@@ -2279,7 +2297,11 @@ export const router = t.router({
         | { type: "done"; result: rpcServerMod.StartRpcServerResult };
       yield* bridgeEventStream<RpcEvent>(signal, async (emit, sig) => {
         const result = await rpcServerMod.startRpcServer({
-          ...input,
+          port: input.port,
+          ...(input.host !== undefined ? { host: input.host } : {}),
+          ...(input.modelPath !== undefined ? { modelPath: input.modelPath } : {}),
+          ...(input.extraArgs !== undefined ? { extraArgs: input.extraArgs } : {}),
+          ...(input.timeoutSeconds !== undefined ? { timeoutSeconds: input.timeoutSeconds } : {}),
           signal: sig,
           onEvent: emit,
         });
@@ -2298,7 +2320,7 @@ export const router = t.router({
       async ({ input }) =>
         await keepAliveMod.stopKeepAlive({
           key: { name: input.workload },
-          graceSeconds: input.graceSeconds,
+          ...(input.graceSeconds !== undefined ? { graceSeconds: input.graceSeconds } : {}),
         }),
     ),
 
@@ -2354,8 +2376,8 @@ export const router = t.router({
       yield* bridgeEventStream<CandidateStreamEvent>(signal, async (emit, sig) => {
         const result = await candidateMod.candidateTest({
           repo: input.repo,
-          file: input.file,
-          profile: input.profile,
+          ...(input.file !== undefined ? { file: input.file } : {}),
+          ...(input.profile !== undefined ? { profile: input.profile } : {}),
           signal: sig,
           onEvent: emit,
         });
@@ -2375,7 +2397,10 @@ export const router = t.router({
       // Surface the structured report as-is. `code` is 0 on success,
       // non-zero on refusal (e.g. non-candidate scope without --force),
       // with `error` carrying the human message the CLI prints.
-      return uninstallMod.uninstall({ rel: input.rel, force: input.force });
+      return uninstallMod.uninstall({
+        rel: input.rel,
+        ...(input.force !== undefined ? { force: input.force } : {}),
+      });
     }),
 
   autotuneAfterPull: t.procedure
@@ -2482,7 +2507,7 @@ export const router = t.router({
       yield* bridgeEventStream<BenchStreamEvent>(signal, async (emit, sig) => {
         const result = await bench.benchPreset({
           target: input.target,
-          mode: input.mode,
+          ...(input.mode !== undefined ? { mode: input.mode } : {}),
           signal: sig,
           onEvent: emit,
         });
@@ -2517,8 +2542,8 @@ export const router = t.router({
       yield* bridgeEventStream<PullStreamEvent>(signal, async (emit, sig) => {
         const result = await pull.pullCandidate({
           repo: input.repo,
-          file: input.file,
-          profile: input.profile,
+          ...(input.file !== undefined ? { file: input.file } : {}),
+          ...(input.profile !== undefined ? { profile: input.profile } : {}),
           signal: sig,
           onEvent: emit,
         });
@@ -2540,9 +2565,9 @@ export const router = t.router({
     .query(
       async ({ input }) =>
         await discovery.discover({
-          filter: input?.filter,
-          requestedProfile: input?.profile,
-          limit: input?.limit,
+          ...(input?.filter !== undefined ? { filter: input.filter } : {}),
+          ...(input?.profile !== undefined ? { requestedProfile: input.profile } : {}),
+          ...(input?.limit !== undefined ? { limit: input.limit } : {}),
         }),
     ),
 
@@ -2853,9 +2878,13 @@ export const router = t.router({
         dryRun: input.dryRun,
         ok: dispatched.ok,
         durationMs: dispatched.durationMs,
-        errorCode: dispatched.ok ? undefined : (dispatched.error?.code ?? "dispatch_error"),
-        errorMessage: dispatched.ok ? undefined : (dispatched.error?.message ?? "(no message)"),
-        sessionId: input.sessionId,
+        ...(dispatched.ok
+          ? {}
+          : {
+              errorCode: dispatched.error?.code ?? "dispatch_error",
+              errorMessage: dispatched.error?.message ?? "(no message)",
+            }),
+        ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
       });
       return dispatched;
     }),
@@ -2868,7 +2897,13 @@ export const router = t.router({
         status: z.enum(["live", "done", "refused", "aborted"]).optional(),
       }),
     )
-    .query(({ input }) => listSessions(input)),
+    .query(({ input }) =>
+      listSessions({
+        limit: input.limit,
+        ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+      }),
+    ),
 
   opsSessionGet: t.procedure
     .input(
@@ -2967,13 +3002,13 @@ export const router = t.router({
       const plannerTools = mergePlannerTools(callerTools, BUILT_IN_PLANNER_TOOLS);
       const stream = runLoopExecutor({
         goal: input.goal,
-        context: input.context,
-        history: input.history,
+        ...(input.context !== undefined ? { context: input.context } : {}),
+        ...(input.history !== undefined ? { history: input.history } : {}),
         tools: plannerTools,
         executor,
         allowlist: DEFAULT_ALLOWLIST,
-        maxIterations: input.maxIterations,
-        signal,
+        ...(input.maxIterations !== undefined ? { maxIterations: input.maxIterations } : {}),
+        ...(signal !== undefined ? { signal } : {}),
       });
       for await (const event of stream) {
         if (signal?.aborted) break;

@@ -373,7 +373,7 @@ async function runEvalLeaderboard(args: string[]): Promise<number> {
   const evalRoot = ensureEvalRoot();
   const db = new Database(join(evalRoot, "leaderboard.sqlite"), { readonly: true });
   try {
-    const rows = queryRows(db, { node: node || undefined, sort_by: sortBy });
+    const rows = queryRows(db, { ...(node ? { node } : {}), sort_by: sortBy });
     const cols = [
       "model",
       "node",

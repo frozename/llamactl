@@ -174,7 +174,7 @@ async function runTick(opts: {
       opts.journalPath,
     );
   }
-  appendHealerJournal({ kind: "tick", ts: report.ts, report }, opts.journalPath);
+  appendHealerJournal({ kind: "tick", ts: report.ts, report, source: "direct" }, opts.journalPath);
   return report;
 }
 

@@ -85,7 +85,7 @@ export async function runTier3Search(
               startedAt: metadataString(metadata, "startedAt") ?? "",
               matches: [ragSnippet(result)],
               score: result.score,
-              ragDistance: result.distance,
+              ...(result.distance !== undefined ? { ragDistance: result.distance } : {}),
             };
           });
           setResults((cur) =>
@@ -116,7 +116,7 @@ export async function runTier3Search(
               title: metadataString(metadata, "title") ?? result.document.id,
               matches: [ragSnippet(result)],
               score: result.score,
-              ragDistance: result.distance,
+              ...(result.distance !== undefined ? { ragDistance: result.distance } : {}),
             };
           });
           setResults((cur) =>
@@ -153,7 +153,7 @@ export async function runTier3Search(
                 },
               ],
               score: result.score,
-              ragDistance: result.distance,
+              ...(result.distance !== undefined ? { ragDistance: result.distance } : {}),
             };
           });
           setResults((cur) =>

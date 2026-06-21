@@ -51,7 +51,7 @@ export function EditorialHero({
       {pills && pills.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: actions ? 24 : 0 }}>
           {pills.map((p, i) => (
-            <HeroPill key={i} label={p.label} tone={p.tone} />
+            <HeroPill key={i} label={p.label} {...(p.tone !== undefined ? { tone: p.tone } : {})} />
           ))}
         </div>
       )}

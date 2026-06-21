@@ -1,4 +1,5 @@
 import { type bench, candidateTest, type pull } from "@llamactl/core";
+import { omitUndefined } from "@llamactl/core/object";
 
 import {
   getGlobals,
@@ -148,8 +149,7 @@ async function runTest(args: string[]): Promise<number> {
   if (isLocalDispatch()) {
     result = await candidateTest.candidateTest({
       repo,
-      file,
-      profile,
+      ...omitUndefined({ file, profile }),
       onEvent: forwardStream,
     });
   } else {

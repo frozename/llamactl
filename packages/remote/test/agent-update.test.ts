@@ -53,7 +53,11 @@ function postReq(body: Uint8Array, opts: { sha?: string; bearer?: string } = {})
       "x-sha256": sha,
       "content-type": "application/octet-stream",
     },
-    body,
+    // `Uint8Array<ArrayBufferLike>` (e.g. a SharedArrayBuffer-backed view)
+    // is not assignable to the lib's `BodyInit`, which wants an
+    // `ArrayBuffer`-backed view. Copy into a fresh ArrayBuffer-backed
+    // Uint8Array — byte-identical payload, satisfies the type.
+    body: Uint8Array.from(body),
   });
 }
 

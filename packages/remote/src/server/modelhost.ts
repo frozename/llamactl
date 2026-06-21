@@ -14,11 +14,17 @@ import {
   parseSlotSavePathFromCommand,
   resolveSlotSavePathArgs,
 } from "@llamactl/core/kvstore";
+import { omitUndefined } from "@llamactl/core/object";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { basename } from "node:path";
 
 import { existsSync } from "../safe-fs.js";
-import { type ModelHostManifest, ModelHostManifestSchema } from "../workload/modelhost-schema.js";
+import {
+  type ModelHostManifest,
+  ModelHostManifestSchema,
+  specForEngine,
+  specForHash,
+} from "../workload/modelhost-schema.js";
 import { loadModelHostByName, saveModelHost } from "../workload/modelhost-store.js";
 
 function isProcessAlive(pid: number): boolean {
@@ -145,15 +151,7 @@ function withRuntimeDir(env: NodeJS.ProcessEnv, runtimeDir?: string): NodeJS.Pro
 }
 
 function buildModelHostSpec(manifest: ModelHostManifest): ModelHostSpecForEngine {
-  return {
-    engine: manifest.spec.engine,
-    binary: manifest.spec.binary,
-    endpoint: manifest.spec.endpoint,
-    hostedModels: manifest.spec.hostedModels,
-    resources: manifest.spec.resources,
-    extraArgs: manifest.spec.extraArgs,
-    timeoutSeconds: manifest.spec.timeoutSeconds,
-  };
+  return specForEngine(manifest.spec);
 }
 
 // Short probe window for adoption: a process already bound to the endpoint
@@ -279,7 +277,7 @@ async function tryAdoptLiveHost(
       modelAliases: Array.from(aliases),
       startedAt: new Date().toISOString(),
       slotSavePath: typeof cmdline === "string" ? parseSlotSavePathFromCommand(cmdline) : null,
-      specHash: computeModelHostSpecHash(manifest.spec),
+      specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
     },
     opts.key,
     resolved,
@@ -412,9 +410,11 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   }
 
   const bootEnv: EngineBootEnv = {
-    LLAMACTL_MODELS_DIR: env["LLAMACTL_MODELS_DIR"],
-    LLAMA_CPP_MODELS: env["LLAMA_CPP_MODELS"],
-    LLAMACTL_RUNTIME_DIR: env["LLAMACTL_RUNTIME_DIR"],
+    ...omitUndefined({
+      LLAMACTL_MODELS_DIR: env["LLAMACTL_MODELS_DIR"],
+      LLAMA_CPP_MODELS: env["LLAMA_CPP_MODELS"],
+      LLAMACTL_RUNTIME_DIR: env["LLAMACTL_RUNTIME_DIR"],
+    }),
     workloadName: opts.key.name,
     machineProfile: resolved.LLAMA_CPP_MACHINE_PROFILE,
   };
@@ -463,7 +463,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
         modelAliases,
         startedAt: new Date().toISOString(),
         slotSavePath: extraArgsResolved.slotSavePath,
-        specHash: computeModelHostSpecHash(manifest.spec),
+        specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
       },
       opts.key,
       resolved,
@@ -505,5 +505,9 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
   // trusting a stale pid forever — which the proxy route check would treat as
   // dead and silently drop.
   if (!isProcessAlive(state.pid)) return { state: "Stopped" };
-  return { state: "Running", pid: state.pid, specHash: state.specHash };
+  return {
+    state: "Running",
+    pid: state.pid,
+    ...omitUndefined({ specHash: state.specHash }),
+  };
 }

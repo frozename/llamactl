@@ -99,9 +99,14 @@ export type RagSearchCaller = (input: {
   collection?: string;
 }) => Promise<{
   results: {
-    document: { id: string; content: string; metadata?: Record<string, unknown> };
+    document: {
+      id: string;
+      content: string;
+      metadata?: Record<string, unknown> | undefined;
+      vector?: number[] | undefined;
+    };
     score: number;
-    distance?: number;
+    distance?: number | undefined;
   }[];
   collection: string;
 }>;

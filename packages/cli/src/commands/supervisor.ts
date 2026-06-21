@@ -1,4 +1,5 @@
 import { env as envMod, sourceRevision } from "@llamactl/core";
+import { omitUndefined } from "@llamactl/core/object";
 import {
   appendFleetJournal,
   type CompletionProbeConfig,
@@ -128,7 +129,7 @@ async function runSupervisorStatus(flags: Flags, journalPath: string): Promise<n
   const report = await readSupervisorStatus({
     journalPath,
     node: flags.node,
-    limit: flags.limit,
+    ...omitUndefined({ limit: flags.limit }),
   });
 
   if (flags.json) {
@@ -149,10 +150,10 @@ async function runSupervisorStatus(flags: Flags, journalPath: string): Promise<n
 
 async function runSupervisorAudit(flags: Flags): Promise<number> {
   const res = await readAuditEntries({
-    auditPath: flags.auditPath,
-    tool: flags.tool,
-    outcome: flags.outcome,
-    since: flags.since,
+    ...omitUndefined({ auditPath: flags.auditPath }),
+    ...omitUndefined({ tool: flags.tool }),
+    ...omitUndefined({ outcome: flags.outcome }),
+    ...omitUndefined({ since: flags.since }),
     limit: flags.limit ?? 50,
   });
 
@@ -274,7 +275,7 @@ function buildSupervisorLoopOptions(
     once,
     intervalMs: flags.intervalMs,
     writeJournal,
-    startupRev,
+    ...omitUndefined({ startupRev }),
     checkSourceStale,
     reloadOnSourceChange: flags.reloadOnSourceChange,
     pressureThresholds: {
@@ -290,38 +291,40 @@ function buildSupervisorLoopOptions(
     },
     migrationController,
     logSlotProgress: flags.logSlotProgress,
-    onTick: executorEnabled
-      ? async (): Promise<void> => {
-          const results = await runExecutor({
-            node: flags.node,
-            auto: flags.auto,
-            severityThreshold: flags.severityThreshold,
-            executeId: flags.executeId,
-            journalPath,
-            writeJournal,
-            disable: async (name) => {
-              const r = await setWorkloadEnabled(name, false);
-              if (r.message && !flags.quiet)
-                process.stderr.write(`supervisor: executor: ${r.message}`);
-              return r.code;
-            },
-            enable: async (name) => {
-              const r = await setWorkloadEnabled(name, true);
-              if (r.message && !flags.quiet)
-                process.stderr.write(`supervisor: executor: ${r.message}`);
-              return r.code;
-            },
-          });
-          if (!flags.quiet && results.length > 0) {
-            for (const r of results) {
-              process.stderr.write(
-                // eslint-disable-next-line eqeqeq -- Preserve existing CLI/test semantics while clearing strict lint debt.
-                `supervisor: executor: ${r.status} proposal=${r.proposalId} action=${r.action.type}${r.reason ? ` reason=${r.reason}` : ""}${r.exitCode != null ? ` exitCode=${String(r.exitCode)}` : ""}\n`,
-              );
+    ...(executorEnabled
+      ? {
+          onTick: async (): Promise<void> => {
+            const results = await runExecutor({
+              node: flags.node,
+              auto: flags.auto,
+              severityThreshold: flags.severityThreshold,
+              ...omitUndefined({ executeId: flags.executeId }),
+              journalPath,
+              writeJournal,
+              disable: async (name) => {
+                const r = await setWorkloadEnabled(name, false);
+                if (r.message && !flags.quiet)
+                  process.stderr.write(`supervisor: executor: ${r.message}`);
+                return r.code;
+              },
+              enable: async (name) => {
+                const r = await setWorkloadEnabled(name, true);
+                if (r.message && !flags.quiet)
+                  process.stderr.write(`supervisor: executor: ${r.message}`);
+                return r.code;
+              },
+            });
+            if (!flags.quiet && results.length > 0) {
+              for (const r of results) {
+                process.stderr.write(
+                  // eslint-disable-next-line eqeqeq -- Preserve existing CLI/test semantics while clearing strict lint debt.
+                  `supervisor: executor: ${r.status} proposal=${r.proposalId} action=${r.action.type}${r.reason ? ` reason=${r.reason}` : ""}${r.exitCode != null ? ` exitCode=${String(r.exitCode)}` : ""}\n`,
+                );
+              }
             }
-          }
+          },
         }
-      : undefined,
+      : {}),
   };
 }
 
@@ -449,7 +452,7 @@ interface Flags {
 
 interface ResolveWorkloadUrlDeps {
   loadWorkloadByName?: typeof workloadStore.loadWorkloadByName;
-  loadWorkloadByNameAny?: (name: string) => { spec: { useProxy?: boolean } };
+  loadWorkloadByNameAny?: (name: string) => { spec: { useProxy?: boolean | undefined } };
   resolveInternalProxyEndpoint?: typeof envMod.resolveInternalProxyEndpoint;
   warn?: (message: string) => void;
 }
@@ -466,10 +469,10 @@ export function resolveWorkloadUrl(
 ): string {
   const loadWorkloadByNameAny =
     deps.loadWorkloadByNameAny ??
-    ((workloadName: string): { spec: { useProxy?: boolean } } =>
-      (deps.loadWorkloadByName
+    ((workloadName: string): { spec: { useProxy?: boolean | undefined } } =>
+      deps.loadWorkloadByName
         ? deps.loadWorkloadByName(workloadName)
-        : workloadStore.loadWorkloadByName(workloadName)) as { spec: { useProxy?: boolean } });
+        : workloadStore.loadWorkloadByName(workloadName));
   const resolveInternalProxyEndpoint =
     deps.resolveInternalProxyEndpoint ?? envMod.resolveInternalProxyEndpoint;
   const warn = deps.warn ?? ((message: string): boolean => process.stderr.write(`${message}\n`));
@@ -573,7 +576,8 @@ interface AuditFlags {
 
 function parseAuditFlags(raw: string, current: AuditFlags): void {
   if (raw.startsWith("--limit=")) {
-    current.limit = num(raw, "--limit=", 0) || undefined;
+    const limit = num(raw, "--limit=", 0) || undefined;
+    if (limit !== undefined) current.limit = limit;
     return;
   }
   if (raw.startsWith("--audit-path=")) {
@@ -776,14 +780,23 @@ function parseFlags(argv: string[]): Flags {
   };
 
   const audit: AuditFlags = { json: false };
-  const pressure = {
+  const pressure: {
+    intervalMs: number;
+    journal?: string;
+    node: string;
+    headroomMb: number;
+    compressorMb: number;
+    consecutiveTicks: number;
+    clearTicks?: number;
+    p95DegradedMs: number;
+    consecutiveErrors: number;
+    consecutiveCompletionErrors: number;
+  } = {
     intervalMs: 30_000,
-    journal: undefined as string | undefined,
     node: "local",
     headroomMb: 512,
     compressorMb: 2048,
     consecutiveTicks: 3,
-    clearTicks: undefined as number | undefined,
     p95DegradedMs: 5000,
     consecutiveErrors: 3,
     consecutiveCompletionErrors: 2,
@@ -806,12 +819,12 @@ function parseFlags(argv: string[]): Flags {
   return {
     intervalMs: pressure.intervalMs,
     once: toggles.once,
-    journal: pressure.journal,
+    ...omitUndefined({ journal: pressure.journal }),
     node: pressure.node,
     headroomMb: pressure.headroomMb,
     compressorMb: pressure.compressorMb,
     consecutiveTicks: pressure.consecutiveTicks,
-    clearTicks: pressure.clearTicks,
+    ...omitUndefined({ clearTicks: pressure.clearTicks }),
     p95DegradedMs: pressure.p95DegradedMs,
     consecutiveErrors: pressure.consecutiveErrors,
     consecutiveCompletionErrors: pressure.consecutiveCompletionErrors,
@@ -823,13 +836,13 @@ function parseFlags(argv: string[]): Flags {
     reloadOnSourceChange: toggles.reloadOnSourceChange,
     severityThreshold: executor.severityThreshold,
 
-    executeId: executor.executeId,
+    ...omitUndefined({ executeId: executor.executeId }),
     json: audit.json,
-    limit: audit.limit,
-    auditPath: audit.auditPath,
-    tool: audit.tool,
-    outcome: audit.outcome,
-    since: audit.since,
+    ...omitUndefined({ limit: audit.limit }),
+    ...omitUndefined({ auditPath: audit.auditPath }),
+    ...omitUndefined({ tool: audit.tool }),
+    ...omitUndefined({ outcome: audit.outcome }),
+    ...omitUndefined({ since: audit.since }),
   };
 }
 

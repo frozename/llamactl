@@ -1,3 +1,4 @@
+import { omitUndefined } from "@llamactl/core/object";
 import {
   type AllowlistConfig,
   type Plan,
@@ -297,7 +298,7 @@ export async function* runLoopExecutor(
         context: buildMergedContext(opts, outcomes),
         tools: opts.tools,
         executor: opts.executor,
-        allowlist: opts.allowlist,
+        ...omitUndefined({ allowlist: opts.allowlist }),
       });
 
       if (!result.ok) {

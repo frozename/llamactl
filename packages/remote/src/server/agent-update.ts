@@ -1,3 +1,4 @@
+import { omitUndefined } from "@llamactl/core/object";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 
@@ -279,9 +280,11 @@ export async function handleAgentUpdate(req: Request, opts: AgentUpdateOptions):
       previousPath,
       host: opts.watchdog.host,
       port: opts.watchdog.port,
-      gracePeriodMs: opts.watchdog.gracePeriodMs,
-      pollIntervalMs: opts.watchdog.pollIntervalMs,
-      maxPollAttempts: opts.watchdog.maxPollAttempts,
+      ...omitUndefined({
+        gracePeriodMs: opts.watchdog.gracePeriodMs,
+        pollIntervalMs: opts.watchdog.pollIntervalMs,
+        maxPollAttempts: opts.watchdog.maxPollAttempts,
+      }),
     };
     (opts._spawnWatchdog ?? spawnDetachedWatchdog)(wdConfig);
   }

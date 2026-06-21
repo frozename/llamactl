@@ -48,7 +48,10 @@ function OutcomeBlock({
         </div>
       )}
       {outcome.result !== undefined || outcome.resultRedacted ? (
-        <ResultViewer value={outcome.result} redacted={outcome.resultRedacted} />
+        <ResultViewer
+          value={outcome.result}
+          {...(outcome.resultRedacted !== undefined ? { redacted: outcome.resultRedacted } : {})}
+        />
       ) : null}
     </div>
   );

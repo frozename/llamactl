@@ -79,7 +79,7 @@ export function buildCompletionRequest(opts: {
       messages: opts.messages,
       temperature: opts.temperature ?? 0,
       max_tokens: opts.maxTokens,
-      seed: opts.seed,
+      ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
       stream: false,
       ...(opts.tools ? { tools: opts.tools, tool_choice: opts.tool_choice ?? "auto" } : {}),
       ...(opts.response_format ? { response_format: opts.response_format } : {}),

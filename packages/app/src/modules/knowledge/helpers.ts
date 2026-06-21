@@ -38,7 +38,7 @@ function toIndexDocument(entry: unknown): IndexDocumentInput {
   return {
     id: e.id,
     content: e.content,
-    metadata: e.metadata && typeof e.metadata === "object" ? e.metadata : undefined,
+    ...(e.metadata && typeof e.metadata === "object" ? { metadata: e.metadata } : {}),
   };
 }
 

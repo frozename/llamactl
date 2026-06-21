@@ -611,8 +611,8 @@ export function assemblePlistOptions(a: AssembledPlistArgs): BuildPlistOptions {
   if (a.scope === "system") {
     return {
       ...common,
-      user: a.user,
-      group: a.group,
+      ...(a.user !== undefined ? { user: a.user } : {}),
+      ...(a.group !== undefined ? { group: a.group } : {}),
       workingDir: a.dirArg,
     };
   }
@@ -990,7 +990,7 @@ async function executeInstallWithResult(opts: ExecuteInstallOpts): Promise<Execu
     return { code: 1 };
   }
 
-  return { code: 0, pid: pollResult.pid };
+  return { code: 0, ...(pollResult.pid !== undefined ? { pid: pollResult.pid } : {}) };
 }
 
 function defaultAgentDir(deps: InstallLaunchdDeps, homeDir: string): string {
