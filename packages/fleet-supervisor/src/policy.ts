@@ -145,14 +145,14 @@ export function detectDegradation(
   const completionWedged = completionFailures >= thresholds.consecutiveCompletionErrorsForDegraded;
   const unhealthy =
     workload.consecutiveErrors >= thresholds.consecutiveErrorsForDegraded ||
-    workload.p95_ms > thresholds.p95DegradedMs ||
+    (workload.p95_ms !== null && workload.p95_ms > thresholds.p95DegradedMs) ||
     completionWedged;
   // Recovery must mirror the unhealthy conditions. If latency is still over
   // threshold, a p95-driven degradation would flip healthy on every tick.
   const recovered =
     workload.reachable &&
     workload.consecutiveErrors === 0 &&
-    workload.p95_ms <= thresholds.p95DegradedMs &&
+    (workload.p95_ms === null || workload.p95_ms <= thresholds.p95DegradedMs) &&
     !completionWedged;
 
   if (unhealthy && priorState !== "degraded") {

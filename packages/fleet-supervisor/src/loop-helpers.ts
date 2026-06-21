@@ -316,8 +316,8 @@ export function makeUnreachableFallback(
     rss_mb: null,
     request_rate_5m: null,
     error_rate_5m: 1,
-    p50_ms: 0,
-    p95_ms: 0,
+    p50_ms: null,
+    p95_ms: null,
     models: [],
     reachable: false,
     consecutiveErrors: (consecutiveErrors.get(target.name) ?? 0) + 1,
@@ -384,8 +384,8 @@ export function applyPressureTransition(
       clearTicksNeeded: pressureThresholds.clearTicks,
       free_mb: node_mem.free_mb,
       compressor_mb: node_mem.compressor_mb,
-      headroomBreach: node_mem.free_mb < pressureThresholds.headroomMinMb,
-      compressorBreach: node_mem.compressor_mb > pressureThresholds.compressorWarnMb,
+      headroomBreach: node_mem.free_mb <= pressureThresholds.headroomMinMb,
+      compressorBreach: node_mem.compressor_mb >= pressureThresholds.compressorWarnMb,
     };
     writeJournalEntry(statusEntry);
   } else if (lastPressureLevel === "HIGH") {
@@ -441,6 +441,7 @@ export function emitPeriodicPressureStatus(
   if (
     state.lastPressureLevel === "HIGH" &&
     pressureStatusEveryTicks > 0 &&
+    state.ticksInHigh > 0 &&
     state.ticksInHigh % pressureStatusEveryTicks === 0
   ) {
     if (state.enteredHighAt === null) return;
@@ -455,8 +456,8 @@ export function emitPeriodicPressureStatus(
       clearTicksNeeded: pressureThresholds.clearTicks,
       free_mb: node_mem.free_mb,
       compressor_mb: node_mem.compressor_mb,
-      headroomBreach: node_mem.free_mb < pressureThresholds.headroomMinMb,
-      compressorBreach: node_mem.compressor_mb > pressureThresholds.compressorWarnMb,
+      headroomBreach: node_mem.free_mb <= pressureThresholds.headroomMinMb,
+      compressorBreach: node_mem.compressor_mb >= pressureThresholds.compressorWarnMb,
     };
     writeJournalEntry(statusEntry);
   }
