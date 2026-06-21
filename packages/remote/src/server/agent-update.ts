@@ -20,6 +20,11 @@ import { unauthorizedResponse, verifyBearer } from "./auth.js";
  * for rollback, then schedules `process.exit(0)` so launchd respawns
  * into the new binary.
  *
+ * A detached watchdog subprocess is spawned (when `opts.watchdog` is set)
+ * before the exit. It polls the agent's listen endpoint; if launchd fails
+ * to respawn within the deadline it restores `.previous` and relaunches
+ * the agent directly so the node self-heals without operator intervention.
+ *
  * Bearer-auth'd with the same token as every other agent endpoint —
  * only callers with the agent's existing kubeconfig credentials can
  * push an update.
@@ -31,6 +36,126 @@ import { unauthorizedResponse, verifyBearer } from "./auth.js";
  * KeepAlive flips it back into a respawn loop and the operator can
  * `agent rollback` (separate command) to restore `.previous`.
  */
+
+// ---------------------------------------------------------------------------
+// Watchdog types + logic
+// ---------------------------------------------------------------------------
+
+export interface WatchdogConfig {
+  selfPath: string;
+  previousPath: string;
+  host: string;
+  port: number;
+  /** Milliseconds to wait before first probe (default 8000). */
+  gracePeriodMs?: number;
+  /** Milliseconds between probes (default 5000). */
+  pollIntervalMs?: number;
+  /** Maximum probe attempts before triggering recovery (default 8). */
+  maxPollAttempts?: number;
+}
+
+export interface WatchdogDeps {
+  /** Returns true when the agent endpoint is accepting connections. */
+  probe: (host: string, port: number) => Promise<boolean>;
+  sleep: (ms: number) => Promise<void>;
+  /** Copy src → dst (overwrite). */
+  copyFile: (src: string, dst: string) => void;
+  /** Spawn the agent binary detached to restart it. */
+  spawn: (execPath: string) => void;
+  /** Last-resort error reporting that must not throw. */
+  stderr: (msg: string) => void;
+}
+
+/**
+ * Watchdog logic with fully injectable side-effects for unit testing.
+ * Waits up to `gracePeriodMs + maxPollAttempts * pollIntervalMs` for
+ * the agent to come back. On timeout, copies `.previous` over `selfPath`
+ * and spawns the agent so the node recovers without operator action.
+ *
+ * Every operation is wrapped in try/catch so a partial failure cannot
+ * propagate and strand the watchdog process.
+ */
+export async function runWatchdog(config: WatchdogConfig, deps: WatchdogDeps): Promise<void> {
+  const grace = config.gracePeriodMs ?? 8000;
+  const interval = config.pollIntervalMs ?? 5000;
+  const maxAttempts = config.maxPollAttempts ?? 8;
+  const { host, port, selfPath, previousPath } = config;
+
+  await deps.sleep(grace);
+
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      if (await deps.probe(host, port)) return;
+    } catch {
+      // probe error is non-fatal — keep polling
+    }
+    if (i < maxAttempts - 1) await deps.sleep(interval);
+  }
+
+  // Agent did not come back — self-heal by restoring the known-good binary.
+  try {
+    deps.copyFile(previousPath, selfPath);
+  } catch (err) {
+    deps.stderr(`watchdog: restore .previous failed: ${String(err)}`);
+  }
+
+  // Always attempt relaunch even when the restore above threw.
+  try {
+    deps.spawn(selfPath);
+  } catch (err) {
+    deps.stderr(`watchdog: relaunch failed: ${String(err)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Production watchdog spawn (bun --eval with inline script)
+// ---------------------------------------------------------------------------
+
+function buildWatchdogEval(config: WatchdogConfig): string {
+  const grace = config.gracePeriodMs ?? 8000;
+  const interval = config.pollIntervalMs ?? 5000;
+  const maxAttempts = config.maxPollAttempts ?? 8;
+  const { host, port, selfPath, previousPath } = config;
+  const portS = port.toString();
+  const graceS = grace.toString();
+  const intervalS = interval.toString();
+  const maxS = maxAttempts.toString();
+  const maxM1S = (maxAttempts - 1).toString();
+  return (
+    `const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));` +
+    `async function probe(){try{` +
+    `const s=await Bun.connect({hostname:${JSON.stringify(host)},port:${portS},` +
+    `socket:{open(){},data(){},close(){},error(){}}});` +
+    `s.end();return true;}catch{return false;}}` +
+    `const{copyFileSync}=await import("node:fs");` +
+    `const{spawn}=await import("node:child_process");` +
+    `await sleep(${graceS});` +
+    `for(let i=0;i<${maxS};i++){` +
+    `try{if(await probe())process.exit(0);}catch{}` +
+    `if(i<${maxM1S})await sleep(${intervalS});}` +
+    `try{copyFileSync(${JSON.stringify(previousPath)},${JSON.stringify(selfPath)});}` +
+    `catch(e){process.stderr.write(String(e));}` +
+    `try{spawn(${JSON.stringify(selfPath)},[],{detached:true,stdio:"ignore"}).unref();}` +
+    `catch(e){process.stderr.write(String(e));}`
+  );
+}
+
+function spawnDetachedWatchdog(config: WatchdogConfig): void {
+  try {
+    const proc = Bun.spawn(["bun", "--eval", buildWatchdogEval(config)], {
+      detached: true,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    proc.unref();
+  } catch {
+    // Non-fatal: launchd KeepAlive may still respawn the agent.
+    process.stderr.write("agent-update: watchdog spawn failed\n");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// handleAgentUpdate
+// ---------------------------------------------------------------------------
 
 export interface AgentUpdateOptions {
   /** SHA-256 hex of the expected bearer token. */
@@ -48,6 +173,24 @@ export interface AgentUpdateOptions {
    * production but breaks unit tests by killing the test runner.
    */
   exitAfter?: boolean;
+  /**
+   * When set, a detached watchdog subprocess is spawned before the agent
+   * exits. The watchdog polls `host:port`; if the agent doesn't come back
+   * within the deadline it restores `.previous` and relaunches directly.
+   */
+  watchdog?: {
+    host: string;
+    port: number;
+    gracePeriodMs?: number;
+    pollIntervalMs?: number;
+    maxPollAttempts?: number;
+  };
+  /**
+   * Test-only: replaces the real `spawnDetachedWatchdog` call so tests
+   * can assert the config without launching a real subprocess. Only called
+   * when `watchdog` is also set.
+   */
+  _spawnWatchdog?: (config: WatchdogConfig) => void;
 }
 
 export interface AgentUpdateResult {
@@ -129,6 +272,20 @@ export async function handleAgentUpdate(req: Request, opts: AgentUpdateOptions):
   };
   const body = JSON.stringify(result);
 
+  // Spawn watchdog BEFORE scheduling exit so it's running before teardown.
+  if (opts.watchdog) {
+    const wdConfig: WatchdogConfig = {
+      selfPath,
+      previousPath,
+      host: opts.watchdog.host,
+      port: opts.watchdog.port,
+      gracePeriodMs: opts.watchdog.gracePeriodMs,
+      pollIntervalMs: opts.watchdog.pollIntervalMs,
+      maxPollAttempts: opts.watchdog.maxPollAttempts,
+    };
+    (opts._spawnWatchdog ?? spawnDetachedWatchdog)(wdConfig);
+  }
+
   // Fire-and-forget exit so launchd's KeepAlive respawns into the
   // new binary. 200ms is enough to flush the response back to the
   // operator before tearing down. Tests bypass this by passing
@@ -149,6 +306,10 @@ function jsonError(status: number, message: string): Response {
     headers: { "content-type": "application/json" },
   });
 }
+
+// ---------------------------------------------------------------------------
+// handleAgentRollback
+// ---------------------------------------------------------------------------
 
 export interface AgentRollbackOptions {
   tokenHash: string;
