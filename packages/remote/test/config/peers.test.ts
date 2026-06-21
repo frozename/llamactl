@@ -1,11 +1,11 @@
+import * as kubeconfigActual from "@llamactl/core/config/kubeconfig";
+import { saveConfig, upsertCluster, upsertNode } from "@llamactl/core/config/kubeconfig";
+import { listPeers } from "@llamactl/core/config/peers";
+import { freshConfig, LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
 import { afterAll, afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import * as kubeconfigActual from "../../src/config/kubeconfig.js";
-import { saveConfig, upsertCluster, upsertNode } from "../../src/config/kubeconfig.js";
-import { listPeers } from "../../src/config/peers.js";
-import { freshConfig, LOCAL_NODE_NAME } from "../../src/config/schema.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
 // Snapshot the real exports at load time. mock.module retroactively
@@ -18,7 +18,7 @@ const kubeconfigReal = { ...kubeconfigActual };
 // whole suite runs in one bun process (mock.module is process-global);
 // re-register the real module so later files see real behavior.
 afterAll(() => {
-  void mock.module("../../src/config/kubeconfig.js", () => kubeconfigReal);
+  void mock.module("@llamactl/core/config/kubeconfig", () => kubeconfigReal);
 });
 
 let tmp: string;
@@ -124,56 +124,4 @@ test("listPeers honors explicit currentNodeName override", () => {
       .map((peer) => peer.id)
       .sort(),
   ).toEqual(["remote-node"]);
-});
-
-test("readSchedulerLease reads holder from journal and does not call loadConfig fallback", async () => {
-  const journalPath = join(tmp, "journal.jsonl");
-  writeFileSync(
-    journalPath,
-    [
-      JSON.stringify({
-        kind: "fleet-lease-election",
-        ts: "2026-05-26T00:00:00.000Z",
-        node: "node-a",
-        holder: "node-a",
-      }),
-      JSON.stringify({
-        kind: "fleet-lease-election",
-        ts: "2026-05-26T00:00:01.000Z",
-        node: "node-b",
-        holder: "node-b",
-      }),
-    ].join("\n") + "\n",
-    "utf8",
-  );
-
-  const loadConfigSpy = mock(() => {
-    throw new Error("loadConfig should not be called");
-  });
-
-  void mock.module("../../src/config/kubeconfig.js", () => ({
-    currentContext: (): never => {
-      throw new Error("currentContext should not be called");
-    },
-    loadConfig: loadConfigSpy,
-    resolveToken: (): undefined => undefined,
-    saveConfig,
-    upsertCluster,
-    upsertNode,
-  }));
-
-  let peers: { readSchedulerLease: (path: string) => { holder: string } | null };
-  try {
-    peers = (await import(`../../src/config/peers.js?f11-${String(Date.now())}`)) as {
-      readSchedulerLease: (path: string) => { holder: string } | null;
-    };
-  } finally {
-    // The throwing mock must not outlive this import: mock.module is
-    // process-global, and a whole-suite run (cross-repo-smoke) executes
-    // other files' kubeconfig calls after this test.
-    void mock.module("../../src/config/kubeconfig.js", () => kubeconfigReal);
-  }
-  const lease = peers.readSchedulerLease(journalPath);
-  expect(lease).toEqual({ holder: "node-b" });
-  expect(loadConfigSpy).not.toHaveBeenCalled();
 });

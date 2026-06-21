@@ -1,3 +1,5 @@
+import type { ClusterNode, Config, User } from "@llamactl/core/config/schema";
+
 import {
   autotune as autotuneMod,
   bench,
@@ -20,6 +22,9 @@ import {
   target as targetMod,
   uninstall as uninstallMod,
 } from "@llamactl/core";
+import { decodeBootstrap } from "@llamactl/core/config/agent-config";
+import { nonEmpty } from "@llamactl/core/config/env";
+import * as kubecfg from "@llamactl/core/config/kubeconfig";
 import {
   type CostJournalEntry,
   decideGuardianAction,
@@ -52,16 +57,12 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import type { CompositeApplyEvent } from "./composite/types.js";
-import type { ClusterNode, Config, User } from "./config/schema.js";
 import type { RuntimeBackend } from "./runtime/backend.js";
 import type { RuntimeKind } from "./runtime/factory.js";
 
 import * as benchScheduleMod from "./bench/schedule.js";
 import * as benchScheduleLoopMod from "./bench/scheduleLoop.js";
 import { buildPinnedLinks } from "./client/links.js";
-import { decodeBootstrap } from "./config/agent-config.js";
-import { nonEmpty } from "./config/env.js";
-import * as kubecfg from "./config/kubeconfig.js";
 import * as infraInstallMod from "./infra/install.js";
 import * as infraLayoutMod from "./infra/layout.js";
 import * as infraServicesMod from "./infra/services.js";
@@ -872,7 +873,7 @@ export const router = t.router({
     const cfg = kubecfg.loadConfig();
     const ctx = kubecfg.currentContext(cfg);
     const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
-    const { resolveNodeKind } = await import("./config/schema.js");
+    const { resolveNodeKind } = await import("@llamactl/core/config/schema");
     const { synthesizeProviderNodes } = await import("./config/provider-nodes.js");
     // Provider-kind virtual nodes derived from sirius-providers.yaml
     // for each gateway. Synthesized fresh on every read — no cache.
@@ -896,7 +897,7 @@ export const router = t.router({
   nodeTest: t.procedure.input(z.object({ name: z.string().min(1) })).query(async ({ input }) => {
     const cfg = kubecfg.loadConfig();
     const resolved = kubecfg.resolveNode(cfg, input.name);
-    const { resolveNodeKind } = await import("./config/schema.js");
+    const { resolveNodeKind } = await import("@llamactl/core/config/schema");
     const kind = resolveNodeKind(resolved.node);
     const node = resolved.node;
 
@@ -1308,7 +1309,7 @@ export const router = t.router({
   nodeModels: t.procedure.input(z.object({ name: z.string().min(1) })).query(async ({ input }) => {
     const cfg = kubecfg.loadConfig();
     const resolved = kubecfg.resolveNode(cfg, input.name);
-    const { resolveNodeKind } = await import("./config/schema.js");
+    const { resolveNodeKind } = await import("@llamactl/core/config/schema");
     const kind = resolveNodeKind(resolved.node);
     if (kind === "provider") {
       // Scope to the parent gateway's catalog, filtered by

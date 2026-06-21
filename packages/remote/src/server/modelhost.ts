@@ -1,22 +1,22 @@
-import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { basename } from "node:path";
+import type { EngineBootEnv, ModelHostSpecForEngine } from "@llamactl/core/engines/types";
+import type { WorkloadKey } from "@llamactl/core/workloadRuntime";
 
-import type { EngineBootEnv, ModelHostSpecForEngine } from "../../../core/src/engines/types.js";
-import type { WorkloadKey } from "../../../core/src/workloadRuntime.js";
-
-import { ENGINES } from "../../../core/src/engines/index.js";
+import { ENGINES } from "@llamactl/core/engines";
 import {
   computeModelHostSpecHash,
   readModelHostState,
   removeModelHostState,
   writeModelHostState,
-} from "../../../core/src/engines/state.js";
-import { resolveEnv } from "../../../core/src/env.js";
+} from "@llamactl/core/engines/state";
+import { resolveEnv } from "@llamactl/core/env";
 import {
   defaultReadProcessCommand,
   parseSlotSavePathFromCommand,
   resolveSlotSavePathArgs,
-} from "../../../core/src/kvstore/index.js";
+} from "@llamactl/core/kvstore";
+import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
+import { basename } from "node:path";
+
 import { existsSync } from "../safe-fs.js";
 import { type ModelHostManifest, ModelHostManifestSchema } from "../workload/modelhost-schema.js";
 import { loadModelHostByName, saveModelHost } from "../workload/modelhost-store.js";

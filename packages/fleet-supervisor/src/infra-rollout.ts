@@ -1,4 +1,5 @@
-import type { PeerNode } from "../../remote/src/config/peers.js";
+import type { PeerNode } from "@llamactl/core/config/peers";
+
 import type { FleetSnapshotEntry } from "./types.js";
 
 export type InfraRolloutStrategy = "one-at-a-time" | "all";

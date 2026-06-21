@@ -1,5 +1,6 @@
 import type { UnifiedAiRequest, UnifiedStreamEvent } from "@nova/contracts";
 
+import { type CliBinding, CliBindingSchema } from "@llamactl/core/config/schema";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -7,7 +8,6 @@ import {
   type SpawnStreamFn,
   type SpawnStreamResult,
 } from "../src/cli/adapter.js";
-import { type CliBinding, CliBindingSchema } from "../src/config/schema.js";
 
 /**
  * Streaming adapter coverage. Every test injects a fake

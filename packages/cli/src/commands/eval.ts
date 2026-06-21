@@ -1,6 +1,3 @@
-import { Database } from "bun:sqlite";
-import { basename, join } from "node:path";
-
 import type {
   ContextRetrievalDetail,
   JsonOutputFailure,
@@ -8,7 +5,7 @@ import type {
   SubBenchDetail,
   ThroughputDetail,
   ToolCallingFailure,
-} from "../../../eval/src/index.js";
+} from "@llamactl/eval";
 
 import {
   composite,
@@ -22,7 +19,10 @@ import {
   spawnServer,
   upsertRow,
   waitForHealth,
-} from "../../../eval/src/index.js";
+} from "@llamactl/eval";
+import { Database } from "bun:sqlite";
+import { basename, join } from "node:path";
+
 import { getGlobals } from "../dispatcher.js";
 import { required } from "../required.js";
 import { existsSync, mkdirSync } from "../safe-fs.js";

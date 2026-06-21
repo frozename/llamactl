@@ -1,11 +1,10 @@
 import type { schemas } from "@llamactl/core";
+import type { Config } from "@llamactl/core/config/schema";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
-
-import type { Config } from "../src/config/schema.js";
 
 import {
   DEFAULT_EMBERSYNTH_PROFILES,

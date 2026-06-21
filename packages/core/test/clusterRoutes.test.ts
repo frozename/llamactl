@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import type { PeerNode } from "../../remote/src/config/peers.js";
+import type { PeerNode } from "../src/config/peers.js";
 import type { LocalRoute, PeerSnapshot } from "../src/workloadRuntime.js";
 
 import { listClusterRoutes } from "../src/workloadRuntime.js";

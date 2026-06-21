@@ -1,6 +1,6 @@
+import { llamactlHome } from "@llamactl/core/config/env";
 import { join } from "node:path";
 
-import { llamactlHome } from "../config/env.js";
 import { existsSync, statSync } from "../safe-fs.js";
 
 /**

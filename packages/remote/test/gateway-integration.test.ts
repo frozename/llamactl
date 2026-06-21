@@ -1,9 +1,10 @@
+import type { ClusterNode } from "@llamactl/core/config/schema";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
-import type { ClusterNode } from "../src/config/schema.js";
 import type { ModelRun } from "../src/workload/schema.js";
 
 import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";

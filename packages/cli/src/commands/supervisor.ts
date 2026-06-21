@@ -1,6 +1,4 @@
 import { env as envMod, sourceRevision } from "@llamactl/core";
-import { listPeers, workloadStore } from "@llamactl/remote";
-
 import {
   appendFleetJournal,
   type CompletionProbeConfig,
@@ -17,8 +15,10 @@ import {
   startSupervisorLoop,
   type SupervisorLoopOptions,
   type WorkloadTarget,
-} from "../../../fleet-supervisor/src/index.js";
-import { readSchedulerLease } from "../../../remote/src/config/peers.js";
+} from "@llamactl/fleet-supervisor";
+import { readCurrentLeaseHolder } from "@llamactl/fleet-supervisor/journal";
+import { listPeers, workloadStore } from "@llamactl/remote";
+
 import { getGlobals } from "../dispatcher.js";
 import { isRecord } from "../runtime-shape.js";
 import { setWorkloadEnabled } from "./setEnabled.js";
@@ -831,4 +831,10 @@ function parseFlags(argv: string[]): Flags {
     outcome: audit.outcome,
     since: audit.since,
   };
+}
+
+function readSchedulerLease(journalPath: string): { holder: string } | null {
+  const holder = readCurrentLeaseHolder(journalPath);
+  if (!holder) return null;
+  return { holder };
 }

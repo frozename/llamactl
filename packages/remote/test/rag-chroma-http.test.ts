@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { RagBinding } from "@llamactl/core/config/schema";
 
-import type { RagBinding } from "../src/config/schema.js";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import {
   CHROMA_DEFAULT_DATABASE,
@@ -623,7 +623,7 @@ describe("ChromaRagAdapter (HTTP backend)", () => {
       },
     });
     try {
-      const { freshConfig } = await import("../src/config/schema.js");
+      const { freshConfig } = await import("@llamactl/core/config/schema");
       const cfg = freshConfig();
       const adapter = (await createChromaAdapter(
         httpBinding({

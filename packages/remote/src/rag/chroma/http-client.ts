@@ -1,6 +1,7 @@
-import type { RagBinding } from "../../config/schema.js";
+import type { RagBinding } from "@llamactl/core/config/schema";
 
-import { resolveSecret } from "../../config/secret.js";
+import { resolveSecret } from "@llamactl/core/config/secret";
+
 import { RagError } from "../errors.js";
 
 /**

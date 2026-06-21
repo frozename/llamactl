@@ -2,8 +2,8 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { PeerNode } from "../../../remote/src/config/peers.js";
 import type { AnthropicMessagesRequest } from "../../src/anthropic/types.js";
+import type { PeerNode } from "../../src/config/peers.js";
 import type { ResolvedEnv } from "../../src/types.js";
 import type { PeerSnapshot } from "../../src/workloadRuntime.js";
 

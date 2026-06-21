@@ -1,6 +1,6 @@
+import { llamactlHome, nonEmpty } from "@llamactl/core/config/env";
 import { dirname, join } from "node:path";
 
-import { llamactlHome, nonEmpty } from "../config/env.js";
 /**
  * CLI-call journal. One JSONL entry per `createResponse` call from
  * a `CliSubprocessAdapter`. Lives at

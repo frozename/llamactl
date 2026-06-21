@@ -1,10 +1,10 @@
+import { defaultAgentConfigPath } from "@llamactl/core/config/agent-config";
+import { defaultConfigPath } from "@llamactl/core/config/kubeconfig";
 import { describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { defaultScheduleFilePath } from "../../src/bench/schedule.js";
-import { defaultAgentConfigPath } from "../../src/config/agent-config.js";
-import { defaultConfigPath } from "../../src/config/kubeconfig.js";
 import { defaultArtifactsDir } from "../../src/server/artifacts.js";
 import { defaultWorkloadsDir } from "../../src/workload/store.js";
 

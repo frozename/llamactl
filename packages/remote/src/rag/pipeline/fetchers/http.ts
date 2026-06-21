@@ -1,3 +1,5 @@
+import { resolveSecret } from "@llamactl/core/config/secret";
+
 /**
  * HTTP source fetcher. Breadth-first crawl with:
  *   - per-host rate limiter (leaky bucket, setTimeout-based);
@@ -17,7 +19,6 @@
 import type { Fetcher, FetcherContext, RawDoc } from "../types.js";
 import type { HostResolver } from "./ssrf-guard.js";
 
-import { resolveSecret } from "../../../config/secret.js";
 import { HttpSourceSpecSchema } from "../schema.js";
 import { assertPublicUrl, SsrfBlockedError } from "./ssrf-guard.js";
 

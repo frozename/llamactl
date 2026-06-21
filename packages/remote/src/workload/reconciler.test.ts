@@ -1,3 +1,4 @@
+import { computeModelHostSpecHash } from "@llamactl/core/engines/state";
 import { expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,7 +6,6 @@ import { join } from "node:path";
 import type { WorkloadClient } from "./apply.js";
 import type { ModelHostManifest } from "./modelhost-schema.js";
 
-import { computeModelHostSpecHash } from "../../../core/src/engines/state.js";
 import { mkdtempSync, rmSync } from "../safe-fs.js";
 import { saveModelHost } from "./modelhost-store.js";
 import { reconcileOnce } from "./reconciler.js";

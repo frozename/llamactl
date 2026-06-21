@@ -1,10 +1,9 @@
+import type { CliBinding } from "@llamactl/core/config/schema";
 import type { UnifiedAiRequest } from "@nova/contracts";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import type { CliBinding } from "../src/config/schema.js";
 
 import {
   createCliSubprocessProvider,

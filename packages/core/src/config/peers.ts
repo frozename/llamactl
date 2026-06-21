@@ -1,4 +1,3 @@
-import { readCurrentLeaseHolder } from "../../../fleet-supervisor/src/journal.js";
 import { currentContext, loadConfig, resolveToken } from "./kubeconfig.js";
 import { type ClusterNode, type Config, LOCAL_NODE_ENDPOINT, LOCAL_NODE_NAME } from "./schema.js";
 
@@ -59,10 +58,4 @@ export function listPeers(opts?: { currentNodeName?: string }): PeerNode[] {
       tokenRef: contextUser?.tokenRef,
       token: resolvedToken,
     }));
-}
-
-export function readSchedulerLease(journalPath: string): { holder: string } | null {
-  const holder = readCurrentLeaseHolder(journalPath);
-  if (!holder) return null;
-  return { holder };
 }

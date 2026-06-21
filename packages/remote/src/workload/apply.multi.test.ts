@@ -1,3 +1,5 @@
+import { readModelHostState, writeModelHostState } from "@llamactl/core/engines/state";
+import { resolveEnv } from "@llamactl/core/env";
 import { expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,8 +7,6 @@ import { join } from "node:path";
 import type { ModelHostManifest } from "./modelhost-schema.js";
 import type { ModelRun } from "./schema.js";
 
-import { readModelHostState, writeModelHostState } from "../../../core/src/engines/state.js";
-import { resolveEnv } from "../../../core/src/env.js";
 import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "../safe-fs.js";
 import { applyOne, applyOneModelHost, type WorkloadClient } from "./apply.js";
 import { saveWorkload } from "./store.js";

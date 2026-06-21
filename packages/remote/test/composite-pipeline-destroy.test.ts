@@ -1,3 +1,5 @@
+import { saveConfig } from "@llamactl/core/config/kubeconfig";
+import { freshConfig } from "@llamactl/core/config/schema";
 /**
  * Composite destroy — pipeline-component dispatch (T7).
  *
@@ -23,8 +25,6 @@ import type {
 import type { WorkloadClient } from "../src/workload/apply.js";
 
 import { applyComposite, destroyComposite } from "../src/composite/apply.js";
-import { saveConfig } from "../src/config/kubeconfig.js";
-import { freshConfig } from "../src/config/schema.js";
 import { loadPipeline } from "../src/rag/pipeline/store.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 

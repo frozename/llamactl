@@ -1,8 +1,8 @@
+import { llamactlHome } from "@llamactl/core/config/env";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
-import { llamactlHome } from "../config/env.js";
 import { existsSync, readdirSync, readFileSync } from "../safe-fs.js";
 
 /**

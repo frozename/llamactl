@@ -1,10 +1,10 @@
 import type { ResolvedEnv } from "@llamactl/core";
 
+import { llamactlHome } from "@llamactl/core/config/env";
 import { basename, join, resolve, sep } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { atomicWriteFileSync } from "../atomic-write.js";
-import { llamactlHome } from "../config/env.js";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "../safe-fs.js";
 import { estimateModelHostMemoryGiB } from "./admission.js";
 import { type ModelHostManifest, ModelHostManifestSchema } from "./modelhost-schema.js";

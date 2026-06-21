@@ -1,8 +1,8 @@
+import { createSecretResolver, resolveSecret } from "@llamactl/core/config/secret";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createSecretResolver, resolveSecret } from "../src/config/secret.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**

@@ -1,9 +1,9 @@
 /* eslint-disable @typescript-eslint/require-await -- Test fetch stub implements the async fetch contract without artificial scheduling. */
+import type { PeerNode } from "@llamactl/core/config/peers";
+
 import { afterEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-import type { PeerNode } from "../../remote/src/config/peers.js";
 
 import { generateSelfSignedCert } from "../../remote/src/server/tls.js";
 import { createPeerFetch } from "../src/peer-fetch.js";

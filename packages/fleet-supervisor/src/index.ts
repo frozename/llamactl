@@ -1,7 +1,8 @@
+import { listPeers } from "@llamactl/core/config/peers";
+
 import type { AggregatorPeer } from "./aggregator.js";
 import type { FleetSnapshotEntry } from "./types.js";
 
-import { listPeers } from "../../remote/src/config/peers.js";
 import { defaultFleetJournalPath, readRecentMovesFromJournal } from "./journal.js";
 import {
   MigrationController,

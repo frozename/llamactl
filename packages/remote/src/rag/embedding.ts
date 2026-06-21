@@ -1,3 +1,4 @@
+import type { Config, EmbedderBinding } from "@llamactl/core/config/schema";
 /**
  * Delegated embedding helpers for RAG adapters that don't embed
  * internally (pgvector, future backends). An `Embedder` maps N texts
@@ -16,8 +17,6 @@ import type {
   UnifiedEmbeddingRequest,
   UnifiedEmbeddingResponse,
 } from "@nova/contracts";
-
-import type { Config, EmbedderBinding } from "../config/schema.js";
 
 import { RagError } from "./errors.js";
 
@@ -101,7 +100,7 @@ async function defaultBuildProvider(opts: EmbedderFactoryOptions): Promise<AiPro
     const { createOpenAICompatProvider } = await import("@nova/contracts");
     let apiKey = "";
     if (binding.apiKeyRef) {
-      const { resolveSecret } = await import("../config/secret.js");
+      const { resolveSecret } = await import("@llamactl/core/config/secret");
       try {
         apiKey = resolveSecret(binding.apiKeyRef, env ?? process.env);
       } catch (err) {
@@ -122,7 +121,7 @@ async function defaultBuildProvider(opts: EmbedderFactoryOptions): Promise<AiPro
 
   // Resolve the node via the kubeconfig helpers; use the provider
   // factory the router already uses for cloud/gateway/agent kinds.
-  const { resolveNode, resolveToken } = await import("../config/kubeconfig.js");
+  const { resolveNode, resolveToken } = await import("@llamactl/core/config/kubeconfig");
   const { providerForNode } = await import("../providers/factory.js");
   let resolved;
   try {

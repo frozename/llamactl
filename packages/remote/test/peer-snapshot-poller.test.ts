@@ -1,7 +1,8 @@
+import type { PeerNode } from "@llamactl/core/config/peers";
+
 import { describe, expect, test } from "bun:test";
 
 import type { PeerSnapshot } from "../../core/src/workloadRuntime.js";
-import type { PeerNode } from "../src/config/peers.js";
 
 import { startPeerSnapshotPoller } from "../src/server/peer-snapshot-poller.js";
 

@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/require-await -- test doubles implement async contracts without scheduling */
+import type { PeerNode } from "@llamactl/core/config/peers";
+
 import { describe, expect, it } from "bun:test";
 
-import type { PeerNode } from "../../remote/src/config/peers.js";
 import type { FleetSnapshotEntry } from "../src/types.js";
 
 import {

@@ -23,7 +23,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.j
 /**
  * Local copy of the bootstrap blob shape + encoder so this demo
  * doesn't pull in @llamactl/remote. Must stay byte-compatible with
- * the encoder in packages/remote/src/config/agent-config.ts.
+ * the encoder in packages/core/src/config/agent-config.ts.
  */
 function encodeBootstrap(blob: {
   url: string;

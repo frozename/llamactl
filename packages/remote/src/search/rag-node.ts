@@ -1,5 +1,5 @@
 // packages/remote/src/search/rag-node.ts
-import { currentContext, loadConfig } from "../config/kubeconfig.js";
+import { currentContext, loadConfig } from "@llamactl/core/config/kubeconfig";
 
 export function resolveDefaultRagNode(): string | null {
   const cfg = loadConfig();

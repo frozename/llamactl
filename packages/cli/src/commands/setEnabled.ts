@@ -1,17 +1,14 @@
+import type { ModelHostManifest } from "@llamactl/remote/workload/modelhost-schema";
+
 import {
   config as kubecfg,
   workloadApply,
   type workloadSchema,
   workloadStore,
 } from "@llamactl/remote";
+import { applyOneModelHost } from "@llamactl/remote/workload/apply";
+import { loadModelHostByName, saveModelHost } from "@llamactl/remote/workload/modelhost-store";
 
-import type { ModelHostManifest } from "../../../remote/src/workload/modelhost-schema.js";
-
-import { applyOneModelHost } from "../../../remote/src/workload/apply.js";
-import {
-  loadModelHostByName,
-  saveModelHost,
-} from "../../../remote/src/workload/modelhost-store.js";
 import { getNodeClientByName } from "../dispatcher.js";
 
 export interface SetEnabledResult {

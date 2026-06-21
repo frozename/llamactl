@@ -4,9 +4,9 @@ import type {
   UnifiedEmbeddingResponse,
 } from "@nova/contracts";
 
+import { freshConfig } from "@llamactl/core/config/schema";
 import { describe, expect, test } from "bun:test";
 
-import { freshConfig } from "../src/config/schema.js";
 import { createEmbedderFromBinding } from "../src/rag/embedding.js";
 import { RagError } from "../src/rag/errors.js";
 

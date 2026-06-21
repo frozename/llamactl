@@ -1,9 +1,10 @@
+import { currentContext, loadConfig, resolveToken } from "@llamactl/core/config/kubeconfig";
+import { type ClusterNode, resolveNodeKind } from "@llamactl/core/config/schema";
+
 import type { ApplyResult } from "../apply.js";
 import type { ApplyConflict } from "../gateway-catalog/index.js";
 import type { GatewayApplyOptions, GatewayHandler } from "./types.js";
 
-import { currentContext, loadConfig, resolveToken } from "../../config/kubeconfig.js";
-import { type ClusterNode, resolveNodeKind } from "../../config/schema.js";
 import { loadSiriusProviders, type SiriusProvider } from "../../config/sirius-providers.js";
 import {
   applyCompositeEntries,

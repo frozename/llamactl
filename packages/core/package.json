@@ -6,10 +6,22 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./config/agent-config": "./src/config/agent-config.ts",
+    "./config/env": "./src/config/env.ts",
+    "./config/kubeconfig": "./src/config/kubeconfig.ts",
+    "./config/peers": "./src/config/peers.ts",
+    "./config/schema": "./src/config/schema.ts",
+    "./config/secret": "./src/config/secret.ts",
+    "./engines": "./src/engines/index.ts",
+    "./engines/state": "./src/engines/state.ts",
+    "./engines/types": "./src/engines/types.ts",
     "./env": "./src/env.ts",
+    "./kvstore": "./src/kvstore/index.ts",
+    "./probe": "./src/probe.ts",
     "./profile": "./src/profile.ts",
     "./schemas": "./src/schemas.ts",
-    "./types": "./src/types.ts"
+    "./types": "./src/types.ts",
+    "./workloadRuntime": "./src/workloadRuntime.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -17,6 +29,7 @@
   },
   "dependencies": {
     "@nova/contracts": "file:../../../nova/packages/contracts",
+    "yaml": "2.8.3",
     "zod": "4.3.6"
   },
   "devDependencies": {

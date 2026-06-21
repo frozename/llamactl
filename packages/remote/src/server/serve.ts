@@ -1,11 +1,11 @@
 import { openaiProxy } from "@llamactl/core";
+import { resolveEnv } from "@llamactl/core/env";
+import { migrateLegacySingletonRuntime } from "@llamactl/core/workloadRuntime";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { join } from "node:path";
 
 import type { ModelRun } from "../workload/schema.js";
 
-import { resolveEnv } from "../../../core/src/env.js";
-import { migrateLegacySingletonRuntime } from "../../../core/src/workloadRuntime.js";
 import { router as appRouter } from "../router.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
 import { existsSync, readFileSync } from "../safe-fs.js";

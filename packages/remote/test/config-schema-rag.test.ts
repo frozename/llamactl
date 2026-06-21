@@ -1,11 +1,10 @@
-import { describe, expect, test } from "bun:test";
-
 import {
   ClusterNodeSchema,
   RagBindingSchema,
   RagProviderKindSchema,
   resolveNodeKind,
-} from "../src/config/schema.js";
+} from "@llamactl/core/config/schema";
+import { describe, expect, test } from "bun:test";
 
 describe("RAG schema", () => {
   test("RagProviderKindSchema accepts chroma + pgvector", () => {

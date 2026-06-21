@@ -1,5 +1,13 @@
 import type { spawn as nodeSpawn } from "node:child_process";
 
+import { ENGINES } from "@llamactl/core/engines";
+import {
+  computeModelHostSpecHash,
+  readModelHostState,
+  removeModelHostState,
+  writeModelHostState,
+} from "@llamactl/core/engines/state";
+import { resolveEnv } from "@llamactl/core/env";
 import {
   appendFleetJournal,
   chooseBestNode,
@@ -18,14 +26,6 @@ import { basename } from "node:path";
 import type { GatewayDispatch } from "./gateway-handlers/types.js";
 import type { ModelRun, ModelRunStatus, ModelRunWorker } from "./schema.js";
 
-import { ENGINES } from "../../../core/src/engines/index.js";
-import {
-  computeModelHostSpecHash,
-  readModelHostState,
-  removeModelHostState,
-  writeModelHostState,
-} from "../../../core/src/engines/state.js";
-import { resolveEnv } from "../../../core/src/env.js";
 import {
   type AdmissionResult,
   computeNodeBudget,

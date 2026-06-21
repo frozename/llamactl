@@ -1,11 +1,12 @@
-import type { ModelRun } from "./schema.js";
-
 import {
   computeModelHostSpecHash,
   readModelHostState,
   removeModelHostState,
-} from "../../../core/src/engines/state.js";
-import { resolveEnv } from "../../../core/src/env.js";
+} from "@llamactl/core/engines/state";
+import { resolveEnv } from "@llamactl/core/env";
+
+import type { ModelRun } from "./schema.js";
+
 import { defaultNodeBudgetGiB } from "./admission.js";
 import {
   type ApplyEvent,

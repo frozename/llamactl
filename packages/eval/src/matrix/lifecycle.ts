@@ -1,11 +1,12 @@
+import type { EngineBootEnv, ModelHostSpecForEngine } from "@llamactl/core/engines";
+
+import { ENGINES } from "@llamactl/core/engines";
+import { resolveProfile } from "@llamactl/core/profile";
 import { type ChildProcess, spawn } from "node:child_process";
 import { basename } from "node:path";
 
-import type { EngineBootEnv, ModelHostSpecForEngine } from "../../../core/src/engines/index.js";
 import type { ModelSpec } from "./types.js";
 
-import { ENGINES } from "../../../core/src/engines/index.js";
-import { resolveProfile } from "../../../core/src/profile.js";
 import { existsSync } from "../safe-fs.js";
 
 const HEALTH_POLL_INTERVAL_MS = 1000;

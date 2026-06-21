@@ -1,6 +1,7 @@
+import type { RagBinding } from "@llamactl/core/config/schema";
+
 import { describe, expect, test } from "bun:test";
 
-import type { RagBinding } from "../src/config/schema.js";
 import type { ChromaMcpClient, ChromaToolResult } from "../src/rag/chroma/client.js";
 
 import { ChromaRagAdapter } from "../src/rag/chroma/adapter.js";

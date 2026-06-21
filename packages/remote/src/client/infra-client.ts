@@ -1,10 +1,11 @@
+import type { PeerNode } from "@llamactl/core/config/peers";
+
+import { loadConfig, resolveToken } from "@llamactl/core/config/kubeconfig";
+import { type ClusterNode, LOCAL_NODE_ENDPOINT } from "@llamactl/core/config/schema";
 import { createTRPCClient, type TRPCClient } from "@trpc/client";
 
-import type { PeerNode } from "../config/peers.js";
 import type { AppRouter } from "../router.js";
 
-import { loadConfig, resolveToken } from "../config/kubeconfig.js";
-import { type ClusterNode, LOCAL_NODE_ENDPOINT } from "../config/schema.js";
 import { buildPinnedLinks, makePinnedFetch } from "./links.js";
 import { createNodeClient } from "./node-client.js";
 

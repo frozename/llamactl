@@ -1,5 +1,6 @@
 import type { DeleteRequest, RetrievalProvider, StoreRequest } from "@nova/contracts";
 
+import { defaultConfigPath, loadConfig, resolveNode } from "@llamactl/core/config/kubeconfig";
 /**
  * RAG ingestion pipeline orchestrator. Walks a validated manifest
  * source-by-source, feeds the fetched RawDocs through the declared
@@ -16,7 +17,6 @@ import { createHash } from "node:crypto";
 
 import type { RawDoc } from "./types.js";
 
-import { defaultConfigPath, loadConfig, resolveNode } from "../../config/kubeconfig.js";
 import { createRagAdapter } from "../index.js";
 import { pipelineEvents } from "./event-bus.js";
 import { FETCHERS } from "./fetchers/registry.js";

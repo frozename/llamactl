@@ -1,6 +1,6 @@
-import type { FleetSnapshotEntry } from "./types.js";
+import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
 
-import { listPeers, type PeerNode } from "../../remote/src/config/peers.js";
+import type { FleetSnapshotEntry } from "./types.js";
 
 export type AggregatorPeer = PeerNode;
 

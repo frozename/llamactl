@@ -17,7 +17,7 @@
  * Custom CLIs that don't fit a preset use `preset: 'custom'` with
  * operator-supplied `command` + `args`.
  */
-import type { CliBinding, CliPreset } from "../config/schema.js";
+import type { CliBinding, CliPreset } from "@llamactl/core/config/schema";
 
 export interface ResolvedCliInvocation {
   command: string;

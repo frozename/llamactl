@@ -1,8 +1,7 @@
+import { llamactlHome } from "@llamactl/core/config/env";
 import { describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
-
-import { llamactlHome } from "../src/config/env.js";
 
 /**
  * llamactlHome is the canonical base resolver for operator state. The

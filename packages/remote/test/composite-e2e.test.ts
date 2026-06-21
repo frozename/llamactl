@@ -1,3 +1,5 @@
+import { saveConfig } from "@llamactl/core/config/kubeconfig";
+import { freshConfig } from "@llamactl/core/config/schema";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,8 +8,6 @@ import type { Composite } from "../src/composite/schema.js";
 import type { WorkloadClient } from "../src/workload/apply.js";
 
 import { applyComposite, destroyComposite } from "../src/composite/apply.js";
-import { saveConfig } from "../src/config/kubeconfig.js";
-import { freshConfig } from "../src/config/schema.js";
 import { createDockerBackend } from "../src/runtime/docker/backend.js";
 import { createKubernetesBackend } from "../src/runtime/kubernetes/backend.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
