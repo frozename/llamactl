@@ -9,8 +9,7 @@ import { defaultEmbersynthConfigPath, loadEmbersynthConfig } from "../../config/
 import {
   applyCompositeEntries,
   deriveEmbersynthEntries,
-  readGatewayCatalog,
-  writeGatewayCatalog,
+  updateGatewayCatalog,
 } from "../gateway-catalog/index.js";
 
 /**
@@ -51,26 +50,36 @@ function embersynthConflictResult(
   return pending(opts, reason, message, now);
 }
 
-function resolveEmbersynthCatalog(
+async function resolveEmbersynthCatalog(
   opts: GatewayApplyOptions,
   now: string,
-): { ok: false; result: ApplyResult } | { ok: true; changed: boolean } {
-  if (!opts.composite) return { ok: true, changed: false };
-  const derived = deriveEmbersynthEntries(opts.composite);
-  const current = readGatewayCatalog("embersynth");
-  const result = applyCompositeEntries({
-    kind: "embersynth",
-    compositeName: opts.composite.compositeName,
-    derived,
-    current,
-  });
-  if (result.conflicts.length > 0) {
-    return { ok: false, result: embersynthConflictResult(opts, result.conflicts, now) };
-  }
-  if (!result.changed) return { ok: true, changed: false };
+): Promise<{ ok: false; result: ApplyResult } | { ok: true; changed: boolean }> {
+  const composite = opts.composite;
+  if (!composite) return { ok: true, changed: false };
+  const derived = deriveEmbersynthEntries(composite);
+
+  // Read-modify-write under the per-kind catalog mutex. The transform
+  // runs the composite-merge against a FRESH read INSIDE the lock, so a
+  // concurrent teardown (`cleanupGatewayCatalogs`) can't clobber our
+  // write from a stale snapshot, and we can't clobber its reduced set.
+  // `conflicts`/`changed` escape via closure; on conflict or no-op we
+  // return `current` unchanged (an idempotent replace of the value we
+  // hold the lock on — never a re-union).
+  let conflicts: ApplyConflict[] = [];
+  let changed = false;
   try {
-    writeGatewayCatalog("embersynth", result.next);
-    return { ok: true, changed: true };
+    await updateGatewayCatalog("embersynth", (current) => {
+      const result = applyCompositeEntries({
+        kind: "embersynth",
+        compositeName: composite.compositeName,
+        derived,
+        current,
+      });
+      conflicts = result.conflicts;
+      changed = result.changed;
+      if (result.conflicts.length > 0 || !result.changed) return current;
+      return result.next;
+    });
   } catch (err) {
     return {
       ok: false,
@@ -82,6 +91,11 @@ function resolveEmbersynthCatalog(
       ),
     };
   }
+
+  if (conflicts.length > 0) {
+    return { ok: false, result: embersynthConflictResult(opts, conflicts, now) };
+  }
+  return { ok: true, changed };
 }
 
 function resolveEmbersynthSynthetic(
@@ -217,7 +231,7 @@ export const embersynthHandler: GatewayHandler = {
   async apply(opts: GatewayApplyOptions): Promise<ApplyResult> {
     const now = new Date().toISOString();
 
-    const catalogResult = resolveEmbersynthCatalog(opts, now);
+    const catalogResult = await resolveEmbersynthCatalog(opts, now);
     if (!catalogResult.ok) return catalogResult.result;
 
     const syntheticResult = resolveEmbersynthSynthetic(opts, now);

@@ -3,7 +3,7 @@ export type { ApplyOpts, ApplyResult } from "./apply.js";
 export { deriveEmbersynthEntries } from "./embersynth-entries.js";
 export type { DerivedEmbersynthEntry } from "./embersynth-entries.js";
 export { entrySpecHash } from "./hash.js";
-export { readGatewayCatalog, writeGatewayCatalog } from "./io.js";
+export { readGatewayCatalog, updateGatewayCatalog, writeGatewayCatalog } from "./io.js";
 export type { GatewayKind } from "./io.js";
 export { removeCompositeEntries } from "./remove.js";
 export type { RemoveOpts, RemoveResult } from "./remove.js";
