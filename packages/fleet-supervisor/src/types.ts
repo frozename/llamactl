@@ -93,6 +93,15 @@ export interface FleetSnapshotEntry {
   node: string;
   node_mem: NodeMemSnapshot;
   workloads: WorkloadSnapshot[];
+  /**
+   * Self-published scheduler-lease intent (derived leader election). Optional:
+   * old peers without it parse as undefined and are treated as ineligible
+   * candidates (valid move destinations, never holders). When constructing a
+   * snapshot, only include `lease` via a conditional spread — never assign
+   * `lease: undefined` (exactOptionalPropertyTypes). See
+   * docs/notes/2026-06-20-scheduler-lease-derived-election-design.md §1.
+   */
+  lease?: { candidate: string; term: number; eligible: boolean; seq: number };
 }
 
 export interface FleetHeartbeatEntry {
