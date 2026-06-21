@@ -154,7 +154,7 @@ ${GOOD_FUNCTION}\`\`\``;
 
     expect(result.prediction).toBe("pass");
     expect(result.gold).toBe("pass");
-    expect(result.metrics.pass).toBe(1);
+    expect(result.metrics["pass"]).toBe(1);
   });
 
   test("scores a wrong completion as fail", async () => {
@@ -162,7 +162,7 @@ ${GOOD_FUNCTION}\`\`\``;
 
     expect(result.prediction).toBe("fail");
     expect(result.gold).toBe("pass");
-    expect(result.metrics.pass).toBe(0);
+    expect(result.metrics["pass"]).toBe(0);
   });
 });
 
@@ -175,7 +175,7 @@ describe("HumanEval scorer sandbox infra error", () => {
 
     try {
       const result = await codeHumanevalWorkload.scorer(ROW, GOOD_BODY);
-      expect(result.metrics.pass).toBe(0);
+      expect(result.metrics["pass"]).toBe(0);
     } finally {
       (Bun as unknown as { spawn: unknown }).spawn = origSpawn;
     }

@@ -124,9 +124,9 @@ users:
     const parsed = parseJsonRecord(out.trim());
     const firstResult = requireRecord(requireArrayField(parsed, "results")[0]);
     expect(requireArrayField(parsed, "results")).toHaveLength(1);
-    expect(firstResult.state).toBe("unhealthy");
-    expect(firstResult.agent).toBe("mac-mini");
-    expect(firstResult.binding).toBe("missing-probe");
+    expect(firstResult["state"]).toBe("unhealthy");
+    expect(firstResult["agent"]).toBe("mac-mini");
+    expect(firstResult["binding"]).toBe("missing-probe");
   });
 
   test("--node filter restricts the probe to a single agent", async () => {
@@ -166,8 +166,8 @@ users:
     const parsed = parseJsonRecord(out.trim());
     const result = requireRecord(requireArrayField(parsed, "results")[0]);
     expect(requireArrayField(parsed, "results")).toHaveLength(1);
-    expect(result.agent).toBe("laptop");
-    expect(result.binding).toBe("binding-b");
+    expect(result["agent"]).toBe("laptop");
+    expect(result["binding"]).toBe("binding-b");
   });
 
   test("no agents + no bindings renders a clean empty result (exit 0)", async () => {

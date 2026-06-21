@@ -69,7 +69,7 @@ function snapshotFetch(
 ): () => Promise<Awaited<ReturnType<InfraClient["pollHealth"]>>> {
   const token = resolvedPeerToken(peer);
   const headers: Record<string, string> = {};
-  if (token) headers.authorization = `Bearer ${token}`;
+  if (token) headers["authorization"] = `Bearer ${token}`;
   const pinnedFetch = makePinnedFetch({
     name: peer.id,
     endpoint: peer.endpoint,

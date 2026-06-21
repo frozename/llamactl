@@ -12,27 +12,27 @@ afterEach(() => {
 
 describe("advertisedEndpoint", () => {
   test("falls back to bind endpoint when LLAMA_CPP_ADVERTISED_HOST is unset", () => {
-    process.env.LLAMA_CPP_HOST = "127.0.0.1";
-    process.env.LLAMA_CPP_PORT = "8080";
-    delete process.env.LLAMA_CPP_ADVERTISED_HOST;
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "8080";
+    delete process.env["LLAMA_CPP_ADVERTISED_HOST"];
     const resolved = resolveEnv();
     expect(endpoint(resolved)).toBe("http://127.0.0.1:8080");
     expect(advertisedEndpoint(resolved)).toBe("http://127.0.0.1:8080");
   });
 
   test("overrides the host when LLAMA_CPP_ADVERTISED_HOST is set", () => {
-    process.env.LLAMA_CPP_HOST = "0.0.0.0";
-    process.env.LLAMA_CPP_PORT = "8080";
-    process.env.LLAMA_CPP_ADVERTISED_HOST = "mac-mini.local";
+    process.env["LLAMA_CPP_HOST"] = "0.0.0.0";
+    process.env["LLAMA_CPP_PORT"] = "8080";
+    process.env["LLAMA_CPP_ADVERTISED_HOST"] = "mac-mini.local";
     const resolved = resolveEnv();
     expect(endpoint(resolved)).toBe("http://0.0.0.0:8080");
     expect(advertisedEndpoint(resolved)).toBe("http://mac-mini.local:8080");
   });
 
   test("prefers LLAMA_CPP_ADVERTISED_HOST over an override host", () => {
-    process.env.LLAMA_CPP_HOST = "127.0.0.1";
-    process.env.LLAMA_CPP_PORT = "8080";
-    process.env.LLAMA_CPP_ADVERTISED_HOST = "mac-mini.local";
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "8080";
+    process.env["LLAMA_CPP_ADVERTISED_HOST"] = "mac-mini.local";
     const resolved = resolveEnv();
     expect(advertisedEndpoint(resolved, { host: "0.0.0.0", port: 8181 })).toBe(
       "http://mac-mini.local:8181",
@@ -40,9 +40,9 @@ describe("advertisedEndpoint", () => {
   });
 
   test("keeps bind endpoint unchanged when override matches bind", () => {
-    process.env.LLAMA_CPP_HOST = "127.0.0.1";
-    process.env.LLAMA_CPP_PORT = "8080";
-    process.env.LLAMA_CPP_ADVERTISED_HOST = "127.0.0.1";
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "8080";
+    process.env["LLAMA_CPP_ADVERTISED_HOST"] = "127.0.0.1";
     const resolved = resolveEnv();
     expect(endpoint(resolved)).toBe("http://127.0.0.1:8080");
     expect(advertisedEndpoint(resolved)).toBe("http://127.0.0.1:8080");

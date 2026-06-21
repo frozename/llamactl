@@ -117,7 +117,7 @@ function resolveEnv(varName: string, env: NodeJS.ProcessEnv): string {
 
 function resolveFile(path: string, env: NodeJS.ProcessEnv): string {
   if (!path) throw new Error("file secret ref has empty path");
-  const resolved = path.replace(/^~(?=$|\/)/, env.HOME ?? homedir());
+  const resolved = path.replace(/^~(?=$|\/)/, env["HOME"] ?? homedir());
   if (!existsSync(resolved)) {
     throw new Error(`file secret ref '${path}' does not exist at ${resolved}`);
   }

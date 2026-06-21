@@ -78,9 +78,9 @@ export type TunnelJournalEntry =
   | TunnelJournalReplaced;
 
 export function defaultTunnelJournalPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_TUNNEL_JOURNAL?.trim();
+  const override = env["LLAMACTL_TUNNEL_JOURNAL"]?.trim();
   if (override) return override;
-  const devStorage = env.DEV_STORAGE?.trim();
+  const devStorage = env["DEV_STORAGE"]?.trim();
   if (devStorage) return join(devStorage, "tunnel", "journal.jsonl");
   return join(homedir(), ".llamactl", "tunnel", "journal.jsonl");
 }

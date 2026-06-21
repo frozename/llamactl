@@ -164,7 +164,7 @@ function check(label: string, cond: boolean, detail = ""): void {
 }
 
 function resolveServerScript(here: string): string {
-  const explicit = process.env.ELECTRON_MCP_DIR;
+  const explicit = process.env["ELECTRON_MCP_DIR"];
   if (explicit && explicit.length > 0) {
     return resolve(explicit, "dist", "server", "index.js");
   }
@@ -212,8 +212,8 @@ async function main(): Promise<void> {
   const collectionName = `wizard_smoke_${ts}`;
 
   const env: typeof process.env = { ...process.env };
-  env.ELECTRON_MCP_LOG_LEVEL = env.ELECTRON_MCP_LOG_LEVEL ?? "warn";
-  const nodeBin = process.env.MCP_NODE ?? "node";
+  env["ELECTRON_MCP_LOG_LEVEL"] = env["ELECTRON_MCP_LOG_LEVEL"] ?? "warn";
+  const nodeBin = process.env["MCP_NODE"] ?? "node";
   const proc = spawn(nodeBin, [serverScript], { env, stdio: ["pipe", "pipe", "inherit"] });
   const client = new McpClient(proc);
 
@@ -223,8 +223,8 @@ async function main(): Promise<void> {
       executablePath: args.executable,
       args: args.execArgs,
     };
-    if (Object.keys(args.env).length > 0) launchArgs.env = args.env;
-    if (args.userDataDir !== undefined) launchArgs.userDataDir = args.userDataDir;
+    if (Object.keys(args.env).length > 0) launchArgs["env"] = args.env;
+    if (args.userDataDir !== undefined) launchArgs["userDataDir"] = args.userDataDir;
     const launch = (await client.call("electron_launch", launchArgs, 60_000)) as {
       sessionId?: string;
     };

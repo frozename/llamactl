@@ -124,7 +124,7 @@ export async function runController(args: string[]): Promise<number> {
   }
 
   const { config: kubecfg } = await import("@llamactl/remote");
-  const cfgPath = process.env.LLAMACTL_CONFIG ?? kubecfg.defaultConfigPath();
+  const cfgPath = process.env["LLAMACTL_CONFIG"] ?? kubecfg.defaultConfigPath();
   // Reuse the canonical resolver instead of reinventing the
   // DEV_STORAGE→~/.llamactl base (the inline copy used $HOME +
   // `??`, which fed an "undefined/.llamactl" path when HOME was

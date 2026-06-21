@@ -159,7 +159,7 @@ describe("translateToStatefulSet — pgvector-shaped happy path", () => {
     const t = templates[0];
     expect(t?.metadata?.name).toBe("data-0");
     expect(t?.spec?.accessModes).toEqual(["ReadWriteOnce"]);
-    expect(t?.spec?.resources?.requests?.storage).toBe("20Gi");
+    expect(t?.spec?.resources?.requests?.["storage"]).toBe("20Gi");
     // Field must NOT appear at all — not '', not 'default', not null.
     expect("storageClassName" in (t?.spec ?? {})).toBe(false);
   });

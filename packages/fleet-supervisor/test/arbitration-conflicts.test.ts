@@ -55,7 +55,7 @@ describe("Arbitration conflicts", () => {
   }
 
   it("C1: destination re-check blocks move when destination is no longer viable", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "HIGH",
       nodeMem: { freeMb: 100 },
@@ -77,7 +77,7 @@ describe("Arbitration conflicts", () => {
   });
 
   it("C1b: successful move writes exactly one skipped-evict and one executed move entry", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 9000 },
@@ -142,7 +142,7 @@ describe("Arbitration conflicts", () => {
   });
 
   it("C4: HIGH-pressure destination refused even if it was NORMAL at proposal time", async () => {
-    snapshots.m2mini = {
+    snapshots["m2mini"] = {
       node: "m2mini",
       pressureState: "HIGH",
       nodeMem: { freeMb: 120 },

@@ -199,10 +199,10 @@ describe("streamResponse — journal write", () => {
     await collect(provider.streamResponse!(minimalReq));
     expect(entries).toHaveLength(1);
     const e = entries[0] as Record<string, unknown>;
-    expect(e.ok).toBe(true);
+    expect(e["ok"]).toBe(true);
     // Each line re-attaches a trailing newline; two 5-char + one
     // newline each = 12 bytes.
-    expect(e.response_bytes).toBe(12);
+    expect(e["response_bytes"]).toBe(12);
     // Body content never landed.
     expect(e).not.toHaveProperty("response");
     expect(e).not.toHaveProperty("prompt");
@@ -229,8 +229,8 @@ describe("streamResponse — journal write", () => {
     expect(errors[0]!.error.code).toBe("non-zero-exit");
     expect(events[events.length - 1]!.type).toBe("done");
     const e = entries[0] as Record<string, unknown>;
-    expect(e.ok).toBe(false);
-    expect(e.error_code).toBe("non-zero-exit");
+    expect(e["ok"]).toBe(false);
+    expect(e["error_code"]).toBe("non-zero-exit");
   });
 });
 

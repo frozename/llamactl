@@ -50,9 +50,9 @@ describe("filesystemFetcher", () => {
     expect(ids).toEqual(["docs/a.md", "docs/b.txt"]);
     const a = docs.find((d) => d.id === "docs/a.md")!;
     expect(a.content).toContain("Hello world.");
-    expect(a.metadata.source_kind).toBe("filesystem");
-    expect(a.metadata.team).toBe("platform");
-    expect(typeof a.metadata.path).toBe("string");
+    expect(a.metadata["source_kind"]).toBe("filesystem");
+    expect(a.metadata["team"]).toBe("platform");
+    expect(typeof a.metadata["path"]).toBe("string");
   });
 
   test("skips binary files and logs a warn", async () => {
@@ -85,8 +85,8 @@ describe("filesystemFetcher", () => {
       root: tmp,
       tag: { source: "local-docs", team: "platform" },
     });
-    expect(docs[0]!.metadata.source).toBe("local-docs");
-    expect(docs[0]!.metadata.team).toBe("platform");
+    expect(docs[0]!.metadata["source"]).toBe("local-docs");
+    expect(docs[0]!.metadata["team"]).toBe("platform");
   });
 });
 

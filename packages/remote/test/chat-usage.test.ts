@@ -17,7 +17,7 @@ const originalEnv = { ...process.env };
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "chat-usage-"));
-  process.env.LLAMACTL_USAGE_DIR = dir;
+  process.env["LLAMACTL_USAGE_DIR"] = dir;
 });
 
 afterEach(() => {
@@ -47,14 +47,14 @@ describe("recordChatUsage", () => {
       string,
       unknown
     >;
-    expect(rec.provider).toBe("openai");
-    expect(rec.model).toBe("gpt-4o");
-    expect(rec.kind).toBe("chat");
-    expect(rec.prompt_tokens).toBe(10);
-    expect(rec.completion_tokens).toBe(5);
-    expect(rec.total_tokens).toBe(15);
-    expect(rec.latency_ms).toBe(42);
-    expect(typeof rec.ts).toBe("string");
+    expect(rec["provider"]).toBe("openai");
+    expect(rec["model"]).toBe("gpt-4o");
+    expect(rec["kind"]).toBe("chat");
+    expect(rec["prompt_tokens"]).toBe(10);
+    expect(rec["completion_tokens"]).toBe(5);
+    expect(rec["total_tokens"]).toBe(15);
+    expect(rec["latency_ms"]).toBe(42);
+    expect(typeof rec["ts"]).toBe("string");
   });
 
   test("no-ops when the response carries no usage block", async () => {

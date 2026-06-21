@@ -21,7 +21,7 @@ beforeEach(() => {
   for (const k of ["LLAMACTL_WORKLOADS_DIR", "DEV_STORAGE"]) {
     savedEnv[k] = process.env[k];
   }
-  process.env.LLAMACTL_WORKLOADS_DIR = envWorkloadsDir;
+  process.env["LLAMACTL_WORKLOADS_DIR"] = envWorkloadsDir;
   Reflect.deleteProperty(process.env, "DEV_STORAGE");
 });
 

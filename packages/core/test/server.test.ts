@@ -99,8 +99,8 @@ describe("server.serverStatus", () => {
     }
     // Point host/port at an address that will refuse connections so the
     // health probe deterministically reports unreachable.
-    process.env.LLAMA_CPP_HOST = "127.0.0.1";
-    process.env.LLAMA_CPP_PORT = "1";
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "1";
     mkdirSync(temp.runtimeDir, { recursive: true });
   });
   afterEach(() => {
@@ -135,7 +135,7 @@ describe("server.startServer (error paths)", () => {
     for (const [k, v] of Object.entries(envForTemp(temp))) {
       if (v !== undefined) process.env[k] = v;
     }
-    process.env.LLAMA_CPP_BIN = join(temp.devStorage, "nonexistent-bin");
+    process.env["LLAMA_CPP_BIN"] = join(temp.devStorage, "nonexistent-bin");
     mkdirSync(temp.runtimeDir, { recursive: true });
   });
   afterEach(() => {
@@ -176,9 +176,9 @@ describe("server.startServer (error paths)", () => {
     const binDir = join(temp.devStorage, "fake-bin");
     mkdirSync(binDir, { recursive: true });
     writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
-    process.env.LLAMA_CPP_BIN = binDir;
+    process.env["LLAMA_CPP_BIN"] = binDir;
     const port = 29143;
-    process.env.LLAMA_CPP_PORT = String(port);
+    process.env["LLAMA_CPP_PORT"] = String(port);
     const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("nope", { status: 401 }),
     );
@@ -199,9 +199,9 @@ describe("server.startServer (error paths)", () => {
     const binDir = join(temp.devStorage, "fake-bin");
     mkdirSync(binDir, { recursive: true });
     writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
-    process.env.LLAMA_CPP_BIN = binDir;
-    process.env.LLAMA_CPP_HOST = "127.0.0.1";
-    process.env.LLAMA_CPP_PORT = "8080";
+    process.env["LLAMA_CPP_BIN"] = binDir;
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "8080";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
       mockSpawnImplementation(12345),
@@ -239,9 +239,9 @@ describe("server.startServer (error paths)", () => {
     const binDir = join(temp.devStorage, "fake-bin");
     mkdirSync(binDir, { recursive: true });
     writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
-    process.env.LLAMA_CPP_BIN = binDir;
-    process.env.LLAMA_CPP_HOST = "127.0.0.1";
-    process.env.LLAMA_CPP_PORT = "8081";
+    process.env["LLAMA_CPP_BIN"] = binDir;
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "8081";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
       mockSpawnImplementation(process.pid),
@@ -273,7 +273,7 @@ describe("server.startServer (error paths)", () => {
     const binDir = join(temp.devStorage, "fake-bin");
     mkdirSync(binDir, { recursive: true });
     writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
-    process.env.LLAMA_CPP_BIN = binDir;
+    process.env["LLAMA_CPP_BIN"] = binDir;
 
     let thrown: unknown;
     try {
@@ -298,9 +298,9 @@ describe("server.startServer (error paths)", () => {
     const binDir = join(temp.devStorage, "fake-bin");
     mkdirSync(binDir, { recursive: true });
     writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
-    process.env.LLAMA_CPP_BIN = binDir;
-    process.env.LLAMA_CPP_HOST = "127.0.0.1";
-    process.env.LLAMA_CPP_PORT = "8080";
+    process.env["LLAMA_CPP_BIN"] = binDir;
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "8080";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
       mockSpawnImplementation(process.pid),
@@ -332,9 +332,9 @@ describe("server.startServer (error paths)", () => {
     const binDir = join(temp.devStorage, "fake-bin");
     mkdirSync(binDir, { recursive: true });
     writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
-    process.env.LLAMA_CPP_BIN = binDir;
-    process.env.LLAMA_CPP_HOST = "127.0.0.1";
-    process.env.LLAMA_CPP_PORT = "8080";
+    process.env["LLAMA_CPP_BIN"] = binDir;
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "8080";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
       mockSpawnImplementation(process.pid),
@@ -364,9 +364,9 @@ describe("server.startServer (error paths)", () => {
     const binDir = join(temp.devStorage, "fake-bin");
     mkdirSync(binDir, { recursive: true });
     writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
-    process.env.LLAMA_CPP_BIN = binDir;
-    process.env.LLAMA_CPP_HOST = "127.0.0.1";
-    process.env.LLAMA_CPP_PORT = "8080";
+    process.env["LLAMA_CPP_BIN"] = binDir;
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "8080";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
       mockSpawnImplementation(process.pid),
@@ -411,9 +411,9 @@ describe("server.startServer (error paths)", () => {
     mkdirSync(customBinDir, { recursive: true });
     writeFileSync(join(defaultBinDir, "llama-server"), "#!/bin/sh\nexit 0\n");
     writeFileSync(customBin, "#!/bin/sh\nexit 0\n");
-    process.env.LLAMA_CPP_BIN = defaultBinDir;
-    process.env.LLAMA_CPP_HOST = "127.0.0.1";
-    process.env.LLAMA_CPP_PORT = "8080";
+    process.env["LLAMA_CPP_BIN"] = defaultBinDir;
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "8080";
 
     const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
       mockSpawnImplementation(process.pid),

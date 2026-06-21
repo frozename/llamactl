@@ -257,9 +257,9 @@ export class HttpChromaClient {
   ): Promise<ChromaCollection> {
     const path = `/api/v2/tenants/${encodeURIComponent(this.tenant)}/databases/${encodeURIComponent(this.database)}/collections`;
     const body: Record<string, unknown> = { name };
-    if (opts.getOrCreate) body.get_or_create = true;
-    if (opts.metadata) body.metadata = opts.metadata;
-    if (opts.configuration) body.configuration = opts.configuration;
+    if (opts.getOrCreate) body["get_or_create"] = true;
+    if (opts.metadata) body["metadata"] = opts.metadata;
+    if (opts.configuration) body["configuration"] = opts.configuration;
     return await this.json<ChromaCollection>("POST", path, body);
   }
 

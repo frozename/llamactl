@@ -266,7 +266,7 @@ async function runForcePrivateDryRun(
       ok = false;
       error = `${parsed.reason ?? "unknown"}: ${parsed.message ?? "no message"}`;
       if (parsed.availableProfiles) {
-        detail.availableProfiles = parsed.availableProfiles;
+        detail["availableProfiles"] = parsed.availableProfiles;
       }
     }
   } catch (err) {
@@ -334,7 +334,7 @@ async function runForcePrivateWetRun(
       wetOk = false;
       wetError = `${parsed.reason ?? "unknown"}: ${parsed.message ?? "no message"}`;
       if (parsed.availableProfiles) {
-        wetDetail.availableProfiles = parsed.availableProfiles;
+        wetDetail["availableProfiles"] = parsed.availableProfiles;
       }
     }
   } catch (err) {

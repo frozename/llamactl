@@ -18,7 +18,7 @@ const originalEnv = { ...process.env };
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-init-"));
-  process.env.LLAMACTL_COMPOSITES_DIR = join(tmp, "composites");
+  process.env["LLAMACTL_COMPOSITES_DIR"] = join(tmp, "composites");
   // Suppress stdout writes during assertions. Can't monkeypatch here
   // without losing runInit's process.stdout chain; we just let the
   // test runner eat the banner lines.
@@ -51,7 +51,7 @@ describe("init --help", () => {
     expect(result).toBe(0);
     expect(out).toContain("llamactl init");
     expect(out).toContain("--template=");
-    expect(existsSync(process.env.LLAMACTL_COMPOSITES_DIR!)).toBe(false);
+    expect(existsSync(process.env["LLAMACTL_COMPOSITES_DIR"]!)).toBe(false);
   });
 });
 
@@ -68,7 +68,7 @@ describe("init --yes --no-apply writes the template", () => {
     );
     expect(result).toBe(0);
 
-    const target = join(process.env.LLAMACTL_COMPOSITES_DIR!, "smoke-a.yaml");
+    const target = join(process.env["LLAMACTL_COMPOSITES_DIR"]!, "smoke-a.yaml");
     expect(existsSync(target)).toBe(true);
     const yaml = readFileSync(target, "utf8");
     expect(yaml).toContain("name: smoke-a");
@@ -87,7 +87,10 @@ describe("init --yes --no-apply writes the template", () => {
       ]),
     );
     expect(result).toBe(0);
-    const yaml = readFileSync(join(process.env.LLAMACTL_COMPOSITES_DIR!, "smoke-b.yaml"), "utf8");
+    const yaml = readFileSync(
+      join(process.env["LLAMACTL_COMPOSITES_DIR"]!, "smoke-b.yaml"),
+      "utf8",
+    );
     expect(yaml).toContain("runtime: kubernetes");
   });
 
@@ -101,7 +104,7 @@ describe("init --yes --no-apply writes the template", () => {
         "--name=pg-kb",
       ]),
     );
-    const yaml = readFileSync(join(process.env.LLAMACTL_COMPOSITES_DIR!, "pg-kb.yaml"), "utf8");
+    const yaml = readFileSync(join(process.env["LLAMACTL_COMPOSITES_DIR"]!, "pg-kb.yaml"), "utf8");
     expect(yaml).toContain("provider: pgvector");
     expect(yaml).toContain("embedder:");
     expect(yaml).toContain("passwordEnv: PG_PASSWORD");
@@ -117,7 +120,7 @@ describe("init --yes --no-apply writes the template", () => {
         "--name=stack",
       ]),
     );
-    const yaml = readFileSync(join(process.env.LLAMACTL_COMPOSITES_DIR!, "stack.yaml"), "utf8");
+    const yaml = readFileSync(join(process.env["LLAMACTL_COMPOSITES_DIR"]!, "stack.yaml"), "utf8");
     expect(yaml).toContain("workloads:");
     expect(yaml).toContain("target:");
     expect(yaml).toContain("gguf");
@@ -126,10 +129,10 @@ describe("init --yes --no-apply writes the template", () => {
 
 describe("init --force behavior", () => {
   test("existing file blocks write without --force", async () => {
-    const target = join(process.env.LLAMACTL_COMPOSITES_DIR!, "kept.yaml");
+    const target = join(process.env["LLAMACTL_COMPOSITES_DIR"]!, "kept.yaml");
     // Pre-populate the composites dir with a sentinel file.
     const { mkdirSync } = await import("node:fs");
-    mkdirSync(process.env.LLAMACTL_COMPOSITES_DIR!, { recursive: true });
+    mkdirSync(process.env["LLAMACTL_COMPOSITES_DIR"]!, { recursive: true });
     writeFileSync(target, "# pre-existing — do not overwrite\n", "utf8");
 
     const { result } = await captureStdout(() =>
@@ -140,9 +143,9 @@ describe("init --force behavior", () => {
   });
 
   test("--force overwrites the existing file", async () => {
-    const target = join(process.env.LLAMACTL_COMPOSITES_DIR!, "overwrite-me.yaml");
+    const target = join(process.env["LLAMACTL_COMPOSITES_DIR"]!, "overwrite-me.yaml");
     const { mkdirSync } = await import("node:fs");
-    mkdirSync(process.env.LLAMACTL_COMPOSITES_DIR!, { recursive: true });
+    mkdirSync(process.env["LLAMACTL_COMPOSITES_DIR"]!, { recursive: true });
     writeFileSync(target, "# old contents\n", "utf8");
 
     const { result } = await captureStdout(() =>
@@ -175,7 +178,10 @@ describe("init bad args", () => {
     );
     // Invalid flag values are silently ignored — command still works.
     expect(result).toBe(0);
-    const yaml = readFileSync(join(process.env.LLAMACTL_COMPOSITES_DIR!, "fallback.yaml"), "utf8");
+    const yaml = readFileSync(
+      join(process.env["LLAMACTL_COMPOSITES_DIR"]!, "fallback.yaml"),
+      "utf8",
+    );
     expect(yaml).toContain("chroma-only");
   });
 });
@@ -207,6 +213,6 @@ describe("init --name path-traversal guard", () => {
   test("--name=mystack succeeds normally", async () => {
     const { result } = await captureProcessIo(() => runInit([...baseFlags, "--name=mystack"]));
     expect(result).toBe(0);
-    expect(existsSync(join(process.env.LLAMACTL_COMPOSITES_DIR!, "mystack.yaml"))).toBe(true);
+    expect(existsSync(join(process.env["LLAMACTL_COMPOSITES_DIR"]!, "mystack.yaml"))).toBe(true);
   });
 });

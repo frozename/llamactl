@@ -19,7 +19,7 @@ const originalEnv = { ...process.env };
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-node-add-rag-"));
   configPath = join(tmp, "config");
-  process.env.LLAMACTL_CONFIG = configPath;
+  process.env["LLAMACTL_CONFIG"] = configPath;
 });
 
 afterEach(() => {

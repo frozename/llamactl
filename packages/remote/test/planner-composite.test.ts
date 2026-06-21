@@ -133,8 +133,8 @@ describe("BUILT_IN_PLANNER_TOOLS", () => {
       properties?: Record<string, { type: string }>;
     };
     expect(schema.required).toContain("manifestYaml");
-    expect(schema.properties?.manifestYaml?.type).toBe("string");
-    expect(schema.properties?.dryRun?.type).toBe("boolean");
+    expect(schema.properties?.["manifestYaml"]?.type).toBe("string");
+    expect(schema.properties?.["dryRun"]?.type).toBe("boolean");
   });
 });
 

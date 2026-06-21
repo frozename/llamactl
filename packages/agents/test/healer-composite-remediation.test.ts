@@ -282,7 +282,7 @@ describe("healer composite remediation — auto mode", () => {
     // The apply tool actually got called with a manifestYaml arg.
     const applyCall = calls.find((c) => c.name === "llamactl.composite.apply");
     expect(applyCall).toBeDefined();
-    expect(typeof applyCall?.arguments.manifestYaml).toBe("string");
+    expect(typeof applyCall?.arguments["manifestYaml"]).toBe("string");
   });
 
   test("severity threshold 1 refuses the tier-2 plan → refused entry, apply never runs", async () => {

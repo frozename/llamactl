@@ -94,13 +94,13 @@ describe("pull.pickCandidateFile", () => {
 
 describe("pull.resolveHfToken", () => {
   test("returns HF_TOKEN when set", () => {
-    const original = process.env.HF_TOKEN;
-    process.env.HF_TOKEN = "test-token";
+    const original = process.env["HF_TOKEN"];
+    process.env["HF_TOKEN"] = "test-token";
     try {
       expect(resolveHfToken()).toBe("test-token");
     } finally {
-      if (original === undefined) delete process.env.HF_TOKEN;
-      else process.env.HF_TOKEN = original;
+      if (original === undefined) delete process.env["HF_TOKEN"];
+      else process.env["HF_TOKEN"] = original;
     }
   });
 });

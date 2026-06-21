@@ -53,14 +53,14 @@ describe("embersynthHandler with composite context", () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "eh-"));
-    prevEm = process.env.LLAMACTL_EMBERSYNTH_CONFIG;
-    prevKc = process.env.LLAMACTL_CONFIG;
+    prevEm = process.env["LLAMACTL_EMBERSYNTH_CONFIG"];
+    prevKc = process.env["LLAMACTL_CONFIG"];
 
-    process.env.LLAMACTL_EMBERSYNTH_CONFIG = join(tmp, "em.yaml");
-    process.env.LLAMACTL_CONFIG = join(tmp, "kubeconfig");
+    process.env["LLAMACTL_EMBERSYNTH_CONFIG"] = join(tmp, "em.yaml");
+    process.env["LLAMACTL_CONFIG"] = join(tmp, "kubeconfig");
 
     writeFileSync(
-      process.env.LLAMACTL_CONFIG,
+      process.env["LLAMACTL_CONFIG"],
       stringifyYaml({
         apiVersion: "llamactl/v1",
         kind: "Config",
@@ -79,11 +79,11 @@ describe("embersynthHandler with composite context", () => {
   });
 
   afterEach(() => {
-    if (prevEm === undefined) delete process.env.LLAMACTL_EMBERSYNTH_CONFIG;
-    else process.env.LLAMACTL_EMBERSYNTH_CONFIG = prevEm;
+    if (prevEm === undefined) delete process.env["LLAMACTL_EMBERSYNTH_CONFIG"];
+    else process.env["LLAMACTL_EMBERSYNTH_CONFIG"] = prevEm;
 
-    if (prevKc === undefined) delete process.env.LLAMACTL_CONFIG;
-    else process.env.LLAMACTL_CONFIG = prevKc;
+    if (prevKc === undefined) delete process.env["LLAMACTL_CONFIG"];
+    else process.env["LLAMACTL_CONFIG"] = prevKc;
 
     globalThis.fetch = origFetch;
     rmSync(tmp, { recursive: true, force: true });

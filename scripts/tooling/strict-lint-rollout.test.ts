@@ -32,7 +32,7 @@ describe("strict lint rollout baselines", () => {
 
   test("root typecheck covers every TypeScript package", () => {
     const pkg = readPackageJson("package.json");
-    const typecheck = pkg.scripts?.typecheck ?? "";
+    const typecheck = pkg.scripts?.["typecheck"] ?? "";
     const packages = ["core", "cli", "app", "remote", "eval", "agents", "fleet-supervisor", "mcp"];
 
     for (const name of packages) {
@@ -42,7 +42,7 @@ describe("strict lint rollout baselines", () => {
 
   test("app typecheck checks referenced projects instead of the solution shell", () => {
     const pkg = readPackageJson("packages/app/package.json");
-    const typecheck = pkg.scripts?.typecheck ?? "";
+    const typecheck = pkg.scripts?.["typecheck"] ?? "";
 
     expect(typecheck.trim()).not.toBe("tsc --noEmit");
     expect(typecheck).toContain("tsconfig.main.json");
@@ -53,10 +53,10 @@ describe("strict lint rollout baselines", () => {
   test("root package.json exposes the strict lint and format scripts", () => {
     const pkg = readPackageJson("package.json");
 
-    expect(pkg.scripts?.lint).toBe("eslint .");
+    expect(pkg.scripts?.["lint"]).toBe("eslint .");
     expect(pkg.scripts?.["lint:fix"]).toBe("eslint . --fix");
-    expect(pkg.scripts?.prepare).toBe("husky");
-    expect(pkg.scripts?.format).toBe("prettier . --write");
+    expect(pkg.scripts?.["prepare"]).toBe("husky");
+    expect(pkg.scripts?.["format"]).toBe("prettier . --write");
     expect(pkg.scripts?.["format:check"]).toBe("prettier . --check");
   });
 

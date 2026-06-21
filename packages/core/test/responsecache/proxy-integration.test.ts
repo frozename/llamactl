@@ -170,19 +170,19 @@ function startUpstream(mode: "json" | "sse" | "json_error" | "sse_partial"): Pro
   });
 }
 
-const originalBudget = process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB;
-const originalMaxEntry = process.env.LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB;
-const originalTtlHours = process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS;
+const originalBudget = process.env["LLAMACTL_RESPONSE_CACHE_BUDGET_MB"];
+const originalMaxEntry = process.env["LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB"];
+const originalTtlHours = process.env["LLAMACTL_RESPONSE_CACHE_TTL_HOURS"];
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  if (originalBudget === undefined) delete process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB;
-  else process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB = originalBudget;
-  if (originalMaxEntry === undefined) delete process.env.LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB;
-  else process.env.LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB = originalMaxEntry;
-  if (originalTtlHours === undefined) delete process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS;
-  else process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = originalTtlHours;
+  if (originalBudget === undefined) delete process.env["LLAMACTL_RESPONSE_CACHE_BUDGET_MB"];
+  else process.env["LLAMACTL_RESPONSE_CACHE_BUDGET_MB"] = originalBudget;
+  if (originalMaxEntry === undefined) delete process.env["LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB"];
+  else process.env["LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB"] = originalMaxEntry;
+  if (originalTtlHours === undefined) delete process.env["LLAMACTL_RESPONSE_CACHE_TTL_HOURS"];
+  else process.env["LLAMACTL_RESPONSE_CACHE_TTL_HOURS"] = originalTtlHours;
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
 });
 
@@ -345,7 +345,7 @@ test("non-deterministic request bypasses response cache", async () => {
 test("eviction trims entries under configured response-cache budget", async () => {
   const runtime = makeTempRuntime();
   const upstream = await startUpstream("json");
-  process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB = "1";
+  process.env["LLAMACTL_RESPONSE_CACHE_BUDGET_MB"] = "1";
   try {
     const url = new URL(upstream.baseUrl);
     const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
@@ -536,7 +536,7 @@ test("partial SSE responses are not cached and emit skip log", async () => {
 test("TTL-expired response-cache entries are treated as misses and deleted", async () => {
   const runtime = makeTempRuntime();
   const upstream = await startUpstream("json_error");
-  process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = "24";
+  process.env["LLAMACTL_RESPONSE_CACHE_TTL_HOURS"] = "24";
   try {
     const url = new URL(upstream.baseUrl);
     const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
@@ -602,7 +602,7 @@ test("TTL-expired response-cache entries are treated as misses and deleted", asy
 test("fresh response-cache entries are served as hits before TTL expiry", async () => {
   const runtime = makeTempRuntime();
   const upstream = await startUpstream("json");
-  process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS = "24";
+  process.env["LLAMACTL_RESPONSE_CACHE_TTL_HOURS"] = "24";
   try {
     const url = new URL(upstream.baseUrl);
     const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";

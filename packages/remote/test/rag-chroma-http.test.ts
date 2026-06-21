@@ -695,7 +695,7 @@ describe("ChromaRagAdapter (HTTP backend)", () => {
 
 // ---- live test (opt-in) ------------------------------------------------
 
-const LIVE_URL = process.env.LLAMACTL_RAG_CHROMA_HTTP_URL;
+const LIVE_URL = process.env["LLAMACTL_RAG_CHROMA_HTTP_URL"];
 const liveDescribe = LIVE_URL ? describe : describe.skip;
 
 liveDescribe("ChromaRagAdapter (live HTTP, opt-in)", () => {

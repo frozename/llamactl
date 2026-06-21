@@ -53,16 +53,16 @@ describe("markdownChunkTransform", () => {
     });
     expect(chunks.length).toBeGreaterThan(1);
     for (const c of chunks) {
-      expect(Array.isArray(c.metadata.heading_path)).toBe(true);
-      expect(typeof c.metadata.chunk_n).toBe("number");
-      expect(typeof c.metadata.total_chunks).toBe("number");
+      expect(Array.isArray(c.metadata["heading_path"])).toBe(true);
+      expect(typeof c.metadata["chunk_n"]).toBe("number");
+      expect(typeof c.metadata["total_chunks"]).toBe("number");
     }
     // The Bearer section's chunks should carry its full heading chain.
     const bearer = chunks.find((c) =>
-      (c.metadata.heading_path as string[]).some((h) => h === "Bearer Tokens"),
+      (c.metadata["heading_path"] as string[]).some((h) => h === "Bearer Tokens"),
     );
     expect(bearer).toBeDefined();
-    expect(bearer!.metadata.heading_path).toEqual([
+    expect(bearer!.metadata["heading_path"]).toEqual([
       "API Reference",
       "Authentication",
       "Bearer Tokens",

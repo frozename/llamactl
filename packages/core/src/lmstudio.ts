@@ -30,10 +30,10 @@ import {
  * it at Electron startup) so no duplicate `mkdir` here.
  */
 function defaultRoots(env: NodeJS.ProcessEnv = process.env): string[] {
-  const override = env.LMSTUDIO_MODELS_DIR;
+  const override = env["LMSTUDIO_MODELS_DIR"];
   const candidates: string[] = [];
   if (override) candidates.push(override);
-  const testProfile = env.LLAMACTL_TEST_PROFILE?.trim();
+  const testProfile = env["LLAMACTL_TEST_PROFILE"]?.trim();
   if (testProfile) {
     candidates.push(join(testProfile, "ai-models/lmstudio"));
     return candidates;

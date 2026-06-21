@@ -578,7 +578,7 @@ function buildPlistEnv(
   overrides: Record<string, string>,
 ): Record<string, string> {
   const env: Record<string, string> = {
-    PATH: processEnv.PATH ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
+    PATH: processEnv["PATH"] ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
   };
   for (const key of PLIST_ENV_KEYS) {
     const val = processEnv[key];
@@ -717,7 +717,7 @@ function resolveInstallTargets(
   const label =
     parsed.label ??
     (parsed.scope === "system" ? "com.llamactl.agent.daemon" : "com.llamactl.agent");
-  const homeDir = deps.env.HOME ?? "";
+  const homeDir = deps.env["HOME"] ?? "";
   const logDir =
     parsed.logDir ??
     (homeDir ? join(homeDir, ".llamactl-launchd-logs") : "/tmp/llamactl-launchd-logs");
@@ -994,15 +994,15 @@ async function executeInstallWithResult(opts: ExecuteInstallOpts): Promise<Execu
 }
 
 function defaultAgentDir(deps: InstallLaunchdDeps, homeDir: string): string {
-  const devStorage = deps.env.DEV_STORAGE;
-  const node = (deps.env.LLAMACTL_NODE_NAME ?? hostname()).trim() || "local";
+  const devStorage = deps.env["DEV_STORAGE"];
+  const node = (deps.env["LLAMACTL_NODE_NAME"] ?? hostname()).trim() || "local";
   if (devStorage) return join(devStorage, "agent", node);
   if (homeDir) return join(homeDir, ".llamactl", "agent", node);
   return join("/tmp", ".llamactl", "agent", node);
 }
 
 function currentUserAndGroup(deps: InstallLaunchdDeps): { user: string; group: string } {
-  let user = deps.env.USER ?? "";
+  let user = deps.env["USER"] ?? "";
   let group = "staff";
   try {
     const info = userInfo();

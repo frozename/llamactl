@@ -636,7 +636,7 @@ describe("applyManifest — kind dispatch", () => {
     const workloadsDir = join(tmp, "workloads");
     const runtimeDir = join(tmp, "runtime");
     const fakeBinary = join(tmp, "omlx");
-    const previousRuntimeDir = process.env.LOCAL_AI_RUNTIME_DIR;
+    const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
     const runtimeEnv = { ...process.env, LOCAL_AI_RUNTIME_DIR: runtimeDir };
     const resolvedRuntimeEnv = resolveEnv(runtimeEnv);
 
@@ -716,7 +716,7 @@ describe("applyManifest — kind dispatch", () => {
     };
 
     try {
-      process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
+      process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
       await Bun.write(fakeBinary, "");
 
       const applied = await applyManifest({
@@ -759,8 +759,8 @@ describe("applyManifest — kind dispatch", () => {
         "unchanged",
       ]);
     } finally {
-      if (previousRuntimeDir === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
-      else process.env.LOCAL_AI_RUNTIME_DIR = previousRuntimeDir;
+      if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+      else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
       rmSync(tmp, { recursive: true, force: true });
     }
   });

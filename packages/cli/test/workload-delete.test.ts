@@ -18,10 +18,10 @@ const originalEnv = { ...process.env };
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-delete-workload-"));
-  process.env.LLAMACTL_WORKLOADS_DIR = join(tmp, "workloads");
-  process.env.LOCAL_AI_RUNTIME_DIR = join(tmp, "runtime");
-  mkdirSync(process.env.LLAMACTL_WORKLOADS_DIR, { recursive: true });
-  mkdirSync(process.env.LOCAL_AI_RUNTIME_DIR, { recursive: true });
+  process.env["LLAMACTL_WORKLOADS_DIR"] = join(tmp, "workloads");
+  process.env["LOCAL_AI_RUNTIME_DIR"] = join(tmp, "runtime");
+  mkdirSync(process.env["LLAMACTL_WORKLOADS_DIR"], { recursive: true });
+  mkdirSync(process.env["LOCAL_AI_RUNTIME_DIR"], { recursive: true });
 });
 
 afterEach(() => {
@@ -57,7 +57,7 @@ function withCapturedIo<T>(
 }
 
 test("delete workload removes ModelHost manifest and runtime dir", async () => {
-  const manifestPath = join(process.env.LLAMACTL_WORKLOADS_DIR!, "mlx-host.yaml");
+  const manifestPath = join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "mlx-host.yaml");
   writeFileSync(
     manifestPath,
     [

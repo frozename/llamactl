@@ -113,16 +113,16 @@ describe("promote-fastest-vision-model runbook", () => {
     ]);
     // All three promote calls target the top rel + vision preset + dryRun=true.
     const promoteCalls = calls.filter((c) => c.name === "llamactl.catalog.promote");
-    const profilesUsed = promoteCalls.map((c) => c.arguments.profile).sort();
+    const profilesUsed = promoteCalls.map((c) => c.arguments["profile"]).sort();
     expect(profilesUsed).toEqual(["balanced", "mac-mini-16g", "macbook-pro-48g"]);
     for (const c of promoteCalls) {
-      expect(c.arguments.rel).toBe(VISION_REL);
-      expect(c.arguments.preset).toBe("vision");
-      expect(c.arguments.dryRun).toBe(true);
+      expect(c.arguments["rel"]).toBe(VISION_REL);
+      expect(c.arguments["preset"]).toBe("vision");
+      expect(c.arguments["dryRun"]).toBe(true);
     }
     // embersynth.sync also forwarded dryRun.
     const syncCall = calls.find((c) => c.name === "llamactl.embersynth.sync")!;
-    expect(syncCall.arguments.dryRun).toBe(true);
+    expect(syncCall.arguments["dryRun"]).toBe(true);
   });
 
   test("single-profile variant constrains promote fan-out", async () => {
@@ -144,7 +144,7 @@ describe("promote-fastest-vision-model runbook", () => {
     expect(result.ok).toBe(true);
     const promoteCalls = calls.filter((c) => c.name === "llamactl.catalog.promote");
     expect(promoteCalls).toHaveLength(1);
-    expect(promoteCalls[0]!.arguments.profile).toBe("macbook-pro-48g");
+    expect(promoteCalls[0]!.arguments["profile"]).toBe("macbook-pro-48g");
   });
 
   test("wet-run forwards dryRun:false to mutation tools", async () => {
@@ -166,7 +166,7 @@ describe("promote-fastest-vision-model runbook", () => {
     expect(result.ok).toBe(true);
     const mutations = calls.filter((c) => c.name !== "llamactl.bench.compare");
     for (const c of mutations) {
-      expect(c.arguments.dryRun).toBe(false);
+      expect(c.arguments["dryRun"]).toBe(false);
     }
   });
 

@@ -96,9 +96,9 @@ describe("agent rotate-token", () => {
         parseJsonRecord(Buffer.from(b, "base64url").toString("utf8"));
       const initBlob = decode(initRecord.blob);
       const rotatedBlob = decode(rotatedRecord.blob);
-      expect(rotatedBlob.token).not.toBe(initBlob.token);
-      expect(rotatedBlob.fingerprint).toBe(initBlob.fingerprint);
-      expect(rotatedBlob.certificate).toBe(initBlob.certificate);
+      expect(rotatedBlob["token"]).not.toBe(initBlob["token"]);
+      expect(rotatedBlob["fingerprint"]).toBe(initBlob["fingerprint"]);
+      expect(rotatedBlob["certificate"]).toBe(initBlob["certificate"]);
     } finally {
       restore();
     }

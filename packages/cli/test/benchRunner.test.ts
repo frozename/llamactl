@@ -10,7 +10,7 @@ describe("llamactl bench preset / vision (usage + binary-missing paths)", () => 
     temp = makeTempRuntime();
     // Force LLAMA_CPP_BIN at a nonexistent path so the binary check is
     // deterministic regardless of the developer's real llama.cpp install.
-    temp.env.LLAMA_CPP_BIN = join(temp.devStorage, "nonexistent-bin");
+    temp.env["LLAMA_CPP_BIN"] = join(temp.devStorage, "nonexistent-bin");
   });
   afterEach(() => {
     temp.cleanup();
@@ -26,14 +26,14 @@ describe("llamactl bench preset / vision (usage + binary-missing paths)", () => 
     const r = runCli(["bench", "preset", "Demo/demo.gguf", "--json"], temp.env);
     expect(r.code).not.toBe(0);
     const parsed = parseJsonRecord(r.stdout);
-    expect(parsed.error).toBeDefined();
+    expect(parsed["error"]).toBeDefined();
   });
 
   test("bench vision --json emits a structured error when the binary is missing", () => {
     const r = runCli(["bench", "vision", "Demo/demo.gguf", "--json"], temp.env);
     expect(r.code).not.toBe(0);
     const parsed = parseJsonRecord(r.stdout);
-    expect(parsed.error).toBeDefined();
+    expect(parsed["error"]).toBeDefined();
   });
 
   test("unknown mode rejects", () => {

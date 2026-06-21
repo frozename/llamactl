@@ -286,7 +286,7 @@ async function main() {
     const p = predMap.get(g.findingId);
     if (!p) continue;
     if (!VALID.includes(p.classification as Bucket)) {
-      confusion[g.classification]!.unknown! += 1;
+      confusion[g.classification]!["unknown"]! += 1;
       graded += 1;
       continue;
     }

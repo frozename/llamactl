@@ -261,8 +261,8 @@ function requireString(obj: Record<string, unknown>, key: string): string {
 
 function buildBenchHistoryInput(args: Record<string, unknown>): { rel?: string; limit?: number } {
   const opts: { rel?: string; limit?: number } = {};
-  if (typeof args.rel === "string") opts.rel = args.rel;
-  if (typeof args.limit === "number") opts.limit = args.limit;
+  if (typeof args["rel"] === "string") opts.rel = args["rel"];
+  if (typeof args["limit"] === "number") opts.limit = args["limit"];
   return opts;
 }
 
@@ -270,13 +270,13 @@ function buildRagSearchInput(args: Record<string, unknown>): Parameters<Caller["
   const payload: Parameters<Caller["ragSearch"]>[0] = {
     node: requireString(args, "node"),
     query: requireString(args, "query"),
-    topK: typeof args.topK === "number" ? args.topK : 10,
+    topK: typeof args["topK"] === "number" ? args["topK"] : 10,
   };
-  if (args.filter && typeof args.filter === "object") {
-    payload.filter = args.filter as Record<string, unknown>;
+  if (args["filter"] && typeof args["filter"] === "object") {
+    payload.filter = args["filter"] as Record<string, unknown>;
   }
-  if (typeof args.collection === "string") {
-    payload.collection = args.collection;
+  if (typeof args["collection"] === "string") {
+    payload.collection = args["collection"];
   }
   return payload;
 }
@@ -285,16 +285,16 @@ function buildRagPipelineDraftInput(
   args: Record<string, unknown>,
 ): Parameters<Caller["ragPipelineDraft"]>[0] {
   const payload: Parameters<Caller["ragPipelineDraft"]>[0] = {
-    description: typeof args.description === "string" ? args.description : "",
+    description: typeof args["description"] === "string" ? args["description"] : "",
   };
-  if (Array.isArray(args.availableRagNodes)) {
-    payload.availableRagNodes = args.availableRagNodes as string[];
+  if (Array.isArray(args["availableRagNodes"])) {
+    payload.availableRagNodes = args["availableRagNodes"] as string[];
   }
-  if (typeof args.defaultRagNode === "string") {
-    payload.defaultRagNode = args.defaultRagNode;
+  if (typeof args["defaultRagNode"] === "string") {
+    payload.defaultRagNode = args["defaultRagNode"];
   }
-  if (typeof args.nameOverride === "string") {
-    payload.nameOverride = args.nameOverride;
+  if (typeof args["nameOverride"] === "string") {
+    payload.nameOverride = args["nameOverride"];
   }
   return payload;
 }
@@ -320,24 +320,24 @@ async function executeReadTool(
     case "llamactl.workload.list":
       return await caller.workloadList();
     case "llamactl.catalog.list":
-      return await caller.catalogList(coerceScope(args.scope));
+      return await caller.catalogList(coerceScope(args["scope"]));
     case "llamactl.bench.compare":
       return await caller.benchCompare({
         classFilter:
-          (args.classFilter as
+          (args["classFilter"] as
             | "all"
             | "reasoning"
             | "multimodal"
             | "general"
             | "custom"
             | undefined) ?? "all",
-        scopeFilter: (args.scopeFilter as string | undefined) ?? "all",
+        scopeFilter: (args["scopeFilter"] as string | undefined) ?? "all",
       });
     case "llamactl.bench.history":
       return await caller.benchHistory(buildBenchHistoryInput(args));
     case "llamactl.cost.snapshot":
       return await caller.costSnapshot({
-        days: typeof args.days === "number" ? args.days : 7,
+        days: typeof args["days"] === "number" ? args["days"] : 7,
       });
     case "llamactl.operator.plan":
       // Surface the router's operatorPlan verbatim; the UI passes
@@ -405,7 +405,7 @@ async function runServerStopDryRun(
   dryRun: boolean,
 ): Promise<unknown> {
   const workload = requireString(args, "workload");
-  const graceSeconds = typeof args.graceSeconds === "number" ? args.graceSeconds : undefined;
+  const graceSeconds = typeof args["graceSeconds"] === "number" ? args["graceSeconds"] : undefined;
   return await dryRunOr(
     dryRun,
     { dryRun: true, wouldStop: { workload, graceSeconds: graceSeconds ?? null } },
@@ -446,20 +446,20 @@ async function executeMutationDryRunTool(
           dryRun: true,
           wouldRegister: {
             name: requireString(args, "name"),
-            bootstrapLength: typeof args.bootstrap === "string" ? args.bootstrap.length : 0,
+            bootstrapLength: typeof args["bootstrap"] === "string" ? args["bootstrap"].length : 0,
           },
         },
         async (): Promise<unknown> =>
           await caller.nodeAdd({
             name: requireString(args, "name"),
             bootstrap: requireString(args, "bootstrap"),
-            ...(typeof args.force === "boolean" ? { force: args.force } : {}),
+            ...(typeof args["force"] === "boolean" ? { force: args["force"] } : {}),
           }),
       );
     case "llamactl.rag.store": {
       const node = requireString(args, "node");
-      const documents = Array.isArray(args.documents)
-        ? (args.documents as {
+      const documents = Array.isArray(args["documents"])
+        ? (args["documents"] as {
             id: string;
             content: string;
             metadata?: Record<string, unknown>;
@@ -474,8 +474,8 @@ async function executeMutationDryRunTool(
             node,
             documents: documents,
           };
-          if (typeof args.collection === "string") {
-            payload.collection = args.collection;
+          if (typeof args["collection"] === "string") {
+            payload.collection = args["collection"];
           }
           return await caller.ragStore(payload);
         },
@@ -571,7 +571,7 @@ async function executeMutationDestructiveTool(
     case "llamactl.workload.delete": {
       const payload = {
         name: requireString(args, "name"),
-        keepRunning: typeof args.keepRunning === "boolean" ? args.keepRunning : false,
+        keepRunning: typeof args["keepRunning"] === "boolean" ? args["keepRunning"] : false,
       };
       return await dryRunOr(
         dryRun,
@@ -589,14 +589,14 @@ async function executeMutationDestructiveTool(
     }
     case "llamactl.rag.delete": {
       const node = requireString(args, "node");
-      const ids = Array.isArray(args.ids) ? (args.ids as string[]) : [];
+      const ids = Array.isArray(args["ids"]) ? (args["ids"] as string[]) : [];
       return await dryRunOr(
         dryRun,
         { dryRun: true, wouldDelete: { node, ids } },
         async (): Promise<unknown> => {
           const payload: Parameters<Caller["ragDelete"]>[0] = { node, ids };
-          if (typeof args.collection === "string") {
-            payload.collection = args.collection;
+          if (typeof args["collection"] === "string") {
+            payload.collection = args["collection"];
           }
           return await caller.ragDelete(payload);
         },
@@ -610,7 +610,7 @@ async function executeMutationDestructiveTool(
       return await caller.compositeDestroy({
         name: requireString(args, "name"),
         dryRun,
-        purgeVolumes: (args.purgeVolumes as boolean | undefined) ?? false,
+        purgeVolumes: (args["purgeVolumes"] as boolean | undefined) ?? false,
       });
     case "llamactl.rag.pipeline.remove": {
       const payload = { name: requireString(args, "name") };

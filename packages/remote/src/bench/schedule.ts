@@ -39,7 +39,7 @@ const BenchScheduleFileSchema = z.object({
 type BenchScheduleFile = z.infer<typeof BenchScheduleFileSchema>;
 
 export function defaultScheduleFilePath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_BENCH_SCHEDULES?.trim();
+  const override = env["LLAMACTL_BENCH_SCHEDULES"]?.trim();
   if (override) return override;
   const base = llamactlHome(env);
   return join(base, "bench-schedules.yaml");

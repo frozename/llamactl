@@ -24,10 +24,10 @@ describe("task-refiner-rubric scorer", () => {
       )) as unknown as typeof fetch;
     try {
       const result = await taskRefinerRubricWorkload.scorer({ input: "draft" }, "refined output");
-      expect(result.metrics.intent_preservation).toBe(3);
-      expect(result.metrics.contract_clarity).toBe(2);
-      expect(result.metrics.noise_removal).toBe(2);
-      expect(result.metrics.composite).toBeCloseTo(7 / 9, 5);
+      expect(result.metrics["intent_preservation"]).toBe(3);
+      expect(result.metrics["contract_clarity"]).toBe(2);
+      expect(result.metrics["noise_removal"]).toBe(2);
+      expect(result.metrics["composite"]).toBeCloseTo(7 / 9, 5);
     } finally {
       globalThis.fetch = origFetch;
     }
@@ -53,7 +53,7 @@ describe("task-refiner-rubric scorer", () => {
       )) as unknown as typeof fetch;
     try {
       const result = await taskRefinerRubricWorkload.scorer({ input: "draft" }, "refined");
-      expect(result.metrics.composite).toBeCloseTo(3 / 9, 5);
+      expect(result.metrics["composite"]).toBeCloseTo(3 / 9, 5);
     } finally {
       globalThis.fetch = origFetch;
     }
@@ -68,7 +68,7 @@ describe("task-refiner-rubric scorer", () => {
     }) as unknown as typeof fetch;
     try {
       const result = await taskRefinerRubricWorkload.scorer({ input: "draft" }, "   ");
-      expect(result.metrics.parse_error).toBe(1);
+      expect(result.metrics["parse_error"]).toBe(1);
       expect(calledJudge).toBe(false);
     } finally {
       globalThis.fetch = origFetch;

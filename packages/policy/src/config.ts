@@ -65,9 +65,9 @@ export type CostGuardianThresholds = z.infer<typeof CostGuardianThresholdsSchema
 export type CostGuardianConfig = z.infer<typeof CostGuardianConfigSchema>;
 
 export function defaultCostGuardianConfigPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_COST_GUARDIAN_CONFIG?.trim();
+  const override = env["LLAMACTL_COST_GUARDIAN_CONFIG"]?.trim();
   if (override) return override;
-  const devStorage = env.DEV_STORAGE?.trim();
+  const devStorage = env["DEV_STORAGE"]?.trim();
   const base =
     devStorage !== undefined && devStorage.length > 0 ? devStorage : join(homedir(), ".llamactl");
   return join(base, "cost-guardian.yaml");

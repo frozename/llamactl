@@ -27,15 +27,15 @@ import { mkdtempSync, rmSync } from "../src/safe-fs.js";
  * var is unset. See docs/rag-nodes.md for provider prereqs.
  */
 
-const CHROMA_CMD = process.env.LLAMACTL_RAG_E2E_CHROMA?.trim();
-const PG_CONFIG = process.env.LLAMACTL_RAG_E2E_PG?.trim();
+const CHROMA_CMD = process.env["LLAMACTL_RAG_E2E_CHROMA"]?.trim();
+const PG_CONFIG = process.env["LLAMACTL_RAG_E2E_PG"]?.trim();
 
 let tmp = "";
 const originalEnv = { ...process.env };
 
 beforeAll(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-rag-e2e-"));
-  process.env.LLAMACTL_CONFIG = join(tmp, "config");
+  process.env["LLAMACTL_CONFIG"] = join(tmp, "config");
 });
 
 afterAll(() => {

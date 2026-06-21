@@ -53,7 +53,7 @@ describe("MBPP workload scorer", () => {
 
     expect(result.prediction).toBe("pass");
     expect(result.gold).toBe("pass");
-    expect(result.metrics.pass).toBe(1);
+    expect(result.metrics["pass"]).toBe(1);
   });
 
   test("scores a wrong solution as fail", async () => {
@@ -64,6 +64,6 @@ describe("MBPP workload scorer", () => {
 
     expect(result.prediction).toBe("fail");
     expect(result.gold).toBe("pass");
-    expect(result.metrics.pass).toBe(0);
+    expect(result.metrics["pass"]).toBe(0);
   });
 });

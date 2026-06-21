@@ -25,8 +25,8 @@ beforeEach(() => {
   altCfgPath = join(tmp, "alt-config");
 
   // Control defaultConfigPath() so tests are hermetic regardless of ~/.llamactl.
-  savedLlamaCtlConfig = process.env.LLAMACTL_CONFIG;
-  process.env.LLAMACTL_CONFIG = defaultCfgPath;
+  savedLlamaCtlConfig = process.env["LLAMACTL_CONFIG"];
+  process.env["LLAMACTL_CONFIG"] = defaultCfgPath;
 
   // Default config: only "default" context, currentContext: "default".
   kubecfg.saveConfig(configSchema.freshConfig(), defaultCfgPath);
@@ -60,9 +60,9 @@ afterEach(() => {
   process.stderr.write = origStderrWrite;
   resetGlobals();
   if (savedLlamaCtlConfig === undefined) {
-    delete process.env.LLAMACTL_CONFIG;
+    delete process.env["LLAMACTL_CONFIG"];
   } else {
-    process.env.LLAMACTL_CONFIG = savedLlamaCtlConfig;
+    process.env["LLAMACTL_CONFIG"] = savedLlamaCtlConfig;
   }
   rmSync(tmp, { recursive: true, force: true });
 });

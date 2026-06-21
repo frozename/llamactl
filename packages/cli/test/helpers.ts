@@ -27,8 +27,8 @@ export function makeTempRuntime(): {
   const runtimeDir = join(devStorage, "ai-models", "local-ai");
   const modelsDir = join(devStorage, "ai-models", "llama.cpp", "models");
   const env: NodeJS.ProcessEnv = {
-    PATH: process.env.PATH ?? "",
-    HOME: process.env.HOME ?? "/tmp",
+    PATH: process.env["PATH"] ?? "",
+    HOME: process.env["HOME"] ?? "/tmp",
     DEV_STORAGE: devStorage,
     LOCAL_AI_RUNTIME_DIR: runtimeDir,
     LLAMA_CPP_MODELS: modelsDir,

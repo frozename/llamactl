@@ -164,12 +164,12 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
     await provider.createResponse(minimalReq);
     expect(entries).toHaveLength(1);
     const e = entries[0] as Record<string, unknown>;
-    expect(e.ok).toBe(true);
-    expect(e.exit_code).toBe(0);
-    expect(e.agent).toBe("mac-mini");
-    expect(e.subscription).toBe("pro-alex");
-    expect(typeof e.prompt_bytes).toBe("number");
-    expect((e.prompt_bytes as number) > 0).toBe(true);
+    expect(e["ok"]).toBe(true);
+    expect(e["exit_code"]).toBe(0);
+    expect(e["agent"]).toBe("mac-mini");
+    expect(e["subscription"]).toBe("pro-alex");
+    expect(typeof e["prompt_bytes"]).toBe("number");
+    expect((e["prompt_bytes"] as number) > 0).toBe(true);
     // Body is never logged.
     expect(e).not.toHaveProperty("prompt");
     expect(e).not.toHaveProperty("response");
@@ -193,8 +193,8 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
     }
     expect(entries).toHaveLength(1);
     const e = entries[0] as Record<string, unknown>;
-    expect(e.ok).toBe(false);
-    expect(e.error_code).toBe("non-zero-exit");
+    expect(e["ok"]).toBe(false);
+    expect(e["error_code"]).toBe("non-zero-exit");
   });
 });
 

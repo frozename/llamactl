@@ -321,13 +321,13 @@ function entryTemplate(overrides: Partial<KvEntry>): KvEntry {
   };
 }
 
-const originalBudget = process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB;
+const originalBudget = process.env["LLAMACTL_KV_WORKLOAD_BUDGET_MB"];
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  if (originalBudget === undefined) delete process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB;
-  else process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB = originalBudget;
+  if (originalBudget === undefined) delete process.env["LLAMACTL_KV_WORKLOAD_BUDGET_MB"];
+  else process.env["LLAMACTL_KV_WORKLOAD_BUDGET_MB"] = originalBudget;
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
 });
 
@@ -557,7 +557,7 @@ test("anthropic cold save writes trailer toolMap and ext_flags when upstream ret
     const entry = entries[0]!;
     expect((entry.extFlags & EXT_FLAG_TOOL_MAP) !== 0).toBe(true);
     const trailer = readTrailer(entry.upstreamSlotFile);
-    expect(trailer?.toolMap?.toolu_1).toBe(
+    expect(trailer?.toolMap?.["toolu_1"]).toBe(
       '{"id":"toolu_1","type":"function","function":{"name":"lookup_weather","arguments":"{\\n  \\"city\\": \\"Sao Paulo\\",\\n  \\"units\\": \\"c\\"\\n}"}}',
     );
     storage.close();
@@ -814,8 +814,8 @@ test("proxy injects x_omlx_request_handle and x_omlx_restore_epoch after success
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
     const echoed = JSON.parse(responseJson.echoed ?? "{}") as Record<string, unknown>;
-    expect(echoed.x_omlx_request_handle).toBe(sha);
-    expect(echoed.x_omlx_restore_epoch).toBe("abc");
+    expect(echoed["x_omlx_request_handle"]).toBe(sha);
+    expect(echoed["x_omlx_restore_epoch"]).toBe("abc");
     expect(upstream.events).toEqual(["slot-restore", "chat-forward"]);
   } finally {
     await upstream.close();
@@ -872,8 +872,8 @@ test("proxy does not inject vendor fields when request-handle capability is unsu
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
     const echoed = JSON.parse(responseJson.echoed ?? "{}") as Record<string, unknown>;
-    expect(echoed.x_omlx_request_handle).toBeUndefined();
-    expect(echoed.x_omlx_restore_epoch).toBeUndefined();
+    expect(echoed["x_omlx_request_handle"]).toBeUndefined();
+    expect(echoed["x_omlx_restore_epoch"]).toBeUndefined();
   } finally {
     await upstream.close();
     runtime.cleanup();
@@ -930,8 +930,8 @@ test("proxy does not inject vendor fields when restore fails", async () => {
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
     const echoed = JSON.parse(responseJson.echoed ?? "{}") as Record<string, unknown>;
-    expect(echoed.x_omlx_request_handle).toBeUndefined();
-    expect(echoed.x_omlx_restore_epoch).toBeUndefined();
+    expect(echoed["x_omlx_request_handle"]).toBeUndefined();
+    expect(echoed["x_omlx_restore_epoch"]).toBeUndefined();
   } finally {
     await upstream.close();
     runtime.cleanup();
@@ -987,8 +987,8 @@ test("proxy does not inject vendor fields when restore_epoch is null", async () 
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
     const echoed = JSON.parse(responseJson.echoed ?? "{}") as Record<string, unknown>;
-    expect(echoed.x_omlx_request_handle).toBeUndefined();
-    expect(echoed.x_omlx_restore_epoch).toBeUndefined();
+    expect(echoed["x_omlx_request_handle"]).toBeUndefined();
+    expect(echoed["x_omlx_restore_epoch"]).toBeUndefined();
   } finally {
     await upstream.close();
     runtime.cleanup();
@@ -1301,8 +1301,8 @@ test("proxy strips user supplied x_omlx_request_handle at ingress", async () => 
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
     const echoed = JSON.parse(responseJson.echoed ?? "{}") as Record<string, unknown>;
-    expect(echoed.x_omlx_request_handle).toBe(sha);
-    expect(echoed.x_omlx_restore_epoch).toBe("abc");
+    expect(echoed["x_omlx_request_handle"]).toBe(sha);
+    expect(echoed["x_omlx_restore_epoch"]).toBe("abc");
     expect(parsedConsoleDebugEvents(debugSpy)).toContainEqual({
       event: "slot_injection_user_supplied_stripped",
       workload: "wl-a",
@@ -1373,8 +1373,8 @@ test("proxy strips user supplied x_omlx_restore_epoch at ingress", async () => {
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
     const echoed = JSON.parse(responseJson.echoed ?? "{}") as Record<string, unknown>;
-    expect(echoed.x_omlx_request_handle).toBe(sha);
-    expect(echoed.x_omlx_restore_epoch).toBe("abc");
+    expect(echoed["x_omlx_request_handle"]).toBe(sha);
+    expect(echoed["x_omlx_restore_epoch"]).toBe("abc");
     expect(parsedConsoleDebugEvents(debugSpy)).toContainEqual({
       event: "slot_injection_user_supplied_stripped",
       workload: "wl-a",
@@ -1446,8 +1446,8 @@ test("proxy injection overwrites user supplied vendor fields", async () => {
     expect(response.status).toBe(200);
     const responseJson = (await response.json()) as { echoed?: string };
     const echoed = JSON.parse(responseJson.echoed ?? "{}") as Record<string, unknown>;
-    expect(echoed.x_omlx_request_handle).toBe(sha);
-    expect(echoed.x_omlx_restore_epoch).toBe("abc");
+    expect(echoed["x_omlx_request_handle"]).toBe(sha);
+    expect(echoed["x_omlx_restore_epoch"]).toBe("abc");
     const debugEvents = parsedConsoleDebugEvents(debugSpy);
     expect(debugEvents).toContainEqual({
       event: "slot_injection_user_supplied_stripped",
@@ -2101,7 +2101,7 @@ test("eviction trims over-budget workload entries and keeps new cold entry", asy
   const runtime = makeTempRuntime();
   const slotBaseDir = join(runtime.root, "kvstore", "slots", "wl-a");
   const upstream = await startUpstream({ slotBaseDir });
-  process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB = "1";
+  process.env["LLAMACTL_KV_WORKLOAD_BUDGET_MB"] = "1";
   try {
     const url = new URL(upstream.baseUrl);
     writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
@@ -2158,7 +2158,7 @@ test("eviction blocked by active entry keeps active row and emits debug event", 
   const runtime = makeTempRuntime();
   const slotBaseDir = join(runtime.root, "kvstore", "slots", "wl-a");
   const upstream = await startUpstream({ slotBaseDir });
-  process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB = "1";
+  process.env["LLAMACTL_KV_WORKLOAD_BUDGET_MB"] = "1";
   const debugSpy = spyOn(console, "debug").mockImplementation(() => undefined);
   try {
     const url = new URL(upstream.baseUrl);

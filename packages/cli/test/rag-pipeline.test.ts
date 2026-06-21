@@ -279,8 +279,8 @@ describe("rag pipeline run", () => {
   test("--json emits a single-line JSON doc", async () => {
     const { cap } = await captureStdio(() => runRag(["pipeline", "run", "test", "--json"]));
     const parsed = parseJsonRecord(cap.out.trim());
-    expect(parsed.ok).toBe(true);
-    expect(requireRecordField(parsed, "summary").total_chunks).toBe(12);
+    expect(parsed["ok"]).toBe(true);
+    expect(requireRecordField(parsed, "summary")["total_chunks"]).toBe(12);
   });
 });
 
@@ -294,7 +294,7 @@ describe("rag pipeline list", () => {
   test("--json emits structured doc", async () => {
     const { cap } = await captureStdio(() => runRag(["pipeline", "list", "--json"]));
     const parsed = parseJsonRecord(cap.out.trim());
-    expect(Array.isArray(parsed.pipelines)).toBe(true);
+    expect(Array.isArray(parsed["pipelines"])).toBe(true);
   });
   test("empty → informative message", async () => {
     __setRagPipelineTestSeams({

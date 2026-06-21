@@ -86,7 +86,7 @@ describe("cross-repo seam: @nova/contracts imports + schema shapes", () => {
     });
     expect(c.count).toBe(1234);
     expect(c.dimensions).toBe(1536);
-    expect(c.metadata?.source).toBe("runbook");
+    expect(c.metadata?.["source"]).toBe("runbook");
   });
 
   test("ListCollectionsResponseSchema wraps CollectionInfo[]", () => {

@@ -51,10 +51,10 @@ describe("translateToDeployment — Deployment shape", () => {
     expect(labels[K8S_LABEL_KEYS.component]).toBe("service");
 
     const podLabels = deployment.spec?.template.metadata?.labels ?? {};
-    expect(podLabels.app).toBe("chroma-main");
+    expect(podLabels["app"]).toBe("chroma-main");
     expect(podLabels[K8S_LABEL_KEYS.managedBy]).toBe(MANAGED_BY_VALUE);
 
-    expect(deployment.spec!.selector.matchLabels!.app).toBe("chroma-main");
+    expect(deployment.spec!.selector.matchLabels!["app"]).toBe("chroma-main");
   });
 
   test("spec-hash annotation drives drift detection", () => {
@@ -158,7 +158,7 @@ describe("translateToDeployment — container shape", () => {
     // Raw value must NOT appear in the env.
     expect(env.some((e) => e.value === "super-s3cret")).toBe(false);
     // But the Secret itself carries it, base64'd.
-    expect(secret?.data?.POSTGRES_PASSWORD).toBe(
+    expect(secret?.data?.["POSTGRES_PASSWORD"]).toBe(
       Buffer.from("super-s3cret", "utf8").toString("base64"),
     );
     expect(secret?.type).toBe("Opaque");
@@ -274,7 +274,7 @@ describe("translateToDeployment — PVC + volumes", () => {
     });
     expect(pvc?.metadata?.name).toBe("chroma-main-data");
     expect(pvc?.spec?.accessModes).toEqual(["ReadWriteOnce"]);
-    expect(pvc?.spec?.resources?.requests?.storage).toBe("10Gi");
+    expect(pvc?.spec?.resources?.requests?.["storage"]).toBe("10Gi");
   });
 
   test("named volume → PVC claim reference", () => {

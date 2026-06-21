@@ -47,7 +47,9 @@ const PipelineToolSchema = z.object({
 export type PipelineTool = z.infer<typeof PipelineToolSchema>;
 
 function defaultPipelinesDir(): string {
-  return process.env.LLAMACTL_MCP_PIPELINES_DIR ?? join(homedir(), ".llamactl", "mcp", "pipelines");
+  return (
+    process.env["LLAMACTL_MCP_PIPELINES_DIR"] ?? join(homedir(), ".llamactl", "mcp", "pipelines")
+  );
 }
 
 /**

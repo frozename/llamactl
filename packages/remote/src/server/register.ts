@@ -86,16 +86,16 @@ export async function handleRegister(
   let payload: RegisterRequestBody;
   try {
     const raw = (await req.json()) as Record<string, unknown>;
-    if (typeof raw.bootstrapToken !== "string" || raw.bootstrapToken.length === 0) {
+    if (typeof raw["bootstrapToken"] !== "string" || raw["bootstrapToken"].length === 0) {
       return jsonResponse({ ok: false, error: "bootstrapToken is required" }, 400);
     }
-    if (typeof raw.blob !== "string" || raw.blob.length === 0) {
+    if (typeof raw["blob"] !== "string" || raw["blob"].length === 0) {
       return jsonResponse({ ok: false, error: "blob is required" }, 400);
     }
     payload = {
-      bootstrapToken: raw.bootstrapToken,
-      blob: raw.blob,
-      ...(typeof raw.nodeName === "string" ? { nodeName: raw.nodeName } : {}),
+      bootstrapToken: raw["bootstrapToken"],
+      blob: raw["blob"],
+      ...(typeof raw["nodeName"] === "string" ? { nodeName: raw["nodeName"] } : {}),
     };
   } catch {
     return jsonResponse({ ok: false, error: "invalid JSON body" }, 400);

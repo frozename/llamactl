@@ -390,30 +390,30 @@ async function runGet(args: string[]): Promise<number> {
 export function formatStatusEvent(e: unknown): string | null {
   if (typeof e !== "object" || e === null) return null;
   const ev = e as Record<string, unknown>;
-  switch (ev.type) {
+  switch (ev["type"]) {
     case "phase":
-      return `→ phase: ${String(ev.phase)}`;
+      return `→ phase: ${String(ev["phase"])}`;
     case "component-start": {
-      const ref = ev.ref as { kind: string; name: string };
+      const ref = ev["ref"] as { kind: string; name: string };
       return `  ▸ ${ref.kind}/${ref.name}: starting`;
     }
     case "component-ready": {
-      const ref = ev.ref as { kind: string; name: string };
+      const ref = ev["ref"] as { kind: string; name: string };
       return `  ✓ ${ref.kind}/${ref.name}: ready`;
     }
     case "component-failed": {
-      const ref = ev.ref as { kind: string; name: string };
+      const ref = ev["ref"] as { kind: string; name: string };
       // eslint-disable-next-line @typescript-eslint/no-base-to-string -- Preserve existing CLI/test semantics while clearing strict lint debt.
-      return `  ✗ ${ref.kind}/${ref.name}: ${String(ev.message ?? "failed")}`;
+      return `  ✗ ${ref.kind}/${ref.name}: ${String(ev["message"] ?? "failed")}`;
     }
     case "rollback-start": {
-      const refs = ev.refs as unknown[];
+      const refs = ev["refs"] as unknown[];
       return `⇢ rolling back ${String(refs.length)} components`;
     }
     case "rollback-complete":
       return `⇠ rollback done`;
     case "done":
-      return `⏺ done (ok=${String(ev.ok)})`;
+      return `⏺ done (ok=${String(ev["ok"])})`;
     default:
       return null;
   }

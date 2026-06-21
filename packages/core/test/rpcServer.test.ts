@@ -48,10 +48,10 @@ beforeEach(() => {
   mkdirSync(runtimeDir, { recursive: true });
   mkdirSync(join(devStorage, "logs", "llama.cpp"), { recursive: true });
   writeFileSync(join(binDir, "rpc-server"), FAKE_RPC_SCRIPT, { mode: 0o755 });
-  process.env.DEV_STORAGE = devStorage;
-  process.env.LLAMA_CPP_BIN = binDir;
-  process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
-  process.env.LLAMA_CPP_LOGS = join(devStorage, "logs", "llama.cpp");
+  process.env["DEV_STORAGE"] = devStorage;
+  process.env["LLAMA_CPP_BIN"] = binDir;
+  process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+  process.env["LLAMA_CPP_LOGS"] = join(devStorage, "logs", "llama.cpp");
   resolved = resolveEnv();
 });
 

@@ -40,7 +40,7 @@ describe("llamactl pull (usage + arg wiring)", () => {
     const r = runCli(["pull", "candidate", "--json", "unsloth/not-a-real-repo"], temp.env);
     expect(r.code).not.toBe(0);
     const parsed = parseJsonRecord(r.stdout);
-    expect(parsed.error).toContain("Unable to resolve a candidate file");
+    expect(parsed["error"]).toContain("Unable to resolve a candidate file");
   });
 
   test("unknown flag is rejected", () => {

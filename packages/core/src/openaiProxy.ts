@@ -726,7 +726,7 @@ export function isRouteKvEligible(route: {
 }
 
 function kvBudgetBytes(): number {
-  const raw = process.env.LLAMACTL_KV_WORKLOAD_BUDGET_MB;
+  const raw = process.env["LLAMACTL_KV_WORKLOAD_BUDGET_MB"];
   if (!raw) return 8192 * 1024 * 1024;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 1) return 8192 * 1024 * 1024;
@@ -754,7 +754,7 @@ function responseCacheProtocolVariant(context: ProxyContext): "openai" | "anthro
 }
 
 function responseCacheBudgetBytes(): number {
-  const raw = process.env.LLAMACTL_RESPONSE_CACHE_BUDGET_MB;
+  const raw = process.env["LLAMACTL_RESPONSE_CACHE_BUDGET_MB"];
   if (!raw) return 1024 * 1024 * 1024;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 1) return 1024 * 1024 * 1024;
@@ -762,7 +762,7 @@ function responseCacheBudgetBytes(): number {
 }
 
 function responseCacheMaxEntryBytes(): number {
-  const raw = process.env.LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB;
+  const raw = process.env["LLAMACTL_RESPONSE_CACHE_MAX_ENTRY_MB"];
   if (!raw) return 8 * 1024 * 1024;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed < 1) return 8 * 1024 * 1024;
@@ -770,7 +770,7 @@ function responseCacheMaxEntryBytes(): number {
 }
 
 function responseCacheTtlMs(): number {
-  const raw = process.env.LLAMACTL_RESPONSE_CACHE_TTL_HOURS;
+  const raw = process.env["LLAMACTL_RESPONSE_CACHE_TTL_HOURS"];
   if (!raw) return 24 * 60 * 60 * 1000;
   const parsed = Number.parseFloat(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return 24 * 60 * 60 * 1000;
@@ -853,9 +853,9 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
     route.kind === "ModelHost" &&
     route.engine === "omlx" &&
     isRecord(parsedBody) &&
-    parsedBody.stream !== false
+    parsedBody["stream"] !== false
   ) {
-    parsedBody.stream = false;
+    parsedBody["stream"] = false;
     bodyText = JSON.stringify(parsedBody);
     context.bodyText = bodyText;
     context.init = { ...context.init, body: bodyText };
@@ -970,15 +970,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function collectToolCallEntries(toolCalls: unknown[], out: Record<string, string>): void {
   for (const rawCall of toolCalls) {
     if (!isRecord(rawCall)) continue;
-    if (rawCall.type !== "function" || typeof rawCall.id !== "string") continue;
-    const fn = rawCall.function;
-    if (!isRecord(fn) || typeof fn.name !== "string" || typeof fn.arguments !== "string") continue;
-    out[rawCall.id] = JSON.stringify({
-      id: rawCall.id,
+    if (rawCall["type"] !== "function" || typeof rawCall["id"] !== "string") continue;
+    const fn = rawCall["function"];
+    if (!isRecord(fn) || typeof fn["name"] !== "string" || typeof fn["arguments"] !== "string")
+      continue;
+    out[rawCall["id"]] = JSON.stringify({
+      id: rawCall["id"],
       type: "function",
       function: {
-        name: fn.name,
-        arguments: fn.arguments,
+        name: fn["name"],
+        arguments: fn["arguments"],
       },
     });
   }
@@ -986,14 +987,14 @@ function collectToolCallEntries(toolCalls: unknown[], out: Record<string, string
 
 function extractToolMapFromJson(payload: unknown): Record<string, string> {
   if (!isRecord(payload)) return {};
-  const choices = payload.choices;
+  const choices = payload["choices"];
   if (!Array.isArray(choices)) return {};
   const out: Record<string, string> = {};
   for (const choice of choices) {
     if (!isRecord(choice)) continue;
-    const message = choice.message;
+    const message = choice["message"];
     if (!isRecord(message)) continue;
-    const toolCalls = message.tool_calls;
+    const toolCalls = message["tool_calls"];
     if (!Array.isArray(toolCalls)) continue;
     collectToolCallEntries(toolCalls, out);
   }
@@ -1056,9 +1057,9 @@ function stripUserSuppliedOmlxVendorFields(
   const hadRestoreEpoch = Object.prototype.hasOwnProperty.call(body, "x_omlx_restore_epoch");
   const hadSaveHandle = Object.prototype.hasOwnProperty.call(body, "x_omlx_save_handle");
   if (!hadRequestHandle && !hadRestoreEpoch && !hadSaveHandle) return false;
-  delete body.x_omlx_request_handle;
-  delete body.x_omlx_restore_epoch;
-  delete body.x_omlx_save_handle;
+  delete body["x_omlx_request_handle"];
+  delete body["x_omlx_restore_epoch"];
+  delete body["x_omlx_save_handle"];
   logSlotInjectionEvent("slot_injection_user_supplied_stripped", {
     model,
     workload,
@@ -1075,8 +1076,8 @@ function injectVendorFields(
 ): boolean {
   const hadRequestHandle = Object.prototype.hasOwnProperty.call(body, "x_omlx_request_handle");
   const hadRestoreEpoch = Object.prototype.hasOwnProperty.call(body, "x_omlx_restore_epoch");
-  body.x_omlx_request_handle = fields.x_omlx_request_handle;
-  body.x_omlx_restore_epoch = fields.x_omlx_restore_epoch;
+  body["x_omlx_request_handle"] = fields.x_omlx_request_handle;
+  body["x_omlx_restore_epoch"] = fields.x_omlx_restore_epoch;
   return hadRequestHandle || hadRestoreEpoch;
 }
 
@@ -1113,7 +1114,7 @@ async function maybeInjectOmlxRestoreBind(
     return;
   }
   if (!isRecord(parsed)) return;
-  const userValue = parsed.x_omlx_request_handle;
+  const userValue = parsed["x_omlx_request_handle"];
   const overwritten = injectVendorFields(parsed, {
     x_omlx_request_handle: basenameStripKvslot(upstreamSlotFile),
     x_omlx_restore_epoch: restoreEpoch,
@@ -1167,8 +1168,8 @@ async function maybeInjectOmlxSaveHandle(
     return;
   }
   if (!isRecord(parsed)) return;
-  parsed.x_omlx_save_handle = sha;
-  parsed.stream = false;
+  parsed["x_omlx_save_handle"] = sha;
+  parsed["stream"] = false;
   const injectedBody = JSON.stringify(parsed);
   context.bodyText = injectedBody;
   context.init = { ...context.init, body: injectedBody };

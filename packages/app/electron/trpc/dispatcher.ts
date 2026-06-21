@@ -458,9 +458,9 @@ const uiRouter = t.router({
       // audit/CI renders. Same philosophy as env.ts's testProfileDefaults:
       // every machine-specific path gets rerooted under the profile.
       const home =
-        process.env.LLAMACTL_TEST_PROFILE && process.env.LLAMACTL_TEST_PROFILE.length > 0
-          ? process.env.LLAMACTL_TEST_PROFILE
-          : (process.env.HOME ?? "");
+        process.env["LLAMACTL_TEST_PROFILE"] && process.env["LLAMACTL_TEST_PROFILE"].length > 0
+          ? process.env["LLAMACTL_TEST_PROFILE"]
+          : (process.env["HOME"] ?? "");
       const expandedRoot = input.root.startsWith("~/")
         ? input.root.replace(/^~/, home)
         : input.root;

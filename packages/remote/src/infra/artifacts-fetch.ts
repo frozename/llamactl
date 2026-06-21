@@ -48,9 +48,9 @@ async function defaultFetcher(
   text: () => string;
 }> {
   const headers: Record<string, string> = {};
-  if (opts?.accept) headers.accept = opts.accept;
-  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
-  if (token) headers.authorization = `Bearer ${token}`;
+  if (opts?.accept) headers["accept"] = opts.accept;
+  const token = process.env["GITHUB_TOKEN"] ?? process.env["GH_TOKEN"];
+  if (token) headers["authorization"] = `Bearer ${token}`;
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
   const controller = new AbortController();
   const timeout = setTimeout(() => {

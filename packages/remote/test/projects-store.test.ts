@@ -135,7 +135,7 @@ describe("loadProjects / saveProjects", () => {
     saveProjects([p], path);
     const loaded = loadProjects(path);
     expect(loaded[0]!.spec.rag!.collection).toBe("docs");
-    expect(loaded[0]!.spec.routing.quick_qna).toBe("private-first");
+    expect(loaded[0]!.spec.routing["quick_qna"]).toBe("private-first");
     expect(loaded[0]!.spec.budget!.usd_per_day).toBe(1.5);
   });
 
@@ -146,7 +146,7 @@ describe("loadProjects / saveProjects", () => {
   });
 
   test("respects LLAMACTL_PROJECTS_FILE when path argument is omitted", () => {
-    process.env.LLAMACTL_PROJECTS_FILE = path;
+    process.env["LLAMACTL_PROJECTS_FILE"] = path;
     saveProjects([makeProject("env-override")]);
     const loaded = loadProjects();
     expect(loaded[0]!.metadata.name).toBe("env-override");
@@ -165,7 +165,7 @@ describe("upsertProject", () => {
     const existing = [makeProject("a", { routing: { quick_qna: "v1" } })];
     const next = upsertProject(existing, makeProject("a", { routing: { quick_qna: "v2" } }));
     expect(next.length).toBe(1);
-    expect(next[0]!.spec.routing.quick_qna).toBe("v2");
+    expect(next[0]!.spec.routing["quick_qna"]).toBe("v2");
   });
 
   test("does not mutate the input array", () => {

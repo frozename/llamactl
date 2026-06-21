@@ -15,17 +15,17 @@ describe("gateway-catalog io", () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "gc-io-"));
-    prevSp = process.env.LLAMACTL_SIRIUS_PROVIDERS;
-    prevEm = process.env.LLAMACTL_EMBERSYNTH_CONFIG;
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = join(tmp, "sp.yaml");
-    process.env.LLAMACTL_EMBERSYNTH_CONFIG = join(tmp, "em.yaml");
+    prevSp = process.env["LLAMACTL_SIRIUS_PROVIDERS"];
+    prevEm = process.env["LLAMACTL_EMBERSYNTH_CONFIG"];
+    process.env["LLAMACTL_SIRIUS_PROVIDERS"] = join(tmp, "sp.yaml");
+    process.env["LLAMACTL_EMBERSYNTH_CONFIG"] = join(tmp, "em.yaml");
   });
 
   afterEach(() => {
-    if (prevSp === undefined) delete process.env.LLAMACTL_SIRIUS_PROVIDERS;
-    else process.env.LLAMACTL_SIRIUS_PROVIDERS = prevSp;
-    if (prevEm === undefined) delete process.env.LLAMACTL_EMBERSYNTH_CONFIG;
-    else process.env.LLAMACTL_EMBERSYNTH_CONFIG = prevEm;
+    if (prevSp === undefined) delete process.env["LLAMACTL_SIRIUS_PROVIDERS"];
+    else process.env["LLAMACTL_SIRIUS_PROVIDERS"] = prevSp;
+    if (prevEm === undefined) delete process.env["LLAMACTL_EMBERSYNTH_CONFIG"];
+    else process.env["LLAMACTL_EMBERSYNTH_CONFIG"] = prevEm;
     rmSync(tmp, { recursive: true, force: true });
   });
 

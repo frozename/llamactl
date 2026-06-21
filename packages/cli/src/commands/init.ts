@@ -245,9 +245,9 @@ function applyRewrites(yaml: string, opts: { name: string; runtime: RuntimeKind 
 }
 
 function defaultCompositesDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_COMPOSITES_DIR;
+  const override = env["LLAMACTL_COMPOSITES_DIR"];
   if (override) return override;
-  const base = env.LLAMACTL_HOME ?? join(homedir(), ".llamactl");
+  const base = env["LLAMACTL_HOME"] ?? join(homedir(), ".llamactl");
   return join(base, "composites");
 }
 

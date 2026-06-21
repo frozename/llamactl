@@ -235,7 +235,7 @@ function renderFunctionTree(node: unknown): unknown {
     return renderFunctionTree(component(element.props ?? {}));
   }
 
-  const children = element.props?.children;
+  const children = element.props?.["children"];
   return {
     ...element,
     props: {
@@ -269,7 +269,7 @@ function findElements(node: unknown, predicate: (element: TestElement) => boolea
     if (!current || typeof current !== "object") continue;
     const element = current as TestElement;
     if (predicate(element)) matches.push(element);
-    pushChildren(stack, element.props?.children);
+    pushChildren(stack, element.props?.["children"]);
   }
   return matches;
 }
@@ -368,10 +368,10 @@ describe("chat stream ownership", () => {
 
     const selects = findElements(rendered, (element) => element.type === "select");
     const nodeAndModelSelects = selects.filter((select) =>
-      ["node-a", "node-a-model"].includes(String(select.props?.value)),
+      ["node-a", "node-a-model"].includes(String(select.props?.["value"])),
     );
 
     expect(nodeAndModelSelects).toHaveLength(2);
-    expect(nodeAndModelSelects.every((select) => select.props?.disabled === true)).toBe(true);
+    expect(nodeAndModelSelects.every((select) => select.props?.["disabled"] === true)).toBe(true);
   });
 });

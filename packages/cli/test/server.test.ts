@@ -19,8 +19,8 @@ beforeEach(() => {
   stderrChunks = [];
   stdoutChunks = [];
   tmpRuntimeDir = mkdtempSync(join(tmpdir(), "llamactl-server-test-"));
-  savedRuntime = process.env.LOCAL_AI_RUNTIME_DIR;
-  process.env.LOCAL_AI_RUNTIME_DIR = tmpRuntimeDir;
+  savedRuntime = process.env["LOCAL_AI_RUNTIME_DIR"];
+  process.env["LOCAL_AI_RUNTIME_DIR"] = tmpRuntimeDir;
   __setTestSeams({ config: configSchema.freshConfig() });
   process.stderr.write = (chunk: string | Uint8Array, ..._rest: unknown[]): boolean => {
     if (typeof chunk === "string") stderrChunks.push(chunk);
@@ -38,8 +38,8 @@ afterEach(() => {
   __resetTestSeams();
   resetGlobals();
   rmSync(tmpRuntimeDir, { recursive: true, force: true });
-  if (savedRuntime === undefined) delete process.env.LOCAL_AI_RUNTIME_DIR;
-  else process.env.LOCAL_AI_RUNTIME_DIR = savedRuntime;
+  if (savedRuntime === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+  else process.env["LOCAL_AI_RUNTIME_DIR"] = savedRuntime;
 });
 
 describe("server stop: positional arg rejection", () => {

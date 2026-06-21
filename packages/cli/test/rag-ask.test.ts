@@ -147,7 +147,7 @@ function installStubClient(opts: {
         return {
           id: "chat-stub",
           object: "chat.completion",
-          model: input.request.model,
+          model: input.request["model"],
           created: 0,
           choices: opts.chatChoices ?? [
             {
@@ -225,16 +225,16 @@ describe("rag ask — happy path", () => {
     expect(chatReq.node).toBe("sirius-gw");
     const request = chatReq.request;
     const messages = requireMessages(request);
-    expect(request.model).toBe("gpt-4o-mini");
-    expect(request.max_tokens).toBe(2048);
-    expect(request.temperature).toBe(0);
+    expect(request["model"]).toBe("gpt-4o-mini");
+    expect(request["max_tokens"]).toBe(2048);
+    expect(request["temperature"]).toBe(0);
     expect(messages).toHaveLength(2);
-    expect(messages[0]!.role).toBe("system");
-    expect(messages[1]!.role).toBe("user");
+    expect(messages[0]!["role"]).toBe("system");
+    expect(messages[1]!["role"]).toBe("user");
     // User prompt must quote the retrieved docs.
-    expect(String(messages[1]!.content)).toContain("[1] The magic number is 4823.");
-    expect(String(messages[1]!.content)).toContain("[2] Another fact about llamactl.");
-    expect(String(messages[1]!.content)).toContain("Question: What is the magic number?");
+    expect(String(messages[1]!["content"])).toContain("[1] The magic number is 4823.");
+    expect(String(messages[1]!["content"])).toContain("[2] Another fact about llamactl.");
+    expect(String(messages[1]!["content"])).toContain("Question: What is the magic number?");
   });
 
   test("--top-k, --max-tokens, --temperature, --collection all pass through", async () => {
@@ -263,8 +263,8 @@ describe("rag ask — happy path", () => {
     expect(calls.ragSearch[0]!.topK).toBe(7);
     expect(calls.ragSearch[0]!.collection).toBe("my-coll");
     const req = calls.chatComplete[0]!.request;
-    expect(req.max_tokens).toBe(512);
-    expect(req.temperature).toBe(0.25);
+    expect(req["max_tokens"]).toBe(512);
+    expect(req["temperature"]).toBe(0.25);
   });
 
   test("--system-prompt overrides the default system message", async () => {
@@ -285,7 +285,7 @@ describe("rag ask — happy path", () => {
     );
     expect(code).toBe(0);
     const msgs = requireMessages(calls.chatComplete[0]!.request);
-    expect(msgs[0]!.content).toBe("be terse");
+    expect(msgs[0]!["content"]).toBe("be terse");
   });
 });
 
@@ -375,13 +375,13 @@ describe("rag ask — --json rendering", () => {
     const retrieval = requireRecordField(parsed, "retrieval");
     const results = requireArrayField(retrieval, "results");
     const first = requireRecord(results[0]);
-    expect(retrieval.node).toBe("kb-json");
-    expect(retrieval.collection).toBe("docs");
+    expect(retrieval["node"]).toBe("kb-json");
+    expect(retrieval["collection"]).toBe("docs");
     expect(results).toHaveLength(1);
-    expect(requireRecordField(first, "document").content).toBe("Document content.");
-    expect(parsed.answer).toBe("JSON-ready answer.");
-    expect(parsed.model).toBe("gpt-x");
-    expect(parsed.via).toBe("gw");
+    expect(requireRecordField(first, "document")["content"]).toBe("Document content.");
+    expect(parsed["answer"]).toBe("JSON-ready answer.");
+    expect(parsed["model"]).toBe("gpt-x");
+    expect(parsed["via"]).toBe("gw");
   });
 
   test("--json takes precedence over --cite", async () => {
@@ -401,7 +401,7 @@ describe("rag ask — --json rendering", () => {
 });
 
 function requireMessages(request: Record<string, unknown>): Record<string, unknown>[] {
-  const messages = request.messages;
+  const messages = request["messages"];
   if (!Array.isArray(messages)) throw new Error("expected messages array");
   return messages.map(requireRecord);
 }

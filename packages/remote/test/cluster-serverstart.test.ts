@@ -100,15 +100,15 @@ beforeEach(async () => {
 
   fakePort = pickPort();
 
-  process.env.DEV_STORAGE = devStorage;
-  process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
-  process.env.LLAMA_CPP_MODELS = modelsDir;
-  process.env.LLAMA_CPP_BIN = binDir;
-  process.env.LLAMA_CPP_LOGS = logsDir;
-  process.env.LLAMA_CPP_HOST = "127.0.0.1";
-  process.env.LLAMA_CPP_PORT = String(fakePort);
+  process.env["DEV_STORAGE"] = devStorage;
+  process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+  process.env["LLAMA_CPP_MODELS"] = modelsDir;
+  process.env["LLAMA_CPP_BIN"] = binDir;
+  process.env["LLAMA_CPP_LOGS"] = logsDir;
+  process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+  process.env["LLAMA_CPP_PORT"] = String(fakePort);
   // Skip tuned-profile lookup (would require a seeded bench TSV).
-  process.env.LLAMA_CPP_USE_TUNED_ARGS = "false";
+  process.env["LLAMA_CPP_USE_TUNED_ARGS"] = "false";
 
   makeFakeBinary(binDir, "127.0.0.1", fakePort);
 
@@ -142,8 +142,8 @@ afterEach(async () => {
   }
   // Best-effort: kill any PID still tracked in the runtime dir so a
   // failed test doesn't leak the fake server across iterations.
-  const pidFile = process.env.LOCAL_AI_RUNTIME_DIR
-    ? join(process.env.LOCAL_AI_RUNTIME_DIR, "llama-server.pid")
+  const pidFile = process.env["LOCAL_AI_RUNTIME_DIR"]
+    ? join(process.env["LOCAL_AI_RUNTIME_DIR"], "llama-server.pid")
     : null;
   if (pidFile && existsSync(pidFile)) {
     const pid = Number.parseInt(readFileSync(pidFile, "utf8").trim(), 10);

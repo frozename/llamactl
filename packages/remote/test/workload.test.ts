@@ -381,14 +381,14 @@ describe("interpolateEnvRefs", () => {
 
   test("parseWorkload interpolates env refs before YAML parse", () => {
     const tmpl = sampleYaml.replace("spec:", "spec:\n  binary: ${env:LLAMA_SERVER_BIN}");
-    const prior = process.env.LLAMA_SERVER_BIN;
-    process.env.LLAMA_SERVER_BIN = "/opt/llama/llama-server";
+    const prior = process.env["LLAMA_SERVER_BIN"];
+    process.env["LLAMA_SERVER_BIN"] = "/opt/llama/llama-server";
     try {
       const m = parseWorkload(tmpl);
       expect(m.spec.binary).toBe("/opt/llama/llama-server");
     } finally {
-      if (prior === undefined) delete process.env.LLAMA_SERVER_BIN;
-      else process.env.LLAMA_SERVER_BIN = prior;
+      if (prior === undefined) delete process.env["LLAMA_SERVER_BIN"];
+      else process.env["LLAMA_SERVER_BIN"] = prior;
     }
   });
 });
@@ -396,15 +396,15 @@ describe("interpolateEnvRefs", () => {
 describe("parseManifestYaml", () => {
   test("interpolates env refs in nested ModelRun and ModelHost fields", () => {
     const prior = {
-      MODEL_REL: process.env.MODEL_REL,
-      MODELS_DIR: process.env.MODELS_DIR,
-      HOST_BINARY: process.env.HOST_BINARY,
-      HOST_REL: process.env.HOST_REL,
+      MODEL_REL: process.env["MODEL_REL"],
+      MODELS_DIR: process.env["MODELS_DIR"],
+      HOST_BINARY: process.env["HOST_BINARY"],
+      HOST_REL: process.env["HOST_REL"],
     };
-    process.env.MODEL_REL = "/models/run.gguf";
-    process.env.MODELS_DIR = "/srv/models";
-    process.env.HOST_BINARY = "/usr/bin/llamactl-host";
-    process.env.HOST_REL = "/models/host.gguf";
+    process.env["MODEL_REL"] = "/models/run.gguf";
+    process.env["MODELS_DIR"] = "/srv/models";
+    process.env["HOST_BINARY"] = "/usr/bin/llamactl-host";
+    process.env["HOST_REL"] = "/models/host.gguf";
     try {
       const parsedRun = parseManifestYaml(`
 apiVersion: llamactl/v1

@@ -172,13 +172,13 @@ async function runSupervisorAudit(flags: Flags): Promise<number> {
     if (!isRecord(obj) || Object.keys(obj).length === 0) return "{}";
 
     let out = "";
-    if ("proposalId" in obj) out += `proposalId:"${String(obj.proposalId)}" `;
-    if ("name" in obj) out += `name:"${String(obj.name)}" `;
-    if ("error" in obj && typeof obj.error === "string")
-      out += `error:"${obj.error.slice(0, 40)}" `;
-    if ("auto" in obj) out += `auto:${String(obj.auto)} `;
-    if ("memMb" in obj) out += `memMb=${String(obj.memMb)} `;
-    if ("action" in obj && typeof obj.action === "string") out += `action:"${obj.action}" `;
+    if ("proposalId" in obj) out += `proposalId:"${String(obj["proposalId"])}" `;
+    if ("name" in obj) out += `name:"${String(obj["name"])}" `;
+    if ("error" in obj && typeof obj["error"] === "string")
+      out += `error:"${obj["error"].slice(0, 40)}" `;
+    if ("auto" in obj) out += `auto:${String(obj["auto"])} `;
+    if ("memMb" in obj) out += `memMb=${String(obj["memMb"])} `;
+    if ("action" in obj && typeof obj["action"] === "string") out += `action:"${obj["action"]}" `;
 
     out = out.trim();
     if (!out) {
@@ -193,8 +193,8 @@ async function runSupervisorAudit(flags: Flags): Promise<number> {
     let detStr = "";
     // Entries come from unvalidated JSONL — a legacy/foreign line may
     // carry a missing/null/primitive detail, so guard before reading.
-    if (isRecord(e.detail) && typeof e.detail.error === "string" && e.detail.error) {
-      detStr = e.detail.error;
+    if (isRecord(e.detail) && typeof e.detail["error"] === "string" && e.detail["error"]) {
+      detStr = e.detail["error"];
     } else {
       detStr = summarize(e.detail);
     }
@@ -215,7 +215,7 @@ function buildSupervisorLoopOptions(
     appendFleetJournal(entry, journalPath);
   };
 
-  const migrationEnabled = process.env.LLAMACTL_FLEET_MOVE_ENABLED === "1";
+  const migrationEnabled = process.env["LLAMACTL_FLEET_MOVE_ENABLED"] === "1";
   const migrationController = migrationEnabled
     ? createMigrationController({
         peers: listPeers({ currentNodeName: flags.node }).map((peer) => peer.id),

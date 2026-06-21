@@ -14,14 +14,14 @@ describe("ops-session router", () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "ops-router-"));
-    prev = process.env.DEV_STORAGE;
-    process.env.DEV_STORAGE = tmp;
+    prev = process.env["DEV_STORAGE"];
+    process.env["DEV_STORAGE"] = tmp;
     caller = router.createCaller({});
   });
 
   afterEach(() => {
-    if (prev === undefined) delete process.env.DEV_STORAGE;
-    else process.env.DEV_STORAGE = prev;
+    if (prev === undefined) delete process.env["DEV_STORAGE"];
+    else process.env["DEV_STORAGE"] = prev;
     rmSync(tmp, { recursive: true, force: true });
   });
 

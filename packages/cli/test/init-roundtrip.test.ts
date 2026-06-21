@@ -28,7 +28,7 @@ import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
  * failure beyond whatever the composite-destroy cleanup missed.
  */
 
-const SHOULD_RUN = process.env.LLAMACTL_INIT_E2E === "1";
+const SHOULD_RUN = process.env["LLAMACTL_INIT_E2E"] === "1";
 
 let tmp = "";
 let compositesDir = "";
@@ -143,8 +143,8 @@ beforeAll(async () => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-init-e2e-"));
   compositesDir = join(tmp, "composites");
   configPath = join(tmp, "config");
-  process.env.LLAMACTL_COMPOSITES_DIR = compositesDir;
-  process.env.LLAMACTL_CONFIG = configPath;
+  process.env["LLAMACTL_COMPOSITES_DIR"] = compositesDir;
+  process.env["LLAMACTL_CONFIG"] = configPath;
   __setWorkloadTestSeams({
     getNodeClientByName: () => makeModelHostClient() as unknown as NodeClient,
   });
@@ -242,8 +242,8 @@ describe.skipIf(!SHOULD_RUN)("modelhost workload round-trip", () => {
     "apply persists ModelHost and list renders it",
     async () => {
       const workloadDir = join(tmp, "workloads");
-      process.env.LLAMACTL_WORKLOADS_DIR = workloadDir;
-      process.env.LOCAL_AI_RUNTIME_DIR = join(tmp, "runtime");
+      process.env["LLAMACTL_WORKLOADS_DIR"] = workloadDir;
+      process.env["LOCAL_AI_RUNTIME_DIR"] = join(tmp, "runtime");
       const fakeBinary = join(tmp, "omlx");
       await Bun.write(fakeBinary, "");
 

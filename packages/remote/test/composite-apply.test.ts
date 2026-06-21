@@ -43,8 +43,8 @@ beforeEach(() => {
   configPath = join(tmp, "config");
   compositesDir = join(tmp, "composites");
   saveConfig(freshConfig(), configPath);
-  process.env.LLAMACTL_CONFIG = configPath;
-  process.env.LLAMACTL_COMPOSITES_DIR = compositesDir;
+  process.env["LLAMACTL_CONFIG"] = configPath;
+  process.env["LLAMACTL_COMPOSITES_DIR"] = compositesDir;
 });
 
 afterEach(() => {

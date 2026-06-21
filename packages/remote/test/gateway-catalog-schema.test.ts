@@ -35,12 +35,12 @@ describe("SiriusProvider schema with ownership", () => {
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "sp-"));
     path = join(tmp, "sirius-providers.yaml");
-    prev = process.env.LLAMACTL_SIRIUS_PROVIDERS;
-    process.env.LLAMACTL_SIRIUS_PROVIDERS = path;
+    prev = process.env["LLAMACTL_SIRIUS_PROVIDERS"];
+    process.env["LLAMACTL_SIRIUS_PROVIDERS"] = path;
   });
   afterEach(() => {
-    if (prev === undefined) delete process.env.LLAMACTL_SIRIUS_PROVIDERS;
-    else process.env.LLAMACTL_SIRIUS_PROVIDERS = prev;
+    if (prev === undefined) delete process.env["LLAMACTL_SIRIUS_PROVIDERS"];
+    else process.env["LLAMACTL_SIRIUS_PROVIDERS"] = prev;
     rmSync(tmp, { recursive: true, force: true });
   });
 
@@ -86,12 +86,12 @@ describe("EmbersynthNode schema with ownership", () => {
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "em-"));
     path = join(tmp, "embersynth.yaml");
-    prev = process.env.LLAMACTL_EMBERSYNTH_CONFIG;
-    process.env.LLAMACTL_EMBERSYNTH_CONFIG = path;
+    prev = process.env["LLAMACTL_EMBERSYNTH_CONFIG"];
+    process.env["LLAMACTL_EMBERSYNTH_CONFIG"] = path;
   });
   afterEach(() => {
-    if (prev === undefined) delete process.env.LLAMACTL_EMBERSYNTH_CONFIG;
-    else process.env.LLAMACTL_EMBERSYNTH_CONFIG = prev;
+    if (prev === undefined) delete process.env["LLAMACTL_EMBERSYNTH_CONFIG"];
+    else process.env["LLAMACTL_EMBERSYNTH_CONFIG"] = prev;
     rmSync(tmp, { recursive: true, force: true });
   });
 

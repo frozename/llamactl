@@ -191,11 +191,11 @@ function aggregateComposite(rowMetrics: Record<string, number>[]): WorkloadAggre
   };
   let compositeSum = 0;
   for (const metrics of rowMetrics) {
-    sums.intent_preservation += numberOrZero(metrics.intent_preservation);
-    sums.contract_clarity += numberOrZero(metrics.contract_clarity);
-    sums.noise_removal += numberOrZero(metrics.noise_removal);
-    if (isPositiveNumber(metrics.parse_error)) sums.n_parse_error += 1;
-    compositeSum += metrics.composite ?? 0;
+    sums.intent_preservation += numberOrZero(metrics["intent_preservation"]);
+    sums.contract_clarity += numberOrZero(metrics["contract_clarity"]);
+    sums.noise_removal += numberOrZero(metrics["noise_removal"]);
+    if (isPositiveNumber(metrics["parse_error"])) sums.n_parse_error += 1;
+    compositeSum += metrics["composite"] ?? 0;
     sums.n_scored += 1;
   }
   return {
@@ -225,13 +225,13 @@ function aggregateMeanNdcg5(rowMetrics: Record<string, number>[]): WorkloadAggre
   let nParseErrors = 0;
   let nFallback = 0;
   for (const metrics of rowMetrics) {
-    if (typeof metrics.ndcg5 === "number") {
-      sum += metrics.ndcg5;
-      recallSum += numberOrZero(metrics.recall5);
+    if (typeof metrics["ndcg5"] === "number") {
+      sum += metrics["ndcg5"];
+      recallSum += numberOrZero(metrics["recall5"]);
       n += 1;
     }
-    if (isPositiveNumber(metrics.parse_error)) nParseErrors += 1;
-    if (isPositiveNumber(metrics.fallback)) nFallback += 1;
+    if (isPositiveNumber(metrics["parse_error"])) nParseErrors += 1;
+    if (isPositiveNumber(metrics["fallback"])) nFallback += 1;
   }
   const mean = meanOrZero(sum, n);
   return {
@@ -253,11 +253,11 @@ function aggregateMeanBriefQuality(rowMetrics: Record<string, number>[]): Worklo
   let sumSs = 0;
   let sumPs = 0;
   for (const metrics of rowMetrics) {
-    if (typeof metrics.brief_quality === "number") {
-      sum += metrics.brief_quality;
-      sumTcs += metrics.token_count_score ?? 0;
-      sumSs += metrics.structure_score ?? 0;
-      sumPs += metrics.paragraph_score ?? 0;
+    if (typeof metrics["brief_quality"] === "number") {
+      sum += metrics["brief_quality"];
+      sumTcs += metrics["token_count_score"] ?? 0;
+      sumSs += metrics["structure_score"] ?? 0;
+      sumPs += metrics["paragraph_score"] ?? 0;
       n += 1;
     }
   }

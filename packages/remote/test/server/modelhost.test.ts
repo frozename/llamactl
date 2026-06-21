@@ -280,9 +280,9 @@ describe("server/modelhost", () => {
         string[],
         { env?: NodeJS.ProcessEnv },
       ];
-      expect(options.env?.SECRET_TOKEN).toBeUndefined();
-      expect(options.env?.PATH).toBe("/usr/bin");
-      expect(options.env?.LLAMA_CPP_BIN).toBe("/bin/llama");
+      expect(options.env?.["SECRET_TOKEN"]).toBeUndefined();
+      expect(options.env?.["PATH"]).toBe("/usr/bin");
+      expect(options.env?.["LLAMA_CPP_BIN"]).toBe("/bin/llama");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -425,9 +425,9 @@ describe("server/modelhost", () => {
         string[],
         { env?: NodeJS.ProcessEnv },
       ];
-      expect(options.env?.MLX_METAL_MAX_INFLIGHT_PER_STREAM).toBe("1");
-      expect(options.env?.MY_CUSTOM).toBe("hello");
-      expect(options.env?.SECRET_TOKEN).toBeUndefined();
+      expect(options.env?.["MLX_METAL_MAX_INFLIGHT_PER_STREAM"]).toBe("1");
+      expect(options.env?.["MY_CUSTOM"]).toBe("hello");
+      expect(options.env?.["SECRET_TOKEN"]).toBeUndefined();
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

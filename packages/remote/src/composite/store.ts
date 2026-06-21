@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "../saf
 import { type Composite, CompositeSchema } from "./schema.js";
 
 export function defaultCompositesDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_COMPOSITES_DIR?.trim();
+  const override = env["LLAMACTL_COMPOSITES_DIR"]?.trim();
   if (override) return override;
   const base = llamactlHome(env);
   return join(base, "composites");

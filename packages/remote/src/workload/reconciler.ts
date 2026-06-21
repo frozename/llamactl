@@ -64,15 +64,15 @@ function hostSpecSnapshot(manifest: ModelHostManifest): Record<string, unknown> 
 
 function liveHostSpecSnapshot(current: Record<string, unknown>): Record<string, unknown> {
   return {
-    engine: current.engine,
-    binary: current.binary,
-    endpoint: current.endpoint,
-    hostedModels: current.hostedModels,
-    extraArgs: current.extraArgs,
-    resources: current.resources,
-    restartPolicy: current.restartPolicy,
-    timeoutSeconds: current.timeoutSeconds,
-    env: current.env,
+    engine: current["engine"],
+    binary: current["binary"],
+    endpoint: current["endpoint"],
+    hostedModels: current["hostedModels"],
+    extraArgs: current["extraArgs"],
+    resources: current["resources"],
+    restartPolicy: current["restartPolicy"],
+    timeoutSeconds: current["timeoutSeconds"],
+    env: current["env"],
   };
 }
 

@@ -27,18 +27,18 @@ describe("applyPipeline with ownership", () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "pipeline-apply-"));
-    prevDevStorage = process.env.DEV_STORAGE;
-    prevPipelinesDir = process.env.LLAMACTL_RAG_PIPELINES_DIR;
-    process.env.DEV_STORAGE = tmp;
+    prevDevStorage = process.env["DEV_STORAGE"];
+    prevPipelinesDir = process.env["LLAMACTL_RAG_PIPELINES_DIR"];
+    process.env["DEV_STORAGE"] = tmp;
     // Ensure the tmp DEV_STORAGE is what defaultPipelinesDir uses by
     // clearing the more-specific override.
-    delete process.env.LLAMACTL_RAG_PIPELINES_DIR;
+    delete process.env["LLAMACTL_RAG_PIPELINES_DIR"];
   });
   afterEach(() => {
-    if (prevDevStorage === undefined) delete process.env.DEV_STORAGE;
-    else process.env.DEV_STORAGE = prevDevStorage;
-    if (prevPipelinesDir === undefined) delete process.env.LLAMACTL_RAG_PIPELINES_DIR;
-    else process.env.LLAMACTL_RAG_PIPELINES_DIR = prevPipelinesDir;
+    if (prevDevStorage === undefined) delete process.env["DEV_STORAGE"];
+    else process.env["DEV_STORAGE"] = prevDevStorage;
+    if (prevPipelinesDir === undefined) delete process.env["LLAMACTL_RAG_PIPELINES_DIR"];
+    else process.env["LLAMACTL_RAG_PIPELINES_DIR"] = prevPipelinesDir;
     rmSync(tmp, { recursive: true, force: true });
   });
 

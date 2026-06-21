@@ -186,7 +186,7 @@ export async function resolveProjectNodeTarget(
 }
 
 export function defaultProjectRoutingJournalPath(env: NodeJS.ProcessEnv = process.env): string {
-  const override = nonEmpty(env.LLAMACTL_PROJECT_ROUTING_JOURNAL);
+  const override = nonEmpty(env["LLAMACTL_PROJECT_ROUTING_JOURNAL"]);
   if (override) return override;
   const base = llamactlHome(env);
   return join(base, "project-routing.jsonl");
@@ -246,8 +246,8 @@ function usageRecordCostUsd(
   rec: Record<string, unknown>,
   catalog: ReturnType<typeof loadPricing>["catalog"],
 ): { cost: number; underCounted: boolean; provider?: string; model?: string } {
-  if (typeof rec.estimated_cost_usd === "number") {
-    return { cost: rec.estimated_cost_usd, underCounted: false };
+  if (typeof rec["estimated_cost_usd"] === "number") {
+    return { cost: rec["estimated_cost_usd"], underCounted: false };
   }
   const { provider, model, prompt_tokens: prompt, completion_tokens: completion } = rec;
   if (
@@ -331,7 +331,7 @@ export function makeProjectBudgetChecker(
     const prefix = `project:${project.metadata.name}/`;
     let usdToday = 0;
     for (const rec of records) {
-      if (typeof rec.route !== "string" || !rec.route.startsWith(prefix)) continue;
+      if (typeof rec["route"] !== "string" || !rec["route"].startsWith(prefix)) continue;
       const priced = usageRecordCostUsd(rec, catalog);
       if (priced.underCounted) {
         const key = `${project.metadata.name}:${priced.provider ?? ""}/${priced.model ?? ""}`;

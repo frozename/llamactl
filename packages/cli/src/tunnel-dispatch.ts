@@ -564,7 +564,7 @@ function isDoneFrame(value: unknown): value is {
   error?: { code: string; message: string };
 } {
   if (!isRecord(value) || !hasBoolean(value, "ok")) return false;
-  const error = value.error;
+  const error = value["error"];
   return (
     error === undefined ||
     (isRecord(error) && hasString(error, "code") && hasString(error, "message"))

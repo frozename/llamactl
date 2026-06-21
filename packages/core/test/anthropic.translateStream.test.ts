@@ -77,7 +77,7 @@ function parseAnthropicSse(text: string): ParsedEvent[] {
 }
 
 function numericEventIndex(event: ParsedEvent): number {
-  const index = event.data.index;
+  const index = event.data["index"];
   if (typeof index !== "number") {
     throw new Error(`${event.event} missing numeric index`);
   }
@@ -167,7 +167,7 @@ test("basic text streaming translates to anthropic SSE sequence", async () => {
     "message_stop",
   ]);
 
-  expect(events[0]!.data.message).toMatchObject({ id: "msg_1", model: "claude-3-7-sonnet" });
+  expect(events[0]!.data["message"]).toMatchObject({ id: "msg_1", model: "claude-3-7-sonnet" });
   expect(events[1]!.data).toMatchObject({
     type: "content_block_start",
     index: 0,
@@ -300,12 +300,12 @@ test("tool-call before text assigns unique monotonic content-block indices", asy
   const toolStart = events.find(
     (event) =>
       event.event === "content_block_start" &&
-      (event.data.content_block as { type?: string }).type === "tool_use",
+      (event.data["content_block"] as { type?: string }).type === "tool_use",
   );
   const textStart = events.find(
     (event) =>
       event.event === "content_block_start" &&
-      (event.data.content_block as { type?: string }).type === "text",
+      (event.data["content_block"] as { type?: string }).type === "text",
   );
   expect(toolStart!.data).toMatchObject({
     index: 0,
@@ -333,12 +333,12 @@ test("text before tool (regression) still yields text@0, tool@1", async () => {
   const textStart = events.find(
     (event) =>
       event.event === "content_block_start" &&
-      (event.data.content_block as { type?: string }).type === "text",
+      (event.data["content_block"] as { type?: string }).type === "text",
   );
   const toolStart = events.find(
     (event) =>
       event.event === "content_block_start" &&
-      (event.data.content_block as { type?: string }).type === "tool_use",
+      (event.data["content_block"] as { type?: string }).type === "tool_use",
   );
   expect(textStart!.data).toMatchObject({ index: 0, content_block: { type: "text" } });
   expect(toolStart!.data).toMatchObject({
@@ -463,7 +463,7 @@ test("fuzz: fragmented tool argument JSON reconstructs exactly for 20 seeds", as
 
     const partials = events
       .filter((event) => event.event === "content_block_delta")
-      .map((event) => (event.data.delta as { partial_json?: string }).partial_json ?? "")
+      .map((event) => (event.data["delta"] as { partial_json?: string }).partial_json ?? "")
       .join("");
 
     expect(JSON.parse(partials)).toEqual(JSON.parse(sourceJson));

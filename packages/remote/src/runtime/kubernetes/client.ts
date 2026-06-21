@@ -159,9 +159,9 @@ class BunFetchHttpLibrary {
       method,
       headers,
     };
-    if (body !== undefined && body !== null) init.body = body;
-    if (signal !== undefined) init.signal = signal;
-    if (tls !== undefined) init.tls = tls;
+    if (body !== undefined && body !== null) init["body"] = body;
+    if (signal !== undefined) init["signal"] = signal;
+    if (tls !== undefined) init["tls"] = tls;
 
     const resp = await fetch(url, init);
     const headerMap: Record<string, string> = {};
@@ -191,12 +191,12 @@ function agentToTls(
   if (!agent?.options) return undefined;
   const o = agent.options;
   const tls: Record<string, unknown> = {};
-  if (o.rejectUnauthorized !== undefined) tls.rejectUnauthorized = o.rejectUnauthorized;
-  if (o.ca !== undefined) tls.ca = o.ca;
-  if (o.cert !== undefined) tls.cert = o.cert;
-  if (o.key !== undefined) tls.key = o.key;
-  if (o.passphrase !== undefined) tls.passphrase = o.passphrase;
-  if (o.servername !== undefined) tls.servername = o.servername;
+  if (o["rejectUnauthorized"] !== undefined) tls["rejectUnauthorized"] = o["rejectUnauthorized"];
+  if (o["ca"] !== undefined) tls["ca"] = o["ca"];
+  if (o["cert"] !== undefined) tls["cert"] = o["cert"];
+  if (o["key"] !== undefined) tls["key"] = o["key"];
+  if (o["passphrase"] !== undefined) tls["passphrase"] = o["passphrase"];
+  if (o["servername"] !== undefined) tls["servername"] = o["servername"];
   if (Object.keys(tls).length === 0) return undefined;
   return tls;
 }

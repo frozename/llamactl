@@ -148,8 +148,8 @@ describe("rag bench", () => {
     const { result, cap } = await captureStdio(() => runRag(["bench", "-f", p, "--json"]));
     expect(result).toBe(0);
     const parsed = parseJsonRecord(cap.out.trim());
-    expect(parsed.hitRate).toBe(1);
-    expect(parsed.perQuery).toHaveLength(1);
+    expect(parsed["hitRate"]).toBe(1);
+    expect(parsed["perQuery"]).toHaveLength(1);
   });
 
   test("-f - reads manifest from stdin", async () => {

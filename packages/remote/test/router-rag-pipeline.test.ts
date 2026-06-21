@@ -79,7 +79,7 @@ let pipelinesRoot = "";
 let restoreFetcher: (() => void) | null = null;
 
 function installStubFetcher(docs: { id: string; content: string }[]): () => void {
-  const original = FETCHERS.filesystem;
+  const original = FETCHERS["filesystem"];
   const stub: Fetcher = {
     kind: "filesystem",
     async *fetch() {
@@ -87,10 +87,10 @@ function installStubFetcher(docs: { id: string; content: string }[]): () => void
       for (const d of docs) yield { id: d.id, content: d.content, metadata: {} };
     },
   };
-  FETCHERS.filesystem = stub;
+  FETCHERS["filesystem"] = stub;
   return () => {
-    if (original) FETCHERS.filesystem = original;
-    else delete FETCHERS.filesystem;
+    if (original) FETCHERS["filesystem"] = original;
+    else delete FETCHERS["filesystem"];
   };
 }
 

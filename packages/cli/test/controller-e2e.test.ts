@@ -102,14 +102,14 @@ beforeEach(async () => {
   mkdirSync(workloadsDir, { recursive: true });
 
   const fakePort = 18900 + Math.floor(Math.random() * 99);
-  process.env.DEV_STORAGE = devStorage;
-  process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
-  process.env.LLAMA_CPP_MODELS = modelsDir;
-  process.env.LLAMA_CPP_BIN = binDir;
-  process.env.LLAMA_CPP_LOGS = logsDir;
-  process.env.LLAMA_CPP_HOST = "127.0.0.1";
-  process.env.LLAMA_CPP_PORT = String(fakePort);
-  process.env.LLAMA_CPP_USE_TUNED_ARGS = "false";
+  process.env["DEV_STORAGE"] = devStorage;
+  process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+  process.env["LLAMA_CPP_MODELS"] = modelsDir;
+  process.env["LLAMA_CPP_BIN"] = binDir;
+  process.env["LLAMA_CPP_LOGS"] = logsDir;
+  process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+  process.env["LLAMA_CPP_PORT"] = String(fakePort);
+  process.env["LLAMA_CPP_USE_TUNED_ARGS"] = "false";
 
   writeFileSync(join(binDir, "llama-server"), FAKE_LLAMA_SERVER, { mode: 0o755 });
   mkdirSync(join(modelsDir, "fake-org"), { recursive: true });

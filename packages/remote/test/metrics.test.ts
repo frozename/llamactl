@@ -52,11 +52,11 @@ beforeAll(async () => {
     },
   });
 
-  process.env.DEV_STORAGE = devStorage;
-  process.env.LOCAL_AI_RUNTIME_DIR = runtimeDir;
-  process.env.LLAMA_CPP_HOST = "127.0.0.1";
-  process.env.LLAMA_CPP_PORT = String(FAKE_LLAMA_PORT);
-  process.env.LLAMACTL_NODE_NAME = "metrics-test-node";
+  process.env["DEV_STORAGE"] = devStorage;
+  process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+  process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+  process.env["LLAMA_CPP_PORT"] = String(FAKE_LLAMA_PORT);
+  process.env["LLAMACTL_NODE_NAME"] = "metrics-test-node";
 
   const cert = await generateSelfSignedCert({
     dir: join(devStorage, "agent"),

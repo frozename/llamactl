@@ -646,8 +646,8 @@ describe("@llamactl/mcp mutations", () => {
     // Audit captures the dry-run.
     const audits = auditLines("llamactl");
     expect(audits).toHaveLength(1);
-    expect(audits[0]!.tool).toBe("llamactl.catalog.promote");
-    expect(audits[0]!.dryRun).toBe(true);
+    expect(audits[0]!["tool"]).toBe("llamactl.catalog.promote");
+    expect(audits[0]!["dryRun"]).toBe(true);
   });
 
   test("catalog.promote wet-run writes TSV and audits the action", async () => {
@@ -670,8 +670,8 @@ describe("@llamactl/mcp mutations", () => {
 
     const audits = auditLines("llamactl");
     expect(audits).toHaveLength(1);
-    expect(audits[0]!.dryRun).toBe(false);
-    expect((audits[0]!.result as { ok: boolean }).ok).toBe(true);
+    expect(audits[0]!["dryRun"]).toBe(false);
+    expect((audits[0]!["result"] as { ok: boolean }).ok).toBe(true);
   });
 
   test("catalog.promoteDelete round-trips", async () => {

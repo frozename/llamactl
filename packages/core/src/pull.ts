@@ -47,23 +47,23 @@ function findBinaryOnPath(
 }
 
 export function resolveHfBin(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LOCAL_AI_HF_BIN;
+  const override = env["LOCAL_AI_HF_BIN"];
   if (override && override.length > 0) return override;
-  const path = env.PATH ?? "";
+  const path = env["PATH"] ?? "";
   const extensions =
-    process.platform === "win32" ? (env.PATHEXT ?? ".EXE;.BAT;.CMD").split(";") : [""];
+    process.platform === "win32" ? (env["PATHEXT"] ?? ".EXE;.BAT;.CMD").split(";") : [""];
   return findBinaryOnPath(path, ["hf", "huggingface-cli"], extensions) ?? "hf";
 }
 
 export function resolveHfToken(): string | undefined {
-  const direct = process.env.HF_TOKEN;
+  const direct = process.env["HF_TOKEN"];
   if (direct && direct.length > 0) return direct;
 
-  const legacy = process.env.HUGGING_FACE_HUB_TOKEN;
+  const legacy = process.env["HUGGING_FACE_HUB_TOKEN"];
   if (legacy && legacy.length > 0) return legacy;
 
   try {
-    const home = process.env.HF_HOME ?? join(os.homedir(), ".cache/huggingface");
+    const home = process.env["HF_HOME"] ?? join(os.homedir(), ".cache/huggingface");
     const token = fs.readFileSync(join(home, "token"), "utf8").trim();
     return token.length > 0 ? token : undefined;
   } catch {
@@ -167,7 +167,7 @@ export const defaultRunHf: RunHf = (args, onEvent, signal) => {
     const bin = resolveHfBin();
     const env = { ...process.env };
     const token = resolveHfToken();
-    if (token) env.HF_TOKEN = token;
+    if (token) env["HF_TOKEN"] = token;
     const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env });
     const forward = (stream: NodeJS.ReadableStream, kind: "stdout" | "stderr"): void => {
       let buf = "";

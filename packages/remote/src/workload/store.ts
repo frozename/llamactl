@@ -11,7 +11,7 @@ import { type ModelHostManifest, ModelHostManifestSchema } from "./modelhost-sch
 import { type ModelRun, ModelRunSchema } from "./schema.js";
 
 export function defaultWorkloadsDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.LLAMACTL_WORKLOADS_DIR?.trim();
+  const override = env["LLAMACTL_WORKLOADS_DIR"]?.trim();
   if (override) return override;
   const base = llamactlHome(env);
   return join(base, "workloads");

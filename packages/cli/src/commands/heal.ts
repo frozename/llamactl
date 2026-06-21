@@ -99,17 +99,17 @@ interface HealFlags {
 
 function parseFlags(argv: string[]): HealFlags | null {
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
-  const base = process.env.DEV_STORAGE?.trim() || join(homedir(), ".llamactl");
+  const base = process.env["DEV_STORAGE"]?.trim() || join(homedir(), ".llamactl");
   const flags: HealFlags = {
     intervalSec: 30,
     once: false,
     timeoutMs: 1500,
     journalPath: defaultHealerJournalPath(),
     // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
-    kubeconfigPath: process.env.LLAMACTL_CONFIG?.trim() || join(base, "config"),
+    kubeconfigPath: process.env["LLAMACTL_CONFIG"]?.trim() || join(base, "config"),
     providersPath:
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
-      process.env.LLAMACTL_PROVIDERS_FILE?.trim() || join(base, "sirius-providers.yaml"),
+      process.env["LLAMACTL_PROVIDERS_FILE"]?.trim() || join(base, "sirius-providers.yaml"),
     quiet: false,
     useFacade: true,
     auto: false,

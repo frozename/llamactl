@@ -8,18 +8,18 @@ import {
 } from "../src/index.js";
 
 describe("migration supervisor integration", () => {
-  const original = process.env.LLAMACTL_FLEET_MOVE_ENABLED;
+  const original = process.env["LLAMACTL_FLEET_MOVE_ENABLED"];
 
   afterEach(() => {
     if (original === undefined) {
-      delete process.env.LLAMACTL_FLEET_MOVE_ENABLED;
+      delete process.env["LLAMACTL_FLEET_MOVE_ENABLED"];
       return;
     }
-    process.env.LLAMACTL_FLEET_MOVE_ENABLED = original;
+    process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = original;
   });
 
   it("emits a move fleet-proposal when migration is enabled and a NORMAL→HIGH transition is journaled", async () => {
-    process.env.LLAMACTL_FLEET_MOVE_ENABLED = "1";
+    process.env["LLAMACTL_FLEET_MOVE_ENABLED"] = "1";
 
     const entries: FleetJournalEntry[] = [];
     let moved = false;
@@ -104,7 +104,7 @@ describe("migration supervisor integration", () => {
   });
 
   it("does not emit a move fleet-proposal when migration is disabled", async () => {
-    delete process.env.LLAMACTL_FLEET_MOVE_ENABLED;
+    delete process.env["LLAMACTL_FLEET_MOVE_ENABLED"];
 
     const entries: FleetJournalEntry[] = [];
     const handle = startSupervisorLoop({

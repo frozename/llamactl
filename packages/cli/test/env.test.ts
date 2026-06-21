@@ -24,8 +24,8 @@ describe("llamactl env", () => {
     const r = runCli(["env", "--json"], temp.env);
     expect(r.code).toBe(0);
     const parsed = parseJsonRecord(r.stdout);
-    expect(parsed.LLAMA_CPP_MACHINE_PROFILE).toBe("macbook-pro-48g");
-    expect(parsed.LOCAL_AI_RUNTIME_DIR).toBe(temp.runtimeDir);
+    expect(parsed["LLAMA_CPP_MACHINE_PROFILE"]).toBe("macbook-pro-48g");
+    expect(parsed["LOCAL_AI_RUNTIME_DIR"]).toBe(temp.runtimeDir);
   });
 
   test("env default (no flag) behaves as --eval", () => {
