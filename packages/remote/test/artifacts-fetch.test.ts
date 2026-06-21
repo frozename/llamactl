@@ -43,7 +43,9 @@ function failIfUnsettled<T>(promise: Promise<T>, ms: number, message: string): P
   return Promise.race([
     promise,
     new Promise<T>((_, reject) => {
-      setTimeout(() => { reject(new Error(message)); }, ms);
+      setTimeout(() => {
+        reject(new Error(message));
+      }, ms);
     }),
   ]);
 }
