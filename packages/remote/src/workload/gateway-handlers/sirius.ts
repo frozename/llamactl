@@ -10,7 +10,7 @@ import {
   applyCompositeEntries,
   deriveSiriusEntries,
   readGatewayCatalog,
-  writeGatewayCatalog,
+  updateGatewayCatalog,
 } from "../gateway-catalog/index.js";
 
 /**
@@ -84,17 +84,41 @@ function computeSiriusCatalog(
 }
 
 /**
- * Persist the computed catalog union. The LAST side effect of a
+ * Persist the composite's catalog entries. The LAST side effect of a
  * successful apply — called only after the upstream / baseUrl / token
  * have all validated, so an invalid config never writes a catalog.
+ *
+ * The persist runs under the per-kind catalog mutex via
+ * `updateGatewayCatalog`: the transform RE-DERIVES the union against a
+ * FRESH read INSIDE the lock (re-running `applyCompositeEntries` on the
+ * same composite-derived set), so a concurrent teardown
+ * (`cleanupGatewayCatalogs`) can't clobber this write from a stale
+ * snapshot — closing the read-modify-write race the validate-phase
+ * `computeSiriusCatalog` read would otherwise leave open. On a re-derived
+ * no-op the fresh `current` is written back unchanged (idempotent
+ * replace under the lock — never a re-union).
  */
-function writeSiriusCatalog(
+async function writeSiriusCatalog(
   opts: GatewayApplyOptions,
-  next: SiriusProvider[],
   now: string,
-): { ok: false; result: ApplyResult } | { ok: true } {
+): Promise<{ ok: false; result: ApplyResult } | { ok: true }> {
+  const composite = opts.composite;
+  if (!composite) return { ok: true };
+  const derived = deriveSiriusEntries(composite);
   try {
-    writeGatewayCatalog("sirius", next);
+    await updateGatewayCatalog("sirius", (current) => {
+      const result = applyCompositeEntries({
+        kind: "sirius",
+        compositeName: composite.compositeName,
+        derived,
+        current,
+      });
+      // Conflicts were already screened in computeSiriusCatalog; a fresh
+      // conflict here means a concurrent write introduced one — leave the
+      // catalog untouched rather than forcing our union over it.
+      if (result.conflicts.length > 0 || !result.changed) return current;
+      return result.next;
+    });
     return { ok: true };
   } catch (err) {
     return {
@@ -304,9 +328,11 @@ export const siriusHandler: GatewayHandler = {
 
     // All validation passed — NOW persist the catalog (last side effect
     // before the reload). Only composites with a real diff write; plain
-    // applies (next === null) never touch the file.
+    // applies (next === null) never touch the file. The write re-derives
+    // fresh under the catalog mutex, so a no-longer-current `next` can't
+    // clobber a concurrent teardown.
     if (catalogResult.changed && catalogResult.next) {
-      const written = writeSiriusCatalog(opts, catalogResult.next, now);
+      const written = await writeSiriusCatalog(opts, now);
       if (!written.ok) return written.result;
     }
 

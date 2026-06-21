@@ -52,11 +52,7 @@ import { applyOne } from "../workload/apply.js";
  *   - Swallows rollback errors (logs via the event stream) so a
  *     single stuck teardown can't keep the applier from finishing.
  */
-import {
-  readGatewayCatalog,
-  removeCompositeEntries,
-  writeGatewayCatalog,
-} from "../workload/gateway-catalog/index.js";
+import { removeCompositeEntries, updateGatewayCatalog } from "../workload/gateway-catalog/index.js";
 import { reloadAllGatewayNodesOfKind } from "../workload/gateway-catalog/reload.js";
 import {
   DEFAULT_GATEWAY_HANDLERS,
@@ -800,25 +796,31 @@ async function destroyComponentsInOrder(
 /** Drop the composite's sirius / embersynth catalog entries and
  *  reload the affected gateway nodes when anything changed. */
 async function cleanupGatewayCatalogs(compositeName: string): Promise<void> {
-  const currentSirius = readGatewayCatalog("sirius");
-  const resSirius = removeCompositeEntries({
-    kind: "sirius",
-    compositeName,
-    current: currentSirius,
+  // Removal is a read-modify-write with REPLACE semantics: the new set is
+  // the current catalog minus this composite's owned entries (a strictly
+  // REDUCED set — see removeCompositeEntries). Run it under the per-kind
+  // catalog mutex so the reduced set is derived from a FRESH read INSIDE
+  // the lock; otherwise a concurrent apply (resolveEmbersynthCatalog /
+  // writeSiriusCatalog) writing from its own stale snapshot would either
+  // clobber our removal or be clobbered by it. Never re-union the prior
+  // read — that would resurrect the nodes we mean to drop.
+  const sirius = { changed: false };
+  await updateGatewayCatalog("sirius", (current) => {
+    const res = removeCompositeEntries({ kind: "sirius", compositeName, current });
+    sirius.changed = res.changed;
+    return res.next;
   });
-  if (resSirius.changed) {
-    writeGatewayCatalog("sirius", resSirius.next);
+  if (sirius.changed) {
     await reloadAllGatewayNodesOfKind("sirius");
   }
 
-  const currentEmber = readGatewayCatalog("embersynth");
-  const resEmber = removeCompositeEntries({
-    kind: "embersynth",
-    compositeName,
-    current: currentEmber,
+  const ember = { changed: false };
+  await updateGatewayCatalog("embersynth", (current) => {
+    const res = removeCompositeEntries({ kind: "embersynth", compositeName, current });
+    ember.changed = res.changed;
+    return res.next;
   });
-  if (resEmber.changed) {
-    writeGatewayCatalog("embersynth", resEmber.next);
+  if (ember.changed) {
     await reloadAllGatewayNodesOfKind("embersynth");
   }
 }
