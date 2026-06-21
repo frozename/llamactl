@@ -676,40 +676,51 @@ async function startWorkers(
     } catch {
       // Best-effort cleanup before starting the requested worker.
     }
-    const started = await new Promise<{ ok: boolean; endpoint: string; error?: string } | null>(
-      (resolve, reject) => {
-        const timer = setTimeout(
-          () => {
-            reject(new Error(`rpc-server start timeout on ${worker.node}`));
-          },
-          (worker.timeoutSeconds + 5) * 1000,
-        );
-        let done: { ok: boolean; endpoint: string; error?: string } | null = null;
-        const sub = wc.rpcServerStart.subscribe(
-          {
-            host: "0.0.0.0",
-            port: worker.rpcPort,
-            ...(worker.extraArgs.length > 0 ? { extraArgs: worker.extraArgs } : {}),
-            timeoutSeconds: worker.timeoutSeconds,
-          },
-          {
-            onData: (e: unknown) => {
-              const evt = e as { type?: string; result?: unknown };
-              if (evt.type === "done") done = evt.result as typeof done;
+    let sub: Unsubscribable | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let started: { ok: boolean; endpoint: string; error?: string } | null = null;
+    try {
+      started = await new Promise<{ ok: boolean; endpoint: string; error?: string } | null>(
+        (resolve, reject) => {
+          timer = setTimeout(
+            () => {
+              reject(new Error(`rpc-server start timeout on ${worker.node}`));
             },
-            onError: (err: unknown) => {
-              clearTimeout(timer);
-              reject(err instanceof Error ? err : new Error(String(err)));
+            (worker.timeoutSeconds + 5) * 1000,
+          );
+          let done: { ok: boolean; endpoint: string; error?: string } | null = null;
+          sub = wc.rpcServerStart.subscribe(
+            {
+              host: "0.0.0.0",
+              port: worker.rpcPort,
+              ...(worker.extraArgs.length > 0 ? { extraArgs: worker.extraArgs } : {}),
+              timeoutSeconds: worker.timeoutSeconds,
             },
-            onComplete: () => {
-              clearTimeout(timer);
-              resolve(done);
+            {
+              onData: (e: unknown) => {
+                const evt = e as { type?: string; result?: unknown };
+                if (evt.type === "done") done = evt.result as typeof done;
+              },
+              onError: (err: unknown) => {
+                if (timer) clearTimeout(timer);
+                reject(err instanceof Error ? err : new Error(String(err)));
+              },
+              onComplete: () => {
+                if (timer) clearTimeout(timer);
+                resolve(done);
+              },
             },
-          },
-        );
-        void sub;
-      },
-    );
+          );
+        },
+      ).catch((err: unknown): { ok: false; endpoint: string; error: string } => ({
+        ok: false,
+        endpoint: "",
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    } finally {
+      if (timer) clearTimeout(timer);
+      sub?.unsubscribe?.();
+    }
     if (!started?.ok) {
       return {
         rpcList: "",
@@ -998,41 +1009,47 @@ async function startCoordinator(
   manifest: ModelRun,
   desiredArgs: string[],
 ): Promise<StartDone | null> {
-  return await new Promise<StartDone | null>((resolve, reject) => {
-    const timer = setTimeout(
-      () => {
-        reject(new Error("serverStart timed out"));
-      },
-      (manifest.spec.timeoutSeconds + 5) * 1000,
-    );
-    let done: StartDone | null = null;
-    const sub = client.serverStart.subscribe(
-      {
-        workload: manifest.metadata.name,
-        target: manifest.spec.target.value,
-        ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
-        ...(manifest.spec.allowExternalBind ? { allowExternalBind: true } : {}),
-        ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
-        ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
-        timeoutSeconds: manifest.spec.timeoutSeconds,
-      },
-      {
-        onData: (evt: unknown) => {
-          const e = evt as { type?: string; result?: unknown };
-          if (e.type === "done") done = e.result as StartDone;
+  let sub: Unsubscribable | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await new Promise<StartDone | null>((resolve, reject) => {
+      timer = setTimeout(
+        () => {
+          reject(new Error("serverStart timed out"));
         },
-        onError: (err: unknown) => {
-          clearTimeout(timer);
-          reject(err instanceof Error ? err : new Error(String(err)));
+        (manifest.spec.timeoutSeconds + 5) * 1000,
+      );
+      let done: StartDone | null = null;
+      sub = client.serverStart.subscribe(
+        {
+          workload: manifest.metadata.name,
+          target: manifest.spec.target.value,
+          ...(desiredArgs.length > 0 ? { extraArgs: desiredArgs } : {}),
+          ...(manifest.spec.allowExternalBind ? { allowExternalBind: true } : {}),
+          ...(manifest.spec.endpoint ? { endpoint: manifest.spec.endpoint } : {}),
+          ...(manifest.spec.binary ? { binary: manifest.spec.binary } : {}),
+          timeoutSeconds: manifest.spec.timeoutSeconds,
         },
-        onComplete: () => {
-          clearTimeout(timer);
-          resolve(done);
+        {
+          onData: (evt: unknown) => {
+            const e = evt as { type?: string; result?: unknown };
+            if (e.type === "done") done = e.result as StartDone;
+          },
+          onError: (err: unknown) => {
+            if (timer) clearTimeout(timer);
+            reject(err instanceof Error ? err : new Error(String(err)));
+          },
+          onComplete: () => {
+            if (timer) clearTimeout(timer);
+            resolve(done);
+          },
         },
-      },
-    );
-    void sub;
-  });
+      );
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+    sub?.unsubscribe?.();
+  }
 }
 
 async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
@@ -1082,6 +1099,9 @@ async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<Appl
   if (workers.length > 0) {
     const wres = await startWorkers(workers, getClient, onEvent);
     if (wres.error) {
+      // Already inside `workers.length > 0`; stop the partially-started workers
+      // before returning so a worker-start failure is all-or-nothing.
+      await stopWorkers(workers, getClient);
       return failedApplyResult(action, wres.error, new Date().toISOString());
     }
   }
