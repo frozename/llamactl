@@ -68,8 +68,8 @@ export interface WorkloadSnapshot {
   rss_mb: number | null;
   request_rate_5m: number | null;
   error_rate_5m: number;
-  p50_ms: number;
-  p95_ms: number;
+  p50_ms: number | null;
+  p95_ms: number | null;
   models: string[];
   reachable: boolean;
   consecutiveErrors: number;
