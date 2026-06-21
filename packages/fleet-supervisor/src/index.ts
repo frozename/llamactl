@@ -24,6 +24,8 @@ export {
   readCurrentLeaseHolder,
   readRecentMovesFromJournal,
 } from "./journal.js";
+export * from "./lease-election.js";
+export * from "./lease-term.js";
 export * from "./loop.js";
 export * from "./measured-memory.js";
 export * from "./migration-controller.js";
