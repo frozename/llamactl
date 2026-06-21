@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +10,7 @@ import { saveConfig } from "../src/config/kubeconfig.js";
 import { freshConfig } from "../src/config/schema.js";
 import { createDockerBackend } from "../src/runtime/docker/backend.js";
 import { createKubernetesBackend } from "../src/runtime/kubernetes/backend.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Phase 8 — composite E2E smoke. Opt-in; CI skips by default.

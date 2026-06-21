@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
 import type { ModelRun } from "../src/workload/schema.js";
 
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { type ApplyEvent, applyManifest, type WorkloadClient } from "../src/workload/apply.js";
 
 let workloadsDir: string;
@@ -150,7 +150,6 @@ function makeModelRun(overrides: Partial<ModelRun["spec"]> = {}, name = "test-mo
 }
 
 function writeManifest(dir: string, m: ModelRun): void {
-  // eslint-disable-next-line security/detect-non-literal-fs-filename
   writeFileSync(join(dir, `${m.metadata.name}.yaml`), stringifyYaml(m), "utf8");
 }
 

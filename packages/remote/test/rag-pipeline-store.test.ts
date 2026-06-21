@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -16,6 +15,14 @@ import {
   removePipeline,
   writeLastRun,
 } from "../src/rag/pipeline/store.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../src/safe-fs.js";
 
 /**
  * On-disk persistence for RagPipeline manifests. Uses a tmpdir root

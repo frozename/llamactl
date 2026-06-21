@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import type { ResolvedEnv } from "./types.js";
@@ -21,6 +20,7 @@ import {
   parseSlotSavePathFromCommand,
   resolveSlotSavePathArgs,
 } from "./kvstore/index.js";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
 import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from "./workloadRuntime.js";
 

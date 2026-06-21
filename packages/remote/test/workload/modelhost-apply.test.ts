@@ -2,8 +2,6 @@ import type { spawn as nodeSpawn } from "node:child_process";
 
 import { openAggregatorDb, writeSnapshot } from "@llamactl/fleet-supervisor";
 import { describe, expect, mock, spyOn, test } from "bun:test";
-import * as fs from "node:fs";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +12,8 @@ import { setWorkloadEnabledWithDeps } from "../../../cli/src/commands/setEnabled
 import * as modelHostState from "../../../core/src/engines/state.js";
 import { readModelHostState, removeModelHostState } from "../../../core/src/engines/state.js";
 import { resolveEnv } from "../../../core/src/env.js";
+import * as fs from "../../src/safe-fs.js";
+import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { applyManifest, applyOneModelHost, type WorkloadClient } from "../../src/workload/apply.js";
 import { listModelHosts, saveModelHost } from "../../src/workload/modelhost-store.js";
 import { reconcileOnce } from "../../src/workload/reconciler.js";

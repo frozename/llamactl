@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unnecessary-condition -- Webhook tests use synchronous fetch/tool fakes and parse journal JSON fixtures. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +12,7 @@ import {
   type ToolCallInput,
   type WebhookFetcher,
 } from "../src/index.js";
+import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Webhook action tests for the cost-guardian tick. Uses an

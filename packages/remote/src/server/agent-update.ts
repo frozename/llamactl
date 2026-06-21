@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
+
 import {
   chmodSync,
   copyFileSync,
@@ -7,9 +9,7 @@ import {
   renameSync,
   statSync,
   writeFileSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
-
+} from "../safe-fs.js";
 import { unauthorizedResponse, verifyBearer } from "./auth.js";
 
 /**

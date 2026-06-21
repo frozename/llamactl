@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { applyManifest, type WorkloadClient } from "../../src/workload/apply.js";
 
 describe("applyManifest — ModelHost timeout cleanup", () => {

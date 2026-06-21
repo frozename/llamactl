@@ -1,6 +1,4 @@
 import { expect, spyOn, test } from "bun:test";
-import * as fs from "node:fs";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +10,8 @@ import {
   writeTrailer,
 } from "../src/kvstore/index.js";
 import { openKvStorage } from "../src/kvstore/storage.js";
+import * as fs from "../src/safe-fs.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-trailer-"));

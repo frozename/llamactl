@@ -1,7 +1,7 @@
-import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { llamactlHome } from "../config/env.js";
+import { existsSync, statSync } from "../safe-fs.js";
 
 /**
  * Artifact server for the Sprint I-α bootstrap flow. Serves

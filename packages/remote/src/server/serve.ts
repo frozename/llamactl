@@ -1,6 +1,5 @@
 import { openaiProxy } from "@llamactl/core";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ModelRun } from "../workload/schema.js";
@@ -9,6 +8,7 @@ import { resolveEnv } from "../../../core/src/env.js";
 import { migrateLegacySingletonRuntime } from "../../../core/src/workloadRuntime.js";
 import { router as appRouter } from "../router.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
+import { existsSync, readFileSync } from "../safe-fs.js";
 import { startSearchIngest, stopSearchIngest } from "../search/ingest/lifecycle.js";
 import {
   type ClientWebSocketConstructor,

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { APP_MODULES } from "../src/modules/registry";
+import { readFileSync } from "../src/safe-fs.js";
 
 /**
  * Drift gate: tests/ui-audit-modules.json (consumed by the ui-audit

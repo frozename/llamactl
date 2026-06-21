@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveEnv } from "../env.js";
+import { readFileSync } from "../safe-fs.js";
 import {
   BenchHistoryEntry,
   benchHistoryFields,

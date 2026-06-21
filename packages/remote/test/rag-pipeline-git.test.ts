@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { FetcherContext, RawDoc } from "../src/rag/pipeline/types.js";
 
 import { buildCloneArgs, gitFetcher } from "../src/rag/pipeline/fetchers/git.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * The git fetcher shells out to the real `git` binary — Bun tests

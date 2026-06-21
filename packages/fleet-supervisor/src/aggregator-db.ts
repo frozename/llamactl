@@ -1,9 +1,10 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { FleetSnapshotEntry } from "./types.js";
+
+import { mkdirSync } from "./safe-fs.js";
 
 // Keep this many most-recent rows per node. getHistoricalForNode defaults to limit 50,
 // so the bound must be comfortably above that to avoid losing retained history.

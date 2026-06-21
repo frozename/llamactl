@@ -1,11 +1,12 @@
 import type { ResolvedEnv } from "@llamactl/core";
 
-import { readdirSync, statSync } from "node:fs";
 import { totalmem } from "node:os";
 import { join } from "node:path";
 
 import type { ModelHostManifest } from "./modelhost-schema.js";
 import type { ModelRun } from "./schema.js";
+
+import { readdirSync, statSync } from "../safe-fs.js";
 
 const MODEL_HOST_MEMORY_HEURISTIC_MULTIPLIER = 2;
 

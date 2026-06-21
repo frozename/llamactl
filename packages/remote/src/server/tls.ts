@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "../safe-fs.js";
 
 export interface CertFiles {
   certPath: string;

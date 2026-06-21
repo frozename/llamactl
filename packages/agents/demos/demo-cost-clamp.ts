@@ -1,5 +1,11 @@
 import type { CostGuardianConfig } from "@llamactl/policy";
 
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type { RunbookToolClient, ToolCallInput } from "../src/types.js";
+
+import { runCostGuardianTick } from "../src/cost-guardian/tick.js";
 /**
  * demo-cost-clamp — N.5 golden-path demo. Drives three cost-guardian
  * ticks with progressively higher simulated spend against a tight
@@ -12,13 +18,7 @@ import type { CostGuardianConfig } from "@llamactl/policy";
  * Uses a fake RunbookToolClient so no network, no fs writes outside
  * a tempdir, no real usage corpus needed.
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import type { RunbookToolClient, ToolCallInput } from "../src/types.js";
-
-import { runCostGuardianTick } from "../src/cost-guardian/tick.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 const NARRATIVE = `\
 N.5 golden-path demo — cost-clamp (guardian tier escalation)

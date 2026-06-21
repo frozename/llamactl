@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { checkRpcServerAvailable } from "../src/rpcServer.js";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * Preflight doctor for the `rpc-server` binary that llama.cpp builds

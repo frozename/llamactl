@@ -1,8 +1,8 @@
 import { agentConfig as agentConfigMod } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { existsSync, readFileSync } from "../src/safe-fs.js";
 import { makeTempRuntime, runCli } from "./helpers.js";
 
 function augment(env: NodeJS.ProcessEnv, devStorage: string): NodeJS.ProcessEnv {

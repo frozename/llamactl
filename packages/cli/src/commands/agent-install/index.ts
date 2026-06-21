@@ -2,6 +2,10 @@ import type { SpawnSyncOptionsWithStringEncoding, SpawnSyncReturns } from "node:
 
 import { infraArtifactsFetch } from "@llamactl/remote";
 import { spawnSync as nodeSpawnSync } from "node:child_process";
+import { hostname, userInfo } from "node:os";
+import { dirname, join } from "node:path";
+
+import { required } from "../../required.js";
 import {
   accessSync,
   chmodSync,
@@ -13,11 +17,7 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
-} from "node:fs";
-import { hostname, userInfo } from "node:os";
-import { dirname, join } from "node:path";
-
-import { required } from "../../required.js";
+} from "../../safe-fs.js";
 import {
   agentBinaryPath,
   ALLOWED_PLATFORMS,

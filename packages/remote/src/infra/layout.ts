@@ -1,3 +1,6 @@
+import { basename, dirname, join } from "node:path";
+
+import { llamactlHome } from "../config/env.js";
 import {
   existsSync,
   lstatSync,
@@ -7,10 +10,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
-} from "node:fs";
-import { basename, dirname, join } from "node:path";
-
-import { llamactlHome } from "../config/env.js";
+} from "../safe-fs.js";
 
 /**
  * Versioned side-by-side layout for infra packages on an agent host.

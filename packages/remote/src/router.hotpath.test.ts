@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +7,7 @@ import type { JournalEvent } from "./ops-chat/sessions/journal-schema.js";
 import { sessionEventBus } from "./ops-chat/sessions/event-bus.js";
 import { appendJournalEvent } from "./ops-chat/sessions/journal.js";
 import { queryServerStatusWithTimeout, router, tailSessionEvents } from "./router.js";
+import { mkdtempSync, rmSync } from "./safe-fs.js";
 
 // ---------------------------------------------------------------------------
 // Hermetic journal root so readJournal/appendJournalEvent never touch the real

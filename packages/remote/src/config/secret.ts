@@ -19,8 +19,9 @@
  * exports and text-editor "save" actions are common and harmless.
  */
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
+
+import { existsSync, readFileSync } from "../safe-fs.js";
 
 export type SecretBackend = "env" | "file" | "keychain";
 

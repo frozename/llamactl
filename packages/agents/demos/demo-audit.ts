@@ -1,3 +1,8 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
+
+import { runRunbook } from "../src/index.js";
 /**
  * demo-audit — N.5 golden-path demo. Scripted, reproducible run of
  * the audit-fleet runbook against a fresh disposable fleet. Prints a
@@ -11,12 +16,7 @@
  * original env at teardown — safe to run against a machine with an
  * existing ~/.llamactl state.
  */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { stringify as stringifyYaml } from "yaml";
-
-import { runRunbook } from "../src/index.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 const NARRATIVE = `\
 N.5 golden-path demo — audit-fleet

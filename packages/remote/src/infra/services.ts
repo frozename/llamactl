@@ -1,8 +1,15 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, platform as nodePlatform } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 import { llamactlHome } from "../config/env.js";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../safe-fs.js";
 import { infraCurrentSymlink } from "./layout.js";
 
 /**

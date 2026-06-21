@@ -1,7 +1,6 @@
 import type { NodeClient } from "@llamactl/remote";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -11,6 +10,7 @@ import {
   __setProjectTestSeams,
   runProject,
 } from "../src/commands/project.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { parseJsonRecord, requireRecordField } from "./helpers.js";
 
 /**

@@ -1,9 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import { readAuditEntries } from "../src/audit-reader.js";
+import * as fs from "../src/safe-fs.js";
 
 describe("audit-reader", () => {
   async function withTempAudit(

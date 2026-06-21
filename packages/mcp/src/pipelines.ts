@@ -2,10 +2,11 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { router } from "@llamactl/remote";
 import { toTextContent } from "@nova/mcp-shared";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+
+import { existsSync, readdirSync, readFileSync } from "./safe-fs.js";
 
 /**
  * M.1 — pipeline-tool pickup. Operators author pipelines in the

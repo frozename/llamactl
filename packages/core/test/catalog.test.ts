@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,6 +15,7 @@ import {
   relKnown,
   repoKnown,
 } from "../src/catalog.js";
+import { mkdtempSync, writeFileSync } from "../src/safe-fs.js";
 import { FIXTURE_DIR } from "./helpers.js";
 
 describe("catalog.BUILTIN_CATALOG", () => {

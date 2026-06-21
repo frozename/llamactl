@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { statSync } from "node:fs";
 
 import { resolveEnv } from "./env.js";
+import { statSync } from "./safe-fs.js";
 
 /**
  * Compute an abbreviated build identifier for the current llama.cpp

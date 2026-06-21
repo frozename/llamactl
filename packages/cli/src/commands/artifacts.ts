@@ -1,7 +1,8 @@
 import { infraArtifactsFetch } from "@llamactl/remote";
-import { existsSync, mkdirSync } from "node:fs";
 import { homedir, arch as nodeArch, platform as nodePlatform } from "node:os";
 import { dirname, join, resolve } from "node:path";
+
+import { existsSync, mkdirSync } from "../safe-fs.js";
 
 const USAGE = `llamactl artifacts — manage pre-built llamactl-agent binaries
 

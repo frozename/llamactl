@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { type Cell, loadCells, parseArgs, renderCsv, renderMd } from "../src/matrix/diff.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 let tmp: string;
 let dbPath: string;

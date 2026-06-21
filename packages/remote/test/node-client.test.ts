@@ -1,12 +1,12 @@
 import { env as envMod, serverLogs as serverLogsMod } from "@llamactl/core";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { createNodeClient } from "../src/client/node-client.js";
 import { upsertNode as upsertNodeInConfig } from "../src/config/kubeconfig.js";
 import { freshConfig } from "../src/config/schema.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 describe("createNodeClient (local sentinel path)", () => {
   test("local node dispatches in-process via router.createCaller", async () => {

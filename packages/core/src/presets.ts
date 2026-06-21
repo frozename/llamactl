@@ -1,10 +1,9 @@
-import { readFileSync, unlinkSync } from "node:fs";
-
 import type { MachineProfile } from "./types.js";
 
 import { resolveEnv } from "./env.js";
 import { atomicWriteFile } from "./fsAtomic.js";
 import { normalizeProfile } from "./profile.js";
+import { readFileSync, unlinkSync } from "./safe-fs.js";
 import { PresetOverride, presetOverrideFields, splitTsvRow } from "./schemas.js";
 
 export type PresetName = "best" | "vision" | "balanced" | "fast";

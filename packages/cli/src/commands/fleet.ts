@@ -1,5 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
-
 import {
   createPeerFetch,
   DEFAULT_PRESSURE_THRESHOLDS,
@@ -12,6 +10,7 @@ import {
   writeSnapshot,
 } from "../../../fleet-supervisor/src/index.js";
 import { listPeers, type PeerNode } from "../../../remote/src/config/peers.js";
+import { existsSync, readFileSync } from "../safe-fs.js";
 
 const USAGE = `Usage: llamactl fleet <subcommand>
 

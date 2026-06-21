@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash, createHash as cryptoHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
   copyFileSync,
   existsSync,
@@ -8,10 +11,7 @@ import {
   rmSync,
   statSync,
   writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
+} from "../src/safe-fs.js";
 import {
   handleAgentUpdate,
   runWatchdog,

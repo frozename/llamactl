@@ -1,7 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +12,7 @@ import {
   type WorkloadEval,
 } from "../src/index.js";
 import { memoryEfficacyBinaryWorkload } from "../src/index.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 function makeModel(name: string, port = 8080): ModelSpec {
   return {

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +17,7 @@ import {
   unitBaseName,
   writeServiceUnit,
 } from "../src/infra/services.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 let dir = "";
 

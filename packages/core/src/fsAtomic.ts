@@ -1,5 +1,6 @@
-import { appendFileSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+
+import { appendFileSync, mkdirSync, renameSync, writeFileSync } from "./safe-fs.js";
 
 /**
  * Atomically replace a file's contents. Uses a tmp file in the SAME

@@ -1,6 +1,6 @@
-import * as fs from "node:fs";
 import { dirname } from "node:path";
 
+import * as fs from "../safe-fs.js";
 import { type KvStorage, safeWrite } from "./storage.js";
 
 export const EXT_FLAG_TOOL_MAP = 1 << 0;

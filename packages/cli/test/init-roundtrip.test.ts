@@ -1,7 +1,6 @@
 import type { NodeClient } from "@llamactl/remote";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +12,7 @@ import {
   runApply,
   runGet,
 } from "../src/commands/workload.js";
+import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Opt-in E2E covering the full onboarding round-trip:

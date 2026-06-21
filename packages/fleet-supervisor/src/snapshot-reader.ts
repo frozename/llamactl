@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-
 import type { FleetSnapshotEntry } from "./types.js";
+
+import { existsSync, readFileSync } from "./safe-fs.js";
 
 export function readLatestFleetSnapshotFromJournal(journalPath: string): FleetSnapshotEntry | null {
   if (!existsSync(journalPath)) return null;

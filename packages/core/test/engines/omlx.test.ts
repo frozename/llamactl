@@ -1,5 +1,4 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -7,6 +6,7 @@ import type { EngineBootEnv, ModelHostSpecForEngine } from "../../src/engines/ty
 
 import { ENGINES } from "../../src/engines/index.js";
 import { gracefulShutdown } from "../../src/engines/lifecycle.js";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
 
 function makeFakeBinary(): string {
   const dir = join(

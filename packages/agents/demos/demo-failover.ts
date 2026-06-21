@@ -1,3 +1,9 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { stringify as stringifyYaml } from "yaml";
+
+import { appendHealerJournal } from "../src/healer/journal.js";
+import { probeFleet, type ProbeReport, stateTransitions } from "../src/healer/probe.js";
 /**
  * demo-failover — N.5 golden-path demo. Deterministic simulation of
  * the healer observing a gateway transition from healthy → unhealthy,
@@ -10,13 +16,7 @@
  *
  * Teardown restores env + removes the tempdir.
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { stringify as stringifyYaml } from "yaml";
-
-import { appendHealerJournal } from "../src/healer/journal.js";
-import { probeFleet, type ProbeReport, stateTransitions } from "../src/healer/probe.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 const NARRATIVE = `\
 N.5 golden-path demo — failover (healer observation)

@@ -154,7 +154,7 @@ export default tseslint.config(
       "unicorn/prefer-string-replace-all": "error",
       "unicorn/prefer-set-has": "error",
       "unicorn/throw-new-error": "error",
-      "security/detect-non-literal-fs-filename": "warn",
+      "security/detect-non-literal-fs-filename": "error",
       "security/detect-non-literal-regexp": "error",
       "@typescript-eslint/prefer-readonly-parameter-types": "off",
       "@typescript-eslint/consistent-type-definitions": "off",

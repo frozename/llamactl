@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ResolvedEnv } from "../src/types.js";
 
 import { resolveEnv } from "../src/env.js";
+import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import {
   abortableSleep,
   advertisedEndpoint,

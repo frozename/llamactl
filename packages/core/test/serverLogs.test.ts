@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resolveEnv } from "../src/env.js";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { serverLogFile, tailServerLog } from "../src/serverLogs.js";
 
 let tmp: string;

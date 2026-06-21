@@ -1,10 +1,10 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { ResolvedEnv } from "../types.js";
 import type { EngineName } from "./index.js";
 
 import { resolveEnv } from "../env.js";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "../safe-fs.js";
 import {
   ensureWorkloadRuntimeDir,
   type WorkloadKey,

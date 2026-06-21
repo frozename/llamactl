@@ -1,9 +1,10 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import { dirname, join } from "node:path";
 
 import type { WorkloadEval } from "../types.js";
+
+import { existsSync, mkdirSync } from "../../safe-fs.js";
 
 export const KV_WARM_BENCH_FRONTIERS = [2048, 4096, 8192, 16384, 32768] as const;
 export const KV_WARM_BENCH_DEFAULT_PROXY_BASE_URL = "http://127.0.0.1:8089";

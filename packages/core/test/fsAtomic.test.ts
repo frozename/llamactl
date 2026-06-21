@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { appendLine, atomicWriteFile } from "../src/fsAtomic.js";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 describe("fsAtomic", () => {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-fsatomic-"));

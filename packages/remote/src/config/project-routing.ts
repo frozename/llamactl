@@ -26,9 +26,9 @@
  */
 
 import { estimateCostUsd, loadPricing, readUsage } from "@nova/mcp-shared";
-import { appendFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import { appendFile, mkdir } from "../safe-fs-promises.js";
 import { llamactlHome, nonEmpty } from "./env.js";
 import {
   defaultProjectsPath,

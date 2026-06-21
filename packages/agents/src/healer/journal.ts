@@ -1,10 +1,11 @@
-import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { StepOutcome } from "./execute.js";
 import type { ProbeReport } from "./probe.js";
 import type { PlanLike } from "./severity.js";
+
+import { appendFileSync, mkdirSync } from "../safe-fs.js";
 
 /**
  * Append-only JSONL journal for the healer loop. One record per tick

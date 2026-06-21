@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +6,7 @@ import type { ModelHostManifest } from "./modelhost-schema.js";
 import type { ModelRun } from "./schema.js";
 
 import { resolveEnv } from "../../../core/src/env.js";
+import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "../safe-fs.js";
 import {
   type AdmissionInput,
   computeNodeBudget,

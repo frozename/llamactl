@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runNode } from "../src/commands/node.js";
 import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
+import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * `llamactl node add-cloud` registers a gateway/cloud-kind node via

@@ -1,5 +1,4 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
 import type { EngineBootEnv, ModelHostSpecForEngine } from "../../../core/src/engines/index.js";
@@ -7,6 +6,7 @@ import type { ModelSpec } from "./types.js";
 
 import { ENGINES } from "../../../core/src/engines/index.js";
 import { resolveProfile } from "../../../core/src/profile.js";
+import { existsSync } from "../safe-fs.js";
 
 const HEALTH_POLL_INTERVAL_MS = 1000;
 const HEALTH_TIMEOUT_MS = 120_000;

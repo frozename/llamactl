@@ -1,4 +1,10 @@
 import { spawn } from "node:child_process";
+import { connect } from "node:net";
+import { join } from "node:path";
+
+import type { ResolvedEnv } from "./types.js";
+
+import { resolveEnv } from "./env.js";
 import {
   accessSync,
   closeSync,
@@ -9,13 +15,7 @@ import {
   readFileSync,
   unlinkSync,
   writeFileSync,
-} from "node:fs";
-import { connect } from "node:net";
-import { join } from "node:path";
-
-import type { ResolvedEnv } from "./types.js";
-
-import { resolveEnv } from "./env.js";
+} from "./safe-fs.js";
 
 /**
  * Distinct failure modes `checkRpcServerAvailable()` can surface. Each

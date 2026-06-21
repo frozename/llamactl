@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +14,7 @@ import {
   renderKvWarmBenchMarkdown,
   runKvWarmBench,
 } from "../src/matrix/workloads/kv-warm-bench.js";
+import { mkdirSync, mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 describe("buildDeterministicPrompt", () => {
   test("is byte-identical for the same args", () => {

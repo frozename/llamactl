@@ -1,3 +1,9 @@
+import { basename, dirname, join, resolve, sep } from "node:path";
+
+import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from "./types.js";
+
+import { resolveEnv } from "../env.js";
+import { defaultOmlxMemoryGiBForProfile } from "../profile.js";
 import {
   existsSync,
   lstatSync,
@@ -6,13 +12,7 @@ import {
   symlinkSync,
   unlinkSync,
   writeFileSync,
-} from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
-
-import type { EngineAdapter, EngineBootEnv, ModelHostSpecForEngine } from "./types.js";
-
-import { resolveEnv } from "../env.js";
-import { defaultOmlxMemoryGiBForProfile } from "../profile.js";
+} from "../safe-fs.js";
 import { ensureWorkloadRuntimeDir } from "../workloadRuntime.js";
 import { gracefulShutdown, pollUntilModelIds } from "./lifecycle.js";
 

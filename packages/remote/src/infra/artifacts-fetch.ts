@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
+
 import {
   chmodSync,
   existsSync,
@@ -12,9 +14,7 @@ import {
   symlinkSync,
   unlinkSync,
   writeFileSync,
-} from "node:fs";
-import { dirname, join } from "node:path";
-
+} from "../safe-fs.js";
 import { agentBinaryPath, defaultArtifactsDir } from "../server/artifacts.js";
 
 /**

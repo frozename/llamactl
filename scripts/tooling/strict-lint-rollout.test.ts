@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { existsSync, readFileSync } from "../safe-fs.js";
 
 const root = join(import.meta.dir, "..", "..");
 

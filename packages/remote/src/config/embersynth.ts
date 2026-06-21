@@ -1,9 +1,9 @@
 import { bench, env as envMod, type schemas } from "@llamactl/core";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "../safe-fs.js";
 import { CompositeOwnershipSchema } from "../workload/gateway-catalog/schema.js";
 import { llamactlHome, nonEmpty } from "./env.js";
 import { loadConfig, resolveToken } from "./kubeconfig.js";

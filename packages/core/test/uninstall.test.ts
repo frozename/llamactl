@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "../src/safe-fs.js";
 import { uninstall } from "../src/uninstall.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 

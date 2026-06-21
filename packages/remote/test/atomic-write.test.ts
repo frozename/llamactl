@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { atomicWriteFileSync } from "../src/atomic-write.js";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 let dir = "";
 

@@ -398,7 +398,7 @@ export async function runSupervisor(args: string[]): Promise<number> {
   }
 
   if (sub === "serve" || sub === "tick") {
-    // TODO: Re-resolve on each tick once we have low-overhead cache + invalidation.
+    // Deferred: re-resolve on each tick once we have low-overhead cache + invalidation.
     flags.workloads = resolveWorkloadTargetsAtStartup(flags.workloads, process.env);
   }
 

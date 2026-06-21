@@ -1,7 +1,6 @@
 import type { DeleteRequest, DeleteResponse, StoreRequest, StoreResponse } from "@nova/contracts";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +9,7 @@ import type { Fetcher, RawDoc } from "../src/rag/pipeline/types.js";
 
 import { FETCHERS } from "../src/rag/pipeline/fetchers/registry.js";
 import { runPipeline } from "../src/rag/pipeline/runtime.js";
+import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 let tmp = "";
 

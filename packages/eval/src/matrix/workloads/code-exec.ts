@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { mkdtempSync, rmSync, writeFileSync } from "../../safe-fs.js";
 
 export const RELIABILITY_GUARD = `import os
 os.environ["OMP_NUM_THREADS"] = "1"

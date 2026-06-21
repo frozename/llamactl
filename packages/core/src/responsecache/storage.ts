@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+
+import { mkdirSync } from "../safe-fs.js";
 
 const SCHEMA_VERSION = 2;
 

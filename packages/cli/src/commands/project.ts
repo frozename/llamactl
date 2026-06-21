@@ -1,11 +1,11 @@
 import type { NodeClient } from "@llamactl/remote";
 
-import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
 import { getNodeClient } from "../dispatcher.js";
 import { required } from "../required.js";
+import { existsSync, readFileSync } from "../safe-fs.js";
 
 /**
  * `llamactl project …` — first-class project resource CLI (Phase 2

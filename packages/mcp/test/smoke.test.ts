@@ -3,13 +3,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { saveModelHost } from "../../remote/src/workload/modelhost-store.js";
 import { saveNodeRun } from "../../remote/src/workload/noderun-store.js";
 import { saveWorkload } from "../../remote/src/workload/store.js";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "../src/safe-fs.js";
 import { buildMcpServer, type WorkloadDeleteDryRunResult } from "../src/server.js";
 
 /**

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { applyImport, detectLMStudioRoot, planImport, scanLMStudio } from "../src/lmstudio.js";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "../src/safe-fs.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 function makeLMTree(root: string): void {

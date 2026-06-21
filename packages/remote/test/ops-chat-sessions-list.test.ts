@@ -1,6 +1,5 @@
 // packages/remote/test/ops-chat-sessions-list.test.ts
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,6 +8,7 @@ import { deleteSession } from "../src/ops-chat/sessions/delete";
 import { sessionEventBus } from "../src/ops-chat/sessions/event-bus";
 import { appendJournalEvent } from "../src/ops-chat/sessions/journal";
 import { getSessionSummary, listSessions } from "../src/ops-chat/sessions/list";
+import { existsSync, mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 describe("list + delete", () => {
   let tmp: string;

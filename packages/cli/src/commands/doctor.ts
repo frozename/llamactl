@@ -16,9 +16,10 @@
  */
 import type { KubernetesClient } from "@llamactl/remote";
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
+
+import { existsSync, readdirSync, readFileSync } from "../safe-fs.js";
 
 export type Status = "ok" | "warn" | "fail" | "info";
 

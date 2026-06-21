@@ -6,11 +6,11 @@ import type {
 } from "@llamactl/remote";
 
 import { startPipelineScheduler } from "@llamactl/remote";
-import { existsSync, readFileSync, statSync, unwatchFile, watchFile } from "node:fs";
 import { resolve } from "node:path";
 
 import { getNodeClient } from "../dispatcher.js";
 import { required } from "../required.js";
+import { existsSync, readFileSync, statSync, unwatchFile, watchFile } from "../safe-fs.js";
 
 const USAGE = `Usage: llamactl rag pipeline <subcommand>
 

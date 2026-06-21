@@ -1,7 +1,7 @@
 import { config as kubecfg } from "@llamactl/remote";
-import { existsSync, readFileSync } from "node:fs";
 
 import { getGlobals } from "../dispatcher.js";
+import { existsSync, readFileSync } from "../safe-fs.js";
 
 const USAGE = `Usage: llamactl ctx <subcommand>
 

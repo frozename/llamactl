@@ -1,7 +1,8 @@
 import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 
 import type { MachineProfile } from "./types.js";
+
+import { readFileSync } from "./safe-fs.js";
 
 const OMLX_MAX_MODEL_MEMORY_GIB_BY_PROFILE: Record<MachineProfile, number> = {
   "mac-mini-16g": 12,

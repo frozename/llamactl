@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -13,6 +12,7 @@ import {
 } from "../src/composite/event-bus.js";
 import { saveComposite } from "../src/composite/store.js";
 import { router } from "../src/router.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Phase 5 of composite-infra.md — router-level coverage for the

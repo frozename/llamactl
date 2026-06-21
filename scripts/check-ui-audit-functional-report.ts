@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./safe-fs.js";
 
 export interface UiAuditModuleEntry {
   id: string;

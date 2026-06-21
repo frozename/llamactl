@@ -22,8 +22,7 @@
  * read per tick — well within budget.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-
+import { existsSync, readFileSync } from "../../safe-fs.js";
 import { journalPathFor, listPipelines, type PipelineRecord } from "./store.js";
 
 export interface OrphanedRun {

@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +10,7 @@ import {
   loadBootstrapToken,
   pruneBootstrapTokens,
 } from "../src/config/bootstrap-tokens.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "../src/safe-fs.js";
 
 let dir = "";
 

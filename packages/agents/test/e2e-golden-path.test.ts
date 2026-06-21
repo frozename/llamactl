@@ -1,11 +1,11 @@
 /* eslint-disable @typescript-eslint/no-empty-function -- This smoke test passes a no-op transcript logger. */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 
 import { runRunbook } from "../src/index.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * Golden-path end-to-end test — runs a runbook against the real

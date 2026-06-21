@@ -42,7 +42,7 @@ import { unauthorizedResponse, verifyBearer } from "./auth.js";
  * with durationMs measured from stream start — NOT per-event to
  * avoid burning disk on chatty subscriptions.
  *
- * TODO: rate-limit relay calls per node — currently unbounded.
+ * Deferred: rate-limit relay calls per node — currently unbounded.
  */
 export async function handleTunnelRelay(
   req: Request,

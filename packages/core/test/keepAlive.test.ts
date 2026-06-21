@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -13,6 +12,7 @@ import {
   sleepWithAbort,
   stopKeepAlive,
 } from "../src/keepAlive.js";
+import { existsSync, mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 describe("keepAlive path helpers", () => {

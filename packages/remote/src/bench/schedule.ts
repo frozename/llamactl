@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 
 import { llamactlHome } from "../config/env.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "../safe-fs.js";
 
 /**
  * Recurring bench schedules. The control plane stores them in

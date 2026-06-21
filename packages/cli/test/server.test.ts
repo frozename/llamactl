@@ -1,11 +1,11 @@
 import { configSchema, type NodeClient } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runServer } from "../src/commands/server.js";
 import { __resetTestSeams, __setTestSeams, resetGlobals, setGlobals } from "../src/dispatcher.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 const origStderrWrite = process.stderr.write.bind(process.stderr);
 const origStdoutWrite = process.stdout.write.bind(process.stdout);

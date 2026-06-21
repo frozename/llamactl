@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { MachineProfile, Provider, ResolvedEnv } from "./types.js";
 
 import { resolveProfile } from "./profile.js";
+import { existsSync, mkdirSync } from "./safe-fs.js";
 import { MANAGED_DIRS } from "./types.js";
 
 const GEMMA_CTX_BY_PROFILE: Record<MachineProfile, string> = {

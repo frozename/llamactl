@@ -1,6 +1,7 @@
-import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { existsSync } from "../safe-fs.js";
 
 /** Walks up from this file's dir to find the workspace root. */
 export function repoRoot(): string {

@@ -1,11 +1,11 @@
 import { TRPCError } from "@trpc/server";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { AppRouter } from "../src/router.js";
 
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 import { generateToken } from "../src/server/auth.js";
 import {
   buildRagSystemMessage,

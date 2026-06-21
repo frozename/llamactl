@@ -1,11 +1,11 @@
 import { type Config, configSchema, config as kubecfg } from "@llamactl/remote";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCtx } from "../src/commands/ctx.js";
 import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 const origStdoutWrite = process.stdout.write.bind(process.stdout);
 const origStderrWrite = process.stderr.write.bind(process.stderr);

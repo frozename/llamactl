@@ -1,4 +1,3 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 /**
@@ -35,6 +34,7 @@ import { createInterface, type Interface as ReadlineInterface } from "node:readl
 import { fileURLToPath } from "node:url";
 
 import { required } from "../required.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "../safe-fs.js";
 
 type RuntimeKind = "docker" | "kubernetes";
 type TemplateKey = "chroma-only" | "pgvector-with-embedder" | "chroma-plus-workload";

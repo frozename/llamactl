@@ -1,3 +1,11 @@
+import { homedir } from "node:os";
+import { join, resolve, sep } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+
+import type { CompositeOwnership } from "../../workload/gateway-catalog/schema.js";
+import type { RunSummary } from "./runtime.js";
+
+import { atomicWriteFileSync } from "../../atomic-write.js";
 /**
  * On-disk persistence for RagPipeline manifests. Mirrors how composites
  * live under `$DEV_STORAGE/composites/<name>.yaml` — one directory per
@@ -13,15 +21,7 @@
  * + MCP + future Electron wizard. Tests override the root via
  * `LLAMACTL_RAG_PIPELINES_DIR`.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-
-import type { CompositeOwnership } from "../../workload/gateway-catalog/schema.js";
-import type { RunSummary } from "./runtime.js";
-
-import { atomicWriteFileSync } from "../../atomic-write.js";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "../../safe-fs.js";
 import { entrySpecHash } from "../../workload/gateway-catalog/hash.js";
 import { type RagPipelineManifest, RagPipelineManifestSchema } from "./schema.js";
 

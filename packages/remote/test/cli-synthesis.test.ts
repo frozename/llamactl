@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +7,7 @@ import type { CliBinding, CliPreset } from "../src/config/schema.js";
 import { loadConfig, resolveNode, saveConfig, upsertNode } from "../src/config/kubeconfig.js";
 import { findCliBindingForNode, synthesizeProviderNodes } from "../src/config/provider-nodes.js";
 import { CliBindingSchema, freshConfig } from "../src/config/schema.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 let tmp = "";
 beforeEach(() => {

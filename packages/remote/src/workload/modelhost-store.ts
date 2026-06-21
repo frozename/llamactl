@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { atomicWriteFileSync } from "../atomic-write.js";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "../safe-fs.js";
 import { type ModelHostManifest, ModelHostManifestSchema } from "./modelhost-schema.js";
 import { defaultWorkloadsDir } from "./store.js";
 

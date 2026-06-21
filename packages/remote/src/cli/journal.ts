@@ -1,3 +1,6 @@
+import { dirname, join } from "node:path";
+
+import { llamactlHome, nonEmpty } from "../config/env.js";
 /**
  * CLI-call journal. One JSONL entry per `createResponse` call from
  * a `CliSubprocessAdapter`. Lives at
@@ -17,10 +20,7 @@
  * "calls per subscription per day" — the quota proxy for flat-fee
  * subscription backends where USD tracking is meaningless.
  */
-import { appendFile, mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
-
-import { llamactlHome, nonEmpty } from "../config/env.js";
+import { appendFile, mkdir } from "../safe-fs-promises.js";
 
 export interface CliJournalEntry {
   ts: string;

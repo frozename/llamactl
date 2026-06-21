@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveHfBin } from "../src/pull.js";
+import { chmodSync, mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import { makeTempRuntime } from "./helpers.js";
 
 describe("resolveHfBin", () => {

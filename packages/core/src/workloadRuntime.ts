@@ -1,11 +1,3 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
 import { join } from "node:path";
 
 import type { EngineName } from "./engines/index.js";
@@ -13,6 +5,14 @@ import type { ResolvedEnv } from "./types.js";
 
 import { modelhostPidFile, readModelHostState } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "./safe-fs.js";
 import { readServerState } from "./server.js";
 
 export interface WorkloadKey {

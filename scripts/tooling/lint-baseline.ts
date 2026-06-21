@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
+
+import { mkdirSync, writeFileSync } from "../safe-fs.js";
 
 type LintMessage = {
   readonly ruleId: string | null;

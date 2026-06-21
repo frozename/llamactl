@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import { runSupervisor } from "../src/commands/supervisor.js";
 import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
+import * as fs from "../src/safe-fs.js";
 import { captureProcessStreams } from "./helpers.js";
 
 /**

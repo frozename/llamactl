@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { BenchCompareRow } from "./bench/compare.js";
@@ -38,6 +37,7 @@ import {
   pullRepoFile,
   type RunHf,
 } from "./pull.js";
+import { existsSync } from "./safe-fs.js";
 
 export type CandidateTestEvent = PullEvent | BenchEvent;
 

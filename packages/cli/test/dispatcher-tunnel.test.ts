@@ -1,6 +1,5 @@
 import { type Config, tls } from "@llamactl/remote";
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,6 +12,7 @@ import {
   getNodeClient,
   getNodeClientByName,
 } from "../src/dispatcher.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 // Slice C (I.3.7) — pin fields are now required to reach the relay
 // unless `--insecure-tunnel-relay` is set. These tests exercise the

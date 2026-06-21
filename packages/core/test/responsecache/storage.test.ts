@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +9,7 @@ import {
   ResponseCacheRegistry,
 } from "../../src/responsecache/index.js";
 import { runMigrations } from "../../src/responsecache/storage.js";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "../../src/safe-fs.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-responsecache-"));

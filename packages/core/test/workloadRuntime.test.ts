@@ -1,11 +1,18 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ResolvedEnv } from "../src/types.js";
 
 import { writeModelHostState } from "../src/engines/state.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../src/safe-fs.js";
 import {
   ensureWorkloadRuntimeDir,
   listLocalRoutes,

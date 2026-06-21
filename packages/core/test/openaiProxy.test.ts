@@ -1,5 +1,4 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +7,7 @@ import type { PeerSnapshot } from "../src/workloadRuntime.js";
 
 import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 const originalFetch = globalThis.fetch;
 

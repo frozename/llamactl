@@ -1,5 +1,6 @@
-import { readdirSync } from "node:fs";
 import { join } from "node:path";
+
+import { readdirSync } from "./safe-fs.js";
 
 /**
  * Locate an `mmproj*.gguf` sibling inside the given model directory.

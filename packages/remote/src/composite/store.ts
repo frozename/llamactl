@@ -1,3 +1,8 @@
+import { basename, join } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+
+import { atomicWriteFileSync } from "../atomic-write.js";
+import { llamactlHome } from "../config/env.js";
 /**
  * Composite manifest storage — file-per-manifest YAML pattern,
  * mirrors the workload store in `../workload/store.ts`. Default
@@ -6,12 +11,7 @@
  * workloads / infra / kubeconfig stores, so ops tools that bulk-
  * relocate llamactl state can redirect all of them uniformly).
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { basename, join } from "node:path";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-
-import { atomicWriteFileSync } from "../atomic-write.js";
-import { llamactlHome } from "../config/env.js";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "../safe-fs.js";
 import { type Composite, CompositeSchema } from "./schema.js";
 
 export function defaultCompositesDir(env: NodeJS.ProcessEnv = process.env): string {
