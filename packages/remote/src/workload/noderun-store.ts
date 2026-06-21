@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { atomicWriteFileSync } from "../atomic-write.js";
 import { type NodeRun, NodeRunSchema } from "./noderun-schema.js";
 import { defaultWorkloadsDir } from "./store.js";
 
@@ -42,7 +43,7 @@ export function saveNodeRun(manifest: NodeRun, dir: string = defaultNodeRunsDir(
   NodeRunSchema.parse(manifest);
   mkdirSync(dir, { recursive: true });
   const path = nodeRunPath(manifest.metadata.name, dir);
-  writeFileSync(path, stringifyYaml(manifest), "utf8");
+  atomicWriteFileSync(path, stringifyYaml(manifest));
   return path;
 }
 
