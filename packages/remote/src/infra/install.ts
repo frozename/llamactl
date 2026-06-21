@@ -26,8 +26,25 @@ import {
 export type InfraFetcher = (url: string) => Promise<Uint8Array>;
 export type InfraExtractor = (tarballPath: string, destDir: string) => Promise<void>;
 
-async function defaultFetcher(url: string): Promise<Uint8Array> {
-  const res = await fetch(url);
+const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+
+async function defaultFetcher(
+  url: string,
+  timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
+): Promise<Uint8Array> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, { signal: controller.signal });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`infra fetch: ${url} timed out after ${String(timeoutMs)}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) {
     throw new Error(`infra fetch: ${url} returned ${String(res.status)}`);
   }
@@ -68,6 +85,8 @@ export interface InstallInfraOptions {
   base?: string;
   fetcher?: InfraFetcher;
   extractor?: InfraExtractor;
+  /** Timeout for the production tarball fetcher. Default: 30s. */
+  fetchTimeoutMs?: number;
 }
 
 export type InstallResult =
@@ -78,7 +97,7 @@ export async function installInfraPackage(opts: InstallInfraOptions): Promise<In
   const base = opts.base ?? defaultInfraDir();
   const skipIfPresent = opts.skipIfPresent ?? true;
   const activate = opts.activate ?? true;
-  const fetcher = opts.fetcher ?? defaultFetcher;
+  const fetcher = opts.fetcher ?? ((url: string) => defaultFetcher(url, opts.fetchTimeoutMs));
   const extractor = opts.extractor ?? defaultExtractor;
 
   ensurePackageDir(opts.pkg, base);
