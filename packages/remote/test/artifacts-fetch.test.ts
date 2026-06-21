@@ -43,7 +43,7 @@ function failIfUnsettled<T>(promise: Promise<T>, ms: number, message: string): P
   return Promise.race([
     promise,
     new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error(message)), ms);
+      setTimeout(() => { reject(new Error(message)); }, ms);
     }),
   ]);
 }
@@ -299,7 +299,7 @@ describe("fetchAgentRelease", () => {
     });
     const writeSpy = spyOn(fs, "writeFileSync").mockImplementation((path, data, options) => {
       if (path === topLevel) throw new Error("copy denied");
-      return realWriteFileSync(path, data, options);
+      realWriteFileSync(path, data, options);
     });
     try {
       const result = await fetchAgentRelease({
