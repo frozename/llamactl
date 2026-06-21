@@ -17,6 +17,7 @@
     "./engines/types": "./src/engines/types.ts",
     "./env": "./src/env.ts",
     "./kvstore": "./src/kvstore/index.ts",
+    "./object": "./src/object.ts",
     "./probe": "./src/probe.ts",
     "./profile": "./src/profile.ts",
     "./schemas": "./src/schemas.ts",

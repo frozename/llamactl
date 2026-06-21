@@ -79,7 +79,7 @@ async function runWorkloadRows(
       const req = buildCompletionRequest({
         messages: built.messages as ChatMessage[],
         maxTokens: workload.maxTokens ?? 256,
-        temperature: workload.temperature,
+        ...(workload.temperature !== undefined ? { temperature: workload.temperature } : {}),
         // Diffusion hosts draw canvas-init noise from the server's global
         // PRNG and only reseed when the request carries a seed; unseeded
         // sequential rows let that state drift until an unlucky init sends
@@ -102,7 +102,7 @@ async function runWorkloadRows(
       const _msg = resp.choices[0]?.message;
       const completion = `${_msg?.reasoning_content ?? ""}${_msg?.content ?? ""}`;
       const scored = await workload.scorer(row, completion, {
-        tool_calls: _msg?.tool_calls,
+        ...(_msg?.tool_calls !== undefined ? { tool_calls: _msg.tool_calls } : {}),
       });
       predictions.push({ pred: scored.prediction, gold: scored.gold });
       rowMetrics.push(scored.metrics);

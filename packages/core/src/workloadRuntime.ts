@@ -104,8 +104,8 @@ function appendPeerRoutes(
       kind: "ModelRun",
       isPeer: true,
       peerEndpoint: peer.endpoint,
-      certificate: peer.certificate,
-      token: peer.token,
+      ...(peer.certificate !== undefined ? { certificate: peer.certificate } : {}),
+      ...(peer.token !== undefined ? { token: peer.token } : {}),
       targetNodeId: peer.id,
       revision: workload.revision ?? null,
     });

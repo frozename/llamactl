@@ -96,7 +96,10 @@ describe("applyChatStreamEvent", () => {
     const evt: ChatStreamEvent = { type: "error", error: { message: "boom" } };
     applyChatStreamEvent(evt, pipeline, 0, controls);
 
-    expect(capturedError).toBe("boom");
+    // capturedError is mutated inside the setRunError callback above, which
+    // control-flow analysis can't see — annotate the assertion so it isn't
+    // narrowed to the `null` initializer.
+    expect<string | null>(capturedError).toBe("boom");
     expect(runningCleared).toBe(true);
   });
 

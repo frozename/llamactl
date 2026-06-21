@@ -205,7 +205,24 @@ function isLoopbackAddress(address: string | null | undefined): boolean {
 export function runStartupMigration(): void {
   try {
     const resolved = resolveEnv();
-    const migration = migrateLegacySingletonRuntime(resolved, listWorkloads());
+    const migration = migrateLegacySingletonRuntime(
+      resolved,
+      listWorkloads().map((w) => ({
+        metadata: { name: w.metadata.name },
+        spec: {
+          node: w.spec.node,
+          target: w.spec.target,
+          ...(w.spec.endpoint !== undefined
+            ? {
+                endpoint: {
+                  ...(w.spec.endpoint.host !== undefined ? { host: w.spec.endpoint.host } : {}),
+                  ...(w.spec.endpoint.port !== undefined ? { port: w.spec.endpoint.port } : {}),
+                },
+              }
+            : {}),
+        },
+      })),
+    );
     if (migration.kind === "migrated") {
       process.stderr.write(
         `[migration] re-homed legacy runtime under workload '${migration.workload}'\n`,
@@ -584,12 +601,16 @@ function maybeStartTunnelClient(opts: StartAgentOptions): TunnelClient | null {
     bearer: opts.tunnelDial.bearer,
     nodeName: opts.tunnelDial.nodeName,
     handleRequest,
-    onStateChange: opts.tunnelDial.onStateChange,
+    ...(opts.tunnelDial.onStateChange !== undefined
+      ? { onStateChange: opts.tunnelDial.onStateChange }
+      : {}),
     // Background mode by default: the HTTP server must come up
     // regardless of central's reachability. The reconnect loop
     // handles transient failures on its own schedule.
     initialAttemptTimeoutMs: opts.tunnelDial.initialAttemptTimeoutMs ?? 0,
-    WebSocketCtor: opts.tunnelDial.WebSocketCtor,
+    ...(opts.tunnelDial.WebSocketCtor !== undefined
+      ? { WebSocketCtor: opts.tunnelDial.WebSocketCtor }
+      : {}),
   });
   // Fire-and-forget; state transitions are observable via
   // opts.tunnelDial.onStateChange.
@@ -630,11 +651,15 @@ function maybeCreateTunnelServer(opts: StartAgentOptions): TunnelServer | null {
   if (!opts.tunnelCentral) return null;
   return createTunnelServer({
     expectedBearerHash: opts.tunnelCentral.expectedBearerHash,
-    onNodeConnect: opts.tunnelCentral.onNodeConnect,
-    onNodeDisconnect: opts.tunnelCentral.onNodeDisconnect,
+    ...(opts.tunnelCentral.onNodeConnect !== undefined
+      ? { onNodeConnect: opts.tunnelCentral.onNodeConnect }
+      : {}),
+    ...(opts.tunnelCentral.onNodeDisconnect !== undefined
+      ? { onNodeDisconnect: opts.tunnelCentral.onNodeDisconnect }
+      : {}),
     // journal.ts resolves undefined → the default path; we just
     // pass through so callers can force a tempfile in tests.
-    journalPath: opts.tunnelJournalPath,
+    ...(opts.tunnelJournalPath !== undefined ? { journalPath: opts.tunnelJournalPath } : {}),
   });
 }
 

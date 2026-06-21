@@ -96,7 +96,7 @@ function modulesToCommands(): Command[] {
     id: `go:${m.id}`,
     label: `Open ${m.labelKey}`,
     group: groupLabel(m.group),
-    hint: m.shortcut ? `⌘${String(m.shortcut)}` : undefined,
+    ...(m.shortcut ? { hint: `⌘${String(m.shortcut)}` } : {}),
     keywords: m.aliases ?? [],
     run: (): void => {
       useTabStore.getState().open({

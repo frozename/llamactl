@@ -43,9 +43,9 @@ const leaderboardInputSchema = {
 };
 
 function handleModelsLeaderboard(input: {
-  node?: string;
-  min_throughput?: number;
-  min_tool_call_score?: number;
+  node?: string | undefined;
+  min_throughput?: number | undefined;
+  min_tool_call_score?: number | undefined;
   sort_by?: QueryFilter["sort_by"];
 }): { content: { type: "text"; text: string }[] } {
   const dbPath = leaderboardDbPath();
@@ -55,10 +55,12 @@ function handleModelsLeaderboard(input: {
   const db = new Database(dbPath, { readonly: true });
   try {
     const filter: QueryFilter = {
-      node: input.node,
-      min_throughput: input.min_throughput,
-      min_tool_call_score: input.min_tool_call_score,
-      sort_by: input.sort_by,
+      ...(input.node !== undefined ? { node: input.node } : {}),
+      ...(input.min_throughput !== undefined ? { min_throughput: input.min_throughput } : {}),
+      ...(input.min_tool_call_score !== undefined
+        ? { min_tool_call_score: input.min_tool_call_score }
+        : {}),
+      ...(input.sort_by !== undefined ? { sort_by: input.sort_by } : {}),
     };
     return toTextContent(queryRows(db, filter));
   } finally {

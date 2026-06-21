@@ -21,7 +21,7 @@ export function mapSessionRagHits(hits: SessionRagServerHit[]): Hit[] {
         parentTitle: h.goal || h.sessionId,
         score: h.score,
         matchKind: "semantic",
-        ragDistance: h.ragDistance,
+        ...(h.ragDistance !== undefined ? { ragDistance: h.ragDistance } : {}),
         match: m,
         action: {
           kind: "open-tab",

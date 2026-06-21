@@ -102,7 +102,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
     probeFleet({
       kubeconfigPath: opts.kubeconfigPath,
       siriusProvidersPath: opts.siriusProvidersPath,
-      timeoutMs: opts.timeoutMs,
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
       ...(opts.fetch ? { fetch: opts.fetch } : {}),
       ...(opts.now ? { now: opts.now } : {}),
     });
@@ -182,7 +182,7 @@ export function startHealerLoop(opts: HealerLoopOptions): HealerLoopHandle {
         mode,
         severityThreshold,
         writeJournal: writeEntry,
-        onProposal: opts.onProposal,
+        ...(opts.onProposal !== undefined ? { onProposal: opts.onProposal } : {}),
         prevCompositeRemediation: previousCompositeRemediation,
       });
     }
@@ -245,7 +245,7 @@ async function runRemediations(opts: RemediateOptions): Promise<void> {
     mode: opts.mode,
     severityThreshold: opts.severityThreshold,
     writeJournal: opts.writeJournal,
-    onProposal: opts.onProposal,
+    ...(opts.onProposal !== undefined ? { onProposal: opts.onProposal } : {}),
     prevRemediation: opts.prevCompositeRemediation,
   });
 }

@@ -336,7 +336,8 @@ function matchNodeGlob(name: string, glob: string): boolean {
 
 function filterPeers(glob: string | undefined): PeerNode[] {
   const globals = getGlobals();
-  const peers = listPeers({ currentNodeName: globals.nodeName ?? undefined });
+  const nodeName = globals.nodeName ?? undefined;
+  const peers = listPeers(nodeName !== undefined ? { currentNodeName: nodeName } : {});
   if (!glob) return peers;
   return peers.filter((peer) => matchNodeGlob(peer.id, glob));
 }

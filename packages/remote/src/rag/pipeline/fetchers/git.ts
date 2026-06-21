@@ -187,7 +187,7 @@ async function runGit(args: string[], opts: { cwd: string }): Promise<GitResult>
  * and local paths are returned unchanged — their auth is elsewhere.
  */
 function resolveCloneUrl(
-  spec: { repo: string; auth?: { tokenRef: string } },
+  spec: { repo: string; auth?: { tokenRef: string } | undefined },
   ctx: FetcherContext,
 ): string {
   if (!spec.auth?.tokenRef) return spec.repo;

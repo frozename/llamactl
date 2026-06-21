@@ -64,7 +64,7 @@ export function WorkloadDetail({ workloadId }: Props): React.JSX.Element {
         <StatCard
           label="t/s"
           value={row.tokensPerSec ? row.tokensPerSec.toFixed(1) : "—"}
-          unit={row.tokensPerSec ? "t/s" : undefined}
+          {...(row.tokensPerSec ? { unit: "t/s" } : {})}
         />
         <StatCard label="Model" value={row.modelRef ?? "—"} />
       </div>

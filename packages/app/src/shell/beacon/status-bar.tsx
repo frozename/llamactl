@@ -64,7 +64,7 @@ export function StatusBar(): React.JSX.Element {
           {moduleItems.map((it) => (
             <SBItem
               key={it.id}
-              glyph={it.glyph}
+              {...(it.glyph !== undefined ? { glyph: it.glyph } : {})}
               text={it.text}
               tone={mapContributionTone(it.tone)}
             />

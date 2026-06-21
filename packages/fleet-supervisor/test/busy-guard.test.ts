@@ -121,7 +121,6 @@ describe("applyBusyGuard", () => {
 
     expect(guarded).toEqual({
       consecutiveFailures: 1,
-      reason: undefined,
       nextProgress: { nPast: 4096, nDecoded: 128, stallChecks: 0, lastAdvanceAt: 0 },
     });
   });
@@ -214,7 +213,6 @@ describe("applyBusyGuard", () => {
 
     expect(guarded).toEqual({
       consecutiveFailures: 2,
-      reason: undefined,
       nextProgress: { nPast: 4096, nDecoded: 128, stallChecks: 1, lastAdvanceAt: 5 },
     });
   });

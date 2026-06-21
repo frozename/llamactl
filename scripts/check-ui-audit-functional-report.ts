@@ -11,8 +11,8 @@ export interface UiAuditFunctionalReport {
   modulesTested?: number;
   network?: {
     failureCount?: number;
-    failures?: { failed?: boolean; status?: number }[];
-    requests?: { failed?: boolean; status?: number }[];
+    failures?: { failed?: boolean; status?: number; method?: string; url?: string }[];
+    requests?: { failed?: boolean; status?: number; method?: string; url?: string }[];
   };
   console?: {
     count?: number;

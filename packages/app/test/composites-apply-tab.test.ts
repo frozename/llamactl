@@ -76,7 +76,7 @@ function useEffectMock(effect: () => void, deps: unknown[]): void {
 }
 
 function useMemoMock<T>(factory: () => T, deps?: DependencyList): T {
-  if (!hookHarnessActive) return ReactActual.useMemo(factory, deps);
+  if (!hookHarnessActive) return ReactActual.useMemo(factory, deps!);
   return factory();
 }
 

@@ -102,7 +102,12 @@ function readJournalEntries(
     if (!trimmed) continue;
     try {
       const parsed = JSON.parse(trimmed) as { ts?: string; kind?: string; node?: string };
-      entries.push({ ts: parsed.ts, kind: parsed.kind, node: parsed.node, raw: trimmed });
+      entries.push({
+        ...(parsed.ts !== undefined ? { ts: parsed.ts } : {}),
+        ...(parsed.kind !== undefined ? { kind: parsed.kind } : {}),
+        ...(parsed.node !== undefined ? { node: parsed.node } : {}),
+        raw: trimmed,
+      });
     } catch {
       entries.push({ raw: trimmed });
     }

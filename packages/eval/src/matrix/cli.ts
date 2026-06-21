@@ -98,11 +98,11 @@ export function parseArgs(argv: string[]): MatrixCliArgs {
     workloadsArg,
     outDb,
     concurrency,
-    report,
-    reportOut,
-    runId,
     reportAllRuns,
-    corpusOverrides,
+    ...(report !== undefined ? { report } : {}),
+    ...(reportOut !== undefined ? { reportOut } : {}),
+    ...(runId !== undefined ? { runId } : {}),
+    ...(corpusOverrides !== undefined ? { corpusOverrides } : {}),
   };
 }
 
@@ -275,7 +275,14 @@ async function main(): Promise<void> {
   const workloads = resolveWorkloads(workloadsArg, corpusOverrides);
 
   const db = new Database(outDb);
-  const result = await runMatrix({ models, workloads, db, runId, corpusOverrides, concurrency });
+  const result = await runMatrix({
+    models,
+    workloads,
+    db,
+    concurrency,
+    ...(runId !== undefined ? { runId } : {}),
+    ...(corpusOverrides !== undefined ? { corpusOverrides } : {}),
+  });
   if (report) {
     await writeReport({ report, reportOut, db, runId: result.runId, reportAllRuns });
   }

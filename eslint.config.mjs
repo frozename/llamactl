@@ -42,6 +42,17 @@ export default tseslint.config(
     },
   },
   js.configs.recommended,
+  {
+    // Ignore intentionally-unused identifiers prefixed with "_" (universal convention) —
+    // notably type-signature parameter names kept for documentation in non-typed-block
+    // files like tests/, which base no-unused-vars would otherwise flag.
+    rules: {
+      "no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
+    },
+  },
   ...tseslint.configs.strictTypeChecked.map((config) => ({
     ...config,
     files: typedFiles,

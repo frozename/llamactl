@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { WorkloadClient } from "./apply.js";
-import type { ModelHostManifest } from "./modelhost-schema.js";
 
 import { mkdtempSync, rmSync } from "../safe-fs.js";
+import { type ModelHostManifest, specForHash } from "./modelhost-schema.js";
 import { saveModelHost } from "./modelhost-store.js";
 import { reconcileOnce } from "./reconciler.js";
 
@@ -36,7 +36,7 @@ test("reconcile uses remote modelHostStatus.specHash to avoid restarts and detec
   saveModelHost(manifest, workloadsDir);
 
   const remoteState = {
-    hash: computeModelHostSpecHash(manifest.spec),
+    hash: computeModelHostSpecHash(specForHash(manifest.spec)),
     pid: 12345,
     starts: 0,
   };

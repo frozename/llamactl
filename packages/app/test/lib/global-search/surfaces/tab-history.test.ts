@@ -1,16 +1,23 @@
 // packages/app/test/lib/global-search/surfaces/tab-history.test.ts
 import { describe, expect, test } from "bun:test";
 
+import type { TabHistoryState } from "../../../../src/lib/global-search/surfaces/tab-history";
 import type { TabEntry } from "../../../../src/stores/tab-store";
 
 import { matchTabHistory } from "../../../../src/lib/global-search/surfaces/tab-history";
 
 describe("matchTabHistory", () => {
-  const state = {
+  const state: TabHistoryState = {
     tabs: [{ tabKey: "ops-session:1", title: "Audit fleet", kind: "ops-session", openedAt: 100 }],
     closed: [
-      { tabKey: "node:local", title: "Local Agent", kind: "node", closedAt: 200 },
-      { tabKey: "ops-session:1", title: "Audit fleet", kind: "ops-session", closedAt: 300 }, // dup
+      { tabKey: "node:local", title: "Local Agent", kind: "node", openedAt: 50, closedAt: 200 },
+      {
+        tabKey: "ops-session:1",
+        title: "Audit fleet",
+        kind: "ops-session",
+        openedAt: 100,
+        closedAt: 300,
+      }, // dup
     ],
   };
 

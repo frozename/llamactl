@@ -321,6 +321,9 @@ export function translateAnthropicRequest(
     messages.push(...translateMessageContent(message, options));
   }
 
+  const tools = translateTools(req.tools);
+  const toolChoice = translateToolChoice(req.tool_choice);
+
   return {
     model: req.model,
     messages,
@@ -329,9 +332,7 @@ export function translateAnthropicRequest(
     ...(req.top_p !== undefined ? { top_p: req.top_p } : {}),
     ...(req.top_k !== undefined ? { top_k: req.top_k } : {}),
     ...(req.stop_sequences !== undefined ? { stop: req.stop_sequences } : {}),
-    ...(translateTools(req.tools) !== undefined ? { tools: translateTools(req.tools) } : {}),
-    ...(translateToolChoice(req.tool_choice) !== undefined
-      ? { tool_choice: translateToolChoice(req.tool_choice) }
-      : {}),
+    ...(tools !== undefined ? { tools } : {}),
+    ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
   };
 }

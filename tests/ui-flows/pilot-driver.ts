@@ -27,6 +27,27 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { existsSync } from "node:fs";
 
+/**
+ * Minimal driver surface the scaffolded `*-search-flow.ts` flows expect.
+ * Those flows predate the suite's move to the raw `McpClient`/`client.send`
+ * pattern and were never wired to a concrete implementation, but they type
+ * against this shape (a Playwright-style page plus selector helpers). Declared
+ * here as a type-only export so the flow files import a real symbol instead of
+ * a dangling one; emits no runtime code.
+ */
+export interface PilotDriver {
+  page: {
+    keyboard: {
+      down: (_key: string) => Promise<void>;
+      up: (_key: string) => Promise<void>;
+      press: (_key: string) => Promise<void>;
+    };
+  };
+  waitForSelector: (_selector: string) => Promise<unknown>;
+  type: (_text: string) => Promise<void>;
+  click: (_selector: string) => Promise<void>;
+}
+
 type JsonRpcRequest = {
   jsonrpc: "2.0";
   id: number | string;

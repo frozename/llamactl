@@ -113,7 +113,9 @@ function createWindow(): BrowserWindow {
   createIPCHandler({
     router,
     windows: [win],
-    createContext: makeIpcCreateContext(trustedUrl) as IPCHandlerOptions["createContext"],
+    createContext: makeIpcCreateContext(trustedUrl) as NonNullable<
+      IPCHandlerOptions["createContext"]
+    >,
   });
 
   // Prevent the renderer from navigating to untrusted URLs. This fires

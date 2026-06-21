@@ -37,7 +37,7 @@ function parseImportFlags(
     else if (arg.startsWith("--")) return { error: `Unknown flag: ${arg}` };
     else return { error: `Unexpected positional: ${arg}` };
   }
-  return { root, apply, link, json };
+  return { ...(root !== undefined ? { root } : {}), apply, link, json };
 }
 
 type ScanFlags =
@@ -59,7 +59,7 @@ function parseScanFlags(args: string[]): ScanFlags {
 
 async function fetchScan(root: string | undefined): Promise<ScanResult | null> {
   if (isLocalDispatch()) {
-    return lmstudio.scanLMStudio({ root });
+    return lmstudio.scanLMStudio(root !== undefined ? { root } : {});
   }
   try {
     return await getNodeClient().lmstudioScan.query(root ? { root } : undefined);
@@ -117,7 +117,7 @@ async function fetchImportPlan(
   link: boolean,
 ): Promise<ImportPlan | null> {
   if (isLocalDispatch()) {
-    return lmstudio.planImport({ root, link });
+    return lmstudio.planImport({ ...(root !== undefined ? { root } : {}), link });
   }
   try {
     return await getNodeClient().lmstudioPlan.query(buildRemoteImportInput(root, link));
@@ -166,7 +166,11 @@ async function fetchImportResult(
   link: boolean,
 ): Promise<ImportResult | null> {
   if (isLocalDispatch()) {
-    return await lmstudio.applyImport({ root, apply: true, link });
+    return await lmstudio.applyImport({
+      ...(root !== undefined ? { root } : {}),
+      apply: true,
+      link,
+    });
   }
   try {
     return await getNodeClient().lmstudioImport.mutate(buildRemoteImportInput(root, link) ?? {});

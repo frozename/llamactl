@@ -503,7 +503,6 @@ describe("httpFetcher cross-origin redirect token handling", () => {
   test("strips Authorization when a redirect crosses origins", async () => {
     // `other` is a different loopback origin (different port).
     other = await startFakeSite({
-      authRequired: undefined,
       pages: { "/landing": { html: "<html><body>cross-origin landing</body></html>" } },
     });
     const otherOrigin = other.origin;

@@ -655,11 +655,11 @@ describe("KubernetesBackend.ensureService — validation + failure modes", () =>
         "apps.createNamespacedDeployment": (p) => {
           const body = p["body"] as V1Deployment;
           const out = {} as V1Deployment;
-          out.apiVersion = body.apiVersion;
-          out.kind = body.kind;
-          out.metadata = body.metadata;
+          if (body.apiVersion !== undefined) out.apiVersion = body.apiVersion;
+          if (body.kind !== undefined) out.kind = body.kind;
+          if (body.metadata !== undefined) out.metadata = body.metadata;
           out.metadata!.creationTimestamp = new Date("2026-04-20T15:00:00Z");
-          out.spec = body.spec;
+          if (body.spec !== undefined) out.spec = body.spec;
           out.status = { readyReplicas: 0, replicas: 1 };
           return out;
         },

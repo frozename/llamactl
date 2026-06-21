@@ -55,10 +55,18 @@ function makeMockFetch(responder: Responder, recorded: Recorded[]): typeof fetch
         : undefined;
     const method = init?.method ?? "GET";
     const unix = (init as RequestInit & { unix?: string }).unix;
-    const rec: Recorded = { url, method, body, unix };
+    const rec: Recorded = {
+      url,
+      method,
+      ...(body !== undefined ? { body } : {}),
+      ...(unix !== undefined ? { unix } : {}),
+    };
     recorded.push(rec);
     const r = responder(rec);
-    return new Response(r.body, { status: r.status, headers: r.headers });
+    return new Response(r.body, {
+      status: r.status,
+      ...(r.headers !== undefined ? { headers: r.headers } : {}),
+    });
   };
   // Bun's fetch type requires a `preconnect` method. Tests don't need
   // it — shim as a no-op so the cast typechecks cleanly.

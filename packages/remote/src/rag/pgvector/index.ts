@@ -74,7 +74,7 @@ export async function createPgvectorAdapter(
 
   return new PgvectorRagAdapter({
     sql: client.sql,
-    defaultCollection: binding.collection,
+    ...(binding.collection !== undefined ? { defaultCollection: binding.collection } : {}),
     safeLabel: client.safeLabel,
     ...(embedder && { embedder }),
     ...(embedderLabel && { embedderLabel }),

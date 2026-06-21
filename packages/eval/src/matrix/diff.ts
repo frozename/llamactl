@@ -52,20 +52,22 @@ export function parseArgs(argv: string[]): DiffArgs {
   if (formatRaw !== "md" && formatRaw !== "csv" && formatRaw !== "json") {
     throw new Error(`--format must be md|csv|json, got: ${formatRaw}`);
   }
+  const models = modelsRaw
+    ? modelsRaw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : undefined;
+  const workloads = workloadsRaw
+    ? workloadsRaw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : undefined;
   return {
     db,
-    models: modelsRaw
-      ? modelsRaw
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : undefined,
-    workloads: workloadsRaw
-      ? workloadsRaw
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : undefined,
+    ...(models !== undefined ? { models } : {}),
+    ...(workloads !== undefined ? { workloads } : {}),
     format: formatRaw,
     allRuns: argv.includes("--all-runs"),
   };

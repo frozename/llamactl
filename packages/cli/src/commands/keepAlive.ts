@@ -346,8 +346,8 @@ async function runWorker(args: string[]): Promise<number> {
     await keepAlive.runKeepAliveWorker({
       key: { name: target },
       target,
-      intervalSeconds,
-      maxBackoff,
+      ...(intervalSeconds !== undefined ? { intervalSeconds } : {}),
+      ...(maxBackoff !== undefined ? { maxBackoff } : {}),
       signal: controller.signal,
     });
     return 0;

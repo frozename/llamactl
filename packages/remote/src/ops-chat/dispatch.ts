@@ -717,8 +717,8 @@ export function auditOpsChatToolRun(args: {
     argumentsHash: hashArguments(args.arguments),
     ok: args.ok,
     durationMs: args.durationMs,
-    errorCode: args.errorCode,
-    errorMessage: args.errorMessage,
-    sessionId: args.sessionId,
+    ...(args.errorCode !== undefined ? { errorCode: args.errorCode } : {}),
+    ...(args.errorMessage !== undefined ? { errorMessage: args.errorMessage } : {}),
+    ...(args.sessionId !== undefined ? { sessionId: args.sessionId } : {}),
   });
 }

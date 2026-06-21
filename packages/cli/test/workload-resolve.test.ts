@@ -49,7 +49,7 @@ const remoteDeps = (
     manifests.map((m) => ({
       metadata: { name: m.name },
       spec: { node: m.node },
-    }))) as unknown as ResolveWorkloadDeps["listWorkloads"],
+    }))) as unknown as NonNullable<ResolveWorkloadDeps["listWorkloads"]>,
 });
 
 describe("resolveWorkloadName (local path)", () => {

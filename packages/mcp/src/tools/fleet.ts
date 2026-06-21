@@ -126,7 +126,7 @@ function makeResultError(
   return {
     ok: false,
     error: message,
-    code: result.code,
+    ...(result.code !== undefined ? { code: result.code } : {}),
     timedOut: result.timedOut,
     stdout: result.stdout,
     stderr: result.stderr,
@@ -259,12 +259,16 @@ async function handleFleetPressureStatus({
   node,
   limit,
 }: {
-  journalPath?: string;
-  node?: string;
-  limit?: number;
+  journalPath?: string | undefined;
+  node?: string | undefined;
+  limit?: number | undefined;
 }): Promise<{ content: { type: "text"; text: string }[] }> {
   const path = journalPath ?? defaultFleetJournalPath();
-  const report = await readSupervisorStatus({ journalPath: path, node, limit });
+  const report = await readSupervisorStatus({
+    journalPath: path,
+    ...(node !== undefined ? { node } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  });
   return toTextContent(report);
 }
 
@@ -348,13 +352,19 @@ async function handleFleetAudit({
   since,
   limit,
 }: {
-  auditPath?: string;
-  tool?: string;
-  outcome?: "denied" | "success" | "error";
-  since?: string;
-  limit?: number;
+  auditPath?: string | undefined;
+  tool?: string | undefined;
+  outcome?: "denied" | "success" | "error" | undefined;
+  since?: string | undefined;
+  limit?: number | undefined;
 }): Promise<{ content: { type: "text"; text: string }[] }> {
-  const result = await readAuditEntries({ auditPath, tool, outcome, since, limit });
+  const result = await readAuditEntries({
+    ...(auditPath !== undefined ? { auditPath } : {}),
+    ...(tool !== undefined ? { tool } : {}),
+    ...(outcome !== undefined ? { outcome } : {}),
+    ...(since !== undefined ? { since } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+  });
   return toTextContent(result);
 }
 
@@ -363,9 +373,9 @@ function handleFleetSnapshot({
   all,
   journalPath,
 }: {
-  node?: string;
-  all?: boolean;
-  journalPath?: string;
+  node?: string | undefined;
+  all?: boolean | undefined;
+  journalPath?: string | undefined;
 }):
   | Promise<{ content: { type: "text"; text: string }[] }>
   | { content: { type: "text"; text: string }[] } {
@@ -389,15 +399,19 @@ function handleFleetProposals({
   sinceIsoTs,
   journalPath,
 }: {
-  node?: string;
-  pendingOnly?: boolean;
-  limit?: number;
-  sinceIsoTs?: string;
-  journalPath?: string;
+  node?: string | undefined;
+  pendingOnly?: boolean | undefined;
+  limit?: number | undefined;
+  sinceIsoTs?: string | undefined;
+  journalPath?: string | undefined;
 }): { content: { type: "text"; text: string }[] } {
   const path = journalPath ?? defaultFleetJournalPath();
   const entries = readJournal(path);
-  const proposals = collectProposals(entries, { node, pendingOnly, sinceIsoTs });
+  const proposals = collectProposals(entries, {
+    pendingOnly,
+    ...(node !== undefined ? { node } : {}),
+    ...(sinceIsoTs !== undefined ? { sinceIsoTs } : {}),
+  });
   const total = proposals.length;
   return toTextContent({ proposals: proposals.slice(0, limit), total });
 }
@@ -408,10 +422,10 @@ function handleFleetExecutions({
   limit = 50,
   journalPath,
 }: {
-  node?: string;
-  sinceIsoTs?: string;
-  limit?: number;
-  journalPath?: string;
+  node?: string | undefined;
+  sinceIsoTs?: string | undefined;
+  limit?: number | undefined;
+  journalPath?: string | undefined;
 }): { content: { type: "text"; text: string }[] } {
   const path = journalPath ?? defaultFleetJournalPath();
   const entries = readJournal(path);
@@ -435,10 +449,10 @@ function handleFleetJournalTail({
   limit = 20,
   journalPath,
 }: {
-  node?: string;
-  kinds?: FleetJournalEntry["kind"][];
-  limit?: number;
-  journalPath?: string;
+  node?: string | undefined;
+  kinds?: FleetJournalEntry["kind"][] | undefined;
+  limit?: number | undefined;
+  journalPath?: string | undefined;
 }): { content: { type: "text"; text: string }[] } {
   const path = journalPath ?? defaultFleetJournalPath();
   const entries = readJournal(path);
@@ -453,7 +467,13 @@ function handleFleetJournalTail({
   return toTextContent({ entries: filtered.slice(-limit) });
 }
 
-function handleFleetPressure({ node, journalPath }: { node?: string; journalPath?: string }): {
+function handleFleetPressure({
+  node,
+  journalPath,
+}: {
+  node?: string | undefined;
+  journalPath?: string | undefined;
+}): {
   content: { type: "text"; text: string }[];
 } {
   const path = journalPath ?? defaultFleetJournalPath();
@@ -493,7 +513,12 @@ function handleFleetPressure({ node, journalPath }: { node?: string; journalPath
 
 async function handleAdmitMeasure(
   spawnFn: SpawnFn,
-  input: { workload: string; node?: string; timeoutMs?: number; confirm?: boolean },
+  input: {
+    workload: string;
+    node?: string | undefined;
+    timeoutMs?: number | undefined;
+    confirm?: boolean | undefined;
+  },
 ): Promise<{ content: { type: "text"; text: string }[] }> {
   const { workload, node, timeoutMs, confirm } = input;
 
@@ -555,12 +580,12 @@ async function handleSupervisorExecute(
   spawnFn: SpawnFn,
   detectExistingSupervisor: DetectExistingSupervisor,
   input: {
-    proposalId?: string;
-    auto?: boolean;
-    severityThreshold?: number;
-    node?: string;
-    confirm?: boolean;
-    timeoutMs?: number;
+    proposalId?: string | undefined;
+    auto?: boolean | undefined;
+    severityThreshold?: number | undefined;
+    node?: string | undefined;
+    confirm?: boolean | undefined;
+    timeoutMs?: number | undefined;
   },
 ): Promise<{ content: { type: "text"; text: string }[] }> {
   const { proposalId, auto, severityThreshold, node, confirm, timeoutMs } = input;

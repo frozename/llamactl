@@ -116,7 +116,7 @@ function createMockSql(): MockSql {
 }
 
 function queueRows(mock: MockSql, rows: unknown[], count?: number): void {
-  mock.queue.push({ kind: "rows", rows, count });
+  mock.queue.push({ kind: "rows", rows, ...(count !== undefined ? { count } : {}) });
 }
 
 function queueError(mock: MockSql, error: Error & { code?: string }): void {

@@ -246,7 +246,7 @@ export interface ImportOptions extends ScanOptions {
 export function planImport(opts: ImportOptions = {}): ImportPlan {
   const env = opts.env ?? process.env;
   const resolved = opts.resolved ?? resolveEnv(env);
-  const scan = scanLMStudio({ root: opts.root, env });
+  const scan = scanLMStudio({ ...(opts.root !== undefined ? { root: opts.root } : {}), env });
   const link = opts.link ?? true;
   const items = scan.models.map((m) => planItem(m, resolved, link));
   return { root: scan.root, items };

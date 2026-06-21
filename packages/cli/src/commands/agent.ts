@@ -560,8 +560,10 @@ function buildServeOptions(
         }
       : {}),
   } as Parameters<typeof startAgentServer>[0];
-  (serverOptions as Parameters<typeof startAgentServer>[0] & { noAuth?: boolean }).noAuth =
-    parsed.noAuth;
+  if (parsed.noAuth !== undefined) {
+    (serverOptions as Parameters<typeof startAgentServer>[0] & { noAuth?: boolean }).noAuth =
+      parsed.noAuth;
+  }
   return serverOptions;
 }
 

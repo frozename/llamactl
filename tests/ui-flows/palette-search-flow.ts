@@ -1,5 +1,5 @@
 // tests/ui-flows/palette-search-flow.ts
-import { PilotDriver } from "./pilot-driver.js";
+import type { PilotDriver } from "./pilot-driver.js";
 
 export async function runPaletteSearchFlow(pilot: PilotDriver) {
   // 1. Press Cmd+K (using pilot keyboard abstraction if available, else click a mock button or use keypress)

@@ -137,7 +137,7 @@ async function guardedFetch(startUrl: string, state: CrawlState): Promise<Respon
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     await assertPublicUrl(currentUrl, {
       allowPrivate: state.spec.allow_private_targets,
-      resolve: state.resolve,
+      ...(state.resolve !== undefined ? { resolve: state.resolve } : {}),
     });
 
     // Only carry the bearer to the same origin as the original request.
@@ -202,7 +202,7 @@ async function crawlOne(
   try {
     await assertPublicUrl(item.url, {
       allowPrivate: state.spec.allow_private_targets,
-      resolve: state.resolve,
+      ...(state.resolve !== undefined ? { resolve: state.resolve } : {}),
     });
   } catch (err) {
     if (err instanceof SsrfBlockedError) {

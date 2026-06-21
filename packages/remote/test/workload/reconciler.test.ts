@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { WorkloadClient } from "../../src/workload/apply.js";
-import type { ModelHostManifest } from "../../src/workload/modelhost-schema.js";
 import type { ModelRun } from "../../src/workload/schema.js";
 
 import {
@@ -14,6 +13,7 @@ import {
 import { resolveEnv } from "../../../core/src/env.js";
 import * as fs from "../../src/safe-fs.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
+import { type ModelHostManifest, specForHash } from "../../src/workload/modelhost-schema.js";
 import { saveModelHost } from "../../src/workload/modelhost-store.js";
 import { reconcileOnce, type ReconcileResult } from "../../src/workload/reconciler.js";
 import { saveWorkload } from "../../src/workload/store.js";
@@ -28,7 +28,7 @@ function seedRunningSidecar(dir: string, manifest: ReturnType<typeof makeHostMan
       port: manifest.spec.endpoint.port,
       modelAliases: [manifest.spec.hostedModels[0]!.rel],
       startedAt: new Date().toISOString(),
-      specHash: computeModelHostSpecHash(manifest.spec),
+      specHash: computeModelHostSpecHash(specForHash(manifest.spec)),
     },
     { name: manifest.metadata.name },
     resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir }),

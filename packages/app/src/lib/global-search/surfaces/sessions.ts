@@ -14,12 +14,13 @@ export function mapSessionHits(hits: SessionServerHit[]): Hit[] {
   const out: Hit[] = [];
   for (const h of hits) {
     if (h.matches.length === 0) continue;
+    const originNode = (h as { originNode?: string }).originNode;
     for (const m of h.matches) {
       out.push({
         surface: "session",
         parentId: h.sessionId,
         parentTitle: h.goal || h.sessionId,
-        originNode: (h as { originNode?: string }).originNode,
+        ...(originNode !== undefined ? { originNode } : {}),
         score: h.score,
         matchKind: "exact",
         match: m,

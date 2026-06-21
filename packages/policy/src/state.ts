@@ -1,3 +1,5 @@
+import { omitUndefined } from "@llamactl/core/object";
+
 import type { CostGuardianConfig } from "./config.js";
 
 /**
@@ -186,12 +188,17 @@ export function decideGuardianAction(input: GuardianDecisionInput): GuardianDeci
     ts,
     tier: winning.tier,
     reason: buildReason(
-      { cost: dailyCost, budget: dailyBudget, fraction: dailyFraction },
-      { cost: weeklyCost, budget: weeklyBudget, fraction: weeklyFraction },
+      omitUndefined({ cost: dailyCost, budget: dailyBudget, fraction: dailyFraction }),
+      omitUndefined({ cost: weeklyCost, budget: weeklyBudget, fraction: weeklyFraction }),
     ),
     thresholdCrossed: winning.crossed,
     deregisterTarget,
   };
-  attachSpendFields(decision, { dailyFraction, weeklyFraction, dailyCost, weeklyCost });
+  attachSpendFields(decision, {
+    ...(dailyFraction !== undefined ? { dailyFraction } : {}),
+    ...(weeklyFraction !== undefined ? { weeklyFraction } : {}),
+    ...(dailyCost !== undefined ? { dailyCost } : {}),
+    ...(weeklyCost !== undefined ? { weeklyCost } : {}),
+  });
   return decision;
 }

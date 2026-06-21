@@ -325,11 +325,11 @@ export function LocalServerStartInline({
         Local server
       </div>
       <LocalServerActions
-        onStarted={onStarted}
+        {...(onStarted !== undefined ? { onStarted } : {})}
         picked={picked}
         rels={rels}
         setPicked={setPicked}
-        workload={workload ?? undefined}
+        {...(workload !== null ? { workload } : {})}
       />
       <div style={{ marginLeft: "auto" }}>
         <Button
@@ -540,7 +540,9 @@ export function TranscriptColumn(props: {
     >
       <TranscriptHeader
         capabilities={props.capabilities}
-        controlsDisabled={props.controlsDisabled}
+        {...(props.controlsDisabled !== undefined
+          ? { controlsDisabled: props.controlsDisabled }
+          : {})}
         headerExtras={props.headerExtras}
         label={props.label}
         model={props.model}
@@ -562,7 +564,11 @@ export function TranscriptColumn(props: {
           ))}
         </div>
       </div>
-      {props.node === "local" && <LocalServerStartInline onStarted={props.onStartedLocal} />}
+      {props.node === "local" && (
+        <LocalServerStartInline
+          {...(props.onStartedLocal !== undefined ? { onStarted: props.onStartedLocal } : {})}
+        />
+      )}
     </div>
   );
 }
@@ -681,7 +687,9 @@ export function ChatActiveView(props: {
                     store.setCompareWith(active.id, {
                       node: active.node,
                       model: active.model,
-                      capabilities: active.capabilities,
+                      ...(active.capabilities !== undefined
+                        ? { capabilities: active.capabilities }
+                        : {}),
                     });
                   }}
                   data-testid="chat-compare"

@@ -14,7 +14,7 @@ interface RunningServer {
 function startServer(bearer: string, opts: { requestTimeoutMs?: number } = {}): RunningServer {
   const srv = createTunnelServer({
     expectedBearerHash: hashToken(bearer),
-    requestTimeoutMs: opts.requestTimeoutMs,
+    ...(opts.requestTimeoutMs !== undefined ? { requestTimeoutMs: opts.requestTimeoutMs } : {}),
   });
   const bun = Bun.serve({
     port: 0,

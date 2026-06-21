@@ -67,7 +67,10 @@ export function ProposalBubble({
           tierStyle={tierStyle(tier)}
         />
         <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{step.annotation}</div>
-        <ProposalArguments args={step.args} iteration={iteration} />
+        <ProposalArguments
+          {...(step.args !== undefined ? { args: step.args } : {})}
+          iteration={iteration}
+        />
 
         {tier === "mutation-destructive" && !terminal && (
           <DestructiveConfirmation

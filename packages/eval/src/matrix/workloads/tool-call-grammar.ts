@@ -47,7 +47,7 @@ export const toolCallGrammarWorkload: WorkloadEval = {
     const r = row as CorpusRow;
     return {
       messages: r.messages.slice(0, -1),
-      tools: r.tools,
+      ...(r.tools !== undefined ? { tools: r.tools } : {}),
       tool_choice: r.tool_choice ?? "auto",
     };
   },

@@ -168,7 +168,7 @@ export default function Nodes(): React.JSX.Element {
               endpoint={n.endpoint}
               defaultNode={data.defaultNode}
               kind={n.effectiveKind || (n.cloud ? "gateway" : "agent")}
-              cloud={n.cloud}
+              {...(n.cloud !== undefined ? { cloud: n.cloud } : {})}
             />
           ))
         )}

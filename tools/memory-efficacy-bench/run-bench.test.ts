@@ -34,7 +34,7 @@ describe("run-bench grammar wiring", () => {
   test("callChat surfaces grammar unsupported errors clearly", async () => {
     globalThis.fetch = (async () => {
       return new Response("grammar not supported by backend", { status: 400 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await expect(
       callChat("http://127.0.0.1:18090", "local", "hi", 'root ::= "[]"'),

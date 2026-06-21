@@ -15,7 +15,7 @@ import {
   type ApplyResult,
   type WorkloadClient,
 } from "./apply.js";
-import { LOCAL_NODE_ID, type ModelHostManifest } from "./modelhost-schema.js";
+import { LOCAL_NODE_ID, type ModelHostManifest, specForHash } from "./modelhost-schema.js";
 import { listModelHosts, saveModelHost } from "./modelhost-store.js";
 import { listNodeRuns } from "./noderun-store.js";
 import { defaultWorkloadsDir, listWorkloads, loadWorkloadByName, saveWorkload } from "./store.js";
@@ -195,7 +195,7 @@ function classifyHostReconcile(
   current: { state: string; specHash?: string },
 ): "sweep-disabled" | "converged" | "apply" {
   if (!spec.enabled && current.state !== "Running") return "sweep-disabled";
-  const desiredHash = computeModelHostSpecHash(spec);
+  const desiredHash = computeModelHostSpecHash(specForHash(spec));
   const observedHash =
     spec.node === LOCAL_NODE_ID
       ? readModelHostState({ name }, resolveEnv(process.env))?.specHash

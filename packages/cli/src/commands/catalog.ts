@@ -319,10 +319,10 @@ async function runAdd(args: string[]): Promise<number> {
   const result = await catalogWriter.addCurated({
     repo: repo ?? "",
     fileOrRel: fileOrRel ?? "",
-    label,
-    family,
-    class: klass,
-    scope,
+    ...(label !== undefined ? { label } : {}),
+    ...(family !== undefined ? { family } : {}),
+    ...(klass !== undefined ? { class: klass } : {}),
+    ...(scope !== undefined ? { scope } : {}),
   });
   if (!result.ok) {
     process.stderr.write(`${result.error}\n`);

@@ -137,7 +137,7 @@ async function logSlotProgressForWorkloads(
   await Promise.all(
     opts.workloads.map(async (target) => {
       const reading = await readSlotProgress(target.endpoint, {
-        fetch: opts.fetch,
+        ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
         timeoutMs,
       });
       const entry: FleetSlotProgressEntry = {

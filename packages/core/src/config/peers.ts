@@ -53,9 +53,11 @@ export function listPeers(opts?: { currentNodeName?: string }): PeerNode[] {
     .map((node) => ({
       id: node.name,
       endpoint: node.endpoint,
-      certificate: node.certificate,
-      fingerprint: node.certificateFingerprint,
-      tokenRef: contextUser?.tokenRef,
-      token: resolvedToken,
+      ...(node.certificate !== undefined ? { certificate: node.certificate } : {}),
+      ...(node.certificateFingerprint !== undefined
+        ? { fingerprint: node.certificateFingerprint }
+        : {}),
+      ...(contextUser?.tokenRef !== undefined ? { tokenRef: contextUser.tokenRef } : {}),
+      ...(resolvedToken !== undefined ? { token: resolvedToken } : {}),
     }));
 }

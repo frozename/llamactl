@@ -1,3 +1,4 @@
+import { omitUndefined } from "@llamactl/core/object";
 // Completion-based liveness probe. A long-lived server can keep /health green
 // while completions degrade to 5xx/timeout (the granite + diffusion "wedge":
 // growing per-request bookkeeping). probeWorkload alone never sees this, so a
@@ -177,21 +178,30 @@ export function applyBusyGuard(input: BusyGuardInput): BusyGuardResult {
   // reducer's — the two paths diverge deliberately so the guard only ever decides
   // the wedge-vs-busy question.
   if (classification !== "wedge") {
-    return { consecutiveFailures: prior, reason: undefined, nextProgress: lastProgress };
+    return {
+      consecutiveFailures: prior,
+      ...omitUndefined({ nextProgress: lastProgress }),
+    };
   }
   if (!reading.available) {
-    return { consecutiveFailures: prior, reason: undefined, nextProgress: lastProgress };
+    return {
+      consecutiveFailures: prior,
+      ...omitUndefined({ nextProgress: lastProgress }),
+    };
   }
 
   const progress = maxProgress(reading);
   if (!progress.processing) {
     if (progress.ambiguousProcessing) {
-      return { consecutiveFailures: prior, reason: undefined, nextProgress: lastProgress };
+      return {
+        consecutiveFailures: prior,
+        ...omitUndefined({ nextProgress: lastProgress }),
+      };
     }
     return {
       consecutiveFailures: prior + 1,
       reason: "idle-wedge",
-      nextProgress: lastProgress,
+      ...omitUndefined({ nextProgress: lastProgress }),
     };
   }
 
