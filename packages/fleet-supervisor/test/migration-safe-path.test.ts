@@ -39,7 +39,8 @@ describe("migration safe-path: non-blocking health poll, apply_failed cooldown, 
       removeWorkload: async (workload, fromNode): Promise<void> => {
         deleteCalls.push({ workload, fromNode });
       },
-      leaseholder: "m4pro",
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
       getNowMs: (): number => nowMs,
       getCurrentTick: (): number => tick,
       healthTimeoutMs: 5_000,
@@ -190,7 +191,6 @@ describe("migration safe-path: non-blocking health poll, apply_failed cooldown, 
     const ctrl = makeController();
     snapshots["m2mini"] = {
       node: "m2mini",
-      schedulerLeaseHolder: "m4pro",
       pressureState: "NORMAL",
       nodeMem: { freeMb: 8000 },
       workloads: [],

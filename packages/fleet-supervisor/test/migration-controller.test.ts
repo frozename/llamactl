@@ -41,7 +41,8 @@ describe("MigrationController", () => {
       removeWorkload: async (workload, fromNode): Promise<void> => {
         deleteCalls.push({ workload, fromNode });
       },
-      leaseholder: "m4pro",
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
       getNowMs: (): number => nowMs,
       getCurrentTick: (): number => tick,
       healthTimeoutMs: 5,
@@ -61,7 +62,6 @@ describe("MigrationController", () => {
 
   const sourceSnapshot: NodeSnapshot = {
     node: "m4pro",
-    schedulerLeaseHolder: "m4pro",
     pressureState: "HIGH",
     nodeMem: { freeMb: 100 },
     workloads: [],
@@ -96,11 +96,54 @@ describe("MigrationController", () => {
     });
   });
 
-  it("T1: evaluateMove returns null when not scheduler leaseholder", async () => {
-    const result = await controller.evaluateMove(workload, {
-      ...sourceSnapshot,
-      schedulerLeaseHolder: "m2mini",
+  it("T1: evaluateMove returns null when the elected holder is not self", async () => {
+    // Drive the real guard: getLeaseHolder names a peer, not selfNode.
+    const notHolder = new MigrationController({
+      peers: ["m2mini", "m4pro"],
+      fetchSnapshot: async (node): Promise<NodeSnapshot> =>
+        snapshots[node] ?? {
+          node,
+          pressureState: "NORMAL",
+          nodeMem: { freeMb: 4096 },
+          workloads: [],
+        },
+      deployWorkload: async (workload, toNode): Promise<void> => {
+        applyCalls.push({ workload, toNode });
+      },
+      removeWorkload: async (workload, fromNode): Promise<void> => {
+        deleteCalls.push({ workload, fromNode });
+      },
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m2mini",
+      getNowMs: (): number => nowMs,
+      getCurrentTick: (): number => tick,
     });
+    const result = await notHolder.evaluateMove(workload, sourceSnapshot);
+    expect(result).toBeNull();
+  });
+
+  it("T1b: evaluateMove returns null when no holder is elected", async () => {
+    const noHolder = new MigrationController({
+      peers: ["m2mini", "m4pro"],
+      fetchSnapshot: async (node): Promise<NodeSnapshot> =>
+        snapshots[node] ?? {
+          node,
+          pressureState: "NORMAL",
+          nodeMem: { freeMb: 4096 },
+          workloads: [],
+        },
+      deployWorkload: async (workload, toNode): Promise<void> => {
+        applyCalls.push({ workload, toNode });
+      },
+      removeWorkload: async (workload, fromNode): Promise<void> => {
+        deleteCalls.push({ workload, fromNode });
+      },
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => null,
+      getNowMs: (): number => nowMs,
+      getCurrentTick: (): number => tick,
+    });
+    const result = await noHolder.evaluateMove(workload, sourceSnapshot);
     expect(result).toBeNull();
   });
 
@@ -166,12 +209,12 @@ describe("MigrationController", () => {
       peers: ["m2mini"],
       fetchSnapshot: async (): Promise<NodeSnapshot> => ({
         node: "m2mini",
-        schedulerLeaseHolder: "m4pro",
         pressureState: "NORMAL",
         nodeMem: { freeMb: 4096 },
         workloads: [],
       }),
-      leaseholder: "m4pro",
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
       getNowMs: (): number => nowMs,
       moveCooldownTicks: 10,
       pollIntervalMs: 100,
@@ -314,7 +357,8 @@ describe("MigrationController", () => {
       removeWorkload: async (w, fromNode): Promise<void> => {
         deleteCalls.push({ workload: w, fromNode });
       },
-      leaseholder: "m4pro",
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
       getNowMs: (): number => nowMs,
       getCurrentTick: (): number => tick,
       healthTimeoutMs: 5,
@@ -360,7 +404,8 @@ describe("MigrationController", () => {
       }),
       deployWorkload: async (): Promise<undefined> => undefined,
       removeWorkload: async (): Promise<undefined> => undefined,
-      leaseholder: "m4pro",
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
       getNowMs: (): number => nowMs,
       moveCooldownTicks: 2,
       pollIntervalMs: 100,
@@ -403,7 +448,8 @@ describe("MigrationController", () => {
       },
       deployWorkload: async (): Promise<undefined> => undefined,
       removeWorkload: async (): Promise<undefined> => undefined,
-      leaseholder: "m4pro",
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
       getNowMs: (): number => nowMs,
       getCurrentTick: (): number => tick,
     });
@@ -542,7 +588,8 @@ describe("MigrationController", () => {
         nodeMem: { freeMb: 4096 },
         workloads: [],
       }),
-      leaseholder: "m4pro",
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
       getNowMs: (): number => nowMs,
       moveCooldownTicks: 2,
       pollIntervalMs: 100,
