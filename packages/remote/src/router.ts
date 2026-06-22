@@ -79,6 +79,7 @@ import { readJournal } from "./ops-chat/sessions/journal.js";
 import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
 import { createRagAdapter } from "./rag/index.js";
 import { resolveRagNode } from "./rag/resolve.js";
+import { readFleetSnapshot } from "./routes/fleet.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "./safe-fs.js";
 import { searchLogs } from "./search/logs.js";
 import { resolveDefaultRagNode } from "./search/rag-node.js";
@@ -427,7 +428,11 @@ type CandidateStreamEvent =
 // (strings, numbers, arrays, nested objects). We'd swap in superjson if
 // we started returning Date/Map/Set, but electron-trpc v0.7 doesn't pass
 // a transformer through ipcLink, so this keeps the pipeline uncomplicated.
-const t = initTRPC.create();
+export interface AgentRouterContext {
+  fleetJournalPath?: string;
+}
+
+const t = initTRPC.context<AgentRouterContext>().create();
 
 const modelHostStatusInput = z.object({ workload: z.string().min(1) });
 const modelHostStopInput = z.object({
@@ -866,6 +871,12 @@ export const router = t.router({
   env: t.procedure.query(() => envMod.resolveEnv()),
 
   nodeFacts: t.procedure.query(() => nodeFactsMod.collectNodeFacts()),
+
+  fleetSnapshot: t.procedure.query(({ ctx }) =>
+    readFleetSnapshot(
+      ctx.fleetJournalPath !== undefined ? { journalPath: ctx.fleetJournalPath } : {},
+    ),
+  ),
 
   // ---- node management (kubeconfig + reachability) ----------------------
 

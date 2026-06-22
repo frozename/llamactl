@@ -1,9 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import type { TunnelState } from "../src/tunnel/index.js";
+import {
+  encodeTunnelMessage,
+  parseTunnelMessage,
+  type ClientWebSocketConstructor,
+  type TunnelState,
+} from "../src/tunnel/index.js";
 
 import { generateToken, hashToken } from "../src/server/auth.js";
 import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 /**
  * Phase I.3.2 — agent-side DIAL-OUT (tunnelDial) integration.
@@ -51,7 +59,13 @@ interface DialingHandle {
   states: TunnelState[];
 }
 
-function bootDialingAgent(opts: { url: string; bearer: string; nodeName: string }): DialingHandle {
+function bootDialingAgent(opts: {
+  url: string;
+  bearer: string;
+  nodeName: string;
+  fleetJournalPath?: string;
+  WebSocketCtor?: ClientWebSocketConstructor;
+}): DialingHandle {
   const states: TunnelState[] = [];
   const { hash } = generateToken();
   const agent = startAgentServer({
@@ -66,7 +80,9 @@ function bootDialingAgent(opts: { url: string; bearer: string; nodeName: string 
       onStateChange: (s) => {
         states.push(s);
       },
+      ...(opts.WebSocketCtor !== undefined ? { WebSocketCtor: opts.WebSocketCtor } : {}),
     },
+    ...(opts.fleetJournalPath !== undefined ? { fleetJournalPath: opts.fleetJournalPath } : {}),
   });
   return { agent, states };
 }
@@ -82,12 +98,51 @@ async function waitFor(check: () => boolean, timeoutMs = 3000, intervalMs = 10):
   }
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function fleetSnapshotFixture(node: string): Record<string, unknown> {
+  return {
+    kind: "fleet-snapshot",
+    ts: "2026-06-22T12:00:00.000Z",
+    node,
+    node_mem: {
+      free_mb: 4096,
+      active_mb: 1024,
+      inactive_mb: 512,
+      wired_mb: 256,
+      compressor_mb: 128,
+      swap_in: 0,
+      swap_out: 0,
+    },
+    workloads: [
+      {
+        name: "assistant",
+        kind: "ModelRun",
+        endpoint: "http://127.0.0.1:8080",
+        priority: 50,
+        rss_mb: 2048,
+        request_rate_5m: 1.5,
+        error_rate_5m: 0,
+        p50_ms: 100,
+        p95_ms: 200,
+        models: ["gemma"],
+        reachable: true,
+        consecutiveErrors: 0,
+      },
+    ],
+  };
+}
+
 let centrals: CentralHandle[] = [];
 let dialers: DialingHandle[] = [];
+let tempDirs: string[] = [];
 
 beforeEach(() => {
   centrals = [];
   dialers = [];
+  tempDirs = [];
 });
 afterEach(async () => {
   for (const d of dialers) {
@@ -98,6 +153,10 @@ afterEach(async () => {
   }
   centrals = [];
   dialers = [];
+  for (const dir of tempDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  tempDirs = [];
 });
 
 describe("startAgentServer with tunnelDial", () => {
@@ -142,6 +201,120 @@ describe("startAgentServer with tunnelDial", () => {
     expect(typeof body.result?.profile).toBe("string");
     expect(typeof body.result?.os).toBe("string");
     expect(typeof body.result?.arch).toBe("string");
+  });
+
+  test("tunnel direction stays central-originated only", async () => {
+    const central = bootCentralAgent();
+    centrals.push(central);
+
+    const sockets: WebSocket[] = [];
+    const CapturingWebSocket = class extends WebSocket {
+      constructor(url: string) {
+        super(url);
+        sockets.push(this);
+      }
+    } as ClientWebSocketConstructor;
+
+    const dialer = bootDialingAgent({
+      url: central.wsUrl,
+      bearer: central.tunnelBearer,
+      nodeName: "nodeB",
+      WebSocketCtor: CapturingWebSocket,
+    });
+    dialers.push(dialer);
+
+    await waitFor(() => dialer.agent.tunnelClient!.isReady());
+    await waitFor(() => central.agent.tunnelServer!.registry().some((e) => e.nodeName === "nodeB"));
+    await waitFor(() => sockets.length === 1);
+
+    const resp = await fetch(`${central.baseUrl}/tunnel-relay/nodeB`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${central.agentToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ method: "nodeFacts", type: "query" }),
+    });
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as {
+      type: string;
+      result?: { profile?: unknown };
+      error?: { code: string; message: string };
+    };
+    expect(body.type).toBe("res");
+    expect(body.error).toBeUndefined();
+    expect(typeof body.result?.profile).toBe("string");
+
+    const socket = sockets[0]!;
+    const inboundAfterNodeReq: unknown[] = [];
+    const originalOnMessage = socket.onmessage;
+    socket.onmessage = ((ev: MessageEvent) => {
+      const raw = typeof ev.data === "string" ? ev.data : String(ev.data);
+      inboundAfterNodeReq.push(parseTunnelMessage(raw));
+      originalOnMessage?.call(socket, ev);
+    }) as typeof socket.onmessage;
+
+    socket.send(
+      encodeTunnelMessage({
+        type: "req",
+        id: "node-originated-req",
+        method: "nodeFacts",
+        params: { type: "query" },
+      }),
+    );
+    await sleep(100);
+
+    expect(
+      inboundAfterNodeReq.some(
+        (msg) =>
+          msg !== null &&
+          typeof msg === "object" &&
+          "id" in msg &&
+          msg.id === "node-originated-req",
+      ),
+    ).toBe(false);
+    expect(central.agent.tunnelServer!.pendingCount("nodeB")).toBe(0);
+    expect(dialer.agent.tunnelClient!.isReady()).toBe(true);
+  });
+
+  test("central relays fleetSnapshot query to the dialing node", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-fleet-tunnel-"));
+    tempDirs.push(dir);
+    const journalPath = join(dir, "fleet.jsonl");
+    const snapshot = fleetSnapshotFixture("nodeB");
+    writeFileSync(journalPath, `${JSON.stringify(snapshot)}\n`, "utf8");
+
+    const central = bootCentralAgent();
+    centrals.push(central);
+
+    const dialer = bootDialingAgent({
+      url: central.wsUrl,
+      bearer: central.tunnelBearer,
+      nodeName: "nodeB",
+      fleetJournalPath: journalPath,
+    });
+    dialers.push(dialer);
+
+    await waitFor(() => dialer.agent.tunnelClient!.isReady());
+    await waitFor(() => central.agent.tunnelServer!.registry().some((e) => e.nodeName === "nodeB"));
+
+    const resp = await fetch(`${central.baseUrl}/tunnel-relay/nodeB`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${central.agentToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ method: "fleetSnapshot", type: "query" }),
+    });
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as {
+      type: string;
+      result?: unknown;
+      error?: { code: string; message: string };
+    };
+    expect(body.type).toBe("res");
+    expect(body.error).toBeUndefined();
+    expect(body.result).toEqual(snapshot);
   });
 
   test("disconnect → reconnect: tunnel re-establishes and second relay call succeeds", async () => {

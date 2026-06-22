@@ -499,7 +499,9 @@ function createAgentFetchHandler(args: {
       req,
       endpoint,
       router: appRouter,
-      createContext: () => ({}),
+      createContext: () => ({
+        ...(opts.fleetJournalPath !== undefined ? { fleetJournalPath: opts.fleetJournalPath } : {}),
+      }),
     });
   };
 }
@@ -603,11 +605,12 @@ function maybePublishAgentMdns(
 // the background and uses its own reconnect loop, so an unreachable
 // central never blocks the local agent. Bridges inbound `req`
 // frames from central into the same appRouter the /trpc endpoint
-// serves (createCaller({}) — matches the existing /trpc context
-// shape).
+// serves.
 function maybeStartTunnelClient(opts: StartAgentOptions): TunnelClient | null {
   if (!opts.tunnelDial) return null;
-  const caller = appRouter.createCaller({});
+  const caller = appRouter.createCaller({
+    ...(opts.fleetJournalPath !== undefined ? { fleetJournalPath: opts.fleetJournalPath } : {}),
+  });
   const handleRequest = createTunnelRouterHandler(caller);
   const tunnelClient = createTunnelClient({
     url: opts.tunnelDial.url,
