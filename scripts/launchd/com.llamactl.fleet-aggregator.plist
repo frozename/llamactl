@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Per-user launchd agent for the M4 Pro fleet aggregator.
+
+  Runs `llamactl fleet aggregator serve` continuously: every 30s it reads
+  the kubeconfig peer list (listPeers, self-excluded), GETs each peer's
+  /v1/fleet/snapshot, and persists the rows into ~/.llamactl/fleet/cluster.db
+  (node_snapshots, 200/node retention). That db is the replicated peer view
+  the scheduler-lease election (makeGetLeaseHolder) reads to elect a holder
+  and to see fresh destination peers for cross-node migration.
+
+  Runs on the aggregator host only (M4 Pro). Each node's supervisor reads its
+  own local cluster.db; with a single aggregator here, m4-pro sees mac-mini as
+  a destination (one-directional offload). Peer reachability + TLS comes from
+  the kubeconfig (cert pin + bearer); stale/unreachable peers are dropped, so
+  the election degrades safely to no-holder/no-move rather than acting on bad
+  data.
+
+  Install:
+    cp scripts/launchd/com.llamactl.fleet-aggregator.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.llamactl.fleet-aggregator.plist
+
+  Uninstall (rollback to safe-inert: cluster.db goes stale, supervisors
+  self-demote, no cross-node moves):
+    launchctl bootout gui/$(id -u)/com.llamactl.fleet-aggregator || true
+    rm ~/Library/LaunchAgents/com.llamactl.fleet-aggregator.plist
+
+  Smoke check after install (expect a fresh mac-mini row ~every 30s):
+    sleep 35
+    sqlite3 ~/.llamactl/fleet/cluster.db \
+      'SELECT node, ts FROM node_snapshots ORDER BY ts DESC LIMIT 3;'
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.llamactl.fleet-aggregator</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/acordeiro/.bun/bin/bun</string>
+    <string>/Volumes/WorkSSD/repos/personal/llamactl/packages/cli/src/bin.ts</string>
+    <string>fleet</string>
+    <string>aggregator</string>
+    <string>serve</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/Users/acordeiro/.llamactl/logs/fleet-aggregator.stdout.log</string>
+  <key>StandardErrorPath</key><string>/Users/acordeiro/.llamactl/logs/fleet-aggregator.stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>/Users/acordeiro</string>
+    <key>PATH</key><string>/Users/acordeiro/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>DEV_STORAGE</key><string>/Users/acordeiro/DevStorage</string>
+  </dict>
+</dict>
+</plist>
