@@ -8,6 +8,8 @@ import type { PeerSnapshot } from "@llamactl/core/workloadRuntime";
 // reads (routes silently never appear).
 import { openaiProxy } from "@llamactl/core";
 import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
+import { resolveToken } from "@llamactl/core/config/kubeconfig";
+import { callViaTunnelRelay } from "@llamactl/core/tunnel-relay";
 
 import { makePinnedFetch } from "../client/links.js";
 
@@ -73,7 +75,16 @@ function computePeerPressure(nodeMem: RawFleetSnapshot["node_mem"]): PeerSnapsho
   return availableMb !== null && availableMb < HIGH_PRESSURE_AVAILABLE_MB ? "HIGH" : "NORMAL";
 }
 
-async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSnapshot | null> {
+function resolveTunnelRelayToken(peer: PeerNode): string {
+  if (peer.tunnelRelayToken) return peer.tunnelRelayToken;
+  if (peer.token) return peer.token;
+  if (peer.tunnelRelayTokenRef)
+    return resolveToken({ name: peer.id, tokenRef: peer.tunnelRelayTokenRef });
+  if (peer.tokenRef) return resolveToken({ name: peer.id, tokenRef: peer.tokenRef });
+  throw new Error(`peer ${peer.id} has tunnelPreferred=true but no tunnel relay bearer set`);
+}
+
+async function readPeerSnapshotDirect(peer: PeerNode): Promise<RawFleetSnapshot | null> {
   const headers: Record<string, string> = {};
   if (peer.token) headers["authorization"] = `Bearer ${peer.token}`;
   const pinnedFetch = makePinnedFetch({
@@ -90,7 +101,35 @@ async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSna
     return null; // unreachable / TLS error -> no peer routes this tick
   }
   if (!res.ok) return null; // 204 (no journal entry yet) or error
-  const snap = (await res.json().catch(() => null)) as RawFleetSnapshot | null;
+  return (await res.json().catch(() => null)) as RawFleetSnapshot | null;
+}
+
+async function readPeerSnapshotViaTunnel(peer: PeerNode): Promise<RawFleetSnapshot | null> {
+  if (!peer.tunnelCentralUrl) {
+    throw new Error(
+      `peer ${peer.id} has tunnelPreferred=true but no tunnelCentralUrl set; cannot route via reverse tunnel`,
+    );
+  }
+  const result = await callViaTunnelRelay({
+    centralUrl: peer.tunnelCentralUrl,
+    nodeName: peer.tunnelNodeName ?? peer.id,
+    method: "fleetSnapshot",
+    input: undefined,
+    bearer: resolveTunnelRelayToken(peer),
+    type: "query",
+    ...(peer.tunnelCentralCertificate ? { pinnedCa: peer.tunnelCentralCertificate } : {}),
+    ...(peer.tunnelCentralFingerprint
+      ? { expectedFingerprint: peer.tunnelCentralFingerprint }
+      : {}),
+  });
+  return result as RawFleetSnapshot | null;
+}
+
+async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSnapshot | null> {
+  const snap =
+    peer.tunnelPreferred === true
+      ? await readPeerSnapshotViaTunnel(peer).catch(() => null)
+      : await readPeerSnapshotDirect(peer);
   if (!snap?.workloads?.length) return null;
 
   const workloads = collectPeerWorkloads(snap.workloads);
