@@ -261,6 +261,7 @@ export const ClusterNodeSchema = z
      * through the tunnel.
      */
     tunnelPreferred: z.boolean().optional(),
+    tunnelNodeName: z.string().min(1).optional(),
     /**
      * RAG backend binding. Set on `kind: 'rag'` nodes only — the
      * refine below enforces the pairing. `rag` and the cloud/provider

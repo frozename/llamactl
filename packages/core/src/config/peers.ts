@@ -8,6 +8,13 @@ export interface PeerNode {
   fingerprint?: string;
   tokenRef?: string;
   token?: string;
+  tunnelPreferred?: boolean;
+  tunnelCentralUrl?: string;
+  tunnelCentralCertificate?: string;
+  tunnelCentralFingerprint?: string;
+  tunnelRelayTokenRef?: string;
+  tunnelRelayToken?: string;
+  tunnelNodeName?: string;
 }
 
 function isAgentNode(node: ClusterNode): boolean {
@@ -59,5 +66,18 @@ export function listPeers(opts?: { currentNodeName?: string }): PeerNode[] {
         : {}),
       ...(contextUser?.tokenRef !== undefined ? { tokenRef: contextUser.tokenRef } : {}),
       ...(resolvedToken !== undefined ? { token: resolvedToken } : {}),
+      ...(node.tunnelPreferred !== undefined ? { tunnelPreferred: node.tunnelPreferred } : {}),
+      ...(context.tunnelCentralUrl !== undefined
+        ? { tunnelCentralUrl: context.tunnelCentralUrl }
+        : {}),
+      ...(context.tunnelCentralCertificate !== undefined
+        ? { tunnelCentralCertificate: context.tunnelCentralCertificate }
+        : {}),
+      ...(context.tunnelCentralFingerprint !== undefined
+        ? { tunnelCentralFingerprint: context.tunnelCentralFingerprint }
+        : {}),
+      ...(contextUser?.tokenRef !== undefined ? { tunnelRelayTokenRef: contextUser.tokenRef } : {}),
+      ...(resolvedToken !== undefined ? { tunnelRelayToken: resolvedToken } : {}),
+      ...(node.tunnelNodeName !== undefined ? { tunnelNodeName: node.tunnelNodeName } : {}),
     }));
 }

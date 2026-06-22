@@ -21,6 +21,7 @@
     "./probe": "./src/probe.ts",
     "./profile": "./src/profile.ts",
     "./schemas": "./src/schemas.ts",
+    "./tunnel-relay": "./src/tunnel-relay.ts",
     "./types": "./src/types.ts",
     "./workloadRuntime": "./src/workloadRuntime.ts"
   },

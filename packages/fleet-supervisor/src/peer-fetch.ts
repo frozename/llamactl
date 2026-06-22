@@ -1,4 +1,5 @@
 import { resolveToken } from "@llamactl/core/config/kubeconfig";
+import { callViaTunnelRelay } from "@llamactl/core/tunnel-relay";
 
 import type { AggregatorPeer } from "./aggregator.js";
 import type { FleetSnapshotEntry } from "./types.js";
@@ -30,11 +31,43 @@ function resolvedPeerToken(peer: AggregatorPeer): string | undefined {
   }
 }
 
+function resolvedTunnelRelayToken(peer: AggregatorPeer): string {
+  if (peer.tunnelRelayToken) return peer.tunnelRelayToken;
+  if (!peer.tunnelRelayTokenRef) {
+    throw new Error(`peer ${peer.id} has tunnelPreferred=true but no tunnel relay bearer set`);
+  }
+  return resolveToken({ name: peer.id, tokenRef: peer.tunnelRelayTokenRef });
+}
+
 async function doRequest(
   peer: AggregatorPeer,
   opts: PeerFetchOptions = {},
 ): Promise<PeerFetchResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_PEER_FETCH_TIMEOUT_MS;
+  if (peer.tunnelPreferred === true) {
+    if (!peer.tunnelCentralUrl) {
+      throw new Error(
+        `peer ${peer.id} has tunnelPreferred=true but no tunnelCentralUrl set; cannot route via reverse tunnel`,
+      );
+    }
+    const result = await callViaTunnelRelay({
+      centralUrl: peer.tunnelCentralUrl,
+      nodeName: peer.tunnelNodeName ?? peer.id,
+      method: "fleetSnapshot",
+      input: undefined,
+      bearer: resolvedTunnelRelayToken(peer),
+      type: "query",
+      timeoutMs,
+      ...(peer.tunnelCentralCertificate ? { pinnedCa: peer.tunnelCentralCertificate } : {}),
+      ...(peer.tunnelCentralFingerprint
+        ? { expectedFingerprint: peer.tunnelCentralFingerprint }
+        : {}),
+    });
+    return {
+      statusCode: result === null ? 204 : 200,
+      body: JSON.stringify(result),
+    };
+  }
   const headers: Record<string, string> = {};
   const token = resolvedPeerToken(peer);
   if (token) headers["authorization"] = `Bearer ${token}`;
