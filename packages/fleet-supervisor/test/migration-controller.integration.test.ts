@@ -1,10 +1,10 @@
-/* eslint-disable @typescript-eslint/require-await -- Test doubles implement async migration contracts without artificial scheduling. */
 import type { PeerNode } from "@llamactl/core/config/peers";
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { generateSelfSignedCert } from "../../remote/src/server/tls.js";
 import {
   createMigrationController,
   createPeerFetch,
@@ -13,9 +13,20 @@ import {
   type NodeSnapshot,
 } from "../src/index.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
-import { generateSelfSignedCert } from "../../remote/src/server/tls.js";
 
 const originalFetch = globalThis.fetch;
+
+function requestUrl(input: Request | string | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function requestBodyJson(init: RequestInit | undefined): unknown {
+  const body = init?.body;
+  if (typeof body !== "string") throw new Error("expected JSON string request body");
+  return JSON.parse(body) as unknown;
+}
 
 function toNodeSnapshot(snapshot: FleetSnapshotEntry): NodeSnapshot {
   return {
@@ -43,23 +54,25 @@ describe("MigrationController integration", () => {
 
     const controller = createMigrationController({
       peers: ["m2mini"],
-      fetchSnapshot: async () => ({
-        node: "m2mini",
-        pressureState: "NORMAL",
-        nodeMem: { freeMb: 8000 },
-        workloads: [{ name: "model-a", reachable: true }],
-      }),
-      deployWorkload: async () => undefined,
-      removeWorkload: async () => undefined,
+      fetchSnapshot: () =>
+        Promise.resolve({
+          node: "m2mini",
+          pressureState: "NORMAL",
+          nodeMem: { freeMb: 8000 },
+          workloads: [{ name: "model-a", reachable: true }],
+        }),
+      deployWorkload: () => Promise.resolve(undefined),
+      removeWorkload: () => Promise.resolve(undefined),
       selfNode: "m4pro",
       getLeaseHolder: () => "m4pro",
       getNowMs: () => nowMs,
       getCurrentTick: () => tick,
       healthTimeoutMs: 5,
       pollIntervalMs: 1,
-      sleep: async () => {
+      sleep: () => {
         nowMs += 1;
         tick += 1;
+        return Promise.resolve();
       },
     });
 
@@ -111,18 +124,20 @@ describe("MigrationController integration", () => {
       hostnames: ["127.0.0.1"],
     });
     const relayCalls: { url: string; body: unknown }[] = [];
-    globalThis.fetch = (async (input: Request | string | URL, init?: RequestInit) => {
+    globalThis.fetch = ((input: Request | string | URL, init?: RequestInit) => {
       relayCalls.push({
-        url: String(input),
-        body: JSON.parse(String(init?.body ?? "{}")),
+        url: requestUrl(input),
+        body: requestBodyJson(init),
       });
-      return new Response(
-        JSON.stringify({
-          type: "res",
-          id: "relay-1",
-          error: { code: "tunnel-send-failed", message: "node is not connected" },
-        }),
-        { status: 502, headers: { "content-type": "application/json" } },
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            type: "res",
+            id: "relay-1",
+            error: { code: "tunnel-send-failed", message: "node is not connected" },
+          }),
+          { status: 502, headers: { "content-type": "application/json" } },
+        ),
       );
     }) as typeof fetch;
 
@@ -150,8 +165,8 @@ describe("MigrationController integration", () => {
             throw err;
           }
         },
-        deployWorkload: async () => undefined,
-        removeWorkload: async () => undefined,
+        deployWorkload: () => Promise.resolve(undefined),
+        removeWorkload: () => Promise.resolve(undefined),
         selfNode: "m4pro",
         getLeaseHolder: () => "m4pro",
         getNowMs: () => 1_700_000_000_000,

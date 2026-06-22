@@ -219,13 +219,18 @@ export function buildMigrationWorkloadOps(opts: MigrationWorkloadOpsOptions): Mi
     const peer = peerForNode(node);
     if (peer?.tunnelPreferred === true) {
       assertPeerCanRelay(peer);
+      const centralUrl = peer.tunnelCentralUrl;
+      const bearer = peer.tunnelRelayToken;
+      if (centralUrl === undefined || bearer === undefined) {
+        throw new Error(`tunnel relay config incomplete for peer '${peer.id}'`);
+      }
       const yaml = workloadDeployYaml(workloadName, loadManifestByName);
       const callOpts: TunnelRelayCallOptions = {
-        centralUrl: peer.tunnelCentralUrl!,
+        centralUrl,
         nodeName: peer.tunnelNodeName ?? peer.id,
         method: "workloadApply",
         input: { yaml },
-        bearer: peer.tunnelRelayToken!,
+        bearer,
         type: "mutation",
         timeoutMs: callTimeoutMs,
       };
@@ -250,12 +255,17 @@ export function buildMigrationWorkloadOps(opts: MigrationWorkloadOpsOptions): Mi
     const peer = peerForNode(node);
     if (peer?.tunnelPreferred === true) {
       assertPeerCanRelay(peer);
+      const centralUrl = peer.tunnelCentralUrl;
+      const bearer = peer.tunnelRelayToken;
+      if (centralUrl === undefined || bearer === undefined) {
+        throw new Error(`tunnel relay config incomplete for peer '${peer.id}'`);
+      }
       const callOpts: TunnelRelayCallOptions = {
-        centralUrl: peer.tunnelCentralUrl!,
+        centralUrl,
         nodeName: peer.tunnelNodeName ?? peer.id,
         method: "workloadDelete",
         input: { name: workloadName },
-        bearer: peer.tunnelRelayToken!,
+        bearer,
         type: "mutation",
         timeoutMs: callTimeoutMs,
       };
@@ -867,8 +877,7 @@ function buildSupervisorLoopOptions(
             if (!flags.quiet && results.length > 0) {
               for (const r of results) {
                 process.stderr.write(
-                  // eslint-disable-next-line eqeqeq -- Preserve existing CLI/test semantics while clearing strict lint debt.
-                  `supervisor: executor: ${r.status} proposal=${r.proposalId} action=${r.action.type}${r.reason ? ` reason=${r.reason}` : ""}${r.exitCode != null ? ` exitCode=${String(r.exitCode)}` : ""}\n`,
+                  `supervisor: executor: ${r.status} proposal=${r.proposalId} action=${r.action.type}${r.reason ? ` reason=${r.reason}` : ""}${r.exitCode !== undefined ? ` exitCode=${String(r.exitCode)}` : ""}\n`,
                 );
               }
             }

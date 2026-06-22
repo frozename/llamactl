@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/require-await -- Test fetch stub implements the async fetch contract without artificial scheduling. */
 import type { PeerNode } from "@llamactl/core/config/peers";
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -29,6 +28,35 @@ function makeSnapshot(node: string): string {
   });
 }
 
+function parsedSnapshot(node: string): unknown {
+  return JSON.parse(makeSnapshot(node)) as unknown;
+}
+
+function requestUrl(input: Request | string | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function requestBodyJson(init: RequestInit | undefined): unknown {
+  const body = init?.body;
+  if (typeof body !== "string") throw new Error("expected JSON string request body");
+  return JSON.parse(body) as unknown;
+}
+
+async function expectRejectsToThrow(promise: Promise<unknown>, expected?: RegExp): Promise<void> {
+  try {
+    await promise;
+  } catch (err) {
+    if (expected !== undefined) {
+      const message = err instanceof Error ? err.message : String(err);
+      expect(message).toMatch(expected);
+    }
+    return;
+  }
+  throw new Error("expected promise to reject");
+}
+
 function withStubbedSnapshotFetch(
   peerRequestCapture: (url: string, init: RequestInit | undefined) => string,
 ): {
@@ -37,14 +65,16 @@ function withStubbedSnapshotFetch(
 } {
   const originalFetch = globalThis.fetch;
   let captured: { url: string; headers: Headers } | null = null;
-  globalThis.fetch = (async (input: Request | string, init?: RequestInit) => {
+  globalThis.fetch = ((input: Request | string, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.url;
     captured = { url, headers: new Headers(init?.headers) };
     const responseBody = peerRequestCapture(url, init);
-    return new Response(responseBody, {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return Promise.resolve(
+      new Response(responseBody, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
   }) as typeof fetch;
   return {
     captured: (): { url: string; headers: Headers } | null => captured,
@@ -133,15 +163,17 @@ describe("peer fetch", () => {
       hostnames: ["127.0.0.1"],
     });
     const captured: { url: string; init: RequestInit | undefined }[] = [];
-    globalThis.fetch = (async (input: Request | string | URL, init?: RequestInit) => {
-      captured.push({ url: String(input), init });
-      return new Response(
-        JSON.stringify({
-          type: "res",
-          id: "relay-1",
-          result: JSON.parse(makeSnapshot("mac-mini")),
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
+    globalThis.fetch = ((input: Request | string | URL, init?: RequestInit) => {
+      captured.push({ url: requestUrl(input), init });
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            type: "res",
+            id: "relay-1",
+            result: parsedSnapshot("mac-mini"),
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
       );
     }) as typeof fetch;
 
@@ -165,7 +197,7 @@ describe("peer fetch", () => {
       expect(init.method).toBe("POST");
       expect(init.tls?.ca).toBe(cert.certPem);
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer local-agent-token");
-      expect(JSON.parse(init.body as string)).toEqual({
+      expect(requestBodyJson(init)).toEqual({
         method: "fleetSnapshot",
         type: "query",
         input: undefined,
@@ -183,12 +215,14 @@ describe("peer fetch", () => {
       hostnames: ["macmini.ai"],
     });
     const captured: { url: string; init: RequestInit | undefined }[] = [];
-    globalThis.fetch = (async (input: Request | string | URL, init?: RequestInit) => {
-      captured.push({ url: String(input), init });
-      return new Response(makeSnapshot("mac-mini"), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+    globalThis.fetch = ((input: Request | string | URL, init?: RequestInit) => {
+      captured.push({ url: requestUrl(input), init });
+      return Promise.resolve(
+        new Response(makeSnapshot("mac-mini"), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
     }) as typeof fetch;
 
     try {
@@ -241,18 +275,19 @@ describe("peer fetch", () => {
         certificate: cert.certPem,
         token: "peer-token",
       };
-      await expect(createPeerFetch(directPeer)()).rejects.toThrow();
+      await expectRejectsToThrow(createPeerFetch(directPeer)());
 
-      globalThis.fetch = (async () => {
-        return new Response(
-          JSON.stringify({
-            type: "res",
-            id: "relay-1",
-            result: JSON.parse(makeSnapshot("mac-mini")),
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
-      }) as unknown as typeof fetch;
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              type: "res",
+              id: "relay-1",
+              result: parsedSnapshot("mac-mini"),
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        )) as unknown as typeof fetch;
       const tunnelPeer = {
         ...directPeer,
         tunnelPreferred: true,
@@ -264,16 +299,16 @@ describe("peer fetch", () => {
       const snapshot = await createPeerFetch(tunnelPeer)();
       expect(snapshot?.node).toBe("mac-mini");
     } finally {
-      server.stop(true);
+      await server.stop(true);
       rmSync(certDir, { recursive: true, force: true });
     }
   });
 
   test("tunnelPreferred without relay pinning fails closed before network I/O", async () => {
     let calls = 0;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (() => {
       calls++;
-      return new Response(makeSnapshot("mac-mini"), { status: 200 });
+      return Promise.resolve(new Response(makeSnapshot("mac-mini"), { status: 200 }));
     }) as unknown as typeof fetch;
     const peer = {
       id: "mac-mini",
@@ -283,15 +318,15 @@ describe("peer fetch", () => {
       tunnelRelayToken: "local-agent-token",
     } as PeerNode;
 
-    await expect(createPeerFetch(peer)()).rejects.toThrow(/tunnelCentralFingerprint/);
+    await expectRejectsToThrow(createPeerFetch(peer)(), /tunnelCentralFingerprint/);
     expect(calls).toBe(0);
   });
 
   test("tunnelPreferred without tunnelCentralUrl refuses direct fallback", async () => {
     let calls = 0;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (() => {
       calls++;
-      return new Response(makeSnapshot("mac-mini"), { status: 200 });
+      return Promise.resolve(new Response(makeSnapshot("mac-mini"), { status: 200 }));
     }) as unknown as typeof fetch;
     const peer = {
       id: "mac-mini",
@@ -300,7 +335,7 @@ describe("peer fetch", () => {
       tunnelRelayToken: "local-agent-token",
     } as PeerNode;
 
-    await expect(createPeerFetch(peer)()).rejects.toThrow(/cannot route via reverse tunnel/);
+    await expectRejectsToThrow(createPeerFetch(peer)(), /cannot route via reverse tunnel/);
     expect(calls).toBe(0);
   });
 });

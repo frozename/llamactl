@@ -2,16 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  encodeTunnelMessage,
-  parseTunnelMessage,
-  type ClientWebSocketConstructor,
-  type TunnelState,
-} from "../src/tunnel/index.js";
-
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { generateToken, hashToken } from "../src/server/auth.js";
 import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
-import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import {
+  type ClientWebSocketConstructor,
+  encodeTunnelMessage,
+  parseTunnelMessage,
+  type TunnelState,
+} from "../src/tunnel/index.js";
 
 /**
  * Phase I.3.2 — agent-side DIAL-OUT (tunnelDial) integration.

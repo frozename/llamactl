@@ -7,8 +7,8 @@ import type { PeerSnapshot } from "@llamactl/core/workloadRuntime";
 // relative import would publish to a productionPeerSnapshots the proxy never
 // reads (routes silently never appear).
 import { openaiProxy } from "@llamactl/core";
-import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
 import { resolveToken } from "@llamactl/core/config/kubeconfig";
+import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
 import { callViaTunnelRelay } from "@llamactl/core/tunnel-relay";
 
 import { makePinnedFetch } from "../client/links.js";

@@ -8,12 +8,24 @@ import type { PeerSnapshot } from "../../core/src/workloadRuntime.js";
 
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 import {
-  startPeerSnapshotPoller,
   __peerSnapshotInternals,
+  startPeerSnapshotPoller,
 } from "../src/server/peer-snapshot-poller.js";
 import { generateSelfSignedCert } from "../src/server/tls.js";
 
 const originalFetch = globalThis.fetch;
+
+function requestUrl(input: Request | string | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function requestBodyJson(init: RequestInit | undefined): unknown {
+  const body = init?.body;
+  if (typeof body !== "string") throw new Error("expected JSON string request body");
+  return JSON.parse(body) as unknown;
+}
 
 function peer(id: string): PeerNode {
   return { id, endpoint: `https://${id}.local:7843`, token: "tok" };
@@ -157,15 +169,17 @@ describe("startPeerSnapshotPoller", () => {
       hostnames: ["127.0.0.1"],
     });
     const captured: { url: string; init: RequestInit | undefined }[] = [];
-    globalThis.fetch = (async (input: Request | string | URL, init?: RequestInit) => {
-      captured.push({ url: String(input), init });
-      return new Response(
-        JSON.stringify({
-          type: "res",
-          id: "relay-1",
-          result: rawFleetSnapshot(),
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
+    globalThis.fetch = ((input: Request | string | URL, init?: RequestInit) => {
+      captured.push({ url: requestUrl(input), init });
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            type: "res",
+            id: "relay-1",
+            result: rawFleetSnapshot(),
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
       );
     }) as typeof fetch;
 
@@ -195,7 +209,7 @@ describe("startPeerSnapshotPoller", () => {
       expect(init.method).toBe("POST");
       expect(init.tls?.ca).toBe(cert.certPem);
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer local-agent-token");
-      expect(JSON.parse(init.body as string)).toEqual({
+      expect(requestBodyJson(init)).toEqual({
         method: "fleetSnapshot",
         type: "query",
         input: undefined,
@@ -213,12 +227,14 @@ describe("startPeerSnapshotPoller", () => {
       hostnames: ["macmini.ai"],
     });
     const captured: { url: string; init: RequestInit | undefined }[] = [];
-    globalThis.fetch = (async (input: Request | string | URL, init?: RequestInit) => {
-      captured.push({ url: String(input), init });
-      return new Response(JSON.stringify(rawFleetSnapshot()), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+    globalThis.fetch = ((input: Request | string | URL, init?: RequestInit) => {
+      captured.push({ url: requestUrl(input), init });
+      return Promise.resolve(
+        new Response(JSON.stringify(rawFleetSnapshot()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
     }) as typeof fetch;
 
     try {

@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { handleFleetSnapshotRoute } from "../src/routes/fleet.js";
 import { router } from "../src/router.js";
+import { handleFleetSnapshotRoute } from "../src/routes/fleet.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 let dir = "";
@@ -82,7 +82,7 @@ describe("fleetSnapshot router query", () => {
       journalPath,
     });
     expect(routeRes.status).toBe(200);
-    const routeJson = await routeRes.json();
+    const routeJson = (await routeRes.json()) as unknown;
     const queryJson = await callFleetSnapshot({ fleetJournalPath: journalPath });
 
     expect(JSON.stringify(queryJson)).toBe(JSON.stringify(routeJson));

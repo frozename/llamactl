@@ -39,35 +39,33 @@ function resolvedTunnelRelayToken(peer: AggregatorPeer): string {
   return resolveToken({ name: peer.id, tokenRef: peer.tunnelRelayTokenRef });
 }
 
-async function doRequest(
-  peer: AggregatorPeer,
-  opts: PeerFetchOptions = {},
-): Promise<PeerFetchResult> {
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_PEER_FETCH_TIMEOUT_MS;
-  if (peer.tunnelPreferred === true) {
-    if (!peer.tunnelCentralUrl) {
-      throw new Error(
-        `peer ${peer.id} has tunnelPreferred=true but no tunnelCentralUrl set; cannot route via reverse tunnel`,
-      );
-    }
-    const result = await callViaTunnelRelay({
-      centralUrl: peer.tunnelCentralUrl,
-      nodeName: peer.tunnelNodeName ?? peer.id,
-      method: "fleetSnapshot",
-      input: undefined,
-      bearer: resolvedTunnelRelayToken(peer),
-      type: "query",
-      timeoutMs,
-      ...(peer.tunnelCentralCertificate ? { pinnedCa: peer.tunnelCentralCertificate } : {}),
-      ...(peer.tunnelCentralFingerprint
-        ? { expectedFingerprint: peer.tunnelCentralFingerprint }
-        : {}),
-    });
-    return {
-      statusCode: result === null ? 204 : 200,
-      body: JSON.stringify(result),
-    };
+async function requestViaTunnel(peer: AggregatorPeer, timeoutMs: number): Promise<PeerFetchResult> {
+  const centralUrl = peer.tunnelCentralUrl;
+  if (!centralUrl) {
+    throw new Error(
+      `peer ${peer.id} has tunnelPreferred=true but no tunnelCentralUrl set; cannot route via reverse tunnel`,
+    );
   }
+  const result = await callViaTunnelRelay({
+    centralUrl,
+    nodeName: peer.tunnelNodeName ?? peer.id,
+    method: "fleetSnapshot",
+    input: undefined,
+    bearer: resolvedTunnelRelayToken(peer),
+    type: "query",
+    timeoutMs,
+    ...(peer.tunnelCentralCertificate ? { pinnedCa: peer.tunnelCentralCertificate } : {}),
+    ...(peer.tunnelCentralFingerprint
+      ? { expectedFingerprint: peer.tunnelCentralFingerprint }
+      : {}),
+  });
+  return {
+    statusCode: result === null ? 204 : 200,
+    body: JSON.stringify(result),
+  };
+}
+
+async function requestDirect(peer: AggregatorPeer, timeoutMs: number): Promise<PeerFetchResult> {
   const headers: Record<string, string> = {};
   const token = resolvedPeerToken(peer);
   if (token) headers["authorization"] = `Bearer ${token}`;
@@ -96,6 +94,15 @@ async function doRequest(
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function doRequest(
+  peer: AggregatorPeer,
+  opts: PeerFetchOptions = {},
+): Promise<PeerFetchResult> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_PEER_FETCH_TIMEOUT_MS;
+  if (peer.tunnelPreferred === true) return await requestViaTunnel(peer, timeoutMs);
+  return await requestDirect(peer, timeoutMs);
 }
 
 export function createPeerFetch(

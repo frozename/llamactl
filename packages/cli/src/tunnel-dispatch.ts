@@ -1,10 +1,11 @@
 import type { TunnelSubscribeFn } from "@llamactl/remote";
+
 import {
+  __resetInsecureTunnelWarning,
   buildRelayFetchInit,
   buildTunnelSend,
-  callViaTunnelRelay,
-  __resetInsecureTunnelWarning,
   type BuiltRelayRequest,
+  callViaTunnelRelay,
   type FetchLike,
   type TunnelRelayCallOptions,
 } from "@llamactl/core/tunnel-relay";
@@ -12,9 +13,9 @@ import {
 import { hasBoolean, hasString, isRecord } from "./runtime-shape.js";
 
 export {
+  __resetInsecureTunnelWarning,
   buildTunnelSend,
   callViaTunnelRelay,
-  __resetInsecureTunnelWarning,
   type FetchLike,
   type TunnelRelayCallOptions,
 };

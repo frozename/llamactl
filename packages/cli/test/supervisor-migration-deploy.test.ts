@@ -1,9 +1,30 @@
-import { describe, expect, test } from "bun:test";
 import type { workloadSchema } from "@llamactl/remote";
+
+import { describe, expect, test } from "bun:test";
 
 import { buildMigrationWorkloadOps } from "../src/commands/supervisor.js";
 
 describe("supervisor migration deploy wiring", () => {
+  async function expectRejectsToThrow(promise: Promise<unknown>, expected: RegExp): Promise<void> {
+    try {
+      await promise;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      expect(message).toMatch(expected);
+      return;
+    }
+    throw new Error("expected promise to reject");
+  }
+
+  function inputYaml(input: unknown): string {
+    if (typeof input !== "object" || input === null || !("yaml" in input)) {
+      throw new Error("expected input with yaml");
+    }
+    const yaml = input.yaml;
+    if (typeof yaml !== "string") throw new Error("expected yaml string");
+    return yaml;
+  }
+
   function modelRun(name: string): workloadSchema.ModelRun {
     return {
       apiVersion: "llamactl/v1",
@@ -24,7 +45,11 @@ describe("supervisor migration deploy wiring", () => {
   }
 
   test("tunnel-backed deploy sends workloadApply as a mutation for local execution", async () => {
-    const calls: { method: string; type?: "query" | "mutation"; input: unknown }[] = [];
+    const calls: {
+      method: string;
+      type: "query" | "mutation" | undefined;
+      input: unknown;
+    }[] = [];
     const ops = buildMigrationWorkloadOps({
       peers: [
         {
@@ -39,20 +64,20 @@ describe("supervisor migration deploy wiring", () => {
         },
       ],
       loadManifestByName: modelRun,
-      callViaTunnelRelay: async (opts) => {
+      callViaTunnelRelay: (opts) => {
         calls.push({ method: opts.method, type: opts.type, input: opts.input });
-        return { action: "unchanged" };
+        return Promise.resolve({ action: "unchanged" });
       },
     });
 
-    await ops.deployWorkload?.("model-a", "m2mini");
+    const deployWorkload = ops.deployWorkload;
+    if (deployWorkload === undefined) throw new Error("expected deployWorkload");
+    await deployWorkload("model-a", "m2mini");
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.method).toBe("workloadApply");
     expect(calls[0]?.type).toBe("mutation");
-    expect(calls[0]?.input).toMatchObject({
-      yaml: expect.stringContaining("node: local"),
-    });
+    expect(inputYaml(calls[0]?.input)).toContain("node: local");
   });
 
   test("one peer with missing tunnel relay config does not disable moves between configured peers", async () => {
@@ -76,13 +101,15 @@ describe("supervisor migration deploy wiring", () => {
         },
       ],
       loadManifestByName: modelRun,
-      callViaTunnelRelay: async (opts) => {
+      callViaTunnelRelay: (opts) => {
         calls.push({ method: opts.method, nodeName: opts.nodeName, input: opts.input });
-        return {};
+        return Promise.resolve({});
       },
     });
 
-    await ops.deployWorkload?.("model-a", "m2mini");
+    const deployWorkload = ops.deployWorkload;
+    if (deployWorkload === undefined) throw new Error("expected deployWorkload");
+    await deployWorkload("model-a", "m2mini");
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.nodeName).toBe("m2mini");
@@ -100,10 +127,13 @@ describe("supervisor migration deploy wiring", () => {
       loadManifestByName: () => {
         throw new Error("should not load manifest before relay validation");
       },
-      callViaTunnelRelay: async () => ({}),
+      callViaTunnelRelay: () => Promise.resolve({}),
     });
 
-    await expect(ops.deployWorkload?.("model-a", "bad-peer")).rejects.toThrow(
+    const deployWorkload = ops.deployWorkload;
+    if (deployWorkload === undefined) throw new Error("expected deployWorkload");
+    await expectRejectsToThrow(
+      deployWorkload("model-a", "bad-peer"),
       /tunnel relay config incomplete/i,
     );
   });
@@ -116,21 +146,23 @@ describe("supervisor migration deploy wiring", () => {
       getNodeClientByName: () =>
         ({
           workloadApply: {
-            mutate: async (input: unknown) => {
+            mutate: (input: unknown) => {
               calls.push({ kind: "apply", input });
-              return {};
+              return Promise.resolve({});
             },
           },
           workloadDelete: {
-            mutate: async (input: unknown) => {
+            mutate: (input: unknown) => {
               calls.push({ kind: "delete", input });
-              return { ok: true };
+              return Promise.resolve({ ok: true });
             },
           },
         }) as never,
     });
 
-    await ops.removeWorkload?.("model-a", "m4pro");
+    const removeWorkload = ops.removeWorkload;
+    if (removeWorkload === undefined) throw new Error("expected removeWorkload");
+    await removeWorkload("model-a", "m4pro");
 
     expect(calls).toEqual([{ kind: "delete", input: { name: "model-a" } }]);
   });
@@ -148,14 +180,15 @@ describe("supervisor migration deploy wiring", () => {
       getNodeClientByName: () =>
         ({
           workloadApply: {
-            mutate: async () => {
-              throw new Error("should not apply ModelHost");
-            },
+            mutate: () => Promise.reject(new Error("should not apply ModelHost")),
           },
         }) as never,
     });
 
-    await expect(ops.deployWorkload?.("host-a", "m2mini")).rejects.toThrow(
+    const deployWorkload = ops.deployWorkload;
+    if (deployWorkload === undefined) throw new Error("expected deployWorkload");
+    await expectRejectsToThrow(
+      deployWorkload("host-a", "m2mini"),
       /ModelHost moves are not supported/i,
     );
   });
@@ -168,11 +201,13 @@ describe("supervisor migration deploy wiring", () => {
       getNodeClientByName: () =>
         ({
           workloadApply: {
-            mutate: async () => await new Promise(() => undefined),
+            mutate: () => new Promise<never>(() => undefined),
           },
         }) as never,
     });
 
-    await expect(ops.deployWorkload?.("model-a", "m2mini")).rejects.toThrow(/timed out/i);
+    const deployWorkload = ops.deployWorkload;
+    if (deployWorkload === undefined) throw new Error("expected deployWorkload");
+    await expectRejectsToThrow(deployWorkload("model-a", "m2mini"), /timed out/i);
   });
 });
