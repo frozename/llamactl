@@ -1,5 +1,6 @@
 import { env as envMod, sourceRevision } from "@llamactl/core";
 import { omitUndefined } from "@llamactl/core/object";
+import { callViaTunnelRelay, type TunnelRelayCallOptions } from "@llamactl/core/tunnel-relay";
 import {
   appendFleetJournal,
   bumpLeaseTerm,
@@ -14,6 +15,7 @@ import {
   type FleetSnapshotEntry,
   getLatestPerNode,
   type MigrationController,
+  type MigrationControllerDeps,
   openAggregatorDb,
   readAuditEntries,
   readRecentMovesFromJournal,
@@ -26,8 +28,9 @@ import {
   type WorkloadTarget,
 } from "@llamactl/fleet-supervisor";
 import { listPeers, workloadStore } from "@llamactl/remote";
+import { stringify as stringifyYaml } from "yaml";
 
-import { getGlobals } from "../dispatcher.js";
+import { getGlobals, getNodeClientByName } from "../dispatcher.js";
 import { isRecord } from "../runtime-shape.js";
 import { setWorkloadEnabled } from "./setEnabled.js";
 
@@ -101,6 +104,19 @@ EXAMPLES:
 `;
 
 type SupervisorStatusNode = Awaited<ReturnType<typeof readSupervisorStatus>>["nodes"][number];
+type MigrationPeer = ReturnType<typeof listPeers>[number];
+
+export interface MigrationWorkloadOpsOptions {
+  peers: MigrationPeer[];
+  loadManifestByName?: typeof workloadStore.loadWorkloadByNameAny;
+  callViaTunnelRelay?: typeof callViaTunnelRelay;
+  getNodeClientByName?: typeof getNodeClientByName;
+  callTimeoutMs?: number;
+  allowInsecureTunnelRelay?: boolean;
+}
+
+type MigrationWorkloadOps = Pick<MigrationControllerDeps, "deployWorkload" | "removeWorkload">;
+const MIGRATION_WORKLOAD_CALL_TIMEOUT_MS = 5_000;
 
 function renderStatusNode(node: SupervisorStatusNode): void {
   if (node.state === "NORMAL") {
@@ -130,6 +146,143 @@ function renderStatusNode(node: SupervisorStatusNode): void {
     );
   }
   process.stdout.write("\n");
+}
+
+function hasSufficientRelayConfig(peer: MigrationPeer, allowInsecure: boolean): boolean {
+  if (peer.tunnelPreferred !== true) return true;
+  if (peer.tunnelCentralUrl === undefined || peer.tunnelRelayToken === undefined) return false;
+  if (allowInsecure) return true;
+  return peer.tunnelCentralCertificate !== undefined && peer.tunnelCentralFingerprint !== undefined;
+}
+
+function isInsecureTunnelRelay(argv: readonly string[] = process.argv): boolean {
+  for (const raw of argv) {
+    if (raw === "--") break;
+    if (raw === "--insecure-tunnel-relay") return true;
+    if (raw === "--insecure-tunnel-relay=true") return true;
+  }
+  return false;
+}
+
+function workloadDeployYaml(
+  workloadName: string,
+  loadManifestByName: typeof workloadStore.loadWorkloadByNameAny,
+): string {
+  const manifest = loadManifestByName(workloadName);
+  if (manifest.kind !== "ModelRun") {
+    throw new Error(
+      `ModelHost moves are not supported yet because ModelHost workloadApply is not durable`,
+    );
+  }
+  return stringifyYaml({
+    ...manifest,
+    spec: {
+      ...manifest.spec,
+      // The receiving agent resolves this through its in-process local client.
+      node: "local",
+      enabled: true,
+    },
+  });
+}
+
+export function buildMigrationWorkloadOps(opts: MigrationWorkloadOpsOptions): MigrationWorkloadOps {
+  const loadManifestByName = opts.loadManifestByName ?? workloadStore.loadWorkloadByNameAny;
+  const relayCall = opts.callViaTunnelRelay ?? callViaTunnelRelay;
+  const directClient = opts.getNodeClientByName ?? getNodeClientByName;
+  const callTimeoutMs = opts.callTimeoutMs ?? MIGRATION_WORKLOAD_CALL_TIMEOUT_MS;
+  const allowInsecureTunnelRelay =
+    opts.allowInsecureTunnelRelay ?? isInsecureTunnelRelay(process.argv);
+
+  const peerForNode = (node: string): MigrationPeer | undefined =>
+    opts.peers.find((candidate) => candidate.id === node);
+
+  const assertPeerCanRelay = (peer: MigrationPeer): void => {
+    if (hasSufficientRelayConfig(peer, allowInsecureTunnelRelay)) return;
+    throw new Error(`tunnel relay config incomplete for peer '${peer.id}'`);
+  };
+
+  const withTimeout = async <T>(operation: Promise<T>, label: string): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`${label} timed out after ${String(callTimeoutMs)}ms`));
+      }, callTimeoutMs);
+    });
+    try {
+      return await Promise.race([operation, timeout]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
+
+  const applyToNode = async (workloadName: string, node: string): Promise<void> => {
+    const peer = peerForNode(node);
+    if (peer?.tunnelPreferred === true) {
+      assertPeerCanRelay(peer);
+      const yaml = workloadDeployYaml(workloadName, loadManifestByName);
+      const callOpts: TunnelRelayCallOptions = {
+        centralUrl: peer.tunnelCentralUrl!,
+        nodeName: peer.tunnelNodeName ?? peer.id,
+        method: "workloadApply",
+        input: { yaml },
+        bearer: peer.tunnelRelayToken!,
+        type: "mutation",
+        timeoutMs: callTimeoutMs,
+      };
+      if (peer.tunnelCentralCertificate !== undefined)
+        callOpts.pinnedCa = peer.tunnelCentralCertificate;
+      if (peer.tunnelCentralFingerprint !== undefined)
+        callOpts.expectedFingerprint = peer.tunnelCentralFingerprint;
+      if (allowInsecureTunnelRelay) callOpts.insecure = true;
+      await withTimeout(relayCall(callOpts), `workloadApply on ${node}`);
+      return;
+    }
+
+    const signal = AbortSignal.timeout(callTimeoutMs);
+    const yaml = workloadDeployYaml(workloadName, loadManifestByName);
+    await withTimeout(
+      directClient(node).workloadApply.mutate({ yaml }, { signal }),
+      `workloadApply on ${node}`,
+    );
+  };
+
+  const deleteFromNode = async (workloadName: string, node: string): Promise<void> => {
+    const peer = peerForNode(node);
+    if (peer?.tunnelPreferred === true) {
+      assertPeerCanRelay(peer);
+      const callOpts: TunnelRelayCallOptions = {
+        centralUrl: peer.tunnelCentralUrl!,
+        nodeName: peer.tunnelNodeName ?? peer.id,
+        method: "workloadDelete",
+        input: { name: workloadName },
+        bearer: peer.tunnelRelayToken!,
+        type: "mutation",
+        timeoutMs: callTimeoutMs,
+      };
+      if (peer.tunnelCentralCertificate !== undefined)
+        callOpts.pinnedCa = peer.tunnelCentralCertificate;
+      if (peer.tunnelCentralFingerprint !== undefined)
+        callOpts.expectedFingerprint = peer.tunnelCentralFingerprint;
+      if (allowInsecureTunnelRelay) callOpts.insecure = true;
+      await withTimeout(relayCall(callOpts), `workloadDelete on ${node}`);
+      return;
+    }
+
+    const signal = AbortSignal.timeout(callTimeoutMs);
+    await withTimeout(
+      directClient(node).workloadDelete.mutate({ name: workloadName }, { signal }),
+      `workloadDelete on ${node}`,
+    );
+  };
+
+  return {
+    deployWorkload: async (workloadName, toNode): Promise<void> => {
+      await applyToNode(workloadName, toNode);
+    },
+    removeWorkload: async (workloadName, fromNode): Promise<void> => {
+      await deleteFromNode(workloadName, fromNode);
+    },
+  };
 }
 
 async function runSupervisorStatus(flags: Flags, journalPath: string): Promise<number> {
@@ -562,12 +715,11 @@ function buildMigrationController(
   migrationEnabled: boolean,
 ): MigrationController | null {
   if (!migrationEnabled) return null;
+  const peers = listPeers({ currentNodeName: flags.node });
   return createMigrationController({
-    peers: listPeers({ currentNodeName: flags.node }).map((peer) => peer.id),
+    peers: peers.map((peer) => peer.id),
     fetchSnapshot: async (node) => {
-      const peer = listPeers({ currentNodeName: flags.node }).find(
-        (candidate) => candidate.id === node,
-      );
+      const peer = peers.find((candidate) => candidate.id === node);
       if (!peer) {
         throw new Error(`unknown peer: ${node}`);
       }
@@ -586,6 +738,7 @@ function buildMigrationController(
         })),
       };
     },
+    ...buildMigrationWorkloadOps({ peers }),
     readRecentMoves: () => readRecentMovesFromJournal(journalPath),
     selfNode: flags.node,
     // Derived scheduler-lease election over the replicated peer snapshots,

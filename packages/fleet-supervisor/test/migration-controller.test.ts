@@ -253,6 +253,71 @@ describe("MigrationController", () => {
     expect(executed[0]?.proposalId).toBe("move-1");
   });
 
+  it("T7b: executeMove runs supplied deploy hook before source removal", async () => {
+    const calls: string[] = [];
+    const orderedController = new MigrationController({
+      peers: ["m2mini", "m4pro"],
+      fetchSnapshot: async (node): Promise<NodeSnapshot> =>
+        node === "m2mini"
+          ? {
+              node: "m2mini",
+              pressureState: "NORMAL",
+              nodeMem: { freeMb: 8000 },
+              workloads: [{ name: "model-a", reachable: true }],
+            }
+          : {
+              node,
+              pressureState: "NORMAL",
+              nodeMem: { freeMb: 4096 },
+              workloads: [],
+            },
+      deployWorkload: async (w, toNode): Promise<void> => {
+        calls.push(`deploy:${w}:${toNode}`);
+      },
+      removeWorkload: async (w, fromNode): Promise<void> => {
+        calls.push(`remove:${w}:${fromNode}`);
+      },
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
+      getNowMs: (): number => nowMs,
+      getCurrentTick: (): number => tick,
+      healthTimeoutMs: 5,
+      pollIntervalMs: 1,
+      sleep: async (): Promise<void> => {
+        nowMs += 1;
+      },
+    });
+
+    const result = await orderedController.executeMove(proposal(), (entry) => journal.push(entry));
+
+    expect(result).toBe("pending_health_check");
+    expect(calls).toEqual(["deploy:model-a:m2mini"]);
+
+    await orderedController.advancePendingHealthPolls();
+    expect(calls).toEqual(["deploy:model-a:m2mini", "remove:model-a:m4pro"]);
+  });
+
+  it("T7c: executeMove returns destination_unavailable when deploy deps are absent", async () => {
+    const noDeployController = new MigrationController({
+      peers: ["m2mini", "m4pro"],
+      fetchSnapshot: async (node): Promise<NodeSnapshot> => ({
+        node,
+        pressureState: "NORMAL",
+        nodeMem: { freeMb: 8000 },
+        workloads: [{ name: "model-a", reachable: true }],
+      }),
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
+      getNowMs: (): number => nowMs,
+      getCurrentTick: (): number => tick,
+    });
+
+    const result = await noDeployController.executeMove(proposal(), (entry) => journal.push(entry));
+
+    expect(result).toBe("destination_unavailable");
+    expect(journal).toHaveLength(0);
+  });
+
   it("T8: advancePendingHealthPolls writes failed execution when destination never becomes reachable", async () => {
     snapshots["m2mini"] = {
       node: "m2mini",
@@ -267,9 +332,86 @@ describe("MigrationController", () => {
     nowMs += 10; // advance past healthTimeoutMs (5ms)
 
     await controller.advancePendingHealthPolls();
-    expect(deleteCalls).toHaveLength(0);
+    expect(deleteCalls).toEqual([{ workload: "model-a", fromNode: "m2mini" }]);
     const failed = journal.find(executionEntryMatches("failed"));
     expect(failed).toBeTruthy();
+  });
+
+  it("F1: advancePendingHealthPolls retains pending state and retries when source removal fails", async () => {
+    let removeAttempts = 0;
+    const retryController = new MigrationController({
+      peers: ["m2mini", "m4pro"],
+      fetchSnapshot: async (node): Promise<NodeSnapshot> =>
+        node === "m2mini"
+          ? {
+              node: "m2mini",
+              pressureState: "NORMAL",
+              nodeMem: { freeMb: 8000 },
+              workloads: [{ name: "model-a", reachable: true }],
+            }
+          : {
+              node,
+              pressureState: "NORMAL",
+              nodeMem: { freeMb: 4096 },
+              workloads: [],
+            },
+      deployWorkload: async (w, toNode): Promise<void> => {
+        applyCalls.push({ workload: w, toNode });
+      },
+      removeWorkload: async (w, fromNode): Promise<void> => {
+        removeAttempts += 1;
+        if (removeAttempts === 1) throw new Error("source stop failed");
+        deleteCalls.push({ workload: w, fromNode });
+      },
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
+      getNowMs: (): number => nowMs,
+      getCurrentTick: (): number => tick,
+      healthTimeoutMs: 5,
+      pollIntervalMs: 1,
+    });
+
+    const result = await retryController.executeMove(proposal(), (entry) => journal.push(entry));
+
+    expect(result).toBe("pending_health_check");
+    await retryController.advancePendingHealthPolls();
+
+    expect(deleteCalls).toHaveLength(0);
+    expect(retryController.getInFlightMoves()).toHaveLength(1);
+    const removeFailed = journal.find(
+      (entry): entry is FleetExecutionEntry =>
+        entry.kind === "fleet-execution" &&
+        entry.proposalId === "move-1" &&
+        entry.status === "failed" &&
+        entry.reason?.includes("remove failed") === true,
+    );
+    expect(removeFailed?.reason).toContain("source stop failed");
+
+    await retryController.advancePendingHealthPolls();
+
+    expect(deleteCalls).toEqual([{ workload: "model-a", fromNode: "m4pro" }]);
+    expect(retryController.getInFlightMoves()).toHaveLength(0);
+    expect(journal.filter(executionEntryMatches("executed"))).toHaveLength(1);
+  });
+
+  it("F4: advancePendingHealthPolls cleans up destination deploy when health times out", async () => {
+    snapshots["m2mini"] = {
+      node: "m2mini",
+      pressureState: "NORMAL",
+      nodeMem: { freeMb: 8000 },
+      workloads: [{ name: "model-a", reachable: false }],
+    };
+
+    const result = await controller.executeMove(proposal(), (entry) => journal.push(entry));
+
+    expect(result).toBe("pending_health_check");
+    nowMs += 10;
+
+    await controller.advancePendingHealthPolls();
+
+    expect(deleteCalls).toEqual([{ workload: "model-a", fromNode: "m2mini" }]);
+    const failed = journal.find(executionEntryMatches("failed"));
+    expect(failed?.reason).toContain("timeout waiting for destination health");
   });
 
   it("T9: executeMove returns destination_unavailable and does not skip evict when destination headroom is lost", async () => {

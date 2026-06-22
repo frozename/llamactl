@@ -370,6 +370,20 @@ export class MigrationController {
 
       if (this.nowMs > deployedAtMs + this.healthTimeoutMs) {
         this.pendingHealthPolls.delete(workloadName);
+        try {
+          await removeWorkload(proposal.workload, proposal.toNode);
+        } catch (err) {
+          writeJournalEntry({
+            kind: "fleet-execution",
+            ts,
+            node: this.deps.selfNode,
+            proposalId: proposal.proposalId,
+            action,
+            status: "failed",
+            reason: `timeout waiting for destination health; destination cleanup failed: ${(err as Error).message}; manual intervention required`,
+          });
+          continue;
+        }
         writeJournalEntry({
           kind: "fleet-execution",
           ts,
@@ -387,8 +401,21 @@ export class MigrationController {
         (entry) => entry.name === proposal.workload && entry.reachable,
       );
       if (reachable) {
+        try {
+          await removeWorkload(proposal.workload, proposal.fromNode);
+        } catch (err) {
+          writeJournalEntry({
+            kind: "fleet-execution",
+            ts,
+            node: this.deps.selfNode,
+            proposalId: proposal.proposalId,
+            action,
+            status: "failed",
+            reason: `remove failed: ${(err as Error).message}; will retry`,
+          });
+          continue;
+        }
         this.pendingHealthPolls.delete(workloadName);
-        await removeWorkload(proposal.workload, proposal.fromNode);
         writeJournalEntry({
           kind: "fleet-execution",
           ts,

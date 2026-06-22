@@ -153,7 +153,11 @@ describe("migration safe-path: non-blocking health poll, apply_failed cooldown, 
     nowMs += 2_000; // advance past healthTimeoutMs
 
     await ctrl.advancePendingHealthPolls();
-    expect(deleteCalls).toHaveLength(0);
+    // On health-check timeout the failed deployment is cleaned up on the
+    // DESTINATION (toNode); the source (fromNode) must never be removed.
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0]?.fromNode).toBe("m2mini");
+    expect(deleteCalls.some((c) => c.fromNode === "m4pro")).toBe(false);
     const failed = journal.find(
       (e): e is FleetExecutionEntry =>
         e.kind === "fleet-execution" &&

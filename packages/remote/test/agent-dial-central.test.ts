@@ -135,6 +135,22 @@ function fleetSnapshotFixture(node: string): Record<string, unknown> {
   };
 }
 
+function disabledModelRunYaml(name: string): string {
+  return [
+    "apiVersion: llamactl/v1",
+    "kind: ModelRun",
+    "metadata:",
+    `  name: ${name}`,
+    "spec:",
+    "  node: local",
+    "  enabled: false",
+    "  target:",
+    "    kind: rel",
+    "    value: models/demo.gguf",
+    "",
+  ].join("\n");
+}
+
 let centrals: CentralHandle[] = [];
 let dialers: DialingHandle[] = [];
 let tempDirs: string[] = [];
@@ -315,6 +331,48 @@ describe("startAgentServer with tunnelDial", () => {
     expect(body.type).toBe("res");
     expect(body.error).toBeUndefined();
     expect(body.result).toEqual(snapshot);
+  });
+
+  test("central relays workloadApply mutation to the dialing node", async () => {
+    const central = bootCentralAgent();
+    centrals.push(central);
+
+    const dialer = bootDialingAgent({
+      url: central.wsUrl,
+      bearer: central.tunnelBearer,
+      nodeName: "nodeB",
+    });
+    dialers.push(dialer);
+
+    await waitFor(() => dialer.agent.tunnelClient!.isReady());
+    await waitFor(() => central.agent.tunnelServer!.registry().some((e) => e.nodeName === "nodeB"));
+
+    const resp = await fetch(`${central.baseUrl}/tunnel-relay/nodeB`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${central.agentToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        method: "workloadApply",
+        type: "mutation",
+        input: { yaml: disabledModelRunYaml("relay-apply") },
+      }),
+    });
+    expect(resp.status).toBe(200);
+    const body = (await resp.json()) as {
+      type: string;
+      result?: { action?: unknown; name?: unknown; node?: unknown; status?: { phase?: unknown } };
+      error?: { code: string; message: string };
+    };
+    expect(body.type).toBe("res");
+    expect(body.error).toBeUndefined();
+    expect(body.result).toMatchObject({
+      action: "unchanged",
+      name: "relay-apply",
+      node: "local",
+      status: { phase: "Stopped" },
+    });
   });
 
   test("disconnect → reconnect: tunnel re-establishes and second relay call succeeds", async () => {
