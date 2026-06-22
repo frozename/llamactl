@@ -102,6 +102,23 @@ export interface FleetSnapshotEntry {
    * docs/notes/2026-06-20-scheduler-lease-derived-election-design.md §1.
    */
   lease?: { candidate: string; term: number; eligible: boolean; seq: number };
+  /**
+   * Self-published in-flight-move intent (partition safety, design §2/§4): moves
+   * this node has deployed onto a destination but not yet removed from the
+   * source. Replicated so a successor that takes over the lease honors the move
+   * (the existing per-workload cooldown bounds a double-move) rather than
+   * starting a second copy. Optional + conditional-spread only — never assign
+   * `inFlightMoves: undefined` (exactOptionalPropertyTypes). Old peers without it
+   * parse as undefined (back-compat). See
+   * docs/notes/2026-06-20-scheduler-lease-derived-election-design.md §2/§4.
+   */
+  inFlightMoves?: {
+    workload: string;
+    fromNode: string;
+    toNode: string;
+    proposalId: string;
+    deployedAtMs: number;
+  }[];
 }
 
 export interface FleetHeartbeatEntry {

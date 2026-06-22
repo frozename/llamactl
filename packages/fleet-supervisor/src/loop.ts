@@ -196,6 +196,13 @@ async function runTick(
         }
       : undefined;
 
+  // In-flight-move intent (partition safety, design §2/§4): publish moves this
+  // node has deployed but not yet removed from the source so a successor honors
+  // them. Reflects the state carried into THIS tick (advancePendingHealthPolls
+  // runs later, in evaluateMigrationWorkloads). Conditional spread only — never
+  // assign `inFlightMoves: undefined` (exactOptionalPropertyTypes).
+  const inFlightMoves = migrationController?.getInFlightMoves() ?? [];
+
   const snapshot: FleetSnapshotEntry = {
     kind: "fleet-snapshot",
     ts,
@@ -203,6 +210,7 @@ async function runTick(
     node_mem,
     workloads,
     ...(leaseIntent ? { lease: leaseIntent } : {}),
+    ...(inFlightMoves.length > 0 ? { inFlightMoves } : {}),
   };
   const heartbeat: FleetHeartbeatEntry = { kind: "fleet-heartbeat", ts, node: opts.node };
   writeJournalEntry(snapshot);

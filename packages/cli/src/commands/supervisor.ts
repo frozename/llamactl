@@ -13,6 +13,7 @@ import {
   type FleetJournalEntry,
   type FleetSnapshotEntry,
   getLatestPerNode,
+  type MigrationController,
   openAggregatorDb,
   readAuditEntries,
   readRecentMovesFromJournal,
@@ -386,6 +387,143 @@ export function makeGetLeaseHolder(deps: GetLeaseHolderDeps): () => string | nul
   };
 }
 
+/**
+ * Partition self-demotion predicate (design §2). Returns true iff this node can
+ * see at least one FRESH destination peer — any peer it could move a workload
+ * onto. Reuses the SAME per-node-fresh peer view as makeGetLeaseHolder (the
+ * local aggregator's cluster.db, which is already self-excluded — listPeers
+ * filters self — so every row is a candidate destination), falling back to a
+ * direct peer pull when the aggregator is down/empty.
+ *
+ * Crucially this gates on destination VISIBILITY, not lease-eligibility: in the
+ * single-eligible prod case the holder still sees its (ineligible) peer rows as
+ * fresh destinations, so this returns true and migrations proceed exactly as
+ * today. It returns false only for a partitioned-but-alive holder that can see
+ * no fresh peer at all — which then self-demotes and emits no move.
+ *
+ * The direct fallback is async but the predicate is sync; the cache is scoped to
+ * this closure and only ever ADDS fresh peer rows, so a cold cache during a real
+ * partition correctly reports "no fresh peer" until a peer responds.
+ */
+export function makeCanSeeFreshDestinationPeer(deps: GetLeaseHolderDeps): () => boolean {
+  const { selfNode } = deps;
+  const now = deps.now ?? ((): number => Date.now());
+  const loadPeerRows =
+    deps.loadPeerRows ??
+    ((freshAfterTs: string): SnapshotRow[] | null => {
+      try {
+        const db = openAggregatorDb();
+        return getLatestPerNode(db, { freshAfterTs });
+      } catch {
+        return null;
+      }
+    });
+  const directFetch = deps.directFetch ?? directPeerFetchSnapshots;
+
+  let directFallbackCache: { rows: SnapshotRow[]; at: number } | null = null;
+  let directFallbackInFlight = false;
+
+  const refreshDirectFallback = (): void => {
+    if (directFallbackInFlight) return;
+    directFallbackInFlight = true;
+    void directFetch(selfNode)
+      .then((rows) => {
+        directFallbackCache = { rows, at: Date.now() };
+      })
+      .catch(() => {
+        directFallbackCache = { rows: [], at: Date.now() };
+      })
+      .finally(() => {
+        directFallbackInFlight = false;
+      });
+  };
+
+  const hasFreshRow = (rows: SnapshotRow[], nowMs: number): boolean =>
+    rows.some((row) => {
+      const tsMs = Date.parse(row.ts);
+      return Number.isFinite(tsMs) && nowMs - tsMs < STALE_AFTER_MS;
+    });
+
+  return (): boolean => {
+    const nowMs = now();
+    const freshAfterTs = new Date(nowMs - STALE_AFTER_MS).toISOString();
+
+    const peerRows = loadPeerRows(freshAfterTs);
+    if (peerRows && peerRows.length > 0) {
+      return hasFreshRow(peerRows, nowMs);
+    }
+
+    refreshDirectFallback();
+    const cachedPeers =
+      directFallbackCache && nowMs - directFallbackCache.at < STALE_AFTER_MS
+        ? directFallbackCache.rows
+        : [];
+    return hasFreshRow(cachedPeers, nowMs);
+  };
+}
+
+/**
+ * Construct the migration controller when LLAMACTL_FLEET_MOVE_ENABLED=1, else
+ * null. Bumps the persisted lease term at startup (design §2 acquire) and wires
+ * the derived election (getLeaseHolder) plus the partition self-demotion
+ * predicate (canSeeFreshDestinationPeer).
+ */
+function buildMigrationController(
+  flags: Flags,
+  journalPath: string,
+  leaseTerm: number,
+  migrationEnabled: boolean,
+): MigrationController | null {
+  if (!migrationEnabled) return null;
+  return createMigrationController({
+    peers: listPeers({ currentNodeName: flags.node }).map((peer) => peer.id),
+    fetchSnapshot: async (node) => {
+      const peer = listPeers({ currentNodeName: flags.node }).find(
+        (candidate) => candidate.id === node,
+      );
+      if (!peer) {
+        throw new Error(`unknown peer: ${node}`);
+      }
+      const fetchSnapshot = createPeerFetch(peer);
+      const snapshot = await fetchSnapshot();
+      if (!snapshot) {
+        throw new Error(`peer ${node} returned no snapshot`);
+      }
+      return {
+        node: snapshot.node,
+        pressureState: "NORMAL",
+        nodeMem: { freeMb: snapshot.node_mem.free_mb },
+        workloads: snapshot.workloads.map((workload) => ({
+          name: workload.name,
+          reachable: workload.reachable,
+        })),
+      };
+    },
+    readRecentMoves: () => readRecentMovesFromJournal(journalPath),
+    selfNode: flags.node,
+    // Derived scheduler-lease election over the replicated peer snapshots,
+    // gated by LLAMACTL_FLEET_LEASE_MODE (default 'derived'; 'legacy-self'
+    // restores PR-1's always-self for instant rollback). In current prod
+    // (one eligible node) this elects that node → holder === self →
+    // byte-identical to PR-1.
+    getLeaseHolder: makeGetLeaseHolder({
+      selfNode: flags.node,
+      selfLeaseTerm: leaseTerm,
+      selfEligible: migrationEnabled,
+    }),
+    // Partition self-demotion (design §2): a partitioned-but-alive holder
+    // that can see no fresh destination peer emits no move. Same fresh-peer
+    // view as the election; gates only NEW proposals (in-flight completion
+    // is unaffected).
+    canSeeFreshDestinationPeer: makeCanSeeFreshDestinationPeer({
+      selfNode: flags.node,
+      selfLeaseTerm: leaseTerm,
+      selfEligible: migrationEnabled,
+    }),
+    getNowMs: () => Date.now(),
+  });
+}
+
 function buildSupervisorLoopOptions(
   flags: Flags,
   journalPath: string,
@@ -398,46 +536,12 @@ function buildSupervisorLoopOptions(
   const migrationEnabled = process.env["LLAMACTL_FLEET_MOVE_ENABLED"] === "1";
   // Acquire: bump the persisted monotonic term once at startup (design §2).
   const leaseTerm = bumpLeaseTerm(defaultLeaseTermPath());
-  const migrationController = migrationEnabled
-    ? createMigrationController({
-        peers: listPeers({ currentNodeName: flags.node }).map((peer) => peer.id),
-        fetchSnapshot: async (node) => {
-          const peer = listPeers({ currentNodeName: flags.node }).find(
-            (candidate) => candidate.id === node,
-          );
-          if (!peer) {
-            throw new Error(`unknown peer: ${node}`);
-          }
-          const fetchSnapshot = createPeerFetch(peer);
-          const snapshot = await fetchSnapshot();
-          if (!snapshot) {
-            throw new Error(`peer ${node} returned no snapshot`);
-          }
-          return {
-            node: snapshot.node,
-            pressureState: "NORMAL",
-            nodeMem: { freeMb: snapshot.node_mem.free_mb },
-            workloads: snapshot.workloads.map((workload) => ({
-              name: workload.name,
-              reachable: workload.reachable,
-            })),
-          };
-        },
-        readRecentMoves: () => readRecentMovesFromJournal(journalPath),
-        selfNode: flags.node,
-        // Derived scheduler-lease election over the replicated peer snapshots,
-        // gated by LLAMACTL_FLEET_LEASE_MODE (default 'derived'; 'legacy-self'
-        // restores PR-1's always-self for instant rollback). In current prod
-        // (one eligible node) this elects that node → holder === self →
-        // byte-identical to PR-1.
-        getLeaseHolder: makeGetLeaseHolder({
-          selfNode: flags.node,
-          selfLeaseTerm: leaseTerm,
-          selfEligible: migrationEnabled,
-        }),
-        getNowMs: () => Date.now(),
-      })
-    : null;
+  const migrationController = buildMigrationController(
+    flags,
+    journalPath,
+    leaseTerm,
+    migrationEnabled,
+  );
 
   const executorEnabled = flags.auto || flags.executeId !== undefined;
 
