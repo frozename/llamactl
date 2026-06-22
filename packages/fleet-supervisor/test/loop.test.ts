@@ -9,12 +9,14 @@ import type {
   FleetSourceStaleEntry,
   FleetTickErrorEntry,
   FleetTransitionEntry,
+  MoveProposal,
   NodeMemSnapshot,
   WorkloadSnapshot,
 } from "../src/types.js";
 import type { WorkloadTarget } from "../src/workload-probe.js";
 
 import { startSupervisorLoop } from "../src/loop.js";
+import { MigrationController, type NodeSnapshot } from "../src/migration-controller.js";
 
 const FAKE_NODE_MEM: NodeMemSnapshot = {
   free_mb: 1031,
@@ -785,6 +787,84 @@ describe("startSupervisorLoop", () => {
     expect(status.ts).toBe(transition.ts);
     expect(status.enteredAt).toBe(transition.ts);
     expect(status.durationMs).toBe(0);
+  });
+
+  it("PR-3: publishes the migration controller's in-flight moves in the snapshot", async () => {
+    // A real controller with a move deployed-but-not-yet-removed: executeMove
+    // registers a pending health poll, so getInFlightMoves() is non-empty going
+    // into the next tick. The loop must carry that intent in the snapshot
+    // (design §2/§4) so a successor honors it.
+    const nowMs = 1_700_000_000_000;
+    const controller = new MigrationController({
+      peers: ["m2mini"],
+      fetchSnapshot: async (node): Promise<NodeSnapshot> => ({
+        node,
+        pressureState: "NORMAL",
+        nodeMem: { freeMb: 16_000 },
+        workloads: [], // dest not yet reachable -> move stays pending
+      }),
+      deployWorkload: async (): Promise<void> => undefined,
+      removeWorkload: async (): Promise<void> => undefined,
+      selfNode: "local",
+      getLeaseHolder: (): string | null => "local",
+      getNowMs: (): number => nowMs,
+      healthTimeoutMs: 1_000_000,
+    });
+
+    const proposal: MoveProposal = {
+      workload: "model-a",
+      fromNode: "local",
+      toNode: "m2mini",
+      proposalId: "move-1",
+      evictProposalId: "evict-1",
+      expiresAt: new Date(nowMs + 30_000).toISOString(),
+      expiresAtMs: nowMs + 30_000,
+    };
+    await controller.executeMove(proposal, () => undefined);
+    expect(controller.getInFlightMoves()).toHaveLength(1);
+
+    const snapshots: FleetSnapshotEntry[] = [];
+    const handle = startSupervisorLoop({
+      node: "local",
+      once: true,
+      workloads: [TARGET],
+      probeNodeMem: async () => FAKE_NODE_MEM,
+      probeWorkload: async (t) => makeReachable(t),
+      migrationController: controller,
+      writeJournal: (entry) => {
+        if (entry.kind === "fleet-snapshot") snapshots.push(entry);
+      },
+    });
+    await handle.done;
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]?.inFlightMoves).toEqual([
+      {
+        workload: "model-a",
+        fromNode: "local",
+        toNode: "m2mini",
+        proposalId: "move-1",
+        deployedAtMs: nowMs,
+      },
+    ]);
+  });
+
+  it("PR-3: omits inFlightMoves from the snapshot when there are none (back-compat)", async () => {
+    const snapshots: FleetSnapshotEntry[] = [];
+    const handle = startSupervisorLoop({
+      node: "local",
+      once: true,
+      workloads: [TARGET],
+      probeNodeMem: async () => FAKE_NODE_MEM,
+      probeWorkload: async (t) => makeReachable(t),
+      writeJournal: (entry) => {
+        if (entry.kind === "fleet-snapshot") snapshots.push(entry);
+      },
+    });
+    await handle.done;
+
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]?.inFlightMoves).toBeUndefined();
   });
 });
 

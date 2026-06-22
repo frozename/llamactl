@@ -39,6 +39,21 @@ export interface MigrationControllerDeps {
    * PR-2 derives it from `electLeaseHolder` over peer snapshots.
    */
   getLeaseHolder: () => string | null;
+  /**
+   * Partition self-demotion (design §2). When this node is the elected holder,
+   * it may only initiate a move if it can ALSO see at least one fresh
+   * destination peer — i.e. a peer it could move a workload onto. A
+   * partitioned-but-alive holder (its own lease intent stays fresh, so
+   * `getLeaseHolder` still names it) that sees no fresh peer must NOT issue
+   * moves onto nodes it can't observe; it self-demotes (treated as holder
+   * `null`). This is destination VISIBILITY, not lease-eligibility: in the
+   * single-eligible prod case the holder still sees its (ineligible) peers as
+   * fresh destinations, so it does not demote and migrations proceed as today.
+   *
+   * Optional: when omitted (PR-1/PR-2 call-sites, most tests) the holder is
+   * never demoted on this axis — behavior-preserving.
+   */
+  canSeeFreshDestinationPeer?: () => boolean;
   getNowMs?: () => number;
   getCurrentTick?: () => number;
   moveCooldownTicks?: number;
@@ -63,6 +78,21 @@ interface InFlightMoveState {
 interface PendingHealthPoll {
   proposal: MoveProposal;
   writeJournalEntry: (entry: FleetJournalEntry) => void;
+  deployedAtMs: number;
+}
+
+/**
+ * Published in-flight-move intent (design §2/§4). A move that has deployed onto
+ * the destination but not yet removed from the source — the half-done state that
+ * a successor must honor (via the existing cooldown) so it does not start a
+ * second move of the same workload. Carried additively in the node's snapshot.
+ */
+export interface InFlightMove {
+  workload: string;
+  fromNode: string;
+  toNode: string;
+  proposalId: string;
+  /** Local-clock ms when the deploy onto the destination completed. */
   deployedAtMs: number;
 }
 
@@ -162,6 +192,14 @@ export class MigrationController {
   ): Promise<MoveProposal | null> {
     const holder = this.deps.getLeaseHolder();
     if (holder === null || holder !== this.deps.selfNode) return null;
+    // Partition self-demotion (design §2): a holder that cannot see any fresh
+    // destination peer is partitioned-but-alive — it must NOT move workloads
+    // onto nodes it can't observe. Treat the holder as null (emit no move).
+    // Absent the dep, never demote (behavior-preserving). This gates only NEW
+    // proposals; in-flight completion (advancePendingHealthPolls) is unaffected.
+    if (this.deps.canSeeFreshDestinationPeer && !this.deps.canSeeFreshDestinationPeer()) {
+      return null;
+    }
     if (workload.spec?.placement === "pinned") return null;
     if (this.isInMoveCooldown(workload.name)) return null;
 
@@ -192,6 +230,27 @@ export class MigrationController {
       movedAtMs: this.nowMs,
       ...(this.deps.getCurrentTick ? { tick: this.currentTick } : {}),
     });
+  }
+
+  /**
+   * Snapshot of the moves this node has deployed onto a destination but not yet
+   * removed from the source (design §2/§4). Published additively in the node's
+   * fleet-snapshot so a successor that takes over the lease can honor the move
+   * (the existing cooldown bounds a double-move). Drains as each move completes
+   * (source removed) in advancePendingHealthPolls.
+   */
+  getInFlightMoves(): InFlightMove[] {
+    const moves: InFlightMove[] = [];
+    for (const poll of this.pendingHealthPolls.values()) {
+      moves.push({
+        workload: poll.proposal.workload,
+        fromNode: poll.proposal.fromNode,
+        toNode: poll.proposal.toNode,
+        proposalId: poll.proposal.proposalId,
+        deployedAtMs: poll.deployedAtMs,
+      });
+    }
+    return moves;
   }
 
   isInMoveCooldown(workload: string): boolean {
