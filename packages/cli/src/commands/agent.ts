@@ -29,6 +29,7 @@ Subcommands:
   serve [--dir=<path>] [--bind=<host>] [--host=<host>] [--port=<n>] [--no-auth]
         [--dial-central=<wss-url>] [--central-bearer=<token>] [--tunnel-node-name=<name>]
         [--tunnel-central=true] [--tunnel-bearer=<token>] [--tunnel-journal=<path>]
+        [--fleet-journal=<path>]
       Run the node agent (blocks until SIGINT/SIGTERM).
       With --dial-central + --central-bearer, the agent additionally
       dials a central's /tunnel endpoint so its tRPC router is
@@ -41,6 +42,13 @@ Subcommands:
       --tunnel-journal overrides the JSONL audit path for tunnel
       events (default ~/.llamactl/tunnel/journal.jsonl, also
       settable via LLAMACTL_TUNNEL_JOURNAL).
+      --fleet-journal overrides the JSONL fleet journal that
+      GET /v1/fleet/snapshot serves (default
+      DEV_STORAGE/fleet-supervisor/journal.jsonl, falling back to
+      ~/.llamactl/fleet-supervisor/journal.jsonl when DEV_STORAGE is
+      unset). Point it at the journal the fleet-supervisor writes so
+      the agent serves fresh snapshots, not a DEV_STORAGE-dependent
+      default.
   status [--dir=<path>]
       Print the agent config and its advertised URL.
   heal [flags]
@@ -395,6 +403,7 @@ export interface ServeFlags {
   tunnelCentral?: boolean;
   tunnelBearer?: string;
   tunnelJournal?: string;
+  fleetJournal?: string;
 }
 
 export function parseServeFlags(args: string[]): ServeFlags | { error: string } {
@@ -439,6 +448,9 @@ export function parseServeFlags(args: string[]): ServeFlags | { error: string } 
         break;
       case "--tunnel-journal":
         flags.tunnelJournal = v;
+        break;
+      case "--fleet-journal":
+        flags.fleetJournal = v;
         break;
       default:
         return { error: `agent serve: unknown flag ${k}` };
@@ -537,6 +549,10 @@ function buildServeOptions(
     // Undefined → journal.ts resolves the default path (honors
     // $LLAMACTL_TUNNEL_JOURNAL and $DEV_STORAGE).
     ...(parsed.tunnelJournal ? { tunnelJournalPath: parsed.tunnelJournal } : {}),
+    // Undefined → the fleet-snapshot route resolves
+    // defaultFleetJournalPath() (honors $DEV_STORAGE). Set this so the
+    // agent serves the SAME journal the supervisor writes.
+    ...(parsed.fleetJournal ? { fleetJournalPath: parsed.fleetJournal } : {}),
     ...(dialUrl && dialBearer
       ? {
           tunnelDial: {

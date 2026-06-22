@@ -105,6 +105,17 @@ export interface StartAgentOptions {
    */
   tunnelJournalPath?: string;
   /**
+   * Override the JSONL fleet journal that `GET /v1/fleet/snapshot`
+   * reads. Resolves to `defaultFleetJournalPath()` inside the route
+   * when undefined (honors `$DEV_STORAGE`). Set this so the agent
+   * serves the SAME journal the fleet-supervisor writes — otherwise,
+   * when the agent and supervisor processes have different
+   * `$DEV_STORAGE`, the route resolves a different (stale) default
+   * path than the supervisor writes to. `agent serve --fleet-journal`
+   * threads this through.
+   */
+  fleetJournalPath?: string;
+  /**
    * When set, agent dials a central's /tunnel endpoint and bridges
    * inbound req frames to its own tRPC router. Use alongside or
    * independently of tunnelCentral — a given agent can be both
@@ -432,7 +443,9 @@ function handleAuthedApiRoutes(
   if (req.method === "GET" && url.pathname === "/v1/fleet/snapshot") {
     const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
     if (denied) return denied;
-    return handleFleetSnapshotRoute(req);
+    return handleFleetSnapshotRoute(req, {
+      ...(opts.fleetJournalPath !== undefined ? { journalPath: opts.fleetJournalPath } : {}),
+    });
   }
   // OpenAI-compatible gateway. Anything under /v1/* is bearer-auth'd
   // then either listed (GET /v1/models — static, no upstream call)
