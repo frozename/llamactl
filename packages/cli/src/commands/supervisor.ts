@@ -463,10 +463,97 @@ export function makeCanSeeFreshDestinationPeer(deps: GetLeaseHolderDeps): () => 
 }
 
 /**
+ * Cross-node in-flight-move consumer (design §4). Returns a predicate
+ * `isPeerMovingWorkload(workload)` that is true iff some FRESH peer reports the
+ * named workload in its snapshot `inFlightMoves` — i.e. a peer has deployed that
+ * workload onto a destination but not yet removed the source. The migration
+ * controller consults this before proposing a move so it does NOT start a second
+ * move of a workload a peer is already mid-moving (the cross-node double-move).
+ *
+ * Reuses the SAME per-node-fresh peer view as makeGetLeaseHolder /
+ * makeCanSeeFreshDestinationPeer (getLatestPerNode over the local cluster.db,
+ * direct peer-fetch fallback when the aggregator is down/empty), and the SAME
+ * staleness convention — a stale peer's in-flight publication is dropped (a dead
+ * peer must not freeze a workload forever).
+ *
+ * The local aggregator's cluster.db is already SELF-EXCLUDED (listPeers filters
+ * self), so a node never honors its OWN published move here — its own in-flight
+ * moves are governed by the local cooldown, this is purely the PEER channel.
+ *
+ * In the single-eligible prod case no peer publishes any in-flight move, so the
+ * predicate is always false and the controller behaves exactly as today.
+ */
+export function makeIsPeerMovingWorkload(deps: GetLeaseHolderDeps): (workload: string) => boolean {
+  const { selfNode } = deps;
+  const now = deps.now ?? ((): number => Date.now());
+  const loadPeerRows =
+    deps.loadPeerRows ??
+    ((freshAfterTs: string): SnapshotRow[] | null => {
+      try {
+        const db = openAggregatorDb();
+        return getLatestPerNode(db, { freshAfterTs });
+      } catch {
+        return null;
+      }
+    });
+  const directFetch = deps.directFetch ?? directPeerFetchSnapshots;
+
+  let directFallbackCache: { rows: SnapshotRow[]; at: number } | null = null;
+  let directFallbackInFlight = false;
+
+  const refreshDirectFallback = (): void => {
+    if (directFallbackInFlight) return;
+    directFallbackInFlight = true;
+    void directFetch(selfNode)
+      .then((rows) => {
+        directFallbackCache = { rows, at: Date.now() };
+      })
+      .catch(() => {
+        directFallbackCache = { rows: [], at: Date.now() };
+      })
+      .finally(() => {
+        directFallbackInFlight = false;
+      });
+  };
+
+  // Collect the workloads any FRESH peer reports as in-flight. A peer is fresh by
+  // the same `now - ts < STALE_AFTER_MS` test the election uses; loadPeerRows may
+  // already be freshness-filtered, but we re-check here so the direct-fallback
+  // cache (which is not) is held to the same bar.
+  const freshInFlightWorkloads = (rows: SnapshotRow[], nowMs: number): Set<string> => {
+    const out = new Set<string>();
+    for (const row of rows) {
+      const tsMs = Date.parse(row.ts);
+      if (!Number.isFinite(tsMs) || nowMs - tsMs >= STALE_AFTER_MS) continue;
+      for (const move of row.snapshot.inFlightMoves ?? []) out.add(move.workload);
+    }
+    return out;
+  };
+
+  return (workloadName: string): boolean => {
+    const nowMs = now();
+    const freshAfterTs = new Date(nowMs - STALE_AFTER_MS).toISOString();
+
+    const peerRows = loadPeerRows(freshAfterTs);
+    if (peerRows && peerRows.length > 0) {
+      return freshInFlightWorkloads(peerRows, nowMs).has(workloadName);
+    }
+
+    refreshDirectFallback();
+    const cachedPeers =
+      directFallbackCache && nowMs - directFallbackCache.at < STALE_AFTER_MS
+        ? directFallbackCache.rows
+        : [];
+    return freshInFlightWorkloads(cachedPeers, nowMs).has(workloadName);
+  };
+}
+
+/**
  * Construct the migration controller when LLAMACTL_FLEET_MOVE_ENABLED=1, else
  * null. Bumps the persisted lease term at startup (design §2 acquire) and wires
- * the derived election (getLeaseHolder) plus the partition self-demotion
- * predicate (canSeeFreshDestinationPeer).
+ * the derived election (getLeaseHolder), the partition self-demotion predicate
+ * (canSeeFreshDestinationPeer), and the cross-node in-flight-move consumer
+ * (isPeerMovingWorkload).
  */
 function buildMigrationController(
   flags: Flags,
@@ -516,6 +603,17 @@ function buildMigrationController(
     // view as the election; gates only NEW proposals (in-flight completion
     // is unaffected).
     canSeeFreshDestinationPeer: makeCanSeeFreshDestinationPeer({
+      selfNode: flags.node,
+      selfLeaseTerm: leaseTerm,
+      selfEligible: migrationEnabled,
+    }),
+    // Cross-node in-flight-move consumer (design §4): before proposing a move of
+    // workload W, skip W if a fresh peer already published it in its snapshot
+    // inFlightMoves (the peer is mid-moving it). Same fresh-peer view as the
+    // election; honors a PEER's in-flight move so two holders can't double-move
+    // the same workload. No-op in the single-eligible prod case (no peer
+    // publishes any in-flight move).
+    isPeerMovingWorkload: makeIsPeerMovingWorkload({
       selfNode: flags.node,
       selfLeaseTerm: leaseTerm,
       selfEligible: migrationEnabled,

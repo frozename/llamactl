@@ -54,6 +54,29 @@ export interface MigrationControllerDeps {
    * never demoted on this axis — behavior-preserving.
    */
   canSeeFreshDestinationPeer?: () => boolean;
+  /**
+   * Cross-node in-flight-move consumer (design §4). Returns true iff some FRESH
+   * peer is currently mid-moving the named workload — i.e. that peer published it
+   * in its snapshot `inFlightMoves` (deployed onto a destination, source not yet
+   * removed). When a peer is mid-moving W, this node must NOT start a SECOND move
+   * of W: a node's OWN local cooldown (`isInMoveCooldown`) only knows about moves
+   * THIS node started, so without this consumer two holders (the takeover window,
+   * or a transient double-holder) can each begin a move of the same workload — the
+   * cross-node double-move. The guard runs before proposing a move and skips the
+   * workload when this returns true.
+   *
+   * The implementation (wired in supervisor.ts) reuses the SAME per-node-fresh
+   * peer view as `getLeaseHolder` / `canSeeFreshDestinationPeer`
+   * (getLatestPerNode over the local cluster.db, direct peer-fetch fallback),
+   * filters to fresh peers, and tests whether any reports `workload` in its
+   * published `inFlightMoves`.
+   *
+   * Optional + workload-scoped: when omitted (PR-1..PR-3 call-sites, most tests)
+   * NO workload is ever skipped on this axis — byte-preserving. In the
+   * single-eligible prod case no peer publishes any in-flight move, so even when
+   * supplied this is a no-op and migrations proceed exactly as today.
+   */
+  isPeerMovingWorkload?: (workload: string) => boolean;
   getNowMs?: () => number;
   getCurrentTick?: () => number;
   moveCooldownTicks?: number;
@@ -202,6 +225,14 @@ export class MigrationController {
     }
     if (workload.spec?.placement === "pinned") return null;
     if (this.isInMoveCooldown(workload.name)) return null;
+    // Cross-node in-flight-move consumer (design §4): a node's OWN cooldown only
+    // knows the moves THIS node started. If a FRESH peer is already mid-moving
+    // this workload (it published it in its snapshot inFlightMoves — deployed on a
+    // destination, source not yet removed), starting a SECOND move would be a
+    // cross-node double-move. Honor the peer's in-flight move and skip W. Absent
+    // the dep, never skip (behavior-preserving); single-eligible prod publishes no
+    // peer in-flight moves, so this is a no-op there.
+    if (this.deps.isPeerMovingWorkload?.(workload.name)) return null;
 
     const fromNode = snapshot.node ?? workload.node;
     if (!fromNode) return null;
