@@ -21,14 +21,21 @@ import { z } from "zod";
 
 import { existsSync, readFileSync } from "../safe-fs.js";
 
-const CLI_BIN_PATH = createRequire(import.meta.url).resolve("@llamactl/cli/bin");
-let cliBinChecked = false;
-function ensureCliBin(): void {
-  if (cliBinChecked) return;
-  if (!existsSync(CLI_BIN_PATH)) {
-    throw new Error(`llamactl CLI not found at ${CLI_BIN_PATH}`);
+// Resolve the CLI bin path lazily, not at module load. `createRequire().resolve`
+// of a workspace package throws inside a `bun build --compile` binary (the
+// workspace layout isn't present in $bunfs), which would crash the agent binary
+// at startup — fleet.ts is in the static import graph of every command. Deferring
+// the resolve into the call path means the throw only happens if the fleet tools
+// actually shell out to the CLI, which never occurs in the compiled agent.
+let resolvedCliBinPath: string | undefined;
+function ensureCliBin(): string {
+  if (resolvedCliBinPath !== undefined) return resolvedCliBinPath;
+  const binPath = createRequire(import.meta.url).resolve("@llamactl/cli/bin");
+  if (!existsSync(binPath)) {
+    throw new Error(`llamactl CLI not found at ${binPath}`);
   }
-  cliBinChecked = true;
+  resolvedCliBinPath = binPath;
+  return binPath;
 }
 
 const MAX_OUTPUT_BYTES = 512 * 1024;
@@ -559,8 +566,8 @@ async function handleAdmitMeasure(
   admitMeasureInFlight.add(key);
   const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_ADMIT);
   try {
-    ensureCliBin();
-    const args = [CLI_BIN_PATH, "admit", "measure", workload];
+    const cliBinPath = ensureCliBin();
+    const args = [cliBinPath, "admit", "measure", workload];
     if (node) args.push(`--node=${node}`);
     const result = await runProcess(spawnFn, "bun", args, boundedTimeoutMs);
     if (!result.ok) {
@@ -644,8 +651,8 @@ async function handleSupervisorExecute(
     return toTextContent(outcome);
   }
 
-  ensureCliBin();
-  const args = [CLI_BIN_PATH, "supervisor", "tick"];
+  const cliBinPath = ensureCliBin();
+  const args = [cliBinPath, "supervisor", "tick"];
   if (node) args.push(`--node=${node}`);
   if (hasAuto) {
     args.push("--auto");
