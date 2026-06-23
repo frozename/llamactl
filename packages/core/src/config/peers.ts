@@ -55,7 +55,12 @@ export function listPeers(opts?: { currentNodeName?: string }): PeerNode[] {
 
   return cluster.nodes
     .filter((node) => isAgentNode(node))
-    .filter((node) => node.name !== localNodeName && node.endpoint !== LOCAL_NODE_ENDPOINT)
+    .filter(
+      (node) =>
+        node.name !== localNodeName &&
+        node.name !== LOCAL_NODE_NAME &&
+        node.endpoint !== LOCAL_NODE_ENDPOINT,
+    )
     .filter((node) => isHttpsEndpoint(node.endpoint))
     .map((node) => ({
       id: node.name,

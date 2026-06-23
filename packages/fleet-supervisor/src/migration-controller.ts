@@ -213,6 +213,12 @@ export class MigrationController {
     workload: MigrationWorkload,
     snapshot: NodeSnapshot,
   ): Promise<MoveProposal | null> {
+    // Source-pressure gate (defect 2): only rebalance OFF a node that is itself
+    // under HIGH pressure. Without this the supervisor proposes a 'rebalance'
+    // move every tick regardless of source load. Gates ONLY new proposals —
+    // in-flight health-poll completion (advancePendingHealthPolls) is a separate
+    // method and is unaffected.
+    if (snapshot.pressureState !== "HIGH") return null;
     const holder = this.deps.getLeaseHolder();
     if (holder === null || holder !== this.deps.selfNode) return null;
     // Partition self-demotion (design §2): a holder that cannot see any fresh

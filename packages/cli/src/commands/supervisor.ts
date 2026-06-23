@@ -14,8 +14,10 @@ import {
   type FleetJournalEntry,
   type FleetSnapshotEntry,
   getLatestPerNode,
+  isPressureHot,
   type MigrationController,
   type MigrationControllerDeps,
+  type NodeSnapshot,
   openAggregatorDb,
   readAuditEntries,
   readRecentMovesFromJournal,
@@ -718,6 +720,32 @@ export function makeIsPeerMovingWorkload(deps: GetLeaseHolderDeps): (workload: s
  * (canSeeFreshDestinationPeer), and the cross-node in-flight-move consumer
  * (isPeerMovingWorkload).
  */
+/**
+ * Map a fetched peer fleet-snapshot to the migration-controller's NodeSnapshot,
+ * deriving pressureState from node_mem via the SAME AND-gate the supervisor's own
+ * pressure detector uses (isPressureHot + DEFAULT_PRESSURE_THRESHOLDS:
+ * free_mb <= headroomMinMb AND compressor_mb >= compressorWarnMb). Sharing the
+ * exported helper keeps the destination-viability gate consistent with local
+ * pressure detection and avoids duplicating threshold literals. A constant here
+ * would defeat findBestDestination's `pressureState === "NORMAL"` filter, so the
+ * value MUST be computed from the snapshot.
+ */
+export function peerSnapshotToNodeSnapshot(snapshot: FleetSnapshotEntry): NodeSnapshot {
+  const hot = isPressureHot(
+    { node_mem: snapshot.node_mem, workloads: snapshot.workloads },
+    DEFAULT_PRESSURE_THRESHOLDS,
+  );
+  return {
+    node: snapshot.node,
+    pressureState: hot ? "HIGH" : "NORMAL",
+    nodeMem: { freeMb: snapshot.node_mem.free_mb },
+    workloads: snapshot.workloads.map((workload) => ({
+      name: workload.name,
+      reachable: workload.reachable,
+    })),
+  };
+}
+
 function buildMigrationController(
   flags: Flags,
   journalPath: string,
@@ -738,15 +766,7 @@ function buildMigrationController(
       if (!snapshot) {
         throw new Error(`peer ${node} returned no snapshot`);
       }
-      return {
-        node: snapshot.node,
-        pressureState: "NORMAL",
-        nodeMem: { freeMb: snapshot.node_mem.free_mb },
-        workloads: snapshot.workloads.map((workload) => ({
-          name: workload.name,
-          reachable: workload.reachable,
-        })),
-      };
+      return peerSnapshotToNodeSnapshot(snapshot);
     },
     ...buildMigrationWorkloadOps({ peers }),
     readRecentMoves: () => readRecentMovesFromJournal(journalPath),
