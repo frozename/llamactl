@@ -24,7 +24,7 @@ export function openResponseCacheStorage(dataRoot: string): ResponseCacheStorage
   // is owned by the returned storage.
   try {
     db.run("PRAGMA journal_mode = WAL");
-    db.run("PRAGMA busy_timeout = 5000");
+    db.run("PRAGMA busy_timeout = 15000");
     migrate(db);
     const storage: ResponseCacheStorage = {
       db,

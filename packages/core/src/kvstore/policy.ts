@@ -77,15 +77,29 @@ export function runEvictionIfOverBudget(
 
   const deleted: string[] = [];
   const blockedActive: string[] = [];
-  for (const entry of sorted) {
-    if (totalPayloadBytes <= byteBudget) break;
-    if (registry.tryDelete(entry.sha)) {
-      deleted.push(entry.sha);
-      totalPayloadBytes -= entry.payloadBytes;
-      continue;
+  // Batch the row deletes into one write transaction: a single lock
+  // acquire/release cycle instead of N, cutting SQLITE_BUSY contention with
+  // concurrent inserts. tryDelete also unlinks the slot artifact (file I/O),
+  // which must NOT run under the write lock — so inside the transaction we do
+  // DB-only row deletes via tryDeleteRowOnly, collect the slot paths, and
+  // unlink them AFTER the transaction commits. Evicted entries / blockedActive
+  // and returned totals are identical to the per-delete implementation.
+  const slotPathsToUnlink: string[] = [];
+  registry.transaction(() => {
+    for (const entry of sorted) {
+      if (totalPayloadBytes <= byteBudget) break;
+      const slotPaths = registry.tryDeleteRowOnly(entry.sha);
+      if (slotPaths !== null) {
+        deleted.push(entry.sha);
+        totalPayloadBytes -= entry.payloadBytes;
+        slotPathsToUnlink.push(...slotPaths);
+        continue;
+      }
+      blockedActive.push(entry.sha);
     }
-    blockedActive.push(entry.sha);
-  }
+  });
+  // File I/O strictly after the write lock is released.
+  registry.unlinkSlotArtifactsFor(slotPathsToUnlink);
 
   return {
     deleted,

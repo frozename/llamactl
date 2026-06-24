@@ -379,3 +379,15 @@ test("openResponseCacheStorage creates <dataRoot>/responsecache directory on fir
     t.cleanup();
   }
 });
+
+test("openResponseCacheStorage raises busy_timeout to 15000ms", () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openResponseCacheStorage(t.root);
+    const row = storage.db.query("PRAGMA busy_timeout").get() as { timeout: number } | null;
+    expect(row?.timeout).toBe(15000);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});

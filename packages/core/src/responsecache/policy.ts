@@ -41,21 +41,28 @@ export function runResponseCacheEvictionIfOverBudget(
     (a, b) => responseEvictionScore(b, now) - responseEvictionScore(a, now),
   );
   const deleted: string[] = [];
-  for (const entry of sorted) {
-    if (totalBytes <= budgetBytes) break;
-    if (
-      !registry.tryDelete({
-        sha: entry.sha,
-        model: entry.model,
-        workload: entry.workload,
-        workloadEpoch: entry.workloadEpoch,
-        protocolVariant: entry.protocolVariant,
-      })
-    )
-      continue;
-    deleted.push(entry.sha);
-    totalBytes -= totalEntryBytes(entry);
-  }
+  // Batch the row deletes into one write transaction: a single lock
+  // acquire/release cycle instead of N, so concurrent inserts see far less
+  // SQLITE_BUSY contention. responsecache tryDelete is pure DB (no file I/O),
+  // so the loop wraps directly. Evicted entries and returned totals are
+  // identical to the per-delete implementation — the transaction is transparent.
+  registry.transaction(() => {
+    for (const entry of sorted) {
+      if (totalBytes <= budgetBytes) break;
+      if (
+        !registry.tryDelete({
+          sha: entry.sha,
+          model: entry.model,
+          workload: entry.workload,
+          workloadEpoch: entry.workloadEpoch,
+          protocolVariant: entry.protocolVariant,
+        })
+      )
+        continue;
+      deleted.push(entry.sha);
+      totalBytes -= totalEntryBytes(entry);
+    }
+  });
 
   return {
     deleted,

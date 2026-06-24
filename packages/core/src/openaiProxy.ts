@@ -1955,6 +1955,28 @@ async function maybeTranslateResponse(
   });
 }
 
+/**
+ * Resolve the model string for vendor-field stripping from the ALREADY-parsed
+ * body, avoiding a second JSON.parse of the same text. Mirrors the prior chain
+ * `requestedModelFromBody(bodyText) ?? route?.model ?? "unknown"` exactly:
+ * requestedModelFromBody returned `parsed.model` only when it was a string, so
+ * a non-string `model` falls through to the route model and then "unknown".
+ */
+function resolveStripVendorModel(
+  parsedBody: Record<string, unknown>,
+  routeModel: string | undefined,
+): string {
+  const bodyModel = parsedBody["model"];
+  return (typeof bodyModel === "string" ? bodyModel : undefined) ?? routeModel ?? "unknown";
+}
+
+export function __resolveStripVendorModelForTests(
+  parsedBody: Record<string, unknown>,
+  routeModel: string | undefined,
+): string {
+  return resolveStripVendorModel(parsedBody, routeModel);
+}
+
 /** Strip user-supplied oMLX vendor fields from a JSON body in place on the context. */
 function stripVendorFieldsFromBody(routed: ProxyContext): void {
   if (!routed.bodyText) return;
@@ -1967,7 +1989,7 @@ function stripVendorFieldsFromBody(routed: ProxyContext): void {
   if (!isRecord(parsedBody)) return;
   stripUserSuppliedOmlxVendorFields(
     parsedBody,
-    requestedModelFromBody(routed.bodyText) ?? routed.route?.model ?? "unknown",
+    resolveStripVendorModel(parsedBody, routed.route?.model),
     routed.route?.workload ?? "unknown",
   );
   const strippedBodyText = JSON.stringify(parsedBody);

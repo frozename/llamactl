@@ -116,3 +116,48 @@ test("recent orphan slot file is not deleted", () => {
     t.cleanup();
   }
 });
+
+/**
+ * A KvRegistry that counts how many times the sweep reaches into the DB so we
+ * can pin the query shape: O(1) `listAll` instead of O(n) `findBySha`. It
+ * delegates to a real registry so correctness still flows through SQLite.
+ */
+class CountingRegistry extends KvRegistry {
+  findByShaCalls = 0;
+  listAllCalls = 0;
+
+  override findBySha(sha: string): KvEntry | null {
+    this.findByShaCalls += 1;
+    return super.findBySha(sha);
+  }
+
+  override listAll(): KvEntry[] {
+    this.listAllCalls += 1;
+    return super.listAll();
+  }
+}
+
+test("sweep issues one batched DB read regardless of slot-file count", () => {
+  const t = makeTempRoot();
+  try {
+    const slotDir = join(t.root, "slots");
+    mkdirSync(slotDir, { recursive: true });
+    const now = Date.now();
+    const slotCount = 5;
+    for (let i = 0; i < slotCount; i += 1) {
+      const slotPath = join(slotDir, `orphan-${String(i)}.kvslot`);
+      writeFileSync(slotPath, `orphan-${String(i)}`);
+      utimesSync(slotPath, new Date(now - 20_000), new Date(now - 20_000));
+    }
+
+    const storage = openKvStorage(t.root);
+    const registry = new CountingRegistry(storage);
+    sweepOrphanSlotFiles({ slotDir, registry, ttlMs: 10_000, now });
+
+    expect(registry.listAllCalls).toBe(1);
+    expect(registry.findByShaCalls).toBe(0);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});

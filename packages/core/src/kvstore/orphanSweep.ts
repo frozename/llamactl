@@ -23,10 +23,19 @@ export function sweepOrphanSlotFiles(
   let orphansFound = 0;
   let orphansDeleted = 0;
 
+  // Snapshot the known SHAs once instead of one DB read per slot file: the
+  // sweep runs on the per-cacheable-response KV-persist path, so an O(n) query
+  // fan-out here contributes to SQLITE_BUSY. A concurrently inserted entry's
+  // file is written after this snapshot, so its mtime stays above `cutoff` and
+  // the mtime guard below (which we deliberately keep ordered after the
+  // membership check) refuses to delete it.
+  const knownShas = new Set<string>();
+  for (const entry of opts.registry.listAll()) knownShas.add(entry.sha);
+
   for (const filename of readdirSync(opts.slotDir)) {
     const sha = parseShaFromSlotFile(filename);
     if (!sha) continue;
-    if (opts.registry.findBySha(sha)) continue;
+    if (knownShas.has(sha)) continue;
     orphansFound += 1;
 
     const fullPath = join(opts.slotDir, filename);

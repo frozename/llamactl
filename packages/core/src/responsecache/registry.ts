@@ -43,6 +43,16 @@ export interface ResponseCacheLookup {
 export class ResponseCacheRegistry {
   constructor(private readonly storage: ResponseCacheStorage) {}
 
+  /**
+   * Run `fn` inside a single SQLite write transaction (one lock acquire/release
+   * cycle). Eviction batches its row deletes through here so concurrent inserts
+   * contend with one write-lock hold instead of N. Delegates to the idiomatic
+   * `storage.db.transaction(fn)()` wrapper.
+   */
+  transaction<T>(fn: () => T): T {
+    return this.storage.db.transaction(fn)();
+  }
+
   insert(entry: ResponseCacheEntry): void {
     this.storage.db
       .query(

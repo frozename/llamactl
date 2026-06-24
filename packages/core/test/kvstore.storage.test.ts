@@ -391,12 +391,12 @@ test("openKvStorage closes the db handle when migrate() throws on a newer schema
   }
 });
 
-test("openKvStorage sets busy_timeout to 5000", () => {
+test("openKvStorage sets busy_timeout to 15000", () => {
   const t = makeTempRoot();
   try {
     const storage = openKvStorage(t.root);
     const row = storage.db.query("PRAGMA busy_timeout").get() as { timeout: number } | null;
-    expect(row?.timeout).toBe(5000);
+    expect(row?.timeout).toBe(15000);
     storage.close();
   } finally {
     t.cleanup();

@@ -52,6 +52,20 @@ interface KvEntryRow {
 export class KvRegistry {
   constructor(private readonly storage: KvStorage) {}
 
+  /**
+   * Run `fn` inside a single SQLite write transaction (one lock acquire/release
+   * cycle). Eviction batches its row deletes through here so concurrent inserts
+   * contend with one write-lock hold instead of N. Delegates to the idiomatic
+   * `storage.db.transaction(fn)()` wrapper.
+   *
+   * Slot-artifact unlinks are FILE I/O and must NOT run inside this callback —
+   * use `tryDeleteRowOnly` to collect paths under the lock, then unlink after
+   * the transaction commits (see `unlinkSlotArtifactsFor`).
+   */
+  transaction<T>(fn: () => T): T {
+    return this.storage.db.transaction(fn)();
+  }
+
   insert(entry: KvEntry): void {
     this.storage.db
       .query(
@@ -189,6 +203,33 @@ export class KvRegistry {
     `,
       sha,
     );
+  }
+
+  /**
+   * DB-only variant of `tryDelete`: removes the idle row and RETURNS the slot
+   * file paths to unlink, WITHOUT performing the unlink. Callers that batch
+   * deletes inside `transaction()` use this to keep file I/O out of the write
+   * lock — collect the returned paths and pass them to `unlinkSlotArtifactsFor`
+   * AFTER the transaction commits. Returns null if no idle row matched.
+   */
+  tryDeleteRowOnly(sha: string): string[] | null {
+    const rows = this.storage.db
+      .query(
+        `
+      DELETE FROM kv_entries
+      WHERE sha = ? AND state = 'idle'
+      RETURNING upstream_slot_file
+    `,
+      )
+      .all(sha) as { upstream_slot_file: string }[];
+    if (rows.length === 0) return null;
+    return rows.map((row) => row.upstream_slot_file);
+  }
+
+  /** Unlink slot artifacts for the given upstream-slot-file paths. File I/O —
+   * call AFTER any enclosing write transaction commits, never inside it. */
+  unlinkSlotArtifactsFor(paths: readonly string[]): void {
+    for (const path of paths) unlinkSlotArtifacts(path);
   }
 
   deleteEpochStale(workload: string, currentEpoch: string): boolean {
