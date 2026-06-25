@@ -434,6 +434,19 @@ export interface AgentRouterContext {
 
 const t = initTRPC.context<AgentRouterContext>().create();
 
+// Path-safe identifier for infra `pkg` and `version` inputs. These
+// values flow into filesystem joins (mkdir, symlink, rmSync) inside
+// the local infra directory; any caller-controlled traversal must be
+// refused at the schema boundary. The character class forbids slashes
+// and backslashes (so '..' followed by a separator can't appear), and
+// the refine step rejects the literal '.' / '..' / '~' which are the
+// only single-token escape values still permitted by the regex.
+const infraIdentifier = z
+  .string()
+  .min(1)
+  .regex(/^[A-Za-z0-9_.+-]+$/, "must match /^[A-Za-z0-9_.+-]+$/")
+  .refine((s) => s !== "." && s !== ".." && s !== "~", "reserved name");
+
 const modelHostStatusInput = z.object({ workload: z.string().min(1) });
 const modelHostStopInput = z.object({
   workload: z.string().min(1),
@@ -1937,14 +1950,14 @@ export const router = t.router({
   infraList: t.procedure.query(() => infraLayoutMod.listInstalledInfra()),
 
   infraCurrent: t.procedure
-    .input(z.object({ pkg: z.string().min(1) }))
+    .input(z.object({ pkg: infraIdentifier }))
     .query(({ input }) => infraLayoutMod.resolveCurrentVersion(input.pkg)),
 
   infraInstall: t.procedure
     .input(
       z.object({
-        pkg: z.string().min(1),
-        version: z.string().min(1),
+        pkg: infraIdentifier,
+        version: infraIdentifier,
         tarballUrl: z.string().min(1),
         sha256: z.string().regex(/^[0-9a-f]{64}$/i),
         activate: z.boolean().default(true),
@@ -1963,7 +1976,7 @@ export const router = t.router({
     }),
 
   infraActivate: t.procedure
-    .input(z.object({ pkg: z.string().min(1), version: z.string().min(1) }))
+    .input(z.object({ pkg: infraIdentifier, version: infraIdentifier }))
     .mutation(({ input }) => {
       infraLayoutMod.activateInfraVersion(input.pkg, input.version);
       return { ok: true as const };
@@ -1972,8 +1985,8 @@ export const router = t.router({
   infraUninstall: t.procedure
     .input(
       z.object({
-        pkg: z.string().min(1),
-        version: z.string().optional(),
+        pkg: infraIdentifier,
+        version: infraIdentifier.optional(),
       }),
     )
     .mutation(({ input }) => {
@@ -1992,7 +2005,7 @@ export const router = t.router({
   infraServiceWriteUnit: t.procedure
     .input(
       z.object({
-        pkg: z.string().min(1),
+        pkg: infraIdentifier,
         env: z.record(z.string(), z.string()).default({}),
         args: z.array(z.string()).default([]),
       }),
@@ -2013,7 +2026,7 @@ export const router = t.router({
   infraServiceLifecycle: t.procedure
     .input(
       z.object({
-        pkg: z.string().min(1),
+        pkg: infraIdentifier,
         action: z.enum(["start", "stop", "reload", "status"]),
       }),
     )

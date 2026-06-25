@@ -1,5 +1,5 @@
 import { llamactlHome } from "@llamactl/core/config/env";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 import {
   existsSync,
@@ -39,8 +39,26 @@ export function defaultInfraDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(base, "infra");
 }
 
+// Defense-in-depth path-escape guard. Any joined path produced from
+// caller-supplied pkg / version values MUST resolve to a location
+// strictly inside the infra base. Without this, a hostile value like
+// pkg='../../.ssh' flows into rmSync and deletes arbitrary files.
+function assertInsideBase(base: string, target: string): void {
+  // The target must resolve strictly INSIDE the base — deeper than
+  // the base by at least one segment. Equal-to-base also fails,
+  // because version='..' joins to the base itself and would let a
+  // caller rmSync the whole infra tree.
+  const resolvedBase = resolve(base);
+  const resolvedTarget = resolve(target);
+  if (!resolvedTarget.startsWith(resolvedBase + sep)) {
+    throw new Error(`infra path escape refused: ${target} resolves outside ${resolvedBase}`);
+  }
+}
+
 export function infraPackageDir(pkg: string, base: string = defaultInfraDir()): string {
-  return join(base, pkg);
+  const dir = join(base, pkg);
+  assertInsideBase(base, dir);
+  return dir;
 }
 
 export function infraVersionDir(
@@ -48,11 +66,15 @@ export function infraVersionDir(
   version: string,
   base: string = defaultInfraDir(),
 ): string {
-  return join(base, pkg, version);
+  const dir = join(base, pkg, version);
+  assertInsideBase(base, dir);
+  return dir;
 }
 
 export function infraCurrentSymlink(pkg: string, base: string = defaultInfraDir()): string {
-  return join(base, pkg, "current");
+  const link = join(base, pkg, "current");
+  assertInsideBase(base, link);
+  return link;
 }
 
 export interface InstalledInfra {
