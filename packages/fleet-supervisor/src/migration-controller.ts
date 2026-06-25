@@ -102,6 +102,13 @@ interface PendingHealthPoll {
   proposal: MoveProposal;
   writeJournalEntry: (entry: FleetJournalEntry) => void;
   deployedAtMs: number;
+  /**
+   * Defect A: tracks whether the destination has EVER been observed reachable
+   * for this move. Once true, the timeout/failure path must retry SOURCE
+   * removal only — it must NOT remove the destination, because that would
+   * destroy the healthy copy just because the source could not be cleaned up.
+   */
+  destinationReachableObserved: boolean;
 }
 
 /**
@@ -305,10 +312,22 @@ export class MigrationController {
     proposal: MoveProposal,
     writeJournalEntry: (entry: FleetJournalEntry) => void,
   ): Promise<
-    "executed" | "timed_out" | "destination_unavailable" | "apply_failed" | "pending_health_check"
+    | "executed"
+    | "timed_out"
+    | "destination_unavailable"
+    | "apply_failed"
+    | "pending_health_check"
+    | "lease_lost"
   > {
     if (!this.deps.deployWorkload || !this.deps.removeWorkload) {
       return "destination_unavailable";
+    }
+    // Defect B: evaluateMove read getLeaseHolder before awaiting
+    // findBestDestination, so ownership could have flipped to another node
+    // during that async window. Re-check here so a node that lost the lease
+    // never deploys on top of the new holder (split-brain double-deploy).
+    if (this.deps.getLeaseHolder() !== this.deps.selfNode) {
+      return "lease_lost";
     }
     const expiresAtMs = proposal.expiresAtMs ?? Date.parse(proposal.expiresAt);
     if (!Number.isFinite(expiresAtMs) || expiresAtMs < this.nowMs) {
@@ -352,6 +371,7 @@ export class MigrationController {
       proposal,
       writeJournalEntry,
       deployedAtMs: this.nowMs,
+      destinationReachableObserved: false,
     });
 
     return "pending_health_check";
@@ -364,75 +384,132 @@ export class MigrationController {
     const removeWorkload = this.deps.removeWorkload;
 
     for (const [workloadName, poll] of this.pendingHealthPolls) {
-      const { proposal, writeJournalEntry, deployedAtMs } = poll;
-      const ts = new Date(this.nowMs).toISOString();
-      const action: FleetExecutionEntry["action"] = {
-        type: "move",
-        workload: proposal.workload,
-        fromNode: proposal.fromNode,
-        toNode: proposal.toNode,
-        reason: "rebalance",
-      };
-
-      if (this.nowMs > deployedAtMs + this.healthTimeoutMs) {
-        this.pendingHealthPolls.delete(workloadName);
-        try {
-          await removeWorkload(proposal.workload, proposal.toNode);
-        } catch (err) {
-          writeJournalEntry({
-            kind: "fleet-execution",
-            ts,
-            node: this.deps.selfNode,
-            proposalId: proposal.proposalId,
-            action,
-            status: "failed",
-            reason: `timeout waiting for destination health; destination cleanup failed: ${(err as Error).message}; manual intervention required`,
-          });
-          continue;
-        }
-        writeJournalEntry({
-          kind: "fleet-execution",
-          ts,
-          node: this.deps.selfNode,
-          proposalId: proposal.proposalId,
-          action,
-          status: "failed",
-          reason: "timeout waiting for destination health",
-        });
-        continue;
-      }
-
-      const snapshot = await this.safeFetchSnapshot(proposal.toNode);
-      const reachable = snapshot?.workloads?.some(
-        (entry) => entry.name === proposal.workload && entry.reachable,
-      );
-      if (reachable) {
-        try {
-          await removeWorkload(proposal.workload, proposal.fromNode);
-        } catch (err) {
-          writeJournalEntry({
-            kind: "fleet-execution",
-            ts,
-            node: this.deps.selfNode,
-            proposalId: proposal.proposalId,
-            action,
-            status: "failed",
-            reason: `remove failed: ${(err as Error).message}; will retry`,
-          });
-          continue;
-        }
-        this.pendingHealthPolls.delete(workloadName);
-        writeJournalEntry({
-          kind: "fleet-execution",
-          ts,
-          node: this.deps.selfNode,
-          proposalId: proposal.proposalId,
-          action,
-          status: "executed",
-        });
-      }
-      // else: still waiting — leave in pending for the next tick
+      await this.advanceSinglePendingPoll(workloadName, poll, removeWorkload);
     }
+  }
+
+  private async advanceSinglePendingPoll(
+    workloadName: string,
+    poll: PendingHealthPoll,
+    removeWorkload: (workloadName: string, fromNode: string) => Promise<void>,
+  ): Promise<void> {
+    const { proposal, writeJournalEntry, deployedAtMs } = poll;
+    const ts = new Date(this.nowMs).toISOString();
+    const action = this.buildMoveAction(proposal);
+
+    const timedOut = this.nowMs > deployedAtMs + this.healthTimeoutMs;
+
+    // Defect A: only the genuinely-failed-deploy timeout branch (destination
+    // never came up) may remove the destination. A timeout reached AFTER
+    // destination reachability was observed means the deploy succeeded and
+    // only source cleanup is stuck — that path falls through to source-only
+    // retry below, leaving the healthy destination in place.
+    if (timedOut && !poll.destinationReachableObserved) {
+      this.pendingHealthPolls.delete(workloadName);
+      await this.cleanupTimedOutDeploy(proposal, ts, action, writeJournalEntry, removeWorkload);
+      return;
+    }
+
+    const reachable = await this.observeDestinationReachable(poll);
+    if (!reachable) return; // still waiting — leave in pending for the next tick
+
+    await this.completeMoveBySourceRemoval(
+      workloadName,
+      proposal,
+      ts,
+      action,
+      writeJournalEntry,
+      removeWorkload,
+    );
+  }
+
+  private buildMoveAction(proposal: MoveProposal): FleetExecutionEntry["action"] {
+    return {
+      type: "move",
+      workload: proposal.workload,
+      fromNode: proposal.fromNode,
+      toNode: proposal.toNode,
+      reason: "rebalance",
+    };
+  }
+
+  private async observeDestinationReachable(poll: PendingHealthPoll): Promise<boolean> {
+    // Once reachability has been observed, commit to source-removal until it
+    // drains. Re-probing the destination here could flap on a transient miss
+    // and would re-introduce the false-timeout-destroy hazard.
+    if (poll.destinationReachableObserved) return true;
+    const snapshot = await this.safeFetchSnapshot(poll.proposal.toNode);
+    const reachable =
+      snapshot?.workloads?.some(
+        (entry) => entry.name === poll.proposal.workload && entry.reachable,
+      ) ?? false;
+    if (reachable) poll.destinationReachableObserved = true;
+    return reachable;
+  }
+
+  private async cleanupTimedOutDeploy(
+    proposal: MoveProposal,
+    ts: string,
+    action: FleetExecutionEntry["action"],
+    writeJournalEntry: (entry: FleetJournalEntry) => void,
+    removeWorkload: (workloadName: string, fromNode: string) => Promise<void>,
+  ): Promise<void> {
+    try {
+      await removeWorkload(proposal.workload, proposal.toNode);
+    } catch (err) {
+      writeJournalEntry({
+        kind: "fleet-execution",
+        ts,
+        node: this.deps.selfNode,
+        proposalId: proposal.proposalId,
+        action,
+        status: "failed",
+        reason: `timeout waiting for destination health; destination cleanup failed: ${(err as Error).message}; manual intervention required`,
+      });
+      return;
+    }
+    writeJournalEntry({
+      kind: "fleet-execution",
+      ts,
+      node: this.deps.selfNode,
+      proposalId: proposal.proposalId,
+      action,
+      status: "failed",
+      reason: "timeout waiting for destination health",
+    });
+  }
+
+  private async completeMoveBySourceRemoval(
+    workloadName: string,
+    proposal: MoveProposal,
+    ts: string,
+    action: FleetExecutionEntry["action"],
+    writeJournalEntry: (entry: FleetJournalEntry) => void,
+    removeWorkload: (workloadName: string, fromNode: string) => Promise<void>,
+  ): Promise<void> {
+    try {
+      await removeWorkload(proposal.workload, proposal.fromNode);
+    } catch (err) {
+      writeJournalEntry({
+        kind: "fleet-execution",
+        ts,
+        node: this.deps.selfNode,
+        proposalId: proposal.proposalId,
+        action,
+        status: "failed",
+        reason: `remove failed: ${(err as Error).message}; will retry`,
+      });
+      return;
+    }
+    this.pendingHealthPolls.delete(workloadName);
+    writeJournalEntry({
+      kind: "fleet-execution",
+      ts,
+      node: this.deps.selfNode,
+      proposalId: proposal.proposalId,
+      action,
+      status: "executed",
+    });
   }
 
   private buildDeployFailedEntry(proposal: MoveProposal, errorMsg: string): FleetExecutionEntry {
