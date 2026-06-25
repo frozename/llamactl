@@ -59,50 +59,52 @@ interface TickFlags {
   autoTier3: boolean;
 }
 
-/** Apply one tick arg; false → stop parsing (help or error already printed). */
-function applyTickFlag(arg: string, flags: TickFlags): boolean {
+/** Apply one tick arg; returns "ok" / "help" / "error". */
+function applyTickFlag(arg: string, flags: TickFlags): "ok" | "help" | "error" {
   if (arg === "--help" || arg === "-h") {
     process.stdout.write(USAGE);
-    return false;
+    return "help";
   }
   if (arg === "--skip-journal") {
     flags.skipJournal = true;
-    return true;
+    return "ok";
   }
   if (arg === "--auto") {
     flags.autoTier2 = true;
     flags.autoTier3 = true;
-    return true;
+    return "ok";
   }
   if (arg === "--auto-tier-2") {
     flags.autoTier2 = true;
-    return true;
+    return "ok";
   }
   if (arg === "--auto-tier-3") {
     flags.autoTier3 = true;
-    return true;
+    return "ok";
   }
   const eq = arg.indexOf("=");
   if (!arg.startsWith("--") || eq < 0) {
     process.stderr.write(`cost-guardian: unknown arg ${arg}\n\n${USAGE}`);
-    return false;
+    return "error";
   }
   const key = arg.slice(2, eq);
   const value = arg.slice(eq + 1);
   switch (key) {
     case "config":
       flags.configPath = value;
-      return true;
+      return "ok";
     case "journal":
       flags.journalPath = value;
-      return true;
+      return "ok";
     default:
       process.stderr.write(`cost-guardian: unknown flag --${key}\n\n${USAGE}`);
-      return false;
+      return "error";
   }
 }
 
-function parseFlags(argv: string[]): TickFlags | null {
+type TickParseResult = TickFlags | { mode: "help" } | { mode: "error" };
+
+function parseFlags(argv: string[]): TickParseResult {
   const flags: TickFlags = {
     configPath: defaultCostGuardianConfigPath(),
     journalPath: defaultCostJournalPath(),
@@ -111,14 +113,17 @@ function parseFlags(argv: string[]): TickFlags | null {
     autoTier3: false,
   };
   for (const arg of argv) {
-    if (!applyTickFlag(arg, flags)) return null;
+    const r = applyTickFlag(arg, flags);
+    if (r === "help") return { mode: "help" };
+    if (r === "error") return { mode: "error" };
   }
   return flags;
 }
 
 async function runTick(argv: string[]): Promise<number> {
-  const flags = parseFlags(argv);
-  if (!flags) return 0;
+  const parsed = parseFlags(argv);
+  if ("mode" in parsed) return parsed.mode === "help" ? 0 : 1;
+  const flags = parsed;
   let config;
   try {
     config = loadCostGuardianConfig(flags.configPath);

@@ -97,7 +97,9 @@ interface HealFlags {
   executeProposalId: string | null;
 }
 
-function parseFlags(argv: string[]): HealFlags | null {
+type HealParseResult = HealFlags | { mode: "help" } | { mode: "error" };
+
+function parseFlags(argv: string[]): HealParseResult {
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Preserve existing CLI/test semantics while clearing strict lint debt.
   const base = process.env["DEV_STORAGE"]?.trim() || join(homedir(), ".llamactl");
   const flags: HealFlags = {
@@ -117,79 +119,81 @@ function parseFlags(argv: string[]): HealFlags | null {
     executeProposalId: null,
   };
   for (const arg of argv) {
-    if (!applyHealFlag(arg, flags)) return null;
+    const r = applyHealFlag(arg, flags);
+    if (r === "help") return { mode: "help" };
+    if (r === "error") return { mode: "error" };
   }
   return flags;
 }
 
-/** Apply one heal arg; false → stop parsing (help or error already printed). */
-function applyHealFlag(arg: string, flags: HealFlags): boolean {
+/** Apply one heal arg; returns "ok" / "help" / "error". */
+function applyHealFlag(arg: string, flags: HealFlags): "ok" | "help" | "error" {
   if (arg === "--help" || arg === "-h") {
     process.stdout.write(USAGE);
-    return false;
+    return "help";
   }
   if (arg === "--once") {
     flags.once = true;
-    return true;
+    return "ok";
   }
   if (arg === "--quiet") {
     flags.quiet = true;
-    return true;
+    return "ok";
   }
   if (arg === "--use-facade") {
     flags.useFacade = true;
-    return true;
+    return "ok";
   }
   if (arg === "--no-use-facade") {
     flags.useFacade = false;
-    return true;
+    return "ok";
   }
   if (arg === "--auto") {
     flags.auto = true;
-    return true;
+    return "ok";
   }
   const eq = arg.indexOf("=");
   if (!arg.startsWith("--") || eq < 0) {
     process.stderr.write(`unknown arg: ${arg}\n\n${USAGE}`);
-    return false;
+    return "error";
   }
   return applyHealKeyValue(arg.slice(2, eq), arg.slice(eq + 1), flags);
 }
 
-function applyHealKeyValue(key: string, value: string, flags: HealFlags): boolean {
+function applyHealKeyValue(key: string, value: string, flags: HealFlags): "ok" | "error" {
   switch (key) {
     case "interval":
       flags.intervalSec = Math.max(1, Number.parseInt(value, 10) || 30);
-      return true;
+      return "ok";
     case "timeout":
       flags.timeoutMs = Math.max(100, Number.parseInt(value, 10) || 1500);
-      return true;
+      return "ok";
     case "journal":
       flags.journalPath = value;
-      return true;
+      return "ok";
     case "kubeconfig":
       flags.kubeconfigPath = value;
-      return true;
+      return "ok";
     case "providers-file":
       flags.providersPath = value;
-      return true;
+      return "ok";
     case "severity-threshold": {
       const parsed = Number.parseInt(value, 10);
       if (parsed !== 1 && parsed !== 2 && parsed !== 3) {
         process.stderr.write(
           `invalid --severity-threshold: ${value} (must be 1, 2, or 3)\n\n${USAGE}`,
         );
-        return false;
+        return "error";
       }
       flags.severityThreshold = parsed;
-      return true;
+      return "ok";
     }
     case "execute":
       flags.executeProposalId = value;
-      return true;
+      return "ok";
     default:
       process.stderr.write(`unknown flag: --${key}\n\n${USAGE}`);
-      return false;
+      return "error";
   }
 }
 
@@ -271,9 +275,27 @@ async function runExecuteProposal(flags: HealFlags): Promise<number> {
   }
 }
 
+/**
+ * Boot the in-proc MCP tool client for facade mode, returning null (and logging)
+ * if it fails so the loop falls back to direct probing. Extracted from runHeal to
+ * keep that function under the cognitive-complexity gate.
+ */
+async function bootFacadeToolHandle(): Promise<DefaultToolClientHandle | null> {
+  try {
+    return await createDefaultToolClient();
+  } catch (err) {
+    process.stderr.write(
+      `healer: failed to boot in-proc MCP client (${(err as Error).message}); ` +
+        "continuing with direct probe\n",
+    );
+    return null;
+  }
+}
+
 export async function runHeal(argv: string[]): Promise<number> {
-  const flags = parseFlags(argv);
-  if (!flags) return 0;
+  const parsed = parseFlags(argv);
+  if ("mode" in parsed) return parsed.mode === "help" ? 0 : 1;
+  const flags = parsed;
 
   // --execute <proposal-id>: out-of-band apply of a previously-
   // journaled proposal. Boots the same in-proc tool client the loop
@@ -289,15 +311,7 @@ export async function runHeal(argv: string[]): Promise<number> {
   // tool-name prefix — exactly the harness runbooks use.
   let toolHandle: DefaultToolClientHandle | null = null;
   if (flags.useFacade) {
-    try {
-      toolHandle = await createDefaultToolClient();
-    } catch (err) {
-      process.stderr.write(
-        `healer: failed to boot in-proc MCP client (${(err as Error).message}); ` +
-          "continuing with direct probe\n",
-      );
-      toolHandle = null;
-    }
+    toolHandle = await bootFacadeToolHandle();
   }
 
   const loopOpts: HealerLoopOptions = {

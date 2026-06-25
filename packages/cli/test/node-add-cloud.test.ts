@@ -1,9 +1,17 @@
+import type { NodeClient } from "@llamactl/remote";
+
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runNode } from "../src/commands/node.js";
-import { EMPTY_GLOBALS, resetGlobals, setGlobals } from "../src/dispatcher.js";
+import {
+  __resetTestSeams,
+  __setTestSeams,
+  EMPTY_GLOBALS,
+  resetGlobals,
+  setGlobals,
+} from "../src/dispatcher.js";
 import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 /**
@@ -35,6 +43,7 @@ afterEach(() => {
   for (const k of Object.keys(process.env)) Reflect.deleteProperty(process.env, k);
   Object.assign(process.env, originalEnv);
   resetGlobals();
+  __resetTestSeams();
   globalThis.fetch = originalFetch;
 });
 
@@ -313,5 +322,56 @@ describe("node add-cloud — validation", () => {
     );
     expect(code).toBe(1);
     expect(stderr).toContain("unknown flag --fortune-cookie");
+  });
+});
+
+describe("node add-cloud — gemini provider", () => {
+  // The CLI's --provider validator must accept 'gemini' because
+  // CloudProviderSchema in @llamactl/core includes it. The tRPC
+  // mutation is stubbed here via the dispatcher test seam so the
+  // test doesn't depend on the router's own enum.
+  test("--provider gemini is accepted by the CLI and forwarded to the mutation", async () => {
+    type AddCloudInput = {
+      name: string;
+      provider: string;
+      baseUrl: string;
+      apiKeyRef?: string;
+      displayName?: string;
+      skipProbe?: boolean;
+    };
+    const inputs: AddCloudInput[] = [];
+    const mockClient = {
+      nodeAddCloud: {
+        // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
+        mutate: async (input: AddCloudInput) => {
+          inputs.push(input);
+          return { ok: true as const, name: input.name, baseUrl: input.baseUrl };
+        },
+      },
+    } as unknown as NodeClient;
+    __setTestSeams({ nodeClient: mockClient });
+
+    const { code, stderr } = await capture(() =>
+      runNode([
+        "add-cloud",
+        "gemini-main",
+        "--provider",
+        "gemini",
+        "--base-url",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "--api-key-ref",
+        "env:GEMINI_API_KEY",
+        "--force",
+      ]),
+    );
+    expect(stderr).not.toContain("--provider must be one of");
+    expect(code).toBe(0);
+    expect(inputs).toHaveLength(1);
+    const captured = inputs[0]!;
+    expect(captured.provider).toBe("gemini");
+    expect(captured.name).toBe("gemini-main");
+    expect(captured.baseUrl).toBe("https://generativelanguage.googleapis.com/v1beta/openai");
+    expect(captured.apiKeyRef).toBe("env:GEMINI_API_KEY");
+    expect(captured.skipProbe).toBe(true);
   });
 });

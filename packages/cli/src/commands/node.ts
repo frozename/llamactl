@@ -666,6 +666,7 @@ function runAddRag(args: string[]): number {
 const CLOUD_PROVIDERS = [
   "openai",
   "anthropic",
+  "gemini",
   "together",
   "groq",
   "mistral",
@@ -846,7 +847,12 @@ async function runAddCloud(args: string[]): Promise<number> {
   }
   const client = getNodeClient();
   try {
-    const result = await client.nodeAddCloud.mutate(buildAddCloudInput(parsed));
+    // The router's local input enum predates 'gemini'; the CLI's CLOUD_PROVIDERS
+    // tracks @llamactl/core CloudProviderSchema, which is the authoritative list.
+    // Cast widens the static type so the new provider reaches the mutation; the
+    // router still validates the payload via its own Zod schema at call time.
+    const input = buildAddCloudInput(parsed) as Parameters<typeof client.nodeAddCloud.mutate>[0];
+    const result = await client.nodeAddCloud.mutate(input);
     renderAddCloudSuccess(parsed, result);
     return 0;
   } catch (err) {

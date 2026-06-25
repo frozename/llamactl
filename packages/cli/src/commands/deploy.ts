@@ -39,44 +39,53 @@ function inferCentralUrl(): string | null {
   }
 }
 
-/** Apply one deploy arg; false → stop parsing (help or error already printed). */
-function applyDeployFlag(arg: string, flags: DeployFlags): boolean {
+/** Apply one deploy arg; returns "ok" / "help" / "error". */
+function applyDeployFlag(arg: string, flags: DeployFlags): "ok" | "help" | "error" {
   if (arg === "--help" || arg === "-h") {
     process.stdout.write(USAGE);
-    return false;
+    return "help";
   }
   const eq = arg.indexOf("=");
   if (!arg.startsWith("--") || eq < 0) {
     process.stderr.write(`deploy-node: unknown arg ${arg}\n\n${USAGE}`);
-    return false;
+    return "error";
   }
   const key = arg.slice(2, eq);
   const value = arg.slice(eq + 1);
   switch (key) {
     case "central-url":
       flags.centralUrl = value;
-      return true;
+      return "ok";
     case "ttl": {
       const parsed = Number.parseInt(value, 10);
       if (!Number.isFinite(parsed) || parsed <= 0) {
         process.stderr.write(`deploy-node: --ttl must be a positive integer (minutes)\n`);
-        return false;
+        return "error";
       }
       flags.ttlMinutes = parsed;
-      return true;
+      return "ok";
     }
     default:
       process.stderr.write(`deploy-node: unknown flag --${key}\n\n${USAGE}`);
-      return false;
+      return "error";
   }
 }
 
-function parseFlags(
-  argv: string[],
-): { mode: "deploy"; flags: DeployFlags } | { mode: "list" } | { mode: "prune" } | null {
-  if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
+type ParseResult =
+  | { mode: "deploy"; flags: DeployFlags }
+  | { mode: "list" }
+  | { mode: "prune" }
+  | { mode: "help" }
+  | { mode: "error" };
+
+function parseFlags(argv: string[]): ParseResult {
+  if (argv[0] === "--help" || argv[0] === "-h") {
     process.stdout.write(USAGE);
-    return null;
+    return { mode: "help" };
+  }
+  if (argv.length === 0) {
+    process.stderr.write(`deploy-node: node name is required\n\n${USAGE}`);
+    return { mode: "error" };
   }
   if (argv[0] === "--list") return { mode: "list" };
   if (argv[0] === "--prune") return { mode: "prune" };
@@ -84,7 +93,7 @@ function parseFlags(
   const name = argv[0];
   if (!name || name.startsWith("--")) {
     process.stderr.write(`deploy-node: node name is required\n\n${USAGE}`);
-    return null;
+    return { mode: "error" };
   }
   const flags: DeployFlags = {
     name,
@@ -94,7 +103,9 @@ function parseFlags(
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === undefined) continue;
-    if (!applyDeployFlag(arg, flags)) return null;
+    const r = applyDeployFlag(arg, flags);
+    if (r === "help") return { mode: "help" };
+    if (r === "error") return { mode: "error" };
   }
   return { mode: "deploy", flags };
 }
@@ -118,7 +129,8 @@ function formatList(): void {
 // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 export async function runDeployNode(argv: string[]): Promise<number> {
   const parsed = parseFlags(argv);
-  if (!parsed) return 0;
+  if (parsed.mode === "help") return 0;
+  if (parsed.mode === "error") return 1;
 
   if (parsed.mode === "list") {
     formatList();
