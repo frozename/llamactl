@@ -196,26 +196,6 @@ async function runTick(
         }
       : undefined;
 
-  // In-flight-move intent (partition safety, design §2/§4): publish moves this
-  // node has deployed but not yet removed from the source so a successor honors
-  // them. Reflects the state carried into THIS tick (advancePendingHealthPolls
-  // runs later, in evaluateMigrationWorkloads). Conditional spread only — never
-  // assign `inFlightMoves: undefined` (exactOptionalPropertyTypes).
-  const inFlightMoves = migrationController?.getInFlightMoves() ?? [];
-
-  const snapshot: FleetSnapshotEntry = {
-    kind: "fleet-snapshot",
-    ts,
-    node: opts.node,
-    node_mem,
-    workloads,
-    ...(leaseIntent ? { lease: leaseIntent } : {}),
-    ...(inFlightMoves.length > 0 ? { inFlightMoves } : {}),
-  };
-  const heartbeat: FleetHeartbeatEntry = { kind: "fleet-heartbeat", ts, node: opts.node };
-  writeJournalEntry(snapshot);
-  writeJournalEntry(heartbeat);
-
   if (opts.logSlotProgress) {
     await logSlotProgressForWorkloads(opts, ts, writeJournalEntry);
   }
@@ -268,6 +248,29 @@ async function runTick(
       writeJournalEntry,
     );
   }
+
+  // In-flight-move intent (partition safety, design §2/§4): publish moves this
+  // node has deployed but not yet removed from the source so a successor honors
+  // them. Read AFTER evaluateMigrationWorkloads so a move STARTED in this tick is
+  // present (executeMove has just registered the pending health poll) and a move
+  // COMPLETED in this tick is absent (advancePendingHealthPolls has just drained
+  // it). Reading earlier produced a one-tick-stale set that opened a ~30s blind
+  // spot in the cross-node double-move guard. Conditional spread only — never
+  // assign `inFlightMoves: undefined` (exactOptionalPropertyTypes).
+  const inFlightMoves = migrationController?.getInFlightMoves() ?? [];
+
+  const snapshot: FleetSnapshotEntry = {
+    kind: "fleet-snapshot",
+    ts,
+    node: opts.node,
+    node_mem,
+    workloads,
+    ...(leaseIntent ? { lease: leaseIntent } : {}),
+    ...(inFlightMoves.length > 0 ? { inFlightMoves } : {}),
+  };
+  const heartbeat: FleetHeartbeatEntry = { kind: "fleet-heartbeat", ts, node: opts.node };
+  writeJournalEntry(snapshot);
+  writeJournalEntry(heartbeat);
 
   await opts.onTick?.(snapshot);
 }
