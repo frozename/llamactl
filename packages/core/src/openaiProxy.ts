@@ -320,6 +320,14 @@ type ProxyContext = {
   kv?: KvRequestState;
   responseCache?: ResponseCacheRequestState;
   responseCacheHit?: Response;
+  /**
+   * Captured by maybeInjectOmlxSaveHandle BEFORE the save-handle injection
+   * forces stream:false on the upstream request. If the client originally
+   * asked for SSE, the response path synthesizes an OpenAI-compatible
+   * text/event-stream body from the upstream JSON completion so the client's
+   * SDK does not crash parsing JSON when it expected events.
+   */
+  clientRequestedStream?: boolean;
 };
 
 let routeMapCache: { sig: string; map: Map<string, RouteEntry> } | null = null;
@@ -1169,12 +1177,178 @@ async function maybeInjectOmlxSaveHandle(
     return;
   }
   if (!isRecord(parsed)) return;
+  // Capture original stream intent BEFORE we overwrite it. The response
+  // path uses this to synthesize SSE when the client asked for it.
+  context.clientRequestedStream = parsed["stream"] === true;
   parsed["x_omlx_save_handle"] = sha;
   parsed["stream"] = false;
   const injectedBody = JSON.stringify(parsed);
   context.bodyText = injectedBody;
   context.init = { ...context.init, body: injectedBody };
   logSlotInjectionEvent("save_handle_injected", { workload, model, request_handle: sha });
+}
+
+interface OpenAiChatChunkChoice {
+  index: number;
+  delta: Record<string, unknown>;
+  finish_reason: string | null;
+}
+
+interface OpenAiChatChunk {
+  id: string;
+  object: "chat.completion.chunk";
+  created: number;
+  model: string;
+  choices: OpenAiChatChunkChoice[];
+  usage?: unknown;
+}
+
+/**
+ * Convert a non-streamed OpenAI chat-completion JSON body into a valid
+ * text/event-stream body. Used on the oMLX save-handle path: the proxy
+ * forced the upstream to stream:false so it could persist the slot, but
+ * the client originally asked for SSE. The output emits one or more
+ * `data: {chat.completion.chunk ...}` events carrying role + content (and
+ * a final chunk with finish_reason), then `data: [DONE]\n\n`. Preserves
+ * id, model, and usage where present. Scoped to the OpenAI completion
+ * format (not Anthropic).
+ */
+interface SseHeader {
+  id: string;
+  created: number;
+  model: string;
+}
+
+function sseHeaderFromCompletion(completion: Record<string, unknown>): SseHeader {
+  const id = typeof completion["id"] === "string" ? completion["id"] : "chatcmpl-stream";
+  const created =
+    typeof completion["created"] === "number"
+      ? completion["created"]
+      : Math.floor(Date.now() / 1000);
+  const model = typeof completion["model"] === "string" ? completion["model"] : "unknown";
+  return { id, created, model };
+}
+
+function buildChoiceDelta(
+  message: Record<string, unknown>,
+  content: string,
+): Record<string, unknown> {
+  const role = typeof message["role"] === "string" ? message["role"] : "assistant";
+  const delta: Record<string, unknown> = { role };
+  if (content.length > 0) delta["content"] = content;
+  if (Array.isArray(message["tool_calls"])) delta["tool_calls"] = message["tool_calls"];
+  return delta;
+}
+
+function chunksForChoice(header: SseHeader, choice: unknown, fallbackIndex: number): string[] {
+  if (!isRecord(choice)) return [];
+  const idx = typeof choice["index"] === "number" ? choice["index"] : fallbackIndex;
+  const message = isRecord(choice["message"]) ? choice["message"] : {};
+  const content = typeof message["content"] === "string" ? message["content"] : "";
+  const finishReason =
+    typeof choice["finish_reason"] === "string" ? choice["finish_reason"] : "stop";
+  const roleChunk: OpenAiChatChunk = {
+    id: header.id,
+    object: "chat.completion.chunk",
+    created: header.created,
+    model: header.model,
+    choices: [{ index: idx, delta: buildChoiceDelta(message, content), finish_reason: null }],
+  };
+  const stopChunk: OpenAiChatChunk = {
+    id: header.id,
+    object: "chat.completion.chunk",
+    created: header.created,
+    model: header.model,
+    choices: [{ index: idx, delta: {}, finish_reason: finishReason }],
+  };
+  return [`data: ${JSON.stringify(roleChunk)}\n\n`, `data: ${JSON.stringify(stopChunk)}\n\n`];
+}
+
+function jsonCompletionToSse(json: unknown): string {
+  const completion = isRecord(json) ? json : {};
+  const header = sseHeaderFromCompletion(completion);
+  const rawChoices: unknown[] = Array.isArray(completion["choices"])
+    ? (completion["choices"] as unknown[])
+    : [];
+
+  const lines: string[] = [];
+
+  if (rawChoices.length === 0) {
+    const empty: OpenAiChatChunk = {
+      id: header.id,
+      object: "chat.completion.chunk",
+      created: header.created,
+      model: header.model,
+      choices: [],
+    };
+    lines.push(`data: ${JSON.stringify(empty)}\n\n`);
+  }
+
+  for (const [i, choice] of rawChoices.entries()) {
+    lines.push(...chunksForChoice(header, choice, i));
+  }
+
+  const usage = completion["usage"];
+  if (usage !== undefined && usage !== null) {
+    const usageChunk: OpenAiChatChunk = {
+      id: header.id,
+      object: "chat.completion.chunk",
+      created: header.created,
+      model: header.model,
+      choices: [],
+      usage,
+    };
+    lines.push(`data: ${JSON.stringify(usageChunk)}\n\n`);
+  }
+
+  lines.push("data: [DONE]\n\n");
+  return lines.join("");
+}
+
+/**
+ * If the client originally requested SSE (oMLX save-handle path forced the
+ * upstream to non-stream so the KV save could persist) and the upstream
+ * returned a 200 application/json chat completion that is not an error
+ * envelope, convert it to a text/event-stream response so the client's
+ * OpenAI SDK sees the event shape it asked for. Returns null when no
+ * synthesis should happen and the caller should pass through normally.
+ */
+async function maybeSynthesizeOmlxSseResponse(
+  context: Pick<ProxyContext, "clientRequestedStream" | "isAnthropic">,
+  upstream: Response,
+): Promise<Response | null> {
+  if (context.clientRequestedStream !== true) return null;
+  if (context.isAnthropic === true) return null;
+  if (upstream.status !== 200) return null;
+  const contentType = upstream.headers.get("content-type");
+  if (!isJsonContentType(contentType)) return null;
+  let json: unknown;
+  try {
+    json = await upstream.clone().json();
+  } catch {
+    return null;
+  }
+  if (isRecord(json) && json["error"] !== undefined && json["error"] !== null) return null;
+  const sseBody = jsonCompletionToSse(json);
+  const respHeaders = sanitizedResponseHeaders(upstream);
+  respHeaders.set("content-type", "text/event-stream");
+  respHeaders.delete("content-length");
+  return new Response(sseBody, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: respHeaders,
+  });
+}
+
+export function __jsonCompletionToSseForTests(json: unknown): string {
+  return jsonCompletionToSse(json);
+}
+
+export async function __maybeSynthesizeOmlxSseResponseForTests(
+  context: { clientRequestedStream?: boolean; isAnthropic?: boolean },
+  upstream: Response,
+): Promise<Response | null> {
+  return await maybeSynthesizeOmlxSseResponse(context, upstream);
 }
 
 function buildKvRequestState(
@@ -2057,7 +2231,9 @@ export async function proxyOpenAI(
     } catch (error) {
       warnKvStageFailure("persist", error);
     }
-    const translatedResponse = await maybeTranslateResponse(withKvLookup, upstream);
+    const synthesizedSse = await maybeSynthesizeOmlxSseResponse(withKvLookup, upstream);
+    const translatedResponse =
+      synthesizedSse ?? (await maybeTranslateResponse(withKvLookup, upstream));
     return await maybePersistResponseCache(withKvLookup, translatedResponse);
   } finally {
     releaseWarmHitLease(withKvLookup);
