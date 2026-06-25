@@ -243,4 +243,66 @@ describe("migration safe-path: non-blocking health poll, apply_failed cooldown, 
       journal.filter((e) => e.kind === "fleet-proposal" && e.action.type === "move"),
     ).toHaveLength(0);
   });
+
+  // ── FIX 4: evaluateMigrationWorkloads must thread expectedMemoryMb into MigrationWorkload ──
+
+  it("FIX4: evaluateMigrationWorkloads does not move a large-memory workload to a memory-tight destination", async () => {
+    const ctrl = makeController();
+
+    // Destination has 8 000 MB free — enough to beat the 512 MB default, but
+    // NOT enough for the workload's declared 20 000 MB requirement.
+    snapshots["m2mini"] = {
+      node: "m2mini",
+      pressureState: "NORMAL",
+      nodeMem: { freeMb: 8_000 },
+      workloads: [],
+    };
+
+    const workloads: WorkloadSnapshot[] = [
+      {
+        name: "large-model",
+        kind: "ModelHost" as const,
+        endpoint: "http://127.0.0.1:8080",
+        priority: 50,
+        rss_mb: null,
+        request_rate_5m: null,
+        error_rate_5m: 0,
+        p50_ms: 100,
+        p95_ms: 200,
+        models: [],
+        reachable: true,
+        consecutiveErrors: 0,
+        placement: "auto",
+        expectedMemoryMb: 20_000,
+      },
+    ];
+
+    const nodeMem: NodeMemSnapshot = {
+      free_mb: 200,
+      active_mb: 0,
+      inactive_mb: 0,
+      wired_mb: 0,
+      compressor_mb: 0,
+      swap_in: 0,
+      swap_out: 0,
+    };
+
+    await evaluateMigrationWorkloads(
+      new Date(nowMs).toISOString(),
+      "m4pro",
+      workloads,
+      nodeMem,
+      true, // pressureDetected = HIGH on source
+      ctrl,
+      (e) => journal.push(e),
+    );
+
+    // Without the fix, expectedMemoryMb is dropped → 512 MB fallback → destination
+    // passes the gate → applyCalls has one entry. With the fix, 20 000 MB > 8 000 MB
+    // free → destination rejected → no move.
+    expect(applyCalls).toHaveLength(0);
+    expect(
+      journal.filter((e) => e.kind === "fleet-proposal" && e.action.type === "move"),
+    ).toHaveLength(0);
+  });
 });

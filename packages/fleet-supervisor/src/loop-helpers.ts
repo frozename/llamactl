@@ -296,6 +296,7 @@ export function makeDefaultProbeFn(
       endpoint: redactEndpoint(target.endpoint),
       priority: target.priority ?? 50,
       ...omitUndefined({ placement: target.placement }),
+      ...omitUndefined({ expectedMemoryMb: target.expectedMemoryMb }),
       rss_mb: null,
       request_rate_5m: null,
       error_rate_5m: 0,
@@ -319,6 +320,7 @@ export function makeUnreachableFallback(
     endpoint: redactEndpoint(target.endpoint),
     priority: target.priority ?? 50,
     ...omitUndefined({ placement: target.placement }),
+    ...omitUndefined({ expectedMemoryMb: target.expectedMemoryMb }),
     rss_mb: null,
     request_rate_5m: null,
     error_rate_5m: 1,
@@ -529,7 +531,13 @@ export async function evaluateMigrationWorkloads(
     const migrationWorkload: MigrationWorkload = {
       name: workload.name,
       node,
-      spec: { placement: workload.placement ?? "auto" },
+      spec: {
+        placement: workload.placement ?? "auto",
+        ...(typeof workload.expectedMemoryMb === "number" &&
+        Number.isFinite(workload.expectedMemoryMb)
+          ? { resources: { memoryMb: workload.expectedMemoryMb } }
+          : {}),
+      },
       evictProposalId: `evict-${workload.name}-${ts}`,
     };
     const proposal = await migrationController.evaluateMove(migrationWorkload, nodeSnapshot);

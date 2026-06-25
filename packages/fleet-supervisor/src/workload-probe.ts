@@ -10,6 +10,13 @@ export interface WorkloadTarget {
   placement?: string;
   /** Resolved completion-liveness probe config; present only when the workload opted in. */
   completionProbe?: CompletionProbeConfig;
+  /**
+   * Declared expected memory for this workload in MiB, sourced from the
+   * workload manifest / startup config. Carried through to WorkloadSnapshot so
+   * the migration controller can enforce the real memory requirement instead of
+   * the 512 MB default.
+   */
+  expectedMemoryMb?: number;
 }
 
 export interface WorkloadProbeOptions {

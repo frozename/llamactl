@@ -85,6 +85,12 @@ export interface WorkloadSnapshot {
    * mode where /health stays 200 but completions return 5xx.
    */
   completionProbe?: CompletionProbeSnapshot;
+  /**
+   * Declared expected memory in MiB, carried from WorkloadTarget.expectedMemoryMb.
+   * Used by evaluateMigrationWorkloads to populate MigrationWorkload.spec.resources.memoryMb
+   * so the migration controller enforces the real requirement instead of the 512 MB default.
+   */
+  expectedMemoryMb?: number;
 }
 
 export interface FleetSnapshotEntry {

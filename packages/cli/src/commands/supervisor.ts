@@ -1031,7 +1031,12 @@ interface Flags {
 
 interface ResolveWorkloadUrlDeps {
   loadWorkloadByName?: typeof workloadStore.loadWorkloadByName;
-  loadWorkloadByNameAny?: (name: string) => { spec: { useProxy?: boolean | undefined } };
+  loadWorkloadByNameAny?: (name: string) => {
+    spec: {
+      useProxy?: boolean | undefined;
+      resources?: { expectedMemoryGiB?: number | undefined } | undefined;
+    };
+  };
   resolveInternalProxyEndpoint?: typeof envMod.resolveInternalProxyEndpoint;
   warn?: (message: string) => void;
 }
@@ -1103,6 +1108,7 @@ export function resolveWorkloadTargetsAtStartup(
   deps: ResolveWorkloadTargetsAtStartupDeps = {},
 ): WorkloadTarget[] {
   const info = deps.info ?? ((message: string): boolean => process.stderr.write(`${message}\n`));
+  const loadManifest = deps.loadWorkloadByNameAny ?? workloadStore.loadWorkloadByNameAny;
   const loggedOverrides = new Map<string, string>();
 
   return workloads.map((target) => {
@@ -1110,9 +1116,13 @@ export function resolveWorkloadTargetsAtStartup(
     // avoids loading + ModelRunSchema-parsing (which throws) a ModelHost manifest.
     const completionProbe =
       target.kind === "ModelRun" ? resolveCompletionProbe(target.name, deps) : undefined;
-    const withProbe = completionProbe ? { ...target, completionProbe } : target;
+    const expectedMemoryMb =
+      target.kind === "ModelHost" ? resolveExpectedMemoryMb(target.name, loadManifest) : undefined;
+    let enriched: WorkloadTarget = target;
+    if (completionProbe) enriched = { ...enriched, completionProbe };
+    if (expectedMemoryMb !== undefined) enriched = { ...enriched, expectedMemoryMb };
     const resolvedEndpoint = resolveWorkloadUrl(target.name, target.endpoint, env, deps);
-    if (resolvedEndpoint === target.endpoint) return withProbe;
+    if (resolvedEndpoint === target.endpoint) return enriched;
 
     const signature = `${target.endpoint}->${resolvedEndpoint}`;
     const prev = loggedOverrides.get(target.name);
@@ -1122,8 +1132,33 @@ export function resolveWorkloadTargetsAtStartup(
       );
       loggedOverrides.set(target.name, signature);
     }
-    return { ...withProbe, endpoint: resolvedEndpoint };
+    return { ...enriched, endpoint: resolvedEndpoint };
   });
+}
+
+/**
+ * Read the workload's deployed manifest and convert ModelHost
+ * `spec.resources.expectedMemoryGiB` → MiB for the migration memory-gate.
+ * Returns undefined when the manifest can't be loaded, is not a ModelHost,
+ * or omits the field — the migration controller keeps its 512 MB default
+ * for truly-undeclared workloads.
+ */
+function resolveExpectedMemoryMb(
+  name: string,
+  loadManifest: NonNullable<ResolveWorkloadUrlDeps["loadWorkloadByNameAny"]>,
+): number | undefined {
+  try {
+    const manifest = loadManifest(name) as {
+      kind?: string;
+      spec?: { resources?: { expectedMemoryGiB?: number } };
+    };
+    if (manifest.kind !== undefined && manifest.kind !== "ModelHost") return undefined;
+    const gib = manifest.spec?.resources?.expectedMemoryGiB;
+    if (typeof gib !== "number" || !Number.isFinite(gib) || gib <= 0) return undefined;
+    return gib * 1024;
+  } catch {
+    return undefined;
+  }
 }
 
 const warnedDeprecatedAuditFlagNames = new Set<string>();
