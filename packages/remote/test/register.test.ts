@@ -105,21 +105,63 @@ describe("handleRegister", () => {
     expect(operator.token).toBe("node-minted-token");
   });
 
-  test("nodeName override wins over the token record", async () => {
+  test("mismatched nodeName is rejected and does not upsert (cannot hijack an existing node)", async () => {
+    // Token was minted for "gpu1" but the caller tries to register
+    // under "local" — that would overwrite the seeded local node's
+    // endpoint/certificate and silently hijack its traffic. The
+    // handler must refuse and leave the kubeconfig untouched.
     const { token } = generateBootstrapToken({
-      nodeName: "original",
+      nodeName: "gpu1",
+      centralUrl: "https://central.lan:7843",
+      dir: tokensDir,
+    });
+    const before = loadConfig(kubeconfigPath);
+    const localBefore = before.clusters[0]!.nodes.find((n) => n.name === "local")!;
+
+    const { status, body } = await callRegister({
+      bootstrapToken: token,
+      blob: makeBlob(),
+      nodeName: "local",
+    });
+
+    expect(status).toBeGreaterThanOrEqual(400);
+    expect(status).toBeLessThan(500);
+    expect(body["ok"]).toBe(false);
+
+    const after = loadConfig(kubeconfigPath);
+    const cluster = after.clusters.find((c) => c.name === "home")!;
+    // No new node appeared.
+    expect(cluster.nodes.map((n) => n.name).sort()).toEqual(["local"]);
+    // The local node was NOT overwritten with the bootstrap blob's
+    // endpoint/certificate.
+    const localAfter = cluster.nodes.find((n) => n.name === "local")!;
+    expect(localAfter.endpoint).toBe(localBefore.endpoint);
+    expect(localAfter.certificateFingerprint).toBeUndefined();
+    expect(localAfter.certificate).toBeUndefined();
+    // Operator token must not have been rewritten either.
+    const operator = after.users.find((u) => u.name === "me")!;
+    expect(operator.token).toBe("initial-operator-token");
+  });
+
+  test("matching nodeName in payload still succeeds", async () => {
+    // Echoing the token's nodeName back in the payload is harmless
+    // and must keep working — only mismatches are forbidden.
+    const { token } = generateBootstrapToken({
+      nodeName: "gpu1",
       centralUrl: "https://central.lan:7843",
       dir: tokensDir,
     });
     const { status, body } = await callRegister({
       bootstrapToken: token,
       blob: makeBlob(),
-      nodeName: "override-name",
+      nodeName: "gpu1",
     });
     expect(status).toBe(200);
-    expect(body["nodeName"]).toBe("override-name");
+    expect(body["ok"]).toBe(true);
+    expect(body["nodeName"]).toBe("gpu1");
     const cfg = loadConfig(kubeconfigPath);
-    expect(cfg.clusters[0]!.nodes.some((n) => n.name === "override-name")).toBe(true);
+    const cluster = cfg.clusters.find((c) => c.name === "home")!;
+    expect(cluster.nodes.some((n) => n.name === "gpu1")).toBe(true);
   });
 
   test("token reuse rejected with 409 already-used", async () => {

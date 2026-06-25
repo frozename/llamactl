@@ -46,8 +46,9 @@ export interface RegisterHandlerOptions {
 interface RegisterRequestBody {
   bootstrapToken: string;
   blob: string;
-  /** Optional override. When set, wins over the nodeName embedded in
-   *  the bootstrap-token record. */
+  /** Optional echo. When present, must equal the nodeName embedded
+   *  in the bootstrap-token record; mismatches are rejected. The
+   *  token record's nodeName is always authoritative. */
   nodeName?: string;
 }
 
@@ -121,7 +122,19 @@ export async function handleRegister(
     );
   }
 
-  const nodeName = payload.nodeName ?? consumed.record.nodeName;
+  // A bootstrap token authorizes registration of exactly the node
+  // it was minted for. Letting the caller pass a different nodeName
+  // would let any token holder upsert under an arbitrary name —
+  // including an existing node's — silently overwriting its
+  // endpoint/certificate and hijacking its traffic. Reject the
+  // mismatch fail-closed; the token record is authoritative.
+  if (payload.nodeName !== undefined && payload.nodeName !== consumed.record.nodeName) {
+    return jsonResponse(
+      { ok: false, error: "nodeName does not match bootstrap token record" },
+      403,
+    );
+  }
+  const nodeName = consumed.record.nodeName;
   let cfg = loadConfig(opts.kubeconfigPath);
   const ctx = currentContext(cfg);
 
