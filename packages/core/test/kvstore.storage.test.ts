@@ -5,7 +5,8 @@ import { join } from "node:path";
 
 import { resolveEnv } from "../src/env.js";
 import { type KvEntry, KvRegistry, openKvStorage } from "../src/kvstore/index.js";
-import { runMigrations } from "../src/kvstore/storage.js";
+import { runIntegrityScan, runMigrations } from "../src/kvstore/storage.js";
+import * as safeFs from "../src/safe-fs.js";
 import {
   existsSync,
   mkdirSync,
@@ -321,6 +322,54 @@ test("integrity scan quarantines rows with missing upstream_slot_file on open", 
   }
 });
 
+test("runIntegrityScan performs filesystem checks outside write transactions", () => {
+  const t = makeTempRoot();
+  try {
+    const missing = join(t.root, "missing.slot");
+    const storage = openKvStorage(t.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(baseEntry({ sha: "scan-mutex", upstreamSlotFile: missing }));
+
+    let inWriteTransaction = false;
+    const db = storage.db as unknown as {
+      run: (sql: string, ...args: unknown[]) => unknown;
+    };
+    const originalRun = db.run;
+    db.run = (sql: string, ...args: unknown[]): unknown => {
+      const normalized = sql.trim().toUpperCase();
+      if (normalized.startsWith("BEGIN")) {
+        inWriteTransaction = true;
+      } else if (normalized.startsWith("COMMIT") || normalized.startsWith("ROLLBACK")) {
+        inWriteTransaction = false;
+      }
+      return originalRun(sql, ...args);
+    };
+
+    const originalExistsSync = safeFs.existsSync;
+    const existsSyncSpy = spyOn(safeFs, "existsSync").mockImplementation(
+      (path: Parameters<typeof safeFs.existsSync>[0]) => {
+        if (inWriteTransaction) {
+          throw new Error("runIntegrityScan touched filesystem during write transaction");
+        }
+        return originalExistsSync(path);
+      },
+    );
+
+    try {
+      runIntegrityScan(storage);
+    } finally {
+      db.run = originalRun;
+      existsSyncSpy.mockRestore();
+    }
+
+    expect(registry.get("scan-mutex")?.quarantined).toBe(1);
+    expect(storage.registry_integrity_errors_total).toBe(1);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("integrity scan self-heals quarantined rows when the slot file reappears and purges stale quarantines after grace", () => {
   const t = makeTempRoot();
   try {
@@ -480,6 +529,102 @@ test("kv metadata writes do not change workloadRuntimeRoot mtimeNs", () => {
 
     const after = statSync(root, { bigint: true }).mtimeNs;
     expect(after).toBe(before);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("kvstore migrations remain safe when the same DB is migrated concurrently", async () => {
+  const t = makeTempRoot();
+  try {
+    const kvDir = join(t.root, "kvstore");
+    mkdirSync(kvDir, { recursive: true });
+    const dbPath = join(kvDir, "registry.db");
+    const seed = new Database(dbPath);
+    seed.run("PRAGMA journal_mode = WAL");
+    seed.run("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)");
+    seed.run("INSERT INTO schema_version (version) VALUES (0)");
+    seed.close();
+
+    const signalDir = join(t.root, "migration-workers");
+    mkdirSync(signalDir, { recursive: true });
+    writeFileSync(join(signalDir, "start"), "1");
+
+    const workerCode = `
+import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { runMigrations } from "./src/kvstore/storage.js";
+
+const dbPath = Bun.env.KV_DB_PATH;
+const signalDir = Bun.env.KV_SIGNAL_DIR;
+const workerId = Bun.env.KV_WORKER_ID;
+
+if (!dbPath || !signalDir || !workerId) {
+  throw new Error("missing worker env");
+}
+
+mkdirSync(signalDir, { recursive: true });
+
+const peerId = workerId === "0" ? "1" : "0";
+const marker = (name) => signalDir + "/" + name;
+const waitFor = (path) => {
+  const deadline = Date.now() + 5000;
+  while (!existsSync(path)) {
+    if (Date.now() > deadline) throw new Error("timeout waiting for signal: " + path);
+  }
+};
+
+waitFor(marker("start"));
+
+const db = new Database(dbPath);
+
+const originalRun = db.run.bind(db);
+let inWriteTransaction = false;
+(db as unknown as { run: (...args: unknown[]) => unknown }).run = (
+  sql: unknown,
+  ...params: unknown[]
+) => {
+  const normalized = String(sql).toUpperCase();
+  if (normalized.startsWith("BEGIN")) inWriteTransaction = true;
+  if (normalized.startsWith("COMMIT") || normalized.startsWith("ROLLBACK")) inWriteTransaction = false;
+  if (!inWriteTransaction && normalized.includes("ADD COLUMN")) {
+    writeFileSync(marker("add-" + workerId + ".ready"), "1");
+    waitFor(marker("add-" + peerId + ".ready"));
+  }
+  return originalRun(sql as Parameters<typeof originalRun>[0], ...params);
+};
+
+runMigrations(db, 0, 5);
+db.close();
+`;
+
+    const runWorker = async (workerId: string): Promise<void> => {
+      const proc = Bun.spawn({
+        cmd: ["bun", "-e", workerCode],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          KV_DB_PATH: dbPath,
+          KV_SIGNAL_DIR: signalDir,
+          KV_WORKER_ID: workerId,
+        },
+      });
+      const exitCode = await proc.exited;
+      if (exitCode !== 0) {
+        const errorText = await new Response(proc.stderr).text();
+        throw new Error(
+          `migration worker ${workerId} failed with ${String(exitCode)}: ${errorText}`,
+        );
+      }
+    };
+
+    await Promise.all([runWorker("0"), runWorker("1")]);
+    const verify = new Database(dbPath);
+    const row = verify.query("SELECT version FROM schema_version LIMIT 1").get() as {
+      version: number;
+    };
+    expect(row.version).toBe(5);
+    verify.close();
   } finally {
     t.cleanup();
   }

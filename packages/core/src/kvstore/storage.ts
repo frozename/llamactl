@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 
-import { existsSync, mkdirSync } from "../safe-fs.js";
+import * as safeFs from "../safe-fs.js";
 
 const SCHEMA_VERSION = 5;
 
@@ -18,7 +18,7 @@ export interface KvStorage {
 
 export function openKvStorage(dataRoot: string): KvStorage {
   const kvDir = join(dataRoot, "kvstore");
-  mkdirSync(kvDir, { recursive: true });
+  safeFs.mkdirSync(kvDir, { recursive: true });
   const db = new Database(join(kvDir, "registry.db"));
   // Any throw during post-construction init (pragmas, migrate,
   // runIntegrityScan) must close the freshly-opened handle, or it leaks a
@@ -89,78 +89,83 @@ export function runMigrations(db: Database, fromVersion: number, toVersion: numb
   for (let next = fromVersion + 1; next <= toVersion; next += 1) {
     switch (next) {
       case 1:
-        db.run(`
-          CREATE TABLE IF NOT EXISTS kv_entries (
-            sha TEXT PRIMARY KEY,
-            workload TEXT NOT NULL,
-            upstream_slot_file TEXT NOT NULL,
-            quant_bits INTEGER NOT NULL,
-            tokens INTEGER NOT NULL,
-            ctx_size INTEGER NOT NULL,
-            hits INTEGER NOT NULL DEFAULT 0,
-            created_at INTEGER NOT NULL,
-            last_used INTEGER NOT NULL,
-            payload_bytes INTEGER NOT NULL,
-            text_bytes INTEGER NOT NULL,
-            reason TEXT NOT NULL CHECK(reason IN ('cold','continued','evict','shutdown','agent_session')),
-            prefix_byte_length INTEGER NOT NULL,
-            workload_epoch TEXT NOT NULL,
-            quarantined INTEGER NOT NULL DEFAULT 0
-          )
-        `);
-        db.run(
-          "CREATE INDEX IF NOT EXISTS idx_kv_workload_quant_ctx ON kv_entries (workload, quant_bits, ctx_size)",
-        );
-        db.run("CREATE INDEX IF NOT EXISTS idx_kv_last_used ON kv_entries (last_used)");
-        db.query("UPDATE schema_version SET version = 1").run();
+        withMigrationLock(db, 1, () => {
+          db.run(`
+            CREATE TABLE IF NOT EXISTS kv_entries (
+              sha TEXT PRIMARY KEY,
+              workload TEXT NOT NULL,
+              upstream_slot_file TEXT NOT NULL,
+              quant_bits INTEGER NOT NULL,
+              tokens INTEGER NOT NULL,
+              ctx_size INTEGER NOT NULL,
+              hits INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              last_used INTEGER NOT NULL,
+              payload_bytes INTEGER NOT NULL,
+              text_bytes INTEGER NOT NULL,
+              reason TEXT NOT NULL CHECK(reason IN ('cold','continued','evict','shutdown','agent_session')),
+              prefix_byte_length INTEGER NOT NULL,
+              workload_epoch TEXT NOT NULL,
+              quarantined INTEGER NOT NULL DEFAULT 0
+            )
+          `);
+          db.run(
+            "CREATE INDEX IF NOT EXISTS idx_kv_workload_quant_ctx ON kv_entries (workload, quant_bits, ctx_size)",
+          );
+          db.run("CREATE INDEX IF NOT EXISTS idx_kv_last_used ON kv_entries (last_used)");
+        });
         break;
       case 2:
-        addColumnIfMissing(
-          db,
-          "kv_entries",
-          "state",
-          `
-            ALTER TABLE kv_entries
-            ADD COLUMN state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','reserved','active'))
-          `,
-        );
-        db.query("UPDATE schema_version SET version = 2").run();
+        withMigrationLock(db, 2, () => {
+          addColumnIfMissing(
+            db,
+            "kv_entries",
+            "state",
+            `
+              ALTER TABLE kv_entries
+              ADD COLUMN state TEXT NOT NULL DEFAULT 'idle' CHECK(state IN ('idle','reserved','active'))
+            `,
+          );
+        });
         break;
       case 3:
-        addColumnIfMissing(
-          db,
-          "kv_entries",
-          "first_response_token",
-          `
-            ALTER TABLE kv_entries
-            ADD COLUMN first_response_token TEXT
-          `,
-        );
-        db.query("UPDATE schema_version SET version = 3").run();
+        withMigrationLock(db, 3, () => {
+          addColumnIfMissing(
+            db,
+            "kv_entries",
+            "first_response_token",
+            `
+              ALTER TABLE kv_entries
+              ADD COLUMN first_response_token TEXT
+            `,
+          );
+        });
         break;
       case 4:
-        addColumnIfMissing(
-          db,
-          "kv_entries",
-          "ext_flags",
-          `
-            ALTER TABLE kv_entries
-            ADD COLUMN ext_flags INTEGER NOT NULL DEFAULT 0
-          `,
-        );
-        db.query("UPDATE schema_version SET version = 4").run();
+        withMigrationLock(db, 4, () => {
+          addColumnIfMissing(
+            db,
+            "kv_entries",
+            "ext_flags",
+            `
+              ALTER TABLE kv_entries
+              ADD COLUMN ext_flags INTEGER NOT NULL DEFAULT 0
+            `,
+          );
+        });
         break;
       case 5:
-        addColumnIfMissing(
-          db,
-          "kv_entries",
-          "model",
-          `
-            ALTER TABLE kv_entries
-            ADD COLUMN model TEXT
-          `,
-        );
-        db.query("UPDATE schema_version SET version = 5").run();
+        withMigrationLock(db, 5, () => {
+          addColumnIfMissing(
+            db,
+            "kv_entries",
+            "model",
+            `
+              ALTER TABLE kv_entries
+              ADD COLUMN model TEXT
+            `,
+          );
+        });
         break;
       default:
         throw new Error(`Unsupported kvstore schema migration target ${String(next)}`);
@@ -174,41 +179,71 @@ function addColumnIfMissing(db: Database, table: string, column: string, sql: st
   db.run(sql);
 }
 
-function runIntegrityScan(storage: KvStorage): void {
+export function runIntegrityScan(storage: KvStorage): void {
   const graceMs = ((): number => {
     const raw = process.env["LLAMACTL_KV_QUARANTINE_PURGE_HOURS"];
     const hours = raw ? Number.parseFloat(raw) : 24;
     return Number.isFinite(hours) && hours > 0 ? hours * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
   })();
   const now = Date.now();
+  const rows = storage.db
+    .query("SELECT sha, upstream_slot_file, quarantined, last_used FROM kv_entries")
+    .all() as {
+    sha: string;
+    upstream_slot_file: string;
+    quarantined: number;
+    last_used: number;
+  }[];
+  const toUnquarantine: string[] = [];
+  const toQuarantine: string[] = [];
+  const toPurge: string[] = [];
+  for (const row of rows) {
+    const exists = safeFs.existsSync(row.upstream_slot_file);
+    if (exists && row.quarantined === 1) {
+      toUnquarantine.push(row.sha);
+      continue;
+    }
+    if (!exists && row.quarantined === 0) {
+      toQuarantine.push(row.sha);
+      storage.registry_integrity_errors_total += 1;
+      continue;
+    }
+    if (!exists && row.quarantined === 1 && now - row.last_used > graceMs) {
+      toPurge.push(row.sha);
+    }
+  }
+  if (toUnquarantine.length === 0 && toQuarantine.length === 0 && toPurge.length === 0) return;
   storage.db.transaction(() => {
-    const rows = storage.db
-      .query("SELECT sha, upstream_slot_file, quarantined, last_used FROM kv_entries")
-      .all() as {
-      sha: string;
-      upstream_slot_file: string;
-      quarantined: number;
-      last_used: number;
-    }[];
     const quarantine = storage.db.query("UPDATE kv_entries SET quarantined = 1 WHERE sha = ?");
     const unquarantine = storage.db.query("UPDATE kv_entries SET quarantined = 0 WHERE sha = ?");
     const purge = storage.db.query("DELETE FROM kv_entries WHERE sha = ?");
-    for (const row of rows) {
-      const exists = existsSync(row.upstream_slot_file);
-      if (exists && row.quarantined === 1) {
-        unquarantine.run(row.sha);
-        continue;
-      }
-      if (!exists && row.quarantined === 0) {
-        quarantine.run(row.sha);
-        storage.registry_integrity_errors_total += 1;
-        continue;
-      }
-      if (!exists && row.quarantined === 1 && now - row.last_used > graceMs) {
-        purge.run(row.sha);
-      }
+    for (const sha of toUnquarantine) {
+      unquarantine.run(sha);
+    }
+    for (const sha of toQuarantine) {
+      quarantine.run(sha);
+    }
+    for (const sha of toPurge) {
+      purge.run(sha);
     }
   })();
+}
+
+function withMigrationLock(db: Database, version: number, migrate: () => void): void {
+  db.run("PRAGMA busy_timeout = 15000");
+  db.run("BEGIN IMMEDIATE");
+  try {
+    migrate();
+    db.query("UPDATE schema_version SET version = ?").run(version);
+    db.run("COMMIT");
+  } catch (error: unknown) {
+    try {
+      db.run("ROLLBACK");
+    } catch (rollbackError) {
+      void rollbackError;
+    }
+    throw error;
+  }
 }
 
 function isEnospcError(error: Error & { code?: unknown }): boolean {
