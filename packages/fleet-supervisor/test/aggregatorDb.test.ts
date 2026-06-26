@@ -35,26 +35,43 @@ describe("aggregator db", () => {
     const dbPath = join(dir, "cluster.db");
     try {
       const db = openAggregatorDb(dbPath);
-      writeSnapshot(db, "mac-mini", snapshot("mac-mini", "2026-05-25T17:00:00Z", 2048));
+      writeSnapshot(
+        db,
+        "mac-mini",
+        snapshot("mac-mini", "2026-05-25T17:00:00Z", 2048),
+        "2026-05-25T17:00:00Z",
+      );
       const rows = getLatestPerNode(db);
       expect(rows).toHaveLength(1);
       expect(rows[0]?.node).toBe("mac-mini");
+      expect(rows[0]?.receivedAt).toBe("2026-05-25T17:00:00Z");
       expect(rows[0]?.snapshot.node_mem.free_mb).toBe(2048);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("multiple upserts for same node: getLatestPerNode returns row with latest ts", () => {
+  test("multiple upserts for same node: getLatestPerNode returns row with latest received_at", () => {
     const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
     const dbPath = join(dir, "cluster.db");
     try {
       const db = openAggregatorDb(dbPath);
-      writeSnapshot(db, "mac-mini", snapshot("mac-mini", "2026-05-25T17:00:00Z", 1024));
-      writeSnapshot(db, "mac-mini", snapshot("mac-mini", "2026-05-25T17:02:00Z", 4096));
+      writeSnapshot(
+        db,
+        "mac-mini",
+        snapshot("mac-mini", "2099-01-01T00:00:00Z", 1024),
+        "2026-05-25T17:00:00Z",
+      );
+      writeSnapshot(
+        db,
+        "mac-mini",
+        snapshot("mac-mini", "2026-05-25T17:02:00Z", 4096),
+        "2026-05-25T17:02:30Z",
+      );
       const rows = getLatestPerNode(db);
       expect(rows).toHaveLength(1);
       expect(rows[0]?.ts).toBe("2026-05-25T17:02:00Z");
+      expect(rows[0]?.receivedAt).toBe("2026-05-25T17:02:30Z");
       expect(rows[0]?.snapshot.node_mem.free_mb).toBe(4096);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -94,16 +111,26 @@ describe("aggregator db", () => {
     }
   });
 
-  test("getLatestPerNode with freshAfterTs excludes rows older than the cutoff", () => {
+  test("getLatestPerNode with freshAfterTs excludes rows whose received_at is older than the cutoff", () => {
     const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
     const dbPath = join(dir, "cluster.db");
     try {
       const db = openAggregatorDb(dbPath);
-      writeSnapshot(db, "stale", snapshot("stale", "2026-01-01T00:00:00Z", 1000));
-      writeSnapshot(db, "fresh", snapshot("fresh", "2026-01-01T01:00:00Z", 2000));
+      writeSnapshot(
+        db,
+        "future-clock-stale",
+        snapshot("future-clock-stale", "2099-01-01T00:00:00Z", 1000),
+        "2026-01-01T00:00:00Z",
+      );
+      writeSnapshot(
+        db,
+        "slow-clock-fresh",
+        snapshot("slow-clock-fresh", "2020-01-01T00:00:00Z", 2000),
+        "2026-01-01T01:00:00Z",
+      );
       const rows = getLatestPerNode(db, { freshAfterTs: "2026-01-01T00:30:00Z" });
       expect(rows).toHaveLength(1);
-      expect(rows[0]?.node).toBe("fresh");
+      expect(rows[0]?.node).toBe("slow-clock-fresh");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -114,7 +141,12 @@ describe("aggregator db", () => {
     const dbPath = join(dir, "cluster.db");
     try {
       const db = openAggregatorDb(dbPath);
-      writeSnapshot(db, "node-a", snapshot("node-a", "2026-01-01T01:00:00Z", 1000));
+      writeSnapshot(
+        db,
+        "node-a",
+        snapshot("node-a", "2020-01-01T01:00:00Z", 1000),
+        "2026-01-01T01:00:00Z",
+      );
       const rows = getLatestPerNode(db, { freshAfterTs: "2026-01-01T01:00:00Z" });
       expect(rows).toHaveLength(1);
       expect(rows[0]?.node).toBe("node-a");

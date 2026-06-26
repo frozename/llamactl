@@ -34,6 +34,7 @@ function snapshot(row: {
   return {
     node: row.node,
     ts: row.ts ?? BASE_TS,
+    receivedAt: row.ts ?? BASE_TS,
     snapshot: {
       kind: "fleet-snapshot",
       ts: row.ts ?? BASE_TS,

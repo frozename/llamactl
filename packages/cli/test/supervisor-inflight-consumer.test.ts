@@ -22,6 +22,7 @@ function peerRow(node: string, tsMs: number, inFlightMoves?: PublishedInFlightMo
   return {
     node,
     ts,
+    receivedAt: ts,
     snapshot: {
       kind: "fleet-snapshot",
       ts,

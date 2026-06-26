@@ -33,6 +33,10 @@ function readLeaseIntent(row: SnapshotRow): LeaseIntent | undefined {
   return { candidate, term, eligible, seq };
 }
 
+function livenessTimestamp(row: SnapshotRow): string {
+  return row.receivedAt;
+}
+
 /**
  * Deterministic leader election over the replicated peer snapshots. Pure: no fs,
  * no clock read, no env — `now` and `staleAfterMs` are injected.
@@ -44,8 +48,8 @@ function readLeaseIntent(row: SnapshotRow): LeaseIntent | undefined {
  * 3. empty kept-set => null (no holder = safe; never "two holders").
  *
  * Skew-free: selection compares self-minted (term, candidate) values, never a
- * cross-node clock subtraction. Liveness alone uses `ts`, always as local-now vs
- * peer-ts.
+ * cross-node clock subtraction. Liveness uses `receivedAt` (aggregator-local
+ * ingest clock), never the peer-minted `ts`, so the gate is skew-free too.
  */
 export function electLeaseHolder(
   peerSnapshots: SnapshotRow[],
@@ -59,7 +63,7 @@ export function electLeaseHolder(
     const lease = readLeaseIntent(row);
     if (!lease?.eligible) continue;
 
-    const tsMs = Date.parse(row.ts);
+    const tsMs = Date.parse(livenessTimestamp(row));
     if (!Number.isFinite(tsMs)) continue;
     if (now - tsMs >= staleAfterMs) continue; // stale -> dead peer, dropped
 

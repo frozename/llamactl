@@ -43,6 +43,7 @@ function rowsFrom(map: SharedMap): SnapshotRow[] {
   return Object.values(map).map((snapshot) => ({
     node: snapshot.node,
     ts: snapshot.ts,
+    receivedAt: snapshot.ts,
     snapshot,
   }));
 }

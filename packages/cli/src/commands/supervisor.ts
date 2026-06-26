@@ -398,7 +398,12 @@ async function directPeerFetchSnapshots(currentNodeName: string): Promise<Snapsh
       try {
         const snapshot = await createPeerFetch(peer)();
         if (!snapshot) return null;
-        return { node: snapshot.node, ts: snapshot.ts, snapshot };
+        return {
+          node: snapshot.node,
+          ts: snapshot.ts,
+          receivedAt: new Date().toISOString(),
+          snapshot,
+        };
       } catch {
         return null;
       }
@@ -445,7 +450,14 @@ function buildSelfLeaseRow(
     workloads: [],
     lease: { candidate: selfNode, term, eligible, seq },
   };
-  return { node: selfNode, ts, snapshot };
+  return { node: selfNode, ts, receivedAt: ts, snapshot };
+}
+
+function snapshotReceiptTs(row: SnapshotRow): string {
+  const shape = row as { receivedAt?: unknown; ts?: unknown };
+  if (typeof shape.receivedAt === "string") return shape.receivedAt;
+  if (typeof shape.ts === "string") return shape.ts;
+  return "";
 }
 
 /** Injectable seam for makeGetLeaseHolder so the real wiring can be exercised in
@@ -605,7 +617,7 @@ export function makeCanSeeFreshDestinationPeer(deps: GetLeaseHolderDeps): () => 
 
   const hasFreshRow = (rows: SnapshotRow[], nowMs: number): boolean =>
     rows.some((row) => {
-      const tsMs = Date.parse(row.ts);
+      const tsMs = Date.parse(snapshotReceiptTs(row));
       return Number.isFinite(tsMs) && nowMs - tsMs < STALE_AFTER_MS;
     });
 
@@ -682,13 +694,13 @@ export function makeIsPeerMovingWorkload(deps: GetLeaseHolderDeps): (workload: s
   };
 
   // Collect the workloads any FRESH peer reports as in-flight. A peer is fresh by
-  // the same `now - ts < STALE_AFTER_MS` test the election uses; loadPeerRows may
-  // already be freshness-filtered, but we re-check here so the direct-fallback
-  // cache (which is not) is held to the same bar.
+  // the same receivedAt liveness test the election uses; loadPeerRows may already
+  // be freshness-filtered, but we re-check here so the direct-fallback cache
+  // (which is not) is held to the same bar.
   const freshInFlightWorkloads = (rows: SnapshotRow[], nowMs: number): Set<string> => {
     const out = new Set<string>();
     for (const row of rows) {
-      const tsMs = Date.parse(row.ts);
+      const tsMs = Date.parse(snapshotReceiptTs(row));
       if (!Number.isFinite(tsMs) || nowMs - tsMs >= STALE_AFTER_MS) continue;
       for (const move of row.snapshot.inFlightMoves ?? []) out.add(move.workload);
     }

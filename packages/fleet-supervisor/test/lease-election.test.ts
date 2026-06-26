@@ -29,7 +29,7 @@ function row(node: string, tsOffsetMs: number, lease: LeaseIntent | undefined): 
     workloads: [],
     ...(lease ? { lease } : {}),
   };
-  return { node, ts, snapshot };
+  return { node, ts, receivedAt: ts, snapshot };
 }
 
 function intent(candidate: string, term: number, eligible: boolean, seq = 1): LeaseIntent {

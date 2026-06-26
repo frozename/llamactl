@@ -18,8 +18,15 @@ const NOW = 1_700_000_000_000;
 /** A peer snapshot exactly as a node's own aggregator stores it in cluster.db:
  *  PEER rows only (listPeers excludes self), every peer eligible:false (no
  *  LLAMACTL_FLEET_MOVE_ENABLED on them). */
-function peerRow(node: string, eligible: boolean, term: number, tsMs: number): SnapshotRow {
+function peerRow(
+  node: string,
+  eligible: boolean,
+  term: number,
+  tsMs: number,
+  receivedAtMs = tsMs,
+): SnapshotRow {
   const ts = new Date(tsMs).toISOString();
+  const receivedAt = new Date(receivedAtMs).toISOString();
   const snapshot: FleetSnapshotEntry = {
     kind: "fleet-snapshot",
     ts,
@@ -36,7 +43,7 @@ function peerRow(node: string, eligible: boolean, term: number, tsMs: number): S
     workloads: [],
     lease: { candidate: node, term, eligible, seq: 1 },
   };
-  return { node, ts, snapshot };
+  return { node, ts, receivedAt, snapshot };
 }
 
 describe("makeGetLeaseHolder — real production wiring over a self-excluded view", () => {
@@ -103,6 +110,28 @@ describe("makeGetLeaseHolder — real production wiring over a self-excluded vie
       loadPeerRows: () => [peerRow("m2-mini", true, 2, NOW - 1_000)],
     });
     expect(getLeaseHolder()).toBe("m2-mini");
+  });
+
+  test("lease liveness uses received_at so future-clock dead peers drop and slow-clock live peers stay", () => {
+    const futureClockDeadPeer = makeGetLeaseHolder({
+      selfNode: "m4-pro",
+      selfLeaseTerm: 9,
+      selfEligible: true,
+      leaseMode: "derived",
+      now: () => NOW,
+      loadPeerRows: () => [peerRow("m2-mini", true, 2, NOW + 60_000, NOW - STALE_AFTER_MS - 1_000)],
+    });
+    expect(futureClockDeadPeer()).toBe("m4-pro");
+
+    const slowClockLivePeer = makeGetLeaseHolder({
+      selfNode: "m4-pro",
+      selfLeaseTerm: 9,
+      selfEligible: true,
+      leaseMode: "derived",
+      now: () => NOW,
+      loadPeerRows: () => [peerRow("m2-mini", true, 2, NOW - STALE_AFTER_MS - 1_000, NOW - 1_000)],
+    });
+    expect(slowClockLivePeer()).toBe("m2-mini");
   });
 
   test("aggregator down/empty + eligible self => SELF synchronously (cold cache never spuriously null)", () => {
