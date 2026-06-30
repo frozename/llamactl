@@ -73,6 +73,33 @@ test("old orphan slot file is deleted", () => {
   }
 });
 
+test("orphan slot file's trailer sidecar is deleted alongside it", () => {
+  const t = makeTempRoot();
+  try {
+    const slotDir = join(t.root, "slots");
+    mkdirSync(slotDir, { recursive: true });
+    const orphanPath = join(slotDir, "orphan-sha.kvslot");
+    // kvstore/trailer.ts writes the sidecar as `${slotFile}.trailer.json`; it is
+    // not itself a .kvslot file so the sweep never matches it directly.
+    const trailerPath = `${orphanPath}.trailer.json`;
+    writeFileSync(orphanPath, "old-orphan");
+    writeFileSync(trailerPath, "{}");
+    const now = Date.now();
+    utimesSync(orphanPath, new Date(now - 20_000), new Date(now - 20_000));
+
+    const storage = openKvStorage(t.root);
+    const registry = new KvRegistry(storage);
+    const result = sweepOrphanSlotFiles({ slotDir, registry, ttlMs: 10_000, now });
+    // The sidecar is not counted as its own orphan, but it must not leak.
+    expect(result).toEqual({ orphansFound: 1, orphansDeleted: 1 });
+    expect(existsSync(orphanPath)).toBe(false);
+    expect(existsSync(trailerPath)).toBe(false);
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("slot file with registry entry is preserved", () => {
   const t = makeTempRoot();
   try {

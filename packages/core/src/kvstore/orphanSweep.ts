@@ -43,6 +43,11 @@ export function sweepOrphanSlotFiles(
     if (!stat) continue;
     if (stat.mtimeMs > cutoff) continue;
     if (!safeDelete(fullPath)) continue;
+    // The slot's trailer sidecar (kvstore/trailer.ts writes `${slot}.trailer.json`)
+    // is not itself a .kvslot file, so parseShaFromSlotFile never matches it —
+    // delete it alongside the slot or it leaks. Best-effort: a missing sidecar
+    // is a no-op.
+    safeDelete(`${fullPath}.trailer.json`);
     orphansDeleted += 1;
   }
 

@@ -93,6 +93,25 @@ function positionalArgs(argv: string[]): string[] {
   return argv.filter((a) => !a.startsWith("--"));
 }
 
+/**
+ * Collect every repeated `--env=KEY=VALUE` flag into an env record. Unlike
+ * parseKv (which keys on the flag name and so collapses repeated `--env` to the
+ * last one), this keys on KEY, so `--env=A=1 --env=B=2` yields both. The value
+ * may itself contain '=' (split on the FIRST '='); a later duplicate KEY wins,
+ * matching shell env-assignment semantics.
+ */
+export function collectEnvEntries(argv: string[]): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const arg of argv) {
+    if (!arg.startsWith("--env=")) continue;
+    const body = arg.slice("--env=".length);
+    const eq = body.indexOf("=");
+    if (eq <= 0) continue; // require a non-empty KEY before '='
+    env[body.slice(0, eq)] = body.slice(eq + 1);
+  }
+  return env;
+}
+
 async function runList(): Promise<number> {
   const client = getNodeClient();
   const rows = await client.infraList.query();
@@ -241,15 +260,7 @@ async function runService(argv: string[]): Promise<number> {
     return 1;
   }
   if (action === "write-unit") {
-    const kv = parseKv(rest);
-    // --env=KEY=VALUE can be repeated; parseKv collapses to one. Use
-    // positional repetition if operators need multiple — deferred.
-    const envEntries: Record<string, string> = {};
-    if (kv.has("env")) {
-      const val = kv.get("env") ?? "";
-      const eq = val.indexOf("=");
-      if (eq > 0) envEntries[val.slice(0, eq)] = val.slice(eq + 1);
-    }
+    const envEntries = collectEnvEntries(rest);
     const client = getNodeClient();
     const result = await client.infraServiceWriteUnit.mutate({ pkg, env: envEntries });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

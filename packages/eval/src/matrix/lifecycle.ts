@@ -255,16 +255,19 @@ async function probeBootedServer(
   }
 }
 
-async function waitForHealthyBoot(
+export async function waitForHealthyBoot(
   model: ModelSpec,
   proc: ChildProcess,
   stderrTail: string[],
 ): Promise<BootResult> {
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (proc.exitCode !== null) {
+    if (hasExited(proc)) {
+      const signalCode = (proc as { signalCode?: NodeJS.Signals | null }).signalCode;
+      const how =
+        proc.exitCode !== null ? `code=${String(proc.exitCode)}` : `signal=${String(signalCode)}`;
       throw new Error(
-        `llama-server for ${model.name} exited before /health came up (code=${String(proc.exitCode)})\n--- stderr tail ---\n${stderrTail.join("\n")}`,
+        `llama-server for ${model.name} exited before /health came up (${how})\n--- stderr tail ---\n${stderrTail.join("\n")}`,
       );
     }
     if (await pingHealth(model.host, model.port)) {

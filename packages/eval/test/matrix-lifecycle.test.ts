@@ -13,6 +13,7 @@ import {
   type ModelSpec,
   probeInference,
   teardownIfOwned,
+  waitForHealthyBoot,
 } from "../src/index.js";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
@@ -237,6 +238,30 @@ describe("probeInference", () => {
       globalThis.fetch = origFetch;
     }
   });
+});
+
+describe("waitForHealthyBoot", () => {
+  // A SIGTERM/SIGKILL-killed llama-server keeps exitCode === null and reports
+  // the death only in signalCode. The boot wait must observe that (via hasExited)
+  // and fail promptly instead of spinning until HEALTH_TIMEOUT_MS (120s).
+  test("detects a signal-killed server (exitCode null, signalCode set) promptly", async () => {
+    const proc = {
+      exitCode: null,
+      signalCode: "SIGKILL",
+      kill: () => false,
+    } as unknown as ChildProcess;
+    // Port 1 is closed so pingHealth never succeeds; on the unfixed code this
+    // spins to the 120s timeout instead of catching the signal death.
+    const model = { name: "fake", host: "127.0.0.1", port: 1 } as unknown as ModelSpec;
+    let caught: unknown;
+    try {
+      await waitForHealthyBoot(model, proc, ["boom"]);
+    } catch (error: unknown) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(String(caught)).toMatch(/SIGKILL|signal/i);
+  }, 10_000);
 });
 
 describe("teardownIfOwned", () => {
