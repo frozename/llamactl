@@ -91,6 +91,7 @@ describe("MigrationController", () => {
     expect(MIGRATION_POLICY_DEFAULTS).toEqual({
       moveProposalTtlMs: 30_000,
       moveCooldownTicks: 10,
+      tickIntervalMs: 30_000,
       healthTimeoutMs: 300_000,
       minDestinationFreeMb: 512,
     });
@@ -218,12 +219,75 @@ describe("MigrationController", () => {
       getNowMs: (): number => nowMs,
       moveCooldownTicks: 10,
       pollIntervalMs: 100,
+      tickIntervalMs: 30_000,
       readRecentMoves: (): { workload: string; movedAtMs: number }[] => [
         { workload: "w1", movedAtMs: nowMs - 500 },
       ],
     });
 
     expect(seeded.isInMoveCooldown("w1")).toBe(true);
+  });
+
+  it("F25: live move cooldown fallback uses the supervisor tick interval", () => {
+    const startMs = nowMs;
+    const makeFallbackController = (): MigrationController =>
+      new MigrationController({
+        peers: ["m2mini"],
+        fetchSnapshot: async (): Promise<NodeSnapshot> => ({
+          node: "m2mini",
+          pressureState: "NORMAL",
+          nodeMem: { freeMb: 4096 },
+          workloads: [],
+        }),
+        selfNode: "m4pro",
+        getLeaseHolder: (): string | null => "m4pro",
+        getNowMs: (): number => nowMs,
+        moveCooldownTicks: 10,
+        pollIntervalMs: 1_000,
+        tickIntervalMs: 30_000,
+      });
+
+    const active = makeFallbackController();
+    active.markMoveInFlight("w1");
+    nowMs = startMs + 10 * 1_000 + 1;
+    expect(active.isInMoveCooldown("w1")).toBe(true);
+
+    nowMs = startMs;
+    const expired = makeFallbackController();
+    expired.markMoveInFlight("w1");
+    nowMs = startMs + 10 * 30_000 + 1;
+    expect(expired.isInMoveCooldown("w1")).toBe(false);
+  });
+
+  it("F26: restored move cooldown fallback uses the supervisor tick interval", () => {
+    const startMs = nowMs;
+    const makeRestoredController = (): MigrationController =>
+      new MigrationController({
+        peers: ["m2mini"],
+        fetchSnapshot: async (): Promise<NodeSnapshot> => ({
+          node: "m2mini",
+          pressureState: "NORMAL",
+          nodeMem: { freeMb: 4096 },
+          workloads: [],
+        }),
+        selfNode: "m4pro",
+        getLeaseHolder: (): string | null => "m4pro",
+        getNowMs: (): number => nowMs,
+        moveCooldownTicks: 10,
+        pollIntervalMs: 1_000,
+        tickIntervalMs: 30_000,
+        readRecentMoves: (): { workload: string; movedAtMs: number }[] => [
+          { workload: "w1", movedAtMs: startMs },
+        ],
+      });
+
+    const active = makeRestoredController();
+    nowMs = startMs + 10 * 1_000 + 1;
+    expect(active.isInMoveCooldown("w1")).toBe(true);
+
+    nowMs = startMs + 10 * 30_000 + 1;
+    const expired = makeRestoredController();
+    expect(expired.isInMoveCooldown("w1")).toBe(false);
   });
 
   it("T7: executeMove deploys then advancePendingHealthPolls writes skipped-evict and executed move", async () => {
@@ -551,6 +615,7 @@ describe("MigrationController", () => {
       getNowMs: (): number => nowMs,
       moveCooldownTicks: 2,
       pollIntervalMs: 100,
+      tickIntervalMs: 100,
     });
 
     noTickController.markMoveInFlight("model-a");
@@ -735,6 +800,7 @@ describe("MigrationController", () => {
       getNowMs: (): number => nowMs,
       moveCooldownTicks: 2,
       pollIntervalMs: 100,
+      tickIntervalMs: 100,
     });
     gcController.markMoveInFlight("model-a");
     expect(gcController.isInMoveCooldown("model-a")).toBe(true);

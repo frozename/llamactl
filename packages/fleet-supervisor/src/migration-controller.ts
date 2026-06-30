@@ -82,6 +82,7 @@ export interface MigrationControllerDeps {
   moveCooldownTicks?: number;
   healthTimeoutMs?: number;
   pollIntervalMs?: number;
+  tickIntervalMs?: number;
   minDestinationFreeMb?: number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -89,6 +90,7 @@ export interface MigrationControllerDeps {
 export const MIGRATION_POLICY_DEFAULTS = {
   moveProposalTtlMs: 30_000,
   moveCooldownTicks: 10,
+  tickIntervalMs: 30_000,
   healthTimeoutMs: 300_000,
   minDestinationFreeMb: 512,
 } as const;
@@ -163,6 +165,10 @@ export class MigrationController {
 
   private get pollIntervalMs(): number {
     return this.deps.pollIntervalMs ?? 1_000;
+  }
+
+  private get tickIntervalMs(): number {
+    return this.deps.tickIntervalMs ?? MIGRATION_POLICY_DEFAULTS.tickIntervalMs;
   }
 
   private get minDestinationFreeMb(): number {
@@ -303,7 +309,7 @@ export class MigrationController {
     const active =
       state.tick !== undefined && this.deps.getCurrentTick
         ? this.currentTick - state.tick < this.moveCooldownTicks
-        : this.nowMs - state.movedAtMs < this.moveCooldownTicks * this.pollIntervalMs;
+        : this.nowMs - state.movedAtMs < this.moveCooldownTicks * this.tickIntervalMs;
     if (!active) this.inFlightMoves.delete(workload);
     return active;
   }

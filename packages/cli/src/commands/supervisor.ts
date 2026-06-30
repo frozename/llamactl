@@ -766,7 +766,7 @@ function buildMigrationController(
 ): MigrationController | null {
   if (!migrationEnabled) return null;
   const peers = listPeers({ currentNodeName: flags.node });
-  return createMigrationController({
+  const deps: MigrationControllerDeps & { tickIntervalMs: number } = {
     peers: peers.map((peer) => peer.id),
     fetchSnapshot: async (node) => {
       const peer = peers.find((candidate) => candidate.id === node);
@@ -814,7 +814,9 @@ function buildMigrationController(
       selfEligible: migrationEnabled,
     }),
     getNowMs: () => Date.now(),
-  });
+    tickIntervalMs: flags.intervalMs,
+  };
+  return createMigrationController(deps);
 }
 
 function buildSupervisorLoopOptions(
