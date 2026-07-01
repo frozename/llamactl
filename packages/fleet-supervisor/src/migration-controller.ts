@@ -411,8 +411,14 @@ export class MigrationController {
     // only source cleanup is stuck — that path falls through to source-only
     // retry below, leaving the healthy destination in place.
     if (timedOut && !poll.destinationReachableObserved) {
-      this.pendingHealthPolls.delete(workloadName);
-      await this.cleanupTimedOutDeploy(proposal, ts, action, writeJournalEntry, removeWorkload);
+      await this.cleanupTimedOutDeploy(
+        workloadName,
+        proposal,
+        ts,
+        action,
+        writeJournalEntry,
+        removeWorkload,
+      );
       return;
     }
 
@@ -454,6 +460,7 @@ export class MigrationController {
   }
 
   private async cleanupTimedOutDeploy(
+    workloadName: string,
     proposal: MoveProposal,
     ts: string,
     action: FleetExecutionEntry["action"],
@@ -470,10 +477,11 @@ export class MigrationController {
         proposalId: proposal.proposalId,
         action,
         status: "failed",
-        reason: `timeout waiting for destination health; destination cleanup failed: ${(err as Error).message}; manual intervention required`,
+        reason: `timeout waiting for destination health; destination cleanup failed: ${(err as Error).message}; will retry`,
       });
       return;
     }
+    this.pendingHealthPolls.delete(workloadName);
     writeJournalEntry({
       kind: "fleet-execution",
       ts,

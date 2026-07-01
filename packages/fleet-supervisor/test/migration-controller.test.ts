@@ -478,6 +478,77 @@ describe("MigrationController", () => {
     expect(failed?.reason).toContain("timeout waiting for destination health");
   });
 
+  it("M-fleet8: advancePendingHealthPolls retries timed-out destination cleanup after removal failure", async () => {
+    const removeCalls: { workload: string; fromNode: string }[] = [];
+    let removeAttempts = 0;
+    const retryDestinationController = new MigrationController({
+      peers: ["m2mini", "m4pro"],
+      fetchSnapshot: async (node): Promise<NodeSnapshot> =>
+        node === "m2mini"
+          ? {
+              node: "m2mini",
+              pressureState: "NORMAL",
+              nodeMem: { freeMb: 8000 },
+              workloads: [{ name: "model-a", reachable: false }],
+            }
+          : {
+              node,
+              pressureState: "NORMAL",
+              nodeMem: { freeMb: 4096 },
+              workloads: [],
+            },
+      deployWorkload: async (w, toNode): Promise<void> => {
+        applyCalls.push({ workload: w, toNode });
+      },
+      removeWorkload: async (w, fromNode): Promise<void> => {
+        removeAttempts += 1;
+        removeCalls.push({ workload: w, fromNode });
+        if (removeAttempts === 1) throw new Error("destination stop failed");
+      },
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
+      getNowMs: (): number => nowMs,
+      getCurrentTick: (): number => tick,
+      healthTimeoutMs: 5,
+      pollIntervalMs: 1,
+    });
+
+    const result = await retryDestinationController.executeMove(proposal(), (entry) =>
+      journal.push(entry),
+    );
+
+    expect(result).toBe("pending_health_check");
+    nowMs += 10;
+
+    await retryDestinationController.advancePendingHealthPolls();
+
+    expect(removeCalls).toEqual([{ workload: "model-a", fromNode: "m2mini" }]);
+    const retryFailed = journal.find(
+      (entry): entry is FleetExecutionEntry =>
+        entry.kind === "fleet-execution" &&
+        entry.proposalId === "move-1" &&
+        entry.status === "failed" &&
+        entry.reason?.includes("will retry") === true,
+    );
+    expect(retryFailed).toBeTruthy();
+    expect(retryFailed?.reason).toContain("destination stop failed");
+
+    await retryDestinationController.advancePendingHealthPolls();
+
+    expect(removeCalls).toEqual([
+      { workload: "model-a", fromNode: "m2mini" },
+      { workload: "model-a", fromNode: "m2mini" },
+    ]);
+    const timedOut = journal.find(
+      (entry): entry is FleetExecutionEntry =>
+        entry.kind === "fleet-execution" &&
+        entry.proposalId === "move-1" &&
+        entry.status === "failed" &&
+        entry.reason === "timeout waiting for destination health",
+    );
+    expect(timedOut).toBeTruthy();
+  });
+
   it("T9: executeMove returns destination_unavailable and does not skip evict when destination headroom is lost", async () => {
     snapshots["m2mini"] = {
       node: "m2mini",
