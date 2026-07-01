@@ -27,7 +27,7 @@ export function parseVmStatOutput(raw: string): NodeMemSnapshot {
     swap_out: 0,
   };
 
-  let matchedFields = 0;
+  let matchedPageFields = 0;
   for (const line of raw.split("\n")) {
     const pageMatch = /^(.+?):\s+([\d.]+)\./.exec(line);
     if (!pageMatch) continue;
@@ -39,19 +39,17 @@ export function parseVmStatOutput(raw: string): NodeMemSnapshot {
     const field = PAGE_FIELDS[label];
     if (field) {
       snap[field] = toMb(count);
-      matchedFields++;
+      matchedPageFields++;
       continue;
     }
     if (label === "Swapins") {
       snap.swap_in = count;
-      matchedFields++;
     } else if (label === "Swapouts") {
       snap.swap_out = count;
-      matchedFields++;
     }
   }
 
-  if (matchedFields === 0) {
+  if (matchedPageFields < Object.keys(PAGE_FIELDS).length) {
     snap.available = false;
   }
 

@@ -39,12 +39,17 @@ describe("parseVmStatOutput unavailable", () => {
     expect(snap.available).toBe(false);
   });
 
-  it("does not mark valid output unavailable", () => {
+  it("returns available:false when only some page fields are present", () => {
     const FAKE = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
-Pages free:                         1031.`;
+Pages free:                         1031.
+Pages active:                        912.`;
     const snap = parseVmStatOutput(FAKE);
-    expect(snap.available).not.toBe(false);
+    expect(snap.available).toBe(false);
     expect(snap.free_mb).toBeGreaterThan(0);
+    expect(snap.active_mb).toBeGreaterThan(0);
+    expect(snap.inactive_mb).toBe(0);
+    expect(snap.wired_mb).toBe(0);
+    expect(snap.compressor_mb).toBe(0);
   });
 });
 
