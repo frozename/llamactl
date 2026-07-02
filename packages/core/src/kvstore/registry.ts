@@ -146,11 +146,19 @@ export class KvRegistry {
     return this.get(sha);
   }
 
-  delete(sha: string): boolean {
+  delete(sha: string, expectedUpstreamSlotFile?: string): boolean {
+    if (expectedUpstreamSlotFile === undefined) {
+      return deleteReturning(
+        this.storage,
+        "DELETE FROM kv_entries WHERE sha = ? RETURNING upstream_slot_file",
+        sha,
+      );
+    }
     return deleteReturning(
       this.storage,
-      "DELETE FROM kv_entries WHERE sha = ? RETURNING upstream_slot_file",
+      "DELETE FROM kv_entries WHERE sha = ? AND upstream_slot_file = ? RETURNING upstream_slot_file",
       sha,
+      expectedUpstreamSlotFile,
     );
   }
 
@@ -193,15 +201,27 @@ export class KvRegistry {
     return (result.changes ?? 0) > 0;
   }
 
-  tryDelete(sha: string): boolean {
-    return deleteReturning(
-      this.storage,
-      `
+  tryDelete(sha: string, expectedUpstreamSlotFile?: string): boolean {
+    if (expectedUpstreamSlotFile === undefined) {
+      return deleteReturning(
+        this.storage,
+        `
       DELETE FROM kv_entries
       WHERE sha = ? AND state = 'idle'
       RETURNING upstream_slot_file
     `,
+        sha,
+      );
+    }
+    return deleteReturning(
+      this.storage,
+      `
+      DELETE FROM kv_entries
+      WHERE sha = ? AND state = 'idle' AND upstream_slot_file = ?
+      RETURNING upstream_slot_file
+    `,
       sha,
+      expectedUpstreamSlotFile,
     );
   }
 
@@ -296,8 +316,8 @@ function unlinkSlotArtifacts(path: string): void {
   }
 }
 
-function deleteReturning(storage: KvStorage, sql: string, sha: string): boolean {
-  const rows = storage.db.query(sql).all(sha) as { upstream_slot_file: string }[];
+function deleteReturning(storage: KvStorage, sql: string, ...params: string[]): boolean {
+  const rows = storage.db.query(sql).all(...params) as { upstream_slot_file: string }[];
   for (const row of rows) unlinkSlotArtifacts(row.upstream_slot_file);
   return rows.length > 0;
 }

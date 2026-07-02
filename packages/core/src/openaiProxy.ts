@@ -1473,14 +1473,15 @@ async function applyWarmKvHit(
   if (!(activateWrite.ok && restore.ok && activateState.activated)) {
     runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
     lease.release();
-    if (!restore.ok) runtime.storage.safeWrite(() => runtime.registry.delete(hit.sha));
+    if (!restore.ok)
+      runtime.storage.safeWrite(() => runtime.registry.delete(hit.sha, hit.upstreamSlotFile));
     return null;
   }
   const replay = applyAnthropicToolMapReplay(context, runtime, hit, metadata.workload);
   if (replay.kind === "mismatch") {
     runtime.storage.safeWrite(() => runtime.registry.release(hit.sha));
     lease.release();
-    runtime.storage.safeWrite(() => runtime.registry.tryDelete(hit.sha));
+    runtime.storage.safeWrite(() => runtime.registry.tryDelete(hit.sha, hit.upstreamSlotFile));
     return null;
   }
   const effectiveSha = replay.kind === "replayed" ? replay.sha : sha;

@@ -341,3 +341,63 @@ test("delete and tryDelete unlink slot files and trailer siblings, and deleteEpo
     t.cleanup();
   }
 });
+
+test("delete() guarded by captured upstream_slot_file does not destroy a concurrently re-inserted row with the same sha", () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openKvStorage(t.root);
+    const registry = new KvRegistry(storage);
+    const f1 = join(t.root, "f1.kvslot");
+    const f2 = join(t.root, "f2.kvslot");
+    writeFileSync(f1, "f1");
+    writeFileSync(`${f1}.trailer.json`, "trailer1");
+    writeFileSync(f2, "f2");
+    writeFileSync(`${f2}.trailer.json`, "trailer2");
+
+    registry.insert(baseEntry({ sha: "S", upstreamSlotFile: f1 }));
+    expect(registry.reserve("S")).toBe(true);
+
+    registry.insert(baseEntry({ sha: "S", upstreamSlotFile: f2 }));
+
+    registry.release("S");
+    expect(registry.delete("S", f1)).toBe(false);
+
+    expect(registry.findBySha("S")?.upstreamSlotFile).toBe(f2);
+    expect(existsSync(f2)).toBe(true);
+    expect(existsSync(`${f2}.trailer.json`)).toBe(true);
+
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("tryDelete() guarded by captured upstream_slot_file does not destroy a concurrently re-inserted row with the same sha", () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openKvStorage(t.root);
+    const registry = new KvRegistry(storage);
+    const f1 = join(t.root, "g1.kvslot");
+    const f2 = join(t.root, "g2.kvslot");
+    writeFileSync(f1, "f1");
+    writeFileSync(`${f1}.trailer.json`, "trailer1");
+    writeFileSync(f2, "f2");
+    writeFileSync(`${f2}.trailer.json`, "trailer2");
+
+    registry.insert(baseEntry({ sha: "T", upstreamSlotFile: f1 }));
+    expect(registry.reserve("T")).toBe(true);
+
+    registry.insert(baseEntry({ sha: "T", upstreamSlotFile: f2 }));
+
+    registry.release("T");
+    expect(registry.tryDelete("T", f1)).toBe(false);
+
+    expect(registry.findBySha("T")?.upstreamSlotFile).toBe(f2);
+    expect(existsSync(f2)).toBe(true);
+    expect(existsSync(`${f2}.trailer.json`)).toBe(true);
+
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});
