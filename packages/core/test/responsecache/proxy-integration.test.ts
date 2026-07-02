@@ -1208,6 +1208,126 @@ test("peer route cache invalidates when the peer revision changes (restart/swap)
   }
 });
 
+test("peer route non-deterministic request bypasses response cache", async () => {
+  const runtime = makeTempRuntime();
+  const upstreamBase = "http://127.0.0.1:19501";
+  let chatCalls = 0;
+  globalThis.fetch = ((input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method =
+      init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
+    const parsed = new URL(url);
+    if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
+      const body = typeof init?.body === "string" ? init.body : "";
+      chatCalls += 1;
+      return Promise.resolve(chatResponseForMode("json", chatCalls, body));
+    }
+    return Promise.resolve(new Response("", { status: 404 }));
+  }) as typeof fetch;
+
+  try {
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(
+      peerClusterRouting(upstreamBase, 19501, Date.now()),
+    );
+    const body = JSON.stringify({
+      model: PEER_MODEL,
+      messages: [{ role: "user", content: "peer sampled bypass" }],
+      temperature: 0.7,
+    });
+    const first = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+      runtime.env,
+    );
+    const second = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+      runtime.env,
+    );
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(chatCalls).toBe(2);
+
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    expect(
+      registry.findBySha(
+        lookupScope({
+          sha: canonicalRequestSha(body),
+          model: PEER_MODEL,
+          workload: `${PEER_NODE_ID}:${PEER_MODEL}`,
+          workloadEpoch: `peer:${PEER_NODE_ID}:${PEER_MODEL}`,
+        }),
+      ),
+    ).toBeNull();
+    storage.close();
+  } finally {
+    runtime.cleanup();
+  }
+});
+
+test("peer route keeps KV slot path local-only for deterministic requests", async () => {
+  const runtime = makeTempRuntime();
+  const upstreamBase = "http://127.0.0.1:19501";
+  let chatCalls = 0;
+  let slotCalls = 0;
+  const capturedBodies: string[] = [];
+  globalThis.fetch = ((input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method =
+      init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
+    const parsed = new URL(url);
+    if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
+      chatCalls += 1;
+      const body = typeof init?.body === "string" ? init.body : "";
+      capturedBodies.push(body);
+      return Promise.resolve(chatResponseForMode("json", chatCalls, body));
+    }
+    if (parsed.pathname.startsWith("/v1/slots/")) {
+      slotCalls += 1;
+      return Promise.resolve(Response.json({}));
+    }
+    return Promise.resolve(new Response("", { status: 404 }));
+  }) as typeof fetch;
+
+  try {
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests(
+      peerClusterRouting(upstreamBase, 19501, Date.now()),
+    );
+    const body = JSON.stringify({
+      model: PEER_MODEL,
+      messages: [{ role: "user", content: "peer deterministic" }],
+      temperature: 0,
+    });
+    const response = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+      runtime.env,
+    );
+    expect(response.status).toBe(200);
+    expect(chatCalls).toBe(1);
+    expect(slotCalls).toBe(0);
+
+    const upstreamBody = JSON.parse(capturedBodies[0] ?? "{}") as {
+      x_omlx_request_handle?: unknown;
+    };
+    expect(Object.prototype.hasOwnProperty.call(upstreamBody, "x_omlx_request_handle")).toBe(false);
+  } finally {
+    runtime.cleanup();
+  }
+});
+
 function writeModelHostWorkload(
   runtimeRoot: string,
   workload: string,
