@@ -36,11 +36,23 @@ EXIT CODES:
   2 — usage / manifest error
 `;
 
+function randomStartPort(base = 18000): number {
+  const offset = Math.floor(Math.random() * 500);
+  return base + offset;
+}
+
+const FREE_PORT_SEARCH_WINDOW = 1000;
+const MAX_ADMIT_MEASURE_ATTEMPTS = 3;
+
 function findFreePort(start: number): Promise<number> {
   return new Promise((resolve, reject) => {
     function tryPort(p: number): void {
-      if (p > start + 200) {
-        reject(new Error(`No free port found in range ${String(start)}–${String(start + 200)}`));
+      if (p > start + FREE_PORT_SEARCH_WINDOW) {
+        reject(
+          new Error(
+            `No free port found in range ${String(start)}–${String(start + FREE_PORT_SEARCH_WINDOW)}`,
+          ),
+        );
         return;
       }
       const srv = createServer();
@@ -218,23 +230,136 @@ function parseMeasureFlags(args: string[]): MeasureFlags {
   return { overridePort, steadyStateSecs, samples };
 }
 
+function tailCapturedStderr(stderr: string): string {
+  const lines = stderr.trim().split("\n").filter(Boolean);
+  if (lines.length <= 0) return "";
+  return lines.slice(-Math.min(8, lines.length)).join("\n");
+}
+
 async function awaitSandboxHealth(
   proc: ChildProcess,
   pid: number,
   healthUrl: string,
   timeoutSecs: number,
-): Promise<boolean> {
+  hasExited: () => boolean,
+): Promise<{ healthy: boolean; exitedBeforeHealth: boolean }> {
   try {
     process.stdout.write(
       `waiting for health at ${healthUrl} (pid ${String(pid)}, timeout ${String(timeoutSecs)}s)...\n`,
     );
     await waitForHealth(healthUrl, timeoutSecs * 1000);
-    return true;
+    return { healthy: true, exitedBeforeHealth: false };
   } catch (err) {
     console.error(`admit measure: ${(err as Error).message}`);
     proc.kill("SIGKILL");
-    return false;
+    return { healthy: false, exitedBeforeHealth: hasExited() };
   }
+}
+
+async function runMeasureAttempt(
+  config: LaunchConfig,
+  port: number,
+  steadyStateSecs: number,
+  samples: number,
+): Promise<
+  | { kind: "success" }
+  | { kind: "retry"; error: string; stderrTail: string }
+  | { kind: "failure"; error: string; stderrTail: string }
+> {
+  const healthUrl = `http://127.0.0.1:${String(port)}${config.healthPath}`;
+  const cmdArgs = [...config.launchArgs, "--port", String(port), "--host", "127.0.0.1"];
+
+  process.stdout.write(`launching: ${config.binary} ... --port ${String(port)}\n`);
+
+  let stderr = "";
+  const proc = spawn(config.binary, cmdArgs, {
+    stdio: ["ignore", "ignore", "pipe"],
+    detached: false,
+  });
+  const pid = proc.pid;
+  if (pid === undefined) {
+    return {
+      kind: "failure",
+      error: "admit measure: failed to spawn process (no PID)",
+      stderrTail: "",
+    };
+  }
+
+  proc.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+
+  const exitedEarly = { value: false };
+  proc.once("exit", () => {
+    exitedEarly.value = true;
+  });
+  const hasExitedEarly = (): boolean => exitedEarly.value;
+
+  const { healthy, exitedBeforeHealth } = await awaitSandboxHealth(
+    proc,
+    pid,
+    healthUrl,
+    config.timeoutSecs,
+    hasExitedEarly,
+  );
+  if (!healthy) {
+    if (exitedBeforeHealth) {
+      return {
+        kind: "retry",
+        error: "admit measure: process exited before health check passed",
+        stderrTail: tailCapturedStderr(stderr),
+      };
+    }
+    return {
+      kind: "failure",
+      error: "admit measure: health check failed",
+      stderrTail: tailCapturedStderr(stderr),
+    };
+  }
+
+  process.stdout.write(
+    `sampling RSS over ${String(steadyStateSecs)}s (${String(samples)} samples)...\n`,
+  );
+  const intervalMs = Math.max(1000, Math.round((steadyStateSecs * 1000) / Math.max(samples, 1)));
+  const rssSamples = await collectRssSamples(pid, samples, intervalMs, hasExitedEarly);
+
+  process.stdout.write("terminating sandbox...\n");
+  const cleanExit = await killGracefully(proc);
+  if (!cleanExit) console.warn("admit measure: process did not exit cleanly (SIGKILL sent)");
+
+  if (rssSamples.length === 0) {
+    return {
+      kind: "failure",
+      error: "admit measure: no RSS samples collected (process may have exited too early)",
+      stderrTail: tailCapturedStderr(stderr),
+    };
+  }
+
+  const rssMeanMb = rssSamples.reduce((a, b) => a + b, 0) / rssSamples.length;
+  const rssPeakMb = Math.max(...rssSamples);
+
+  const entry: MeasuredMemoryEntry = {
+    workloadName: config.workloadName,
+    measuredAt: new Date().toISOString(),
+    rssMeanMb,
+    rssPeakMb,
+    sampleCount: rssSamples.length,
+    engineKind: config.engineKind,
+    binary: config.binary,
+  };
+
+  writeMeasuredMemoryCache(config.modelKey, entry);
+
+  const cachePath =
+    process.env["LLAMACTL_MEASURED_MEMORY_PATH"] ?? "~/.llamactl/measured-memory.json";
+  process.stdout.write(`\nmeasured: ${config.workloadName}\n`);
+  process.stdout.write(`  model key:  ${config.modelKey}\n`);
+  process.stdout.write(`  peak RSS:   ${rssPeakMb.toFixed(1)} MiB\n`);
+  process.stdout.write(`  mean RSS:   ${rssMeanMb.toFixed(1)} MiB\n`);
+  process.stdout.write(`  samples:    ${String(rssSamples.length)}\n`);
+  process.stdout.write(`  cached:     ${cachePath}\n`);
+
+  return { kind: "success" };
 }
 
 async function collectRssSamples(
@@ -253,6 +378,7 @@ async function collectRssSamples(
   return rssSamples;
 }
 
+// eslint-disable-next-line sonarjs/cognitive-complexity -- keep all admission retry orchestration in one place
 export async function runAdmitMeasure(args: string[]): Promise<number> {
   const target = args[0];
   if (!target || target === "--help" || target === "-h") {
@@ -281,70 +407,39 @@ export async function runAdmitMeasure(args: string[]): Promise<number> {
     return 2;
   }
 
-  const port = overridePort ?? (await findFreePort(18000));
-  const healthUrl = `http://127.0.0.1:${String(port)}${config.healthPath}`;
-  const cmdArgs = [...config.launchArgs, "--port", String(port), "--host", "127.0.0.1"];
+  const maxAttempts = overridePort === undefined ? MAX_ADMIT_MEASURE_ATTEMPTS : 1;
+  let attempt = 0;
 
-  process.stdout.write(`launching: ${config.binary} ... --port ${String(port)}\n`);
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    const scanStart = overridePort ?? randomStartPort(18000);
+    let port: number;
+    try {
+      port = overridePort ?? (await findFreePort(scanStart));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`admit measure: ${message}`);
+      if (overridePort === undefined && attempt < maxAttempts) {
+        continue;
+      }
+      return 1;
+    }
 
-  const proc = spawn(config.binary, cmdArgs, { stdio: "ignore", detached: false });
-  const pid = proc.pid;
-  if (pid === undefined) {
-    console.error("admit measure: failed to spawn process (no PID)");
+    const result = await runMeasureAttempt(config, port, steadyStateSecs, samples);
+    if (result.kind === "success") return 0;
+
+    console.error(result.error);
+    if (result.stderrTail) {
+      console.error("  launch stderr (tail):");
+      console.error(result.stderrTail);
+    }
+
+    if (result.kind === "retry" && attempt < maxAttempts && overridePort === undefined) {
+      continue;
+    }
+
     return 1;
   }
 
-  const exitedEarly = { value: false };
-  proc.once("exit", () => {
-    exitedEarly.value = true;
-  });
-  const hasExitedEarly = (): boolean => exitedEarly.value;
-
-  const healthy = await awaitSandboxHealth(proc, pid, healthUrl, config.timeoutSecs);
-  if (!healthy) return 1;
-
-  if (exitedEarly.value) {
-    console.error("admit measure: process exited before health check passed");
-    return 1;
-  }
-
-  process.stdout.write(
-    `sampling RSS over ${String(steadyStateSecs)}s (${String(samples)} samples)...\n`,
-  );
-  const intervalMs = Math.max(1000, Math.round((steadyStateSecs * 1000) / Math.max(samples, 1)));
-  const rssSamples = await collectRssSamples(pid, samples, intervalMs, hasExitedEarly);
-
-  process.stdout.write("terminating sandbox...\n");
-  const cleanExit = await killGracefully(proc);
-  if (!cleanExit) console.warn("admit measure: process did not exit cleanly (SIGKILL sent)");
-
-  if (rssSamples.length === 0) {
-    console.error("admit measure: no RSS samples collected (process may have exited too early)");
-    return 1;
-  }
-
-  const rssMeanMb = rssSamples.reduce((a, b) => a + b, 0) / rssSamples.length;
-  const rssPeakMb = Math.max(...rssSamples);
-
-  const entry: MeasuredMemoryEntry = {
-    workloadName: config.workloadName,
-    measuredAt: new Date().toISOString(),
-    rssMeanMb,
-    rssPeakMb,
-    sampleCount: rssSamples.length,
-    engineKind: config.engineKind,
-    binary: config.binary,
-  };
-
-  writeMeasuredMemoryCache(config.modelKey, entry);
-
-  const cachePath =
-    process.env["LLAMACTL_MEASURED_MEMORY_PATH"] ?? "~/.llamactl/measured-memory.json";
-  process.stdout.write(`\nmeasured: ${config.workloadName}\n`);
-  process.stdout.write(`  model key:  ${config.modelKey}\n`);
-  process.stdout.write(`  peak RSS:   ${rssPeakMb.toFixed(1)} MiB\n`);
-  process.stdout.write(`  mean RSS:   ${rssMeanMb.toFixed(1)} MiB\n`);
-  process.stdout.write(`  samples:    ${String(rssSamples.length)}\n`);
-  process.stdout.write(`  cached:     ${cachePath}\n`);
-  return 0;
+  return 1;
 }

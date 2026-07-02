@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,6 +30,17 @@ function buildWorkloadYaml(binaryPath: string, modelRel = "test/fake-model.gguf"
     "    host: 127.0.0.1",
     "    port: 18001",
   ].join("\n");
+}
+
+function shouldSkipCommandForLiveRun(status: number | null, stderr: string): boolean {
+  if (status === 0) return false;
+  const lower = stderr.toLowerCase();
+  return (
+    lower.includes("python3") ||
+    lower.includes("no free port found") ||
+    lower.includes("operation not permitted") ||
+    lower.includes("eperm")
+  );
 }
 
 describe("llamactl admit measure", () => {
@@ -113,6 +124,12 @@ describe("llamactl admit measure", () => {
   });
 
   test("writes cache with expected fields after successful measurement", () => {
+    const pythonCheck = spawnSync("python3", ["--version"], { encoding: "utf8" });
+    if (shouldSkipCommandForLiveRun(pythonCheck.status, pythonCheck.stderr)) {
+      console.warn("admit-measure: python3 unavailable — skipping live-server test");
+      return;
+    }
+
     const r = spawnSync(
       "bun",
       [BIN, "admit", "measure", yamlPath, "--steady-state-seconds=4", "--samples=2"],
@@ -123,8 +140,7 @@ describe("llamactl admit measure", () => {
       },
     );
 
-    // If python3 isn't available, skip rather than fail hard.
-    if (r.status !== 0 && r.stderr.includes("python3")) {
+    if (shouldSkipCommandForLiveRun(r.status, r.stderr)) {
       console.warn("admit-measure: python3 unavailable — skipping live-server test");
       return;
     }
@@ -144,4 +160,48 @@ describe("llamactl admit measure", () => {
     expect(typeof entry!["measuredAt"]).toBe("string");
     expect(entry!["binary"]).toBe(FAKE_SERVER);
   }, 50_000);
+
+  test("all concurrent invocations complete successfully", async () => {
+    const pythonCheck = spawnSync("python3", ["--version"], { encoding: "utf8" });
+    if (shouldSkipCommandForLiveRun(pythonCheck.status, pythonCheck.stderr)) {
+      console.warn("admit-measure: python3 unavailable — skipping concurrent live-server test");
+      return;
+    }
+
+    const run = (i: number): Promise<{ status: number | null; stderr: string }> =>
+      new Promise((resolve) => {
+        const child = spawn(
+          "bun",
+          [BIN, "admit", "measure", yamlPath, "--steady-state-seconds=1", "--samples=1"],
+          {
+            env: {
+              ...process.env,
+              LLAMACTL_MEASURED_MEMORY_PATH: join(tmpDir, `measured-memory-${String(i)}.json`),
+            },
+            stdio: ["ignore", "ignore", "pipe"],
+          },
+        );
+
+        let stderr = "";
+        child.stderr.on("data", (chunk) => {
+          stderr += String(chunk);
+        });
+        child.on("close", (status) => {
+          resolve({ status, stderr });
+        });
+      });
+
+    const inner = await Promise.all([run(0), run(1), run(2)]);
+    for (const item of inner) {
+      if (shouldSkipCommandForLiveRun(item.status, item.stderr)) {
+        console.warn("admit-measure: python3 unavailable — skipping concurrent live-server test");
+        return;
+      }
+      if (item.status !== 0) {
+        console.error(`admit measure concurrent run failed (status=${String(item.status)}):`);
+        console.error(item.stderr);
+      }
+      expect(item.status).toBe(0);
+    }
+  }, 60_000);
 });
