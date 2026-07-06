@@ -145,17 +145,16 @@ const failedExecution = (
   proposalId: string,
   attempt: number,
   maxAttempts = 3,
-): FleetExecutionEntry =>
-  ({
-    kind: "fleet-execution",
-    ts,
-    node,
-    proposalId,
-    action: { type: "evict", workload: "test-workload", reason: "pressure" },
-    status: "failed",
-    attempt,
-    maxAttempts,
-  }) as FleetExecutionEntry;
+): FleetExecutionEntry => ({
+  kind: "fleet-execution",
+  ts,
+  node,
+  proposalId,
+  action: { type: "evict", workload: "test-workload", reason: "pressure" },
+  status: "failed",
+  attempt,
+  maxAttempts,
+});
 
 // ── llamactl_fleet_snapshot ──────────────────────────────────────────────────
 
