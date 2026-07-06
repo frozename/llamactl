@@ -879,4 +879,54 @@ describe("MigrationController", () => {
     expect(gcController.isInMoveCooldown("model-a")).toBe(false);
     expect(gcController.isInMoveCooldown("model-a")).toBe(false);
   });
+
+  it("M-fleetX: double-move of the same workload while its poll is pending refuses overwrite and journals refusal", async () => {
+    snapshots["m2mini"] = {
+      node: "m2mini",
+      pressureState: "NORMAL",
+      nodeMem: { freeMb: 8000 },
+      workloads: [{ name: "model-a", reachable: false }],
+    };
+
+    const prop1 = proposal({ proposalId: "move-1" });
+    const result1 = await controller.executeMove(prop1, (entry) => journal.push(entry));
+    expect(result1).toBe("pending_health_check");
+
+    // Cooldown would normally prevent evaluateMove, but if cooldown expires, it shouldn't evaluate while poll is pending.
+    tick += 20;
+    nowMs += 1;
+    const evalResult = await controller.evaluateMove(workload, sourceSnapshot);
+    expect(evalResult).toBeNull();
+
+    // If somehow executed directly (e.g. race condition), it should fail closed.
+    const prop2 = proposal({ proposalId: "move-2" });
+    const result2 = await controller.executeMove(prop2, (entry) => journal.push(entry));
+    expect(result2).toBe("apply_failed");
+
+    const refusal = journal.find(
+      (entry): entry is FleetExecutionEntry =>
+        entry.kind === "fleet-execution" &&
+        entry.proposalId === "move-2" &&
+        entry.status === "failed" &&
+        entry.reason === "refused to overwrite active health poll",
+    );
+    expect(refusal).toBeTruthy();
+
+    // Ensure first poll is intact by making destination reachable and advancing polls
+    snapshots["m2mini"] = {
+      node: "m2mini",
+      pressureState: "NORMAL",
+      nodeMem: { freeMb: 8000 },
+      workloads: [{ name: "model-a", reachable: true }],
+    };
+    await controller.advancePendingHealthPolls();
+
+    const executed = journal.find(
+      (entry): entry is FleetExecutionEntry =>
+        entry.kind === "fleet-execution" &&
+        entry.proposalId === "move-1" &&
+        entry.status === "executed",
+    );
+    expect(executed).toBeTruthy();
+  });
 });

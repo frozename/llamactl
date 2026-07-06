@@ -244,6 +244,7 @@ export class MigrationController {
     }
     if (workload.spec?.placement === "pinned") return null;
     if (this.isInMoveCooldown(workload.name)) return null;
+    if (this.pendingHealthPolls.has(workload.name)) return null;
     // Cross-node in-flight-move consumer (design §4): a node's OWN cooldown only
     // knows the moves THIS node started. If a FRESH peer is already mid-moving
     // this workload (it published it in its snapshot inFlightMoves — deployed on a
@@ -325,6 +326,25 @@ export class MigrationController {
     | "pending_health_check"
     | "lease_lost"
   > {
+    if (this.pendingHealthPolls.has(proposal.workload)) {
+      writeJournalEntry({
+        kind: "fleet-execution",
+        ts: new Date(this.nowMs).toISOString(),
+        node: this.deps.selfNode,
+        proposalId: proposal.proposalId,
+        action: {
+          type: "move",
+          workload: proposal.workload,
+          fromNode: proposal.fromNode,
+          toNode: proposal.toNode,
+          reason: "rebalance",
+        },
+        status: "failed",
+        reason: "refused to overwrite active health poll",
+      });
+      return "apply_failed";
+    }
+
     if (!this.deps.deployWorkload || !this.deps.removeWorkload) {
       return "destination_unavailable";
     }
