@@ -88,7 +88,7 @@ export function runEvictionIfOverBudget(
   registry.transaction(() => {
     for (const entry of sorted) {
       if (totalPayloadBytes <= byteBudget) break;
-      const slotPaths = registry.tryDeleteRowOnly(entry.sha);
+      const slotPaths = registry.tryDeleteRowOnly(entry.sha, entry.upstreamSlotFile);
       if (slotPaths !== null) {
         deleted.push(entry.sha);
         totalPayloadBytes -= entry.payloadBytes;

@@ -401,3 +401,33 @@ test("tryDelete() guarded by captured upstream_slot_file does not destroy a conc
     t.cleanup();
   }
 });
+
+test("tryDeleteRowOnly() guarded by captured upstream_slot_file does not destroy a concurrently re-inserted row with the same sha", () => {
+  const t = makeTempRoot();
+  try {
+    const storage = openKvStorage(t.root);
+    const registry = new KvRegistry(storage);
+    const f1 = join(t.root, "row-only-1.kvslot");
+    const f2 = join(t.root, "row-only-2.kvslot");
+    writeFileSync(f1, "f1");
+    writeFileSync(`${f1}.trailer.json`, "trailer1");
+    writeFileSync(f2, "f2");
+    writeFileSync(`${f2}.trailer.json`, "trailer2");
+
+    registry.insert(baseEntry({ sha: "S", upstreamSlotFile: f1 }));
+    expect(registry.reserve("S")).toBe(true);
+
+    registry.insert(baseEntry({ sha: "S", upstreamSlotFile: f2 }));
+
+    registry.release("S");
+    expect(registry.tryDeleteRowOnly("S", f1)).toBeNull();
+
+    expect(registry.findBySha("S")?.upstreamSlotFile).toBe(f2);
+    expect(existsSync(f2)).toBe(true);
+    expect(existsSync(`${f2}.trailer.json`)).toBe(true);
+
+    storage.close();
+  } finally {
+    t.cleanup();
+  }
+});

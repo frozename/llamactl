@@ -232,7 +232,20 @@ export class KvRegistry {
    * lock — collect the returned paths and pass them to `unlinkSlotArtifactsFor`
    * AFTER the transaction commits. Returns null if no idle row matched.
    */
-  tryDeleteRowOnly(sha: string): string[] | null {
+  tryDeleteRowOnly(sha: string, expectedUpstreamSlotFile?: string): string[] | null {
+    if (expectedUpstreamSlotFile !== undefined) {
+      const rows = this.storage.db
+        .query(
+          `
+      DELETE FROM kv_entries
+      WHERE sha = ? AND state = 'idle' AND upstream_slot_file = ?
+      RETURNING upstream_slot_file
+    `,
+        )
+        .all(sha, expectedUpstreamSlotFile) as { upstream_slot_file: string }[];
+      if (rows.length === 0) return null;
+      return rows.map((row) => row.upstream_slot_file);
+    }
     const rows = this.storage.db
       .query(
         `

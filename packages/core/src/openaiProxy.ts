@@ -289,6 +289,7 @@ interface KvRequestState {
   prefixMetric: number;
   shouldPersist: boolean;
   warmHitSha: string | null;
+  warmHitUpstreamSlotFile: string | null;
   warmHitLease: { slotId: number; release: () => void } | null;
   warmHitExpectedFirstResponseToken: string | null;
   enforceFirstTokenEquivalence: boolean;
@@ -1372,6 +1373,7 @@ function buildKvRequestState(
     prefixMetric,
     shouldPersist: false,
     warmHitSha: null,
+    warmHitUpstreamSlotFile: null,
     warmHitLease: null,
     warmHitExpectedFirstResponseToken: null,
     enforceFirstTokenEquivalence,
@@ -1510,6 +1512,7 @@ async function applyWarmKvHit(
     enforceFirstTokenEquivalence,
     {
       warmHitSha: hit.sha,
+      warmHitUpstreamSlotFile: hit.upstreamSlotFile,
       warmHitLease: lease,
       warmHitExpectedFirstResponseToken: hit.firstResponseToken,
     },
@@ -1598,6 +1601,7 @@ async function maybeKvLookup(context: ProxyContext): Promise<ProxyContext> {
     prefixMetric,
     shouldPersist: true,
     warmHitSha: null,
+    warmHitUpstreamSlotFile: null,
     warmHitLease: null,
     warmHitExpectedFirstResponseToken: null,
     enforceFirstTokenEquivalence,
@@ -1712,6 +1716,7 @@ function releaseWarmHitLease(context: ProxyContext): void {
   const warmHitSha = kv.warmHitSha;
   const warmHitLease = kv.warmHitLease;
   kv.warmHitSha = null;
+  kv.warmHitUpstreamSlotFile = null;
   kv.warmHitLease = null;
   if (warmHitSha) kv.runtime.storage.safeWrite(() => kv.runtime.registry.release(warmHitSha));
   warmHitLease?.release();
@@ -1842,10 +1847,11 @@ function checkFalseHit(kv: KvRequestState, firstResponseToken: string | null): b
   const staleSha = kv.warmHitSha;
   kv.runtime.storage.safeWrite(() => {
     kv.runtime.registry.release(staleSha);
-    kv.runtime.registry.tryDelete(staleSha);
+    kv.runtime.registry.tryDelete(staleSha, kv.warmHitUpstreamSlotFile ?? undefined);
   });
   kv.warmHitLease?.release();
   kv.warmHitSha = null;
+  kv.warmHitUpstreamSlotFile = null;
   kv.warmHitLease = null;
   return true;
 }

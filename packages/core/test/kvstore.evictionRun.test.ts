@@ -8,7 +8,7 @@ import {
   openKvStorage,
   runEvictionIfOverBudget,
 } from "../src/kvstore/index.js";
-import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 function makeTempRoot(): { root: string; cleanup: () => void } {
   const root = mkdtempSync(join(tmpdir(), "llamactl-kvstore-evictionrun-"));
@@ -87,6 +87,55 @@ test("over-budget eviction reports Before == initial total even after After decr
     expect(result.totalPayloadBytesBefore).toBe(initialTotal);
     expect(result.totalPayloadBytesAfter).toBeLessThan(initialTotal);
     expect(result.totalPayloadBytesAfter).toBeLessThanOrEqual(1500);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("eviction does not delete a same-sha row re-inserted after its snapshot", () => {
+  const t = makeTempRoot();
+  try {
+    const staleSlotFile = join(t.root, "race-stale.kvslot");
+    const freshSlotFile = join(t.root, "race-fresh.kvslot");
+    writeFileSync(staleSlotFile, "stale");
+    writeFileSync(`${staleSlotFile}.trailer.json`, "stale-trailer");
+    writeFileSync(freshSlotFile, "fresh");
+    writeFileSync(`${freshSlotFile}.trailer.json`, "fresh-trailer");
+    const storage = openKvStorage(t.root);
+    const registry = new KvRegistry(storage);
+    registry.insert(
+      baseEntry(staleSlotFile, {
+        sha: "race",
+        payloadBytes: 1000,
+        lastUsed: 1,
+      }),
+    );
+
+    const originalTransaction = registry.transaction.bind(registry);
+    registry.transaction = <T>(fn: () => T): T => {
+      expect(registry.reserve("race")).toBe(true);
+      registry.insert(
+        baseEntry(freshSlotFile, {
+          sha: "race",
+          payloadBytes: 4000,
+          lastUsed: 2,
+        }),
+      );
+      registry.release("race");
+      return originalTransaction(fn);
+    };
+
+    const result = runEvictionIfOverBudget(registry, "wl", 0, 1716576000 + 60_000);
+
+    expect(result.deleted).toEqual([]);
+    expect(result.blockedActive).toEqual(["race"]);
+    expect(result.totalPayloadBytesBefore).toBe(1000);
+    expect(result.totalPayloadBytesAfter).toBe(1000);
+    expect(registry.findBySha("race")?.upstreamSlotFile).toBe(freshSlotFile);
+    expect(existsSync(freshSlotFile)).toBe(true);
+    expect(existsSync(`${freshSlotFile}.trailer.json`)).toBe(true);
+
+    storage.close();
   } finally {
     t.cleanup();
   }
