@@ -1820,6 +1820,33 @@ function requestBodyContainsOmlxRequestHandle(bodyText: string | undefined): boo
   }
 }
 
+function composeAbortSignals(
+  a: AbortSignal | null | undefined,
+  b: AbortSignal | null | undefined,
+): AbortSignal | undefined {
+  const signals: AbortSignal[] = [];
+  if (a) signals.push(a);
+  if (b) signals.push(b);
+  if (signals.length === 0) return undefined;
+  if (signals.length === 1) return signals[0];
+  const anyFn = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any;
+  if (typeof anyFn === "function") return anyFn.call(AbortSignal, signals);
+  const controller = new AbortController();
+  const propagate = (source: AbortSignal): void => {
+    if (source.aborted) controller.abort(source.reason);
+    else
+      source.addEventListener(
+        "abort",
+        () => {
+          controller.abort(source.reason);
+        },
+        { once: true },
+      );
+  };
+  for (const s of signals) propagate(s);
+  return controller.signal;
+}
+
 async function forward(context: ProxyContext): Promise<Response> {
   if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
     return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
@@ -1834,6 +1861,12 @@ async function forward(context: ProxyContext): Promise<Response> {
   }
   const peerTls = peerTlsForRoute(context.route);
   if (peerTls) (init as RequestInit & { tls?: { ca: string } }).tls = peerTls;
+  // Propagate the client's AbortSignal to the upstream fetch so that a client
+  // disconnect promptly cancels upstream inference and releases warm-hit lease
+  // + registry reservation via the finally in proxyOpenAI. Compose with any
+  // pre-existing signal already staged on init (e.g. a timeout) rather than
+  // stomping on it.
+  init.signal = composeAbortSignals(context.req.signal, context.init.signal) ?? null;
 
   let upstream: Response;
   try {
@@ -1849,7 +1882,11 @@ async function forward(context: ProxyContext): Promise<Response> {
       { status: 502 },
     );
   }
-  if (context.route?.isPeer && upstream.status === 502) {
+  // Skip route-cache invalidation when the 502 is attributable to a client
+  // abort: a disconnected caller says nothing about peer reachability, and
+  // wrongly evicting the cache would force a full route-map rebuild on the
+  // next request just because one client hung up.
+  if (context.route?.isPeer && upstream.status === 502 && !context.req.signal.aborted) {
     invalidateRouteCacheEntry(context.route.model);
   }
   return upstream;
