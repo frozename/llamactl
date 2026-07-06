@@ -46,6 +46,110 @@ const MAX_TIMEOUT_FOLLOWUP_MS = 5_000;
 const KILL_TIMEOUT_MS = 2_000;
 const OUTPUT_TRUNCATION_SENTINEL = "[output truncated]";
 const deprecatedToolWarnings = new Set<string>();
+const DEFAULT_MAX_EXECUTION_ATTEMPTS = 3;
+
+interface ExecutionRetryState {
+  terminal: boolean;
+  pending: boolean;
+  attempt: number;
+  maxAttempts: number;
+}
+
+type FleetExecutionEntryWithRetryFields = FleetExecutionEntry & {
+  attempt?: unknown;
+  maxAttempts?: unknown;
+};
+
+function asPositiveFiniteNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value;
+}
+
+function parseFailureAttemptState(
+  entry: FleetExecutionEntryWithRetryFields,
+): ExecutionRetryState | null {
+  const attempt = asPositiveFiniteNumber(entry.attempt);
+  const maxAttempts = asPositiveFiniteNumber(entry.maxAttempts ?? DEFAULT_MAX_EXECUTION_ATTEMPTS);
+  if (
+    attempt === null ||
+    maxAttempts === null ||
+    !Number.isInteger(attempt) ||
+    attempt <= 0 ||
+    maxAttempts <= 0
+  ) {
+    return null;
+  }
+  return {
+    terminal: attempt >= maxAttempts,
+    pending: attempt < maxAttempts,
+    attempt,
+    maxAttempts,
+  };
+}
+
+function getExecutionRetryState(
+  proposalId: string,
+  entries: FleetJournalEntry[],
+): ExecutionRetryState {
+  const proposalEntries = entries.filter(
+    (entry): entry is FleetExecutionEntryWithRetryFields =>
+      entry.kind === "fleet-execution" && entry.proposalId === proposalId,
+  );
+
+  if (
+    proposalEntries.some(
+      (entry) =>
+        entry.status === "executed" || entry.status === "skipped" || entry.attempt === undefined,
+    )
+  ) {
+    return {
+      terminal: true,
+      pending: false,
+      attempt: 0,
+      maxAttempts: DEFAULT_MAX_EXECUTION_ATTEMPTS,
+    };
+  }
+
+  const retryCandidates = proposalEntries
+    .filter(
+      (entry): entry is FleetExecutionEntry =>
+        entry.status === "failed" && entry.attempt !== undefined,
+    )
+    .map((entry) => parseFailureAttemptState(entry))
+    .filter((candidate): candidate is ExecutionRetryState => candidate !== null)
+    .sort((a, b) => b.attempt - a.attempt);
+
+  if (retryCandidates.length === 0) {
+    return {
+      terminal: false,
+      pending: true,
+      attempt: 0,
+      maxAttempts: DEFAULT_MAX_EXECUTION_ATTEMPTS,
+    };
+  }
+
+  const [latest] = retryCandidates;
+  if (latest === undefined) {
+    return {
+      terminal: false,
+      pending: true,
+      attempt: 0,
+      maxAttempts: DEFAULT_MAX_EXECUTION_ATTEMPTS,
+    };
+  }
+
+  return {
+    terminal: latest.terminal,
+    pending: latest.pending,
+    attempt: latest.attempt,
+    maxAttempts: latest.maxAttempts,
+  };
+}
+
+function isProposalPending(proposalId: string, entries: FleetJournalEntry[]): boolean {
+  const retryState = getExecutionRetryState(proposalId, entries);
+  return !retryState.terminal && retryState.pending;
+}
 
 function readProcessOutput(chunks: Buffer[]): string {
   const merged = Buffer.concat(chunks);
@@ -944,11 +1048,11 @@ export function collectLatestSnapshots(
 function proposalMatches(
   e: FleetProposalEntry,
   opts: { node?: string; pendingOnly?: boolean; sinceIsoTs?: string },
-  executedIds: Set<string>,
+  pendingIds: Set<string>,
 ): boolean {
   if (opts.node !== undefined && e.node !== opts.node) return false;
   if (opts.sinceIsoTs !== undefined && e.ts < opts.sinceIsoTs) return false;
-  if ((opts.pendingOnly ?? true) && executedIds.has(e.proposalId)) return false;
+  if ((opts.pendingOnly ?? true) && !pendingIds.has(e.proposalId)) return false;
   return true;
 }
 
@@ -956,15 +1060,20 @@ export function collectProposals(
   entries: FleetJournalEntry[],
   opts: { node?: string; pendingOnly?: boolean; sinceIsoTs?: string } = {},
 ): FleetProposalEntry[] {
-  const executedIds = new Set<string>();
+  const proposalIds = new Set<string>();
   for (const e of entries) {
-    if (e.kind === "fleet-execution") executedIds.add(e.proposalId);
+    if (e.kind === "fleet-proposal") proposalIds.add(e.proposalId);
+  }
+
+  const pendingIds = new Set<string>();
+  for (const proposalId of proposalIds) {
+    if (isProposalPending(proposalId, entries)) pendingIds.add(proposalId);
   }
 
   const out: FleetProposalEntry[] = [];
   for (const e of entries) {
     if (e.kind !== "fleet-proposal") continue;
-    if (proposalMatches(e, opts, executedIds)) out.push(e);
+    if (proposalMatches(e, opts, pendingIds)) out.push(e);
   }
   out.sort((a, b) => b.ts.localeCompare(a.ts));
   return out;

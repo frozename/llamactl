@@ -6,6 +6,9 @@ import { actionTier } from "./types.js";
 export type { FleetExecutionEntry };
 export { actionTier };
 
+const DEFAULT_MAX_EXECUTION_ATTEMPTS = 3;
+const EXECUTION_RETRY_DELAY_MS = 30_000;
+
 export interface ExecutorOptions {
   node: string;
   auto: boolean;
@@ -20,6 +23,8 @@ export interface ExecutorOptions {
   disable: (workload: string) => Promise<number>;
   /** Enable a workload by name; returns exit code. */
   enable: (workload: string) => Promise<number>;
+  /** Override wall-clock time for retry backoff calculations. */
+  nowMs?: number;
   /**
    * Resolve a workload's `spec.restartPolicy` from its manifest. When it returns
    * "Never", evict/restart actions are skipped so the supervisor cannot thrash a
@@ -29,6 +34,148 @@ export interface ExecutorOptions {
    * action proceeds. Optional: when omitted, no restartPolicy gate is applied.
    */
   loadRestartPolicy?: (workload: string) => string | undefined;
+}
+
+interface ExecutionRetryState {
+  terminal: boolean;
+  pending: boolean;
+  attempt: number;
+  maxAttempts: number;
+  blockedUntilMs: number | null;
+}
+
+function parseFailureAttemptState(entry: FleetExecutionEntry): ExecutionRetryState | null {
+  const attempt = entry.attempt;
+  const maxAttempts = entry.maxAttempts ?? DEFAULT_MAX_EXECUTION_ATTEMPTS;
+  if (typeof attempt !== "number" || !Number.isFinite(attempt)) return null;
+  if (
+    !Number.isInteger(attempt) ||
+    attempt <= 0 ||
+    !Number.isFinite(maxAttempts) ||
+    maxAttempts <= 0
+  ) {
+    return null;
+  }
+  const blockedUntilMs =
+    typeof entry.nextAttemptAt === "string" ? Date.parse(entry.nextAttemptAt) : Number.NaN;
+  return {
+    terminal: attempt >= maxAttempts,
+    pending: attempt < maxAttempts,
+    attempt,
+    maxAttempts,
+    blockedUntilMs: Number.isFinite(blockedUntilMs) ? blockedUntilMs : null,
+  };
+}
+
+function parseRetryDelayMs(attempt: number): number {
+  return EXECUTION_RETRY_DELAY_MS * 2 ** Math.max(0, attempt - 1);
+}
+
+function getExecutionRetryState(
+  proposalId: string,
+  entries: FleetJournalEntry[],
+  nowMs: number,
+): ExecutionRetryState {
+  const proposalEntries = entries.filter(
+    (entry): entry is FleetExecutionEntry =>
+      entry.kind === "fleet-execution" && entry.proposalId === proposalId,
+  );
+
+  if (
+    proposalEntries.some(
+      (entry) =>
+        entry.status === "executed" || entry.status === "skipped" || entry.attempt === undefined,
+    )
+  ) {
+    return {
+      terminal: true,
+      pending: false,
+      attempt: 0,
+      maxAttempts: DEFAULT_MAX_EXECUTION_ATTEMPTS,
+      blockedUntilMs: null,
+    };
+  }
+
+  const retryCandidates = proposalEntries
+    .filter(
+      (entry): entry is FleetExecutionEntry =>
+        entry.status === "failed" && entry.attempt !== undefined,
+    )
+    .map((entry) => parseFailureAttemptState(entry))
+    .filter((candidate): candidate is ExecutionRetryState => candidate !== null)
+    .sort((a, b) => b.attempt - a.attempt);
+
+  if (retryCandidates.length === 0) {
+    return {
+      terminal: false,
+      pending: true,
+      attempt: 0,
+      maxAttempts: DEFAULT_MAX_EXECUTION_ATTEMPTS,
+      blockedUntilMs: null,
+    };
+  }
+
+  const [latest] = retryCandidates;
+  if (latest === undefined) {
+    return {
+      terminal: false,
+      pending: true,
+      attempt: 0,
+      maxAttempts: DEFAULT_MAX_EXECUTION_ATTEMPTS,
+      blockedUntilMs: null,
+    };
+  }
+
+  if (latest.terminal) {
+    return {
+      terminal: true,
+      pending: false,
+      attempt: latest.attempt,
+      maxAttempts: latest.maxAttempts,
+      blockedUntilMs: null,
+    };
+  }
+  if (latest.blockedUntilMs !== null && latest.blockedUntilMs > nowMs) {
+    return {
+      terminal: false,
+      pending: false,
+      attempt: latest.attempt,
+      maxAttempts: latest.maxAttempts,
+      blockedUntilMs: latest.blockedUntilMs,
+    };
+  }
+  return {
+    terminal: false,
+    pending: true,
+    attempt: latest.attempt,
+    maxAttempts: latest.maxAttempts,
+    blockedUntilMs: null,
+  };
+}
+
+function makeRetryFailureEntry(
+  entry: FleetExecutionEntry,
+  attempt: number,
+  maxAttempts: number,
+  nowMs: number,
+): FleetExecutionEntry {
+  if (attempt >= maxAttempts) {
+    return {
+      ...entry,
+      attempt,
+      maxAttempts,
+      reason: `${entry.reason ?? "execution failed"}; giving up after ${String(attempt)}/${String(maxAttempts)} attempts`,
+    };
+  }
+
+  const nextAttemptAtMs = nowMs + parseRetryDelayMs(attempt);
+  return {
+    ...entry,
+    attempt,
+    maxAttempts,
+    nextAttemptAt: new Date(nextAttemptAtMs).toISOString(),
+    reason: `${entry.reason ?? "execution failed"}; retry ${String(attempt)}/${String(maxAttempts)}; will retry after ${String(parseRetryDelayMs(attempt))}ms`,
+  };
 }
 
 function defaultReadJournal(path: string): FleetJournalEntry[] {
@@ -53,17 +200,14 @@ export async function runExecutor(opts: ExecutorOptions): Promise<FleetExecution
     (e): e is FleetProposalEntry => e.kind === "fleet-proposal" && e.node === opts.node,
   );
 
-  const executedIds = new Set(
-    entries
-      .filter((e): e is FleetExecutionEntry => e.kind === "fleet-execution")
-      .map((e) => e.proposalId),
-  );
-
-  const pending = proposals.filter((p) => !executedIds.has(p.proposalId));
-
-  const nowMs = Date.now();
+  const nowMs = opts.nowMs ?? Date.now();
   const results: FleetExecutionEntry[] = [];
-  for (const proposal of pending) {
+  for (const proposal of proposals) {
+    const retryState = getExecutionRetryState(proposal.proposalId, entries, nowMs);
+    if (retryState.terminal || !retryState.pending) {
+      continue;
+    }
+
     if (typeof proposal.expiresAt === "string") {
       const expiresAtMs = Date.parse(proposal.expiresAt);
       if (Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) {
@@ -81,7 +225,8 @@ export async function runExecutor(opts: ExecutorOptions): Promise<FleetExecution
         continue;
       }
     }
-    const result = await executeOne(proposal, opts);
+
+    const result = await executeOne(proposal, opts, retryState, nowMs);
     if (result !== null) results.push(result);
   }
   return results;
@@ -92,14 +237,11 @@ type ExecutionEntryBase = Pick<
   "action" | "kind" | "node" | "proposalId" | "ts"
 >;
 
-// Returns null when both the initial enable and the recovery re-enable fail after
-// a successful disable — null suppresses journaling so the proposal stays
-// retryable on the next supervisor tick instead of being permanently deduped.
 async function executeRestart(
   workload: string,
   opts: ExecutorOptions,
   base: ExecutionEntryBase,
-): Promise<FleetExecutionEntry | null> {
+): Promise<FleetExecutionEntry> {
   const disableCode = await opts.disable(workload);
   if (disableCode !== 0) {
     return {
@@ -113,15 +255,18 @@ async function executeRestart(
   if (enableCode === 0) {
     return { ...base, status: "executed", exitCode: enableCode };
   }
-  // Enable failed after disable — attempt one bounded recovery re-enable to
-  // avoid stranding the workload in the disabled state.
   const recoveryCode = await opts.enable(workload);
   if (recoveryCode === 0) {
     return { ...base, status: "executed", exitCode: recoveryCode };
   }
-  // Both enable attempts failed; return null to suppress the journal write so
-  // the proposal is not permanently deduped and the next tick can retry.
-  return null;
+  // Enable failed after disable + one bounded recovery attempt — keep failure
+  // retryable via attempt metadata.
+  return {
+    ...base,
+    status: "failed",
+    exitCode: recoveryCode,
+    reason: "enable phase failed",
+  };
 }
 
 function isRestartPolicyNever(workload: string, opts: ExecutorOptions): boolean {
@@ -166,9 +311,19 @@ async function executeAction(
   return { ...base, status: "skipped", reason: "unknown action type" };
 }
 
+function isRetryableFailure(entry: FleetExecutionEntry): boolean {
+  if (entry.status !== "failed") return false;
+  if (entry.action.type === "mark-degraded") return false;
+  if (entry.action.type === "evict") return true;
+  if (entry.action.type === "restart") return true;
+  return false;
+}
+
 async function executeOne(
   proposal: FleetProposalEntry,
   opts: ExecutorOptions,
+  retryState: ExecutionRetryState,
+  nowMs: number,
 ): Promise<FleetExecutionEntry | null> {
   const ts = new Date().toISOString();
   const tier = actionTier(proposal.action);
@@ -192,9 +347,14 @@ async function executeOne(
     return entry;
   }
 
-  const entry = await executeAction(proposal.action, opts, base);
-  if (entry !== null) {
-    opts.writeJournal(entry);
+  let entry = await executeAction(proposal.action, opts, base);
+  if (entry === null) return null;
+  if (isRetryableFailure(entry)) {
+    const retryAttempt = retryState.attempt + 1;
+    entry = makeRetryFailureEntry(entry, retryAttempt, retryState.maxAttempts, nowMs);
   }
+
+  // Outcomes are journaled immediately; retry states are represented in entry metadata.
+  opts.writeJournal(entry);
   return entry;
 }

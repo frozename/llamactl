@@ -327,22 +327,101 @@ describe("executeRestart enable-failure recovery", () => {
     expect(written).toHaveLength(1);
   });
 
-  it("restart: enable failure + recovery re-enable failure → no journal entry (proposal retryable next tick)", async () => {
-    let enableCallCount = 0;
+  it("restart: enable failure + recovery re-enable failure → writes a retryable failure entry", async () => {
     const proposal = makeProposal("p1", "restart", "test-host");
     const { opts, written } = makeOpts([proposal], {
       auto: true,
       severityThreshold: 3,
       disable: async () => 0,
-      enable: async () => {
-        enableCallCount++;
-        return 1;
-      },
+      enable: async () => 1,
     });
     const results = await runExecutor(opts);
-    expect(enableCallCount).toBe(2);
-    expect(written).toHaveLength(0);
-    expect(results).toHaveLength(0);
+    const retryEntry = written[0] as FleetExecutionEntry;
+    expect(retryEntry.attempt).toBe(1);
+    expect(retryEntry.maxAttempts).toBe(3);
+    expect(retryEntry.nextAttemptAt).toBeDefined();
+    expect(results[0]!.status).toBe("failed");
+  });
+
+  it("retryable failure is re-attempted on a later tick after backoff", async () => {
+    const proposal = makeProposal("p1", "restart", "test-host");
+    const proposalJournal: FleetJournalEntry[] = [proposal];
+    const t0 = Date.parse("2026-07-01T10:00:00.000Z");
+
+    const first = makeOpts(proposalJournal, {
+      auto: true,
+      severityThreshold: 3,
+      nowMs: t0,
+      disable: async () => 0,
+      enable: async () => 1,
+    });
+    const firstResults = await runExecutor(first.opts);
+    const failed = first.written[0] as FleetExecutionEntry;
+    expect(firstResults).toHaveLength(1);
+    expect(failed.status).toBe("failed");
+    expect(failed.attempt).toBe(1);
+    expect(failed.nextAttemptAt).toBeTruthy();
+
+    const pendingJournal: FleetJournalEntry[] = [...proposalJournal, ...first.written];
+    const blocked = makeOpts(pendingJournal, {
+      auto: true,
+      severityThreshold: 3,
+      nowMs: Date.parse(failed.nextAttemptAt!) - 1000,
+      disable: async () => 0,
+      enable: async () => 0,
+    });
+    const blockedResults = await runExecutor(blocked.opts);
+    expect(blockedResults).toHaveLength(0);
+
+    const retried = makeOpts(pendingJournal, {
+      auto: true,
+      severityThreshold: 3,
+      nowMs: Date.parse(failed.nextAttemptAt!) + 1000,
+      disable: async () => 0,
+      enable: async () => 0,
+    });
+    const retriedResults = await runExecutor(retried.opts);
+    expect(retriedResults).toHaveLength(1);
+    expect(retriedResults[0]!.status).toBe("executed");
+  });
+
+  it("give-up is journaled after retry cap and no further attempts occur", async () => {
+    const proposal = makeProposal("p1", "restart", "test-host");
+    let journal: FleetJournalEntry[] = [proposal];
+    let nowMs = Date.parse("2026-07-01T10:00:00.000Z");
+    let terminalFailure: FleetExecutionEntry | null = null;
+
+    for (let i = 0; i < 3; i += 1) {
+      const { opts, written } = makeOpts(journal, {
+        auto: true,
+        severityThreshold: 3,
+        nowMs,
+        disable: async () => 0,
+        enable: async () => 1,
+      });
+      const tickResults = await runExecutor(opts);
+      expect(tickResults).toHaveLength(1);
+      const entry = tickResults[0]!;
+      terminalFailure = entry;
+      journal = [...journal, ...written];
+      if (entry.attempt === 3) break;
+      expect(entry.nextAttemptAt).toBeTruthy();
+      nowMs = Date.parse(entry.nextAttemptAt!) + 1_000;
+    }
+
+    expect(terminalFailure).not.toBeNull();
+    expect(terminalFailure!.attempt).toBe(3);
+    expect(terminalFailure!.reason).toContain("giving up");
+
+    const { opts: finalAttempt } = makeOpts(journal, {
+      auto: true,
+      severityThreshold: 3,
+      nowMs: nowMs + 1_000,
+      disable: async () => 0,
+      enable: async () => 1,
+    });
+    const finalResults = await runExecutor(finalAttempt);
+    expect(finalResults).toHaveLength(0);
   });
 });
 

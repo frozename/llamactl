@@ -139,6 +139,24 @@ const execution = (node: string, ts: string, proposalId: string): FleetExecution
   status: "executed",
 });
 
+const failedExecution = (
+  node: string,
+  ts: string,
+  proposalId: string,
+  attempt: number,
+  maxAttempts = 3,
+): FleetExecutionEntry =>
+  ({
+    kind: "fleet-execution",
+    ts,
+    node,
+    proposalId,
+    action: { type: "evict", workload: "test-workload", reason: "pressure" },
+    status: "failed",
+    attempt,
+    maxAttempts,
+  }) as FleetExecutionEntry;
+
 // ── llamactl_fleet_snapshot ──────────────────────────────────────────────────
 
 describe("llamactl_fleet_snapshot", () => {
@@ -304,6 +322,29 @@ describe("llamactl_fleet_proposals", () => {
     expect(parsed.proposals).toHaveLength(1);
     expect(parsed.proposals[0]!.proposalId).toBe("prop-2");
     expect(parsed.total).toBe(1);
+  });
+
+  test("pendingOnly=true keeps proposals with mid-retry failed execution entries", async () => {
+    const p = proposal("node-a", "2026-01-01T00:01:00Z", "prop-retry");
+    const failed = failedExecution("node-a", "2026-01-01T00:01:30Z", "prop-retry", 1, 3);
+    const path = writeJournal([p, failed]);
+    const { client } = await connected();
+    const result = await call(client, "llamactl_fleet_proposals", { journalPath: path });
+    const parsed = JSON.parse(textOf(result)) as { proposals: FleetProposalEntry[]; total: number };
+    expect(parsed.proposals).toHaveLength(1);
+    expect(parsed.proposals[0]!.proposalId).toBe("prop-retry");
+    expect(parsed.total).toBe(1);
+  });
+
+  test("pendingOnly=true excludes proposals once retry attempts are exhausted", async () => {
+    const p = proposal("node-a", "2026-01-01T00:01:00Z", "prop-exhausted");
+    const failed = failedExecution("node-a", "2026-01-01T00:01:30Z", "prop-exhausted", 3, 3);
+    const path = writeJournal([p, failed]);
+    const { client } = await connected();
+    const result = await call(client, "llamactl_fleet_proposals", { journalPath: path });
+    const parsed = JSON.parse(textOf(result)) as { proposals: FleetProposalEntry[]; total: number };
+    expect(parsed.proposals).toHaveLength(0);
+    expect(parsed.total).toBe(0);
   });
 
   test("pendingOnly=false returns all proposals", async () => {

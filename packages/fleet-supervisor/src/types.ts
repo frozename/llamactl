@@ -201,6 +201,9 @@ export interface FleetExecutionEntry {
   status: "executed" | "skipped" | "failed";
   reason?: string;
   exitCode?: number;
+  attempt?: number;
+  maxAttempts?: number;
+  nextAttemptAt?: string;
 }
 
 export function actionTier(action: FleetProposalAction): 1 | 2 | 3 {
