@@ -96,6 +96,7 @@ type StreamState = {
 };
 
 type StreamEmit = (event: string, payload: Record<string, unknown>) => void;
+type StreamCompletion = "complete" | "truncated";
 
 function createStreamState(ctx: TranslatorContext): StreamState {
   return {
@@ -339,7 +340,7 @@ async function processUpstreamStream(
   controller: ReadableStreamDefaultController<Uint8Array>,
   ctx: TranslatorContext,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<StreamCompletion> {
   const encoder = new TextEncoder();
   const emit: StreamEmit = (event, payload) => {
     controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`));
@@ -349,6 +350,7 @@ async function processUpstreamStream(
   const reader = upstream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let sawTerminalMarker = false;
 
   try {
     let done = false;
@@ -416,6 +418,7 @@ async function processUpstreamStream(
         buffer = buffer.slice(boundary + 2);
         const status = processEvent(state, eventPayload, emit);
         if (status === "done") {
+          sawTerminalMarker = true;
           done = true;
           break;
         }
@@ -432,9 +435,10 @@ async function processUpstreamStream(
       emitTerminalDelta(state, emit, state.lastFinishReason);
       emitMessageStop(emit);
       controller.close();
+      return sawTerminalMarker ? "complete" : "truncated";
     }
   } catch (error) {
-    if (signal?.aborted) return;
+    if (signal?.aborted) return "truncated";
     console.error(
       JSON.stringify({
         event: "anthropic_stream_upstream_error",
@@ -444,9 +448,11 @@ async function processUpstreamStream(
     emitTerminalDelta(state, emit, "stop");
     emitMessageStop(emit);
     controller.close();
+    return "truncated";
   } finally {
     await reader.cancel().catch(() => undefined);
   }
+  return "truncated";
 }
 
 export function translator_unknown_event_total(): number {
@@ -492,12 +498,20 @@ export function translateOpenAIStreamToAnthropic(
   ctx: TranslatorContext,
 ): ReadableStream<Uint8Array> {
   const abortController = new AbortController();
-  return new ReadableStream<Uint8Array>({
+  let resolveCompleted!: (value: boolean) => void;
+  const completed = new Promise<boolean>((resolve) => {
+    resolveCompleted = resolve;
+  });
+  const stream = new ReadableStream<Uint8Array>({
     async start(controller): Promise<void> {
-      await processUpstreamStream(upstream, controller, ctx, abortController.signal);
+      const status = await processUpstreamStream(upstream, controller, ctx, abortController.signal);
+      resolveCompleted(status === "complete");
     },
     cancel(): void {
       abortController.abort();
+      resolveCompleted(false);
     },
-  });
+  }) as ReadableStream<Uint8Array> & { completed?: Promise<boolean> };
+  stream.completed = completed;
+  return stream;
 }

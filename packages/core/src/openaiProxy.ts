@@ -48,6 +48,8 @@ import { mkdirSync, readdirSync, statSync } from "./safe-fs.js";
 import { endpoint as llamaEndpoint, readServerPid, readServerState } from "./server.js";
 import * as workloadRuntime from "./workloadRuntime.js";
 
+const anthropicStreamCompletionByResponse = new WeakMap<Response, Promise<boolean>>();
+
 const MAX_JSON_BODY_BYTES = 10 * 1024 * 1024;
 
 /**
@@ -1650,6 +1652,33 @@ function isCompleteSseBody(
   return true;
 }
 
+async function shouldCacheSseResponse(
+  context: ProxyContext,
+  upstream: Response,
+  bodyBytes: Uint8Array,
+  responseCache: ResponseCacheRequestState,
+): Promise<boolean> {
+  if (context.isAnthropic) {
+    // Fail closed: a translated Anthropic SSE body always carries a fabricated
+    // message_stop, so the shape check below cannot detect truncation. Without
+    // a registered completion signal we must not cache.
+    const completion = anthropicStreamCompletionByResponse.get(upstream);
+    const anthropicCompletion =
+      completion === undefined ? false : await completion.catch(() => false);
+    if (!anthropicCompletion) {
+      console.warn(
+        JSON.stringify({
+          event: "response_cache_skip_partial_sse",
+          sha: responseCache.sha,
+          model: responseCache.model,
+        }),
+      );
+      return false;
+    }
+  }
+  return isCompleteSseBody(bodyBytes, responseCache);
+}
+
 async function maybePersistResponseCache(
   context: ProxyContext,
   upstream: Response,
@@ -1670,7 +1699,9 @@ async function maybePersistResponseCache(
   });
   if (upstream.status !== 200 || !responseCache.deterministic || !cacheableType) return replay;
   if (isJson && isErrorEnvelope(bodyBytes, responseCache)) return replay;
-  if (isSse && !isCompleteSseBody(bodyBytes, responseCache)) return replay;
+  if (isSse && !(await shouldCacheSseResponse(context, upstream, bodyBytes, responseCache))) {
+    return replay;
+  }
 
   const totalBytes = responseCache.requestBodyBytes + bodyBytes.byteLength;
   if (totalBytes > responseCacheMaxEntryBytes()) return replay;
@@ -2088,16 +2119,20 @@ function translateAnthropicSseResponse(context: ProxyContext, upstream: Response
   if (!upstream.body) return upstream;
   const respHeaders = sanitizedResponseHeaders(upstream);
   respHeaders.set("content-type", "text/event-stream");
-  return new Response(
-    translateOpenAIStreamToAnthropic(upstream.body, {
-      model: context.anthropicModel ?? "claude-compatible",
-    }),
-    {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers: respHeaders,
-    },
+  const translated = translateOpenAIStreamToAnthropic(upstream.body, {
+    model: context.anthropicModel ?? "claude-compatible",
+  });
+  const response = new Response(translated, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: respHeaders,
+  });
+  anthropicStreamCompletionByResponse.set(
+    response,
+    (translated as ReadableStream<Uint8Array> & { completed?: Promise<boolean> }).completed ??
+      Promise.resolve(true),
   );
+  return response;
 }
 
 async function translateAnthropicJsonResponse(upstream: Response): Promise<Response> {
