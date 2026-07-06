@@ -509,6 +509,99 @@ test("ModelHost omlx with save-handle capability saves a cold-miss kv entry (alw
   }
 });
 
+test("ModelHost omlx stream:true request is synthesized back to SSE when save-handle forces non-stream upstream", async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, "kvstore", "slots", "wl-a");
+  const upstream = await startUpstream({ slotBaseDir, supportsSaveHandle: true });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelHostWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), "omlx", [
+      "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+    ]);
+    writeFileSync(
+      join(runtime.root, "workloads", "wl-a", "modelhost.state"),
+      JSON.stringify({
+        kind: "ModelHost",
+        engine: "omlx",
+        pid: process.pid,
+        host: "127.0.0.1",
+        port: Number.parseInt(url.port, 10),
+        modelAliases: ["Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf"],
+        startedAt: "2026-05-24T00:00:00.000Z",
+        slotSavePath: slotBaseDir,
+        rel: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+      }),
+    );
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+          messages: [{ role: "user", content: "stream synth" }],
+          stream: true,
+          temperature: 0,
+        }),
+      }),
+      runtime.env,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const responseText = await response.text();
+    expect(responseText).toContain("data: ");
+    expect(responseText).toContain("data: [DONE]");
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test("ModelHost omlx stream:false request remains non-stream on direct pass-through", async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, "kvstore", "slots", "wl-a");
+  const upstream = await startUpstream({ slotBaseDir, supportsSaveHandle: true });
+  try {
+    const url = new URL(upstream.baseUrl);
+    writeModelHostWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), "omlx", [
+      "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+    ]);
+    writeFileSync(
+      join(runtime.root, "workloads", "wl-a", "modelhost.state"),
+      JSON.stringify({
+        kind: "ModelHost",
+        engine: "omlx",
+        pid: process.pid,
+        host: "127.0.0.1",
+        port: Number.parseInt(url.port, 10),
+        modelAliases: ["Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf"],
+        startedAt: "2026-05-24T00:00:00.000Z",
+        slotSavePath: slotBaseDir,
+        rel: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+      }),
+    );
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+          messages: [{ role: "user", content: "stream json" }],
+          stream: false,
+          temperature: 0,
+        }),
+      }),
+      runtime.env,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/json");
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
 test("kv eligibility: llamacpp ModelRun and oMLX ModelHost always participate; other arms excluded", () => {
   // oMLX ModelHosts are eligible unconditionally (symmetric with llama.cpp);
   // the supports_save_handle capability probe is the only runtime guard.

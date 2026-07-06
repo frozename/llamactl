@@ -1511,6 +1511,13 @@ test("oMLX save-handle: response-cache key normalized to stream:false so stream:
   const model = "mlx-community/Qwen3-8B-MLX-4bit";
   const port = 19503;
   writeModelHostWorkload(runtime.root, "wl-omlx", port, "omlx", [model]);
+  const workloadEpoch = workloadEpochFor(runtime, "wl-omlx");
+  const normalizedBodyForCache = JSON.stringify({
+    model,
+    messages: [{ role: "user", content: "omlx cache normalize stream" }],
+    temperature: 0,
+    stream: false,
+  });
 
   let upstreamChatCalls = 0;
   const capturedStreamValues: unknown[] = [];
@@ -1572,8 +1579,8 @@ test("oMLX save-handle: response-cache key normalized to stream:false so stream:
     // The proxy must have sent stream:false to upstream (save-handle forces it).
     expect(capturedStreamValues[0]).toBe(false);
 
-    // Request 2: stream:false — identical logical content. After the fix the
-    // cache key (SHA over stream:false body) matches the entry from request 1.
+    // Pin #1 (current failure): stream:true populate should replay as JSON when
+    // later read with stream:false.
     const resp2 = await openaiProxy.proxyOpenAI(
       new Request("http://localhost/v1/chat/completions", {
         method: "POST",
@@ -1587,11 +1594,136 @@ test("oMLX save-handle: response-cache key normalized to stream:false so stream:
       }),
       runtime.env,
     );
-    const resp2Json = (await resp2.json()) as { id?: string };
+    expect(resp2.headers.get("content-type")).toContain("application/json");
+    const resp2Json = (await resp2.json()) as { id?: unknown };
     expect(resp2.status).toBe(200);
-    // Upstream must NOT be called a second time — this is a cache hit.
+    expect(resp2Json).toMatchObject({ id: "chatcmpl-omlx" });
     expect(upstreamChatCalls).toBe(1);
-    expect(resp2Json.id).toBe("chatcmpl-omlx");
+
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    expect(
+      registry.findBySha(
+        lookupScope({
+          sha: canonicalRequestSha(normalizedBodyForCache),
+          model,
+          workload: "wl-omlx",
+          workloadEpoch,
+        }),
+      ),
+    ).not.toBeNull();
+    storage.close();
+    expect(openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(runtime.env)).toBe(1);
+  } finally {
+    runtime.cleanup();
+  }
+});
+
+test("oMLX save-handle: stream:false population replays cache as SSE for stream:true reader", async () => {
+  const runtime = makeTempRuntime();
+  const model = "mlx-community/Qwen3-8B-MLX-4bit";
+  const port = 19503;
+  writeModelHostWorkload(runtime.root, "wl-omlx", port, "omlx", [model]);
+  const workloadEpoch = workloadEpochFor(runtime, "wl-omlx");
+  const normalizedBodyForCache = JSON.stringify({
+    model,
+    messages: [{ role: "user", content: "omlx cache normalize stream" }],
+    temperature: 0,
+    stream: false,
+  });
+
+  let upstreamChatCalls = 0;
+  const capturedStreamValues: unknown[] = [];
+  function omlxUpstreamResponse(pathname: string, method: string, init?: RequestInit): Response {
+    if (method === "GET" && pathname === "/v1/slots/capabilities") {
+      return Response.json({
+        slots: { api_version: 2, supports_request_handle: true, supports_save_handle: true },
+      });
+    }
+    if (method === "POST" && pathname === "/v1/chat/completions") {
+      upstreamChatCalls += 1;
+      const body = typeof init?.body === "string" ? init.body : "";
+      try {
+        capturedStreamValues.push((JSON.parse(body) as { stream?: unknown }).stream);
+      } catch {
+        /* ignore */
+      }
+      return Response.json({
+        id: "chatcmpl-omlx",
+        object: "chat.completion",
+        model,
+        choices: [
+          { index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+    }
+    return new Response("", { status: 404 });
+  }
+  globalThis.fetch = ((input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method =
+      init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
+    return Promise.resolve(omlxUpstreamResponse(new URL(url).pathname, method, init));
+  }) as typeof fetch;
+
+  try {
+    const baseMessages = [{ role: "user", content: "omlx cache normalize stream" }];
+
+    // Request 1: stream:false — caches canonical JSON with a stream-agnostic
+    // body key for oMLX.
+    const resp1 = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: baseMessages,
+          temperature: 0,
+          stream: false,
+        }),
+      }),
+      runtime.env,
+    );
+    expect(resp1.status).toBe(200);
+    expect(upstreamChatCalls).toBe(1);
+    expect(capturedStreamValues[0]).toBe(false);
+
+    // Pin #2 (current failure): stream:false populate should replay as SSE when
+    // a later caller requested stream:true.
+    const resp2 = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: baseMessages,
+          temperature: 0,
+          stream: true,
+        }),
+      }),
+      runtime.env,
+    );
+    const resp2Text = await resp2.text();
+    expect(resp2.status).toBe(200);
+    expect(resp2.headers.get("content-type")).toContain("text/event-stream");
+    expect(resp2Text).toContain("data: [DONE]");
+    expect(upstreamChatCalls).toBe(1);
+
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    expect(
+      registry.findBySha(
+        lookupScope({
+          sha: canonicalRequestSha(normalizedBodyForCache),
+          model,
+          workload: "wl-omlx",
+          workloadEpoch,
+        }),
+      ),
+    ).not.toBeNull();
+    storage.close();
     expect(openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(runtime.env)).toBe(1);
   } finally {
     runtime.cleanup();

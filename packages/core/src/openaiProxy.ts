@@ -323,6 +323,7 @@ type ProxyContext = {
   kv?: KvRequestState;
   responseCache?: ResponseCacheRequestState;
   responseCacheHit?: Response;
+  responseCacheCanonicalBody?: Uint8Array;
   /**
    * Captured by maybeInjectOmlxSaveHandle BEFORE the save-handle injection
    * forces stream:false on the upstream request. If the client originally
@@ -795,9 +796,20 @@ function requestModel(parsedBody: unknown): string | null {
   return typeof maybeModel === "string" ? maybeModel : null;
 }
 
-function cacheHitResponse(entry: ResponseCacheEntry): Response {
+async function cacheHitResponse(
+  context: Pick<ProxyContext, "clientRequestedStream" | "route" | "isAnthropic">,
+  entry: ResponseCacheEntry,
+): Promise<Response> {
   const headers = new Headers();
   headers.set("content-type", entry.contentType);
+  const cachedBody = new Response(new Uint8Array(entry.responseBody), {
+    status: entry.statusCode,
+    headers,
+  });
+  if (context.route?.engine === "omlx") {
+    const synthesized = await maybeSynthesizeOmlxSseResponse(context, cachedBody);
+    if (synthesized !== null) return synthesized;
+  }
   if (entry.contentType.toLowerCase().startsWith("text/event-stream")) {
     return new Response(
       new ReadableStream<Uint8Array>({
@@ -808,7 +820,8 @@ function cacheHitResponse(entry: ResponseCacheEntry): Response {
       }),
       {
         status: entry.statusCode,
-        headers,
+        statusText: cachedBody.statusText,
+        headers: cachedBody.headers,
       },
     );
   }
@@ -837,7 +850,6 @@ function responseCacheEpochForRoute(route: RoutedEntry, resolved: ResolvedEnv): 
   return `peer:${route.targetNodeId ?? route.workload}:${route.model}${peerRevision}`;
 }
 
-// eslint-disable-next-line @typescript-eslint/require-await -- Pipeline stages share an async contract.
 async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyContext> {
   if (!shouldUseResponseCachePath(context)) return context;
   // Response-cache metadata is resolved independently of the KV *slot* path
@@ -859,6 +871,7 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
   if (!isDeterministic(parsedBody)) return context;
   const model = requestModel(parsedBody);
   if (!model) return context;
+  context.clientRequestedStream ??= isRecord(parsedBody) && parsedBody["stream"] === true;
   // oMLX save-handle always forces stream:false upstream; normalize before
   // computing the cache key so stream:true and stream:false callers share an entry.
   if (
@@ -907,7 +920,7 @@ async function maybeResponseCacheLookup(context: ProxyContext): Promise<ProxyCon
   runtime.storage.safeWrite(() => {
     runtime.registry.bumpHit(lookup, Date.now());
   });
-  context.responseCacheHit = cacheHitResponse(hit);
+  context.responseCacheHit = await cacheHitResponse(context, hit);
   return context;
 }
 
@@ -1180,9 +1193,10 @@ async function maybeInjectOmlxSaveHandle(
     return;
   }
   if (!isRecord(parsed)) return;
-  // Capture original stream intent BEFORE we overwrite it. The response
-  // path uses this to synthesize SSE when the client asked for it.
-  context.clientRequestedStream = parsed["stream"] === true;
+  // Capture original stream intent before overwriting it.
+  // The response-cache lookup may already have normalized stream:false to unify
+  // the cache key for oMLX.
+  context.clientRequestedStream ??= parsed["stream"] === true;
   parsed["x_omlx_save_handle"] = sha;
   parsed["stream"] = false;
   const injectedBody = JSON.stringify(parsed);
@@ -1317,7 +1331,14 @@ function jsonCompletionToSse(json: unknown): string {
  * synthesis should happen and the caller should pass through normally.
  */
 async function maybeSynthesizeOmlxSseResponse(
-  context: Pick<ProxyContext, "clientRequestedStream" | "isAnthropic">,
+  context: Pick<
+    ProxyContext,
+    | "clientRequestedStream"
+    | "route"
+    | "isAnthropic"
+    | "responseCache"
+    | "responseCacheCanonicalBody"
+  >,
   upstream: Response,
 ): Promise<Response | null> {
   if (context.clientRequestedStream !== true) return null;
@@ -1332,6 +1353,13 @@ async function maybeSynthesizeOmlxSseResponse(
     return null;
   }
   if (isRecord(json) && json["error"] !== undefined && json["error"] !== null) return null;
+  if (
+    context.route?.engine === "omlx" &&
+    context.responseCache &&
+    context.responseCacheCanonicalBody === undefined
+  ) {
+    context.responseCacheCanonicalBody = new TextEncoder().encode(JSON.stringify(json));
+  }
   const sseBody = jsonCompletionToSse(json);
   const respHeaders = sanitizedResponseHeaders(upstream);
   respHeaders.set("content-type", "text/event-stream");
@@ -1688,22 +1716,26 @@ async function maybePersistResponseCache(
   if (context.responseCacheHit) return upstream;
 
   const contentType = upstream.headers.get("content-type") ?? "";
-  const isJson = isJsonContentType(contentType);
-  const isSse = contentType.toLowerCase().startsWith("text/event-stream");
+  const replayBody = new Uint8Array(await upstream.arrayBuffer());
+  const persistedBody = context.responseCacheCanonicalBody ?? replayBody;
+  const persistedContentType = context.responseCacheCanonicalBody
+    ? "application/json"
+    : contentType;
+  const isJson = isJsonContentType(persistedContentType);
+  const isSse = persistedContentType.toLowerCase().startsWith("text/event-stream");
   const cacheableType = isJson || isSse;
-  const bodyBytes = new Uint8Array(await upstream.arrayBuffer());
-  const replay = new Response(bodyBytes, {
+  const replay = new Response(replayBody, {
     status: upstream.status,
     statusText: upstream.statusText,
     headers: upstream.headers,
   });
   if (upstream.status !== 200 || !responseCache.deterministic || !cacheableType) return replay;
-  if (isJson && isErrorEnvelope(bodyBytes, responseCache)) return replay;
-  if (isSse && !(await shouldCacheSseResponse(context, upstream, bodyBytes, responseCache))) {
+  if (isJson && isErrorEnvelope(persistedBody, responseCache)) return replay;
+  if (isSse && !(await shouldCacheSseResponse(context, upstream, persistedBody, responseCache))) {
     return replay;
   }
 
-  const totalBytes = responseCache.requestBodyBytes + bodyBytes.byteLength;
+  const totalBytes = responseCache.requestBodyBytes + persistedBody.byteLength;
   if (totalBytes > responseCacheMaxEntryBytes()) return replay;
 
   const now = Date.now();
@@ -1714,11 +1746,11 @@ async function maybePersistResponseCache(
       workload: responseCache.workload,
       workloadEpoch: responseCache.workloadEpoch,
       protocolVariant: responseCache.protocolVariant,
-      contentType: isSse ? "text/event-stream" : "application/json",
+      contentType: persistedContentType,
       statusCode: upstream.status,
-      responseBody: bodyBytes,
+      responseBody: persistedBody,
       requestBodyBytes: responseCache.requestBodyBytes,
-      responseBodyBytes: bodyBytes.byteLength,
+      responseBodyBytes: persistedBody.byteLength,
       createdAt: now,
       lastUsed: now,
       hits: 0,
