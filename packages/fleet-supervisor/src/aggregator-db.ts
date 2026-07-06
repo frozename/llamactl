@@ -95,7 +95,10 @@ export function writeSnapshot(
       INSERT INTO node_snapshots (node, ts, received_at, snapshot_json)
       VALUES ($node, $ts, $received_at, $snapshot_json)
       ON CONFLICT(node, ts) DO UPDATE SET
-        received_at=excluded.received_at,
+        received_at=CASE
+          WHEN node_snapshots.snapshot_json = excluded.snapshot_json THEN node_snapshots.received_at
+          ELSE excluded.received_at
+        END,
         snapshot_json=excluded.snapshot_json
     `,
   ).run({

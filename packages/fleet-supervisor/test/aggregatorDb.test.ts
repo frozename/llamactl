@@ -78,6 +78,71 @@ describe("aggregator db", () => {
     }
   });
 
+  test("identical snapshot re-ingest preserves received_at so freshness still expires on schedule", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
+    const dbPath = join(dir, "cluster.db");
+    try {
+      const db = openAggregatorDb(dbPath);
+      const first = snapshot("mac-mini", "2026-05-25T17:00:00Z", 1024);
+      writeSnapshot(db, "mac-mini", first, "2026-05-25T17:00:00Z");
+      writeSnapshot(db, "mac-mini", first, "2026-05-25T17:05:00Z");
+
+      const rows = getLatestPerNode(db, { freshAfterTs: "2026-05-25T17:01:00Z" });
+      expect(rows).toHaveLength(0);
+
+      const [history] = getHistoricalForNode(db, "mac-mini", { limit: 1 });
+      expect(history?.receivedAt).toBe("2026-05-25T17:00:00Z");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("advanced snapshot re-ingest refreshes received_at and stays fresh", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
+    const dbPath = join(dir, "cluster.db");
+    try {
+      const db = openAggregatorDb(dbPath);
+      writeSnapshot(
+        db,
+        "mac-mini",
+        snapshot("mac-mini", "2026-05-25T17:00:00Z", 1024),
+        "2026-05-25T17:00:00Z",
+      );
+      writeSnapshot(
+        db,
+        "mac-mini",
+        snapshot("mac-mini", "2026-05-25T17:01:00Z", 1024),
+        "2026-05-25T17:05:00Z",
+      );
+
+      const rows = getLatestPerNode(db, { freshAfterTs: "2026-05-25T17:01:00Z" });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.ts).toBe("2026-05-25T17:01:00Z");
+      expect(rows[0]?.receivedAt).toBe("2026-05-25T17:05:00Z");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("same-key upsert with changed snapshot_json refreshes received_at", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
+    const dbPath = join(dir, "cluster.db");
+    try {
+      const db = openAggregatorDb(dbPath);
+      const ts = "2026-05-25T17:01:00Z";
+      writeSnapshot(db, "mac-mini", snapshot("mac-mini", ts, 1024), "2026-05-25T17:02:00Z");
+      writeSnapshot(db, "mac-mini", snapshot("mac-mini", ts, 2048), "2026-05-25T17:05:00Z");
+
+      const rows = getLatestPerNode(db, { freshAfterTs: "2026-05-25T17:01:00Z" });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.ts).toBe(ts);
+      expect(rows[0]?.receivedAt).toBe("2026-05-25T17:05:00Z");
+      expect(rows[0]?.snapshot.node_mem.free_mb).toBe(2048);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("getHistoricalForNode filters by sinceTs, honors limit", () => {
     const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
     const dbPath = join(dir, "cluster.db");
