@@ -148,6 +148,33 @@ describe("startPeerSnapshotPoller", () => {
     expect(publishes[publishes.length - 1]!.has("mac-mini")).toBe(true); // later tick failed -> retained
   });
 
+  test("one malformed peer cannot block another peer in the same tick", async () => {
+    const cap = capture();
+    const stop = startPeerSnapshotPoller({
+      intervalMs: 15,
+      listPeersFn: () => [peer("broken"), peer("healthy")],
+      fetchFn: (p) => {
+        if (p.id === "broken") {
+          throw new Error("malformed snapshot");
+        }
+        return Promise.resolve({
+          workloads: [{ modelId: "granite-mini-3b", port: 8086 }],
+          pressure: "NORMAL",
+          fetchedAt: 1,
+        });
+      },
+      publish: cap.publish,
+    });
+    await cap.done;
+    stop();
+    expect([...cap.published!.keys()]).toEqual(["healthy"]);
+    expect(cap.published!.get("healthy")).toEqual({
+      workloads: [{ modelId: "granite-mini-3b", port: 8086 }],
+      pressure: "NORMAL",
+      fetchedAt: 1,
+    });
+  });
+
   test("publishes an empty map when there are no peers (local-only routing)", async () => {
     const cap = capture();
     const stop = startPeerSnapshotPoller({
@@ -259,6 +286,160 @@ describe("startPeerSnapshotPoller", () => {
       expect(new Headers(init.headers).get("authorization")).toBe("Bearer peer-token");
     } finally {
       rmSync(certDir, { recursive: true, force: true });
+    }
+  });
+
+  test("slow peer fetch does not block healthy peer publishes across ticks", async () => {
+    const publishes: Map<string, PeerSnapshot>[] = [];
+    let n = 0;
+    const stalledJson = (): Promise<unknown> =>
+      new Promise(() => {
+        void 0;
+      });
+
+    globalThis.fetch = ((input: Request | string | URL) => {
+      const target = requestUrl(input);
+      if (target.includes("127.0.0.2")) {
+        const response = new Response("{}", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+        Object.defineProperty(response, "json", { value: stalledJson });
+        return Promise.resolve(response);
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            node_mem: { free_mb: 1024, inactive_mb: 2048 },
+            workloads: [
+              {
+                models: ["granite-mini-3b"],
+                endpoint: "http://127.0.0.1:8086",
+                reachable: true,
+                revision: "rev-1",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }) as typeof fetch;
+
+    const complete = new Promise<void>((resolve, reject) => {
+      const stop = startPeerSnapshotPoller({
+        intervalMs: 15,
+        peerSnapshotFetchTimeoutMs: 200,
+        listPeersFn: () => {
+          const peers = [
+            { id: "healthy", endpoint: "https://127.0.0.1:7843", token: "tok" },
+            { id: "stalled", endpoint: "https://127.0.0.2:7843", token: "tok" },
+          ];
+          return peers;
+        },
+        publish: (m) => {
+          publishes.push(new Map(m));
+          n += 1;
+          if (n >= 3) {
+            stop();
+            resolve();
+          }
+        },
+      });
+      setTimeout(() => {
+        stop();
+        reject(new Error("peer poller tick stalled"));
+      }, 1000);
+    });
+
+    await complete;
+    expect(publishes.length).toBeGreaterThanOrEqual(3);
+    for (const snapshot of publishes) {
+      expect(snapshot.has("healthy")).toBe(true);
+      expect(snapshot.get("healthy")!.workloads).toEqual([
+        { modelId: "granite-mini-3b", port: 8086, revision: "rev-1" },
+      ]);
+    }
+  });
+
+  test("direct peer fetch times out stalled response bodies instead of wedging the tick", async () => {
+    const stalledJson = (): Promise<unknown> =>
+      new Promise(() => {
+        void 0;
+      });
+    globalThis.fetch = ((_input: Request | string | URL) => {
+      const response = new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+      Object.defineProperty(response, "json", { value: stalledJson });
+      return Promise.resolve(response);
+    }) as typeof fetch;
+
+    const result = await Promise.race([
+      __peerSnapshotInternals.fetchPeerSnapshot(
+        {
+          id: "mac-mini",
+          endpoint: "https://127.0.0.1:7843",
+          token: "peer-token",
+        },
+        1234,
+        50,
+      ),
+      new Promise<symbol>((resolve) => {
+        setTimeout(() => {
+          resolve(Symbol("timed-out"));
+        }, 100);
+      }),
+    ]);
+
+    expect(result).toBeNull();
+  });
+
+  test("direct peer fetch uses the default 8000ms timeout when none is supplied", async () => {
+    const delays: number[] = [];
+    const originalSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((
+      handler: Parameters<typeof setTimeout>[0],
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      if (typeof timeout === "number") delays.push(timeout);
+      return originalSetTimeout(handler, timeout, ...args);
+    }) as typeof setTimeout;
+    globalThis.fetch = ((_input: Request | string | URL, _init?: RequestInit) => {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            node_mem: { free_mb: 1024, inactive_mb: 2048 },
+            workloads: [
+              {
+                models: ["granite-mini-3b"],
+                endpoint: "http://127.0.0.1:8086",
+                reachable: true,
+                revision: "rev-1",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }) as typeof fetch;
+
+    try {
+      const snapshot = await __peerSnapshotInternals.fetchPeerSnapshot(
+        {
+          id: "mac-mini",
+          endpoint: "https://127.0.0.1:7843",
+          token: "peer-token",
+        },
+        1234,
+      );
+
+      expect(snapshot).not.toBeNull();
+      expect(delays).toContain(__peerSnapshotInternals.DEFAULT_PEER_FETCH_TIMEOUT_MS);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
     }
   });
 });

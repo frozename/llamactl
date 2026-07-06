@@ -38,6 +38,7 @@ interface RawFleetSnapshot {
 // the OS holds most RAM as reclaimable `inactive` cache, so free_mb is routinely
 // a few hundred MB even when GBs are available. Use free + inactive.
 const HIGH_PRESSURE_AVAILABLE_MB = 768;
+export const DEFAULT_PEER_FETCH_TIMEOUT_MS = 8_000;
 
 function parseWorkloadPort(endpoint: string | undefined): number {
   if (!endpoint) return 0;
@@ -84,7 +85,10 @@ function resolveTunnelRelayToken(peer: PeerNode): string {
   throw new Error(`peer ${peer.id} has tunnelPreferred=true but no tunnel relay bearer set`);
 }
 
-async function readPeerSnapshotDirect(peer: PeerNode): Promise<RawFleetSnapshot | null> {
+async function readPeerSnapshotDirectWithTimeout(
+  peer: PeerNode,
+  timeoutMs: number,
+): Promise<RawFleetSnapshot | null> {
   const headers: Record<string, string> = {};
   if (peer.token) headers["authorization"] = `Bearer ${peer.token}`;
   const pinnedFetch = makePinnedFetch({
@@ -94,14 +98,38 @@ async function readPeerSnapshotDirect(peer: PeerNode): Promise<RawFleetSnapshot 
     fingerprint: peer.fingerprint,
   } as ClusterNode);
   const target = new URL("/v1/fleet/snapshot", peer.endpoint);
-  let res: Response;
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
   try {
-    res = await pinnedFetch(target, { method: "GET", headers });
+    const res = await pinnedFetch(target, { method: "GET", headers, signal: controller.signal });
+    if (!res.ok) return null; // 204 (no journal entry yet) or error
+    return (await Promise.race([
+      res.json(),
+      new Promise<never>((_, reject) => {
+        if (controller.signal.aborted) {
+          reject(new Error("peer snapshot fetch timed out"));
+          return;
+        }
+        controller.signal.addEventListener(
+          "abort",
+          (): void => {
+            reject(new Error("peer snapshot fetch timed out"));
+          },
+          { once: true },
+        );
+      }),
+    ]).catch(() => null)) as RawFleetSnapshot | null;
   } catch {
-    return null; // unreachable / TLS error -> no peer routes this tick
+    return null; // unreachable / TLS error / timeout -> no peer routes this tick
+  } finally {
+    clearTimeout(timer);
   }
-  if (!res.ok) return null; // 204 (no journal entry yet) or error
-  return (await res.json().catch(() => null)) as RawFleetSnapshot | null;
+}
+
+async function readPeerSnapshotDirect(peer: PeerNode): Promise<RawFleetSnapshot | null> {
+  return await readPeerSnapshotDirectWithTimeout(peer, DEFAULT_PEER_FETCH_TIMEOUT_MS);
 }
 
 async function readPeerSnapshotViaTunnel(peer: PeerNode): Promise<RawFleetSnapshot | null> {
@@ -125,11 +153,15 @@ async function readPeerSnapshotViaTunnel(peer: PeerNode): Promise<RawFleetSnapsh
   return result as RawFleetSnapshot | null;
 }
 
-async function fetchPeerSnapshot(peer: PeerNode, nowMs: number): Promise<PeerSnapshot | null> {
+async function fetchPeerSnapshot(
+  peer: PeerNode,
+  nowMs: number,
+  timeoutMs: number = DEFAULT_PEER_FETCH_TIMEOUT_MS,
+): Promise<PeerSnapshot | null> {
   const snap =
     peer.tunnelPreferred === true
       ? await readPeerSnapshotViaTunnel(peer).catch(() => null)
-      : await readPeerSnapshotDirect(peer);
+      : await readPeerSnapshotDirectWithTimeout(peer, timeoutMs).catch(() => null);
   if (!snap?.workloads?.length) return null;
 
   const workloads = collectPeerWorkloads(snap.workloads);
@@ -144,6 +176,8 @@ export interface PeerSnapshotPollerOptions {
   listPeersFn?: () => PeerNode[];
   /** Override the per-peer fetch (tests). */
   fetchFn?: (peer: PeerNode, nowMs: number) => Promise<PeerSnapshot | null>;
+  /** Timeout for direct per-peer snapshot fetch + JSON body read. */
+  peerSnapshotFetchTimeoutMs?: number;
   /** Override the publish sink (tests). Defaults to setPeerSnapshots. */
   publish?: (snapshots: Map<string, PeerSnapshot>) => void;
 }
@@ -156,7 +190,12 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
   const intervalMs = opts.intervalMs ?? 15_000;
   const nowFn = opts.nowFn ?? ((): number => Date.now());
   const discover = opts.listPeersFn ?? ((): PeerNode[] => listPeers());
-  const fetchOne = opts.fetchFn ?? fetchPeerSnapshot;
+  const peerSnapshotFetchTimeoutMs =
+    opts.peerSnapshotFetchTimeoutMs ?? DEFAULT_PEER_FETCH_TIMEOUT_MS;
+  const fetchOne =
+    opts.fetchFn ??
+    ((peer: PeerNode, nowMs: number): Promise<PeerSnapshot | null> =>
+      fetchPeerSnapshot(peer, nowMs, peerSnapshotFetchTimeoutMs));
   const publish = opts.publish ?? openaiProxy.setPeerSnapshots;
   let stopped = false;
   let inflight = false;
@@ -179,10 +218,15 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
         const prev = lastPublished.get(peer.id);
         if (prev !== undefined) next.set(peer.id, prev);
       }
+      const nowMs = nowFn();
       await Promise.all(
         peers.map(async (peer) => {
-          const snap = await fetchOne(peer, nowFn());
-          if (snap) next.set(peer.id, snap);
+          try {
+            const snap = await fetchOne(peer, nowMs);
+            if (snap) next.set(peer.id, snap);
+          } catch {
+            // Per-peer failure must not block peers already in flight.
+          }
         }),
       );
       if (!isStopped()) {
@@ -220,4 +264,4 @@ export function startPeerSnapshotPoller(opts: PeerSnapshotPollerOptions = {}): (
   };
 }
 
-export const __peerSnapshotInternals = { fetchPeerSnapshot };
+export const __peerSnapshotInternals = { fetchPeerSnapshot, DEFAULT_PEER_FETCH_TIMEOUT_MS };
