@@ -100,6 +100,11 @@ interface InFlightMoveState {
   tick?: number;
 }
 
+interface DestinationCapacityReservation {
+  tick: number;
+  freeMb: number;
+}
+
 interface PendingHealthPoll {
   proposal: MoveProposal;
   writeJournalEntry: (entry: FleetJournalEntry) => void;
@@ -131,6 +136,10 @@ export interface InFlightMove {
 export class MigrationController {
   private readonly inFlightMoves = new Map<string, InFlightMoveState>();
   private readonly pendingHealthPolls = new Map<string, PendingHealthPoll>();
+  private readonly destinationCapacityReservations = new Map<
+    string,
+    DestinationCapacityReservation
+  >();
 
   constructor(private readonly deps: MigrationControllerDeps) {
     if (!deps.readRecentMoves) return;
@@ -175,6 +184,29 @@ export class MigrationController {
     return this.deps.minDestinationFreeMb ?? MIGRATION_POLICY_DEFAULTS.minDestinationFreeMb;
   }
 
+  private get reservationTick(): number {
+    if (this.deps.getCurrentTick) return this.currentTick;
+    const interval = this.tickIntervalMs;
+    return interval <= 0 ? Math.floor(this.nowMs / 1_000) : Math.floor(this.nowMs / interval);
+  }
+
+  private getOrInitDestinationProjection(peer: string, freeMb: number): number {
+    const reservation = this.destinationCapacityReservations.get(peer);
+    if (reservation?.tick !== this.reservationTick) {
+      this.destinationCapacityReservations.set(peer, { tick: this.reservationTick, freeMb });
+      return freeMb;
+    }
+    return reservation.freeMb;
+  }
+
+  private reserveDestinationCapacity(peer: string, memoryMb: number): void {
+    const freeMb = this.getOrInitDestinationProjection(peer, this.minDestinationFreeMb);
+    this.destinationCapacityReservations.set(peer, {
+      tick: this.reservationTick,
+      freeMb: freeMb - Math.max(memoryMb, 0),
+    });
+  }
+
   private minRequiredFreeMb(workloadMemoryMb?: number): number {
     if (typeof workloadMemoryMb !== "number" || !Number.isFinite(workloadMemoryMb)) {
       return this.minDestinationFreeMb;
@@ -207,15 +239,17 @@ export class MigrationController {
       const { peer, snapshot: peerSnapshot } = peerSnapshotEntry;
 
       const freeMb = peerSnapshot.nodeMem?.freeMb;
+      const projectedFreeMb =
+        typeof freeMb === "number" ? this.getOrInitDestinationProjection(peer, freeMb) : null;
       const isViable =
         peerSnapshot.pressureState === "NORMAL" &&
-        typeof freeMb === "number" &&
-        Number.isFinite(freeMb) &&
-        freeMb >= requiredFreeMb;
+        typeof projectedFreeMb === "number" &&
+        Number.isFinite(projectedFreeMb) &&
+        projectedFreeMb >= requiredFreeMb;
       if (!isViable) continue;
 
-      if (freeMb > bestFreeMb) {
-        bestFreeMb = freeMb;
+      if (projectedFreeMb > bestFreeMb) {
+        bestFreeMb = projectedFreeMb;
         bestNode = peer;
       }
     }
@@ -277,10 +311,12 @@ export class MigrationController {
   }
 
   markMoveInFlight(workload: string): void {
-    this.inFlightMoves.set(workload, {
-      movedAtMs: this.nowMs,
-      ...(this.deps.getCurrentTick ? { tick: this.currentTick } : {}),
-    });
+    const currentTick = this.deps.getCurrentTick?.();
+    const inFlightMove: InFlightMoveState = { movedAtMs: this.nowMs };
+    if (currentTick !== undefined) {
+      inFlightMove.tick = currentTick;
+    }
+    this.inFlightMoves.set(workload, inFlightMove);
   }
 
   /**
@@ -388,6 +424,7 @@ export class MigrationController {
     }
 
     this.writeSkippedEvictAndMoveProposal(proposal, ts, writeJournalEntry);
+    this.reserveDestinationCapacity(proposal.toNode, requiredFreeMb);
     this.markMoveInFlight(proposal.workload);
 
     // Register a pending health poll so the tick returns immediately.

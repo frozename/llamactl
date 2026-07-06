@@ -696,6 +696,166 @@ describe("MigrationController", () => {
     expect(noTickController.isInMoveCooldown("model-a")).toBe(false);
   });
 
+  it("F2b: same-tick reservation on the wall-clock path defers the second destination", async () => {
+    const noTickReservationController = new MigrationController({
+      peers: ["m2mini", "m4pro"],
+      fetchSnapshot: async (node): Promise<NodeSnapshot> =>
+        snapshots[node] ?? {
+          node,
+          pressureState: "NORMAL",
+          nodeMem: { freeMb: 4096 },
+          workloads: [],
+        },
+      deployWorkload: async (): Promise<void> => undefined,
+      removeWorkload: async (): Promise<void> => undefined,
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
+      getNowMs: (): number => nowMs,
+      tickIntervalMs: 30_000,
+      minDestinationFreeMb: 512,
+    });
+
+    snapshots["m2mini"] = {
+      node: "m2mini",
+      pressureState: "NORMAL",
+      nodeMem: { freeMb: 900 },
+      workloads: [],
+    };
+
+    const first = await noTickReservationController.evaluateMove(
+      { ...workload, name: "model-a", spec: { placement: "auto", resources: { memoryMb: 600 } } },
+      { ...sourceSnapshot, nodeMem: { freeMb: 128 } },
+    );
+    expect(first?.toNode).toBe("m2mini");
+
+    await noTickReservationController.executeMove(first!, (entry) => journal.push(entry));
+
+    const second = await noTickReservationController.evaluateMove(
+      { ...workload, name: "model-b", spec: { placement: "auto", resources: { memoryMb: 600 } } },
+      { ...sourceSnapshot, nodeMem: { freeMb: 128 } },
+    );
+    expect(second).toBeNull();
+  });
+
+  it("F2c: wall-clock reservation expires after a tick boundary and the destination is viable again", async () => {
+    const tickIntervalMs = 30_000;
+    const noTickReservationController = new MigrationController({
+      peers: ["m2mini", "m4pro"],
+      fetchSnapshot: async (node): Promise<NodeSnapshot> =>
+        snapshots[node] ?? {
+          node,
+          pressureState: "NORMAL",
+          nodeMem: { freeMb: 4096 },
+          workloads: [],
+        },
+      deployWorkload: async (): Promise<void> => undefined,
+      removeWorkload: async (): Promise<void> => undefined,
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
+      getNowMs: (): number => nowMs,
+      tickIntervalMs,
+      minDestinationFreeMb: 512,
+    });
+
+    snapshots["m2mini"] = {
+      node: "m2mini",
+      pressureState: "NORMAL",
+      nodeMem: { freeMb: 900 },
+      workloads: [],
+    };
+
+    const first = await noTickReservationController.evaluateMove(
+      { ...workload, name: "model-a", spec: { placement: "auto", resources: { memoryMb: 600 } } },
+      { ...sourceSnapshot, nodeMem: { freeMb: 128 } },
+    );
+    expect(first?.toNode).toBe("m2mini");
+
+    nowMs += tickIntervalMs + 1;
+    await noTickReservationController.executeMove(first!, (entry) => journal.push(entry));
+
+    const second = await noTickReservationController.evaluateMove(
+      { ...workload, name: "model-b", spec: { placement: "auto", resources: { memoryMb: 600 } } },
+      { ...sourceSnapshot, nodeMem: { freeMb: 128 } },
+    );
+    expect(second?.toNode).toBe("m2mini");
+  });
+
+  it("F2d: boundary-crossing reseed errs toward deferral instead of overcommit", async () => {
+    const tickIntervalMs = 30_000;
+    const noTickReservationController = new MigrationController({
+      peers: ["m2mini", "m4pro"],
+      fetchSnapshot: async (node): Promise<NodeSnapshot> =>
+        snapshots[node] ?? {
+          node,
+          pressureState: "NORMAL",
+          nodeMem: { freeMb: 4096 },
+          workloads: [],
+        },
+      deployWorkload: async (): Promise<void> => undefined,
+      removeWorkload: async (): Promise<void> => undefined,
+      selfNode: "m4pro",
+      getLeaseHolder: (): string | null => "m4pro",
+      getNowMs: (): number => nowMs,
+      tickIntervalMs,
+      minDestinationFreeMb: 512,
+    });
+
+    snapshots["m2mini"] = {
+      node: "m2mini",
+      pressureState: "NORMAL",
+      nodeMem: { freeMb: 900 },
+      workloads: [],
+    };
+
+    nowMs += tickIntervalMs + 1;
+
+    const first = await noTickReservationController.evaluateMove(
+      { ...workload, name: "model-a", spec: { placement: "auto", resources: { memoryMb: 600 } } },
+      { ...sourceSnapshot, nodeMem: { freeMb: 128 } },
+    );
+    expect(first?.toNode).toBe("m2mini");
+
+    await noTickReservationController.executeMove(first!, (entry) => journal.push(entry));
+
+    const second = await noTickReservationController.evaluateMove(
+      { ...workload, name: "model-b", spec: { placement: "auto", resources: { memoryMb: 600 } } },
+      { ...sourceSnapshot, nodeMem: { freeMb: 128 } },
+    );
+    expect(second).toBeNull();
+  });
+
+  it("F28: reservation-aware destination selection allows only one move per tick when free memory is limited", async () => {
+    snapshots["m2mini"] = {
+      node: "m2mini",
+      pressureState: "NORMAL",
+      nodeMem: { freeMb: 600 },
+      workloads: [],
+    };
+
+    const firstWorkload = {
+      ...workload,
+      spec: { placement: "auto", resources: { memoryMb: 600 } },
+    };
+    const secondWorkload = {
+      name: "model-b",
+      node: "m4pro",
+      spec: { placement: "auto", resources: { memoryMb: 600 } },
+    };
+
+    const firstProposal = await controller.evaluateMove(firstWorkload, sourceSnapshot);
+    expect(firstProposal).not.toBeNull();
+    const firstResult = await controller.executeMove(firstProposal!, (entry) =>
+      journal.push(entry),
+    );
+    expect(firstResult).toBe("pending_health_check");
+
+    const secondProposal = await controller.evaluateMove(secondWorkload, sourceSnapshot);
+    expect(secondProposal).toBeNull();
+
+    expect(applyCalls).toHaveLength(1);
+    expect(applyCalls[0]).toEqual({ workload: "model-a", toNode: "m2mini" });
+  });
+
   it("F4: evaluateMove fans out peer snapshot fetches in parallel", async () => {
     const deferred = new Map<
       string,
