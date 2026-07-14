@@ -1,10 +1,19 @@
+import type { Config } from "@llamactl/core/config/schema";
+
 import {
-  config as kubecfg,
-  LOCAL_NODE_ENDPOINT,
-  resolveNodeKind,
-  siriusProviders,
-} from "@llamactl/remote";
+  currentContext,
+  defaultConfigPath,
+  loadConfig,
+  mutateConfig,
+  resolveToken,
+  upsertNode,
+} from "@llamactl/core/config/kubeconfig";
+import { LOCAL_NODE_ENDPOINT, resolveNodeKind, siriusProviders } from "@llamactl/remote";
 import { stringify as stringifyYaml } from "yaml";
+
+function mutateConfigLocked(path: string, fn: (cfg: Config) => Config): Config {
+  return mutateConfig(path, fn);
+}
 
 const USAGE = `llamactl sirius — sirius-gateway integration
 
@@ -72,8 +81,8 @@ interface NodeEntry {
 }
 
 function collectAgentNodes(tokenInline: boolean): NodeEntry[] {
-  const cfg = kubecfg.loadConfig();
-  const ctx = kubecfg.currentContext(cfg);
+  const cfg = loadConfig();
+  const ctx = currentContext(cfg);
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   if (!cluster) return [];
   const user = cfg.users.find((u) => u.name === ctx.user);
@@ -101,7 +110,7 @@ function tryResolveToken(user: {
   tokenRef?: string | undefined;
 }): string {
   try {
-    return kubecfg.resolveToken(user);
+    return resolveToken(user);
   } catch (err) {
     return `# ERROR: ${(err as Error).message}`;
   }
@@ -159,27 +168,29 @@ async function runConnect(argv: string[]): Promise<number> {
   const { name, apiKeyRef } = parsed;
   const normalized = url.endsWith("/") ? url.slice(0, -1) : url;
   const baseUrl = normalized.endsWith("/v1") ? normalized : `${normalized}/v1`;
-  const cfgPath = kubecfg.defaultConfigPath();
-  let cfg = kubecfg.loadConfig(cfgPath);
-  const ctx = kubecfg.currentContext(cfg);
-  cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
-    name,
-    endpoint: "",
-    // Sirius is a gateway (fans out to many providers), not a cloud
-    // provider per se. `kind: 'gateway'` lets the UI render the right
-    // badge and future gateway-specific features (routing insight,
-    // per-provider health) light up only for these nodes.
-    kind: "gateway",
-    cloud: {
-      provider: "sirius",
-      baseUrl,
-      ...(apiKeyRef ? { apiKeyRef } : {}),
-    },
+  const cfgPath = defaultConfigPath();
+  let ctxName = "";
+  mutateConfigLocked(cfgPath, (cfg: Config) => {
+    const ctx = currentContext(cfg);
+    ctxName = ctx.name;
+    return upsertNode(cfg, ctx.cluster, {
+      name,
+      endpoint: "",
+      // Sirius is a gateway (fans out to many providers), not a cloud
+      // provider per se. `kind: 'gateway'` lets the UI render the right
+      // badge and future gateway-specific features (routing insight,
+      // per-provider health) light up only for these nodes.
+      kind: "gateway",
+      cloud: {
+        provider: "sirius",
+        baseUrl,
+        ...(apiKeyRef ? { apiKeyRef } : {}),
+      },
+    });
   });
-  kubecfg.saveConfig(cfg, cfgPath);
   process.stdout.write(
     `registered sirius gateway as node '${name}' → ${baseUrl}\n` +
-      `  switch with: llamactl ctx use ${ctx.name} && llamactl --node ${name} ...\n`,
+      `  switch with: llamactl ctx use ${ctxName} && llamactl --node ${name} ...\n`,
   );
   return 0;
 }

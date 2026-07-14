@@ -1,4 +1,6 @@
-import { config as kubecfg } from "@llamactl/remote";
+import type { Config } from "@llamactl/core/config/schema";
+
+import { defaultConfigPath, loadConfig, mutateConfig } from "@llamactl/core/config/kubeconfig";
 
 import { getGlobals } from "../dispatcher.js";
 import { existsSync, readFileSync } from "../safe-fs.js";
@@ -11,6 +13,10 @@ Subcommands:
   get                 Print the full kubeconfig YAML.
   nodes               List nodes in the current context (alias for 'node ls').
 `;
+
+function mutateConfigLocked(path: string, fn: (cfg: Config) => Config): Config {
+  return mutateConfig(path, fn);
+}
 
 export async function runCtx(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
@@ -40,8 +46,8 @@ function runCurrent(args: string[]): number {
     process.stderr.write(`ctx current: unexpected argument ${String(args[0])}\n`);
     return 1;
   }
-  const cfgPath = getGlobals().configPath ?? kubecfg.defaultConfigPath();
-  const cfg = kubecfg.loadConfig(cfgPath);
+  const cfgPath = getGlobals().configPath ?? defaultConfigPath();
+  const cfg = loadConfig(cfgPath);
   process.stdout.write(`${cfg.currentContext}\n`);
   return 0;
 }
@@ -56,15 +62,19 @@ function runUse(args: string[]): number {
     process.stderr.write(`ctx use: unexpected argument ${String(rest[0])}\n`);
     return 1;
   }
-  const cfgPath = getGlobals().configPath ?? kubecfg.defaultConfigPath();
-  const cfg = kubecfg.loadConfig(cfgPath);
-  const found = cfg.contexts.find((c) => c.name === name);
-  if (!found) {
-    process.stderr.write(`ctx use: no context named '${name}'\n`);
+  const cfgPath = getGlobals().configPath ?? defaultConfigPath();
+  try {
+    mutateConfigLocked(cfgPath, (cfg: Config) => {
+      const found = cfg.contexts.find((c) => c.name === name);
+      if (!found) {
+        throw new Error(`ctx use: no context named '${name}'`);
+      }
+      return { ...cfg, currentContext: name };
+    });
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}\n`);
     return 1;
   }
-  const next = { ...cfg, currentContext: name };
-  kubecfg.saveConfig(next, cfgPath);
   process.stdout.write(`switched to context '${name}'\n`);
   return 0;
 }
@@ -74,11 +84,11 @@ function runGet(args: string[]): number {
     process.stderr.write(`ctx get: unexpected argument ${String(args[0])}\n`);
     return 1;
   }
-  const cfgPath = getGlobals().configPath ?? kubecfg.defaultConfigPath();
+  const cfgPath = getGlobals().configPath ?? defaultConfigPath();
   if (!existsSync(cfgPath)) {
     // Load will produce a fresh default; surface that but don't write
     // — `get` is a read-only view.
-    const fresh = kubecfg.loadConfig(cfgPath);
+    const fresh = loadConfig(cfgPath);
     process.stdout.write(`# no config at ${cfgPath}; showing defaults\n`);
     process.stdout.write(`${JSON.stringify(fresh, null, 2)}\n`);
     return 0;

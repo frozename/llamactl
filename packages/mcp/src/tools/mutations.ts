@@ -155,6 +155,8 @@ function registerNodeAdd(server: McpServer): void {
         users: cfg.users.map((u) => (u.name === ctx.user ? { ...u, token: decoded.token } : u)),
       };
       cfg = kubecfg.upsertNode(cfg, ctx.cluster, entry);
+      // eslint-disable-next-line no-warning-comments
+      // TODO(kubeconfig-rmw): migrate to mutateConfig.
       kubecfg.saveConfig(cfg);
       appendAudit({
         server: SERVER_SLUG,
@@ -213,6 +215,8 @@ function registerNodeRemove(server: McpServer): void {
         return toTextContent({ ok: true, removed: false, node: null });
       }
       const next = kubecfg.removeNode(cfg, cluster.name, name);
+      // eslint-disable-next-line no-warning-comments
+      // TODO(kubeconfig-rmw): migrate to mutateConfig.
       kubecfg.saveConfig(next);
       appendAudit({
         server: SERVER_SLUG,

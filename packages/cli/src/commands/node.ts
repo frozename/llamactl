@@ -1,10 +1,20 @@
+import type { Config } from "@llamactl/core/config/schema";
+
+import {
+  currentContext,
+  defaultConfigPath,
+  loadConfig,
+  mutateConfig,
+  removeNode,
+  resolveNode,
+  upsertNode,
+} from "@llamactl/core/config/kubeconfig";
 import { omitUndefined } from "@llamactl/core/object";
 import {
   agentConfig as agentConfigMod,
   configSchema,
   createNodeClient,
   createRemoteNodeClient,
-  config as kubecfg,
   providerForNode,
   resolveNodeKind,
 } from "@llamactl/remote";
@@ -13,6 +23,9 @@ import { dirname } from "node:path";
 import { getNodeClient } from "../dispatcher.js";
 import { required } from "../required.js";
 import { mkdirSync, readFileSync, writeFileSync } from "../safe-fs.js";
+
+const mutateConfigLocked = (path: string, fn: (cfg: Config) => Config): Config =>
+  mutateConfig(path, fn);
 
 const USAGE = `Usage: llamactl node <subcommand>
 
@@ -92,9 +105,9 @@ function runLs(args: string[]): number {
       return 1;
     }
   }
-  const cfgPath = kubecfg.defaultConfigPath();
-  const cfg = kubecfg.loadConfig(cfgPath);
-  const ctx = kubecfg.currentContext(cfg);
+  const cfgPath = defaultConfigPath();
+  const cfg = loadConfig(cfgPath);
+  const ctx = currentContext(cfg);
   const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   const nodes = cluster?.nodes ?? [];
   if (json) {
@@ -315,21 +328,21 @@ async function runAdd(args: string[]): Promise<number> {
     if (!probeFacts) return 1;
   }
 
-  const cfgPath = kubecfg.defaultConfigPath();
-  let cfg = kubecfg.loadConfig(cfgPath);
-  const ctx = kubecfg.currentContext(cfg);
-  cfg = persistUserToken(cfg, ctx.user, token);
-
-  const nodeEntry: configSchema.ClusterNode = {
-    name: f.name,
-    endpoint: url,
-    certificateFingerprint: fingerprint,
-  };
-  if (certificate) nodeEntry.certificate = certificate;
-  cfg = kubecfg.upsertNode(cfg, ctx.cluster, nodeEntry);
-
-  kubecfg.saveConfig(cfg, cfgPath);
-  renderAddResult(f.name, url, ctx.name, probeFacts);
+  const cfgPath = defaultConfigPath();
+  let ctxName = "";
+  mutateConfigLocked(cfgPath, (cfg: Config) => {
+    const ctx = currentContext(cfg);
+    ctxName = ctx.name;
+    const withUser = persistUserToken(cfg, ctx.user, token);
+    const nodeEntry: configSchema.ClusterNode = {
+      name: f.name,
+      endpoint: url,
+      certificateFingerprint: fingerprint,
+    };
+    if (certificate) nodeEntry.certificate = certificate;
+    return upsertNode(withUser, ctx.cluster, nodeEntry);
+  });
+  renderAddResult(f.name, url, ctxName, probeFacts);
   return 0;
 }
 
@@ -343,17 +356,19 @@ function runRm(args: string[]): number {
     process.stderr.write(`node rm: unexpected argument ${String(rest[0])}\n`);
     return 1;
   }
-  const cfgPath = kubecfg.defaultConfigPath();
-  let cfg = kubecfg.loadConfig(cfgPath);
-  const ctx = kubecfg.currentContext(cfg);
+  const cfgPath = defaultConfigPath();
+  let ctxName = "";
   try {
-    cfg = kubecfg.removeNode(cfg, ctx.cluster, name);
+    mutateConfigLocked(cfgPath, (cfg: Config) => {
+      const ctx = currentContext(cfg);
+      ctxName = ctx.name;
+      return removeNode(cfg, ctx.cluster, name);
+    });
   } catch (err) {
     process.stderr.write(`${(err as Error).message}\n`);
     return 1;
   }
-  kubecfg.saveConfig(cfg, cfgPath);
-  process.stdout.write(`removed node '${name}' from context '${ctx.name}'\n`);
+  process.stdout.write(`removed node '${name}' from context '${ctxName}'\n`);
   return 0;
 }
 
@@ -367,8 +382,8 @@ async function runTest(args: string[]): Promise<number> {
     process.stderr.write(`node test: unexpected argument ${String(rest[0])}\n`);
     return 1;
   }
-  const cfgPath = kubecfg.defaultConfigPath();
-  const cfg = kubecfg.loadConfig(cfgPath);
+  const cfgPath = defaultConfigPath();
+  const cfg = loadConfig(cfgPath);
 
   // Cloud / gateway / provider-kind nodes have no `endpoint`, so the
   // tRPC HTTP link below builds an invalid URL and Bun's fetch fails
@@ -379,7 +394,7 @@ async function runTest(args: string[]): Promise<number> {
     user: configSchema.Config["users"][number];
   } | null = null;
   try {
-    const r = kubecfg.resolveNode(cfg, name);
+    const r = resolveNode(cfg, name);
     resolved = { node: r.node, user: r.user };
   } catch (err) {
     process.stderr.write(`node test failed: ${(err as Error).message}\n`);
@@ -631,24 +646,30 @@ function runAddRag(args: string[]): number {
     binding["auth"] = { tokenRef: parsed.passwordRef };
   }
 
-  const cfgPath = kubecfg.defaultConfigPath();
-  const cfg = kubecfg.loadConfig(cfgPath);
-  const ctx = kubecfg.currentContext(cfg);
-  let next;
+  const cfgPath = defaultConfigPath();
+  // Validate the binding shape BEFORE taking the write lock so a
+  // malformed input surfaces its zod error without blocking or
+  // touching the file.
+  let ragBinding: configSchema.RagBinding;
   try {
-    next = kubecfg.upsertNode(cfg, ctx.cluster, {
-      name: parsed.name,
-      endpoint: "",
-      kind: "rag",
-      rag: configSchema.RagBindingSchema.parse(binding),
-    });
+    ragBinding = configSchema.RagBindingSchema.parse(binding);
   } catch (err) {
     process.stderr.write(`node add-rag: invalid binding: ${(err as Error).message}\n`);
     return 1;
   }
-  kubecfg.saveConfig(next, cfgPath);
+  let ctxName = "";
+  mutateConfigLocked(cfgPath, (cfg: Config) => {
+    const ctx = currentContext(cfg);
+    ctxName = ctx.name;
+    return upsertNode(cfg, ctx.cluster, {
+      name: parsed.name,
+      endpoint: "",
+      kind: "rag",
+      rag: ragBinding,
+    });
+  });
   process.stdout.write(
-    `added rag node '${parsed.name}' (${parsed.provider}) to context '${ctx.name}'\n`,
+    `added rag node '${parsed.name}' (${parsed.provider}) to context '${ctxName}'\n`,
   );
   return 0;
 }
@@ -804,9 +825,9 @@ function buildAddCloudInput(f: AddCloudFlags): {
 }
 
 function renderAddCloudSuccess(f: AddCloudFlags, result: { name: string; baseUrl: string }): void {
-  const cfgPath = kubecfg.defaultConfigPath();
-  const cfg = kubecfg.loadConfig(cfgPath);
-  const ctx = kubecfg.currentContext(cfg);
+  const cfgPath = defaultConfigPath();
+  const cfg = loadConfig(cfgPath);
+  const ctx = currentContext(cfg);
   const lines = [
     `added cloud node '${result.name}' (${f.provider} @ ${result.baseUrl})`,
     `  context:     ${ctx.name}`,

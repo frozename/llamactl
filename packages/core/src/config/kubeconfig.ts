@@ -1,7 +1,18 @@
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "../safe-fs.js";
+import { atomicWriteFile } from "../fsAtomic.js";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
+} from "../safe-fs.js";
 import { llamactlHome, nonEmpty } from "./env.js";
 import {
   type ClusterNode,
@@ -30,15 +41,164 @@ export function loadConfig(path: string = defaultConfigPath()): Config {
 
 export function saveConfig(config: Config, path: string = defaultConfigPath()): void {
   ConfigSchema.parse(config);
-  mkdirSync(dirname(path), { recursive: true });
   const yaml = stringifyYaml(config);
-  writeFileSync(path, yaml, "utf8");
+  atomicWriteFile(path, yaml);
   try {
     chmodSync(path, 0o600);
   } catch {
     // Non-POSIX filesystems may reject chmod; cert files elsewhere are
     // the actual secret, so degradation is acceptable.
   }
+}
+
+/**
+ * Serialize a read-modify-write cycle on the kubeconfig behind a
+ * pidfile mutex. Both CLI invocations and the long-lived daemon call
+ * into the same file, so bare `load -> mutate -> saveConfig` chains
+ * race: two writers can each read the same baseline, one saves after
+ * the other, and the loser's mutation silently disappears. This
+ * wrapper holds a `${path}.lock` pidfile for the entire load / fn /
+ * save window, so concurrent callers serialize (bounded 50ms x 40
+ * retries wait; then a clear throw) instead of clobbering.
+ *
+ * `fn` must be synchronous and pure Config->Config — any awaits
+ * would extend the critical section unbounded. Callers that need to
+ * do async work (network probes, subprocess spawns) must do it
+ * BEFORE invoking `mutateConfig`.
+ */
+export function mutateConfig(path: string, fn: (cfg: Config) => Config): Config {
+  const handle = acquireConfigLock(path);
+  try {
+    const current = loadConfig(path);
+    const next = fn(current);
+    saveConfig(next, path);
+    return next;
+  } finally {
+    releaseConfigLock(handle);
+  }
+}
+
+interface ConfigLockHandle {
+  path: string;
+  fd: number;
+  pid: number;
+}
+
+const LOCK_RETRY_INTERVAL_MS = 50;
+const LOCK_MAX_RETRIES = 40;
+
+function acquireConfigLock(configPath: string): ConfigLockHandle {
+  const lockPath = `${configPath}.lock`;
+  mkdirSync(dirname(lockPath), { recursive: true });
+  let lastHolder = -1;
+  for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
+    lastHolder = reapIfStale(lockPath);
+    const acquired = tryOpenLock(lockPath);
+    if (acquired) return acquired;
+    // This synchronous backoff blocks this thread while waiting, by design.
+    // Config writes are infrequent and the critical section is short (sub-ms),
+    // so bounded contention wait is acceptable and keeps the lock discipline
+    // strict even if contention lasts up to ~2,000ms.
+    if (attempt < LOCK_MAX_RETRIES - 1) sleepSync(LOCK_RETRY_INTERVAL_MS);
+  }
+  const totalMs = LOCK_RETRY_INTERVAL_MS * LOCK_MAX_RETRIES;
+  const holderNote = lastHolder > 0 ? ` (held by pid=${String(lastHolder)})` : "";
+  throw new Error(
+    `kubeconfig lock at ${lockPath} still held after ${String(totalMs)}ms${holderNote}`,
+  );
+}
+
+/**
+ * Reap a stale pidfile if the recorded holder is dead.
+ * Returns the observed holder pid (`-1` if unreadable or absent).
+ *
+ * Reaping is intentionally atomic: only one process can rename the stale
+ * lockfile away. If another process already replaced or reaped it, this
+ * process loses the race and retries the lock-acquire loop.
+ *
+ * Caveat: if PID `process.kill(pid, 0)` reports a live holder due PID reuse,
+ * this function refuses to reap and throws later if lock contention persists.
+ * That is fail-closed: better to surface an apparent lock than risk corrupting
+ * the kubeconfig. Manual `${configPath}.lock` cleanup is still possible.
+ */
+function reapIfStale(lockPath: string): number {
+  if (!existsSync(lockPath)) return -1;
+  const holder = readLockHolder(lockPath);
+  if (holder >= 0 && isProcessAlive(holder)) return holder;
+  try {
+    const reapPath = `${lockPath}.reap-${String(process.pid)}-${String(Date.now() % 1_000_000_000)}`;
+    renameSync(lockPath, reapPath);
+    try {
+      unlinkSync(reapPath);
+    } catch {
+      // Best-effort cleanup: if removal fails, the stale lock is no longer
+      // reachable at lockPath, so correctness is already preserved.
+    }
+  } catch {
+    // Another concurrent acquirer may have already unlinked; the
+    // wx open below is the ground truth either way.
+  }
+  return holder;
+}
+
+/** Attempt one exclusive-create open. Returns the handle on success,
+ *  null when the lock is contended, throws on any other fs error. */
+function tryOpenLock(lockPath: string): ConfigLockHandle | null {
+  try {
+    const fd = openSync(lockPath, "wx");
+    writeSync(fd, String(process.pid));
+    return { path: lockPath, fd, pid: process.pid };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") return null;
+    throw err;
+  }
+}
+
+function releaseConfigLock(handle: ConfigLockHandle): void {
+  try {
+    closeSync(handle.fd);
+  } catch {
+    // Best-effort — unlink below is the authoritative release.
+  }
+  try {
+    const holder = readLockHolder(handle.path);
+    if (holder !== handle.pid) return;
+    unlinkSync(handle.path);
+  } catch {
+    // Another process's stale-lock reaper may have removed it first.
+  }
+}
+
+function readLockHolder(lockPath: string): number {
+  try {
+    const parsed = Number.parseInt(readFileSync(lockPath, "utf8").trim(), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : -1;
+  } catch {
+    return -1;
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  // PID reuse trade-off: a recycled pid can keep a stale lock alive (fail-closed)
+  // until the impostor exits. This avoids corrupting config via premature lock theft;
+  // operators can clear a stuck `.lock` file manually if needed.
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Block the current thread for `ms` without CPU-spinning.
+ * `Atomics.wait` on a fresh SharedArrayBuffer is standard across
+ * Bun/Node and doesn't need a runtime-specific sleep primitive.
+ */
+function sleepSync(ms: number): void {
+  const buf = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(buf, 0, 0, ms);
 }
 
 export function currentContext(config: Config): Context {

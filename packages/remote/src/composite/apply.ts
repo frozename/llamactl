@@ -498,6 +498,8 @@ async function applyRagComponent(
     kind: "rag",
     rag: bindingWithEndpoint,
   };
+  // eslint-disable-next-line no-warning-comments
+  // TODO(kubeconfig-rmw): migrate to mutateConfig.
   const next = upsertNode(cfg, ctx.cluster, node);
   saveConfig(next, configPath);
   return { ref, ragNodeCreated: true, started: true };
@@ -671,6 +673,8 @@ async function teardownComponent(
       const cfg = loadConfig(opts.configPath);
       const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
       if (!ctx) return;
+      // eslint-disable-next-line no-warning-comments
+      // TODO(kubeconfig-rmw): migrate to mutateConfig.
       const next = removeNode(cfg, ctx.cluster, rec.ref.name);
       saveConfig(next, opts.configPath);
       return;
@@ -885,6 +889,8 @@ function destroyRagComponent(ref: ComponentRef, opts: CompositeDestroyOptions): 
   const cfg = loadConfig(opts.configPath);
   const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
   if (!ctx) return;
+  // eslint-disable-next-line no-warning-comments
+  // TODO(kubeconfig-rmw): migrate to mutateConfig.
   const next = removeNode(cfg, ctx.cluster, ref.name);
   saveConfig(next, opts.configPath);
 }

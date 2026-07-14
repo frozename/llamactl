@@ -95,6 +95,10 @@ import * as reconcileLoopMod from "./workload/reconcileLoop.js";
 import { type ModelRun, ModelRunSchema, ModelRunSpecSchema } from "./workload/schema.js";
 import * as workloadStoreMod from "./workload/store.js";
 
+const mutateConfigLocked = (path: string, fn: (cfg: Config) => Config): Config => {
+  return kubecfg.mutateConfig(path, fn);
+};
+
 /**
  * Router↔client circular-type escape hatch — the `AppRouter → NodeClient
  * → AppRouter` alias is unresolvable in TypeScript, so router.ts never
@@ -975,39 +979,38 @@ export const router = t.router({
       }
 
       const cfgPath = kubecfg.defaultConfigPath();
-      let cfg = kubecfg.loadConfig(cfgPath);
-      const ctx = kubecfg.currentContext(cfg);
-
-      cfg = {
-        ...cfg,
-        users: cfg.users.map((u) => (u.name === ctx.user ? { ...u, token: decoded.token } : u)),
-      };
-      const entry: ClusterNode = {
-        name: input.name,
-        endpoint: decoded.url,
-        certificateFingerprint: decoded.fingerprint,
-        certificate: decoded.certificate,
-      };
-      cfg = kubecfg.upsertNode(cfg, ctx.cluster, entry);
-      kubecfg.saveConfig(cfg, cfgPath);
+      mutateConfigLocked(cfgPath, (cfg: Config) => {
+        const ctx = kubecfg.currentContext(cfg);
+        const withUser = {
+          ...cfg,
+          users: cfg.users.map((u) => (u.name === ctx.user ? { ...u, token: decoded.token } : u)),
+        };
+        const entry: ClusterNode = {
+          name: input.name,
+          endpoint: decoded.url,
+          certificateFingerprint: decoded.fingerprint,
+          certificate: decoded.certificate,
+        };
+        return kubecfg.upsertNode(withUser, ctx.cluster, entry);
+      });
       return { ok: true as const, name: input.name, endpoint: decoded.url };
     }),
 
   nodeRemove: t.procedure.input(z.object({ name: z.string().min(1) })).mutation(({ input }) => {
     const cfgPath = kubecfg.defaultConfigPath();
-    let cfg = kubecfg.loadConfig(cfgPath);
-    const ctx = kubecfg.currentContext(cfg);
-    cfg = kubecfg.removeNode(cfg, ctx.cluster, input.name);
-    kubecfg.saveConfig(cfg, cfgPath);
+    mutateConfigLocked(cfgPath, (cfg: Config) => {
+      const ctx = kubecfg.currentContext(cfg);
+      return kubecfg.removeNode(cfg, ctx.cluster, input.name);
+    });
     return { ok: true as const };
   }),
 
   nodeSetDefault: t.procedure.input(z.object({ name: z.string().min(1) })).mutation(({ input }) => {
     const cfgPath = kubecfg.defaultConfigPath();
-    let cfg = kubecfg.loadConfig(cfgPath);
-    cfg = kubecfg.setDefaultNode(cfg, input.name);
-    kubecfg.saveConfig(cfg, cfgPath);
-    const ctx = kubecfg.currentContext(cfg);
+    const next = mutateConfigLocked(cfgPath, (cfg: Config) =>
+      kubecfg.setDefaultNode(cfg, input.name),
+    );
+    const ctx = kubecfg.currentContext(next);
     return { ok: true as const, defaultNode: ctx.defaultNode };
   }),
 
@@ -1050,8 +1053,6 @@ export const router = t.router({
     .mutation(async ({ input }) => {
       const { defaultCloudBinding, providerForCloudNode } = await import("./providers/factory.js");
       const cfgPath = kubecfg.defaultConfigPath();
-      let cfg = kubecfg.loadConfig(cfgPath);
-      const ctx = kubecfg.currentContext(cfg);
       const binding = defaultCloudBinding(input.provider, input.apiKeyRef ?? "", {
         ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),
         ...(input.displayName ? { displayName: input.displayName } : {}),
@@ -1066,10 +1067,10 @@ export const router = t.router({
           message: "baseUrl is required for openai-compatible provider",
         });
       }
-      // Probe the binding — empty apiKeyRef or wrong URL fails here
-      // rather than silently later. Callers can pass `skipProbe: true`
-      // to persist the binding without exercising the upstream (the
-      // binding is still structurally validated above).
+      // Probe BEFORE taking the kubeconfig lock — an in-lock await
+      // would extend the critical section across a network round-trip
+      // and let a concurrent bootstrap registration land inside it and
+      // then get silently erased when we finally save.
       if (!input.skipProbe) {
         try {
           const provider = providerForCloudNode({
@@ -1095,13 +1096,15 @@ export const router = t.router({
           });
         }
       }
-      cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
-        name: input.name,
-        endpoint: "",
-        kind: "gateway",
-        cloud: binding,
+      mutateConfigLocked(cfgPath, (cfg: Config) => {
+        const ctx = kubecfg.currentContext(cfg);
+        return kubecfg.upsertNode(cfg, ctx.cluster, {
+          name: input.name,
+          endpoint: "",
+          kind: "gateway",
+          cloud: binding,
+        });
       });
-      kubecfg.saveConfig(cfg, cfgPath);
       return { ok: true as const, name: input.name, baseUrl: binding.baseUrl };
     }),
 
@@ -1135,36 +1138,49 @@ export const router = t.router({
     )
     .mutation(({ input }) => {
       const cfgPath = kubecfg.defaultConfigPath();
-      let cfg = kubecfg.loadConfig(cfgPath);
-      const ctx = kubecfg.currentContext(cfg);
-      const resolved = kubecfg.resolveNode(cfg, input.node);
-      if (!resolved.node.rag) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `node '${input.node}' is not a RAG node`,
-        });
-      }
-      const nextRag = { ...resolved.node.rag };
-      if (input.embedder === null) {
-        delete nextRag.embedder;
-      } else if (input.embedder !== undefined) {
-        nextRag.embedder = input.embedder;
-      } else {
+      // No-op fast path: when the caller doesn't specify an embedder
+      // at all we don't need the write lock — just read + report.
+      if (input.embedder === undefined) {
+        const cfg = kubecfg.loadConfig(cfgPath);
+        const resolved = kubecfg.resolveNode(cfg, input.node);
+        if (!resolved.node.rag) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `node '${input.node}' is not a RAG node`,
+          });
+        }
         return {
           ok: true as const,
           node: input.node,
-          embedder: nextRag.embedder ?? null,
+          embedder: resolved.node.rag.embedder ?? null,
         };
       }
-      cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
-        ...resolved.node,
-        rag: nextRag,
+      let embedderResult: typeof input.embedder = null;
+      mutateConfigLocked(cfgPath, (cfg: Config) => {
+        const ctx = kubecfg.currentContext(cfg);
+        const resolved = kubecfg.resolveNode(cfg, input.node);
+        if (!resolved.node.rag) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `node '${input.node}' is not a RAG node`,
+          });
+        }
+        const nextRag = { ...resolved.node.rag };
+        if (input.embedder === null) {
+          delete nextRag.embedder;
+        } else {
+          nextRag.embedder = input.embedder;
+        }
+        embedderResult = nextRag.embedder ?? null;
+        return kubecfg.upsertNode(cfg, ctx.cluster, {
+          ...resolved.node,
+          rag: nextRag,
+        });
       });
-      kubecfg.saveConfig(cfg, cfgPath);
       return {
         ok: true as const,
         node: input.node,
-        embedder: nextRag.embedder ?? null,
+        embedder: embedderResult,
       };
     }),
 

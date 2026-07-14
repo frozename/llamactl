@@ -1,6 +1,18 @@
-import { embersynth as embersynthMod, config as kubecfg, resolveNodeKind } from "@llamactl/remote";
+import type { Config } from "@llamactl/core/config/schema";
+
+import {
+  currentContext,
+  defaultConfigPath,
+  loadConfig,
+  mutateConfig,
+  upsertNode,
+} from "@llamactl/core/config/kubeconfig";
+import { embersynth as embersynthMod, resolveNodeKind } from "@llamactl/remote";
 
 import { required } from "../required.js";
+
+const mutateConfigLocked = (path: string, fn: (cfg: Config) => Config): Config =>
+  mutateConfig(path, fn);
 
 const USAGE = `llamactl embersynth — embersynth orchestrator integration
 
@@ -173,20 +185,20 @@ async function runConnect(argv: string[]): Promise<number> {
   const { name, apiKeyRef } = flags;
   const normalized = url.endsWith("/") ? url.slice(0, -1) : url;
   const baseUrl = normalized.endsWith("/v1") ? normalized : `${normalized}/v1`;
-  const cfgPath = kubecfg.defaultConfigPath();
-  let cfg = kubecfg.loadConfig(cfgPath);
-  const ctx = kubecfg.currentContext(cfg);
-  cfg = kubecfg.upsertNode(cfg, ctx.cluster, {
-    name,
-    endpoint: "",
-    kind: "gateway",
-    cloud: {
-      provider: "embersynth",
-      baseUrl,
-      ...(apiKeyRef ? { apiKeyRef } : {}),
-    },
+  const cfgPath = defaultConfigPath();
+  mutateConfigLocked(cfgPath, (cfg: Config) => {
+    const ctx = currentContext(cfg);
+    return upsertNode(cfg, ctx.cluster, {
+      name,
+      endpoint: "",
+      kind: "gateway",
+      cloud: {
+        provider: "embersynth",
+        baseUrl,
+        ...(apiKeyRef ? { apiKeyRef } : {}),
+      },
+    });
   });
-  kubecfg.saveConfig(cfg, cfgPath);
   process.stdout.write(
     `registered embersynth gateway as node '${name}' → ${baseUrl}\n` +
       `  synthetic models from \`${embersynthMod.defaultEmbersynthConfigPath()}\` will appear as ${name}.fusion-<profile>.\n`,
@@ -226,9 +238,9 @@ async function runPromotePrivate(argv: string[]): Promise<number> {
     return 1;
   }
 
-  const cfg = kubecfg.loadConfig();
-  const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
-  const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
+  const cfg = loadConfig();
+  const ctx = currentContext(cfg);
+  const cluster = cfg.clusters.find((c) => c.name === ctx.cluster);
   const agentNodes = (cluster?.nodes ?? []).filter((n) => resolveNodeKind(n) === "agent");
   if (agentNodes.length === 0) {
     process.stderr.write(

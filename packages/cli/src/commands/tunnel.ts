@@ -1,10 +1,16 @@
-import { type Config, config as kubecfg, tls } from "@llamactl/remote";
+import type { Config } from "@llamactl/core/config/schema";
+
+import { defaultConfigPath, loadConfig, mutateConfig } from "@llamactl/core/config/kubeconfig";
+import { tls } from "@llamactl/remote";
 import * as tlsModule from "node:tls";
 import { URL } from "node:url";
 
 import { required } from "../required.js";
 
 const { computeFingerprint } = tls;
+function mutateConfigLocked(path: string, fn: (cfg: Config) => Config): Config {
+  return mutateConfig(path, fn);
+}
 
 const USAGE = `llamactl tunnel — reverse-tunnel operator utilities
 
@@ -94,8 +100,8 @@ async function runPinCentral(argv: string[]): Promise<number> {
     return 1;
   }
 
-  const cfgPath = kubecfg.defaultConfigPath();
-  const cfg: Config = kubecfg.loadConfig(cfgPath);
+  const cfgPath = defaultConfigPath();
+  const cfg = loadConfig(cfgPath);
   const ctxName = parsed.context ?? cfg.currentContext;
   const ctxIndex = cfg.contexts.findIndex((c) => c.name === ctxName);
   if (ctxIndex < 0) {
@@ -103,7 +109,6 @@ async function runPinCentral(argv: string[]): Promise<number> {
     return 1;
   }
   const ctx = required(cfg.contexts[ctxIndex]);
-
   const urlStr = parsed.url ?? ctx.tunnelCentralUrl;
   if (!urlStr) {
     process.stderr.write(
@@ -147,13 +152,28 @@ async function runPinCentral(argv: string[]): Promise<number> {
     return 1;
   }
 
-  cfg.contexts[ctxIndex] = {
-    ...ctx,
-    ...(ctx.tunnelCentralUrl ? {} : { tunnelCentralUrl: urlStr }),
-    tunnelCentralCertificate: captured.pem,
-    tunnelCentralFingerprint: captured.fingerprint,
-  };
-  kubecfg.saveConfig(cfg, cfgPath);
+  mutateConfigLocked(cfgPath, (next: Config) => {
+    const contexts = next.contexts;
+    const targetIndex = contexts.findIndex((c) => c.name === ctxName);
+    if (targetIndex < 0) {
+      throw new Error(`tunnel pin-central: context '${ctxName}' not found in ${cfgPath}`);
+    }
+    const context = required(contexts[targetIndex]);
+    return {
+      ...next,
+      contexts: contexts.map((current, index) =>
+        index === targetIndex
+          ? {
+              ...current,
+              ...context,
+              ...(context.tunnelCentralUrl ? {} : { tunnelCentralUrl: urlStr }),
+              tunnelCentralCertificate: captured.pem,
+              tunnelCentralFingerprint: captured.fingerprint,
+            }
+          : current,
+      ),
+    };
+  });
   // Fingerprint only — never log the full PEM or any key material.
   process.stderr.write(`pinned ${host}:${String(port)} -> ${captured.fingerprint}\n`);
   return 0;

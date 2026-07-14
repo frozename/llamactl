@@ -1,14 +1,17 @@
-import type { ClusterNode } from "@llamactl/core/config/schema";
+import type { ClusterNode, Config } from "@llamactl/core/config/schema";
 
 import { decodeBootstrap } from "@llamactl/core/config/agent-config";
 import {
   currentContext,
-  loadConfig,
-  saveConfig,
+  defaultConfigPath,
+  mutateConfig,
   upsertNode,
 } from "@llamactl/core/config/kubeconfig";
 
 import { consumeBootstrapToken, type ConsumeOptions } from "../config/bootstrap-tokens.js";
+
+const mutateConfigLocked = (path: string, fn: (cfg: Config) => Config): Config =>
+  mutateConfig(path, fn);
 
 /**
  * HTTP handler for POST /register. Unauthenticated by design —
@@ -135,28 +138,32 @@ export async function handleRegister(
     );
   }
   const nodeName = consumed.record.nodeName;
-  let cfg = loadConfig(opts.kubeconfigPath);
-  const ctx = currentContext(cfg);
-
-  cfg = {
-    ...cfg,
-    users: cfg.users.map((u) => (u.name === ctx.user ? { ...u, token: decoded.token } : u)),
-  };
-  const entry: ClusterNode = {
-    name: nodeName,
-    endpoint: decoded.url,
-    certificateFingerprint: decoded.fingerprint,
-    certificate: decoded.certificate,
-  };
-  cfg = upsertNode(cfg, ctx.cluster, entry);
-  saveConfig(cfg, opts.kubeconfigPath);
+  const cfgPath = opts.kubeconfigPath ?? defaultConfigPath();
+  let clusterName = "";
+  let contextName = "";
+  mutateConfigLocked(cfgPath, (cfg: Config) => {
+    const ctx = currentContext(cfg);
+    clusterName = ctx.cluster;
+    contextName = ctx.name;
+    const withUser = {
+      ...cfg,
+      users: cfg.users.map((u) => (u.name === ctx.user ? { ...u, token: decoded.token } : u)),
+    };
+    const entry: ClusterNode = {
+      name: nodeName,
+      endpoint: decoded.url,
+      certificateFingerprint: decoded.fingerprint,
+      certificate: decoded.certificate,
+    };
+    return upsertNode(withUser, ctx.cluster, entry);
+  });
 
   return jsonResponse(
     {
       ok: true,
       nodeName,
-      cluster: ctx.cluster,
-      context: ctx.name,
+      cluster: clusterName,
+      context: contextName,
     },
     200,
   );
