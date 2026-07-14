@@ -407,4 +407,64 @@ describe("llamactl_supervisor_execute", () => {
     expect(parsed.error).toMatch(/proposalId|invalid|empty/i);
     expect(calls).toHaveLength(0);
   });
+
+  test("does not allow concurrent in-flight runs for the same proposalId", async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const spawnFn = mockSpawn({ code: 0, stdout: "executed", holdOpenMs: 15 }, calls);
+    const { client } = await connected({ spawn: spawnFn });
+
+    const first = call(client, "llamactl_supervisor_execute", {
+      proposalId: "prop-42",
+      confirm: true,
+    });
+    const second = Promise.resolve().then(() =>
+      call(client, "llamactl_supervisor_execute", { proposalId: "prop-42", confirm: true }),
+    );
+    const [, rawSecond] = await Promise.all([first, second]);
+    const parsedSecond = JSON.parse(textOf(rawSecond)) as { ok: boolean; error?: string };
+    expect(parsedSecond.ok).toBe(false);
+    expect(parsedSecond.error).toMatch(/already running/);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("allows a new run after the previous one completes", async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const spawnFn = mockSpawn({ code: 0, stdout: "executed" }, calls);
+    const { client } = await connected({ spawn: spawnFn });
+
+    const first = await call(client, "llamactl_supervisor_execute", {
+      proposalId: "prop-42",
+      confirm: true,
+    });
+    const parsedFirst = JSON.parse(textOf(first)) as { ok: boolean };
+    expect(parsedFirst.ok).toBe(true);
+
+    const second = await call(client, "llamactl_supervisor_execute", {
+      proposalId: "prop-42",
+      confirm: true,
+    });
+    const parsedSecond = JSON.parse(textOf(second)) as { ok: boolean };
+    expect(parsedSecond.ok).toBe(true);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("different proposalIds run concurrently without blocking each other", async () => {
+    const calls: { cmd: string; args: string[] }[] = [];
+    const spawnFn = mockSpawn({ code: 0, stdout: "executed", holdOpenMs: 15 }, calls);
+    const { client } = await connected({ spawn: spawnFn });
+
+    const first = call(client, "llamactl_supervisor_execute", {
+      proposalId: "prop-a",
+      confirm: true,
+    });
+    const second = Promise.resolve().then(() =>
+      call(client, "llamactl_supervisor_execute", { proposalId: "prop-b", confirm: true }),
+    );
+    const [rawFirst, rawSecond] = await Promise.all([first, second]);
+    const parsedFirst = JSON.parse(textOf(rawFirst)) as { ok: boolean };
+    const parsedSecond = JSON.parse(textOf(rawSecond)) as { ok: boolean };
+    expect(parsedFirst.ok).toBe(true);
+    expect(parsedSecond.ok).toBe(true);
+    expect(calls).toHaveLength(2);
+  });
 });

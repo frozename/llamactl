@@ -353,6 +353,7 @@ async function detectExistingSupervisorDefault(
 }
 
 const admitMeasureInFlight = new Set<string>();
+const supervisorExecuteInFlight = new Set<string>();
 
 function snapshotInput(input: unknown): Record<string, unknown> {
   if (input === null || typeof input !== "object") return {};
@@ -743,43 +744,60 @@ async function handleSupervisorExecute(
     return toTextContent(outcome);
   }
 
-  const running = await detectExistingSupervisor();
-  if (running.running) {
-    const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
+  const key = hasProposalId ? proposalId : `auto:${node ?? ""}`;
+  if (supervisorExecuteInFlight.has(key)) {
+    const snapshot = snapshotInput({ proposalId, auto, severityThreshold, node });
     const outcome = {
       ok: false,
-      error: "supervisor execute blocked by running supervisor",
-      preview: { ...preview, runningPid: running.pid },
+      error: `supervisor execute already running for ${key}`,
+      preview: snapshot,
     };
-    appendAudit("llamactl_supervisor_execute", preview, "denied", outcome);
+    appendAudit("llamactl_supervisor_execute", snapshot, "denied", outcome);
     return toTextContent(outcome);
   }
+  supervisorExecuteInFlight.add(key);
 
-  const cliBinPath = ensureCliBin();
-  const args = [cliBinPath, "supervisor", "tick"];
-  if (node) args.push(`--node=${node}`);
-  if (hasAuto) {
-    args.push("--auto");
-    if (severityThreshold !== undefined) {
-      args.push("--severity-threshold=" + severityThreshold.toString());
+  try {
+    const running = await detectExistingSupervisor();
+    if (running.running) {
+      const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
+      const outcome = {
+        ok: false,
+        error: "supervisor execute blocked by running supervisor",
+        preview: { ...preview, runningPid: running.pid },
+      };
+      appendAudit("llamactl_supervisor_execute", preview, "denied", outcome);
+      return toTextContent(outcome);
     }
-  } else {
-    args.push("--execute=" + (proposalId ?? ""));
-  }
-  const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_EXECUTE);
-  const result = await runProcess(spawnFn, "bun", args, boundedTimeoutMs);
-  const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
-  if (!result.ok) {
-    const outcome = makeResultError(getRunProcessFailureMessage(result), result);
-    appendAudit("llamactl_supervisor_execute", preview, "error", outcome);
-    return toTextContent({
-      ...outcome,
-      preview,
-    });
-  }
 
-  appendAudit("llamactl_supervisor_execute", preview, "success", result);
-  return toTextContent({ ...result, preview });
+    const cliBinPath = ensureCliBin();
+    const args = [cliBinPath, "supervisor", "tick"];
+    if (node) args.push(`--node=${node}`);
+    if (hasAuto) {
+      args.push("--auto");
+      if (severityThreshold !== undefined) {
+        args.push("--severity-threshold=" + severityThreshold.toString());
+      }
+    } else {
+      args.push("--execute=" + (proposalId ?? ""));
+    }
+    const boundedTimeoutMs = toTimeoutMs(timeoutMs, MAX_TIMEOUT_MS_EXECUTE);
+    const result = await runProcess(spawnFn, "bun", args, boundedTimeoutMs);
+    const preview = snapshotInput({ proposalId, auto, severityThreshold, node });
+    if (!result.ok) {
+      const outcome = makeResultError(getRunProcessFailureMessage(result), result);
+      appendAudit("llamactl_supervisor_execute", preview, "error", outcome);
+      return toTextContent({
+        ...outcome,
+        preview,
+      });
+    }
+
+    appendAudit("llamactl_supervisor_execute", preview, "success", result);
+    return toTextContent({ ...result, preview });
+  } finally {
+    supervisorExecuteInFlight.delete(key);
+  }
 }
 
 export function registerFleetTools(server: McpServer, deps?: FleetToolDeps): void {
