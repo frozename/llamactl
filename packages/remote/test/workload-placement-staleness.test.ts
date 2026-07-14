@@ -125,9 +125,10 @@ describe("placement staleness filtering", () => {
     const freshTs = new Date(Date.now() - 5_000).toISOString(); // 5 s ago
 
     const db = openAggregatorDb(dbPath);
+    // Freshness now keys off received_at, not peer ts, after a6de8bc6.
     // stale node has MORE free memory so without filtering it would win
-    writeSnapshot(db, "stale-node", makeSnapshot("stale-node", staleTs, 16_000));
-    writeSnapshot(db, "fresh-node", makeSnapshot("fresh-node", freshTs, 8_000));
+    writeSnapshot(db, "stale-node", makeSnapshot("stale-node", staleTs, 16_000), staleTs);
+    writeSnapshot(db, "fresh-node", makeSnapshot("fresh-node", freshTs, 8_000), freshTs);
     db.close();
 
     let chosenNode = "";
@@ -151,8 +152,8 @@ describe("placement staleness filtering", () => {
 
     const db = openAggregatorDb(dbPath);
     // stale node has MORE free memory — without filtering it wins
-    writeSnapshot(db, "stale-node", makeSnapshot("stale-node", staleTs, 16_000));
-    writeSnapshot(db, "fresh-node", makeSnapshot("fresh-node", freshTs, 8_000));
+    writeSnapshot(db, "stale-node", makeSnapshot("stale-node", staleTs, 16_000), staleTs);
+    writeSnapshot(db, "fresh-node", makeSnapshot("fresh-node", freshTs, 8_000), freshTs);
     db.close();
 
     let chosenNode = "";
@@ -175,7 +176,7 @@ describe("placement staleness filtering", () => {
     const staleTs = new Date(Date.now() - 300_000).toISOString();
 
     const db = openAggregatorDb(dbPath);
-    writeSnapshot(db, "stale-node", makeSnapshot("stale-node", staleTs, 16_000));
+    writeSnapshot(db, "stale-node", makeSnapshot("stale-node", staleTs, 16_000), staleTs);
     db.close();
 
     const result = await applyManifest({
