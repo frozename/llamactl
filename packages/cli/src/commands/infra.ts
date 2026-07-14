@@ -89,6 +89,32 @@ function parseKv(argv: string[]): Map<string, string> {
   return out;
 }
 
+function validateInfraFlags(
+  argv: string[],
+  command: string,
+  allowedKeys: readonly string[],
+  allowedBooleans: readonly string[] = [],
+): boolean {
+  const keys = new Set(allowedKeys);
+  const bools = new Set(allowedBooleans);
+  for (const arg of argv) {
+    if (!arg.startsWith("--")) continue;
+    const eq = arg.indexOf("=");
+    if (eq < 0) {
+      const flag = arg.slice(2);
+      if (bools.has(flag)) continue;
+      process.stderr.write(`infra ${command}: unknown flag --${flag}\n`);
+      return false;
+    }
+    const key = arg.slice(2, eq);
+    if (!keys.has(key)) {
+      process.stderr.write(`infra ${command}: unknown flag --${key}\n`);
+      return false;
+    }
+  }
+  return true;
+}
+
 function positionalArgs(argv: string[]): string[] {
   return argv.filter((a) => !a.startsWith("--"));
 }
@@ -167,6 +193,16 @@ async function runInstall(argv: string[]): Promise<number> {
     process.stderr.write("infra install: pkg name required\n");
     return 1;
   }
+  if (
+    !validateInfraFlags(
+      argv,
+      "install",
+      ["version", "tarball-url", "sha256", "target-platform", "packages-dir", "node"],
+      ["no-activate", "force"],
+    )
+  ) {
+    return 1;
+  }
   const kv = parseKv(argv);
   const version = kv.get("version");
   if (!version) {
@@ -225,6 +261,7 @@ async function runActivate(argv: string[]): Promise<number> {
     process.stderr.write("infra activate: pkg name required\n");
     return 1;
   }
+  if (!validateInfraFlags(argv, "activate", ["version", "node"])) return 1;
   const kv = parseKv(argv);
   const version = kv.get("version");
   if (!version) {
@@ -243,8 +280,18 @@ async function runUninstall(argv: string[]): Promise<number> {
     process.stderr.write("infra uninstall: pkg name required\n");
     return 1;
   }
+  if (!validateInfraFlags(argv, "uninstall", ["version", "node"], ["all"])) return 1;
   const kv = parseKv(argv);
   const version = kv.get("version");
+  const all = kv.has("all");
+  if (!version && !all) {
+    process.stderr.write("infra uninstall: specify --version=<v> or --all\n");
+    return 1;
+  }
+  if (version && all) {
+    process.stderr.write("infra uninstall: specify either --version=<v> or --all, not both\n");
+    return 1;
+  }
   const client = getNodeClient();
   const result = await client.infraUninstall.mutate(version ? { pkg, version } : { pkg });
   process.stdout.write(`${JSON.stringify(result)}\n`);
@@ -280,6 +327,7 @@ async function runService(argv: string[]): Promise<number> {
 }
 
 function runListSpecs(argv: string[]): number {
+  if (!validateInfraFlags(argv, "list-specs", ["packages-dir", "node"])) return 1;
   const kv = parseKv(argv);
   const dir = kv.get("packages-dir");
   const specs = infraSpec.listInfraPackageSpecs(dir);
@@ -355,6 +403,19 @@ function filterPeers(glob: string | undefined): PeerNode[] {
 
 async function runRolloutMain(argv: string[]): Promise<number> {
   const [pkg] = positionalArgs(argv);
+  if (
+    !validateInfraFlags(argv, "rollout", [
+      "version",
+      "tarball-url",
+      "sha256",
+      "nodes",
+      "strategy",
+      "health-timeout",
+      "node",
+    ])
+  ) {
+    return 1;
+  }
   const kv = parseKv(argv);
   const version = kv.get("version");
   const tarballUrl = kv.get("tarball-url");
@@ -384,6 +445,7 @@ async function runRolloutMain(argv: string[]): Promise<number> {
 
 async function runRollbackMain(argv: string[]): Promise<number> {
   const [pkg] = positionalArgs(argv);
+  if (!validateInfraFlags(argv, "rollback", ["previous-version", "nodes", "node"])) return 1;
   const kv = parseKv(argv);
   const previousVersion = kv.get("previous-version");
 
