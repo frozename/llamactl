@@ -15,6 +15,50 @@ import {
 import { toTextContent } from "@nova/mcp-shared";
 import { z } from "zod";
 
+const DEFAULT_OPENAI_COMPAT_BASE_URL = "https://api.openai.com/v1";
+const DEFAULT_OPENAI_COMPAT_HOSTS = ["api.openai.com"];
+const DEFAULT_API_KEY_ENV_NAMES = ["OPENAI_API_KEY"];
+const ENV_HOST_ALLOWLIST = "LLAMACTL_OPERATOR_PLAN_HOST_ALLOWLIST";
+const ENV_API_KEY_ENV_ALLOWLIST = "LLAMACTL_OPERATOR_PLAN_API_KEY_ENVS";
+
+function splitPlannerAllowlist(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
+function normalizeHostname(value: string): string {
+  return value.toLowerCase();
+}
+
+function getAllowedPlannerHosts(): string[] {
+  const configured = splitPlannerAllowlist(process.env[ENV_HOST_ALLOWLIST] ?? "");
+  return configured.length > 0 ? configured.map(normalizeHostname) : DEFAULT_OPENAI_COMPAT_HOSTS;
+}
+
+function getAllowedApiKeyEnvs(): string[] {
+  const configured = splitPlannerAllowlist(process.env[ENV_API_KEY_ENV_ALLOWLIST] ?? "");
+  return configured.length > 0 ? configured : DEFAULT_API_KEY_ENV_NAMES;
+}
+
+function validatePlannerBaseUrl(baseUrl: string): string | null {
+  let normalizedUrl: URL;
+  try {
+    normalizedUrl = new URL(baseUrl);
+  } catch (error: unknown) {
+    return `invalid baseUrl${error instanceof Error ? `: ${error.message}` : ""}`;
+  }
+  if (normalizedUrl.protocol !== "https:") {
+    return "baseUrl must use https";
+  }
+  const host = normalizeHostname(normalizedUrl.hostname);
+  if (!getAllowedPlannerHosts().includes(host)) {
+    return `baseUrl host '${host}' is not allowlisted`;
+  }
+  return null;
+}
+
 export function registerOperatorTools(server: McpServer): void {
   server.registerTool(
     "llamactl.env",
@@ -135,6 +179,19 @@ export function registerOperatorTools(server: McpServer): void {
           });
         }
         const envName = input.apiKeyEnv ?? "OPENAI_API_KEY";
+        const allowedApiKeyEnvs = getAllowedApiKeyEnvs();
+        if (!allowedApiKeyEnvs.includes(envName)) {
+          return toTextContent({
+            ok: false,
+            reason: "config",
+            message: `apiKeyEnv '${envName}' is not allowlisted`,
+          });
+        }
+        const baseUrl = input.baseUrl ?? DEFAULT_OPENAI_COMPAT_BASE_URL;
+        const baseUrlError = validatePlannerBaseUrl(baseUrl);
+        if (baseUrlError) {
+          return toTextContent({ ok: false, reason: "config", message: baseUrlError });
+        }
         const apiKey = process.env[envName];
         if (!apiKey) {
           return toTextContent({
@@ -145,7 +202,7 @@ export function registerOperatorTools(server: McpServer): void {
         }
         const provider = createOpenAICompatProvider({
           name: "planner-llm",
-          baseUrl: input.baseUrl ?? "https://api.openai.com/v1",
+          baseUrl,
           apiKey,
         });
         executor = createLlmExecutor({ provider, model: input.model });
