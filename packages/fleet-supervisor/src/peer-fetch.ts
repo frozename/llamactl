@@ -4,6 +4,8 @@ import { callViaTunnelRelay } from "@llamactl/core/tunnel-relay";
 import type { AggregatorPeer } from "./aggregator.js";
 import type { FleetSnapshotEntry } from "./types.js";
 
+import { assertPeerPinned } from "./peer-pinning.js";
+
 interface PeerFetchResult {
   statusCode: number;
   body: string;
@@ -66,6 +68,11 @@ async function requestViaTunnel(peer: AggregatorPeer, timeoutMs: number): Promis
 }
 
 async function requestDirect(peer: AggregatorPeer, timeoutMs: number): Promise<PeerFetchResult> {
+  // Enforce fail-closed pinning BEFORE building headers so the bearer
+  // is structurally unable to leave the process over an unpinned TLS
+  // connection or against a stored cert that doesn't match its
+  // pinned fingerprint.
+  assertPeerPinned(peer);
   const headers: Record<string, string> = {};
   const token = resolvedPeerToken(peer);
   if (token) headers["authorization"] = `Bearer ${token}`;

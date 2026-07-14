@@ -30,7 +30,10 @@ describe("peer fetch timeout", () => {
 
     const peer: PeerNode = {
       id: "slow-peer",
-      endpoint: "https://slow-peer.local:7843",
+      // Loopback so `assertPeerPinned` allows the request through and
+      // we actually exercise the timeout branch instead of the
+      // fail-closed pinning gate.
+      endpoint: "https://127.0.0.1:7843",
       token: "peer-token",
     };
 
@@ -43,5 +46,29 @@ describe("peer fetch timeout", () => {
 
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toBe("peer slow-peer snapshot timed out after 10ms");
+  });
+
+  test("rejects a non-local peer that has no pinned certificate before hitting the network", async () => {
+    let calls = 0;
+    globalThis.fetch = (() => {
+      calls++;
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as unknown as typeof fetch;
+
+    const peer: PeerNode = {
+      id: "unpinned",
+      endpoint: "https://slow-peer.local:7843",
+      token: "peer-token",
+    };
+
+    let thrown: unknown;
+    try {
+      await createPeerFetch(peer, { timeoutMs: 25 })();
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/no pinned certificate/);
+    expect(calls).toBe(0);
   });
 });

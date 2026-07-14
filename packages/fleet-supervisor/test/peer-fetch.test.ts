@@ -338,4 +338,71 @@ describe("peer fetch", () => {
     await expectRejectsToThrow(createPeerFetch(peer)(), /cannot route via reverse tunnel/);
     expect(calls).toBe(0);
   });
+
+  test("https non-local peer without pinned certificate refuses direct fetch", async () => {
+    let calls = 0;
+    globalThis.fetch = (() => {
+      calls++;
+      return Promise.resolve(new Response(makeSnapshot("mac-mini"), { status: 200 }));
+    }) as unknown as typeof fetch;
+    const peer: PeerNode = {
+      id: "no-cert",
+      endpoint: "https://macmini.ai:7843",
+      token: "peer-token",
+    };
+
+    await expectRejectsToThrow(createPeerFetch(peer)(), /no pinned certificate/);
+    expect(calls).toBe(0);
+  });
+
+  test("direct peer with mismatched fingerprint refuses before network I/O", async () => {
+    const certDir = mkdtempSync(join(tmpdir(), "llamactl-peer-fetch-fp-"));
+    const cert = await generateSelfSignedCert({
+      dir: certDir,
+      commonName: "macmini.ai",
+      hostnames: ["macmini.ai"],
+    });
+    let calls = 0;
+    globalThis.fetch = (() => {
+      calls++;
+      return Promise.resolve(new Response(makeSnapshot("mac-mini"), { status: 200 }));
+    }) as unknown as typeof fetch;
+    try {
+      const peer: PeerNode = {
+        id: "bad-fp",
+        endpoint: "https://macmini.ai:7843",
+        certificate: cert.certPem,
+        fingerprint: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        token: "peer-token",
+      };
+      await expectRejectsToThrow(createPeerFetch(peer)(), /fingerprint mismatch/);
+      expect(calls).toBe(0);
+    } finally {
+      rmSync(certDir, { recursive: true, force: true });
+    }
+  });
+
+  test("local https endpoint without a pinned certificate still proceeds", async () => {
+    const captured: { url: string; init: RequestInit | undefined }[] = [];
+    globalThis.fetch = ((input: Request | string | URL, init?: RequestInit) => {
+      captured.push({ url: requestUrl(input), init });
+      return Promise.resolve(
+        new Response(makeSnapshot("mac-mini"), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }) as typeof fetch;
+
+    const peer: PeerNode = {
+      id: "local-peer",
+      endpoint: "https://127.0.0.1:7843",
+      token: "peer-token",
+    };
+    const snapshot = await createPeerFetch(peer)();
+    expect(snapshot?.node).toBe("mac-mini");
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.url).toBe("https://127.0.0.1:7843/v1/fleet/snapshot");
+    expect(new Headers(captured[0]!.init?.headers).get("authorization")).toBe("Bearer peer-token");
+  });
 });
