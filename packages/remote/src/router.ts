@@ -1727,38 +1727,43 @@ export const router = t.router({
       }),
     )
     .mutation(async ({ input }) => {
-      const manifest = workloadStoreMod.loadWorkloadByName(input.name);
-      const stops: string[] = [];
-      if (!input.keepRunning) {
-        const cfg = kubecfg.loadConfig();
-        try {
-          const client = clientForNode(cfg, manifest.spec.node);
-          const status = await queryServerStatusWithTimeout(
-            () => client.serverStatus.query({ workload: manifest.metadata.name }),
-            WORKLOAD_LIST_NODE_TIMEOUT_MS,
-          );
-          if (status.state === "up" && status.rel === manifest.spec.target.value) {
-            await client.serverStop.mutate({
-              workload: manifest.metadata.name,
-              graceSeconds: 5,
-            });
-            stops.push(`stopped llama-server on ${manifest.spec.node}`);
+      return await workloadStoreMod.withWorkloadsMutex(
+        workloadStoreMod.defaultWorkloadsDir(),
+        async () => {
+          const manifest = workloadStoreMod.loadWorkloadByName(input.name);
+          const stops: string[] = [];
+          if (!input.keepRunning) {
+            const cfg = kubecfg.loadConfig();
+            try {
+              const client = clientForNode(cfg, manifest.spec.node);
+              const status = await queryServerStatusWithTimeout(
+                () => client.serverStatus.query({ workload: manifest.metadata.name }),
+                WORKLOAD_LIST_NODE_TIMEOUT_MS,
+              );
+              if (status.state === "up" && status.rel === manifest.spec.target.value) {
+                await client.serverStop.mutate({
+                  workload: manifest.metadata.name,
+                  graceSeconds: 5,
+                });
+                stops.push(`stopped llama-server on ${manifest.spec.node}`);
+              }
+            } catch (err) {
+              stops.push(`warning: coordinator ${manifest.spec.node}: ${(err as Error).message}`);
+            }
+            for (const worker of [...manifest.spec.workers].reverse()) {
+              try {
+                const wc = clientForNode(cfg, worker.node);
+                await wc.rpcServerStop.mutate({ graceSeconds: 3 });
+                stops.push(`stopped rpc-server on ${worker.node}`);
+              } catch (err) {
+                stops.push(`warning: worker ${worker.node}: ${(err as Error).message}`);
+              }
+            }
           }
-        } catch (err) {
-          stops.push(`warning: coordinator ${manifest.spec.node}: ${(err as Error).message}`);
-        }
-        for (const worker of [...manifest.spec.workers].reverse()) {
-          try {
-            const wc = clientForNode(cfg, worker.node);
-            await wc.rpcServerStop.mutate({ graceSeconds: 3 });
-            stops.push(`stopped rpc-server on ${worker.node}`);
-          } catch (err) {
-            stops.push(`warning: worker ${worker.node}: ${(err as Error).message}`);
-          }
-        }
-      }
-      const removed = workloadStoreMod.deleteWorkload(input.name);
-      return { ok: removed, name: input.name, stops };
+          const removed = workloadStoreMod.deleteWorkload(input.name);
+          return { ok: removed, name: input.name, stops };
+        },
+      );
     }),
 
   workloadValidate: t.procedure.input(z.object({ yaml: z.string().min(1) })).query(({ input }) => {

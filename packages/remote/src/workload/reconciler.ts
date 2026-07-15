@@ -7,6 +7,7 @@ import { resolveEnv } from "@llamactl/core/env";
 
 import type { ModelRun } from "./schema.js";
 
+import { existsSync } from "../safe-fs.js";
 import { defaultNodeBudgetGiB } from "./admission.js";
 import {
   type ApplyEvent,
@@ -18,12 +19,18 @@ import {
 import { LOCAL_NODE_ID, type ModelHostManifest, specForHash } from "./modelhost-schema.js";
 import { listModelHosts, saveModelHost } from "./modelhost-store.js";
 import { listNodeRuns } from "./noderun-store.js";
-import { defaultWorkloadsDir, listWorkloads, loadWorkloadByName, saveWorkload } from "./store.js";
+import {
+  defaultWorkloadsDir,
+  listWorkloads,
+  loadWorkloadByName,
+  saveWorkload,
+  workloadPath,
+} from "./store.js";
 
 export interface ReconcileNodeReport {
   name: string;
   node: string;
-  action: ApplyResult["action"];
+  action: ApplyResult["action"] | "skipped-deleted";
   error?: string;
 }
 
@@ -133,6 +140,11 @@ async function reconcileModelRun(
   const { spec } = manifest;
   let errors = 0;
   try {
+    const manifestPath = workloadPath(name, dir);
+    if (!existsSync(manifestPath)) {
+      reports.push({ name, node: spec.node, action: "skipped-deleted" });
+      return 0;
+    }
     const result = await applyOne(
       manifest,
       opts.getClient,
@@ -153,6 +165,14 @@ async function reconcileModelRun(
       action: result.action,
       ...(result.error ? { error: result.error } : {}),
     });
+    if (!existsSync(manifestPath)) {
+      reports[reports.length - 1] = {
+        name,
+        node: spec.node,
+        action: "skipped-deleted",
+      };
+      return errors;
+    }
     // Persist status WITHOUT clobbering a concurrent spec edit. A reconcile
     // pass snapshots every manifest up-front (listWorkloads) and can run for
     // minutes when a serverStart on another workload is slow or times out. If
@@ -164,7 +184,9 @@ async function reconcileModelRun(
     try {
       toPersist = { ...loadWorkloadByName(name, dir), status: result.statusSection };
     } catch {
-      // Manifest deleted/renamed mid-pass — fall back to snapshot + status.
+      // Preserve a rename by not writing the stale snapshot back when the
+      // original manifest path vanished mid-pass.
+      return errors;
     }
     saveWorkload(toPersist, dir);
   } catch (err) {
