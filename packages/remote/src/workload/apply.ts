@@ -1,5 +1,6 @@
 import type { spawn as nodeSpawn } from "node:child_process";
 
+import { target as targetMod } from "@llamactl/core";
 import { ENGINES } from "@llamactl/core/engines";
 import {
   computeModelHostSpecHash,
@@ -136,6 +137,9 @@ export interface WorkloadClient {
         | "rpc-server-not-executable";
       hint?: string;
     }>;
+  };
+  resolveTarget?: {
+    query(input: string): Promise<string | null>;
   };
 }
 
@@ -289,6 +293,20 @@ function sameExtraArgs(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
+}
+
+async function resolveDesiredRel(
+  target: ModelRun["spec"]["target"],
+  client: WorkloadClient,
+): Promise<string> {
+  if (target.kind !== "alias") return target.value;
+
+  const resolved =
+    client.resolveTarget !== undefined ? await client.resolveTarget.query(target.value) : null;
+  if (resolved !== null) return resolved;
+
+  const local = targetMod.resolveTarget(target.value);
+  return local ?? target.value;
 }
 
 function normalizeLoopbackHost(host: string | undefined): string {
@@ -1192,7 +1210,7 @@ export async function applyOne(
 
   const status = await client.serverStatus.query({ workload: manifest.metadata.name });
 
-  const desiredRel = manifest.spec.target.value;
+  const desiredRel = await resolveDesiredRel(manifest.spec.target, client);
   const desiredEndpoint = manifest.spec.endpoint;
   // Compose the effective extraArgs: user args + the --rpc flag if
   // this workload has workers. The coordinator's server.rel /
@@ -1211,9 +1229,8 @@ export async function applyOne(
   const liveArgs = status.extraArgs;
   const running = status.state === "up";
   const endpointMatches =
-    !desiredEndpoint ||
-    ((status.host ?? null) === (desiredEndpoint.host ?? null) &&
-      (status.port ?? null) === (desiredEndpoint.port ?? null));
+    (desiredEndpoint?.host === undefined || (status.host ?? null) === desiredEndpoint.host) &&
+    (desiredEndpoint?.port === undefined || (status.port ?? null) === desiredEndpoint.port);
   const binaryMatches = !manifest.spec.binary || (status.binary ?? null) === manifest.spec.binary;
   const matches =
     running &&

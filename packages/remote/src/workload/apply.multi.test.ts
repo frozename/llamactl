@@ -181,6 +181,41 @@ test("parallel apply does not stop other workloads on the node", async () => {
   expect(result.action).toBe("started");
 });
 
+test("running server with port-only endpoint manifest is unchanged", async () => {
+  const state = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
+  const manifest = mkManifest("a");
+  manifest.spec.endpoint = {
+    port: 8181,
+  };
+  const result = await applyOne(manifest, () => makeClient(state));
+  expect(result.action).toBe("unchanged");
+});
+
+test("running server with alias target resolved to live rel is unchanged", async () => {
+  const state = new Map([["alias", { up: true, rel: "qwen3.6-35b-mtp.gguf", args: [] }]]);
+  const manifest = mkManifest("alias");
+  manifest.spec.target = { kind: "alias", value: "best" };
+  const result = await applyOne(manifest, () => ({
+    ...makeClient(state),
+    resolveTarget: {
+      query: (): Promise<string | null> => Promise.resolve("qwen3.6-35b-mtp.gguf"),
+    },
+  }));
+  expect(result.action).toBe("unchanged");
+});
+
+test("genuinely changed rel/host/port still triggers restart", async () => {
+  const state = new Map([["delta", { up: true, rel: "a.gguf", args: [] }]]);
+  const manifest = mkManifest("delta");
+  manifest.spec.target = { kind: "rel", value: "b.gguf" };
+  manifest.spec.endpoint = {
+    host: "127.0.0.2",
+    port: 8199,
+  };
+  const result = await applyOne(manifest, () => makeClient(state));
+  expect(result.action).toBe("restarted");
+});
+
 test("evict annotation stops named workload before starting incoming", async () => {
   const state = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
   const result = await applyOne(
