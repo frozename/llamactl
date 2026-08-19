@@ -43,3 +43,9 @@ __pycache__/
 
 # Failure screenshots emitted by tests/ui-flows (uploaded as CI artifacts)
 tests/ui-flows/screenshots/
+
+# Dispatch-worktree provisioning state (worktree-mode / worktree-ready).
+# Written into each agent worktree by the dispatch tooling, not by anything in
+# this repo. Untracked it gets swept into the autocommit a chain makes when an
+# agent ends without committing, which lands scaffolding on the agent branch.
+.test-storage/
