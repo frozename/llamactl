@@ -17,7 +17,12 @@ import {
   type WorkloadEval,
 } from "../src/index.js";
 import { memoryEfficacy4wayWorkload, memoryEfficacyBinaryWorkload } from "../src/index.js";
-import { parseArgs, parseCorpusOverrides } from "../src/matrix/cli.js";
+import {
+  assertNoQuarantinedModels,
+  loadModels,
+  parseArgs,
+  parseCorpusOverrides,
+} from "../src/matrix/cli.js";
 import { rmSync } from "../src/safe-fs.js";
 
 function makeModel(name: string): ModelSpec {
@@ -595,6 +600,106 @@ describe("matrix CLI", () => {
         expect((error as Error).message).toBe("runMatrix: workloads list is empty — no work to do");
       },
     );
+  });
+
+  test("assertNoQuarantinedModels is a no-op when no entries are quarantined", () => {
+    expect(() =>
+      assertNoQuarantinedModels([makeModel("ok-a"), makeModel("ok-b")], "/tmp/fake.json"),
+    ).not.toThrow();
+  });
+
+  test("assertNoQuarantinedModels refuses a spec containing any quarantined entry", () => {
+    const models: ModelSpec[] = [
+      makeModel("ok-a"),
+      { ...makeModel("gone-fork"), quarantined: { reason: "binary vanished" } },
+    ];
+    let caught: unknown;
+    try {
+      assertNoQuarantinedModels(models, "/tmp/fake-spec.json");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toContain("refusing to run quarantined models spec /tmp/fake-spec.json");
+    expect(message).toContain("gone-fork");
+    expect(message).toContain("binary vanished");
+  });
+
+  test("loadModels refuses a spec file whose entries carry a quarantined marker", async () => {
+    const tmpPath = `/tmp/quarantined-spec-${randomUUID()}.json`;
+    const models = [
+      { ...makeModel("ok-a") },
+      {
+        ...makeModel("gone-fork"),
+        quarantined: { reason: "backing fork removed" },
+      },
+    ];
+    await Bun.write(tmpPath, JSON.stringify(models));
+    try {
+      let caught: unknown;
+      try {
+        await loadModels(tmpPath);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      expect(message).toContain("refusing to run quarantined models spec");
+      expect(message).toContain(tmpPath);
+      expect(message).toContain("gone-fork");
+      expect(message).toContain("backing fork removed");
+    } finally {
+      try {
+        rmSync(tmpPath);
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+  });
+
+  test("loadModels rejects a malformed quarantined field", async () => {
+    const tmpPath = `/tmp/bad-quarantined-${randomUUID()}.json`;
+    // reason missing — the shape validator must catch it before the
+    // spec-wide refusal ever runs.
+    await Bun.write(tmpPath, JSON.stringify([{ ...makeModel("bad"), quarantined: {} }]));
+    try {
+      let caught: unknown;
+      try {
+        await loadModels(tmpPath);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toContain(
+        "quarantined must be { reason: <non-empty string> }",
+      );
+    } finally {
+      try {
+        rmSync(tmpPath);
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+  });
+
+  test("all three quarantined shipped specs are refused by loadModels", async () => {
+    const specs = [
+      "gemma4-vs-qwen35-headtohead.json",
+      "memory-recall-fleet.json",
+      "tool-call-tier-fleet.json",
+    ];
+    for (const spec of specs) {
+      const specPath = new URL(`../specs/${spec}`, import.meta.url).pathname;
+      let caught: unknown;
+      try {
+        await loadModels(specPath);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toContain("refusing to run quarantined models spec");
+    }
   });
 
   test("runMatrix concurrency preserves row attribution and metrics", async () => {

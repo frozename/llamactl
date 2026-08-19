@@ -128,6 +128,13 @@ function isValidOptionalField(field: OptionalModelSpecField, value: unknown): bo
   return typeof value === "boolean";
 }
 
+function isValidQuarantineField(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (typeof value !== "object" || value === null) return false;
+  const reason = (value as Record<string, unknown>)["reason"];
+  return typeof reason === "string" && reason.trim().length > 0;
+}
+
 function validateModelSpec(value: unknown): ModelSpec {
   if (typeof value !== "object" || value === null) {
     throw new Error("invalid ModelSpec: missing/bad field name");
@@ -161,7 +168,33 @@ function validateModelSpec(value: unknown): ModelSpec {
       throw new Error(`invalid ModelSpec: missing/bad field ${field}`);
     }
   }
+  if (!isValidQuarantineField(spec["quarantined"])) {
+    throw new Error(
+      "invalid ModelSpec: quarantined must be { reason: <non-empty string> } when present",
+    );
+  }
   return spec as unknown as ModelSpec;
+}
+
+/**
+ * Fail-closed check: if ANY entry in a loaded models list is marked
+ * `quarantined`, refuse the whole spec file with a non-zero exit and an
+ * explicit message. The alternative (letting the run proceed and record
+ * error cells for missing binaries) silently loses the A/B — a quarantined
+ * spec's original binary is gone, and we must not swap it for a surviving
+ * one behind the operator's back.
+ */
+export function assertNoQuarantinedModels(models: readonly ModelSpec[], sourcePath: string): void {
+  const quarantined = models.filter((m) => m.quarantined !== undefined);
+  if (quarantined.length === 0) return;
+  const lines = quarantined.map(
+    (m) => `  - ${m.name}: ${m.quarantined?.reason ?? "(no reason recorded)"}`,
+  );
+  throw new Error(
+    `refusing to run quarantined models spec ${sourcePath}: ` +
+      `${String(quarantined.length)} entr${quarantined.length === 1 ? "y is" : "ies are"} ` +
+      `quarantined and cannot be executed:\n${lines.join("\n")}`,
+  );
 }
 
 function getKnownWorkloads(): Record<string, WorkloadEval> {
@@ -182,11 +215,12 @@ function getKnownWorkloads(): Record<string, WorkloadEval> {
   };
 }
 
-async function loadModels(modelsPath: string): Promise<ModelSpec[]> {
+export async function loadModels(modelsPath: string): Promise<ModelSpec[]> {
   const models = ((await Bun.file(modelsPath).json()) as unknown[]).map(validateModelSpec);
   if (models.length === 0) {
     throw new Error(`--models points to an empty list (${modelsPath}); nothing to bench`);
   }
+  assertNoQuarantinedModels(models, modelsPath);
   return models;
 }
 

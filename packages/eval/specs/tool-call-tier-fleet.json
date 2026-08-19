@@ -1,6 +1,9 @@
 [
   {
     "name": "gemma4-26b-a4b-mtp",
+    "quarantined": {
+      "reason": "backing llama.cpp fork /Volumes/WorkSSD/src/llama.cpp-atomic has been deleted; MTP A/B relied on --spec-type mtp + --draft-max/--draft-min which do not exist on any surviving binary. Results unreproducible until the fork is restored."
+    },
     "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
     "quant": "UD-Q4_K_M",
     "family": "gemma-4-mtp",
@@ -56,6 +59,9 @@
   },
   {
     "name": "gemma4-e4b-vanilla",
+    "quarantined": {
+      "reason": "backing llama.cpp fork /Volumes/WorkSSD/src/llama.cpp-atomic has been deleted; kept as the vanilla arm of the paired A/B, quarantined alongside its MTP partner so the whole spec fails closed."
+    },
     "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-UD-Q4_K_XL.gguf",
     "quant": "UD-Q4_K_XL",
     "family": "gemma-4",
@@ -95,6 +101,9 @@
   },
   {
     "name": "qwen3.5-9b-mtp-UDQ4KXL",
+    "quarantined": {
+      "reason": "backing llama.cpp fork /Volumes/WorkSSD/src/llama.cpp-atomic-qwen has been deleted; --spec-type nextn + --draft-max/--draft-min were never valid on upstream. Results unreproducible until the fork is restored."
+    },
     "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/Qwen3.5-9B-MTP-GGUF/Qwen3.5-9B-UD-Q4_K_XL.gguf",
     "quant": "UD-Q4_K_XL-MTP",
     "family": "qwen-3.5-mtp",

@@ -37,6 +37,14 @@ export interface ModelSpec {
   dflash?: Record<string, unknown>;
   /** Default is supported; set false to opt out from forwarding response_format for this model. */
   structured_outputs_supported?: boolean;
+  /** Marks a spec entry whose backing binary is permanently gone (e.g. a
+   *  removed llama.cpp fork). The matrix loader refuses ANY spec file that
+   *  contains a quarantined entry — the results are unreproducible, and
+   *  silently swapping to a surviving binary would change the A/B under test.
+   *  The `reason` string is required and is surfaced in the refusal message so
+   *  a future operator can decide whether to un-quarantine (restore the
+   *  binary) or delete the spec. */
+  quarantined?: { reason: string };
 }
 
 export interface WorkloadEval {

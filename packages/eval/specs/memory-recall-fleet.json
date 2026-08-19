@@ -71,6 +71,9 @@
   },
   {
     "name": "qwen3.6-35b-A3B-MTP-UDQ4KXL",
+    "quarantined": {
+      "reason": "backing llama.cpp fork /Volumes/WorkSSD/src/llama.cpp-atomic-qwen has been deleted; --spec-type nextn + --draft-max/--draft-min were never valid on upstream. Results unreproducible until the fork is restored."
+    },
     "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/Qwen3.6-35B-A3B-UDT-MTP-GGUF/Qwen3.6-35B-A3B-UDT-Q4_K_XL_MTP.gguf",
     "quant": "UDT-Q4_K_XL-MTP",
     "family": "qwen-3.6-mtp",
@@ -111,6 +114,9 @@
   },
   {
     "name": "qwen3.6-35b-A3B-UDQ4KXL",
+    "quarantined": {
+      "reason": "backing llama.cpp fork /Volumes/WorkSSD/src/llama.cpp-atomic-qwen has been deleted; the MTP A/B this entry participated in is unreproducible on any surviving binary. Kept as the vanilla arm of the paired A/B — quarantined alongside its MTP partner so the whole spec fails closed."
+    },
     "gguf_path": "/Volumes/WorkSSD/ai-models/llama.cpp/models/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
     "quant": "UD-Q4_K_XL",
     "family": "qwen-3.6",
