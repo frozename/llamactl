@@ -153,18 +153,20 @@ expect_contains "smoke: catalog status after uninstall is 'none'" \
 
 # -------------------------------------------------------------------------
 note "shim fallback when bun is missing"
-(
-  PATH_BACKUP="$PATH"
-  export PATH="$(print "$PATH" | tr ':' '\n' | grep -v bun | paste -sd: -)"
-  out="$(llama-bench-show current 2>&1)"
-  rc=$?
-  export PATH="$PATH_BACKUP"
-  if [ "$rc" -ne 0 ] && [[ "$out" == *"llamactl CLI not available"* ]]; then
-    pass "missing-bun fallback"
-  else
-    fail "missing-bun fallback (rc=$rc)" "$out"
-  fi
-)
+# Deliberately NOT wrapped in a `( ... )` subshell — pass/fail increment
+# PASS/FAIL, and a subshell would discard them, printing FAIL while the
+# suite still exits 0. Restore PATH before asserting so later checks always
+# inherit the caller's environment, including when the fallback probe fails.
+path_before_missing_bun="$PATH"
+export PATH="$(print "$PATH" | tr ':' '\n' | grep -v bun | paste -sd: -)"
+out="$(llama-bench-show current 2>&1)"
+rc=$?
+export PATH="$path_before_missing_bun"
+if [ "$rc" -ne 0 ] && [[ "$out" == *"llamactl CLI not available"* ]]; then
+  pass "missing-bun fallback"
+else
+  fail "missing-bun fallback (rc=$rc)" "$out"
+fi
 
 # -------------------------------------------------------------------------
 note "ctx envelope parity: _llama_ctx_for_model vs TypeScript ctxForModel"
