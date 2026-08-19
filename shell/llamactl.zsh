@@ -1262,9 +1262,22 @@ _llama_quant_from_rel() {
   esac
 }
 
+# Pick the default context size for a model relative path.
+#
+# Rule, not a model list: a rel whose leading path segment starts with
+# `Qwen` (case-sensitive — the on-disk dirs are `Qwen3.5-27B-GGUF`,
+# `Qwen3.8-27B-GGUF`, …) gets the Qwen ctx envelope; everything else
+# falls back to Gemma. `${1%%/*}` is the leading segment, so a
+# vendor-prefixed rel such as `mlx-community/Qwen3-8B-MLX-4bit` stays on
+# Gemma — the fallback is fail-closed.
+#
+# Must stay in lockstep with `ctxForModel` in packages/core/src/ctx.ts:
+# `ctx` is part of a bench record's primary key, so if the two diverge
+# each path writes bench records under a key the other never matches.
+# test/shell-smoke.zsh asserts the two agree rel-by-rel.
 _llama_ctx_for_model() {
-  case "$1" in
-    Qwen3.6-35B-A3B-GGUF/*|Qwen3.5-27B-GGUF/*)
+  case "${1%%/*}" in
+    Qwen*)
       printf '%s\n' "$LLAMA_CPP_QWEN_CTX_SIZE"
       ;;
     *)

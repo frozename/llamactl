@@ -167,6 +167,53 @@ note "shim fallback when bun is missing"
 )
 
 # -------------------------------------------------------------------------
+note "ctx envelope parity: _llama_ctx_for_model vs TypeScript ctxForModel"
+# `ctx` is a component of a bench record's primary key, so a rel that routes
+# to a different envelope in the shell path than in the TS path writes bench
+# records under a key the other path never matches. Asserting the two agree
+# (rather than asserting absolute sizes, which move with the env) keeps the
+# parity claim in packages/core/src/ctx.ts self-auditing: adding a model
+# family to one implementation and not the other fails here.
+#
+# Deliberately NOT wrapped in a `( ... )` subshell — pass/fail increment
+# PASS/FAIL, and a subshell would discard them, printing FAIL while the
+# suite still exits 0.
+ctx_rels=(
+  "Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf"
+  "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+  "Qwen3.8-27B-GGUF/Qwen3.8-27B-Q4_K_M.gguf"
+  "Qwen4-80B-A6B-GGUF/Qwen4-80B-A6B-UD-Q4_K_XL.gguf"
+  "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf"
+  "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf"
+  # Fail-closed negatives: `Qwen` is not the LEADING segment, and the
+  # on-disk dirs are capital-Q, so both must keep the Gemma envelope.
+  "mlx-community/Qwen3-8B-MLX-4bit"
+  "qwen3.8-27B-GGUF/qwen3.8-27B-Q4_K_M.gguf"
+  "foo/bar-UD-Q4_K_XL.gguf"
+)
+
+ts_out="$(CTX_MOD="$LLAMACTL_HOME/packages/core/src/ctx.ts" \
+  CTX_RELS="$(printf '%s\n' "${ctx_rels[@]}")" \
+  bun -e 'const { ctxForModel } = await import(process.env.CTX_MOD);
+    for (const r of process.env.CTX_RELS.split("\n").filter(Boolean)) console.log(ctxForModel(r));' 2>&1)"
+ts_lines=("${(@f)ts_out}")
+
+if [ "${#ts_lines[@]}" -ne "${#ctx_rels[@]}" ]; then
+  fail "ctx parity: TypeScript side did not emit one ctx per rel" "$ts_out"
+else
+  for i in {1..${#ctx_rels[@]}}; do
+    rel="${ctx_rels[$i]}"
+    want="${ts_lines[$i]}"
+    got="$(_llama_ctx_for_model "$rel")"
+    if [ "$got" = "$want" ]; then
+      pass "ctx parity: $rel -> $got"
+    else
+      fail "ctx parity: $rel (zsh=$got ts=$want)"
+    fi
+  done
+fi
+
+# -------------------------------------------------------------------------
 note "summary"
 print "pass=$PASS fail=$FAIL"
 if [ "$FAIL" -gt 0 ]; then
