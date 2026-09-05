@@ -16,10 +16,9 @@ import {
 } from "@llamactl/core/kvstore";
 import { omitUndefined } from "@llamactl/core/object";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { openSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, resolve, sep } from "node:path";
 
-import { existsSync } from "../safe-fs.js";
+import { existsSync, openSync } from "../safe-fs.js";
 import {
   type ModelHostManifest,
   ModelHostManifestSchema,
@@ -376,6 +375,39 @@ function resolveModelAliases(manifest: ModelHostManifest): string[] {
   return Array.from(new Set([firstHostedModel.rel, basename(firstHostedModel.rel)]));
 }
 
+/**
+ * Open a write-only append fd for the per-workload boot log, returning
+ * "ignore" if the path escapes the runtime tree or opening fails. Boot
+ * logging must never break a launch, and the workload name (which feeds
+ * the path) ultimately comes from a user-supplied manifest.
+ */
+function openBootLogFd(workloadName: string, runtimeDir: string): "ignore" | number {
+  const baseDir = resolve(runtimeDir, "workloads");
+  const bootLogPath = resolve(baseDir, workloadName, "modelhost.boot.log");
+  const allowedPrefix = `${baseDir}${sep}`;
+  if (bootLogPath !== baseDir && !bootLogPath.startsWith(allowedPrefix)) {
+    // Escaped the runtime tree; degrade to no boot log rather than fail.
+    return "ignore";
+  }
+  try {
+    return openSync(bootLogPath, "a");
+  } catch {
+    // never let logging break a launch
+    return "ignore";
+  }
+}
+
+function teardownChildSilently(
+  child: ChildProcess | null,
+  engine: (typeof ENGINES)[keyof typeof ENGINES],
+): Promise<void> {
+  const pid = child?.pid ?? null;
+  if (pid !== null) {
+    return engine.teardown(pid).catch(() => undefined);
+  }
+  return Promise.resolve();
+}
+
 export async function startModelHost(opts: StartModelHostOptions): Promise<StartModelHostResult> {
   const env = toRuntimeEnv(opts.env);
   const runtimeEnv = withRuntimeDir(env, opts.runtimeDir);
@@ -435,18 +467,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     // in ~2s (argparse rejecting a stale flag exits 2) left no trace, probeReady
     // then polled the whole budget, and the caller reported a bare
     // "modelHostStart timed out". Persist the child's output beside its state.
-    const bootLogPath = join(
-      resolved.LOCAL_AI_RUNTIME_DIR,
-      "workloads",
-      opts.key.name,
-      "modelhost.boot.log",
-    );
-    let bootStdio: "ignore" | number = "ignore";
-    try {
-      bootStdio = openSync(bootLogPath, "a");
-    } catch {
-      // never let logging break a launch
-    }
+    const bootStdio = openBootLogFd(opts.key.name, resolved.LOCAL_AI_RUNTIME_DIR);
     child = spawn(launch.binary, launch.args, {
       detached: true,
       stdio: bootStdio === "ignore" ? "ignore" : ["ignore", bootStdio, bootStdio],
@@ -489,10 +510,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     opts.onEvent?.({ type: "done", result });
     return result;
   } catch (error) {
-    const pid = child?.pid ?? null;
-    if (pid !== null) {
-      await engine.teardown(pid).catch(() => undefined);
-    }
+    await teardownChildSilently(child, engine);
     const message = error instanceof Error ? error.message : "modelhost start failed";
     const result = { ok: false, pid: null, error: message };
     opts.onEvent?.({ type: "done", result });

@@ -603,9 +603,9 @@ describe("matrix CLI", () => {
   });
 
   test("assertNoQuarantinedModels is a no-op when no entries are quarantined", () => {
-    expect(() =>
-      assertNoQuarantinedModels([makeModel("ok-a"), makeModel("ok-b")], "/tmp/fake.json"),
-    ).not.toThrow();
+    expect(() => {
+      assertNoQuarantinedModels([makeModel("ok-a"), makeModel("ok-b")], "/tmp/fake.json");
+    }).not.toThrow();
   });
 
   test("assertNoQuarantinedModels refuses a spec containing any quarantined entry", () => {
