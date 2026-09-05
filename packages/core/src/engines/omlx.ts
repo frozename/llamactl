@@ -175,7 +175,11 @@ export const omlxEngine: EngineAdapter = {
     const maxModelMemoryGiB =
       spec.resources?.expectedMemoryGiB ??
       defaultOmlxMemoryGiBForProfile(env.machineProfile ?? "macbook-pro-48g");
-    args.push("--max-model-memory", `${String(maxModelMemoryGiB)}GB`);
+    // oMLX replaced --max-model-memory with --memory-guard-gb (a bare GB number,
+    // mapped to settings.memory.memory_guard_custom_ceiling_gb). Passing the old
+    // flag makes `omlx serve` exit with "unrecognized arguments" and the workload
+    // never boots.
+    args.push("--memory-guard-gb", String(maxModelMemoryGiB));
     const modelSettings = workloadName ? buildDflashModelSettings(spec) : null;
     if (workloadName && modelSettings) {
       const basePath = omxBasePath(env, workloadName);

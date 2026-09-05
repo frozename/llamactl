@@ -78,10 +78,10 @@ describe("omlx engine adapter", () => {
     expect(built.args).toContain("127.0.0.1");
   });
 
-  test("buildBootCommand passes --max-model-memory when resources set", () => {
+  test("buildBootCommand passes --memory-guard-gb when resources set", () => {
     const built = ENGINES.omlx.buildBootCommand(baseSpec, { LLAMA_CPP_MODELS: "/tmp" });
-    expect(built.args).toContain("--max-model-memory");
-    expect(built.args).toContain("12GB");
+    expect(built.args).toContain("--memory-guard-gb");
+    expect(built.args).toContain("12");
   });
 
   test("buildBootCommand keeps an explicit expectedMemoryGiB unchanged", () => {
@@ -89,21 +89,21 @@ describe("omlx engine adapter", () => {
       LLAMA_CPP_MODELS: "/tmp",
       machineProfile: "balanced",
     } satisfies EngineBootEnv);
-    const idx = built.args.indexOf("--max-model-memory");
+    const idx = built.args.indexOf("--memory-guard-gb");
     expect(idx).toBeGreaterThanOrEqual(0);
-    expect(built.args[idx + 1]).toBe("12GB");
+    expect(built.args[idx + 1]).toBe("12");
   });
 
-  test("buildBootCommand still emits --max-model-memory when resources are omitted", () => {
+  test("buildBootCommand still emits --memory-guard-gb when resources are omitted", () => {
     const { resources: _omitted, ...specWithoutResources } = baseSpec;
     void _omitted;
     const built = ENGINES.omlx.buildBootCommand(specWithoutResources, {
       LLAMA_CPP_MODELS: "/tmp",
       machineProfile: "balanced",
     } satisfies EngineBootEnv);
-    const idx = built.args.indexOf("--max-model-memory");
+    const idx = built.args.indexOf("--memory-guard-gb");
     expect(idx).toBeGreaterThanOrEqual(0);
-    expect(built.args[idx + 1]).toBe("24GB");
+    expect(built.args[idx + 1]).toBe("24");
   });
 
   test("buildBootCommand appends extraArgs verbatim", () => {
