@@ -16,7 +16,8 @@ import {
 } from "@llamactl/core/kvstore";
 import { omitUndefined } from "@llamactl/core/object";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { basename } from "node:path";
+import { openSync } from "node:fs";
+import { basename, join } from "node:path";
 
 import { existsSync } from "../safe-fs.js";
 import {
@@ -430,9 +431,25 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   try {
     await engine.prepareLaunch?.(spec, bootEnv);
     const launch = engine.buildBootCommand(spec, bootEnv);
+    // stdio:"ignore" made every launch failure undiagnosable: a child that dies
+    // in ~2s (argparse rejecting a stale flag exits 2) left no trace, probeReady
+    // then polled the whole budget, and the caller reported a bare
+    // "modelHostStart timed out". Persist the child's output beside its state.
+    const bootLogPath = join(
+      resolved.LOCAL_AI_RUNTIME_DIR,
+      "workloads",
+      opts.key.name,
+      "modelhost.boot.log",
+    );
+    let bootStdio: "ignore" | number = "ignore";
+    try {
+      bootStdio = openSync(bootLogPath, "a");
+    } catch {
+      // never let logging break a launch
+    }
     child = spawn(launch.binary, launch.args, {
       detached: true,
-      stdio: "ignore",
+      stdio: bootStdio === "ignore" ? "ignore" : ["ignore", bootStdio, bootStdio],
       env: sanitizeChildEnv(runtimeEnv, launch.envOverrides, manifest.spec.env),
     });
     const pid = child.pid ?? null;
