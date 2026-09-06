@@ -18,18 +18,40 @@ export interface AdmissionInput {
   forceAdmit: boolean;
 }
 
+export interface ReservationBreakdownItem {
+  name: string;
+  expectedMemoryGiB: number;
+}
+
 export type AdmissionResult =
   | { ok: true; reservedAfter: number; budget: number }
-  | { ok: false; reservedAfter: number; budget: number; reason: string };
+  | {
+      ok: false;
+      reservedAfter: number;
+      budget: number;
+      reason: string;
+      breakdown: ReservationBreakdownItem[];
+    };
 
-export function sumReservedForNode(manifests: ModelRun[], nodeName: string): number {
-  let sum = 0;
+export function reservedForNodeBreakdown(
+  manifests: ModelRun[],
+  nodeName: string,
+): ReservationBreakdownItem[] {
+  const items: ReservationBreakdownItem[] = [];
   for (const m of manifests) {
     if (m.spec.node !== nodeName) continue;
     if (!m.spec.enabled) continue;
-    sum += m.spec.resources?.expectedMemoryGiB ?? 0;
+    const expectedMemoryGiB = m.spec.resources?.expectedMemoryGiB ?? 0;
+    if (expectedMemoryGiB > 0) items.push({ name: m.metadata.name, expectedMemoryGiB });
   }
-  return sum;
+  return items;
+}
+
+export function sumReservedForNode(manifests: ModelRun[], nodeName: string): number {
+  return reservedForNodeBreakdown(manifests, nodeName).reduce(
+    (sum, item) => sum + item.expectedMemoryGiB,
+    0,
+  );
 }
 
 export function defaultNodeBudgetGiB(nodeBudgetFromManifest?: number): number {
@@ -37,17 +59,45 @@ export function defaultNodeBudgetGiB(nodeBudgetFromManifest?: number): number {
   return (totalmem() / 1024 ** 3) * 0.75;
 }
 
+function formatAdmissionBreakdown(
+  nodeName: string,
+  budget: number,
+  incoming: ReservationBreakdownItem,
+  living: ReservationBreakdownItem[],
+  reservedAfter: number,
+): string {
+  const livingDesc =
+    living.length > 0
+      ? living.map((i) => `'${i.name}' ${i.expectedMemoryGiB.toFixed(1)} GiB`).join(", ")
+      : "(none)";
+  return [
+    `node '${nodeName}' would reserve ${reservedAfter.toFixed(1)} GiB after adding '${incoming.name}' (${incoming.expectedMemoryGiB.toFixed(1)} GiB) to existing: ${livingDesc}`,
+    `Budget is ${budget.toFixed(1)} GiB`,
+    `--force does not bypass the budget; free capacity with --evict <name> or raise the node budget (NodeRun spec.budget.memoryGiB, default 75% of total RAM)`,
+  ].join(". ");
+}
+
 export function computeNodeBudget(input: AdmissionInput): AdmissionResult {
-  const reservedAfter =
-    sumReservedForNode(input.livingManifests, input.nodeName) +
-    (input.incoming.spec.resources?.expectedMemoryGiB ?? 0);
+  const livingItems = reservedForNodeBreakdown(input.livingManifests, input.nodeName);
+  const reservedBefore = livingItems.reduce((sum, item) => sum + item.expectedMemoryGiB, 0);
+  const incomingMemory = input.incoming.spec.resources?.expectedMemoryGiB ?? 0;
+  const incomingItem = { name: input.incoming.metadata.name, expectedMemoryGiB: incomingMemory };
+  const reservedAfter = reservedBefore + incomingMemory;
   if (input.forceAdmit) return { ok: true, reservedAfter, budget: input.nodeBudgetGiB };
   if (reservedAfter > input.nodeBudgetGiB) {
+    const breakdown = [...livingItems, incomingItem].filter((i) => i.expectedMemoryGiB > 0);
     return {
       ok: false,
       reservedAfter,
       budget: input.nodeBudgetGiB,
-      reason: `node '${input.nodeName}' would reserve ${reservedAfter.toFixed(1)} GiB (> ${input.nodeBudgetGiB.toFixed(1)} GiB budget)`,
+      reason: formatAdmissionBreakdown(
+        input.nodeName,
+        input.nodeBudgetGiB,
+        incomingItem,
+        livingItems,
+        reservedAfter,
+      ),
+      breakdown,
     };
   }
   return { ok: true, reservedAfter, budget: input.nodeBudgetGiB };

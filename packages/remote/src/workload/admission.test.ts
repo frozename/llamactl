@@ -13,6 +13,7 @@ import {
   defaultNodeBudgetGiB,
   estimateModelHostMemoryGiB,
   estimateWorkloadMemoryGiB,
+  reservedForNodeBreakdown,
   sumReservedForNode,
 } from "./admission.js";
 
@@ -74,6 +75,23 @@ test("sumReservedForNode sums expectedMemoryGiB for enabled manifests on the nod
   expect(sumReservedForNode(all, "local")).toBe(24);
 });
 
+test("reservedForNodeBreakdown only counts enabled manifests on the node and names each contributor", () => {
+  const all = [
+    mkManifest("granite41-8b", { expectedMemoryGiB: 8 }),
+    mkManifest("gemma4-26b", { expectedMemoryGiB: 16 }),
+    mkManifest("disabled-mlx", { expectedMemoryGiB: 18, enabled: false }),
+    mkManifest("remote-only", { expectedMemoryGiB: 2, node: "mac-mini" }),
+  ];
+  const breakdown = reservedForNodeBreakdown(all, "local");
+  expect(breakdown).toEqual([
+    { name: "granite41-8b", expectedMemoryGiB: 8 },
+    { name: "gemma4-26b", expectedMemoryGiB: 16 },
+  ]);
+  expect(sumReservedForNode(all, "local")).toBe(
+    breakdown.reduce((sum, item) => sum + item.expectedMemoryGiB, 0),
+  );
+});
+
 test("admission returns ok when within budget", () => {
   const input: AdmissionInput = {
     nodeName: "local",
@@ -101,6 +119,56 @@ test("admission returns over-budget when sum exceeds budget without force", () =
   const r = computeNodeBudget(input);
   expect(r.ok).toBe(false);
   if (!r.ok) expect(r.reservedAfter).toBe(24);
+});
+
+test("admission over-budget reason attributes each contributor and names the levers", () => {
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: 20,
+    livingManifests: [mkManifest("a", { expectedMemoryGiB: 16 })],
+    incoming: mkManifest("b", { expectedMemoryGiB: 8 }),
+    forceAdmit: false,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.reason).toContain("'b' (8.0 GiB)");
+    expect(r.reason).toContain("'a' 16.0 GiB");
+    expect(r.reason).toContain("Budget is 20.0 GiB");
+    expect(r.reason).toContain("would reserve 24.0 GiB");
+    expect(r.reason).toMatch(/--evict/);
+    expect(r.reason).toContain("spec.budget.memoryGiB");
+    expect(r.reason).toContain("does not bypass the budget");
+  }
+});
+
+test("over-budget with disabled ModelHosts only counts the genuinely living contributor", () => {
+  const living = [
+    mkManifest("mlx-host-local", { expectedMemoryGiB: 12 }),
+    mkManifest("disabled-a", { expectedMemoryGiB: 18, enabled: false }),
+    mkManifest("disabled-b", { expectedMemoryGiB: 16, enabled: false }),
+    mkManifest("disabled-c", { expectedMemoryGiB: 28, enabled: false }),
+    mkManifest("disabled-d", { expectedMemoryGiB: 21, enabled: false }),
+  ];
+  const input: AdmissionInput = {
+    nodeName: "local",
+    nodeBudgetGiB: 20,
+    livingManifests: living,
+    incoming: mkManifest("new-workload", { expectedMemoryGiB: 10 }),
+    forceAdmit: false,
+  };
+  const r = computeNodeBudget(input);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.reservedAfter).toBe(22);
+    expect(r.reason).toContain("'mlx-host-local' 12.0 GiB");
+    expect(r.reason).toContain("'new-workload' (10.0 GiB)");
+    expect(r.reason).not.toContain("disabled-");
+    expect(r.breakdown).toEqual([
+      { name: "mlx-host-local", expectedMemoryGiB: 12 },
+      { name: "new-workload", expectedMemoryGiB: 10 },
+    ]);
+  }
 });
 
 test("admission ok when force-admit set even if over budget", () => {
