@@ -58,6 +58,23 @@ function makeRunManifest(name: string, port = 8181): Parameters<typeof saveWorkl
   };
 }
 
+function writeHighBudgetNodeRun(dir: string): void {
+  writeFileSync(
+    join(dir, "mac-mini.yaml"),
+    [
+      "apiVersion: llamactl/v1",
+      "kind: NodeRun",
+      "metadata:",
+      "  name: mac-mini",
+      "spec:",
+      "  node: mac-mini",
+      "  budget:",
+      "    memoryGiB: 1024",
+      "  infra: []",
+    ].join("\n"),
+  );
+}
+
 function makeSlowStoppedClient(delayMs: number): WorkloadClient {
   return {
     serverStatus: {
@@ -267,6 +284,7 @@ test("reconcile uses remote modelHostStatus.specHash to avoid restarts and detec
 
 test("reconcile skips deleted manifests without resurrecting them", async () => {
   const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-"));
+  writeHighBudgetNodeRun(workloadsDir);
   const blocker = "aaa-blocker";
   const name = "zzz-deleted-host";
   saveWorkload(makeRunManifest(blocker, 8182), workloadsDir);
@@ -350,6 +368,7 @@ test("reconcile restarts and persists when the manifest is still present", async
 
 test("reconcile preserves renamed manifests without resurrecting the old name", async () => {
   const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-"));
+  writeHighBudgetNodeRun(workloadsDir);
   const blocker = "aaa-blocker";
   const name = "zzz-rename-host";
   const renamed = "zzz-rename-host-new";
