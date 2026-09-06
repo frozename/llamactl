@@ -1,9 +1,13 @@
+import { writeModelHostState } from "@llamactl/core/engines/state";
+import { resolveEnv } from "@llamactl/core/env";
+import { listLocalRoutes } from "@llamactl/core/workloadRuntime";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { router } from "../src/router.js";
-import { mkdtempSync, rmSync } from "../src/safe-fs.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { parseModelHost, saveModelHost } from "../src/workload/modelhost-store.js";
 import { parseWorkload, saveWorkload } from "../src/workload/store.js";
 
@@ -131,5 +135,222 @@ describe("workloadList", () => {
 
     // Existing ModelRun rows gain the discriminator too.
     expect(byName["gemma-solo"]!.kind).toBe("ModelRun");
+  });
+});
+
+describe("workloadList foreign-listener detection", () => {
+  function writeServerSidecars(
+    runtimeDir: string,
+    name: string,
+    opts: { recordedPid: number; host: string; port: number; rel: string },
+  ): void {
+    const dir = join(runtimeDir, "workloads", name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "llama-server.pid"), `${String(opts.recordedPid)}\n`);
+    writeFileSync(
+      join(dir, "llama-server.state"),
+      JSON.stringify({
+        rel: opts.rel,
+        extraArgs: [],
+        host: opts.host,
+        port: String(opts.port),
+        binary: "/nonexistent/llama-server",
+        pid: opts.recordedPid,
+        startedAt: new Date().toISOString(),
+        tunedProfile: null,
+      }),
+    );
+  }
+
+  function workloadYaml(name: string, rel: string): string {
+    return `
+apiVersion: llamactl/v1
+kind: ModelRun
+metadata:
+  name: ${name}
+spec:
+  node: local
+  target:
+    kind: rel
+    value: ${rel}
+`;
+  }
+
+  // A process llamactl does not own is bound to the workload's recorded
+  // port: the recorded pid is dead, the endpoint still answers /health,
+  // and the pid holding the port is not the recorded one. `get
+  // workloads` must not render this as a green Running — the proxy has
+  // already dropped the route, so the row has to name the mismatch.
+  test("marks the workload Foreign when a foreign process squats the recorded port", async () => {
+    const squatter = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("ok"),
+    });
+    const squatterPort = squatter.port;
+    if (squatterPort === undefined) throw new Error("squatter did not bind a port");
+    const runtimeDir = join(tmp, "runtime");
+    Object.assign(process.env, {
+      LOCAL_AI_RUNTIME_DIR: runtimeDir,
+      LLAMA_CPP_HOST: "127.0.0.1",
+      // Nothing listens on the env-default endpoint — the squatter only
+      // holds the port recorded in this workload's sidecar.
+      LLAMA_CPP_PORT: "1",
+    });
+    try {
+      saveWorkload(parseWorkload(workloadYaml("squatted", "gemma.gguf")), tmp);
+      writeServerSidecars(runtimeDir, "squatted", {
+        recordedPid: 999999,
+        host: "127.0.0.1",
+        port: squatterPort,
+        rel: "gemma.gguf",
+      });
+
+      const caller = router.createCaller({});
+      const rows = await caller.workloadList();
+      const row = rows.find((r) => r.name === "squatted");
+
+      expect(row).toBeDefined();
+      expect(row!.phase).toBe("Foreign");
+      expect(row!.statePid).toBeNull();
+      expect(row!.listenerPid).toBe(process.pid);
+      // The proxy sees the same reality: the dead recorded pid means the
+      // workload has no route. Foreign makes the two views agree.
+      expect(listLocalRoutes(resolveEnv())).toHaveLength(0);
+    } finally {
+      await squatter.stop(true);
+    }
+  });
+
+  // Same shape but the listener IS the recorded pid: the endpoint answers
+  // and the process holding the port is the one llamactl recorded, so the
+  // row must stay Running — Foreign is only for pid-vs-listener mismatch.
+  test("keeps Running when the recorded live pid owns the answering port", async () => {
+    const listener = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("ok"),
+    });
+    const listenerPort = listener.port;
+    if (listenerPort === undefined) throw new Error("listener did not bind a port");
+    const runtimeDir = join(tmp, "runtime");
+    Object.assign(process.env, {
+      LOCAL_AI_RUNTIME_DIR: runtimeDir,
+      LLAMA_CPP_HOST: "127.0.0.1",
+      LLAMA_CPP_PORT: "1",
+    });
+    try {
+      saveWorkload(parseWorkload(workloadYaml("owned", "gemma.gguf")), tmp);
+      writeServerSidecars(runtimeDir, "owned", {
+        recordedPid: process.pid,
+        host: "127.0.0.1",
+        port: listenerPort,
+        rel: "gemma.gguf",
+      });
+
+      const caller = router.createCaller({});
+      const rows = await caller.workloadList();
+      const row = rows.find((r) => r.name === "owned");
+
+      expect(row).toBeDefined();
+      expect(row!.phase).toBe("Running");
+      expect(row!.statePid).toBe(process.pid);
+      expect(row!.listenerPid).toBe(process.pid);
+      expect(listLocalRoutes(resolveEnv())).toHaveLength(1);
+    } finally {
+      await listener.stop(true);
+    }
+  });
+
+  // The recorded pid is alive but the port belongs to someone else —
+  // the stale-orphan / pid-reuse variant. `state: "up"` alone cannot
+  // tell this apart from a healthy server; only the pid-vs-listener
+  // comparison can.
+  test("marks the workload Foreign when a live recorded pid does not hold the answering port", async () => {
+    const squatter = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("ok"),
+    });
+    const squatterPort = squatter.port;
+    if (squatterPort === undefined) throw new Error("squatter did not bind a port");
+    // A real live pid that is NOT the port listener.
+    const decoy = spawn("sleep", ["30"], { stdio: "ignore" });
+    const decoyPid = decoy.pid;
+    if (decoyPid === undefined) throw new Error("decoy process did not spawn");
+    const runtimeDir = join(tmp, "runtime");
+    Object.assign(process.env, {
+      LOCAL_AI_RUNTIME_DIR: runtimeDir,
+      LLAMA_CPP_HOST: "127.0.0.1",
+      LLAMA_CPP_PORT: "1",
+    });
+    try {
+      saveWorkload(parseWorkload(workloadYaml("reused", "gemma.gguf")), tmp);
+      writeServerSidecars(runtimeDir, "reused", {
+        recordedPid: decoyPid,
+        host: "127.0.0.1",
+        port: squatterPort,
+        rel: "gemma.gguf",
+      });
+
+      const caller = router.createCaller({});
+      const rows = await caller.workloadList();
+      const row = rows.find((r) => r.name === "reused");
+
+      expect(row).toBeDefined();
+      expect(row!.phase).toBe("Foreign");
+      expect(row!.statePid).toBe(decoyPid);
+      expect(row!.listenerPid).toBe(process.pid);
+    } finally {
+      decoy.kill("SIGKILL");
+      await squatter.stop(true);
+    }
+  });
+
+  // ModelHost rows share the list surface. A dead recorded pid with the
+  // endpoint still answering is the same squatter shape — the row must
+  // be Foreign rather than a misleading Stopped/Running.
+  test("marks a ModelHost Foreign when its endpoint answers under a foreign pid", async () => {
+    const squatter = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("ok"),
+    });
+    const squatterPort = squatter.port;
+    if (squatterPort === undefined) throw new Error("squatter did not bind a port");
+    const runtimeDir = join(tmp, "runtime");
+    Object.assign(process.env, {
+      LOCAL_AI_RUNTIME_DIR: runtimeDir,
+      LLAMA_CPP_HOST: "127.0.0.1",
+      LLAMA_CPP_PORT: "1",
+    });
+    try {
+      saveModelHost(parseModelHost(modelHostYaml), tmp);
+      writeModelHostState(
+        {
+          kind: "ModelHost",
+          engine: "omlx",
+          pid: 999999,
+          host: "127.0.0.1",
+          port: squatterPort,
+          modelAliases: ["Qwen3-8B-MLX-4bit"],
+          startedAt: new Date().toISOString(),
+        },
+        { name: "mlx-host" },
+        resolveEnv(),
+      );
+
+      const caller = router.createCaller({});
+      const rows = await caller.workloadList();
+      const row = rows.find((r) => r.name === "mlx-host");
+
+      expect(row).toBeDefined();
+      expect(row!.kind).toBe("ModelHost");
+      expect(row!.phase).toBe("Foreign");
+      expect(row!.statePid).toBeNull();
+      expect(row!.listenerPid).toBe(process.pid);
+    } finally {
+      await squatter.stop(true);
+    }
   });
 });

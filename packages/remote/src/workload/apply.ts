@@ -85,6 +85,10 @@ export interface WorkloadClient {
       binary: string | null;
       endpoint: string;
       advertisedEndpoint?: string | null;
+      /** Present on agents new enough to report port ownership; absent on
+       *  older agents, so consumers treat undefined as "unknown". */
+      listenerPid?: number | null;
+      foreign?: boolean;
     }>;
   };
   serverStop: {

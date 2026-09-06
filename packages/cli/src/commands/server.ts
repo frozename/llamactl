@@ -451,6 +451,11 @@ function renderStatusText(status: Awaited<ReturnType<typeof server.serverStatus>
   lines.push(`pid=${String(status.pid ?? "none")}`);
   lines.push(`http=${String(status.health.httpCode ?? "unreachable")}`);
   if (status.rel) lines.push(`rel=${status.rel}`);
+  if (status.foreign) {
+    lines.push(
+      `foreign=port held by pid ${String(status.listenerPid ?? "unknown")} — not the recorded server (llamactl owns no route)`,
+    );
+  }
   lines.push("");
   process.stdout.write(lines.join("\n"));
 }

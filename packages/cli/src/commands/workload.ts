@@ -1,6 +1,6 @@
 import { readModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
-import { formatEndpoint, probeHealthEndpoint } from "@llamactl/core/probe";
+import { formatEndpoint, probeEndpointOwnership } from "@llamactl/core/probe";
 import { workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import {
   type ClusterNode,
@@ -43,7 +43,8 @@ so 'llamactl get workloads' can list it afterwards.
 const GET_USAGE = `Usage: llamactl get workloads [--json]
 
 List every workload manifest and the live phase of its target node
-(Running / Stopped / Mismatch / Unreachable).
+(Running / Stopped / Mismatch / Unreachable / Foreign — Foreign means a
+process llamactl did not record is answering on the workload's port).
 `;
 
 const DESCRIBE_USAGE = `Usage: llamactl describe workload <name> [--json]
@@ -479,11 +480,22 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
 type WorkloadRow = {
   name: string;
   node: string;
-  phase: "Running" | "Stopped" | "Mismatch" | "Unreachable" | "Pending" | "Failed";
+  phase: "Running" | "Stopped" | "Mismatch" | "Unreachable" | "Pending" | "Failed" | "Foreign";
   rel: string;
   endpoint: string | null;
+  statePid: number | null;
+  listenerPid: number | null;
   gateway: boolean;
 };
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> {
   // Gateway manifests never run a local server on a reachable agent
@@ -499,6 +511,8 @@ async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> 
       phase,
       rel: manifest.spec.target.value,
       endpoint: status?.endpoint ?? null,
+      statePid: null,
+      listenerPid: null,
       gateway: true,
     };
   }
@@ -509,7 +523,11 @@ async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> 
     const desired = manifest.spec.target.value;
     const running = status.state === "up";
     let phase: WorkloadRow["phase"] = "Stopped";
-    if (running && status.rel === desired) phase = "Running";
+    // `foreign` first: an endpoint answering under a pid llamactl did not
+    // record is a squatter — the proxy already dropped the route, so
+    // Running (or even Mismatch) would misreport who owns the port.
+    if (status.foreign) phase = "Foreign";
+    else if (running && status.rel === desired) phase = "Running";
     else if (running && status.rel !== desired) phase = "Mismatch";
     return {
       name: manifest.metadata.name,
@@ -517,6 +535,8 @@ async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> 
       phase,
       rel: desired,
       endpoint: status.endpoint,
+      statePid: status.pid,
+      listenerPid: status.listenerPid ?? null,
       gateway: false,
     };
   } catch {
@@ -526,6 +546,8 @@ async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> 
       phase: "Unreachable",
       rel: manifest.spec.target.value,
       endpoint: null,
+      statePid: null,
+      listenerPid: null,
       gateway: false,
     };
   }
@@ -563,12 +585,24 @@ export async function runGet(args: string[]): Promise<number> {
       modelHosts.map(async (manifest) => {
         const state = readModelHostState({ name: manifest.metadata.name });
         const endpoint = state ? formatEndpoint(state.host, state.port) : null;
-        let phase = "unknown";
+        let phase: WorkloadRow["phase"] | "unknown" = "unknown";
+        let statePid: number | null = null;
+        let listenerPid: number | null = null;
         if (state) {
-          const probe = await probeHealthEndpoint(state.host, state.port).catch(() => ({
-            reachable: false,
-          }));
-          phase = probe.reachable ? "Running" : "Unreachable";
+          statePid = isPidAlive(state.pid) ? state.pid : null;
+          // A reachable endpoint is only proof that *something* answers —
+          // compare the pid holding the port against the recorded live
+          // pid so a foreign squatter can't read as Running while
+          // listLocalRoutes has already dropped the route.
+          const ownership = await probeEndpointOwnership(state.host, state.port);
+          listenerPid = ownership.listenerPid;
+          if (!ownership.reachable) {
+            phase = "Unreachable";
+          } else if (statePid === null || (listenerPid !== null && listenerPid !== statePid)) {
+            phase = "Foreign";
+          } else {
+            phase = "Running";
+          }
         }
         return {
           kind: "modelhost" as const,
@@ -577,6 +611,8 @@ export async function runGet(args: string[]): Promise<number> {
           phase,
           rel: manifest.spec.hostedModels.map((m) => m.rel).join(", "),
           endpoint,
+          statePid,
+          listenerPid,
           gateway: false,
         };
       }),

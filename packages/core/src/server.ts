@@ -21,6 +21,7 @@ import {
   resolveSlotSavePathArgs,
 } from "./kvstore/index.js";
 import { omitUndefined } from "./object.js";
+import { findTcpListenerPid, probeHealthEndpoint } from "./probe.js";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
 import { ensureWorkloadRuntimeDir, workloadRuntimeDir } from "./workloadRuntime.js";
@@ -225,6 +226,21 @@ export interface ServerStatus {
     reachable: boolean;
   };
   /**
+   * pid of the process actually holding the port that answered /health,
+   * resolved via lsof. null when no endpoint answered or the listener
+   * could not be identified.
+   */
+  listenerPid: number | null;
+  /**
+   * True when an HTTP endpoint answers on this workload's recorded (or
+   * default) port but the pid bound there is not the recorded live pid —
+   * i.e. a process llamactl did not start is squatting the port.
+   * `listLocalRoutes` drops such a workload from routing, so callers must
+   * surface this as a distinct state (e.g. phase "Foreign") rather than a
+   * misleading Running or a silent Stopped.
+   */
+  foreign: boolean;
+  /**
    * Metadata about the currently-tracked llama-server process. Populated
    * from the `llama-server.state` sidecar written at startServer time so
    * downstream reconcilers can diff desired vs observed without needing
@@ -308,6 +324,29 @@ function removeServerState(resolved: ResolvedEnv, key: WorkloadKey): void {
   }
 }
 
+/**
+ * Which endpoint answered /health, if any: the primary probe target, or
+ * — when it missed — the recorded sidecar endpoint. The fallback matters
+ * because a dead recorded pid makes the primary probe fall back to the
+ * env-default endpoint, which can miss a squatter bound to the port the
+ * workload itself last used. Returns null when nothing answers.
+ */
+async function resolveAnsweredEndpoint(args: {
+  reachable: boolean;
+  probedHost: string;
+  probedPort: number;
+  sidecar: ServerState | null;
+}): Promise<{ host: string; port: number } | null> {
+  if (args.reachable) return { host: args.probedHost, port: args.probedPort };
+  const { sidecar } = args;
+  if (sidecar === null) return null;
+  const sidecarPort = Number.parseInt(sidecar.port, 10);
+  if (!Number.isFinite(sidecarPort)) return null;
+  if (sidecar.host === args.probedHost && sidecarPort === args.probedPort) return null;
+  const probe = await probeHealthEndpoint(sidecar.host, sidecarPort, { timeoutMs: 1500 });
+  return probe.reachable ? { host: sidecar.host, port: sidecarPort } : null;
+}
+
 type SidecarStatusFields = Pick<
   ServerStatus,
   "binary" | "extraArgs" | "host" | "port" | "rel" | "startedAt" | "tunedProfile"
@@ -375,12 +414,34 @@ export async function serverStatus(
     removeServerState(resolved, key);
   }
 
+  // Squatter detection: a 200 on /health only proves *something* answers.
+  // listLocalRoutes routes by the recorded pid, so whenever an endpoint
+  // answers we resolve which pid actually holds the port — a listener
+  // that isn't the recorded live pid means a foreign process owns the
+  // endpoint.
+  const answered = await resolveAnsweredEndpoint({
+    reachable,
+    probedHost: endpointOverride?.host ?? resolved.LLAMA_CPP_HOST,
+    probedPort: Number.parseInt(endpointOverride?.port ?? resolved.LLAMA_CPP_PORT, 10),
+    sidecar,
+  });
+  const listenerPid = answered ? await findTcpListenerPid(answered.host, answered.port) : null;
+  // A null listenerPid is inconclusive (the listener may have exited
+  // between the probe and the lsof lookup, or lsof may be unavailable):
+  // only flag foreign when we positively resolved a different pid, or
+  // when we recorded no live pid at all — then anything answering is
+  // not ours by definition.
+  const foreign =
+    answered !== null && (pid === null || (listenerPid !== null && listenerPid !== pid));
+
   return {
     state,
     endpoint: endpoint(resolved, endpointOverride),
     advertisedEndpoint: advertisedEndpoint(resolved, endpointOverride),
     pid,
     health: { httpCode, reachable },
+    listenerPid,
+    foreign,
     ...sidecarStatusFields(sidecar, validSidecar),
   };
 }
@@ -462,72 +523,6 @@ async function detectPortConflict(endpointUrl: string): Promise<string | null> {
 // unreliable) routable + managed. Mirrors modelhost.ts `tryAdoptLiveHost`.
 
 const ADOPT_PROBE_TIMEOUT_MS = 3000;
-const FIND_LISTENER_TIMEOUT_MS = 2000;
-
-// Resolve lsof by absolute path: macOS ships it in /usr/sbin, which is NOT on
-// the launchd PATH — a bare `lsof` would ENOENT there and silently disable
-// adoption in production.
-function resolveLsofPath(): string {
-  for (const candidate of ["/usr/sbin/lsof", "/usr/bin/lsof"]) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return "lsof";
-}
-
-function lsofListenerPid(filter: string): Promise<number | null> {
-  return new Promise((resolve) => {
-    let settled = false;
-    let child: ReturnType<typeof spawn> | null = null;
-    const finish = (value: number | null): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      try {
-        child?.kill("SIGKILL");
-      } catch {
-        // Process may have already exited between lsof and timeout cleanup.
-      }
-      resolve(value);
-    };
-    const timer = setTimeout(() => {
-      finish(null);
-    }, FIND_LISTENER_TIMEOUT_MS);
-    try {
-      child = spawn(resolveLsofPath(), ["-nP", filter, "-sTCP:LISTEN", "-t"], {
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      let out = "";
-      child.stdout?.on("data", (chunk) => {
-        out += String(chunk);
-      });
-      child.on("error", () => {
-        finish(null);
-      });
-      child.on("close", () => {
-        const pid = out
-          .split(/\s+/)
-          .map((token) => Number.parseInt(token, 10))
-          .find((value) => Number.isInteger(value) && value > 0);
-        finish(pid ?? null);
-      });
-    } catch {
-      finish(null);
-    }
-  });
-}
-
-async function findListenerPid(host: string, port: number): Promise<number | null> {
-  // Prefer the exact bind address so an unrelated process on a different
-  // address of the same port isn't mis-matched. Fall back to any address on
-  // the port: a server launched with `--host 0.0.0.0` (LAN-reachable) binds
-  // 0.0.0.0:<port>, which the loopback-scoped `-iTCP@host:port` filter misses
-  // even though detectPortConflict reached it via 127.0.0.1. Ownership is
-  // already confirmed by the /v1/models probe in the caller, so the
-  // port-only fallback is safe.
-  const exact = await lsofListenerPid(`-iTCP@${host}:${String(port)}`);
-  if (exact !== null) return exact;
-  return await lsofListenerPid(`-iTCP:${String(port)}`);
-}
 
 async function probeServerModelIds(endpointUrl: string, timeoutMs: number): Promise<string[]> {
   try {
@@ -585,7 +580,7 @@ export async function tryAdoptExistingServer(args: {
   deps?: Partial<AdoptDeps>;
 }): Promise<number | null> {
   const probe = args.deps?.probeModelIds ?? probeServerModelIds;
-  const find = args.deps?.findListenerPid ?? findListenerPid;
+  const find = args.deps?.findListenerPid ?? findTcpListenerPid;
   const readProcessCommand = args.deps?.readProcessCommand ?? defaultReadProcessCommand;
   const modelIds = await probe(args.endpointUrl, ADOPT_PROBE_TIMEOUT_MS);
   const aliases = new Set<string>([

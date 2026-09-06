@@ -25,6 +25,8 @@ import {
 import { decodeBootstrap } from "@llamactl/core/config/agent-config";
 import { nonEmpty } from "@llamactl/core/config/env";
 import * as kubecfg from "@llamactl/core/config/kubeconfig";
+import { readModelHostState } from "@llamactl/core/engines/state";
+import { probeEndpointOwnership } from "@llamactl/core/probe";
 import {
   type CostJournalEntry,
   decideGuardianAction,
@@ -1495,8 +1497,10 @@ export const router = t.router({
     const rows = await Promise.all(
       manifests.map(async (manifest) => {
         const nodeName = manifest.spec.node;
-        let phase: "Running" | "Stopped" | "Mismatch" | "Unreachable" = "Stopped";
+        let phase: "Running" | "Stopped" | "Mismatch" | "Unreachable" | "Foreign" = "Stopped";
         let endpoint: string | null = null;
+        let statePid: number | null = null;
+        let listenerPid: number | null = null;
         try {
           const client = clientForNode(cfg, nodeName);
           // FIX [6] — per-node deadline. Without it, one black-holed
@@ -1508,7 +1512,13 @@ export const router = t.router({
             WORKLOAD_LIST_NODE_TIMEOUT_MS,
           );
           const desired = manifest.spec.target.value;
-          if (status.state === "up" && status.rel === desired) phase = "Running";
+          statePid = status.pid;
+          listenerPid = status.listenerPid ?? null;
+          // `foreign` first: an endpoint answering under a pid llamactl
+          // did not record is a squatter, not a Running workload — the
+          // proxy already dropped the route, so Running would lie.
+          if (status.foreign) phase = "Foreign";
+          else if (status.state === "up" && status.rel === desired) phase = "Running";
           else if (status.state === "up" && status.rel !== desired) phase = "Mismatch";
           endpoint = status.advertisedEndpoint ?? status.endpoint;
         } catch {
@@ -1522,6 +1532,8 @@ export const router = t.router({
           rel: manifest.spec.target.value,
           phase,
           endpoint,
+          statePid,
+          listenerPid,
           status: manifest.status ?? null,
           /**
            * E.4 — multi-node summary. `workerCount` powers a badge on
@@ -1540,28 +1552,52 @@ export const router = t.router({
     // separate store. They were previously invisible to this list —
     // and to nodeBudget — even though admission counts them. Surface
     // them with the same row shape, discriminated by `kind`.
-    const hostRows = modelHostStoreMod.listModelHosts().map((manifest) => {
-      const status = statusModelHost({ key: { name: manifest.metadata.name } });
-      const ep = manifest.spec.endpoint;
-      const hosted = manifest.spec.hostedModels[0];
-      if (!hosted) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: `ModelHost '${manifest.metadata.name}' has no hosted models`,
-        });
-      }
-      return {
-        name: manifest.metadata.name,
-        kind: "ModelHost" as const,
-        node: manifest.spec.node,
-        rel: hosted.rel,
-        phase: status.state === "Running" ? "Running" : "Stopped",
-        endpoint: `http://${ep.host}:${String(ep.port)}`,
-        status: null,
-        workerCount: 0,
-        workerNodes: [] as string[],
-      };
-    });
+    const hostRows = await Promise.all(
+      modelHostStoreMod.listModelHosts().map(async (manifest) => {
+        const status = statusModelHost({ key: { name: manifest.metadata.name } });
+        const ep = manifest.spec.endpoint;
+        const hosted = manifest.spec.hostedModels[0];
+        if (!hosted) {
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `ModelHost '${manifest.metadata.name}' has no hosted models`,
+          });
+        }
+        let phase: "Running" | "Stopped" | "Foreign" =
+          status.state === "Running" ? "Running" : "Stopped";
+        const statePid = status.state === "Running" ? (status.pid ?? null) : null;
+        let listenerPid: number | null = null;
+        // statusModelHost only reports recorded-pid liveness — a dead
+        // recorded pid with a foreign process still answering on the
+        // endpoint would otherwise read Stopped while the proxy has no
+        // route, and a live recorded pid could mask a port the recorded
+        // process no longer holds. Compare the answering pid directly.
+        const hostState = readModelHostState({ name: manifest.metadata.name });
+        if (hostState) {
+          const ownership = await probeEndpointOwnership(hostState.host, hostState.port);
+          listenerPid = ownership.listenerPid;
+          if (
+            ownership.reachable &&
+            (statePid === null || (listenerPid !== null && listenerPid !== statePid))
+          ) {
+            phase = "Foreign";
+          }
+        }
+        return {
+          name: manifest.metadata.name,
+          kind: "ModelHost" as const,
+          node: manifest.spec.node,
+          rel: hosted.rel,
+          phase,
+          endpoint: `http://${ep.host}:${String(ep.port)}`,
+          statePid,
+          listenerPid,
+          status: null,
+          workerCount: 0,
+          workerNodes: [] as string[],
+        };
+      }),
+    );
     return [...rows, ...hostRows];
   }),
 
