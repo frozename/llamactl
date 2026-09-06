@@ -13,6 +13,12 @@ import {
 } from "./anthropic/translateRequest.js";
 import { translateOpenAIResponse } from "./anthropic/translateResponse.js";
 import { translateOpenAIStreamToAnthropic } from "./anthropic/translateStream.js";
+import {
+  ResponsesTranslationError,
+  translateChatCompletionToResponses,
+  translateResponsesRequest,
+} from "./responses/index.js";
+import type { ResponsesApiRequest } from "./responses/index.js";
 import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from "./cache-identity/canonical.js";
 import { listPeers, type PeerNode } from "./config/peers.js";
 import { ctxForModel } from "./ctx.js";
@@ -304,7 +310,7 @@ interface ResponseCacheRequestState {
   model: string;
   workload: string;
   workloadEpoch: string;
-  protocolVariant: "openai" | "anthropic";
+  protocolVariant: "openai" | "anthropic" | "responses";
   deterministic: boolean;
   requestBodyBytes: number;
 }
@@ -320,6 +326,8 @@ type ProxyContext = {
   isAnthropic?: boolean;
   anthropicModel?: string;
   anthropicRequest?: AnthropicMessagesRequest;
+  isResponsesApi?: boolean;
+  responsesRequest?: ResponsesApiRequest;
   route?: RoutedEntry;
   kv?: KvRequestState;
   responseCache?: ResponseCacheRequestState;
@@ -492,6 +500,18 @@ function anthropicTranslationErrorResponse(error: unknown): Response {
   );
 }
 
+function responsesTranslationErrorResponse(error: unknown): Response {
+  return Response.json(
+    {
+      error: {
+        message: error instanceof Error ? error.message : "responses request translation failed",
+        type: "responses_translation_error",
+      },
+    },
+    { status: error instanceof ResponsesTranslationError ? error.statusCode : 400 },
+  );
+}
+
 function isOversizedJsonBody(req: Request): boolean {
   const contentLength = req.headers.get("content-length");
   if (!contentLength) return false;
@@ -550,6 +570,41 @@ async function parseIncoming(
       }
       return anthropicTranslationErrorResponse(
         new AnthropicTranslationError("anthropic request translation failed"),
+      );
+    }
+  }
+  if (url.pathname === "/v1/responses") {
+    if (isOversizedJsonBody(req)) {
+      return new Response("Payload Too Large", { status: 413 });
+    }
+    try {
+      const bodyText = await req.text();
+      const incoming = JSON.parse(bodyText) as ResponsesApiRequest;
+      const translated = translateResponsesRequest(incoming);
+      const translatedBodyText = JSON.stringify(translated);
+      const translatedUrl = new URL(req.url);
+      translatedUrl.pathname = "/v1/chat/completions";
+      return {
+        req,
+        resolved,
+        target: `${llamaEndpoint(resolved)}${translatedUrl.pathname}${translatedUrl.search}`,
+        pathname: translatedUrl.pathname,
+        search: translatedUrl.search,
+        isResponsesApi: true,
+        responsesRequest: incoming,
+        bodyText: translatedBodyText,
+        init: {
+          method: req.method,
+          headers,
+          body: translatedBodyText,
+        },
+      };
+    } catch (error) {
+      if (error instanceof ResponsesTranslationError || error instanceof SyntaxError) {
+        return responsesTranslationErrorResponse(error);
+      }
+      return responsesTranslationErrorResponse(
+        new ResponsesTranslationError("responses request translation failed"),
       );
     }
   }
@@ -755,8 +810,10 @@ function shouldUseResponseCachePath(context: ProxyContext): boolean {
   );
 }
 
-function responseCacheProtocolVariant(context: ProxyContext): "openai" | "anthropic" {
-  return context.isAnthropic ? "anthropic" : "openai";
+function responseCacheProtocolVariant(context: ProxyContext): "openai" | "anthropic" | "responses" {
+  if (context.isAnthropic) return "anthropic";
+  if (context.isResponsesApi) return "responses";
+  return "openai";
 }
 
 function responseCacheBudgetBytes(): number {
@@ -790,7 +847,7 @@ function requestModel(parsedBody: unknown): string | null {
 }
 
 async function cacheHitResponse(
-  context: Pick<ProxyContext, "clientRequestedStream" | "route" | "isAnthropic">,
+  context: Pick<ProxyContext, "clientRequestedStream" | "route" | "isAnthropic" | "isResponsesApi">,
   entry: ResponseCacheEntry,
 ): Promise<Response> {
   const headers = new Headers();
@@ -1329,6 +1386,7 @@ async function maybeSynthesizeOmlxSseResponse(
     | "clientRequestedStream"
     | "route"
     | "isAnthropic"
+    | "isResponsesApi"
     | "responseCache"
     | "responseCacheCanonicalBody"
   >,
@@ -1336,6 +1394,7 @@ async function maybeSynthesizeOmlxSseResponse(
 ): Promise<Response | null> {
   if (context.clientRequestedStream !== true) return null;
   if (context.isAnthropic === true) return null;
+  if (context.isResponsesApi === true) return null;
   if (upstream.status !== 200) return null;
   const contentType = upstream.headers.get("content-type");
   if (!isJsonContentType(contentType)) return null;
@@ -1369,7 +1428,7 @@ export function __jsonCompletionToSseForTests(json: unknown): string {
 }
 
 export async function __maybeSynthesizeOmlxSseResponseForTests(
-  context: { clientRequestedStream?: boolean; isAnthropic?: boolean },
+  context: { clientRequestedStream?: boolean; isAnthropic?: boolean; isResponsesApi?: boolean },
   upstream: Response,
 ): Promise<Response | null> {
   return await maybeSynthesizeOmlxSseResponse(context, upstream);
@@ -2220,6 +2279,43 @@ async function translateAnthropicJsonResponse(upstream: Response): Promise<Respo
   }
 }
 
+async function translateResponsesJsonResponse(upstream: Response): Promise<Response> {
+  try {
+    const translated = translateChatCompletionToResponses((await upstream.clone().json()) as never);
+    const respHeaders = sanitizedResponseHeaders(upstream);
+    return Response.json(translated, { status: upstream.status, headers: respHeaders });
+  } catch (error) {
+    return Response.json(
+      {
+        error: {
+          message: error instanceof Error ? error.message : "responses response translation failed",
+          type: "responses_response_translation_error",
+        },
+      },
+      { status: 502 },
+    );
+  }
+}
+
+/**
+ * Named seam for Responses API SSE streaming translation.
+ *
+ * Contract: streaming over /v1/responses is not implemented. Rather than
+ * silently passing chat-completions-shaped SSE frames to a client that
+ * believes it is talking to the Responses API (silently wrong-shaped data),
+ * fail closed with an explicit 501 error in the responses_translation_error
+ * shape used by the rest of the Responses translation surface.
+ *
+ * This is the extension point for full streaming support. The non-streaming
+ * JSON path (translateResponsesJsonResponse) is fully wired; this SSE path
+ * refuses until a streaming translator is implemented.
+ */
+function translateResponsesSseResponse(): Response {
+  return responsesTranslationErrorResponse(
+    new ResponsesTranslationError("streaming is not supported for /v1/responses", 501),
+  );
+}
+
 async function maybeTranslateResponse(
   context: ProxyContext,
   upstream: Response,
@@ -2230,6 +2326,12 @@ async function maybeTranslateResponse(
   }
   if (context.isAnthropic && upstream.ok && contentType && isJsonContentType(contentType)) {
     return await translateAnthropicJsonResponse(upstream);
+  }
+  if (context.isResponsesApi && contentType?.toLowerCase().startsWith("text/event-stream")) {
+    return translateResponsesSseResponse();
+  }
+  if (context.isResponsesApi && upstream.ok && contentType && isJsonContentType(contentType)) {
+    return await translateResponsesJsonResponse(upstream);
   }
   return new Response(upstream.body, {
     status: upstream.status,

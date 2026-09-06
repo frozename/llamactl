@@ -5,7 +5,7 @@ export interface ResponseCacheEntry {
   model: string;
   workload: string;
   workloadEpoch: string;
-  protocolVariant: "openai" | "anthropic";
+  protocolVariant: "openai" | "anthropic" | "responses";
   contentType: string;
   statusCode: number;
   responseBody: Uint8Array;
@@ -21,7 +21,7 @@ interface ResponseCacheEntryRow {
   model: string;
   workload: string;
   workload_epoch: string;
-  protocol_variant: "openai" | "anthropic";
+  protocol_variant: "openai" | "anthropic" | "responses";
   content_type: string;
   status_code: number;
   response_body: Uint8Array;
@@ -37,7 +37,7 @@ export interface ResponseCacheLookup {
   model: string;
   workload: string;
   workloadEpoch: string;
-  protocolVariant: "openai" | "anthropic";
+  protocolVariant: "openai" | "anthropic" | "responses";
 }
 
 export class ResponseCacheRegistry {
