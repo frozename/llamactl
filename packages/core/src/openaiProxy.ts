@@ -24,6 +24,7 @@ import {
   KvRegistry,
   type KvStorage,
   type KvTrailer,
+  kvWorkloadBudgetBytes,
   longestPrefixLookup,
   openKvStorage,
   parseAbsoluteSlotSavePath,
@@ -736,14 +737,6 @@ export function isRouteKvEligible(route: {
   // (/v1/slots/capabilities), so a server that can't save-by-handle is a no-op.
   if (route.kind === "ModelHost" && route.engine === "omlx") return true;
   return false;
-}
-
-function kvBudgetBytes(): number {
-  const raw = process.env["LLAMACTL_KV_WORKLOAD_BUDGET_MB"];
-  if (!raw) return 8192 * 1024 * 1024;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed < 1) return 8192 * 1024 * 1024;
-  return parsed * 1024 * 1024;
 }
 
 function shouldUseKvPath(context: ProxyContext): boolean {
@@ -2131,7 +2124,12 @@ async function persistSlotAndMaintain(
   if (committed === null) return;
   const { now } = committed;
 
-  const eviction = runEvictionIfOverBudget(kv.runtime.registry, kv.workload, kvBudgetBytes(), now);
+  const eviction = runEvictionIfOverBudget(
+    kv.runtime.registry,
+    kv.workload,
+    kvWorkloadBudgetBytes(),
+    now,
+  );
   for (const blockedSha of eviction.blockedActive) {
     logSlotInjectionEvent("slot_eviction_blocked_active_request", {
       workload: kv.workload,

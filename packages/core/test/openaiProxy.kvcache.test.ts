@@ -2322,6 +2322,67 @@ test("eviction blocked by active entry keeps active row and emits debug event", 
   }
 });
 
+test("default workload budget evicts over-budget idle entries without env override", async () => {
+  const runtime = makeTempRuntime();
+  const slotBaseDir = join(runtime.root, "kvstore", "slots", "wl-a");
+  const upstream = await startUpstream({ slotBaseDir });
+  const previousBudget = process.env["LLAMACTL_KV_WORKLOAD_BUDGET_MB"];
+  try {
+    delete process.env["LLAMACTL_KV_WORKLOAD_BUDGET_MB"];
+    const url = new URL(upstream.baseUrl);
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10));
+    const workloadEpoch = readWorkloadEpoch({ name: "wl-a" }, runtime.env);
+    expect(workloadEpoch).not.toBeNull();
+    const storage = openKvStorage(runtime.root);
+    const registry = new KvRegistry(storage);
+    for (const [idx, sha] of ["old-a", "old-b", "old-c"].entries()) {
+      const slotFile = join(runtime.root, "kvstore", "slots", "wl-a", `${sha}.kvslot`);
+      mkdirSync(dirname(slotFile), { recursive: true });
+      writeFileSync(slotFile, "slot");
+      registry.insert(
+        entryTemplate({
+          sha,
+          workload: "wl-a",
+          upstreamSlotFile: slotFile,
+          workloadEpoch: workloadEpoch!,
+          payloadBytes: 3 * 1024 * 1024 * 1024,
+          textBytes: 100,
+          lastUsed: Date.now() - 10_000_000 - idx * 1_000,
+        }),
+      );
+    }
+    storage.close();
+
+    const body = JSON.stringify({
+      model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+      messages: [{ role: "user", content: "new turn" }],
+    });
+    const response = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+      runtime.env,
+    );
+    expect(response.status).toBe(200);
+
+    const afterStorage = openKvStorage(runtime.root);
+    const afterRegistry = new KvRegistry(afterStorage);
+    const entries = afterRegistry.listAll().filter((entry) => entry.workload === "wl-a");
+    const totalBytes = entries.reduce((sum, entry) => sum + entry.payloadBytes, 0);
+    const defaultBudgetBytes = 8 * 1024 * 1024 * 1024;
+    expect(totalBytes).toBeLessThanOrEqual(defaultBudgetBytes);
+    expect(afterRegistry.get(shaForBody(body))).not.toBeNull();
+    afterStorage.close();
+  } finally {
+    if (previousBudget === undefined) delete process.env["LLAMACTL_KV_WORKLOAD_BUDGET_MB"];
+    else process.env["LLAMACTL_KV_WORKLOAD_BUDGET_MB"] = previousBudget;
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
 test("sse response skips kv save", async () => {
   const runtime = makeTempRuntime();
   const slotBaseDir = join(runtime.root, "kvstore", "slots", "wl-a");

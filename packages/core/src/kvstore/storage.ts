@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { join } from "node:path";
 
 import * as safeFs from "../safe-fs.js";
+import { kvQuarantinePurgeMs, kvStoreConfig } from "./config.js";
 
 const SCHEMA_VERSION = 5;
 
@@ -41,6 +42,17 @@ export function openKvStorage(dataRoot: string): KvStorage {
       },
     };
     runIntegrityScan(storage);
+    const config = kvStoreConfig();
+    console.info(
+      JSON.stringify({
+        event: "kvstore_opened",
+        dataRoot,
+        kvWorkloadBudgetMiB: config.workloadBudgetMb,
+        kvWorkloadBudgetSource: config.workloadBudgetSource,
+        kvQuarantinePurgeHours: config.quarantinePurgeHours,
+        kvQuarantinePurgeSource: config.quarantinePurgeSource,
+      }),
+    );
     return storage;
   } catch (error) {
     db.close();
@@ -180,11 +192,7 @@ function addColumnIfMissing(db: Database, table: string, column: string, sql: st
 }
 
 export function runIntegrityScan(storage: KvStorage): void {
-  const graceMs = ((): number => {
-    const raw = process.env["LLAMACTL_KV_QUARANTINE_PURGE_HOURS"];
-    const hours = raw ? Number.parseFloat(raw) : 24;
-    return Number.isFinite(hours) && hours > 0 ? hours * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-  })();
+  const graceMs = kvQuarantinePurgeMs();
   const now = Date.now();
   const rows = storage.db
     .query("SELECT sha, upstream_slot_file, quarantined, last_used FROM kv_entries")
