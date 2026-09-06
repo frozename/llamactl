@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
 import type { AnthropicMessagesRequest } from "./anthropic/types.js";
+import type { ResponsesApiRequest } from "./responses/index.js";
 import type { ResolvedEnv } from "./types.js";
 import type { WorkloadKey } from "./workloadRuntime.js";
 
@@ -13,12 +14,6 @@ import {
 } from "./anthropic/translateRequest.js";
 import { translateOpenAIResponse } from "./anthropic/translateResponse.js";
 import { translateOpenAIStreamToAnthropic } from "./anthropic/translateStream.js";
-import {
-  ResponsesTranslationError,
-  translateChatCompletionToResponses,
-  translateResponsesRequest,
-} from "./responses/index.js";
-import type { ResponsesApiRequest } from "./responses/index.js";
 import { boundaryNaiveBytePrefixSha, canonicalRequestSha } from "./cache-identity/canonical.js";
 import { listPeers, type PeerNode } from "./config/peers.js";
 import { ctxForModel } from "./ctx.js";
@@ -51,6 +46,11 @@ import {
   type ResponseCacheStorage,
   runResponseCacheEvictionIfOverBudget,
 } from "./responsecache/index.js";
+import {
+  ResponsesTranslationError,
+  translateChatCompletionToResponses,
+  translateResponsesRequest,
+} from "./responses/index.js";
 import { mkdirSync, readdirSync, statSync } from "./safe-fs.js";
 import { endpoint as llamaEndpoint, readServerPid, readServerState } from "./server.js";
 import * as workloadRuntime from "./workloadRuntime.js";
@@ -519,6 +519,87 @@ function isOversizedJsonBody(req: Request): boolean {
   return Number.isFinite(parsedContentLength) && parsedContentLength > MAX_JSON_BODY_BYTES;
 }
 
+async function anthropicMessagesContext(
+  req: Request,
+  resolved: ResolvedEnv,
+  headers: Headers,
+): Promise<ProxyContext | Response> {
+  if (isOversizedJsonBody(req)) {
+    return new Response("Payload Too Large", { status: 413 });
+  }
+  try {
+    const bodyText = await req.text();
+    const incoming = JSON.parse(bodyText) as AnthropicMessagesRequest;
+    const translated = translateAnthropicRequest(incoming);
+    const translatedBodyText = JSON.stringify(translated);
+    const translatedUrl = new URL(req.url);
+    translatedUrl.pathname = "/v1/chat/completions";
+    return {
+      req,
+      resolved,
+      target: `${llamaEndpoint(resolved)}${translatedUrl.pathname}${translatedUrl.search}`,
+      pathname: translatedUrl.pathname,
+      search: translatedUrl.search,
+      isAnthropic: true,
+      anthropicModel: incoming.model,
+      anthropicRequest: incoming,
+      bodyText: translatedBodyText,
+      init: {
+        method: req.method,
+        headers,
+        body: translatedBodyText,
+      },
+    };
+  } catch (error) {
+    if (error instanceof AnthropicTranslationError || error instanceof SyntaxError) {
+      return anthropicTranslationErrorResponse(error);
+    }
+    return anthropicTranslationErrorResponse(
+      new AnthropicTranslationError("anthropic request translation failed"),
+    );
+  }
+}
+
+async function responsesApiContext(
+  req: Request,
+  resolved: ResolvedEnv,
+  headers: Headers,
+): Promise<ProxyContext | Response> {
+  if (isOversizedJsonBody(req)) {
+    return new Response("Payload Too Large", { status: 413 });
+  }
+  try {
+    const bodyText = await req.text();
+    const incoming = JSON.parse(bodyText) as ResponsesApiRequest;
+    const translated = translateResponsesRequest(incoming);
+    const translatedBodyText = JSON.stringify(translated);
+    const translatedUrl = new URL(req.url);
+    translatedUrl.pathname = "/v1/chat/completions";
+    return {
+      req,
+      resolved,
+      target: `${llamaEndpoint(resolved)}${translatedUrl.pathname}${translatedUrl.search}`,
+      pathname: translatedUrl.pathname,
+      search: translatedUrl.search,
+      isResponsesApi: true,
+      responsesRequest: incoming,
+      bodyText: translatedBodyText,
+      init: {
+        method: req.method,
+        headers,
+        body: translatedBodyText,
+      },
+    };
+  } catch (error) {
+    if (error instanceof ResponsesTranslationError || error instanceof SyntaxError) {
+      return responsesTranslationErrorResponse(error);
+    }
+    return responsesTranslationErrorResponse(
+      new ResponsesTranslationError("responses request translation failed"),
+    );
+  }
+}
+
 async function parseIncoming(
   req: Request,
   resolved: ResolvedEnv,
@@ -538,75 +619,10 @@ async function parseIncoming(
     headers.set(key, value);
   }
   if (url.pathname === "/v1/messages") {
-    if (isOversizedJsonBody(req)) {
-      return new Response("Payload Too Large", { status: 413 });
-    }
-    try {
-      const bodyText = await req.text();
-      const incoming = JSON.parse(bodyText) as AnthropicMessagesRequest;
-      const translated = translateAnthropicRequest(incoming);
-      const translatedBodyText = JSON.stringify(translated);
-      const translatedUrl = new URL(req.url);
-      translatedUrl.pathname = "/v1/chat/completions";
-      return {
-        req,
-        resolved,
-        target: `${llamaEndpoint(resolved)}${translatedUrl.pathname}${translatedUrl.search}`,
-        pathname: translatedUrl.pathname,
-        search: translatedUrl.search,
-        isAnthropic: true,
-        anthropicModel: incoming.model,
-        anthropicRequest: incoming,
-        bodyText: translatedBodyText,
-        init: {
-          method: req.method,
-          headers,
-          body: translatedBodyText,
-        },
-      };
-    } catch (error) {
-      if (error instanceof AnthropicTranslationError || error instanceof SyntaxError) {
-        return anthropicTranslationErrorResponse(error);
-      }
-      return anthropicTranslationErrorResponse(
-        new AnthropicTranslationError("anthropic request translation failed"),
-      );
-    }
+    return await anthropicMessagesContext(req, resolved, headers);
   }
   if (url.pathname === "/v1/responses") {
-    if (isOversizedJsonBody(req)) {
-      return new Response("Payload Too Large", { status: 413 });
-    }
-    try {
-      const bodyText = await req.text();
-      const incoming = JSON.parse(bodyText) as ResponsesApiRequest;
-      const translated = translateResponsesRequest(incoming);
-      const translatedBodyText = JSON.stringify(translated);
-      const translatedUrl = new URL(req.url);
-      translatedUrl.pathname = "/v1/chat/completions";
-      return {
-        req,
-        resolved,
-        target: `${llamaEndpoint(resolved)}${translatedUrl.pathname}${translatedUrl.search}`,
-        pathname: translatedUrl.pathname,
-        search: translatedUrl.search,
-        isResponsesApi: true,
-        responsesRequest: incoming,
-        bodyText: translatedBodyText,
-        init: {
-          method: req.method,
-          headers,
-          body: translatedBodyText,
-        },
-      };
-    } catch (error) {
-      if (error instanceof ResponsesTranslationError || error instanceof SyntaxError) {
-        return responsesTranslationErrorResponse(error);
-      }
-      return responsesTranslationErrorResponse(
-        new ResponsesTranslationError("responses request translation failed"),
-      );
-    }
+    return await responsesApiContext(req, resolved, headers);
   }
   const fallbackTarget = `${llamaEndpoint(resolved)}${url.pathname}${url.search}`;
   return {

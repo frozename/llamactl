@@ -85,8 +85,8 @@ export function translateChatCompletionToResponses(res: OpenAIChatResponse): Res
     throw new ResponsesTranslationError("chat completion response missing choices");
   }
 
-  const choice = res.choices[0]!;
-  if (!isRecord(choice.message)) {
+  const choice = res.choices[0];
+  if (!choice || !isRecord(choice.message)) {
     throw new ResponsesTranslationError("chat completion response missing assistant message");
   }
 
@@ -96,7 +96,7 @@ export function translateChatCompletionToResponses(res: OpenAIChatResponse): Res
   const toolCalls = choice.message.tool_calls;
 
   if (hasTextContent || !toolCalls || toolCalls.length === 0) {
-    output.push(outputMessageFromChoice(choice as OpenAIChatChoice, `msg_${res.id}`));
+    output.push(outputMessageFromChoice(choice, `msg_${res.id}`));
   }
 
   if (toolCalls) {

@@ -1,6 +1,6 @@
-export { evictionScore } from "./evictionScore.js";
 export { kvQuarantinePurgeMs, kvStoreConfig, kvWorkloadBudgetBytes } from "./config.js";
 export type { KvStoreConfig } from "./config.js";
+export { evictionScore } from "./evictionScore.js";
 export { sweepOrphanSlotFiles } from "./orphanSweep.js";
 export type { SweepOrphanSlotFilesOptions, SweepOrphanSlotFilesResult } from "./orphanSweep.js";
 export { longestPrefixLookup } from "./policy.js";

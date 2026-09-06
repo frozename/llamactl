@@ -43,7 +43,7 @@ export function openKvStorage(dataRoot: string): KvStorage {
     };
     runIntegrityScan(storage);
     const config = kvStoreConfig();
-    console.info(
+    console.warn(
       JSON.stringify({
         event: "kvstore_opened",
         dataRoot,

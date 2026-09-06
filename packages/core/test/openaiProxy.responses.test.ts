@@ -69,6 +69,54 @@ function shaForBody(body: string): string {
   return createHash("sha1").update(body).digest("hex");
 }
 
+function slotActionResponse(
+  parsed: URL,
+  init: RequestInit | undefined,
+  events: string[],
+  slotBaseDir: string,
+): Response {
+  const action = parsed.searchParams.get("action");
+  if (action === "save") {
+    events.push("slot-save");
+    const body = typeof init?.body === "string" ? init.body : "";
+    const parsedBody = JSON.parse(body) as { filename?: string };
+    const filename = parsedBody.filename ?? "slot.kvslot";
+    writeFileSync(join(slotBaseDir, filename), "slot");
+    return Response.json({ n_saved: 321 });
+  }
+  return Response.json({ ok: true });
+}
+
+function kvAwareFetchMock(events: string[], slotBaseDir: string): typeof fetch {
+  return ((input: Request | URL | string, init?: RequestInit) => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const parsed = new URL(url);
+    const method =
+      init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
+    if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
+      events.push("chat-forward");
+      return Response.json({
+        id: "chatcmpl-1",
+        object: "chat.completion",
+        model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "Hello world" },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 5, completion_tokens: 2 },
+      });
+    }
+    if (method === "POST" && parsed.pathname.startsWith("/slots/")) {
+      return slotActionResponse(parsed, init, events, slotBaseDir);
+    }
+    return new Response("", { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
 /**
  * /v1/responses POST must be translated to /v1/chat/completions and flow
  * through the KV-gated path. The proof is that a KV slot is saved after
@@ -83,42 +131,7 @@ test("/v1/responses POST reaches the KV path and saves a slot", async () => {
 
     const events: string[] = [];
     const slotBaseDir = join(t.dir, "kvstore", "slots", "wl-a");
-    globalThis.fetch = ((input: Request | URL | string, init?: RequestInit) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      const parsed = new URL(url);
-      const method =
-        init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
-      if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
-        events.push("chat-forward");
-        return Response.json({
-          id: "chatcmpl-1",
-          object: "chat.completion",
-          model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
-          choices: [
-            {
-              index: 0,
-              message: { role: "assistant", content: "Hello world" },
-              finish_reason: "stop",
-            },
-          ],
-          usage: { prompt_tokens: 5, completion_tokens: 2 },
-        });
-      }
-      if (method === "POST" && parsed.pathname.startsWith("/slots/")) {
-        const action = parsed.searchParams.get("action");
-        if (action === "save") {
-          events.push("slot-save");
-          const body = typeof init?.body === "string" ? init.body : "";
-          const parsedBody = JSON.parse(body) as { filename?: string };
-          const filename = parsedBody.filename ?? "slot.kvslot";
-          writeFileSync(join(slotBaseDir, filename), "slot");
-          return Response.json({ n_saved: 321 });
-        }
-        return Response.json({ ok: true });
-      }
-      return new Response("", { status: 404 });
-    }) as unknown as typeof fetch;
+    globalThis.fetch = kvAwareFetchMock(events, slotBaseDir);
 
     const requestBody = JSON.stringify({
       model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
@@ -194,7 +207,7 @@ test("/v1/responses translates request body to chat-completions shape", async ()
     expect(res.status).toBe(200);
     expect(capturedUrl!).toContain("/v1/chat/completions");
     expect(capturedBody).not.toBeNull();
-    const parsed = JSON.parse(capturedBody!);
+    const parsed = JSON.parse(capturedBody!) as { messages?: unknown; model?: unknown };
     expect(parsed).toHaveProperty("messages");
     expect(parsed).not.toHaveProperty("input");
     expect(parsed.messages).toEqual([
@@ -380,7 +393,7 @@ test("/v1/responses translates array input items to chat messages", async () => 
       t.env,
     );
     expect(res.status).toBe(200);
-    const parsed = JSON.parse(capturedBody!);
+    const parsed = JSON.parse(capturedBody!) as { messages?: unknown; model?: unknown };
     expect(parsed.messages).toEqual([
       { role: "user", content: "hello" },
       { role: "assistant", content: "hi there" },
@@ -498,42 +511,7 @@ test("regression: /v1/chat/completions KV path still saves a slot", async () => 
 
     const events: string[] = [];
     const slotBaseDir = join(t.dir, "kvstore", "slots", "wl-a");
-    globalThis.fetch = ((input: Request | URL | string, init?: RequestInit) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      const parsed = new URL(url);
-      const method =
-        init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
-      if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
-        events.push("chat-forward");
-        return Response.json({
-          id: "chatcmpl-1",
-          object: "chat.completion",
-          model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
-          choices: [
-            {
-              index: 0,
-              message: { role: "assistant", content: "Hello world" },
-              finish_reason: "stop",
-            },
-          ],
-          usage: { prompt_tokens: 5, completion_tokens: 2 },
-        });
-      }
-      if (method === "POST" && parsed.pathname.startsWith("/slots/")) {
-        const action = parsed.searchParams.get("action");
-        if (action === "save") {
-          events.push("slot-save");
-          const body = typeof init?.body === "string" ? init.body : "";
-          const parsedBody = JSON.parse(body) as { filename?: string };
-          const filename = parsedBody.filename ?? "slot.kvslot";
-          writeFileSync(join(slotBaseDir, filename), "slot");
-          return Response.json({ n_saved: 321 });
-        }
-        return Response.json({ ok: true });
-      }
-      return new Response("", { status: 404 });
-    }) as unknown as typeof fetch;
+    globalThis.fetch = kvAwareFetchMock(events, slotBaseDir);
 
     const body = JSON.stringify({
       model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
@@ -570,42 +548,7 @@ test("regression: /v1/messages KV path still saves a slot", async () => {
 
     const events: string[] = [];
     const slotBaseDir = join(t.dir, "kvstore", "slots", "wl-a");
-    globalThis.fetch = ((input: Request | URL | string, init?: RequestInit) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      const parsed = new URL(url);
-      const method =
-        init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
-      if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
-        events.push("chat-forward");
-        return Response.json({
-          id: "chatcmpl-1",
-          object: "chat.completion",
-          model: "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf",
-          choices: [
-            {
-              index: 0,
-              message: { role: "assistant", content: "Hello world" },
-              finish_reason: "stop",
-            },
-          ],
-          usage: { prompt_tokens: 5, completion_tokens: 2 },
-        });
-      }
-      if (method === "POST" && parsed.pathname.startsWith("/slots/")) {
-        const action = parsed.searchParams.get("action");
-        if (action === "save") {
-          events.push("slot-save");
-          const body = typeof init?.body === "string" ? init.body : "";
-          const parsedBody = JSON.parse(body) as { filename?: string };
-          const filename = parsedBody.filename ?? "slot.kvslot";
-          writeFileSync(join(slotBaseDir, filename), "slot");
-          return Response.json({ n_saved: 321 });
-        }
-        return Response.json({ ok: true });
-      }
-      return new Response("", { status: 404 });
-    }) as unknown as typeof fetch;
+    globalThis.fetch = kvAwareFetchMock(events, slotBaseDir);
 
     const res = await openaiProxy.proxyOpenAI(
       new Request("http://localhost/v1/messages", {

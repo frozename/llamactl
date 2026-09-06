@@ -130,8 +130,9 @@ function translateInputItems(items: ResponsesInputItem[]): OpenAIChatMessage[] {
     } else if (isFunctionCallOutputItem(item)) {
       messages.push(messageFromFunctionCallOutput(item));
     } else {
+      const raw: unknown = item;
       throw new ResponsesTranslationError(
-        `unsupported input item type: ${isRecord(item) ? String(item["type"]) : "unknown"}`,
+        `unsupported input item type: ${isRecord(raw) ? String(raw["type"]) : "unknown"}`,
       );
     }
   }
@@ -163,6 +164,12 @@ function translateToolChoice(
   };
 }
 
+function messagesFromInput(input: ResponsesApiRequest["input"]): OpenAIChatMessage[] {
+  if (typeof input === "string") return [{ role: "user", content: input }];
+  if (Array.isArray(input)) return translateInputItems(input);
+  throw new ResponsesTranslationError("input must be a string or an array of input items");
+}
+
 export function translateResponsesRequest(req: ResponsesApiRequest): OpenAIChatRequest {
   const messages: OpenAIChatMessage[] = [];
 
@@ -170,13 +177,7 @@ export function translateResponsesRequest(req: ResponsesApiRequest): OpenAIChatR
     messages.push({ role: "system", content: req.instructions });
   }
 
-  if (typeof req.input === "string") {
-    messages.push({ role: "user", content: req.input });
-  } else if (Array.isArray(req.input)) {
-    messages.push(...translateInputItems(req.input));
-  } else {
-    throw new ResponsesTranslationError("input must be a string or an array of input items");
-  }
+  messages.push(...messagesFromInput(req.input));
 
   const tools = translateTools(req.tools);
   const toolChoice = translateToolChoice(req.tool_choice);
