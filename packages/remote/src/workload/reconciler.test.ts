@@ -134,6 +134,30 @@ function makeSlowStoppedClient(delayMs: number): WorkloadClient {
   };
 }
 
+function makeClientThatDeletesManifestDuringStart(
+  workloadsDir: string,
+  name: string,
+): WorkloadClient {
+  const base = makeSlowStoppedClient(0);
+  const manifestPath = workloadPath(name, workloadsDir);
+  return {
+    ...base,
+    serverStart: {
+      subscribe: (_input, callbacks): { unsubscribe: () => void } => {
+        rmSync(manifestPath, { force: true });
+        queueMicrotask(() => {
+          callbacks.onData({
+            type: "done",
+            result: { ok: true, pid: 12345, endpoint: "http://127.0.0.1:8181" },
+          });
+          callbacks.onComplete();
+        });
+        return { unsubscribe: () => undefined };
+      },
+    },
+  };
+}
+
 function makeRunClient(
   state: Map<string, { rel: string; args: string[] }>,
   slowWorkload?: string,
@@ -392,6 +416,26 @@ test("reconcile preserves renamed manifests without resurrecting the old name", 
     ]);
     expect(existsSync(originalPath)).toBe(false);
     expect(existsSync(renamedPath)).toBe(true);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile reports skipped-deleted when a manifest is deleted mid-apply", async () => {
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-mid-delete-"));
+  writeHighBudgetNodeRun(workloadsDir);
+  const name = "mid-delete";
+  saveWorkload(makeRunManifest(name), workloadsDir);
+
+  try {
+    const result = await reconcileOnce({
+      workloadsDir,
+      getClient: (): WorkloadClient => makeClientThatDeletesManifestDuringStart(workloadsDir, name),
+    });
+
+    expect(result.errors).toBe(0);
+    expect(result.reports).toEqual([{ name, node: "mac-mini", action: "skipped-deleted" }]);
+    expect(existsSync(workloadPath(name, workloadsDir))).toBe(false);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
   }
