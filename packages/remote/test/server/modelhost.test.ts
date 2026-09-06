@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ENGINES } from "../../../core/src/engines/index.js";
+import { computeModelHostSpecHash } from "../../../core/src/engines/state.js";
 import {
   existsSync,
   mkdirSync,
@@ -14,6 +15,8 @@ import {
   writeFileSync,
 } from "../../src/safe-fs.js";
 import { startModelHost, statusModelHost, stopModelHost } from "../../src/server/modelhost.js";
+import { ModelHostManifestSchema, specForHash } from "../../src/workload/modelhost-schema.js";
+import { loadModelHostByName } from "../../src/workload/modelhost-store.js";
 
 interface ManifestFixture {
   manifest: {
@@ -534,7 +537,7 @@ describe("server/modelhost", () => {
   // process.kill(pid, 0) reliably throws ESRCH → treated as dead.
   const DEAD_PID = 2 ** 31 - 1;
 
-  function seedDeadSidecar(runtimeDir: string): string {
+  function seedDeadSidecar(runtimeDir: string, specHash?: string): string {
     const hostDir = join(runtimeDir, "workloads", "mlx-host-server");
     mkdirSync(hostDir, { recursive: true });
     const state = {
@@ -545,6 +548,7 @@ describe("server/modelhost", () => {
       port: 8094,
       modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit", "Qwen3-8B-MLX-4bit"],
       startedAt: new Date().toISOString(),
+      ...(specHash !== undefined ? { specHash } : {}),
     };
     writeFileSync(join(hostDir, "modelhost.state"), JSON.stringify(state));
     writeFileSync(join(hostDir, "modelhost.pid"), `${String(DEAD_PID)}\n`);
@@ -569,7 +573,13 @@ describe("server/modelhost", () => {
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
     const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 9999 }) as const);
     try {
-      const hostDir = seedDeadSidecar(runtimeDir);
+      // A same-spec respawn: the recorded launch spec matches the desired
+      // manifest, so the live listener is adoptable.
+      const desired = loadModelHostByName("mlx-host-server", workloadsDir);
+      const hostDir = seedDeadSidecar(
+        runtimeDir,
+        computeModelHostSpecHash(specForHash(desired.spec)),
+      );
       const result = await startModelHost({
         key: { name: "mlx-host-server" },
         workloadsDir,
@@ -591,6 +601,65 @@ describe("server/modelhost", () => {
         `"pid": ${String(process.pid)}`,
       );
     } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("relaunches a live listener whose recorded spec drifted on a resources-only change", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-adoptdrift-"));
+    const { workloadsDir, runtimeDir, manifest } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const tornDown: number[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const hostDir = seedDeadSidecar(
+        runtimeDir,
+        // The recorded launch ran with expectedMemoryGiB=24; the applied
+        // manifest bumps only resources to 32, so the live listener is a
+        // spec-drifted process, not a same-spec respawn.
+        computeModelHostSpecHash(
+          specForHash(
+            ModelHostManifestSchema.parse({
+              ...manifest,
+              spec: { ...manifest.spec, resources: { expectedMemoryGiB: 24 } },
+            }).spec,
+          ),
+        ),
+      );
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        manifest: {
+          ...manifest,
+          spec: { ...manifest.spec, resources: { expectedMemoryGiB: 32 } },
+        },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () =>
+          Promise.resolve({ ready: true, modelIds: ["mlx-community/Qwen3-8B-MLX-4bit"] }),
+        // The stale spec's process is still bound to the endpoint.
+        findListenerPid: () => Promise.resolve(process.pid),
+      });
+
+      // A drifted spec must not be silently adopted: the stale listener is
+      // torn down and a replacement spawned, so the new resources take effect.
+      expect(result.ok).toBe(true);
+      expect(tornDown).toEqual([process.pid]);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(result.pid).toBe(4321);
+      const state = JSON.parse(readFileSync(join(hostDir, "modelhost.state"), "utf8")) as {
+        specHash?: string;
+      };
+      expect(state.specHash).toContain('"expectedMemoryGiB":32');
+    } finally {
+      engine.teardown = originalTeardown;
       rmSync(tmp, { recursive: true, force: true });
     }
   });

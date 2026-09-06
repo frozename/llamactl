@@ -243,7 +243,9 @@ async function tryAdoptLiveHost(
   resolved: ReturnType<typeof resolveEnv>,
   probeReady: NonNullable<StartModelHostOptions["probeReady"]>,
   livePid: number,
-): Promise<StartModelHostResult | null> {
+  engine: (typeof ENGINES)[keyof typeof ENGINES],
+  priorSpecHash: string | undefined,
+): Promise<StartModelHostResult | "relaunch" | null> {
   const endpoint = manifest.spec.endpoint;
   const readiness = await probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS).catch(() => ({
     ready: false,
@@ -265,6 +267,15 @@ async function tryAdoptLiveHost(
   }
   // TOCTOU: the listener may have exited between discovery and now.
   if (!isProcessAlive(livePid)) return null;
+  // The live process is ours, but the applied spec differs from the recorded
+  // launch spec — it predates the change and is running a stale launch. Adopting
+  // it would stamp a convergence hash onto the old spec and silently drop the
+  // applied change (e.g. a resources bump), so tear it down and let the caller
+  // respawn with the applied spec. A same-spec respawn is still adopted.
+  if (priorSpecHash !== computeModelHostSpecHash(specForHash(manifest.spec))) {
+    await engine.teardown(livePid).catch(() => undefined);
+    return "relaunch";
+  }
   const readProcessCommand = opts.readProcessCommand ?? defaultReadProcessCommand;
   const cmdline = await Promise.resolve(readProcessCommand(livePid)).catch(() => null);
   writeModelHostState(
@@ -322,7 +333,10 @@ async function reapOrAdoptPriorHost(
         ((endpoint, timeoutMs): Promise<{ ready: boolean; modelIds: string[] }> =>
           engine.probeReady(endpoint, timeoutMs)),
       livePid,
+      engine,
+      priorState.specHash,
     );
+    if (adopted === "relaunch") return null;
     if (adopted) return adopted;
     // A live process owns the port but is not (yet) confirmable as ours
     // (still loading, or an unrelated process). Defer to the next reconcile
