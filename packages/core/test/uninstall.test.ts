@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
+import { findByRel } from "../src/catalog.js";
+import { addCurated } from "../src/catalogWriter.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "../src/safe-fs.js";
 import { uninstall } from "../src/uninstall.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
@@ -139,5 +141,28 @@ describe("uninstall (integration)", () => {
     expect(report.code).toBe(1);
     expect(report.error).toMatch(/traversal/);
     expect(existsSync(modelPath())).toBe(true);
+  });
+
+  test("finds the custom row addCurated wrote when LOCAL_AI_CUSTOM_CATALOG_FILE is unset", async () => {
+    // Launchd agents and bare `LLAMACTL_TEST_PROFILE` shells never export
+    // LOCAL_AI_CUSTOM_CATALOG_FILE; writers still resolve the default path
+    // through resolveEnv(), so the read side must see the same file.
+    Reflect.deleteProperty(process.env, "LOCAL_AI_CUSTOM_CATALOG_FILE");
+    const addedRel = "Smoke-GGUF/smoke-Q4.gguf";
+    const added = await addCurated({
+      repo: "unsloth/Smoke-GGUF",
+      fileOrRel: "smoke-Q4.gguf",
+      label: "Smoke",
+      family: "custom",
+      class: "general",
+      scope: "candidate",
+    });
+    expect(added.ok).toBe(true);
+
+    const report = uninstall({ rel: addedRel, force: true });
+    expect(report.code).toBe(0);
+    expect(findByRel(addedRel)).toBeNull();
+    // The seeded row for `rel` was not the target and must survive the prune.
+    expect(findByRel(rel)?.scope).toBe("candidate");
   });
 });

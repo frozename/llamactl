@@ -6,7 +6,12 @@ if [[ "${LLAMACTL_SKIP_LIVE:-}" == "1" ]]; then
   exit 0
 fi
 
-LLAMACTL_CMD=(${=LLAMACTL:-"bun /Volumes/WorkSSD/repos/personal/llamactl/packages/cli/src/bin.ts"})
+ROOT=${0:A:h:h}
+if [[ -n "${LLAMACTL:-}" ]]; then
+  LLAMACTL_CMD=(${=LLAMACTL})
+else
+  LLAMACTL_CMD=(bun "$ROOT/packages/cli/src/bin.ts")
+fi
 
 SMALL_A=${LLAMACTL_TEST_GGUF_A:-"granite-4.1-3b-Q4_K_M.gguf"}
 SMALL_B=${LLAMACTL_TEST_GGUF_B:-"$SMALL_A"}

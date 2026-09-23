@@ -1,3 +1,4 @@
+import { resolveCustomCatalogFile } from "./env.js";
 import { readFileSync } from "./safe-fs.js";
 import { CuratedModel, curatedTsvFields, formatTsvRow, splitTsvRow } from "./schemas.js";
 
@@ -209,17 +210,22 @@ export function readCustomCatalog(file: string): CuratedModel[] {
  * resolution). `builtin` and `custom` are self-descriptive.
  */
 export function listCatalog(scope: CatalogScope, opts: CatalogLoadOptions = {}): CuratedModel[] {
-  const customFile = opts.customCatalogFile ?? process.env["LOCAL_AI_CUSTOM_CATALOG_FILE"];
+  // resolveCustomCatalogFile() honours the env var first and then falls
+  // back to the same `$LOCAL_AI_RUNTIME_DIR/curated-models.tsv` default
+  // the writers resolve through resolveEnv(), so readers see custom rows
+  // even when nothing exported the var into process.env (launchd agents,
+  // bare LLAMACTL_TEST_PROFILE shells). Evaluated lazily — the builtin
+  // path never pays for path resolution or the machine-profile probe a
+  // full resolveEnv() would run.
+  const customFile = (): string => opts.customCatalogFile ?? resolveCustomCatalogFile();
   switch (scope) {
     case "builtin":
       return [...BUILTIN_CATALOG];
     case "custom":
-      return customFile ? readCustomCatalog(customFile) : [];
+      return readCustomCatalog(customFile());
     case "all":
-    default: {
-      const custom = customFile ? readCustomCatalog(customFile) : [];
-      return [...BUILTIN_CATALOG, ...custom];
-    }
+    default:
+      return [...BUILTIN_CATALOG, ...readCustomCatalog(customFile())];
   }
 }
 

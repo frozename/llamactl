@@ -11,7 +11,7 @@ import type {
 
 import { saveConfig, upsertNode } from "@llamactl/core/config/kubeconfig";
 import { freshConfig } from "@llamactl/core/config/schema";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -99,6 +99,11 @@ function makeFakeProvider(options: FakeProviderOptions): RetrievalProvider {
   };
 }
 
+// Snapshot the real exports before registering the mock. mock.module is
+// process-global, so re-registering the snapshot in afterAll keeps later
+// test files in this bun process on the real module.
+const ragIndexReal = { ...(await import("../src/rag/index.js")) };
+
 await mock.module("../src/rag/index.js", () => ({
   createRagAdapter: async (node: { name: string }, opts?: unknown): Promise<RetrievalProvider> => {
     await Promise.resolve();
@@ -107,6 +112,10 @@ await mock.module("../src/rag/index.js", () => ({
     return makeFakeProvider(lastProviderOptions);
   },
 }));
+
+afterAll(() => {
+  void mock.module("../src/rag/index.js", () => ragIndexReal);
+});
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-router-rag-"));

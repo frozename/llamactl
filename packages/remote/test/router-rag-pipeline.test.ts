@@ -2,7 +2,7 @@ import type { RetrievalProvider } from "@nova/contracts";
 
 import { saveConfig, upsertNode } from "@llamactl/core/config/kubeconfig";
 import { freshConfig } from "@llamactl/core/config/schema";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -68,9 +68,18 @@ function makeFakeProvider(): RetrievalProvider {
   };
 }
 
+// Snapshot the real exports before registering the mock. mock.module is
+// process-global, so re-registering the snapshot in afterAll keeps later
+// test files in this bun process on the real module.
+const ragIndexReal = { ...(await import("../src/rag/index.js")) };
+
 await mock.module("../src/rag/index.js", () => ({
   createRagAdapter: (): Promise<RetrievalProvider> => Promise.resolve(makeFakeProvider()),
 }));
+
+afterAll(() => {
+  void mock.module("../src/rag/index.js", () => ragIndexReal);
+});
 
 const originalEnv = { ...process.env };
 await Promise.resolve();

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -73,10 +74,20 @@ describe("mutateConfig — cross-process concurrency", () => {
     expect(names).toContain("raceB");
   }, 15_000);
 
-  test("two subprocesses reaping the same stale lock both persist their node", async () => {
+  test("concurrent subprocesses reaping the same stale lock all persist their node", async () => {
+    // A start barrier aligns every child's mutateConfig call to the same
+    // instant: all of them read the stale pidfile, decide it is dead, and
+    // race to rename it away. Without the barrier, bun startup jitter
+    // scatters entry over ~100ms and the losing reaper's rename almost
+    // never lands on the winner's freshly planted live lock — which is
+    // exactly the interleaving that used to drop a write.
     const script = `
+      import { existsSync } from "node:fs";
       import { mutateConfig, upsertNode } from "${resolveKubeconfigModule()}";
       const [nodeName, endpoint] = process.argv.slice(2);
+      const go = process.env.GO_PATH;
+      const deadline = Date.now() + 10_000;
+      while (!existsSync(go) && Date.now() < deadline) {}
       mutateConfig(process.env.CFG_PATH, (cfg) =>
         upsertNode(cfg, "home", { name: nodeName, endpoint }),
       );
@@ -85,27 +96,41 @@ describe("mutateConfig — cross-process concurrency", () => {
     writeFileSync(scriptPath, script);
     const lockPath = `${cfgPath}.lock`;
     const rounds = 12;
+    const children = 4;
     for (let i = 0; i < rounds; i++) {
       writeFileSync(lockPath, "2147483000");
-      const p1 = Bun.spawn({
-        cmd: ["bun", "run", scriptPath, `stale-a-${String(i)}`, `https://a-${String(i)}.lan:7843`],
-        env: { ...process.env, CFG_PATH: cfgPath },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const p2 = Bun.spawn({
-        cmd: ["bun", "run", scriptPath, `stale-b-${String(i)}`, `https://b-${String(i)}.lan:7843`],
-        env: { ...process.env, CFG_PATH: cfgPath },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [c1, c2] = await Promise.all([p1.exited, p2.exited]);
-      if (c1 !== 0 || c2 !== 0) {
-        const stderr1 = await new Response(p1.stderr).text();
-        const stderr2 = await new Response(p2.stderr).text();
-        throw new Error(
-          `subprocess failed on round ${String(i)}: c1=${String(c1)} c2=${String(c2)}\n${stderr1}\n---\n${stderr2}`,
-        );
+      const goPath = join(tmp, `go-${String(i)}`);
+      const procs = Array.from({ length: children }, (_, k) =>
+        Bun.spawn({
+          cmd: [
+            "bun",
+            "run",
+            scriptPath,
+            `stale-${String(i)}-${String(k)}`,
+            `https://n-${String(i)}-${String(k)}.lan:7843`,
+          ],
+          env: { ...process.env, CFG_PATH: cfgPath, GO_PATH: goPath },
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
+      writeFileSync(goPath, "go");
+      // Watchdog: every child's critical path is bounded (barrier 10s +
+      // lock acquire ~2s + loss retries), so a child still running after
+      // 15s is wedged outside the protocol — kill the round and surface
+      // diagnostics instead of stalling the suite silently.
+      let wedged = -1;
+      const watchdog = setTimeout(() => {
+        wedged = procs.findIndex((p) => p.exitCode === null);
+        for (const p of procs) p.kill();
+      }, 15_000);
+      const codes = await Promise.all(procs.map((p) => p.exited));
+      clearTimeout(watchdog);
+      const bad = codes.findIndex((c) => c !== 0);
+      if (bad !== -1) {
+        const stderr = await new Response(procs[bad]!.stderr).text();
+        const note = wedged >= 0 ? ` (watchdog killed child ${String(wedged)})` : "";
+        throw new Error(`subprocess ${String(bad)} failed on round ${String(i)}${note}\n${stderr}`);
       }
     }
 
@@ -115,8 +140,9 @@ describe("mutateConfig — cross-process concurrency", () => {
       .nodes.map((n) => n.name)
       .sort();
     for (let i = 0; i < rounds; i++) {
-      expect(names).toContain(`stale-a-${String(i)}`);
-      expect(names).toContain(`stale-b-${String(i)}`);
+      for (let k = 0; k < children; k++) {
+        expect(names).toContain(`stale-${String(i)}-${String(k)}`);
+      }
     }
   }, 25_000);
 
@@ -203,9 +229,14 @@ describe("saveConfig — atomic write (no torn reads)", () => {
     }
     saveConfig(cfg, cfgPath);
 
+    // The child script lives in os tmpdir, outside any package root — a
+    // bare "yaml" specifier there resolves to nothing and bun auto-installs
+    // latest into ~/.bun/install/cache, which lands inside the repo when
+    // HOME is sandboxed to the worktree (eslint then lints the cache and
+    // fails). Import by resolved absolute path instead.
     const readerScript = `
       import { readFileSync, existsSync } from "node:fs";
-      import { parse } from "yaml";
+      import { parse } from "${resolveYamlModule()}";
       const path = process.env.CFG_PATH;
       const errors = [];
       const start = Date.now();
@@ -265,4 +296,8 @@ describe("saveConfig — atomic write (no torn reads)", () => {
 
 function resolveKubeconfigModule(): string {
   return new URL("../../src/config/kubeconfig.ts", import.meta.url).pathname;
+}
+
+function resolveYamlModule(): string {
+  return createRequire(import.meta.url).resolve("yaml");
 }

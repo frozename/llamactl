@@ -1,11 +1,22 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 
 import type { IterationView } from "../../../src/lib/use-ops-session";
 
 import { fmtMs, statusGlyph } from "../../../src/modules/ops/detail/iteration-card-helpers";
 
+// Snapshot the real exports before registering the mocks. mock.module is
+// process-global, so re-registering the snapshots in afterAll keeps later
+// test files in this bun process on the real modules.
+const ThemesActual = { ...(await import("../../../src/themes/index")) };
+const UiActual = { ...(await import("../../../src/ui/index")) };
+
 void mock.module("@/themes", () => ({}));
 void mock.module("@/ui", () => ({ Badge: (): null => null }));
+
+afterAll(() => {
+  void mock.module("@/themes", () => ThemesActual);
+  void mock.module("@/ui", () => UiActual);
+});
 
 const base: IterationView = {
   iteration: 0,

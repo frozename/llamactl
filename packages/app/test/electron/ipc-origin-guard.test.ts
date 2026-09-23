@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 
 // mock.module() must be called before the import of the module under test.
 // Electron and electron-trpc/main are native Electron modules that can't
@@ -32,6 +32,13 @@ void mock.module("electron", () => ({
 void mock.module("electron-trpc/main", () => ({
   createIPCHandler: (): object => ({}),
 }));
+
+// mock.module is process-global. main.ts above instantiates both stubs,
+// and mock.restore() drops materialized mock records so later test files
+// resolve the real (unloadable under Bun) modules again.
+afterAll(() => {
+  mock.restore();
+});
 
 const { isTrustedRendererOrigin, makeIpcCreateContext } = await import("../../electron/main.js");
 

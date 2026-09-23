@@ -553,7 +553,7 @@ test("kvstore migrations remain safe when the same DB is migrated concurrently",
     const workerCode = `
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { runMigrations } from "./src/kvstore/storage.js";
+import { runMigrations } from ${JSON.stringify(join(import.meta.dir, "../src/kvstore/storage.js"))};
 
 const dbPath = Bun.env.KV_DB_PATH;
 const signalDir = Bun.env.KV_SIGNAL_DIR;

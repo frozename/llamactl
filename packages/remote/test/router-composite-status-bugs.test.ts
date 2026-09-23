@@ -9,7 +9,7 @@
  *   to clientSignal but never removes it on completion, leaking the
  *   reference.
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -33,6 +33,12 @@ const applyControl: { reject: (err: Error) => void; started: boolean } = {
   reject: (): void => {},
   started: false,
 };
+
+// Snapshot the real exports before registering the mocks. mock.module is
+// process-global, so re-registering the snapshots in afterAll keeps later
+// test files in this bun process on the real modules.
+const compositeApplyReal = { ...(await import("../src/composite/apply.js")) };
+const runtimeFactoryReal = { ...(await import("../src/runtime/factory.js")) };
 
 await mock.module("../src/composite/apply.js", () => ({
   applyComposite: (): Promise<never> => {
@@ -62,6 +68,11 @@ await mock.module("../src/runtime/factory.js", () => ({
     return {};
   },
 }));
+
+afterAll(() => {
+  void mock.module("../src/composite/apply.js", () => compositeApplyReal);
+  void mock.module("../src/runtime/factory.js", () => runtimeFactoryReal);
+});
 
 // ---------------------------------------------------------------------------
 
