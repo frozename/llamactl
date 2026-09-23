@@ -1194,14 +1194,13 @@ test("an unreachable routed upstream yields the llamactl_upstream_error envelope
       t.env,
     );
 
-    // Frozen public error envelope: 502 + {error:{message,type}}.
+    // Frozen public error envelope: 502 + {error:{message,type}}. Pin
+    // status + type + the message prefix — the suffix is whatever the
+    // fetch rejection carried (mock-owned, not part of the contract).
     expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({
-      error: {
-        message: "upstream llama-server unreachable: connect ECONNREFUSED",
-        type: "llamactl_upstream_error",
-      },
-    });
+    const body = (await res.json()) as { error: { message: string; type: string } };
+    expect(body.error.type).toBe("llamactl_upstream_error");
+    expect(body.error.message.startsWith("upstream llama-server unreachable:")).toBe(true);
   } finally {
     t.cleanup();
   }
