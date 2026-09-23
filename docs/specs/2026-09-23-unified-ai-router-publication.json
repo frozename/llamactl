@@ -1997,7 +1997,7 @@
   "tracking": {
     "schema_version": 1,
     "ledger_url": "https://github.com/frozename/llamactl/blob/docs/unified-ai-router-roadmap/docs/unified-ai-router-registrar.md",
-    "snapshot_at": "2026-09-23T16:57:40.000Z",
+    "snapshot_at": "2026-09-23T23:47:12.000Z",
     "repository": "frozename/llamactl",
     "baseline": "7443403912ab3976d18bc288de3009e2c23b7afb",
     "roadmap_url": "https://github.com/frozename/llamactl/issues/127",
@@ -2005,7 +2005,7 @@
       "url": "https://github.com/frozename/llamactl/pull/147",
       "state": "open",
       "merged": false,
-      "observed_head": "6f4cb88562856dc9e301f0aeb321d5c9c8981fd2"
+      "observed_head": "f0ecb37be3a13468c2f150a13154c4f5246c11df"
     },
     "penumbra": {
       "registrar_id": "2c2a7cbb-048c-45e5-8663-f15187b9e85b",
@@ -2013,10 +2013,10 @@
       "home_project": "llamactl",
       "status": "active",
       "source_doc_path": "docs/unified-ai-router-registrar.md",
-      "last_event_id": 1739,
+      "last_event_id": 1767,
       "rollup": {
-        "open_blockers": 1,
-        "open_follow_ups": 19
+        "open_blockers": 0,
+        "open_follow_ups": 18
       },
       "phases": [
         {
@@ -2085,8 +2085,8 @@
         "id": "P0.1",
         "issue_url": "https://github.com/frozename/llamactl/issues/129",
         "issue_number": 129,
-        "status": "in_review",
-        "github_state": "open",
+        "status": "complete",
+        "github_state": "closed",
         "dependencies": [],
         "penumbra_phase_no": 2,
         "penumbra_event_id": 1691,
@@ -2094,22 +2094,25 @@
         "task_id": "task_0a2237f7-e962-479e-bc17-ce25a2db008c",
         "handoff_id": "e9137c98-ed33-478d-aaf5-d01ea86e828c",
         "implementation_pr": "https://github.com/frozename/llamactl/pull/148",
-        "implementation_sha": "11451629d50e6a6d2f620591d6e149482c6387dc",
+        "implementation_sha": "c2a6a83c4bcbe36ff7651b7ca6d675068e2103a3",
         "review_verdict": "pass",
         "test_evidence": [
           "Gate table at head 11451629 vs base 7443403 on the same isolated install: typecheck, lint, remote/app tsc and format:check exit 0 at both; core 698/0 -> 729/0; cli 517 pass/3 skip/0 fail at both; remote 1796/6/0 -> 1804/6/0; nova 321/0, sirius-gateway 288/0, embersynth 152/0 unchanged.",
           "Root-run classification: root bun test exit 1 at both (3752/9/224 -> 3787/9/228; all 224 base failures persist, +4 in the new remote characterization file traced to the pre-existing unrestored mock at packages/mcp/test/pipelines-run.test.ts:15); test/run-all.zsh exit 1 at both with the same two shell smoke failures (29 pass/2 fail).",
           "Reproduction/mutation: nine test.failing known-defect reproductions recorded (P1.2 #132 x5, P1.3 #133 x3, P4.1 #139 x1).",
-          "Independent review: round 1 FAIL with three highs (fixed), round 2 split, closure verification PASS with no new findings at 11451629d50e6a6d2f620591d6e149482c6387dc."
+          "Independent review: round 1 FAIL with three highs (fixed), round 2 split, closure verification PASS with no new findings at 11451629d50e6a6d2f620591d6e149482c6387dc.",
+          "Hermetic gates at merged main c2a6a83c4bcbe36ff7651b7ca6d675068e2103a3 (tree cd1fc68c64b27033fccb0e72a69ced8a749c70f7, byte-identical to the reviewed branch merge 157edb5a): typecheck, lint, format:check and remote/app tsc exit 0; root bun test exit 0, 4019 pass / 9 skip / 0 fail / 0 errors; test/run-all.zsh exit 0 (shell smoke 35/0, live multi-workload tier explicitly skipped).",
+          "Package suites at the merged tree: core 733/0, cli 517 pass/3 skip/0 fail, remote 1804/6/0; nova 321/0, sirius-gateway 288/0, embersynth 152/0; CI green on pull/148.",
+          "Correction (registrar event 1748): the earlier head-vs-base gate runs were not hermetic because ambient environment variables overrode the test profile; base-vs-head comparisons stand, and the hermetic runs above supersede their absolute counts."
         ],
         "rollout_status": "not_enabled",
-        "next_action": "Run CI on pull/148, then a maintainer merge decision; P0.2 stays blocked until P0.1 is verified merged."
+        "next_action": "None for P0.1. The next eligible item is P0.2 (#130), which needs its own authorized preflight."
       },
       {
         "id": "P0.2",
         "issue_url": "https://github.com/frozename/llamactl/issues/130",
         "issue_number": 130,
-        "status": "blocked",
+        "status": "ready_for_preflight",
         "github_state": "open",
         "dependencies": ["P0.1"],
         "penumbra_phase_no": 2,
@@ -2122,7 +2125,7 @@
         "review_verdict": "not_run",
         "test_evidence": [],
         "rollout_status": "not_enabled",
-        "next_action": "Verify accepted dependency commits before any authorized dispatch."
+        "next_action": "Dependency P0.1 verified merged (c2a6a83c4bcbe36ff7651b7ca6d675068e2103a3, event 1764). Awaiting separately authorized preflight and dispatch; BOUNDARY, with coordinated Nova and consumer changes in isolated sibling worktrees."
       },
       {
         "id": "P1.1",
@@ -2432,10 +2435,10 @@
     "gates": [
       {
         "id": "GATE-01",
-        "state": "open",
+        "state": "resolved",
         "registrar_event_id": 1686,
         "scope": "implementation_acceptance_and_rollout",
-        "summary": "Mandatory llamactl baseline has unresolved test failures; P0.1 characterization may proceed once implementation is authorized. Fresh evidence at head 11451629d50e6a6d2f620591d6e149482c6387dc: typecheck, lint, remote/app tsc and format:check exit 0; core 729/0, cli 517 pass/3 skip/0 fail, remote 1804/6/0; run-all and root bun test still exit 1 with all 224 base failures persisting plus 4 new-characterization failures from the pre-existing unrestored mock at packages/mcp/test/pipelines-run.test.ts:15; gate remains open.",
+        "summary": "Mandatory llamactl baseline has unresolved test failures; P0.1 characterization may proceed once implementation is authorized. Fresh evidence at head 11451629d50e6a6d2f620591d6e149482c6387dc: typecheck, lint, remote/app tsc and format:check exit 0; core 729/0, cli 517 pass/3 skip/0 fail, remote 1804/6/0; run-all and root bun test still exit 1 with all 224 base failures persisting plus 4 new-characterization failures from the pre-existing unrestored mock at packages/mcp/test/pipelines-run.test.ts:15; gate remains open. Resolved (event 1763): pull/149 (d421db1e5977e0cecf1705da57a0f0d51cd1251a) repaired the baseline; at merged main c2a6a83c4bcbe36ff7651b7ca6d675068e2103a3, run hermetically, root bun test exits 0 (4019/9/0/0) and test/run-all.zsh exits 0. Earlier counts were not hermetic (correction 1748).",
         "evidence_url": "https://github.com/frozename/llamactl/pull/147",
         "resolve_when": "Fresh required gates pass at the proposed implementation SHA; record command/cwd/ref/counts and accepted disposition of failures. Close blocker using ref_event_id 1686."
       },
@@ -2498,6 +2501,27 @@
         "kind": "correction",
         "summary": "Lane-ledger correction recorded; fresh GATE-01 evidence appended while the gate stays open; architecture 1.1 tunnel-streaming claim corrected (must be wired, not reused); follow-up 1691 remains owed.",
         "registrar_event_range": [1738, 1739]
+      },
+      {
+        "id": "LEDGER-007",
+        "at": "2026-09-23T23:47:12.000Z",
+        "kind": "progress",
+        "summary": "PR #148 CI green; operator authorized a separate GATE-01 repair PR followed by squash merges; earlier gate runs corrected as not hermetic.",
+        "registrar_event_range": [1741, 1748]
+      },
+      {
+        "id": "LEDGER-008",
+        "at": "2026-09-23T23:47:12.000Z",
+        "kind": "gate_resolved",
+        "summary": "GATE-01 repair reviewed and merged as pull/149 at d421db1e5977e0cecf1705da57a0f0d51cd1251a; blocker 1686 resolved with hermetic gates at merged main.",
+        "registrar_event_range": [1754, 1763]
+      },
+      {
+        "id": "LEDGER-009",
+        "at": "2026-09-23T23:47:12.000Z",
+        "kind": "implementation_merged",
+        "summary": "P0.1 merged as pull/148 at c2a6a83c4bcbe36ff7651b7ca6d675068e2103a3; follow-ups 1691 and 1739 done; non-blocking follow-up 1766 owed; lane-ledger correction 1767.",
+        "registrar_event_range": [1764, 1767]
       }
     ]
   },
