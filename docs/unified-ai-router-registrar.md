@@ -95,4 +95,4 @@ Read Penumbra using `registrar_status({registrar_id: "2c2a7cbb-048c-45e5-8663-f1
 | LEDGER-003 | 2026-09-23T11:19:57.546Z | Verified events 1683–1708: completed R0, 18 owed follow-ups, baseline acceptance blocker and design/dispatch caveats. No implementation dispatched.    |
 | LEDGER-004 | 2026-09-23T16:57:40.000Z | Implementation authorized for P0.1 (1718); entry draft → active (1719), phase 2 → active (1720); work-start events recorded (1721–1722).               |
 | LEDGER-005 | 2026-09-23T16:57:40.000Z | P0.1 review: FAIL round 1 fixed, split round 2, closure PASS; pull/148 open at 11451629d50e6a6d2f620591d6e149482c6387dc, not merged (1729–1737).       |
-| LEDGER-006 | 2026-09-23T16:57:40.000Z | Lane-ledger correction (1738); GATE-01 evidence appended, stays open; architecture 1.1 tunnel-streaming corrected; follow-up 1691 owed (1739).         |
+| LEDGER-006 | 2026-09-23T16:57:40.000Z | Lane-ledger correction (1738); GATE-01 evidence appended, stays open; architecture 1.1 tunnel-streaming corrected; 1691 still owed; new follow-up 1739 |
