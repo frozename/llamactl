@@ -539,12 +539,14 @@ offline audit.
 
 **Known gaps**:
 
-- Subscriptions (streaming tRPC) ride the tunnel as
-  `stream-event`/`stream-done`/`stream-cancel` frames
-  (`packages/remote/src/tunnel/messages.ts`, fanned out by
-  `tunnel-client.ts`). An agent without a wired subscription
-  handler answers `subscription-unsupported` — that is a per-agent
-  capability check, not a tunnel limitation.
+- The tunnel protocol defines `stream-event`/`stream-done`/
+  `stream-cancel` frames (`packages/remote/src/tunnel/messages.ts`)
+  and `tunnel-client.ts` can bridge inbound subscription requests
+  into them — but only when a `handleSubscription` is wired. The
+  shipped `llamactl agent serve --dial-central` passes none
+  (`maybeStartTunnelClient` in `packages/remote/src/server/serve.ts`),
+  so a tunneled subscription is answered `subscription-unsupported`.
+  Use direct HTTPS for streaming ops.
 - Fingerprint pinning over the tunnel-relay HTTP call isn't
   implemented — rely on TLS on the central agent's
   `/tunnel-relay` endpoint and trust the system CA.
