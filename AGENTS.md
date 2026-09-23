@@ -539,9 +539,14 @@ offline audit.
 
 **Known gaps**:
 
-- Subscriptions (streaming tRPC) aren't supported over the tunnel
-  yet — the tunneled path rejects them with a "not supported yet"
-  error. Use direct HTTPS for streaming ops.
+- The tunnel protocol defines `stream-event`/`stream-done`/
+  `stream-cancel` frames (`packages/remote/src/tunnel/messages.ts`)
+  and `tunnel-client.ts` can bridge inbound subscription requests
+  into them — but only when a `handleSubscription` is wired. The
+  shipped `llamactl agent serve --dial-central` passes none
+  (`maybeStartTunnelClient` in `packages/remote/src/server/serve.ts`),
+  so a tunneled subscription is answered `subscription-unsupported`.
+  Use direct HTTPS for streaming ops.
 - Fingerprint pinning over the tunnel-relay HTTP call isn't
   implemented — rely on TLS on the central agent's
   `/tunnel-relay` endpoint and trust the system CA.
@@ -614,7 +619,8 @@ failures, reseed baselines after intentional UI changes
 
 Every `apiKeyRef`, `User.tokenRef`, and `RagBinding.auth.tokenRef`
 flows through a unified resolver in
-`packages/remote/src/config/secret.ts`. Four reference syntaxes are
+`packages/core/src/config/secret.ts` — `kubeconfig.ts` delegates to
+`resolveSecret` for `tokenRef`/`apiKeyRef`. Four reference syntaxes are
 supported everywhere:
 
 - `env:VAR_NAME` or `$VAR_NAME` — read from `process.env`
