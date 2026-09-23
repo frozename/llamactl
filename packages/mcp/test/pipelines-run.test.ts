@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 // Mutable slots — each test sets these before calling the tool.
 let _responses: string[] = [];
 let _callIdx = 0;
+
+// Snapshot the real exports before registering the mock. mock.module is
+// process-global, so re-registering the snapshot in afterAll keeps later
+// test files in this bun process on the real module.
+const remoteReal = { ...(await import("@llamactl/remote")) };
 
 // mock.module must be called before the dynamic import of pipelines.ts below.
 void mock.module("@llamactl/remote", () => ({
@@ -29,6 +34,10 @@ void mock.module("@llamactl/remote", () => ({
 // Dynamic import so the mock above is in place when pipelines.ts loads
 // @llamactl/remote.
 const { registerPipelineTools } = await import("../src/pipelines.js");
+
+afterAll(() => {
+  void mock.module("@llamactl/remote", () => remoteReal);
+});
 
 function makePipeline(stageCount: number): object {
   return {

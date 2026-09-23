@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { atomicWriteFile } from "../fsAtomic.js";
@@ -6,8 +6,10 @@ import {
   chmodSync,
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   unlinkSync,
@@ -67,32 +69,75 @@ export function saveConfig(config: Config, path: string = defaultConfigPath()): 
  * BEFORE invoking `mutateConfig`.
  */
 export function mutateConfig(path: string, fn: (cfg: Config) => Config): Config {
-  const handle = acquireConfigLock(path);
-  try {
-    const current = loadConfig(path);
-    const next = fn(current);
-    saveConfig(next, path);
-    return next;
-  } finally {
-    releaseConfigLock(handle);
+  // A racing stale-lock reaper can displace our lockfile mid-critical-
+  // section (see reapIfStale: restoring a wrongly-seized file swaps a
+  // live plant out from under its owner). Verify ownership before AND
+  // after saveConfig, and confirm our bytes are still the on-disk
+  // content; on any loss, retry the whole read-modify-write against the
+  // winner's persisted result instead of clobbering it.
+  for (let attempt = 0; attempt < LOCK_LOSS_MAX_ATTEMPTS; attempt++) {
+    const handle = acquireConfigLock(path);
+    try {
+      const next = fn(loadConfig(path));
+      if (!ownsLockFile(handle.path)) continue;
+      const yaml = stringifyYaml(next);
+      saveConfig(next, path);
+      if (ownsLockFile(handle.path) && readFileSync(path, "utf8") === yaml) {
+        return next;
+      }
+    } finally {
+      releaseConfigLock(handle);
+    }
   }
+  throw new Error(
+    `kubeconfig lock at ${path}.lock repeatedly displaced by concurrent stale-lock reaping`,
+  );
 }
 
 interface ConfigLockHandle {
   path: string;
   fd: number;
-  pid: number;
+  token: string;
 }
+
+/**
+ * Test seam for the lock protocol. The interleavings that break the
+ * pidfile mutex are a few syscalls wide, so a regression test cannot
+ * hit them by timing luck — it pins them by pausing the reaper at these
+ * points while a real subprocess moves through its own critical
+ * section. Production code never sets these.
+ */
+export const lockProbe: {
+  beforeSeizeRename?: (lockPath: string, reapPath: string) => void;
+  afterSeizePlant?: (lockPath: string, reapPath: string) => void;
+} = {};
 
 const LOCK_RETRY_INTERVAL_MS = 50;
 const LOCK_MAX_RETRIES = 40;
+const LOCK_LOSS_MAX_ATTEMPTS = 3;
+
+/**
+ * Ownership tokens this process has written into the lockfile. The
+ * lockfile payload is `${pid}-${nonce}`, not a bare pid: a bare pid
+ * cannot distinguish our own lockfile from a foreign one once pid
+ * reuse or same-pid workers enter the picture, and a restored lockfile
+ * (see reapIfStale) must be recognizable as ours to be reclaimable.
+ * Tokens are deleted on release so the set stays bounded by live locks
+ * in a long-lived daemon; a released token's file can never resurface
+ * because releaseConfigLock does not return until its displaced copy is
+ * verifiably gone.
+ */
+const ownedTokens = new Set<string>();
+let lockTokenCounter = 0;
 
 function acquireConfigLock(configPath: string): ConfigLockHandle {
   const lockPath = `${configPath}.lock`;
   mkdirSync(dirname(lockPath), { recursive: true });
   let lastHolder = -1;
   for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
-    lastHolder = reapIfStale(lockPath);
+    const reaped = reapIfStale(lockPath);
+    if (typeof reaped !== "number") return reaped;
+    lastHolder = reaped;
     const acquired = tryOpenLock(lockPath);
     if (acquired) return acquired;
     // This synchronous backoff blocks this thread while waiting, by design.
@@ -110,35 +155,167 @@ function acquireConfigLock(configPath: string): ConfigLockHandle {
 
 /**
  * Reap a stale pidfile if the recorded holder is dead.
- * Returns the observed holder pid (`-1` if unreadable or absent).
+ * Returns a planted ConfigLockHandle when this call both reaped the stale
+ * file and claimed the freed slot; otherwise returns the observed holder
+ * pid (`-1` if unreadable or absent) so the caller can retry or report.
  *
- * Reaping is intentionally atomic: only one process can rename the stale
- * lockfile away. If another process already replaced or reaped it, this
- * process loses the race and retries the lock-acquire loop.
+ * The staleness check races with a competing acquirer: after we decide
+ * the lockfile is dead, another process can reap it and plant a fresh
+ * live lock before our renameSync lands. Unlinking whatever we seized
+ * would destroy that live lock and let two mutators into the critical
+ * section — the lost-write flake this used to cause. So the seized file
+ * is only unlinked when it is verifiably the same dead file we checked
+ * (same inode, unchanged contents); anything else is a live or
+ * mid-creation lockfile swapped into the window and is restored with an
+ * atomic rename. Restoring can only displace a just-planted lockfile
+ * whose owner has not verified yet — that owner detects the swap in
+ * mutateConfig's pre-write ownership check and retries.
  *
  * Caveat: if PID `process.kill(pid, 0)` reports a live holder due PID reuse,
  * this function refuses to reap and throws later if lock contention persists.
  * That is fail-closed: better to surface an apparent lock than risk corrupting
  * the kubeconfig. Manual `${configPath}.lock` cleanup is still possible.
  */
-function reapIfStale(lockPath: string): number {
-  if (!existsSync(lockPath)) return -1;
-  const holder = readLockHolder(lockPath);
-  if (holder >= 0 && isProcessAlive(holder)) return holder;
-  try {
-    const reapPath = `${lockPath}.reap-${String(process.pid)}-${String(Date.now() % 1_000_000_000)}`;
-    renameSync(lockPath, reapPath);
-    try {
-      unlinkSync(reapPath);
-    } catch {
-      // Best-effort cleanup: if removal fails, the stale lock is no longer
-      // reachable at lockPath, so correctness is already preserved.
-    }
-  } catch {
-    // Another concurrent acquirer may have already unlinked; the
-    // wx open below is the ground truth either way.
+function reapIfStale(lockPath: string): ConfigLockHandle | number {
+  const checked = statIdentity(lockPath);
+  if (!checked) return -1;
+  const checkedToken = readLockToken(lockPath);
+  if (checkedToken !== null && ownedTokens.has(checkedToken)) {
+    return adoptOwnedLock(lockPath);
   }
-  return holder;
+  const holder = readLockHolder(lockPath);
+  // A file claiming our pid but carrying a foreign token is a relic from
+  // a dead process whose pid was recycled to us — we did not write it,
+  // so it is stale for us and safe to reap below.
+  if (holder >= 0 && holder !== process.pid && isProcessAlive(holder)) return holder;
+  return seizeStaleSlot(lockPath, checked, checkedToken, holder);
+}
+
+/**
+ * Reclaim a lockfile carrying one of our own tokens — a displaced and
+ * restored copy of a lock this process planted. It occupied the slot the
+ * whole time, so mutual exclusion never lapsed and reclaiming is safe.
+ * This is also how a zombie relic gets cleaned up instead of blocking
+ * every contender on a live pid that never releases.
+ */
+function adoptOwnedLock(lockPath: string): ConfigLockHandle | number {
+  try {
+    const fd = openSync(lockPath, "r");
+    const token = readLockToken(lockPath);
+    if (token === null) {
+      closeQuiet(fd);
+      return -1;
+    }
+    return { path: lockPath, fd, token };
+  } catch {
+    return -1;
+  }
+}
+
+/**
+ * Move the lockfile aside, plant our own lock in the freed slot, then
+ * decide what was actually seized. Returns the planted handle when the
+ * seized file was verifiably the dead file we checked; otherwise the
+ * seized file is restored and the observed holder pid is returned.
+ */
+function seizeStaleSlot(
+  lockPath: string,
+  checked: { dev: number; ino: number },
+  checkedToken: string | null,
+  holder: number,
+): ConfigLockHandle | number {
+  const reapPath = `${lockPath}.reap-${String(process.pid)}-${String(Date.now() % 1_000_000_000)}`;
+  lockProbe.beforeSeizeRename?.(lockPath, reapPath);
+  try {
+    renameSync(lockPath, reapPath);
+  } catch {
+    return holder;
+  }
+  // Plant before inspecting the seized file so no third party can claim
+  // the freed slot in the gap and pass verification while a restore is
+  // still in flight.
+  const plant = tryOpenLock(lockPath);
+  lockProbe.afterSeizePlant?.(lockPath, reapPath);
+  const seizedPid = readLockHolder(reapPath);
+  if (isCheckedDeadFile(reapPath, checked, checkedToken, seizedPid)) {
+    // The seized file is verifiably the dead one we vetted — the only
+    // case where unlinking cannot destroy a live lock. If removal fails
+    // the stale lock is already unreachable at lockPath, so correctness
+    // is preserved either way.
+    unlinkQuiet(reapPath);
+    return plant ?? holder;
+  }
+  // The seized file is not the dead one we vetted — put it back. The
+  // atomic rename displaces our own plant (or a gap claimant's); every
+  // displaced owner re-verifies before writing, and an owner that already
+  // released sweeps the file away so it cannot resurface as an orphan.
+  // If the restore fails the owner already swept the seized copy — our
+  // plant owns the slot, so return it rather than re-acquire.
+  if (restoreSeized(reapPath, lockPath)) {
+    if (plant) {
+      // The restore renamed over our plant — its inode is gone, so its
+      // token can never be reclaimed; drop it instead of leaking it.
+      ownedTokens.delete(plant.token);
+      closeQuiet(plant.fd);
+    }
+    return seizedPid >= 0 ? seizedPid : holder;
+  }
+  return plant ?? holder;
+}
+
+/** The seized file is the same dead lockfile we checked: same inode and
+ *  unchanged token, and its recorded pid is still dead (or a recycled
+ *  pid that is now ours — a foreign-token relic we did not write). */
+function isCheckedDeadFile(
+  reapPath: string,
+  checked: { dev: number; ino: number },
+  checkedToken: string | null,
+  seizedPid: number,
+): boolean {
+  const seized = statIdentity(reapPath);
+  if (seized?.dev !== checked.dev || seized.ino !== checked.ino) return false;
+  if (readLockToken(reapPath) !== checkedToken) return false;
+  return seizedPid < 0 || seizedPid === process.pid || !isProcessAlive(seizedPid);
+}
+
+/** Put a wrongly-seized lockfile back at lockPath, replacing whatever
+ *  claimed the gap — the displaced owner re-verifies before writing.
+ *  Returns false when the seized file vanished before the restore could
+ *  land: its owner already released and swept it, so nothing at lockPath
+ *  is owed back to it and the caller's own plant owns the slot. */
+function restoreSeized(reapPath: string, lockPath: string): boolean {
+  try {
+    renameSync(reapPath, lockPath);
+    return true;
+  } catch {
+    unlinkQuiet(reapPath);
+    return false;
+  }
+}
+
+function unlinkQuiet(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // Best-effort; callers never rely on the unlink having succeeded.
+  }
+}
+
+function closeQuiet(fd: number): void {
+  try {
+    closeSync(fd);
+  } catch {
+    // The fd's inode may already have been replaced by a restore.
+  }
+}
+
+function statIdentity(path: string): { dev: number; ino: number } | null {
+  try {
+    const st = lstatSync(path);
+    return { dev: st.dev, ino: st.ino };
+  } catch {
+    return null;
+  }
 }
 
 /** Attempt one exclusive-create open. Returns the handle on success,
@@ -146,8 +323,12 @@ function reapIfStale(lockPath: string): number {
 function tryOpenLock(lockPath: string): ConfigLockHandle | null {
   try {
     const fd = openSync(lockPath, "wx");
-    writeSync(fd, String(process.pid));
-    return { path: lockPath, fd, pid: process.pid };
+    const token = `${String(process.pid)}-${String(lockTokenCounter++)}-${Math.random()
+      .toString(36)
+      .slice(2)}`;
+    writeSync(fd, token);
+    ownedTokens.add(token);
+    return { path: lockPath, fd, token };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "EEXIST") return null;
@@ -162,12 +343,99 @@ function releaseConfigLock(handle: ConfigLockHandle): void {
     // Best-effort — unlink below is the authoritative release.
   }
   try {
-    const holder = readLockHolder(handle.path);
-    if (holder !== handle.pid) return;
-    unlinkSync(handle.path);
-  } catch {
-    // Another process's stale-lock reaper may have removed it first.
+    ensureLockFileGone(handle);
+  } finally {
+    // Tokens are per-acquisition; deleting on release keeps ownedTokens
+    // bounded in a long-lived process. If the file somehow still
+    // resurfaces it now reads as a foreign-token file with our pid, which
+    // the own-pid reap path unlinks on our next acquire.
+    ownedTokens.delete(handle.token);
   }
+}
+
+/** Unlink the lockfile while it still carries our token. False when the
+ *  current file is foreign or already gone — a reaper may have moved our
+ *  copy to a reap sibling, which the sweep finds next pass. */
+function unlinkIfOwned(lockPath: string): boolean {
+  if (!ownsLockFile(lockPath)) return false;
+  try {
+    unlinkSync(lockPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Do not return until our released lockfile is verifiably gone. A
+ * stale-lock reaper may have seized it mid-flight: it sits at a
+ * `${lockPath}.reap-*` sibling awaiting verification, and a restore that
+ * lands after we walk away resurrects a lockfile whose pid is live but
+ * whose owner is gone — every other writer then fails "still held" until
+ * this process re-enters mutateConfig. A live-pid file is never unlinked
+ * by a reaper, so ours is always either at lockPath or at a discoverable
+ * reap sibling; keep sweeping both until it is verifiably gone so a
+ * restored file can never outlive its owner. Two consecutive clean
+ * passes confirm it: a file in transit between the two names is caught
+ * at one endpoint or seen as an unclassifiable sibling, which forces
+ * another pass.
+ */
+function ensureLockFileGone(handle: ConfigLockHandle): void {
+  let cleanPasses = 0;
+  for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
+    if (unlinkIfOwned(handle.path)) return;
+    const sweep = unlinkDisplacedCopy(handle.path, handle.token);
+    if (sweep === "removed") return;
+    cleanPasses = sweep === "clean" ? cleanPasses + 1 : 0;
+    if (cleanPasses >= 2) return;
+    if (attempt < LOCK_MAX_RETRIES - 1) sleepSync(LOCK_RETRY_INTERVAL_MS);
+  }
+}
+
+/**
+ * Unlink our displaced lockfile if it sits at one of the
+ * `${lockPath}.reap-*` siblings a stale-lock reaper moved it to.
+ * "removed" — our copy was found and deleted. "busy" — a sibling could
+ * not be classified (renamed or still mid-write during the scan), so the
+ * caller must recheck rather than conclude the file is gone. "clean" —
+ * no sibling carries our token.
+ */
+function unlinkDisplacedCopy(lockPath: string, token: string): "removed" | "busy" | "clean" {
+  const dir = dirname(lockPath);
+  const prefix = `${basename(lockPath)}.reap-`;
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return "busy";
+  }
+  let sawUnclassifiable = false;
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    const candidate = join(dir, name);
+    const candidateToken = readLockToken(candidate);
+    if (candidateToken === null) {
+      sawUnclassifiable = true;
+      continue;
+    }
+    if (candidateToken !== token) continue;
+    try {
+      unlinkSync(candidate);
+      return "removed";
+    } catch {
+      // Renamed between the directory scan and the unlink — the next
+      // pass sees it at lockPath (restore) or nowhere (destroyed).
+      sawUnclassifiable = true;
+    }
+  }
+  return sawUnclassifiable ? "busy" : "clean";
+}
+
+/** True while the lockfile still carries a token this process planted —
+ *  i.e. no reaper displaced it with a foreign or restored file. */
+function ownsLockFile(lockPath: string): boolean {
+  const token = readLockToken(lockPath);
+  return token !== null && ownedTokens.has(token);
 }
 
 function readLockHolder(lockPath: string): number {
@@ -176,6 +444,18 @@ function readLockHolder(lockPath: string): number {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : -1;
   } catch {
     return -1;
+  }
+}
+
+/** Raw lockfile payload — the `${pid}-${nonce}` ownership token. Null
+ *  when absent, unreadable, or still empty inside a creator's
+ *  open->write window. */
+function readLockToken(lockPath: string): string | null {
+  try {
+    const token = readFileSync(lockPath, "utf8").trim();
+    return token.length > 0 ? token : null;
+  } catch {
+    return null;
   }
 }
 

@@ -119,10 +119,56 @@ expect_contains "catalog status fake rel -> pattern" \
 
 # -------------------------------------------------------------------------
 note "bench reads"
+# The bench reads below were written assuming a live $DEV_STORAGE with
+# tuned records on disk; a hermetic LLAMACTL_TEST_PROFILE boots with an
+# empty runtime dir and is the one environment where they fail. Seed
+# through the core write path first — the fixture script refuses to
+# touch anything whose resolved runtime dir sits outside the profile,
+# so live runs are unaffected.
+seed_out="$(bun "$LLAMACTL_HOME/test/fixtures/seed-bench-profile.ts" 2>&1)"
+seed_rc=$?
+if [ "$seed_rc" -ne 0 ]; then
+  fail "bench fixture seed (rc=$seed_rc)" "$seed_out"
+fi
+first_seeded="$(print "$seed_out" | sed -n 's/^SEEDED_REL=//p' | head -1)"
+show_rel="$(print "$seed_out" | sed -n 's/^SHOW_REL=//p' | head -1)"
+compare_rel="$(print "$seed_out" | sed -n 's/^COMPARE_REL=//p' | head -1)"
+compare_profile="$(print "$seed_out" | sed -n 's/^COMPARE_PROFILE=//p' | head -1)"
+seed_skip="$(print "$seed_out" | sed -n 's/^SKIP //p' | head -1)"
+
+if [ "$seed_rc" -eq 0 ] && [ -n "$LLAMACTL_TEST_PROFILE" ] && [ -z "$seed_skip" ]; then
+  # Inside a hermetic profile the fixture must either emit all four
+  # markers or an explicit SKIP line — a silent no-op would drop every
+  # content assertion below while the tier still reports fail=0. The
+  # only deliberate skip reachable here is "runtime dir resolved outside
+  # the profile" (a developer shell exporting LOCAL_AI_RUNTIME_DIR); the
+  # marker guards below then skip the content assertions while the bare
+  # bench rc0 checks keep exercising that real runtime dir.
+  [ -n "$first_seeded" ] || fail "bench fixture seed: missing SEEDED_REL" "$seed_out"
+  [ -n "$show_rel" ] || fail "bench fixture seed: missing SHOW_REL" "$seed_out"
+  [ -n "$compare_rel" ] || fail "bench fixture seed: missing COMPARE_REL" "$seed_out"
+  [ -n "$compare_profile" ] || fail "bench fixture seed: missing COMPARE_PROFILE" "$seed_out"
+fi
+
 expect_rc0 "bench show current" bun "$CLI" bench show current
 expect_rc_nonzero "bench show bogus target" bun "$CLI" bench show bogus-target
 expect_rc0 "bench history all" bun "$CLI" bench history all
 expect_rc0 "bench compare all all" bun "$CLI" bench compare all all
+
+if [ -n "$show_rel" ]; then
+  expect_contains "bench show current prints the seeded rel" \
+    "model=$show_rel" bun "$CLI" bench show current
+fi
+if [ -n "$first_seeded" ]; then
+  expect_contains "bench history all lists the seeded rel" \
+    "model=$first_seeded" bun "$CLI" bench history all
+fi
+if [ -n "$compare_rel" ]; then
+  expect_contains "bench compare all all lists the seeded rel" \
+    "model=$compare_rel" bun "$CLI" bench compare all all
+  expect_contains "bench compare all all shows tuned profile" \
+    "tuned=$compare_profile" bun "$CLI" bench compare all all
+fi
 
 # -------------------------------------------------------------------------
 note "recommendations"

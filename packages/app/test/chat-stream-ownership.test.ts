@@ -1,9 +1,37 @@
 import type { DependencyList } from "react";
 
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 
 const ReactActual = await import("react");
 const UiActual = await import("../src/ui/index");
+
+// Snapshot the real exports before registering the mocks. mock.module is
+// process-global, so re-registering the snapshots in afterAll keeps later
+// test files in this bun process on the real modules. `@/` specifiers
+// don't resolve under bun test, so the real modules are registered under
+// those specifiers first — that both lets the snapshot targets load and
+// leaves a real-module fallback for other files. Loading lib/trpc builds
+// an IPC client at eval, which needs the preload bridge global.
+const hadElectronTRPC = "electronTRPC" in globalThis;
+const prevElectronTRPC = globalThis.electronTRPC;
+globalThis.electronTRPC ??= {
+  sendMessage: (): undefined => undefined,
+  onMessage: (): undefined => undefined,
+};
+
+const TrpcActual = { ...(await import("../src/lib/trpc")) };
+const UiSnapshot = { ...UiActual };
+const ReactSnapshot = { ...ReactActual };
+const workloadSelectionStoreReal = {
+  ...(await import("../src/stores/workload-selection-store")),
+};
+const tabStoreReal = { ...(await import("../src/stores/tab-store")) };
+
+void mock.module("@/lib/trpc", () => TrpcActual);
+void mock.module("@/stores/workload-selection-store", () => workloadSelectionStoreReal);
+void mock.module("@/stores/tab-store", () => tabStoreReal);
+
+const useActiveWorkloadReal = { ...(await import("../src/hooks/useActiveWorkload")) };
 
 let hookHarnessActive = false;
 
@@ -217,6 +245,16 @@ void mock.module("@/stores/tab-store", () => ({
 }));
 
 void mock.module("@/ui", () => UiActual);
+
+afterAll(() => {
+  void mock.module("react", () => ReactSnapshot);
+  void mock.module("@/lib/trpc", () => TrpcActual);
+  void mock.module("@/hooks/useActiveWorkload", () => useActiveWorkloadReal);
+  void mock.module("@/stores/tab-store", () => tabStoreReal);
+  void mock.module("@/ui", () => UiSnapshot);
+  if (hadElectronTRPC) globalThis.electronTRPC = prevElectronTRPC;
+  else delete (globalThis as { electronTRPC?: unknown }).electronTRPC;
+});
 
 interface TestElement {
   type: unknown;

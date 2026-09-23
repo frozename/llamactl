@@ -1,6 +1,6 @@
 import type { DependencyList } from "react";
 
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 
 import type { CompositeShape } from "../src/modules/composites/types";
 
@@ -8,12 +8,21 @@ const ReactActual = await import("react");
 const ReactQueryActual = await import("@tanstack/react-query");
 const UiActual = await import("../src/ui/index");
 
+const hadElectronTRPC = "electronTRPC" in globalThis;
+const prevElectronTRPC = globalThis.electronTRPC;
 globalThis.electronTRPC ??= {
   sendMessage: (): undefined => undefined,
   onMessage: (): undefined => undefined,
 };
 
 const TrpcActual = await import("../src/lib/trpc");
+
+// Plain-object snapshots for afterAll re-registration. mock.module is
+// process-global; restoring these keeps later test files on real modules.
+const ReactSnapshot = { ...ReactActual };
+const ReactQuerySnapshot = { ...ReactQueryActual };
+const UiSnapshot = { ...UiActual };
+const TrpcSnapshot = { ...TrpcActual };
 
 let hookHarnessActive = false;
 
@@ -158,6 +167,15 @@ void mock.module("@/lib/trpc", () => ({
   ...TrpcActual,
   trpc: trpcProxy,
 }));
+
+afterAll(() => {
+  void mock.module("react", () => ReactSnapshot);
+  void mock.module("@tanstack/react-query", () => ReactQuerySnapshot);
+  void mock.module("@/ui", () => UiSnapshot);
+  void mock.module("@/lib/trpc", () => TrpcSnapshot);
+  if (hadElectronTRPC) globalThis.electronTRPC = prevElectronTRPC;
+  else delete (globalThis as { electronTRPC?: unknown }).electronTRPC;
+});
 
 function manifest(name: string, labels?: Record<string, string>): CompositeShape {
   return {
