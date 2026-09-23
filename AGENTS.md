@@ -539,9 +539,12 @@ offline audit.
 
 **Known gaps**:
 
-- Subscriptions (streaming tRPC) aren't supported over the tunnel
-  yet — the tunneled path rejects them with a "not supported yet"
-  error. Use direct HTTPS for streaming ops.
+- Subscriptions (streaming tRPC) ride the tunnel as
+  `stream-event`/`stream-done`/`stream-cancel` frames
+  (`packages/remote/src/tunnel/messages.ts`, fanned out by
+  `tunnel-client.ts`). An agent without a wired subscription
+  handler answers `subscription-unsupported` — that is a per-agent
+  capability check, not a tunnel limitation.
 - Fingerprint pinning over the tunnel-relay HTTP call isn't
   implemented — rely on TLS on the central agent's
   `/tunnel-relay` endpoint and trust the system CA.
@@ -614,7 +617,8 @@ failures, reseed baselines after intentional UI changes
 
 Every `apiKeyRef`, `User.tokenRef`, and `RagBinding.auth.tokenRef`
 flows through a unified resolver in
-`packages/remote/src/config/secret.ts`. Four reference syntaxes are
+`packages/core/src/config/secret.ts` — `kubeconfig.ts` delegates to
+`resolveSecret` for `tokenRef`/`apiKeyRef`. Four reference syntaxes are
 supported everywhere:
 
 - `env:VAR_NAME` or `$VAR_NAME` — read from `process.env`
