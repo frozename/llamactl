@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
+import * as os from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,6 +17,7 @@ import {
   relKnown,
   repoKnown,
 } from "../src/catalog.js";
+import * as envModule from "../src/env.js";
 import { mkdtempSync, writeFileSync } from "../src/safe-fs.js";
 import { FIXTURE_DIR } from "./helpers.js";
 
@@ -90,6 +93,49 @@ describe("catalog.listCatalog", () => {
     expect(
       listCatalog("all", { customCatalogFile: join(FIXTURE_DIR, "curated-custom.tsv") }).length,
     ).toBe(BUILTIN_CATALOG.length + 2);
+  });
+});
+
+describe("catalog.listCatalog lazy env resolution", () => {
+  // Regression: listCatalog used to call resolveEnv() unconditionally,
+  // which shells out to `sysctl -n hw.memsize` on every call (~4ms each,
+  // ~100ms across a repoKnown loop). The builtin-only path must not
+  // touch env resolution at all. Three spied seams cover every way the
+  // probe can be reached: resolveEnv itself, any subprocess spawn, and
+  // homedir (the default-path resolution in env.ts goes through
+  // detectDevStorageDefault -> homedir).
+  test("builtin scope never resolves env or probes hardware", () => {
+    const resolveEnvSpy = spyOn(envModule, "resolveEnv");
+    const execSpy = spyOn(childProcess, "execSync");
+    const homeSpy = spyOn(os, "homedir");
+    try {
+      expect(listCatalog("builtin")).toHaveLength(BUILTIN_CATALOG.length);
+      expect(resolveEnvSpy).not.toHaveBeenCalled();
+      expect(execSpy).not.toHaveBeenCalled();
+      expect(homeSpy).not.toHaveBeenCalled();
+    } finally {
+      resolveEnvSpy.mockRestore();
+      execSpy.mockRestore();
+      homeSpy.mockRestore();
+    }
+  });
+
+  test("explicit customCatalogFile needs no env resolution", () => {
+    const resolveEnvSpy = spyOn(envModule, "resolveEnv");
+    const execSpy = spyOn(childProcess, "execSync");
+    const homeSpy = spyOn(os, "homedir");
+    try {
+      expect(
+        listCatalog("all", { customCatalogFile: join(FIXTURE_DIR, "curated-custom.tsv") }),
+      ).toHaveLength(BUILTIN_CATALOG.length + 2);
+      expect(resolveEnvSpy).not.toHaveBeenCalled();
+      expect(execSpy).not.toHaveBeenCalled();
+      expect(homeSpy).not.toHaveBeenCalled();
+    } finally {
+      resolveEnvSpy.mockRestore();
+      execSpy.mockRestore();
+      homeSpy.mockRestore();
+    }
   });
 });
 

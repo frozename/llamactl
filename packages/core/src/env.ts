@@ -255,16 +255,46 @@ function detectDevStorageDefault(): string {
   return join(homedir(), ".llamactl");
 }
 
+/**
+ * Resolve just `$LOCAL_AI_RUNTIME_DIR` — env var > test-profile default
+ * > `$DEV_STORAGE/ai-models/local-ai`. Same precedence `resolveEnv`
+ * uses, but without the machine-profile probe or the model-dir statting
+ * a full resolution pays for. For readers that only need the runtime
+ * dir (e.g. the lazy custom-catalog path in catalog.ts).
+ */
+export function resolveRuntimeDir(env: NodeJS.ProcessEnv = process.env): string {
+  const testProfile = testProfileDefaults(env);
+  const devStorage = pickWithTestProfile(
+    env["DEV_STORAGE"],
+    testProfile?.["DEV_STORAGE"],
+    detectDevStorageDefault(),
+  );
+  return pickWithTestProfile(
+    env["LOCAL_AI_RUNTIME_DIR"],
+    testProfile?.["LOCAL_AI_RUNTIME_DIR"],
+    join(devStorage, "ai-models/local-ai"),
+  );
+}
+
+/**
+ * Resolve `$LOCAL_AI_CUSTOM_CATALOG_FILE` — env var >
+ * `$LOCAL_AI_RUNTIME_DIR/curated-models.tsv`, the same default the
+ * writers resolve through `resolveEnv`. Cheap: no subprocess, no
+ * machine-profile probe.
+ */
+export function resolveCustomCatalogFile(env: NodeJS.ProcessEnv = process.env): string {
+  return pick(
+    env["LOCAL_AI_CUSTOM_CATALOG_FILE"],
+    join(resolveRuntimeDir(env), "curated-models.tsv"),
+  );
+}
+
 export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
   const testProfile = testProfileDefaults(env);
   const basics = computeEnvBasics(env, testProfile);
   const profile = resolveProfile(env);
 
-  const runtimeDir = pickWithTestProfile(
-    env["LOCAL_AI_RUNTIME_DIR"],
-    testProfile?.["LOCAL_AI_RUNTIME_DIR"],
-    join(basics.devStorage, "ai-models/local-ai"),
-  );
+  const runtimeDir = resolveRuntimeDir(env);
   const defaultModel = resolveDefaultModel(env, profile, basics.llamaCppModels);
   const gemmaCtx = pick(env["LLAMA_CPP_GEMMA_CTX_SIZE"], GEMMA_CTX_BY_PROFILE[profile]);
   const qwenCtx = pick(env["LLAMA_CPP_QWEN_CTX_SIZE"], QWEN_CTX_BY_PROFILE[profile]);
@@ -325,10 +355,7 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
     LOCAL_AI_DISCOVERY_AUTHOR: pick(env["LOCAL_AI_DISCOVERY_AUTHOR"], "unsloth"),
     LOCAL_AI_DISCOVERY_LIMIT: pick(env["LOCAL_AI_DISCOVERY_LIMIT"], "24"),
     LOCAL_AI_DISCOVERY_SEARCH: pick(env["LOCAL_AI_DISCOVERY_SEARCH"], "GGUF"),
-    LOCAL_AI_CUSTOM_CATALOG_FILE: pick(
-      env["LOCAL_AI_CUSTOM_CATALOG_FILE"],
-      join(runtimeDir, "curated-models.tsv"),
-    ),
+    LOCAL_AI_CUSTOM_CATALOG_FILE: resolveCustomCatalogFile(env),
     LOCAL_AI_PRESET_OVERRIDES_FILE: pick(
       env["LOCAL_AI_PRESET_OVERRIDES_FILE"],
       join(runtimeDir, "preset-overrides.tsv"),
