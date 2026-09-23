@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -11,6 +11,7 @@ import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
 import { KvRegistry, openKvStorage, readWorkloadEpoch } from "../src/kvstore/index.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import { installConditionalChatUpstream } from "./conditionalUpstream.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -383,4 +384,271 @@ test("normal (non-aborted) completion is unaffected by signal propagation", asyn
   } finally {
     t.cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// P0.1 (#129) characterization — abort surfaces + upstream-SSE failure
+// envelopes the client actually observes at 7443403.
+// ---------------------------------------------------------------------------
+
+test("client abort before dispatch surfaces the upstream-unreachable envelope", async () => {
+  const t = tempEnv();
+  try {
+    globalThis.fetch = ((_input: Request | URL | string, init?: RequestInit) => {
+      const signal = init?.signal;
+      if (signal?.aborted) {
+        return Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as unknown as typeof fetch;
+
+    const controller = new AbortController();
+    controller.abort(); // aborted before proxyOpenAI is even called
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "no-such-model",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+        signal: controller.signal,
+      }),
+      t.env,
+    );
+
+    // forward() maps the aborted fetch to the standard 502 envelope —
+    // a client abort is indistinguishable from an unreachable upstream
+    // on the wire today.
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({
+      error: {
+        message: "upstream llama-server unreachable: The operation was aborted.",
+        type: "llamactl_upstream_error",
+      },
+    });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("cancelling the client response stream mid-output cancels the upstream body", async () => {
+  const t = tempEnv();
+  try {
+    let upstreamCancelled = false;
+    const gated = new ReadableStream<Uint8Array>({
+      start(controller): void {
+        controller.enqueue(
+          new TextEncoder().encode('data: {"choices":[{"delta":{"content":"chunk-1"}}]}\n\n'),
+        );
+        // Deliberately never closes — the client hangs up mid-stream.
+      },
+      cancel(): void {
+        upstreamCancelled = true;
+      },
+    });
+    globalThis.fetch = (() =>
+      new Response(gated, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "no-such-model",
+          messages: [{ role: "user", content: "hi" }],
+          stream: true,
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(new TextDecoder().decode(first.value)).toContain("chunk-1");
+    await reader.cancel();
+    expect(upstreamCancelled).toBe(true);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a truncated upstream SSE body is passed to the client verbatim", async () => {
+  const t = tempEnv();
+  try {
+    // OpenAI passthrough: the proxy replays the upstream stream without a
+    // terminal-frame synthesis — the client sees exactly what arrived,
+    // truncation included.
+    const truncated = 'data: {"choices":[{"delta":{"content":"par"},"finish_reason":null}]}\n\n';
+    globalThis.fetch = (() =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller): void {
+            controller.enqueue(new TextEncoder().encode(truncated));
+            controller.close(); // ends without data: [DONE]
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      )) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "no-such-model",
+          messages: [{ role: "user", content: "hi" }],
+          stream: true,
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    expect(await res.text()).toBe(truncated);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("an erroring upstream SSE stream propagates the error to the client reader", async () => {
+  const t = tempEnv();
+  try {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller): void {
+        controller.enqueue(
+          new TextEncoder().encode('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'),
+        );
+        controller.error(new Error("upstream boom"));
+      },
+    });
+    globalThis.fetch = (() =>
+      new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "no-such-model",
+          messages: [{ role: "user", content: "hi" }],
+          stream: true,
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    // WHATWG streams: controller.error() discards the queued chunks, so
+    // the FIRST read already rejects — the buffered partial frame never
+    // reaches the client.
+    const firstRead = await reader.read().then(
+      () => "resolved",
+      (err: unknown) => (err instanceof Error ? err.message : String(err)),
+    );
+    expect(firstRead).toBe("upstream boom");
+  } finally {
+    t.cleanup();
+  }
+});
+
+describe("known defects at 7443403 (fix in later slices)", () => {
+  // Defect: when an anthropic-bound upstream SSE ends WITHOUT a terminal
+  // marker (truncation or mid-stream error), translateOpenAIStreamToAnthropic
+  // fabricates a normal message_delta + message_stop terminal — the client
+  // sees a success-shaped stream instead of an explicit error.
+  //   packages/core/src/anthropic/translateStream.ts:434-438 (synthetic
+  //   terminal on EOF/error; returns "truncated" internally but emits
+  //   success-shaped frames)
+  // Owning slice: P1.3 (#133) — streaming completion semantics.
+  //
+  // streamMode:"always" is required: the request-side `stream` flag never
+  // reaches the upstream at 7443403 (see the sibling defect in
+  // openaiProxy.test.ts), so an honest fixture could never exercise the
+  // response translator's truncation path.
+  test.failing(
+    "/v1/messages truncated upstream SSE surfaces an explicit error event",
+    async () => {
+      const t = tempEnv();
+      try {
+        installConditionalChatUpstream({
+          streamMode: "always",
+          sseBody: () =>
+            'data: {"id":"chatcmpl-x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"par"},"finish_reason":null}]}\n\n',
+        });
+        const res = await openaiProxy.proxyOpenAI(
+          new Request("http://localhost/v1/messages", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-3-7-sonnet",
+              messages: [{ role: "user", content: "truncate me" }],
+              max_tokens: 64,
+              stream: true,
+            }),
+          }),
+          t.env,
+        );
+
+        expect(res.headers.get("content-type")).toBe("text/event-stream");
+        const body = await res.text();
+        expect(body).toContain("event: error");
+      } finally {
+        t.cleanup();
+      }
+    },
+  );
+
+  // Same defect via an errored (not merely truncated) upstream stream.
+  test.failing(
+    "/v1/messages errored upstream SSE surfaces an explicit error event",
+    async () => {
+      const t = tempEnv();
+      try {
+        installConditionalChatUpstream({
+          streamMode: "always",
+          sseBody: () =>
+            new ReadableStream<Uint8Array>({
+              start(controller): void {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'data: {"id":"chatcmpl-x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"par"},"finish_reason":null}]}\n\n',
+                  ),
+                );
+                controller.error(new Error("upstream boom"));
+              },
+            }),
+        });
+        const res = await openaiProxy.proxyOpenAI(
+          new Request("http://localhost/v1/messages", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-3-7-sonnet",
+              messages: [{ role: "user", content: "boom" }],
+              max_tokens: 64,
+              stream: true,
+            }),
+          }),
+          t.env,
+        );
+
+        expect(res.headers.get("content-type")).toBe("text/event-stream");
+        const body = await res.text();
+        expect(body).toContain("event: error");
+      } finally {
+        t.cleanup();
+      }
+    },
+  );
 });

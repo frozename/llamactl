@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +8,7 @@ import type { PeerSnapshot } from "../src/workloadRuntime.js";
 import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import { installConditionalChatUpstream } from "./conditionalUpstream.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -16,19 +17,55 @@ afterEach(() => {
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
 });
 
-function tempEnv(): { env: ResolvedEnv; dir: string; cleanup: () => void } {
+function tempEnv(extra?: Record<string, string>): {
+  env: ResolvedEnv;
+  dir: string;
+  cleanup: () => void;
+} {
   const dir = mkdtempSync(join(tmpdir(), "llamactl-openai-proxy-core-"));
   return {
     env: resolveEnv({
       DEV_STORAGE: dir,
       LOCAL_AI_RUNTIME_DIR: dir,
       LLAMA_CPP_MODELS: join(dir, "models"),
+      ...extra,
     }),
     dir,
     cleanup: (): void => {
       rmSync(dir, { recursive: true, force: true });
     },
   } satisfies { env: ResolvedEnv; dir: string; cleanup: () => void };
+}
+
+function writeLlamaServerWorkload(
+  runtimeRoot: string,
+  workload: string,
+  state: { rel: string; port: number; extraArgs?: string[] },
+): void {
+  const dir = join(runtimeRoot, "workloads", workload);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "llama-server.pid"), `${String(process.pid)}\n`);
+  writeFileSync(
+    join(dir, "llama-server.state"),
+    JSON.stringify({
+      rel: state.rel,
+      extraArgs: state.extraArgs ?? [],
+      host: "127.0.0.1",
+      port: state.port,
+      binary: "/x/llama-server",
+      pid: process.pid,
+      startedAt: "2026-05-24T00:00:00.000Z",
+      tunedProfile: null,
+    }),
+  );
+}
+
+function anthropicChatRequest(body: Record<string, unknown>): Request {
+  return new Request("http://localhost/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 test("routes chat completions to a ModelHost by rel alias", async () => {
@@ -927,4 +964,308 @@ test("peer 502 invalidates route cache so next request refetches routes", async 
   } finally {
     t.cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// P0.1 (#129) characterization — pin the wire contract for every supported
+// ingress shape: which URL, model, stream flag, and client headers the
+// upstream actually receives. Local AND peer coverage for each shape.
+// ---------------------------------------------------------------------------
+
+test("/v1/messages routes a local routable model to its workload endpoint", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17999" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-claude", {
+      rel: "org/claude-lookalike.gguf",
+      port: 8140,
+      extraArgs: ["--alias", "claude-alias"],
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": "sk-ant-test",
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "tools-2024-05-16",
+          authorization: "Bearer client-token-must-not-leak",
+        },
+        body: JSON.stringify({
+          model: "claude-alias",
+          messages: [{ role: "user", content: "route me" }],
+          max_tokens: 64,
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    const call = upstream.calls[0]!;
+    // The routable model resolved to its workload endpoint, NOT the
+    // LLAMA_CPP_PORT fallback — resolveJsonBodyRoute overrides the default.
+    expect(call.url).toBe("http://127.0.0.1:8140/v1/chat/completions");
+    expect(call.method).toBe("POST");
+    // Translated chat-completions body: the anthropic model alias is
+    // forwarded verbatim as the upstream `model`.
+    expect(call.body).toEqual({
+      model: "claude-alias",
+      messages: [{ role: "user", content: "route me" }],
+      max_tokens: 64,
+    });
+    // Anthropic client headers pass through; the client Authorization
+    // header is stripped by parseIncoming (no peer bearer on a local route).
+    expect(call.headers["x-api-key"]).toBe("sk-ant-test");
+    expect(call.headers["anthropic-version"]).toBe("2023-06-01");
+    expect(call.headers["anthropic-beta"]).toBe("tools-2024-05-16");
+    expect(call.headers["authorization"]).toBeUndefined();
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/messages routes a peer-only model to the peer endpoint", async () => {
+  const t = tempEnv();
+  try {
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterPeers: [
+        { id: "peer-b", endpoint: "https://peer-b.local:7843", token: "peer-token-xyz" },
+      ],
+      peerSnapshots: new Map<string, PeerSnapshot>([
+        [
+          "peer-b",
+          {
+            workloads: [{ modelId: "claude-peer-only", port: 9222 }],
+            pressure: "NORMAL",
+            fetchedAt: Date.now(),
+          },
+        ],
+      ]),
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": "sk-ant-test",
+          "anthropic-version": "2023-06-01",
+          authorization: "Bearer client-token-must-not-leak",
+        },
+        body: JSON.stringify({
+          model: "claude-peer-only",
+          messages: [{ role: "user", content: "peer route me" }],
+          max_tokens: 32,
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    const call = upstream.calls[0]!;
+    expect(call.url).toBe("https://peer-b.local:7843/v1/chat/completions");
+    expect(call.body).toEqual({
+      model: "claude-peer-only",
+      messages: [{ role: "user", content: "peer route me" }],
+      max_tokens: 32,
+    });
+    // Peer forwarding replaces the client bearer with the peer token.
+    expect(call.headers["authorization"]).toBe("Bearer peer-token-xyz");
+    expect(call.headers["x-api-key"]).toBe("sk-ant-test");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/chat/completions routes a ModelRun by its --alias and forwards the alias verbatim", async () => {
+  const t = tempEnv({ LLAMA_CPP_PORT: "17999" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-alias", {
+      rel: "org/real-model.gguf",
+      port: 8141,
+      extraArgs: ["--alias", "chatty-alias"],
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "chatty-alias",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:8141/v1/chat/completions");
+    // The client-supplied alias is forwarded as `model` unchanged —
+    // llama-server resolves its own --alias.
+    expect(upstream.calls[0]!.body?.["model"]).toBe("chatty-alias");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a routable model overrides the singleton local fallback endpoint", async () => {
+  // LLAMA_CPP_PORT is the legacy default llama-server; a workload-registered
+  // model must win over it (resolveJsonBodyRoute).
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", {
+      rel: "routed/model.gguf",
+      port: 8142,
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "routed/model.gguf",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:8142/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("an unknown model keeps the legacy local fallback endpoint", async () => {
+  // Compatibility contract at 7443403: an unrecognized `model` falls
+  // through to the singleton llama-server rather than 404ing. Whether a
+  // strict unknown-model error is desirable is a later-slice decision —
+  // this test freezes the current behavior.
+  const t = tempEnv({ LLAMA_CPP_PORT: "17777" });
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-routed", {
+      rel: "routed/model.gguf",
+      port: 8142,
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "nope/unknown.gguf",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.url).toBe("http://127.0.0.1:17777/v1/chat/completions");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("an unreachable routed upstream yields the llamactl_upstream_error envelope", async () => {
+  const t = tempEnv();
+  try {
+    writeLlamaServerWorkload(t.dir, "wl-down", {
+      rel: "down/model.gguf",
+      port: 8143,
+    });
+    globalThis.fetch = (() => {
+      throw new Error("connect ECONNREFUSED");
+    }) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "down/model.gguf",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+      t.env,
+    );
+
+    // Frozen public error envelope: 502 + {error:{message,type}}.
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({
+      error: {
+        message: "upstream llama-server unreachable: connect ECONNREFUSED",
+        type: "llamactl_upstream_error",
+      },
+    });
+  } finally {
+    t.cleanup();
+  }
+});
+
+describe("known defects at 7443403 (fix in later slices)", () => {
+  // Defect: AnthropicMessagesRequest declares no `stream` member and
+  // translateAnthropicRequest never emits it, so a streaming /v1/messages
+  // request is silently downgraded to a non-streaming upstream call.
+  //   packages/core/src/anthropic/types.ts:72-83 (no `stream` field)
+  //   packages/core/src/anthropic/translateRequest.ts:310-337 (no `stream` emitted)
+  // Owning slice: P1.2 (#132) — Anthropic stream propagation / native passthrough.
+  test.failing("/v1/messages stream:true reaches the upstream request body", async () => {
+    const t = tempEnv();
+    try {
+      const upstream = installConditionalChatUpstream();
+      const res = await openaiProxy.proxyOpenAI(
+        anthropicChatRequest({
+          model: "claude-3-7-sonnet",
+          messages: [{ role: "user", content: "stream please" }],
+          max_tokens: 64,
+          stream: true,
+        }),
+        t.env,
+      );
+      expect(upstream.calls).toHaveLength(1);
+      expect(upstream.calls[0]!.body?.["stream"]).toBe(true);
+      expect(res.headers.get("content-type")).toBe("text/event-stream");
+    } finally {
+      t.cleanup();
+    }
+  });
+
+  // Same defect, client-visible half: with an honest upstream the SSE
+  // envelope can only arrive if the proxy asked for a stream. When the
+  // fixture streams unconditionally (the pre-P0.1 dishonest mode), this
+  // test would pass vacuously — that asymmetry is the fixture's proof.
+  // Owning slice: P1.2 (#132).
+  test.failing("/v1/messages stream:true yields an anthropic SSE response", async () => {
+    const t = tempEnv();
+    try {
+      installConditionalChatUpstream();
+      const res = await openaiProxy.proxyOpenAI(
+        anthropicChatRequest({
+          model: "claude-3-7-sonnet",
+          messages: [{ role: "user", content: "stream please" }],
+          max_tokens: 64,
+          stream: true,
+        }),
+        t.env,
+      );
+      expect(res.headers.get("content-type")).toBe("text/event-stream");
+      const body = await res.text();
+      expect(body.startsWith("event: message_start\n")).toBe(true);
+      expect(body).toContain("event: message_stop\n");
+    } finally {
+      t.cleanup();
+    }
+  });
 });

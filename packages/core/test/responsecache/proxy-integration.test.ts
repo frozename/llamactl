@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,7 +29,7 @@ type LookupScope = {
   readonly model: string;
   readonly workload: string;
   readonly workloadEpoch: string;
-  readonly protocolVariant: "openai" | "anthropic";
+  readonly protocolVariant: "openai" | "anthropic" | "responses";
 };
 
 interface TestUpstream {
@@ -89,7 +89,7 @@ function lookupScope(params: {
   model: string;
   workload: string;
   workloadEpoch: string;
-  protocolVariant?: "openai" | "anthropic";
+  protocolVariant?: "openai" | "anthropic" | "responses";
 }): LookupScope {
   return {
     sha: params.sha,
@@ -1728,4 +1728,255 @@ test("oMLX save-handle: stream:false population replays cache as SSE for stream:
   } finally {
     runtime.cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// P0.1 (#129) characterization — determinism trigger coverage, three-variant
+// protocol isolation, and the streaming-buffering defect.
+// ---------------------------------------------------------------------------
+
+test("a numeric seed (no temperature) makes the request deterministic and hits the response cache", async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream("json");
+  try {
+    const url = new URL(upstream.baseUrl);
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
+    // seed alone (no temperature) is the second determinism trigger —
+    // isDeterministic treats a finite numeric seed as cacheable.
+    const body = JSON.stringify({
+      model,
+      messages: [{ role: "user", content: "seeded determinism" }],
+      seed: 42,
+    });
+
+    const first = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+      runtime.env,
+    );
+    expect(first.status).toBe(200);
+    expect(upstream.calls).toBe(1);
+
+    const second = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+      runtime.env,
+    );
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { id: string }).id).toBe("chatcmpl-1");
+    expect(upstream.calls).toBe(1);
+
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    expect(
+      registry.findBySha(
+        lookupScope({
+          sha: canonicalRequestSha(body),
+          model,
+          workload: "wl-a",
+          workloadEpoch,
+        }),
+      ),
+    ).not.toBeNull();
+    storage.close();
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+test("identical request bodies never cross-hit across openai/anthropic/responses variants", async () => {
+  const runtime = makeTempRuntime();
+  const upstream = await startUpstream("json");
+  try {
+    const url = new URL(upstream.baseUrl);
+    const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+    writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
+
+    // All three ingress shapes translate to the same canonical
+    // chat-completions body — canonicalRequestSha sorts keys, so content
+    // (not key order) decides the sha. The only differing scope component
+    // is protocolVariant.
+    const prompt = "cross-protocol isolation";
+    const sha = canonicalRequestSha(
+      JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0,
+      }),
+    );
+
+    const post = (pathname: string, body: Record<string, unknown>): Promise<Response> =>
+      openaiProxy.proxyOpenAI(
+        new Request(`http://localhost${pathname}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+        runtime.env,
+      );
+
+    const openai = await post("/v1/chat/completions", {
+      model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0,
+    });
+    const anthropic = await post("/v1/messages", {
+      model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0,
+    });
+    const responses = await post("/v1/responses", {
+      model,
+      input: prompt,
+      temperature: 0,
+    });
+
+    // Three variants, three cold misses, three upstream calls.
+    expect(openai.status).toBe(200);
+    expect(anthropic.status).toBe(200);
+    expect(responses.status).toBe(200);
+    expect(upstream.calls).toBe(3);
+
+    // Second round: each variant must hit its OWN entry — never a
+    // foreign-shaped body.
+    const openai2 = await post("/v1/chat/completions", {
+      model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0,
+    });
+    const anthropic2 = await post("/v1/messages", {
+      model,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0,
+    });
+    const responses2 = await post("/v1/responses", {
+      model,
+      input: prompt,
+      temperature: 0,
+    });
+    expect(upstream.calls).toBe(3);
+    expect(((await openai2.json()) as { object?: string }).object).toBe("chat.completion");
+    expect(((await anthropic2.json()) as { type?: string }).type).toBe("message");
+    expect(((await responses2.json()) as { object?: string }).object).toBe("response");
+
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    for (const protocolVariant of ["openai", "anthropic", "responses"] as const) {
+      expect(
+        registry.findBySha(
+          lookupScope({ sha, model, workload: "wl-a", workloadEpoch, protocolVariant }),
+        ),
+      ).not.toBeNull();
+    }
+    storage.close();
+  } finally {
+    await upstream.close();
+    runtime.cleanup();
+  }
+});
+
+describe("known defects at 7443403 (fix in later slices)", () => {
+  // Defect (S17): when a response cache is configured and misses,
+  // maybePersistResponseCache runs `await upstream.arrayBuffer()` BEFORE
+  // returning the replay Response — a streaming response is fully buffered
+  // upstream-to-EOF before the client's first byte.
+  //   packages/core/src/openaiProxy.ts:1787 (unconditional arrayBuffer)
+  // Owning slice: P1.3 (#133) — streaming completion + cache capture.
+  test.failing(
+    "a cacheable SSE miss delivers the first event while the upstream is still open",
+    async () => {
+      const runtime = makeTempRuntime();
+      let releaseGate!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseGate = resolve;
+      });
+      let upstreamCalls = 0;
+      globalThis.fetch = ((input: Request | URL | string): Promise<Response> => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        if (new URL(url).pathname !== "/v1/chat/completions") {
+          return Promise.resolve(new Response("", { status: 404 }));
+        }
+        upstreamCalls += 1;
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              async start(controller): Promise<void> {
+                const enc = new TextEncoder();
+                controller.enqueue(
+                  enc.encode('data: {"choices":[{"delta":{"content":"gated-1"}}]}\n\n'),
+                );
+                // Hold the stream open — the client must see gated-1
+                // while this upstream is still open.
+                await gate;
+                controller.enqueue(
+                  enc.encode('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'),
+                );
+                controller.enqueue(enc.encode("data: [DONE]\n\n"));
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      }) as typeof fetch;
+      try {
+        const url = new URL("http://127.0.0.1:19501");
+        const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
+        writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+        const body = JSON.stringify({
+          model,
+          messages: [{ role: "user", content: "gated stream" }],
+          temperature: 0,
+          stream: true,
+        });
+
+        const resPromise = openaiProxy.proxyOpenAI(
+          new Request("http://localhost/v1/chat/completions", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body,
+          }),
+          runtime.env,
+        );
+        // Bounded race — the defect is structural (proxyOpenAI cannot
+        // resolve before upstream EOF), so the timeout only bounds the
+        // defective side; the correct side is event-driven.
+        const outcome = await Promise.race([
+          resPromise.then(() => "responded" as const),
+          new Promise<"buffered">((resolve) =>
+            setTimeout(() => {
+              resolve("buffered");
+            }, 1500),
+          ),
+        ]);
+        try {
+          expect(outcome).toBe("responded");
+        } finally {
+          releaseGate();
+        }
+
+        const res = await resPromise;
+        expect(res.status).toBe(200);
+        expect(await res.text()).toContain("data: [DONE]");
+        expect(upstreamCalls).toBe(1);
+      } finally {
+        runtime.cleanup();
+      }
+    },
+  );
 });

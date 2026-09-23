@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ResolvedEnv } from "../src/types.js";
+import type { PeerSnapshot } from "../src/workloadRuntime.js";
 
 import { resolveEnv } from "../src/env.js";
 import { openaiProxy } from "../src/index.js";
 import { KvRegistry, openKvStorage } from "../src/kvstore/index.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import { installConditionalChatUpstream } from "./conditionalUpstream.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -565,6 +567,151 @@ test("regression: /v1/messages KV path still saves a slot", async () => {
     expect(res.status).toBe(200);
     expect(events).toContain("chat-forward");
     expect(events).toContain("slot-save");
+  } finally {
+    t.cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// P0.1 (#129) characterization — /v1/responses ingress: local + peer routing,
+// upstream-observed model/stream, and the fail-closed streaming envelope.
+// ---------------------------------------------------------------------------
+
+function writeKvFreeModelRun(runtimeRoot: string, workload: string, port: number, rel: string): void {
+  // No slotSavePath: resolveRouteKvMetadata returns null, keeping this a
+  // pure routing test (no KV slot machinery).
+  const dir = join(runtimeRoot, "workloads", workload);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "llama-server.pid"), pidText());
+  writeFileSync(
+    join(dir, "llama-server.state"),
+    JSON.stringify({
+      rel,
+      extraArgs: [],
+      host: "127.0.0.1",
+      port,
+      binary: "/x/llama-server",
+      pid: process.pid,
+      startedAt: "2026-05-24T00:00:00.000Z",
+      tunedProfile: null,
+    }),
+  );
+}
+
+test("/v1/responses routes a local routable model to its workload endpoint", async () => {
+  const t = tempEnv();
+  try {
+    writeKvFreeModelRun(t.dir, "wl-resp", 8145, "org/responses-model.gguf");
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "org/responses-model.gguf",
+          input: "route me",
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    const call = upstream.calls[0]!;
+    expect(call.url).toBe("http://127.0.0.1:8145/v1/chat/completions");
+    expect(call.body).toEqual({
+      model: "org/responses-model.gguf",
+      messages: [{ role: "user", content: "route me" }],
+    });
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/responses routes a peer-only model to the peer endpoint", async () => {
+  const t = tempEnv();
+  try {
+    openaiProxy.__setOpenAIProxyClusterRoutingForTests({
+      clusterPeers: [
+        { id: "peer-c", endpoint: "https://peer-c.local:7843", token: "peer-token-abc" },
+      ],
+      peerSnapshots: new Map<string, PeerSnapshot>([
+        [
+          "peer-c",
+          {
+            workloads: [{ modelId: "responses-peer-model", port: 9444 }],
+            pressure: "NORMAL",
+            fetchedAt: Date.now(),
+          },
+        ],
+      ]),
+    });
+    const upstream = installConditionalChatUpstream();
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "responses-peer-model",
+          input: "peer route me",
+          instructions: "You are terse",
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    const call = upstream.calls[0]!;
+    expect(call.url).toBe("https://peer-c.local:7843/v1/chat/completions");
+    expect(call.body).toEqual({
+      model: "responses-peer-model",
+      messages: [
+        { role: "system", content: "You are terse" },
+        { role: "user", content: "peer route me" },
+      ],
+    });
+    expect(call.headers["authorization"]).toBe("Bearer peer-token-abc");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("/v1/responses stream:true reaches upstream and the SSE answer fails closed with 501", async () => {
+  const t = tempEnv();
+  try {
+    // Unlike the anthropic path, translateResponsesRequest DOES forward
+    // `stream` — the honest upstream therefore returns SSE, which
+    // maybeTranslateResponse refuses with the explicit 501 envelope
+    // (responsesTranslationErrorResponse). This pins both halves:
+    // stream propagation AND the documented streaming-unsupported surface.
+    const upstream = installConditionalChatUpstream();
+    writeKvFreeModelRun(t.dir, "wl-resp-stream", 8146, "org/stream-model.gguf");
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "org/stream-model.gguf",
+          input: "stream me",
+          stream: true,
+        }),
+      }),
+      t.env,
+    );
+
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.body?.["stream"]).toBe(true);
+    expect(res.status).toBe(501);
+    expect(await res.json()).toEqual({
+      error: {
+        message: "streaming is not supported for /v1/responses",
+        type: "responses_translation_error",
+      },
+    });
   } finally {
     t.cleanup();
   }
