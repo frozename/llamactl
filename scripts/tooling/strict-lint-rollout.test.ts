@@ -53,7 +53,9 @@ describe("strict lint rollout baselines", () => {
   test("root package.json exposes the strict lint and format scripts", () => {
     const pkg = readPackageJson("package.json");
 
-    expect(pkg.scripts?.["lint"]).toBe("eslint .");
+    expect(pkg.scripts?.["lint"]).toBe(
+      "bun scripts/lint/no-cross-package-relative.ts && eslint . --max-warnings=0 && bun run typecheck:strict",
+    );
     expect(pkg.scripts?.["lint:fix"]).toBe("eslint . --fix");
     expect(pkg.scripts?.["prepare"]).toBe("husky");
     expect(pkg.scripts?.["format"]).toBe("prettier . --write");
