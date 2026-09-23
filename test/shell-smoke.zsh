@@ -135,6 +135,17 @@ show_rel="$(print "$seed_out" | sed -n 's/^SHOW_REL=//p' | head -1)"
 compare_rel="$(print "$seed_out" | sed -n 's/^COMPARE_REL=//p' | head -1)"
 compare_profile="$(print "$seed_out" | sed -n 's/^COMPARE_PROFILE=//p' | head -1)"
 
+if [ "$seed_rc" -eq 0 ] && [ -n "$LLAMACTL_TEST_PROFILE" ]; then
+  # Inside a hermetic profile the fixture must emit all four markers —
+  # a silent no-op would drop every content assertion below while the
+  # tier still reports fail=0. Outside a profile the SKIP path leaves
+  # them empty and the guards below keep their skip behaviour.
+  [ -n "$first_seeded" ] || fail "bench fixture seed: missing SEEDED_REL" "$seed_out"
+  [ -n "$show_rel" ] || fail "bench fixture seed: missing SHOW_REL" "$seed_out"
+  [ -n "$compare_rel" ] || fail "bench fixture seed: missing COMPARE_REL" "$seed_out"
+  [ -n "$compare_profile" ] || fail "bench fixture seed: missing COMPARE_PROFILE" "$seed_out"
+fi
+
 expect_rc0 "bench show current" bun "$CLI" bench show current
 expect_rc_nonzero "bench show bogus target" bun "$CLI" bench show bogus-target
 expect_rc0 "bench history all" bun "$CLI" bench history all
