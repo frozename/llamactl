@@ -134,12 +134,16 @@ first_seeded="$(print "$seed_out" | sed -n 's/^SEEDED_REL=//p' | head -1)"
 show_rel="$(print "$seed_out" | sed -n 's/^SHOW_REL=//p' | head -1)"
 compare_rel="$(print "$seed_out" | sed -n 's/^COMPARE_REL=//p' | head -1)"
 compare_profile="$(print "$seed_out" | sed -n 's/^COMPARE_PROFILE=//p' | head -1)"
+seed_skip="$(print "$seed_out" | sed -n 's/^SKIP //p' | head -1)"
 
-if [ "$seed_rc" -eq 0 ] && [ -n "$LLAMACTL_TEST_PROFILE" ]; then
-  # Inside a hermetic profile the fixture must emit all four markers —
-  # a silent no-op would drop every content assertion below while the
-  # tier still reports fail=0. Outside a profile the SKIP path leaves
-  # them empty and the guards below keep their skip behaviour.
+if [ "$seed_rc" -eq 0 ] && [ -n "$LLAMACTL_TEST_PROFILE" ] && [ -z "$seed_skip" ]; then
+  # Inside a hermetic profile the fixture must either emit all four
+  # markers or an explicit SKIP line — a silent no-op would drop every
+  # content assertion below while the tier still reports fail=0. The
+  # only deliberate skip reachable here is "runtime dir resolved outside
+  # the profile" (a developer shell exporting LOCAL_AI_RUNTIME_DIR); the
+  # marker guards below then skip the content assertions while the bare
+  # bench rc0 checks keep exercising that real runtime dir.
   [ -n "$first_seeded" ] || fail "bench fixture seed: missing SEEDED_REL" "$seed_out"
   [ -n "$show_rel" ] || fail "bench fixture seed: missing SHOW_REL" "$seed_out"
   [ -n "$compare_rel" ] || fail "bench fixture seed: missing COMPARE_REL" "$seed_out"

@@ -12,6 +12,10 @@
 //   SHOW_REL=<rel>        a record exists for `bench show current`'s key
 //   COMPARE_REL=<rel>     a tuned row exists for `bench compare all all`
 //   COMPARE_PROFILE=<p>   that row's tuned profile name
+//   SKIP <reason>         deliberate no-op with its reason — inside a
+//                         profile the smoke guard accepts this as an
+//                         explicit skip, so the runtime-dir guard can
+//                         never be mistaken for a silent seed failure
 
 import { resolve, sep } from "node:path";
 
