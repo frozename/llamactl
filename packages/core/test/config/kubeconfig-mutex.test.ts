@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -228,9 +229,14 @@ describe("saveConfig — atomic write (no torn reads)", () => {
     }
     saveConfig(cfg, cfgPath);
 
+    // The child script lives in os tmpdir, outside any package root — a
+    // bare "yaml" specifier there resolves to nothing and bun auto-installs
+    // latest into ~/.bun/install/cache, which lands inside the repo when
+    // HOME is sandboxed to the worktree (eslint then lints the cache and
+    // fails). Import by resolved absolute path instead.
     const readerScript = `
       import { readFileSync, existsSync } from "node:fs";
-      import { parse } from "yaml";
+      import { parse } from "${resolveYamlModule()}";
       const path = process.env.CFG_PATH;
       const errors = [];
       const start = Date.now();
@@ -290,4 +296,8 @@ describe("saveConfig — atomic write (no torn reads)", () => {
 
 function resolveKubeconfigModule(): string {
   return new URL("../../src/config/kubeconfig.ts", import.meta.url).pathname;
+}
+
+function resolveYamlModule(): string {
+  return createRequire(import.meta.url).resolve("yaml");
 }

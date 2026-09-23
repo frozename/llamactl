@@ -68,17 +68,20 @@ export function saveConfig(config: Config, path: string = defaultConfigPath()): 
  * BEFORE invoking `mutateConfig`.
  */
 export function mutateConfig(path: string, fn: (cfg: Config) => Config): Config {
-  // A racing stale-lock reaper can displace our lockfile between acquire
-  // and write (see reapIfStale). Re-verify ownership right before
-  // saveConfig; on loss, retry the whole read-modify-write against the
+  // A racing stale-lock reaper can displace our lockfile mid-critical-
+  // section (see reapIfStale: restoring a wrongly-seized file swaps a
+  // live plant out from under its owner). Verify ownership before AND
+  // after saveConfig, and confirm our bytes are still the on-disk
+  // content; on any loss, retry the whole read-modify-write against the
   // winner's persisted result instead of clobbering it.
   for (let attempt = 0; attempt < LOCK_LOSS_MAX_ATTEMPTS; attempt++) {
     const handle = acquireConfigLock(path);
     try {
       const next = fn(loadConfig(path));
-      const token = readLockToken(handle.path);
-      if (token !== null && ownedTokens.has(token)) {
-        saveConfig(next, path);
+      if (!ownsLockFile(handle.path)) continue;
+      const yaml = stringifyYaml(next);
+      saveConfig(next, path);
+      if (ownsLockFile(handle.path) && readFileSync(path, "utf8") === yaml) {
         return next;
       }
     } finally {
@@ -305,12 +308,18 @@ function releaseConfigLock(handle: ConfigLockHandle): void {
     // Best-effort — unlink below is the authoritative release.
   }
   try {
-    const token = readLockToken(handle.path);
-    if (token === null || !ownedTokens.has(token)) return;
+    if (!ownsLockFile(handle.path)) return;
     unlinkSync(handle.path);
   } catch {
     // Another process's stale-lock reaper may have removed it first.
   }
+}
+
+/** True while the lockfile still carries a token this process planted —
+ *  i.e. no reaper displaced it with a foreign or restored file. */
+function ownsLockFile(lockPath: string): boolean {
+  const token = readLockToken(lockPath);
+  return token !== null && ownedTokens.has(token);
 }
 
 function readLockHolder(lockPath: string): number {
