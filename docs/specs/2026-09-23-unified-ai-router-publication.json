@@ -1997,7 +1997,7 @@
   "tracking": {
     "schema_version": 1,
     "ledger_url": "https://github.com/frozename/llamactl/blob/docs/unified-ai-router-roadmap/docs/unified-ai-router-registrar.md",
-    "snapshot_at": "2026-09-23T11:22:30.080Z",
+    "snapshot_at": "2026-09-23T16:57:40.000Z",
     "repository": "frozename/llamactl",
     "baseline": "7443403912ab3976d18bc288de3009e2c23b7afb",
     "roadmap_url": "https://github.com/frozename/llamactl/issues/127",
@@ -2011,12 +2011,12 @@
       "registrar_id": "2c2a7cbb-048c-45e5-8663-f15187b9e85b",
       "slug": "llamactl-unified-ai-router",
       "home_project": "llamactl",
-      "status": "draft",
+      "status": "active",
       "source_doc_path": "docs/unified-ai-router-registrar.md",
-      "last_event_id": 1708,
+      "last_event_id": 1739,
       "rollup": {
         "open_blockers": 1,
-        "open_follow_ups": 18
+        "open_follow_ups": 19
       },
       "phases": [
         {
@@ -2027,7 +2027,7 @@
         {
           "number": 2,
           "title": "P0 — Characterization and shared contracts",
-          "status": "pending"
+          "status": "active"
         },
         {
           "number": 3,
@@ -2085,20 +2085,25 @@
         "id": "P0.1",
         "issue_url": "https://github.com/frozename/llamactl/issues/129",
         "issue_number": 129,
-        "status": "ready_for_preflight",
+        "status": "in_review",
         "github_state": "open",
         "dependencies": [],
         "penumbra_phase_no": 2,
         "penumbra_event_id": 1691,
-        "owner": null,
-        "task_id": null,
-        "handoff_id": null,
-        "implementation_pr": null,
-        "implementation_sha": null,
-        "review_verdict": "not_run",
-        "test_evidence": [],
+        "owner": "Penumbra fleet implementer (seat recorded in registrar event 1737)",
+        "task_id": "task_0a2237f7-e962-479e-bc17-ce25a2db008c",
+        "handoff_id": "e9137c98-ed33-478d-aaf5-d01ea86e828c",
+        "implementation_pr": "https://github.com/frozename/llamactl/pull/148",
+        "implementation_sha": "11451629d50e6a6d2f620591d6e149482c6387dc",
+        "review_verdict": "pass",
+        "test_evidence": [
+          "Gate table at head 11451629 vs base 7443403 on the same isolated install: typecheck, lint, remote/app tsc and format:check exit 0 at both; core 698/0 -> 729/0; cli 517 pass/3 skip/0 fail at both; remote 1796/6/0 -> 1804/6/0; nova 321/0, sirius-gateway 288/0, embersynth 152/0 unchanged.",
+          "Root-run classification: root bun test exit 1 at both (3752/9/224 -> 3787/9/228; all 224 base failures persist, +4 in the new remote characterization file traced to the pre-existing unrestored mock at packages/mcp/test/pipelines-run.test.ts:15); test/run-all.zsh exit 1 at both with the same two shell smoke failures (29 pass/2 fail).",
+          "Reproduction/mutation: nine test.failing known-defect reproductions recorded (P1.2 #132 x5, P1.3 #133 x3, P4.1 #139 x1).",
+          "Independent review: round 1 FAIL with three highs (fixed), round 2 split, closure verification PASS with no new findings at 11451629d50e6a6d2f620591d6e149482c6387dc."
+        ],
         "rollout_status": "not_enabled",
-        "next_action": "Characterize baseline and known failures in an isolated worktree after implementation authorization."
+        "next_action": "Run CI on pull/148, then a maintainer merge decision; P0.2 stays blocked until P0.1 is verified merged."
       },
       {
         "id": "P0.2",
@@ -2430,7 +2435,7 @@
         "state": "open",
         "registrar_event_id": 1686,
         "scope": "implementation_acceptance_and_rollout",
-        "summary": "Mandatory llamactl baseline has unresolved test failures; P0.1 characterization may proceed once implementation is authorized.",
+        "summary": "Mandatory llamactl baseline has unresolved test failures; P0.1 characterization may proceed once implementation is authorized. Fresh evidence at head 11451629d50e6a6d2f620591d6e149482c6387dc: typecheck, lint, remote/app tsc and format:check exit 0; core 729/0, cli 517 pass/3 skip/0 fail, remote 1804/6/0; run-all and root bun test still exit 1 with all 224 base failures persisting plus 4 new-characterization failures from the pre-existing unrestored mock at packages/mcp/test/pipelines-run.test.ts:15; gate remains open.",
         "evidence_url": "https://github.com/frozename/llamactl/pull/147",
         "resolve_when": "Fresh required gates pass at the proposed implementation SHA; record command/cwd/ref/counts and accepted disposition of failures. Close blocker using ref_event_id 1686."
       },
@@ -2472,6 +2477,27 @@
         "kind": "tracking_reconciled",
         "summary": "R0 complete; P0-P6 pending; 18 owed issue-linked follow-ups and one baseline acceptance blocker.",
         "registrar_event_range": [1683, 1708]
+      },
+      {
+        "id": "LEDGER-004",
+        "at": "2026-09-23T16:57:40.000Z",
+        "kind": "implementation_authorized",
+        "summary": "P0.1 implementation authorized; entry draft to active and phase 2 pending to active; work-start recorded; task task_0a2237f7-e962-479e-bc17-ce25a2db008c filed against issue 129.",
+        "registrar_event_range": [1718, 1722]
+      },
+      {
+        "id": "LEDGER-005",
+        "at": "2026-09-23T16:57:40.000Z",
+        "kind": "review_recorded",
+        "summary": "P0.1 review round 1 FAIL with three highs (fixed), round 2 split, closure-round decision recorded as a deliberate one-round deviation from the two-round review cap; implementation PR pull/148 opened at 11451629d50e6a6d2f620591d6e149482c6387dc, open and not merged; final handoff e9137c98-ed33-478d-aaf5-d01ea86e828c.",
+        "registrar_event_range": [1729, 1737]
+      },
+      {
+        "id": "LEDGER-006",
+        "at": "2026-09-23T16:57:40.000Z",
+        "kind": "correction",
+        "summary": "Lane-ledger correction recorded; fresh GATE-01 evidence appended while the gate stays open; architecture 1.1 tunnel-streaming claim corrected (must be wired, not reused); follow-up 1691 remains owed.",
+        "registrar_event_range": [1738, 1739]
       }
     ]
   },
