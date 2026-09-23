@@ -8,12 +8,11 @@
  */
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { config as kubecfg } from "../src/index.js";
-import { existsSync, mkdtempSync, rmSync } from "../src/safe-fs.js";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { type Cluster, makeCluster } from "./helpers.js";
 
 interface CloudCall {
@@ -23,21 +22,28 @@ interface CloudCall {
   body: Record<string, unknown> | null;
 }
 
+interface ChromaCall {
+  url: string;
+  method: string;
+  body: Record<string, unknown> | null;
+}
+
 const ENV_KEYS = [
   "LLAMACTL_CONFIG",
   "DEV_STORAGE",
   "LOCAL_AI_RUNTIME_DIR",
   "LLAMA_CPP_HOST",
   "LLAMA_CPP_PORT",
-  "PATH",
 ] as const;
 
 let cluster: Cluster | undefined;
 let cloud: ReturnType<typeof Bun.serve> | undefined;
+let chroma: ReturnType<typeof Bun.serve> | undefined;
 let cloudCalls: CloudCall[];
+let chromaCalls: ChromaCall[];
 let bearer: string;
-let envBackup: Record<string, string | undefined>;
-let sandbox: string;
+let envBackup: Record<string, string | undefined> = {};
+let sandbox: string | undefined;
 
 function chatCompletions(
   body: Record<string, unknown>,
@@ -58,24 +64,28 @@ function chatCompletions(
   );
 }
 
-function preferWorkingOpenssl(): void {
-  // tls.generateSelfSignedCert shells out to `openssl req -x509 -key …`
-  // with no explicit -new. /usr/bin/openssl on this host is LibreSSL
-  // 3.3.x, which rejects that invocation ("unable to load X509 request"),
-  // while OpenSSL ≥1.1.1 accepts it. When the PATH openssl is LibreSSL
-  // and a Homebrew OpenSSL exists, prefer it for the cert fixture —
-  // test-environment plumbing only; product code is unchanged.
-  const probe = spawnSync("openssl", ["version"], { encoding: "utf8" });
-  if (!probe.stdout.includes("LibreSSL")) return;
-  const homebrewOpenssl = "/opt/homebrew/opt/openssl/bin";
-  if (!existsSync(join(homebrewOpenssl, "openssl"))) return;
-  process.env["PATH"] = `${homebrewOpenssl}:${process.env["PATH"] ?? ""}`;
+function writeLlamaServerWorkload(runtimeRoot: string, workload: string, port: number): void {
+  const dir = join(runtimeRoot, "workloads", workload);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "llama-server.pid"), `${String(process.pid)}\n`);
+  writeFileSync(
+    join(dir, "llama-server.state"),
+    JSON.stringify({
+      rel: "via-node1/model.gguf",
+      extraArgs: [],
+      host: "127.0.0.1",
+      port,
+      binary: "/x/llama-server",
+      pid: process.pid,
+      startedAt: "2026-05-24T00:00:00.000Z",
+      tunedProfile: null,
+    }),
+  );
 }
 
 beforeAll(async () => {
   envBackup = {};
   for (const key of ENV_KEYS) envBackup[key] = process.env[key];
-  preferWorkingOpenssl();
 
   sandbox = mkdtempSync(join(tmpdir(), "llamactl-proxy-char-"));
   // Hermetic globals — the in-proc pipeline reads process.env per call:
@@ -120,6 +130,53 @@ beforeAll(async () => {
           usage: { prompt_tokens: 7, completion_tokens: 5, total_tokens: 12 },
         });
       }
+      if (req.method === "POST" && parsed.pathname === "/v1/embeddings") {
+        const inputs = Array.isArray(body?.["input"]) ? body["input"].length : 1;
+        return Response.json({
+          object: "list",
+          model: body?.["model"] ?? "embed-model",
+          data: Array.from({ length: inputs }, (_, i) => ({
+            object: "embedding",
+            index: i,
+            embedding: [0.11, 0.22, 0.33],
+          })),
+          usage: { prompt_tokens: 2, total_tokens: 2 },
+        });
+      }
+      return new Response("", { status: 404 });
+    },
+  });
+
+  chromaCalls = [];
+  chroma = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req: Request): Promise<Response> {
+      const parsed = new URL(req.url);
+      let body: Record<string, unknown> | null = null;
+      try {
+        body = (await req.json()) as Record<string, unknown>;
+      } catch {
+        body = null;
+      }
+      chromaCalls.push({ url: req.url, method: req.method, body });
+      if (req.method === "GET" && parsed.pathname === "/api/v2/heartbeat") {
+        return Response.json({ nanosecond: Date.now() });
+      }
+      if (req.method === "POST" && parsed.pathname.endsWith("/collections")) {
+        return Response.json({
+          id: "chroma-collection-uuid-1",
+          name: body?.["name"] ?? "kb",
+        });
+      }
+      if (req.method === "POST" && parsed.pathname.endsWith("/query")) {
+        return Response.json({
+          ids: [["doc-1"]],
+          distances: [[0.05]],
+          documents: [["llamactl is a local-first control plane for llama.cpp fleets"]],
+          metadatas: [[{ source: "docs" }]],
+        });
+      }
       return new Response("", { status: 404 });
     },
   });
@@ -132,7 +189,7 @@ beforeAll(async () => {
   const cfg = kubecfg.loadConfig(cluster.clusterConfigPath);
   bearer = cfg.users.find((u) => u.name === "me")?.token ?? "";
   if (!bearer) throw new Error("cluster kubeconfig has no 'me' user token");
-  const withGateway = kubecfg.upsertNode(cfg, "home", {
+  let nextCfg = kubecfg.upsertNode(cfg, "home", {
     name: "fake-cloud",
     kind: "gateway",
     endpoint: "",
@@ -141,18 +198,44 @@ beforeAll(async () => {
       baseUrl: `http://127.0.0.1:${String(cloud.port)}`,
     },
   });
-  kubecfg.saveConfig(withGateway, cluster.clusterConfigPath);
+  nextCfg = kubecfg.upsertNode(nextCfg, "home", {
+    name: "rag1",
+    kind: "rag",
+    endpoint: "",
+    rag: {
+      provider: "chroma",
+      endpoint: `http://127.0.0.1:${String(chroma.port)}`,
+      collection: "kb",
+      extraArgs: [],
+      embedder: {
+        node: "fake-cloud",
+        model: "embed-model",
+        baseUrl: `http://127.0.0.1:${String(cloud.port)}`,
+      },
+    },
+  });
+  kubecfg.saveConfig(nextCfg, cluster.clusterConfigPath);
   process.env["LLAMACTL_CONFIG"] = cluster.clusterConfigPath;
 });
 
 afterAll(async () => {
-  if (cluster !== undefined) await cluster.cleanup();
-  if (cloud !== undefined) await cloud.stop(true);
-  rmSync(sandbox, { recursive: true, force: true });
-  for (const key of ENV_KEYS) {
-    const prev = envBackup[key];
-    if (prev === undefined) Reflect.deleteProperty(process.env, key);
-    else process.env[key] = prev;
+  try {
+    try {
+      if (cluster !== undefined) await cluster.cleanup();
+    } finally {
+      if (cloud !== undefined) await cloud.stop(true);
+      if (chroma !== undefined) await chroma.stop(true);
+      if (sandbox !== undefined) rmSync(sandbox, { recursive: true, force: true });
+    }
+  } finally {
+    // Env restore must survive a failing cleanup — leaking
+    // LLAMACTL_CONFIG / DEV_STORAGE / LLAMA_CPP_PORT into later test
+    // files would silently reroute their kubeconfig and fallback port.
+    for (const key of ENV_KEYS) {
+      const prev = envBackup[key];
+      if (prev === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = prev;
+    }
   }
 });
 
@@ -175,8 +258,7 @@ describe("POST /v1/chat/completions via/rag JSON path (P0.1)", () => {
     const body = (await res.json()) as Record<string, unknown>;
 
     // The OpenAI-compat adapter POSTs <baseUrl>/chat/completions with
-    // stream forced off, providerOptions spread into the wire body, and
-    // a Bearer header carrying the (absent) apiKeyRef as empty.
+    // stream forced off and providerOptions spread into the wire body.
     expect(cloudCalls).toHaveLength(1);
     const call = cloudCalls[0]!;
     expect(call.url).toBe(`http://127.0.0.1:${String(cloud?.port)}/v1/chat/completions`);
@@ -185,7 +267,6 @@ describe("POST /v1/chat/completions via/rag JSON path (P0.1)", () => {
     expect(call.body?.["stream"]).toBe(false);
     expect(call.body?.["user"]).toBe("test-operator");
     expect(call.body?.["temperature"]).toBe(0.5);
-    expect(call.authorization).toBe("Bearer");
 
     // chatComplete returns the upstream JSON + provider/latency fields.
     expect(body["object"]).toBe("chat.completion");
@@ -196,28 +277,43 @@ describe("POST /v1/chat/completions via/rag JSON path (P0.1)", () => {
     );
   });
 
-  test("via targeting an agent node dials the agent's own /v1 surface", async () => {
-    // `via: node1` resolves to kind 'agent' → providerForNode points an
-    // OpenAI-compat adapter at <endpoint>/v1. The fetch reaches the
-    // agent's TLS listener (the fixture serves the self-signed cert that
-    // makeCluster generated) and fails certificate validation — no
-    // pinned CA is configured on the dial. chatComplete wraps that as a
-    // TRPCError, which forwardChat maps to the upstream_error envelope
-    // at the TRPC-derived status (INTERNAL_SERVER_ERROR → 500).
+  // Known defect: router.ts:1256 (chatComplete) calls providerForNode
+  // without a fetchFactory, so factory.ts:231 dials the agent with
+  // unpinned global fetch and the kubeconfig-pinned node.certificate is
+  // ignored — the TLS handshake to the agent's self-signed cert is
+  // rejected before any HTTP exchange. Owning slice: P4.1 (#139).
+  // Correct behavior asserted below: via:node1 reaches node1's
+  // /v1/chat/completions, falls through to node1's local openaiProxy,
+  // and the workload routed there (wl-via-node → the loopback "cloud")
+  // answers 200.
+  test.failing("via targeting an agent node reaches the agent's own /v1 surface", async () => {
+    const runtimeRoot = process.env["LOCAL_AI_RUNTIME_DIR"];
+    const cloudPort = cloud?.port;
+    if (runtimeRoot === undefined || cloudPort === undefined)
+      throw new Error("test fixture not initialized");
+    writeLlamaServerWorkload(runtimeRoot, "wl-via-node", cloudPort);
+
     const res = await chatCompletions({
-      model: "any",
+      model: "via-node1/model.gguf",
       messages: [{ role: "user", content: "hi" }],
       via: "node1",
     });
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({
-      error: {
-        message: "self signed certificate",
-        type: "upstream_error",
-        code: "INTERNAL_SERVER_ERROR",
-      },
-    });
-    expect(cloudCalls).toHaveLength(0);
+    expect(res.status).toBe(200);
+
+    // node1's proxy forwarded verbatim to its workload upstream — proof
+    // the dial actually reached the agent's /v1 surface rather than
+    // being answered by an in-caller fallback.
+    const chatCalls = cloudCalls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.method).toBe("POST");
+    expect(chatCalls[0]!.body?.["model"]).toBe("via-node1/model.gguf");
+
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["object"]).toBe("chat.completion");
+    expect(body["provider"]).toBe("node1");
+    expect((body["choices"] as { message: { content: string } }[])[0]!.message.content).toBe(
+      "cloud reply",
+    );
   });
 
   test("rag without via returns the invalid_request_error envelope", async () => {
@@ -286,5 +382,81 @@ describe("POST /v1/chat/completions via/rag JSON path (P0.1)", () => {
       error: { code: "UNAUTHORIZED", message: "invalid bearer token" },
     });
     expect(cloudCalls).toHaveLength(0);
+  });
+
+  test("via + rag on the chroma rag node retrieves, injects context first, and answers 200", async () => {
+    const res = await chatCompletions({
+      model: "fake-model",
+      messages: [{ role: "user", content: "what is llamactl?" }],
+      via: "fake-cloud",
+      rag: { node: "rag1", topK: 2 },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-llamactl-rag")).toBe("retrieved=1");
+
+    // The real ragSearch path ran end-to-end: chroma heartbeat +
+    // get-or-create collection + a query carrying the embedded vector,
+    // and the delegated embedder hit the cloud's /v1/embeddings.
+    const heartbeat = chromaCalls.filter(
+      (c) => c.method === "GET" && c.url.endsWith("/api/v2/heartbeat"),
+    );
+    const collectionCreate = chromaCalls.filter(
+      (c) => c.method === "POST" && new URL(c.url).pathname.endsWith("/collections"),
+    );
+    const chromaQuery = chromaCalls.filter(
+      (c) => c.method === "POST" && new URL(c.url).pathname.endsWith("/query"),
+    );
+    expect(heartbeat.length).toBeGreaterThanOrEqual(1);
+    expect(collectionCreate).toHaveLength(1);
+    expect(collectionCreate[0]!.body?.["name"]).toBe("kb");
+    expect(collectionCreate[0]!.body?.["get_or_create"]).toBe(true);
+    expect(chromaQuery).toHaveLength(1);
+    expect(Array.isArray(chromaQuery[0]!.body?.["query_embeddings"])).toBe(true);
+
+    const embedCalls = cloudCalls.filter((c) => c.url.endsWith("/v1/embeddings"));
+    expect(embedCalls).toHaveLength(1);
+    expect(embedCalls[0]!.body?.["model"]).toBe("embed-model");
+
+    // The retrieved document is injected as the FIRST system message
+    // before the user turn reaches the chat upstream.
+    const chatCalls = cloudCalls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    const messages = chatCalls[0]!.body?.["messages"] as { role: string; content: string }[];
+    expect(messages[0]!.role).toBe("system");
+    expect(messages[0]!.content).toContain(
+      "llamactl is a local-first control plane for llama.cpp fleets",
+    );
+    expect(messages[1]).toEqual({ role: "user", content: "what is llamactl?" });
+
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["object"]).toBe("chat.completion");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Observed current behavior — NOT a compatibility guarantee. These pin what
+// the wire does TODAY for credential handling; a security review may change
+// them. Keep contract assertions in the describe above.
+// ---------------------------------------------------------------------------
+describe("observed current behavior, not a compatibility guarantee (security review pending)", () => {
+  beforeEach(() => {
+    cloudCalls = [];
+    chromaCalls = [];
+  });
+
+  test("the gateway adapter sends a vacuous 'Bearer' credential when apiKeyRef is unset", async () => {
+    // providerForCloudNode passes apiKey:"" for a gateway with no
+    // apiKeyRef and the OpenAI-compat adapter still emits the
+    // `authorization` header — a header with a scheme and no token.
+    const res = await chatCompletions({
+      model: "fake-model",
+      messages: [{ role: "user", content: "hello cloud" }],
+      via: "fake-cloud",
+    });
+    expect(res.status).toBe(200);
+    const chatCalls = cloudCalls.filter((c) => c.url.endsWith("/v1/chat/completions"));
+    expect(chatCalls).toHaveLength(1);
+    expect(chatCalls[0]!.authorization).toBe("Bearer");
   });
 });

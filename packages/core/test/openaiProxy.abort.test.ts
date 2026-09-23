@@ -419,14 +419,13 @@ test("client abort before dispatch surfaces the upstream-unreachable envelope", 
 
     // forward() maps the aborted fetch to the standard 502 envelope —
     // a client abort is indistinguishable from an unreachable upstream
-    // on the wire today.
+    // on the wire today. Pin status + type + the message prefix; the
+    // suffix is whatever the abort rejection carried (mock-owned, not
+    // part of the envelope contract).
     expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({
-      error: {
-        message: "upstream llama-server unreachable: The operation was aborted.",
-        type: "llamactl_upstream_error",
-      },
-    });
+    const body = (await res.json()) as { error: { message: string; type: string } };
+    expect(body.error.type).toBe("llamactl_upstream_error");
+    expect(body.error.message.startsWith("upstream llama-server unreachable:")).toBe(true);
   } finally {
     t.cleanup();
   }
@@ -520,11 +519,18 @@ test("a truncated upstream SSE body is passed to the client verbatim", async () 
 test("an erroring upstream SSE stream propagates the error to the client reader", async () => {
   const t = tempEnv();
   try {
+    // Pull-based erroring models a real mid-stream socket failure: the
+    // first chunk is delivered to whoever drains the queue, and the NEXT
+    // pull errors. (error() inside start() would discard the queued
+    // chunk before any read — a fixture artifact, not a connection
+    // reset.)
     const stream = new ReadableStream<Uint8Array>({
       start(controller): void {
         controller.enqueue(
           new TextEncoder().encode('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'),
         );
+      },
+      pull(controller): void {
         controller.error(new Error("upstream boom"));
       },
     });
@@ -549,14 +555,16 @@ test("an erroring upstream SSE stream propagates the error to the client reader"
 
     expect(res.status).toBe(200);
     const reader = res.body!.getReader();
-    // WHATWG streams: controller.error() discards the queued chunks, so
-    // the FIRST read already rejects — the buffered partial frame never
-    // reaches the client.
-    const firstRead = await reader.read().then(
+    // What the client really observes on this stack: the delivered
+    // partial frame first, then the error on the next read.
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(new TextDecoder().decode(first.value)).toContain("partial");
+    const secondRead = await reader.read().then(
       () => "resolved",
       (err: unknown) => (err instanceof Error ? err.message : String(err)),
     );
-    expect(firstRead).toBe("upstream boom");
+    expect(secondRead).toBe("upstream boom");
   } finally {
     t.cleanup();
   }
@@ -575,14 +583,15 @@ describe("known defects at 7443403 (fix in later slices)", () => {
   // streamMode:"always" is required: the request-side `stream` flag never
   // reaches the upstream at 7443403 (see the sibling defect in
   // openaiProxy.test.ts), so an honest fixture could never exercise the
-  // response translator's truncation path.
+  // response translator's truncation path. Remove "always" when P1.2
+  // (#132) lands — the fixture then sees stream:true on the wire.
   test.failing(
     "/v1/messages truncated upstream SSE surfaces an explicit error event",
     async () => {
       const t = tempEnv();
       try {
         installConditionalChatUpstream({
-          streamMode: "always",
+          streamMode: "always", // required until P1.2 #132 lands — see above
           sseBody: () =>
             'data: {"id":"chatcmpl-x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"par"},"finish_reason":null}]}\n\n',
         });
@@ -602,7 +611,14 @@ describe("known defects at 7443403 (fix in later slices)", () => {
 
         expect(res.headers.get("content-type")).toBe("text/event-stream");
         const body = await res.text();
-        expect(body).toContain("event: error");
+        const errorIdx = body.indexOf("event: error");
+        expect(errorIdx).toBeGreaterThanOrEqual(0);
+        // The error must be the terminal event — a fabricated success
+        // terminal after it would still signal "completed normally".
+        const tail = body.slice(errorIdx);
+        expect(tail).not.toContain("\nevent:");
+        expect(tail).not.toContain('"stop_reason":"end_turn"');
+        expect(body).not.toContain("event: message_stop");
       } finally {
         t.cleanup();
       }
@@ -610,13 +626,14 @@ describe("known defects at 7443403 (fix in later slices)", () => {
   );
 
   // Same defect via an errored (not merely truncated) upstream stream.
+  // "always" is likewise pinned to P1.2 #132 — remove when it lands.
   test.failing(
     "/v1/messages errored upstream SSE surfaces an explicit error event",
     async () => {
       const t = tempEnv();
       try {
         installConditionalChatUpstream({
-          streamMode: "always",
+          streamMode: "always", // required until P1.2 #132 lands — see above
           sseBody: () =>
             new ReadableStream<Uint8Array>({
               start(controller): void {
@@ -645,7 +662,13 @@ describe("known defects at 7443403 (fix in later slices)", () => {
 
         expect(res.headers.get("content-type")).toBe("text/event-stream");
         const body = await res.text();
-        expect(body).toContain("event: error");
+        const errorIdx = body.indexOf("event: error");
+        expect(errorIdx).toBeGreaterThanOrEqual(0);
+        // Same terminal contract — error last, no fabricated success.
+        const tail = body.slice(errorIdx);
+        expect(tail).not.toContain("\nevent:");
+        expect(tail).not.toContain('"stop_reason":"end_turn"');
+        expect(body).not.toContain("event: message_stop");
       } finally {
         t.cleanup();
       }

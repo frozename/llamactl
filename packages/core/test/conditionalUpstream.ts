@@ -30,19 +30,22 @@ const DEFAULT_SSE_BODY =
 interface UpstreamFixtureOpts {
   /**
    * "honest" (default): stream only when the observed body has
-   * `stream === true`. "always": stream regardless — required by
-   * response-side translation tests at 7443403, where the anthropic
-   * request translator drops `stream` so the proxy can never ask.
+   * `stream === true`. "always" exists ONLY for the two P1.3
+   * test.failing reproductions in openaiProxy.abort.test.ts — the
+   * P1.2 request-translator defect drops `stream`, so an honest
+   * fixture could never reach the response-side path under test.
+   * Remove "always" when P1.2 (#132) lands.
    */
   streamMode?: "honest" | "always";
   /** Override the SSE payload (truncated / erroring stream fixtures). */
-  sseBody?: () => ReadableStream<Uint8Array> | string;
+  sseBody?: ReadableStream<Uint8Array> | string | (() => ReadableStream<Uint8Array> | string);
   /** Extra fields merged into the JSON chat.completion response. */
   json?: Record<string, unknown>;
 }
 
 function sseResponse(opts: UpstreamFixtureOpts | undefined): Response {
-  const override = opts?.sseBody?.();
+  const override =
+    typeof opts?.sseBody === "function" ? opts.sseBody() : opts?.sseBody;
   const stream =
     override instanceof ReadableStream
       ? override
@@ -60,9 +63,32 @@ function sseResponse(opts: UpstreamFixtureOpts | undefined): Response {
   });
 }
 
+/**
+ * Fail closed on request bodies the fixture can't decode — recording a
+ * non-string body as "no stream" would let a real `stream: true`
+ * silently masquerade as non-streaming.
+ */
+async function readRequestBodyText(
+  input: Request | URL | string,
+  init: RequestInit | undefined,
+): Promise<string | null> {
+  const body = init?.body;
+  if (body === undefined || body === null) {
+    if (input instanceof Request && input.body !== null) return await input.text();
+    return null;
+  }
+  if (typeof body === "string") return body;
+  if (body instanceof Uint8Array) return new TextDecoder().decode(body);
+  if (body instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(body));
+  if (body instanceof Blob) return await body.text();
+  throw new Error(
+    `conditionalUpstream: unsupported request body type ${Object.prototype.toString.call(body)}`,
+  );
+}
+
 export function installConditionalChatUpstream(opts?: UpstreamFixtureOpts): ConditionalUpstream {
   const calls: RecordedUpstreamCall[] = [];
-  globalThis.fetch = ((input: Request | URL | string, init?: RequestInit) => {
+  globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
     const url =
       typeof input === "string"
         ? input
@@ -71,7 +97,7 @@ export function installConditionalChatUpstream(opts?: UpstreamFixtureOpts): Cond
           : input.url;
     const method =
       init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
-    const bodyText = typeof init?.body === "string" ? init.body : null;
+    const bodyText = await readRequestBodyText(input, init);
     let body: Record<string, unknown> | null = null;
     try {
       body = bodyText === null ? null : (JSON.parse(bodyText) as Record<string, unknown>);
@@ -86,28 +112,26 @@ export function installConditionalChatUpstream(opts?: UpstreamFixtureOpts): Cond
 
     const parsed = new URL(url);
     if (method !== "POST" || parsed.pathname !== "/v1/chat/completions") {
-      return Promise.resolve(new Response("", { status: 404 }));
+      return new Response("", { status: 404 });
     }
 
     const wantsStream = opts?.streamMode === "always" || body?.["stream"] === true;
-    if (wantsStream) return Promise.resolve(sseResponse(opts));
+    if (wantsStream) return sseResponse(opts);
 
-    return Promise.resolve(
-      Response.json({
-        id: "chatcmpl-fixture",
-        object: "chat.completion",
-        model: body?.["model"] ?? "fixture-model",
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: "fixture reply" },
-            finish_reason: "stop",
-          },
-        ],
-        usage: { prompt_tokens: 3, completion_tokens: 4 },
-        ...opts?.json,
-      }),
-    );
+    return Response.json({
+      id: "chatcmpl-fixture",
+      object: "chat.completion",
+      model: body?.["model"] ?? "fixture-model",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "fixture reply" },
+          finish_reason: "stop",
+        },
+      ],
+      usage: { prompt_tokens: 3, completion_tokens: 4 },
+      ...opts?.json,
+    });
   }) as unknown as typeof fetch;
   return { calls };
 }

@@ -17,6 +17,7 @@ import {
   ResponseCacheRegistry,
 } from "../../src/responsecache/index.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../../src/safe-fs.js";
+import { installConditionalChatUpstream } from "../conditionalUpstream.js";
 
 interface TempRuntime {
   root: string;
@@ -533,35 +534,20 @@ test("partial SSE responses are not cached and emit skip log", async () => {
   }
 });
 
-test("truncated anthropic SSE responses are not cached even after translation adds a terminal frame", async () => {
+// Defect-tagged at cf60f20d: depends on the client `stream` flag
+// reaching the upstream — P1.2 (#132). Under the defect the honest
+// fixture answers JSON, so the partial-SSE skip path never runs.
+test.failing("truncated anthropic SSE responses are not cached even after translation adds a terminal frame", async () => {
   const runtime = makeTempRuntime();
   const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
   try {
     writeModelRunWorkload(runtime.root, "wl-a", 19502, "claude-3-7-sonnet");
-    let calls = 0;
-    globalThis.fetch = ((input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      const method =
-        init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
-      const parsed = new URL(url);
-      if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
-        calls += 1;
-        return Promise.resolve(
-          new Response(
-            `data: ${JSON.stringify({
-              id: "msg_1",
-              choices: [{ delta: { content: "hello" }, finish_reason: null }],
-            })}\n\n`,
-            {
-              status: 200,
-              headers: { "content-type": "text/event-stream" },
-            },
-          ),
-        );
-      }
-      return Promise.resolve(new Response("", { status: 404 }));
-    }) as typeof fetch;
+    const upstream = installConditionalChatUpstream({
+      sseBody: `data: ${JSON.stringify({
+        id: "msg_1",
+        choices: [{ delta: { content: "hello" }, finish_reason: null }],
+      })}\n\n`,
+    });
 
     const model = "claude-3-7-sonnet";
     const body = JSON.stringify({
@@ -581,7 +567,7 @@ test("truncated anthropic SSE responses are not cached even after translation ad
     );
 
     expect(response.status).toBe(200);
-    expect(calls).toBe(1);
+    expect(upstream.calls).toHaveLength(1);
     expect(
       warnSpy.mock.calls.some((call) =>
         String(call[0]).includes('"event":"response_cache_skip_partial_sse"'),
@@ -612,34 +598,21 @@ test("truncated anthropic SSE responses are not cached even after translation ad
   }
 });
 
+// NOTE: under the P1.2 (#132) request-translator defect the client's
+// `stream` never reaches the upstream, so the honest fixture answers
+// JSON — this currently exercises the non-streaming cache path. It
+// genuinely covers SSE once P1.2 lands.
 test("complete anthropic SSE responses remain cacheable after translation", async () => {
   const runtime = makeTempRuntime();
   try {
     writeModelRunWorkload(runtime.root, "wl-a", 19503, "claude-3-7-sonnet");
-    let calls = 0;
-    globalThis.fetch = ((input: Request | URL | string, init?: RequestInit): Promise<Response> => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      const method =
-        init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
-      const parsed = new URL(url);
-      if (method === "POST" && parsed.pathname === "/v1/chat/completions") {
-        calls += 1;
-        return Promise.resolve(
-          new Response(
-            `data: ${JSON.stringify({
-              id: "msg_1",
-              choices: [{ delta: { content: "hello" }, finish_reason: null }],
-            })}\n\n` + `data: [DONE]\n\n`,
-            {
-              status: 200,
-              headers: { "content-type": "text/event-stream" },
-            },
-          ),
-        );
-      }
-      return Promise.resolve(new Response("", { status: 404 }));
-    }) as typeof fetch;
+    const upstream = installConditionalChatUpstream({
+      sseBody:
+        `data: ${JSON.stringify({
+          id: "msg_1",
+          choices: [{ delta: { content: "hello" }, finish_reason: null }],
+        })}\n\n` + `data: [DONE]\n\n`,
+    });
 
     const model = "claude-3-7-sonnet";
     const body = JSON.stringify({
@@ -659,7 +632,7 @@ test("complete anthropic SSE responses remain cacheable after translation", asyn
     );
 
     expect(response.status).toBe(200);
-    expect(calls).toBe(1);
+    expect(upstream.calls).toHaveLength(1);
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
@@ -1900,8 +1873,8 @@ describe("known defects at 7443403 (fix in later slices)", () => {
       const gate = new Promise<void>((resolve) => {
         releaseGate = resolve;
       });
-      let upstreamCalls = 0;
-      globalThis.fetch = ((input: Request | URL | string): Promise<Response> => {
+      const upstreamCalls: { url: string; body: Record<string, unknown> | null }[] = [];
+      globalThis.fetch = ((input: Request | URL | string, init?: RequestInit): Promise<Response> => {
         const url =
           typeof input === "string"
             ? input
@@ -1911,7 +1884,14 @@ describe("known defects at 7443403 (fix in later slices)", () => {
         if (new URL(url).pathname !== "/v1/chat/completions") {
           return Promise.resolve(new Response("", { status: 404 }));
         }
-        upstreamCalls += 1;
+        const bodyText = typeof init?.body === "string" ? init.body : null;
+        let parsedBody: Record<string, unknown> | null = null;
+        try {
+          parsedBody = bodyText === null ? null : (JSON.parse(bodyText) as Record<string, unknown>);
+        } catch {
+          parsedBody = null;
+        }
+        upstreamCalls.push({ url, body: parsedBody });
         return Promise.resolve(
           new Response(
             new ReadableStream<Uint8Array>({
@@ -1935,9 +1915,8 @@ describe("known defects at 7443403 (fix in later slices)", () => {
         );
       }) as typeof fetch;
       try {
-        const url = new URL("http://127.0.0.1:19501");
         const model = "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-Q8_0.gguf";
-        writeModelRunWorkload(runtime.root, "wl-a", Number.parseInt(url.port, 10), model);
+        writeModelRunWorkload(runtime.root, "wl-a", 19501, model);
         const body = JSON.stringify({
           model,
           messages: [{ role: "user", content: "gated stream" }],
@@ -1953,27 +1932,64 @@ describe("known defects at 7443403 (fix in later slices)", () => {
           }),
           runtime.env,
         );
-        // Bounded race — the defect is structural (proxyOpenAI cannot
-        // resolve before upstream EOF), so the timeout only bounds the
-        // defective side; the correct side is event-driven.
-        const outcome = await Promise.race([
-          resPromise.then(() => "responded" as const),
-          new Promise<"buffered">((resolve) =>
-            setTimeout(() => {
-              resolve("buffered");
-            }, 1500),
-          ),
-        ]);
+        let respondTimer: ReturnType<typeof setTimeout> | undefined;
         try {
+          // Bounded race — the defect is structural (proxyOpenAI cannot
+          // resolve before upstream EOF), so the timeout only bounds the
+          // defective side; the correct side is event-driven.
+          const outcome = await Promise.race([
+            resPromise.then(() => "responded" as const),
+            new Promise<"buffered">((resolve) => {
+              respondTimer = setTimeout(() => {
+                resolve("buffered");
+              }, 1500);
+            }),
+          ]);
           expect(outcome).toBe("responded");
+
+          const res = await resPromise;
+          expect(res.status).toBe(200);
+          // The upstream really received this request — a silent
+          // fallback or a synthesized response cannot satisfy this.
+          expect(upstreamCalls).toHaveLength(1);
+          expect(upstreamCalls[0]!.url).toBe("http://127.0.0.1:19501/v1/chat/completions");
+          expect(upstreamCalls[0]!.body?.["model"]).toBe(model);
+          expect(upstreamCalls[0]!.body?.["stream"]).toBe(true);
+
+          // Gate still held: the client's first read must yield the
+          // first gated event while the upstream stream is still open.
+          const reader = res.body!.getReader();
+          const decoder = new TextDecoder();
+          let readTimer: ReturnType<typeof setTimeout> | undefined;
+          const first = await Promise.race([
+            reader.read(),
+            new Promise<"timeout">((resolve) => {
+              readTimer = setTimeout(() => {
+                resolve("timeout");
+              }, 1500);
+            }),
+          ]).finally(() => {
+            if (readTimer !== undefined) clearTimeout(readTimer);
+          });
+          expect(first).not.toBe("timeout");
+          const firstRead = first as { done?: boolean; value?: Uint8Array };
+          expect(firstRead.done).toBe(false);
+          let received = decoder.decode(firstRead.value, { stream: true });
+          expect(received).toContain("gated-1");
+
+          // Release and drain — the full stream completes after the
+          // gate opens.
+          releaseGate();
+          for (;;) {
+            const r = await reader.read();
+            if (r.done) break;
+            received += decoder.decode(r.value, { stream: true });
+          }
+          expect(received).toContain("data: [DONE]");
         } finally {
+          if (respondTimer !== undefined) clearTimeout(respondTimer);
           releaseGate();
         }
-
-        const res = await resPromise;
-        expect(res.status).toBe(200);
-        expect(await res.text()).toContain("data: [DONE]");
-        expect(upstreamCalls).toBe(1);
       } finally {
         runtime.cleanup();
       }

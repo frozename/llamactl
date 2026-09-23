@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -679,15 +679,13 @@ test("/v1/responses routes a peer-only model to the peer endpoint", async () => 
   }
 });
 
-test("/v1/responses stream:true reaches upstream and the SSE answer fails closed with 501", async () => {
+test("/v1/responses stream:true fails closed with the 501 envelope", async () => {
   const t = tempEnv();
   try {
-    // Unlike the anthropic path, translateResponsesRequest DOES forward
-    // `stream` — the honest upstream therefore returns SSE, which
-    // maybeTranslateResponse refuses with the explicit 501 envelope
-    // (responsesTranslationErrorResponse). This pins both halves:
-    // stream propagation AND the documented streaming-unsupported surface.
-    const upstream = installConditionalChatUpstream();
+    // The contract surface: a client that asks for streaming on
+    // /v1/responses gets the explicit responses_translation_error
+    // envelope, never a silent downgrade.
+    installConditionalChatUpstream();
     writeKvFreeModelRun(t.dir, "wl-resp-stream", 8146, "org/stream-model.gguf");
 
     const res = await openaiProxy.proxyOpenAI(
@@ -703,8 +701,6 @@ test("/v1/responses stream:true reaches upstream and the SSE answer fails closed
       t.env,
     );
 
-    expect(upstream.calls).toHaveLength(1);
-    expect(upstream.calls[0]!.body?.["stream"]).toBe(true);
     expect(res.status).toBe(501);
     expect(await res.json()).toEqual({
       error: {
@@ -715,4 +711,41 @@ test("/v1/responses stream:true reaches upstream and the SSE answer fails closed
   } finally {
     t.cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Observed current behavior — NOT a compatibility guarantee. Whether the
+// upstream is still contacted before the 501 is an implementation detail a
+// later slice may change (e.g. reject before forwarding).
+// ---------------------------------------------------------------------------
+describe("observed current behavior, not a compatibility guarantee (security review pending)", () => {
+  test("/v1/responses stream:true is forwarded upstream once with stream:true", async () => {
+    const t = tempEnv();
+    try {
+      // Incidental at this revision: the request is forwarded (with
+      // translateResponsesRequest's stream flag intact) before
+      // maybeTranslateResponse refuses the SSE reply with 501.
+      const upstream = installConditionalChatUpstream();
+      writeKvFreeModelRun(t.dir, "wl-resp-stream", 8146, "org/stream-model.gguf");
+
+      const res = await openaiProxy.proxyOpenAI(
+        new Request("http://localhost/v1/responses", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "org/stream-model.gguf",
+            input: "stream me",
+            stream: true,
+          }),
+        }),
+        t.env,
+      );
+
+      expect(res.status).toBe(501);
+      expect(upstream.calls).toHaveLength(1);
+      expect(upstream.calls[0]!.body?.["stream"]).toBe(true);
+    } finally {
+      t.cleanup();
+    }
+  });
 });
