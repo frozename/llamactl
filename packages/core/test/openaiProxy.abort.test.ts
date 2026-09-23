@@ -585,93 +585,87 @@ describe("known defects at 7443403 (fix in later slices)", () => {
   // openaiProxy.test.ts), so an honest fixture could never exercise the
   // response translator's truncation path. Remove "always" when P1.2
   // (#132) lands — the fixture then sees stream:true on the wire.
-  test.failing(
-    "/v1/messages truncated upstream SSE surfaces an explicit error event",
-    async () => {
-      const t = tempEnv();
-      try {
-        installConditionalChatUpstream({
-          streamMode: "always", // required until P1.2 #132 lands — see above
-          sseBody: () =>
-            'data: {"id":"chatcmpl-x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"par"},"finish_reason":null}]}\n\n',
-        });
-        const res = await openaiProxy.proxyOpenAI(
-          new Request("http://localhost/v1/messages", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              model: "claude-3-7-sonnet",
-              messages: [{ role: "user", content: "truncate me" }],
-              max_tokens: 64,
-              stream: true,
-            }),
+  test.failing("/v1/messages truncated upstream SSE surfaces an explicit error event", async () => {
+    const t = tempEnv();
+    try {
+      installConditionalChatUpstream({
+        streamMode: "always", // required until P1.2 #132 lands — see above
+        sseBody: () =>
+          'data: {"id":"chatcmpl-x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"par"},"finish_reason":null}]}\n\n',
+      });
+      const res = await openaiProxy.proxyOpenAI(
+        new Request("http://localhost/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-3-7-sonnet",
+            messages: [{ role: "user", content: "truncate me" }],
+            max_tokens: 64,
+            stream: true,
           }),
-          t.env,
-        );
+        }),
+        t.env,
+      );
 
-        expect(res.headers.get("content-type")).toBe("text/event-stream");
-        const body = await res.text();
-        const errorIdx = body.indexOf("event: error");
-        expect(errorIdx).toBeGreaterThanOrEqual(0);
-        // The error must be the terminal event — a fabricated success
-        // terminal after it would still signal "completed normally".
-        const tail = body.slice(errorIdx);
-        expect(tail).not.toContain("\nevent:");
-        expect(tail).not.toContain('"stop_reason":"end_turn"');
-        expect(body).not.toContain("event: message_stop");
-      } finally {
-        t.cleanup();
-      }
-    },
-  );
+      expect(res.headers.get("content-type")).toBe("text/event-stream");
+      const body = await res.text();
+      const errorIdx = body.indexOf("event: error");
+      expect(errorIdx).toBeGreaterThanOrEqual(0);
+      // The error must be the terminal event — a fabricated success
+      // terminal after it would still signal "completed normally".
+      const tail = body.slice(errorIdx);
+      expect(tail).not.toContain("\nevent:");
+      expect(tail).not.toContain('"stop_reason":"end_turn"');
+      expect(body).not.toContain("event: message_stop");
+    } finally {
+      t.cleanup();
+    }
+  });
 
   // Same defect via an errored (not merely truncated) upstream stream.
   // "always" is likewise pinned to P1.2 #132 — remove when it lands.
-  test.failing(
-    "/v1/messages errored upstream SSE surfaces an explicit error event",
-    async () => {
-      const t = tempEnv();
-      try {
-        installConditionalChatUpstream({
-          streamMode: "always", // required until P1.2 #132 lands — see above
-          sseBody: () =>
-            new ReadableStream<Uint8Array>({
-              start(controller): void {
-                controller.enqueue(
-                  new TextEncoder().encode(
-                    'data: {"id":"chatcmpl-x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"par"},"finish_reason":null}]}\n\n',
-                  ),
-                );
-                controller.error(new Error("upstream boom"));
-              },
-            }),
-        });
-        const res = await openaiProxy.proxyOpenAI(
-          new Request("http://localhost/v1/messages", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              model: "claude-3-7-sonnet",
-              messages: [{ role: "user", content: "boom" }],
-              max_tokens: 64,
-              stream: true,
-            }),
+  test.failing("/v1/messages errored upstream SSE surfaces an explicit error event", async () => {
+    const t = tempEnv();
+    try {
+      installConditionalChatUpstream({
+        streamMode: "always", // required until P1.2 #132 lands — see above
+        sseBody: () =>
+          new ReadableStream<Uint8Array>({
+            start(controller): void {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'data: {"id":"chatcmpl-x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"par"},"finish_reason":null}]}\n\n',
+                ),
+              );
+              controller.error(new Error("upstream boom"));
+            },
           }),
-          t.env,
-        );
+      });
+      const res = await openaiProxy.proxyOpenAI(
+        new Request("http://localhost/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-3-7-sonnet",
+            messages: [{ role: "user", content: "boom" }],
+            max_tokens: 64,
+            stream: true,
+          }),
+        }),
+        t.env,
+      );
 
-        expect(res.headers.get("content-type")).toBe("text/event-stream");
-        const body = await res.text();
-        const errorIdx = body.indexOf("event: error");
-        expect(errorIdx).toBeGreaterThanOrEqual(0);
-        // Same terminal contract — error last, no fabricated success.
-        const tail = body.slice(errorIdx);
-        expect(tail).not.toContain("\nevent:");
-        expect(tail).not.toContain('"stop_reason":"end_turn"');
-        expect(body).not.toContain("event: message_stop");
-      } finally {
-        t.cleanup();
-      }
-    },
-  );
+      expect(res.headers.get("content-type")).toBe("text/event-stream");
+      const body = await res.text();
+      const errorIdx = body.indexOf("event: error");
+      expect(errorIdx).toBeGreaterThanOrEqual(0);
+      // Same terminal contract — error last, no fabricated success.
+      const tail = body.slice(errorIdx);
+      expect(tail).not.toContain("\nevent:");
+      expect(tail).not.toContain('"stop_reason":"end_turn"');
+      expect(body).not.toContain("event: message_stop");
+    } finally {
+      t.cleanup();
+    }
+  });
 });

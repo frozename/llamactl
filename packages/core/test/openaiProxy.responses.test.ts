@@ -577,7 +577,12 @@ test("regression: /v1/messages KV path still saves a slot", async () => {
 // upstream-observed model/stream, and the fail-closed streaming envelope.
 // ---------------------------------------------------------------------------
 
-function writeKvFreeModelRun(runtimeRoot: string, workload: string, port: number, rel: string): void {
+function writeKvFreeModelRun(
+  runtimeRoot: string,
+  workload: string,
+  port: number,
+  rel: string,
+): void {
   // No slotSavePath: resolveRouteKvMetadata returns null, keeping this a
   // pure routing test (no KV slot machinery).
   const dir = join(runtimeRoot, "workloads", workload);

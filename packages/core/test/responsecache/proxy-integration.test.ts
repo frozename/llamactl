@@ -537,66 +537,69 @@ test("partial SSE responses are not cached and emit skip log", async () => {
 // Defect-tagged at cf60f20d: depends on the client `stream` flag
 // reaching the upstream — P1.2 (#132). Under the defect the honest
 // fixture answers JSON, so the partial-SSE skip path never runs.
-test.failing("truncated anthropic SSE responses are not cached even after translation adds a terminal frame", async () => {
-  const runtime = makeTempRuntime();
-  const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
-  try {
-    writeModelRunWorkload(runtime.root, "wl-a", 19502, "claude-3-7-sonnet");
-    const upstream = installConditionalChatUpstream({
-      sseBody: `data: ${JSON.stringify({
-        id: "msg_1",
-        choices: [{ delta: { content: "hello" }, finish_reason: null }],
-      })}\n\n`,
-    });
+test.failing(
+  "truncated anthropic SSE responses are not cached even after translation adds a terminal frame",
+  async () => {
+    const runtime = makeTempRuntime();
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      writeModelRunWorkload(runtime.root, "wl-a", 19502, "claude-3-7-sonnet");
+      const upstream = installConditionalChatUpstream({
+        sseBody: `data: ${JSON.stringify({
+          id: "msg_1",
+          choices: [{ delta: { content: "hello" }, finish_reason: null }],
+        })}\n\n`,
+      });
 
-    const model = "claude-3-7-sonnet";
-    const body = JSON.stringify({
-      model,
-      messages: [{ role: "user", content: "partial anthropic stream" }],
-      stream: true,
-      temperature: 0,
-    });
+      const model = "claude-3-7-sonnet";
+      const body = JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "partial anthropic stream" }],
+        stream: true,
+        temperature: 0,
+      });
 
-    const response = await openaiProxy.proxyOpenAI(
-      new Request("http://localhost/v1/messages", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body,
-      }),
-      runtime.env,
-    );
-
-    expect(response.status).toBe(200);
-    expect(upstream.calls).toHaveLength(1);
-    expect(
-      warnSpy.mock.calls.some((call) =>
-        String(call[0]).includes('"event":"response_cache_skip_partial_sse"'),
-      ),
-    ).toBe(true);
-
-    const storage = openResponseCacheStorage(runtime.root);
-    const registry = new ResponseCacheRegistry(storage);
-    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
-    const translatedBody = JSON.stringify(
-      translateAnthropicRequest(JSON.parse(body) as AnthropicMessagesRequest),
-    );
-    expect(
-      registry.findBySha(
-        lookupScope({
-          sha: canonicalRequestSha(translatedBody),
-          model,
-          workload: "wl-a",
-          workloadEpoch,
-          protocolVariant: "anthropic",
+      const response = await openaiProxy.proxyOpenAI(
+        new Request("http://localhost/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
         }),
-      ),
-    ).toBeNull();
-    storage.close();
-  } finally {
-    warnSpy.mockRestore();
-    runtime.cleanup();
-  }
-});
+        runtime.env,
+      );
+
+      expect(response.status).toBe(200);
+      expect(upstream.calls).toHaveLength(1);
+      expect(
+        warnSpy.mock.calls.some((call) =>
+          String(call[0]).includes('"event":"response_cache_skip_partial_sse"'),
+        ),
+      ).toBe(true);
+
+      const storage = openResponseCacheStorage(runtime.root);
+      const registry = new ResponseCacheRegistry(storage);
+      const workloadEpoch = workloadEpochFor(runtime, "wl-a");
+      const translatedBody = JSON.stringify(
+        translateAnthropicRequest(JSON.parse(body) as AnthropicMessagesRequest),
+      );
+      expect(
+        registry.findBySha(
+          lookupScope({
+            sha: canonicalRequestSha(translatedBody),
+            model,
+            workload: "wl-a",
+            workloadEpoch,
+            protocolVariant: "anthropic",
+          }),
+        ),
+      ).toBeNull();
+      storage.close();
+    } finally {
+      warnSpy.mockRestore();
+      runtime.cleanup();
+    }
+  },
+);
 
 // NOTE: under the P1.2 (#132) request-translator defect the client's
 // `stream` never reaches the upstream, so the honest fixture answers
@@ -1874,13 +1877,12 @@ describe("known defects at 7443403 (fix in later slices)", () => {
         releaseGate = resolve;
       });
       const upstreamCalls: { url: string; body: Record<string, unknown> | null }[] = [];
-      globalThis.fetch = ((input: Request | URL | string, init?: RequestInit): Promise<Response> => {
+      globalThis.fetch = ((
+        input: Request | URL | string,
+        init?: RequestInit,
+      ): Promise<Response> => {
         const url =
-          typeof input === "string"
-            ? input
-            : input instanceof URL
-              ? input.toString()
-              : input.url;
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         if (new URL(url).pathname !== "/v1/chat/completions") {
           return Promise.resolve(new Response("", { status: 404 }));
         }

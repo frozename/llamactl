@@ -44,8 +44,7 @@ interface UpstreamFixtureOpts {
 }
 
 function sseResponse(opts: UpstreamFixtureOpts | undefined): Response {
-  const override =
-    typeof opts?.sseBody === "function" ? opts.sseBody() : opts?.sseBody;
+  const override = typeof opts?.sseBody === "function" ? opts.sseBody() : opts?.sseBody;
   const stream =
     override instanceof ReadableStream
       ? override
@@ -90,11 +89,7 @@ export function installConditionalChatUpstream(opts?: UpstreamFixtureOpts): Cond
   const calls: RecordedUpstreamCall[] = [];
   globalThis.fetch = (async (input: Request | URL | string, init?: RequestInit) => {
     const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method =
       init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET");
     const bodyText = await readRequestBodyText(input, init);
