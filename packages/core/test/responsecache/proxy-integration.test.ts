@@ -536,7 +536,11 @@ test("partial SSE responses are not cached and emit skip log", async () => {
 
 // Defect-tagged at cf60f20d: depends on the client `stream` flag
 // reaching the upstream — P1.2 (#132). Under the defect the honest
-// fixture answers JSON, so the partial-SSE skip path never runs.
+// fixture answers JSON, so no SSE reaches the cache and the
+// partial-SSE skip path never runs — which is why this fails today.
+// After P1.2 lands it exercises the anthropic partial-SSE skip guard
+// in shouldCacheSseResponse (packages/core/src/openaiProxy.ts
+// ~1757-1773).
 test.failing(
   "truncated anthropic SSE responses are not cached even after translation adds a terminal frame",
   async () => {
@@ -603,9 +607,9 @@ test.failing(
 
 // NOTE: under the P1.2 (#132) request-translator defect the client's
 // `stream` never reaches the upstream, so the honest fixture answers
-// JSON — this currently exercises the non-streaming cache path. It
-// genuinely covers SSE once P1.2 lands.
-test("complete anthropic SSE responses remain cacheable after translation", async () => {
+// JSON — this exercises the non-streaming cache path only. The SSE
+// behavior is pinned by the test.failing twin below.
+test("complete anthropic responses remain cacheable after translation (non-streaming until P1.2 #132)", async () => {
   const runtime = makeTempRuntime();
   try {
     writeModelRunWorkload(runtime.root, "wl-a", 19503, "claude-3-7-sonnet");
@@ -636,6 +640,69 @@ test("complete anthropic SSE responses remain cacheable after translation", asyn
 
     expect(response.status).toBe(200);
     expect(upstream.calls).toHaveLength(1);
+
+    const storage = openResponseCacheStorage(runtime.root);
+    const registry = new ResponseCacheRegistry(storage);
+    const workloadEpoch = workloadEpochFor(runtime, "wl-a");
+    const translatedBody = JSON.stringify(
+      translateAnthropicRequest(JSON.parse(body) as AnthropicMessagesRequest),
+    );
+    expect(
+      registry.findBySha(
+        lookupScope({
+          sha: canonicalRequestSha(translatedBody),
+          model,
+          workload: "wl-a",
+          workloadEpoch,
+          protocolVariant: "anthropic",
+        }),
+      ),
+    ).not.toBeNull();
+    storage.close();
+  } finally {
+    runtime.cleanup();
+  }
+});
+
+// Defect-tagged: the P1.2 (#132) request-translator defect drops the
+// client's `stream` flag, so the upstream never sees stream:true and
+// the honest fixture answers JSON instead of SSE. Asserts the correct
+// behavior: the translated request carries stream:true, the client
+// gets a text/event-stream response, and the completed anthropic SSE
+// body is persisted under the anthropic protocol variant.
+test.failing("complete anthropic SSE responses remain cacheable after translation", async () => {
+  const runtime = makeTempRuntime();
+  try {
+    writeModelRunWorkload(runtime.root, "wl-a", 19503, "claude-3-7-sonnet");
+    const upstream = installConditionalChatUpstream({
+      sseBody:
+        `data: ${JSON.stringify({
+          id: "msg_1",
+          choices: [{ delta: { content: "hello" }, finish_reason: null }],
+        })}\n\n` + `data: [DONE]\n\n`,
+    });
+
+    const model = "claude-3-7-sonnet";
+    const body = JSON.stringify({
+      model,
+      messages: [{ role: "user", content: "complete anthropic stream" }],
+      stream: true,
+      temperature: 0,
+    });
+
+    const response = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+      runtime.env,
+    );
+
+    expect(response.status).toBe(200);
+    expect(upstream.calls).toHaveLength(1);
+    expect(upstream.calls[0]!.body?.["stream"]).toBe(true);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
 
     const storage = openResponseCacheStorage(runtime.root);
     const registry = new ResponseCacheRegistry(storage);
