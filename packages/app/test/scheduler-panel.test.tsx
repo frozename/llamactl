@@ -1,7 +1,20 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 const UiActual = await import("../src/ui/index");
+
+// Snapshot the real exports before registering the mocks. mock.module is
+// process-global, so re-registering the snapshots in afterAll keeps later
+// test files in this bun process on the real modules. Loading lib/trpc
+// builds an IPC client at eval, which needs the preload bridge global.
+const hadElectronTRPC = "electronTRPC" in globalThis;
+const prevElectronTRPC = globalThis.electronTRPC;
+globalThis.electronTRPC ??= {
+  sendMessage: (): undefined => undefined,
+  onMessage: (): undefined => undefined,
+};
+const TrpcActual = { ...(await import("../src/lib/trpc")) };
+const UiSnapshot = { ...UiActual };
 
 interface TestSchedule {
   id: string;
@@ -73,6 +86,13 @@ void mock.module("@/lib/trpc", () => ({
 }));
 
 void mock.module("@/ui", () => UiActual);
+
+afterAll(() => {
+  void mock.module("@/lib/trpc", () => TrpcActual);
+  void mock.module("@/ui", () => UiSnapshot);
+  if (hadElectronTRPC) globalThis.electronTRPC = prevElectronTRPC;
+  else delete (globalThis as { electronTRPC?: unknown }).electronTRPC;
+});
 
 function schedule(intervalSeconds: number): TestSchedule {
   return {
