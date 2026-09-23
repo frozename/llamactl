@@ -4,7 +4,7 @@ Design review baseline: `frozename/llamactl`, `main` at commit `7443403912ab3976
 
 All paths are complete paths relative to the repository root. Source references S01–S36 and S44 at the end link to immutable GitHub file/line ranges. New module paths and schemas are explicitly proposals and therefore have no existing line numbers. External protocol references E01–E11 identify primary documentation reviewed. Static call-path verification was performed; planned implementation tests are not completion claims, and live provider interoperability is not claimed. The completed Nova contract audit and Penumbra/geo-eval review are in §11; validation results for this documentation publication are recorded in the PR. [S01], [S44]
 
-Roadmap: [#127](https://github.com/frozename/llamactl/issues/127). Documentation PR is linked from the parent roadmap.
+Roadmap: [#127](https://github.com/frozename/llamactl/issues/127). Documentation PR: [#147](https://github.com/frozename/llamactl/pull/147).
 
 ## 1. Executive decision
 
@@ -897,7 +897,7 @@ Apply `wp`, `class:BOUNDARY` / `class:STANDARD`, `status:ready` / `status:blocke
 
 ### 11.4 Publication and delivery gates
 
-Roadmap: https://github.com/frozename/llamactl/issues/127. Design review PR: The documentation review PR will be linked from the parent roadmap. All implementation work stays disabled; merging or deployment is outside this publication task. The manifest beside this design records the 19 issue identities, links and dependencies. R0 is complete on source-review evidence; closing it does not assert that P0–P6 exist or pass tests.
+Roadmap: https://github.com/frozename/llamactl/issues/127. Design review PR: https://github.com/frozename/llamactl/pull/147. All implementation work stays disabled; merging or deployment is outside this publication task. The manifest beside this design records the 19 issue identities, links and dependencies. R0 is complete on source-review evidence; closing it does not assert that P0–P6 exist or pass tests.
 
 Retain the architecture decisions in §§3–7: native same-protocol passthrough; SQLite exact-only embedded mode; opt-in pgvector semantic profiles; strict tenant/account/generation/protocol scopes and non-sliding TTL; independent execution and cache affinity; PostgreSQL fencing in managed mode; no uncertain retries; ephemeral ACP before stateful sessions. Research tightens model selection, pool isolation, streaming, cancellation, usage provenance and shared-schema migration without changing that topology.
 
@@ -994,3 +994,13 @@ flowchart TD
 ```
 
 The arrows point from prerequisite to dependent. R0 records completed research; every unchecked implementation item requires its issue-specific acceptance gate.
+
+## 13. Penumbra fleet handoff
+
+The publication manifest gives all 19 children a versioned fleet contract: repository/base identity, branch, exact primary write fence, explicit sibling fences where needed, dependency acceptance gates, focused commands and expected review evidence. R0 is already complete; 18 implementation tasks have strict-schema task.file payloads. No fleet task is filed or dispatched by this documentation publication.
+
+The registrar first deduplicates by existing task-to-GitHub association, verifies the registered project’s git origin, binds its local project ID and submitting identity, and rechecks current main plus accepted dependency commits. It files only a ready task, links the returned ID through task.link_gh, and creates an isolated worktree with the manifest’s task class/type/branch applied to the chain and review lane. Dependency closure alone is insufficient: verify merged implementation and acceptance evidence. Serialize overlapping file fences even when the issue DAG permits parallel work. Failed mandatory gates retain FAIL and block dependents. Shared Nova changes require coordinated sibling worktrees/PRs and refreshed consumer installs.
+
+The task API is strict: branch policy, task_class, task_type and GitHub dependency enforcement are not arbitrary task.file fields. The current writer persists branch_base only for orchestrate tasks; do not assume a work task enforces it. Production seat names, account configuration and credentials remain local. Payloads are validated against the pinned API contract; this is schema compatibility, not a live fleet execution claim. Use configured routing and review policies; no subscription/premium fallback is invented.
+
+Source: [task.file schema](https://github.com/frozename/penumbra/blob/c264644bc2b4f1e1429e845208fd6ca7f6426d62/packages/api-contract/src/tasks.ts#L96-L124), [writer](https://github.com/frozename/penumbra/blob/c264644bc2b4f1e1429e845208fd6ca7f6426d62/packages/core/src/tasks/writer.ts#L355-L390), [chain metadata](https://github.com/frozename/penumbra/blob/c264644bc2b4f1e1429e845208fd6ca7f6426d62/packages/api-contract/src/chains.ts#L160-L186), [task.link_gh](https://github.com/frozename/penumbra/blob/c264644bc2b4f1e1429e845208fd6ca7f6426d62/packages/mcp/src/tools/task-link-gh.ts#L6-L23).
