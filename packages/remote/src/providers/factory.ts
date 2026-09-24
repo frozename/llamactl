@@ -276,11 +276,18 @@ function providerForVirtualNode(
     );
   }
   const binding = node.provider;
-  // CLI-source virtual nodes dispatch to a subprocess adapter that
-  // doesn't speak the OpenAI-compat usage protocol — no
-  // onUsageObservation to thread through.
+  // CLI-source virtual nodes dispatch to a subprocess adapter. The
+  // adapter can't read upstream usage (CLIs don't report it), but it
+  // fires its own byte-estimated observation tagged
+  // 'estimated' — forward the hook so the router's recorder sees it
+  // (and null-projects it out of the V1 corpus).
   if (binding.source === "cli") {
-    return buildCliProviderForNode({ node, cfg, env });
+    return buildCliProviderForNode({
+      node,
+      cfg,
+      env,
+      ...(onUsageObservation !== undefined ? { onUsageObservation } : {}),
+    });
   }
   const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
   const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
@@ -320,8 +327,9 @@ function buildCliProviderForNode(opts: {
   node: ClusterNode;
   cfg: Config;
   env: NodeJS.ProcessEnv;
+  onUsageObservation?: OpenAICompatOnUsageObservation;
 }): AiProvider {
-  const { node, cfg, env } = opts;
+  const { node, cfg, env, onUsageObservation } = opts;
   const providerBinding = node.provider;
   if (!providerBinding) {
     throw new Error(`cli-source provider-kind node '${node.name}' missing provider{}`);
@@ -352,12 +360,14 @@ function buildCliProviderForNode(opts: {
       agentName: string;
       binding: typeof binding;
       env?: NodeJS.ProcessEnv;
+      onUsageObservation?: OpenAICompatOnUsageObservation;
     }) => AiProvider;
   };
   return createCliSubprocessProvider({
     agentName: agent.name,
     binding,
     env,
+    ...(onUsageObservation ? { onUsageObservation } : {}),
   });
 }
 

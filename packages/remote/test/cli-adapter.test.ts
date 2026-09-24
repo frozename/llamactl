@@ -201,6 +201,84 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
   });
 });
 
+describe("createCliSubprocessProvider — abort attribution on spawn rejection", () => {
+  test("deadline abort followed by a late caller abort is journalled 'deadline' + TimeoutError", async () => {
+    // First-source attribution: the deadline records first; the caller
+    // abort lands inside the abort listener — AFTER 'deadline' was
+    // already recorded — and must not rewrite the outcome.
+    const entries: unknown[] = [];
+    const caller = new AbortController();
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: makeBinding({ timeoutMs: 60_000 }),
+      spawn: (_argv, o) =>
+        new Promise<SpawnResult>((_res, rej) => {
+          o.signal.addEventListener(
+            "abort",
+            () => {
+              caller.abort();
+              rej(new Error("spawn aborted by linked signal"));
+            },
+            { once: true },
+          );
+        }),
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    let thrown: unknown;
+    try {
+      await provider.createResponse(minimalReq, {
+        deadline: Date.now() + 40,
+        signal: caller.signal,
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as Error).name).toBe("TimeoutError");
+    expect(entries).toHaveLength(1);
+    expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("deadline");
+  });
+
+  test("spawn rejection once the deadline expired → TimeoutError + journal 'deadline'", async () => {
+    // A spawn that fails because the linked signal already fired on an
+    // expired deadline must surface as TimeoutError, not 'spawn-failed'.
+    const entries: unknown[] = [];
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: makeBinding({ timeoutMs: 60_000 }),
+      spawn: (_argv, o) =>
+        new Promise<SpawnResult>((_res, rej) => {
+          if (o.signal.aborted) {
+            rej(new Error("refusing to spawn on an aborted signal"));
+            return;
+          }
+          o.signal.addEventListener(
+            "abort",
+            () => {
+              rej(new Error("aborted during spawn"));
+            },
+            { once: true },
+          );
+        }),
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    let thrown: unknown;
+    try {
+      await provider.createResponse(minimalReq, { deadline: Date.now() + 40 });
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as Error).name).toBe("TimeoutError");
+    expect(entries).toHaveLength(1);
+    expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("deadline");
+  });
+});
+
 describe("createCliSubprocessProvider — healthCheck", () => {
   test("reports healthy when version probe exits 0", async () => {
     const provider = createCliSubprocessProvider({

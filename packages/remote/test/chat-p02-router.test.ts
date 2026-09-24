@@ -70,6 +70,23 @@ const flush = (): Promise<void> =>
     setTimeout(r, 0);
   });
 
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(cond: () => boolean, ms = 5_000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > ms) throw new Error("waitFor: condition not met");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 function usageRecords(): Record<string, unknown>[] {
   const udir = process.env["LLAMACTL_USAGE_DIR"];
   if (udir === undefined || !existsSync(udir)) return [];
@@ -296,5 +313,116 @@ describe("chatStream — non-streaming provider fallback", () => {
     expect(text).toBe("fallback-content");
     expect(done).toHaveLength(1);
     expect(done[0]!.completion).toBe("upstream");
+  });
+
+  test("caller abort reaches the fallback createResponse — the spawned CLI child dies", async () => {
+    // Pin: streamNodeChatEvents must forward the subscription signal
+    // into `createResponse(request, { signal })`. Dropping it leaves a
+    // SIGTERM'd-never child sleeping past every abort while the
+    // consumer hangs.
+    dir = mkdtempSync(join(tmpdir(), "p02-fallback-abort-"));
+    process.env["LLAMACTL_CLI_JOURNAL_DIR"] = join(dir, "cli-journal");
+    const pidFile = join(dir, "cli-pid");
+    const cfgPath = writeConfig([
+      {
+        name: "mac-mini",
+        endpoint: "https://mac-mini.lan:7843",
+        kind: "agent",
+        cli: [
+          {
+            name: "fake",
+            preset: "custom",
+            command: "/bin/sh",
+            args: ["-c", `echo $$ > ${pidFile}; exec sleep 30`],
+            format: "text",
+            timeoutMs: 60_000,
+            advertisedModels: [],
+            capabilities: ["reasoning"],
+          },
+        ],
+      },
+    ]);
+    process.env["LLAMACTL_CONFIG"] = cfgPath;
+
+    const caller = new AbortController();
+    const client = router.createCaller({}, { signal: caller.signal });
+    const gen = (await client.chatStream({
+      node: "mac-mini.fake",
+      request: { model: "m", messages: [{ role: "user", content: "hi" }] },
+    })) as AsyncIterable<UnifiedStreamEvent>;
+    let thrown: unknown;
+    const consumed = (async (): Promise<void> => {
+      try {
+        for await (const _e of gen) {
+          /* drain until the abort lands */
+        }
+      } catch (err) {
+        thrown = err;
+      }
+    })();
+    await waitFor(() => existsSync(pidFile));
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    expect(pidAlive(pid)).toBe(true);
+
+    caller.abort();
+    await Promise.race([
+      consumed,
+      new Promise((_, rej) => {
+        setTimeout(() => {
+          rej(new Error("stream never settled after caller abort"));
+        }, 8_000);
+      }),
+    ]);
+    expect(thrown).toBeTruthy();
+    await waitFor(() => !pidAlive(pid));
+  });
+
+  test("a CLI node call fires its estimated observation and writes NO usage row", async () => {
+    // cli-source providers emit byte-estimated usage through
+    // onUsageObservation with source 'estimated' — the router's
+    // recorder projects it through projectUsageRecordV2ToV1, which
+    // returns null for estimated rows: the call lands in the CLI
+    // journal but never in the usage corpus.
+    dir = mkdtempSync(join(tmpdir(), "p02-cli-usage-"));
+    process.env["LLAMACTL_USAGE_DIR"] = join(dir, "usage");
+    process.env["LLAMACTL_CLI_JOURNAL_DIR"] = join(dir, "cli-journal");
+    const cfgPath = writeConfig([
+      {
+        name: "mac-mini",
+        endpoint: "https://mac-mini.lan:7843",
+        kind: "agent",
+        cli: [
+          {
+            name: "fake",
+            preset: "custom",
+            command: "/bin/sh",
+            args: ["-c", "printf observed"],
+            format: "text",
+            timeoutMs: 10_000,
+            advertisedModels: [],
+            capabilities: ["reasoning"],
+          },
+        ],
+      },
+    ]);
+    process.env["LLAMACTL_CONFIG"] = cfgPath;
+
+    const client = router.createCaller({});
+    const gen = (await client.chatStream({
+      node: "mac-mini.fake",
+      request: { model: "m", messages: [{ role: "user", content: "hi" }] },
+    })) as AsyncIterable<UnifiedStreamEvent>;
+    const events: UnifiedStreamEvent[] = [];
+    for await (const e of gen) events.push(e);
+    expect(events.some((e) => e.type === "done")).toBe(true);
+
+    await flush();
+    expect(usageRecords()).toHaveLength(0);
+    // The call itself ran — the CLI journal holds its byte record.
+    const day = new Date().toISOString().slice(0, 10);
+    const journalRaw = readFileSync(join(dir, "cli-journal", `${day}.jsonl`), "utf8").trim();
+    const entry = JSON.parse(journalRaw) as { agent: string; ok: boolean };
+    expect(entry.agent).toBe("mac-mini");
+    expect(entry.ok).toBe(true);
   });
 });

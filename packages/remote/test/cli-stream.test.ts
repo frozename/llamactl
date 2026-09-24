@@ -349,6 +349,94 @@ describe("streamResponse — cancellation", () => {
     expect((entries[0] as Record<string, unknown>)["ok"]).toBe(false);
   });
 
+  test("binding timeout followed by a late caller abort keeps 'timeout' attribution", async () => {
+    // The binding timer fires first; the caller aborts AFTER it but
+    // before the reap settles. First-source attribution must keep the
+    // journal + error event on 'timeout' — a late caller abort must not
+    // rewrite the cause to 'aborted'.
+    const entries: unknown[] = [];
+    const caller = new AbortController();
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: claudeBinding({ timeoutMs: 60 }),
+      spawnStream: async (_argv, opts): Promise<SpawnStreamResult> => {
+        await Promise.resolve();
+        const exitedPromise = new Promise<{ exitCode: number; aborted: boolean }>((res) => {
+          opts.signal.addEventListener(
+            "abort",
+            () => {
+              caller.abort();
+              res({ exitCode: -1, aborted: true });
+            },
+            { once: true },
+          );
+        });
+        const stdout = (async function* (): AsyncIterable<string> {
+          yield "first";
+          await exitedPromise;
+        })();
+        return { stdout, stderrPromise: Promise.resolve(""), exitedPromise };
+      },
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    const events = await collect(provider.streamResponse!(minimalReq, caller.signal));
+    const errors = events.filter(
+      (e): e is Extract<UnifiedStreamEvent, { type: "error" }> => e.type === "error",
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error.code).toBe("timeout");
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    const e = entries[0] as Record<string, unknown>;
+    expect(e["error_code"]).toBe("timeout");
+    expect(e["ok"]).toBe(false);
+  });
+
+  test("consumer break mid-stream kills the child and journals error_code 'cancelled'", async () => {
+    const entries: unknown[] = [];
+    let sawKill = false;
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: claudeBinding({ timeoutMs: 60_000 }),
+      spawnStream: async (_argv, opts): Promise<SpawnStreamResult> => {
+        await Promise.resolve();
+        const exitedPromise = new Promise<{ exitCode: number; aborted: boolean }>((res) => {
+          opts.signal.addEventListener(
+            "abort",
+            () => {
+              sawKill = true;
+              res({ exitCode: -1, aborted: true });
+            },
+            { once: true },
+          );
+        });
+        const stdout = (async function* (): AsyncIterable<string> {
+          yield "first";
+          yield "second";
+          await exitedPromise;
+        })();
+        return { stdout, stderrPromise: Promise.resolve(""), exitedPromise };
+      },
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    const events: UnifiedStreamEvent[] = [];
+    for await (const e of provider.streamResponse!(minimalReq)) {
+      events.push(e);
+      break;
+    }
+    expect(events).toHaveLength(1);
+    expect(sawKill).toBe(true);
+    expect(entries).toHaveLength(1);
+    const e = entries[0] as Record<string, unknown>;
+    expect(e["error_code"]).toBe("cancelled");
+    expect(e["ok"]).toBe(false);
+  });
+
   test("binding timeout mid-stream → one error event (code 'timeout'), NO done", async () => {
     // The child hangs past the binding's own timeout; the timer's
     // abort kills it and the stream ends on the error event.

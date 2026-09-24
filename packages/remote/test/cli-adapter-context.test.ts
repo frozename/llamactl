@@ -13,6 +13,7 @@ import { join } from "node:path";
 import {
   createCliSubprocessProvider,
   defaultBunSpawn,
+  defaultBunSpawnStream,
   type SpawnFn,
   type SpawnResult,
 } from "../src/cli/adapter.js";
@@ -227,6 +228,123 @@ describe("default spawners — pre-aborted signals", () => {
       await waitFor(() => !pidAlive(pid));
     }
   });
+
+  test("defaultBunSpawnStream kills the child immediately when the signal is already aborted", async () => {
+    const pidFile = join(tmp, "pid-stream-spawner");
+    const res = await defaultBunSpawnStream(["/bin/sh", "-c", sleepyScript(pidFile)], {
+      env: process.env,
+      signal: AbortSignal.abort(),
+      promptOnStdin: false,
+      prompt: "",
+    });
+    const exited = await Promise.race([
+      res.exitedPromise,
+      new Promise<null>((r) => {
+        setTimeout(() => {
+          r(null);
+        }, 5_000);
+      }),
+    ]);
+    expect(exited).not.toBeNull();
+    expect(exited!.aborted).toBe(true);
+    if (existsSync(pidFile)) {
+      const pid = Number(readFileSync(pidFile, "utf8").trim());
+      await waitFor(() => !pidAlive(pid));
+    }
+  });
+});
+
+describe("SIGKILL escalation — a child that ignores SIGTERM still dies", () => {
+  // `trap '' TERM` installs SIG_IGN, which survives `exec` — the sleep
+  // process shrugs off the abort's SIGTERM and only SIGKILL ends it.
+  const GRACE_MS = 40;
+  function trapScript(pidFile: string): string {
+    return `trap '' TERM; echo $$ > ${pidFile}; exec sleep 30`;
+  }
+
+  test("createResponse: SIGKILL lands within grace; the promise settles", async () => {
+    const pidFile = join(tmp, "pid-sigkill-nonstream");
+    const entries: unknown[] = [];
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: makeBinding({ args: ["-c", trapScript(pidFile)], timeoutMs: 60_000 }),
+      spawn: (argv, o) => defaultBunSpawn(argv, { ...o, killGraceMs: GRACE_MS }),
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    const caller = new AbortController();
+    const pending = provider.createResponse(minimalReq, { signal: caller.signal });
+    await waitFor(() => existsSync(pidFile));
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    expect(pidAlive(pid)).toBe(true);
+
+    caller.abort();
+    const outcome = await Promise.race([
+      pending.then(
+        () => "resolved",
+        (e: unknown) => `rejected:${(e as Error).name}`,
+      ),
+      new Promise<string>((r) => {
+        setTimeout(() => {
+          r("hung");
+        }, 8_000);
+      }),
+    ]);
+    expect(outcome).toBe("rejected:AbortError");
+    await waitFor(() => !pidAlive(pid));
+    expect(entries).toHaveLength(1);
+    expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("aborted");
+  });
+
+  test("streamResponse: SIGKILL lands within grace; the stream settles", async () => {
+    const pidFile = join(tmp, "pid-sigkill-stream");
+    const entries: unknown[] = [];
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: {
+        name: "claude-pro",
+        preset: "claude",
+        command: "/bin/sh",
+        args: ["-c", trapScript(pidFile)],
+        format: "text",
+        timeoutMs: 60_000,
+        advertisedModels: [],
+        capabilities: ["reasoning"],
+      },
+      spawnStream: (argv, o) => defaultBunSpawnStream(argv, { ...o, killGraceMs: GRACE_MS }),
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    const caller = new AbortController();
+    const events: UnifiedStreamEvent[] = [];
+    let thrown: unknown;
+    const consume = (async (): Promise<void> => {
+      try {
+        for await (const e of provider.streamResponse!(minimalReq, caller.signal)) events.push(e);
+      } catch (err) {
+        thrown = err;
+      }
+    })();
+    await waitFor(() => existsSync(pidFile));
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+
+    caller.abort();
+    await Promise.race([
+      consume,
+      new Promise((_r, rej) => {
+        setTimeout(() => {
+          rej(new Error("stream hung — SIGKILL never landed"));
+        }, 8_000);
+      }),
+    ]);
+    expect((thrown as Error).name).toBe("AbortError");
+    await waitFor(() => !pidAlive(pid));
+    expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("aborted");
+  });
 });
 
 describe("createResponse — usage observation", () => {
@@ -237,7 +355,7 @@ describe("createResponse — usage observation", () => {
       binding: makeBinding(),
       spawn: fakeSpawn({ stdout: "hello world" }),
       journalWrite: () => Promise.resolve(),
-      onUsageObservation: (s) => {
+      onUsageObservation: (s: OpenAICompatUsageObservation) => {
         seen.push(s);
       },
     });
@@ -284,7 +402,7 @@ describe("createResponse — usage observation", () => {
       binding: makeBinding(),
       spawn: fakeSpawn({ stdout: "", stderr: "boom", exitCode: 2 }),
       journalWrite: () => Promise.resolve(),
-      onUsageObservation: (s) => {
+      onUsageObservation: (s: OpenAICompatUsageObservation) => {
         seen.push(s);
       },
     });
@@ -398,5 +516,34 @@ describe("streamResponse — real subprocess", () => {
     expect(events.some((e) => e.type === "done")).toBe(false);
     await waitFor(() => !pidAlive(pid));
     expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("aborted");
+  });
+
+  test("a binding-timer abort after the child exits does not cut the stdout drain", async () => {
+    // The child writes 300 lines (~3KB — far under the pipe buffer)
+    // and exits in a few ms. The paced consumer stretches the drain to
+    // ~600ms so the 80ms binding timer fires mid-drain while the child
+    // is already reaped: buffered output must complete to EOF and the
+    // run still earns done 'upstream' + journal ok:true.
+    const entries: unknown[] = [];
+    const provider = streamProvider(
+      `i=0; while [ $i -lt 300 ]; do echo "line-$i"; i=$((i+1)); done`,
+      entries,
+      80,
+    );
+    const events: UnifiedStreamEvent[] = [];
+    for await (const e of provider.streamResponse!(minimalReq)) {
+      events.push(e);
+      await new Promise((r) => setTimeout(r, 2));
+    }
+    const chunks = events.filter((e) => e.type === "chunk");
+    const done = events.filter(
+      (e): e is Extract<UnifiedStreamEvent, { type: "done" }> => e.type === "done",
+    );
+    expect(chunks).toHaveLength(300);
+    expect(done).toHaveLength(1);
+    expect(done[0]!.completion).toBe("upstream");
+    const e = entries[0] as Record<string, unknown>;
+    expect(e["ok"]).toBe(true);
+    expect(e["error_code"]).toBeUndefined();
   });
 });

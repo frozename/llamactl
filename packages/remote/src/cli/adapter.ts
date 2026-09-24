@@ -78,6 +78,9 @@ export type SpawnFn = (
     promptOnStdin: boolean;
     /** Prompt text, only read when `promptOnStdin` is true. */
     prompt: string;
+    /** Grace window between SIGTERM and the SIGKILL escalation on
+     *  abort. Defaults to `CLI_KILL_GRACE_MS`; tests shorten it. */
+    killGraceMs?: number;
   },
 ) => Promise<SpawnResult>;
 
@@ -106,6 +109,8 @@ export type SpawnStreamFn = (
     signal: AbortSignal;
     promptOnStdin: boolean;
     prompt: string;
+    /** Same kill-grace override as `SpawnFn`. */
+    killGraceMs?: number;
   },
 ) => Promise<SpawnStreamResult>;
 
@@ -120,7 +125,7 @@ interface BunChildProcess {
   stderr: ReadableStream<Uint8Array>;
   exited: Promise<number>;
   stdin?: { write: (chunk: string) => void; end: () => void } | null;
-  kill: () => void;
+  kill: (signal?: number | string) => void;
 }
 
 interface BunRuntime {
@@ -252,7 +257,7 @@ function buildStreamJournalEntry(
   startedAt: number,
   prompt: string,
   responseBytes: number,
-  exitCode: number,
+  exitCode: number | null,
   errorCode?: string,
 ): CliJournalEntry {
   return {
@@ -378,6 +383,36 @@ function createLinkedAbort(opts: {
   };
 }
 
+/**
+ * Journal + rethrow for a rejected spawn. First-source attribution
+ * only: a deadline recorded before a late caller abort stays
+ * 'deadline'; re-checking callerSignal.aborted here would mislabel
+ * the ordering.
+ */
+async function journalSpawnFailure(
+  opts: CliProviderOptions,
+  providerId: string,
+  journalWrite: (entry: CliJournalEntry) => Promise<void>,
+  startedAt: number,
+  prompt: string,
+  err: unknown,
+  src: LinkedAbortSource | undefined,
+  callerSignal: AbortSignal | undefined,
+): Promise<never> {
+  const entry = buildCliJournalEntry(
+    opts,
+    startedAt,
+    prompt,
+    undefined,
+    false,
+    src === undefined ? undefined : abortErrorCode(src),
+  );
+  await journalWrite(entry);
+  if (src === "caller") throw abortReason(callerSignal);
+  if (src === "deadline") throw timeoutError();
+  throw wrapCliError(providerId, err, src === "binding" ? "timeout" : "spawn-failed");
+}
+
 async function createCliResponse(
   opts: CliProviderOptions,
   providerId: string,
@@ -413,18 +448,16 @@ async function createCliResponse(
       prompt,
     });
   } catch (err) {
-    const callerAborted = source() === "caller" || callerSignal?.aborted === true;
-    const entry = buildCliJournalEntry(
+    return await journalSpawnFailure(
       opts,
+      providerId,
+      journalWrite,
       startedAt,
       prompt,
-      undefined,
-      false,
-      callerAborted ? "aborted" : undefined,
+      err,
+      source(),
+      callerSignal,
     );
-    await journalWrite(entry);
-    if (callerAborted) throw abortReason(callerSignal);
-    throw wrapCliError(providerId, err, "spawn-failed");
   } finally {
     cleanup();
   }
@@ -505,6 +538,8 @@ function* exitStreamErrorEvents(
 interface CliStreamRead {
   responseBytes: number;
   readFailed: boolean;
+  /** True when the drain ended before stdout reached EOF. */
+  truncated: boolean;
 }
 
 /**
@@ -513,6 +548,11 @@ interface CliStreamRead {
  * occurred — a read failure yields its error event here, while a
  * caller abort that surfaces as a read rejection defers to the
  * caller's reap+journal+throw path.
+ *
+ * Once the child's exit is reaped, remaining stdout is buffered
+ * output it already produced — a binding/deadline timer must not cut
+ * that drain, or truncated output would masquerade as a clean run.
+ * A caller abort still interrupts immediately.
  */
 async function* readCliStreamChunks(
   stream: SpawnStreamResult,
@@ -521,48 +561,67 @@ async function* readCliStreamChunks(
     source: () => LinkedAbortSource | undefined;
     callerSignal: AbortSignal | undefined;
     providerId: string;
+    bytes: { n: number };
   },
   request: UnifiedAiRequest,
   startedAt: number,
   chunkId: string,
 ): AsyncGenerator<UnifiedStreamEvent, CliStreamRead, void> {
-  let responseBytes = 0;
   let yieldedRole = false;
+  // Ref object, not a bare boolean — the assignment lands inside a
+  // promise callback, and a captured `let` would narrow to `false`
+  // for the drain loop's lifetime.
+  const childExit = { settled: false };
+  void stream.exitedPromise.then(
+    () => {
+      childExit.settled = true;
+    },
+    () => {
+      childExit.settled = true;
+    },
+  );
+  let truncated = false;
   try {
     for await (const rawLine of stream.stdout) {
-      if (ctx.ctrl.signal.aborted) break;
+      if (ctx.source() === "caller" || (ctx.ctrl.signal.aborted && !childExit.settled)) {
+        truncated = true;
+        break;
+      }
       // Re-attach the newline so concatenated deltas reconstruct
       // the original output. The final \n is trimmed in consumers
       // that display token-by-token.
       const delta = `${rawLine}\n`;
-      responseBytes += Buffer.byteLength(delta, "utf8");
+      ctx.bytes.n += Buffer.byteLength(delta, "utf8");
       yield buildContentChunk(chunkId, request.model, startedAt, delta, yieldedRole);
       yieldedRole = true;
     }
   } catch (err) {
-    if (ctx.source() === "caller" || ctx.callerSignal?.aborted === true) {
-      return { responseBytes, readFailed: false };
+    if (ctx.source() === "caller") {
+      return { responseBytes: ctx.bytes.n, readFailed: false, truncated: true };
     }
     ctx.ctrl.abort();
     yield buildStreamErrorEvent(ctx.providerId, err);
-    return { responseBytes, readFailed: true };
+    return { responseBytes: ctx.bytes.n, readFailed: true, truncated: true };
   }
-  return { responseBytes, readFailed: false };
+  return { responseBytes: ctx.bytes.n, readFailed: false, truncated };
 }
 
 /** Journal error_code for a settled stream run — the same
- *  precedence the terminal-event logic applies. */
+ *  precedence the terminal-event logic applies. A clean exit
+ *  (code 0) outranks a racing `aborted` flag: a kill that lands on
+ *  an already-dead child did not truncate anything. */
 function streamErrorCode(s: {
   callerAborted: boolean;
   readFailed: boolean;
+  truncated: boolean;
   aborted: boolean;
   abortSource: LinkedAbortSource | undefined;
   exitCode: number;
 }): string | undefined {
   if (s.callerAborted) return "aborted";
   if (s.readFailed) return "stream-failed";
-  if (s.aborted) return abortErrorCode(s.abortSource);
-  if (s.exitCode !== 0) return "non-zero-exit";
+  if (s.exitCode !== 0) return s.aborted ? abortErrorCode(s.abortSource) : "non-zero-exit";
+  if (s.truncated) return "truncated";
   return undefined;
 }
 
@@ -581,13 +640,25 @@ function* finishStreamEvents(s: {
   aborted: boolean;
   callerAborted: boolean;
   readFailed: boolean;
+  truncated: boolean;
   stderrText: string;
   callerSignal: AbortSignal | undefined;
 }): Generator<UnifiedStreamEvent, void, void> {
   if (s.callerAborted) throw abortReason(s.callerSignal);
   if (s.readFailed) return;
-  if (s.aborted || s.exitCode !== 0) {
+  if (s.exitCode !== 0) {
     yield* exitStreamErrorEvents(s.providerId, s.timeoutMs, s.exitCode, s.aborted, s.stderrText);
+    return;
+  }
+  if (s.truncated) {
+    yield {
+      type: "error",
+      error: {
+        message: `cli provider '${s.providerId}' output truncated before EOF`,
+        code: "truncated",
+        retryable: false,
+      },
+    };
     return;
   }
   yield { type: "done", finish_reason: "stop", completion: "upstream" };
@@ -638,10 +709,13 @@ async function* streamCliResponse(
   }
 
   let childSettled = false;
+  let exitCodeForJournal: number | null = null;
+  let journaled = false;
+  const readBytes = { n: 0 };
   try {
     const read = yield* readCliStreamChunks(
       stream,
-      { ctrl, source, callerSignal, providerId },
+      { ctrl, source, callerSignal, providerId, bytes: readBytes },
       request,
       startedAt,
       chunkId,
@@ -649,14 +723,18 @@ async function* streamCliResponse(
 
     const { exitCode, aborted } = await stream.exitedPromise;
     childSettled = true;
+    exitCodeForJournal = exitCode;
     const stderrText = await stream.stderrPromise;
     cleanup();
 
+    // First-source attribution only — a late caller abort must not
+    // rewrite a 'deadline'/'binding' cause recorded earlier.
     const abortSource = source();
-    const callerAborted = abortSource === "caller" || callerSignal?.aborted === true;
+    const callerAborted = abortSource === "caller";
     const errorCode = streamErrorCode({
       callerAborted,
       readFailed: read.readFailed,
+      truncated: read.truncated,
       aborted,
       abortSource,
       exitCode,
@@ -664,6 +742,7 @@ async function* streamCliResponse(
     await journalWrite(
       buildStreamJournalEntry(opts, startedAt, prompt, read.responseBytes, exitCode, errorCode),
     );
+    journaled = true;
 
     yield* finishStreamEvents({
       providerId,
@@ -672,11 +751,32 @@ async function* streamCliResponse(
       aborted,
       callerAborted,
       readFailed: read.readFailed,
+      truncated: read.truncated,
       stderrText,
       callerSignal,
     });
   } finally {
     if (!childSettled) ctrl.abort();
+    if (!journaled) {
+      // Consumer detach (iterator.return/throw) or an abrupt reap
+      // failure skips the normal journal path — record the attempt as
+      // 'cancelled' so a mid-stream break can't vanish from the audit
+      // trail.
+      try {
+        await journalWrite(
+          buildStreamJournalEntry(
+            opts,
+            startedAt,
+            prompt,
+            readBytes.n,
+            exitCodeForJournal,
+            "cancelled",
+          ),
+        );
+      } catch {
+        /* teardown must not throw */
+      }
+    }
     cleanup();
   }
 }
@@ -869,6 +969,39 @@ function wrapCliError(
  * adapter can include it in error messages without blocking the
  * streaming stdout path.
  */
+/**
+ * Grace window between the abort's SIGTERM and the SIGKILL
+ * escalation. A child that traps or ignores SIGTERM (a wedged
+ * subscription CLI sitting in a signal handler) must still die so
+ * `createResponse` / `streamResponse` settle within timeout + grace.
+ * Overridable per-spawn via `opts.killGraceMs` for tests.
+ */
+export const CLI_KILL_GRACE_MS = 250;
+
+function killWithEscalation(proc: BunChildProcess, graceMs: number): void {
+  try {
+    proc.kill("SIGTERM");
+  } catch {
+    /* already exited */
+  }
+  const timer = setTimeout(() => {
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+      /* already exited */
+    }
+  }, graceMs);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  void proc.exited.then(
+    () => {
+      clearTimeout(timer);
+    },
+    () => {
+      clearTimeout(timer);
+    },
+  );
+}
+
 export const defaultBunSpawnStream: SpawnStreamFn = (argv, opts) => {
   const Bun = (globalThis as { Bun?: BunRuntime }).Bun;
   if (!Bun?.spawn) {
@@ -892,11 +1025,7 @@ export const defaultBunSpawnStream: SpawnStreamFn = (argv, opts) => {
   let aborted = false;
   const onAbort = (): void => {
     aborted = true;
-    try {
-      proc.kill();
-    } catch {
-      /* already exited */
-    }
+    killWithEscalation(proc, opts.killGraceMs ?? CLI_KILL_GRACE_MS);
   };
   opts.signal.addEventListener("abort", onAbort, { once: true });
   // A signal aborted before the listener attached never fires the
@@ -977,11 +1106,7 @@ export const defaultBunSpawn: SpawnFn = async (argv, opts) => {
   let aborted = false;
   const onAbort = (): void => {
     aborted = true;
-    try {
-      proc.kill();
-    } catch {
-      /* already exited */
-    }
+    killWithEscalation(proc, opts.killGraceMs ?? CLI_KILL_GRACE_MS);
   };
   opts.signal.addEventListener("abort", onAbort, { once: true });
   // Same pre-aborted-signal guard as the streaming spawner — the

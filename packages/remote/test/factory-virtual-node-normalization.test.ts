@@ -1,8 +1,12 @@
 import type { ClusterNode, Config, User } from "@llamactl/core/config/schema";
+import type { OpenAICompatUsageObservation } from "@nova/contracts";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { providerForNode } from "../src/providers/factory.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * FIX [10]: provider-kind virtual nodes must mirror the DIRECT cloud
@@ -132,5 +136,62 @@ describe("providerForVirtualNode base-URL normalization + quirks", () => {
     // path stays intact (normalization skip for /openai-terminated URL).
     const lastGeminiUrl = captured.at(-1);
     expect(lastGeminiUrl).toBe("https://generativelanguage.googleapis.com/v1beta/openai/models");
+  });
+});
+
+describe("providerForVirtualNode — cli-source onUsageObservation forwarding", () => {
+  test("forwards the hook into the CLI adapter; one 'estimated' observation per call", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "factory-cli-obs-"));
+    try {
+      const agent: ClusterNode = {
+        name: "mac-mini",
+        endpoint: "https://mac-mini.lan:7843",
+        kind: "agent",
+        cli: [
+          {
+            name: "fake",
+            preset: "custom",
+            command: "/bin/sh",
+            args: ["-c", "printf cli-observed"],
+            format: "text",
+            timeoutMs: 10_000,
+            advertisedModels: [],
+            capabilities: ["reasoning"],
+          },
+        ],
+      } as unknown as ClusterNode;
+      const virtual: ClusterNode = {
+        name: "mac-mini.fake",
+        endpoint: "",
+        kind: "provider",
+        provider: { gateway: "mac-mini", providerName: "fake", source: "cli" },
+      } as unknown as ClusterNode;
+      const cfg = makeCfg(agent, virtual);
+
+      const seen: OpenAICompatUsageObservation[] = [];
+      const provider = providerForNode({
+        node: virtual,
+        user,
+        cfg,
+        env: { ...process.env, LLAMACTL_CLI_JOURNAL_DIR: dir },
+        onUsageObservation: (s: OpenAICompatUsageObservation) => {
+          seen.push(s);
+        },
+      });
+      const res = await provider.createResponse({
+        model: "m",
+        messages: [{ role: "user", content: "hi" }],
+      });
+      expect(res.choices[0]!.message.content).toBe("cli-observed");
+      expect(res.usage).toBeUndefined();
+      // The estimate reaches the caller's recorder exactly once, marked
+      // 'estimated' — projectUsageRecordV2ToV1 nulls it before the V1
+      // corpus, so the stream path writes no usage row for it.
+      expect(seen).toHaveLength(1);
+      expect(seen[0]!.observation.source).toBe("estimated");
+      expect(seen[0]!.provider).toBe("mac-mini.fake");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
