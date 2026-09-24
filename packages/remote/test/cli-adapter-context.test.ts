@@ -518,6 +518,57 @@ describe("streamResponse — real subprocess", () => {
     expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("aborted");
   });
 
+  test("a binding-timer abort mid-run then a trapped clean exit reports 'truncated', NO done", async () => {
+    // The child traps SIGTERM: on the 80ms binding abort it emits one
+    // final line and lingers ~300ms inside the trap before exiting 0.
+    // The drain sees that post-abort line while the child still runs
+    // and cuts before EOF — the clean exit that follows must NOT
+    // upgrade the run to done: truncation is a terminal error event
+    // plus an ok:false / error_code 'truncated' journal entry.
+    // killGraceMs is stretched so the SIGKILL escalation can't land
+    // inside the trap's linger and flip the exit code.
+    const pidFile = join(tmp, "pid-stream-truncated");
+    const entries: unknown[] = [];
+    const script = [
+      `trap 'kill $! 2>/dev/null; echo trapped-line; sleep 0.3; exit 0' TERM`,
+      `echo $$ > ${pidFile}`,
+      `i=0; while [ $i -lt 200 ]; do echo "line-$i"; i=$((i+1)); done`,
+      `sleep 30 & wait`,
+    ].join("; ");
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: streamBinding(script, 80),
+      spawnStream: (argv, o) => defaultBunSpawnStream(argv, { ...o, killGraceMs: 5_000 }),
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    const events = await collect(provider.streamResponse!(minimalReq));
+    const chunks = events.filter(
+      (e): e is Extract<UnifiedStreamEvent, { type: "chunk" }> => e.type === "chunk",
+    );
+    const errors = events.filter(
+      (e): e is Extract<UnifiedStreamEvent, { type: "error" }> => e.type === "error",
+    );
+    expect(chunks.length).toBeGreaterThanOrEqual(1);
+    expect(chunks.length).toBeLessThanOrEqual(200);
+    expect(
+      chunks.some((c) => (c.chunk.choices[0]!.delta.content ?? "").includes("trapped-line")),
+    ).toBe(false);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error.code).toBe("truncated");
+    expect(errors[0]!.error.retryable).toBe(false);
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    await waitFor(() => !pidAlive(pid));
+    expect(entries).toHaveLength(1);
+    const e = entries[0] as Record<string, unknown>;
+    expect(e["ok"]).toBe(false);
+    expect(e["error_code"]).toBe("truncated");
+    expect(e["exit_code"]).toBe(0);
+  });
+
   test("a binding-timer abort after the child exits does not cut the stdout drain", async () => {
     // The child writes 300 lines (~3KB — far under the pipe buffer)
     // and exits in a few ms. The paced consumer stretches the drain to

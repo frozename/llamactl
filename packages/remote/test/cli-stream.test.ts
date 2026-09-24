@@ -482,6 +482,73 @@ describe("streamResponse — cancellation", () => {
     expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("timeout");
   });
 
+  test("binding abort cuts the drain mid-run, then a clean exit → error 'truncated', NO done", async () => {
+    // A child that traps SIGTERM can still exit 0 after the binding
+    // timer fires — but its drain was cut before EOF, so the run is
+    // reported 'truncated' (terminal error + ok:false journal), never
+    // done. Deterministic stand-in for the real trap-'exit 0' child:
+    // stdout yields one post-abort line while the exit is still
+    // pending, then the reap sees exitCode 0.
+    const entries: unknown[] = [];
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: claudeBinding({ timeoutMs: 50 }),
+      spawnStream: async (_argv, opts): Promise<SpawnStreamResult> => {
+        await Promise.resolve();
+        let resolveExited: (v: { exitCode: number; aborted: boolean }) => void = () => {
+          /* replaced below */
+        };
+        const exitedPromise = new Promise<{ exitCode: number; aborted: boolean }>((r) => {
+          resolveExited = r;
+        });
+        const stdout = (async function* (): AsyncIterable<string> {
+          try {
+            yield "first";
+            // Still running when the kill lands: the trap flushes
+            // one last line, then lingers before exiting 0 — the
+            // drain must cut here, before EOF.
+            await new Promise<void>((r) => {
+              opts.signal.addEventListener(
+                "abort",
+                () => {
+                  r();
+                },
+                { once: true },
+              );
+            });
+            yield "post-abort";
+            await new Promise<void>(() => {
+              /* trap still running — exit arrives only once the
+                 consumer abandons stdout */
+            });
+          } finally {
+            resolveExited({ exitCode: 0, aborted: true });
+          }
+        })();
+        return { stdout, stderrPromise: Promise.resolve(""), exitedPromise };
+      },
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    const events = await collect(provider.streamResponse!(minimalReq));
+    const chunks = events.filter(
+      (e): e is Extract<UnifiedStreamEvent, { type: "chunk" }> => e.type === "chunk",
+    );
+    const errors = events.filter(
+      (e): e is Extract<UnifiedStreamEvent, { type: "error" }> => e.type === "error",
+    );
+    expect(chunks).toHaveLength(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error.code).toBe("truncated");
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    const e = entries[0] as Record<string, unknown>;
+    expect(e["ok"]).toBe(false);
+    expect(e["error_code"]).toBe("truncated");
+    expect(e["exit_code"]).toBe(0);
+  });
+
   test("stdout read failure → one error event, NO done", async () => {
     const provider = createCliSubprocessProvider({
       agentName: "mac-mini",
