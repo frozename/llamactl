@@ -40,6 +40,7 @@ export {
   synthesizeProviderNodes,
 } from "./config/provider-nodes.js";
 export * as siriusProviders from "./config/sirius-providers.js";
+export { createLegacyLocalExecutor } from "./inference/legacy-local-executor.js";
 export * as infraArtifactsFetch from "./infra/artifacts-fetch.js";
 export * as infraInstall from "./infra/install.js";
 export * as infraLayout from "./infra/layout.js";
@@ -82,6 +83,17 @@ export {
   type RefusalMatch,
 } from "./ops-chat/refusals.js";
 export { providerForCloudNode, providerForNode } from "./providers/factory.js";
+export {
+  type BackendExecutionContext,
+  type BackendExecutor,
+  type BackendExecutorDescription,
+  createProxy,
+  dispatchProxyRequest,
+  publishUnifiedPeerSnapshots,
+  type UnifiedProxy,
+  unifiedProxyEnabled,
+  type UnifiedProxyOptions,
+} from "./proxy/create-proxy.js";
 export {
   type BenchReport,
   type PerQueryResult,

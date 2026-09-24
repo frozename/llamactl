@@ -1233,14 +1233,15 @@ export const router = t.router({
       const cfg = kubecfg.loadConfig();
       const resolved = kubecfg.resolveNode(cfg, route.node);
       if (resolved.node.endpoint === "inproc://local") {
-        // Local agent — short-circuit through core's openaiProxy.
-        const { openaiProxy } = await import("@llamactl/core");
+        // Local agent — short-circuit through the shared proxy dispatch;
+        // it is the legacy openaiProxy call unless LLAMACTL_UNIFIED_PROXY=1.
+        const { dispatchProxyRequest } = await import("./proxy/create-proxy.js");
         const req = new Request("http://local/v1/chat/completions", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ ...input.request, stream: false }),
         });
-        const res = await openaiProxy.proxyOpenAI(req);
+        const res = await dispatchProxyRequest(req);
         if (!res.ok) {
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
