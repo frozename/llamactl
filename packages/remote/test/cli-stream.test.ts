@@ -18,9 +18,11 @@ import {
  *     fall through to `createResponse`
  *   - Chunks carry the role on the first delta + content-only
  *     on subsequent deltas (OpenAI-envelope convention)
- *   - Caller AbortSignal kills the subprocess + yields error +
- *     done
- *   - Non-zero exit yields an error event before done
+ *   - Caller AbortSignal kills the subprocess, then THROWS the
+ *     caller's reason after the child is reaped + journalled
+ *   - Non-zero exit / timeout / read failure yield one error event
+ *     and NO done — truncation never presents as success
+ *   - A clean exit ends with done `completion: 'upstream'`
  *   - Journal entry records response_bytes across all yielded
  *     chunks; prompt/response bodies never appear
  */
@@ -151,6 +153,8 @@ describe("streamResponse — chunk sequencing", () => {
     expect(chunks).toHaveLength(3);
     expect(done).toHaveLength(1);
     expect(done[0]!.finish_reason).toBe("stop");
+    // P0.2: a successful exit marks its terminal provenance.
+    expect(done[0]!.completion).toBe("upstream");
   });
   test("first chunk carries role: assistant, subsequent chunks content-only", async () => {
     const provider = createCliSubprocessProvider({
@@ -207,7 +211,7 @@ describe("streamResponse — journal write", () => {
     expect(e).not.toHaveProperty("response");
     expect(e).not.toHaveProperty("prompt");
   });
-  test("non-zero exit → error event + done + error_code journal", async () => {
+  test("non-zero exit → one error event, NO done + error_code journal", async () => {
     const entries: unknown[] = [];
     const provider = createCliSubprocessProvider({
       agentName: "mac-mini",
@@ -227,7 +231,8 @@ describe("streamResponse — journal write", () => {
     );
     expect(errors).toHaveLength(1);
     expect(errors[0]!.error.code).toBe("non-zero-exit");
-    expect(events[events.length - 1]!.type).toBe("done");
+    // P0.2: an error is terminal — no done may follow it.
+    expect(events.some((e) => e.type === "done")).toBe(false);
     const e = entries[0] as Record<string, unknown>;
     expect(e["ok"]).toBe(false);
     expect(e["error_code"]).toBe("non-zero-exit");
@@ -290,7 +295,7 @@ describe("streamResponse — cancellation", () => {
     }
   });
 
-  test("caller AbortSignal aborts mid-stream + yields timeout error + done", async () => {
+  test("caller AbortSignal aborts mid-stream → throws AbortError after reap + journal", async () => {
     // Drive a "hung" stream: emit one line, then hang until the
     // signal fires. Caller aborts after the first chunk.
     let resolveHang: () => void = () => {
@@ -299,6 +304,7 @@ describe("streamResponse — cancellation", () => {
     const hangPromise = new Promise<void>((r) => {
       resolveHang = r;
     });
+    const entries: unknown[] = [];
     const provider = createCliSubprocessProvider({
       agentName: "mac-mini",
       binding: claudeBinding({ timeoutMs: 60_000 }),
@@ -308,27 +314,101 @@ describe("streamResponse — cancellation", () => {
         // After the caller aborts the fake releases hangPromise
         // from the test; the generator then returns naturally.
       }),
-      journalWrite: () => Promise.resolve(),
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
     });
     const caller = new AbortController();
     // Consume via for-await so we stay within the AsyncIterable
     // contract (AiProvider.streamResponse is declared that way).
     const events: UnifiedStreamEvent[] = [];
-    let firedAbort = false;
-    for await (const e of provider.streamResponse!(minimalReq, caller.signal)) {
-      events.push(e);
-      if (!firedAbort && e.type === "chunk") {
-        firedAbort = true;
-        caller.abort();
-        resolveHang();
+    let thrown: unknown;
+    try {
+      let firedAbort = false;
+      for await (const e of provider.streamResponse!(minimalReq, caller.signal)) {
+        events.push(e);
+        if (!firedAbort && e.type === "chunk") {
+          firedAbort = true;
+          caller.abort();
+          resolveHang();
+        }
       }
+    } catch (err) {
+      thrown = err;
     }
+    // P0.2: caller cancellation surfaces as the caller's own reason
+    // — an AbortError — not an in-stream error event or a done.
+    expect((thrown as Error).name).toBe("AbortError");
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    expect(events.some((e) => e.type === "error")).toBe(false);
+    expect(events.some((e) => e.type === "chunk")).toBe(true);
+    // The child was reaped + journalled before the throw.
+    expect(entries).toHaveLength(1);
+    expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("aborted");
+    expect((entries[0] as Record<string, unknown>)["ok"]).toBe(false);
+  });
+
+  test("binding timeout mid-stream → one error event (code 'timeout'), NO done", async () => {
+    // The child hangs past the binding's own timeout; the timer's
+    // abort kills it and the stream ends on the error event.
+    const entries: unknown[] = [];
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: claudeBinding({ timeoutMs: 50 }),
+      spawnStream: async (_argv, opts): Promise<SpawnStreamResult> => {
+        await Promise.resolve();
+        let resolveExited: (v: { exitCode: number; aborted: boolean }) => void = () => {};
+        const exitedPromise = new Promise<{ exitCode: number; aborted: boolean }>((r) => {
+          resolveExited = r;
+        });
+        // The hung child only unwinds when the kill lands — mirrors
+        // a real subprocess dying on SIGKILL.
+        opts.signal.addEventListener(
+          "abort",
+          () => {
+            resolveExited({ exitCode: -1, aborted: true });
+          },
+          { once: true },
+        );
+        const stdout = (async function* (): AsyncIterable<string> {
+          yield "first";
+          await exitedPromise;
+        })();
+        return { stdout, stderrPromise: Promise.resolve(""), exitedPromise };
+      },
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    const events = await collect(provider.streamResponse!(minimalReq));
     const errors = events.filter(
       (e): e is Extract<UnifiedStreamEvent, { type: "error" }> => e.type === "error",
     );
-    expect(errors.length).toBeGreaterThanOrEqual(1);
+    expect(errors).toHaveLength(1);
     expect(errors[0]!.error.code).toBe("timeout");
-    expect(events[events.length - 1]!.type).toBe("done");
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("timeout");
+  });
+
+  test("stdout read failure → one error event, NO done", async () => {
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: claudeBinding(),
+      spawnStream: fakeStreamSpawn(async function* () {
+        yield "partial";
+        throw new Error("stdout exploded");
+      }),
+      journalWrite: () => Promise.resolve(),
+    });
+    const events = await collect(provider.streamResponse!(minimalReq));
+    const errors = events.filter(
+      (e): e is Extract<UnifiedStreamEvent, { type: "error" }> => e.type === "error",
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error.code).toBe("stream-failed");
+    expect(events.some((e) => e.type === "done")).toBe(false);
   });
 });
 

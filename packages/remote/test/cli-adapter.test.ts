@@ -71,7 +71,7 @@ describe("messagesToPrompt", () => {
 });
 
 describe("createCliSubprocessProvider — createResponse happy path", () => {
-  test("returns UnifiedAiResponse with assistant content, model, usage, latencyMs", async () => {
+  test("returns UnifiedAiResponse with assistant content, model, latencyMs — and no usage", async () => {
     const provider = createCliSubprocessProvider({
       agentName: "mac-mini",
       binding: makeBinding({ defaultModel: "claude-sonnet-4-5" }),
@@ -85,7 +85,10 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
     expect(res.choices[0]!.finish_reason).toBe("stop");
     expect(res.provider).toBe("mac-mini.claude-pro");
     expect(typeof res.latencyMs).toBe("number");
-    expect(res.usage?.total_tokens).toBeGreaterThan(0);
+    // P0.2: the byte-estimate is no longer presented as observed
+    // usage — it only flows through onUsageObservation marked
+    // 'estimated'. The response carries no usage block.
+    expect(res.usage).toBeUndefined();
   });
 
   test("JSON format extracts response field", async () => {
