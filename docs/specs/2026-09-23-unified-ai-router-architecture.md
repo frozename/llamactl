@@ -8,7 +8,7 @@ Roadmap: [#127](https://github.com/frozename/llamactl/issues/127). Documentation
 
 ## Ownership revision — 2026-09-24
 
-The [cross-project boundary assessment](./2026-09-24-ai-platform-boundaries.md) revises the recommended ownership below: Sirius owns the full public gateway and final-response cache policy; llamactl owns fleet control, execution workers and the direct local endpoint; Embersynth owns synthetic-model composition; Nova owns shared contracts. In particular, replace the proposed llamactl `packages/proxy` destination with a standalone Sirius deployment. The original detailed safety invariants remain applicable, but module allocation and future task fences must be reconciled with the assessment before affected work is dispatched. Preserve active P0.2 work and completed P0.1 evidence. The assessment is a documentation proposal, not a runtime change or a transfer of existing issues.
+The [cross-project boundary assessment](./2026-09-24-ai-platform-boundaries.md) revises the recommended ownership below: Sirius owns the full public gateway and final-response cache policy; llamactl owns fleet control, model workers and the direct local endpoint; Embersynth owns synthetic-model composition; Penumbra owns the agentic harness and managed CLI/ACP execution; Nova owns shared model contracts. In particular, replace the proposed llamactl `packages/proxy` destination with a standalone Sirius deployment. The original detailed safety invariants remain applicable, but module allocation and future task fences must be reconciled with the assessment before affected work is dispatched. Preserve active P0.2 work and completed P0.1 evidence. The assessment is a documentation proposal, not a runtime change or a transfer of existing issues.
 
 ## 1. Executive decision
 
@@ -838,6 +838,8 @@ References below are immutable repository citations or primary external specific
 ## 11. Completed reference review and publication organization
 
 ### 11.1 Penumbra reuse/adapt/reject matrix
+
+The [2026-09-24 harness reuse assessment](./2026-09-24-penumbra-agentic-harness-reuse.md) expands this reference audit to workflows, routing, task leases, memory, embeddings, telemetry and lifecycle ownership. Prefer Penumbra service integration over copying its harness into llamactl. The original P2/P6 llamactl ACP connection/pool/permission/session module proposals below and above require reallocation to Penumbra or its explicit consumer bridge before dispatch; preserve their safety requirements and active P0.2 work.
 
 R0 review completed on 2026-09-23. Penumbra AGENTS.md, executable implementations and fixture assertions were inspected at `c264644bc2b4f1e1429e845208fd6ca7f6426d62`; the pinned commit is accessible to the authenticated reviewer. Penumbra and geo-eval are private. References below require repository access; the public design records interface findings and adaptation decisions, without copying private implementation code, credentials, worker inventories, account details or runtime transcripts. Static inspection establishes implementation and test intent, not real-agent conformance.
 

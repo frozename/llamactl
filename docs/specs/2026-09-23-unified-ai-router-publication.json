@@ -2577,13 +2577,37 @@
     "url": "https://github.com/frozename/llamactl/blob/docs/unified-ai-router-roadmap/docs/specs/2026-09-24-ai-platform-boundaries.md",
     "allocation": {
       "public_gateway_and_final_response_cache": "frozename/sirius-gateway",
-      "fleet_control_worker_execution_and_engine_kv": "frozename/llamactl",
+      "fleet_control_worker_execution_and_engine_kv": "frozename/llamactl (model workers and runtime deployment; managed agent execution is Penumbra-owned)",
       "synthetic_composition_and_stage_artifacts": "frozename/embersynth",
-      "shared_inference_contracts": "frozename/nova"
+      "shared_inference_contracts": "frozename/nova",
+      "agentic_harness_managed_cli_acp_workflows_memory": "frozename/penumbra"
     },
     "dispatch_preflight": "Preserve active P0.2 work and stable IDs. Before subsequent affected dispatch, rebase repository ownership, exact file fences, accepted dependencies, tests and rollout gates against the assessment. Existing task_file payloads are not yet rebased.",
     "active_task_fences_changed": false,
     "runtime_changes": false,
-    "registrar_event_id": 1813
+    "registrar_event_id": 1813,
+    "penumbra_reuse": {
+      "document": "docs/specs/2026-09-24-penumbra-agentic-harness-reuse.md",
+      "reviewed_commit": "c264644bc2b4f1e1429e845208fd6ca7f6426d62",
+      "status": "recommended_service_integration",
+      "affected_ids": [
+        "R0",
+        "P0.2",
+        "P1.1",
+        "P1.3",
+        "P2.1",
+        "P2.2",
+        "P3.1",
+        "P3.2",
+        "P3.3",
+        "P4.1",
+        "P5.1",
+        "P5.2",
+        "P6.1",
+        "P6.2"
+      ],
+      "task_payloads_rebased": false,
+      "registrar_event_id": 1816
+    }
   }
 }
