@@ -1615,7 +1615,7 @@
           "registrar_event_id": 1853,
           "follow_up_event_id": 1838,
           "marker": "deployment-slices-1838",
-          "published_at": null,
+          "published_at": "2026-09-24T21:15:48Z",
           "body_sha256": "56fe169c10b773cf59dca66ba78b5298b5d9a9456c314ac0da902941f427413e"
         }
       ]
@@ -1739,7 +1739,7 @@
           "registrar_event_id": 1853,
           "follow_up_event_id": 1838,
           "marker": "deployment-slices-1838",
-          "published_at": null,
+          "published_at": "2026-09-24T21:15:52Z",
           "body_sha256": "d2269a63bacf7bfac9d0d789a78ba0188f34e67e7c3a605448865d80710f4a47"
         }
       ]
@@ -1843,7 +1843,7 @@
           "registrar_event_id": 1853,
           "follow_up_event_id": 1838,
           "marker": "deployment-slices-1838",
-          "published_at": null,
+          "published_at": "2026-09-24T21:15:55Z",
           "body_sha256": "c939f86e13b76c882f4b2d48152adb957a3b86953c409e8d6bef2251069838a8"
         }
       ]
@@ -2080,7 +2080,7 @@
           "registrar_event_id": 1853,
           "follow_up_event_id": 1838,
           "marker": "deployment-slices-1838",
-          "published_at": null,
+          "published_at": "2026-09-24T21:15:59Z",
           "body_sha256": "1bf777edf22c27411b2013a231dae21932fde9ee5f202185c882dcc2719df394"
         }
       ]
@@ -2191,7 +2191,7 @@
           "registrar_event_id": 1853,
           "follow_up_event_id": 1838,
           "marker": "deployment-slices-1838",
-          "published_at": null,
+          "published_at": "2026-09-24T21:16:02Z",
           "body_sha256": "80a7cab9c29543e70050c97b532689c08048b0d4b9c205f5312f6e2b8b86a526"
         }
       ]
@@ -4098,7 +4098,7 @@
   "tracking": {
     "schema_version": 1,
     "ledger_url": "https://github.com/frozename/llamactl/blob/docs/unified-ai-router-roadmap/docs/unified-ai-router-registrar.md",
-    "snapshot_at": "2026-09-24T20:16:34.159Z",
+    "snapshot_at": "2026-09-24T21:17:22.109Z",
     "repository": "frozename/llamactl",
     "baseline": "7443403912ab3976d18bc288de3009e2c23b7afb",
     "roadmap_url": "https://github.com/frozename/llamactl/issues/127",
@@ -4106,7 +4106,7 @@
       "url": "https://github.com/frozename/llamactl/pull/147",
       "state": "open",
       "merged": false,
-      "observed_head": "332ec2f3dd2b38c03503e63b9807e7399bb8e91b"
+      "observed_head": "a39a0916b7ce2569333e88b0d2c4c194aa5ad01d"
     },
     "penumbra": {
       "registrar_id": "2c2a7cbb-048c-45e5-8663-f15187b9e85b",
@@ -4114,10 +4114,10 @@
       "home_project": "llamactl",
       "status": "active",
       "source_doc_path": "docs/unified-ai-router-registrar.md",
-      "last_event_id": 1853,
+      "last_event_id": 1858,
       "rollup": {
         "open_blockers": 0,
-        "open_follow_ups": 30
+        "open_follow_ups": 29
       },
       "phases": [
         {
@@ -4218,7 +4218,7 @@
         "dependencies": ["P0.1"],
         "penumbra_phase_no": 2,
         "penumbra_event_id": 1692,
-        "owner": "Penumbra fleet lanes per repository (registrar events 1771-1853)",
+        "owner": "Penumbra fleet lanes per repository (registrar events 1771-1858)",
         "task_id": null,
         "handoff_id": null,
         "implementation_pr": null,
@@ -4737,6 +4737,13 @@
         "kind": "tracking_rebased",
         "summary": "Boundary rebase published (1844 docs 332ec2f3, 1845 bodies, 1847 edges, 1848 #129 closed); consumer PR #151 opened (1846; CI caveat 1849); Sirius ../penumbra workspace finding (1850); deployment incorporation decision 1853: ten DEP slices under P4.1/P4.2/P4.3/P5.3 with validated task files (validator 28/0), none dispatchable; 30 follow-ups owed (1838 pending publication readback); no open blockers.",
         "registrar_event_range": [1844, 1853]
+      },
+      {
+        "id": "LEDGER-020",
+        "at": "2026-09-24T21:17:22.109Z",
+        "kind": "publication_verified",
+        "summary": "Deployment incorporation published and read back: docs commit a39a0916 (1856), coordinator sections on #139, #140, #141, #143 and #144 with exact readback hashes equal to the manifest amendment rows (1857); follow-up 1838 closed DONE (1858). 29 follow-ups owed; no open blockers.",
+        "registrar_event_range": [1856, 1858]
       }
     ]
   },
@@ -5380,7 +5387,12 @@
         "nova": "71fe71dbf72fe99f4e53e68b5be9b3d420c446ad"
       },
       "dispatchable": false,
-      "summary": "Decision 1828, the 24-edge DAG (dag-next.json; verify-manifest equals_dag_next true today), the active P0.2 fence (13 paths incl. packages/remote/src/index.ts and packages/remote/package.json; its intersection with every DEP write_fence path is empty, enforced by a transform guard) and the fleet v2 payloads are preserved. The ten DEP slices reference only their coordinator's existing dependencies (P4.2: P1.3+P4.1; P4.1: P0.2; P5.3: P5.2; P4.3: P3.3+P4.1), never the parent and never a DEP-to-DEP edge (DEP ordering lives in fleet.serialize_after and the existing `requires` note key), so no dependency edge, coordinator issue or active fence changes. deployment_extension passes through byte-identical (transform guard :649 plus verify-manifest's sorted and text-region compares); DEP information lives only in slices[] (36 -> 46), a new boundary_assessment.deployment_incorporation summary, tracking (snapshot at the incorporation event, observed_head 332ec2f3, LEDGER-019 covering 1844-1853 (this registrar's events 1844-1850 and 1853)) and the new amendment rows on #139, #140, #141, #143 and #144 while every 1828 row is copied verbatim from 332ec2f3. The single fence overlap with published v2 work is packages/remote/src/server/serve.ts (P4.1/llamactl vs P4.1/DEP2-llamactl), declared and serialized; DEP2 reaches control.ts through the already exported startAgentServer/StartAgentOptions (packages/remote/src/index.ts:157) and the existing `llamactl controller serve` command with a --role flag, so no P0.2-fence path and no new CLI command. Fence bases: llamactl c2a6a83c (main HEAD, verified), sirius-gateway 42f3ca8 (HEAD, clean; supersedes the 1828 pin per caveat 1850; six ../penumbra workspaces made optional by DEP1-sirius-gateway), embersynth c50706f (HEAD; three untracked container drafts and an uncommitted README edit excluded and never read; workers start from a clean isolated worktree), nova 71fe71dbf72fe99f4e53e68b5be9b3d420c446ad (pin only; no DEP slice touches nova; channel 1832 stays owed, no vendored artifact anywhere). Authority: 1841(c) pre-approves the documentation/issue/manifest/ledger synchronization with the same guards; no image build, publication, deployment, enablement, merge, or touch of the Embersynth drafts is authorized or planned. Kit baseline before changes (reproduced by the judges): transform fixpoint on 332ec2f3 (cmp exit 0, 36 slices), verify-manifest 0 problems, validate-task-files 18/0, docs-wt clean at 332ec2f3, incorporation decision event 1853 (2026-09-24T20:16:34.159Z), 1838 referenced by 1840 and 1850 but closed by none."
+      "published": {
+        "docs_commit": "a39a0916b7ce2569333e88b0d2c4c194aa5ad01d",
+        "issues_event_id": 1857,
+        "follow_up_closed_event_id": 1858
+      },
+      "summary": "Decision 1828, the 24-edge DAG (dag-next.json; verify-manifest equals_dag_next true today), the active P0.2 fence (13 paths incl. packages/remote/src/index.ts and packages/remote/package.json; its intersection with every DEP write_fence path is empty, enforced by a transform guard) and the fleet v2 payloads are preserved. The ten DEP slices reference only their coordinator's existing dependencies (P4.2: P1.3+P4.1; P4.1: P0.2; P5.3: P5.2; P4.3: P3.3+P4.1), never the parent and never a DEP-to-DEP edge (DEP ordering lives in fleet.serialize_after and the existing `requires` note key), so no dependency edge, coordinator issue or active fence changes. deployment_extension passes through byte-identical (transform guard :649 plus verify-manifest's sorted and text-region compares); DEP information lives only in slices[] (36 -> 46), a new boundary_assessment.deployment_incorporation summary, tracking (snapshot at the closing event 1858, observed_head a39a0916, LEDGER-019 covering 1844-1853 (this registrar's events 1844-1850 and 1853) and LEDGER-020 covering 1856-1858) and the new amendment rows on #139, #140, #141, #143 and #144 while every 1828 row is copied verbatim from 332ec2f3. The single fence overlap with published v2 work is packages/remote/src/server/serve.ts (P4.1/llamactl vs P4.1/DEP2-llamactl), declared and serialized; DEP2 reaches control.ts through the already exported startAgentServer/StartAgentOptions (packages/remote/src/index.ts:157) and the existing `llamactl controller serve` command with a --role flag, so no P0.2-fence path and no new CLI command. Fence bases: llamactl c2a6a83c (main HEAD, verified), sirius-gateway 42f3ca8 (HEAD, clean; supersedes the 1828 pin per caveat 1850; six ../penumbra workspaces made optional by DEP1-sirius-gateway), embersynth c50706f (HEAD; three untracked container drafts and an uncommitted README edit excluded and never read; workers start from a clean isolated worktree), nova 71fe71dbf72fe99f4e53e68b5be9b3d420c446ad (pin only; no DEP slice touches nova; channel 1832 stays owed, no vendored artifact anywhere). Authority: 1841(c) pre-approves the documentation/issue/manifest/ledger synchronization with the same guards; no image build, publication, deployment, enablement, merge, or touch of the Embersynth drafts is authorized or planned. Kit baseline before changes (reproduced by the judges): transform fixpoint on 332ec2f3 (cmp exit 0, 36 slices), verify-manifest 0 problems, validate-task-files 18/0, docs-wt clean at 332ec2f3, incorporation decision event 1853 (2026-09-24T20:16:34.159Z), 1838 referenced by 1840 and 1850 but closed by none. Published and read back after that baseline: docs commit a39a0916 (1856) and the coordinator sections on #139, #140, #141, #143 and #144 with exact readback hashes equal to the amendment rows (1857); follow-up 1838 closed DONE in 1858, leaving 29 follow-ups owed."
     },
     "shared_library_qualification": {
       "status": "proposed; not extracted; qualification not started",
