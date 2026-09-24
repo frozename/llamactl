@@ -9,6 +9,12 @@ Snapshot: 2026-09-23T23:47:12.000Z. Repository: frozename/llamactl. This is an e
 
 Penumbra entry: **llamactl-unified-ai-router**, ID **2c2a7cbb-048c-45e5-8663-f15187b9e85b**, home project **llamactl**, source document **docs/unified-ai-router-registrar.md**, status **active**. Registrar state was read back: one completed research phase, one active and six pending implementation phases, 18 owed follow-ups, no open blockers. P0.1 is merged and accepted (pull/148 squash-merged as c2a6a83c4bcbe36ff7651b7ca6d675068e2103a3 at 2026-09-23T23:32:49Z; follow-up 1691 done in 1764). GATE-01 was repaired by pull/149 (d421db1e5977e0cecf1705da57a0f0d51cd1251a) and blocker 1686 resolved in 1763. Last recorded event 1767.
 
+## Boundary assessment update — 2026-09-24
+
+The [cross-project ownership assessment](./specs/2026-09-24-ai-platform-boundaries.md) recommends Sirius for the full gateway and final-response exact/semantic policy, llamactl for control/worker execution and engine-local KV management, Embersynth for synthetic composition, and Nova for shared contracts. Its §6 maps all 19 stable work packages and requires updated repository/file fences and dependencies before subsequent ownership-dependent dispatch. Existing task payloads remain historical until that rebase; they are not authorization to implement Sirius-owned features in llamactl.
+
+The earlier snapshot below remains history. At this review, P0.2 is active: [llamactl PR #150](https://github.com/frozename/llamactl/pull/150), [Nova PR #1](https://github.com/frozename/nova/pull/1), and [Embersynth PR #2](https://github.com/frozename/embersynth/pull/2) are open; the assessment pins their inspected heads. Preserve these lanes and their acceptance requirements. This update does not change phase status, cancel a task, close a follow-up or claim an implementation has passed. No production files changed.
+
 ## State and evidence rules
 
 Git/GitHub are authoritative for repository commits, PR merges, issue state and checks. Penumbra is the durable event record; this file and the manifest are its reviewable repository projection. Refresh all three before acting. A repository ledger snapshot can age; record its observation time and append corrections instead of silently rewriting history.
@@ -88,14 +94,15 @@ Read Penumbra using `registrar_status({registrar_id: "2c2a7cbb-048c-45e5-8663-f1
 
 ## Append-only journal
 
-| Entry      | Observed at              | Fact / evidence                                                                                                                                        |
-| ---------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| LEDGER-001 | 2026-09-23T11:15:31.660Z | Publication readback: roadmap #127, 19 children, 24 dependency edges, seven milestones; R0 closed and 18 implementation issues open; PR #147 unmerged. |
-| LEDGER-002 | 2026-09-23T11:18:34.798Z | Duplicate sweep found no matching initiative. Created Penumbra entry 2c2a7cbb-048c-45e5-8663-f15187b9e85b as draft.                                    |
-| LEDGER-003 | 2026-09-23T11:19:57.546Z | Verified events 1683–1708: completed R0, 18 owed follow-ups, baseline acceptance blocker and design/dispatch caveats. No implementation dispatched.    |
-| LEDGER-004 | 2026-09-23T16:57:40.000Z | Implementation authorized for P0.1 (1718); entry draft → active (1719), phase 2 → active (1720); work-start events recorded (1721–1722).               |
-| LEDGER-005 | 2026-09-23T16:57:40.000Z | P0.1 review: FAIL round 1 fixed, split round 2, closure PASS; pull/148 open at 11451629d50e6a6d2f620591d6e149482c6387dc, not merged (1729–1737).       |
-| LEDGER-006 | 2026-09-23T16:57:40.000Z | Lane-ledger correction (1738); GATE-01 evidence appended, stays open; architecture 1.1 tunnel-streaming corrected; 1691 still owed; new follow-up 1739 |
-| LEDGER-007 | 2026-09-23T23:47:12.000Z | PR #148 CI green (1741); separate GATE-01 repair then squash merges authorized (1747); earlier gate runs corrected as not hermetic (1748).             |
-| LEDGER-008 | 2026-09-23T23:47:12.000Z | GATE-01 repair merged as pull/149 at d421db1e5977e0cecf1705da57a0f0d51cd1251a (1761); blocker 1686 resolved with hermetic gates (1763).                |
-| LEDGER-009 | 2026-09-23T23:47:12.000Z | P0.1 merged as pull/148 at c2a6a83c4bcbe36ff7651b7ca6d675068e2103a3 (1764); follow-up 1739 done (1765); 1766 owed; lane correction (1767).             |
+| Entry      | Observed at                 | Fact / evidence                                                                                                                                                                            |
+| ---------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| LEDGER-001 | 2026-09-23T11:15:31.660Z    | Publication readback: roadmap #127, 19 children, 24 dependency edges, seven milestones; R0 closed and 18 implementation issues open; PR #147 unmerged.                                     |
+| LEDGER-002 | 2026-09-23T11:18:34.798Z    | Duplicate sweep found no matching initiative. Created Penumbra entry 2c2a7cbb-048c-45e5-8663-f15187b9e85b as draft.                                                                        |
+| LEDGER-003 | 2026-09-23T11:19:57.546Z    | Verified events 1683–1708: completed R0, 18 owed follow-ups, baseline acceptance blocker and design/dispatch caveats. No implementation dispatched.                                        |
+| LEDGER-004 | 2026-09-23T16:57:40.000Z    | Implementation authorized for P0.1 (1718); entry draft → active (1719), phase 2 → active (1720); work-start events recorded (1721–1722).                                                   |
+| LEDGER-005 | 2026-09-23T16:57:40.000Z    | P0.1 review: FAIL round 1 fixed, split round 2, closure PASS; pull/148 open at 11451629d50e6a6d2f620591d6e149482c6387dc, not merged (1729–1737).                                           |
+| LEDGER-006 | 2026-09-23T16:57:40.000Z    | Lane-ledger correction (1738); GATE-01 evidence appended, stays open; architecture 1.1 tunnel-streaming corrected; 1691 still owed; new follow-up 1739                                     |
+| LEDGER-007 | 2026-09-23T23:47:12.000Z    | PR #148 CI green (1741); separate GATE-01 repair then squash merges authorized (1747); earlier gate runs corrected as not hermetic (1748).                                                 |
+| LEDGER-008 | 2026-09-23T23:47:12.000Z    | GATE-01 repair merged as pull/149 at d421db1e5977e0cecf1705da57a0f0d51cd1251a (1761); blocker 1686 resolved with hermetic gates (1763).                                                    |
+| LEDGER-009 | 2026-09-23T23:47:12.000Z    | P0.1 merged as pull/148 at c2a6a83c4bcbe36ff7651b7ca6d675068e2103a3 (1764); follow-up 1739 done (1765); 1766 owed; lane correction (1767).                                                 |
+| LEDGER-010 | 2026-09-24T13:08:59.122000Z | Cross-project boundary assessment added for design review; Penumbra caveat 1813 records recommended ownership and next-task rebase requirement. Active P0.2 fences and statuses preserved. |

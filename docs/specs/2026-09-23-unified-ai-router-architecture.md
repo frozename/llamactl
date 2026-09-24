@@ -6,9 +6,13 @@ All paths are complete paths relative to the repository root. Source references 
 
 Roadmap: [#127](https://github.com/frozename/llamactl/issues/127). Documentation PR: [#147](https://github.com/frozename/llamactl/pull/147).
 
+## Ownership revision — 2026-09-24
+
+The [cross-project boundary assessment](./2026-09-24-ai-platform-boundaries.md) revises the recommended ownership below: Sirius owns the full public gateway and final-response cache policy; llamactl owns fleet control, execution workers and the direct local endpoint; Embersynth owns synthetic-model composition; Nova owns shared contracts. In particular, replace the proposed llamactl `packages/proxy` destination with a standalone Sirius deployment. The original detailed safety invariants remain applicable, but module allocation and future task fences must be reconciled with the assessment before affected work is dispatched. Preserve active P0.2 work and completed P0.1 evidence. The assessment is a documentation proposal, not a runtime change or a transfer of existing issues.
+
 ## 1. Executive decision
 
-Build one **protocol-neutral routing and execution pipeline**, with OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages as ingress/egress codecs. Retain native protocol payloads alongside normalized requests. Keep provider and network adapters in `remote`, pure routing/cache policy and schemas in `core`, and introduce `packages/proxy` as a thin independently deployable composition root. The “core tier” means execution workers built from `remote` plus `core`; it does not mean putting HTTP or ACP transport in the `core` package. [S01]
+Build one **protocol-neutral routing and execution pipeline**, with OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages as ingress/egress codecs. Retain native protocol payloads alongside normalized requests. In llamactl, keep worker/provider transport adapters in `remote` and pure worker policy/schemas in `core`. The full public gateway composition root and response-cache policy belong in Sirius under the 2026-09-24 ownership revision; the original `packages/proxy` references below are migration targets to reallocate, not instructions to build a competing gateway. The “core tier” means execution workers built from `remote` plus `core`; it does not mean putting HTTP or ACP transport in the `core` package. [S01]
 
 Recommended decisions:
 
@@ -1009,4 +1013,4 @@ Source: [task.file schema](https://github.com/frozename/penumbra/blob/c264644bc2
 
 The [initiative ledger](https://github.com/frozename/llamactl/blob/docs/unified-ai-router-roadmap/docs/unified-ai-router-registrar.md) tracks the stable R0/P0.1-P6.2 IDs, dependency acceptance, implementation ownership, actual PRs and commits, review/test evidence, rollout gates, risks and open decisions. Its machine-readable snapshot and append-only history are in the publication manifest under `tracking`. Penumbra registrar `llamactl-unified-ai-router` / `2c2a7cbb-048c-45e5-8663-f15187b9e85b` holds the matching phase, blocker and follow-up events. Git/GitHub are authoritative for facts; registrar events record state claims with evidence. Nothing is dispatched by registration.
 
-Keep research completion, documentation publication, documentation merge, implementation merge and runtime activation separate. P0.1 is ready only for preflight; dependent issues remain blocked until accepted prerequisite commits exist. The ledger defines who records each transition, how to resolve original event IDs, and what evidence permits a completed claim. No automatic synchronization or recurring monitor is installed.
+Keep research completion, documentation publication, documentation merge, implementation merge and runtime activation separate. P0.1 has merged through PR #148; P0.2 is in progress. Refresh the registrar and GitHub before dispatching dependents, and apply the ownership review preflight above. The ledger defines who records each transition, how to resolve original event IDs, and what evidence permits a completed claim. No automatic synchronization or recurring monitor is installed.

@@ -2569,5 +2569,21 @@
       "url": "https://github.com/frozename/llamactl/milestone/7",
       "title": "AI router P6 — ACP execution and sessions"
     }
+  },
+  "boundary_assessment": {
+    "review_date": "2026-09-24",
+    "status": "recommended_design_pending_review",
+    "document": "docs/specs/2026-09-24-ai-platform-boundaries.md",
+    "url": "https://github.com/frozename/llamactl/blob/docs/unified-ai-router-roadmap/docs/specs/2026-09-24-ai-platform-boundaries.md",
+    "allocation": {
+      "public_gateway_and_final_response_cache": "frozename/sirius-gateway",
+      "fleet_control_worker_execution_and_engine_kv": "frozename/llamactl",
+      "synthetic_composition_and_stage_artifacts": "frozename/embersynth",
+      "shared_inference_contracts": "frozename/nova"
+    },
+    "dispatch_preflight": "Preserve active P0.2 work and stable IDs. Before subsequent affected dispatch, rebase repository ownership, exact file fences, accepted dependencies, tests and rollout gates against the assessment. Existing task_file payloads are not yet rebased.",
+    "active_task_fences_changed": false,
+    "runtime_changes": false,
+    "registrar_event_id": 1813
   }
 }
