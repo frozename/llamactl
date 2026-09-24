@@ -6,24 +6,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { providerForCloudNode } from "../src/providers/factory.js";
-import { recordChatUsageSnapshot } from "../src/router.js";
+import { recordChatUsageObservation } from "../src/router.js";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "../src/safe-fs.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
 
 /**
  * Streaming-path cost-corpus coverage. The non-streaming writer
  * (`recordChatUsage`) is exercised by `chat-usage.test.ts`; this file
- * proves the streaming half:
+ * proves the streaming half on the nova 0.2.0 provenance surface:
  *
- *   1. `recordChatUsageSnapshot` lands a UsageRecord with the canonical
- *      provider (the snapshot's own `provider` is the adapter name and
- *      must NOT leak into the corpus).
- *   2. The full factory→adapter→onUsage pipeline records when a stream
- *      yields a usage frame: `providerForNode`/`providerForCloudNode`
- *      threads `onUsage` into the OpenAI-compat adapter, which fires it
- *      on the final SSE usage block. We drive that with a stubbed fetch
- *      so no real upstream is needed — the same wiring the `chatStream`
- *      subscription installs.
+ *   1. `recordChatUsageObservation` lands a V1 UsageRecord with the
+ *      canonical provider (the snapshot's own `provider` is the
+ *      adapter name and must NOT leak into the corpus) — and ONLY
+ *      when the observation is fully observed. Unknown or partial
+ *      usage writes nothing; no V2 rows ever reach the V1 corpus.
+ *   2. The full factory→adapter→onUsageObservation pipeline records
+ *      when a stream yields usage frames: `providerForNode`/
+ *      `providerForCloudNode` threads `onUsageObservation` into the
+ *      OpenAI-compat adapter, which fires it exactly once per
+ *      attempt with the last usage frame's counts. We drive that
+ *      with a stubbed fetch so no real upstream is needed — the
+ *      same wiring the `chatStream` subscription installs.
  */
 
 let dir = "";
@@ -94,7 +97,7 @@ function readSoleRecord(): Record<string, unknown> {
   return JSON.parse(readFileSync(join(dir, files[0]!), "utf8").trim()) as Record<string, unknown>;
 }
 
-/** Two chat chunks + a trailing usage frame + [DONE] — fires onUsage. */
+/** Two chat chunks + a trailing usage frame + [DONE] — fires onUsageObservation. */
 function usageFrames(usage: {
   prompt_tokens: number;
   completion_tokens: number;
@@ -134,15 +137,20 @@ async function drain(iter: AsyncIterable<UnifiedStreamEvent>): Promise<number> {
   return count;
 }
 
-describe("recordChatUsageSnapshot", () => {
+describe("recordChatUsageObservation", () => {
   test("writes a UsageRecord using the canonical provider, not the adapter name", async () => {
-    recordChatUsageSnapshot(
+    recordChatUsageObservation(
       {
+        provider: "openai-direct",
         model: "gpt-4o",
-        prompt_tokens: 11,
-        completion_tokens: 7,
-        total_tokens: 18,
+        kind: "chat",
         latency_ms: 123,
+        observation: {
+          source: "observed",
+          input_tokens: 11,
+          output_tokens: 7,
+          total_tokens: 18,
+        },
       },
       "openai",
     );
@@ -160,17 +168,65 @@ describe("recordChatUsageSnapshot", () => {
     expect(rec["total_tokens"]).toBe(18);
     expect(rec["latency_ms"]).toBe(123);
     expect(typeof rec["ts"]).toBe("string");
+    // The corpus row is a projected V1 — never a V2 envelope.
+    expect("v" in rec).toBe(false);
+    expect("observation" in rec).toBe(false);
   });
 
   test("attributes the project route when one is supplied", async () => {
-    recordChatUsageSnapshot(
-      { model: "gpt-4o", prompt_tokens: 5, completion_tokens: 5, total_tokens: 10, latency_ms: 9 },
+    recordChatUsageObservation(
+      {
+        provider: "openai-direct",
+        model: "gpt-4o",
+        kind: "chat",
+        latency_ms: 9,
+        observation: { source: "observed", input_tokens: 5, output_tokens: 5, total_tokens: 10 },
+      },
       "openai",
       "project:novaflow/quick_qna/private-first",
     );
     await flush();
     const rec = readSoleRecord();
     expect(rec["route"]).toBe("project:novaflow/quick_qna/private-first");
+  });
+
+  test("writes NOTHING when the observation is not fully observed", async () => {
+    // 'unknown' — upstream sent no usage at all.
+    recordChatUsageObservation(
+      {
+        provider: "openai-direct",
+        model: "gpt-4o",
+        kind: "chat",
+        latency_ms: 9,
+        observation: { source: "unknown" },
+      },
+      "openai",
+    );
+    // 'estimated' — a local projection, never upstream-attested.
+    recordChatUsageObservation(
+      {
+        provider: "openai-direct",
+        model: "gpt-4o",
+        kind: "chat",
+        latency_ms: 9,
+        observation: { source: "estimated", input_tokens: 5, output_tokens: 5, total_tokens: 10 },
+      },
+      "openai",
+    );
+    // 'observed' but partial — a missing component stays missing
+    // rather than projecting as a fabricated zero.
+    recordChatUsageObservation(
+      {
+        provider: "openai-direct",
+        model: "gpt-4o",
+        kind: "chat",
+        latency_ms: 9,
+        observation: { source: "observed", input_tokens: 5 },
+      },
+      "openai",
+    );
+    await flush();
+    expect(readdirSync(dir)).toHaveLength(0);
   });
 });
 
@@ -199,17 +255,17 @@ describe("chatStream usage capture", () => {
     expect(response.status).toBe(200);
   });
 
-  test("a stream that yields a usage frame records a UsageRecord via the onUsage hook", async () => {
+  test("a stream that yields a usage frame records one V1 row via onUsageObservation", async () => {
     // Mirror exactly what the chatStream subscription installs: derive
-    // the canonical provider from the node, then forward an onUsage
-    // callback that calls recordChatUsageSnapshot.
+    // the canonical provider from the node, then forward an
+    // onUsageObservation callback that calls recordChatUsageObservation.
     const canonicalProvider = cloudNode.cloud!.provider;
     const provider = providerForCloudNode(
       cloudNode,
       process.env,
       guardedSseFetch(usageFrames({ prompt_tokens: 20, completion_tokens: 13, total_tokens: 33 })),
       (snapshot) => {
-        recordChatUsageSnapshot(snapshot, canonicalProvider);
+        recordChatUsageObservation(snapshot, canonicalProvider);
       },
     );
 
@@ -225,6 +281,44 @@ describe("chatStream usage capture", () => {
     expect(rec["completion_tokens"]).toBe(13);
     expect(rec["total_tokens"]).toBe(33);
     expect(typeof rec["latency_ms"]).toBe("number");
+    expect("v" in rec).toBe(false);
+    expect("observation" in rec).toBe(false);
+  });
+
+  test("cumulative usage frames collapse to exactly one row carrying the LAST frame", async () => {
+    // Upstreams that emit per-chunk cumulative usage produce one
+    // observation — last frame wins — and therefore one V1 row, not
+    // a row per frame.
+    const frames = [
+      `data: ${JSON.stringify({
+        id: "c1",
+        model: "served-model",
+        choices: [{ index: 0, delta: { content: "hi" } }],
+        usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+      })}\n\n`,
+      `data: ${JSON.stringify({
+        id: "c1",
+        model: "served-model",
+        choices: [{ index: 0, delta: { content: "!" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      })}\n\n`,
+      `data: [DONE]\n\n`,
+    ];
+    const provider = providerForCloudNode(
+      cloudNode,
+      process.env,
+      guardedSseFetch(frames),
+      (snapshot) => {
+        recordChatUsageObservation(snapshot, cloudNode.cloud!.provider);
+      },
+    );
+    await drain(provider.streamResponse!(streamReq));
+    await flush();
+
+    const rec = readSoleRecord();
+    expect(rec["prompt_tokens"]).toBe(10);
+    expect(rec["completion_tokens"]).toBe(5);
+    expect(rec["total_tokens"]).toBe(15);
   });
 
   test("a stream without a usage frame records nothing", async () => {
@@ -241,7 +335,37 @@ describe("chatStream usage capture", () => {
       process.env,
       guardedSseFetch(noUsageFrames),
       (snapshot) => {
-        recordChatUsageSnapshot(snapshot, cloudNode.cloud!.provider);
+        recordChatUsageObservation(snapshot, cloudNode.cloud!.provider);
+      },
+    );
+    await drain(provider.streamResponse!(streamReq));
+    await flush();
+    expect(readdirSync(dir)).toHaveLength(0);
+  });
+
+  test("a stream with PARTIAL usage records nothing", async () => {
+    // The upstream reported only prompt_tokens — output + total are
+    // absent in the observation, so the V2->V1 projection is null and
+    // no row lands rather than a zero-filled stand-in.
+    const partialFrames = [
+      `data: ${JSON.stringify({
+        id: "c1",
+        model: "served-model",
+        choices: [{ index: 0, delta: { content: "hi" }, finish_reason: "stop" }],
+      })}\n\n`,
+      `data: ${JSON.stringify({
+        id: "c1",
+        model: "served-model",
+        usage: { prompt_tokens: 10 },
+      })}\n\n`,
+      `data: [DONE]\n\n`,
+    ];
+    const provider = providerForCloudNode(
+      cloudNode,
+      process.env,
+      guardedSseFetch(partialFrames),
+      (snapshot) => {
+        recordChatUsageObservation(snapshot, cloudNode.cloud!.provider);
       },
     );
     await drain(provider.streamResponse!(streamReq));

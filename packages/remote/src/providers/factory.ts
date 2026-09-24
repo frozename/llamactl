@@ -13,8 +13,11 @@ import {
   type AiProvider,
   createOpenAICompatProvider,
   type ModelInfo,
-  type OpenAICompatOnUsage,
+  type OpenAICompatOnUsageObservation,
+  type ProviderExecutionContext,
   type UnifiedAiRequest,
+  type UnifiedEmbeddingRequest,
+  type UnifiedEmbeddingResponse,
   type UnifiedStreamEvent,
 } from "@nova/contracts";
 
@@ -30,7 +33,7 @@ export function providerForCloudNode(
   node: ClusterNode,
   env: NodeJS.ProcessEnv = process.env,
   fetchImpl?: typeof globalThis.fetch,
-  onUsage?: OpenAICompatOnUsage,
+  onUsageObservation?: OpenAICompatOnUsageObservation,
 ): AiProvider {
   if (!node.cloud) {
     throw new Error(`node '${node.name}' is not a cloud node`);
@@ -48,7 +51,7 @@ export function providerForCloudNode(
     baseUrl,
     apiKey,
     ...(fetchImpl ? { fetch: fetchImpl } : {}),
-    ...(onUsage ? { onUsage } : {}),
+    ...(onUsageObservation ? { onUsageObservation } : {}),
   });
   return applyProviderQuirks(base, providerName);
 }
@@ -75,21 +78,31 @@ function applyProviderQuirks(base: AiProvider, providerName: CloudProvider): AiP
   const stripGeminiPrefix = (value: string): string =>
     value.startsWith("models/") ? value.slice("models/".length) : value;
 
-  const transformRequest = (req: UnifiedAiRequest): UnifiedAiRequest => {
+  const transformModel = <T extends { model: string }>(req: T): T => {
     if (providerName !== "gemini" || !req.model) return req;
     return { ...req, model: stripGeminiPrefix(req.model) };
   };
 
   const streamResponse = base.streamResponse?.bind(base);
+  const createEmbeddings = base.createEmbeddings?.bind(base);
   const wrapped = {
     ...base,
-    createResponse: (req: UnifiedAiRequest) => base.createResponse(transformRequest(req)),
+    createResponse: (req: UnifiedAiRequest, context?: ProviderExecutionContext) =>
+      base.createResponse(transformModel(req), context),
     ...(streamResponse
       ? {
           streamResponse: (
             req: UnifiedAiRequest,
             signal?: AbortSignal,
-          ): AsyncIterable<UnifiedStreamEvent> => streamResponse(transformRequest(req), signal),
+          ): AsyncIterable<UnifiedStreamEvent> => streamResponse(transformModel(req), signal),
+        }
+      : {}),
+    ...(createEmbeddings
+      ? {
+          createEmbeddings: (
+            req: UnifiedEmbeddingRequest,
+            context?: ProviderExecutionContext,
+          ): Promise<UnifiedEmbeddingResponse> => createEmbeddings(transformModel(req), context),
         }
       : {}),
     listModels: async () => {
@@ -194,12 +207,14 @@ export function providerForNode(opts: {
    *  Electron main passes `makeNodePinnedFetch`. */
   fetchFactory?: PinnedFetchFactory;
   /** Usage telemetry hook forwarded into the OpenAI-compat adapter.
-   *  Fires for both createResponse and the final streaming usage
-   *  frame; the caller maps the adapter-named snapshot to a canonical
-   *  pricing-key provider before writing. */
-  onUsage?: OpenAICompatOnUsage;
+   *  Fires exactly once per call / stream attempt with a
+   *  provenance-tagged `UsageObservationV1`; the caller maps the
+   *  adapter-named snapshot to a canonical pricing-key provider and
+   *  projects through `projectUsageRecordV2ToV1` before writing —
+   *  never the per-frame zero-filled legacy `onUsage`. */
+  onUsageObservation?: OpenAICompatOnUsageObservation;
 }): AiProvider {
-  const { node, user, cfg, env = process.env, fetchFactory, onUsage } = opts;
+  const { node, user, cfg, env = process.env, fetchFactory, onUsageObservation } = opts;
   const kind = resolveNodeKind(node);
 
   // Provider-kind virtual nodes resolve by walking to their parent
@@ -207,7 +222,7 @@ export function providerForNode(opts: {
   // node's name so telemetry / observers see `llamactl-sirius.openai`
   // rather than the parent gateway name.
   if (kind === "provider") {
-    return providerForVirtualNode(node, cfg, env, onUsage);
+    return providerForVirtualNode(node, cfg, env, onUsageObservation);
   }
 
   // Gateway + cloud-direct both carry a `cloud` binding and want
@@ -219,7 +234,7 @@ export function providerForNode(opts: {
   // of the cloud API key. That's the "still erroring on gemini"
   // bug: transform was there, but unreachable.
   if (kind === "gateway" || kind === "cloud")
-    return providerForCloudNode(node, env, undefined, onUsage);
+    return providerForCloudNode(node, env, undefined, onUsageObservation);
 
   if (node.endpoint === LOCAL_NODE_ENDPOINT) {
     throw new Error(
@@ -235,7 +250,7 @@ export function providerForNode(opts: {
     baseUrl,
     apiKey: token,
     ...(fetchImpl ? { fetch: fetchImpl as typeof globalThis.fetch } : {}),
-    ...(onUsage ? { onUsage } : {}),
+    ...(onUsageObservation ? { onUsageObservation } : {}),
   });
 }
 
@@ -250,7 +265,7 @@ function providerForVirtualNode(
   node: ClusterNode,
   cfg: Config | undefined,
   env: NodeJS.ProcessEnv,
-  onUsage?: OpenAICompatOnUsage,
+  onUsageObservation?: OpenAICompatOnUsageObservation,
 ): AiProvider {
   if (!node.provider) {
     throw new Error(`provider-kind node '${node.name}' is missing provider{}`);
@@ -261,11 +276,18 @@ function providerForVirtualNode(
     );
   }
   const binding = node.provider;
-  // CLI-source virtual nodes dispatch to a subprocess adapter that
-  // doesn't speak the OpenAI-compat usage protocol — no onUsage to
-  // thread through.
+  // CLI-source virtual nodes dispatch to a subprocess adapter. The
+  // adapter can't read upstream usage (CLIs don't report it), but it
+  // fires its own byte-estimated observation tagged
+  // 'estimated' — forward the hook so the router's recorder sees it
+  // (and null-projects it out of the V1 corpus).
   if (binding.source === "cli") {
-    return buildCliProviderForNode({ node, cfg, env });
+    return buildCliProviderForNode({
+      node,
+      cfg,
+      env,
+      ...(onUsageObservation !== undefined ? { onUsageObservation } : {}),
+    });
   }
   const ctx = cfg.contexts.find((c) => c.name === cfg.currentContext);
   const cluster = cfg.clusters.find((c) => c.name === ctx?.cluster);
@@ -289,7 +311,7 @@ function providerForVirtualNode(
     displayName: parent.cloud.displayName ?? node.name,
     baseUrl,
     apiKey,
-    ...(onUsage ? { onUsage } : {}),
+    ...(onUsageObservation ? { onUsageObservation } : {}),
   });
   return applyProviderQuirks(base, providerName);
 }
@@ -305,8 +327,9 @@ function buildCliProviderForNode(opts: {
   node: ClusterNode;
   cfg: Config;
   env: NodeJS.ProcessEnv;
+  onUsageObservation?: OpenAICompatOnUsageObservation;
 }): AiProvider {
-  const { node, cfg, env } = opts;
+  const { node, cfg, env, onUsageObservation } = opts;
   const providerBinding = node.provider;
   if (!providerBinding) {
     throw new Error(`cli-source provider-kind node '${node.name}' missing provider{}`);
@@ -337,12 +360,14 @@ function buildCliProviderForNode(opts: {
       agentName: string;
       binding: typeof binding;
       env?: NodeJS.ProcessEnv;
+      onUsageObservation?: OpenAICompatOnUsageObservation;
     }) => AiProvider;
   };
   return createCliSubprocessProvider({
     agentName: agent.name,
     binding,
     env,
+    ...(onUsageObservation ? { onUsageObservation } : {}),
   });
 }
 

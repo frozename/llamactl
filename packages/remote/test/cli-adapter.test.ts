@@ -71,7 +71,7 @@ describe("messagesToPrompt", () => {
 });
 
 describe("createCliSubprocessProvider — createResponse happy path", () => {
-  test("returns UnifiedAiResponse with assistant content, model, usage, latencyMs", async () => {
+  test("returns UnifiedAiResponse with assistant content, model, latencyMs — and no usage", async () => {
     const provider = createCliSubprocessProvider({
       agentName: "mac-mini",
       binding: makeBinding({ defaultModel: "claude-sonnet-4-5" }),
@@ -85,7 +85,10 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
     expect(res.choices[0]!.finish_reason).toBe("stop");
     expect(res.provider).toBe("mac-mini.claude-pro");
     expect(typeof res.latencyMs).toBe("number");
-    expect(res.usage?.total_tokens).toBeGreaterThan(0);
+    // P0.2: the byte-estimate is no longer presented as observed
+    // usage — it only flows through onUsageObservation marked
+    // 'estimated'. The response carries no usage block.
+    expect(res.usage).toBeUndefined();
   });
 
   test("JSON format extracts response field", async () => {
@@ -195,6 +198,84 @@ describe("createCliSubprocessProvider — createResponse happy path", () => {
     const e = entries[0] as Record<string, unknown>;
     expect(e["ok"]).toBe(false);
     expect(e["error_code"]).toBe("non-zero-exit");
+  });
+});
+
+describe("createCliSubprocessProvider — abort attribution on spawn rejection", () => {
+  test("deadline abort followed by a late caller abort is journalled 'deadline' + TimeoutError", async () => {
+    // First-source attribution: the deadline records first; the caller
+    // abort lands inside the abort listener — AFTER 'deadline' was
+    // already recorded — and must not rewrite the outcome.
+    const entries: unknown[] = [];
+    const caller = new AbortController();
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: makeBinding({ timeoutMs: 60_000 }),
+      spawn: (_argv, o) =>
+        new Promise<SpawnResult>((_res, rej) => {
+          o.signal.addEventListener(
+            "abort",
+            () => {
+              caller.abort();
+              rej(new Error("spawn aborted by linked signal"));
+            },
+            { once: true },
+          );
+        }),
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    let thrown: unknown;
+    try {
+      await provider.createResponse(minimalReq, {
+        deadline: Date.now() + 40,
+        signal: caller.signal,
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as Error).name).toBe("TimeoutError");
+    expect(entries).toHaveLength(1);
+    expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("deadline");
+  });
+
+  test("spawn rejection once the deadline expired → TimeoutError + journal 'deadline'", async () => {
+    // A spawn that fails because the linked signal already fired on an
+    // expired deadline must surface as TimeoutError, not 'spawn-failed'.
+    const entries: unknown[] = [];
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: makeBinding({ timeoutMs: 60_000 }),
+      spawn: (_argv, o) =>
+        new Promise<SpawnResult>((_res, rej) => {
+          if (o.signal.aborted) {
+            rej(new Error("refusing to spawn on an aborted signal"));
+            return;
+          }
+          o.signal.addEventListener(
+            "abort",
+            () => {
+              rej(new Error("aborted during spawn"));
+            },
+            { once: true },
+          );
+        }),
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    let thrown: unknown;
+    try {
+      await provider.createResponse(minimalReq, { deadline: Date.now() + 40 });
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as Error).name).toBe("TimeoutError");
+    expect(entries).toHaveLength(1);
+    expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("deadline");
   });
 });
 
