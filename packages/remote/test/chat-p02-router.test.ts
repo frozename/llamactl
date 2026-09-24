@@ -1,8 +1,8 @@
 import type { ClusterNode } from "@llamactl/core/config/schema";
 import type { UnifiedStreamEvent } from "@nova/contracts";
 
-import { freshConfig } from "@llamactl/core/config/schema";
 import { saveConfig, upsertNode } from "@llamactl/core/config/kubeconfig";
+import { freshConfig } from "@llamactl/core/config/schema";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,7 +65,10 @@ function writeConfig(nodes: ClusterNode[]): string {
   return path;
 }
 
-const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+const flush = (): Promise<void> =>
+  new Promise((r) => {
+    setTimeout(r, 0);
+  });
 
 function usageRecords(): Record<string, unknown>[] {
   const udir = process.env["LLAMACTL_USAGE_DIR"];
@@ -81,8 +84,8 @@ function usageRecords(): Record<string, unknown>[] {
 describe("chatComplete — tRPC cancellation reaches the provider fetch", () => {
   test("cancelling the caller aborts the in-flight upstream request", async () => {
     dir = mkdtempSync(join(tmpdir(), "p02-router-"));
-    let sawRequestResolve: () => void = () => {};
-    let sawAbortResolve: () => void = () => {};
+    let sawRequestResolve: (() => void) | null = null;
+    let sawAbortResolve: (() => void) | null = null;
     const sawRequest = new Promise<void>((r) => {
       sawRequestResolve = r;
     });
@@ -92,13 +95,24 @@ describe("chatComplete — tRPC cancellation reaches the provider fetch", () => 
     upstream = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      fetch(req) {
-        req.signal.addEventListener("abort", () => {
-          sawAbortResolve();
-        });
-        sawRequestResolve();
-        // Hang forever — only the client's abort ends this request.
-        return new Promise<Response>(() => {});
+      fetch(): Response {
+        sawRequestResolve?.();
+        // Hold the response open as an unstarted stream: when the
+        // client aborts its fetch the socket closes and Bun fires
+        // the body's cancel() — the observable disconnect signal
+        // for a server-side fixture (req.signal never fires for a
+        // response that was already returned).
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(): void {
+              /* never enqueues — the abort is what ends this */
+            },
+            cancel(): void {
+              sawAbortResolve?.();
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
       },
     });
     const cfgPath = writeConfig([
@@ -119,11 +133,25 @@ describe("chatComplete — tRPC cancellation reaches the provider fetch", () => 
     });
     await sawRequest;
     caller.abort();
-    await expect(pending).rejects.toBeTruthy();
-    // The abort propagated through the provider's fetch to the wire.
+    let thrown: unknown;
+    try {
+      await pending;
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeTruthy();
+    // tRPC wraps the procedure-thrown AbortError — the caller's
+    // reason rides the cause chain.
+    expect((thrown as Error & { cause?: { name?: string } }).cause?.name).toBe("AbortError");
+    // The abort propagated through the provider's fetch to the wire —
+    // the fixture's open response stream is cancelled server-side.
     await Promise.race([
       sawAbort,
-      new Promise((_, rej) => setTimeout(() => rej(new Error("upstream never saw abort")), 5_000)),
+      new Promise((_, rej) => {
+        setTimeout(() => {
+          rej(new Error("upstream never saw abort"));
+        }, 5_000);
+      }),
     ]);
   });
 });
@@ -133,7 +161,7 @@ describe("chatStream — usage observation → V1 corpus", () => {
     upstream = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      fetch() {
+      fetch(): Response {
         return new Response(frames.join(""), {
           status: 200,
           headers: { "content-type": "text/event-stream" },
@@ -144,7 +172,7 @@ describe("chatStream — usage observation → V1 corpus", () => {
 
   function streamEvents(): Promise<UnifiedStreamEvent[]> {
     const client = router.createCaller({});
-    return (async () => {
+    return (async (): Promise<UnifiedStreamEvent[]> => {
       const gen = (await client.chatStream({
         node: "gw",
         request: { model: "m", messages: [{ role: "user", content: "hi" }] },

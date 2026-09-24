@@ -358,7 +358,9 @@ describe("streamResponse — cancellation", () => {
       binding: claudeBinding({ timeoutMs: 50 }),
       spawnStream: async (_argv, opts): Promise<SpawnStreamResult> => {
         await Promise.resolve();
-        let resolveExited: (v: { exitCode: number; aborted: boolean }) => void = () => {};
+        let resolveExited: (v: { exitCode: number; aborted: boolean }) => void = () => {
+          /* replaced by the exited listener below */
+        };
         const exitedPromise = new Promise<{ exitCode: number; aborted: boolean }>((r) => {
           resolveExited = r;
         });
@@ -398,6 +400,7 @@ describe("streamResponse — cancellation", () => {
       binding: claudeBinding(),
       spawnStream: fakeStreamSpawn(async function* () {
         yield "partial";
+        await Promise.resolve();
         throw new Error("stdout exploded");
       }),
       journalWrite: () => Promise.resolve(),

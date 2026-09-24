@@ -38,9 +38,12 @@ import {
 import {
   type AiProvider,
   createOpenAICompatProvider,
+  type OpenAICompatUsageObservation,
+  projectUsageRecordV2ToV1,
   type UnifiedAiRequest,
   type UnifiedAiResponse,
   type UnifiedStreamEvent,
+  type UsageRecordV2,
 } from "@nova/contracts";
 import {
   computeCostSnapshot,
@@ -577,18 +580,62 @@ async function probeGatewayNodeHealth(opts: {
 }
 
 /**
+ * Extract the assistant text from a non-streaming response choice —
+ * the content union flattens to the displayable string (text blocks
+ * concatenated, non-text dropped) for the single synthetic chunk a
+ * non-streaming provider produces.
+ */
+function responseContentText(
+  content: UnifiedAiResponse["choices"][number]["message"]["content"] | undefined,
+): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((b) => ("text" in b && typeof b.text === "string" ? b.text : "")).join("");
+}
+
+/**
  * Drive a provider's streamResponse, yielding each event until the
- * stream ends or the signal aborts. Providers without streaming get a
- * synthetic done event so subscribers always terminate cleanly.
+ * stream ends or the signal aborts. Providers without a streaming
+ * method fall back to `createResponse`: the response's real content
+ * goes out as one synthetic chunk, then a `done` marked
+ * `completion: 'upstream'` — never a content-less done that would
+ * read as a completed-but-empty stream.
  */
 async function* streamNodeChatEvents(
   provider: AiProvider,
   request: UnifiedAiRequest,
   signal: AbortSignal | undefined,
-): AsyncGenerator<UnifiedStreamEvent | { type: "done"; finish_reason: "stop" }> {
+): AsyncGenerator<UnifiedStreamEvent> {
   const stream = provider.streamResponse?.(request, signal);
   if (!stream) {
-    yield { type: "done", finish_reason: "stop" };
+    const response = await provider.createResponse(request, {
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    const choice = response.choices[0];
+    yield {
+      type: "chunk",
+      chunk: {
+        id: response.id,
+        object: "chat.completion.chunk",
+        model: response.model,
+        created: response.created,
+        choices: [
+          {
+            index: 0,
+            delta: {
+              role: "assistant",
+              content: responseContentText(choice?.message.content),
+            },
+            finish_reason: choice?.finish_reason ?? null,
+          },
+        ],
+      },
+    };
+    yield {
+      type: "done",
+      finish_reason: choice?.finish_reason ?? "stop",
+      completion: "upstream",
+    };
     return;
   }
   for await (const ev of stream) {
@@ -820,7 +867,8 @@ async function* watchSession(
  * past the response with queueMicrotask so a slow disk can't add
  * latency to the user's request. Records nothing when the upstream
  * returned no usage block. Streaming (`chatStream`) usage capture goes
- * through `recordChatUsageSnapshot` via the adapter's onUsage hook.
+ * through `recordChatUsageObservation` via the adapter's
+ * onUsageObservation hook.
  */
 export function recordChatUsage(
   response: {
@@ -851,39 +899,45 @@ export function recordChatUsage(
 }
 
 /**
- * Streaming sibling of `recordChatUsage`. The OpenAI-compat adapter
- * fires `onUsage` with an `OpenAICompatUsageSnapshot` once the final
- * stream frame carries a usage block. The snapshot's `provider` is the
- * ADAPTER name (= node.name), NOT the canonical pricing-key kind, so
- * the caller passes the canonical `provider` separately — mirroring how
- * `chatComplete` derives it. Fire-and-forget through the same background
- * writer; the call already sits inside the adapter's swallowing
- * `fireUsage`, and `appendUsageBackground` never throws either.
+ * Streaming sibling of `recordChatUsage`, rebuilt on the nova 0.2.0
+ * provenance surface. The OpenAI-compat adapter fires
+ * `onUsageObservation` exactly once per attempt with a
+ * `UsageObservationV1` — `source: 'observed'` carrying only the counts
+ * the upstream actually sent, or `source: 'unknown'` carrying none.
+ * We build the `UsageRecordV2` in memory and append ONLY the non-null
+ * result of `projectUsageRecordV2ToV1`: one V1 row per fully-observed
+ * attempt, no row for unknown or partially-observed usage, never a V2
+ * row in the V1 corpus.
+ *
+ * The snapshot's `provider` is the ADAPTER name (= node.name), NOT the
+ * canonical pricing-key kind, so the caller passes the canonical
+ * `provider` separately — mirroring how `chatComplete` derives it.
+ * Fire-and-forget through the same background writer; the call already
+ * sits inside the adapter's swallowing `fireObservation`, and
+ * `appendUsageBackground` never throws either.
  */
-export function recordChatUsageSnapshot(
-  snapshot: {
-    model: string;
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-    latency_ms: number;
-  },
+export function recordChatUsageObservation(
+  snapshot: OpenAICompatUsageObservation,
   provider: string,
   route?: string,
 ): void {
-  appendUsageBackground({
-    record: {
-      ts: new Date().toISOString(),
-      provider,
-      model: snapshot.model,
-      kind: "chat",
-      prompt_tokens: snapshot.prompt_tokens,
-      completion_tokens: snapshot.completion_tokens,
-      total_tokens: snapshot.total_tokens,
-      latency_ms: snapshot.latency_ms,
-      ...(route ? { route } : {}),
-    },
-  });
+  const v2: UsageRecordV2 = {
+    v: 2,
+    ts: new Date().toISOString(),
+    provider,
+    model: snapshot.model,
+    kind: snapshot.kind,
+    latency_ms: snapshot.latency_ms,
+    observation: snapshot.observation,
+    ...(snapshot.request_id !== undefined ? { request_id: snapshot.request_id } : {}),
+    ...(snapshot.attempt_id !== undefined ? { attempt_id: snapshot.attempt_id } : {}),
+    ...(route !== undefined ? { route } : {}),
+  };
+  const v1 = projectUsageRecordV2ToV1(v2);
+  // Partial or non-observed usage is the absence of evidence — it
+  // must not become a zero-filled or fabricated row.
+  if (v1 === null) return;
+  appendUsageBackground({ record: v1 });
 }
 
 export const router = t.router({
@@ -1214,7 +1268,7 @@ export const router = t.router({
         }),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, signal }) => {
       const {
         resolveProjectNodeTarget,
         appendProjectRoutingJournal,
@@ -1255,7 +1309,9 @@ export const router = t.router({
       const { providerForNode } = await import("./providers/factory.js");
 
       const provider = providerForNode({ node: resolved.node, user: resolved.user, cfg });
-      const response = await provider.createResponse(input.request as UnifiedAiRequest);
+      const response = await provider.createResponse(input.request as UnifiedAiRequest, {
+        ...(signal !== undefined ? { signal } : {}),
+      });
       recordChatUsage(
         response,
         resolved.node.cloud?.provider ?? resolved.node.provider?.providerName ?? "local",
@@ -1317,8 +1373,8 @@ export const router = t.router({
           name: "local",
           baseUrl: `http://${rEnv.LLAMA_CPP_HOST}:${rEnv.LLAMA_CPP_PORT}/v1`,
           apiKey: "local",
-          onUsage: (snapshot) => {
-            recordChatUsageSnapshot(snapshot, "local", usageRoute);
+          onUsageObservation: (snapshot) => {
+            recordChatUsageObservation(snapshot, "local", usageRoute);
           },
         });
         yield* streamNodeChatEvents(provider, input.request as UnifiedAiRequest, signal);
@@ -1327,17 +1383,18 @@ export const router = t.router({
 
       // snapshot.provider is the adapter name (= node.name); map it to
       // the canonical pricing-key kind the way chatComplete does before
-      // writing the UsageRecord. Fires when the final stream frame
-      // carries a usage block (upstream must honor stream_options:
-      // { include_usage: true }).
+      // writing the UsageRecord. The observation fires exactly once per
+      // attempt with the last usage frame's counts (upstream must honor
+      // stream_options: { include_usage: true }); partial or absent
+      // usage records nothing rather than a zero-filled row.
       const canonicalProvider =
         resolved.node.cloud?.provider ?? resolved.node.provider?.providerName ?? "local";
       const provider = providerForNode({
         node: resolved.node,
         user: resolved.user,
         cfg,
-        onUsage: (snapshot) => {
-          recordChatUsageSnapshot(snapshot, canonicalProvider, usageRoute);
+        onUsageObservation: (snapshot) => {
+          recordChatUsageObservation(snapshot, canonicalProvider, usageRoute);
         },
       });
       yield* streamNodeChatEvents(provider, input.request as UnifiedAiRequest, signal);

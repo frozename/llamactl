@@ -1,5 +1,6 @@
 import type { CliBinding } from "@llamactl/core/config/schema";
 import type {
+  AiProvider,
   OpenAICompatUsageObservation,
   UnifiedAiRequest,
   UnifiedStreamEvent,
@@ -15,7 +16,7 @@ import {
   type SpawnFn,
   type SpawnResult,
 } from "../src/cli/adapter.js";
-import { mkdtempSync, readFileSync, rmSync, existsSync } from "../src/safe-fs.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * ProviderExecutionContext coverage for the CLI subprocess adapter,
@@ -94,7 +95,11 @@ const minimalReq: UnifiedAiRequest = {
   messages: [{ role: "user", content: "hi" }],
 };
 
-function sleepyProvider(pidFile: string, entries: unknown[], overrides: Partial<CliBinding> = {}) {
+function sleepyProvider(
+  pidFile: string,
+  entries: unknown[],
+  overrides: Partial<CliBinding> = {},
+): AiProvider {
   return createCliSubprocessProvider({
     agentName: "mac-mini",
     binding: makeBinding({
@@ -306,7 +311,7 @@ describe("streamResponse — real subprocess", () => {
     };
   }
 
-  function streamProvider(script: string, entries: unknown[], timeoutMs = 60_000) {
+  function streamProvider(script: string, entries: unknown[], timeoutMs = 60_000): AiProvider {
     return createCliSubprocessProvider({
       agentName: "mac-mini",
       binding: streamBinding(script, timeoutMs),
@@ -331,8 +336,10 @@ describe("streamResponse — real subprocess", () => {
     const done = events.filter((e) => e.type === "done");
     expect(chunks.length).toBeGreaterThanOrEqual(2);
     expect(done).toHaveLength(1);
-    const lastDone = done[0] as Extract<UnifiedStreamEvent, { type: "done" }>;
-    expect(lastDone.completion).toBe("upstream");
+    const lastDone = events.find(
+      (e): e is Extract<UnifiedStreamEvent, { type: "done" }> => e.type === "done",
+    );
+    expect(lastDone?.completion).toBe("upstream");
     expect((entries[0] as Record<string, unknown>)["ok"]).toBe(true);
   });
 
@@ -374,7 +381,7 @@ describe("streamResponse — real subprocess", () => {
     const caller = new AbortController();
     const events: UnifiedStreamEvent[] = [];
     let thrown: unknown;
-    const consume = (async () => {
+    const consume = (async (): Promise<void> => {
       try {
         for await (const e of provider.streamResponse!(minimalReq, caller.signal)) {
           events.push(e);

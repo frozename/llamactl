@@ -1,5 +1,4 @@
 import * as contracts from "@nova/contracts";
-
 import { describe, expect, test } from "bun:test";
 
 /**
@@ -41,7 +40,13 @@ describe("@nova/contracts P0.2 surface", () => {
   });
 
   test("StreamCompletionSchema includes 'eof'", () => {
-    expect(contracts.StreamCompletionSchema?.options ?? []).toContain("eof");
-    expect(contracts.StreamCompletionSchema?.options ?? []).toContain("upstream");
+    // Read through `unknown` so an old install — where the export is
+    // absent — fails the ASSERTION rather than tripping on type or
+    // import mechanics.
+    const schema = (contracts as Record<string, unknown>)["StreamCompletionSchema"] as
+      | { options?: unknown[] }
+      | undefined;
+    expect(schema?.options ?? []).toContain("eof");
+    expect(schema?.options ?? []).toContain("upstream");
   });
 });
