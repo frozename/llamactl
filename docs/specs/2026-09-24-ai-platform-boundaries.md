@@ -2,6 +2,8 @@
 
 Status: recommended architecture for review, 2026-09-24. This document revises the ownership recommendation in the [unified-router design](./2026-09-23-unified-ai-router-architecture.md), particularly the proposed llamactl `packages/proxy`. It does not claim implementation, change running workloads, authorize a merge, or cancel work already in progress. The [roadmap #127](https://github.com/frozename/llamactl/issues/127), [design PR #147](https://github.com/frozename/llamactl/pull/147) and [registrar](../unified-ai-router-registrar.md) remain the initiative's tracking surfaces.
 
+Deployment planning: [images, local/fleet/HA profiles, configuration, cache placement and control-plane authority](./2026-09-24-ai-router-deployment-topology.md). Proposed deployment subscopes attach to existing P4/P5 coordinators; Penumbra remains optional and no runtime is enabled.
+
 ## 1. Decision and alternatives
 
 **Use Sirius as the full inference gateway, llamactl as the fleet control plane and model worker runtime, Embersynth as the synthetic-model composition runtime, and Penumbra as the developer/engineer harness. Keep Nova as the shared model-contract and protocol-adapter foundation.** Preserve llamactl's direct local inference endpoint for local operation and compatibility. Optionally provision a combined deployment through llamactl; separate ownership does not require users to manually assemble three products.

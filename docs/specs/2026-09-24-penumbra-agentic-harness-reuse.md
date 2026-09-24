@@ -4,6 +4,8 @@ Review date: 2026-09-24. Published Penumbra main and the inspected local checkou
 
 Penumbra is private. References require access; this document records interface findings and reuse decisions without reproducing private implementation code, credentials, operational configuration or transcripts.
 
+Deployment planning: [images, local/fleet/HA profiles, configuration, cache placement and control-plane authority](./2026-09-24-ai-router-deployment-topology.md). Proposed deployment subscopes attach to existing P4/P5 coordinators; Penumbra remains optional and no runtime is enabled.
+
 ## Infrastructure execution versus developer harness
 
 The product split is **llamactl/Sirius/Embersynth for infrastructure serving, Penumbra for developer and engineer workflows**. Enterprise deployment is a target use case, not certification of current isolation, failover or protocol readiness. This correction supersedes the earlier blanket recommendation that every managed CLI/ACP backend must run through Penumbra. The installation contract applies in both directions: neither product family requires the other's full suite.

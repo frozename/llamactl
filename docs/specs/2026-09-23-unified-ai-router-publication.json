@@ -2636,5 +2636,76 @@
       "task_payloads_rebased": false,
       "active_task_fences_changed": false
     }
+  },
+  "deployment_extension": {
+    "review_date": "2026-09-24",
+    "document": "docs/specs/2026-09-24-ai-router-deployment-topology.md",
+    "status": "proposed_not_implemented",
+    "registrar_event_id": 1836,
+    "maestro_decision_preserved": 1828,
+    "existing_task_payloads_changed": false,
+    "native_dependency_edges_changed": false,
+    "new_coordinator_issues": false,
+    "profiles": ["local", "fleet", "ha"],
+    "runtime_backends": ["native workers", "docker", "optional kubernetes"],
+    "scopes": [
+      {
+        "id": "DEP1",
+        "title": "Release artifacts and role images",
+        "coordinator": 140,
+        "repositories": ["frozename/llamactl", "frozename/sirius-gateway", "frozename/embersynth"],
+        "depends_on": ["P0.2"],
+        "gate": "Pinned artifact closure; native/multiarch smoke; no install-host sibling source requirement; explicit production configuration; signed release manifest",
+        "dispatch_state": "scope_planned_not_filed",
+        "coordinator_url": "https://github.com/frozename/llamactl/issues/140",
+        "exact_payload_requirement": "Maestro resolves repository-specific post-dependency base and file fence; validates FileTaskInputSchema before just-in-time filing per registrar1831. Parent coordinator is not a self-dependency; listed parent IDs denote required feature evidence."
+      },
+      {
+        "id": "DEP2",
+        "title": "Configuration compiler and control role",
+        "coordinator": 139,
+        "repositories": ["frozename/llamactl"],
+        "depends_on": ["P0.2", "P4.1"],
+        "gate": "Digest/platform validation; control-only boot; secret-reference ownership; compatible staged configuration; no controller in token path",
+        "dispatch_state": "scope_planned_not_filed",
+        "coordinator_url": "https://github.com/frozename/llamactl/issues/139",
+        "exact_payload_requirement": "Maestro resolves repository-specific post-dependency base and file fence; validates FileTaskInputSchema before just-in-time filing per registrar1831. Parent coordinator is not a self-dependency; listed parent IDs denote required feature evidence."
+      },
+      {
+        "id": "DEP3",
+        "title": "Local and Docker fleet profiles",
+        "coordinator": 140,
+        "repositories": ["frozename/llamactl"],
+        "depends_on": ["DEP1", "DEP2", "P4.2"],
+        "gate": "Clean install/upgrade/disconnect; fixture gateway and synthetic models; worker isolation and drain; optional services absent",
+        "dispatch_state": "scope_planned_not_filed",
+        "coordinator_url": "https://github.com/frozename/llamactl/issues/140",
+        "exact_payload_requirement": "Maestro resolves repository-specific post-dependency base and file fence; validates FileTaskInputSchema before just-in-time filing per registrar1831. Parent coordinator is not a self-dependency; listed parent IDs denote required feature evidence."
+      },
+      {
+        "id": "DEP4",
+        "title": "Kubernetes scaling and retained state",
+        "coordinator": 140,
+        "related_coordinators": [143],
+        "repositories": ["frozename/llamactl"],
+        "depends_on": ["DEP1", "DEP2", "P4.2"],
+        "gate": "Rolling strategy; separate probes; sole HPA replica authority; resource limits; retained metadata; no automatic model-Pod migration",
+        "dispatch_state": "scope_planned_not_filed",
+        "coordinator_url": "https://github.com/frozename/llamactl/issues/140",
+        "exact_payload_requirement": "Maestro resolves repository-specific post-dependency base and file fence; validates FileTaskInputSchema before just-in-time filing per registrar1831. Parent coordinator is not a self-dependency; listed parent IDs denote required feature evidence."
+      },
+      {
+        "id": "DEP5",
+        "title": "HA recovery qualification",
+        "coordinator": 144,
+        "related_coordinators": [142, 143, 141],
+        "repositories": ["frozename/llamactl", "frozename/sirius-gateway", "frozename/embersynth"],
+        "depends_on": ["DEP3", "DEP4", "P5.1", "P5.2", "P5.3"],
+        "gate": "Fenced ownership; partition/restore; drain streaming; no uncertain replay; optional cache/CLI/ACP profiles gated on their accepted P3/P4.3/P2/P6 capabilities",
+        "dispatch_state": "scope_planned_not_filed",
+        "coordinator_url": "https://github.com/frozename/llamactl/issues/144",
+        "exact_payload_requirement": "Maestro resolves repository-specific post-dependency base and file fence; validates FileTaskInputSchema before just-in-time filing per registrar1831. Parent coordinator is not a self-dependency; listed parent IDs denote required feature evidence."
+      }
+    ]
   }
 }

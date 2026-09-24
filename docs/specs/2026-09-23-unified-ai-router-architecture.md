@@ -6,6 +6,8 @@ All paths are complete paths relative to the repository root. Source references 
 
 Roadmap: [#127](https://github.com/frozename/llamactl/issues/127). Documentation PR: [#147](https://github.com/frozename/llamactl/pull/147).
 
+Deployment planning: [images, local/fleet/HA profiles, configuration, cache placement and control-plane authority](./2026-09-24-ai-router-deployment-topology.md). Proposed deployment subscopes attach to existing P4/P5 coordinators; Penumbra remains optional and no runtime is enabled.
+
 ## Ownership revision — 2026-09-24
 
 The [cross-project boundary assessment](./2026-09-24-ai-platform-boundaries.md) revises the recommended ownership below: Sirius owns the full public gateway and final-response cache policy; llamactl owns fleet control, model workers and the direct local endpoint; Embersynth owns synthetic-model composition; Penumbra owns the developer harness and its runs; infrastructure CLI/ACP uses a thin worker with qualified shared primitives and optional full-harness delegation; Nova owns shared model contracts. In particular, replace the proposed llamactl `packages/proxy` destination with a standalone Sirius deployment. The original detailed safety invariants remain applicable, but module allocation and future task fences must be reconciled with the assessment before affected work is dispatched. Preserve active P0.2 work and completed P0.1 evidence. The assessment is a documentation proposal, not a runtime change or a transfer of existing issues.
