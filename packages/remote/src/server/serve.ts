@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import type { ModelRun } from "../workload/schema.js";
 
+import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
 import { router as appRouter } from "../router.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
 import { existsSync, readFileSync } from "../safe-fs.js";
@@ -323,7 +324,7 @@ async function handleOpenAIRoute(
       status = 200;
       return Response.json(models);
     }
-    const res = await openaiProxy.proxyOpenAI(req);
+    const res = await dispatchProxyRequest(req);
     status = res.status;
     if (status === 502) openaiUpstreamErrorsTotal.inc();
     return res;
@@ -658,9 +659,16 @@ function warnNoAuthEnabled(allowPlainHttp: boolean): void {
 
 function maybeStartPeerSnapshotPoller(opts: StartAgentOptions): (() => void) | null {
   if (!opts.peerSnapshotPoll) return null;
-  return startPeerSnapshotPoller(
-    opts.peerSnapshotPollIntervalMs ? { intervalMs: opts.peerSnapshotPollIntervalMs } : {},
-  );
+  return startPeerSnapshotPoller({
+    ...(opts.peerSnapshotPollIntervalMs ? { intervalMs: opts.peerSnapshotPollIntervalMs } : {}),
+    // The unified dispatch path's shadow catalog reads the same
+    // snapshot map the legacy route map gets — publish to both so a
+    // flag flip never changes which peer routes are visible.
+    publish: (snapshots) => {
+      openaiProxy.setPeerSnapshots(snapshots);
+      publishUnifiedPeerSnapshots(snapshots);
+    },
+  });
 }
 
 function maybeCreateTunnelServer(opts: StartAgentOptions): TunnelServer | null {

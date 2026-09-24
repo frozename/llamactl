@@ -88,6 +88,8 @@ export {
   type BackendExecutor,
   type BackendExecutorDescription,
   createProxy,
+  dispatchProxyRequest,
+  publishUnifiedPeerSnapshots,
   type UnifiedProxy,
   unifiedProxyEnabled,
   type UnifiedProxyOptions,

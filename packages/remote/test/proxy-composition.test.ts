@@ -14,10 +14,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { configSchema, config as kubecfg } from "../src/index.js";
 import {
   type BackendExecutor,
   type BackendExecutorDescription,
   createProxy,
+  publishUnifiedPeerSnapshots,
   unifiedProxyEnabled,
 } from "../src/proxy/create-proxy.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
@@ -36,6 +38,8 @@ const ENV_KEYS = [
   "LLAMA_CPP_HOST",
   "LLAMA_CPP_PORT",
   "LLAMACTL_UNIFIED_PROXY",
+  "LLAMACTL_CONFIG",
+  "LLAMACTL_PEER_TOKEN_PROBE",
 ] as const;
 
 let sandbox = "";
@@ -87,6 +91,22 @@ function fixtureHandler(calls: FixtureCall[]): (req: Request) => Promise<Respons
         usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
       });
     }
+    if (req.method === "POST" && url.pathname === "/v1/embeddings") {
+      const inputs = Array.isArray(body?.["input"]) ? body["input"].length : 1;
+      return Response.json({
+        object: "list",
+        model: body?.["model"] ?? "fixture-model",
+        data: Array.from({ length: inputs }, (_, i) => ({
+          object: "embedding",
+          index: i,
+          embedding: [0.1, 0.2, 0.3],
+        })),
+        usage: { prompt_tokens: 2, total_tokens: 2 },
+      });
+    }
+    if (req.method === "POST" && url.pathname === "/tokenize") {
+      return Response.json({ tokens: [1, 2, 3] });
+    }
     return new Response("not found", { status: 404 });
   };
 }
@@ -126,6 +146,30 @@ function anthropicReq(body: Record<string, unknown>): Request {
       "anthropic-version": "2023-06-01",
       "x-api-key": "sk-ant-client",
     },
+    body: JSON.stringify(body),
+  });
+}
+
+function responsesReq(body: Record<string, unknown>): Request {
+  return new Request("http://agent.test/v1/responses", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function embedReq(body: Record<string, unknown>): Request {
+  return new Request("http://agent.test/v1/embeddings", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function tokenizeReq(body: Record<string, unknown>): Request {
+  return new Request("http://agent.test/tokenize", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 }
@@ -246,6 +290,7 @@ beforeAll(() => {
 beforeEach(() => {
   upstreamCalls.length = 0;
   peerCalls.length = 0;
+  Reflect.deleteProperty(process.env, "LLAMACTL_CONFIG");
   openaiProxy.__resetOpenAIProxyRouteMapCacheForTests();
 });
 
@@ -472,6 +517,354 @@ describe("capability filtering precedes credentials and execution", () => {
     const res = await proxy.handleRequest(chatReq(toolsBody));
     expect(res.status).toBe(200);
     expect(calls).toEqual(["credentials", "acquire", "execute"]);
+  });
+});
+
+describe("protocol x feature equivalence with the legacy passthrough", () => {
+  const env = { LLAMACTL_UNIFIED_PROXY: "1" };
+  const model = "via-local/model.gguf";
+  const chatMessages = [{ role: "user", content: "hi" }];
+  const anthropicMessages = [{ role: "user", content: "route me" }];
+
+  // Every ingress protocol x derivable feature combination the legacy
+  // passthrough serves: the composed path must never return a different
+  // status — a capability gate that rejects what legacy forwards is the
+  // HIGH-1 defect.
+  const rows: [name: string, make: () => Request][] = [
+    ["openai-chat plain", (): Request => chatReq({ model, messages: chatMessages })],
+    [
+      "openai-chat image part",
+      (): Request =>
+        chatReq({
+          model,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "what is this" },
+                { type: "image_url", image_url: { url: "data:image/png;base64,x" } },
+              ],
+            },
+          ],
+        }),
+    ],
+    [
+      "openai-chat declared audio modality",
+      (): Request => chatReq({ model, messages: chatMessages, modalities: ["text", "audio"] }),
+    ],
+    [
+      "openai-chat tools",
+      (): Request =>
+        chatReq({
+          model,
+          messages: chatMessages,
+          tools: [{ type: "function", function: { name: "f", parameters: {} } }],
+        }),
+    ],
+    [
+      "openai-chat required tool_choice",
+      (): Request => chatReq({ model, messages: chatMessages, tool_choice: "required" }),
+    ],
+    [
+      "openai-chat json_schema response_format",
+      (): Request =>
+        chatReq({
+          model,
+          messages: chatMessages,
+          response_format: { type: "json_schema", json_schema: { name: "s", schema: {} } },
+        }),
+    ],
+    ["openai-chat stream", (): Request => chatReq({ model, messages: chatMessages, stream: true })],
+    [
+      "openai-chat session handle",
+      (): Request => chatReq({ model, messages: chatMessages, session_id: "sess-1" }),
+    ],
+    ["openai-chat empty model", (): Request => chatReq({ model: "", messages: chatMessages })],
+    ["openai-chat missing model", (): Request => chatReq({ messages: chatMessages })],
+    [
+      "openai-chat unrouted model",
+      (): Request => chatReq({ model: "no-such-model", messages: chatMessages }),
+    ],
+    ["openai-responses plain", (): Request => responsesReq({ model, input: "hi" })],
+    [
+      "openai-responses image+audio+file parts",
+      (): Request =>
+        responsesReq({
+          model,
+          input: [
+            {
+              type: "message",
+              role: "user",
+              content: [
+                { type: "input_text", text: "describe" },
+                { type: "input_image", image_url: "data:image/png;base64,x" },
+                { type: "input_audio", input_audio: { data: "x", format: "wav" } },
+                { type: "input_file", file_data: "x", filename: "doc.pdf" },
+              ],
+            },
+          ],
+        }),
+    ],
+    [
+      "openai-responses tools",
+      (): Request =>
+        responsesReq({
+          model,
+          input: "hi",
+          tools: [{ type: "function", name: "f", parameters: {} }],
+        }),
+    ],
+    [
+      "openai-responses text.format json_schema",
+      (): Request =>
+        responsesReq({
+          model,
+          input: "hi",
+          text: { format: { type: "json_schema", name: "s", schema: {} } },
+        }),
+    ],
+    ["openai-responses stream", (): Request => responsesReq({ model, input: "hi", stream: true })],
+    [
+      "anthropic plain",
+      (): Request => anthropicReq({ model, messages: anthropicMessages, max_tokens: 8 }),
+    ],
+    [
+      "anthropic image+document blocks",
+      (): Request =>
+        anthropicReq({
+          model,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "image",
+                  source: { type: "base64", media_type: "image/png", data: "aXY=" },
+                },
+                { type: "document", source: { type: "base64", data: "x" } },
+              ],
+            },
+          ],
+          max_tokens: 8,
+        }),
+    ],
+    [
+      "anthropic tools",
+      (): Request =>
+        anthropicReq({
+          model,
+          messages: anthropicMessages,
+          tools: [{ name: "t", input_schema: {} }],
+          max_tokens: 8,
+        }),
+    ],
+    [
+      "anthropic tool_use blocks",
+      (): Request =>
+        anthropicReq({
+          model,
+          messages: [
+            {
+              role: "assistant",
+              content: [{ type: "tool_use", id: "t1", name: "lookup", input: {} }],
+            },
+          ],
+          max_tokens: 8,
+        }),
+    ],
+    [
+      "anthropic stream",
+      (): Request =>
+        anthropicReq({ model, messages: anthropicMessages, stream: true, max_tokens: 8 }),
+    ],
+    ["embeddings", (): Request => embedReq({ model, input: "hi" })],
+    ["count-tokens", (): Request => tokenizeReq({ model, content: "hi" })],
+  ];
+
+  for (const [name, make] of rows) {
+    test(`${name}: composed status == legacy status`, async () => {
+      const proxy = createProxy({ env, resolved: () => resolved });
+      const legacy = await openaiProxy.proxyOpenAI(make(), resolved);
+      const composed = await proxy.handleRequest(make());
+      expect(composed.status).toBe(legacy.status);
+      if (composed.status === 400) {
+        // A 400 both sides produce is fine (e.g. translation errors);
+        // a capability-gate rejection is not.
+        expect(await composed.text()).not.toContain("unsupported-");
+      }
+    });
+  }
+});
+
+describe("capability rejection shapes", () => {
+  const env = { LLAMACTL_UNIFIED_PROXY: "1" };
+  const narrowAd = advertisedAd(
+    ["blocked-model"],
+    routingCapabilities.RouteCapabilitiesSchema.parse({
+      operations: ["generate"],
+      protocols: ["openai-chat", "openai-responses", "anthropic-messages"],
+      streaming: "sse",
+      modalities: ["text"],
+      tools: false,
+      structuredOutput: false,
+      tokenCounting: false,
+      cancellation: true,
+      sessions: false,
+    }),
+  );
+
+  function narrowCatalog(): routingCatalog.RouteCatalog {
+    const catalog = routingCatalog.buildRouteCatalog({ routes: [], nodeId: "node1" });
+    expect(routingCatalog.addCatalogAdvertisement(catalog, narrowAd).accepted).toBe(true);
+    return catalog;
+  }
+
+  const toolsRequest = {
+    model: "blocked-model",
+    messages: [{ role: "user", content: "hi" }],
+    tools: [{ type: "function", function: { name: "f", parameters: {} } }],
+  };
+
+  test("anthropic ingress gets the anthropic error envelope", async () => {
+    const catalog = narrowCatalog();
+    const proxy = createProxy({ env, resolved: () => resolved, catalog: () => catalog });
+    const res = await proxy.handleRequest(anthropicReq({ ...toolsRequest, max_tokens: 8 }));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      type: string;
+      error: { type: string; message: string };
+    };
+    expect(body.type).toBe("error");
+    expect(body.error.type).toBe("invalid_request_error");
+    expect(body.error.message).toContain("unsupported-tools");
+  });
+
+  test("openai ingress keeps the openai error envelope", async () => {
+    const catalog = narrowCatalog();
+    const proxy = createProxy({ env, resolved: () => resolved, catalog: () => catalog });
+    const res = await proxy.handleRequest(chatReq(toolsRequest));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { type: string; code: string } };
+    expect(body.error.type).toBe("invalid_request_error");
+    expect(body.error.code).toBe("unsupported-tools");
+  });
+});
+
+describe("default-path credential and snapshot ordering", () => {
+  const env = { LLAMACTL_UNIFIED_PROXY: "1" };
+  const probeVar = "LLAMACTL_PEER_TOKEN_PROBE";
+
+  function writePeerKubeconfig(): string {
+    const cfgPath = join(sandbox, `peer-kubeconfig-${String(Date.now())}`);
+    let cfg = configSchema.freshConfig();
+    cfg = {
+      ...cfg,
+      users: cfg.users.map((u) =>
+        u.name === "me" ? { name: u.name, tokenRef: `env:${probeVar}` } : u,
+      ),
+    };
+    cfg = kubecfg.upsertNode(cfg, "home", {
+      name: "peer1",
+      endpoint: "https://127.0.0.1:9443",
+    });
+    kubecfg.saveConfig(cfg, cfgPath);
+    return cfgPath;
+  }
+
+  function countTokenReads(): () => number {
+    let reads = 0;
+    Object.defineProperty(process.env, probeVar, {
+      configurable: true,
+      enumerable: true,
+      get: (): string => {
+        reads += 1;
+        return "probe-token";
+      },
+    });
+    return () => reads;
+  }
+
+  test("a capability-rejected request resolves no credentials on the default path", async () => {
+    process.env["LLAMACTL_CONFIG"] = writePeerKubeconfig();
+    const reads = countTokenReads();
+    try {
+      const narrowAd = advertisedAd(
+        ["blocked-model"],
+        routingCapabilities.RouteCapabilitiesSchema.parse({
+          operations: ["generate"],
+          protocols: ["openai-chat"],
+          streaming: "sse",
+          modalities: ["text"],
+          tools: false,
+          structuredOutput: false,
+          tokenCounting: false,
+          cancellation: true,
+          sessions: false,
+        }),
+      );
+      const proxy = createProxy({
+        env,
+        resolved: () => resolved,
+        advertisements: [narrowAd],
+      });
+      const res = await proxy.handleRequest(
+        chatReq({
+          model: "blocked-model",
+          messages: [{ role: "user", content: "hi" }],
+          tools: [{ type: "function", function: { name: "f", parameters: {} } }],
+        }),
+      );
+      expect(res.status).toBe(400);
+      // The default catalog build + capability filtering ran; the
+      // credential materialization listPeers performs must not have.
+      expect(reads()).toBe(0);
+      expect(upstreamCalls).toHaveLength(0);
+    } finally {
+      Reflect.deleteProperty(process.env, probeVar);
+    }
+  });
+
+  test("the default shadow catalog consumes the published peer snapshots the legacy path uses", async () => {
+    process.env["LLAMACTL_CONFIG"] = writePeerKubeconfig();
+    const snapshots = new Map([
+      [
+        "peer1",
+        {
+          workloads: [{ modelId: "peer-model.gguf", port: 1, revision: "peer-rev-1" }],
+          pressure: "NORMAL" as const,
+          fetchedAt: Date.now(),
+        },
+      ],
+    ]);
+    // The production poller publishes the same map to both routing
+    // paths — mirror that fan-out here.
+    openaiProxy.setPeerSnapshots(snapshots);
+    publishUnifiedPeerSnapshots(snapshots);
+    const calls: string[] = [];
+    try {
+      const proxy = createProxy({
+        env,
+        resolved: () => resolved,
+        resolveCredentials: () => {
+          calls.push("credentials");
+          return Promise.resolve();
+        },
+        acquireExecutor: () => {
+          calls.push("acquire");
+          return recordingExecutor(calls);
+        },
+      });
+      const catalog = await proxy.shadowCatalog();
+      expect(routingCatalog.catalogCandidatesFor(catalog, "peer-model.gguf")).toHaveLength(1);
+      const res = await proxy.handleRequest(
+        chatReq({ model: "peer-model.gguf", messages: [{ role: "user", content: "hi" }] }),
+      );
+      expect(res.status).toBe(200);
+      expect(calls).toEqual(["credentials", "acquire", "execute"]);
+    } finally {
+      publishUnifiedPeerSnapshots(new Map());
+      openaiProxy.setPeerSnapshots(new Map());
+    }
   });
 });
 

@@ -18,7 +18,7 @@ export type IngressProtocol = z.infer<typeof IngressProtocolSchema>;
 export const StreamingModeSchema = z.enum(["none", "buffered", "sse"]);
 export type StreamingMode = z.infer<typeof StreamingModeSchema>;
 
-export const ModalitySchema = z.enum(["text", "image", "audio"]);
+export const ModalitySchema = z.enum(["text", "image", "audio", "document"]);
 export type Modality = z.infer<typeof ModalitySchema>;
 
 export const RouteCapabilitiesSchema = z.object({
@@ -69,17 +69,25 @@ export type CapabilityRejection = z.infer<typeof CapabilityRejectionSchema>;
  * streams SSE, cancels on client disconnect, and carries oMLX session
  * handles — so a legacy-derived advertisement may admit all of it.
  */
-export const LEGACY_PROXY_CAPABILITIES: RouteCapabilities = {
+function freezeCapabilities<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const nested of Object.values(value)) freezeCapabilities(nested);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export const LEGACY_PROXY_CAPABILITIES: RouteCapabilities = freezeCapabilities({
   operations: ["generate", "embed", "count-tokens"],
   protocols: ["openai-chat", "openai-responses", "anthropic-messages"],
   streaming: "sse",
-  modalities: ["text", "image"],
+  modalities: ["text", "image", "audio", "document"],
   tools: true,
   structuredOutput: true,
   tokenCounting: true,
   cancellation: true,
   sessions: true,
-};
+});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -91,7 +99,17 @@ const PART_MODALITY: Record<string, Modality> = {
   input_image: "image",
   input_audio: "audio",
   audio: "audio",
+  input_file: "document",
+  document: "document",
+  file: "document",
 };
+
+const TOOL_PART_TYPES = new Set([
+  "tool_use",
+  "tool_result",
+  "function_call",
+  "function_call_output",
+]);
 
 function scanForModalities(root: unknown, found: Set<Modality>): void {
   const stack: unknown[] = [root];
@@ -110,13 +128,35 @@ function scanForModalities(root: unknown, found: Set<Modality>): void {
   }
 }
 
+function scanForToolParts(root: unknown): boolean {
+  const stack: unknown[] = [root];
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (item === null || typeof item !== "object") continue;
+    if (Array.isArray(item)) {
+      stack.push(...(item as unknown[]));
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const type = record["type"];
+    if (typeof type === "string" && TOOL_PART_TYPES.has(type)) return true;
+    stack.push(...Object.values(record));
+  }
+  return false;
+}
+
 function modalitiesFromBody(body: Record<string, unknown>): Set<Modality> {
   const found = new Set<Modality>(["text"]);
   scanForModalities(body["messages"], found);
+  // Responses API carries its content parts under `input` instead of
+  // `messages`; Anthropic shares the `messages` key already scanned above.
+  scanForModalities(body["input"], found);
   const declared = body["modalities"];
-  if (!Array.isArray(declared)) return found;
-  for (const m of declared as unknown[]) {
-    if (m === "image" || m === "audio") found.add(m);
+  if (Array.isArray(declared)) {
+    for (const m of declared as unknown[]) {
+      const modality = ModalitySchema.safeParse(m);
+      if (modality.success && modality.data !== "text") found.add(modality.data);
+    }
   }
   return found;
 }
@@ -125,14 +165,31 @@ function bodyRequestsTools(body: Record<string, unknown>): boolean {
   const tools = body["tools"];
   if (Array.isArray(tools) && tools.length > 0) return true;
   const functions = body["functions"];
-  return Array.isArray(functions) && functions.length > 0;
+  if (Array.isArray(functions) && functions.length > 0) return true;
+  const toolChoice = body["tool_choice"];
+  if (
+    toolChoice !== undefined &&
+    toolChoice !== "none" &&
+    !(isRecord(toolChoice) && toolChoice["type"] === "none")
+  ) {
+    return true;
+  }
+  return scanForToolParts(body["messages"]) || scanForToolParts(body["input"]);
 }
 
 function bodyRequestsStructuredOutput(body: Record<string, unknown>): boolean {
   const format = body["response_format"];
-  if (!isRecord(format)) return false;
-  const type = format["type"];
-  return typeof type === "string" && type !== "text";
+  if (isRecord(format)) {
+    const type = format["type"];
+    if (typeof type === "string" && type !== "text") return true;
+  }
+  // Responses API nests the format under text.format.
+  const text = body["text"];
+  if (isRecord(text) && isRecord(text["format"])) {
+    const type = text["format"]["type"];
+    if (typeof type === "string" && type !== "text") return true;
+  }
+  return false;
 }
 
 function bodyRequestsSession(body: Record<string, unknown>): boolean {

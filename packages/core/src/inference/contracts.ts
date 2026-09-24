@@ -48,14 +48,79 @@ export const InternalSelectionV1Schema = z.object({
 });
 export type InternalSelectionV1 = z.infer<typeof InternalSelectionV1Schema>;
 
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const key of Object.keys(value)) {
-      deepFreeze((value as Record<string, unknown>)[key]);
+export class InferenceEnvelopeError extends Error {
+  readonly code: "invalid-envelope" | "native-body-too-deep";
+
+  constructor(code: "invalid-envelope" | "native-body-too-deep", message: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = "InferenceEnvelopeError";
+    this.code = code;
+  }
+}
+
+/**
+ * Deepest nativeBody nesting the envelope accepts. Real request bodies
+ * (message arrays, tool schemas, base64 payloads) stay far below this; a
+ * deeper graph is a hostile or malformed input and rejects with a typed
+ * error instead of blowing the stack mid-clone.
+ */
+export const ENVELOPE_BODY_MAX_DEPTH = 128;
+
+// Clone first, then freeze: the caller's own nested objects must stay
+// mutable. The walk is iterative so depth is bounded by the explicit
+// budget, never by the call stack.
+interface CloneFrame {
+  src: object;
+  dst: object;
+  depth: number;
+}
+
+function cloneContainerFor(src: object): object {
+  return Array.isArray(src) ? [] : {};
+}
+
+function assignClonedChild(
+  dst: object,
+  key: string,
+  child: unknown,
+  depth: number,
+  seen: Map<object, object>,
+  stack: CloneFrame[],
+): void {
+  const slot = dst as Record<string, unknown>;
+  if (child === null || typeof child !== "object") {
+    slot[key] = child;
+    return;
+  }
+  const existing = seen.get(child);
+  if (existing !== undefined) {
+    slot[key] = existing;
+    return;
+  }
+  const clone = cloneContainerFor(child);
+  seen.set(child, clone);
+  slot[key] = clone;
+  stack.push({ src: child, dst: clone, depth: depth + 1 });
+}
+
+function cloneFreezeBounded(value: Record<string, unknown>): Record<string, unknown> {
+  const root = cloneContainerFor(value) as Record<string, unknown>;
+  const seen = new Map<object, object>([[value, root]]);
+  const stack: CloneFrame[] = [{ src: value, dst: root, depth: 0 }];
+  for (let frame = stack.pop(); frame !== undefined; frame = stack.pop()) {
+    if (frame.depth > ENVELOPE_BODY_MAX_DEPTH) {
+      throw new InferenceEnvelopeError(
+        "native-body-too-deep",
+        `nativeBody exceeds the maximum depth of ${String(ENVELOPE_BODY_MAX_DEPTH)}`,
+      );
+    }
+    const entries = Object.entries(frame.src) as [string, unknown][];
+    for (const [key, child] of entries) {
+      assignClonedChild(frame.dst, key, child, frame.depth, seen, stack);
     }
   }
-  return value;
+  for (const node of seen.values()) Object.freeze(node);
+  return root;
 }
 
 export const InferenceEnvelopeV1Schema = z.object({
@@ -73,7 +138,7 @@ export const InferenceEnvelopeV1Schema = z.object({
   features: RequiredFeaturesSchema,
   stream: z.boolean(),
   session: SessionReferenceV1Schema.optional(),
-  nativeBody: z.record(z.string(), z.unknown()).transform(deepFreeze),
+  nativeBody: z.record(z.string(), z.unknown()).transform(cloneFreezeBounded),
   headerFingerprint: HeaderFingerprintV1Schema,
   cachePolicy: CachePolicyV1Schema.default({ exact: "default", semantic: "off" }),
   normalized: UnifiedAiRequestSchema.optional(),
@@ -82,5 +147,14 @@ export const InferenceEnvelopeV1Schema = z.object({
 export type InferenceEnvelopeV1 = z.infer<typeof InferenceEnvelopeV1Schema>;
 
 export function parseInferenceEnvelope(input: unknown): InferenceEnvelopeV1 {
-  return InferenceEnvelopeV1Schema.parse(input);
+  try {
+    return InferenceEnvelopeV1Schema.parse(input);
+  } catch (error) {
+    if (error instanceof InferenceEnvelopeError) throw error;
+    throw new InferenceEnvelopeError(
+      "invalid-envelope",
+      error instanceof Error ? error.message : "inference envelope rejected",
+      error,
+    );
+  }
 }

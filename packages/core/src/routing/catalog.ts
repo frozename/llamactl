@@ -30,12 +30,32 @@ export function knownRevision(value: string): RevisionV1 {
   return { status: "known", value };
 }
 
-function endpointHasCredentials(value: string): boolean {
+function endpointIsCredentialFree(value: string): boolean {
+  let url: URL;
   try {
-    const url = new URL(value);
-    return url.username !== "" || url.password !== "";
+    url = new URL(value);
   } catch {
     return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  return url.username === "" && url.password === "" && url.search === "" && url.hash === "";
+}
+
+/**
+ * Strip an endpoint down to its credential-free reference form:
+ * scheme, host, port and path only. Anything the URL parser cannot
+ * handle passes through untouched so the schema rejects it — fail
+ * closed, never silently rewrite a malformed endpoint into a valid one.
+ */
+function credentialFreeEndpoint(value: string): string {
+  try {
+    const url = new URL(value);
+    // Rebuild rather than toString() so an already-clean endpoint is
+    // byte-identical — URL adds a trailing "/" for root paths.
+    const path = url.pathname === "/" ? "" : url.pathname;
+    return `${url.protocol}//${url.host}${path}`;
+  } catch {
+    return value;
   }
 }
 
@@ -49,12 +69,10 @@ export const RouteAdvertisementV1Schema = z.object({
   upstreamModelId: z.string().min(1),
   backendKind: BackendKindSchema,
   transport: RouteTransportSchema,
-  endpoint: z
-    .string()
-    .min(1)
-    .refine((value) => !endpointHasCredentials(value), {
-      message: "endpoint must not embed credentials",
-    }),
+  endpoint: z.string().min(1).refine(endpointIsCredentialFree, {
+    message:
+      "endpoint must be a credential-free http(s) reference (no userinfo, query or fragment)",
+  }),
   providerKind: z.string().min(1).optional(),
   bindingId: z.string().min(1).optional(),
   capabilities: RouteCapabilitiesSchema,
@@ -175,15 +193,21 @@ function groupFor(route: ClusterRoute, nodeId: string): DeploymentGroup {
 }
 
 function upstreamIdFor(group: DeploymentGroup): string {
-  // llama-server --alias makes the upstream report the alias, not the rel;
-  // the rel stays the first public id so the upstream selector is index 1.
+  // llama-server --alias makes the upstream report an alias, not the rel.
+  // The flat route list carries no rel marker, and models is sorted for
+  // deterministic output — so the canonical selector is the second sorted
+  // public id when a ModelRun serves more than one.
   const [first, second] = group.models;
   if (group.kind === "ModelRun" && second !== undefined) return second;
   return first ?? "";
 }
 
 function adForGroup(group: DeploymentGroup): RouteAdvertisementV1 {
-  return {
+  // Legacy-derived advertisements go through the same schema validation
+  // as added ones — the endpoint is rewritten to its credential-free
+  // form first so a peer URL carrying userinfo/query/fragment cannot
+  // reach catalog output.
+  return RouteAdvertisementV1Schema.parse({
     schemaVersion: 1,
     routeId: `route/${group.owner}/${group.workload}`,
     deploymentId: `deploy/${group.owner}/${group.workload}`,
@@ -193,7 +217,7 @@ function adForGroup(group: DeploymentGroup): RouteAdvertisementV1 {
     upstreamModelId: upstreamIdFor(group),
     backendKind: "local-model",
     transport: group.isPeer ? "worker-rpc" : "local-http",
-    endpoint: group.endpoint,
+    endpoint: credentialFreeEndpoint(group.endpoint),
     providerKind: group.engine,
     capabilities: LEGACY_PROXY_CAPABILITIES,
     modelRevision: group.modelRevision,
@@ -202,7 +226,7 @@ function adForGroup(group: DeploymentGroup): RouteAdvertisementV1 {
     policyRevision: UNKNOWN_REVISION,
     weight: 1,
     draining: false,
-  };
+  });
 }
 
 // Legacy collision ordering from openaiProxy.buildRouteMap: ModelRun before
@@ -212,10 +236,22 @@ function compareDeployments(a: DeploymentGroup, b: DeploymentGroup): number {
   return a.workload.localeCompare(b.workload);
 }
 
+function revisionEqual(a: RevisionV1, b: RevisionV1): boolean {
+  if (a.status !== b.status) return false;
+  return a.status !== "known" || (b.status === "known" && a.value === b.value);
+}
+
 function sameServingIdentity(a: RouteAdvertisementV1, b: RouteAdvertisementV1): boolean {
   if (a.upstreamModelId !== b.upstreamModelId) return false;
+  if (a.backendKind !== b.backendKind) return false;
+  if (a.providerKind !== b.providerKind) return false;
   if (a.modelRevision.status !== "known" || b.modelRevision.status !== "known") return false;
-  return a.modelRevision.value === b.modelRevision.value;
+  if (a.modelRevision.value !== b.modelRevision.value) return false;
+  return (
+    revisionEqual(a.deploymentEpoch, b.deploymentEpoch) &&
+    revisionEqual(a.adapterRevision, b.adapterRevision) &&
+    revisionEqual(a.policyRevision, b.policyRevision)
+  );
 }
 
 function admissionConflict(
@@ -298,6 +334,11 @@ export function buildRouteCatalog(opts: {
     }
   }
   const sorted = [...groups.values()].sort(compareDeployments);
+  // Model ids within a deployment arrive in input order; sort them so the
+  // serialized catalog is identical for every permutation of the input.
+  for (const group of sorted) {
+    group.models.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  }
   const catalog: RouteCatalog = {
     schemaVersion: 1,
     catalogVersion: opts.catalogVersion ?? `cat-${String(now)}`,

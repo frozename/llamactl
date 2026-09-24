@@ -5,7 +5,7 @@
  * filtering with typed rejections, and the no-secrets invariant.
  */
 import { describe, expect, test } from "bun:test";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { RouteCapabilities } from "../../src/routing/capabilities.js";
@@ -16,6 +16,10 @@ import {
   checkRouteCapabilities,
   deriveRequestFeatures,
   filterCandidatesByCapabilities,
+  InferenceOperationSchema,
+  IngressProtocolSchema,
+  LEGACY_PROXY_CAPABILITIES,
+  ModalitySchema,
 } from "../../src/routing/capabilities.js";
 import {
   addCatalogAdvertisement,
@@ -48,11 +52,11 @@ function peerRoute(over: Partial<Extract<ClusterRoute, { isPeer: true }>> = {}):
     workload: "peer1:peer.gguf",
     model: "peer.gguf",
     host: "10.0.0.9",
-    port: 443,
+    port: 8443,
     engine: "llamacpp",
     kind: "ModelRun",
     isPeer: true,
-    peerEndpoint: "https://10.0.0.9:443",
+    peerEndpoint: "https://10.0.0.9:8443",
     token: "PEER-TOKEN-SECRET",
     certificate: "PEER-CERT-SECRET",
     targetNodeId: "peer1",
@@ -122,7 +126,7 @@ describe("route catalog candidate retention", () => {
     const ad = candidates[0]!.advertisement;
     expect(ad.ownerNodeId).toBe("peer1");
     expect(ad.backendKind).toBe("local-model");
-    expect(ad.endpoint).toBe("https://10.0.0.9:443");
+    expect(ad.endpoint).toBe("https://10.0.0.9:8443");
     expect(ad.modelRevision).toEqual({ status: "known", value: "boot-1" });
   });
 
@@ -137,7 +141,7 @@ describe("route catalog candidate retention", () => {
     expect(catalog.deployments).toHaveLength(1);
     expect(catalogCandidatesFor(catalog, "mlx-community/Q-4bit")).toHaveLength(1);
     expect(catalogCandidatesFor(catalog, "Q-4bit")).toHaveLength(1);
-    expect(catalog.deployments[0]!.publicModelIds).toEqual(["mlx-community/Q-4bit", "Q-4bit"]);
+    expect(catalog.deployments[0]!.publicModelIds).toEqual(["Q-4bit", "mlx-community/Q-4bit"]);
   });
 });
 
@@ -222,6 +226,26 @@ describe("advertised alias conflicts", () => {
     const r3 = addCatalogAdvertisement(catalog, wrongUpstream);
     expect(r3.accepted).toBe(false);
     if (!r3.accepted) expect(r3.rejection.reason).toBe("incompatible-replica");
+
+    for (const mismatch of [
+      { adapterRevision: knownRevision("adapter-2") },
+      { deploymentEpoch: knownRevision("epoch-2") },
+      { policyRevision: knownRevision("policy-2") },
+      { backendKind: "local-model" as const },
+      { providerKind: "other-provider" },
+    ]) {
+      const divergent = advertised({
+        routeId: `route/divergent-${JSON.stringify(mismatch)}`,
+        deploymentId: `deploy/divergent-${JSON.stringify(mismatch)}`,
+        backendId: `backend/divergent-${JSON.stringify(mismatch)}`,
+        publicModelIds: ["svc"],
+        replicaGroup: "g1",
+        ...mismatch,
+      });
+      const res = addCatalogAdvertisement(catalog, divergent);
+      expect(res.accepted).toBe(false);
+      if (!res.accepted) expect(res.rejection.reason).toBe("incompatible-replica");
+    }
 
     const wrongRevision = advertised({
       routeId: "route/ext-4",
@@ -371,6 +395,65 @@ describe("capability derivation", () => {
     expect(f.tools).toBe(true);
     expect(f.modalities).toContain("image");
   });
+
+  test("responses input parts derive image, audio and document modalities", () => {
+    const f = deriveRequestFeatures({
+      operation: "generate",
+      ingressProtocol: "openai-responses",
+      stream: false,
+      nativeBody: {
+        input: [
+          {
+            type: "message",
+            role: "user",
+            content: [
+              { type: "input_text", text: "describe" },
+              { type: "input_image", image_url: "data:image/png;base64,x" },
+              { type: "input_audio", input_audio: { data: "x", format: "wav" } },
+              { type: "input_file", file_data: "x", filename: "doc.pdf" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(f.modalities).toContain("image");
+    expect(f.modalities).toContain("audio");
+    expect(f.modalities).toContain("document");
+  });
+
+  test("responses text.format json_schema requires structured output", () => {
+    const f = deriveRequestFeatures({
+      operation: "generate",
+      ingressProtocol: "openai-responses",
+      stream: false,
+      nativeBody: {
+        input: "hi",
+        text: { format: { type: "json_schema", name: "s", schema: {} } },
+      },
+    });
+    expect(f.structuredOutput).toBe(true);
+  });
+
+  test("anthropic document and tool_use blocks derive modality and tools", () => {
+    const f = deriveRequestFeatures({
+      operation: "generate",
+      ingressProtocol: "anthropic-messages",
+      stream: false,
+      nativeBody: {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "document", source: { type: "base64", data: "x" } },
+              { type: "tool_use", id: "t1", name: "lookup", input: {} },
+            ],
+          },
+        ],
+      },
+    });
+    expect(f.modalities).toContain("document");
+    expect(f.tools).toBe(true);
+  });
 });
 
 describe("capability filtering", () => {
@@ -484,17 +567,112 @@ describe("serialized catalog output", () => {
     expect(parsed.deployments.length).toBeGreaterThanOrEqual(2);
   });
 
-  test("advertisement endpoints reject embedded credentials", () => {
+  test("advertisement endpoints reject userinfo, query strings and fragments", () => {
+    for (const endpoint of [
+      "https://user:pass@api.example.com/v1",
+      "https://api.example.com/v1?api_key=SECRET-QUERY",
+      "https://api.example.com/v1#SECRET-FRAGMENT",
+      "https://api.example.com/v1?token=SECRET-TOKEN#frag-SECRET",
+      "not-a-url",
+    ]) {
+      expect(RouteAdvertisementV1Schema.safeParse(advertised({ endpoint })).success).toBe(false);
+    }
     expect(
-      RouteAdvertisementV1Schema.safeParse(
-        advertised({ endpoint: "https://user:pass@api.example.com/v1" }),
-      ).success,
-    ).toBe(false);
+      RouteAdvertisementV1Schema.safeParse(advertised({ endpoint: "https://api.example.com/v1" }))
+        .success,
+    ).toBe(true);
+  });
+
+  test("legacy-derived peer advertisements serialize a credential-free endpoint", () => {
+    const routes = listClusterRoutes(
+      [],
+      new Map([
+        [
+          "peer1",
+          {
+            workloads: [{ modelId: "peer.gguf", port: 443, revision: "r1" }],
+            pressure: "NORMAL" as const,
+            fetchedAt: Date.now(),
+          },
+        ],
+      ]),
+      {
+        peers: [
+          {
+            id: "peer1",
+            endpoint: "https://user:SECRET-PASS@10.0.0.9:8443/base?token=SECRET-QUERY#SECRET-FRAG",
+          },
+        ],
+      },
+    );
+    const catalog = buildRouteCatalog({ routes, nodeId: "node1" });
+    const json = serializeRouteCatalog(catalog);
+    for (const secret of ["SECRET-PASS", "SECRET-QUERY", "SECRET-FRAG"]) {
+      expect(json).not.toContain(secret);
+    }
+    const ad = catalog.deployments.find((d) => d.ownerNodeId === "peer1");
+    expect(ad?.endpoint).toBe("https://10.0.0.9:8443/base");
+    // The derived advertisement is validated by the same schema as added ones.
+    expect(RouteAdvertisementV1Schema.safeParse(ad).success).toBe(true);
+  });
+
+  test("serialized output is identical for every permutation of the input routes", () => {
+    const routes: ClusterRoute[] = [
+      localRoute({ workload: "wl-a", model: "shared.gguf" }),
+      localRoute({ workload: "wl-a", model: "z-alias" }),
+      localRoute({ workload: "wl-a", model: "a-alias" }),
+      localRoute({ workload: "wl-b", kind: "ModelHost", engine: "omlx", model: "host-m" }),
+      peerRoute({ model: "p.gguf" }),
+    ];
+    const build = (rs: ClusterRoute[]): string =>
+      serializeRouteCatalog(
+        buildRouteCatalog({ routes: rs, nodeId: "node1", now: 1_000, catalogVersion: "cat-fixed" }),
+      );
+    const baseline = build(routes);
+    const permutations: ClusterRoute[][] = [
+      [...routes].reverse(),
+      [routes[2]!, routes[4]!, routes[0]!, routes[3]!, routes[1]!],
+      [routes[4]!, routes[3]!, routes[2]!, routes[1]!, routes[0]!],
+      [...routes].sort((a, b) => b.model.localeCompare(a.model)),
+    ];
+    for (const permuted of permutations) {
+      expect(build(permuted)).toBe(baseline);
+    }
+  });
+});
+
+describe("legacy proxy capabilities", () => {
+  test("LEGACY_PROXY_CAPABILITIES covers every derivable feature", () => {
+    for (const operation of InferenceOperationSchema.options) {
+      expect(LEGACY_PROXY_CAPABILITIES.operations).toContain(operation);
+    }
+    for (const protocol of IngressProtocolSchema.options) {
+      expect(LEGACY_PROXY_CAPABILITIES.protocols).toContain(protocol);
+    }
+    for (const modality of ModalitySchema.options) {
+      expect(LEGACY_PROXY_CAPABILITIES.modalities).toContain(modality);
+    }
+    expect(LEGACY_PROXY_CAPABILITIES.streaming).toBe("sse");
+    expect(LEGACY_PROXY_CAPABILITIES.tools).toBe(true);
+    expect(LEGACY_PROXY_CAPABILITIES.structuredOutput).toBe(true);
+    expect(LEGACY_PROXY_CAPABILITIES.tokenCounting).toBe(true);
+    expect(LEGACY_PROXY_CAPABILITIES.cancellation).toBe(true);
+    expect(LEGACY_PROXY_CAPABILITIES.sessions).toBe(true);
+  });
+
+  test("LEGACY_PROXY_CAPABILITIES is deeply frozen", () => {
+    expect(Object.isFrozen(LEGACY_PROXY_CAPABILITIES)).toBe(true);
+    expect(Object.isFrozen(LEGACY_PROXY_CAPABILITIES.operations)).toBe(true);
+    expect(Object.isFrozen(LEGACY_PROXY_CAPABILITIES.protocols)).toBe(true);
+    expect(Object.isFrozen(LEGACY_PROXY_CAPABILITIES.modalities)).toBe(true);
   });
 });
 
 describe("core stays adapter-free", () => {
   const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src");
+  const CORE_ROOT = join(SRC, "..");
+  const BANNED_PACKAGE = /^(?:@llamactl\/remote|@trpc|electron|.*\/electron)(?:\/|$)/;
+  const SPECIFIER = /(?:from|require|import)\s*(?:\(\s*)?["']([^"']+)["']/g;
 
   function* walk(dir: string): Generator<string> {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -504,17 +682,50 @@ describe("core stays adapter-free", () => {
     }
   }
 
+  function specifierBanned(spec: string, fromFile: string): boolean {
+    if (spec.startsWith(".")) {
+      const rel = relative(CORE_ROOT, join(dirname(fromFile), spec));
+      return rel.startsWith("..") || isAbsolute(rel);
+    }
+    return BANNED_PACKAGE.test(spec);
+  }
+
   test("no file under packages/core/src imports remote, tRPC or electron", () => {
-    const banned = /^(?:@llamactl\/remote|@trpc(?:\/|$)|electron(?:\/|$)|.*\/electron)$/;
-    const specifier = /(?:from|require|import)\s*(?:\(\s*)?["']([^"']+)["']/g;
     const offenders: string[] = [];
     for (const file of walk(SRC)) {
       const text = readFileSync(file, "utf8");
-      for (const match of text.matchAll(specifier)) {
+      for (const match of text.matchAll(SPECIFIER)) {
         const spec = match[1];
-        if (spec && banned.test(spec)) offenders.push(`${file}: ${spec}`);
+        if (spec && specifierBanned(spec, file)) offenders.push(`${file}: ${spec}`);
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  test("the specifier scan flags static, dynamic, export-from, export-star and relative escapes", () => {
+    const file = join(SRC, "routing", "catalog.ts");
+    const probes: [code: string, banned: boolean][] = [
+      [`import { x } from "../../../remote/src/index.js"`, true],
+      [`export { x } from "../../../remote/src/index.js"`, true],
+      [`export * from "../../../remote/src/index.js"`, true],
+      [`const m = await import("../../../remote/src/index.js")`, true],
+      [`const s = require("../../../remote/src/index.js")`, true],
+      [`import { x } from "../../../cli/src/bin.js"`, true],
+      [`import { x } from "@llamactl/remote"`, true],
+      [`export { x } from "@llamactl/remote/sub"`, true],
+      [`export * from "@trpc/server"`, true],
+      [`const e = require("electron")`, true],
+      [`const m = await import("@trpc/server")`, true],
+      [`import { x } from "./capabilities.js"`, false],
+      [`import { x } from "../types.js"`, false],
+      [`export * from "./sub/index.js"`, false],
+      [`import type { U } from "@nova/contracts"`, false],
+      [`const m = await import("./lazy.js")`, false],
+    ];
+    for (const [code, banned] of probes) {
+      const specs = [...code.matchAll(SPECIFIER)].map((m) => m[1]!);
+      expect(specs.length).toBeGreaterThan(0);
+      expect(specs.some((spec) => specifierBanned(spec, file))).toBe(banned);
+    }
   });
 });

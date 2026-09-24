@@ -16,8 +16,8 @@ import {
   routingCapabilities,
   routingCatalog,
 } from "@llamactl/core";
-import { listPeers } from "@llamactl/core/config/peers";
-import { LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
+import { currentContext, loadConfig } from "@llamactl/core/config/kubeconfig";
+import { LOCAL_NODE_ENDPOINT, LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
 import { resolveEnv } from "@llamactl/core/env";
 import {
   listClusterRoutes,
@@ -65,6 +65,7 @@ export interface UnifiedProxyOptions {
   ) => Promise<BackendExecutor> | BackendExecutor;
   peers?: PeerNode[];
   peerSnapshots?: Map<string, PeerSnapshot>;
+  advertisements?: readonly routingCatalog.RouteAdvertisementV1[];
   nodeId?: string;
   now?: () => number;
 }
@@ -103,6 +104,7 @@ function ingressFor(pathname: string): routingCapabilities.IngressProtocol {
 
 function operationFor(pathname: string): routingCapabilities.InferenceOperation {
   if (pathname.includes("/embeddings")) return "embed";
+  if (pathname.endsWith("/tokenize")) return "count-tokens";
   return "generate";
 }
 
@@ -112,13 +114,23 @@ function headerFingerprint(req: Request): { allowlist: string[]; fingerprint: st
   return { allowlist: [...SEMANTIC_HEADER_ALLOWLIST], fingerprint };
 }
 
-function capabilityError(rejection: routingCapabilities.CapabilityRejection): Response {
+function capabilityError(
+  rejection: routingCapabilities.CapabilityRejection,
+  protocol: routingCapabilities.IngressProtocol,
+): Response {
+  const message = `no candidate route satisfies the request: ${rejection.reason}`;
+  if (protocol === "anthropic-messages") {
+    return Response.json(
+      { type: "error", error: { type: "invalid_request_error", message } },
+      { status: 400 },
+    );
+  }
   return Response.json(
     {
       error: {
         type: "invalid_request_error",
         code: rejection.reason,
-        message: `no candidate route satisfies the request: ${rejection.reason}`,
+        message,
       },
     },
     { status: 400 },
@@ -146,7 +158,8 @@ async function readGateInput(req: Request): Promise<GateInput> {
   } catch {
     body = null;
   }
-  const model = typeof body?.["model"] === "string" ? body["model"] : null;
+  const rawModel = body?.["model"];
+  const model = typeof rawModel === "string" && rawModel !== "" ? rawModel : null;
   return { bodyText, body, model };
 }
 
@@ -218,7 +231,7 @@ async function gatedExecute(
     const rejection = rejected.at(0)?.rejection;
     return rejection === undefined
       ? await deps.executor.execute(envelope, ctx)
-      : capabilityError(rejection);
+      : capabilityError(rejection, envelope.ingressProtocol);
   }
 
   if (deps.resolveCredentials !== undefined) await deps.resolveCredentials(candidate);
@@ -263,6 +276,64 @@ async function handleUnifiedRequest(deps: UnifiedDeps, req: Request): Promise<Re
   return await gatedExecute(deps, gate.model, features, envelope, ctx);
 }
 
+let publishedPeerSnapshots = new Map<string, PeerSnapshot>();
+
+/**
+ * Publish the peer snapshot map the unified catalog consumes — called
+ * alongside `openaiProxy.setPeerSnapshots` by the agent's snapshot
+ * poller so both routing paths observe identical peer state.
+ */
+export function publishUnifiedPeerSnapshots(snapshots: Map<string, PeerSnapshot>): void {
+  publishedPeerSnapshots = snapshots;
+}
+
+function isHttpsEndpoint(endpoint: string): boolean {
+  try {
+    return new URL(endpoint).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Peer discovery for catalog building. Mirrors `listPeers` but never
+ * resolves tokens — credential materialization belongs to the
+ * credential stage after capability filtering, not catalog build.
+ */
+function discoverPeers(): PeerNode[] {
+  try {
+    const config = loadConfig();
+    const context = currentContext(config);
+    const cluster = config.clusters.find((candidate) => candidate.name === context.cluster);
+    if (!cluster) return [];
+    return cluster.nodes
+      .filter((node) => (node.kind ?? "agent") === "agent")
+      .filter((node) => node.name !== LOCAL_NODE_NAME && node.endpoint !== LOCAL_NODE_ENDPOINT)
+      .filter((node) => isHttpsEndpoint(node.endpoint))
+      .map((node) => ({
+        id: node.name,
+        endpoint: node.endpoint,
+        ...(node.certificate !== undefined ? { certificate: node.certificate } : {}),
+        ...(node.certificateFingerprint !== undefined
+          ? { fingerprint: node.certificateFingerprint }
+          : {}),
+        ...(node.tunnelPreferred !== undefined ? { tunnelPreferred: node.tunnelPreferred } : {}),
+        ...(context.tunnelCentralUrl !== undefined
+          ? { tunnelCentralUrl: context.tunnelCentralUrl }
+          : {}),
+        ...(context.tunnelCentralCertificate !== undefined
+          ? { tunnelCentralCertificate: context.tunnelCentralCertificate }
+          : {}),
+        ...(context.tunnelCentralFingerprint !== undefined
+          ? { tunnelCentralFingerprint: context.tunnelCentralFingerprint }
+          : {}),
+        ...(node.tunnelNodeName !== undefined ? { tunnelNodeName: node.tunnelNodeName } : {}),
+      }));
+  } catch {
+    return [];
+  }
+}
+
 export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
   const enabled = unifiedProxyEnabled(opts.env ?? process.env);
   const resolvedOpt = opts.resolved;
@@ -278,23 +349,20 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
 
   function configuredPeers(): PeerNode[] {
     if (opts.peers !== undefined) return opts.peers;
-    try {
-      return listPeers();
-    } catch {
-      return [];
-    }
+    return discoverPeers();
   }
 
   function buildShadowCatalog(): routingCatalog.RouteCatalog {
     const routes = listClusterRoutes(
       listLocalRoutes(resolve()),
-      opts.peerSnapshots ?? new Map<string, PeerSnapshot>(),
+      opts.peerSnapshots ?? publishedPeerSnapshots,
       { peers: configuredPeers() },
     );
     return routingCatalog.buildRouteCatalog({
       routes,
       nodeId: opts.nodeId ?? LOCAL_NODE_NAME,
       now: now(),
+      ...(opts.advertisements !== undefined ? { advertisements: opts.advertisements } : {}),
     });
   }
 
@@ -322,4 +390,23 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
     handleRequest: async (req: Request): Promise<Response> =>
       enabled ? await handleUnifiedRequest(deps, req) : await passthrough(req),
   };
+}
+
+let sharedProxy: UnifiedProxy | null = null;
+
+/**
+ * The shared flag-gated dispatch every production ingress calls. The
+ * flag is read per request: unset or "0" returns the exact legacy
+ * `openaiProxy.proxyOpenAI` call — no extra awaits, allocations or
+ * catalog construction — while "1" routes through the lazily created
+ * shared unified composition.
+ */
+export function dispatchProxyRequest(req: Request): Promise<Response> {
+  if (!unifiedProxyEnabled()) return openaiProxy.proxyOpenAI(req);
+  sharedProxy ??= createProxy();
+  return sharedProxy.handleRequest(req);
+}
+
+export function __setSharedUnifiedProxyForTests(proxy: UnifiedProxy | null): void {
+  sharedProxy = proxy;
 }

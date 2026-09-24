@@ -6,11 +6,18 @@
  * trusted-internal selection block.
  */
 import { describe, expect, test } from "bun:test";
+import { ZodError } from "zod";
 
 import {
   InferenceEnvelopeV1Schema,
   parseInferenceEnvelope,
 } from "../../src/inference/contracts.js";
+import * as contracts from "../../src/inference/contracts.js";
+
+const InferenceEnvelopeError: new (...args: never[]) => Error =
+  ((contracts as Record<string, unknown>)["InferenceEnvelopeError"] as
+    | (new (...args: never[]) => Error)
+    | undefined) ?? class extends Error {};
 
 const base = {
   requestId: "req-1",
@@ -72,6 +79,58 @@ describe("InferenceEnvelopeV1", () => {
     const messages = env.nativeBody["messages"];
     expect(Object.isFrozen(messages)).toBe(true);
     expect(Object.isFrozen((messages as unknown[])[0])).toBe(true);
+  });
+
+  test("the frozen body is a defensive clone — the caller's object stays mutable", () => {
+    const body = {
+      model: "shared.gguf",
+      messages: [{ role: "user", content: "hi" }],
+      nested: { a: { b: 1 } },
+    };
+    const env = parseInferenceEnvelope({ ...base, nativeBody: body });
+    expect(env.nativeBody).not.toBe(body);
+    expect(env.nativeBody).toEqual(body);
+    expect(Object.isFrozen(env.nativeBody)).toBe(true);
+    expect(Object.isFrozen(body)).toBe(false);
+    expect(Object.isFrozen(body.nested)).toBe(false);
+    expect(Object.isFrozen(body.nested.a)).toBe(false);
+  });
+
+  test("a body past the documented depth bound rejects with a typed error, not a RangeError", () => {
+    let deep: Record<string, unknown> = { leaf: true };
+    for (let i = 0; i < 200_000; i++) deep = { next: deep };
+    try {
+      parseInferenceEnvelope({ ...base, nativeBody: deep });
+      expect.unreachable("parse should have rejected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(InferenceEnvelopeError);
+      expect(error).not.toBeInstanceOf(RangeError);
+    }
+  });
+
+  test("a legitimately deep body still parses", () => {
+    let deep: Record<string, unknown> = { leaf: true };
+    for (let i = 0; i < 40; i++) deep = { next: deep };
+    const env = parseInferenceEnvelope({ ...base, nativeBody: deep });
+    expect(Object.isFrozen(env.nativeBody)).toBe(true);
+  });
+
+  test("schema rejections surface as a typed error, not a raw ZodError", () => {
+    try {
+      parseInferenceEnvelope({ ...base, requestId: "" });
+      expect.unreachable("parse should have rejected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(InferenceEnvelopeError);
+      expect(error).not.toBeInstanceOf(ZodError);
+      expect((error as { code?: string }).code).toBe("invalid-envelope");
+    }
+  });
+
+  test("an empty publicModelId rejects", () => {
+    expect(InferenceEnvelopeV1Schema.safeParse({ ...base, publicModelId: "" }).success).toBe(false);
+    expect(() => parseInferenceEnvelope({ ...base, publicModelId: "" })).toThrow(
+      InferenceEnvelopeError,
+    );
   });
 
   test("trusted-internal selection fields are optional and typed", () => {
