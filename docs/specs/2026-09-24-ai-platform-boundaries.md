@@ -4,7 +4,7 @@ Status: recommended architecture for review, 2026-09-24. This document revises t
 
 ## 1. Decision and alternatives
 
-**Use Sirius as the full inference gateway, llamactl as the fleet control plane and model worker runtime, Embersynth as the synthetic-model composition runtime, and Penumbra as the agentic harness. Keep Nova as the shared model-contract and protocol-adapter foundation.** Preserve llamactl's direct local inference endpoint for local operation and compatibility. Provision the combined deployment through llamactl; separate ownership does not require users to manually assemble three products.
+**Use Sirius as the full inference gateway, llamactl as the fleet control plane and model worker runtime, Embersynth as the synthetic-model composition runtime, and Penumbra as the agentic harness. Keep Nova as the shared model-contract and protocol-adapter foundation.** Preserve llamactl's direct local inference endpoint for local operation and compatibility. Optionally provision a combined deployment through llamactl; separate ownership does not require users to manually assemble three products.
 
 The [Penumbra reuse audit](./2026-09-24-penumbra-agentic-harness-reuse.md) refines the initial worker allocation: managed CLI/ACP processes, permissions, conversations, workflows and agent memory remain **Penumbra-owned**. llamactl provisions the harness runtime and resources; it does not duplicate the harness. The audit includes concrete reuse/adapt/reject decisions, implementation limits and tests.
 
@@ -17,6 +17,10 @@ The standalone public proxy belongs in **Sirius**, not a second full gateway in 
 | One full Sirius gateway plus a narrow llamactl worker/local endpoint | Fits implemented responsibilities; supports standalone local use and independently scaled fleet traffic; preserves existing clients during migration | Two endpoint roles must be documented; compatibility codecs require shared fixtures; a combined deployment adds a network hop                    | **Recommend**                    |
 
 Do not start by extracting a universal gateway framework or embedding NestJS in llamactl. Reuse small, framework-independent Nova contracts/adapters and protocol fixtures. Keep transport composition in each runtime. A one-command local composition can launch Sirius and the needed workers; it need not include Embersynth unless synthetic models are configured. Docker remains the default composition runtime; this proposal introduces no Kubernetes requirement.
+
+### Installation simplicity is a required boundary
+
+Penumbra remains a standalone harness with direct providers and local CLI/ACP execution. Sirius, llamactl, Embersynth and distributed storage are optional integrations, not installation prerequisites. Preserve existing settings and secret references; expose optional integration through the existing setup entry point without a new mandatory configuration layer or duplicate provider setup. The [installation and configuration contract](./2026-09-24-penumbra-agentic-harness-reuse.md#installation-and-configuration-contract) defines configuration ownership, failure behavior, reversible setup and clean-install/upgrade acceptance gates. Docker's composition default applies only when a user chooses that composition; it is not a Penumbra prerequisite.
 
 ## 2. What the inspected repositories actually do
 
@@ -82,7 +86,8 @@ flowchart TB
   W --> R[llama.cpp / oMLX]
   L -. runtime deployment .-> P[Penumbra harness and agent workers]
   S -. qualified agent-serving profile .-> P
-  P --> I
+  P --> A
+  P -. optional gateway .-> I
   S <--> K[Response-cache storage]
 ```
 

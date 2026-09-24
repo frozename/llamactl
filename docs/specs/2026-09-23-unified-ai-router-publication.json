@@ -2608,6 +2608,24 @@
       ],
       "task_payloads_rebased": false,
       "registrar_event_id": 1816
+    },
+    "installation_contract": {
+      "document": "docs/specs/2026-09-24-penumbra-agentic-harness-reuse.md#installation-and-configuration-contract",
+      "status": "required_design_constraint_pending_implementation",
+      "standalone_penumbra_preserved": true,
+      "new_default_services_required": false,
+      "duplicate_provider_configuration_required": false,
+      "configuration_entry_point": "existing Penumbra setup; preserve compatible files and explicit ownership",
+      "optional_integrations": ["Sirius", "llamactl", "Embersynth", "distributed storage"],
+      "acceptance_gates": [
+        "clean install against current baseline",
+        "existing-config upgrade",
+        "unconfigured optional service absent",
+        "selected integration unavailable without unsafe fallback",
+        "disconnect and rollback preserve standalone settings"
+      ],
+      "active_task_fences_changed": false,
+      "registrar_event_id": 1818
     }
   }
 }
