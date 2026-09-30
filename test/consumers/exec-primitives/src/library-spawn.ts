@@ -1,6 +1,5 @@
 import { runProcess, superviseProcess } from "@novaproto/exec-primitives";
 import { constants as osConstants } from "node:os";
-import type { Readable } from "node:stream";
 import type { SpawnFn, SpawnStreamFn } from "../../../../packages/remote/src/index.ts";
 
 export const CLI_KILL_GRACE_MS = 250;
@@ -28,19 +27,6 @@ function cancelGraceMs(opts: { killGraceMs?: number }): number {
   return opts.killGraceMs ?? CLI_KILL_GRACE_MS;
 }
 
-async function* passThroughLines(lines: AsyncIterable<string>): AsyncIterable<string> {
-  for await (const line of lines) yield line;
-}
-
-async function* takeLines(lines: AsyncIterable<string>, max: number): AsyncIterable<string> {
-  let n = 0;
-  for await (const line of lines) {
-    if (n >= max) return;
-    n++;
-    yield line;
-  }
-}
-
 export const librarySpawn: SpawnFn = async (argv, opts) => {
   const [command, ...args] = argv;
   const result = await runProcess({
@@ -64,40 +50,78 @@ export const librarySpawn: SpawnFn = async (argv, opts) => {
   };
 };
 
-async function* readLines(stream: Readable): AsyncIterable<string> {
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    for await (const chunk of stream) {
-      buffer += decoder.decode(chunk as Buffer, { stream: true });
-      let nl = buffer.indexOf("\n");
-      while (nl >= 0) {
-        const line = buffer.slice(0, nl);
-        buffer = buffer.slice(nl + 1);
+class LineQueue implements AsyncIterable<string> {
+  readonly #decoder = new TextDecoder();
+  readonly #lines: string[] = [];
+  #buffer = "";
+  #done = false;
+  #waiter: (() => void) | undefined;
+
+  push(chunk: Buffer): void {
+    this.#buffer += this.#decoder.decode(chunk, { stream: true });
+    let nl = this.#buffer.indexOf("\n");
+    while (nl >= 0) {
+      this.#lines.push(this.#buffer.slice(0, nl));
+      this.#buffer = this.#buffer.slice(nl + 1);
+      nl = this.#buffer.indexOf("\n");
+    }
+    this.#wake();
+  }
+
+  finish(): void {
+    this.#buffer += this.#decoder.decode();
+    if (this.#buffer.length > 0) {
+      this.#lines.push(this.#buffer);
+      this.#buffer = "";
+    }
+    this.#done = true;
+    this.#wake();
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<string> {
+    for (;;) {
+      const line = this.#lines.shift();
+      if (line !== undefined) {
         yield line;
-        nl = buffer.indexOf("\n");
+        continue;
       }
+      if (this.#done) return;
+      await new Promise<void>((resolve) => {
+        this.#waiter = resolve;
+      });
     }
-    buffer += decoder.decode();
-    if (buffer.length > 0) {
-      yield buffer;
-    }
-  } finally {
-    stream.destroy();
+  }
+
+  #wake(): void {
+    const waiter = this.#waiter;
+    this.#waiter = undefined;
+    waiter?.();
   }
 }
 
-async function collectStream(stream: Readable | undefined): Promise<string> {
-  if (!stream) return "";
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(chunk as Buffer);
+async function* takeLinesUntilExit(
+  lines: AsyncIterable<string>,
+  exited: Promise<unknown>,
+): AsyncIterable<string> {
+  let exitSettled = false;
+  void exited.then(
+    () => {
+      exitSettled = true;
+    },
+    () => {
+      exitSettled = true;
+    },
+  );
+  for await (const line of lines) {
+    if (exitSettled) return;
+    yield line;
   }
-  return Buffer.concat(chunks).toString("utf8");
 }
 
 export const librarySpawnStream: SpawnStreamFn = async (argv, opts) => {
   const [command, ...args] = argv;
+  const stdoutQueue = new LineQueue();
+  const stderrChunks: Buffer[] = [];
   const proc = superviseProcess({
     command,
     args,
@@ -107,18 +131,32 @@ export const librarySpawnStream: SpawnStreamFn = async (argv, opts) => {
     cancelGraceMs: cancelGraceMs(opts),
     watchdogMs: WATCHDOG_BACKSTOP_MS,
     stdin: opts.promptOnStdin ? opts.prompt : "ignore",
+    onStdoutChunk: (chunk) => {
+      stdoutQueue.push(chunk);
+    },
+    onStderrChunk: (chunk) => {
+      stderrChunks.push(chunk);
+    },
   });
   await new Promise<void>((r) => setImmediate(() => r()));
   if (proc.spawnError) {
     throw proc.spawnError;
   }
-  const stderrPromise = collectStream(proc.stderr);
+  const stderrPromise = proc.exit.then(() => Buffer.concat(stderrChunks).toString("utf8"));
   const exitedPromise = proc.exit.then((exit) => ({
     exitCode: exitCodeOf(exit.code, exit.signal),
     aborted: exit.outcome === "cancelled",
   }));
+  void proc.exit.then(
+    () => {
+      stdoutQueue.finish();
+    },
+    () => {
+      stdoutQueue.finish();
+    },
+  );
   return {
-    stdout: proc.stdout ? passThroughLines(readLines(proc.stdout)) : (async function* () {})(),
+    stdout: stdoutQueue,
     stderrPromise,
     exitedPromise,
   };
