@@ -4,10 +4,15 @@
   "decisions": [1948, 2031],
   "run_date": "2026-09-30",
   "base_sha": "3885164b11a4120db131ffe9a649d1609cef5a29",
-  "head_sha": "b63a412e9aab80cf0c1692f7bd38bd5400a343af",
+  "head_sha": "d193efc272b986248ce193b08eee16a954147c15",
   "nova_sibling": {
     "commit": "e1a65bd77710afb4b3cf67909bd1984bf80837b1",
-    "source": "git ls-remote refs/heads/main; adjacent checkout was not present from this worktree layout"
+    "status": "inferred",
+    "source": "dispatch precondition; adjacent checkout unavailable",
+    "installed_contracts": {
+      "realpath": "node_modules/.bun/@nova+contracts@file+..+nova+packages+contracts/node_modules/@nova/contracts",
+      "package_version": "0.2.0"
+    }
   },
   "toolchain": {
     "bun": "1.3.14"
@@ -123,6 +128,11 @@
       "id": "spawn-error",
       "change": "Throw on the library spawn-error outcome.",
       "reason": "The adapter maps a thrown spawn failure to the same spawn-failed shape as Bun.spawn."
+    },
+    {
+      "id": "stream-buffering",
+      "change": "Use superviseProcess stdout/stderr callbacks as the only stream consumers and buffer stdout lines plus stderr bytes in memory.",
+      "reason": "The library puts child streams in flowing mode and resolves exit after stdio closes; adapter-paced iteration must not delay exit or lose early chunks. Buffering is eager and unbounded in this test shim."
     }
   ],
   "mutations": [
@@ -203,6 +213,10 @@
       "note": "The library signals the process group; the current default adapter signals the direct child. These parity cases observe only the exec child."
     },
     {
+      "topic": "Exit resolution after stdio versus leader exit",
+      "note": "The library resolves exit after child stdio ends and the process group is gone, while the default resolves on leader exit. A lazy library stdout reader can delay exit, so the shim buffers through supervisor callbacks."
+    },
+    {
       "topic": "Watchdog backstop",
       "note": "The library arm carries a watchdog backstop because the library API requires it; the adapter normally bounds runs through abort signals."
     }
@@ -237,15 +251,15 @@
       "evidence": [
         {
           "status": "confirmed",
-          "pointer": "test/consumers/exec-primitives/package.json devDependencies pin"
+          "pointer": "cmd=bun install --frozen-lockfile; cwd=test/consumers/exec-primitives; exit=0; counts=n/a; lock entry and package pin present"
         },
         {
           "status": "confirmed",
-          "pointer": "test/consumers/exec-primitives/bun.lock registry integrity entry"
+          "pointer": "cmd=bun -e import.meta.resolve package path; cwd=test/consumers/exec-primitives; exit=0; counts=n/a; resolved inside consumer node_modules"
         },
         {
           "status": "confirmed",
-          "pointer": "installed content digest 0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98"
+          "pointer": "cmd=find installed package files | shasum -a 256; cwd=test/consumers/exec-primitives/node_modules/@novaproto/exec-primitives; exit=0; counts=n/a; digest=0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98"
         }
       ]
     },
@@ -264,15 +278,23 @@
       "evidence": [
         {
           "status": "confirmed",
-          "pointer": "consumer parity suite: 28 pass, 0 fail"
+          "pointer": "cmd=bun run test (env-cleared); cwd=test/consumers/exec-primitives; exit=0; counts=28 pass, 0 fail"
         },
         {
           "status": "confirmed",
-          "pointer": "origin default-arm adapter test: 18 pass, 0 fail"
+          "pointer": "cmd=bun test ./test/cli-adapter-context.test.ts (env-cleared); cwd=packages/remote; exit=0; counts=18 pass, 0 fail"
         },
         {
           "status": "confirmed",
-          "pointer": "mutation patches m1 through m8 each turn named titles red"
+          "pointer": "cmd=for each mutation patch: git apply, bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts, git apply -R; cwd=.; exit=0 harness; counts red m1..m8=1,1,1,1,11,3,1,2"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "cmd=30 focused A15 library-arm runs; cwd=test/consumers/exec-primitives; exit=0 each; counts=30 pass, 0 fail"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "cmd=30 focused A15 default-arm runs; cwd=packages/remote; exit=0 each; counts=30 pass, 0 fail"
         }
       ]
     }
@@ -282,42 +304,129 @@
     "record": "docs/qualification/exec-primitives-0.1.0-registry-qualification.json"
   },
   "baseline": {
-    "note": "No separate pre-WIP baseline was available in this continuation; after values are fresh measurements on the evidence head.",
-    "typecheck": { "exit": null },
-    "lint": { "exit": null },
-    "format_check": { "exit": null },
-    "remote_test": { "pass": null, "fail": null },
-    "root_bun_test": { "pass": null, "fail": null },
-    "run_all": { "exit": null }
-  },
-  "after": {
-    "typecheck": { "command": "bun run typecheck", "exit": 0 },
-    "lint": { "command": "bun run lint", "exit": 0 },
-    "format_check": { "command": "bun run format:check", "exit": 0 },
+    "base_sha": "3885164b11a4120db131ffe9a649d1609cef5a29",
+    "environment": "assigned worktree with Bun 1.3.14 after bun install --frozen-lockfile; adjacent nova checkout unavailable from this layout",
+    "typecheck": {
+      "command": "bun run typecheck",
+      "cwd": ".",
+      "exit": 0
+    },
+    "lint": {
+      "command": "bun run lint",
+      "cwd": ".",
+      "exit": 0
+    },
+    "format_check": {
+      "command": "bun run format:check",
+      "cwd": ".",
+      "exit": 0
+    },
     "remote_test": {
       "command": "bun run --cwd packages/remote test",
+      "cwd": ".",
       "exit": 1,
       "pass": 1640,
       "fail": 175,
+      "skip": 6,
       "failing_names": [
-        "environmental server binding failures beginning with startAgentServer port-0 EADDRINUSE"
-      ]
+        "httpFetcher robots and SSRF cases",
+        "workloadList foreign-listener detection cases",
+        "server/modelhost process-spawn cases",
+        "one unnamed failure"
+      ],
+      "attribution": "inferred environmental socket/process limits; same pass/fail counts measured at base and branch"
     },
     "root_bun_test": {
       "command": "bun test",
+      "cwd": ".",
       "exit": 1,
       "pass": 3831,
       "fail": 242,
+      "skip": 9,
       "failing_names": [
-        "environmental server binding and timing failures; consumer parity tests were not among the reported failures"
-      ]
+        "httpFetcher robots and SSRF cases",
+        "healthGate timeout case",
+        "foreign-listener and modelhost process cases",
+        "engine probe timeout and process-group reaping cases"
+      ],
+      "attribution": "inferred environmental socket/process limits; same pass/fail counts measured at base and branch"
     },
     "run_all": {
       "command": "zsh test/run-all.zsh",
+      "cwd": ".",
       "exit": 1,
       "pass": 743,
       "fail": 37,
-      "failing_names": ["core phase environmental server binding and timeout failures"]
+      "failing_names": [
+        "detectMemoryBytes",
+        "slot capability HTTP probe cases",
+        "rpcServer timeout cases",
+        "engine probe timeout and process-group reaping cases"
+      ],
+      "attribution": "inferred environmental socket/process limits; same pass/fail counts measured at base and branch"
+    }
+  },
+  "after": {
+    "head_sha": "d193efc272b986248ce193b08eee16a954147c15",
+    "environment": "same assigned worktree with Bun 1.3.14 after returning from base checkout",
+    "typecheck": {
+      "command": "bun run typecheck",
+      "cwd": ".",
+      "exit": 0
+    },
+    "lint": {
+      "command": "bun run lint",
+      "cwd": ".",
+      "exit": 0
+    },
+    "format_check": {
+      "command": "bun run format:check",
+      "cwd": ".",
+      "exit": 0
+    },
+    "remote_test": {
+      "command": "bun run --cwd packages/remote test",
+      "cwd": ".",
+      "exit": 1,
+      "pass": 1640,
+      "fail": 175,
+      "skip": 6,
+      "failing_names": [
+        "httpFetcher robots and SSRF cases",
+        "workloadList foreign-listener detection cases",
+        "server/modelhost process-spawn cases",
+        "one unnamed failure"
+      ],
+      "attribution": "inferred environmental socket/process limits; same pass/fail counts measured at base and branch"
+    },
+    "root_bun_test": {
+      "command": "bun test",
+      "cwd": ".",
+      "exit": 1,
+      "pass": 3831,
+      "fail": 242,
+      "skip": 9,
+      "failing_names": [
+        "httpFetcher robots and SSRF cases",
+        "healthGate timeout case",
+        "foreign-listener and modelhost process cases",
+        "engine probe timeout and process-group reaping cases"
+      ],
+      "attribution": "inferred environmental socket/process limits; same pass/fail counts measured at base and branch"
+    },
+    "run_all": {
+      "command": "zsh test/run-all.zsh",
+      "cwd": ".",
+      "exit": 1,
+      "pass": 743,
+      "fail": 37,
+      "failing_names": [
+        "detectMemoryBytes",
+        "slot capability HTTP probe cases",
+        "rpcServer timeout cases",
+        "engine probe timeout and process-group reaping cases"
+      ],
+      "attribution": "inferred environmental socket/process limits; same pass/fail counts measured at base and branch"
     }
   },
   "honesty": {
