@@ -20,6 +20,27 @@ function exitCodeOf(code: number | null, signal: NodeJS.Signals | null): number 
   return -1;
 }
 
+function callerSignal(opts: { signal: AbortSignal }): AbortSignal {
+  return opts.signal;
+}
+
+function cancelGraceMs(opts: { killGraceMs?: number }): number {
+  return opts.killGraceMs ?? CLI_KILL_GRACE_MS;
+}
+
+async function* passThroughLines(lines: AsyncIterable<string>): AsyncIterable<string> {
+  for await (const line of lines) yield line;
+}
+
+async function* takeLines(lines: AsyncIterable<string>, max: number): AsyncIterable<string> {
+  let n = 0;
+  for await (const line of lines) {
+    if (n >= max) return;
+    n++;
+    yield line;
+  }
+}
+
 export const librarySpawn: SpawnFn = async (argv, opts) => {
   const [command, ...args] = argv;
   const result = await runProcess({
@@ -27,8 +48,8 @@ export const librarySpawn: SpawnFn = async (argv, opts) => {
     args,
     cwd: process.cwd(),
     env: toHostEnv(opts.env),
-    signal: opts.signal,
-    cancelGraceMs: opts.killGraceMs ?? CLI_KILL_GRACE_MS,
+    signal: callerSignal(opts),
+    cancelGraceMs: cancelGraceMs(opts),
     watchdogMs: WATCHDOG_BACKSTOP_MS,
     stdin: opts.promptOnStdin ? opts.prompt : "ignore",
   });
@@ -82,8 +103,8 @@ export const librarySpawnStream: SpawnStreamFn = async (argv, opts) => {
     args,
     cwd: process.cwd(),
     env: toHostEnv(opts.env),
-    signal: opts.signal,
-    cancelGraceMs: opts.killGraceMs ?? CLI_KILL_GRACE_MS,
+    signal: callerSignal(opts),
+    cancelGraceMs: cancelGraceMs(opts),
     watchdogMs: WATCHDOG_BACKSTOP_MS,
     stdin: opts.promptOnStdin ? opts.prompt : "ignore",
   });
@@ -97,7 +118,7 @@ export const librarySpawnStream: SpawnStreamFn = async (argv, opts) => {
     aborted: exit.outcome === "cancelled",
   }));
   return {
-    stdout: proc.stdout ? readLines(proc.stdout) : (async function* () {})(),
+    stdout: proc.stdout ? passThroughLines(readLines(proc.stdout)) : (async function* () {})(),
     stderrPromise,
     exitedPromise,
   };
