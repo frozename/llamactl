@@ -1,0 +1,333 @@
+{
+  "schema": "exec-primitives-test-consumer/1",
+  "follow_up_event_id": 1830,
+  "decisions": [1948, 2031],
+  "run_date": "2026-09-30",
+  "base_sha": "3885164b11a4120db131ffe9a649d1609cef5a29",
+  "head_sha": "b63a412e9aab80cf0c1692f7bd38bd5400a343af",
+  "nova_sibling": {
+    "commit": "e1a65bd77710afb4b3cf67909bd1984bf80837b1",
+    "source": "git ls-remote refs/heads/main; adjacent checkout was not present from this worktree layout"
+  },
+  "toolchain": {
+    "bun": "1.3.14"
+  },
+  "artifact": {
+    "name": "@novaproto/exec-primitives",
+    "version": "0.1.0",
+    "channel": "registry",
+    "sha256": "a3d6658b4d4e62479d2273d90fba8ccd3e09a51bd47d15acc79e9cb3d0e16881",
+    "integrity": "sha512-vhE+TfXrPQZOlsB8/PoF9vYuAZgF4GwXzFK3yvA5sfx0kLDX5ANvh1To00T9NjC4yTKeSPwJYGEaZtOncUE0Ew==",
+    "content_sha256": "0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98"
+  },
+  "install": {
+    "manifest": "test/consumers/exec-primitives/package.json",
+    "section": "devDependencies",
+    "specifier": "0.1.0",
+    "lock_file": "test/consumers/exec-primitives/bun.lock",
+    "lock_entry": "\"@novaproto/exec-primitives\": [\"@novaproto/exec-primitives@0.1.0\", \"\", {}, \"sha512-vhE+TfXrPQZOlsB8/PoF9vYuAZgF4GwXzFK3yvA5sfx0kLDX5ANvh1To00T9NjC4yTKeSPwJYGEaZtOncUE0Ew==\"]",
+    "install_command": "bun install --frozen-lockfile",
+    "cold_cache": true,
+    "installed_content_sha256": "0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98",
+    "by_name_resolution": "bun add --exact @novaproto/exec-primitives@0.1.0",
+    "resolved_inside_consumer": true,
+    "root_manifests_untouched": true,
+    "resolvable_from_runtime_packages": false
+  },
+  "parity": {
+    "origin_file": "packages/remote/test/cli-adapter-context.test.ts",
+    "origin_sha": "3885164b11a4120db131ffe9a649d1609cef5a29",
+    "ported": [
+      "createResponse — ProviderExecutionContext > caller abort kills the real child and rejects AbortError",
+      "createResponse — ProviderExecutionContext > context deadline ahead of binding timeout rejects TimeoutError and kills the child",
+      "createResponse — ProviderExecutionContext > already-aborted signal rejects AbortError without spawning or journalling",
+      "createResponse — ProviderExecutionContext > past deadline rejects TimeoutError without spawning or journalling",
+      "createResponse — ProviderExecutionContext > binding timeout without a context still rejects code 'timeout' and kills the child",
+      "library spawners — pre-aborted signals > library spawn kills the child immediately when the signal is already aborted",
+      "library spawners — pre-aborted signals > library spawnStream kills the child immediately when the signal is already aborted",
+      "SIGKILL escalation — a child that ignores SIGTERM still dies > createResponse: SIGKILL lands within grace; the promise settles",
+      "SIGKILL escalation — a child that ignores SIGTERM still dies > streamResponse: SIGKILL lands within grace; the stream settles",
+      "streamResponse — real subprocess > clean exit yields chunks then done completion 'upstream'",
+      "streamResponse — real subprocess > non-zero exit yields one error event and NO done",
+      "streamResponse — real subprocess > binding timeout yields one 'timeout' error and NO done; the child is killed",
+      "streamResponse — real subprocess > caller abort mid-stream throws AbortError after the child is reaped + journalled",
+      "streamResponse — real subprocess > a binding-timer abort mid-run then a trapped clean exit reports 'truncated', NO done",
+      "streamResponse — real subprocess > a binding-timer abort after the child exits does not cut the stdout drain"
+    ],
+    "differential": [
+      "differential — default vs library spawner > text stdout and journal match",
+      "differential — default vs library spawner > prompt on stdin reaches the child identically",
+      "differential — default vs library spawner > non-zero exit with stderr: same typed error and exit_code",
+      "differential — default vs library spawner > missing binary: same spawn-failed error and no exit_code",
+      "differential — default vs library spawner > caller abort of a SIGTERM-trapping child: same AbortError and signal exit_code",
+      "differential — default vs library spawner > explicit env reaches the child verbatim with no parent leak",
+      "differential — default vs library spawner > child cwd matches the default spawner",
+      "differential — default vs library spawner > stream clean exit yields identical chunks and journal",
+      "differential — default vs library spawner > stream consumer break journals the same error_code"
+    ],
+    "not_portable": [
+      {
+        "title": "createResponse — usage observation > fires onUsageObservation exactly once with source 'estimated'; response has no usage",
+        "reason": "canned fakeSpawn: no subprocess, no spawner under test"
+      },
+      {
+        "title": "createResponse — usage observation > a throwing observation callback does not break the response",
+        "reason": "canned fakeSpawn: no subprocess, no spawner under test"
+      },
+      {
+        "title": "createResponse — usage observation > no observation fires on failure paths",
+        "reason": "canned fakeSpawn: no subprocess, no spawner under test"
+      }
+    ],
+    "library_arm": {
+      "pass": 28,
+      "fail": 0
+    },
+    "default_arm": {
+      "pass": 18,
+      "fail": 0
+    }
+  },
+  "adaptations": [
+    {
+      "id": "env",
+      "change": "Convert the adapter env map to a string-only record and do not merge parent process values.",
+      "reason": "The library accepts a string record, while the adapter exposes a process env shape with optional undefined values."
+    },
+    {
+      "id": "cwd",
+      "change": "Pass process.cwd() at spawn time.",
+      "reason": "The adapter spawner options do not carry cwd, and the default Bun spawner inherits the current working directory."
+    },
+    {
+      "id": "cancel-grace",
+      "change": "Use killGraceMs when present, otherwise CLI_KILL_GRACE_MS at 250 ms.",
+      "reason": "The adapter default is mirrored so abort and timeout behavior stays aligned."
+    },
+    {
+      "id": "watchdog",
+      "change": "Use a named WATCHDOG_BACKSTOP_MS value of 120000.",
+      "reason": "The adapter bounds normal runs with AbortSignal deadlines; the library still requires a backstop."
+    },
+    {
+      "id": "stdin",
+      "change": "Send the prompt only when promptOnStdin is true; otherwise use the library ignore sentinel.",
+      "reason": "This matches the adapter's prompt-on-stdin contract without adding parent input."
+    },
+    {
+      "id": "exit-code",
+      "change": "Map numeric exit code first, then signal to 128 plus signal number, then -1.",
+      "reason": "The adapter journals signal termination as an exit_code-compatible number."
+    },
+    {
+      "id": "spawn-error",
+      "change": "Throw on the library spawn-error outcome.",
+      "reason": "The adapter maps a thrown spawn failure to the same spawn-failed shape as Bun.spawn."
+    }
+  ],
+  "mutations": [
+    {
+      "id": "m1-env-merge",
+      "patch": "test/consumers/exec-primitives/mutations/m1-env-merge.patch",
+      "failing_titles": [
+        "differential — default vs library spawner > explicit env reaches the child verbatim with no parent leak"
+      ]
+    },
+    {
+      "id": "m2-grace-constant",
+      "patch": "test/consumers/exec-primitives/mutations/m2-grace-constant.patch",
+      "failing_titles": [
+        "differential — default vs library spawner > caller abort of a SIGTERM-trapping child: same AbortError and signal exit_code"
+      ]
+    },
+    {
+      "id": "m3-signal-exit-code",
+      "patch": "test/consumers/exec-primitives/mutations/m3-signal-exit-code.patch",
+      "failing_titles": [
+        "differential — default vs library spawner > caller abort of a SIGTERM-trapping child: same AbortError and signal exit_code"
+      ]
+    },
+    {
+      "id": "m4-spawn-error-resolves",
+      "patch": "test/consumers/exec-primitives/mutations/m4-spawn-error-resolves.patch",
+      "failing_titles": [
+        "differential — default vs library spawner > missing binary: same spawn-failed error and no exit_code"
+      ]
+    },
+    {
+      "id": "m5-signal-dropped",
+      "patch": "test/consumers/exec-primitives/mutations/m5-signal-dropped.patch",
+      "failing_titles": [
+        "createResponse — ProviderExecutionContext > caller abort kills the real child and rejects AbortError",
+        "streamResponse — real subprocess > caller abort mid-stream throws AbortError after the child is reaped + journalled"
+      ]
+    },
+    {
+      "id": "m6-no-sigkill-escalation",
+      "patch": "test/consumers/exec-primitives/mutations/m6-no-sigkill-escalation.patch",
+      "failing_titles": [
+        "SIGKILL escalation — a child that ignores SIGTERM still dies > createResponse: SIGKILL lands within grace; the promise settles",
+        "SIGKILL escalation — a child that ignores SIGTERM still dies > streamResponse: SIGKILL lands within grace; the stream settles"
+      ]
+    },
+    {
+      "id": "m7-drain-cut-at-exit",
+      "patch": "test/consumers/exec-primitives/mutations/m7-drain-cut-at-exit.patch",
+      "failing_titles": [
+        "streamResponse — real subprocess > a binding-timer abort after the child exits does not cut the stdout drain"
+      ]
+    },
+    {
+      "id": "m8-stream-exit-zero",
+      "patch": "test/consumers/exec-primitives/mutations/m8-stream-exit-zero.patch",
+      "failing_titles": [
+        "streamResponse — real subprocess > non-zero exit yields one error event and NO done"
+      ]
+    }
+  ],
+  "targeted_poison": {
+    "passing_titles": [
+      "createResponse — ProviderExecutionContext > already-aborted signal rejects AbortError without spawning or journalling",
+      "createResponse — ProviderExecutionContext > past deadline rejects TimeoutError without spawning or journalling",
+      "@novaproto/exec-primitives registry pin > manifest pins the exact published version in devDependencies",
+      "@novaproto/exec-primitives registry pin > bun.lock records the registry resolution and published integrity",
+      "@novaproto/exec-primitives registry pin > resolves to the installed registry copy inside this consumer"
+    ]
+  },
+  "poison_run": {
+    "pass": 0
+  },
+  "divergences": [
+    {
+      "topic": "Process-group kill versus direct-child kill",
+      "note": "The library signals the process group; the current default adapter signals the direct child. These parity cases observe only the exec child."
+    },
+    {
+      "topic": "Watchdog backstop",
+      "note": "The library arm carries a watchdog backstop because the library API requires it; the adapter normally bounds runs through abort signals."
+    }
+  ],
+  "coupled_slices": [
+    {
+      "slice": "#134 (P2.1)",
+      "paths": ["packages/remote/src/cli/**", "test/consumers/exec-primitives/**"],
+      "note": "Remote CLI adapter changes can require parity consumer updates."
+    },
+    {
+      "slice": "#135 (P2.2)",
+      "paths": ["packages/remote/src/cli/**", "test/consumers/exec-primitives/**"],
+      "note": "Runtime adoption planning can change the adapter contract under test."
+    },
+    {
+      "slice": "P2.2/llamactl-adoption",
+      "paths": [
+        "packages/remote/package.json",
+        "packages/remote/src/cli/**",
+        "test/consumers/exec-primitives/**"
+      ],
+      "note": "Actual runtime adoption stays pending and should declare this consumer if it edits the parity surface."
+    }
+  ],
+  "gates": [
+    {
+      "gate": "L2",
+      "verdict": "PASS",
+      "verdict_scope": "registry",
+      "scope": "llamactl-test-consumer",
+      "evidence": [
+        {
+          "status": "confirmed",
+          "pointer": "test/consumers/exec-primitives/package.json devDependencies pin"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "test/consumers/exec-primitives/bun.lock registry integrity entry"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "installed content digest 0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98"
+        }
+      ]
+    },
+    {
+      "gate": "L3",
+      "verdict": "PASS",
+      "scope": "llamactl",
+      "parts": {
+        "llamactl_cli": "PASS"
+      },
+      "not_provable_here": [
+        "ACP fixtures (P6.1: llamactl has no ACP code)",
+        "real llamactl worker (L6)",
+        "runtime adoption (P2.2/llamactl-adoption)"
+      ],
+      "evidence": [
+        {
+          "status": "confirmed",
+          "pointer": "consumer parity suite: 28 pass, 0 fail"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "origin default-arm adapter test: 18 pass, 0 fail"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "mutation patches m1 through m8 each turn named titles red"
+        }
+      ]
+    }
+  ],
+  "penumbra_record": {
+    "repo": "frozename/penumbra",
+    "record": "docs/qualification/exec-primitives-0.1.0-registry-qualification.json"
+  },
+  "baseline": {
+    "note": "No separate pre-WIP baseline was available in this continuation; after values are fresh measurements on the evidence head.",
+    "typecheck": { "exit": null },
+    "lint": { "exit": null },
+    "format_check": { "exit": null },
+    "remote_test": { "pass": null, "fail": null },
+    "root_bun_test": { "pass": null, "fail": null },
+    "run_all": { "exit": null }
+  },
+  "after": {
+    "typecheck": { "command": "bun run typecheck", "exit": 0 },
+    "lint": { "command": "bun run lint", "exit": 0 },
+    "format_check": { "command": "bun run format:check", "exit": 0 },
+    "remote_test": {
+      "command": "bun run --cwd packages/remote test",
+      "exit": 1,
+      "pass": 1640,
+      "fail": 175,
+      "failing_names": [
+        "environmental server binding failures beginning with startAgentServer port-0 EADDRINUSE"
+      ]
+    },
+    "root_bun_test": {
+      "command": "bun test",
+      "exit": 1,
+      "pass": 3831,
+      "fail": 242,
+      "failing_names": [
+        "environmental server binding and timing failures; consumer parity tests were not among the reported failures"
+      ]
+    },
+    "run_all": {
+      "command": "zsh test/run-all.zsh",
+      "exit": 1,
+      "pass": 743,
+      "fail": 37,
+      "failing_names": ["core phase environmental server binding and timeout failures"]
+    }
+  },
+  "honesty": {
+    "adoption_performed": false,
+    "runtime_import": false,
+    "adoption_rules_changed": false
+  },
+  "claims_not_made": [
+    "adopted by llamactl",
+    "1830 closed",
+    "ACP fixture parity in the llamactl consumer"
+  ]
+}
