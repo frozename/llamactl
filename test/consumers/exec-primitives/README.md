@@ -1,0 +1,36 @@
+# exec-primitives test consumer
+
+This directory is a standalone test consumer for decision 2031. It exact-pins
+`@novaproto/exec-primitives@0.1.0` from the public registry and runs the
+llamactl L3 parity cases through the public remote entrypoint. It is not runtime
+adoption: no package under `packages/` depends on the library, and the root
+manifest and lockfile remain unchanged.
+
+The consumer lives outside the workspace package glob on purpose. Its local
+`package.json` and `bun.lock` prove registry resolution by name without adding a
+runtime import path to the application packages.
+
+## Run
+
+```sh
+cd test/consumers/exec-primitives
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+```
+
+The origin default-arm comparison remains in the remote package:
+
+```sh
+bun run --cwd packages/remote test ./test/cli-adapter-context.test.ts
+```
+
+## Coupling
+
+The parity tests intentionally follow the real
+`packages/remote/src/index.ts` export and exercise
+`createCliSubprocessProvider`. Slices #134 and #135, plus the later
+P2.2/llamactl-adoption slice, can legitimately need edits under
+`test/consumers/exec-primitives/**` when they change the remote CLI adapter
+contract. Those edits should be declared as scope changes before modifying this
+consumer.
