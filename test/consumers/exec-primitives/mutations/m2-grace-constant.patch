@@ -1,8 +1,8 @@
 diff --git a/test/consumers/exec-primitives/src/library-spawn.ts b/test/consumers/exec-primitives/src/library-spawn.ts
-index 42165252..233611f5 100644
+index eb518393..9da39a1f 100644
 --- a/test/consumers/exec-primitives/src/library-spawn.ts
 +++ b/test/consumers/exec-primitives/src/library-spawn.ts
-@@ -25,7 +25,7 @@ function callerSignal(opts: { signal: AbortSignal }): AbortSignal {
+@@ -24,7 +24,7 @@ function callerSignal(opts: { signal: AbortSignal }): AbortSignal {
  }
  
  function cancelGraceMs(opts: { killGraceMs?: number }): number {
@@ -10,4 +10,4 @@ index 42165252..233611f5 100644
 +  return opts.killGraceMs ?? 10_000;
  }
  
- async function* passThroughLines(lines: AsyncIterable<string>): AsyncIterable<string> {
+ export const librarySpawn: SpawnFn = async (argv, opts) => {

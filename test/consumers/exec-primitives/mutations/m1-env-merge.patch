@@ -1,8 +1,8 @@
 diff --git a/test/consumers/exec-primitives/src/library-spawn.ts b/test/consumers/exec-primitives/src/library-spawn.ts
-index 42165252..1d881eeb 100644
+index eb518393..908ea0d5 100644
 --- a/test/consumers/exec-primitives/src/library-spawn.ts
 +++ b/test/consumers/exec-primitives/src/library-spawn.ts
-@@ -47,7 +47,7 @@ export const librarySpawn: SpawnFn = async (argv, opts) => {
+@@ -33,7 +33,7 @@ export const librarySpawn: SpawnFn = async (argv, opts) => {
      command,
      args,
      cwd: process.cwd(),

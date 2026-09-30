@@ -1,8 +1,8 @@
 diff --git a/test/consumers/exec-primitives/src/library-spawn.ts b/test/consumers/exec-primitives/src/library-spawn.ts
-index 42165252..e0b1a4e3 100644
+index eb518393..cc55509c 100644
 --- a/test/consumers/exec-primitives/src/library-spawn.ts
 +++ b/test/consumers/exec-primitives/src/library-spawn.ts
-@@ -16,7 +16,7 @@ function toHostEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+@@ -15,7 +15,7 @@ function toHostEnv(env: NodeJS.ProcessEnv): Record<string, string> {
  
  function exitCodeOf(code: number | null, signal: NodeJS.Signals | null): number {
    if (code !== null) return code;
