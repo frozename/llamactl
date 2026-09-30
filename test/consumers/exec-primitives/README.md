@@ -25,6 +25,24 @@ The origin default-arm comparison remains in the remote package:
 bun run --cwd packages/remote test ./test/cli-adapter-context.test.ts
 ```
 
+## Adaptations
+
+The streaming shim lets the library's supervisor be the only reader of child
+stdout and stderr. Supervisor callbacks eagerly push stdout into an in-memory
+line queue and stderr into an in-memory byte buffer; this is intentionally
+unbounded and does not provide pipe backpressure. The adapter then drains the
+queue at its own pace without delaying the library's exit promise.
+
+The library resolves `exit` after child stdio ends and the process group is
+gone. The default adapter resolves on the leader exit. A lazy reader of the
+library's stdout can therefore delay exit, so the shim records output through
+the supervisor callbacks instead of iterating the supervisor's `stdout` stream
+directly.
+
+The `takeLinesUntilExit` helper exists only to keep mutation m7 a one-line
+patch: that mutant stops yielding buffered lines after exit and is caught by
+the post-exit drain test.
+
 ## Coupling
 
 The parity tests intentionally follow the real
