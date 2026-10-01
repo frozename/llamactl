@@ -14,15 +14,15 @@ The registry packument returned HTTP 200 on 2026-09-30. The package resolves ins
 
 The consumer suite reported 28 pass and 0 fail: 15 ported real-subprocess cases, 9 differential default-vs-library cases, and 4 registry pin cases. The origin default-arm adapter test reported 18 pass and 0 fail.
 
-The post-exit drain case was measured in round 2 with 30 pass and 0 fail on the library arm, and 30 pass and 0 fail on the default arm. The round-1 logs also carry 30 pass and 0 fail per arm.
+The post-exit drain case passed in 30 of 30 isolated runs on the library arm and 30 of 30 on the default arm, with 0 failures. The logs taken right after the stream fix also show 30 of 30 per arm.
 
 Broad repository gates exit non-zero in this sandbox, but the base and after failing-title sets are identical when extracted from the closing failed-list only:
 
-| gate                   | base                                                                                                           | after                                           | identical |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | --------- |
-| packages/remote        | 175 failures, 168 unique, 10 unnamed, hash `b588380f62d6127e5a59f18a7051ff1dcbfce535595a3132644f926f2d94faede` | 175 failures, 168 unique, 10 unnamed, same hash | yes       |
-| root `bun test`        | 242 failures, 234 unique, 11 unnamed, hash `4e67f25f2879161001181fb53e9fbf5bd95de3fbcd7e2fbdb6be710894fbc24d`  | 242 failures, 234 unique, 11 unnamed, same hash | yes       |
-| `zsh test/run-all.zsh` | 37 failures, 37 unique, 0 unnamed, hash `1cc4416b3b8117dca0aad7aa7382d3ceb23728a8e0378b2ab29ca660861a596b`     | 37 failures, 37 unique, 0 unnamed, same hash    | yes       |
+| gate                   | base                                                                                                          | after                                           | identical |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | --------- |
+| packages/remote        | 175 failures, 168 unique, 10 unnamed, hash `b588380f62d6c971bc34904ffa0ad6a8114c9bb267f3e8e23cb97f6e9a6000bd` | 175 failures, 168 unique, 10 unnamed, same hash | yes       |
+| root `bun test`        | 242 failures, 234 unique, 11 unnamed, hash `4e67f25f2879fac8d7d54e04e51a4f4f67790df5ae7dee748223fec56bfcb324` | 242 failures, 234 unique, 11 unnamed, same hash | yes       |
+| `zsh test/run-all.zsh` | 37 failures, 37 unique, 0 unnamed, hash `1cc4416b3b81e88d005358d2054c94dcc64347277a0dd6d2a90666102bee074c`    | 37 failures, 37 unique, 0 unnamed, same hash    | yes       |
 
 The attribution is inferred from set identity and the measured constraint counts in the logs: packages/remote has 127 EADDRINUSE, 139 `Failed to start server`, and 42 EPERM in both logs; root `bun test` has 173, 185, and 42 in both logs; `zsh test/run-all.zsh` has 27, 27, and 0 in both logs. The run-all gate stopped after `[1/4] core unit + integration` with exit 1 at base and after, so stages 2 to 4 did not run.
 

@@ -9,7 +9,7 @@
     "commit": "e1a65bd77710afb4b3cf67909bd1984bf80837b1",
     "status": "inferred",
     "source": "nova origin/main at the time of the run (e1a65bd, @nova/contracts 0.2.0), carried forward; the adjacent ../nova has no .git and the installed snapshot carries no commit",
-    "confirmed_by": "inferred; a byte comparison of the installed snapshot against the contracts package of nova e1a65bd confirms the carried-forward source",
+    "confirmed_by": "inferred; a byte comparison of the installed snapshot against the contracts package of nova e1a65bd would confirm the carried-forward source; it was not run",
     "installed_contracts": {
       "realpath": "node_modules/.bun/@nova+contracts@file+..+nova+packages+contracts/node_modules/@nova/contracts",
       "package_version": "0.2.0"
@@ -151,12 +151,12 @@
       "red_count": 1,
       "evidence": {
         "status": "confirmed",
-        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m1-env-merge.log | tail -1 | tr -dc 0-9; cwd=fresh log directory; exit=0; red_count=1"
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m1-env-merge.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=1"
       },
       "procedure": [
-        "cmd=git apply test/consumers/exec-primitives/mutations/m1-env-merge.patch; cwd=.; exit=0",
-        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1",
-        "cmd=git apply -R test/consumers/exec-primitives/mutations/m1-env-merge.patch; cwd=.; exit=0"
+        "cmd=git apply test/consumers/exec-primitives/mutations/m1-env-merge.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m1-env-merge.patch; cwd=.; exit=0 (inferred from the log)"
       ]
     },
     {
@@ -168,12 +168,12 @@
       "red_count": 1,
       "evidence": {
         "status": "confirmed",
-        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m2-grace-constant.log | tail -1 | tr -dc 0-9; cwd=fresh log directory; exit=0; red_count=1"
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m2-grace-constant.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=1"
       },
       "procedure": [
-        "cmd=git apply test/consumers/exec-primitives/mutations/m2-grace-constant.patch; cwd=.; exit=0",
-        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1",
-        "cmd=git apply -R test/consumers/exec-primitives/mutations/m2-grace-constant.patch; cwd=.; exit=0"
+        "cmd=git apply test/consumers/exec-primitives/mutations/m2-grace-constant.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m2-grace-constant.patch; cwd=.; exit=0 (inferred from the log)"
       ]
     },
     {
@@ -185,12 +185,12 @@
       "red_count": 1,
       "evidence": {
         "status": "confirmed",
-        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m3-signal-exit-code.log | tail -1 | tr -dc 0-9; cwd=fresh log directory; exit=0; red_count=1"
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m3-signal-exit-code.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=1"
       },
       "procedure": [
-        "cmd=git apply test/consumers/exec-primitives/mutations/m3-signal-exit-code.patch; cwd=.; exit=0",
-        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1",
-        "cmd=git apply -R test/consumers/exec-primitives/mutations/m3-signal-exit-code.patch; cwd=.; exit=0"
+        "cmd=git apply test/consumers/exec-primitives/mutations/m3-signal-exit-code.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m3-signal-exit-code.patch; cwd=.; exit=0 (inferred from the log)"
       ]
     },
     {
@@ -202,12 +202,12 @@
       "red_count": 1,
       "evidence": {
         "status": "confirmed",
-        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m4-spawn-error-resolves.log | tail -1 | tr -dc 0-9; cwd=fresh log directory; exit=0; red_count=1"
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m4-spawn-error-resolves.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=1"
       },
       "procedure": [
-        "cmd=git apply test/consumers/exec-primitives/mutations/m4-spawn-error-resolves.patch; cwd=.; exit=0",
-        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1",
-        "cmd=git apply -R test/consumers/exec-primitives/mutations/m4-spawn-error-resolves.patch; cwd=.; exit=0"
+        "cmd=git apply test/consumers/exec-primitives/mutations/m4-spawn-error-resolves.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m4-spawn-error-resolves.patch; cwd=.; exit=0 (inferred from the log)"
       ]
     },
     {
@@ -220,12 +220,12 @@
       "red_count": 11,
       "evidence": {
         "status": "confirmed",
-        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m5-signal-dropped.log | tail -1 | tr -dc 0-9; cwd=fresh log directory; exit=0; red_count=11"
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m5-signal-dropped.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=11"
       },
       "procedure": [
-        "cmd=git apply test/consumers/exec-primitives/mutations/m5-signal-dropped.patch; cwd=.; exit=0",
-        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1",
-        "cmd=git apply -R test/consumers/exec-primitives/mutations/m5-signal-dropped.patch; cwd=.; exit=0"
+        "cmd=git apply test/consumers/exec-primitives/mutations/m5-signal-dropped.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m5-signal-dropped.patch; cwd=.; exit=0 (inferred from the log)"
       ]
     },
     {
@@ -238,12 +238,12 @@
       "red_count": 3,
       "evidence": {
         "status": "confirmed",
-        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m6-no-sigkill-escalation.log | tail -1 | tr -dc 0-9; cwd=fresh log directory; exit=0; red_count=3"
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m6-no-sigkill-escalation.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=3"
       },
       "procedure": [
-        "cmd=git apply test/consumers/exec-primitives/mutations/m6-no-sigkill-escalation.patch; cwd=.; exit=0",
-        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1",
-        "cmd=git apply -R test/consumers/exec-primitives/mutations/m6-no-sigkill-escalation.patch; cwd=.; exit=0"
+        "cmd=git apply test/consumers/exec-primitives/mutations/m6-no-sigkill-escalation.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m6-no-sigkill-escalation.patch; cwd=.; exit=0 (inferred from the log)"
       ]
     },
     {
@@ -255,12 +255,12 @@
       "red_count": 1,
       "evidence": {
         "status": "confirmed",
-        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m7-drain-cut-at-exit.log | tail -1 | tr -dc 0-9; cwd=fresh log directory; exit=0; red_count=1"
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m7-drain-cut-at-exit.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=1"
       },
       "procedure": [
-        "cmd=git apply test/consumers/exec-primitives/mutations/m7-drain-cut-at-exit.patch; cwd=.; exit=0",
-        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1",
-        "cmd=git apply -R test/consumers/exec-primitives/mutations/m7-drain-cut-at-exit.patch; cwd=.; exit=0"
+        "cmd=git apply test/consumers/exec-primitives/mutations/m7-drain-cut-at-exit.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m7-drain-cut-at-exit.patch; cwd=.; exit=0 (inferred from the log)"
       ]
     },
     {
@@ -272,12 +272,12 @@
       "red_count": 2,
       "evidence": {
         "status": "confirmed",
-        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m8-stream-exit-zero.log | tail -1 | tr -dc 0-9; cwd=fresh log directory; exit=0; red_count=2"
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m8-stream-exit-zero.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=2"
       },
       "procedure": [
-        "cmd=git apply test/consumers/exec-primitives/mutations/m8-stream-exit-zero.patch; cwd=.; exit=0",
-        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1",
-        "cmd=git apply -R test/consumers/exec-primitives/mutations/m8-stream-exit-zero.patch; cwd=.; exit=0"
+        "cmd=git apply test/consumers/exec-primitives/mutations/m8-stream-exit-zero.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m8-stream-exit-zero.patch; cwd=.; exit=0 (inferred from the log)"
       ]
     }
   ],
@@ -378,31 +378,31 @@
       "evidence": [
         {
           "status": "confirmed",
-          "pointer": "cmd=bun run test; cwd=test/consumers/exec-primitives; exit=0; counts=28 pass, 0 fail"
+          "pointer": "cmd=bun run test; cwd=test/consumers/exec-primitives; exit=0; source=after-consumer-suite.log (2026-09-30 11:00:08 -0300, at head_sha); counts=28 pass, 0 fail"
         },
         {
           "status": "confirmed",
-          "pointer": "cmd=bun test ./test/cli-adapter-context.test.ts; cwd=packages/remote; exit=0; counts=18 pass, 0 fail"
+          "pointer": "cmd=bun test ./test/cli-adapter-context.test.ts; cwd=packages/remote; exit=0; source=after-default-arm.log (2026-09-30 11:00:07 -0300, at head_sha); counts=18 pass, 0 fail"
         },
         {
           "status": "confirmed",
-          "pointer": "cmd=for i in $(seq 30); do bun test ./test/cli-adapter.parity.ts -t 'a binding-timer abort after the child exits does not cut the stdout drain'; done; cwd=test/consumers/exec-primitives; exit=0; source=a15-library-round2-installed.log; counts=30 pass, 0 fail, 30 filtered-out lines"
+          "pointer": "cmd=for i in $(seq 30); do bun test ./test/cli-adapter.parity.ts -t 'a binding-timer abort after the child exits does not cut the stdout drain'; done; cwd=test/consumers/exec-primitives; exit=0; source=a15-library-round2-installed.log; counts=30 runs, each 1 pass, 0 fail, 23 filtered out"
         },
         {
           "status": "confirmed",
-          "pointer": "cmd=for i in $(seq 30); do bun test ./test/cli-adapter-context.test.ts -t 'a binding-timer abort after the child exits does not cut the stdout drain'; done; cwd=packages/remote; exit=0; source=a15-default-round2.log; counts=30 pass, 0 fail, 30 filtered-out lines"
+          "pointer": "cmd=for i in $(seq 30); do bun test ./test/cli-adapter-context.test.ts -t 'a binding-timer abort after the child exits does not cut the stdout drain'; done; cwd=packages/remote; exit=0; source=a15-default-round2.log; counts=30 runs, each 1 pass, 0 fail, 17 filtered out"
         },
         {
           "status": "confirmed",
-          "pointer": "cmd=grep -a -h -E '^\\(pass\\) ' llamactl-a15-library-fixed-*.log; cwd=fresh log directory; exit=0; counts=round-1 library arm 30 pass, 0 fail"
+          "pointer": "cmd=grep -a -h -E '^ *[0-9]+ (pass|fail|filtered out)$' llamactl-a15-library-fixed-*.log | sed -E 's/^ +//' | sort | uniq -c; cwd=the directory holding the A15 logs taken after the stream fix (llamactl-a15-library-fixed-*.log); exit=0; counts=30 runs, each 1 pass, 0 fail, 23 filtered out"
         },
         {
           "status": "confirmed",
-          "pointer": "cmd=grep -a -h -E '^\\(pass\\) ' llamactl-a15-default-fixed-*.log; cwd=fresh log directory; exit=0; counts=round-1 default arm 30 pass, 0 fail"
+          "pointer": "cmd=grep -a -h -E '^ *[0-9]+ (pass|fail|filtered out)$' llamactl-a15-default-fixed-*.log | sed -E 's/^ +//' | sort | uniq -c; cwd=the directory holding the A15 logs taken after the stream fix (llamactl-a15-default-fixed-*.log); exit=0; counts=30 runs, each 1 pass, 0 fail, 17 filtered out"
         },
         {
           "status": "confirmed",
-          "pointer": "cmd=git apply test/consumers/exec-primitives/mutations/<id>.patch; bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; git apply -R test/consumers/exec-primitives/mutations/<id>.patch; cwd=.; counts=red m1..m8 1,1,1,1,11,3,1,2"
+          "pointer": "cmd=git apply test/consumers/exec-primitives/mutations/<id>.patch; cwd=.; then cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; then cmd=git apply -R test/consumers/exec-primitives/mutations/<id>.patch; cwd=.; counts=red m1..m8 1,1,1,1,11,3,1,2 (the fail line of each llamactl-mut-<id>.log)"
         }
       ]
     }
@@ -451,6 +451,7 @@
       "failing_set_sha256": "b588380f62d6c971bc34904ffa0ad6a8114c9bb267f3e8e23cb97f6e9a6000bd",
       "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' baseline-remote-test.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
       "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
       "failure_signal_counts": {
         "EADDRINUSE": 127,
         "Failed to start server": 139,
@@ -645,6 +646,7 @@
       "failing_set_sha256": "4e67f25f2879fac8d7d54e04e51a4f4f67790df5ae7dee748223fec56bfcb324",
       "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' baseline-root-bun-test.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
       "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
       "failure_signal_counts": {
         "EADDRINUSE": 173,
         "Failed to start server": 185,
@@ -905,6 +907,7 @@
       "failing_set_sha256": "1cc4416b3b81e88d005358d2054c94dcc64347277a0dd6d2a90666102bee074c",
       "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' baseline-run-all.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
       "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
       "failure_signal_counts": {
         "EADDRINUSE": 27,
         "Failed to start server": 27,
@@ -960,8 +963,10 @@
     "run_order": [
       "after-root-bun-test.log finished 2026-09-30 10:52:04 -0300 at head_sha",
       "after-run-all.log finished 2026-09-30 10:53:21 -0300 at head_sha",
-      "baseline gates ran at the base commit from 2026-09-30 10:54:44 -0300 through 2026-09-30 10:58:47 -0300",
-      "after-remote-test.log finished 2026-09-30 10:59:19 -0300 at head_sha"
+      "baseline logs finished at the base commit from 2026-09-30 10:54:44 -0300 through 2026-09-30 10:58:47 -0300; the checkout to the base commit preceded the first of them",
+      "after-remote-test.log finished 2026-09-30 10:59:19 -0300 at head_sha",
+      "after-default-arm.log finished 2026-09-30 11:00:07 -0300 at head_sha",
+      "after-consumer-suite.log finished 2026-09-30 11:00:08 -0300 at head_sha"
     ],
     "typecheck": {
       "command": "bun run typecheck",
@@ -1000,6 +1005,7 @@
       "failing_set_sha256": "b588380f62d6c971bc34904ffa0ad6a8114c9bb267f3e8e23cb97f6e9a6000bd",
       "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' after-remote-test.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
       "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
       "failure_signal_counts": {
         "EADDRINUSE": 127,
         "Failed to start server": 139,
@@ -1025,6 +1031,7 @@
       "failing_set_sha256": "4e67f25f2879fac8d7d54e04e51a4f4f67790df5ae7dee748223fec56bfcb324",
       "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' after-root-bun-test.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
       "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
       "failure_signal_counts": {
         "EADDRINUSE": 173,
         "Failed to start server": 185,
@@ -1050,6 +1057,7 @@
       "failing_set_sha256": "1cc4416b3b81e88d005358d2054c94dcc64347277a0dd6d2a90666102bee074c",
       "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' after-run-all.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
       "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
       "failure_signal_counts": {
         "EADDRINUSE": 27,
         "Failed to start server": 27,
