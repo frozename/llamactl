@@ -1,0 +1,13 @@
+diff --git a/test/consumers/exec-primitives/src/library-spawn.ts b/test/consumers/exec-primitives/src/library-spawn.ts
+index eb518393..3d0ba3ab 100644
+--- a/test/consumers/exec-primitives/src/library-spawn.ts
++++ b/test/consumers/exec-primitives/src/library-spawn.ts
+@@ -40,7 +40,7 @@ export const librarySpawn: SpawnFn = async (argv, opts) => {
+     stdin: opts.promptOnStdin ? opts.prompt : "ignore",
+   });
+   if (result.exit.outcome === "spawn-error") {
+-    throw new Error(`spawn failed: ${result.stderr}`);
++    return { stdout: result.stdout, stderr: result.stderr, exitCode: -1, aborted: result.exit.outcome !== "spawn-error" };
+   }
+   return {
+     stdout: result.stdout,

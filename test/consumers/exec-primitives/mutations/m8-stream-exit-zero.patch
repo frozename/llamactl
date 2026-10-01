@@ -1,0 +1,13 @@
+diff --git a/test/consumers/exec-primitives/src/library-spawn.ts b/test/consumers/exec-primitives/src/library-spawn.ts
+index eb518393..93034c9c 100644
+--- a/test/consumers/exec-primitives/src/library-spawn.ts
++++ b/test/consumers/exec-primitives/src/library-spawn.ts
+@@ -144,7 +144,7 @@ export const librarySpawnStream: SpawnStreamFn = async (argv, opts) => {
+   }
+   const stderrPromise = proc.exit.then(() => Buffer.concat(stderrChunks).toString("utf8"));
+   const exitedPromise = proc.exit.then((exit) => ({
+-    exitCode: exitCodeOf(exit.code, exit.signal),
++    exitCode: 0,
+     aborted: exit.outcome === "cancelled",
+   }));
+   void proc.exit.then(

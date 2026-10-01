@@ -1,0 +1,1090 @@
+{
+  "schema": "exec-primitives-test-consumer/1",
+  "follow_up_event_id": 1830,
+  "decisions": [1948, 2031],
+  "run_date": "2026-09-30",
+  "base_sha": "3885164b11a4120db131ffe9a649d1609cef5a29",
+  "head_sha": "d193efc272b986248ce193b08eee16a954147c15",
+  "nova_sibling": {
+    "commit": "e1a65bd77710afb4b3cf67909bd1984bf80837b1",
+    "status": "inferred",
+    "source": "nova origin/main at the time of the run (e1a65bd, @nova/contracts 0.2.0), carried forward; the adjacent ../nova has no .git and the installed snapshot carries no commit",
+    "confirmed_by": "inferred; a byte comparison of the installed snapshot against the contracts package of nova e1a65bd would confirm the carried-forward source; it was not run",
+    "installed_contracts": {
+      "realpath": "node_modules/.bun/@nova+contracts@file+..+nova+packages+contracts/node_modules/@nova/contracts",
+      "package_version": "0.2.0"
+    }
+  },
+  "toolchain": {
+    "bun": "1.3.14"
+  },
+  "artifact": {
+    "name": "@novaproto/exec-primitives",
+    "version": "0.1.0",
+    "channel": "registry",
+    "sha256": "a3d6658b4d4e62479d2273d90fba8ccd3e09a51bd47d15acc79e9cb3d0e16881",
+    "integrity": "sha512-vhE+TfXrPQZOlsB8/PoF9vYuAZgF4GwXzFK3yvA5sfx0kLDX5ANvh1To00T9NjC4yTKeSPwJYGEaZtOncUE0Ew==",
+    "content_sha256": "0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98"
+  },
+  "install": {
+    "manifest": "test/consumers/exec-primitives/package.json",
+    "section": "devDependencies",
+    "specifier": "0.1.0",
+    "lock_file": "test/consumers/exec-primitives/bun.lock",
+    "lock_entry": "\"@novaproto/exec-primitives\": [\"@novaproto/exec-primitives@0.1.0\", \"\", {}, \"sha512-vhE+TfXrPQZOlsB8/PoF9vYuAZgF4GwXzFK3yvA5sfx0kLDX5ANvh1To00T9NjC4yTKeSPwJYGEaZtOncUE0Ew==\"]",
+    "install_command": "bun install --frozen-lockfile",
+    "cold_cache": true,
+    "installed_content_sha256": "0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98",
+    "by_name_resolution": "bun add --exact @novaproto/exec-primitives@0.1.0",
+    "resolved_inside_consumer": true,
+    "root_manifests_untouched": true,
+    "resolvable_from_runtime_packages": false
+  },
+  "parity": {
+    "origin_file": "packages/remote/test/cli-adapter-context.test.ts",
+    "origin_sha": "3885164b11a4120db131ffe9a649d1609cef5a29",
+    "ported": [
+      "createResponse — ProviderExecutionContext > caller abort kills the real child and rejects AbortError",
+      "createResponse — ProviderExecutionContext > context deadline ahead of binding timeout rejects TimeoutError and kills the child",
+      "createResponse — ProviderExecutionContext > already-aborted signal rejects AbortError without spawning or journalling",
+      "createResponse — ProviderExecutionContext > past deadline rejects TimeoutError without spawning or journalling",
+      "createResponse — ProviderExecutionContext > binding timeout without a context still rejects code 'timeout' and kills the child",
+      "library spawners — pre-aborted signals > library spawn kills the child immediately when the signal is already aborted",
+      "library spawners — pre-aborted signals > library spawnStream kills the child immediately when the signal is already aborted",
+      "SIGKILL escalation — a child that ignores SIGTERM still dies > createResponse: SIGKILL lands within grace; the promise settles",
+      "SIGKILL escalation — a child that ignores SIGTERM still dies > streamResponse: SIGKILL lands within grace; the stream settles",
+      "streamResponse — real subprocess > clean exit yields chunks then done completion 'upstream'",
+      "streamResponse — real subprocess > non-zero exit yields one error event and NO done",
+      "streamResponse — real subprocess > binding timeout yields one 'timeout' error and NO done; the child is killed",
+      "streamResponse — real subprocess > caller abort mid-stream throws AbortError after the child is reaped + journalled",
+      "streamResponse — real subprocess > a binding-timer abort mid-run then a trapped clean exit reports 'truncated', NO done",
+      "streamResponse — real subprocess > a binding-timer abort after the child exits does not cut the stdout drain"
+    ],
+    "differential": [
+      "differential — default vs library spawner > text stdout and journal match",
+      "differential — default vs library spawner > prompt on stdin reaches the child identically",
+      "differential — default vs library spawner > non-zero exit with stderr: same typed error and exit_code",
+      "differential — default vs library spawner > missing binary: same spawn-failed error and no exit_code",
+      "differential — default vs library spawner > caller abort of a SIGTERM-trapping child: same AbortError and signal exit_code",
+      "differential — default vs library spawner > explicit env reaches the child verbatim with no parent leak",
+      "differential — default vs library spawner > child cwd matches the default spawner",
+      "differential — default vs library spawner > stream clean exit yields identical chunks and journal",
+      "differential — default vs library spawner > stream consumer break journals the same error_code"
+    ],
+    "not_portable": [
+      {
+        "title": "createResponse — usage observation > fires onUsageObservation exactly once with source 'estimated'; response has no usage",
+        "reason": "canned fakeSpawn: no subprocess, no spawner under test"
+      },
+      {
+        "title": "createResponse — usage observation > a throwing observation callback does not break the response",
+        "reason": "canned fakeSpawn: no subprocess, no spawner under test"
+      },
+      {
+        "title": "createResponse — usage observation > no observation fires on failure paths",
+        "reason": "canned fakeSpawn: no subprocess, no spawner under test"
+      }
+    ],
+    "library_arm": {
+      "pass": 28,
+      "fail": 0
+    },
+    "default_arm": {
+      "pass": 18,
+      "fail": 0
+    }
+  },
+  "adaptations": [
+    {
+      "id": "env",
+      "change": "Convert the adapter env map to a string-only record and do not merge parent process values.",
+      "reason": "The library accepts a string record, while the adapter exposes a process env shape with optional undefined values."
+    },
+    {
+      "id": "cwd",
+      "change": "Pass process.cwd() at spawn time.",
+      "reason": "The adapter spawner options do not carry cwd, and the default Bun spawner inherits the current working directory."
+    },
+    {
+      "id": "cancel-grace",
+      "change": "Use killGraceMs when present, otherwise CLI_KILL_GRACE_MS at 250 ms.",
+      "reason": "The adapter default is mirrored so abort and timeout behavior stays aligned."
+    },
+    {
+      "id": "watchdog",
+      "change": "Use a named WATCHDOG_BACKSTOP_MS value of 120000.",
+      "reason": "The adapter bounds normal runs with AbortSignal deadlines; the library still requires a backstop."
+    },
+    {
+      "id": "stdin",
+      "change": "Send the prompt only when promptOnStdin is true; otherwise use the library ignore sentinel.",
+      "reason": "This matches the adapter's prompt-on-stdin contract without adding parent input."
+    },
+    {
+      "id": "exit-code",
+      "change": "Map numeric exit code first, then signal to 128 plus signal number, then -1.",
+      "reason": "The adapter journals signal termination as an exit_code-compatible number."
+    },
+    {
+      "id": "spawn-error",
+      "change": "Throw on the library spawn-error outcome.",
+      "reason": "The adapter maps a thrown spawn failure to the same spawn-failed shape as Bun.spawn."
+    },
+    {
+      "id": "stream-buffering",
+      "change": "Use superviseProcess stdout/stderr callbacks as the only stream consumers and buffer stdout lines plus stderr bytes in memory; the queue currently finishes when the library exit promise settles.",
+      "reason": "The library resolves exit only after stdout and stderr end and the process group is gone. On the library arm, a background descendant that keeps the group alive after closing stdio delays the end of stdout iteration without losing data."
+    },
+    {
+      "id": "caller-signal",
+      "change": "Pass the caller signal through an identity wrapper.",
+      "reason": "The wrapper keeps the m5 signal-drop mutation to a one-line change in both spawners."
+    }
+  ],
+  "mutations": [
+    {
+      "id": "m1-env-merge",
+      "patch": "test/consumers/exec-primitives/mutations/m1-env-merge.patch",
+      "failing_titles": [
+        "differential — default vs library spawner > explicit env reaches the child verbatim with no parent leak"
+      ],
+      "red_count": 1,
+      "evidence": {
+        "status": "confirmed",
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m1-env-merge.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=1"
+      },
+      "procedure": [
+        "cmd=git apply test/consumers/exec-primitives/mutations/m1-env-merge.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m1-env-merge.patch; cwd=.; exit=0 (inferred from the log)"
+      ]
+    },
+    {
+      "id": "m2-grace-constant",
+      "patch": "test/consumers/exec-primitives/mutations/m2-grace-constant.patch",
+      "failing_titles": [
+        "differential — default vs library spawner > caller abort of a SIGTERM-trapping child: same AbortError and signal exit_code"
+      ],
+      "red_count": 1,
+      "evidence": {
+        "status": "confirmed",
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m2-grace-constant.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=1"
+      },
+      "procedure": [
+        "cmd=git apply test/consumers/exec-primitives/mutations/m2-grace-constant.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m2-grace-constant.patch; cwd=.; exit=0 (inferred from the log)"
+      ]
+    },
+    {
+      "id": "m3-signal-exit-code",
+      "patch": "test/consumers/exec-primitives/mutations/m3-signal-exit-code.patch",
+      "failing_titles": [
+        "differential — default vs library spawner > caller abort of a SIGTERM-trapping child: same AbortError and signal exit_code"
+      ],
+      "red_count": 1,
+      "evidence": {
+        "status": "confirmed",
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m3-signal-exit-code.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=1"
+      },
+      "procedure": [
+        "cmd=git apply test/consumers/exec-primitives/mutations/m3-signal-exit-code.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m3-signal-exit-code.patch; cwd=.; exit=0 (inferred from the log)"
+      ]
+    },
+    {
+      "id": "m4-spawn-error-resolves",
+      "patch": "test/consumers/exec-primitives/mutations/m4-spawn-error-resolves.patch",
+      "failing_titles": [
+        "differential — default vs library spawner > missing binary: same spawn-failed error and no exit_code"
+      ],
+      "red_count": 1,
+      "evidence": {
+        "status": "confirmed",
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m4-spawn-error-resolves.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=1"
+      },
+      "procedure": [
+        "cmd=git apply test/consumers/exec-primitives/mutations/m4-spawn-error-resolves.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m4-spawn-error-resolves.patch; cwd=.; exit=0 (inferred from the log)"
+      ]
+    },
+    {
+      "id": "m5-signal-dropped",
+      "patch": "test/consumers/exec-primitives/mutations/m5-signal-dropped.patch",
+      "failing_titles": [
+        "createResponse — ProviderExecutionContext > caller abort kills the real child and rejects AbortError",
+        "streamResponse — real subprocess > caller abort mid-stream throws AbortError after the child is reaped + journalled"
+      ],
+      "red_count": 11,
+      "evidence": {
+        "status": "confirmed",
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m5-signal-dropped.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=11"
+      },
+      "procedure": [
+        "cmd=git apply test/consumers/exec-primitives/mutations/m5-signal-dropped.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m5-signal-dropped.patch; cwd=.; exit=0 (inferred from the log)"
+      ]
+    },
+    {
+      "id": "m6-no-sigkill-escalation",
+      "patch": "test/consumers/exec-primitives/mutations/m6-no-sigkill-escalation.patch",
+      "failing_titles": [
+        "SIGKILL escalation — a child that ignores SIGTERM still dies > createResponse: SIGKILL lands within grace; the promise settles",
+        "SIGKILL escalation — a child that ignores SIGTERM still dies > streamResponse: SIGKILL lands within grace; the stream settles"
+      ],
+      "red_count": 3,
+      "evidence": {
+        "status": "confirmed",
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m6-no-sigkill-escalation.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=3"
+      },
+      "procedure": [
+        "cmd=git apply test/consumers/exec-primitives/mutations/m6-no-sigkill-escalation.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m6-no-sigkill-escalation.patch; cwd=.; exit=0 (inferred from the log)"
+      ]
+    },
+    {
+      "id": "m7-drain-cut-at-exit",
+      "patch": "test/consumers/exec-primitives/mutations/m7-drain-cut-at-exit.patch",
+      "failing_titles": [
+        "streamResponse — real subprocess > a binding-timer abort after the child exits does not cut the stdout drain"
+      ],
+      "red_count": 1,
+      "evidence": {
+        "status": "confirmed",
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m7-drain-cut-at-exit.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=1"
+      },
+      "procedure": [
+        "cmd=git apply test/consumers/exec-primitives/mutations/m7-drain-cut-at-exit.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m7-drain-cut-at-exit.patch; cwd=.; exit=0 (inferred from the log)"
+      ]
+    },
+    {
+      "id": "m8-stream-exit-zero",
+      "patch": "test/consumers/exec-primitives/mutations/m8-stream-exit-zero.patch",
+      "failing_titles": [
+        "streamResponse — real subprocess > non-zero exit yields one error event and NO done"
+      ],
+      "red_count": 2,
+      "evidence": {
+        "status": "confirmed",
+        "pointer": "cmd=grep -a -E '^ *[0-9]+ fail$' llamactl-mut-m8-stream-exit-zero.log | tail -1 | tr -dc 0-9; cwd=the directory holding the mutation logs (llamactl-mut-*.log); exit=0; red_count=2"
+      },
+      "procedure": [
+        "cmd=git apply test/consumers/exec-primitives/mutations/m8-stream-exit-zero.patch; cwd=.; exit=0 (inferred from the log)",
+        "cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; exit=1 (inferred from the log)",
+        "cmd=git apply -R test/consumers/exec-primitives/mutations/m8-stream-exit-zero.patch; cwd=.; exit=0 (inferred from the log)"
+      ]
+    }
+  ],
+  "targeted_poison": {
+    "passing_titles": [
+      "createResponse — ProviderExecutionContext > already-aborted signal rejects AbortError without spawning or journalling",
+      "createResponse — ProviderExecutionContext > past deadline rejects TimeoutError without spawning or journalling",
+      "@novaproto/exec-primitives registry pin > manifest pins the exact published version in devDependencies",
+      "@novaproto/exec-primitives registry pin > bun.lock records the registry resolution and published integrity",
+      "@novaproto/exec-primitives registry pin > resolves to the installed registry copy inside this consumer"
+    ]
+  },
+  "poison_run": {
+    "pass": 0
+  },
+  "divergences": [
+    {
+      "topic": "Process-group kill versus direct-child kill",
+      "note": "The library signals the process group; the current default adapter signals the direct child. These parity cases observe only the exec child."
+    },
+    {
+      "topic": "stdout-end coupling direction",
+      "note": "On the library arm, exit gates the end of stdout iteration because the queue finishes from the library exit promise; on the default arm, stdout ends at pipe close.",
+      "evidence": "inferred from an independent probe that measured stdout iteration ending at 14 ms on the default arm and 1523 ms on the library arm for: echo hi; (sleep 1.5 >/dev/null 2>&1 &)",
+      "later_adoption_input": "finish the queue on the stream end or close signal, with exit as the fallback"
+    },
+    {
+      "topic": "Watchdog backstop",
+      "note": "The library arm carries a watchdog backstop because the library API requires it; the adapter normally bounds runs through abort signals."
+    }
+  ],
+  "coupled_slices": [
+    {
+      "slice": "#134 (P2.1)",
+      "paths": ["packages/remote/src/cli/**", "test/consumers/exec-primitives/**"],
+      "note": "Remote CLI adapter changes can require parity consumer updates."
+    },
+    {
+      "slice": "#135 (P2.2)",
+      "paths": ["packages/remote/src/cli/**", "test/consumers/exec-primitives/**"],
+      "note": "Runtime adoption planning can change the adapter contract under test."
+    },
+    {
+      "slice": "P2.2/llamactl-adoption",
+      "paths": [
+        "packages/remote/package.json",
+        "packages/remote/src/cli/**",
+        "test/consumers/exec-primitives/**"
+      ],
+      "note": "Actual runtime adoption stays pending and should declare this consumer if it edits the parity surface."
+    }
+  ],
+  "gates": [
+    {
+      "gate": "L2",
+      "verdict": "PASS",
+      "verdict_scope": "registry",
+      "scope": "llamactl-test-consumer",
+      "evidence": [
+        {
+          "status": "confirmed",
+          "pointer": "cmd=bun install --frozen-lockfile; cwd=test/consumers/exec-primitives; exit=0; source=consumer-install-round2.log; counts=n/a; lock entry and package pin present"
+        },
+        {
+          "status": "inferred",
+          "pointer": "check L item L-22 (fresh BUN_INSTALL_CACHE_DIR); cold-cache install is asserted by the acceptance check"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "cmd=curl -s -o /dev/null -w '%{http_code}' -H 'Accept: application/vnd.npm.install-v1+json' https://registry.npmjs.org/@novaproto%2fexec-primitives; cwd=.; exit=0; http_code=200; date=2026-09-30"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "cmd=bun -e 'import { realpathSync } from \"node:fs\"; console.log(realpathSync(Bun.fileURLToPath(import.meta.resolve(\"@novaproto/exec-primitives\"))))'; cwd=test/consumers/exec-primitives; exit=0; result=test/consumers/exec-primitives/node_modules/@novaproto/exec-primitives/dist/src/index.js"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "cmd=cd test/consumers/exec-primitives/node_modules/@novaproto/exec-primitives && find . -type f | sed 's|^\\./||' | LC_ALL=C sort | while IFS= read -r f; do printf '%s\\t%s\\n' \"$f\" \"$(shasum -a 256 \"$f\" | cut -d' ' -f1)\"; done | awk 'NR>1{printf \"\\n\"} {printf \"%s\",$0}' | shasum -a 256 | cut -d' ' -f1; cwd=.; exit=0; result=0d3b6d9adb16a22de6e3cae3c482fd4c3c6e874b730c46e771f8d042646c9f98"
+        },
+        {
+          "status": "inferred",
+          "pointer": "cmd=bun add --exact @novaproto/exec-primitives@0.1.0; cwd=scratch project; check L item L-22b compares the generated lock entry with the committed lock entry"
+        }
+      ]
+    },
+    {
+      "gate": "L3",
+      "verdict": "PASS",
+      "scope": "llamactl",
+      "parts": {
+        "llamactl_cli": "PASS"
+      },
+      "not_provable_here": [
+        "ACP fixtures (P6.1: llamactl has no ACP code)",
+        "real llamactl worker (L6)",
+        "runtime adoption (P2.2/llamactl-adoption)"
+      ],
+      "evidence": [
+        {
+          "status": "confirmed",
+          "pointer": "cmd=bun run test; cwd=test/consumers/exec-primitives; exit=0; source=after-consumer-suite.log (2026-09-30 11:00:08 -0300, at head_sha); counts=28 pass, 0 fail"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "cmd=bun test ./test/cli-adapter-context.test.ts; cwd=packages/remote; exit=0; source=after-default-arm.log (2026-09-30 11:00:07 -0300, at head_sha); counts=18 pass, 0 fail"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "cmd=for i in $(seq 30); do bun test ./test/cli-adapter.parity.ts -t 'a binding-timer abort after the child exits does not cut the stdout drain'; done; cwd=test/consumers/exec-primitives; exit=0; source=a15-library-round2-installed.log; counts=30 runs, each 1 pass, 0 fail, 23 filtered out"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "cmd=for i in $(seq 30); do bun test ./test/cli-adapter-context.test.ts -t 'a binding-timer abort after the child exits does not cut the stdout drain'; done; cwd=packages/remote; exit=0; source=a15-default-round2.log; counts=30 runs, each 1 pass, 0 fail, 17 filtered out"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "cmd=grep -a -h -E '^ *[0-9]+ (pass|fail|filtered out)$' llamactl-a15-library-fixed-*.log | sed -E 's/^ +//' | sort | uniq -c; cwd=the directory holding the A15 logs taken after the stream fix (llamactl-a15-library-fixed-*.log); exit=0; counts=30 runs, each 1 pass, 0 fail, 23 filtered out"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "cmd=grep -a -h -E '^ *[0-9]+ (pass|fail|filtered out)$' llamactl-a15-default-fixed-*.log | sed -E 's/^ +//' | sort | uniq -c; cwd=the directory holding the A15 logs taken after the stream fix (llamactl-a15-default-fixed-*.log); exit=0; counts=30 runs, each 1 pass, 0 fail, 17 filtered out"
+        },
+        {
+          "status": "confirmed",
+          "pointer": "cmd=git apply test/consumers/exec-primitives/mutations/<id>.patch; cwd=.; then cmd=bun test ./test/cli-adapter.parity.ts ./test/pin.parity.ts; cwd=test/consumers/exec-primitives; then cmd=git apply -R test/consumers/exec-primitives/mutations/<id>.patch; cwd=.; counts=red m1..m8 1,1,1,1,11,3,1,2 (the fail line of each llamactl-mut-<id>.log)"
+        }
+      ]
+    }
+  ],
+  "penumbra_record": {
+    "repo": "frozename/penumbra",
+    "record": "docs/qualification/exec-primitives-0.1.0-registry-qualification.json"
+  },
+  "baseline": {
+    "base_sha": "3885164b11a4120db131ffe9a649d1609cef5a29",
+    "environment": "git worktree of the branch, detached at the base commit for baseline gates; Bun 1.3.14; sandbox denied server port binding and writes under the home directory",
+    "typecheck": {
+      "command": "bun run typecheck",
+      "cwd": ".",
+      "exit": 0,
+      "status": "inferred",
+      "pointer": "check L item L-34; packages/ and test/consumers/exec-primitives were unchanged between the measured head_sha and the evidence commit"
+    },
+    "lint": {
+      "command": "bun run lint",
+      "cwd": ".",
+      "exit": 0,
+      "status": "inferred",
+      "pointer": "check L item L-36; packages/ and test/consumers/exec-primitives were unchanged between the measured head_sha and the evidence commit"
+    },
+    "format_check": {
+      "command": "bun run format:check",
+      "cwd": ".",
+      "exit": 0,
+      "status": "inferred",
+      "pointer": "check L item L-35; packages/ and test/consumers/exec-primitives were unchanged between the measured head_sha and the evidence commit"
+    },
+    "remote_test": {
+      "command": "bun run --cwd packages/remote test",
+      "cwd": ".",
+      "exit": 1,
+      "pass": 1640,
+      "fail": 175,
+      "skip": 6,
+      "log": "baseline-remote-test.log",
+      "log_mtime": "2026-09-30 10:54:44 -0300",
+      "failing_count": 175,
+      "unique_failing_count": 168,
+      "unnamed_failing_count": 10,
+      "redacted_count": 0,
+      "failing_set_sha256": "b588380f62d6c971bc34904ffa0ad6a8114c9bb267f3e8e23cb97f6e9a6000bd",
+      "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' baseline-remote-test.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
+      "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
+      "failure_signal_counts": {
+        "EADDRINUSE": 127,
+        "Failed to start server": 139,
+        "EPERM": 42
+      },
+      "attribution_status": "inferred",
+      "attribution": "inferred from identical sorted failing-title sets plus the measured EADDRINUSE, Failed to start server and EPERM counts in the log",
+      "failing_names": [
+        "(unnamed)",
+        "Bug 2 — workloadDelete per-node deadline > completes within deadline when coordinator node never responds",
+        "Bug 2 — workloadDescribe per-node deadline > returns within deadline when coordinator node never responds",
+        "ChromaRagAdapter (HTTP backend) > 5xx from chroma on upsert surfaces connect-failed",
+        "ChromaRagAdapter (HTTP backend) > embedder.baseUrl override flows through from the binding (G4)",
+        "ChromaRagAdapter (HTTP backend) > listCollections normalizes HTTP rows into CollectionInfo[]",
+        "ChromaRagAdapter (HTTP backend) > search without vector + no embedder → invalid-request",
+        "ChromaRagAdapter (HTTP backend) > store + search + delete round-trip with caller-supplied vectors",
+        "ChromaRagAdapter (HTTP backend) > store without vector and without embedder surfaces invalid-request",
+        "ChromaRagAdapter (HTTP backend) > unreachable backend throws connect-failed on heartbeat",
+        "ChromaRagAdapter (HTTP backend) > uses delegated embedder when docs arrive without vectors",
+        "FIX [11]: send() request timeout > a node that replies before the timeout resolves normally and clears the timer",
+        "FIX [11]: send() request timeout > send() rejects with tunnel-request-timeout when the node never replies",
+        "FIX [17]: constant-time hello bearer check > correct bearer authenticates",
+        "FIX [17]: constant-time hello bearer check > wrong bearer is rejected (connection never registers)",
+        "HttpChromaClient > attaches bearer token when configured",
+        "HttpChromaClient > deleteRecords tolerates servers that omit deleted field",
+        "HttpChromaClient > heartbeat hits /api/v2/heartbeat and returns void on 200",
+        "HttpChromaClient > heartbeat translates 5xx into RagError connect-failed",
+        "HttpChromaClient > propagates 4xx as RagError tool-error",
+        "HttpChromaClient > propagates 5xx as RagError connect-failed",
+        "HttpChromaClient > resolveCollectionId caches the first lookup",
+        "HttpChromaClient > upsert + query + delete + listCollections happy path",
+        "applyOne + gateway dispatch — sirius end-to-end > 2xx reload path lands phase=Running + action=started",
+        "applyOne + gateway dispatch — sirius end-to-end > reload non-2xx surfaces as Failed + SiriusReloadFailed",
+        "applyProviderQuirks — context forwarding > gemini createResponse forwards context.signal — abort cancels the upstream fetch",
+        "chatComplete — tRPC cancellation reaches the provider fetch > cancelling the caller aborts the in-flight upstream request",
+        "chatStream — usage observation → V1 corpus > a stream reporting no usage writes nothing",
+        "chatStream — usage observation → V1 corpus > cumulative stream usage writes exactly one V1 row; no 'v'/'observation' keys",
+        "cluster-serverstart: remote serverStart over SSE > streams launch → ready events and returns endpoint",
+        "cluster-streaming: pullFile subscription over SSE > client unsubscribe aborts the remote hf subprocess",
+        "cluster-streaming: pullFile subscription over SSE > emits start/stderr/exit/done events in order and writes the file",
+        "compositeDestroy with pipelines > co-owned: destroying one composite leaves the pipeline; destroying both removes it",
+        "compositeDestroy with pipelines > single-owner: destroying the composite deletes the pipeline",
+        "createEmbedderFromBinding — baseUrl override > apiKeyRef resolves via the unified secret resolver → Bearer header",
+        "createEmbedderFromBinding — baseUrl override > baseUrl routes requests to the override URL, bypassing kubeconfig",
+        "destroyComposite — boundary-based destroy (k8s cascade) > backend with destroyCompositeBoundary skips per-service removeService",
+        "destroyComposite — boundary-based destroy (k8s cascade) > boundary call failure surfaces as a destroy error without breaking non-service teardown",
+        "destroyComposite — purgeVolumes plumbing > default destroy forwards purgeVolumes=false to the backend",
+        "destroyComposite — purgeVolumes plumbing > purgeVolumes: true flows through to backend.removeService",
+        "destroyComposite — reverses the DAG > services + rag node all torn down",
+        "disconnect semantics > client close removes node from registry + fires onNodeDisconnect",
+        "disconnect semantics > duplicate nodeName: newest connection wins, older is closed with 4409",
+        "disconnect semantics > server disconnect errors pending requests",
+        "embersynthHandler — reload flow > 2xx reload → Running + Applied:True",
+        "end-to-end I.3.3: router bridge + tunneled client over real ws > tunneled client.catalog.list.query round-trips through the ws",
+        "fleet-snapshot journal threading > GREEN: a threaded fleetJournalPath makes the live server serve the configured journal, not the $DEV_STORAGE default",
+        "fleet-snapshot journal threading > absent fleetJournalPath preserves current behavior: the live server falls back to the $DEV_STORAGE default journal",
+        "httpFetcher > auth.tokenRef resolves via env: and sends Bearer header",
+        "httpFetcher > depth=0 fetches only the start URL",
+        "httpFetcher > depth=1 follows one hop",
+        "httpFetcher > does not revisit a URL within the same run",
+        "httpFetcher > ignore_robots: true bypasses robots.txt",
+        "httpFetcher > missing robots.txt treated as permissive",
+        "httpFetcher > robots.txt Disallow blocks the forbidden path",
+        "httpFetcher > same_origin filters off-site links",
+        "httpFetcher SSRF guard (integration) > blocks a private link discovered mid-crawl",
+        "httpFetcher SSRF guard (integration) > blocks loopback start URL when escape hatch is off",
+        "httpFetcher cross-origin redirect token handling > keeps Authorization across a same-origin redirect",
+        "httpFetcher cross-origin redirect token handling > strips Authorization when a redirect crosses origins",
+        "makeCluster > cluster config lists both nodes plus local",
+        "makeCluster > each agent has a unique fingerprint",
+        "makeCluster > each client reaches its own agent for env query",
+        "makeCluster > each client reaches its own agent for nodeFacts query",
+        "makeCluster > named node spec is honored",
+        "makeCluster > spawns N independent agents on random ports",
+        "ping/pong > client ping round-trips",
+        "reconnect + heartbeat (I.3.2) > backoff resets on healthy hello-ack — second reconnect uses minDelay",
+        "reconnect + heartbeat (I.3.2) > client auto-reconnects after the server kicks it",
+        "reconnect + heartbeat (I.3.2) > heartbeat round-trips with a healthy server — tunnel stays ready, no reconnect",
+        "reconnect + heartbeat (I.3.2) > heartbeat timeout on a stub server that never pongs forces reconnect",
+        "reconnect + heartbeat (I.3.2) > stop() halts the reconnect loop — no further connects after stop",
+        "reconnect + heartbeat (I.3.2) > waitUntilReady rejects after timeout when we never reach ready",
+        "reconnect + heartbeat (I.3.2) > waitUntilReady resolves immediately when already ready",
+        "request/response correlation > handler that throws surfaces as res.error without tearing the tunnel down",
+        "request/response correlation > server.send dispatches to the right node, resolves with its reply",
+        "request/response correlation > three concurrent requests resolve with matching ids — no crossed wires",
+        "request/response correlation > unknown node errors synchronously on send",
+        "runLoopExecutor — cancellation + session cleanup > AbortSignal unblocks the pending outcome and ends the stream",
+        "runLoopExecutor — cancellation + session cleanup > session count drops to zero after normal termination",
+        "runLoopExecutor — cancellation + session cleanup > submitOutcome returns false for mismatched stepId (stale delivery)",
+        "runLoopExecutor — proposal/outcome loop > emits N plan_proposed events for an N-step conversation",
+        "runLoopExecutor — proposal/outcome loop > failed outcomes still advance the loop + feed back into context",
+        "runLoopExecutor — proposal/outcome loop > first proposal carries plan reasoning; later ones do not",
+        "runLoopExecutor — proposal/outcome loop > outcome.abort terminates the loop after the current step",
+        "runLoopExecutor — proposal/outcome loop > tier classification is resolved server-side",
+        "runLoopExecutor — refusal + safety > disallowed-tool planner result surfaces as refusal",
+        "runLoopExecutor — refusal + safety > goal-pattern refusal short-circuits before the planner runs",
+        "runLoopExecutor — refusal + safety > planner failure emits a single refusal event + no proposals",
+        "runLoopExecutor — refusal + safety > repeated-step detection breaks the loop",
+        "server/modelhost > keeps the manifest binary as source of truth",
+        "server/modelhost > keeps the manifest endpoint as source of truth",
+        "server/modelhost > persists inline manifest to workloadsDir before start",
+        "server/modelhost > reaps a prior live ModelHost before spawning a replacement",
+        "server/modelhost > refuses to record a stale pid when the spawned child already exited",
+        "server/modelhost > relaunches a live listener whose recorded spec drifted on a resources-only change",
+        "server/modelhost > sanitizes the spawned env to the allowlist",
+        "server/modelhost > spawns a replacement when the recorded pid is dead and no live host serves the endpoint",
+        "server/modelhost > spec.env values appear in the spawned child environment",
+        "server/modelhost > startModelHost records the resolved slotSavePath in state and preserves raw extraArgs in the spec hash input",
+        "server/modelhost > startModelHost writes state sidecar with the spawn pid",
+        "server/modelhost > stopModelHost reads state, tears down the pid, and removes sidecar state",
+        "server/modelhost > tears down the spawned pid when readiness fails",
+        "siriusHandler — reload flow > 2xx reload → Running + Applied:True and records the POST",
+        "siriusHandler — reload flow > non-2xx reload → Failed + SiriusReloadFailed carrying the status",
+        "startAgentServer (TLS, pinned cert) > agent URL uses https",
+        "startAgentServer (TLS, pinned cert) > client with pinned cert + good token round-trips env query",
+        "startAgentServer (TLS, pinned cert) > client with tampered stored fingerprint fails construction",
+        "startAgentServer (TLS, pinned cert) > client without CA fails TLS (self-signed cert not trusted)",
+        "startAgentServer (TLS, pinned cert) > valid CA + bad token → UNAUTHORIZED",
+        "startAgentServer (plain HTTP, for test isolation) > /healthz responds 200 without auth",
+        "startAgentServer (plain HTTP, for test isolation) > bad bearer → 401",
+        "startAgentServer (plain HTTP, for test isolation) > good bearer returns tRPC response for env query",
+        "startAgentServer (plain HTTP, for test isolation) > missing bearer → 401",
+        "startAgentServer (plain HTTP, for test isolation) > unknown path responds 404",
+        "startAgentServer no-auth bypass > accepts bearer-authenticated localhost request",
+        "startAgentServer no-auth bypass > accepts bearer-authenticated trpc request in no-auth mode",
+        "startAgentServer no-auth bypass > accepts localhost request without bearer",
+        "startAgentServer no-auth bypass > logs the first unauthenticated request and suppresses the next 98",
+        "startAgentServer no-auth bypass > rejects loopback-only no-auth bypass when the agent is not bound to loopback",
+        "startAgentServer no-auth bypass > rejects non-loopback source even when no-auth is enabled",
+        "startAgentServer no-auth bypass > rejects unauthenticated metrics request even when no-auth is enabled",
+        "startAgentServer no-auth bypass > rejects unauthenticated trpc request even when no-auth is enabled",
+        "startAgentServer no-auth bypass > serves plain HTTP on loopback even when tls is configured",
+        "startAgentServer with tunnelCentral > /tunnel-relay/<node> 400s on malformed JSON body",
+        "startAgentServer with tunnelCentral > /tunnel-relay/<node> 401s without bearer",
+        "startAgentServer with tunnelCentral > /tunnel-relay/<node> dispatches to a connected tunnel",
+        "startAgentServer with tunnelCentral > /tunnel-relay/<unknown> returns 502 with tunnel-send-failed",
+        "startAgentServer with tunnelCentral > accepts a /tunnel ws upgrade and registers the node",
+        "startAgentServer with tunnelDial > central + dialing agent round-trip a real procedure via /tunnel-relay",
+        "startAgentServer with tunnelDial > central relays fleetSnapshot query to the dialing node",
+        "startAgentServer with tunnelDial > central relays workloadApply mutation to the dialing node",
+        "startAgentServer with tunnelDial > disconnect → reconnect: tunnel re-establishes and second relay call succeeds",
+        "startAgentServer with tunnelDial > tunnel direction stays central-originated only",
+        "startAgentServer without tunnelCentral > /tunnel falls through to 404 and tunnelServer is undefined",
+        "startAgentServer — /v1/chat/completions route wiring > bad bearer → 401",
+        "startAgentServer — /v1/chat/completions route wiring > good bearer + malformed body → 400",
+        "startAgentServer — /v1/chat/completions route wiring > good bearer + rag body but missing via → 400",
+        "startAgentServer — /v1/chat/completions route wiring > missing bearer → 401 (auth check fires before body parse)",
+        "startAgentServer — process handler cleanup > uncaughtException + unhandledRejection listener counts return to baseline after stop",
+        "tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike) > (unnamed)",
+        "tRPC v11 + Bun.serve + fetchRequestHandler > (unnamed)",
+        "tunnel handshake > hello with correct bearer → hello-ack + registry records connection",
+        "tunnel handshake > hello with wrong bearer → close 4401 and connect rejects",
+        "tunnel journal — integration > tunnel-connect + tunnel-disconnect round-trip lands in journal",
+        "tunnel journal — integration > tunnel-relay-call success writes metadata + NO payload leakage",
+        "tunnel journal — integration > tunnel-relay-error on unknown node writes tunnel-send-failed",
+        "tunnel journal — integration > tunnel-replaced fires before the new tunnel-connect on duplicate nodeName",
+        "tunnel journal — integration > tunnel-unauthorized on bad bearer captures nodeName",
+        "tunnel-client: handleSubscription > events arrive in agent-emit order",
+        "tunnel-client: handleSubscription > missing handleSubscription → stream-done with error frame",
+        "tunnel-client: handleSubscription > server-initiated stream-cancel tears down the agent subscription",
+        "tunnel-relay SSE > SSE against disconnected node ships an error done frame",
+        "tunnel-relay SSE > SSE rejects without bearer",
+        "tunnel-relay SSE > agent-side error surfaces as done with ok:false",
+        "tunnel-relay SSE > client AbortController mid-stream triggers agent stream-cancel",
+        "tunnel-relay SSE > client abort journals as error, not ok:true",
+        "tunnel-relay SSE > relays three events + done frame over SSE",
+        "tunnel-server: sendSubscribe > break mid-stream fires a stream-cancel on the agent",
+        "tunnel-server: sendSubscribe > disconnect mid-stream throws a tunnel-disconnected error",
+        "tunnel-server: sendSubscribe > error frame throws from the iterator",
+        "tunnel-server: sendSubscribe > sendSubscribe against an unknown node throws on first next()",
+        "tunnel-server: sendSubscribe > streams three events to completion",
+        "workload teardown stops by the node key, not the composite name > destroyComposite stops the workload by its node key ('local'), not the composite name ('stack')",
+        "workloadList foreign-listener detection > keeps Running when the recorded live pid owns the answering port",
+        "workloadList foreign-listener detection > marks a ModelHost Foreign when its endpoint answers under a foreign pid",
+        "workloadList foreign-listener detection > marks the workload Foreign when a foreign process squats the recorded port",
+        "workloadList foreign-listener detection > marks the workload Foreign when a live recorded pid does not hold the answering port"
+      ]
+    },
+    "root_bun_test": {
+      "command": "bun test",
+      "cwd": ".",
+      "exit": 1,
+      "pass": 3831,
+      "fail": 242,
+      "skip": 9,
+      "log": "baseline-root-bun-test.log",
+      "log_mtime": "2026-09-30 10:57:30 -0300",
+      "failing_count": 242,
+      "unique_failing_count": 234,
+      "unnamed_failing_count": 11,
+      "redacted_count": 0,
+      "failing_set_sha256": "4e67f25f2879fac8d7d54e04e51a4f4f67790df5ae7dee748223fec56bfcb324",
+      "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' baseline-root-bun-test.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
+      "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
+      "failure_signal_counts": {
+        "EADDRINUSE": 173,
+        "Failed to start server": 185,
+        "EPERM": 42
+      },
+      "attribution_status": "inferred",
+      "attribution": "inferred from identical sorted failing-title sets plus the measured EADDRINUSE, Failed to start server and EPERM counts in the log",
+      "failing_names": [
+        "(unnamed)",
+        "Bug 2 — workloadDelete per-node deadline > completes within deadline when coordinator node never responds",
+        "Bug 2 — workloadDescribe per-node deadline > returns within deadline when coordinator node never responds",
+        "ChromaRagAdapter (HTTP backend) > 5xx from chroma on upsert surfaces connect-failed",
+        "ChromaRagAdapter (HTTP backend) > embedder.baseUrl override flows through from the binding (G4)",
+        "ChromaRagAdapter (HTTP backend) > listCollections normalizes HTTP rows into CollectionInfo[]",
+        "ChromaRagAdapter (HTTP backend) > search without vector + no embedder → invalid-request",
+        "ChromaRagAdapter (HTTP backend) > store + search + delete round-trip with caller-supplied vectors",
+        "ChromaRagAdapter (HTTP backend) > store without vector and without embedder surfaces invalid-request",
+        "ChromaRagAdapter (HTTP backend) > unreachable backend throws connect-failed on heartbeat",
+        "ChromaRagAdapter (HTTP backend) > uses delegated embedder when docs arrive without vectors",
+        "FIX [11]: send() request timeout > a node that replies before the timeout resolves normally and clears the timer",
+        "FIX [11]: send() request timeout > send() rejects with tunnel-request-timeout when the node never replies",
+        "FIX [17]: constant-time hello bearer check > correct bearer authenticates",
+        "FIX [17]: constant-time hello bearer check > wrong bearer is rejected (connection never registers)",
+        "FIX[6] queryServerStatusWithTimeout: a never-resolving node rejects within ~the timeout instead of hanging",
+        "HttpChromaClient > attaches bearer token when configured",
+        "HttpChromaClient > deleteRecords tolerates servers that omit deleted field",
+        "HttpChromaClient > heartbeat hits /api/v2/heartbeat and returns void on 200",
+        "HttpChromaClient > heartbeat translates 5xx into RagError connect-failed",
+        "HttpChromaClient > propagates 4xx as RagError tool-error",
+        "HttpChromaClient > propagates 5xx as RagError connect-failed",
+        "HttpChromaClient > resolveCollectionId caches the first lookup",
+        "HttpChromaClient > upsert + query + delete + listCollections happy path",
+        "KubernetesBackend.ensureService — validation + failure modes > polling timeout → start-failed",
+        "T2: healthGate resolves \"timeout\" after timeoutMs without full health",
+        "adapter journal file integration > when no journalWrite seam is passed, entries land in LLAMACTL_CLI_JOURNAL_DIR/<day>.jsonl",
+        "applyOne + gateway dispatch — sirius end-to-end > 2xx reload path lands phase=Running + action=started",
+        "applyOne + gateway dispatch — sirius end-to-end > reload non-2xx surfaces as Failed + SiriusReloadFailed",
+        "applyProviderQuirks — context forwarding > gemini createResponse forwards context.signal — abort cancels the upstream fetch",
+        "buildTunnelSubscribe end-to-end > agent-side error propagates to onError",
+        "buildTunnelSubscribe end-to-end > pinning fail-closed without fingerprint + not insecure",
+        "buildTunnelSubscribe end-to-end > streams events + onComplete",
+        "buildTunnelSubscribe end-to-end > unsubscribe() aborts mid-stream + agent sees stream-cancel",
+        "buildTunnelSubscribe end-to-end > unsubscribe() before any events is a clean no-op",
+        "chatComplete — tRPC cancellation reaches the provider fetch > cancelling the caller aborts the in-flight upstream request",
+        "chatStream — non-streaming provider fallback > a CLI node call fires its estimated observation and writes NO usage row",
+        "chatStream — usage observation → V1 corpus > a stream reporting no usage writes nothing",
+        "chatStream — usage observation → V1 corpus > cumulative stream usage writes exactly one V1 row; no 'v'/'observation' keys",
+        "cluster-serverstart: remote serverStart over SSE > streams launch → ready events and returns endpoint",
+        "cluster-streaming: pullFile subscription over SSE > client unsubscribe aborts the remote hf subprocess",
+        "cluster-streaming: pullFile subscription over SSE > emits start/stderr/exit/done events in order and writes the file",
+        "compositeDestroy with pipelines > co-owned: destroying one composite leaves the pipeline; destroying both removes it",
+        "compositeDestroy with pipelines > single-owner: destroying the composite deletes the pipeline",
+        "controller reconcile loop > file lock prevents a second controller from starting",
+        "controller reconcile loop > one-shot reconcile is a no-op when observed matches desired",
+        "controller reconcile loop > one-shot reconcile starts a missing workload",
+        "createEmbedderFromBinding — baseUrl override > apiKeyRef resolves via the unified secret resolver → Bearer header",
+        "createEmbedderFromBinding — baseUrl override > baseUrl routes requests to the override URL, bypassing kubeconfig",
+        "default (llamacpp) engine: save omits model + probes /props",
+        "destroyComposite — boundary-based destroy (k8s cascade) > backend with destroyCompositeBoundary skips per-service removeService",
+        "destroyComposite — boundary-based destroy (k8s cascade) > boundary call failure surfaces as a destroy error without breaking non-service teardown",
+        "destroyComposite — purgeVolumes plumbing > default destroy forwards purgeVolumes=false to the backend",
+        "destroyComposite — purgeVolumes plumbing > purgeVolumes: true flows through to backend.removeService",
+        "destroyComposite — reverses the DAG > services + rag node all torn down",
+        "detectMemoryBytes > returns a number on supported platforms, null otherwise",
+        "disconnect semantics > client close removes node from registry + fires onNodeDisconnect",
+        "disconnect semantics > duplicate nodeName: newest connection wins, older is closed with 4409",
+        "disconnect semantics > server disconnect errors pending requests",
+        "embersynthHandler — reload flow > 2xx reload → Running + Applied:True",
+        "end-to-end I.3.3: router bridge + tunneled client over real ws > tunneled client.catalog.list.query round-trips through the ws",
+        "fleet-snapshot journal threading > GREEN: a threaded fleetJournalPath makes the live server serve the configured journal, not the $DEV_STORAGE default",
+        "fleet-snapshot journal threading > absent fleetJournalPath preserves current behavior: the live server falls back to the $DEV_STORAGE default journal",
+        "gracefulShutdown process-group reaping > group-leader (detached) proc: signalling reaps the forked grandchild",
+        "healthGate — zero-workload node > still returns timeout when fetchSnapshot returns null (node unreachable)",
+        "httpFetcher > auth.tokenRef resolves via env: and sends Bearer header",
+        "httpFetcher > depth=0 fetches only the start URL",
+        "httpFetcher > depth=1 follows one hop",
+        "httpFetcher > does not revisit a URL within the same run",
+        "httpFetcher > ignore_robots: true bypasses robots.txt",
+        "httpFetcher > missing robots.txt treated as permissive",
+        "httpFetcher > robots.txt Disallow blocks the forbidden path",
+        "httpFetcher > same_origin filters off-site links",
+        "httpFetcher SSRF guard (integration) > blocks a private link discovered mid-crawl",
+        "httpFetcher SSRF guard (integration) > blocks loopback start URL when escape hatch is off",
+        "httpFetcher cross-origin redirect token handling > keeps Authorization across a same-origin redirect",
+        "httpFetcher cross-origin redirect token handling > strips Authorization when a redirect crosses origins",
+        "infra uninstall flag validation > --all selects package mode",
+        "infra uninstall flag validation > --version selects version mode",
+        "llamacpp engine adapter > probeReady returns ready:false without overrunning timeout",
+        "llamactl expose > --json output includes openaiBaseUrl",
+        "llamactl expose > deploys a rel + prints the advertised OpenAI URL",
+        "llamactl expose > derives a workload name from the rel when --name is omitted",
+        "makeCluster > cluster config lists both nodes plus local",
+        "makeCluster > each agent has a unique fingerprint",
+        "makeCluster > each client reaches its own agent for env query",
+        "makeCluster > each client reaches its own agent for nodeFacts query",
+        "makeCluster > named node spec is honored",
+        "makeCluster > spawns N independent agents on random ports",
+        "makeIsPeerMovingWorkload — cross-node in-flight-move consumer (design §4) > aggregator down, direct fallback later surfaces a peer's in-flight move => TRUE on the next call",
+        "mutateConfig — cross-process concurrency > throws with a clear error when the lock is held by a live process beyond the retry window",
+        "network failure returns network",
+        "node add — reachability check > bogus URL + --force: persists as unverified, exit 0",
+        "node add — reachability check > bogus URL: probe fails, refuses to persist, exit 1",
+        "node add — reachability check > real URL but wrong fingerprint: probe fails with specific error",
+        "node add — reachability check > real agent: probe succeeds, prints profile + platform",
+        "omlx engine adapter > probeReady returns ready:false on timeout",
+        "omlx engine adapter > probeReady times out cleanly without overrunning the deadline",
+        "omlx engine: save sends model in payload + probes /v1/slots/capabilities",
+        "peer fetch > SAN mismatch fails direct fetch but succeeds through the tunnel",
+        "ping/pong > client ping round-trips",
+        "reconnect + heartbeat (I.3.2) > backoff resets on healthy hello-ack — second reconnect uses minDelay",
+        "reconnect + heartbeat (I.3.2) > client auto-reconnects after the server kicks it",
+        "reconnect + heartbeat (I.3.2) > heartbeat round-trips with a healthy server — tunnel stays ready, no reconnect",
+        "reconnect + heartbeat (I.3.2) > heartbeat timeout on a stub server that never pongs forces reconnect",
+        "reconnect + heartbeat (I.3.2) > stop() halts the reconnect loop — no further connects after stop",
+        "reconnect + heartbeat (I.3.2) > waitUntilReady rejects after timeout when we never reach ready",
+        "reconnect + heartbeat (I.3.2) > waitUntilReady resolves immediately when already ready",
+        "request/response correlation > handler that throws surfaces as res.error without tearing the tunnel down",
+        "request/response correlation > server.send dispatches to the right node, resolves with its reply",
+        "request/response correlation > three concurrent requests resolve with matching ids — no crossed wires",
+        "request/response correlation > unknown node errors synchronously on send",
+        "restore 404 returns not_found",
+        "restore returns null restore_epoch when server omits the field",
+        "restore returns restore_epoch string when server provides it",
+        "restore success returns ok + tokensRestored + sends filename in JSON body",
+        "rpcServer > emits launch → waiting*? → ready events",
+        "rpcServer > reaps stale tracking when the process dies before becoming ready (timeout path)",
+        "rpcServer > starts, reports status=up with host+port, stops cleanly",
+        "runLoopExecutor — cancellation + session cleanup > AbortSignal unblocks the pending outcome and ends the stream",
+        "runLoopExecutor — cancellation + session cleanup > session count drops to zero after normal termination",
+        "runLoopExecutor — cancellation + session cleanup > submitOutcome returns false for mismatched stepId (stale delivery)",
+        "runLoopExecutor — proposal/outcome loop > emits N plan_proposed events for an N-step conversation",
+        "runLoopExecutor — proposal/outcome loop > failed outcomes still advance the loop + feed back into context",
+        "runLoopExecutor — proposal/outcome loop > first proposal carries plan reasoning; later ones do not",
+        "runLoopExecutor — proposal/outcome loop > outcome.abort terminates the loop after the current step",
+        "runLoopExecutor — proposal/outcome loop > tier classification is resolved server-side",
+        "runLoopExecutor — refusal + safety > disallowed-tool planner result surfaces as refusal",
+        "runLoopExecutor — refusal + safety > goal-pattern refusal short-circuits before the planner runs",
+        "runLoopExecutor — refusal + safety > planner failure emits a single refusal event + no proposals",
+        "runLoopExecutor — refusal + safety > repeated-step detection breaks the loop",
+        "save http error returns http_error + status",
+        "save success returns ok + tokensSaved + sends filename in JSON body",
+        "saveConfig — atomic write (no torn reads) > a subprocess hammering readFileSync during many saves never observes a torn/empty file",
+        "server/modelhost > keeps the manifest binary as source of truth",
+        "server/modelhost > keeps the manifest endpoint as source of truth",
+        "server/modelhost > persists inline manifest to workloadsDir before start",
+        "server/modelhost > reaps a prior live ModelHost before spawning a replacement",
+        "server/modelhost > refuses to record a stale pid when the spawned child already exited",
+        "server/modelhost > relaunches a live listener whose recorded spec drifted on a resources-only change",
+        "server/modelhost > sanitizes the spawned env to the allowlist",
+        "server/modelhost > spawns a replacement when the recorded pid is dead and no live host serves the endpoint",
+        "server/modelhost > spec.env values appear in the spawned child environment",
+        "server/modelhost > startModelHost records the resolved slotSavePath in state and preserves raw extraArgs in the spec hash input",
+        "server/modelhost > startModelHost writes state sidecar with the spawn pid",
+        "server/modelhost > stopModelHost reads state, tears down the pid, and removes sidecar state",
+        "server/modelhost > tears down the spawned pid when readiness fails",
+        "siriusHandler — reload flow > 2xx reload → Running + Applied:True and records the POST",
+        "siriusHandler — reload flow > non-2xx reload → Failed + SiriusReloadFailed carrying the status",
+        "startAgentServer (TLS, pinned cert) > agent URL uses https",
+        "startAgentServer (TLS, pinned cert) > client with pinned cert + good token round-trips env query",
+        "startAgentServer (TLS, pinned cert) > client with tampered stored fingerprint fails construction",
+        "startAgentServer (TLS, pinned cert) > client without CA fails TLS (self-signed cert not trusted)",
+        "startAgentServer (TLS, pinned cert) > valid CA + bad token → UNAUTHORIZED",
+        "startAgentServer (plain HTTP, for test isolation) > /healthz responds 200 without auth",
+        "startAgentServer (plain HTTP, for test isolation) > bad bearer → 401",
+        "startAgentServer (plain HTTP, for test isolation) > good bearer returns tRPC response for env query",
+        "startAgentServer (plain HTTP, for test isolation) > missing bearer → 401",
+        "startAgentServer (plain HTTP, for test isolation) > unknown path responds 404",
+        "startAgentServer no-auth bypass > accepts bearer-authenticated localhost request",
+        "startAgentServer no-auth bypass > accepts bearer-authenticated trpc request in no-auth mode",
+        "startAgentServer no-auth bypass > accepts localhost request without bearer",
+        "startAgentServer no-auth bypass > logs the first unauthenticated request and suppresses the next 98",
+        "startAgentServer no-auth bypass > rejects loopback-only no-auth bypass when the agent is not bound to loopback",
+        "startAgentServer no-auth bypass > rejects non-loopback source even when no-auth is enabled",
+        "startAgentServer no-auth bypass > rejects unauthenticated metrics request even when no-auth is enabled",
+        "startAgentServer no-auth bypass > rejects unauthenticated trpc request even when no-auth is enabled",
+        "startAgentServer no-auth bypass > serves plain HTTP on loopback even when tls is configured",
+        "startAgentServer with tunnelCentral > /tunnel-relay/<node> 400s on malformed JSON body",
+        "startAgentServer with tunnelCentral > /tunnel-relay/<node> 401s without bearer",
+        "startAgentServer with tunnelCentral > /tunnel-relay/<node> dispatches to a connected tunnel",
+        "startAgentServer with tunnelCentral > /tunnel-relay/<unknown> returns 502 with tunnel-send-failed",
+        "startAgentServer with tunnelCentral > accepts a /tunnel ws upgrade and registers the node",
+        "startAgentServer with tunnelDial > central + dialing agent round-trip a real procedure via /tunnel-relay",
+        "startAgentServer with tunnelDial > central relays fleetSnapshot query to the dialing node",
+        "startAgentServer with tunnelDial > central relays workloadApply mutation to the dialing node",
+        "startAgentServer with tunnelDial > disconnect → reconnect: tunnel re-establishes and second relay call succeeds",
+        "startAgentServer with tunnelDial > tunnel direction stays central-originated only",
+        "startAgentServer without tunnelCentral > /tunnel falls through to 404 and tunnelServer is undefined",
+        "startAgentServer — /v1/chat/completions route wiring > bad bearer → 401",
+        "startAgentServer — /v1/chat/completions route wiring > good bearer + malformed body → 400",
+        "startAgentServer — /v1/chat/completions route wiring > good bearer + rag body but missing via → 400",
+        "startAgentServer — /v1/chat/completions route wiring > missing bearer → 401 (auth check fires before body parse)",
+        "startAgentServer — process handler cleanup > uncaughtException + unhandledRejection listener counts return to baseline after stop",
+        "startSupervisorLoop > holds a completion wedge in the real loop when /slots shows a busy server",
+        "startSupervisorLoop > widens timeout for long-but-ok completion probes in the real loop",
+        "supportsRequestHandle caches a reachable \"no capability\" result within TTL",
+        "supportsRequestHandle invalidateCapabilityCache() forces next call to re-probe",
+        "supportsRequestHandle invalidates cache on restore() fetch failure",
+        "supportsRequestHandle invalidates cache on save() fetch failure",
+        "supportsRequestHandle re-probes after TTL expiry",
+        "supportsRequestHandle returns cached value within TTL window",
+        "supportsRequestHandle returns false on fetch failure (network error)",
+        "supportsRequestHandle returns false on malformed JSON",
+        "supportsRequestHandle returns false when slots block absent entirely",
+        "supportsRequestHandle returns false when slots.supports_request_handle === true but api_version === 1",
+        "supportsRequestHandle returns false when slots.supports_request_handle absent",
+        "supportsRequestHandle returns true when slots.supports_request_handle === true and api_version >= 2",
+        "supportsRequestHandle still returns true when capability present",
+        "supportsSaveHandle caches a reachable \"no capability\" result within TTL (omlx)",
+        "supportsSaveHandle caches true within TTL (omlx)",
+        "supportsSlots caches probe result per client",
+        "supportsSlots re-probes after invalidateCapabilityCache",
+        "supportsSlots still returns true when slots block present",
+        "tRPC + Bun.serve + fetchRequestHandler (Phase A.2 spike) > (unnamed)",
+        "tRPC v11 + Bun.serve + fetchRequestHandler > (unnamed)",
+        "tunnel handshake > hello with correct bearer → hello-ack + registry records connection",
+        "tunnel handshake > hello with wrong bearer → close 4401 and connect rejects",
+        "tunnel journal — integration > tunnel-connect + tunnel-disconnect round-trip lands in journal",
+        "tunnel journal — integration > tunnel-relay-call success writes metadata + NO payload leakage",
+        "tunnel journal — integration > tunnel-relay-error on unknown node writes tunnel-send-failed",
+        "tunnel journal — integration > tunnel-replaced fires before the new tunnel-connect on duplicate nodeName",
+        "tunnel journal — integration > tunnel-unauthorized on bad bearer captures nodeName",
+        "tunnel-client: handleSubscription > events arrive in agent-emit order",
+        "tunnel-client: handleSubscription > missing handleSubscription → stream-done with error frame",
+        "tunnel-client: handleSubscription > server-initiated stream-cancel tears down the agent subscription",
+        "tunnel-relay SSE > SSE against disconnected node ships an error done frame",
+        "tunnel-relay SSE > SSE rejects without bearer",
+        "tunnel-relay SSE > agent-side error surfaces as done with ok:false",
+        "tunnel-relay SSE > client AbortController mid-stream triggers agent stream-cancel",
+        "tunnel-relay SSE > client abort journals as error, not ok:true",
+        "tunnel-relay SSE > relays three events + done frame over SSE",
+        "tunnel-server: sendSubscribe > break mid-stream fires a stream-cancel on the agent",
+        "tunnel-server: sendSubscribe > disconnect mid-stream throws a tunnel-disconnected error",
+        "tunnel-server: sendSubscribe > error frame throws from the iterator",
+        "tunnel-server: sendSubscribe > sendSubscribe against an unknown node throws on first next()",
+        "tunnel-server: sendSubscribe > streams three events to completion",
+        "workload E2E: apply / get / describe / delete > apply starts, get reports Running, delete stops + removes",
+        "workload E2E: apply / get / describe / delete > re-applying an unchanged manifest is a no-op",
+        "workload teardown stops by the node key, not the composite name > destroyComposite stops the workload by its node key ('local'), not the composite name ('stack')",
+        "workloadList foreign-listener detection > keeps Running when the recorded live pid owns the answering port",
+        "workloadList foreign-listener detection > marks a ModelHost Foreign when its endpoint answers under a foreign pid",
+        "workloadList foreign-listener detection > marks the workload Foreign when a foreign process squats the recorded port",
+        "workloadList foreign-listener detection > marks the workload Foreign when a live recorded pid does not hold the answering port"
+      ]
+    },
+    "run_all": {
+      "command": "zsh test/run-all.zsh",
+      "cwd": ".",
+      "exit": 1,
+      "pass": 743,
+      "fail": 37,
+      "skip": null,
+      "log": "baseline-run-all.log",
+      "log_mtime": "2026-09-30 10:58:47 -0300",
+      "failing_count": 37,
+      "unique_failing_count": 37,
+      "unnamed_failing_count": 0,
+      "redacted_count": 0,
+      "failing_set_sha256": "1cc4416b3b81e88d005358d2054c94dcc64347277a0dd6d2a90666102bee074c",
+      "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' baseline-run-all.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
+      "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
+      "failure_signal_counts": {
+        "EADDRINUSE": 27,
+        "Failed to start server": 27,
+        "EPERM": 0
+      },
+      "attribution_status": "inferred",
+      "attribution": "inferred from identical sorted failing-title sets plus the measured EADDRINUSE, Failed to start server and EPERM counts in the log",
+      "failing_names": [
+        "default (llamacpp) engine: save omits model + probes /props",
+        "detectMemoryBytes > returns a number on supported platforms, null otherwise",
+        "gracefulShutdown process-group reaping > group-leader (detached) proc: signalling reaps the forked grandchild",
+        "llamacpp engine adapter > probeReady returns ready:false without overrunning timeout",
+        "mutateConfig — cross-process concurrency > throws with a clear error when the lock is held by a live process beyond the retry window",
+        "network failure returns network",
+        "omlx engine adapter > probeReady returns ready:false on timeout",
+        "omlx engine adapter > probeReady times out cleanly without overrunning the deadline",
+        "omlx engine: save sends model in payload + probes /v1/slots/capabilities",
+        "restore 404 returns not_found",
+        "restore returns null restore_epoch when server omits the field",
+        "restore returns restore_epoch string when server provides it",
+        "restore success returns ok + tokensRestored + sends filename in JSON body",
+        "rpcServer > emits launch → waiting*? → ready events",
+        "rpcServer > reaps stale tracking when the process dies before becoming ready (timeout path)",
+        "rpcServer > starts, reports status=up with host+port, stops cleanly",
+        "save http error returns http_error + status",
+        "save success returns ok + tokensSaved + sends filename in JSON body",
+        "saveConfig — atomic write (no torn reads) > a subprocess hammering readFileSync during many saves never observes a torn/empty file",
+        "supportsRequestHandle caches a reachable \"no capability\" result within TTL",
+        "supportsRequestHandle invalidateCapabilityCache() forces next call to re-probe",
+        "supportsRequestHandle invalidates cache on restore() fetch failure",
+        "supportsRequestHandle invalidates cache on save() fetch failure",
+        "supportsRequestHandle re-probes after TTL expiry",
+        "supportsRequestHandle returns cached value within TTL window",
+        "supportsRequestHandle returns false on fetch failure (network error)",
+        "supportsRequestHandle returns false on malformed JSON",
+        "supportsRequestHandle returns false when slots block absent entirely",
+        "supportsRequestHandle returns false when slots.supports_request_handle === true but api_version === 1",
+        "supportsRequestHandle returns false when slots.supports_request_handle absent",
+        "supportsRequestHandle returns true when slots.supports_request_handle === true and api_version >= 2",
+        "supportsRequestHandle still returns true when capability present",
+        "supportsSaveHandle caches a reachable \"no capability\" result within TTL (omlx)",
+        "supportsSaveHandle caches true within TTL (omlx)",
+        "supportsSlots caches probe result per client",
+        "supportsSlots re-probes after invalidateCapabilityCache",
+        "supportsSlots still returns true when slots block present"
+      ],
+      "stage_note": "stopped after [1/4] core unit + integration; stages 2 to 4 did not run"
+    }
+  },
+  "after": {
+    "head_sha": "d193efc272b986248ce193b08eee16a954147c15",
+    "environment": "same git worktree of the branch at the measured head_sha for after gates; Bun 1.3.14; sandbox denied server port binding and writes under the home directory",
+    "run_order": [
+      "after-root-bun-test.log finished 2026-09-30 10:52:04 -0300 at head_sha",
+      "after-run-all.log finished 2026-09-30 10:53:21 -0300 at head_sha",
+      "baseline logs finished at the base commit from 2026-09-30 10:54:44 -0300 through 2026-09-30 10:58:47 -0300; the checkout to the base commit preceded the first of them",
+      "after-remote-test.log finished 2026-09-30 10:59:19 -0300 at head_sha",
+      "after-default-arm.log finished 2026-09-30 11:00:07 -0300 at head_sha",
+      "after-consumer-suite.log finished 2026-09-30 11:00:08 -0300 at head_sha"
+    ],
+    "typecheck": {
+      "command": "bun run typecheck",
+      "cwd": ".",
+      "exit": 0,
+      "status": "inferred",
+      "pointer": "check L item L-34; packages/ and test/consumers/exec-primitives were unchanged between the measured head_sha and the evidence commit"
+    },
+    "lint": {
+      "command": "bun run lint",
+      "cwd": ".",
+      "exit": 0,
+      "status": "inferred",
+      "pointer": "check L item L-36; packages/ and test/consumers/exec-primitives were unchanged between the measured head_sha and the evidence commit"
+    },
+    "format_check": {
+      "command": "bun run format:check",
+      "cwd": ".",
+      "exit": 0,
+      "status": "inferred",
+      "pointer": "check L item L-35; packages/ and test/consumers/exec-primitives were unchanged between the measured head_sha and the evidence commit"
+    },
+    "remote_test": {
+      "command": "bun run --cwd packages/remote test",
+      "cwd": ".",
+      "exit": 1,
+      "pass": 1640,
+      "fail": 175,
+      "skip": 6,
+      "log": "after-remote-test.log",
+      "log_mtime": "2026-09-30 10:59:19 -0300",
+      "failing_count": 175,
+      "unique_failing_count": 168,
+      "unnamed_failing_count": 10,
+      "redacted_count": 0,
+      "failing_set_sha256": "b588380f62d6c971bc34904ffa0ad6a8114c9bb267f3e8e23cb97f6e9a6000bd",
+      "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' after-remote-test.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
+      "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
+      "failure_signal_counts": {
+        "EADDRINUSE": 127,
+        "Failed to start server": 139,
+        "EPERM": 42
+      },
+      "attribution_status": "inferred",
+      "attribution": "inferred from identical sorted failing-title sets plus the measured EADDRINUSE, Failed to start server and EPERM counts in the log",
+      "same_set_as_baseline": true
+    },
+    "root_bun_test": {
+      "command": "bun test",
+      "cwd": ".",
+      "exit": 1,
+      "pass": 3831,
+      "fail": 242,
+      "skip": 9,
+      "log": "after-root-bun-test.log",
+      "log_mtime": "2026-09-30 10:52:04 -0300",
+      "failing_count": 242,
+      "unique_failing_count": 234,
+      "unnamed_failing_count": 11,
+      "redacted_count": 0,
+      "failing_set_sha256": "4e67f25f2879fac8d7d54e04e51a4f4f67790df5ae7dee748223fec56bfcb324",
+      "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' after-root-bun-test.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
+      "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
+      "failure_signal_counts": {
+        "EADDRINUSE": 173,
+        "Failed to start server": 185,
+        "EPERM": 42
+      },
+      "attribution_status": "inferred",
+      "attribution": "inferred from identical sorted failing-title sets plus the measured EADDRINUSE, Failed to start server and EPERM counts in the log",
+      "same_set_as_baseline": true
+    },
+    "run_all": {
+      "command": "zsh test/run-all.zsh",
+      "cwd": ".",
+      "exit": 1,
+      "pass": 743,
+      "fail": 37,
+      "skip": null,
+      "log": "after-run-all.log",
+      "log_mtime": "2026-09-30 10:53:21 -0300",
+      "failing_count": 37,
+      "unique_failing_count": 37,
+      "unnamed_failing_count": 0,
+      "redacted_count": 0,
+      "failing_set_sha256": "1cc4416b3b81e88d005358d2054c94dcc64347277a0dd6d2a90666102bee074c",
+      "extraction_command": "awk '/^[0-9]+ tests? failed:$/{f=1;next} f&&/^$/{f=0} f' after-run-all.log | grep -a '^(fail) ' | sed -E 's/^\\(fail\\) //; s/ \\[[0-9.]+ms\\]$//' | LC_ALL=C sort -u | shasum -a 256",
+      "extraction_status": "confirmed",
+      "failure_signal_counts_command": "grep -a -c -e <pattern> <log>, once each for EADDRINUSE, Failed to start server and EPERM",
+      "failure_signal_counts": {
+        "EADDRINUSE": 27,
+        "Failed to start server": 27,
+        "EPERM": 0
+      },
+      "attribution_status": "inferred",
+      "attribution": "inferred from identical sorted failing-title sets plus the measured EADDRINUSE, Failed to start server and EPERM counts in the log",
+      "same_set_as_baseline": true,
+      "stage_note": "stopped after [1/4] core unit + integration; stages 2 to 4 did not run"
+    }
+  },
+  "honesty": {
+    "adoption_performed": false,
+    "runtime_import": false,
+    "adoption_rules_changed": false
+  },
+  "claims_not_made": [
+    "adopted by llamactl",
+    "1830 closed",
+    "ACP fixture parity in the llamactl consumer"
+  ],
+  "broad_gate_summary": {
+    "extraction_rule": "closing failed-list only; keep lines beginning with (fail), strip the marker and trailing timing, sort unique titles with LC_ALL=C",
+    "failing_set_identical_base_after": {
+      "remote_test": true,
+      "root_bun_test": true,
+      "run_all": true
+    }
+  }
+}

@@ -1,0 +1,13 @@
+diff --git a/test/consumers/exec-primitives/src/library-spawn.ts b/test/consumers/exec-primitives/src/library-spawn.ts
+index eb518393..e0efe737 100644
+--- a/test/consumers/exec-primitives/src/library-spawn.ts
++++ b/test/consumers/exec-primitives/src/library-spawn.ts
+@@ -24,7 +24,7 @@ function callerSignal(opts: { signal: AbortSignal }): AbortSignal {
+ }
+ 
+ function cancelGraceMs(opts: { killGraceMs?: number }): number {
+-  return opts.killGraceMs ?? CLI_KILL_GRACE_MS;
++  return 600_000;
+ }
+ 
+ export const librarySpawn: SpawnFn = async (argv, opts) => {

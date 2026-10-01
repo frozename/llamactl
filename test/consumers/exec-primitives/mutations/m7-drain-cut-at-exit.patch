@@ -1,0 +1,13 @@
+diff --git a/test/consumers/exec-primitives/src/library-spawn.ts b/test/consumers/exec-primitives/src/library-spawn.ts
+index eb518393..84ec60ad 100644
+--- a/test/consumers/exec-primitives/src/library-spawn.ts
++++ b/test/consumers/exec-primitives/src/library-spawn.ts
+@@ -156,7 +156,7 @@ export const librarySpawnStream: SpawnStreamFn = async (argv, opts) => {
+     },
+   );
+   return {
+-    stdout: stdoutQueue,
++    stdout: takeLinesUntilExit(stdoutQueue, proc.exit),
+     stderrPromise,
+     exitedPromise,
+   };

@@ -1,0 +1,13 @@
+diff --git a/test/consumers/exec-primitives/src/library-spawn.ts b/test/consumers/exec-primitives/src/library-spawn.ts
+index eb518393..908ea0d5 100644
+--- a/test/consumers/exec-primitives/src/library-spawn.ts
++++ b/test/consumers/exec-primitives/src/library-spawn.ts
+@@ -33,7 +33,7 @@ export const librarySpawn: SpawnFn = async (argv, opts) => {
+     command,
+     args,
+     cwd: process.cwd(),
+-    env: toHostEnv(opts.env),
++    env: { ...toHostEnv(process.env), ...toHostEnv(opts.env) },
+     signal: callerSignal(opts),
+     cancelGraceMs: cancelGraceMs(opts),
+     watchdogMs: WATCHDOG_BACKSTOP_MS,

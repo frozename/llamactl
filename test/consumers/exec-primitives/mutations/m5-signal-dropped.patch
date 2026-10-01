@@ -1,0 +1,13 @@
+diff --git a/test/consumers/exec-primitives/src/library-spawn.ts b/test/consumers/exec-primitives/src/library-spawn.ts
+index eb518393..73fee480 100644
+--- a/test/consumers/exec-primitives/src/library-spawn.ts
++++ b/test/consumers/exec-primitives/src/library-spawn.ts
+@@ -20,7 +20,7 @@ function exitCodeOf(code: number | null, signal: NodeJS.Signals | null): number
+ }
+ 
+ function callerSignal(opts: { signal: AbortSignal }): AbortSignal {
+-  return opts.signal;
++  return new AbortController().signal;
+ }
+ 
+ function cancelGraceMs(opts: { killGraceMs?: number }): number {

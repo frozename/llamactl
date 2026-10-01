@@ -81,6 +81,10 @@ jobs:
         working-directory: llamactl
         run: bun run --cwd packages/mcp test
 
+      - name: Test exec-primitives test consumer
+        working-directory: llamactl/test/consumers/exec-primitives
+        run: bun install --frozen-lockfile && bun run typecheck && bun run test
+
       - name: Test train syntax
         working-directory: llamactl/packages/train
         run: bash scripts/check-syntax.sh
