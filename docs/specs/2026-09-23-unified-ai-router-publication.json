@@ -178,8 +178,15 @@
         "registrar_event_id": 1950,
         "follow_up_event_id": 1830,
         "marker": "p22-evidence-merged-2026-09-28",
-        "published_at": null,
+        "published_at": "2026-09-29T03:06:36Z",
         "body_sha256": "4df107753e7ae10740e26094f261ee05c9ab6ca132b83a935d7a5a6c2c0fae4e"
+      },
+      {
+        "registrar_event_id": 2079,
+        "follow_up_event_id": 1830,
+        "marker": "p22-1830-done-2026-10-01",
+        "published_at": null,
+        "body_sha256": "41842bab527abd79c9f4fb964868830a204be6b8369b0f0155329b6e4053e02e"
       }
     ]
   },
@@ -1240,7 +1247,7 @@
           "registrar_event_id": 1950,
           "follow_up_event_id": 1830,
           "marker": "p22-evidence-merged-2026-09-28",
-          "published_at": null,
+          "published_at": "2026-09-29T03:06:33Z",
           "body_sha256": "8ae558ecf605ebd1dcd06d545aaea632910e286c5ae8884e31619cfc6177fb77"
         }
       ]
@@ -2761,7 +2768,7 @@
       "dispatch_state": "merged",
       "linked_issue_url": "https://github.com/frozename/penumbra/issues/192",
       "filed_at": "2026-09-25T03:12:03Z",
-      "notes": "No dependency on P0.2 (D14); may run first with operator authorization. Library home and distribution channel are operator decisions made from the evidence; file:, workspace:, git-sibling and private-src deep imports are never acceptable channels. Closes DONE only with L1-L6 evidence, or DROPPED with the recorded fallback: keep the narrow llamactl CLI path and defer expanded ACP (P6.1). Update 2026-09-25 (events 1875-1876): filed just in time (1831) as penumbra#192 and dispatched under the operator authorization of 2026-09-24 (recorded in 1861) as handoff 4f22272d on seat devin-swe-2-acp, branch feat/p22-sharedlib6-qualification_4f22272d at base c264644b; evidence only, nothing lands; follow-up 1830 stays owed until the operator rules on its DONE wording after the evidence. Update 2026-09-28 (events 1877-1950): after independent verification failed rounds 0-2, a narrow final pass came back green (1944) and the evidence slice merged as penumbra#196 (squash f122106dc at 2026-09-28T21:04:31Z, 1946); penumbra#192 closed completed. Decision 1948 answers D7: home frozename/nova, @novaproto/exec-primitives 0.1.0 on public npmjs, exact-pinned in penumbra and llamactl; prepared as frozename/nova#2, not merged, nothing published (1950). Follow-up 1830 stays owed until both consumers install the published package from the registry and L2/L3 are re-run against the registry tarball.",
+      "notes": "No dependency on P0.2 (D14); may run first with operator authorization. Library home and distribution channel are operator decisions made from the evidence; file:, workspace:, git-sibling and private-src deep imports are never acceptable channels. Closes DONE only with L1-L6 evidence, or DROPPED with the recorded fallback: keep the narrow llamactl CLI path and defer expanded ACP (P6.1). Update 2026-09-25 (events 1875-1876): filed just in time (1831) as penumbra#192 and dispatched under the operator authorization of 2026-09-24 (recorded in 1861) as handoff 4f22272d on seat devin-swe-2-acp, branch feat/p22-sharedlib6-qualification_4f22272d at base c264644b; evidence only, nothing lands; follow-up 1830 stays owed until the operator rules on its DONE wording after the evidence. Update 2026-09-28 (events 1877-1950): after independent verification failed rounds 0-2, a narrow final pass came back green (1944) and the evidence slice merged as penumbra#196 (squash f122106dc at 2026-09-28T21:04:31Z, 1946); penumbra#192 closed completed. Decision 1948 answers D7: home frozename/nova, @novaproto/exec-primitives 0.1.0 on public npmjs, exact-pinned in penumbra and llamactl; prepared as frozename/nova#2, not merged, nothing published (1950). Follow-up 1830 stays owed until both consumers install the published package from the registry and L2/L3 are re-run against the registry tarball. Update 2026-10-01 (events 1957-2079): frozename/nova#2 merged (1987) and @novaproto/exec-primitives 0.1.0 was published on public npmjs (2024); penumbra retired its in-tree copy, its test consumer exact-pins 0.1.0 from the registry, and llamactl installs it as an exact-pinned test consumer (decision 2031; llamactl#152); SHAREDLIB-6 L2/L3 were re-run against the registry tarball and verified independently, and follow-up 1830 closed DONE (2074). The llamactl test consumer is not adoption (2075); llamactl adoption is owed as P2.2/llamactl-adoption (llamactl#153).",
       "follow_up_event_id": 1830,
       "dispatch": {
         "handoff_id": "4f22272d-198b-420c-8812-1af0cb0e731b",
@@ -2785,6 +2792,11 @@
         "evidence_tag": "qualification/sharedlib6-2026-09-24",
         "linked_issue_state": "closed_completed",
         "registrar_events": [1944, 1945, 1946]
+      },
+      "follow_up_done": {
+        "follow_up_event_id": 1830,
+        "event_id": 2074,
+        "at": "2026-10-01T03:20:10.410Z"
       }
     },
     {
@@ -2793,9 +2805,11 @@
       "repository": "frozename/llamactl",
       "scope": "Adopt the qualified shared execution library in llamactl after P2.2 was accepted on Path B with qualification pending: back process-supervisor.ts with the packed library at the SpawnFn/SpawnStreamFn level through the operator-recorded home and versioned channel.",
       "dependencies": ["P2.2"],
-      "dispatch_state": "conditional_not_filed",
-      "linked_issue_url": null,
-      "notes": "Conditional: owed only if P2.2 is accepted on Path B qualification-pending and follow-up 1830 later closes DONE. Owes the llamactl adoption that a qualification-pending P2.2 verdict records. Filed just in time under follow-up 1831 once 1830 closes DONE and the operator records the library home and versioned channel; links back to the coordinator. Fence: packages/remote/package.json, bun.lock, packages/remote/src/execution/process-supervisor.ts, packages/remote/test/cli-process-supervisor.test.ts, packages/remote/test/cli-lifecycle-install.test.ts. Gates: SHAREDLIB-6 L2-L4 and L6. P6.1's preflight waits on this slice when it is owed.",
+      "dispatch_state": "filed",
+      "linked_issue_url": "https://github.com/frozename/llamactl/issues/153",
+      "filed_at": "2026-10-01T10:30:57Z",
+      "notes": "Conditional: owed only if P2.2 is accepted on Path B qualification-pending and follow-up 1830 later closes DONE. Owes the llamactl adoption that a qualification-pending P2.2 verdict records. Filed just in time under follow-up 1831 once 1830 closes DONE and the operator records the library home and versioned channel; links back to the coordinator. Fence: packages/remote/package.json, bun.lock, packages/remote/src/execution/process-supervisor.ts, packages/remote/test/cli-process-supervisor.test.ts, packages/remote/test/cli-lifecycle-install.test.ts. Gates: SHAREDLIB-6 L2-L4 and L6. P6.1's preflight waits on this slice when it is owed. Update 2026-10-01 (events 2077-2079): filed just in time under follow-up 1831 as llamactl#153 (2078). Decision 2077 makes this slice the vehicle of #135 Scope 8's Path A adoption of @novaproto/exec-primitives 0.1.0 and supersedes the Path B precondition above for when the slice exists; the scope, condition, fence and gates above stay as published (decision 2031). Owed as follow-up 2079; filing is not dispatch: dispatch needs its own authorization and follows P2.1 (#134).",
+      "follow_up_event_id": 2079,
       "condition": "only if P2.2 is accepted on Path B qualification-pending and follow-up 1830 later closes DONE"
     },
     {
@@ -4229,7 +4243,7 @@
   "tracking": {
     "schema_version": 1,
     "ledger_url": "https://github.com/frozename/llamactl/blob/docs/unified-ai-router-roadmap/docs/unified-ai-router-registrar.md",
-    "snapshot_at": "2026-09-28T23:08:12.587Z",
+    "snapshot_at": "2026-10-01T10:31:24.966Z",
     "repository": "frozename/llamactl",
     "baseline": "7443403912ab3976d18bc288de3009e2c23b7afb",
     "roadmap_url": "https://github.com/frozename/llamactl/issues/127",
@@ -4237,7 +4251,7 @@
       "url": "https://github.com/frozename/llamactl/pull/147",
       "state": "open",
       "merged": false,
-      "observed_head": "1a6406af0df89f24eac686a07ba1f803bacb83a0"
+      "observed_head": "5364e8a64876e65c7269404f4d48215187045629"
     },
     "penumbra": {
       "registrar_id": "2c2a7cbb-048c-45e5-8663-f15187b9e85b",
@@ -4245,10 +4259,10 @@
       "home_project": "llamactl",
       "status": "active",
       "source_doc_path": "docs/unified-ai-router-registrar.md",
-      "last_event_id": 1950,
+      "last_event_id": 2079,
       "rollup": {
         "open_blockers": 0,
-        "open_follow_ups": 28
+        "open_follow_ups": 29
       },
       "phases": [
         {
@@ -4521,7 +4535,7 @@
         "review_verdict": "not_run",
         "test_evidence": [],
         "rollout_status": "not_enabled",
-        "next_action": "Verify accepted dependency commits before any authorized dispatch. The evidence-only slice P2.2/penumbra-qualification was filed (penumbra#192, 1875) and dispatched (handoff 4f22272d, 1876) on 2026-09-25; the coordinator stays blocked on P2.1. Update 2026-09-28 (events 1944-1950): the evidence slice merged as penumbra#196 (f122106dc, 1946) and phase 4 moved pending -> active (1945); follow-up 1830 stays owed until the D7 package (decision 1948; frozename/nova#2 prepared, not published) is installed from the registry in penumbra and llamactl and L2/L3 are re-run against it; the coordinator stays blocked on P2.1."
+        "next_action": "Verify accepted dependency commits before any authorized dispatch. The evidence-only slice P2.2/penumbra-qualification was filed (penumbra#192, 1875) and dispatched (handoff 4f22272d, 1876) on 2026-09-25; the coordinator stays blocked on P2.1. Update 2026-09-28 (events 1944-1950): the evidence slice merged as penumbra#196 (f122106dc, 1946) and phase 4 moved pending -> active (1945); follow-up 1830 stays owed until the D7 package (decision 1948; frozename/nova#2 prepared, not published) is installed from the registry in penumbra and llamactl and L2/L3 are re-run against it; the coordinator stays blocked on P2.1. Update 2026-10-01 (events 1957-2079): follow-up 1830 closed DONE (2074) after 0.1.0 was published (2024) and installed from the registry by test consumers in penumbra and llamactl (llamactl#152, decision 2031); decision 2077 makes P2.2/llamactl-adoption (llamactl#153, filed 2078, owed 2079) the vehicle of Scope 8's Path A adoption, so P2.2's own dispatch leaves packages/remote/package.json, bun.lock and packages/remote/src/execution/process-supervisor.ts to it; the coordinator stays blocked on P2.1."
       },
       {
         "id": "P3.1",
@@ -4922,6 +4936,13 @@
         "kind": "progress",
         "summary": "Docs 1a6406af read back (1878); 1876 rows published_at #127 2026-09-25T10:24:30Z, #135 10:24:26Z. P2.2/penumbra-qualification: rounds 0-2 failed independent verification (1879, 1897, 1905, 1916); final pass green at 001e12fc (1944); merged as penumbra#196, squash f122106dc at 2026-09-28T21:04:31Z, penumbra#192 closed (1946); dispatch_state merged; phase 4 pending -> active (1945). D7 ruled in 1948: home frozename/nova, @novaproto/exec-primitives 0.1.0 on public npmjs, exact-pinned; nova#2 a7bbf501 open, unpublished (1950). 28 follow-ups owed (1830 until registry install, L2/L3 re-run); no open blockers; wave 1 not authorized.",
         "registrar_event_range": [1877, 1950]
+      },
+      {
+        "id": "LEDGER-024",
+        "at": "2026-10-01T10:31:24.966Z",
+        "kind": "progress",
+        "summary": "Docs 5364e8a6 read back (1957); 1950 rows published_at #127 2026-09-29T03:06:36Z, #135 03:06:33Z. nova#2 merged 47473d3a (1987); @novaproto/exec-primitives 0.1.0 published on public npmjs (2024). Decision 2031: llamactl first installs it as an exact-pinned test consumer. Penumbra in-tree copy retired 5583740f (2040), registry pin 8fe20f97 (2065); llamactl#152 merged 05d322c8 (2069; not adoption, 2075); verified independently (2073); follow-up 1830 DONE (2074). Decision 2077: P2.2/llamactl-adoption filed as llamactl#153 (2078; dispatch_state filed), owed 2079; 2070 owed. 29 follow-ups owed; no open blockers; wave 1 not authorized.",
+        "registrar_event_range": [1957, 2079]
       }
     ]
   },
@@ -5435,7 +5456,7 @@
         "D4_p61_option_b": "P6.1 is worker-side ephemeral ACP only (worker RPC plus local compatibility). Public exposure of qualified CLI/ACP profiles is a Sirius slice gated on P2.2 (CLI) or P6.1 (ACP) acceptance for that profile, P1.3, and the P4.2 fail-closed exposure gate.",
         "D5_execution_event_definer": "ExecutionEventV1 has exactly one definer: the Nova contracts slice of P4.1. P0.2 (in flight) and P1.3 must not define it; P1.3 uses P0.2 contracts until P4.1 lands. Update 2026-09-24 (events 1861-1867): P0.2 accepted; the in-flight qualifier is the wording of decision 1828 as recorded.",
         "D6_gate_bundles": "INSTALL-6 applies to every rebased open package. SHAREDLIB-6 is mandatory on P2.2 and P6.1 and its single-owner gate (L6) applies to P2.1 and P6.2. EXEC-7 invariants are stated explicitly per package.",
-        "D7_shared_library": "Qualify, do not assume. A Penumbra qualification slice (P2.2/penumbra-qualification) produces evidence for SHAREDLIB-6 on a packed candidate with no llamactl adoption. Adoption by llamactl happens only after every SHAREDLIB gate passes. Library home and distribution channel are chosen by the operator from the qualification evidence before adoption; file:, workspace:, git-sibling and private-src deep imports are never acceptable channels. If extraction proves too coupled: keep the existing narrow llamactl CLI path (P2.1/P2.2 proceed on it) and defer expanded ACP (P6.1 stays deferred) rather than reimplement a full ACP stack or depend on the full Penumbra suite. Update 2026-09-28 (decision 1948): home frozename/nova; @novaproto/exec-primitives 0.1.0 on public npmjs, exact-pinned in penumbra and llamactl; not yet published.",
+        "D7_shared_library": "Qualify, do not assume. A Penumbra qualification slice (P2.2/penumbra-qualification) produces evidence for SHAREDLIB-6 on a packed candidate with no llamactl adoption. Adoption by llamactl happens only after every SHAREDLIB gate passes. Library home and distribution channel are chosen by the operator from the qualification evidence before adoption; file:, workspace:, git-sibling and private-src deep imports are never acceptable channels. If extraction proves too coupled: keep the existing narrow llamactl CLI path (P2.1/P2.2 proceed on it) and defer expanded ACP (P6.1 stays deferred) rather than reimplement a full ACP stack or depend on the full Penumbra suite. Update 2026-09-28 (decision 1948): home frozename/nova; @novaproto/exec-primitives 0.1.0 on public npmjs, exact-pinned in penumbra and llamactl; not yet published. Update 2026-10-01: 0.1.0 published on public npmjs (2024); installed from the registry by test consumers in penumbra and llamactl (decision 2031); follow-up 1830 DONE (2074); llamactl adoption owed (llamactl#153).",
         "D8_optional_delegation": "Full Penumbra delegation (run/profile descriptors, provider-penumbra) stays optional and unfiled until a concrete harness workload exists; it is never a prerequisite of R0-P6.2 and never on the default infrastructure path.",
         "D9_payload_status": "Fully rebased now to fleet version 2: P2.1, P2.2, P4.1, P6.1, P6.2 (reviewed_base = llamactl main c2a6a83c; dispatch preflight must re-verify fences on the post-P0.2 main and pin Nova to the merged nova#1 commit). All other open packages P1.1-P1.3, P3.1-P3.3, P4.2, P4.3, P5.1-P5.3: owners, slices, dependencies and gates rebased at the ownership level; their task_file payloads are historical and fleet.dispatch_state becomes 'payload_rebase_required' (hard stop) until rebased on the owning repository's base immediately before dispatch. P0.2 fleet fields unchanged (annotated with event 1791). P0.1 becomes completed_do_not_dispatch. R0 unchanged.",
         "D10_issue_bodies": "Append-only history. Add a top section '## Current rebased contract — 2026-09-24' that states it supersedes conflicting text below. Mark each '## Penumbra harness refinement — 2026-09-24' (event 1816) section superseded in place with a blockquote directly under its heading. Fix the 'caveat1820' typo to 'caveat 1820'. Update 'Depends on' lines in place, keeping the previous value in parentheses. Replace stale dispatch-status snapshot lines. Retitle #139 and #140 only; IDs preserved in titles.",
@@ -5574,7 +5595,7 @@
       "summary": "Decision 1828, the 24-edge DAG (dag-next.json; verify-manifest equals_dag_next true today), the active P0.2 fence (13 paths incl. packages/remote/src/index.ts and packages/remote/package.json; its intersection with every DEP write_fence path is empty, enforced by a transform guard) and the fleet v2 payloads are preserved. The ten DEP slices reference only their coordinator's existing dependencies (P4.2: P1.3+P4.1; P4.1: P0.2; P5.3: P5.2; P4.3: P3.3+P4.1), never the parent and never a DEP-to-DEP edge (DEP ordering lives in fleet.serialize_after and the existing `requires` note key), so no dependency edge, coordinator issue or active fence changes. deployment_extension passes through byte-identical (transform guard :649 plus verify-manifest's sorted and text-region compares); DEP information lives only in slices[] (36 -> 46), a new boundary_assessment.deployment_incorporation summary, tracking (snapshot at the closing event 1858, observed_head a39a0916, LEDGER-019 covering 1844-1853 (this registrar's events 1844-1850 and 1853) and LEDGER-020 covering 1856-1858) and the new amendment rows on #139, #140, #141, #143 and #144 while every 1828 row is copied verbatim from 332ec2f3. The single fence overlap with published v2 work is packages/remote/src/server/serve.ts (P4.1/llamactl vs P4.1/DEP2-llamactl), declared and serialized; DEP2 reaches control.ts through the already exported startAgentServer/StartAgentOptions (packages/remote/src/index.ts:157) and the existing `llamactl controller serve` command with a --role flag, so no P0.2-fence path and no new CLI command. Fence bases: llamactl c2a6a83c (main HEAD, verified), sirius-gateway 42f3ca8 (HEAD, clean; supersedes the 1828 pin per caveat 1850; six ../penumbra workspaces made optional by DEP1-sirius-gateway), embersynth c50706f (HEAD; three untracked container drafts and an uncommitted README edit excluded and never read; workers start from a clean isolated worktree), nova 71fe71dbf72fe99f4e53e68b5be9b3d420c446ad (pin only; no DEP slice touches nova; channel 1832 stays owed, no vendored artifact anywhere). Authority: 1841(c) pre-approves the documentation/issue/manifest/ledger synchronization with the same guards; no image build, publication, deployment, enablement, merge, or touch of the Embersynth drafts is authorized or planned. Kit baseline before changes (reproduced by the judges): transform fixpoint on 332ec2f3 (cmp exit 0, 36 slices), verify-manifest 0 problems, validate-task-files 18/0, docs-wt clean at 332ec2f3, incorporation decision event 1853 (2026-09-24T20:16:34.159Z), 1838 referenced by 1840 and 1850 but closed by none. Published and read back after that baseline: docs commit a39a0916 (1856) and the coordinator sections on #139, #140, #141, #143 and #144 with exact readback hashes equal to the amendment rows (1857); follow-up 1838 closed DONE in 1858, leaving 29 follow-ups owed. Update 2026-09-24 (events 1861-1867): P0.2 was accepted and #130 closed, so the P0.2 fence named above is no longer active and the disjointness guard is kept as a historical invariant; the fence bases above are design-time bases recorded at decision 1853 and are not re-pinned (see fence_bases_note); the P0.2 merges were separately authorized and are recorded under tracking, and the no-merge statement above describes the 1841(c) authority of this incorporation only."
     },
     "shared_library_qualification": {
-      "status": "proposed; extracted in penumbra and merged (penumbra#196, f122106dc, 2026-09-28); qualification evidence merged; home and channel ruled in 1948 (frozename/nova, @novaproto/exec-primitives 0.1.0 on public npmjs), not yet published; follow-up 1830 owed",
+      "status": "proposed; extracted in penumbra (penumbra#196, f122106dc, 2026-09-28) and moved to frozename/nova (nova#2, 2026-09-29); @novaproto/exec-primitives 0.1.0 published on public npmjs (2026-09-30); installed from the registry by test consumers in penumbra and llamactl (decision 2031); follow-up 1830 DONE (2074); not adopted: llamactl adoption owed (llamactl#153)",
       "follow_up_event_id": 1830,
       "slice_id": "P2.2/penumbra-qualification",
       "reviewed_commit": "c264644bc2b4f1e1429e845208fd6ca7f6426d62",
@@ -5628,7 +5649,24 @@
           "state": "open",
           "registrar_event_id": 1950
         },
-        "published": false
+        "merged": {
+          "pull_request_url": "https://github.com/frozename/nova/pull/2",
+          "head": "727ee283eb346e527a2a5d9f4ded356ee6237012",
+          "merge_sha": "47473d3a8928a1388a067b87c827551564fc2298",
+          "merged_at": "2026-09-29T20:17:05Z",
+          "registrar_event_id": 1987
+        },
+        "published": {
+          "version": "0.1.0",
+          "registry_time": "2026-09-30T09:12:14.666Z",
+          "dist_shasum": "390a2ce6a57ea28f9eafdee0f886df96d537815f",
+          "tarball_sha256": "a3d6658b4d4e62479d2273d90fba8ccd3e09a51bd47d15acc79e9cb3d0e16881",
+          "release_tag": "exec-primitives-v0.1.0",
+          "release_commit": "e1a65bd77710afb4b3cf67909bd1984bf80837b1",
+          "provenance": false,
+          "publish": "one-time operator publish (decision 1960); the registry tarball is byte-identical to the release workflow's CI build of the tag (2024)",
+          "registrar_event_id": 2024
+        }
       },
       "forbidden_channels": [
         "file:",
