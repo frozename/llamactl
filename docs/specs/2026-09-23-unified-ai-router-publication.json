@@ -185,8 +185,15 @@
         "registrar_event_id": 2079,
         "follow_up_event_id": 1830,
         "marker": "p22-1830-done-2026-10-01",
-        "published_at": null,
+        "published_at": "2026-10-02T12:22:54Z",
         "body_sha256": "41842bab527abd79c9f4fb964868830a204be6b8369b0f0155329b6e4053e02e"
+      },
+      {
+        "registrar_event_id": 2114,
+        "follow_up_event_id": 1830,
+        "marker": "p22-path-ruled-2026-10-05",
+        "published_at": null,
+        "body_sha256": "43ee11fb2f33a4fa4f677625c484737cf41ab79f13c308fb1ab3d663babb837a"
       }
     ]
   },
@@ -1184,7 +1191,7 @@
           "bun test (cwd: verified sirius-gateway worktree)",
           "bun test (cwd: verified embersynth worktree)",
           "INSTALL-6 I1-I6 evidence",
-          "SHAREDLIB-6 evidence for the recorded path (Path A only after follow-up 1830 closes DONE with L1-L6 evidence and an operator-recorded home and channel, adding Penumbra package gates, agentchat parity evidence and a packed-tarball install check; Path B, D7 fallback when 1830 is dropped or recorded too coupled; Path B, qualification pending only with recorded operator authorization, labelled 'qualification pending' with P2.2/llamactl-adoption owed)",
+          "SHAREDLIB-6 evidence for the recorded path (Path A only after follow-up 1830 closes DONE with L1-L6 evidence and an operator-recorded home and channel, adding Penumbra package gates, agentchat parity evidence and a packed-tarball install check; Path B, D7 fallback when 1830 is dropped or recorded too coupled; Path B, qualification pending only with recorded operator authorization, labelled 'qualification pending' with P2.2/llamactl-adoption owed) Update 2026-10-05 (decision 2114): for P2.2 the recorded path is the operator-authorized label 'Path B, adoption owed to P2.2/llamactl-adoption (R9 ruling, 2026-10-05)', evidenced by #135's Path B assertions (no library dependency, bun.lock unchanged); it does not satisfy #145's Path A gate.",
           "EXEC-7 X2-X5 evidence with X1 and X6 carrier non-regression and X7 non-regression",
           "independent adversarial review at the final SHA by a different seat than the implementer"
         ],
@@ -1195,7 +1202,7 @@
           "Record the merged P2.1 CliBindingSchema fields, typed codes (overflow, timeout, nonzero exit, rejections), stderr bound and enablement controls; reuse them, and record any rename as a scope change.",
           "Record where the accepted P4.1 cli executor seam decides acceptance and confirm admission can run before P4.1 returns accepted without editing a P4.1-owned file; otherwise stop with a blocker for the P4.1 owner.",
           "Pin Nova to the nova main commit containing merged nova#1 (contracts 0.2.0; reviewed nova main 8a22acf still has 0.1.0); run bun install in each consumer after any Nova change.",
-          "Record the shared-library path from the latest state of follow-up 1830: Path A only if closed DONE with L1-L6 evidence and the operator recorded home and channel (then add packages/remote/package.json and bun.lock by recorded scope change); Path B, D7 fallback if 1830 is closed dropped or recorded too coupled (P6.1 stays deferred); if 1830 is open, stop and report dispatch blocked on qualification unless the operator has recorded authorization to proceed on Path B, qualification pending (then the acceptance record labels the verdict 'qualification pending' and llamactl adoption stays owed as slice P2.2/llamactl-adoption, recorded in manifest slices[] and filed just in time per follow-up 1831, fence packages/remote/package.json, bun.lock, packages/remote/src/execution/process-supervisor.ts, packages/remote/test/cli-process-supervisor.test.ts and packages/remote/test/cli-lifecycle-install.test.ts, gates SHAREDLIB L2-L4 and L6); any other state is a stop.",
+          "Record the shared-library path from the latest state of follow-up 1830: Path A only if closed DONE with L1-L6 evidence and the operator recorded home and channel (then add packages/remote/package.json and bun.lock by recorded scope change); Path B, D7 fallback if 1830 is closed dropped or recorded too coupled (P6.1 stays deferred); if 1830 is open, stop and report dispatch blocked on qualification unless the operator has recorded authorization to proceed on Path B, qualification pending (then the acceptance record labels the verdict 'qualification pending' and llamactl adoption stays owed as slice P2.2/llamactl-adoption, recorded in manifest slices[] and filed just in time per follow-up 1831, fence packages/remote/package.json, bun.lock, packages/remote/src/execution/process-supervisor.ts, packages/remote/test/cli-process-supervisor.test.ts and packages/remote/test/cli-lifecycle-install.test.ts, gates SHAREDLIB L2-L4 and L6); any other state is a stop. Update 2026-10-05 (decision 2114): for P2.2 the operator-authorized verdict label 'Path B, adoption owed to P2.2/llamactl-adoption (R9 ruling, 2026-10-05)' replaces the Path A branch above; P2.2 adds neither packages/remote/package.json nor bun.lock, #135's Path B assertions apply (no library dependency, bun.lock unchanged), and the label does not satisfy #145's Path A gate; P2.2/llamactl-adoption (llamactl#153) then backs process-supervisor.ts with @novaproto/exec-primitives 0.1.0.",
           "Record the actual cancellation behavior on the base (grace constant or none) before changes; no library default may set llamactl's grace or watchdog.",
           "Capture the baseline of every required gate (pass/fail/skip counts and failing test names) before implementation.",
           "Record the installation baseline on the dispatch base per follow-up 1832: required commands and the existing setup entry point, services, config fields and credential entries, the grandfathered ../nova file: dependency, and the D12 duplication baseline (llamactl cli[] vs Penumbra agents.yaml). I1 and I6 diff against this record.",
@@ -2808,7 +2815,7 @@
       "dispatch_state": "filed",
       "linked_issue_url": "https://github.com/frozename/llamactl/issues/153",
       "filed_at": "2026-10-01T10:30:57Z",
-      "notes": "Conditional: owed only if P2.2 is accepted on Path B qualification-pending and follow-up 1830 later closes DONE. Owes the llamactl adoption that a qualification-pending P2.2 verdict records. Filed just in time under follow-up 1831 once 1830 closes DONE and the operator records the library home and versioned channel; links back to the coordinator. Fence: packages/remote/package.json, bun.lock, packages/remote/src/execution/process-supervisor.ts, packages/remote/test/cli-process-supervisor.test.ts, packages/remote/test/cli-lifecycle-install.test.ts. Gates: SHAREDLIB-6 L2-L4 and L6. P6.1's preflight waits on this slice when it is owed. Update 2026-10-01 (events 2077-2079): filed just in time under follow-up 1831 as llamactl#153 (2078). Decision 2077 makes this slice the vehicle of #135 Scope 8's Path A adoption of @novaproto/exec-primitives 0.1.0 and supersedes the Path B precondition above for when the slice exists; the scope, condition, fence and gates above stay as published (decision 2031). Owed as follow-up 2079; filing is not dispatch: dispatch needs its own authorization and follows P2.1 (#134).",
+      "notes": "Conditional: owed only if P2.2 is accepted on Path B qualification-pending and follow-up 1830 later closes DONE. Owes the llamactl adoption that a qualification-pending P2.2 verdict records. Filed just in time under follow-up 1831 once 1830 closes DONE and the operator records the library home and versioned channel; links back to the coordinator. Fence: packages/remote/package.json, bun.lock, packages/remote/src/execution/process-supervisor.ts, packages/remote/test/cli-process-supervisor.test.ts, packages/remote/test/cli-lifecycle-install.test.ts. Gates: SHAREDLIB-6 L2-L4 and L6. P6.1's preflight waits on this slice when it is owed. Update 2026-10-01 (events 2077-2079): filed just in time under follow-up 1831 as llamactl#153 (2078). Decision 2077 makes this slice the vehicle of #135 Scope 8's Path A adoption of @novaproto/exec-primitives 0.1.0 and supersedes the Path B precondition above for when the slice exists; the scope, condition, fence and gates above stay as published (decision 2031). Owed as follow-up 2079; filing is not dispatch: dispatch needs its own authorization and follows P2.1 (#134). Update 2026-10-05 (decision 2114): P2.2 creates process-supervisor.ts natively; this slice then backs it with @novaproto/exec-primitives 0.1.0 at the SpawnFn/SpawnStreamFn level, owns packages/remote/package.json and bun.lock, extends both supervisor tests and starts only once process-supervisor.ts is on main. Its dependency stays P2.2, which implies P2.1: the order is P2.1 -> P2.2 -> P2.2/llamactl-adoption, so 'follows P2.1 (#134)' above is a lower bound.",
       "follow_up_event_id": 2079,
       "condition": "only if P2.2 is accepted on Path B qualification-pending and follow-up 1830 later closes DONE"
     },
@@ -4243,7 +4250,7 @@
   "tracking": {
     "schema_version": 1,
     "ledger_url": "https://github.com/frozename/llamactl/blob/docs/unified-ai-router-roadmap/docs/unified-ai-router-registrar.md",
-    "snapshot_at": "2026-10-01T10:31:24.966Z",
+    "snapshot_at": "2026-10-06T00:04:29.953Z",
     "repository": "frozename/llamactl",
     "baseline": "7443403912ab3976d18bc288de3009e2c23b7afb",
     "roadmap_url": "https://github.com/frozename/llamactl/issues/127",
@@ -4251,7 +4258,7 @@
       "url": "https://github.com/frozename/llamactl/pull/147",
       "state": "open",
       "merged": false,
-      "observed_head": "5364e8a64876e65c7269404f4d48215187045629"
+      "observed_head": "8f89b20eee137dc6078b1e6965337c37df7fce50"
     },
     "penumbra": {
       "registrar_id": "2c2a7cbb-048c-45e5-8663-f15187b9e85b",
@@ -4259,7 +4266,7 @@
       "home_project": "llamactl",
       "status": "active",
       "source_doc_path": "docs/unified-ai-router-registrar.md",
-      "last_event_id": 2079,
+      "last_event_id": 2114,
       "rollup": {
         "open_blockers": 0,
         "open_follow_ups": 29
@@ -4535,7 +4542,7 @@
         "review_verdict": "not_run",
         "test_evidence": [],
         "rollout_status": "not_enabled",
-        "next_action": "Verify accepted dependency commits before any authorized dispatch. The evidence-only slice P2.2/penumbra-qualification was filed (penumbra#192, 1875) and dispatched (handoff 4f22272d, 1876) on 2026-09-25; the coordinator stays blocked on P2.1. Update 2026-09-28 (events 1944-1950): the evidence slice merged as penumbra#196 (f122106dc, 1946) and phase 4 moved pending -> active (1945); follow-up 1830 stays owed until the D7 package (decision 1948; frozename/nova#2 prepared, not published) is installed from the registry in penumbra and llamactl and L2/L3 are re-run against it; the coordinator stays blocked on P2.1. Update 2026-10-01 (events 1957-2079): follow-up 1830 closed DONE (2074) after 0.1.0 was published (2024) and installed from the registry by test consumers in penumbra and llamactl (llamactl#152, decision 2031); decision 2077 makes P2.2/llamactl-adoption (llamactl#153, filed 2078, owed 2079) the vehicle of Scope 8's Path A adoption, so P2.2's own dispatch leaves packages/remote/package.json, bun.lock and packages/remote/src/execution/process-supervisor.ts to it; the coordinator stays blocked on P2.1."
+        "next_action": "Verify accepted dependency commits before any authorized dispatch. The evidence-only slice P2.2/penumbra-qualification was filed (penumbra#192, 1875) and dispatched (handoff 4f22272d, 1876) on 2026-09-25; the coordinator stays blocked on P2.1. Update 2026-09-28 (events 1944-1950): the evidence slice merged as penumbra#196 (f122106dc, 1946) and phase 4 moved pending -> active (1945); follow-up 1830 stays owed until the D7 package (decision 1948; frozename/nova#2 prepared, not published) is installed from the registry in penumbra and llamactl and L2/L3 are re-run against it; the coordinator stays blocked on P2.1. Update 2026-10-01 (events 1957-2079): follow-up 1830 closed DONE (2074) after 0.1.0 was published (2024) and installed from the registry by test consumers in penumbra and llamactl (llamactl#152, decision 2031); decision 2077 makes P2.2/llamactl-adoption (llamactl#153, filed 2078, owed 2079) the vehicle of Scope 8's Path A adoption, so P2.2's own dispatch leaves packages/remote/package.json, bun.lock and packages/remote/src/execution/process-supervisor.ts to it; the coordinator stays blocked on P2.1. Update 2026-10-05 (events 2106-2114): decision 2114 reads 2077's carve-out as the Path A edits only: P2.2 creates packages/remote/src/execution/process-supervisor.ts and both supervisor tests natively, with no library import, never edits packages/remote/package.json or bun.lock, and records its SHAREDLIB-6 verdict as 'Path B, adoption owed to P2.2/llamactl-adoption (R9 ruling, 2026-10-05)', which does not satisfy #145's Path A gate; llamactl#153 then backs the supervisor with @novaproto/exec-primitives 0.1.0 and owns package.json and bun.lock (order P2.1 -> P2.2 -> P2.2/llamactl-adoption); the coordinator stays blocked on P2.1."
       },
       {
         "id": "P3.1",
@@ -4943,6 +4950,13 @@
         "kind": "progress",
         "summary": "Docs 5364e8a6 read back (1957); 1950 rows published_at #127 2026-09-29T03:06:36Z, #135 03:06:33Z. nova#2 merged 47473d3a (1987); @novaproto/exec-primitives 0.1.0 published on public npmjs (2024). Decision 2031: llamactl first installs it as an exact-pinned test consumer. Penumbra in-tree copy retired 5583740f (2040), registry pin 8fe20f97 (2065); llamactl#152 merged 05d322c8 (2069; not adoption, 2075); verified independently (2073); follow-up 1830 DONE (2074). Decision 2077: P2.2/llamactl-adoption filed as llamactl#153 (2078; dispatch_state filed), owed 2079; 2070 owed. 29 follow-ups owed; no open blockers; wave 1 not authorized.",
         "registrar_event_range": [1957, 2079]
+      },
+      {
+        "id": "LEDGER-025",
+        "at": "2026-10-06T00:04:29.953Z",
+        "kind": "progress",
+        "summary": "Docs 8f89b20e read back (2108); 2079 row published_at #127 2026-10-02T12:22:54Z. Caveat 2106 corrects 2075: the test consumer overlaps only the P2.1 and P2.2 write fences. Decision 2114: P2.2 creates process-supervisor.ts and both tests natively, never edits packages/remote/package.json or bun.lock, and labels its SHAREDLIB-6 verdict 'Path B, adoption owed to P2.2/llamactl-adoption (R9 ruling, 2026-10-05)', which does not satisfy #145's Path A gate; llamactl#153 then backs the supervisor with 0.1.0, owns both files and keeps its P2.2 dependency (P2.1 -> P2.2 -> #153). 29 follow-ups owed; no open blockers; wave 1 not authorized.",
+        "registrar_event_range": [2106, 2114]
       }
     ]
   },
@@ -5618,6 +5632,7 @@
       "blockers": {
         "source": "read-only inspection of penumbra c264644 (inventory wf_56c8591d-8c6); closure-walker counts not re-run by the maestro",
         "unresolved": ["B1", "B3", "B4", "B6", "B7", "B8", "B10"],
+        "unresolved_note": "Update 2026-10-05: the unresolved list above is the original inspection's, kept as history; the qualification evidence of record (penumbra#196) marks B1, B3, B4, B6, B7 and B10 resolved in the library and B8 open (its rule requires test tags the tests do not carry; transport limits unmeasured).",
         "B1": "distribution: @penumbra/agentchat and deps are private 0.0.0, workspace:*, raw .ts, primitives not exported",
         "B3": "credential fail-open: cli-spawn buildMergedEnv and stdio-acp-server default to the full process.env (llamactl mergeEnv likewise)",
         "B4": "branded env knobs PENUMBRA_CANCEL_GRACE_S, PENUMBRA_DISPATCH_TIMEOUT_S, PENUMBRA_WARM_PREWARM_CAP and a module-global pools Map",
