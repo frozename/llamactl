@@ -193,7 +193,7 @@
         "follow_up_event_id": 1830,
         "marker": "p22-path-ruled-2026-10-05",
         "published_at": null,
-        "body_sha256": "43ee11fb2f33a4fa4f677625c484737cf41ab79f13c308fb1ab3d663babb837a"
+        "body_sha256": "926e5be0fe873db9ee2428be4e843afa55e88fe511ff0d318268f95c0df6dfed"
       }
     ]
   },
@@ -1191,7 +1191,7 @@
           "bun test (cwd: verified sirius-gateway worktree)",
           "bun test (cwd: verified embersynth worktree)",
           "INSTALL-6 I1-I6 evidence",
-          "SHAREDLIB-6 evidence for the recorded path (Path A only after follow-up 1830 closes DONE with L1-L6 evidence and an operator-recorded home and channel, adding Penumbra package gates, agentchat parity evidence and a packed-tarball install check; Path B, D7 fallback when 1830 is dropped or recorded too coupled; Path B, qualification pending only with recorded operator authorization, labelled 'qualification pending' with P2.2/llamactl-adoption owed) Update 2026-10-05 (decision 2114): for P2.2 the recorded path is the operator-authorized label 'Path B, adoption owed to P2.2/llamactl-adoption (R9 ruling, 2026-10-05)', evidenced by #135's Path B assertions (no library dependency, bun.lock unchanged); it does not satisfy #145's Path A gate.",
+          "SHAREDLIB-6 evidence for the recorded path (Path A only after follow-up 1830 closes DONE with L1-L6 evidence and an operator-recorded home and channel, adding Penumbra package gates, agentchat parity evidence and a packed-tarball install check; Path B, D7 fallback when 1830 is dropped or recorded too coupled; Path B, qualification pending only with recorded operator authorization, labelled 'qualification pending' with P2.2/llamactl-adoption owed). Update 2026-10-05 (decision 2114): for P2.2 the recorded path is the operator-authorized label 'Path B, adoption owed to P2.2/llamactl-adoption (R9 ruling, 2026-10-05)', under which #135's Path B assertions apply (no library dependency, bun.lock unchanged); it does not satisfy #145's Path A gate.",
           "EXEC-7 X2-X5 evidence with X1 and X6 carrier non-regression and X7 non-regression",
           "independent adversarial review at the final SHA by a different seat than the implementer"
         ],
