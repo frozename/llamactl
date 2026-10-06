@@ -37,14 +37,26 @@ describe("verifyRecordedPid", () => {
     expect(verdict).toBe("dead");
   });
 
-  test("dead when the liveness probe throws EPERM", () => {
+  test("reused when the liveness probe throws EPERM", () => {
+    // EPERM means the pid exists but belongs to another user — it cannot be a
+    // process we spawned. That is "not ours" (reused), never "dead" evidence:
+    // the record may be reaped, but the pid is never signalled.
     const err = Object.assign(new Error("not permitted"), { code: "EPERM" });
     const verdict = verifyRecordedPid(4242, Date.now(), {
       probe: () => {
         throw err;
       },
     });
-    expect(verdict).toBe("dead");
+    expect(verdict).toBe("reused");
+  });
+
+  test("unknown when the liveness probe fails for an unrecognized reason", () => {
+    const verdict = verifyRecordedPid(4242, Date.now(), {
+      probe: () => {
+        throw new Error("transient probe failure");
+      },
+    });
+    expect(verdict).toBe("unknown");
   });
 
   test("alive when the process started no later than record + slack", () => {
@@ -147,6 +159,77 @@ describe("isRecordedPidAlive / isRecordedPidGone", () => {
     expect(isRecordedPidGone("reused")).toBe(true);
     expect(isRecordedPidGone("alive")).toBe(false);
     expect(isRecordedPidGone("unknown")).toBe(false);
+  });
+});
+
+describe("command-line corroboration", () => {
+  const record = 1_000_000;
+  const liveDeps = { probe: noopProbe, processStartMs: (): number => record };
+
+  test("reused when argv0's basename is not the expected binary", () => {
+    // A fresh record defeats the start-time check; the command line is the
+    // only evidence left that this pid is not the recorded server.
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...liveDeps,
+        processCommand: () => "/bin/sleep 60",
+        expectCommand: { binary: "llama-server" },
+      }),
+    ).toBe("reused");
+  });
+
+  test("reused when the binary matches but a required arg is absent", () => {
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...liveDeps,
+        processCommand: () =>
+          "/opt/llama/bin/llama-server -m /models/other/elsewhere.gguf --port 8080",
+        expectCommand: { binary: "llama-server", args: ["probe/model.gguf"] },
+      }),
+    ).toBe("reused");
+  });
+
+  test("required args match absolute path tokens by suffix", () => {
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...liveDeps,
+        processCommand: () =>
+          "/opt/llama/bin/llama-server -m /models/probe/model.gguf --port 8080",
+        expectCommand: { binary: "llama-server", args: ["probe/model.gguf"] },
+      }),
+    ).toBe("alive");
+  });
+
+  test("a bare executable-name argv0 matches a bare binary expectation", () => {
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...liveDeps,
+        processCommand: () => "rpc-server --port 19050",
+        expectCommand: { binary: "rpc-server" },
+      }),
+    ).toBe("alive");
+  });
+
+  test("args do not substring-match inside a longer token", () => {
+    // "a.gguf" must not match the token "xa.gguf" — containment is checked at
+    // token boundaries (exact token or path-suffix), not raw substring.
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...liveDeps,
+        processCommand: () => "/opt/bin/llama-server -m /models/xa.gguf",
+        expectCommand: { binary: "llama-server", args: ["a.gguf"] },
+      }),
+    ).toBe("reused");
+  });
+
+  test("unknown when the command line cannot be read", () => {
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...liveDeps,
+        processCommand: () => null,
+        expectCommand: { binary: "llama-server" },
+      }),
+    ).toBe("unknown");
   });
 });
 

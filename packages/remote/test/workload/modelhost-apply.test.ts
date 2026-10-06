@@ -471,6 +471,84 @@ describe("applyManifest — kind dispatch", () => {
     }
   });
 
+  test("applyOneModelHost preserves tracking state when modelHostStop returns ok:false", async () => {
+    // A refused stop (not a transport error — the mutation resolved) means the
+    // remote could not prove the recorded pid's identity. The state sidecar
+    // must survive so a later pass can still find and stop the real process.
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-disable-refused-"));
+    const workloadsDir = join(tmp, "workloads");
+    saveModelHost(makeModelHostManifest("mlx-host-smoke", 4), workloadsDir);
+    const removeSpy = spyOn(modelHostState, "removeModelHostState");
+    const resolvedRuntime = resolveEnv({ LOCAL_AI_RUNTIME_DIR: tmp });
+    modelHostState.writeModelHostState(
+      {
+        kind: "ModelHost",
+        engine: "omlx",
+        pid: 1234,
+        host: "127.0.0.1",
+        port: 8094,
+        modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit"],
+        startedAt: new Date().toISOString(),
+      },
+      { name: "mlx-host-smoke" },
+      resolvedRuntime,
+    );
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
+      },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStop: {
+        mutate: () => Promise.resolve({ ok: false, error: "pid identity unknown" }),
+      },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 1234 }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
+    };
+
+    try {
+      const result = await applyManifest({
+        manifest: {
+          ...makeModelHostManifest("mlx-host-smoke", 4),
+          spec: {
+            ...makeModelHostManifest("mlx-host-smoke", 4).spec,
+            enabled: false,
+          },
+        },
+        workloadsDir,
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain("modelHostStop");
+      expect(removeSpy).not.toHaveBeenCalled();
+      expect(
+        readModelHostState({ name: "mlx-host-smoke" }, resolvedRuntime),
+      ).not.toBeNull();
+    } finally {
+      removeSpy.mockRestore();
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("applyOneModelHost writes a capitalized Stopped phase when disabling", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-disable-phase-"));
     const workloadsDir = join(tmp, "workloads");

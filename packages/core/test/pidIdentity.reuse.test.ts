@@ -133,4 +133,14 @@ describe("recycled recorded pid", () => {
     const entry = listLocalWorkloads(resolved).find((w) => w.name === KEY.name);
     expect(entry?.alive).toBe(true);
   });
+
+  test("stopServer never signals a fresh-record pid that is not llama-server", async () => {
+    // A record younger than the process defeats the start-time check — only
+    // command-line corroboration can catch an impostor recycling in place.
+    const pidPath = seedServer(false);
+    const res = await stopServer({ key: KEY, resolved, graceSeconds: 1 });
+    expect(alive(impostorPid)).toBe(true);
+    expect(res.killed).toBe(false);
+    expect(existsSync(pidPath)).toBe(false);
+  });
 });

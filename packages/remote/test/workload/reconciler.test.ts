@@ -461,4 +461,83 @@ describe("reconcileOnce", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("preserves a disabled ModelHost record when identity is unknown", async () => {
+    // identityUnknown means the agent could not prove the recorded pid is
+    // dead or foreign — the record may still be ours, so the sweep path must
+    // keep it and surface the uncertainty instead of reporting a clean pass.
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-idunknown-"));
+    const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
+    try {
+      const base = makeHostManifest();
+      saveModelHost({ ...base, spec: { ...base.spec, enabled: false } }, dir);
+      process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
+      seedRunningSidecar(dir, base);
+
+      const result = await reconcileOnce({
+        workloadsDir: dir,
+        getClient: () => ({
+          ...makeClient(),
+          modelHostStatus: {
+            query: (): Promise<{ state: string; identityUnknown: boolean }> =>
+              Promise.resolve({ state: "Stopped", identityUnknown: true }),
+          },
+        }),
+      });
+
+      expect(result.errors).toBe(1);
+      expect(result.reports.find((r) => r.name === "host-a")?.action).toBe("unchanged");
+      expect(
+        readModelHostState({ name: "host-a" }, resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir })),
+      ).not.toBeNull();
+    } finally {
+      if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+      else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not restart an enabled ModelHost while identity is unknown", async () => {
+    // Spawning a replacement over an unverifiable process would double-bind
+    // the endpoint; defer the reconcile and report instead.
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-idunknown-start-"));
+    const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
+    let startCalls = 0;
+    try {
+      saveModelHost(makeHostManifest(), dir);
+      process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
+      seedRunningSidecar(dir, makeHostManifest());
+
+      const result = await reconcileOnce({
+        workloadsDir: dir,
+        getClient: () => ({
+          ...makeClient(),
+          modelHostStatus: {
+            query: (): Promise<{ state: string; identityUnknown: boolean }> =>
+              Promise.resolve({ state: "Stopped", identityUnknown: true }),
+          },
+          modelHostStart: {
+            subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
+              startCalls += 1;
+              queueMicrotask(() => {
+                callbacks.onData({ type: "done", result: { ok: true, pid: 4321 } });
+                callbacks.onComplete();
+              });
+              return { unsubscribe: (): undefined => undefined };
+            },
+          },
+        }),
+      });
+
+      expect(result.errors).toBe(1);
+      expect(startCalls).toBe(0);
+      expect(
+        readModelHostState({ name: "host-a" }, resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir })),
+      ).not.toBeNull();
+    } finally {
+      if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+      else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
