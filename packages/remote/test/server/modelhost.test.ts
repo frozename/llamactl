@@ -355,7 +355,9 @@ describe("server/modelhost", () => {
       argv0: "omlx",
     });
     if (impostor.pid === undefined) throw new Error("impostor spawn failed");
-    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: impostor.pid }) as const);
+    const spawn = mock(
+      (..._args: Parameters<typeof nodeSpawn>) => ({ pid: impostor.pid }) as const,
+    );
     const tornDown: number[] = [];
     try {
       await startModelHost({
@@ -880,7 +882,7 @@ describe("server/modelhost", () => {
     }
   });
 
-  test("statusModelHost surfaces identityUnknown when the record cannot be verified", async () => {
+  test("statusModelHost surfaces identityUnknown when the record cannot be verified", () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-idunknown-"));
     const runtimeDir = join(tmp, "runtime");
     const impostor = spawnImpostor("/bin/sleep", ["60"], {
