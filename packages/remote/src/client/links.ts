@@ -3,9 +3,9 @@ import type { FetchLike } from "eventsource";
 
 import { type ClusterNode, LOCAL_NODE_ENDPOINT } from "@llamactl/core/config/schema";
 import { httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
-import { EventSource } from "eventsource";
 
 import { computeFingerprint, fingerprintsEqual } from "../server/tls.js";
+import { ClosedSafeEventSource } from "./closed-safe-event-source.js";
 
 /**
  * Cycle-free link builder shared by `node-client.ts` (typed AppRouter
@@ -101,7 +101,7 @@ export function buildPinnedLinks(
       // agent's auth middleware requires.
       true: httpSubscriptionLink({
         url: trpcUrl,
-        EventSource,
+        EventSource: ClosedSafeEventSource,
         eventSourceOptions: {
           fetch: ((url, init): ReturnType<FetchLike> => {
             const headers = init.headers;
