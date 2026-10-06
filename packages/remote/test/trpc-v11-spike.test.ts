@@ -175,17 +175,14 @@ describe("tRPC v11 + Bun.serve + fetchRequestHandler", () => {
     });
     const received: { i: number }[] = [];
     await new Promise<void>((resolve, reject) => {
-      const sub = client.counter.subscribe(
+      client.counter.subscribe(
         { count: 5 },
         {
           onData: (evt: { data: { i: number; at: number } }) => {
             received.push({ i: evt.data.i });
-            if (received.length >= 5) {
-              sub.unsubscribe();
-              resolve();
-            }
           },
           onError: reject,
+          onComplete: resolve,
         },
       );
       setTimeout(() => {
@@ -244,18 +241,15 @@ describe("tRPC v11 + Bun.serve + fetchRequestHandler", () => {
     });
     const received: number[] = [];
     await new Promise<void>((resolve, reject) => {
-      const sub = client.legacyObservable.subscribe(
+      client.legacyObservable.subscribe(
         { count: 4 },
         {
           onData: (evt: { i: number } | { data: { i: number } }) => {
             const i = "i" in evt ? evt.i : evt.data.i;
             received.push(i);
-            if (received.length >= 4) {
-              sub.unsubscribe();
-              resolve();
-            }
           },
           onError: reject,
+          onComplete: resolve,
         },
       );
       setTimeout(() => {
