@@ -45,6 +45,7 @@ function makeAbortIgnoringStream(): { fetch: PinnedFetch; push: (chunk: string) 
 async function runLateReturnScenario(
   links: ReturnType<typeof buildPinnedLinks>,
   stream: ReturnType<typeof makeAbortIgnoringStream>,
+  lateChunk = "event: return\ndata: \n\n",
 ): Promise<void> {
   const client = createTRPCClient<Router>({ links });
   let dataCount = 0;
@@ -60,7 +61,7 @@ async function runLateReturnScenario(
     });
   });
   await dataReceived;
-  stream.push("event: return\ndata: \n\n");
+  stream.push(lateChunk);
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(dataCount).toBe(1);
 }
@@ -83,6 +84,16 @@ test("buildPinnedLinks ignores a late return event after unsubscribe", async () 
   await runLateReturnScenario(
     buildPinnedLinks(node, "tok", () => stream.fetch),
     stream,
+  );
+});
+
+test("buildPinnedLinks drops a late chunk carrying data and return after unsubscribe", async () => {
+  const node: ClusterNode = { name: "n", endpoint: "http://127.0.0.1:1" };
+  const stream = makeAbortIgnoringStream();
+  await runLateReturnScenario(
+    buildPinnedLinks(node, "tok", () => stream.fetch),
+    stream,
+    "data: 2\n\nevent: return\ndata: \n\n",
   );
 });
 
