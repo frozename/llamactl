@@ -6,7 +6,10 @@ import type { WorkloadKey } from "./workloadRuntime.js";
 import { formatBenchTimestamp } from "./bench/runner.js";
 import { resolveEnv } from "./env.js";
 import {
+  type CommandExpectation,
+  isProcessAlive,
   isRecordedPidGone,
+  type PidIdentityDeps,
   type PidVerdict,
   signalRecordedPid,
   verifyPidFile,
@@ -134,16 +137,47 @@ function readKeepAlivePidRaw(resolved: ResolvedEnv): number | null {
   }
 }
 
+// The supervisor's argv is `<bin> <entry> keep-alive worker <target>` —
+// argv0 varies (bun vs the packaged binary), so identity is pinned to the
+// argv tokens only the supervisor carries.
+const KEEPALIVE_EXPECTATION: CommandExpectation = {
+  args: ["keep-alive", "worker"],
+};
+
 /**
  * The recorded keep-alive pid plus its identity verdict against the pid file
  * it was read from. `verdict` is null only when there is no recorded pid.
  */
-function keepAlivePidVerdict(resolved: ResolvedEnv): {
+function keepAlivePidVerdict(
+  resolved: ResolvedEnv,
+  deps?: PidIdentityDeps,
+): {
   pid: number | null;
   verdict: PidVerdict | null;
 } {
   const pid = readKeepAlivePidRaw(resolved);
-  return { pid, verdict: pid === null ? null : verifyPidFile(keepAlivePidFile(resolved), pid) };
+  return {
+    pid,
+    verdict:
+      pid === null
+        ? null
+        : verifyPidFile(keepAlivePidFile(resolved), pid, {
+            ...deps,
+            expectCommand: KEEPALIVE_EXPECTATION,
+          }),
+  };
+}
+
+/**
+ * Read the keep-alive record without collapsing identity: callers that gate
+ * on more than "is it alive" (start/stop, duplicate detection) need the
+ * verdict — "unknown" must not be treated as absent.
+ */
+export function readKeepAliveRecord(
+  resolved: ResolvedEnv = resolveEnv(),
+  deps?: PidIdentityDeps,
+): { pid: number | null; verdict: PidVerdict | null } {
+  return keepAlivePidVerdict(resolved, deps);
 }
 
 export function readKeepAlivePid(resolved: ResolvedEnv = resolveEnv()): number | null {
@@ -154,6 +188,8 @@ export function readKeepAlivePid(resolved: ResolvedEnv = resolveEnv()): number |
 export interface KeepAliveStatus {
   running: boolean;
   pid: number | null;
+  /** Identity verdict for the recorded pid — null when no pid is recorded. */
+  verdict: PidVerdict | null;
   state: Partial<StateSnapshot> | null;
 }
 
@@ -171,13 +207,15 @@ export function keepAliveStatus(resolved: ResolvedEnv = resolveEnv()): KeepAlive
     }
   }
   const live = verdict === "alive" ? pid : null;
-  return { running: live !== null, pid: live, state };
+  return { running: live !== null, pid: live, verdict, state };
 }
 
 export interface StopKeepAliveOptions {
   key: WorkloadKey;
   resolved?: ResolvedEnv;
   graceSeconds?: number;
+  /** Identity resolver seams for tests; production uses the defaults. */
+  identity?: PidIdentityDeps;
 }
 
 export interface StopKeepAliveResult {
@@ -197,7 +235,11 @@ export async function stopKeepAlive(opts: StopKeepAliveOptions): Promise<StopKee
   const key = opts.key;
   const grace = Math.max(1, opts.graceSeconds ?? 10);
   const recordPath = keepAlivePidFile(resolved);
-  const { pid, verdict } = keepAlivePidVerdict(resolved);
+  const identity: PidIdentityDeps = {
+    ...opts.identity,
+    expectCommand: KEEPALIVE_EXPECTATION,
+  };
+  const { pid, verdict } = keepAlivePidVerdict(resolved, opts.identity);
   // Identity could not be established: signal nothing, skip the stop file and
   // the server stop, and keep the tracking files for a later attempt.
   if (verdict === "unknown") return { stopped: false, pid, killed: false };
@@ -220,13 +262,13 @@ export async function stopKeepAlive(opts: StopKeepAliveOptions): Promise<StopKee
   writeFileSync(keepAliveStopFile(resolved), "");
 
   let waited = 0;
-  while (waited < grace && verifyPidFile(recordPath, pid) === "alive") {
+  while (waited < grace && isProcessAlive(pid)) {
     await new Promise((r) => setTimeout(r, 1000));
     waited += 1;
   }
-  const lastVerdict = verifyPidFile(recordPath, pid);
+  const lastVerdict = verifyPidFile(recordPath, pid, identity);
   if (lastVerdict === "unknown") return { stopped: false, pid, killed: false };
-  const killed = signalRecordedPid(recordPath, pid, "SIGTERM");
+  const killed = signalRecordedPid(recordPath, pid, "SIGTERM", identity);
   await stopServer({ key, resolved });
   try {
     unlinkSync(keepAlivePidFile(resolved));

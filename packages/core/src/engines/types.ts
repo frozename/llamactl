@@ -1,3 +1,4 @@
+import type { SignalIdentity } from "../pidIdentity.js";
 import type { ResolvedEnv } from "../types.js";
 
 export type EngineName = "llamacpp" | "omlx";
@@ -58,5 +59,10 @@ export interface EngineAdapter {
     endpoint: { host: string; port: number },
     timeoutMs: number,
   ): Promise<{ ready: boolean; modelIds: string[] }>;
-  teardown(pid: number): Promise<void>;
+  /**
+   * Tear down the engine process. When `identity` carries a `recordPath`,
+   * the pid is verified against the tracking record before any signal is
+   * sent — a recycled or unverifiable pid is left running.
+   */
+  teardown(pid: number, identity?: SignalIdentity): Promise<void>;
 }

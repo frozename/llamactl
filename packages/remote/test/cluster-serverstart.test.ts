@@ -36,6 +36,7 @@ const FAKE_LLAMA_SERVER = [
   '  case "$1" in',
   '    --host) HOST="$2"; shift 2 ;;',
   '    --port) PORT="$2"; shift 2 ;;',
+  '    -m) MODEL="$2"; shift 2 ;;',
   "    *) shift ;;",
   "  esac",
   "done",
@@ -55,7 +56,7 @@ const FAKE_LLAMA_SERVER = [
   "  process.on('SIGTERM', stop);",
   "  process.on('SIGINT', stop);",
   "  await new Promise(() => undefined);",
-  '"',
+  '" "$MODEL"',
   "",
 ].join("\n");
 

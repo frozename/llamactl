@@ -1,4 +1,9 @@
-import { spawnSync } from "node:child_process";
+import {
+  isProcessAlive,
+  psColumn,
+  type SignalIdentity,
+  verifyPidFile,
+} from "../pidIdentity.js";
 
 const POLL_MS = 100;
 function sleep(ms: number): Promise<void> {
@@ -9,29 +14,14 @@ export function formatHostForUrl(host: string): string {
   return host.includes(":") ? `[${host}]` : host;
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
 /**
  * The process-group id of `pid` (via `ps`), or null if it can't be read. Used
  * to decide whether a group-wide signal is safe: only when `pid` IS its own
  * group leader (pgid === pid).
  */
 function processGroupId(pid: number): number | null {
-  try {
-    const out = spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8" });
-    if (out.status !== 0) return null;
-    const parsed = Number.parseInt(out.stdout.trim(), 10);
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
-  } catch {
-    return null;
-  }
+  const parsed = Number.parseInt(psColumn(pid, "pgid") ?? "", 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 /**
@@ -46,7 +36,21 @@ function shutdownSignalTarget(pid: number): number {
   return pid > 1 && processGroupId(pid) === pid ? -pid : pid;
 }
 
-export async function gracefulShutdown(pid: number, graceMs = 10_000): Promise<void> {
+export async function gracefulShutdown(
+  pid: number,
+  graceMs = 10_000,
+  identity?: SignalIdentity,
+): Promise<void> {
+  // When a tracking record is given, the pid must still be the process it was
+  // recorded for before any signal goes out — recycled or unverifiable pids
+  // are left running.
+  if (identity?.recordPath !== undefined) {
+    const verdict = verifyPidFile(identity.recordPath, pid, {
+      ...identity.deps,
+      expectCommand: identity.expectCommand,
+    });
+    if (verdict !== "alive") return;
+  }
   // Decide group-vs-direct ONCE, while the leader is alive: after it dies its
   // pgid is unreadable, but the group id (== the original pid) stays valid for
   // the SIGKILL sweep of any worker that ignored SIGTERM.

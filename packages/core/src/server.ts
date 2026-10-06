@@ -21,7 +21,12 @@ import {
   resolveSlotSavePathArgs,
 } from "./kvstore/index.js";
 import { omitUndefined } from "./object.js";
-import { isRecordedPidGone, signalRecordedPid, verifyPidFile } from "./pidIdentity.js";
+import {
+  isRecordedPidGone,
+  type PidIdentityDeps,
+  terminateVerifiedPid,
+  verifyPidFile,
+} from "./pidIdentity.js";
 import { findTcpListenerPid, probeHealthEndpoint } from "./probe.js";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
@@ -451,9 +456,13 @@ export async function serverStatus(
   // between the probe and the lsof lookup, or lsof may be unavailable):
   // only flag foreign when we positively resolved a different pid, or
   // when we recorded no live pid at all — then anything answering is
-  // not ours by definition.
+  // not ours by definition. While the tracked pid's identity is unknown
+  // the endpoint may simply belong to our own unverifiable process, so
+  // "foreign" stays inconclusive too.
   const foreign =
-    answered !== null && (pid === null || (listenerPid !== null && listenerPid !== pid));
+    answered !== null &&
+    !identityUnknown &&
+    (pid === null || (listenerPid !== null && listenerPid !== pid));
 
   return {
     state,
@@ -1095,8 +1104,19 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   if ("result" in validation) return validation.result;
   const { rel, modelPath, bin } = validation;
 
-  // Stop any existing instance — best effort.
-  await stopServer({ key, resolved });
+  // Stop any existing instance. When the recorded pid's identity cannot be
+  // proven, refuse to start: a replacement would either orphan the tracked
+  // process or fight it for the port.
+  const stopResult = await stopServer({ key, resolved });
+  if (!stopResult.stopped) {
+    return startServerError(
+      resolved,
+      launchEndpoint,
+      null,
+      false,
+      `pid identity unknown for tracked pid ${String(stopResult.pid)} — refusing to start over an unverifiable process`,
+    );
+  }
 
   const conflictResult = await handlePortConflict(
     opts,
@@ -1288,6 +1308,8 @@ export interface StopServerOptions {
   resolved?: ResolvedEnv;
   /** Max seconds to wait for SIGTERM to take effect before SIGKILL. */
   graceSeconds?: number;
+  /** Identity resolver seams for tests; production uses the defaults. */
+  identity?: PidIdentityDeps;
 }
 
 export interface StopServerResult {
@@ -1312,7 +1334,19 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
     return { stopped: true, pid, killed: false };
   }
   const recordPath = pidFile(resolved, key);
-  const verdict = verifyPidFile(recordPath, pid);
+  // A live pid is not enough to signal: the command line must still be the
+  // llama-server this record describes — its binary (from the sidecar, or the
+  // default name) and the model it was launched with.
+  const sidecar = readServerState(key, resolved);
+  const identity: PidIdentityDeps = {
+    ...opts.identity,
+    expectCommand: {
+      binary:
+        sidecar !== null && sidecar.binary !== "" ? basename(sidecar.binary) : "llama-server",
+      ...(sidecar !== null ? { args: [sidecar.rel] } : {}),
+    },
+  };
+  const verdict = verifyPidFile(recordPath, pid, identity);
   // Identity could not be established: signal nothing, keep the tracking
   // files, and report not-stopped so a later attempt can still find them.
   if (verdict === "unknown") return { stopped: false, pid, killed: false };
@@ -1322,17 +1356,9 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
     return { stopped: true, pid, killed: false };
   }
 
-  signalRecordedPid(recordPath, pid, "SIGTERM");
-
-  for (let i = 0; i < grace; i += 1) {
-    if (verifyPidFile(recordPath, pid) !== "alive") break;
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-
-  const lastVerdict = verifyPidFile(recordPath, pid);
-  if (lastVerdict === "unknown") return { stopped: false, pid, killed: false };
-  const killed = lastVerdict === "alive" ? signalRecordedPid(recordPath, pid, "SIGKILL") : false;
+  const terminated = await terminateVerifiedPid(recordPath, pid, identity, grace);
+  if (!terminated.stopped) return { stopped: false, pid, killed: false };
   removeServerPid(resolved, key);
   removeServerState(resolved, key);
-  return { stopped: true, pid, killed };
+  return { stopped: true, pid, killed: terminated.killed };
 }

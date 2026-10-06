@@ -260,6 +260,48 @@ function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
 }
 
 /**
+ * Stop a ModelRun's server + workers before workloadDelete. Returns a refusal
+ * message when the coordinator's serverStop reports `stopped: false` — the
+ * remote could not prove the recorded pid's identity, and deleting the
+ * manifest would orphan a possibly-live process nobody could find later.
+ */
+async function stopWorkloadForDelete(
+  manifest: ModelRun,
+  stops: string[],
+): Promise<string | null> {
+  const cfg = kubecfg.loadConfig();
+  try {
+    const client = clientForNode(cfg, manifest.spec.node);
+    const status = await queryServerStatusWithTimeout(
+      () => client.serverStatus.query({ workload: manifest.metadata.name }),
+      WORKLOAD_LIST_NODE_TIMEOUT_MS,
+    );
+    if (status.state === "up" && status.rel === manifest.spec.target.value) {
+      const stopOutcome = (await client.serverStop.mutate({
+        workload: manifest.metadata.name,
+        graceSeconds: 5,
+      })) as { stopped?: unknown } | null;
+      if (stopOutcome !== null && stopOutcome.stopped === false) {
+        return `serverStop on ${manifest.spec.node} refused (pid identity unverifiable); manifest preserved`;
+      }
+      stops.push(`stopped llama-server on ${manifest.spec.node}`);
+    }
+  } catch (err) {
+    stops.push(`warning: coordinator ${manifest.spec.node}: ${(err as Error).message}`);
+  }
+  for (const worker of [...manifest.spec.workers].reverse()) {
+    try {
+      const wc = clientForNode(cfg, worker.node);
+      await wc.rpcServerStop.mutate({ graceSeconds: 3 });
+      stops.push(`stopped rpc-server on ${worker.node}`);
+    } catch (err) {
+      stops.push(`warning: worker ${worker.node}: ${(err as Error).message}`);
+    }
+  }
+  return null;
+}
+
+/**
  * Resolve the planner's LLM provider from a fleet node. Mirrors the
  * chatStream path: inproc→local llama-server, everything else goes
  * through `providerForNode` (which handles agent/gateway/cloud).
@@ -1827,31 +1869,9 @@ export const router = t.router({
           const manifest = workloadStoreMod.loadWorkloadByName(input.name);
           const stops: string[] = [];
           if (!input.keepRunning) {
-            const cfg = kubecfg.loadConfig();
-            try {
-              const client = clientForNode(cfg, manifest.spec.node);
-              const status = await queryServerStatusWithTimeout(
-                () => client.serverStatus.query({ workload: manifest.metadata.name }),
-                WORKLOAD_LIST_NODE_TIMEOUT_MS,
-              );
-              if (status.state === "up" && status.rel === manifest.spec.target.value) {
-                await client.serverStop.mutate({
-                  workload: manifest.metadata.name,
-                  graceSeconds: 5,
-                });
-                stops.push(`stopped llama-server on ${manifest.spec.node}`);
-              }
-            } catch (err) {
-              stops.push(`warning: coordinator ${manifest.spec.node}: ${(err as Error).message}`);
-            }
-            for (const worker of [...manifest.spec.workers].reverse()) {
-              try {
-                const wc = clientForNode(cfg, worker.node);
-                await wc.rpcServerStop.mutate({ graceSeconds: 3 });
-                stops.push(`stopped rpc-server on ${worker.node}`);
-              } catch (err) {
-                stops.push(`warning: worker ${worker.node}: ${(err as Error).message}`);
-              }
+            const refused = await stopWorkloadForDelete(manifest, stops);
+            if (refused !== null) {
+              return { ok: false, name: input.name, stops, error: refused };
             }
           }
           const removed = workloadStoreMod.deleteWorkload(input.name);
@@ -2472,12 +2492,21 @@ export const router = t.router({
       const { spawn } = await import("node:child_process");
       const { join } = await import("node:path");
       const resolved = envMod.resolveEnv();
-      const existing = keepAliveMod.readKeepAlivePid(resolved);
-      if (existing !== null) {
+      const existing = keepAliveMod.readKeepAliveRecord(resolved);
+      if (existing.pid !== null && existing.verdict === "alive") {
         return {
           ok: false,
-          pid: existing,
-          error: `keep-alive already running (pid=${String(existing)})`,
+          pid: existing.pid,
+          error: `keep-alive already running (pid=${String(existing.pid)})`,
+        };
+      }
+      // An unverifiable record must not be treated as absent: a second
+      // supervisor would compete with a process we cannot rule out as ours.
+      if (existing.pid !== null && existing.verdict === "unknown") {
+        return {
+          ok: false,
+          pid: existing.pid,
+          error: `pid identity unknown for recorded keep-alive pid ${String(existing.pid)} — refusing to start a duplicate`,
         };
       }
       const llamactlHome =

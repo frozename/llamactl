@@ -152,6 +152,7 @@ describe("unknown identity is fail-closed at every caller", () => {
   });
 
   test("stopKeepAlive refuses to signal or reap while identity is unknown", async () => {
+    mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });
     const pidPath = keepAlive.keepAlivePidFile(resolved);
     writeFileSync(pidPath, `${String(impostorPid)}\n`);
     const res = await keepAlive.stopKeepAlive({
@@ -166,6 +167,7 @@ describe("unknown identity is fail-closed at every caller", () => {
   });
 
   test("readKeepAliveRecord exposes the verdict instead of collapsing to a pid", () => {
+    mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });
     const pidPath = keepAlive.keepAlivePidFile(resolved);
     writeFileSync(pidPath, `${String(impostorPid)}\n`);
     expect(
@@ -176,6 +178,7 @@ describe("unknown identity is fail-closed at every caller", () => {
   test("readKeepAliveRecord flags a command-line impostor as reused", () => {
     // A fresh record passes the start-time check, so only the command line
     // can show this pid is not the keep-alive supervisor.
+    mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });
     const pidPath = keepAlive.keepAlivePidFile(resolved);
     writeFileSync(pidPath, `${String(impostorPid)}\n`);
     expect(keepAlive.readKeepAliveRecord(resolved)).toEqual({

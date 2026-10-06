@@ -242,6 +242,19 @@ async function reconcileModelHost(
   try {
     const client = opts.getClient(spec.node);
     const current = await client.modelHostStatus.query({ workload: name });
+    // The remote could not prove whether the recorded pid is ours: do not
+    // sweep the sidecar (a possibly-live host would lose its identity anchor)
+    // and do not spawn over it. Report the uncertainty so the pass surfaces
+    // it instead of looking clean.
+    if (current.identityUnknown === true) {
+      reports.push({
+        name,
+        node: spec.node,
+        action: "unchanged",
+        error: "pid identity unknown; preserving state for a later pass",
+      });
+      return 1;
+    }
     const decision = classifyHostReconcile(spec, name, current);
     if (decision === "sweep-disabled") {
       // A disabled host that isn't Running may still have a stale sidecar

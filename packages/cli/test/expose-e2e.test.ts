@@ -69,12 +69,13 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --host) HOST="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
+    -m) MODEL="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 export FAKE_HOST="$HOST"
 export FAKE_PORT="$PORT"
-exec -a llama-server bun -e "const s=Bun.serve({port:Number(process.env.FAKE_PORT),hostname:process.env.FAKE_HOST,fetch(){return new Response('ok',{status:200});}});process.on('SIGTERM',()=>{s.stop(true);process.exit(0);});process.on('SIGINT',()=>{s.stop(true);process.exit(0);});await new Promise(()=>{});"
+exec -a llama-server bun -e "const s=Bun.serve({port:Number(process.env.FAKE_PORT),hostname:process.env.FAKE_HOST,fetch(){return new Response('ok',{status:200});}});process.on('SIGTERM',()=>{s.stop(true);process.exit(0);});process.on('SIGINT',()=>{s.stop(true);process.exit(0);});await new Promise(()=>{});" "$MODEL"
 `;
 
 let tmp: string;

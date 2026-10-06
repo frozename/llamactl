@@ -5,7 +5,12 @@ import { join } from "node:path";
 import type { ResolvedEnv } from "./types.js";
 
 import { resolveEnv } from "./env.js";
-import { isRecordedPidGone, signalRecordedPid, verifyPidFile } from "./pidIdentity.js";
+import {
+  isRecordedPidGone,
+  type PidIdentityDeps,
+  terminateVerifiedPid,
+  verifyPidFile,
+} from "./pidIdentity.js";
 import {
   accessSync,
   closeSync,
@@ -267,7 +272,18 @@ export async function startRpcServer(opts: StartRpcServerOptions): Promise<Start
   const advertiseHost = host === "0.0.0.0" ? "127.0.0.1" : host;
   const endpoint = `${advertiseHost}:${String(port)}`;
 
-  await stopRpcServer({ resolved });
+  // Refuse to start over a tracked pid whose identity cannot be proven —
+  // the replacement would orphan the unverifiable process or fight it
+  // for the port.
+  const stopResult = await stopRpcServer({ resolved });
+  if (!stopResult.stopped) {
+    return {
+      ok: false,
+      pid: null,
+      endpoint,
+      error: `pid identity unknown for tracked pid ${String(stopResult.pid)} — refusing to start over an unverifiable process`,
+    };
+  }
 
   mkdirSync(resolved.LLAMA_CPP_LOGS, { recursive: true });
   const logFd = openSync(logFile(resolved), "a");
@@ -322,6 +338,8 @@ export async function startRpcServer(opts: StartRpcServerOptions): Promise<Start
 export interface StopRpcServerOptions {
   resolved?: ResolvedEnv;
   graceSeconds?: number;
+  /** Identity resolver seams for tests; production uses the defaults. */
+  identity?: PidIdentityDeps;
 }
 
 export interface StopRpcServerResult {
@@ -339,7 +357,13 @@ export async function stopRpcServer(opts: StopRpcServerOptions = {}): Promise<St
     return { stopped: true, pid, killed: false };
   }
   const recordPath = pidFile(resolved);
-  const verdict = verifyPidFile(recordPath, pid);
+  // A live pid is not enough to signal: the command line must still be the
+  // rpc-server this record describes.
+  const identity: PidIdentityDeps = {
+    ...opts.identity,
+    expectCommand: { binary: "rpc-server" },
+  };
+  const verdict = verifyPidFile(recordPath, pid, identity);
   // Identity could not be established: signal nothing, keep the tracking
   // files, and report not-stopped so a later attempt can still find them.
   if (verdict === "unknown") return { stopped: false, pid, killed: false };
@@ -347,16 +371,12 @@ export async function stopRpcServer(opts: StopRpcServerOptions = {}): Promise<St
     clearTracking(resolved);
     return { stopped: true, pid, killed: false };
   }
-  signalRecordedPid(recordPath, pid, "SIGTERM");
-  for (let i = 0; i < grace; i++) {
-    if (verifyPidFile(recordPath, pid) !== "alive") break;
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-  const lastVerdict = verifyPidFile(recordPath, pid);
-  if (lastVerdict === "unknown") return { stopped: false, pid, killed: false };
-  const killed = lastVerdict === "alive" ? signalRecordedPid(recordPath, pid, "SIGKILL") : false;
+  // The pid just verified — terminate it. The grace loop polls with kill(0)
+  // only so the ps-backed verify cost stays bounded.
+  const terminated = await terminateVerifiedPid(recordPath, pid, identity, grace);
+  if (!terminated.stopped) return { stopped: false, pid, killed: false };
   clearTracking(resolved);
-  return { stopped: true, pid, killed };
+  return { stopped: true, pid, killed: terminated.killed };
 }
 
 async function pollTcp(
