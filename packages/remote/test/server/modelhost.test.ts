@@ -346,7 +346,10 @@ describe("server/modelhost", () => {
   test("stopModelHost reads state, tears down the pid, and removes sidecar state", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-stop-"));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
-    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    // The recorded pid must be a live process or the pid-identity check
+    // (rightly) refuses teardown — use the test runner's own pid; teardown
+    // is mocked below so nothing is actually signalled.
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: process.pid }) as const);
     const tornDown: number[] = [];
     try {
       await startModelHost({
@@ -368,8 +371,8 @@ describe("server/modelhost", () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(tornDown).toEqual([4321]);
-      expect(result.pid).toBe(4321);
+      expect(tornDown).toEqual([process.pid]);
+      expect(result.pid).toBe(process.pid);
       expect(statusModelHost({ key: { name: "mlx-host-server" }, runtimeDir })).toEqual({
         state: "Stopped",
       });

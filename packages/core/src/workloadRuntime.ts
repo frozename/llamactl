@@ -5,6 +5,7 @@ import type { ResolvedEnv } from "./types.js";
 
 import { modelhostPidFile, readModelHostState } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
+import { isRecordedPidAlive } from "./pidIdentity.js";
 import {
   existsSync,
   mkdirSync,
@@ -146,15 +147,6 @@ export function ensureWorkloadRuntimeDir(resolved: ResolvedEnv, key: WorkloadKey
   return dir;
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function readPidFile(path: string): number | null {
   if (!existsSync(path)) return null;
   try {
@@ -177,7 +169,11 @@ export function listLocalWorkloads(resolved: ResolvedEnv = resolveEnv()): Worklo
     const activePidPath = existsSync(pidPath) ? pidPath : modelhostPidPath;
     if (!existsSync(activePidPath)) continue;
     const pid = readPidFile(activePidPath);
-    entries.push({ name: dirent.name, pid, alive: pid !== null && isProcessAlive(pid) });
+    entries.push({
+      name: dirent.name,
+      pid,
+      alive: pid !== null && isRecordedPidAlive(activePidPath, pid),
+    });
   }
   return entries;
 }
@@ -204,8 +200,9 @@ function aliasesFromExtraArgs(extraArgs: readonly string[] | undefined): string[
  */
 function modelHostRoutesForDir(name: string, resolved: ResolvedEnv): LocalRoute[] | null {
   const key = { name };
-  const hostPid = readPidFile(modelhostPidFile(resolved, key));
-  if (hostPid === null || !isProcessAlive(hostPid)) return null;
+  const hostPidPath = modelhostPidFile(resolved, key);
+  const hostPid = readPidFile(hostPidPath);
+  if (hostPid === null || !isRecordedPidAlive(hostPidPath, hostPid)) return null;
   const state = readModelHostState(key, resolved);
   if (state?.pid !== hostPid) return null;
   const out: LocalRoute[] = [];
@@ -225,8 +222,9 @@ function modelHostRoutesForDir(name: string, resolved: ResolvedEnv): LocalRoute[
 
 /** ModelRun routes for one workload dir (empty when no live tracked server). */
 function modelRunRoutesForDir(name: string, root: string, resolved: ResolvedEnv): LocalRoute[] {
-  const runPid = readPidFile(join(root, name, "llama-server.pid"));
-  if (runPid === null || !isProcessAlive(runPid)) return [];
+  const runPidPath = join(root, name, "llama-server.pid");
+  const runPid = readPidFile(runPidPath);
+  if (runPid === null || !isRecordedPidAlive(runPidPath, runPid)) return [];
   const state = readServerState({ name }, resolved);
   if (!state?.rel || !state.host) return [];
   // Route by the model rel AND any `--alias` the server advertises. The

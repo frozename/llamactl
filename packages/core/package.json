@@ -18,6 +18,7 @@
     "./env": "./src/env.ts",
     "./kvstore": "./src/kvstore/index.ts",
     "./object": "./src/object.ts",
+    "./pidIdentity": "./src/pidIdentity.ts",
     "./probe": "./src/probe.ts",
     "./profile": "./src/profile.ts",
     "./schemas": "./src/schemas.ts",

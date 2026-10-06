@@ -21,6 +21,7 @@ import {
   resolveSlotSavePathArgs,
 } from "./kvstore/index.js";
 import { omitUndefined } from "./object.js";
+import { isRecordedPidGone, signalRecordedPid, verifyPidFile } from "./pidIdentity.js";
 import { findTcpListenerPid, probeHealthEndpoint } from "./probe.js";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
@@ -382,13 +383,31 @@ function sidecarStatusFields(sidecar: ServerState | null, valid: boolean): Sidec
  * reflects reality even when the PID file went stale from an unclean
  * shutdown.
  */
+/**
+ * Read the recorded server pid and verify it still names the process it was
+ * recorded for. A provably-gone record (dead or recycled pid) is reaped; an
+ * unverifiable one ("unknown") is kept — it may still be ours.
+ */
+function resolveTrackedServerPid(
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+): { pid: number | null; identityUnknown: boolean } {
+  const recorded = readServerPid(key, resolved);
+  if (recorded === null) return { pid: null, identityUnknown: false };
+  const verdict = verifyPidFile(pidFile(resolved, key), recorded);
+  if (isRecordedPidGone(verdict)) {
+    removeServerPid(resolved, key);
+    return { pid: null, identityUnknown: false };
+  }
+  if (verdict === "unknown") return { pid: null, identityUnknown: true };
+  return { pid: recorded, identityUnknown: false };
+}
+
 export async function serverStatus(
   key: WorkloadKey,
   resolved: ResolvedEnv = resolveEnv(),
 ): Promise<ServerStatus> {
-  const pidRaw = readServerPid(key, resolved);
-  const pid = pidRaw && isProcessAlive(pidRaw) ? pidRaw : null;
-  if (pidRaw && !pid) removeServerPid(resolved, key);
+  const { pid, identityUnknown } = resolveTrackedServerPid(resolved, key);
   const sidecar = readServerState(key, resolved);
   // Only trust the sidecar when its PID matches the live one; if the
   // PIDs diverge, the state file is from a previous launch that
@@ -410,7 +429,9 @@ export async function serverStatus(
   const reachable = httpCode === 200;
   const state: ServerStatus["state"] = reachable || pid !== null ? "up" : "down";
 
-  if (sidecar && !validSidecar && state === "down") {
+  // An unverifiable record keeps its sidecar too: "unknown" must never reach
+  // a delete, because the record may still belong to our process.
+  if (sidecar && !validSidecar && state === "down" && !identityUnknown) {
     removeServerState(resolved, key);
   }
 
@@ -1285,35 +1306,33 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
   const key = opts.key;
   const grace = Math.max(1, opts.graceSeconds ?? 5);
   const pid = readServerPid(key, resolved);
-  if (pid === null || !isProcessAlive(pid)) {
+  if (pid === null) {
+    removeServerPid(resolved, key);
+    removeServerState(resolved, key);
+    return { stopped: true, pid, killed: false };
+  }
+  const recordPath = pidFile(resolved, key);
+  const verdict = verifyPidFile(recordPath, pid);
+  // Identity could not be established: signal nothing, keep the tracking
+  // files, and report not-stopped so a later attempt can still find them.
+  if (verdict === "unknown") return { stopped: false, pid, killed: false };
+  if (isRecordedPidGone(verdict)) {
     removeServerPid(resolved, key);
     removeServerState(resolved, key);
     return { stopped: true, pid, killed: false };
   }
 
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    removeServerPid(resolved, key);
-    removeServerState(resolved, key);
-    return { stopped: true, pid, killed: false };
-  }
+  signalRecordedPid(recordPath, pid, "SIGTERM");
 
   for (let i = 0; i < grace; i += 1) {
-    if (!isProcessAlive(pid)) {
-      removeServerPid(resolved, key);
-      removeServerState(resolved, key);
-      return { stopped: true, pid, killed: false };
-    }
+    if (verifyPidFile(recordPath, pid) !== "alive") break;
     await new Promise((r) => setTimeout(r, 1000));
   }
 
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // process already gone
-  }
+  const lastVerdict = verifyPidFile(recordPath, pid);
+  if (lastVerdict === "unknown") return { stopped: false, pid, killed: false };
+  const killed = lastVerdict === "alive" ? signalRecordedPid(recordPath, pid, "SIGKILL") : false;
   removeServerPid(resolved, key);
   removeServerState(resolved, key);
-  return { stopped: true, pid, killed: true };
+  return { stopped: true, pid, killed };
 }

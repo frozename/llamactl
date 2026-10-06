@@ -13,7 +13,7 @@ import {
 import { mkdirSync, utimesSync, writeFileSync } from "../src/safe-fs.js";
 import { makeTempRuntime } from "./helpers.js";
 
-const noopProbe = (): void => {};
+const noopProbe = (): void => undefined;
 
 describe("parseEtimeSeconds", () => {
   test("parses ps etime shapes", () => {
@@ -100,7 +100,7 @@ describe("verifyPidFile", () => {
       const recordPath = join(temp.runtimeDir, "x.pid");
       writeFileSync(recordPath, "4242\n");
       const now = Date.now();
-      const deps = { probe: noopProbe, processStartMs: () => now };
+      const deps = { probe: noopProbe, processStartMs: (): number => now };
       expect(verifyPidFile(recordPath, 4242, deps)).toBe("alive");
       // Backdate the record an hour: a process that started now cannot be the
       // one the record was written for — the pid was recycled.
@@ -132,9 +132,9 @@ describe("isRecordedPidAlive / isRecordedPidGone", () => {
       writeFileSync(recordPath, "4242\n");
       const aliveDeps = {
         probe: noopProbe,
-        processStartMs: () => Date.now() - 1000,
+        processStartMs: (): number => Date.now() - 1000,
       };
-      const unknownDeps = { probe: noopProbe, processStartMs: () => null };
+      const unknownDeps = { probe: noopProbe, processStartMs: (): null => null };
       expect(isRecordedPidAlive(recordPath, 4242, aliveDeps)).toBe(true);
       expect(isRecordedPidAlive(recordPath, 4242, unknownDeps)).toBe(false);
     } finally {
@@ -160,7 +160,7 @@ describe("signalRecordedPid", () => {
       writeFileSync(recordPath, "4242\n");
       const aliveDeps = {
         probe: noopProbe,
-        processStartMs: () => Date.now() - 1000,
+        processStartMs: (): number => Date.now() - 1000,
       };
       expect(signalRecordedPid(recordPath, 4242, "SIGTERM", aliveDeps)).toBe(true);
       expect(spy).toHaveBeenCalledWith(4242, "SIGTERM");

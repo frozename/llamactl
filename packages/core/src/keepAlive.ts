@@ -6,6 +6,12 @@ import type { WorkloadKey } from "./workloadRuntime.js";
 import { formatBenchTimestamp } from "./bench/runner.js";
 import { resolveEnv } from "./env.js";
 import {
+  isRecordedPidGone,
+  type PidVerdict,
+  signalRecordedPid,
+  verifyPidFile,
+} from "./pidIdentity.js";
+import {
   appendFileSync,
   existsSync,
   mkdirSync,
@@ -116,26 +122,33 @@ export function readKeepAliveState(
   }
 }
 
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function readKeepAlivePid(resolved: ResolvedEnv = resolveEnv()): number | null {
+function readKeepAlivePidRaw(resolved: ResolvedEnv): number | null {
   const file = keepAlivePidFile(resolved);
   if (!existsSync(file)) return null;
   try {
     const raw = readFileSync(file, "utf8").trim();
     const pid = Number.parseInt(raw, 10);
-    if (!Number.isFinite(pid) || pid <= 0) return null;
-    return isAlive(pid) ? pid : null;
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * The recorded keep-alive pid plus its identity verdict against the pid file
+ * it was read from. `verdict` is null only when there is no recorded pid.
+ */
+function keepAlivePidVerdict(resolved: ResolvedEnv): {
+  pid: number | null;
+  verdict: PidVerdict | null;
+} {
+  const pid = readKeepAlivePidRaw(resolved);
+  return { pid, verdict: pid === null ? null : verifyPidFile(keepAlivePidFile(resolved), pid) };
+}
+
+export function readKeepAlivePid(resolved: ResolvedEnv = resolveEnv()): number | null {
+  const { pid, verdict } = keepAlivePidVerdict(resolved);
+  return verdict === "alive" ? pid : null;
 }
 
 export interface KeepAliveStatus {
@@ -145,16 +158,20 @@ export interface KeepAliveStatus {
 }
 
 export function keepAliveStatus(resolved: ResolvedEnv = resolveEnv()): KeepAliveStatus {
-  const pid = readKeepAlivePid(resolved);
+  const { pid, verdict } = keepAlivePidVerdict(resolved);
   const state = readKeepAliveState(resolved);
-  if (!pid && existsSync(keepAlivePidFile(resolved))) {
+  // The pid file is only reaped when the record is provably gone — an
+  // unverifiable ("unknown") record is kept because it may still be ours.
+  const fileGone = pid === null || (verdict !== null && isRecordedPidGone(verdict));
+  if (fileGone && existsSync(keepAlivePidFile(resolved))) {
     try {
       unlinkSync(keepAlivePidFile(resolved));
     } catch {
       // no-op
     }
   }
-  return { running: pid !== null, pid, state };
+  const live = verdict === "alive" ? pid : null;
+  return { running: live !== null, pid: live, state };
 }
 
 export interface StopKeepAliveOptions {
@@ -179,8 +196,12 @@ export async function stopKeepAlive(opts: StopKeepAliveOptions): Promise<StopKee
   const resolved = opts.resolved ?? resolveEnv();
   const key = opts.key;
   const grace = Math.max(1, opts.graceSeconds ?? 10);
-  const pid = readKeepAlivePid(resolved);
-  if (pid === null) {
+  const recordPath = keepAlivePidFile(resolved);
+  const { pid, verdict } = keepAlivePidVerdict(resolved);
+  // Identity could not be established: signal nothing, skip the stop file and
+  // the server stop, and keep the tracking files for a later attempt.
+  if (verdict === "unknown") return { stopped: false, pid, killed: false };
+  if (pid === null || verdict === null || isRecordedPidGone(verdict)) {
     try {
       unlinkSync(keepAlivePidFile(resolved));
     } catch {
@@ -199,19 +220,13 @@ export async function stopKeepAlive(opts: StopKeepAliveOptions): Promise<StopKee
   writeFileSync(keepAliveStopFile(resolved), "");
 
   let waited = 0;
-  while (waited < grace && isAlive(pid)) {
+  while (waited < grace && verifyPidFile(recordPath, pid) === "alive") {
     await new Promise((r) => setTimeout(r, 1000));
     waited += 1;
   }
-  let killed = false;
-  if (isAlive(pid)) {
-    try {
-      process.kill(pid, "SIGTERM");
-      killed = true;
-    } catch {
-      // no-op
-    }
-  }
+  const lastVerdict = verifyPidFile(recordPath, pid);
+  if (lastVerdict === "unknown") return { stopped: false, pid, killed: false };
+  const killed = signalRecordedPid(recordPath, pid, "SIGTERM");
   await stopServer({ key, resolved });
   try {
     unlinkSync(keepAlivePidFile(resolved));

@@ -1,5 +1,6 @@
-import { readModelHostState } from "@llamactl/core/engines/state";
+import { modelhostStateFile, readModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
+import { isRecordedPidAlive } from "@llamactl/core/pidIdentity";
 import { formatEndpoint, probeEndpointOwnership } from "@llamactl/core/probe";
 import { workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import {
@@ -488,15 +489,6 @@ type WorkloadRow = {
   gateway: boolean;
 };
 
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> {
   // Gateway manifests never run a local server on a reachable agent
   // — their phase lives in the persisted status the handler wrote.
@@ -589,7 +581,12 @@ export async function runGet(args: string[]): Promise<number> {
         let statePid: number | null = null;
         let listenerPid: number | null = null;
         if (state) {
-          statePid = isPidAlive(state.pid) ? state.pid : null;
+          statePid = isRecordedPidAlive(
+            modelhostStateFile(resolveEnv(), { name: manifest.metadata.name }),
+            state.pid,
+          )
+            ? state.pid
+            : null;
           // A reachable endpoint is only proof that *something* answers —
           // compare the pid holding the port against the recorded live
           // pid so a foreign squatter can't read as Running while

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ResolvedEnv } from "./types.js";
 
 import { resolveEnv } from "./env.js";
+import { isRecordedPidGone, signalRecordedPid, verifyPidFile } from "./pidIdentity.js";
 import {
   accessSync,
   closeSync,
@@ -227,10 +228,14 @@ export async function rpcServerStatus(
   resolved: ResolvedEnv = resolveEnv(),
 ): Promise<RpcServerStatus> {
   const storedPid = readPid(resolved);
-  const pid = storedPid && isAlive(storedPid) ? storedPid : null;
-  if (storedPid && !pid) clearTracking(resolved);
+  const verdict = storedPid === null ? null : verifyPidFile(pidFile(resolved), storedPid);
+  const pid = verdict === "alive" ? storedPid : null;
   const persisted = readState(resolved);
-  if (persisted && !pid) clearTracking(resolved);
+  // A recorded pid that is provably gone (or absent) clears tracking; an
+  // unknown verdict keeps it — the record may still belong to our process.
+  if (pid === null && verdict !== "unknown" && (storedPid !== null || persisted !== null)) {
+    clearTracking(resolved);
+  }
   if (pid === null) {
     return { state: "down", endpoint: null, pid: null, host: null, port: null };
   }
@@ -329,30 +334,29 @@ export async function stopRpcServer(opts: StopRpcServerOptions = {}): Promise<St
   const resolved = opts.resolved ?? resolveEnv();
   const grace = Math.max(1, opts.graceSeconds ?? 5);
   const pid = readPid(resolved);
-  if (pid === null || !isAlive(pid)) {
+  if (pid === null) {
     clearTracking(resolved);
     return { stopped: true, pid, killed: false };
   }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
+  const recordPath = pidFile(resolved);
+  const verdict = verifyPidFile(recordPath, pid);
+  // Identity could not be established: signal nothing, keep the tracking
+  // files, and report not-stopped so a later attempt can still find them.
+  if (verdict === "unknown") return { stopped: false, pid, killed: false };
+  if (isRecordedPidGone(verdict)) {
     clearTracking(resolved);
     return { stopped: true, pid, killed: false };
   }
+  signalRecordedPid(recordPath, pid, "SIGTERM");
   for (let i = 0; i < grace; i++) {
-    if (!isAlive(pid)) {
-      clearTracking(resolved);
-      return { stopped: true, pid, killed: false };
-    }
+    if (verifyPidFile(recordPath, pid) !== "alive") break;
     await new Promise((r) => setTimeout(r, 1000));
   }
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // Best-effort cleanup; failures are not actionable here.
-  }
+  const lastVerdict = verifyPidFile(recordPath, pid);
+  if (lastVerdict === "unknown") return { stopped: false, pid, killed: false };
+  const killed = lastVerdict === "alive" ? signalRecordedPid(recordPath, pid, "SIGKILL") : false;
   clearTracking(resolved);
-  return { stopped: true, pid, killed: true };
+  return { stopped: true, pid, killed };
 }
 
 async function pollTcp(

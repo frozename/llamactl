@@ -1,8 +1,8 @@
-import type { ResolvedEnv } from "../src/types.js";
-
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process";
 import { join } from "node:path";
+
+import type { ResolvedEnv } from "../src/types.js";
 
 import { resolveEnv } from "../src/env.js";
 import { rpcServerPidFile, rpcServerStatus, stopRpcServer } from "../src/rpcServer.js";

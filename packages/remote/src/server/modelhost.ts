@@ -4,6 +4,7 @@ import type { WorkloadKey } from "@llamactl/core/workloadRuntime";
 import { ENGINES } from "@llamactl/core/engines";
 import {
   computeModelHostSpecHash,
+  modelhostStateFile,
   readModelHostState,
   removeModelHostState,
   writeModelHostState,
@@ -15,6 +16,7 @@ import {
   resolveSlotSavePathArgs,
 } from "@llamactl/core/kvstore";
 import { omitUndefined } from "@llamactl/core/object";
+import { isRecordedPidAlive, verifyPidFile } from "@llamactl/core/pidIdentity";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { basename, resolve, sep } from "node:path";
 
@@ -311,9 +313,17 @@ async function reapOrAdoptPriorHost(
 ): Promise<StartModelHostResult | null> {
   const priorState = readModelHostState(opts.key, resolved);
   if (!priorState) return null;
-  if (isProcessAlive(priorState.pid)) {
+  // The recorded pid is verified against the sidecar it was read from: a
+  // recycled pid (process started after the record) is not ours and falls
+  // through to the dead-pid adopt/spawn path; an unverifiable one defers the
+  // whole restart so the tracking files survive for a later reconcile.
+  const priorVerdict = verifyPidFile(modelhostStateFile(resolved, opts.key), priorState.pid);
+  if (priorVerdict === "alive") {
     await engine.teardown(priorState.pid).catch(() => undefined);
     return null;
+  }
+  if (priorVerdict === "unknown") {
+    return { ok: false, pid: null, error: "pid identity unknown; deferring restart" };
   }
   // Recorded pid is dead but a sidecar exists. Decide adopt-vs-spawn on
   // listener PRESENCE, not on the short readiness window: if a live process
@@ -536,10 +546,18 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
   const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
   const state = readModelHostState(opts.key, resolved);
   if (!state) return { ok: true, pid: null };
-  const teardown =
-    opts.teardown ??
-    ((pid: number, _graceSeconds?: number): Promise<void> => ENGINES[state.engine].teardown(pid));
-  await teardown(state.pid, opts.graceSeconds);
+  // Teardown signals the whole process group — the worst place to act on a
+  // recycled pid — so the recorded pid is verified against its sidecar first.
+  const verdict = verifyPidFile(modelhostStateFile(resolved, opts.key), state.pid);
+  if (verdict === "unknown") {
+    return { ok: false, pid: state.pid, error: "pid identity unknown" };
+  }
+  if (verdict === "alive") {
+    const teardown =
+      opts.teardown ??
+      ((pid: number, _graceSeconds?: number): Promise<void> => ENGINES[state.engine].teardown(pid));
+    await teardown(state.pid, opts.graceSeconds);
+  }
   removeModelHostState(opts.key, resolved);
   return { ok: true, pid: state.pid };
 }
@@ -553,7 +571,9 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
   // (startModelHost then adopts a live listener or spawns afresh) instead of
   // trusting a stale pid forever — which the proxy route check would treat as
   // dead and silently drop.
-  if (!isProcessAlive(state.pid)) return { state: "Stopped" };
+  if (!isRecordedPidAlive(modelhostStateFile(resolved, opts.key), state.pid)) {
+    return { state: "Stopped" };
+  }
   return {
     state: "Running",
     pid: state.pid,
