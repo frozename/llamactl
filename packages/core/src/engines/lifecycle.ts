@@ -1,9 +1,4 @@
-import {
-  isProcessAlive,
-  psColumn,
-  type SignalIdentity,
-  verifyPidFile,
-} from "../pidIdentity.js";
+import { isProcessAlive, psColumn, type SignalIdentity, verifyPidFile } from "../pidIdentity.js";
 
 const POLL_MS = 100;
 function sleep(ms: number): Promise<void> {
@@ -47,7 +42,7 @@ export async function gracefulShutdown(
   if (identity?.recordPath !== undefined) {
     const verdict = verifyPidFile(identity.recordPath, pid, {
       ...identity.deps,
-      expectCommand: identity.expectCommand,
+      ...(identity.expectCommand !== undefined ? { expectCommand: identity.expectCommand } : {}),
     });
     if (verdict !== "alive") return;
   }

@@ -18,6 +18,7 @@ import {
 import { omitUndefined } from "@llamactl/core/object";
 import {
   type PidIdentityDeps,
+  type SignalIdentity,
   verifyPidFile,
 } from "@llamactl/core/pidIdentity";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
@@ -324,6 +325,21 @@ async function tryAdoptLiveHost(
   return { ok: true, pid: livePid };
 }
 
+/** SignalIdentity for an engine teardown: the pid-file anchor plus the
+ *  caller's identity deps and the engine argv0 expectation, omitting
+ *  undefined optionals so strict exactOptionalPropertyTypes holds. */
+function teardownIdentity(
+  recordPath: string,
+  deps: PidIdentityDeps | undefined,
+  expectCommand: PidIdentityDeps["expectCommand"],
+): SignalIdentity {
+  return {
+    recordPath,
+    ...(deps !== undefined ? { deps } : {}),
+    ...(expectCommand !== undefined ? { expectCommand } : {}),
+  };
+}
+
 // Reap a prior live ModelHost for this workload before spawning a new one.
 // Without this, applying over a still-running host leaves the old process
 // holding the endpoint port: the new omlx fails to bind and exits, yet
@@ -350,11 +366,7 @@ async function reapOrAdoptPriorHost(
   const priorVerdict = verifyPidFile(recordPath, priorState.pid, identity);
   if (priorVerdict === "alive") {
     await engine
-      .teardown(priorState.pid, {
-        recordPath,
-        deps: opts.identity,
-        expectCommand: identity.expectCommand,
-      })
+      .teardown(priorState.pid, teardownIdentity(recordPath, opts.identity, identity.expectCommand))
       .catch(() => undefined);
     return null;
   }
@@ -596,11 +608,10 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
     const teardown =
       opts.teardown ??
       ((pid: number, _graceSeconds?: number): Promise<void> =>
-        ENGINES[state.engine].teardown(pid, {
-          recordPath,
-          deps: opts.identity,
-          expectCommand: identity.expectCommand,
-        }));
+        ENGINES[state.engine].teardown(
+          pid,
+          teardownIdentity(recordPath, opts.identity, identity.expectCommand),
+        ));
     await teardown(state.pid, opts.graceSeconds);
   }
   removeModelHostState(opts.key, resolved);
@@ -615,11 +626,7 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
   // died or was replaced out-of-band. Report Stopped so the reconciler
   // re-acts on it — but keep the verdict visible: "unknown" is not proof the
   // pid is gone, and deletion paths must not act on it.
-  const verdict = verifyPidFile(
-    modelhostPidFile(resolved, opts.key),
-    state.pid,
-    opts.identity,
-  );
+  const verdict = verifyPidFile(modelhostPidFile(resolved, opts.key), state.pid, opts.identity);
   if (verdict !== "alive") {
     return {
       state: "Stopped",
