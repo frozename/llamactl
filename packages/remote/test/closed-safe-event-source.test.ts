@@ -1,8 +1,9 @@
+import type { ClusterNode } from "@llamactl/core/config/schema";
+
 import { createTRPCClient, httpSubscriptionLink } from "@trpc/client";
 import { initTRPC } from "@trpc/server";
 import { expect, test } from "bun:test";
 
-import type { ClusterNode } from "@llamactl/core/config/schema";
 import { ClosedSafeEventSource } from "../src/client/closed-safe-event-source.js";
 import { buildPinnedLinks, type PinnedFetch } from "../src/client/links.js";
 
@@ -35,7 +36,9 @@ function makeAbortIgnoringStream(): { fetch: PinnedFetch; push: (chunk: string) 
     );
   return {
     fetch,
-    push: (chunk: string): void => controller.enqueue(encoder.encode(chunk)),
+    push: (chunk: string): void => {
+      controller.enqueue(encoder.encode(chunk));
+    },
   };
 }
 
@@ -89,7 +92,6 @@ test("buildPinnedLinks reports a failed SSE response as an error", async () => {
   const client = createTRPCClient<Router>({ links: buildPinnedLinks(node, "tok", () => failing) });
   const outcome = await new Promise<string>((resolve) => {
     let settled = false;
-    let timer: ReturnType<typeof setTimeout>;
     const settle = (value: string): void => {
       if (settled) return;
       settled = true;
@@ -97,11 +99,17 @@ test("buildPinnedLinks reports a failed SSE response as an error", async () => {
       resolve(value);
     };
     const sub = client.s.subscribe(undefined, {
-      onData: () => settle("data"),
-      onError: () => settle("error"),
-      onComplete: () => settle("complete"),
+      onData: () => {
+        settle("data");
+      },
+      onError: () => {
+        settle("error");
+      },
+      onComplete: () => {
+        settle("complete");
+      },
     });
-    timer = setTimeout(() => {
+    const timer = setTimeout(() => {
       sub.unsubscribe();
       settle("timeout");
     }, 2000);
