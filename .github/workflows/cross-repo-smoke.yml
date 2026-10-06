@@ -33,10 +33,9 @@ jobs:
         with:
           repository: frozename/nova
           path: nova
-          # Pin to main; bump deliberately when siblings ship a
-          # breaking schema change so the drift shows up in one PR
-          # instead of silently breaking every downstream repo.
-          ref: main
+          # Pinned to the nova commit that llamactl's file: @nova/* dependencies are built
+          # against; unpin after llamactl moves to the published @novaproto/* packages.
+          ref: e1a65bd77710afb4b3cf67909bd1984bf80837b1
 
       - name: Checkout sirius-gateway
         uses: actions/checkout@v4
