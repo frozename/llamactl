@@ -32,7 +32,7 @@ while [ "$#" -gt 0 ]; do
 done
 export FAKE_HOST="$HOST"
 export FAKE_PORT="$PORT"
-exec bun -e "const s=Bun.listen({hostname:process.env.FAKE_HOST,port:Number(process.env.FAKE_PORT),socket:{data(){},open(){},close(){},error(){}}});process.on('SIGTERM',()=>{s.stop();process.exit(0);});process.on('SIGINT',()=>{s.stop();process.exit(0);});await new Promise(()=>{});"
+exec -a rpc-server bun -e "const s=Bun.listen({hostname:process.env.FAKE_HOST,port:Number(process.env.FAKE_PORT),socket:{data(){},open(){},close(){},error(){}}});process.on('SIGTERM',()=>{s.stop();process.exit(0);});process.on('SIGINT',()=>{s.stop();process.exit(0);});await new Promise(()=>{});"
 `;
 
 function pickPort(): number {
