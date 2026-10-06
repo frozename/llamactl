@@ -158,10 +158,7 @@ test("delete workload keeps manifest and runtime state when the remote refuses t
       }) as unknown as NodeClient,
   });
 
-  const {
-    result: code,
-    stderr,
-  } = await withCapturedIo(() => runDelete(["workload", "mlx-host"]));
+  const { result: code, stderr } = await withCapturedIo(() => runDelete(["workload", "mlx-host"]));
 
   expect(code).toBe(1);
   expect(stderr).toContain("pid identity unknown");

@@ -1341,8 +1341,7 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
   const identity: PidIdentityDeps = {
     ...opts.identity,
     expectCommand: {
-      binary:
-        sidecar !== null && sidecar.binary !== "" ? basename(sidecar.binary) : "llama-server",
+      binary: sidecar !== null && sidecar.binary !== "" ? basename(sidecar.binary) : "llama-server",
       ...(sidecar !== null ? { args: [sidecar.rel] } : {}),
     },
   };

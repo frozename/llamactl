@@ -118,9 +118,7 @@ export interface WorkloadClient {
     mutate(input: { workload: string; graceSeconds?: number }): Promise<unknown>;
   };
   modelHostStatus: {
-    query(input: {
-      workload: string;
-    }): Promise<{
+    query(input: { workload: string }): Promise<{
       state: string;
       pid?: number | null;
       specHash?: string;

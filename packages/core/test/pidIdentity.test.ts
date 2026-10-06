@@ -193,8 +193,7 @@ describe("command-line corroboration", () => {
     expect(
       verifyRecordedPid(4242, record, {
         ...liveDeps,
-        processCommand: () =>
-          "/opt/llama/bin/llama-server -m /models/probe/model.gguf --port 8080",
+        processCommand: () => "/opt/llama/bin/llama-server -m /models/probe/model.gguf --port 8080",
         expectCommand: { binary: "llama-server", args: ["probe/model.gguf"] },
       }),
     ).toBe("alive");

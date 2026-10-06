@@ -540,9 +540,7 @@ describe("applyManifest — kind dispatch", () => {
       if (result.ok) return;
       expect(result.error).toContain("modelHostStop");
       expect(removeSpy).not.toHaveBeenCalled();
-      expect(
-        readModelHostState({ name: "mlx-host-smoke" }, resolvedRuntime),
-      ).not.toBeNull();
+      expect(readModelHostState({ name: "mlx-host-smoke" }, resolvedRuntime)).not.toBeNull();
     } finally {
       removeSpy.mockRestore();
       rmSync(tmp, { recursive: true, force: true });

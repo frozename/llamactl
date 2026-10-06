@@ -170,9 +170,10 @@ describe("unknown identity is fail-closed at every caller", () => {
     mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });
     const pidPath = keepAlive.keepAlivePidFile(resolved);
     writeFileSync(pidPath, `${String(impostorPid)}\n`);
-    expect(
-      keepAlive.readKeepAliveRecord(resolved, { processStartMs: () => null }),
-    ).toEqual({ pid: impostorPid, verdict: "unknown" });
+    expect(keepAlive.readKeepAliveRecord(resolved, { processStartMs: () => null })).toEqual({
+      pid: impostorPid,
+      verdict: "unknown",
+    });
   });
 
   test("readKeepAliveRecord flags a command-line impostor as reused", () => {

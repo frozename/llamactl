@@ -265,10 +265,7 @@ function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
  * remote could not prove the recorded pid's identity, and deleting the
  * manifest would orphan a possibly-live process nobody could find later.
  */
-async function stopWorkloadForDelete(
-  manifest: ModelRun,
-  stops: string[],
-): Promise<string | null> {
+async function stopWorkloadForDelete(manifest: ModelRun, stops: string[]): Promise<string | null> {
   const cfg = kubecfg.loadConfig();
   try {
     const client = clientForNode(cfg, manifest.spec.node);
