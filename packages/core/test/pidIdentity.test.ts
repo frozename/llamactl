@@ -166,7 +166,7 @@ describe("command-line corroboration", () => {
   const record = 1_000_000;
   const liveDeps = { probe: noopProbe, processStartMs: (): number => record };
 
-  test("reused when argv0's basename is not the expected binary", () => {
+  test("unknown when argv0's basename is not the expected binary", () => {
     // A fresh record defeats the start-time check; the command line is the
     // only evidence left that this pid is not the recorded server.
     expect(
@@ -175,10 +175,10 @@ describe("command-line corroboration", () => {
         processCommand: () => "/bin/sleep 60",
         expectCommand: { binary: "llama-server" },
       }),
-    ).toBe("reused");
+    ).toBe("unknown");
   });
 
-  test("reused when the binary matches but a required arg is absent", () => {
+  test("unknown when the binary matches but a required arg is absent", () => {
     expect(
       verifyRecordedPid(4242, record, {
         ...liveDeps,
@@ -186,7 +186,7 @@ describe("command-line corroboration", () => {
           "/opt/llama/bin/llama-server -m /models/other/elsewhere.gguf --port 8080",
         expectCommand: { binary: "llama-server", args: ["probe/model.gguf"] },
       }),
-    ).toBe("reused");
+    ).toBe("unknown");
   });
 
   test("required args match absolute path tokens by suffix", () => {
@@ -217,6 +217,67 @@ describe("command-line corroboration", () => {
         ...liveDeps,
         processCommand: () => "/opt/bin/llama-server -m /models/xa.gguf",
         expectCommand: { binary: "llama-server", args: ["a.gguf"] },
+      }),
+    ).toBe("unknown");
+  });
+
+  test("R2-1 mismatch is unknown for a readable command line", () => {
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...liveDeps,
+        processCommand: () => "/bin/sleep 60",
+        expectCommand: { binary: "llama-server" },
+      }),
+    ).toBe("unknown");
+    expect(isRecordedPidGone("unknown")).toBe(false);
+  });
+
+  test("R2-1 spaced path matches its own server", () => {
+    const path = "/opt/my llama/bin/llama-server";
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...liveDeps,
+        processCommand: () => `${path} -m /models/probe/model.gguf`,
+        expectCommand: { binary: "llama-server", path, args: ["probe/model.gguf"] },
+      }),
+    ).toBe("alive");
+  });
+
+  test("R2-1 impostor cannot name the binary in later args or extend argv0", () => {
+    for (const path of ["/opt/llama/bin/llama-server", "/opt/my llama/bin/llama-server"]) {
+      for (const cmdline of [
+        `/opt/other/bin/llama-proxy ${path} -m /models/probe/model.gguf`,
+        `${path}-old -m /models/probe/model.gguf`,
+      ]) {
+        expect(
+          verifyRecordedPid(4242, record, {
+            ...liveDeps,
+            processCommand: () => cmdline,
+            expectCommand: { binary: "llama-server", path, args: ["probe/model.gguf"] },
+          }),
+        ).toBe("unknown");
+      }
+    }
+  });
+
+  test("EPERM and start-time recycle stay reused even with a matching command", () => {
+    const matching = {
+      ...liveDeps,
+      processCommand: () => "llama-server",
+      expectCommand: { binary: "llama-server" },
+    };
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...matching,
+        probe: () => {
+          throw Object.assign(new Error("not permitted"), { code: "EPERM" });
+        },
+      }),
+    ).toBe("reused");
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...matching,
+        processStartMs: () => record + PID_START_SLACK_MS + 1,
       }),
     ).toBe("reused");
   });

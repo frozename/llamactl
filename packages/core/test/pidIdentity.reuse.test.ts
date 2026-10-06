@@ -141,6 +141,7 @@ describe("recycled recorded pid", () => {
     const res = await stopServer({ key: KEY, resolved, graceSeconds: 1 });
     expect(alive(impostorPid)).toBe(true);
     expect(res.killed).toBe(false);
-    expect(existsSync(pidPath)).toBe(false);
+    expect(existsSync(pidPath)).toBe(true);
+    expect(res.stopped).toBe(false);
   });
 });

@@ -8,8 +8,8 @@ import { resolveEnv } from "../src/env.js";
 import * as keepAlive from "../src/keepAlive.js";
 import * as pid from "../src/pidIdentity.js";
 import { stopRpcServer } from "../src/rpcServer.js";
-import { existsSync, mkdirSync, utimesSync, writeFileSync } from "../src/safe-fs.js";
-import { stopServer } from "../src/server.js";
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "../src/safe-fs.js";
+import { startServer, stopServer } from "../src/server.js";
 import { listLocalRoutes } from "../src/workloadRuntime.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
@@ -176,7 +176,7 @@ describe("unknown identity is fail-closed at every caller", () => {
     });
   });
 
-  test("readKeepAliveRecord flags a command-line impostor as reused", () => {
+  test("readKeepAliveRecord flags a command-line impostor as unknown", () => {
     // A fresh record passes the start-time check, so only the command line
     // can show this pid is not the keep-alive supervisor.
     mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });
@@ -184,9 +184,121 @@ describe("unknown identity is fail-closed at every caller", () => {
     writeFileSync(pidPath, `${String(impostorPid)}\n`);
     expect(keepAlive.readKeepAliveRecord(resolved)).toEqual({
       pid: impostorPid,
-      verdict: "reused",
+      verdict: "unknown",
     });
   });
+
+  test("R2-4 stopServer mismatch refuses and keeps every tracking file", async () => {
+    const pidPath = seedServer(false);
+    const statePath = join(temp.runtimeDir, "workloads", KEY.name, "llama-server.state");
+    const state = readFileSync(statePath, "utf8");
+    const res = await stopServer({
+      key: KEY,
+      resolved,
+      graceSeconds: 1,
+      identity: { processCommand: () => "/bin/sleep 60" },
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(res.stopped).toBe(false);
+    expect(res.killed).toBe(false);
+    expect(alive(impostorPid)).toBe(true);
+    expect(existsSync(pidPath)).toBe(true);
+    expect(readFileSync(pidPath, "utf8").trim()).toBe(String(impostorPid));
+    expect(readFileSync(statePath, "utf8")).toBe(state);
+  });
+
+  test("R2-4 stopRpcServer mismatch refuses and keeps every tracking file", async () => {
+    mkdirSync(temp.runtimeDir, { recursive: true });
+    const pidPath = join(temp.runtimeDir, "rpc-server.pid");
+    const statePath = join(temp.runtimeDir, "rpc-server.state");
+    writeFileSync(pidPath, `${String(impostorPid)}\n`);
+    const state = JSON.stringify({ pid: impostorPid, host: "127.0.0.1", port: 1 });
+    writeFileSync(statePath, state);
+    const res = await stopRpcServer({
+      resolved,
+      graceSeconds: 1,
+      identity: { processCommand: () => "/bin/sleep 60" },
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(res.stopped).toBe(false);
+    expect(res.killed).toBe(false);
+    expect(alive(impostorPid)).toBe(true);
+    expect(existsSync(pidPath)).toBe(true);
+    expect(readFileSync(pidPath, "utf8").trim()).toBe(String(impostorPid));
+    expect(readFileSync(statePath, "utf8")).toBe(state);
+  });
+
+  test("R2-4 stopKeepAlive mismatch refuses without writing a stop file", async () => {
+    mkdirSync(temp.runtimeDir, { recursive: true });
+    const pidPath = keepAlive.keepAlivePidFile(resolved);
+    writeFileSync(pidPath, `${String(impostorPid)}\n`);
+    const res = await keepAlive.stopKeepAlive({
+      key: KEY,
+      resolved,
+      graceSeconds: 1,
+      identity: { processCommand: () => "/bin/sleep 60" },
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(res.stopped).toBe(false);
+    expect(res.killed).toBe(false);
+    expect(alive(impostorPid)).toBe(true);
+    expect(existsSync(pidPath)).toBe(true);
+    expect(readFileSync(pidPath, "utf8").trim()).toBe(String(impostorPid));
+    expect(existsSync(keepAlive.keepAliveStopFile(resolved))).toBe(false);
+  });
+
+  test("R2-3 mmproj retry refuses instead of launching over an unverifiable process", async () => {
+    const modelDir = join(temp.modelsDir, "probe");
+    mkdirSync(modelDir, { recursive: true });
+    const modelPath = join(modelDir, "model.gguf");
+    writeFileSync(modelPath, "");
+    const marker = join(temp.devStorage, "launches.log");
+    const binary = join(temp.devStorage, "fake-llama-server");
+    writeFileSync(binary, `#!/bin/sh\necho $$ >> '${marker}'\nexec /bin/sleep 30\n`, {
+      mode: 0o755,
+    });
+    const portServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    const port = portServer.port!;
+    portServer.stop(true);
+    const pidPath = join(temp.runtimeDir, "workloads", KEY.name, "llama-server.pid");
+    const launches = (): number[] =>
+      existsSync(marker) ? readFileSync(marker, "utf8").trim().split("\n").map(Number) : [];
+    try {
+      const res = await startServer({
+        key: KEY,
+        target: "probe/model.gguf",
+        resolved,
+        binary,
+        endpoint: { host: "127.0.0.1", port },
+        extraArgs: ["--mmproj", modelPath],
+        timeoutSeconds: 1,
+        skipTuned: true,
+        identity: { processCommand: () => "/bin/sleep 60" },
+      });
+      expect(launches()).toHaveLength(1);
+      const firstPid = launches()[0]!;
+      expect(res.ok).toBe(false);
+      expect(res.retried).toBe(true);
+      expect(res.error).toContain("pid identity unknown");
+      expect(res.error).toContain(pidPath);
+      await new Promise((r) => setTimeout(r, 300));
+      expect(alive(firstPid)).toBe(true);
+      expect(readFileSync(pidPath, "utf8").trim()).toBe(String(firstPid));
+    } finally {
+      for (const launched of launches()) {
+        try {
+          process.kill(-launched, "SIGKILL");
+        } catch {
+          // The detached group may already be gone.
+        }
+        try {
+          process.kill(launched, "SIGKILL");
+        } catch {
+          // The child may already be gone.
+        }
+      }
+    }
+  }, 15_000);
 
   test("listLocalRoutes keeps routes whose recorded pid cannot be verified", () => {
     // Backdated so only the injected resolver can classify the record.

@@ -136,14 +136,14 @@ describe("rpcServer", () => {
       const pidPath = join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.pid");
       writeFileSync(pidPath, `${String(impostor.pid)}\n`);
       const res = await stopRpcServer({ resolved, graceSeconds: 1 });
-      expect(res.stopped).toBe(true);
+      expect(res.stopped).toBe(false);
       expect(res.killed).toBe(false);
       try {
         process.kill(impostor.pid, 0);
       } catch {
         throw new Error("impostor was signalled");
       }
-      expect(existsSync(pidPath)).toBe(false);
+      expect(existsSync(pidPath)).toBe(true);
     } finally {
       try {
         impostor.kill("SIGKILL");
