@@ -243,6 +243,17 @@ describe("command-line corroboration", () => {
     ).toBe("alive");
   });
 
+  test("a full executable path matches at the end of the command line", () => {
+    const path = "/opt/my llama/bin/llama-server";
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...liveDeps,
+        processCommand: () => path,
+        expectCommand: { binary: "llama-server", path },
+      }),
+    ).toBe("alive");
+  });
+
   test("R2-1 impostor cannot name the binary in later args or extend argv0", () => {
     for (const path of ["/opt/llama/bin/llama-server", "/opt/my llama/bin/llama-server"]) {
       for (const cmdline of [
