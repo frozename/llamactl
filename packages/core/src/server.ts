@@ -481,6 +481,7 @@ export async function serverStatus(
 export interface StartServerOptions {
   key: WorkloadKey;
   target: string;
+  identity?: PidIdentityDeps;
   /** Additional arguments appended to the llama-server invocation. */
   extraArgs?: string[];
   allowExternalBind?: boolean;
@@ -938,7 +939,24 @@ async function retryWithMmprojSafeFlags(
 ): Promise<MmprojRetryOutcome> {
   const { resolved, key, launchEndpoint, tunedProfile } = ctx;
   opts.onEvent?.({ type: "retry", reason: "mmproj safe-flag retry" });
-  await stopServer({ key, resolved });
+  const stopResult = await stopServer({
+    key,
+    resolved,
+    ...omitUndefined({ identity: opts.identity }),
+  });
+  if (!stopResult.stopped) {
+    opts.signal?.removeEventListener("abort", ctx.killOnAbort);
+    return {
+      result: startServerError(
+        resolved,
+        launchEndpoint,
+        tunedProfile,
+        true,
+        `pid identity unknown for ${pidFile(resolved, key)} — refusing mmproj retry over an unverifiable process`,
+      ),
+      readyResult: { outcome: "timeout" },
+    };
+  }
   const retryArgs = [...ctx.launchArgs, ...safeRetryArgs()];
   const retryPid = await launchBackground({
     bin: ctx.bin,
@@ -1107,14 +1125,18 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   // Stop any existing instance. When the recorded pid's identity cannot be
   // proven, refuse to start: a replacement would either orphan the tracked
   // process or fight it for the port.
-  const stopResult = await stopServer({ key, resolved });
+  const stopResult = await stopServer({
+    key,
+    resolved,
+    ...omitUndefined({ identity: opts.identity }),
+  });
   if (!stopResult.stopped) {
     return startServerError(
       resolved,
       launchEndpoint,
       null,
       false,
-      `pid identity unknown for tracked pid ${String(stopResult.pid)} — refusing to start over an unverifiable process`,
+      `pid identity unknown for tracked pid ${String(stopResult.pid)} in ${pidFile(resolved, key)} — refusing to start over an unverifiable process`,
     );
   }
 
@@ -1342,18 +1364,19 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
     ...opts.identity,
     expectCommand: {
       binary: sidecar !== null && sidecar.binary !== "" ? basename(sidecar.binary) : "llama-server",
+      ...(sidecar !== null && sidecar.binary !== "" ? { path: sidecar.binary } : {}),
       ...(sidecar !== null ? { args: [sidecar.rel] } : {}),
     },
   };
   const verdict = verifyPidFile(recordPath, pid, identity);
-  // Identity could not be established: signal nothing, keep the tracking
-  // files, and report not-stopped so a later attempt can still find them.
-  if (verdict === "unknown") return { stopped: false, pid, killed: false };
   if (isRecordedPidGone(verdict)) {
     removeServerPid(resolved, key);
     removeServerState(resolved, key);
     return { stopped: true, pid, killed: false };
   }
+  // Only positive identity authorizes signalling; unknown and future verdicts
+  // keep the tracking files so a later attempt can still find the process.
+  if (verdict !== "alive") return { stopped: false, pid, killed: false };
 
   const terminated = await terminateVerifiedPid(recordPath, pid, identity, grace);
   if (!terminated.stopped) return { stopped: false, pid, killed: false };

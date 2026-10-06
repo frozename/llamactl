@@ -274,7 +274,7 @@ describe("command-line corroboration", () => {
   test("EPERM and start-time recycle stay reused even with a matching command", () => {
     const matching = {
       ...liveDeps,
-      processCommand: () => "llama-server",
+      processCommand: (): string => "llama-server",
       expectCommand: { binary: "llama-server" },
     };
     expect(

@@ -240,9 +240,6 @@ export async function stopKeepAlive(opts: StopKeepAliveOptions): Promise<StopKee
     expectCommand: KEEPALIVE_EXPECTATION,
   };
   const { pid, verdict } = keepAlivePidVerdict(resolved, opts.identity);
-  // Identity could not be established: signal nothing, skip the stop file and
-  // the server stop, and keep the tracking files for a later attempt.
-  if (verdict === "unknown") return { stopped: false, pid, killed: false };
   if (pid === null || verdict === null || isRecordedPidGone(verdict)) {
     try {
       unlinkSync(keepAlivePidFile(resolved));
@@ -256,6 +253,9 @@ export async function stopKeepAlive(opts: StopKeepAliveOptions): Promise<StopKee
     }
     return { stopped: true, pid: null, killed: false };
   }
+  // Only positive identity authorizes the stop file and signal paths; unknown
+  // and future verdicts keep the tracking files for a later attempt.
+  if (verdict !== "alive") return { stopped: false, pid, killed: false };
 
   // Touch the stop file so the worker exits cleanly at the next tick.
   mkdirSync(resolved.LOCAL_AI_RUNTIME_DIR, { recursive: true });

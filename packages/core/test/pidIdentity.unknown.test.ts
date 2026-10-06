@@ -259,7 +259,7 @@ describe("unknown identity is fail-closed at every caller", () => {
     });
     const portServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
     const port = portServer.port!;
-    portServer.stop(true);
+    await portServer.stop(true);
     const pidPath = join(temp.runtimeDir, "workloads", KEY.name, "llama-server.pid");
     const launches = (): number[] =>
       existsSync(marker) ? readFileSync(marker, "utf8").trim().split("\n").map(Number) : [];

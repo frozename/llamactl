@@ -5,7 +5,8 @@
 // Tracking files are only written while their process is alive, so a process
 // that started after the record cannot be the one we launched — the pid was
 // recycled. "unknown" is fail-closed: never signalled, but the tracking files
-// are kept because the record may still be ours.
+// are kept because the record may still be ours. A command mismatch is
+// unverifiable identity ("unknown"), not evidence that the pid was recycled.
 import { execFileSync } from "node:child_process";
 import { basename } from "node:path";
 
@@ -22,12 +23,15 @@ const PS_TIMEOUT_MS = 500;
 /**
  * What the process holding a recorded pid is expected to look like. `binary`
  * compares against argv0's basename (an absolute shebang path and a bare
- * `exec -a` name both reduce to the same basename). Each entry of `args` must
- * appear as a whole token or as the tail of a path token, so "a.gguf" never
+ * `exec -a` name both reduce to the same basename). `path` also accepts the
+ * full argv0 at a whitespace or end boundary, including paths with spaces.
+ * Each entry of `args` must appear as a whole token or as the tail of a path
+ * token, so "a.gguf" never
  * matches "/models/xa.gguf".
  */
 export interface CommandExpectation {
   binary?: string;
+  path?: string;
   args?: readonly string[];
 }
 
@@ -172,7 +176,9 @@ function classifyProbeError(err: unknown): PidVerdict {
 
 function commandMatches(cmdline: string, expect: CommandExpectation): boolean {
   const tokens = cmdline.trim().split(/\s+/);
-  if (expect.binary !== undefined && basename(tokens[0] ?? "") !== expect.binary) {
+  const matchesPath =
+    expect.path !== undefined && (cmdline === expect.path || cmdline.startsWith(`${expect.path} `));
+  if (!matchesPath && expect.binary !== undefined && basename(tokens[0] ?? "") !== expect.binary) {
     return false;
   }
   for (const arg of expect.args ?? []) {
@@ -187,6 +193,8 @@ function commandMatches(cmdline: string, expect: CommandExpectation): boolean {
  * file's mtime). A live pid whose start is later than that + slack belongs to
  * a different process — the pid was recycled and is reported "reused". When
  * `deps.expectCommand` is given, the current command line must also match.
+ * A mismatch is unverifiable identity ("unknown"): never signalled, with
+ * tracking files kept because the record may still be ours.
  */
 export function verifyRecordedPid(
   pid: number,
@@ -208,7 +216,7 @@ export function verifyRecordedPid(
   if (expect !== undefined) {
     const cmdline = (deps?.processCommand ?? processCommand)(pid);
     if (cmdline === null) return "unknown";
-    if (!commandMatches(cmdline, expect)) return "reused";
+    if (!commandMatches(cmdline, expect)) return "unknown";
   }
   return "alive";
 }

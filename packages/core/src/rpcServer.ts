@@ -281,7 +281,7 @@ export async function startRpcServer(opts: StartRpcServerOptions): Promise<Start
       ok: false,
       pid: null,
       endpoint,
-      error: `pid identity unknown for tracked pid ${String(stopResult.pid)} — refusing to start over an unverifiable process`,
+      error: `pid identity unknown for tracked pid ${String(stopResult.pid)} in ${pidFile(resolved)} — refusing to start over an unverifiable process`,
     };
   }
 
@@ -364,13 +364,13 @@ export async function stopRpcServer(opts: StopRpcServerOptions = {}): Promise<St
     expectCommand: { binary: "rpc-server" },
   };
   const verdict = verifyPidFile(recordPath, pid, identity);
-  // Identity could not be established: signal nothing, keep the tracking
-  // files, and report not-stopped so a later attempt can still find them.
-  if (verdict === "unknown") return { stopped: false, pid, killed: false };
   if (isRecordedPidGone(verdict)) {
     clearTracking(resolved);
     return { stopped: true, pid, killed: false };
   }
+  // Only positive identity authorizes signalling; unknown and future verdicts
+  // keep the tracking files so a later attempt can still find the process.
+  if (verdict !== "alive") return { stopped: false, pid, killed: false };
   // The pid just verified — terminate it. The grace loop polls with kill(0)
   // only so the ps-backed verify cost stays bounded.
   const terminated = await terminateVerifiedPid(recordPath, pid, identity, grace);
