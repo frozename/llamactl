@@ -192,8 +192,15 @@
         "registrar_event_id": 2114,
         "follow_up_event_id": 1830,
         "marker": "p22-path-ruled-2026-10-05",
-        "published_at": null,
+        "published_at": "2026-10-06T12:24:02Z",
         "body_sha256": "926e5be0fe873db9ee2428be4e843afa55e88fe511ff0d318268f95c0df6dfed"
+      },
+      {
+        "registrar_event_id": 2146,
+        "follow_up_event_id": 1830,
+        "marker": "current-state-2026-10-07",
+        "published_at": null,
+        "body_sha256": "6dc5bddf6140d0f24111cd63f4fc15f23d436dccd8fdece5eff76111c025a161"
       }
     ]
   },
@@ -4250,7 +4257,7 @@
   "tracking": {
     "schema_version": 1,
     "ledger_url": "https://github.com/frozename/llamactl/blob/docs/unified-ai-router-roadmap/docs/unified-ai-router-registrar.md",
-    "snapshot_at": "2026-10-06T00:04:29.953Z",
+    "snapshot_at": "2026-10-07T00:42:15.589Z",
     "repository": "frozename/llamactl",
     "baseline": "7443403912ab3976d18bc288de3009e2c23b7afb",
     "roadmap_url": "https://github.com/frozename/llamactl/issues/127",
@@ -4258,7 +4265,7 @@
       "url": "https://github.com/frozename/llamactl/pull/147",
       "state": "open",
       "merged": false,
-      "observed_head": "8f89b20eee137dc6078b1e6965337c37df7fce50"
+      "observed_head": "57dd25f53c8af7a5d9bba53dca130af61d52ca57"
     },
     "penumbra": {
       "registrar_id": "2c2a7cbb-048c-45e5-8663-f15187b9e85b",
@@ -4266,7 +4273,7 @@
       "home_project": "llamactl",
       "status": "active",
       "source_doc_path": "docs/unified-ai-router-registrar.md",
-      "last_event_id": 2114,
+      "last_event_id": 2146,
       "rollup": {
         "open_blockers": 0,
         "open_follow_ups": 29
@@ -4542,7 +4549,7 @@
         "review_verdict": "not_run",
         "test_evidence": [],
         "rollout_status": "not_enabled",
-        "next_action": "Verify accepted dependency commits before any authorized dispatch. The evidence-only slice P2.2/penumbra-qualification was filed (penumbra#192, 1875) and dispatched (handoff 4f22272d, 1876) on 2026-09-25; the coordinator stays blocked on P2.1. Update 2026-09-28 (events 1944-1950): the evidence slice merged as penumbra#196 (f122106dc, 1946) and phase 4 moved pending -> active (1945); follow-up 1830 stays owed until the D7 package (decision 1948; frozename/nova#2 prepared, not published) is installed from the registry in penumbra and llamactl and L2/L3 are re-run against it; the coordinator stays blocked on P2.1. Update 2026-10-01 (events 1957-2079): follow-up 1830 closed DONE (2074) after 0.1.0 was published (2024) and installed from the registry by test consumers in penumbra and llamactl (llamactl#152, decision 2031); decision 2077 makes P2.2/llamactl-adoption (llamactl#153, filed 2078, owed 2079) the vehicle of Scope 8's Path A adoption, so P2.2's own dispatch leaves packages/remote/package.json, bun.lock and packages/remote/src/execution/process-supervisor.ts to it; the coordinator stays blocked on P2.1. Update 2026-10-05 (events 2106-2114): decision 2114 reads 2077's carve-out as the Path A edits only: P2.2 creates packages/remote/src/execution/process-supervisor.ts and both supervisor tests natively, with no library import, never edits packages/remote/package.json or bun.lock, and records its SHAREDLIB-6 verdict as 'Path B, adoption owed to P2.2/llamactl-adoption (R9 ruling, 2026-10-05)', which does not satisfy #145's Path A gate; llamactl#153 then backs the supervisor with @novaproto/exec-primitives 0.1.0 and owns package.json and bun.lock (order P2.1 -> P2.2 -> P2.2/llamactl-adoption); the coordinator stays blocked on P2.1."
+        "next_action": "Verify accepted dependency commits before any authorized dispatch. The evidence-only slice P2.2/penumbra-qualification was filed (penumbra#192, 1875) and dispatched (handoff 4f22272d, 1876) on 2026-09-25; the coordinator stays blocked on P2.1. Update 2026-09-28 (events 1944-1950): the evidence slice merged as penumbra#196 (f122106dc, 1946) and phase 4 moved pending -> active (1945); follow-up 1830 stays owed until the D7 package (decision 1948; frozename/nova#2 prepared, not published) is installed from the registry in penumbra and llamactl and L2/L3 are re-run against it; the coordinator stays blocked on P2.1. Update 2026-10-01 (events 1957-2079): follow-up 1830 closed DONE (2074) after 0.1.0 was published (2024) and installed from the registry by test consumers in penumbra and llamactl (llamactl#152, decision 2031); decision 2077 makes P2.2/llamactl-adoption (llamactl#153, filed 2078, owed 2079) the vehicle of Scope 8's Path A adoption, so P2.2's own dispatch leaves packages/remote/package.json, bun.lock and packages/remote/src/execution/process-supervisor.ts to it; the coordinator stays blocked on P2.1. Update 2026-10-05 (events 2106-2114): decision 2114 reads 2077's carve-out as the Path A edits only: P2.2 creates packages/remote/src/execution/process-supervisor.ts and both supervisor tests natively, with no library import, never edits packages/remote/package.json or bun.lock, and records its SHAREDLIB-6 verdict as 'Path B, adoption owed to P2.2/llamactl-adoption (R9 ruling, 2026-10-05)', which does not satisfy #145's Path A gate; llamactl#153 then backs the supervisor with @novaproto/exec-primitives 0.1.0 and owns package.json and bun.lock (order P2.1 -> P2.2 -> P2.2/llamactl-adoption); the coordinator stays blocked on P2.1. Update 2026-10-06 (decision 2119): dispatch is authorized for P2.2 once P2.1 is accepted and merged, and for P2.2/llamactl-adoption (llamactl#153) once P2.2 is accepted and packages/remote/src/execution/process-supervisor.ts is on main, each on decision 2114's terms; it does not authorize wave 1 or P2.1, so the coordinator stays blocked on P2.1."
       },
       {
         "id": "P3.1",
@@ -4957,6 +4964,13 @@
         "kind": "progress",
         "summary": "Docs 8f89b20e read back (2108); 2079 row published_at #127 2026-10-02T12:22:54Z. Caveat 2106 corrects 2075: the test consumer overlaps only the P2.1 and P2.2 write fences. Decision 2114: P2.2 creates process-supervisor.ts and both tests natively, never edits packages/remote/package.json or bun.lock, and labels its SHAREDLIB-6 verdict 'Path B, adoption owed to P2.2/llamactl-adoption (R9 ruling, 2026-10-05)', which does not satisfy #145's Path A gate; llamactl#153 then backs the supervisor with 0.1.0, owns both files and keeps its P2.2 dependency (P2.1 -> P2.2 -> #153). 29 follow-ups owed; no open blockers; wave 1 not authorized.",
         "registrar_event_range": [2106, 2114]
+      },
+      {
+        "id": "LEDGER-026",
+        "at": "2026-10-07T00:42:15.589Z",
+        "kind": "progress",
+        "summary": "Docs 57dd25f5 read back (2118); 2114 row published_at #127 2026-10-06T12:24:02Z. Decision 2119: P2.2 and llamactl#153 authorized for dispatch, each only once its dependencies are met; it does not authorize wave 1 or P2.1. Follow-up 2070 DONE (2120, 2130; #155 9a343c7c). Decision 2121: #127's top section holds current state only; its per-amend event lists move verbatim to the ledger's Registrar event index, which records later events. llamactl CI pins every Nova checkout to e1a65bd (#154, #157; 2122, caveat 2143); nova#3 merged as 814b2e78 (2128); links 2129 and 2145 (#156). 29 follow-ups owed (2146 new); no open blockers.",
+        "registrar_event_range": [2118, 2146]
       }
     ]
   },
@@ -5437,7 +5451,8 @@
         "not_affected": "Penumbra consumes @novaproto/* 0.1.0 from npm and needs no sibling checkout.",
         "rule": "Recorded baseline that predates the initiative, not a new requirement. Rebased work adds no new sibling checkout.",
         "owed": "Publish Nova through a versioned channel before any claim that infrastructure serving needs no sibling checkout.",
-        "p0_2_note": "Until 2026-09-24 the in-flight P0.2 consumers used APIs that existed only on the unmerged nova#1 revision; the unversioned file: dependency could not enforce that revision, so a wrong revision would fail at compile or test time rather than at install (inferred). nova#1 merged first as 861e834fee82a7c31d3c9596614317d8d875e651 (event 1861) and every consumer merged after it (1862-1865), so the ordering hazard is discharged for P0.2; the unversioned channel itself stays owed under follow-up 1832."
+        "p0_2_note": "Until 2026-09-24 the in-flight P0.2 consumers used APIs that existed only on the unmerged nova#1 revision; the unversioned file: dependency could not enforce that revision, so a wrong revision would fail at compile or test time rather than at install (inferred). nova#1 merged first as 861e834fee82a7c31d3c9596614317d8d875e651 (event 1861) and every consumer merged after it (1862-1865), so the ordering hazard is discharged for P0.2; the unversioned channel itself stays owed under follow-up 1832.",
+        "ci_pin_note": "Update 2026-10-06: the CI clause of the llamactl consumer above is the 2026-09-24 reading; llamactl CI now pins every frozename/nova checkout to e1a65bd77710afb4b3cf67909bd1984bf80837b1 (llamactl#154 and #157, events 2122 and 2143) because nova#3 renamed the Nova packages to @novaproto/*, and the pin stays until llamactl moves from file: dependencies to the published @novaproto/* packages."
       },
       "active_task_fences_changed": false,
       "registrar_event_id": 1818
