@@ -200,7 +200,7 @@
         "follow_up_event_id": 1830,
         "marker": "current-state-2026-10-07",
         "published_at": null,
-        "body_sha256": "6dc5bddf6140d0f24111cd63f4fc15f23d436dccd8fdece5eff76111c025a161"
+        "body_sha256": "79207531901560a90997c5eaac3f705a6fc59e9dc94c4623e7e6fb781bc64519"
       }
     ]
   },
@@ -4969,7 +4969,7 @@
         "id": "LEDGER-026",
         "at": "2026-10-07T00:42:15.589Z",
         "kind": "progress",
-        "summary": "Docs 57dd25f5 read back (2118); 2114 row published_at #127 2026-10-06T12:24:02Z. Decision 2119: P2.2 and llamactl#153 authorized for dispatch, each only once its dependencies are met; it does not authorize wave 1 or P2.1. Follow-up 2070 DONE (2120, 2130; #155 9a343c7c). Decision 2121: #127's top section holds current state only; its per-amend event lists move verbatim to the ledger's Registrar event index, which records later events. llamactl CI pins every Nova checkout to e1a65bd (#154, #157; 2122, caveat 2143); nova#3 merged as 814b2e78 (2128); links 2129 and 2145 (#156). 29 follow-ups owed (2146 new); no open blockers.",
+        "summary": "Docs 57dd25f5 read back (2118); 2114 row published_at #127 2026-10-06T12:24:02Z. Decision 2119: P2.2 and llamactl#153 authorized for dispatch, each only once its dependencies are met; it does not authorize wave 1 or P2.1. Follow-up 2070 DONE (2120, 2130; #155 9a343c7c). Decision 2121: #127's top section holds current state only; its per-amend event lists move verbatim to the ledger's Registrar event index, which records later events. llamactl CI pins every Nova checkout to e1a65bd (#154, #157; 2122, caveat 2143); nova#3 merged as 814b2e78 (2128); links 2145 (#156) and 2129. 29 follow-ups owed (2146 new); no open blockers.",
         "registrar_event_range": [2118, 2146]
       }
     ]
@@ -5452,7 +5452,7 @@
         "rule": "Recorded baseline that predates the initiative, not a new requirement. Rebased work adds no new sibling checkout.",
         "owed": "Publish Nova through a versioned channel before any claim that infrastructure serving needs no sibling checkout.",
         "p0_2_note": "Until 2026-09-24 the in-flight P0.2 consumers used APIs that existed only on the unmerged nova#1 revision; the unversioned file: dependency could not enforce that revision, so a wrong revision would fail at compile or test time rather than at install (inferred). nova#1 merged first as 861e834fee82a7c31d3c9596614317d8d875e651 (event 1861) and every consumer merged after it (1862-1865), so the ordering hazard is discharged for P0.2; the unversioned channel itself stays owed under follow-up 1832.",
-        "ci_pin_note": "Update 2026-10-06: the CI clause of the llamactl consumer above is the 2026-09-24 reading; llamactl CI now pins every frozename/nova checkout to e1a65bd77710afb4b3cf67909bd1984bf80837b1 (llamactl#154 and #157, events 2122 and 2143) because nova#3 renamed the Nova packages to @novaproto/*, and the pin stays until llamactl moves from file: dependencies to the published @novaproto/* packages."
+        "ci_pin_note": "Update 2026-10-06: the CI clause of the llamactl consumer above is the 2026-09-24 reading; llamactl CI now pins every frozename/nova checkout to e1a65bd77710afb4b3cf67909bd1984bf80837b1 (llamactl#154 and #157, events 2122 and 2143) because nova#3 renamed the Nova packages to @novaproto/*, and the pin stays until @novaproto/contracts 0.2.0 (then mcp-shared and mcp) is released and llamactl moves from file: dependencies to those packages (follow-up 2146)."
       },
       "active_task_fences_changed": false,
       "registrar_event_id": 1818
