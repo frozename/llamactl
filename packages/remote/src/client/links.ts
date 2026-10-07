@@ -3,9 +3,9 @@ import type { FetchLike } from "eventsource";
 
 import { type ClusterNode, LOCAL_NODE_ENDPOINT } from "@llamactl/core/config/schema";
 import { httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
-import { EventSource } from "eventsource";
 
 import { computeFingerprint, fingerprintsEqual } from "../server/tls.js";
+import { ClosedSafeEventSource } from "./closed-safe-event-source.js";
 
 /**
  * Cycle-free link builder shared by `node-client.ts` (typed AppRouter
@@ -95,13 +95,18 @@ export function buildPinnedLinks(
     splitLink({
       condition: (op) => op.type === "subscription",
       // SSE path for subscriptions. Bun has no global EventSource, so
-      // we ponyfill with `eventsource@4`; tRPC's SSE link routes its
-      // HTTP calls through the ponyfill's `fetch` override, which lets
-      // us carry the pinned-TLS CA and the bearer token that the
-      // agent's auth middleware requires.
+      // the link uses ClosedSafeEventSource, an `eventsource@4` subclass.
+      // eventsource 4.1.x can still dispatch events from an already-read
+      // chunk after the client calls close() (unsubscribe); tRPC's SSE
+      // `return` listener would then call controller.close() on a closed
+      // stream and throw uncaught. The wrapper drops only dispatches that
+      // follow a client close() and still delivers the `error` event that
+      // eventsource's failConnection raises. tRPC routes the SSE HTTP calls
+      // through the `fetch` override below, which carries the pinned-TLS CA
+      // and the bearer token that the agent's auth middleware requires.
       true: httpSubscriptionLink({
         url: trpcUrl,
-        EventSource,
+        EventSource: ClosedSafeEventSource,
         eventSourceOptions: {
           fetch: ((url, init): ReturnType<FetchLike> => {
             const headers = init.headers;

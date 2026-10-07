@@ -113,8 +113,13 @@ Never skip hooks. If a pre-commit hook fails, investigate — don't
   `splitLink` keyed on `op.type === 'subscription'`.
 - `electron-trpc 1.0.0-alpha` — `exposeElectronTRPC` in preload,
   `ipcLink` in renderer.
-- Bun lacks `EventSource` globally — subscribe paths need the
-  `eventsource` ponyfill (`4.1.0`) with `{ withCredentials: false }`.
+- Bun lacks `EventSource` globally. Route product SSE subscriptions
+  through `buildPinnedLinks` (`packages/remote/src/client/links.ts`),
+  or pass `ClosedSafeEventSource` as `httpSubscriptionLink`'s
+  `EventSource`; never hand it the raw `eventsource` ponyfill
+  (`4.1.0`). Trap: the raw ponyfill dispatches events after a client
+  `close()`, and tRPC's SSE `return` listener then throws an uncaught
+  `Controller is already closed`.
 
 ### Dispatcher pattern
 

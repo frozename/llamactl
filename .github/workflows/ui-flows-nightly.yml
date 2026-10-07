@@ -32,7 +32,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: frozename/nova
-          ref: main
+          # Pinned to the nova commit that llamactl's file: @nova/* dependencies are built
+          # against; unpin after llamactl moves to the published @novaproto/* packages.
+          ref: e1a65bd77710afb4b3cf67909bd1984bf80837b1
           path: nova
 
       - name: Setup Bun
