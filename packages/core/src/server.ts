@@ -21,6 +21,12 @@ import {
   resolveSlotSavePathArgs,
 } from "./kvstore/index.js";
 import { omitUndefined } from "./object.js";
+import {
+  isRecordedPidGone,
+  type PidIdentityDeps,
+  terminateVerifiedPid,
+  verifyPidFile,
+} from "./pidIdentity.js";
 import { findTcpListenerPid, probeHealthEndpoint } from "./probe.js";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "./safe-fs.js";
 import { resolveTarget } from "./target.js";
@@ -382,13 +388,31 @@ function sidecarStatusFields(sidecar: ServerState | null, valid: boolean): Sidec
  * reflects reality even when the PID file went stale from an unclean
  * shutdown.
  */
+/**
+ * Read the recorded server pid and verify it still names the process it was
+ * recorded for. A provably-gone record (dead or recycled pid) is reaped; an
+ * unverifiable one ("unknown") is kept — it may still be ours.
+ */
+function resolveTrackedServerPid(
+  resolved: ResolvedEnv,
+  key: WorkloadKey,
+): { pid: number | null; identityUnknown: boolean } {
+  const recorded = readServerPid(key, resolved);
+  if (recorded === null) return { pid: null, identityUnknown: false };
+  const verdict = verifyPidFile(pidFile(resolved, key), recorded);
+  if (isRecordedPidGone(verdict)) {
+    removeServerPid(resolved, key);
+    return { pid: null, identityUnknown: false };
+  }
+  if (verdict === "unknown") return { pid: null, identityUnknown: true };
+  return { pid: recorded, identityUnknown: false };
+}
+
 export async function serverStatus(
   key: WorkloadKey,
   resolved: ResolvedEnv = resolveEnv(),
 ): Promise<ServerStatus> {
-  const pidRaw = readServerPid(key, resolved);
-  const pid = pidRaw && isProcessAlive(pidRaw) ? pidRaw : null;
-  if (pidRaw && !pid) removeServerPid(resolved, key);
+  const { pid, identityUnknown } = resolveTrackedServerPid(resolved, key);
   const sidecar = readServerState(key, resolved);
   // Only trust the sidecar when its PID matches the live one; if the
   // PIDs diverge, the state file is from a previous launch that
@@ -410,7 +434,9 @@ export async function serverStatus(
   const reachable = httpCode === 200;
   const state: ServerStatus["state"] = reachable || pid !== null ? "up" : "down";
 
-  if (sidecar && !validSidecar && state === "down") {
+  // An unverifiable record keeps its sidecar too: "unknown" must never reach
+  // a delete, because the record may still belong to our process.
+  if (sidecar && !validSidecar && state === "down" && !identityUnknown) {
     removeServerState(resolved, key);
   }
 
@@ -430,9 +456,13 @@ export async function serverStatus(
   // between the probe and the lsof lookup, or lsof may be unavailable):
   // only flag foreign when we positively resolved a different pid, or
   // when we recorded no live pid at all — then anything answering is
-  // not ours by definition.
+  // not ours by definition. While the tracked pid's identity is unknown
+  // the endpoint may simply belong to our own unverifiable process, so
+  // "foreign" stays inconclusive too.
   const foreign =
-    answered !== null && (pid === null || (listenerPid !== null && listenerPid !== pid));
+    answered !== null &&
+    !identityUnknown &&
+    (pid === null || (listenerPid !== null && listenerPid !== pid));
 
   return {
     state,
@@ -451,6 +481,7 @@ export async function serverStatus(
 export interface StartServerOptions {
   key: WorkloadKey;
   target: string;
+  identity?: PidIdentityDeps;
   /** Additional arguments appended to the llama-server invocation. */
   extraArgs?: string[];
   allowExternalBind?: boolean;
@@ -908,7 +939,24 @@ async function retryWithMmprojSafeFlags(
 ): Promise<MmprojRetryOutcome> {
   const { resolved, key, launchEndpoint, tunedProfile } = ctx;
   opts.onEvent?.({ type: "retry", reason: "mmproj safe-flag retry" });
-  await stopServer({ key, resolved });
+  const stopResult = await stopServer({
+    key,
+    resolved,
+    ...omitUndefined({ identity: opts.identity }),
+  });
+  if (!stopResult.stopped) {
+    opts.signal?.removeEventListener("abort", ctx.killOnAbort);
+    return {
+      result: startServerError(
+        resolved,
+        launchEndpoint,
+        tunedProfile,
+        true,
+        `pid identity unknown for ${pidFile(resolved, key)} — refusing mmproj retry over an unverifiable process`,
+      ),
+      readyResult: { outcome: "timeout" },
+    };
+  }
   const retryArgs = [...ctx.launchArgs, ...safeRetryArgs()];
   const retryPid = await launchBackground({
     bin: ctx.bin,
@@ -1074,8 +1122,23 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   if ("result" in validation) return validation.result;
   const { rel, modelPath, bin } = validation;
 
-  // Stop any existing instance — best effort.
-  await stopServer({ key, resolved });
+  // Stop any existing instance. When the recorded pid's identity cannot be
+  // proven, refuse to start: a replacement would either orphan the tracked
+  // process or fight it for the port.
+  const stopResult = await stopServer({
+    key,
+    resolved,
+    ...omitUndefined({ identity: opts.identity }),
+  });
+  if (!stopResult.stopped) {
+    return startServerError(
+      resolved,
+      launchEndpoint,
+      null,
+      false,
+      `pid identity unknown for tracked pid ${String(stopResult.pid)} in ${pidFile(resolved, key)} — refusing to start over an unverifiable process`,
+    );
+  }
 
   const conflictResult = await handlePortConflict(
     opts,
@@ -1267,6 +1330,8 @@ export interface StopServerOptions {
   resolved?: ResolvedEnv;
   /** Max seconds to wait for SIGTERM to take effect before SIGKILL. */
   graceSeconds?: number;
+  /** Identity resolver seams for tests; production uses the defaults. */
+  identity?: PidIdentityDeps;
 }
 
 export interface StopServerResult {
@@ -1285,35 +1350,37 @@ export async function stopServer(opts: StopServerOptions): Promise<StopServerRes
   const key = opts.key;
   const grace = Math.max(1, opts.graceSeconds ?? 5);
   const pid = readServerPid(key, resolved);
-  if (pid === null || !isProcessAlive(pid)) {
+  if (pid === null) {
     removeServerPid(resolved, key);
     removeServerState(resolved, key);
     return { stopped: true, pid, killed: false };
   }
-
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
+  const recordPath = pidFile(resolved, key);
+  // A live pid is not enough to signal: the command line must still be the
+  // llama-server this record describes — its binary (from the sidecar, or the
+  // default name) and the model it was launched with.
+  const sidecar = readServerState(key, resolved);
+  const identity: PidIdentityDeps = {
+    ...opts.identity,
+    expectCommand: {
+      binary: sidecar !== null && sidecar.binary !== "" ? basename(sidecar.binary) : "llama-server",
+      ...(sidecar !== null && sidecar.binary !== "" ? { path: sidecar.binary } : {}),
+      ...(sidecar !== null ? { args: [sidecar.rel] } : {}),
+    },
+  };
+  const verdict = verifyPidFile(recordPath, pid, identity);
+  if (isRecordedPidGone(verdict)) {
     removeServerPid(resolved, key);
     removeServerState(resolved, key);
     return { stopped: true, pid, killed: false };
   }
+  // Only positive identity authorizes signalling; unknown and future verdicts
+  // keep the tracking files so a later attempt can still find the process.
+  if (verdict !== "alive") return { stopped: false, pid, killed: false };
 
-  for (let i = 0; i < grace; i += 1) {
-    if (!isProcessAlive(pid)) {
-      removeServerPid(resolved, key);
-      removeServerState(resolved, key);
-      return { stopped: true, pid, killed: false };
-    }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // process already gone
-  }
+  const terminated = await terminateVerifiedPid(recordPath, pid, identity, grace);
+  if (!terminated.stopped) return { stopped: false, pid, killed: false };
   removeServerPid(resolved, key);
   removeServerState(resolved, key);
-  return { stopped: true, pid, killed: true };
+  return { stopped: true, pid, killed: terminated.killed };
 }

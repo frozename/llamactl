@@ -193,8 +193,8 @@ export const omlxEngine: EngineAdapter = {
     return await pollUntilModelIds(endpoint, timeoutMs);
   },
 
-  async teardown(pid) {
-    await gracefulShutdown(pid);
+  async teardown(pid, identity) {
+    await gracefulShutdown(pid, undefined, identity);
   },
 };
 

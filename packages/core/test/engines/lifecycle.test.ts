@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { gracefulShutdown } from "../../src/engines/lifecycle.js";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "../../src/safe-fs.js";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "../../src/safe-fs.js";
 
 function isAlive(pid: number): boolean {
   try {
@@ -95,6 +102,54 @@ describe("gracefulShutdown process-group reaping", () => {
       } catch {
         // Best-effort cleanup; failures are not actionable here.
       }
+      if (proc.pid) {
+        try {
+          process.kill(proc.pid, "SIGKILL");
+        } catch {
+          // Best-effort cleanup; failures are not actionable here.
+        }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("gracefulShutdown PID identity gate", () => {
+  test("a recorded pid that fails identity is never signalled", async () => {
+    // Backdating the record marks the pid as recycled — the process holding
+    // it now is not the one llamactl tracked, so shutdown must not touch it.
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-gshut-id-"));
+    const rec = join(dir, "w.pid");
+    const proc = spawn("/bin/sleep", ["60"], { stdio: "ignore" });
+    try {
+      if (proc.pid === undefined) throw new Error("impostor spawn failed");
+      writeFileSync(rec, `${String(proc.pid)}\n`);
+      const hourAgo = new Date(Date.now() - 3_600_000);
+      utimesSync(rec, hourAgo, hourAgo);
+      await gracefulShutdown(proc.pid, 300, { recordPath: rec });
+      expect(isAlive(proc.pid)).toBe(true);
+    } finally {
+      if (proc.pid) {
+        try {
+          process.kill(proc.pid, "SIGKILL");
+        } catch {
+          // Best-effort cleanup; failures are not actionable here.
+        }
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a recorded pid whose identity verifies is signalled", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-gshut-ok-"));
+    const rec = join(dir, "w.pid");
+    const proc = spawn("/bin/sleep", ["60"], { stdio: "ignore" });
+    try {
+      if (proc.pid === undefined) throw new Error("impostor spawn failed");
+      writeFileSync(rec, `${String(proc.pid)}\n`);
+      await gracefulShutdown(proc.pid, 300, { recordPath: rec });
+      expect(await waitUntil(() => !isAlive(proc.pid!), 4000)).toBe(true);
+    } finally {
       if (proc.pid) {
         try {
           process.kill(proc.pid, "SIGKILL");

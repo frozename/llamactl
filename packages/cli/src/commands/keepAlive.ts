@@ -108,6 +108,23 @@ function reportStartResult(pid: number | null, target: string, json: boolean): n
   return pid !== null ? 0 : 1;
 }
 
+/**
+ * Refusal message when the recorded supervisor pid blocks a fresh start;
+ * null when start may proceed. "unknown" must not read as absent — a
+ * second supervisor would compete with a process we cannot rule out as
+ * ours. Only provably-gone records (dead/reused) fall through.
+ */
+function duplicateStartRefusal(): { msg: string; pid: number } | null {
+  const existing = keepAlive.readKeepAliveRecord();
+  if (existing.pid === null || existing.verdict === null) return null;
+  if (existing.verdict === "dead" || existing.verdict === "reused") return null;
+  const msg =
+    existing.verdict === "alive"
+      ? `keep-alive already running (pid=${String(existing.pid)})`
+      : `pid identity unknown for recorded keep-alive pid ${String(existing.pid)} — refusing to start a duplicate`;
+  return { msg, pid: existing.pid };
+}
+
 async function runStart(args: string[]): Promise<number> {
   const parsed = parseJsonPositionalArgs(args);
   if ("exit" in parsed) return parsed.exit;
@@ -118,11 +135,13 @@ async function runStart(args: string[]): Promise<number> {
     return await runStartRemote(target, json);
   }
 
-  const existing = keepAlive.readKeepAlivePid();
-  if (existing !== null) {
-    const msg = `keep-alive already running (pid=${String(existing)})`;
-    if (json) process.stdout.write(`${JSON.stringify({ error: msg, pid: existing }, null, 2)}\n`);
-    else process.stderr.write(`${msg}\n`);
+  const refusal = duplicateStartRefusal();
+  if (refusal !== null) {
+    if (json)
+      process.stdout.write(
+        `${JSON.stringify({ error: refusal.msg, pid: refusal.pid }, null, 2)}\n`,
+      );
+    else process.stderr.write(`${refusal.msg}\n`);
     return 1;
   }
 

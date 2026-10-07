@@ -6,6 +6,12 @@ import type { ResolvedEnv } from "./types.js";
 import { modelhostPidFile, readModelHostState } from "./engines/state.js";
 import { resolveEnv } from "./env.js";
 import {
+  type PidIdentityDeps,
+  type PidRecordQuery,
+  type PidVerdict,
+  verifyPidFiles,
+} from "./pidIdentity.js";
+import {
   existsSync,
   mkdirSync,
   readdirSync,
@@ -146,15 +152,6 @@ export function ensureWorkloadRuntimeDir(resolved: ResolvedEnv, key: WorkloadKey
   return dir;
 }
 
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function readPidFile(path: string): number | null {
   if (!existsSync(path)) return null;
   try {
@@ -166,10 +163,13 @@ function readPidFile(path: string): number | null {
   }
 }
 
-export function listLocalWorkloads(resolved: ResolvedEnv = resolveEnv()): WorkloadRuntimeEntry[] {
+export function listLocalWorkloads(
+  resolved: ResolvedEnv = resolveEnv(),
+  deps?: PidIdentityDeps,
+): WorkloadRuntimeEntry[] {
   const root = workloadRuntimeRoot(resolved);
   if (!existsSync(root)) return [];
-  const entries: WorkloadRuntimeEntry[] = [];
+  const dirs: { name: string; pid: number | null; rec: PidRecordQuery | null }[] = [];
   for (const dirent of readdirSync(root, { withFileTypes: true })) {
     if (!dirent.isDirectory()) continue;
     const pidPath = join(root, dirent.name, "llama-server.pid");
@@ -177,9 +177,24 @@ export function listLocalWorkloads(resolved: ResolvedEnv = resolveEnv()): Worklo
     const activePidPath = existsSync(pidPath) ? pidPath : modelhostPidPath;
     if (!existsSync(activePidPath)) continue;
     const pid = readPidFile(activePidPath);
-    entries.push({ name: dirent.name, pid, alive: pid !== null && isProcessAlive(pid) });
+    dirs.push({
+      name: dirent.name,
+      pid,
+      rec: pid === null ? null : { recordPath: activePidPath, pid },
+    });
   }
-  return entries;
+  // One batched identity pass: a single ps call covers every recorded pid.
+  const verdicts = verifyPidFiles(
+    dirs.flatMap((d) => (d.rec === null ? [] : [d.rec])),
+    deps,
+  );
+  return dirs.map((d) => ({
+    name: d.name,
+    pid: d.pid,
+    // "unknown" is represented as not-alive but the entry is still listed —
+    // the record was never proven gone.
+    alive: d.rec !== null && verdicts.get(d.rec.recordPath) === "alive",
+  }));
 }
 
 // Extract `--alias`/`-a` values from llama-server extraArgs. Inlined here (not
@@ -197,16 +212,22 @@ function aliasesFromExtraArgs(extraArgs: readonly string[] | undefined): string[
 }
 
 /**
- * Routes for a live ModelHost in this workload dir, or null when the
- * dir has no trusted ModelHost (caller falls through to the ModelRun
- * path). A trusted host with zero aliases yields an empty array — the
- * dir is still "handled" and must not produce ModelRun routes.
+ * Routes for a trusted ModelHost in this workload dir, or null when the
+ * state sidecar no longer describes the recorded pid (caller falls through
+ * to the ModelRun path). A trusted host with zero aliases yields an empty
+ * array — the dir is still "handled" and must not produce ModelRun routes.
+ * `verdict` comes from the caller's batched identity pass: only provably
+ * gone verdicts ("dead"/"reused") make the host untrusted — "unknown"
+ * keeps the record's routes because it may still be our process.
  */
-function modelHostRoutesForDir(name: string, resolved: ResolvedEnv): LocalRoute[] | null {
-  const key = { name };
-  const hostPid = readPidFile(modelhostPidFile(resolved, key));
-  if (hostPid === null || !isProcessAlive(hostPid)) return null;
-  const state = readModelHostState(key, resolved);
+function modelHostRoutesForDir(
+  name: string,
+  resolved: ResolvedEnv,
+  hostPid: number,
+  verdict: PidVerdict,
+): LocalRoute[] | null {
+  if (verdict === "dead" || verdict === "reused") return null;
+  const state = readModelHostState({ name }, resolved);
   if (state?.pid !== hostPid) return null;
   const out: LocalRoute[] = [];
   for (const alias of state.modelAliases) {
@@ -223,10 +244,14 @@ function modelHostRoutesForDir(name: string, resolved: ResolvedEnv): LocalRoute[
   return out;
 }
 
-/** ModelRun routes for one workload dir (empty when no live tracked server). */
-function modelRunRoutesForDir(name: string, root: string, resolved: ResolvedEnv): LocalRoute[] {
-  const runPid = readPidFile(join(root, name, "llama-server.pid"));
-  if (runPid === null || !isProcessAlive(runPid)) return [];
+/** ModelRun routes for one workload dir, given the batched verdict. */
+function modelRunRoutesForDir(
+  name: string,
+  runPid: number,
+  verdict: PidVerdict,
+  resolved: ResolvedEnv,
+): LocalRoute[] {
+  if (verdict === "dead" || verdict === "reused") return [];
   const state = readServerState({ name }, resolved);
   if (!state?.rel || !state.host) return [];
   // Route by the model rel AND any `--alias` the server advertises. The
@@ -252,18 +277,62 @@ function modelRunRoutesForDir(name: string, root: string, resolved: ResolvedEnv)
   return out;
 }
 
-export function listLocalRoutes(resolved: ResolvedEnv = resolveEnv()): LocalRoute[] {
-  const root = workloadRuntimeRoot(resolved);
-  if (!existsSync(root)) return [];
-  const out: LocalRoute[] = [];
+interface DirPidRecords {
+  name: string;
+  host?: PidRecordQuery;
+  run?: PidRecordQuery;
+}
+
+function collectPidRecords(
+  root: string,
+  resolved: ResolvedEnv,
+): { dirs: DirPidRecords[]; records: PidRecordQuery[] } {
+  const dirs: DirPidRecords[] = [];
+  const records: PidRecordQuery[] = [];
   for (const dirent of readdirSync(root, { withFileTypes: true })) {
     if (!dirent.isDirectory()) continue;
-    const hostRoutes = modelHostRoutesForDir(dirent.name, resolved);
-    if (hostRoutes !== null) {
-      out.push(...hostRoutes);
-      continue;
+    const dr: DirPidRecords = { name: dirent.name };
+    const hostPidPath = modelhostPidFile(resolved, { name: dirent.name });
+    const hostPid = readPidFile(hostPidPath);
+    if (hostPid !== null) {
+      dr.host = { recordPath: hostPidPath, pid: hostPid };
+      records.push(dr.host);
     }
-    out.push(...modelRunRoutesForDir(dirent.name, root, resolved));
+    const runPidPath = join(root, dirent.name, "llama-server.pid");
+    const runPid = readPidFile(runPidPath);
+    if (runPid !== null) {
+      dr.run = { recordPath: runPidPath, pid: runPid };
+      records.push(dr.run);
+    }
+    dirs.push(dr);
+  }
+  return { dirs, records };
+}
+
+export function listLocalRoutes(
+  resolved: ResolvedEnv = resolveEnv(),
+  deps?: PidIdentityDeps,
+): LocalRoute[] {
+  const root = workloadRuntimeRoot(resolved);
+  if (!existsSync(root)) return [];
+  const { dirs, records } = collectPidRecords(root, resolved);
+  // One batched identity pass: a single ps call covers every pid file under
+  // the runtime dir, so route listing scales with the workload count.
+  const verdicts = verifyPidFiles(records, deps);
+  const out: LocalRoute[] = [];
+  for (const dr of dirs) {
+    if (dr.host !== undefined) {
+      const hostVerdict = verdicts.get(dr.host.recordPath) ?? "unknown";
+      const hostRoutes = modelHostRoutesForDir(dr.name, resolved, dr.host.pid, hostVerdict);
+      if (hostRoutes !== null) {
+        out.push(...hostRoutes);
+        continue;
+      }
+    }
+    if (dr.run !== undefined) {
+      const runVerdict = verdicts.get(dr.run.recordPath) ?? "unknown";
+      out.push(...modelRunRoutesForDir(dr.name, dr.run.pid, runVerdict, resolved));
+    }
   }
   return out;
 }

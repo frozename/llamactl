@@ -1,5 +1,6 @@
-import { readModelHostState } from "@llamactl/core/engines/state";
+import { modelhostPidFile, readModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
+import { isRecordedPidAlive } from "@llamactl/core/pidIdentity";
 import { formatEndpoint, probeEndpointOwnership } from "@llamactl/core/probe";
 import { workloadRuntimeDir } from "@llamactl/core/workloadRuntime";
 import {
@@ -488,15 +489,6 @@ type WorkloadRow = {
   gateway: boolean;
 };
 
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> {
   // Gateway manifests never run a local server on a reachable agent
   // — their phase lives in the persisted status the handler wrote.
@@ -589,7 +581,12 @@ export async function runGet(args: string[]): Promise<number> {
         let statePid: number | null = null;
         let listenerPid: number | null = null;
         if (state) {
-          statePid = isPidAlive(state.pid) ? state.pid : null;
+          statePid = isRecordedPidAlive(
+            modelhostPidFile(resolveEnv(), { name: manifest.metadata.name }),
+            state.pid,
+          )
+            ? state.pid
+            : null;
           // A reachable endpoint is only proof that *something* answers —
           // compare the pid holding the port against the recorded live
           // pid so a foreign squatter can't read as Running while
@@ -755,10 +752,24 @@ function deleteNodeRunByName(name: string): number {
   return 0;
 }
 
-async function stopModelHostBeforeDelete(manifest: ModelHostManifest): Promise<void> {
+/**
+ * True when deletion may proceed; false when the remote REFUSED the stop —
+ * the recorded pid's identity is unverifiable, so removing the manifest and
+ * runtime state would orphan a process nobody could find later.
+ */
+async function stopModelHostBeforeDelete(manifest: ModelHostManifest): Promise<boolean> {
   try {
     const client = getWorkloadNodeClient(manifest.spec.node);
-    await client.modelHostStop.mutate({ workload: manifest.metadata.name });
+    const outcome = (await client.modelHostStop.mutate({
+      workload: manifest.metadata.name,
+    })) as { ok?: unknown; error?: unknown } | null;
+    if (outcome !== null && outcome.ok === false) {
+      const reason = typeof outcome.error === "string" ? outcome.error : "stop refused";
+      process.stderr.write(
+        `delete: node ${manifest.spec.node} refused to stop (${reason}); manifest and runtime state preserved\n`,
+      );
+      return false;
+    }
     process.stdout.write(`stopped modelhost on node ${manifest.spec.node}\n`);
   } catch (err) {
     process.stderr.write(
@@ -769,6 +780,7 @@ async function stopModelHostBeforeDelete(manifest: ModelHostManifest): Promise<v
     recursive: true,
     force: true,
   });
+  return true;
 }
 
 async function deleteModelHost(
@@ -776,8 +788,8 @@ async function deleteModelHost(
   name: string,
   keepRunning: boolean,
 ): Promise<number> {
-  if (!keepRunning) {
-    await stopModelHostBeforeDelete(manifest);
+  if (!keepRunning && !(await stopModelHostBeforeDelete(manifest))) {
+    return 1;
   }
   const ok = workloadStore.deleteWorkload(name);
   if (!ok) {
@@ -788,7 +800,7 @@ async function deleteModelHost(
   return 0;
 }
 
-async function stopModelRunServer(manifest: workloadSchema.ModelRun): Promise<void> {
+async function stopModelRunServer(manifest: workloadSchema.ModelRun): Promise<boolean> {
   try {
     const client = getWorkloadNodeClient(manifest.spec.node);
     const status = await client.serverStatus.query({ workload: manifest.metadata.name });
@@ -796,7 +808,18 @@ async function stopModelRunServer(manifest: workloadSchema.ModelRun): Promise<vo
     // target. If something else is running there (perhaps another
     // workload was applied on top), leave it alone.
     if (status.state === "up" && status.rel === manifest.spec.target.value) {
-      await client.serverStop.mutate({ workload: manifest.metadata.name, graceSeconds: 5 });
+      const outcome = (await client.serverStop.mutate({
+        workload: manifest.metadata.name,
+        graceSeconds: 5,
+      })) as { stopped?: unknown } | null;
+      // A refused stop keeps the manifest: the remote could not prove the
+      // recorded pid's identity, and deleting would orphan it.
+      if (outcome !== null && outcome.stopped === false) {
+        process.stderr.write(
+          `delete: node ${manifest.spec.node} refused to stop (pid identity unverifiable); manifest preserved\n`,
+        );
+        return false;
+      }
       process.stdout.write(`stopped server on node ${manifest.spec.node}\n`);
     } else if (status.state === "up") {
       process.stdout.write(
@@ -808,6 +831,7 @@ async function stopModelRunServer(manifest: workloadSchema.ModelRun): Promise<vo
       `warning: failed to reach node ${manifest.spec.node}: ${(err as Error).message}\n`,
     );
   }
+  return true;
 }
 
 // Stop rpc-server workers in reverse order. Best-effort — we still
@@ -832,7 +856,7 @@ async function deleteModelRun(
   keepRunning: boolean,
 ): Promise<number> {
   if (!keepRunning) {
-    await stopModelRunServer(manifest);
+    if (!(await stopModelRunServer(manifest))) return 1;
     await stopModelRunWorkers(manifest);
   }
   const ok = workloadStore.deleteWorkload(name);

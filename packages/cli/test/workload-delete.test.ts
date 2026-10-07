@@ -114,3 +114,55 @@ test("delete workload removes ModelHost manifest and runtime dir", async () => {
   expect(() => readFileSync(manifestPath, "utf8")).toThrow();
   expect(() => readFileSync(join(runtimeDir, "modelhost.state"), "utf8")).toThrow();
 });
+
+test("delete workload keeps manifest and runtime state when the remote refuses to stop", async () => {
+  // A refused stop means the remote could not prove the recorded pid's
+  // identity — deleting the manifest would orphan a possibly-live process.
+  const manifestPath = join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "mlx-host.yaml");
+  writeFileSync(
+    manifestPath,
+    [
+      "apiVersion: llamactl/v1",
+      "kind: ModelHost",
+      "metadata:",
+      "  name: mlx-host",
+      "spec:",
+      "  enabled: true",
+      "  node: local",
+      "  engine: omlx",
+      "  binary: /tmp/omlx",
+      "  endpoint:",
+      "    host: 127.0.0.1",
+      "    port: 8094",
+      "  hostedModels:",
+      "    - rel: mlx-community/Qwen3-8B-MLX-4bit",
+      "  extraArgs: []",
+      "  timeoutSeconds: 60",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const runtimeDir = workloadRuntimeDir(resolveEnv(), { name: "mlx-host" });
+  mkdirSync(runtimeDir, { recursive: true });
+  writeFileSync(join(runtimeDir, "modelhost.state"), '{"state":"running"}\n', "utf8");
+  writeFileSync(join(runtimeDir, "modelhost.pid"), "1234\n", "utf8");
+
+  __setWorkloadTestSeams({
+    getNodeClientByName: () =>
+      ({
+        modelHostStop: {
+          // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
+          mutate: async () => ({ ok: false, error: "pid identity unknown" }),
+        },
+      }) as unknown as NodeClient,
+  });
+
+  const { result: code, stderr } = await withCapturedIo(() => runDelete(["workload", "mlx-host"]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("pid identity unknown");
+  expect(readFileSync(manifestPath, "utf8")).toContain("mlx-host");
+  expect(readFileSync(join(runtimeDir, "modelhost.state"), "utf8")).toContain("running");
+  expect(readFileSync(join(runtimeDir, "modelhost.pid"), "utf8")).toContain("1234");
+});

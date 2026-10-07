@@ -1,6 +1,5 @@
-import type { spawn as nodeSpawn } from "node:child_process";
-
 import { describe, expect, mock, test } from "bun:test";
+import { type spawn as nodeSpawn, spawn as spawnImpostor } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +11,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "../../src/safe-fs.js";
 import { startModelHost, statusModelHost, stopModelHost } from "../../src/server/modelhost.js";
@@ -346,7 +346,18 @@ describe("server/modelhost", () => {
   test("stopModelHost reads state, tears down the pid, and removes sidecar state", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-stop-"));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
-    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    // The recorded pid must be a live process with an omlx-shaped command
+    // line or the pid-identity check (rightly) refuses teardown — argv0 is
+    // stamped so `ps` corroborates it; teardown is mocked so nothing is
+    // actually signalled.
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "omlx",
+    });
+    if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+    const spawn = mock(
+      (..._args: Parameters<typeof nodeSpawn>) => ({ pid: impostor.pid }) as const,
+    );
     const tornDown: number[] = [];
     try {
       await startModelHost({
@@ -368,12 +379,17 @@ describe("server/modelhost", () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(tornDown).toEqual([4321]);
-      expect(result.pid).toBe(4321);
+      expect(tornDown).toEqual([impostor.pid]);
+      expect(result.pid).toBe(impostor.pid);
       expect(statusModelHost({ key: { name: "mlx-host-server" }, runtimeDir })).toEqual({
         state: "Stopped",
       });
     } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
       rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -457,24 +473,31 @@ describe("server/modelhost", () => {
     const originalTeardown = engine.teardown.bind(engine);
     const tornDown: number[] = [];
     const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "omlx",
+    });
     try {
-      // Seed a prior sidecar whose pid is genuinely alive (this test process),
-      // so the reap path fires and tears it down BEFORE the replacement spawns.
+      // Seed a prior sidecar whose pid is genuinely alive and presents the
+      // omlx argv0, so the reap path verifies identity and tears it down
+      // BEFORE the replacement spawns.
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
       const hostDir = join(runtimeDir, "workloads", "mlx-host-server");
       mkdirSync(hostDir, { recursive: true });
+      writeFileSync(join(hostDir, "modelhost.pid"), `${String(impostor.pid)}\n`);
       writeFileSync(
         join(hostDir, "modelhost.state"),
         JSON.stringify({
           kind: "ModelHost",
           engine: "omlx",
-          pid: process.pid,
+          pid: impostor.pid,
           host: "127.0.0.1",
           port: 8094,
           modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit", "Qwen3-8B-MLX-4bit"],
           startedAt: new Date().toISOString(),
         }),
       );
-      // Mock teardown so the reap does NOT actually signal this test process.
+      // Mock teardown so the reap does NOT actually signal the impostor.
       engine.teardown = mock((pid: number) => {
         tornDown.push(pid);
         return Promise.resolve();
@@ -490,12 +513,17 @@ describe("server/modelhost", () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(tornDown).toEqual([process.pid]); // old listener reaped first
+      expect(tornDown).toEqual([impostor.pid]); // old listener reaped first
       expect(spawn).toHaveBeenCalledTimes(1);
       // The replacement's real pid is recorded, not the stale one.
       expect(readFileSync(join(hostDir, "modelhost.state"), "utf8")).toContain('"pid": 4321');
     } finally {
       engine.teardown = originalTeardown;
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
       rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -711,6 +739,212 @@ describe("server/modelhost", () => {
       expect(spawn).toHaveBeenCalledTimes(1);
       expect(readFileSync(join(hostDir, "modelhost.state"), "utf8")).toContain('"pid": 4321');
     } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // A tracking record whose mtime predates the process now holding its pid is
+  // a recycled-pid record: the recorded process cannot have started after the
+  // record was written, so the pid belongs to someone else and must never be
+  // torn down (omlx teardown signals the whole process group).
+  function seedImpostorSidecar(runtimeDir: string, pid: number, backdate: boolean): string {
+    const hostDir = join(runtimeDir, "workloads", "mlx-host-server");
+    mkdirSync(hostDir, { recursive: true });
+    const pidPath = join(hostDir, "modelhost.pid");
+    const statePath = join(hostDir, "modelhost.state");
+    writeFileSync(pidPath, `${String(pid)}\n`);
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        kind: "ModelHost",
+        engine: "omlx",
+        pid,
+        host: "127.0.0.1",
+        port: 8094,
+        modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit", "Qwen3-8B-MLX-4bit"],
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    if (backdate) {
+      const hourAgo = new Date(Date.now() - 3_600_000);
+      utimesSync(pidPath, hourAgo, hourAgo);
+      utimesSync(statePath, hourAgo, hourAgo);
+    }
+    return hostDir;
+  }
+
+  test("never tears down a recycled recorded pid and reports Stopped", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-reusedpid-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], { stdio: "ignore" });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const pid = impostor.pid;
+      const hostDir = seedImpostorSidecar(runtimeDir, pid, true);
+      // The recycled pid must read as Stopped while the sidecar still exists.
+      expect(statusModelHost({ key: { name: "mlx-host-server" }, runtimeDir })).toEqual({
+        state: "Stopped",
+      });
+      const tornDown: number[] = [];
+      const result = await stopModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir,
+        teardown: (teardownPid) => {
+          tornDown.push(teardownPid);
+          return Promise.resolve();
+        },
+      });
+
+      expect(tornDown).toEqual([]);
+      expect(result.ok).toBe(true);
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(false);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("tears down a recorded pid whose identity still matches (control)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-samepid-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "omlx",
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const pid = impostor.pid;
+      seedImpostorSidecar(runtimeDir, pid, false);
+      const tornDown: number[] = [];
+      const result = await stopModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir,
+        teardown: (teardownPid) => {
+          tornDown.push(teardownPid);
+          return Promise.resolve();
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(tornDown).toEqual([pid]);
+      expect(result.pid).toBe(pid);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("identity is anchored on modelhost.pid, not the state sidecar", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-pidanchor-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "omlx",
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedImpostorSidecar(runtimeDir, impostor.pid, false);
+      // writeModelHostState writes modelhost.pid first, then the sidecar — so
+      // the pid file is the identity anchor. A stale-looking pid file means
+      // the process is treated as recycled even when the sidecar is fresh.
+      const hourAgo = new Date(Date.now() - 3_600_000);
+      utimesSync(join(hostDir, "modelhost.pid"), hourAgo, hourAgo);
+      expect(statusModelHost({ key: { name: "mlx-host-server" }, runtimeDir }).state).toBe(
+        "Stopped",
+      );
+      const tornDown: number[] = [];
+      const result = await stopModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir,
+        teardown: (teardownPid) => {
+          tornDown.push(teardownPid);
+          return Promise.resolve();
+        },
+      });
+      expect(tornDown).toEqual([]);
+      expect(result.ok).toBe(true);
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(false);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("statusModelHost surfaces identityUnknown when the record cannot be verified", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-idunknown-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "omlx",
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      seedImpostorSidecar(runtimeDir, impostor.pid, false);
+      const st = statusModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir,
+        identity: { processStartMs: () => null },
+      });
+      expect(st.state).toBe("Stopped");
+      expect(st.identityUnknown).toBe(true);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("stopModelHost reports ok:false and preserves state while identity is unknown", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-unkstop-"));
+    const runtimeDir = join(tmp, "runtime");
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "omlx",
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = seedImpostorSidecar(runtimeDir, impostor.pid, false);
+      const tornDown: number[] = [];
+      const result = await stopModelHost({
+        key: { name: "mlx-host-server" },
+        runtimeDir,
+        teardown: (teardownPid) => {
+          tornDown.push(teardownPid);
+          return Promise.resolve();
+        },
+        identity: { processStartMs: () => null },
+      });
+      expect(result.ok).toBe(false);
+      expect(tornDown).toEqual([]);
+      // Nothing was signalled and the tracking record survives for a retry.
+      expect(existsSync(join(hostDir, "modelhost.pid"))).toBe(true);
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(true);
+      try {
+        process.kill(impostor.pid, 0);
+      } catch {
+        throw new Error("impostor was signalled");
+      }
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
       rmSync(tmp, { recursive: true, force: true });
     }
   });

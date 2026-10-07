@@ -36,10 +36,11 @@ const FAKE_LLAMA_SERVER = [
   '  case "$1" in',
   '    --host) HOST="$2"; shift 2 ;;',
   '    --port) PORT="$2"; shift 2 ;;',
+  '    -m) MODEL="$2"; shift 2 ;;',
   "    *) shift ;;",
   "  esac",
   "done",
-  'exec bun -e "',
+  'exec -a llama-server bun -e "',
   "  const s = Bun.serve({",
   "    port: Number(process.env.FAKE_PORT),",
   "    hostname: process.env.FAKE_HOST,",
@@ -55,7 +56,7 @@ const FAKE_LLAMA_SERVER = [
   "  process.on('SIGTERM', stop);",
   "  process.on('SIGINT', stop);",
   "  await new Promise(() => undefined);",
-  '"',
+  '" "$MODEL"',
   "",
 ].join("\n");
 
@@ -64,7 +65,7 @@ function wrapWithEnv(script: string, vars: Record<string, string>): string {
     .map(([k, v]) => `export ${k}=${JSON.stringify(v)}`)
     .join("\n");
   // Insert the exports before the exec line.
-  return script.replace("exec bun", `${envSetup}\nexec bun`);
+  return script.replace("exec -a", `${envSetup}\nexec -a`);
 }
 
 let tmp: string;

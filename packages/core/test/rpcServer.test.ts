@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -32,7 +33,7 @@ while [ "$#" -gt 0 ]; do
 done
 export FAKE_HOST="$HOST"
 export FAKE_PORT="$PORT"
-exec bun -e "const s=Bun.listen({hostname:process.env.FAKE_HOST,port:Number(process.env.FAKE_PORT),socket:{data(){},open(){},close(){},error(){}}});process.on('SIGTERM',()=>{s.stop();process.exit(0);});process.on('SIGINT',()=>{s.stop();process.exit(0);});await new Promise(()=>{});"
+exec -a rpc-server bun -e "const s=Bun.listen({hostname:process.env.FAKE_HOST,port:Number(process.env.FAKE_PORT),socket:{data(){},open(){},close(){},error(){}}});process.on('SIGTERM',()=>{s.stop();process.exit(0);});process.on('SIGINT',()=>{s.stop();process.exit(0);});await new Promise(()=>{});"
 `;
 
 function pickPort(): number {
@@ -123,6 +124,33 @@ describe("rpcServer", () => {
     expect(types[0]).toBe("launch");
     expect(types[types.length - 1]).toBe("ready");
     await stopRpcServer({ resolved });
+  });
+
+  test("stopRpcServer never signals a fresh-record pid that is not rpc-server", async () => {
+    // A record younger than the process defeats the start-time check — only
+    // command-line corroboration can catch the impostor holding a pid that
+    // was recycled in place before we recorded it.
+    const impostor = spawn("/bin/sleep", ["60"], { stdio: "ignore" });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const pidPath = join(resolved.LOCAL_AI_RUNTIME_DIR, "rpc-server.pid");
+      writeFileSync(pidPath, `${String(impostor.pid)}\n`);
+      const res = await stopRpcServer({ resolved, graceSeconds: 1 });
+      expect(res.stopped).toBe(false);
+      expect(res.killed).toBe(false);
+      try {
+        process.kill(impostor.pid, 0);
+      } catch {
+        throw new Error("impostor was signalled");
+      }
+      expect(existsSync(pidPath)).toBe(true);
+    } finally {
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
   });
 
   test("reaps stale tracking when the process dies before becoming ready (timeout path)", async () => {

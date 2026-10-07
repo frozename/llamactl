@@ -118,9 +118,12 @@ export interface WorkloadClient {
     mutate(input: { workload: string; graceSeconds?: number }): Promise<unknown>;
   };
   modelHostStatus: {
-    query(input: {
-      workload: string;
-    }): Promise<{ state: string; pid?: number | null; specHash?: string }>;
+    query(input: { workload: string }): Promise<{
+      state: string;
+      pid?: number | null;
+      specHash?: string;
+      identityUnknown?: boolean;
+    }>;
   };
   rpcServerStart: {
     subscribe(
@@ -369,13 +372,32 @@ function validateModelHostAdmission(
   return null;
 }
 
+/**
+ * Extract a refusal reason when a stop mutation RESOLVED with `{ok:false}` —
+ * distinct from a transport error: the remote answered but could not prove
+ * the recorded pid's identity, so the record may still be ours.
+ */
+function refusedStopReason(outcome: unknown): string | null {
+  if (typeof outcome !== "object" || outcome === null) return null;
+  const ok = (outcome as { ok?: unknown }).ok;
+  if (ok !== false) return null;
+  const error = (outcome as { error?: unknown }).error;
+  return typeof error === "string" ? error : "stop refused";
+}
+
 async function disableModelHost(
   manifest: ModelHostManifest,
   client: WorkloadClient,
   resolved: ReturnType<typeof resolveEnv>,
 ): Promise<ApplyManifestOutcome> {
   try {
-    await client.modelHostStop.mutate({ workload: manifest.metadata.name });
+    const outcome = await client.modelHostStop.mutate({ workload: manifest.metadata.name });
+    // A refused stop keeps the sidecar: deleting it here would orphan a
+    // possibly-live process that no later reconcile could identify.
+    const refused = refusedStopReason(outcome);
+    if (refused !== null) {
+      return { ok: false, error: `modelHostStop refused: ${refused}` };
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: `modelHostStop failed: ${message}` };

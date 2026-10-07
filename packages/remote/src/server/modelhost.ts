@@ -1,9 +1,10 @@
 import type { EngineBootEnv, ModelHostSpecForEngine } from "@llamactl/core/engines/types";
 import type { WorkloadKey } from "@llamactl/core/workloadRuntime";
 
-import { ENGINES } from "@llamactl/core/engines";
+import { type EngineName, ENGINES } from "@llamactl/core/engines";
 import {
   computeModelHostSpecHash,
+  modelhostPidFile,
   readModelHostState,
   removeModelHostState,
   writeModelHostState,
@@ -15,6 +16,11 @@ import {
   resolveSlotSavePathArgs,
 } from "@llamactl/core/kvstore";
 import { omitUndefined } from "@llamactl/core/object";
+import {
+  type PidIdentityDeps,
+  type SignalIdentity,
+  verifyPidFile,
+} from "@llamactl/core/pidIdentity";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
 import { basename, resolve, sep } from "node:path";
 
@@ -49,6 +55,8 @@ export interface StartModelHostOptions {
   workloadsDir?: string;
   runtimeDir?: string;
   env?: NodeJS.ProcessEnv;
+  /** Identity resolver seams for tests; production uses the defaults. */
+  identity?: PidIdentityDeps;
   spawn?: typeof nodeSpawn;
   probeReady?: (
     endpoint: { host: string; port: number },
@@ -76,6 +84,8 @@ export interface StopModelHostOptions {
   runtimeDir?: string;
   env?: NodeJS.ProcessEnv;
   teardown?: (pid: number, graceSeconds?: number) => Promise<void>;
+  /** Identity resolver seams for tests; production uses the defaults. */
+  identity?: PidIdentityDeps;
 }
 
 export interface StopModelHostResult {
@@ -88,16 +98,35 @@ export interface StatusModelHostOptions {
   key: WorkloadKey;
   runtimeDir?: string;
   env?: NodeJS.ProcessEnv;
+  /** Identity resolver seams for tests; production uses the defaults. */
+  identity?: PidIdentityDeps;
 }
 
 export interface StatusModelHostResult {
   state: "Running" | "Stopped";
   pid?: number | null;
   specHash?: string;
+  /** Present and true when the recorded pid's identity could not be
+   *  established — callers must not sweep, restart over, or report the
+   *  record as cleanly stopped. */
+  identityUnknown?: boolean;
 }
 
 function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
   return env ?? process.env;
+}
+
+// Command-line corroboration for a recorded ModelHost pid: the process must
+// still present the engine binary's argv0 basename (`omlx` for oMLX's shim,
+// `llama-server` for llamacpp) — a fresh-recorded impostor fails this even
+// when the start-time check cannot see the recycling.
+const ENGINE_BINARY_BASENAME: Record<EngineName, string> = {
+  llamacpp: "llama-server",
+  omlx: "omlx",
+};
+
+function hostIdentityDeps(engine: EngineName, deps?: PidIdentityDeps): PidIdentityDeps {
+  return { ...deps, expectCommand: { binary: ENGINE_BINARY_BASENAME[engine] } };
 }
 
 const CHILD_ENV_ALLOWLIST = [
@@ -296,6 +325,21 @@ async function tryAdoptLiveHost(
   return { ok: true, pid: livePid };
 }
 
+/** SignalIdentity for an engine teardown: the pid-file anchor plus the
+ *  caller's identity deps and the engine argv0 expectation, omitting
+ *  undefined optionals so strict exactOptionalPropertyTypes holds. */
+function teardownIdentity(
+  recordPath: string,
+  deps: PidIdentityDeps | undefined,
+  expectCommand: PidIdentityDeps["expectCommand"],
+): SignalIdentity {
+  return {
+    recordPath,
+    ...(deps !== undefined ? { deps } : {}),
+    ...(expectCommand !== undefined ? { expectCommand } : {}),
+  };
+}
+
 // Reap a prior live ModelHost for this workload before spawning a new one.
 // Without this, applying over a still-running host leaves the old process
 // holding the endpoint port: the new omlx fails to bind and exits, yet
@@ -311,9 +355,23 @@ async function reapOrAdoptPriorHost(
 ): Promise<StartModelHostResult | null> {
   const priorState = readModelHostState(opts.key, resolved);
   if (!priorState) return null;
-  if (isProcessAlive(priorState.pid)) {
-    await engine.teardown(priorState.pid).catch(() => undefined);
+  // The recorded pid is verified against the pid file it was recorded in
+  // (written before the sidecar, so its mtime is the right identity anchor)
+  // and corroborated by the engine's argv0. A recycled pid is not ours and
+  // falls through to the dead-pid adopt/spawn path; an unverifiable one
+  // defers the whole restart so the tracking files survive for a later
+  // reconcile.
+  const recordPath = modelhostPidFile(resolved, opts.key);
+  const identity = hostIdentityDeps(priorState.engine, opts.identity);
+  const priorVerdict = verifyPidFile(recordPath, priorState.pid, identity);
+  if (priorVerdict === "alive") {
+    await engine
+      .teardown(priorState.pid, teardownIdentity(recordPath, opts.identity, identity.expectCommand))
+      .catch(() => undefined);
     return null;
+  }
+  if (priorVerdict === "unknown") {
+    return { ok: false, pid: null, error: "pid identity unknown; deferring restart" };
   }
   // Recorded pid is dead but a sidecar exists. Decide adopt-vs-spawn on
   // listener PRESENCE, not on the short readiness window: if a live process
@@ -536,10 +594,26 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
   const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
   const state = readModelHostState(opts.key, resolved);
   if (!state) return { ok: true, pid: null };
-  const teardown =
-    opts.teardown ??
-    ((pid: number, _graceSeconds?: number): Promise<void> => ENGINES[state.engine].teardown(pid));
-  await teardown(state.pid, opts.graceSeconds);
+  // Teardown signals the whole process group — the worst place to act on a
+  // recycled pid — so the recorded pid is verified against its pid file
+  // (the identity anchor, written before the sidecar) and corroborated by
+  // the engine's argv0 first.
+  const recordPath = modelhostPidFile(resolved, opts.key);
+  const identity = hostIdentityDeps(state.engine, opts.identity);
+  const verdict = verifyPidFile(recordPath, state.pid, identity);
+  if (verdict === "unknown") {
+    return { ok: false, pid: state.pid, error: "pid identity unknown" };
+  }
+  if (verdict === "alive") {
+    const teardown =
+      opts.teardown ??
+      ((pid: number, _graceSeconds?: number): Promise<void> =>
+        ENGINES[state.engine].teardown(
+          pid,
+          teardownIdentity(recordPath, opts.identity, identity.expectCommand),
+        ));
+    await teardown(state.pid, opts.graceSeconds);
+  }
   removeModelHostState(opts.key, resolved);
   return { ok: true, pid: state.pid };
 }
@@ -548,12 +622,17 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
   const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
   const state = readModelHostState(opts.key, resolved);
   if (!state) return { state: "Stopped" };
-  // A sidecar whose recorded pid is no longer alive means the host died or was
-  // replaced out-of-band. Report Stopped so the reconciler re-acts on it
-  // (startModelHost then adopts a live listener or spawns afresh) instead of
-  // trusting a stale pid forever — which the proxy route check would treat as
-  // dead and silently drop.
-  if (!isProcessAlive(state.pid)) return { state: "Stopped" };
+  // A sidecar whose recorded pid is no longer provably ours means the host
+  // died or was replaced out-of-band. Report Stopped so the reconciler
+  // re-acts on it — but keep the verdict visible: "unknown" is not proof the
+  // pid is gone, and deletion paths must not act on it.
+  const verdict = verifyPidFile(modelhostPidFile(resolved, opts.key), state.pid, opts.identity);
+  if (verdict !== "alive") {
+    return {
+      state: "Stopped",
+      ...omitUndefined({ identityUnknown: verdict === "unknown" ? true : undefined }),
+    };
+  }
   return {
     state: "Running",
     pid: state.pid,
