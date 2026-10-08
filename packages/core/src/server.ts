@@ -1328,22 +1328,42 @@ async function launchBackground(opts: LaunchArgs): Promise<number> {
 export interface StopServerOptions {
   key: WorkloadKey;
   resolved?: ResolvedEnv;
-  /** Max seconds to wait for SIGTERM to take effect before SIGKILL. */
+  /**
+   * Maximum seconds to wait after SIGTERM (default 5; values below 1 are raised to 1; polled in
+   * 1 s steps). SIGKILL follows only if the identity re-verification then returns "alive".
+   */
   graceSeconds?: number;
   /** Identity resolver seams for tests; production uses the defaults. */
   identity?: PidIdentityDeps;
 }
 
+/**
+ * Result returned unchanged by `serverStop`. A `stopped: false` result means the PID identity was
+ * "unknown" before signalling or after the grace wait, so tracking files remain for a later stop
+ * attempt. SIGKILL is only issued after a fresh "alive" identity re-verification.
+ */
 export interface StopServerResult {
+  /**
+   * Whether the record was cleared or the verified stop path completed; `stopped: false` leaves
+   * tracking files in place because identity was "unknown".
+   */
   stopped: boolean;
+  /** PID read from the tracking file, or null when there was no readable record. */
   pid: number | null;
+  /**
+   * Whether SIGKILL was issued after an "alive" re-verification; false does not mean SIGTERM was
+   * not sent.
+   */
   killed: boolean;
 }
 
 /**
- * Stop the tracked llama-server. First tries SIGTERM against the PID
- * in the PID file, then escalates to SIGKILL if the process is still
- * alive after the grace period. Clears the PID file on exit.
+ * Stop a tracked llama-server and return a `StopServerResult`. No readable record, or a "dead" or
+ * "reused" record, is cleared without signalling. An "unknown" record returns `stopped: false`
+ * with tracking files retained. An "alive" record receives SIGTERM; SIGKILL follows only if its
+ * identity re-verification is "alive" after the grace wait. If that re-verification is "unknown",
+ * the result is also `stopped: false` with tracking files retained, although SIGTERM was already
+ * sent. Tracking files are removed only for a completed stop result.
  */
 export async function stopServer(opts: StopServerOptions): Promise<StopServerResult> {
   const resolved = opts.resolved ?? resolveEnv();

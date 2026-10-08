@@ -22,8 +22,12 @@ Subcommands:
       is forwarded to llama-server as-is.
 
   stop [--name <workload>] [--grace=<s>] [--json]
-      SIGTERM the tracked llama-server PID and escalate to SIGKILL
-      after <grace> seconds (default 5).
+      SIGTERM is sent only if the tracked PID verifies as the recorded
+      llama-server. If it remains after <grace> seconds (default 5) and
+      re-verifies, SIGKILL is sent. A gone or recycled PID is cleared
+      without a signal. An unverifiable PID is not signalled; if identity
+      becomes unverifiable after the grace period, SIGTERM was already sent
+      but SIGKILL is not. Its tracking is kept, and --json reports stopped: false.
 
   status [--name <workload>] [--json]
       Report whether llama-server is reachable at the configured

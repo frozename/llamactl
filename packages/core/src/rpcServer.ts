@@ -337,17 +337,43 @@ export async function startRpcServer(opts: StartRpcServerOptions): Promise<Start
 
 export interface StopRpcServerOptions {
   resolved?: ResolvedEnv;
+  /**
+   * Maximum seconds to wait after SIGTERM (default 5; values below 1 are raised to 1; polled in
+   * 1 s steps). SIGKILL follows only if the identity re-verification returns "alive".
+   */
   graceSeconds?: number;
   /** Identity resolver seams for tests; production uses the defaults. */
   identity?: PidIdentityDeps;
 }
 
+/**
+ * Result returned unchanged by `rpcServerStop`. A `stopped: false` result means the PID identity
+ * was "unknown" before signalling or after the grace wait, and tracking files are retained.
+ * SIGKILL is issued only after a fresh "alive" identity re-verification.
+ */
 export interface StopRpcServerResult {
+  /**
+   * Whether the record was cleared or the verified stop path completed; `stopped: false` preserves
+   * tracking files because identity was "unknown".
+   */
   stopped: boolean;
+  /** PID read from the tracking file, or null when there was no readable record. */
   pid: number | null;
+  /**
+   * Whether SIGKILL was issued after an "alive" re-verification; false does not mean SIGTERM was
+   * not sent.
+   */
   killed: boolean;
 }
 
+/**
+ * Stop a tracked rpc-server and return a `StopRpcServerResult`. No readable record, or a "dead" or
+ * "reused" record, is cleared without signalling. An "unknown" record returns `stopped: false`
+ * with tracking files retained. An "alive" record receives SIGTERM; SIGKILL follows only if its
+ * identity re-verification is "alive" after the grace wait. If that re-verification is "unknown",
+ * the result is also `stopped: false` with tracking files retained, although SIGTERM was already
+ * sent. Tracking files are removed only for a completed stop result.
+ */
 export async function stopRpcServer(opts: StopRpcServerOptions = {}): Promise<StopRpcServerResult> {
   const resolved = opts.resolved ?? resolveEnv();
   const grace = Math.max(1, opts.graceSeconds ?? 5);
