@@ -16,8 +16,12 @@ Subcommands:
       (default 5).
 
   stop [--name <workload>] [--grace=<s>] [--json]
-      Touch the supervisor's stop file and wait up to <grace> seconds
-      before SIGTERM. The tracked llama-server is stopped too.
+      If the supervisor PID verifies, write its stop file, wait up to
+      <grace> seconds (default 10), SIGTERM it only after it verifies
+      again, and run the llama-server stop as a safety net; that result is
+      not reported. If its PID cannot be verified at the first check or
+      after the grace period, nothing is signalled, tracking files remain,
+      and --json reports stopped: false.
 
   status [--json]
       Report whether the supervisor is running and print its last
