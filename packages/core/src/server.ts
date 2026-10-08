@@ -1361,8 +1361,9 @@ export interface StopServerResult {
  * Stop a tracked llama-server and return a `StopServerResult`. No readable record, or a "dead" or
  * "reused" record, is cleared without signalling. An "unknown" record returns `stopped: false`
  * with tracking files retained. An "alive" record receives SIGTERM; SIGKILL follows only if its
- * identity re-verification is "alive" after the grace wait. Tracking files are removed only for a
- * completed stop result.
+ * identity re-verification is "alive" after the grace wait. If that re-verification is "unknown",
+ * the result is also `stopped: false` with tracking files retained, although SIGTERM was already
+ * sent. Tracking files are removed only for a completed stop result.
  */
 export async function stopServer(opts: StopServerOptions): Promise<StopServerResult> {
   const resolved = opts.resolved ?? resolveEnv();

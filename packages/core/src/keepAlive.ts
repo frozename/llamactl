@@ -225,17 +225,22 @@ export interface StopKeepAliveOptions {
 
 /**
  * Result returned unchanged by `keepAliveStop`. A `stopped: false` result follows an initial or
- * post-grace "unknown" identity verdict and keeps tracking files. A third check may be "unknown"
- * after the post-grace check; that path still clears tracking files after running the safety net.
+ * post-grace "unknown" identity verdict; this call does not remove the tracking files on that path,
+ * though a supervisor that is mid-cleanup may already have removed them. A third check may be
+ * "unknown" after the post-grace check; that path still clears tracking files after running the
+ * safety net.
  */
 export interface StopKeepAliveResult {
   /**
-   * Whether no live record was found or the supervisor stop path ran; `stopped: false` retains
-   * tracking files after an initial or post-grace "unknown" verdict and does not prove a worker
-   * stopped when true.
+   * When true, no live record was found, or the verified stop path ran and unlinked the PID and stop
+   * files; it does not prove the supervisor or the llama-server stopped. `stopped: false` follows an
+   * initial or post-grace "unknown" verdict, and this call does not remove the tracking files.
    */
   stopped: boolean;
-  /** PID from a live recorded supervisor, or null when no live record was found. */
+  /**
+   * The PID read from the supervisor record, or null when there was no readable record or its first
+   * verdict was "dead" or "reused". A non-null PID does not prove a live supervisor holds it.
+   */
   pid: number | null;
   /**
    * Whether SIGTERM was sent to the supervisor after its third identity check; it is not awaited
@@ -248,10 +253,11 @@ export interface StopKeepAliveResult {
  * Stop a tracked supervisor and return a `StopKeepAliveResult`. No readable record, or a "dead"
  * or "reused" record, clears the PID and stop files without signalling. An initial "unknown"
  * verdict returns `stopped: false` with tracking files retained. For an "alive" record, this writes
- * the stop file, waits for the grace period, and returns `stopped: false` with tracking files kept
- * if the post-grace identity verdict is "unknown". Otherwise it attempts SIGTERM only after a
- * third "alive" check, runs `stopServer` as a safety net without using its result, and clears the
- * supervisor tracking files; a successful result does not establish that either process exited.
+ * the stop file, waits up to the grace period while the pid is still held, and returns
+ * `stopped: false` without removing the tracking files if the post-grace identity verdict is
+ * "unknown". Otherwise it attempts SIGTERM only after a third "alive" check, runs `stopServer` as a
+ * safety net without using its result, and clears the supervisor tracking files; a successful
+ * result does not establish that either process exited.
  */
 export async function stopKeepAlive(opts: StopKeepAliveOptions): Promise<StopKeepAliveResult> {
   const resolved = opts.resolved ?? resolveEnv();
