@@ -497,9 +497,10 @@ export interface StartServerOptions {
   resolved?: ResolvedEnv;
   env?: NodeJS.ProcessEnv;
   /**
-   * When set, aborts an in-flight start: SIGTERMs the detached
-   * llama-server child (tracked via PID) and short-circuits the
-   * readiness polling with `aborted` outcome.
+   * When set, aborts an in-flight start: SIGTERMs the first pid during its poll, nothing while the
+   * mmproj retry is stopping it, and the retry pid during its poll, without waiting for exit. An
+   * aborted start removes both tracking files and returns `pid: null`; a refused retry stop keeps
+   * both files and its refused result even when aborted. The listener is removed before resolving.
    */
   signal?: AbortSignal;
 }
@@ -907,9 +908,8 @@ function prepareLaunchArgs(
 }
 
 interface MmprojRetryContext {
-  bin: string;
-  modelPath: string;
-  launchArgs: string[];
+  target: ResolvedLaunchTarget;
+  prepared: PreparedLaunchArgs;
   resolved: ResolvedEnv;
   key: WorkloadKey;
   launchEndpoint: StartServerOptions["endpoint"];
@@ -917,27 +917,103 @@ interface MmprojRetryContext {
   launchPort: number | string;
   healthUrl: string;
   timeoutSeconds: number;
-  tunedProfile: string | null;
-  killOnAbort: () => void;
+  abortKiller: AbortKiller;
 }
 
-interface MmprojRetryOutcome {
-  /** Final result when the retry resolved the start (ready/aborted); null to keep going. */
-  result: StartServerResult | null;
-  readyResult: PollReadyResult;
+type MmprojRetryOutcome =
+  | {
+      /** Final ready, aborted (during the retry poll or before relaunch), or refused result. */
+      result: StartServerResult;
+      readyResult: PollReadyResult;
+    }
+  | { result: null; readyResult: PollReadyResult; retryPid: number };
+
+interface AbortKiller {
+  targetPid: number | null;
+  kill: () => void;
 }
 
 /**
- * Retry path: relaunch with mmproj-safe flags appended, then poll
- * readiness again. Returns a final `result` for the terminal ready /
- * aborted outcomes; otherwise the caller falls through to the shared
- * timeout / exited handling with the updated `readyResult`.
+ * Per-start abort handler. `kill` SIGTERMs `targetPid` if it is still alive. A null target
+ * (disarmed, or a launch pid <= 0) signals nothing. startServer re-points `targetPid` as
+ * ownership moves from the first launch to the retry.
+ */
+function createAbortKiller(pid: number): AbortKiller {
+  const killer: AbortKiller = {
+    targetPid: pid > 0 ? pid : null,
+    kill: (): void => {
+      const targetPid = killer.targetPid;
+      if (targetPid === null) return;
+      try {
+        if (isProcessAlive(targetPid)) process.kill(targetPid, "SIGTERM");
+      } catch {
+        // already gone
+      }
+    },
+  };
+  return killer;
+}
+
+function abortedStartResult(
+  opts: StartServerOptions,
+  ctx: Pick<MmprojRetryContext, "resolved" | "key" | "launchEndpoint" | "prepared" | "abortKiller">,
+  retried: boolean,
+  pid: number | null,
+): StartServerResult {
+  opts.signal?.removeEventListener("abort", ctx.abortKiller.kill);
+  ctx.abortKiller.targetPid = null;
+  try {
+    if (pid !== null && pid > 0 && isProcessAlive(pid)) process.kill(pid, "SIGTERM");
+  } catch {
+    // already gone
+  }
+  removeServerPid(ctx.resolved, ctx.key);
+  removeServerState(ctx.resolved, ctx.key);
+  return startServerError(
+    ctx.resolved,
+    ctx.launchEndpoint,
+    ctx.prepared.tunedProfile,
+    retried,
+    "Start aborted by caller",
+  );
+}
+
+/**
+ * ServerState sidecar for a launch startServer performed. Shared by the first launch
+ * and the mmproj retry so a new sidecar field is set in exactly one place.
+ */
+function launchedServerState(
+  opts: StartServerOptions,
+  target: ResolvedLaunchTarget,
+  prepared: PreparedLaunchArgs,
+  launchHost: string,
+  launchPort: number | string,
+  pid: number,
+): ServerState {
+  return {
+    rel: target.rel,
+    extraArgs: opts.extraArgs ?? [],
+    slotSavePath: prepared.slotPathResolved.slotSavePath,
+    host: launchHost,
+    port: String(launchPort),
+    binary: target.bin,
+    pid,
+    startedAt: new Date().toISOString(),
+    tunedProfile: prepared.tunedProfile,
+  };
+}
+
+/**
+ * Retry path: disarm the first pid, stop it, relaunch with mmproj-safe flags, restore both tracking
+ * files and arm the retry pid, then poll again. Returns a final result for ready, aborted and refused
+ * outcomes; timeout and exited fall through with the retry pid and updated readiness result.
  */
 async function retryWithMmprojSafeFlags(
   opts: StartServerOptions,
   ctx: MmprojRetryContext,
 ): Promise<MmprojRetryOutcome> {
-  const { resolved, key, launchEndpoint, tunedProfile } = ctx;
+  const { resolved, key, launchEndpoint, target, prepared } = ctx;
+  ctx.abortKiller.targetPid = null;
   opts.onEvent?.({ type: "retry", reason: "mmproj safe-flag retry" });
   const stopResult = await stopServer({
     key,
@@ -945,22 +1021,28 @@ async function retryWithMmprojSafeFlags(
     ...omitUndefined({ identity: opts.identity }),
   });
   if (!stopResult.stopped) {
-    opts.signal?.removeEventListener("abort", ctx.killOnAbort);
+    opts.signal?.removeEventListener("abort", ctx.abortKiller.kill);
     return {
       result: startServerError(
         resolved,
         launchEndpoint,
-        tunedProfile,
+        prepared.tunedProfile,
         true,
         `pid identity unknown for ${pidFile(resolved, key)} — refusing mmproj retry over an unverifiable process`,
       ),
       readyResult: { outcome: "timeout" },
     };
   }
-  const retryArgs = [...ctx.launchArgs, ...safeRetryArgs()];
+  if (opts.signal?.aborted) {
+    return {
+      result: abortedStartResult(opts, ctx, true, null),
+      readyResult: { outcome: "aborted" },
+    };
+  }
+  const retryArgs = [...prepared.launchArgs, ...safeRetryArgs()];
   const retryPid = await launchBackground({
-    bin: ctx.bin,
-    modelPath: ctx.modelPath,
+    bin: target.bin,
+    modelPath: target.modelPath,
     args: retryArgs,
     resolved,
     key,
@@ -969,7 +1051,13 @@ async function retryWithMmprojSafeFlags(
     port: ctx.launchPort,
     ...omitUndefined({ onEvent: opts.onEvent }),
   });
+  ctx.abortKiller.targetPid = retryPid > 0 ? retryPid : null;
   writeServerPid(resolved, key, retryPid);
+  writeServerState(
+    resolved,
+    key,
+    launchedServerState(opts, target, prepared, ctx.launchHost, ctx.launchPort, retryPid),
+  );
   const readyResult = await pollReady(
     retryPid,
     ctx.healthUrl,
@@ -978,31 +1066,18 @@ async function retryWithMmprojSafeFlags(
     opts.signal,
   );
   if (readyResult.outcome === "aborted") {
-    try {
-      if (isProcessAlive(retryPid)) process.kill(retryPid, "SIGTERM");
-    } catch {
-      // already gone
-    }
-    removeServerPid(resolved, key);
-    opts.signal?.removeEventListener("abort", ctx.killOnAbort);
     return {
-      result: startServerError(
-        resolved,
-        launchEndpoint,
-        tunedProfile,
-        true,
-        "Start aborted by caller",
-      ),
+      result: abortedStartResult(opts, ctx, true, retryPid),
       readyResult,
     };
   }
   if (readyResult.outcome === "ready") {
-    opts.signal?.removeEventListener("abort", ctx.killOnAbort);
+    opts.signal?.removeEventListener("abort", ctx.abortKiller.kill);
     return {
       result: startServerSuccess(
         resolved,
         launchEndpoint,
-        tunedProfile,
+        prepared.tunedProfile,
         true,
         retryPid,
         opts.onEvent,
@@ -1010,7 +1085,7 @@ async function retryWithMmprojSafeFlags(
       readyResult,
     };
   }
-  return { result: null, readyResult };
+  return { result: null, readyResult, retryPid };
 }
 
 /**
@@ -1074,21 +1149,19 @@ async function launchAndRecordServer(
     ...omitUndefined({ onEvent: opts.onEvent }),
   });
   writeServerPid(resolved, opts.key, pid);
-  writeServerState(resolved, opts.key, {
-    rel: target.rel,
-    extraArgs: opts.extraArgs ?? [],
-    slotSavePath: prepared.slotPathResolved.slotSavePath,
-    host: launchHost,
-    port: String(launchPort),
-    binary: target.bin,
-    pid,
-    startedAt: new Date().toISOString(),
-    tunedProfile: prepared.tunedProfile,
-  });
+  writeServerState(
+    resolved,
+    opts.key,
+    launchedServerState(opts, target, prepared, launchHost, launchPort, pid),
+  );
   return pid;
 }
 
-/** Run `killOnAbort` when the signal fires (or immediately if already aborted). */
+/**
+ * Run `killOnAbort` once when the signal fires, or immediately if it is already aborted.
+ * startServer passes `createAbortKiller(pid).kill`, which signals the killer's current
+ * `targetPid` when it fires.
+ */
 function wireAbortToKill(signal: AbortSignal | undefined, killOnAbort: () => void): void {
   if (!signal) return;
   if (signal.aborted) killOnAbort();
@@ -1120,7 +1193,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   const launchPort = launchEndpoint?.port ?? resolved.LLAMA_CPP_PORT;
   const validation = resolveAndValidateTarget(opts, resolved, launchEndpoint, env);
   if ("result" in validation) return validation.result;
-  const { rel, modelPath, bin } = validation;
+  const { rel } = validation;
 
   // Stop any existing instance. When the recorded pid's identity cannot be
   // proven, refuse to start: a replacement would either orphan the tracked
@@ -1167,45 +1240,34 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
     launchPort,
   );
 
-  // Wire the caller's abort signal to SIGTERM the detached child so
-  // a tRPC unsubscribe or Ctrl-C doesn't leave an orphan server.
-  const killOnAbort = (): void => {
-    try {
-      if (isProcessAlive(pid)) process.kill(pid, "SIGTERM");
-    } catch {
-      // already gone
-    }
-  };
-  wireAbortToKill(opts.signal, killOnAbort);
+  // The per-call target follows ownership: first pid, no pid while stopping, then retry pid.
+  const abortKiller = createAbortKiller(pid);
+  wireAbortToKill(opts.signal, abortKiller.kill);
 
   const timeoutSeconds = opts.timeoutSeconds ?? 60;
   const healthUrl = `${endpoint(resolved, launchEndpoint)}/health`;
   let readyResult = await pollReady(pid, healthUrl, timeoutSeconds, opts.onEvent, opts.signal);
   let outcome = readyResult.outcome;
   if (outcome === "aborted") {
-    opts.signal?.removeEventListener("abort", killOnAbort);
-    killOnAbort();
-    removeServerPid(resolved, key);
-    return startServerError(
-      resolved,
-      launchEndpoint,
-      tunedProfile,
+    return abortedStartResult(
+      opts,
+      { resolved, key, launchEndpoint, prepared, abortKiller },
       false,
-      "Start aborted by caller",
+      pid,
     );
   }
   if (outcome === "ready") {
-    opts.signal?.removeEventListener("abort", killOnAbort);
+    opts.signal?.removeEventListener("abort", abortKiller.kill);
     return startServerSuccess(resolved, launchEndpoint, tunedProfile, false, pid, opts.onEvent);
   }
 
   // Retry path: mmproj-safe flags.
   let retried = false;
+  let activePid = pid;
   if (hasMmprojArg(launchArgs)) {
     const retry = await retryWithMmprojSafeFlags(opts, {
-      bin,
-      modelPath,
-      launchArgs,
+      target: validation,
+      prepared,
       resolved,
       key,
       launchEndpoint,
@@ -1213,19 +1275,19 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
       launchPort,
       healthUrl,
       timeoutSeconds,
-      tunedProfile,
-      killOnAbort,
+      abortKiller,
     });
     if (retry.result) return retry.result;
     readyResult = retry.readyResult;
     outcome = readyResult.outcome;
+    activePid = retry.retryPid;
     retried = true;
   }
 
-  opts.signal?.removeEventListener("abort", killOnAbort);
+  opts.signal?.removeEventListener("abort", abortKiller.kill);
 
   if (outcome === "timeout") {
-    opts.onEvent?.({ type: "timeout", pid });
+    opts.onEvent?.({ type: "timeout", pid: activePid });
     // Port-collision hint: when the probe kept seeing a non-503 HTTP
     // status on the health endpoint, something else is bound to the
     // port and llama-server is answering nobody. Name the status
@@ -1240,7 +1302,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
       tunedProfile,
       retried,
       `llama-server readiness check timed out after ${String(timeoutSeconds)}s${conflictHint}`,
-      pid,
+      activePid,
     );
   }
 
