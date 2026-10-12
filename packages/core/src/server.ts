@@ -908,11 +908,8 @@ function prepareLaunchArgs(
 }
 
 interface MmprojRetryContext {
-  bin: string;
-  modelPath: string;
-  rel: string;
-  launchArgs: string[];
-  slotSavePath: string | null;
+  target: ResolvedLaunchTarget;
+  prepared: PreparedLaunchArgs;
   resolved: ResolvedEnv;
   key: WorkloadKey;
   launchEndpoint: StartServerOptions["endpoint"];
@@ -920,7 +917,6 @@ interface MmprojRetryContext {
   launchPort: number | string;
   healthUrl: string;
   timeoutSeconds: number;
-  tunedProfile: string | null;
   abortKiller: AbortKiller;
 }
 
@@ -937,6 +933,11 @@ interface AbortKiller {
   kill: () => void;
 }
 
+/**
+ * Per-start abort handler. `kill` SIGTERMs `targetPid` if it is still alive. A null target
+ * (disarmed, or a launch pid <= 0) signals nothing. startServer re-points `targetPid` as
+ * ownership moves from the first launch to the retry.
+ */
 function createAbortKiller(pid: number): AbortKiller {
   const killer: AbortKiller = {
     targetPid: pid > 0 ? pid : null,
@@ -955,10 +956,7 @@ function createAbortKiller(pid: number): AbortKiller {
 
 function abortedStartResult(
   opts: StartServerOptions,
-  ctx: Pick<
-    MmprojRetryContext,
-    "resolved" | "key" | "launchEndpoint" | "tunedProfile" | "abortKiller"
-  >,
+  ctx: Pick<MmprojRetryContext, "resolved" | "key" | "launchEndpoint" | "prepared" | "abortKiller">,
   retried: boolean,
   pid: number | null,
 ): StartServerResult {
@@ -974,10 +972,35 @@ function abortedStartResult(
   return startServerError(
     ctx.resolved,
     ctx.launchEndpoint,
-    ctx.tunedProfile,
+    ctx.prepared.tunedProfile,
     retried,
     "Start aborted by caller",
   );
+}
+
+/**
+ * ServerState sidecar for a launch startServer performed. Shared by the first launch
+ * and the mmproj retry so a new sidecar field is set in exactly one place.
+ */
+function launchedServerState(
+  opts: StartServerOptions,
+  target: ResolvedLaunchTarget,
+  prepared: PreparedLaunchArgs,
+  launchHost: string,
+  launchPort: number | string,
+  pid: number,
+): ServerState {
+  return {
+    rel: target.rel,
+    extraArgs: opts.extraArgs ?? [],
+    slotSavePath: prepared.slotPathResolved.slotSavePath,
+    host: launchHost,
+    port: String(launchPort),
+    binary: target.bin,
+    pid,
+    startedAt: new Date().toISOString(),
+    tunedProfile: prepared.tunedProfile,
+  };
 }
 
 /**
@@ -989,7 +1012,7 @@ async function retryWithMmprojSafeFlags(
   opts: StartServerOptions,
   ctx: MmprojRetryContext,
 ): Promise<MmprojRetryOutcome> {
-  const { resolved, key, launchEndpoint, tunedProfile } = ctx;
+  const { resolved, key, launchEndpoint, target, prepared } = ctx;
   ctx.abortKiller.targetPid = null;
   opts.onEvent?.({ type: "retry", reason: "mmproj safe-flag retry" });
   const stopResult = await stopServer({
@@ -1003,7 +1026,7 @@ async function retryWithMmprojSafeFlags(
       result: startServerError(
         resolved,
         launchEndpoint,
-        tunedProfile,
+        prepared.tunedProfile,
         true,
         `pid identity unknown for ${pidFile(resolved, key)} — refusing mmproj retry over an unverifiable process`,
       ),
@@ -1016,10 +1039,10 @@ async function retryWithMmprojSafeFlags(
       readyResult: { outcome: "aborted" },
     };
   }
-  const retryArgs = [...ctx.launchArgs, ...safeRetryArgs()];
+  const retryArgs = [...prepared.launchArgs, ...safeRetryArgs()];
   const retryPid = await launchBackground({
-    bin: ctx.bin,
-    modelPath: ctx.modelPath,
+    bin: target.bin,
+    modelPath: target.modelPath,
     args: retryArgs,
     resolved,
     key,
@@ -1030,17 +1053,11 @@ async function retryWithMmprojSafeFlags(
   });
   ctx.abortKiller.targetPid = retryPid > 0 ? retryPid : null;
   writeServerPid(resolved, key, retryPid);
-  writeServerState(resolved, key, {
-    rel: ctx.rel,
-    extraArgs: opts.extraArgs ?? [],
-    slotSavePath: ctx.slotSavePath,
-    host: ctx.launchHost,
-    port: String(ctx.launchPort),
-    binary: ctx.bin,
-    pid: retryPid,
-    startedAt: new Date().toISOString(),
-    tunedProfile,
-  });
+  writeServerState(
+    resolved,
+    key,
+    launchedServerState(opts, target, prepared, ctx.launchHost, ctx.launchPort, retryPid),
+  );
   const readyResult = await pollReady(
     retryPid,
     ctx.healthUrl,
@@ -1060,7 +1077,7 @@ async function retryWithMmprojSafeFlags(
       result: startServerSuccess(
         resolved,
         launchEndpoint,
-        tunedProfile,
+        prepared.tunedProfile,
         true,
         retryPid,
         opts.onEvent,
@@ -1132,21 +1149,19 @@ async function launchAndRecordServer(
     ...omitUndefined({ onEvent: opts.onEvent }),
   });
   writeServerPid(resolved, opts.key, pid);
-  writeServerState(resolved, opts.key, {
-    rel: target.rel,
-    extraArgs: opts.extraArgs ?? [],
-    slotSavePath: prepared.slotPathResolved.slotSavePath,
-    host: launchHost,
-    port: String(launchPort),
-    binary: target.bin,
-    pid,
-    startedAt: new Date().toISOString(),
-    tunedProfile: prepared.tunedProfile,
-  });
+  writeServerState(
+    resolved,
+    opts.key,
+    launchedServerState(opts, target, prepared, launchHost, launchPort, pid),
+  );
   return pid;
 }
 
-/** Run the current per-start abort target when the signal fires, or immediately if already aborted. */
+/**
+ * Run `killOnAbort` once when the signal fires, or immediately if it is already aborted.
+ * startServer passes `createAbortKiller(pid).kill`, which signals the killer's current
+ * `targetPid` when it fires.
+ */
 function wireAbortToKill(signal: AbortSignal | undefined, killOnAbort: () => void): void {
   if (!signal) return;
   if (signal.aborted) killOnAbort();
@@ -1178,7 +1193,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   const launchPort = launchEndpoint?.port ?? resolved.LLAMA_CPP_PORT;
   const validation = resolveAndValidateTarget(opts, resolved, launchEndpoint, env);
   if ("result" in validation) return validation.result;
-  const { rel, modelPath, bin } = validation;
+  const { rel } = validation;
 
   // Stop any existing instance. When the recorded pid's identity cannot be
   // proven, refuse to start: a replacement would either orphan the tracked
@@ -1236,7 +1251,7 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   if (outcome === "aborted") {
     return abortedStartResult(
       opts,
-      { resolved, key, launchEndpoint, tunedProfile, abortKiller },
+      { resolved, key, launchEndpoint, prepared, abortKiller },
       false,
       pid,
     );
@@ -1251,11 +1266,8 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   let activePid = pid;
   if (hasMmprojArg(launchArgs)) {
     const retry = await retryWithMmprojSafeFlags(opts, {
-      bin,
-      modelPath,
-      rel,
-      launchArgs,
-      slotSavePath: prepared.slotPathResolved.slotSavePath,
+      target: validation,
+      prepared,
       resolved,
       key,
       launchEndpoint,
@@ -1263,7 +1275,6 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
       launchPort,
       healthUrl,
       timeoutSeconds,
-      tunedProfile,
       abortKiller,
     });
     if (retry.result) return retry.result;
