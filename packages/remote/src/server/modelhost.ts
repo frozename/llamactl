@@ -123,6 +123,7 @@ function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
 const ENGINE_BINARY_BASENAME: Record<EngineName, string> = {
   llamacpp: "llama-server",
   omlx: "omlx",
+  strata: "strata-server",
 };
 
 function hostIdentityDeps(engine: EngineName, deps?: PidIdentityDeps): PidIdentityDeps {

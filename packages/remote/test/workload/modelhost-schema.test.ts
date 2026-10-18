@@ -40,6 +40,20 @@ describe("ModelHostManifestSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  test("accepts engine=strata (registry-wired engine)", () => {
+    const strataManifest = {
+      ...valid,
+      spec: {
+        ...valid.spec,
+        engine: "strata",
+        binary: "/usr/local/bin/strata-server",
+        hostedModels: [{ rel: "strata/qwen3-8b.safetensors" }],
+      },
+    };
+    const result = ModelHostManifestSchema.safeParse(strataManifest);
+    expect(result.success).toBe(true);
+  });
+
   test("rejects engine string outside the enum", () => {
     const bad = { ...valid, spec: { ...valid.spec, engine: "vllm-mlx" } };
     const result = ModelHostManifestSchema.safeParse(bad);
