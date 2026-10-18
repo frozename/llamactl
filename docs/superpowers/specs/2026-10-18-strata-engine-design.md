@@ -21,10 +21,13 @@ and any Strata-internal tuning — those stay in Strata's own run config.
 
 A single ModelHost process is the Strata HTTP server: the `strata-server`
 symlink (a Python interpreter) launching `serve/server.py` with
-`--engine strata --config <file>`. That server in turn forks a **native
-engine child** — the actual inference worker — into its own session.
-llamactl only ever signals the server pid; the adapter is responsible for
-reaching the detached child.
+`--engine strata --config <file>`. That server in turn spawns a **native
+engine child** — the actual inference worker — as a direct child in the
+server's own process group (a plain `subprocess.Popen`, no `setsid` /
+`start_new_session`). llamactl signals the whole process group when the
+server leads its own group (llamactl's detached spawn), and only the
+server pid otherwise; the adapter is responsible for reaping the engine
+child, which can outlive the server.
 
 ## 3. ModelHost contract
 
@@ -58,10 +61,14 @@ when its advertised ids include the hosted model's rel or basename.
 
 ## 5. Teardown
 
-The native engine child runs in its own session, so a process-group
-signal never reaches it. The adapter collects engine children — matched
-by a standalone `--serve` argv token — while the server is still alive to
-parent them, then:
+The native engine child is a direct child in the server's process group, so
+a group-wide signal reaches it only when the server leads that group
+(llamactl's detached spawn); an adopted server that is not a group leader
+gets only its own pid signalled. `gracefulShutdown` waits for the server pid
+alone, yet the engine can keep running after the server exits while it
+releases its ~80 GiB of mappings / GPU memory. The adapter collects engine
+children — matched by a standalone `--serve` argv token — while the server is
+still alive to parent them, then:
 
 1. Identity gate: if the recorded pid's identity cannot be verified
    (recycled pid, or its command no longer matches the expectation),
@@ -69,7 +76,9 @@ parent them, then:
    `gracefulShutdown`'s refusal. A mismatched server must not take an
    unrelated process tree down with it.
 2. Graceful SIGTERM to the server with a 60 s grace window.
-3. Poll up to 180 s for each collected engine child to exit.
+3. Poll up to 180 s for each collected engine child to exit — so a restart
+   never overlaps two engines — since `gracefulShutdown` has already returned
+   once the server pid is gone.
 4. Guarded SIGKILL on any child still alive — only after re-confirming
    `--serve` is still in its command line, so a recycled pid is never
    killed.

@@ -269,10 +269,15 @@ export function createStrataEngine(deps?: Partial<StrataEngineDeps>): EngineAdap
     verify: deps?.verify ?? verifyPidFile,
   };
 
-  // The Strata HTTP server spawns its native engine as a direct child in a
-  // separate session, so a group-wide signal never reaches it. Collect the
-  // engine children (identified by a --serve argv token) before anything is
-  // signalled, while their parent is still alive to parent them.
+  // The Strata HTTP server spawns its native engine as a direct child in the
+  // server's own process group (a plain subprocess.Popen, no setsid), so a
+  // group-wide signal reaches it only when the server leads that group
+  // (llamactl's detached spawn); an adopted server that is not a group leader
+  // gets only its own pid signalled. Either way gracefulShutdown waits for the
+  // server pid alone, but the engine can outlive the server while it tears
+  // down its mappings / GPU memory, so the adapter must wait for it too.
+  // Collect the engine children (identified by a --serve argv token) before
+  // anything is signalled, while their parent is still alive to parent them.
   const engineChildren = (pid: number): number[] => {
     return resolved.listChildren(pid).filter((child) => {
       return hasServeToken(resolved.processCommand(child));
