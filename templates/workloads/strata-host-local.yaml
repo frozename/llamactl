@@ -1,0 +1,49 @@
+# Strata engine pilot: one GGUF model hosted by Strata on local.
+#
+# Pre-reqs:
+# 1. Strata venv installed with a `strata-server` symlink in bin/.
+# 2. A JSON run-config file that lists the model's basename in
+#    `aliases` and points `args[--native]` at the absolute path
+#    matching $LLAMA_CPP_MODELS/<hostedModel.rel>.
+#
+# Apply:
+#   llamactl apply -f templates/workloads/strata-host-local.yaml
+#
+# Verify:
+#   curl http://127.0.0.1:8080/v1/models
+apiVersion: llamactl/v1
+kind: ModelHost
+metadata:
+  name: strata-host-local
+  labels:
+    family: strata
+    role: inference-host
+spec:
+  # The binary MUST be a symlink named strata-server because llamactl
+  # identifies a running host process by argv0 basename — the symlink
+  # name is the only stable handle it gets to match the process.
+  engine: strata
+  node: local
+  enabled: true
+  binary: /path/to/strata/venv/bin/strata-server
+  resources:
+    expectedMemoryGiB: 16
+  endpoint:
+    host: 127.0.0.1
+    port: 8080
+  hostedModels:
+    - rel: some-org/SomeModel-Q4_K_M.gguf
+  # extraArgs[0] must be the server entrypoint ending in serve/server.py.
+  # The run config (--config) must list the hostedModel rel's basename in
+  # its `aliases` array and use the same absolute model path in its
+  # args[--native] value, otherwise prepareLaunch rejects the launch.
+  # The adapter appends --host and --port automatically; do not include
+  # them here (validation rejects them in extraArgs).
+  extraArgs:
+    - /path/to/Strata/serve/server.py
+    - --engine
+    - strata
+    - --config
+    - /path/to/run-config.json
+  restartPolicy: Always
+  timeoutSeconds: 300
