@@ -292,14 +292,18 @@ test("reconcile uses remote modelHostStatus.specHash to avoid restarts and detec
   try {
     const first = await reconcileOnce({ workloadsDir, getClient });
     expect(first.errors).toBe(0);
-    expect(first.reports).toEqual([{ name, node: "mac-mini", action: "unchanged" }]);
+    expect(first.reports).toEqual([
+      { kind: "ModelHost", name, node: "mac-mini", action: "unchanged" },
+    ]);
     expect(remoteState.starts).toBe(0);
 
     const drifted = makeManifest(name, ["--new-flag"]);
     saveModelHost(drifted, workloadsDir);
     const second = await reconcileOnce({ workloadsDir, getClient });
     expect(second.errors).toBe(0);
-    expect(second.reports).toEqual([{ name, node: "mac-mini", action: "restarted" }]);
+    expect(second.reports).toEqual([
+      { kind: "ModelHost", name, node: "mac-mini", action: "restarted" },
+    ]);
     expect(remoteState.starts).toBe(1);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
@@ -326,14 +330,16 @@ test("reconcile skips deleted manifests without resurrecting them", async () => 
     const result = await reconcile;
     expect(result.errors).toBe(0);
     expect(result.reports).toEqual([
-      { name: blocker, node: "mac-mini", action: "started" },
-      { name, node: "mac-mini", action: "skipped-deleted" },
+      { kind: "ModelRun", name: blocker, node: "mac-mini", action: "started" },
+      { kind: "ModelRun", name, node: "mac-mini", action: "skipped-deleted" },
     ]);
     expect(existsSync(path)).toBe(false);
 
     const second = await reconcileOnce({ workloadsDir, getClient });
     expect(second.errors).toBe(0);
-    expect(second.reports).toEqual([{ name: blocker, node: "mac-mini", action: "started" }]);
+    expect(second.reports).toEqual([
+      { kind: "ModelRun", name: blocker, node: "mac-mini", action: "started" },
+    ]);
     expect(existsSync(path)).toBe(false);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
@@ -383,7 +389,9 @@ test("reconcile restarts and persists when the manifest is still present", async
   try {
     const result = await reconcileOnce({ workloadsDir, getClient: () => client });
     expect(result.errors).toBe(0);
-    expect(result.reports).toEqual([{ name, node: "mac-mini", action: "started" }]);
+    expect(result.reports).toEqual([
+      { kind: "ModelHost", name, node: "mac-mini", action: "started" },
+    ]);
     expect(existsSync(workloadPath(name, workloadsDir))).toBe(true);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
@@ -411,8 +419,8 @@ test("reconcile preserves renamed manifests without resurrecting the old name", 
     const result = await reconcile;
     expect(result.errors).toBe(0);
     expect(result.reports).toEqual([
-      { name: blocker, node: "mac-mini", action: "started" },
-      { name, node: "mac-mini", action: "skipped-deleted" },
+      { kind: "ModelRun", name: blocker, node: "mac-mini", action: "started" },
+      { kind: "ModelRun", name, node: "mac-mini", action: "skipped-deleted" },
     ]);
     expect(existsSync(originalPath)).toBe(false);
     expect(existsSync(renamedPath)).toBe(true);
@@ -434,7 +442,9 @@ test("reconcile reports skipped-deleted when a manifest is deleted mid-apply", a
     });
 
     expect(result.errors).toBe(0);
-    expect(result.reports).toEqual([{ name, node: "mac-mini", action: "skipped-deleted" }]);
+    expect(result.reports).toEqual([
+      { kind: "ModelRun", name, node: "mac-mini", action: "skipped-deleted" },
+    ]);
     expect(existsSync(workloadPath(name, workloadsDir))).toBe(false);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
