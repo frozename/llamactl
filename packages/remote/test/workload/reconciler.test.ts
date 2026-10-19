@@ -163,6 +163,7 @@ describe("reconcileOnce", () => {
       expect(result.errors).toBe(0);
       expect(result.reports).toHaveLength(2);
       expect(result.reports.map((r) => r.name)).toEqual(["run-a", "host-a"]);
+      expect(result.reports.map((r) => r.kind)).toEqual(["ModelRun", "ModelHost"]);
       expect(result.reports.map((r) => r.node)).toEqual(["local", "local"]);
       expect(result.reports.find((r) => r.name === "host-a")?.action).toBe("unchanged");
       expect(result.reports.find((r) => r.name === "run-a")?.action).toBe("started");

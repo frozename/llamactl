@@ -213,8 +213,9 @@ async function runReconcilePass(
   }
   for (const r of modelrunResult.reports) {
     const tail = r.error ? ` error=${r.error}` : "";
+    const kind = r.kind === "ModelHost" ? "modelhost" : "modelrun";
     process.stdout.write(
-      `[${new Date().toISOString()}] modelrun/${r.name} on ${r.node}: ${r.action}${tail}\n`,
+      `[${new Date().toISOString()}] ${kind}/${r.name} on ${r.node}: ${r.action}${tail}\n`,
     );
   }
 }

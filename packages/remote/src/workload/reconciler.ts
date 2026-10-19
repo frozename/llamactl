@@ -28,6 +28,8 @@ import {
 } from "./store.js";
 
 export interface ReconcileNodeReport {
+  /** Absent only on the reconcile loop's synthetic "(loop)" error row. */
+  kind?: "ModelRun" | "ModelHost";
   name: string;
   node: string;
   action: ApplyResult["action"] | "skipped-deleted";
@@ -142,7 +144,7 @@ async function reconcileModelRun(
   try {
     const manifestPath = workloadPath(name, dir);
     if (!existsSync(manifestPath)) {
-      reports.push({ name, node: spec.node, action: "skipped-deleted" });
+      reports.push({ kind: "ModelRun", name, node: spec.node, action: "skipped-deleted" });
       return 0;
     }
     const result = await applyOne(
@@ -160,6 +162,7 @@ async function reconcileModelRun(
     );
     if (result.error) errors++;
     reports.push({
+      kind: "ModelRun",
       name,
       node: spec.node,
       action: result.action,
@@ -167,6 +170,7 @@ async function reconcileModelRun(
     });
     if (!existsSync(manifestPath)) {
       reports[reports.length - 1] = {
+        kind: "ModelRun",
         name,
         node: spec.node,
         action: "skipped-deleted",
@@ -192,7 +196,7 @@ async function reconcileModelRun(
   } catch (err) {
     errors++;
     const message = (err as Error).message;
-    reports.push({ name, node: spec.node, action: "unchanged", error: message });
+    reports.push({ kind: "ModelRun", name, node: spec.node, action: "unchanged", error: message });
   }
   return errors;
 }
@@ -248,6 +252,7 @@ async function reconcileModelHost(
     // it instead of looking clean.
     if (current.identityUnknown === true) {
       reports.push({
+        kind: "ModelHost",
         name,
         node: spec.node,
         action: "unchanged",
@@ -265,11 +270,11 @@ async function reconcileModelHost(
       if (spec.node === LOCAL_NODE_ID) {
         removeModelHostState({ name }, resolveEnv(process.env));
       }
-      reports.push({ name, node: spec.node, action: "unchanged" });
+      reports.push({ kind: "ModelHost", name, node: spec.node, action: "unchanged" });
       return 0;
     }
     if (decision === "converged") {
-      reports.push({ name, node: spec.node, action: "unchanged" });
+      reports.push({ kind: "ModelHost", name, node: spec.node, action: "unchanged" });
       return 0;
     }
     const result = await applyOneModelHost(
@@ -286,7 +291,7 @@ async function reconcileModelHost(
     );
     const action = current.state === "Running" ? "restarted" : "started";
     if (result.ok && result.kind === "ModelHost") {
-      reports.push({ name, node: spec.node, action });
+      reports.push({ kind: "ModelHost", name, node: spec.node, action });
       saveModelHost(result.manifest, dir);
       return 0;
     }
@@ -294,11 +299,11 @@ async function reconcileModelHost(
     // {ok:false, error}; the ModelRun shape can't arrive here, but
     // narrow defensively for TS.
     const errMsg = result.ok ? "unexpected non-ModelHost outcome" : result.error;
-    reports.push({ name, node: spec.node, action: "unchanged", error: errMsg });
+    reports.push({ kind: "ModelHost", name, node: spec.node, action: "unchanged", error: errMsg });
     return 1;
   } catch (err) {
     const message = (err as Error).message;
-    reports.push({ name, node: spec.node, action: "unchanged", error: message });
+    reports.push({ kind: "ModelHost", name, node: spec.node, action: "unchanged", error: message });
     return 1;
   }
 }
