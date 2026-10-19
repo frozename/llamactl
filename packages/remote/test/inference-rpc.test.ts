@@ -20,6 +20,8 @@ import type { ResolvedEnv } from "@llamactl/core/types";
 import { inferenceContracts, inferenceRpc, routingCatalog } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { type ExecutionEventV1, validateExecutionEventSequence } from "@novaproto/contracts";
+import { initTRPC } from "@trpc/server";
+import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,6 +67,7 @@ import {
   rmSync,
   writeFileSync,
 } from "../src/safe-fs.js";
+import { createTunnelClient, createTunnelRouterHandler } from "../src/tunnel/index.js";
 import { INFERENCE_RPC_STREAM_LIMITS } from "../src/tunnel/messages.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
@@ -1153,7 +1156,11 @@ interface Transports {
   serviceCredential: string;
   /** Bound to GOLDEN_CLAIMS. */
   goldenCredential: string;
+  /** The worker's operator bearer: the base release's caller credential. */
+  operatorToken: string;
   central: RunningAgent;
+  /** The bearer a node presents in its hello to dial central. */
+  tunnelBearer: string;
   centralCertificate: string;
   centralFingerprint: string;
   centralToken: string;
@@ -1249,7 +1256,9 @@ async function startTransports(): Promise<Transports> {
     bindings,
     serviceCredential: service.token,
     goldenCredential: golden.token,
+    operatorToken: workerToken.token,
     central,
+    tunnelBearer: tunnelBearer.token,
     centralCertificate: centralCert.certPem,
     centralFingerprint: centralCert.fingerprint,
     centralToken: centralToken.token,
@@ -2010,6 +2019,332 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       expect(engine.requests).toHaveLength(0);
     });
   });
+  /**
+   * A8 — the rolling-upgrade window over both remote transports. A
+   * gateway and a worker one minor apart interoperate; anything further
+   * apart, or a different major, is refused typed `unsupported-version`
+   * before any engine request. A worker that positively reports no RPC
+   * keeps new requests on the existing path; every other negotiation
+   * failure fails closed. A downgrade drains or cancels the active
+   * stream and never re-submits it through the legacy path.
+   */
+  describe("rolling-upgrade window (A8)", () => {
+    const at = (minor: number, major = 1): inferenceRpc.InferenceRpcVersion => ({ major, minor });
+    const spoken = inferenceRpc.inferenceRpcVersionsSpokenAt;
+    const WINDOW = [
+      { name: "same version", gateway: at(0), worker: spoken(at(0)), runs: at(0) },
+      { name: "both one minor on", gateway: at(1), worker: spoken(at(1)), runs: at(1) },
+      { name: "the gateway one minor ahead", gateway: at(1), worker: spoken(at(0)), runs: at(0) },
+      { name: "the worker one minor ahead", gateway: at(0), worker: spoken(at(1)), runs: at(0) },
+      { name: "the gateway two minors ahead", gateway: at(2), worker: spoken(at(0)), runs: null },
+      { name: "the worker two minors ahead", gateway: at(0), worker: spoken(at(2)), runs: null },
+      {
+        name: "the worker two minors ahead, still listing the gateway's version",
+        gateway: at(0),
+        worker: [at(2), at(1), at(0)],
+        runs: null,
+      },
+      { name: "a different major", gateway: at(0, 2), worker: spoken(at(0)), runs: null },
+    ];
+
+    for (const transport of TRANSPORTS) {
+      for (const step of WINDOW) {
+        const verdict = step.runs === null ? "is refused typed" : "interoperates";
+        test(`${transport}: ${step.name} ${verdict}`, async () => {
+          useRemoteHost({ versions: step.worker });
+          const submitted: inferenceRpc.InferenceRpcVersion[] = [];
+          const base = currentWorkerRpcHost();
+          wrapHost({
+            submit: (claimsIn, input) => {
+              submitted.push(input.version);
+              return base.submit(claimsIn, input);
+            },
+          });
+          const fallback: string[] = [];
+          const env = envelope(`att-window-${transport}-${step.name.replaceAll(" ", "-")}`);
+          const res = await executorOver(clientFor[transport](), {
+            version: step.gateway,
+            fallback: recordingFallback(fallback),
+          }).execute(env, ctxFor(env));
+          expect(fallback).toEqual([]);
+          if (step.runs === null) {
+            expect(res.status).toBe(503);
+            expect(await res.json()).toMatchObject({ error: { code: "unsupported-version" } });
+            expect(submitted).toEqual([]);
+            expect(engine.requests).toHaveLength(0);
+            return;
+          }
+          expect(res.status).toBe(200);
+          expect(await res.text()).toContain("[DONE]");
+          expect(submitted).toEqual([step.runs]);
+          expect(engine.requests).toHaveLength(1);
+        });
+      }
+
+      test(`${transport}: a new worker still serves a caller shaped like the base release`, async () => {
+        useRemoteHost();
+        // The base release reaches a worker's local model through its legacy
+        // surfaces, never the RPC: /v1 directly, chatComplete over the tunnel.
+        if (transport === "direct") {
+          const pinned = makePinnedFetch(transports.workerNode);
+          const res = await pinned(`${transports.worker.url}/v1/models`, {
+            headers: { authorization: `Bearer ${transports.operatorToken}` },
+          });
+          expect(res.status).toBe(200);
+          expect(await res.json()).toMatchObject({ object: "list" });
+          const trpc = await pinned(`${transports.worker.url}/trpc/env`, {
+            headers: { authorization: `Bearer ${transports.operatorToken}` },
+          });
+          expect(trpc.status).toBe(200);
+        } else {
+          const res = await fetch(`${transports.central.url}/tunnel-relay/${TUNNEL_NODE}`, {
+            method: "POST",
+            tls: { ca: transports.centralCertificate },
+            headers: {
+              authorization: `Bearer ${transports.centralToken}`,
+              "content-type": "application/json",
+            },
+            body: JSON.stringify({ method: "env", type: "query", input: undefined }),
+          });
+          expect(res.status).toBe(200);
+          expect(((await res.json()) as { error?: unknown }).error).toBeUndefined();
+        }
+        expect(engine.requests).toHaveLength(0);
+        expect(statusNow("att-none")).toMatchObject({ state: "unknown" });
+      });
+
+      test(`${transport}: a worker that does not advertise the RPC keeps the request on the existing path`, async () => {
+        useRemoteHost({ versions: [] });
+        const fallback: string[] = [];
+        const env = envelope(`att-unadvertised-${transport}`);
+        const res = await executorOver(clientFor[transport](), {
+          fallback: recordingFallback(fallback),
+        }).execute(env, ctxFor(env));
+        expect(await res.json()).toEqual({ path: "fallback" });
+        expect(fallback).toEqual(["fallback"]);
+        expect(engine.requests).toHaveLength(0);
+      });
+
+      test(`${transport}: a downgrade drains the active stream, sends new requests down the existing path and never re-submits`, async () => {
+        let advertise = true;
+        useRemoteHost({ versions: () => (advertise ? [V1_0] : []) });
+        let release = (): void => undefined;
+        engine.setScript({
+          pieces: ["Hel", "lo"],
+          holdAfter: 1,
+          release: new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+        });
+        const fallback: string[] = [];
+        const executor = executorOver(clientFor[transport](), {
+          fallback: recordingFallback(fallback),
+        });
+        const env = envelope(`att-downgrade-${transport}`);
+        const active = (async (): Promise<string> =>
+          await (await executor.execute(env, ctxFor(env))).text())();
+        await until(() => engine.requests.length === 1);
+        advertise = false;
+        const later = envelope(`att-downgrade-later-${transport}`);
+        expect(await (await executor.execute(later, ctxFor(later))).json()).toEqual({
+          path: "fallback",
+        });
+        release();
+        const body = await active;
+        expect(body).toContain('"content":"lo"');
+        expect(body.trimEnd().endsWith("data: [DONE]")).toBe(true);
+        expect(engine.requests).toHaveLength(1);
+        expect(fallback).toEqual(["fallback"]);
+        expect(statusNow(env.attemptId)).toMatchObject({
+          state: "terminal",
+          terminal: { outcome: "completed" },
+        });
+      });
+
+      test(`${transport}: a downgrade that cannot wait ends the active stream with an acknowledged cancel, never re-submitted`, async () => {
+        const host = useRemoteHost();
+        engine.setScript({ pieces: ["Hel", "lo"], holdAfter: 1 });
+        const fallback: string[] = [];
+        const env = envelope(`att-downgrade-cancel-${transport}`);
+        const active = (async (): Promise<string> =>
+          await (
+            await executorOver(clientFor[transport](), {
+              fallback: recordingFallback(fallback),
+            }).execute(env, ctxFor(env))
+          ).text())();
+        await until(() => engine.requests.length === 1);
+        const aborted = engine.nextAbort();
+        const draining = host.drain();
+        host.close();
+        await draining;
+        await aborted;
+        const body = await active;
+        expect(body).toContain('"code":"cancelled"');
+        expect(statusNow(env.attemptId)).toMatchObject({
+          state: "terminal",
+          terminal: { outcome: "cancelled" },
+        });
+        expect(fallback).toEqual([]);
+        expect(engine.requests).toHaveLength(1);
+      });
+    }
+
+    test("tunnel: a node that predates the RPC answers no route, which keeps the existing path", async () => {
+      useRemoteHost();
+      // The base release serves tunneled calls from its own router caller,
+      // which has no inferenceRpc namespace.
+      const t = initTRPC.create();
+      const baseRouter = t.router({ env: t.procedure.query(() => ({ base: true })) });
+      const BunWebSocket = WebSocket as unknown as new (
+        url: string,
+        options: { tls: { ca: string } },
+      ) => WebSocket;
+      const ca = transports.centralCertificate;
+      let ready = (): void => undefined;
+      const up = new Promise<void>((resolve) => {
+        ready = resolve;
+      });
+      const oldNode = createTunnelClient({
+        url: `wss://127.0.0.1:${String(transports.central.port)}/tunnel`,
+        bearer: transports.tunnelBearer,
+        nodeName: "base-release-node",
+        handleRequest: createTunnelRouterHandler(baseRouter.createCaller({})),
+        WebSocketCtor: class extends BunWebSocket {
+          constructor(url: string) {
+            super(url, { tls: { ca } });
+          }
+        } as unknown as ClientWebSocketConstructor,
+        onStateChange: (state) => {
+          if (state === "ready") ready();
+        },
+        initialAttemptTimeoutMs: 0,
+      });
+      void oldNode.start();
+      try {
+        await up;
+        const fallback: string[] = [];
+        const env = envelope("att-base-node");
+        const res = await executorOver(tunnelClient({ nodeName: "base-release-node" }), {
+          fallback: recordingFallback(fallback),
+        }).execute(env, ctxFor(env));
+        expect(await res.json()).toEqual({ path: "fallback" });
+        expect(fallback).toEqual(["fallback"]);
+        expect(engine.requests).toHaveLength(0);
+      } finally {
+        oldNode.stop();
+      }
+    });
+
+    describe("direct: an owner that predates the RPC", () => {
+      /**
+       * The base release's /trpc handling: its bearer gate, then tRPC over a
+       * router with no inferenceRpc namespace.
+       */
+      async function startBaseAgent(acceptedHash: string): Promise<{
+        node: ClusterNode;
+        stop: () => Promise<void>;
+      }> {
+        const dir = mkdtempSync(join(tmpdir(), "p41-base-agent-"));
+        const cert = await tls.generateSelfSignedCert({
+          dir,
+          commonName: "127.0.0.1",
+          hostnames: ["127.0.0.1", "localhost"],
+        });
+        const t = initTRPC.create();
+        const baseRouter = t.router({ env: t.procedure.query(() => ({ base: true })) });
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          tls: { cert: cert.certPem, key: readFileSync(cert.keyPath, "utf8") },
+          fetch: (req) =>
+            auth.verifyBearer(req, acceptedHash)
+              ? fetchRequestHandler({
+                  req,
+                  endpoint: "/trpc",
+                  router: baseRouter,
+                  createContext: () => ({}),
+                })
+              : auth.unauthorizedResponse(),
+        });
+        return {
+          node: {
+            name: "base-release",
+            endpoint: `https://127.0.0.1:${String(server.port)}`,
+            certificate: cert.certPem,
+            certificateFingerprint: cert.fingerprint,
+          },
+          stop: async (): Promise<void> => {
+            await server.stop(true);
+            rmSync(dir, { recursive: true, force: true });
+          },
+        };
+      }
+
+      test("a 404 for the route from an owner that authenticated the caller keeps the existing path", async () => {
+        const credential = auth.generateToken();
+        const base = await startBaseAgent(credential.hash);
+        try {
+          const fallback: string[] = [];
+          const env = envelope("att-base-404");
+          const client = createDirectInferenceRpcClient({
+            node: base.node,
+            serviceCredential: credential.token,
+          });
+          const res = await executorOver(client, {
+            fallback: recordingFallback(fallback),
+          }).execute(env, ctxFor(env));
+          expect(await res.json()).toEqual({ path: "fallback" });
+          expect(fallback).toEqual(["fallback"]);
+        } finally {
+          await base.stop();
+        }
+      });
+
+      test("an owner that refuses the credential (the base release's 401) fails closed, typed", async () => {
+        const base = await startBaseAgent(auth.generateToken().hash);
+        try {
+          const fallback: string[] = [];
+          const env = envelope("att-base-401");
+          const client = createDirectInferenceRpcClient({
+            node: base.node,
+            serviceCredential: transports.serviceCredential,
+          });
+          const res = await executorOver(client, {
+            fallback: recordingFallback(fallback),
+          }).execute(env, ctxFor(env));
+          expect(res.status).toBe(403);
+          expect(await res.json()).toMatchObject({ error: { code: "unauthorized-scope" } });
+          expect(fallback).toEqual([]);
+        } finally {
+          await base.stop();
+        }
+      });
+
+      test("any other negotiation failure fails closed: a 404 that is not tRPC's, a 500, a malformed answer", async () => {
+        for (const [status, body] of [
+          [404, "not found"],
+          [500, JSON.stringify({ error: { message: "boom" } })],
+          [200, JSON.stringify({ result: { data: { outcome: "surprise" } } })],
+        ] as const) {
+          const fallback: string[] = [];
+          const env = envelope(`att-negotiate-${String(status)}`);
+          const client = createDirectInferenceRpcClient({
+            node: transports.workerNode,
+            serviceCredential: transports.serviceCredential,
+            fetch: () => Promise.resolve(new Response(body, { status })),
+          });
+          const res = await executorOver(client, {
+            fallback: recordingFallback(fallback),
+          }).execute(env, ctxFor(env));
+          expect(res.status).toBe(503);
+          expect(await res.json()).toMatchObject({ error: { code: "target-unavailable" } });
+          expect(fallback).toEqual([]);
+        }
+        expect(engine.requests).toHaveLength(0);
+      });
+    });
+  });
+
   /**
    * X5 — rotation and revocation take effect for new submits over both
    * transports; accepted attempts are not cut off. The worker's bindings

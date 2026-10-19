@@ -25,9 +25,9 @@
  * acknowledgement is resolved through `status`, a lost stream through
  * `cancel` then `status`, and an outcome it cannot establish is surfaced
  * as `unknown-outcome`. Only a stale generation is retried, once, after a
- * single catalog refresh. A worker that positively reports no RPC keeps
- * the request on the existing path; every other negotiation failure
- * fails closed.
+ * single catalog refresh. A worker that positively reports no RPC — it
+ * answers `not-advertised`, or it predates the route — keeps the request
+ * on the existing path; every other negotiation failure fails closed.
  */
 import type { PeerNode } from "@llamactl/core/config/peers";
 import type { ClusterNode } from "@llamactl/core/config/schema";
@@ -149,6 +149,13 @@ export class InferenceRpcStreamOverflowError extends Error {
 /** The owner's agent refused the service credential before any procedure ran (HTTP 401). */
 export class InferenceRpcCredentialRefusedError extends Error {}
 
+/**
+ * The owner answered, past its authentication, that it has no
+ * `inferenceRpc` route: a build that predates the RPC. That is a
+ * positive "no RPC here", like `not-advertised`.
+ */
+export class InferenceRpcRouteMissingError extends Error {}
+
 const DEFAULT_CALL_TIMEOUT_MS = 10_000;
 const RPC = "inferenceRpc";
 
@@ -198,6 +205,12 @@ async function timed<T>(timeoutMs: number, run: (signal: AbortSignal) => Promise
   }
 }
 
+/** tRPC's own "no such procedure" error: the route is absent, not failing. */
+function isMissingProcedure(status: number, error: unknown): boolean {
+  const data = isRecord(error) ? error["data"] : undefined;
+  return status === 404 && isRecord(data) && data["code"] === "NOT_FOUND";
+}
+
 /** The data of a tRPC fetch-adapter response, or the error it carries. */
 async function trpcData(res: Response, procedure: string): Promise<unknown> {
   const body: unknown = await res.json().catch(() => null);
@@ -207,7 +220,21 @@ async function trpcData(res: Response, procedure: string): Promise<unknown> {
   const message = isRecord(error) && typeof error["message"] === "string" ? error["message"] : "";
   const failure = `worker RPC ${procedure} failed: HTTP ${String(res.status)} ${message}`.trim();
   if (res.status === 401) throw new InferenceRpcCredentialRefusedError(failure);
+  if (isMissingProcedure(res.status, error)) throw new InferenceRpcRouteMissingError(failure);
   throw new Error(failure);
+}
+
+/**
+ * A node that predates the RPC answers a tunneled call to it from its
+ * own router caller, which throws tRPC's "No procedure found"; the
+ * tunnel client relays that as `handler-threw`.
+ */
+function relayError(err: unknown): unknown {
+  const code = isRecord(err) ? err["code"] : undefined;
+  const missing =
+    code === "handler-threw" &&
+    /^No procedure found on path "inferenceRpc[.,]/.test(errorMessage(err));
+  return missing ? new InferenceRpcRouteMissingError(errorMessage(err), { cause: err }) : err;
 }
 
 function directWire(opts: DirectInferenceRpcClientOptions): RpcWire {
@@ -291,16 +318,21 @@ function tunnelWire(opts: TunnelInferenceRpcClientOptions): RpcWire {
   const target = { centralUrl: opts.centralUrl, nodeName: opts.nodeName, bearer: opts.bearer };
   return {
     transport: "tunnel",
-    call: (procedure, type, input) =>
-      callViaTunnelRelay({
-        ...target,
-        ...pinning,
-        method: `${RPC}.${procedure}`,
-        type,
-        input,
-        timeoutMs,
-        fetchImpl: relayFetch,
-      }),
+    call: async (procedure, type, input): Promise<unknown> => {
+      try {
+        return await callViaTunnelRelay({
+          ...target,
+          ...pinning,
+          method: `${RPC}.${procedure}`,
+          type,
+          input,
+          timeoutMs,
+          fetchImpl: relayFetch,
+        });
+      } catch (err) {
+        throw relayError(err);
+      }
+    },
     open: (input, signal): Promise<Response> => {
       const { url, init } = buildRelayFetchInit(
         opts.centralUrl,
@@ -1204,6 +1236,8 @@ async function runAttempt(
       requiredFeatures: ["execution-event-v1"],
     });
   } catch (err) {
+    // A worker that predates the route positively reports no RPC.
+    if (err instanceof InferenceRpcRouteMissingError) return { kind: "fallback" };
     return { kind: "rejected", rejection: refusal(err, "worker RPC negotiation failed") };
   }
   if (negotiated.outcome === "not-advertised") return { kind: "fallback" };
