@@ -67,6 +67,7 @@ import type { RuntimeKind } from "./runtime/factory.js";
 
 import * as benchScheduleMod from "./bench/schedule.js";
 import * as benchScheduleLoopMod from "./bench/scheduleLoop.js";
+import { type CallerSubscriptionHandlers, subscribeViaCaller } from "./client/caller-subscribe.js";
 import { buildPinnedLinks } from "./client/links.js";
 import * as infraInstallMod from "./infra/install.js";
 import * as infraLayoutMod from "./infra/layout.js";
@@ -137,8 +138,11 @@ function localCallerProxy(): WorkloadNodeClient {
   // Deferred reference — at runtime `router` exists by the time the
   // helper is invoked from within a procedure body, even though at
   // module-load time the declaration below is still being evaluated.
-  const getCaller = (): Record<string, (...a: unknown[]) => unknown> =>
-    router.createCaller({}) as unknown as Record<string, (...a: unknown[]) => unknown>;
+  const getCaller = (signal?: AbortSignal): Record<string, (...a: unknown[]) => unknown> =>
+    router.createCaller({}, signal ? { signal } : undefined) as unknown as Record<
+      string,
+      (...a: unknown[]) => unknown
+    >;
   const handler: ProxyHandler<object> = {
     get(_t, prop) {
       if (typeof prop !== "string") return undefined;
@@ -148,7 +152,14 @@ function localCallerProxy(): WorkloadNodeClient {
         if (typeof fn !== "function") throw new Error(`unknown procedure '${prop}'`);
         return fn(...args);
       };
-      return { query: invoke, mutate: invoke, subscribe: invoke };
+      // An in-proc caller hands back the subscription's async iterable and
+      // never calls tRPC client handlers; bridge them so apply/reconcile/bench
+      // callers waiting on onData/onComplete see the stream.
+      const subscribe = (
+        input: unknown,
+        handlers: CallerSubscriptionHandlers,
+      ): { unsubscribe: () => void } => subscribeViaCaller(getCaller, prop, input, handlers);
+      return { query: invoke, mutate: invoke, subscribe };
     },
   };
   return new Proxy({}, handler) as unknown as WorkloadNodeClient;
