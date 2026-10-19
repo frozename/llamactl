@@ -180,6 +180,18 @@ test("listWorkloadDirs returns workload subdirs without requiring pidfiles", () 
   }
 });
 
+test("listWorkloadDirs sorts names regardless of creation order", () => {
+  const t = tempEnv();
+  try {
+    for (const name of ["delta", "bravo", "echo", "alpha", "charlie"]) {
+      mkdirSync(join(t.runtimeDir, "workloads", name), { recursive: true });
+    }
+    expect(listWorkloadDirs(t.resolved)).toEqual(["alpha", "bravo", "charlie", "delta", "echo"]);
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("migrateLegacySingletonRuntime moves files under a matching workload dir", () => {
   const t = tempEnv();
   try {

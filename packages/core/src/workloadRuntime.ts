@@ -344,7 +344,9 @@ export function listWorkloadDirs(resolved: ResolvedEnv = resolveEnv()): string[]
   for (const dirent of readdirSync(root, { withFileTypes: true })) {
     if (dirent.isDirectory()) out.push(dirent.name);
   }
-  return out;
+  // readdir order is filesystem-defined (hash order on ext4, creation order
+  // on tmpfs); sort so callers' messages and picks are deterministic.
+  return out.sort();
 }
 
 export type MigrationResult =
