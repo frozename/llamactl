@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  cancelOutcomeOf,
+  DEFAULT_STREAM_LIMITS,
   encodeTunnelMessage,
+  frameBytes,
   parseTunnelMessage,
+  TUNNEL_MAX_FRAME_BYTES,
+  TUNNEL_STREAM_CANCELLED,
   type TunnelMessage,
   TunnelMessageSchema,
   type TunnelStreamCancel,
+  TunnelStreamCancelAckSchema,
   type TunnelStreamDone,
   type TunnelStreamEvent,
 } from "../src/tunnel/messages.js";
@@ -131,5 +137,50 @@ describe("tunnel message: streaming variants", () => {
     for (const f of frames) {
       expect(TunnelMessageSchema.safeParse(f).success).toBe(true);
     }
+  });
+});
+
+describe("tunnel frame bounds and the cancel acknowledgement (P4.1 X3, X4)", () => {
+  test("a frame above TUNNEL_MAX_FRAME_BYTES is malformed; a frame at the cap still parses", () => {
+    const frame = (data: string): string =>
+      encodeTunnelMessage({ type: "stream-event", id: "s", index: 0, data });
+    const fill = TUNNEL_MAX_FRAME_BYTES - frameBytes(frame(""));
+    const atCap = frame("x".repeat(fill));
+    expect(frameBytes(atCap)).toBe(TUNNEL_MAX_FRAME_BYTES);
+    expect(parseTunnelMessage(atCap)).not.toBeNull();
+    expect(parseTunnelMessage(frame("x".repeat(fill + 1)))).toBeNull();
+  });
+
+  test("frame bytes are UTF-8 bytes, so multi-byte text cannot slip under a cap", () => {
+    expect(frameBytes("\u00e9")).toBe(2);
+    expect(frameBytes("\u{1F999}")).toBe(4);
+  });
+
+  test("the stream caps fit one frame and admit at least one full event of backlog", () => {
+    expect(DEFAULT_STREAM_LIMITS.maxFrameBytes).toBeLessThanOrEqual(
+      DEFAULT_STREAM_LIMITS.maxQueuedBytes,
+    );
+    expect(DEFAULT_STREAM_LIMITS.maxQueuedBytes).toBeLessThan(TUNNEL_MAX_FRAME_BYTES);
+  });
+
+  test("a stream-done typed stream-cancelled acknowledges a cancel; any other end is already-terminal", () => {
+    const ack: TunnelStreamDone = {
+      type: "stream-done",
+      id: "s",
+      ok: false,
+      error: { code: TUNNEL_STREAM_CANCELLED, message: "cancelled by central" },
+    };
+    expect(parseTunnelMessage(encodeTunnelMessage(ack))).toEqual(ack);
+    expect(TunnelStreamCancelAckSchema.safeParse(ack).success).toBe(true);
+    expect(cancelOutcomeOf(ack)).toBe("cancelled");
+    expect(cancelOutcomeOf({ type: "stream-done", id: "s", ok: true })).toBe("already-terminal");
+    expect(
+      cancelOutcomeOf({
+        type: "stream-done",
+        id: "s",
+        ok: false,
+        error: { code: "subscription-error", message: "boom" },
+      }),
+    ).toBe("already-terminal");
   });
 });

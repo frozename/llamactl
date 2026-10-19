@@ -2,6 +2,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { StreamLimits } from "../src/tunnel/messages.js";
+
 import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
 import { hashToken } from "../src/server/auth.js";
 import { handleTunnelRelay } from "../src/server/tunnel-relay.js";
@@ -84,6 +86,7 @@ async function startHarness(script: {
   delayMs?: number;
   throwErr?: Error;
   journalPath?: string;
+  streamLimits?: StreamLimits;
 }): Promise<RunningHarness> {
   const bearer = "relay-bearer";
   const tunnelBearer = "tunnel-bearer";
@@ -92,6 +95,7 @@ async function startHarness(script: {
   const receivedCancel: string[] = [];
   const tunnelSrv = createTunnelServer({
     expectedBearerHash: hashToken(tunnelBearer),
+    ...(script.streamLimits !== undefined ? { streamLimits: script.streamLimits } : {}),
   });
   const bun = Bun.serve({
     port: 0,
@@ -355,5 +359,43 @@ describe("tunnel-relay SSE", () => {
     const parsed = JSON.parse(done!.data);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
     expect(parsed.ok).toBe(false);
+  });
+});
+
+describe("P4.1: bounded relay streams", () => {
+  let harness: RunningHarness | undefined;
+  afterEach(async () => {
+    if (harness) await harness.stop();
+    harness = undefined;
+  });
+
+  test("central's stream-overflow reaches the relay client as a typed done frame", async () => {
+    harness = await startHarness({
+      events: [{ small: true }, { pad: "x".repeat(8 * 1024) }, { never: true }],
+      streamLimits: { maxFrameBytes: 4096, maxQueuedBytes: 16 * 1024 },
+    });
+    const res = await fetch(
+      `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/node1?stream=true`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${harness.bearer}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ method: "big", type: "subscription", input: null }),
+      },
+    );
+    const frames = await readSSE(res);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- test parses SSE payloads.
+    expect(frames.filter((f) => !f.event).map((f) => JSON.parse(f.data))).toEqual([
+      { small: true },
+    ]);
+    const done = frames.find((f) => f.event === "done");
+    expect(JSON.parse(done?.data ?? "null")).toMatchObject({
+      ok: false,
+      error: { code: "stream-overflow" },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(harness.receivedCancel).toHaveLength(1);
   });
 });
