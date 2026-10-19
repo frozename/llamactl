@@ -3,6 +3,7 @@ import { type ClusterNode, type Config, LOCAL_NODE_ENDPOINT } from "@llamactl/co
 import { createTRPCClient } from "@trpc/client";
 
 import { router as appRouter, type AppRouter } from "../router.js";
+import { type CallerSubscriptionHandlers, subscribeViaCaller } from "./caller-subscribe.js";
 import { buildPinnedLinks } from "./links.js";
 
 export type NodeClient = ReturnType<typeof createTRPCClient<AppRouter>>;
@@ -115,78 +116,6 @@ function proxyFromCaller(): NodeClient {
       (...args: unknown[]) => unknown
     >;
 
-  function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
-    if (typeof value !== "object" || value === null) return false;
-    // Symbol.asyncIterator is the runtime contract tRPC v11 uses for
-    // async-generator subscriptions in in-proc callers.
-    return (
-      typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function"
-    );
-  }
-
-  function subscribeViaCaller(
-    method: string,
-    input: unknown,
-    handlers: {
-      onData: (e: unknown) => void;
-      onError: (err: unknown) => void;
-      onComplete: () => void;
-      onStarted?: () => void;
-    },
-  ): { unsubscribe: () => void } {
-    const abort = new AbortController();
-    let settled = false;
-
-    const close = (): void => {
-      if (abort.signal.aborted) return;
-      abort.abort();
-    };
-
-    const resolveStream = async (): Promise<AsyncIterable<unknown>> => {
-      const methodFn = callerWithSignal(abort.signal)[method];
-      if (typeof methodFn !== "function") {
-        throw new Error(`unknown procedure '${method}'`);
-      }
-      const stream = await methodFn(input);
-      if (!isAsyncIterable(stream)) {
-        throw new Error(`inproc subscribe('${method}') did not return an AsyncIterable`);
-      }
-      return stream;
-    };
-
-    // A caller-initiated abort settles as a clean completion; any
-    // other failure surfaces through onError. Either way only the
-    // first settlement wins.
-    const settleFailure = (err: unknown): void => {
-      if (settled) return;
-      settled = true;
-      if (abort.signal.aborted) handlers.onComplete();
-      else handlers.onError(err);
-    };
-
-    const run = async (): Promise<void> => {
-      try {
-        const stream = await resolveStream();
-        handlers.onStarted?.();
-        for await (const event of stream) {
-          if (settled) break;
-          handlers.onData(event);
-        }
-        if (!settled) {
-          settled = true;
-          handlers.onComplete();
-        }
-      } catch (err) {
-        settleFailure(err);
-      } finally {
-        close();
-      }
-    };
-
-    void run();
-    return { unsubscribe: close };
-  }
-
   const handler: ProxyHandler<object> = {
     get(_target, prop) {
       if (typeof prop !== "string") return undefined;
@@ -201,15 +130,8 @@ function proxyFromCaller(): NodeClient {
       return {
         query: invoke,
         mutate: invoke,
-        subscribe: (
-          input: unknown,
-          handlers: {
-            onData: (e: unknown) => void;
-            onError: (err: unknown) => void;
-            onComplete: () => void;
-            onStarted?: () => void;
-          },
-        ) => subscribeViaCaller(prop, input, handlers),
+        subscribe: (input: unknown, handlers: CallerSubscriptionHandlers) =>
+          subscribeViaCaller(callerWithSignal, prop, input, handlers),
       };
     },
   };
