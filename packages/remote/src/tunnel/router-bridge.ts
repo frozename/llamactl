@@ -1,9 +1,11 @@
 import { type AnyTRPCRouter, callTRPCProcedure } from "@trpc/server";
 
 import {
-  DEFAULT_STREAM_LIMITS,
   frameBytes,
+  resolveStreamLimits,
   type StreamLimits,
+  streamLimitsFor,
+  type StreamLimitsPolicy,
   TUNNEL_STREAM_CANCELLED,
   TUNNEL_STREAM_OVERFLOW,
   type TunnelReq,
@@ -145,16 +147,20 @@ export interface TunnelSubscription {
  *   - Streams are bounded (P4.1 X3): an event above
  *     `limits.maxFrameBytes`, or an Observable backlog above
  *     `limits.maxQueuedBytes`, ends the stream through `onError` typed
- *     `stream-overflow` and cancels the producer.
+ *     `stream-overflow` and cancels the producer. The caps are chosen
+ *     per procedure path; by default only the worker RPC's are tight.
+ *   - `createContext` sees the req frame, so a context can carry what
+ *     the frame authenticates (the worker RPC's service claims).
  */
 export function createTunnelSubscriptionHandler(
   router: AnyTRPCRouter,
-  createContext: () => unknown,
-  limits: StreamLimits = DEFAULT_STREAM_LIMITS,
+  createContext: (req: TunnelReq) => unknown,
+  policy: StreamLimitsPolicy = streamLimitsFor,
 ): (req: TunnelReq) => TunnelSubscription {
   return (req: TunnelReq): TunnelSubscription => {
     const params = (req.params ?? {}) as TunnelRouterParams;
     const path = req.method;
+    const limits = resolveStreamLimits(policy, path);
     return {
       subscribe(handlers): { cancel(): void } {
         const abort = new AbortController();
@@ -195,7 +201,7 @@ export function createTunnelSubscriptionHandler(
               router,
               path,
               getRawInput: () => Promise.resolve(params.input),
-              ctx: createContext(),
+              ctx: createContext(req),
               type: "subscription",
               signal: abort.signal,
               batchIndex: 0,

@@ -64,7 +64,7 @@ import {
   rmSync,
   writeFileSync,
 } from "../src/safe-fs.js";
-import { DEFAULT_STREAM_LIMITS } from "../src/tunnel/messages.js";
+import { INFERENCE_RPC_STREAM_LIMITS } from "../src/tunnel/messages.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
 
@@ -1539,7 +1539,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       expect(await never.res.json()).toMatchObject({ error: { code: "unknown-outcome" } });
       expect(statusNow("att-d-never")).toMatchObject({ state: "unknown" });
       expect(engine.requests).toHaveLength(1);
-      expect(queue.max()).toBeLessThanOrEqual(DEFAULT_STREAM_LIMITS.maxQueuedBytes);
+      expect(queue.max()).toBeLessThanOrEqual(INFERENCE_RPC_STREAM_LIMITS.maxQueuedBytes);
     });
 
     test("direct, after acceptance before attach: the attempt is cancelled unstarted and nothing runs", async () => {
@@ -1815,7 +1815,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         await aborted;
         expect(queue.max()).toBeGreaterThan(0);
         expect(queue.max()).toBeLessThanOrEqual(limits.maxQueuedBytes);
-        expect(centralQueued).toBeLessThanOrEqual(DEFAULT_STREAM_LIMITS.maxQueuedBytes);
+        expect(centralQueued).toBeLessThanOrEqual(INFERENCE_RPC_STREAM_LIMITS.maxQueuedBytes);
         let rest = "";
         const decoder = new TextDecoder();
         for (let r = await reader.read(); !r.done; r = await reader.read()) {

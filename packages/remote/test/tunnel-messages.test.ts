@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import {
   cancelOutcomeOf,
-  DEFAULT_STREAM_LIMITS,
   encodeTunnelMessage,
   frameBytes,
+  INFERENCE_RPC_STREAM_LIMITS,
   parseTunnelMessage,
+  streamLimitsFor,
+  SUBSCRIPTION_STREAM_LIMITS,
   TUNNEL_MAX_FRAME_BYTES,
   TUNNEL_STREAM_CANCELLED,
   type TunnelMessage,
@@ -157,10 +159,20 @@ describe("tunnel frame bounds and the cancel acknowledgement (P4.1 X3, X4)", () 
   });
 
   test("the stream caps fit one frame and admit at least one full event of backlog", () => {
-    expect(DEFAULT_STREAM_LIMITS.maxFrameBytes).toBeLessThanOrEqual(
-      DEFAULT_STREAM_LIMITS.maxQueuedBytes,
-    );
-    expect(DEFAULT_STREAM_LIMITS.maxQueuedBytes).toBeLessThan(TUNNEL_MAX_FRAME_BYTES);
+    for (const limits of [INFERENCE_RPC_STREAM_LIMITS, SUBSCRIPTION_STREAM_LIMITS]) {
+      expect(limits.maxFrameBytes).toBeLessThanOrEqual(TUNNEL_MAX_FRAME_BYTES);
+      expect(limits.maxFrameBytes).toBeLessThanOrEqual(limits.maxQueuedBytes);
+    }
+    expect(INFERENCE_RPC_STREAM_LIMITS.maxQueuedBytes).toBeLessThan(TUNNEL_MAX_FRAME_BYTES);
+  });
+
+  test("the default policy keeps the 1 MiB event cap to the worker RPC; other streams keep the frame cap", () => {
+    expect(streamLimitsFor("inferenceRpc.stream")).toEqual(INFERENCE_RPC_STREAM_LIMITS);
+    expect(INFERENCE_RPC_STREAM_LIMITS.maxFrameBytes).toBe(1024 * 1024);
+    for (const method of ["serverLogs", "opsSessionWatch", "chatStream", "inferenceRpcX"]) {
+      expect(streamLimitsFor(method)).toEqual(SUBSCRIPTION_STREAM_LIMITS);
+    }
+    expect(SUBSCRIPTION_STREAM_LIMITS.maxFrameBytes).toBe(TUNNEL_MAX_FRAME_BYTES);
   });
 
   test("a stream-done typed stream-cancelled acknowledges a cancel; any other end is already-terminal", () => {

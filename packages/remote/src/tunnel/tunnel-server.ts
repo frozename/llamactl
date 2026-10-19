@@ -6,11 +6,13 @@ import {
 } from "./journal.js";
 import {
   cancelOutcomeOf,
-  DEFAULT_STREAM_LIMITS,
   encodeTunnelMessage,
   frameBytes,
   parseTunnelMessage,
+  resolveStreamLimits,
   type StreamLimits,
+  streamLimitsFor,
+  type StreamLimitsPolicy,
   TUNNEL_CLOSE_BAD_HELLO,
   TUNNEL_CLOSE_HELLO_TIMEOUT,
   TUNNEL_CLOSE_UNAUTHORIZED,
@@ -123,8 +125,9 @@ export interface TunnelServerOptions {
    *  rejects with a `tunnel-request-timeout`-coded error. Defaults to
    *  {@link DEFAULT_REQUEST_TIMEOUT_MS}. */
   requestTimeoutMs?: number;
-  /** Per-stream frame and queued-byte caps. Defaults to DEFAULT_STREAM_LIMITS. */
-  streamLimits?: StreamLimits;
+  /** Per-stream frame and queued-byte caps, fixed or chosen by the
+   *  subscription's procedure path. Defaults to `streamLimitsFor`. */
+  streamLimits?: StreamLimitsPolicy;
   /** Observes how each stream-cancel resolved: the node's acknowledgement,
    *  or `unknown` when the link dropped or the request timeout passed first. */
   onStreamCancelAck?: (nodeName: string, id: string, outcome: TunnelCancelOutcome) => void;
@@ -351,9 +354,10 @@ function streamControl(
   ctx: TunnelServerContext,
   ws: BunServerWebSocket,
   state: ConnectionState,
+  method: string,
 ): StreamControl {
   return {
-    limits: ctx.streamLimits,
+    limits: resolveStreamLimits(ctx.streamLimits, method),
     cancel: (id: string): void => {
       sendStreamCancel(ctx, ws, state, id);
     },
@@ -445,7 +449,7 @@ interface TunnelServerContext {
   journal: (entry: TunnelJournalEntry) => void;
   /** Resolved per-request timeout (ms) for send()/registry send. */
   requestTimeoutMs: number;
-  streamLimits: StreamLimits;
+  streamLimits: StreamLimitsPolicy;
 }
 
 function registerNode(ctx: TunnelServerContext, ws: BunServerWebSocket, nodeName: string): void {
@@ -705,7 +709,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
     }
   };
   const requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const streamLimits = opts.streamLimits ?? DEFAULT_STREAM_LIMITS;
+  const streamLimits = opts.streamLimits ?? streamLimitsFor;
   const ctx: TunnelServerContext = { opts, clock, nodes, journal, requestTimeoutMs, streamLimits };
 
   return {
@@ -794,7 +798,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       }
       const state = getState(ws);
       const full: TunnelReq = { type: "req", ...req };
-      return buildSubscriptionIterable(ws, state, full, streamControl(ctx, ws, state));
+      return buildSubscriptionIterable(ws, state, full, streamControl(ctx, ws, state, req.method));
     },
     registry(): TunnelRegistryEntry[] {
       return buildRegistry(ctx);

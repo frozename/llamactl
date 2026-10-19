@@ -45,8 +45,8 @@ import type { BackendExecutionContext, BackendExecutor } from "../proxy/create-p
 
 import { makePinnedFetch, type PinnedFetch } from "../client/links.js";
 import {
-  DEFAULT_STREAM_LIMITS,
   frameBytes,
+  INFERENCE_RPC_STREAM_LIMITS,
   type StreamLimits,
   TUNNEL_STREAM_OVERFLOW,
 } from "../tunnel/messages.js";
@@ -488,7 +488,7 @@ async function* streamFrames(
   if (signal?.aborted === true) leave();
   const timeoutMs = opts.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
   const firstFrame = setTimeout(leave, timeoutMs);
-  const limits = opts.limits ?? DEFAULT_STREAM_LIMITS;
+  const limits = opts.limits ?? INFERENCE_RPC_STREAM_LIMITS;
   const queue = frameQueue(limits.maxQueuedBytes, (bytes) => {
     opts.onStreamQueue?.(input.attemptId, bytes);
   });
