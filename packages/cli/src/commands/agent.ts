@@ -79,6 +79,74 @@ Subcommands:
 All state lives under $LLAMACTL_AGENT_DIR or $DEV_STORAGE or ~/.llamactl.
 `;
 
+const DIR_FLAG_HELP = `  --dir=<path>     Agent state dir holding agent.yaml, cert and key
+                   (default: $LLAMACTL_AGENT_DIR, else $DEV_STORAGE, else ~/.llamactl)`;
+
+const INIT_USAGE = `Usage: llamactl agent init [flags]
+
+Generate a TLS cert + bearer token and write agent.yaml.
+
+Flags:
+${DIR_FLAG_HELP}
+  --host=<host>    Hostname/IP this node advertises externally (default: 127.0.0.1)
+  --port=<n>       Port the agent listens on (default: 7843)
+  --name=<node>    Node name recorded in agent.yaml (default: this machine's hostname)
+  --bind=<host>    Address the agent binds to (default: 127.0.0.1)
+  --san=<host,...> Certificate SANs (default: the --host and --bind values)
+  --json           Emit a single-line JSON record instead of the human summary
+  -h, --help       Show this help
+`;
+
+const ROTATE_TOKEN_USAGE = `Usage: llamactl agent rotate-token [flags]
+
+Rotate the bearer token in agent.yaml, keeping the TLS cert/key.
+Restart the agent afterwards so it loads the new tokenHash.
+
+Flags:
+${DIR_FLAG_HELP}
+  --host=<host>    Host recorded in the emitted bootstrap URL (default: 127.0.0.1)
+  --json           Emit a single-line JSON record instead of the human summary
+  -h, --help       Show this help
+`;
+
+const SERVE_USAGE = `Usage: llamactl agent serve [flags]
+
+Run the node agent (blocks until SIGINT/SIGTERM).
+
+Flags:
+${DIR_FLAG_HELP}
+  --bind=<host>    Address to bind (alias: --host; default: bindHost from agent.yaml)
+  --port=<n>       Port to listen on (default: port from agent.yaml)
+  --no-auth        Disable bearer auth; only allowed on a loopback bind
+  --dial-central=<wss-url>    Dial a central's /tunnel endpoint
+  --central-bearer=<token>    Tunnel bearer for --dial-central
+                              (or set LLAMACTL_TUNNEL_BEARER)
+  --tunnel-node-name=<name>   Identity in the tunnel hello frame
+                              (default: nodeName from agent.yaml)
+  --tunnel-central=true       Mount /tunnel and /tunnel-relay so NAT'd nodes can dial in
+  --tunnel-bearer=<token>     Bearer for --tunnel-central
+                              (or set LLAMACTL_TUNNEL_CENTRAL_BEARER)
+  --tunnel-journal=<path>     Tunnel audit JSONL (default: ~/.llamactl/tunnel/journal.jsonl,
+                              or LLAMACTL_TUNNEL_JOURNAL)
+  --fleet-journal=<path>      Fleet journal served at GET /v1/fleet/snapshot
+                              (default: DEV_STORAGE/fleet-supervisor/journal.jsonl,
+                              else ~/.llamactl/fleet-supervisor/journal.jsonl)
+  -h, --help       Show this help
+`;
+
+const STATUS_USAGE = `Usage: llamactl agent status [flags]
+
+Print the agent config and its advertised URL.
+
+Flags:
+${DIR_FLAG_HELP}
+  -h, --help       Show this help
+`;
+
+function isHelpFlag(arg: string): boolean {
+  return arg === "-h" || arg === "--help";
+}
+
 export async function runAgent(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
@@ -187,6 +255,10 @@ function parseInitFlags(args: string[]): InitFlags | { error: string } {
 }
 
 async function runInit(args: string[]): Promise<number> {
+  if (args.some(isHelpFlag)) {
+    process.stdout.write(INIT_USAGE);
+    return 0;
+  }
   const parsed = parseInitFlags(args);
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
@@ -314,6 +386,10 @@ function parseRotateTokenFlags(args: string[]): RotateTokenFlags | { error: stri
  */
 // eslint-disable-next-line @typescript-eslint/require-await -- Async signature mirrors the command or client interface.
 export async function runRotateToken(args: string[]): Promise<number> {
+  if (args.some(isHelpFlag)) {
+    process.stdout.write(ROTATE_TOKEN_USAGE);
+    return 0;
+  }
   const parsed = parseRotateTokenFlags(args);
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
@@ -611,6 +687,10 @@ function reportServeStartFailure(
 }
 
 async function runServe(args: string[]): Promise<number> {
+  if (args.some(isHelpFlag)) {
+    process.stdout.write(SERVE_USAGE);
+    return 0;
+  }
   const parsed = parseServeFlags(args);
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
@@ -658,6 +738,10 @@ async function runServe(args: string[]): Promise<number> {
 }
 
 function runStatus(args: string[]): number {
+  if (args.some(isHelpFlag)) {
+    process.stdout.write(STATUS_USAGE);
+    return 0;
+  }
   const parsed = parseStatusFlags(args);
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
