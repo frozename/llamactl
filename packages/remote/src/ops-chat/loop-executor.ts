@@ -6,7 +6,7 @@ import {
   type PlannerToolDescriptor,
   type PlanStep,
   runPlanner,
-} from "@nova/mcp";
+} from "@novaproto/mcp";
 import { randomUUID } from "node:crypto";
 
 import type { OpsChatStepOutcome, OpsChatStreamEvent } from "./loop-schema.js";

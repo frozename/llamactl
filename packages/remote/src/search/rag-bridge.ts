@@ -1,5 +1,5 @@
 // packages/remote/src/search/rag-bridge.ts
-import type { SearchResponse } from "@nova/contracts";
+import type { SearchResponse } from "@novaproto/contracts";
 
 import type { KnowledgeHit, LogHit, SessionHit } from "./types.js";
 

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { type QueryFilter, queryRows } from "@llamactl/eval";
-import { toTextContent } from "@nova/mcp-shared";
+import { toTextContent } from "@novaproto/mcp-shared";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { z } from "zod";

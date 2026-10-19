@@ -233,7 +233,7 @@ retrieval adapters (chroma embeds internally; pgvector's delegated
 embedder swallows `UnifiedEmbeddingResponse.usage`) don't surface
 token counts through the `RetrievalProvider` contract today —
 precise accounting is a follow-up that needs either an adapter
-change in `@nova/contracts` or a side-channel embedder hook.
+change in `@novaproto/contracts` or a side-channel embedder hook.
 
 Absent → no estimate rendered. Honest silence over a false zero.
 

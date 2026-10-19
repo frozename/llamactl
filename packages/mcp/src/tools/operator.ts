@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { bench, env as envMod, SAFETY_TIERS } from "@llamactl/core";
 import { BUILT_IN_PLANNER_TOOLS, mergePlannerTools } from "@llamactl/remote";
-import { createOpenAICompatProvider } from "@nova/contracts";
+import { createOpenAICompatProvider } from "@novaproto/contracts";
 import {
   computeCostSnapshot,
   createLlmExecutor,
@@ -11,8 +11,8 @@ import {
   type PlannerToolDescriptor,
   runPlanner,
   stubPlannerExecutor,
-} from "@nova/mcp";
-import { toTextContent } from "@nova/mcp-shared";
+} from "@novaproto/mcp";
+import { toTextContent } from "@novaproto/mcp-shared";
 import { z } from "zod";
 
 const DEFAULT_OPENAI_COMPAT_BASE_URL = "https://api.openai.com/v1";

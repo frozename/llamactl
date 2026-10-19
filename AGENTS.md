@@ -22,8 +22,10 @@ harnesses.
 - **UI**: Electron + electron-trpc 1.0.0-alpha, React 19, Vite 7.
 - **MCP SDK**: 1.29.0.
 - **WebSocket**: Bun native (for the reverse tunnel in I.3).
-- **Cross-repo dep**: `@nova/contracts`, `@nova/mcp-shared`, `@nova/mcp`
-  via `file:../../../nova/packages/*`.
+- **Cross-repo dep**: `@novaproto/contracts`, `@novaproto/mcp-shared`,
+  `@novaproto/mcp` from npm, exact version pins (no `^`/`~`) in each
+  package that imports them (agents, cli, core, mcp, remote). No nova
+  checkout is needed to install, build or test llamactl.
 
 ## Layout (what lives where)
 
@@ -56,7 +58,7 @@ packages/
 │               Pipelines module via `pipelineExportMcp`).
 └── agents/     Runbooks + self-healing loop + cost guardian + N.5
                 demos. Multi-MCP harness boots @llamactl/mcp +
-                @nova/mcp in-proc and routes by tool-name prefix.
+                @novaproto/mcp in-proc and routes by tool-name prefix.
                 `demos/` holds four scripted narrated runs:
                 demo-audit, demo-onboard, demo-failover, demo-cost-clamp.
 ```
@@ -369,7 +371,7 @@ new `kind: 'rag'` alongside agent/gateway/provider), see
 `docs/rag-nodes.md`. v1 ships two backends — `chroma` (MCP-proxied
 via chroma-mcp) and `pgvector` (native SQL against Postgres +
 pgvector). Adapters implement a shared `RetrievalProvider` contract
-from `@nova/contracts`; tRPC exposes `ragSearch` / `ragStore` /
+from `@novaproto/contracts`; tRPC exposes `ragSearch` / `ragStore` /
 `ragDelete` / `ragListCollections`; MCP mirrors the same surface as
 `llamactl.rag.*`; the Electron activity bar surfaces them through
 the Knowledge module.
@@ -647,6 +649,24 @@ backend for free via `resolveSecret(ref, env)`.
 
 ## Cross-repo discipline
 
+llamactl consumes nova only through the published `@novaproto/*`
+packages on npm. A nova change reaches llamactl after nova releases
+it (tag-triggered, staged on npm, live after 2FA approval), in
+dependency order: contracts, then mcp-shared, then mcp. Then, here:
+
+1. Bump the exact pin in every package that declares it
+   (`grep -n '"@novaproto/' packages/*/package.json`). Keep the three
+   pins mutually consistent: `@novaproto/mcp` and
+   `@novaproto/mcp-shared` pin `@novaproto/contracts` exactly, so a
+   different contracts pin here installs a second copy.
+2. `bun install` to refresh `bun.lock`, adapt llamactl to any contract
+   change, run the full sweep below.
+3. Commit the pins, `bun.lock` and the adaptations together.
+
+To try an unreleased nova change, `bun run build` in a nova checkout,
+`bun pm pack` each package, and point a root `overrides` block at the
+tarballs locally. Never commit tarball paths or overrides.
+
 **After a non-trivial slice, verify four repos still green:**
 
 ```bash
@@ -663,8 +683,9 @@ bun test
 (cd ../embersynth && bun test)
 ```
 
-If the slice touched `@nova/*`, also run `bun install` in every
-consumer before their test run.
+sirius-gateway and embersynth still consume nova through
+`file:../nova/packages/*`; if the slice changed nova, run `bun install`
+in each before their test run.
 
 Test counts we expect as a baseline (bump as features ship):
 
@@ -683,7 +704,7 @@ Four repos green = slice shippable.
   `synthetic.list`, `route.simulate`, `health.all`, `evidence.tail`,
   `reload` (dry-run previews a diff; wet-run appends one audit
   entry). Source: `embersynth/src/mcp/server.ts`.
-- **M.4 `@nova/mcp` facade** — shipped. The facade loads
+- **M.4 `@novaproto/mcp` facade** — shipped. The facade loads
   `~/.llamactl/nova-mcp.yaml` (override via `NOVA_MCP_CONFIG`), boots
   an MCP `Client` per downstream (stdio or HTTP), and re-exposes the
   flat union of every downstream tool under its original namespace
@@ -736,7 +757,8 @@ cross-repo test sweep + a commit.
 - Committing to `packages/core` anything that imports from
   `packages/remote`, `packages/app`, `tRPC`, `electron-trpc`, or
   MCP. Core is the base of the dependency DAG.
-- Rewriting Nova schemas in llamactl. Bump Nova, `bun install` here.
+- Rewriting Nova schemas in llamactl. Release Nova, bump the
+  `@novaproto/*` pins, `bun install` here.
 - Force-pushes to `main`.
 - `z.record(z.unknown())` (Zod 3 idiom — compile error in Zod 4).
 - Adding long docstrings to every function. Write one-line module

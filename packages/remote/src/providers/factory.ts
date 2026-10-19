@@ -19,7 +19,7 @@ import {
   type UnifiedEmbeddingRequest,
   type UnifiedEmbeddingResponse,
   type UnifiedStreamEvent,
-} from "@nova/contracts";
+} from "@novaproto/contracts";
 
 import type { PinnedFetchFactory } from "../client/links.js";
 

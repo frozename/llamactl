@@ -18,7 +18,7 @@ a self-hosted agent on every machine.
 - **Validation**: Zod 4.3+.
 - **UI**: Electron + electron-trpc 1.0.0-alpha + React 19 + Vite 7.
 - **MCP**: `@modelcontextprotocol/sdk` 1.29.
-- **Nova** via `file:` deps.
+- **Nova** via exact `@novaproto/*` npm pins.
 
 ## Layout
 
@@ -65,7 +65,8 @@ packages/
 
 ## Cross-repo
 
-Nova changes propagate:
+Nova changes reach llamactl after Nova releases `@novaproto/*` to npm;
+bump the exact pins in `packages/*/package.json`, then:
 
 ```bash
 (cd ../nova && bun test)

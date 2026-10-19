@@ -1,5 +1,5 @@
 import { SAFETY_TIERS } from "@llamactl/core";
-import { PlanStepSchema } from "@nova/mcp";
+import { PlanStepSchema } from "@novaproto/mcp";
 import { z } from "zod";
 
 /**

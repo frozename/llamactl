@@ -1,4 +1,9 @@
-import type { DeleteRequest, DeleteResponse, StoreRequest, StoreResponse } from "@nova/contracts";
+import type {
+  DeleteRequest,
+  DeleteResponse,
+  StoreRequest,
+  StoreResponse,
+} from "@novaproto/contracts";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";

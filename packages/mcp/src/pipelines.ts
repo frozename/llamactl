@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { router } from "@llamactl/remote";
-import { toTextContent } from "@nova/mcp-shared";
+import { toTextContent } from "@novaproto/mcp-shared";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";

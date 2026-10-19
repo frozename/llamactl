@@ -1,7 +1,7 @@
 import { buildMcpServer } from "@llamactl/mcp";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { buildNovaMcpServer, type PlannerToolDescriptor } from "@nova/mcp";
+import { buildNovaMcpServer, type PlannerToolDescriptor } from "@novaproto/mcp";
 
 import type {
   Runbook,
@@ -23,7 +23,7 @@ export interface RunRunbookOptions {
   dryRun?: boolean;
   log?: (message: string) => void;
   /** Override the tool client. Defaults to booting both @llamactl/mcp
-   *  and @nova/mcp in-process and routing calls by tool-name prefix
+   *  and @novaproto/mcp in-process and routing calls by tool-name prefix
    *  — `nova.*` goes to nova-mcp, everything else to llamactl-mcp.
    *  Same MCP surface a real client would see, without any
    *  subprocess. */
@@ -87,7 +87,7 @@ async function mountInProcess(
 export interface DefaultToolClientHandle {
   client: RunbookToolClient;
   /** Enumerate every tool mounted on the composite client (union of
-   *  @llamactl/mcp + @nova/mcp). Returns an unsorted list with the
+   *  @llamactl/mcp + @novaproto/mcp). Returns an unsorted list with the
    *  name + description + inputSchema the MCP SDK surfaces. */
   listTools(): Promise<HarnessToolDescriptor[]>;
   /** Same shape but widened to PlannerToolDescriptor with a default
@@ -118,7 +118,7 @@ function inferTier(name: string): PlannerToolDescriptor["tier"] {
 }
 
 /**
- * Boot a composite MCP client over @llamactl/mcp + @nova/mcp (both
+ * Boot a composite MCP client over @llamactl/mcp + @novaproto/mcp (both
  * in-process via InMemoryTransport) and route `callTool` by
  * tool-name prefix. Exposed so other CLI entrypoints (cost-guardian
  * tick, `llamactl plan run`) can reuse the harness without running a

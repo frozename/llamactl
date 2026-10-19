@@ -134,7 +134,7 @@ export type CliBinding = z.infer<typeof CliBindingSchema>;
  *   * `rag`      — retrieval-augmented generation backend: vector
  *     stores and knowledge bases (Chroma, pgvector, …). Exposes
  *     `search` / `store` / `delete` / `listCollections` via the
- *     `RetrievalProvider` contract in `@nova/contracts`. The `rag`
+ *     `RetrievalProvider` contract in `@novaproto/contracts`. The `rag`
  *     binding block selects the backend and carries endpoint / auth.
  */
 export const NodeKindSchema = z.enum(["agent", "gateway", "provider", "rag", "cloud"]);

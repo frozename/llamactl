@@ -7,8 +7,8 @@ import type { buildMcpServer as getBuildMcpServer } from "../src/server.js";
 // Snapshot the real exports before any mock.module call — the namespace
 // objects reflect the mock once registered. mock.module is process-global,
 // so afterAll re-registers these snapshots for later test files.
-const novaContractsReal = { ...(await import("@nova/contracts")) };
-const novaMcpReal = { ...(await import("@nova/mcp")) };
+const novaContractsReal = { ...(await import("@novaproto/contracts")) };
+const novaMcpReal = { ...(await import("@novaproto/mcp")) };
 
 const createOpenAICompatProviderCalls: {
   name: string;
@@ -69,14 +69,14 @@ let buildMcpServer: typeof getBuildMcpServer | null = null;
 
 beforeAll(async () => {
   void mock.module(
-    "@nova/contracts",
+    "@novaproto/contracts",
     (): { createOpenAICompatProvider: typeof createOpenAICompatProviderMock } => ({
       ...novaContractsReal,
       createOpenAICompatProvider: createOpenAICompatProviderMock,
     }),
   );
   void mock.module(
-    "@nova/mcp",
+    "@novaproto/mcp",
     (): {
       computeCostSnapshot: () => { totalRequests: number };
       createLlmExecutor: (opts: { provider: unknown; model: string }) => {
@@ -102,8 +102,8 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  void mock.module("@nova/contracts", () => novaContractsReal);
-  void mock.module("@nova/mcp", () => novaMcpReal);
+  void mock.module("@novaproto/contracts", () => novaContractsReal);
+  void mock.module("@novaproto/mcp", () => novaMcpReal);
 });
 
 const originalEnv = { ...process.env };

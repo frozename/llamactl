@@ -4,7 +4,7 @@ import {
   type PlannerExecutorResult,
   type PlannerToolDescriptor,
   runPlanner,
-} from "@nova/mcp";
+} from "@novaproto/mcp";
 import { describe, expect, test } from "bun:test";
 
 import { OPS_CHAT_TOOLS, toolSurfaces, toolTier } from "../src/ops-chat/dispatch.js";

@@ -295,7 +295,7 @@ Detail card (opened by clicking the row):
   `UsageRecord.route`, but the router hasn't been taught to
   stamp it on outbound writes yet. A cross-repo commit adds
   optional `project?` + `subscription?` fields on
-  `UsageRecordSchema` in `@nova/contracts`.
+  `UsageRecordSchema` in `@novaproto/contracts`.
 - **Multi-stage routing** (`pipeline:<name>` target) — chain a
   local summarizer → subscription-CLI review → cloud-API final
   pass as one task kind.

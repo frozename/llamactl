@@ -26,7 +26,7 @@
  */
 
 import { llamactlHome, nonEmpty } from "@llamactl/core/config/env";
-import { estimateCostUsd, loadPricing, readUsage } from "@nova/mcp-shared";
+import { estimateCostUsd, loadPricing, readUsage } from "@novaproto/mcp-shared";
 import { dirname, join } from "node:path";
 
 import { appendFile, mkdir } from "../safe-fs-promises.js";

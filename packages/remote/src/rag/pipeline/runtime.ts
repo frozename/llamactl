@@ -1,4 +1,4 @@
-import type { DeleteRequest, RetrievalProvider, StoreRequest } from "@nova/contracts";
+import type { DeleteRequest, RetrievalProvider, StoreRequest } from "@novaproto/contracts";
 
 import { defaultConfigPath, loadConfig, resolveNode } from "@llamactl/core/config/kubeconfig";
 /**

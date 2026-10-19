@@ -394,7 +394,7 @@ export function resolveEnv(env: NodeJS.ProcessEnv = process.env): ResolvedEnv {
  *                 (`defaultWorkloadsDir`)
  * - mcp/pipelines: packages/remote/src/router.ts
  *                  (`pipelineExportMcp` baseDir cascade)
- * - mcp/audit:    node_modules/@nova/mcp-shared/src/audit.ts
+ * - mcp/audit:    node_modules/@novaproto/mcp-shared/src/audit.ts
  *                 (`defaultAuditDir` — production uses homedir(), but
  *                 hermetic test setups set `LLAMACTL_MCP_AUDIT_DIR` to
  *                 `$DEV_STORAGE/mcp/audit`; precreate that path so

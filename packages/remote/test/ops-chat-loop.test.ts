@@ -1,4 +1,4 @@
-import type { PlannerExecutor, PlannerExecutorResult, PlannerToolDescriptor } from "@nova/mcp";
+import type { PlannerExecutor, PlannerExecutorResult, PlannerToolDescriptor } from "@novaproto/mcp";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 

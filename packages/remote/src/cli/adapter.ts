@@ -8,7 +8,7 @@ import type {
   UnifiedAiRequest,
   UnifiedAiResponse,
   UnifiedStreamEvent,
-} from "@nova/contracts";
+} from "@novaproto/contracts";
 
 /**
  * Subprocess-backed `AiProvider` for CLI subscription tools

@@ -7,7 +7,7 @@ import type {
   SearchResponse,
   StoreRequest,
   StoreResponse,
-} from "@nova/contracts";
+} from "@novaproto/contracts";
 
 import { saveConfig, upsertNode } from "@llamactl/core/config/kubeconfig";
 import { freshConfig } from "@llamactl/core/config/schema";

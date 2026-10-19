@@ -1,4 +1,4 @@
-import type { ModelInfo, ModelListResponse } from "@nova/contracts";
+import type { ModelInfo, ModelListResponse } from "@novaproto/contracts";
 
 import { homedir } from "node:os";
 import { basename, join } from "node:path";

@@ -1,5 +1,5 @@
 import type { CliBinding } from "@llamactl/core/config/schema";
-import type { UnifiedAiRequest } from "@nova/contracts";
+import type { UnifiedAiRequest } from "@novaproto/contracts";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";

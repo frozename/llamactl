@@ -1,5 +1,5 @@
 import type { ClusterNode } from "@llamactl/core/config/schema";
-import type { UnifiedStreamEvent } from "@nova/contracts";
+import type { UnifiedStreamEvent } from "@novaproto/contracts";
 
 import { saveConfig, upsertNode } from "@llamactl/core/config/kubeconfig";
 import { freshConfig } from "@llamactl/core/config/schema";

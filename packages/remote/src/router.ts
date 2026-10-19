@@ -45,7 +45,7 @@ import {
   type UnifiedAiResponse,
   type UnifiedStreamEvent,
   type UsageRecordV2,
-} from "@nova/contracts";
+} from "@novaproto/contracts";
 import {
   computeCostSnapshot,
   createLlmExecutor,
@@ -54,8 +54,8 @@ import {
   type PlannerToolDescriptor,
   runPlanner,
   stubPlannerExecutor,
-} from "@nova/mcp";
-import { appendUsageBackground } from "@nova/mcp-shared";
+} from "@novaproto/mcp";
+import { appendUsageBackground } from "@novaproto/mcp-shared";
 import { createTRPCClient } from "@trpc/client";
 import { initTRPC, TRPCError } from "@trpc/server";
 import { homedir } from "node:os";
@@ -1448,7 +1448,7 @@ export const router = t.router({
       // sentinel). resolveEnv() gives us LLAMA_CPP_HOST/PORT.
       if (resolved.node.endpoint === "inproc://local") {
         const { env: envMod } = await import("@llamactl/core");
-        const { createOpenAICompatProvider } = await import("@nova/contracts");
+        const { createOpenAICompatProvider } = await import("@novaproto/contracts");
         const rEnv = envMod.resolveEnv();
         const provider = createOpenAICompatProvider({
           name: "local",

@@ -2,7 +2,7 @@ import type {
   AiProvider,
   UnifiedEmbeddingRequest,
   UnifiedEmbeddingResponse,
-} from "@nova/contracts";
+} from "@novaproto/contracts";
 
 import { freshConfig } from "@llamactl/core/config/schema";
 import { describe, expect, test } from "bun:test";
