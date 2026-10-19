@@ -301,7 +301,8 @@
             "total_tokens": 7,
             "upstream_request_id": "chatcmpl-fake-1"
           }
-        }
+        },
+        "terminalSequence": 4
       }
     },
     {
@@ -380,7 +381,8 @@
               "total_tokens": 7,
               "upstream_request_id": "chatcmpl-fake-1"
             }
-          }
+          },
+          "terminalSequence": 4
         }
       }
     },
@@ -410,7 +412,8 @@
                 "total_tokens": 7,
                 "upstream_request_id": "chatcmpl-fake-1"
               }
-            }
+            },
+            "terminalSequence": 4
           }
         }
       ]

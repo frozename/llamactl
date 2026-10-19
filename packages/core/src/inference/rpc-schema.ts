@@ -184,6 +184,13 @@ export const InferenceRpcAttemptStatusV1Schema = z.object({
   requestId: z.string().min(1).optional(),
   deploymentId: z.string().min(1).optional(),
   terminal: ExecutionTerminalSchema.optional(),
+  /**
+   * The sequence of the terminal event, once the worker emitted it on the
+   * attempt's stream. A caller whose stream broke compares it with the
+   * last event it received: only when the terminal was the very next event
+   * did it lose nothing but the terminal.
+   */
+  terminalSequence: z.number().int().nonnegative().optional(),
 });
 export type InferenceRpcAttemptStatusV1 = z.infer<typeof InferenceRpcAttemptStatusV1Schema>;
 
