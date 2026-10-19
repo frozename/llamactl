@@ -21,6 +21,7 @@ import {
   server as serverMod,
   target as targetMod,
   uninstall as uninstallMod,
+  workloadRuntime as workloadRuntimeMod,
 } from "@llamactl/core";
 import { decodeBootstrap } from "@llamactl/core/config/agent-config";
 import { nonEmpty } from "@llamactl/core/config/env";
@@ -86,7 +87,7 @@ import { getSessionSummary, listSessions } from "./ops-chat/sessions/list.js";
 import { createRagAdapter } from "./rag/index.js";
 import { resolveRagNode } from "./rag/resolve.js";
 import { readFleetSnapshot } from "./routes/fleet.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "./safe-fs.js";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "./safe-fs.js";
 import { searchLogs } from "./search/logs.js";
 import { resolveDefaultRagNode } from "./search/rag-node.js";
 import { searchSessions } from "./search/sessions.js";
@@ -94,7 +95,7 @@ import { startModelHost, statusModelHost, stopModelHost } from "./server/modelho
 import { defaultNodeBudgetGiB, estimateModelHostMemoryGiB } from "./workload/admission.js";
 import * as workloadApplyMod from "./workload/apply.js";
 import { CompositeOwnershipSchema } from "./workload/gateway-catalog/schema.js";
-import { ModelHostManifestSchema } from "./workload/modelhost-schema.js";
+import { type ModelHostManifest, ModelHostManifestSchema } from "./workload/modelhost-schema.js";
 import * as modelHostStoreMod from "./workload/modelhost-store.js";
 import * as nodeRunStoreMod from "./workload/noderun-store.js";
 import * as reconcileLoopMod from "./workload/reconcileLoop.js";
@@ -306,6 +307,36 @@ async function stopWorkloadForDelete(manifest: ModelRun, stops: string[]): Promi
       stops.push(`warning: worker ${worker.node}: ${(err as Error).message}`);
     }
   }
+  return null;
+}
+
+/**
+ * Stop a ModelHost before workloadDelete and drop its local runtime dir, as
+ * `llamactl delete workload` does. Returns a refusal message when the node
+ * reports `ok: false` — it could not prove the recorded pid's identity, so
+ * deleting the manifest and runtime state would orphan the host.
+ */
+async function stopModelHostForDelete(
+  manifest: ModelHostManifest,
+  stops: string[],
+): Promise<string | null> {
+  try {
+    const client = clientForNode(kubecfg.loadConfig(), manifest.spec.node);
+    const outcome = (await client.modelHostStop.mutate({
+      workload: manifest.metadata.name,
+    })) as { ok?: unknown; error?: unknown } | null;
+    if (outcome !== null && outcome.ok === false) {
+      const reason = typeof outcome.error === "string" ? outcome.error : "stop refused";
+      return `modelHostStop on ${manifest.spec.node} refused (${reason}); manifest and runtime state preserved`;
+    }
+    stops.push(`stopped modelhost on ${manifest.spec.node}`);
+  } catch (err) {
+    stops.push(`warning: node ${manifest.spec.node}: ${(err as Error).message}`);
+  }
+  rmSync(
+    workloadRuntimeMod.workloadRuntimeDir(envMod.resolveEnv(), { name: manifest.metadata.name }),
+    { recursive: true, force: true },
+  );
   return null;
 }
 
@@ -1878,10 +1909,13 @@ export const router = t.router({
       return await workloadStoreMod.withWorkloadsMutex(
         workloadStoreMod.defaultWorkloadsDir(),
         async () => {
-          const manifest = workloadStoreMod.loadWorkloadByName(input.name);
+          const manifest = workloadStoreMod.loadWorkloadByNameAny(input.name);
           const stops: string[] = [];
           if (!input.keepRunning) {
-            const refused = await stopWorkloadForDelete(manifest, stops);
+            const refused =
+              manifest.kind === "ModelHost"
+                ? await stopModelHostForDelete(manifest, stops)
+                : await stopWorkloadForDelete(manifest, stops);
             if (refused !== null) {
               return { ok: false, name: input.name, stops, error: refused };
             }
