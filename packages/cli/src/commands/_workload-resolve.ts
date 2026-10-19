@@ -74,7 +74,10 @@ export function resolveWorkloadName(
     return pickByPrecedence([], known, opts);
   }
 
-  const live = workloadRuntime.listLocalWorkloads(resolved).map((w: { name: string }) => w.name);
+  const live = workloadRuntime
+    .listLocalWorkloads(resolved)
+    .map((w: { name: string }) => w.name)
+    .sort();
   const known = workloadRuntime.listWorkloadDirs(resolved);
   return pickByPrecedence(live, known, opts);
 }
