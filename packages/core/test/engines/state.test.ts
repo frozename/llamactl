@@ -47,6 +47,20 @@ describe("engines/state", () => {
     expect(readModelHostState(KEY, env)).toEqual({ ...state, slotSavePath: null });
   });
 
+  test("roundtrips a strata ModelHostState through write + read", () => {
+    const state: ModelHostState = {
+      kind: "ModelHost",
+      engine: "strata",
+      pid: 4343,
+      host: "127.0.0.1",
+      port: 8095,
+      modelAliases: ["strata/qwen3-8b", "qwen3-8b"],
+      startedAt: "2026-05-19T00:00:00Z",
+    };
+    writeModelHostState(state, KEY, env);
+    expect(readModelHostState(KEY, env)).toEqual({ ...state, slotSavePath: null });
+  });
+
   test("returns null when no state file exists", () => {
     expect(readModelHostState(KEY, env)).toBeNull();
   });

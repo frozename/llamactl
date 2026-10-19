@@ -47,7 +47,7 @@ export const ModelHostSpecSchema = z
     // Engine selection. The registry in packages/core/src/engines/ holds
     // the canonical list; this enum mirrors it. New engines land here when
     // their adapter is wired into ENGINES.
-    engine: z.enum(["llamacpp", "omlx"]),
+    engine: z.enum(["llamacpp", "omlx", "strata"]),
     node: z.string().min(1),
     enabled: z.boolean().default(true),
     binary: z.string().min(1),

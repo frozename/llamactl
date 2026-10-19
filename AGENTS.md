@@ -190,6 +190,10 @@ or a production swap, default to these in order:
      flag set, not those.
      Sub A ships single-model ModelHost on local only;
      multi-model + mac-mini + train-adapter loading land in Sub B/C/D.
+     A GGUF can also be hosted through Strata via `kind: ModelHost` +
+     `spec.engine: strata`. Prefer it on AMD/HIP hosts where a Strata
+     build with an MTP head is available. See
+     `docs/superpowers/specs/2026-10-18-strata-engine-design.md`.
 3. **Quant ladder, by architecture.** Conventional dense + hybrid
    attention (Granite 4.1, Llama 3.x, Qwen 3.x non-MoE) ranks
    Q8_0 > Q6_K > Q5_K_M > Q4_K_M monotonically on retrieval/

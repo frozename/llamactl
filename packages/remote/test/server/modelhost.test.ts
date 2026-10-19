@@ -842,6 +842,77 @@ describe("server/modelhost", () => {
     }
   });
 
+  test("stopModelHost corroborates a strata pid against the strata-server argv0", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-strata-"));
+    const runtimeDir = join(tmp, "runtime");
+    const hostDir = join(runtimeDir, "workloads", "strata-host-server");
+    mkdirSync(hostDir, { recursive: true });
+    const seedStrataSidecar = (pid: number): void => {
+      writeFileSync(join(hostDir, "modelhost.pid"), `${String(pid)}\n`);
+      writeFileSync(
+        join(hostDir, "modelhost.state"),
+        JSON.stringify({
+          kind: "ModelHost",
+          engine: "strata",
+          pid,
+          host: "127.0.0.1",
+          port: 8095,
+          modelAliases: ["strata/qwen3-8b", "qwen3-8b"],
+          startedAt: new Date().toISOString(),
+        }),
+      );
+    };
+
+    // A live strata-server argv0 corroborates the strata identity map, so
+    // teardown runs; an omlx argv0 against the same strata record is a command
+    // mismatch (unknown identity) and must NOT be torn down.
+    const matched = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "strata-server",
+    });
+    const mismatched = spawnImpostor("/bin/sleep", ["60"], { stdio: "ignore", argv0: "omlx" });
+    try {
+      if (matched.pid === undefined || mismatched.pid === undefined) {
+        throw new Error("impostor spawn failed");
+      }
+
+      seedStrataSidecar(matched.pid);
+      const tornDown: number[] = [];
+      const okResult = await stopModelHost({
+        key: { name: "strata-host-server" },
+        runtimeDir,
+        teardown: (pid) => {
+          tornDown.push(pid);
+          return Promise.resolve();
+        },
+      });
+      expect(okResult.ok).toBe(true);
+      expect(tornDown).toEqual([matched.pid]);
+
+      seedStrataSidecar(mismatched.pid);
+      const refusedTornDown: number[] = [];
+      const refused = await stopModelHost({
+        key: { name: "strata-host-server" },
+        runtimeDir,
+        teardown: (pid) => {
+          refusedTornDown.push(pid);
+          return Promise.resolve();
+        },
+      });
+      expect(refused.ok).toBe(false);
+      expect(refusedTornDown).toEqual([]);
+    } finally {
+      for (const proc of [matched, mismatched]) {
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("identity is anchored on modelhost.pid, not the state sidecar", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-pidanchor-"));
     const runtimeDir = join(tmp, "runtime");

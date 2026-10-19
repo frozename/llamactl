@@ -1,7 +1,7 @@
 import type { SignalIdentity } from "../pidIdentity.js";
 import type { ResolvedEnv } from "../types.js";
 
-export type EngineName = "llamacpp" | "omlx";
+export type EngineName = "llamacpp" | "omlx" | "strata";
 
 export interface EngineBootEnv {
   LLAMACTL_MODELS_DIR?: string;

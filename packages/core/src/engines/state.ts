@@ -94,7 +94,7 @@ function validateModelHostState(parsed: Partial<ModelHostState>): ModelHostState
   if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return null;
   if (typeof host !== "string" || !LOOPBACK_HOSTS.has(host)) return null;
   if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) return null;
-  if (engine !== "llamacpp" && engine !== "omlx") return null;
+  if (engine !== "llamacpp" && engine !== "omlx" && engine !== "strata") return null;
   if (typeof startedAt !== "string" || Number.isNaN(Date.parse(startedAt))) return null;
   if (!validModelAliases(modelAliases)) return null;
   return {
