@@ -1,4 +1,6 @@
-import { openaiProxy } from "@llamactl/core";
+import type { AgentWorkerRpc } from "@llamactl/core/config/agent-config";
+
+import { inferenceRpc, openaiProxy } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { migrateLegacySingletonRuntime } from "@llamactl/core/workloadRuntime";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
@@ -6,6 +8,7 @@ import { join } from "node:path";
 
 import type { ModelRun } from "../workload/schema.js";
 
+import { createWorkerRpcHost, publishWorkerRpcHost } from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
 import { router as appRouter } from "../router.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
@@ -18,13 +21,21 @@ import {
   createTunnelServer,
   createTunnelSubscriptionHandler,
   type TunnelClient,
+  type TunnelReq,
   type TunnelServer,
   type TunnelState,
 } from "../tunnel/index.js";
+import { isInferenceRpcMethod } from "../tunnel/messages.js";
 import { listWorkloads, saveWorkload } from "../workload/store.js";
 import { handleAgentRollback, handleAgentUpdate } from "./agent-update.js";
 import { type ArtifactsHandlerOptions, handleArtifact } from "./artifacts.js";
-import { extractBearer, unauthorizedResponse, verifyBearer } from "./auth.js";
+import {
+  claimsForServiceCredential,
+  extractBearer,
+  SERVICE_CREDENTIAL_HEADER,
+  unauthorizedResponse,
+  verifyBearer,
+} from "./auth.js";
 import { handleInstallScript, type InstallScriptHandlerOptions } from "./install-script.js";
 import { publishAgentMdns, type PublishedAgent } from "./mdns.js";
 import {
@@ -134,6 +145,21 @@ export interface StartAgentOptions {
     initialAttemptTimeoutMs?: number;
     /** Test-only WebSocket constructor override. */
     WebSocketCtor?: ClientWebSocketConstructor;
+  };
+  /**
+   * Serve the InferenceRpcV1 worker (P4.1). `workerId` is the node's
+   * kubeconfig name, which the worker's deployment ids embed.
+   * `settings` (agent.yaml's `workerRpc` block) is read on every RPC
+   * call: a service credential is accepted, on `inferenceRpc.*` only,
+   * when it matches a binding, and the versions it lists that this build
+   * speaks are advertised. Absent or listing no version, the RPC is not
+   * advertised, as before. `stop()` drains active attempts for up to
+   * `drainTimeoutMs` (default 15 s), then cancels the rest.
+   */
+  workerRpc?: {
+    workerId: string;
+    settings: () => AgentWorkerRpc | undefined;
+    drainTimeoutMs?: number;
   };
 }
 
@@ -371,7 +397,13 @@ function handleInfraRoutes(
     return upgradeRes ?? new Response(null, { status: 101 });
   }
   if (url.pathname.startsWith("/tunnel-relay/") && tunnelServer) {
-    return handleTunnelRelay(req, url, tunnelServer, opts.tokenHash, opts.tunnelJournalPath);
+    return handleTunnelRelay(
+      req,
+      url,
+      forwardingServiceCredential(tunnelServer, req),
+      opts.tokenHash,
+      opts.tunnelJournalPath,
+    );
   }
   // Bootstrap registration — unauthenticated by design (nodes have
   // no bearer yet; that's what this endpoint mints). Consumes a
@@ -408,6 +440,26 @@ function handleInfraRoutes(
     return handleAgentRollback(req, { tokenHash: opts.tokenHash });
   }
   return null;
+}
+
+/**
+ * The tunnel server as one relay request sees it: a worker-RPC caller's
+ * service credential rides, unread, on the `inferenceRpc.*` req frames
+ * it sends, for the node to verify. The relay hop itself stays
+ * authorized by central's own bearer.
+ */
+function forwardingServiceCredential(server: TunnelServer, req: Request): TunnelServer {
+  const credential = req.headers.get(SERVICE_CREDENTIAL_HEADER);
+  if (credential === null || credential === "") return server;
+  const withAuth = (frame: Omit<TunnelReq, "type">): Omit<TunnelReq, "type"> =>
+    isInferenceRpcMethod(frame.method)
+      ? { ...frame, auth: { serviceCredential: credential } }
+      : frame;
+  return {
+    ...server,
+    send: (nodeName, frame) => server.send(nodeName, withAuth(frame)),
+    sendSubscribe: (nodeName, frame) => server.sendSubscribe(nodeName, withAuth(frame)),
+  };
 }
 
 /**
@@ -477,13 +529,41 @@ function handleMetricsRoute(
   );
 }
 
+/**
+ * True when every procedure a tRPC request names is in the worker RPC
+ * namespace. Batched paths are decoded and split the way tRPC splits
+ * them, so a service credential never rides along to another procedure.
+ */
+function inferenceRpcOnly(pathname: string, endpoint: string): boolean {
+  let paths: string[];
+  try {
+    paths = decodeURIComponent(pathname.slice(endpoint.length + 1)).split(",");
+  } catch {
+    return false;
+  }
+  return paths.every((path) => isInferenceRpcMethod(path));
+}
+
+type InferenceClaims = inferenceRpc.InferenceServiceClaimsV1;
+
+function requestContext(
+  opts: StartAgentOptions,
+  claims: InferenceClaims | null,
+): { fleetJournalPath?: string; inferenceClaims?: InferenceClaims } {
+  return {
+    ...(opts.fleetJournalPath !== undefined ? { fleetJournalPath: opts.fleetJournalPath } : {}),
+    ...(claims !== null ? { inferenceClaims: claims } : {}),
+  };
+}
+
 function createAgentFetchHandler(args: {
   opts: StartAgentOptions;
   endpoint: string;
   tunnelServer: TunnelServer | null;
   gate: NoAuthGate;
+  workerRpc: WorkerRpcServing | null;
 }): AgentFetchHandler {
-  const { opts, endpoint, tunnelServer, gate } = args;
+  const { opts, endpoint, tunnelServer, gate, workerRpc } = args;
   return (req, server) => {
     const url = new URL(req.url);
     const clientAddress = typeof server.requestIP === "function" ? server.requestIP(req) : null;
@@ -495,15 +575,22 @@ function createAgentFetchHandler(args: {
     if (!url.pathname.startsWith(endpoint)) {
       return new Response("not found", { status: 404 });
     }
-    const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
-    if (denied) return denied;
+    // A worker-RPC service credential stands in for the operator bearer
+    // on inferenceRpc.* alone, and carries its verified claims; the
+    // operator bearer keeps its scope and carries none.
+    const claims =
+      workerRpc !== null && inferenceRpcOnly(url.pathname, endpoint)
+        ? workerRpc.claimsFor(extractBearer(req))
+        : null;
+    if (claims === null) {
+      const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
+      if (denied) return denied;
+    }
     return fetchRequestHandler({
       req,
       endpoint,
       router: appRouter,
-      createContext: () => ({
-        ...(opts.fleetJournalPath !== undefined ? { fleetJournalPath: opts.fleetJournalPath } : {}),
-      }),
+      createContext: () => requestContext(opts, claims),
     });
   };
 }
@@ -608,14 +695,23 @@ function maybePublishAgentMdns(
 // central never blocks the local agent. Bridges inbound `req`
 // frames from central — queries, mutations and subscriptions — into
 // the same appRouter the /trpc endpoint serves.
-function maybeStartTunnelClient(opts: StartAgentOptions): TunnelClient | null {
+function maybeStartTunnelClient(
+  opts: StartAgentOptions,
+  workerRpc: WorkerRpcServing | null,
+): TunnelClient | null {
   if (!opts.tunnelDial) return null;
-  const ctx = {
-    ...(opts.fleetJournalPath !== undefined ? { fleetJournalPath: opts.fleetJournalPath } : {}),
+  // Central forwards a worker-RPC caller's service credential on the req
+  // frame; the claims it verifies to ride that request's context only.
+  const contextFor = (req: TunnelReq): ReturnType<typeof requestContext> => {
+    const claims =
+      workerRpc !== null && isInferenceRpcMethod(req.method)
+        ? workerRpc.claimsFor(req.auth?.serviceCredential)
+        : null;
+    return requestContext(opts, claims);
   };
-  const caller = appRouter.createCaller(ctx);
-  const handleRequest = createTunnelRouterHandler(caller);
-  const handleSubscription = createTunnelSubscriptionHandler(appRouter, () => ({ ...ctx }));
+  const handleRequest = (req: TunnelReq): Promise<unknown> =>
+    createTunnelRouterHandler(appRouter.createCaller(contextFor(req)))(req);
+  const handleSubscription = createTunnelSubscriptionHandler(appRouter, contextFor);
   const tunnelClient = createTunnelClient({
     url: opts.tunnelDial.url,
     bearer: opts.tunnelDial.bearer,
@@ -673,6 +769,64 @@ function maybeStartPeerSnapshotPoller(opts: StartAgentOptions): (() => void) | n
       publishUnifiedPeerSnapshots(snapshots);
     },
   });
+}
+
+interface WorkerRpcServing {
+  /** The claims a service credential carries under the bindings current now. */
+  claimsFor(token: string | null | undefined): InferenceClaims | null;
+  /** Drains active attempts, cancels what outlives the window, then unpublishes. */
+  stop(): Promise<void>;
+}
+
+// Inside launchd's default 20 s ExitTimeOut, so a SIGTERM'd agent still
+// cancels what outlives the drain instead of being killed mid-stream.
+const DEFAULT_DRAIN_TIMEOUT_MS = 15_000;
+/** How long streams get to deliver their terminal, after a cancel and again on the wire. */
+const TERMINAL_FLUSH_MS = 1_000;
+
+function within(ms: number, work: Promise<void>): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(false);
+    }, ms);
+  });
+  return Promise.race([work.then(() => true), timeout]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
+/**
+ * Publishes this agent's worker-RPC host (P4.1). It advertises the
+ * versions agent.yaml lists that this build speaks, read on every call,
+ * so emptying the list stops the advertisement for new requests while
+ * accepted attempts run on.
+ */
+function maybePublishWorkerRpc(opts: StartAgentOptions): WorkerRpcServing | null {
+  const config = opts.workerRpc;
+  if (config === undefined) return null;
+  const spoken = inferenceRpc.inferenceRpcVersionsSpokenAt(inferenceRpc.INFERENCE_RPC_VERSION);
+  const host = createWorkerRpcHost({
+    workerId: config.workerId,
+    versions: () =>
+      (config.settings()?.versions ?? []).filter((v) =>
+        spoken.some((s) => inferenceRpc.compareInferenceRpcVersions(s, v) === 0),
+      ),
+  });
+  const restore = publishWorkerRpcHost(host);
+  return {
+    claimsFor: (token) =>
+      claimsForServiceCredential(token, config.settings()?.serviceCredentials ?? []),
+    stop: async (): Promise<void> => {
+      const drainMs = config.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
+      if (!(await within(drainMs, host.drain()))) {
+        // Cancelled attempts end with a typed terminal on their stream.
+        host.close();
+        await within(TERMINAL_FLUSH_MS, host.drain());
+      }
+      restore();
+    },
+  };
 }
 
 function maybeCreateTunnelServer(opts: StartAgentOptions): TunnelServer | null {
@@ -733,7 +887,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
   const gate = makeNoAuthGate(noAuth, bindHost);
 
-  const fetchHandler = createAgentFetchHandler({ opts, endpoint, tunnelServer, gate });
+  const workerRpc = maybePublishWorkerRpc(opts);
+
+  const fetchHandler = createAgentFetchHandler({ opts, endpoint, tunnelServer, gate, workerRpc });
 
   const wsConfig = tunnelServer ? tunnelServer.websocket : null;
   const { server, fingerprint } = startBunServer({
@@ -750,7 +906,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
 
   const mdns = maybePublishAgentMdns(opts, listenPort, fingerprint);
 
-  const tunnelClient = maybeStartTunnelClient(opts);
+  const tunnelClient = maybeStartTunnelClient(opts, workerRpc);
 
   return {
     url: `${scheme}://${bindHost}:${String(listenPort)}`,
@@ -767,6 +923,8 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       });
     },
     stop: async (): Promise<void> => {
+      // Worker-RPC attempts drain first, while their transports are up.
+      await workerRpc?.stop();
       // Remove exactly the process handlers this call installed so
       // repeated start/stop cycles don't accumulate listeners.
       process.off("uncaughtException", onUncaughtException);
@@ -783,6 +941,9 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
         }
       }
       if (mdns) await mdns.stop().catch(() => undefined);
+      // A drained or cancelled worker-RPC stream has handed its terminal
+      // to its response; let in-flight responses finish before closing.
+      if (workerRpc !== null) await within(TERMINAL_FLUSH_MS, server.stop());
       void server.stop(true);
     },
     ...(tunnelServer ? { tunnelServer } : {}),

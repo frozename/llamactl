@@ -14,20 +14,29 @@
  * stream typed `stream-overflow` and tears the transport down, which
  * cancels the attempt upstream.
  *
+ * Remote clients present the caller's service credential, never the
+ * operator bearer: as the bearer on a direct dial, and in a header
+ * central's relay forwards to the node over the tunnel, whose own hop is
+ * authorized by central's relay bearer.
+ *
  * The executor negotiates, fences on the worker's catalog, submits, then
  * consumes the stream, checking every event with Nova's sequence rules.
  * It never re-submits once a submit may have been accepted: a lost
  * acknowledgement is resolved through `status`, a lost stream through
  * `cancel` then `status`, and an outcome it cannot establish is surfaced
  * as `unknown-outcome`. Only a stale generation is retried, once, after a
- * single catalog refresh.
+ * single catalog refresh. A worker that positively reports no RPC keeps
+ * the request on the existing path; every other negotiation failure
+ * fails closed.
  */
 import type { PeerNode } from "@llamactl/core/config/peers";
 import type { ClusterNode } from "@llamactl/core/config/schema";
 import type { z } from "zod";
 
 import { type inferenceContracts, inferenceRpc, type routingCatalog } from "@llamactl/core";
+import { currentContext, loadConfig } from "@llamactl/core/config/kubeconfig";
 import { listPeers } from "@llamactl/core/config/peers";
+import { resolveSecret } from "@llamactl/core/config/secret";
 import {
   buildRelayFetchInit,
   callViaTunnelRelay,
@@ -44,6 +53,7 @@ import {
 import type { BackendExecutionContext, BackendExecutor } from "../proxy/create-proxy.js";
 
 import { makePinnedFetch, type PinnedFetch } from "../client/links.js";
+import { SERVICE_CREDENTIAL_HEADER } from "../server/auth.js";
 import {
   frameBytes,
   INFERENCE_RPC_STREAM_LIMITS,
@@ -111,8 +121,8 @@ export interface RemoteInferenceRpcClientOptions {
 export interface DirectInferenceRpcClientOptions extends RemoteInferenceRpcClientOptions {
   /** The owner's kubeconfig node: its endpoint and pinned certificate. */
   node: ClusterNode;
-  /** The caller's credential for the owner's agent. */
-  token: string;
+  /** The caller's service credential for the owner's worker RPC. */
+  serviceCredential: string;
   /** Defaults to a fetch pinned to the node's certificate. */
   fetch?: PinnedFetch;
 }
@@ -123,8 +133,10 @@ export interface TunnelInferenceRpcClientOptions extends RemoteInferenceRpcClien
   centralFingerprint?: string;
   /** The name the owner dials central with. */
   nodeName: string;
-  /** The caller's credential for central's relay. */
+  /** Central's relay bearer: it authorizes the relay hop only and never reaches the node. */
   bearer: string;
+  /** The caller's service credential, forwarded by central to the owner's worker RPC. */
+  serviceCredential: string;
   /** Defaults to global fetch; the relay request is pinned to central either way. */
   fetch?: PinnedFetch;
 }
@@ -133,6 +145,9 @@ export interface TunnelInferenceRpcClientOptions extends RemoteInferenceRpcClien
 export class InferenceRpcStreamOverflowError extends Error {
   readonly code = TUNNEL_STREAM_OVERFLOW;
 }
+
+/** The owner's agent refused the service credential before any procedure ran (HTTP 401). */
+export class InferenceRpcCredentialRefusedError extends Error {}
 
 const DEFAULT_CALL_TIMEOUT_MS = 10_000;
 const RPC = "inferenceRpc";
@@ -190,7 +205,9 @@ async function trpcData(res: Response, procedure: string): Promise<unknown> {
   if (res.ok && isRecord(result)) return result["data"];
   const error = isRecord(body) ? body["error"] : undefined;
   const message = isRecord(error) && typeof error["message"] === "string" ? error["message"] : "";
-  throw new Error(`worker RPC ${procedure} failed: HTTP ${String(res.status)} ${message}`.trim());
+  const failure = `worker RPC ${procedure} failed: HTTP ${String(res.status)} ${message}`.trim();
+  if (res.status === 401) throw new InferenceRpcCredentialRefusedError(failure);
+  throw new Error(failure);
 }
 
 function directWire(opts: DirectInferenceRpcClientOptions): RpcWire {
@@ -199,7 +216,7 @@ function directWire(opts: DirectInferenceRpcClientOptions): RpcWire {
   const root = opts.node.endpoint.endsWith("/")
     ? opts.node.endpoint.slice(0, -1)
     : opts.node.endpoint;
-  const authorization = `Bearer ${opts.token}`;
+  const authorization = `Bearer ${opts.serviceCredential}`;
   const url = (procedure: string, input?: unknown): string => {
     const path = `${root}/trpc/${RPC}.${procedure}`;
     return input === undefined
@@ -263,7 +280,14 @@ function tunnelWire(opts: TunnelInferenceRpcClientOptions): RpcWire {
   // Refuse an unpinned central up front rather than on the first call.
   enforceRelayPinning(pinning);
   const timeoutMs = opts.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
-  const relayFetch = opts.fetch ?? fetch;
+  const baseFetch = opts.fetch ?? fetch;
+  // The service credential rides its own header; central forwards it to
+  // the node, which is the one that verifies it.
+  const relayFetch: PinnedFetch = (input, init) => {
+    const headers = new Headers(init?.headers);
+    headers.set(SERVICE_CREDENTIAL_HEADER, opts.serviceCredential);
+    return baseFetch(input, { ...init, headers });
+  };
   const target = { centralUrl: opts.centralUrl, nodeName: opts.nodeName, bearer: opts.bearer };
   return {
     transport: "tunnel",
@@ -577,8 +601,15 @@ const UNKNOWN_OUTCOME: ExecutionTerminal = {
 
 const DEFAULT_RESOLVE_TIMEOUT_MS = 15_000;
 
-function unavailable(message: string): AttemptOutcome {
-  return { kind: "rejected", rejection: { code: "target-unavailable", message } };
+/**
+ * A call that failed before the worker could accept anything: a refused
+ * credential is outside the claims, anything else leaves the target
+ * unavailable. Both fail closed.
+ */
+function refusal(err: unknown, what: string): Rejection {
+  return err instanceof InferenceRpcCredentialRefusedError
+    ? { code: "unauthorized-scope", message: `the worker refused the service credential: ${what}` }
+    : { code: "target-unavailable", message: `${what}: ${errorMessage(err)}` };
 }
 
 /** The only outcome a non-terminal status can resolve to: never a replay. */
@@ -793,24 +824,38 @@ async function targetFor(
 }
 
 type SubmitAnswer = inferenceRpc.InferenceRpcSubmitResultV1 | { outcome: "lost" };
+type Refused = { outcome: "rejected"; rejection: Rejection };
 
-async function submitOnce(
-  plan: SubmitPlan,
-): Promise<SubmitAnswer | { outcome: "rejected"; rejection: Rejection }> {
-  for (let refreshed = false; ; refreshed = true) {
-    const resolved = await targetFor(plan);
-    if ("rejection" in resolved) return { outcome: "rejected", rejection: resolved.rejection };
-    let answer: SubmitAnswer;
-    try {
-      answer = await plan.client.submit({
-        version: plan.version,
-        envelope: plan.envelope,
-        target: resolved.target,
-        cancelId: plan.cancelId,
-      });
-    } catch {
-      return { outcome: "lost" };
+/** One submit against a freshly read catalog; never retried once it may have been accepted. */
+async function submitAgainstCatalog(plan: SubmitPlan): Promise<SubmitAnswer | Refused> {
+  let resolved: Awaited<ReturnType<typeof targetFor>>;
+  try {
+    resolved = await targetFor(plan);
+  } catch (err) {
+    // Nothing was submitted yet: fail closed.
+    return { outcome: "rejected", rejection: refusal(err, "worker RPC catalog failed") };
+  }
+  if ("rejection" in resolved) return { outcome: "rejected", rejection: resolved.rejection };
+  try {
+    return await plan.client.submit({
+      version: plan.version,
+      envelope: plan.envelope,
+      target: resolved.target,
+      cancelId: plan.cancelId,
+    });
+  } catch (err) {
+    // A refused credential never reached the procedure, so nothing was
+    // accepted; any other loss may have been, and is resolved by status.
+    if (err instanceof InferenceRpcCredentialRefusedError) {
+      return { outcome: "rejected", rejection: refusal(err, "submit") };
     }
+    return { outcome: "lost" };
+  }
+}
+
+async function submitOnce(plan: SubmitPlan): Promise<SubmitAnswer | Refused> {
+  for (let refreshed = false; ; refreshed = true) {
+    const answer = await submitAgainstCatalog(plan);
     const stale = answer.outcome === "rejected" && answer.rejection.code === "stale-generation";
     if (!stale || refreshed) return answer;
   }
@@ -1159,7 +1204,7 @@ async function runAttempt(
       requiredFeatures: ["execution-event-v1"],
     });
   } catch (err) {
-    return unavailable(`worker RPC negotiation failed: ${errorMessage(err)}`);
+    return { kind: "rejected", rejection: refusal(err, "worker RPC negotiation failed") };
   }
   if (negotiated.outcome === "not-advertised") return { kind: "fallback" };
   if (negotiated.outcome === "rejected") {
@@ -1297,9 +1342,23 @@ function configuredPeer(id: string): PeerNode | undefined {
   }
 }
 
-function directClientFor(peer: PeerNode): InferenceRpcClient {
-  const token = peer.token ?? configuredPeer(peer.id)?.token;
-  if (token === undefined) throw new Error(`no credential for owner '${peer.id}'`);
+/**
+ * The secret reference to the caller's service credential for `owner`,
+ * from the owner's kubeconfig node. Undefined when the node declares no
+ * worker-RPC block: the caller has not opted in for that owner.
+ */
+export function kubeconfigServiceCredentialRef(owner: string): string | undefined {
+  try {
+    const config = loadConfig();
+    const context = currentContext(config);
+    const cluster = config.clusters.find((candidate) => candidate.name === context.cluster);
+    return cluster?.nodes.find((node) => node.name === owner)?.workerRpc?.serviceCredentialRef;
+  } catch {
+    return undefined;
+  }
+}
+
+function directClientFor(peer: PeerNode, serviceCredential: string): InferenceRpcClient {
   return createDirectInferenceRpcClient({
     node: {
       name: peer.id,
@@ -1307,11 +1366,11 @@ function directClientFor(peer: PeerNode): InferenceRpcClient {
       ...(peer.certificate !== undefined ? { certificate: peer.certificate } : {}),
       ...(peer.fingerprint !== undefined ? { certificateFingerprint: peer.fingerprint } : {}),
     },
-    token,
+    serviceCredential,
   });
 }
 
-function tunnelClientFor(peer: PeerNode): InferenceRpcClient {
+function tunnelClientFor(peer: PeerNode, serviceCredential: string): InferenceRpcClient {
   if (peer.tunnelCentralUrl === undefined) {
     throw new Error(`owner '${peer.id}' prefers the tunnel, but no tunnelCentralUrl is set`);
   }
@@ -1321,6 +1380,7 @@ function tunnelClientFor(peer: PeerNode): InferenceRpcClient {
     centralUrl: peer.tunnelCentralUrl,
     nodeName: peer.tunnelNodeName ?? peer.id,
     bearer,
+    serviceCredential,
     ...(peer.tunnelCentralCertificate !== undefined
       ? { centralCertificate: peer.tunnelCentralCertificate }
       : {}),
@@ -1333,17 +1393,28 @@ function tunnelClientFor(peer: PeerNode): InferenceRpcClient {
 /**
  * The client for a remote owner, over the transport its kubeconfig node
  * declares: the reverse tunnel when it prefers one, else a direct dial
- * pinned to its certificate. An owner that cannot be reached that way
- * fails closed; it is never rerouted.
+ * pinned to its certificate, presenting the caller's service credential.
+ * An owner the caller has not opted in for (no worker-RPC block) keeps
+ * the existing path: null. An owner that cannot be reached, or whose
+ * credential does not resolve, fails closed; it is never rerouted.
  */
-function ownerClient(owner: string, peers: readonly PeerNode[]): InferenceRpcClient {
+function ownerClient(
+  owner: string,
+  peers: readonly PeerNode[],
+  credentialRef: (owner: string) => string | undefined,
+): InferenceRpcClient | null {
   const peer = peers.find((candidate) => candidate.id === owner);
   if (peer === undefined) {
     return unreachableClient("direct", `no kubeconfig agent node declares owner '${owner}'`);
   }
+  const ref = credentialRef(owner);
+  if (ref === undefined) return null;
   const transport = peer.tunnelPreferred === true ? "tunnel" : "direct";
   try {
-    return transport === "tunnel" ? tunnelClientFor(peer) : directClientFor(peer);
+    const credential = resolveSecret(ref);
+    return transport === "tunnel"
+      ? tunnelClientFor(peer, credential)
+      : directClientFor(peer, credential);
   } catch (err) {
     return unreachableClient(transport, errorMessage(err));
   }
@@ -1355,9 +1426,15 @@ export interface WorkerRpcAcquireOptions {
   fallback: BackendExecutor;
   /** The kubeconfig agent nodes; the owner's entry picks its transport. */
   peers?: () => readonly PeerNode[];
+  /** The caller's service-credential reference for an owner. Defaults to its kubeconfig node's. */
+  serviceCredentialRef?: (owner: string) => string | undefined;
 }
 
-/** The executor for a `worker-rpc` candidate, over the transport its declared owner selects. */
+/**
+ * The executor for a `worker-rpc` candidate, over the transport its
+ * declared owner selects; null keeps the candidate on the default
+ * executor (not a worker-rpc candidate, or an owner not opted in).
+ */
 export function acquireWorkerRpcExecutor(
   candidate: routingCatalog.RouteCandidate,
   opts: WorkerRpcAcquireOptions,
@@ -1367,7 +1444,12 @@ export function acquireWorkerRpcExecutor(
   const client =
     ad.ownerNodeId === opts.nodeId
       ? createEmbeddedInferenceRpcClient(embeddedClaims(opts.nodeId, ad.deploymentId, opts.scope))
-      : ownerClient(ad.ownerNodeId, opts.peers?.() ?? []);
+      : ownerClient(
+          ad.ownerNodeId,
+          opts.peers?.() ?? [],
+          opts.serviceCredentialRef ?? kubeconfigServiceCredentialRef,
+        );
+  if (client === null) return null;
   return createWorkerRpcExecutor({
     client,
     deploymentId: ad.deploymentId,

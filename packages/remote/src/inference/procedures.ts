@@ -14,7 +14,8 @@ import type { ResolvedEnv } from "@llamactl/core/types";
  * closed by default: `cli`/`acp` stay `target-unavailable` until their
  * lifecycle packages register a backend, and `cloud-api` is never a
  * worker-RPC target. Until a worker publishes a host that lists versions,
- * the RPC is not advertised.
+ * the RPC is not advertised. A draining host stops advertising for new
+ * requests while its attempts run to their terminal.
  */
 import { type inferenceContracts, inferenceRpc, routingCatalog } from "@llamactl/core";
 import { LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
@@ -69,8 +70,14 @@ export interface WorkerRpcBackend {
 
 export interface WorkerRpcHostOptions {
   workerId: string;
-  /** Versions this worker advertises; empty (the default) means not advertised. */
-  versions?: readonly inferenceRpc.InferenceRpcVersion[];
+  /**
+   * Versions this worker advertises; empty (the default) means not
+   * advertised. A function is read on every call, so the advertisement
+   * can stop for new requests while active attempts continue.
+   */
+  versions?:
+    | readonly inferenceRpc.InferenceRpcVersion[]
+    | (() => readonly inferenceRpc.InferenceRpcVersion[]);
   resolved?: ResolvedEnv | (() => ResolvedEnv);
   /** Extra catalog input (the P0.2 advertisement seam). Foreign-owned entries never run. */
   advertisements?: () => readonly Deployment[];
@@ -110,6 +117,12 @@ export interface WorkerRpcHost {
     claims: Claims | undefined,
     input: inferenceRpc.InferenceRpcCancelRequestV1,
   ): inferenceRpc.InferenceRpcCancelResultV1;
+  /**
+   * Stops advertising for new requests and resolves once every
+   * unsettled attempt has settled and every open stream has delivered
+   * its terminal. Attempts already accepted keep running.
+   */
+  drain(): Promise<void>;
   /** Cancels every unsettled attempt. */
   close(): void;
 }
@@ -136,7 +149,8 @@ interface AttemptRecord {
 interface HostState {
   workerId: string;
   incarnation: string;
-  versions: inferenceRpc.InferenceRpcVersion[];
+  versions: () => readonly inferenceRpc.InferenceRpcVersion[];
+  draining: boolean;
   resolve: () => ResolvedEnv;
   advertisements: () => readonly Deployment[];
   backends: ReadonlyMap<WorkerRpcBackendKind, WorkerRpcBackend>;
@@ -148,6 +162,9 @@ interface HostState {
   cancelIds: Map<string, string>;
   settled: string[];
   active: number;
+  /** Streams attached and not yet ended. */
+  streams: number;
+  idle: (() => void)[];
 }
 
 interface WorkerCatalog {
@@ -298,8 +315,18 @@ function inScope(claims: Claims, deployment: Deployment): boolean {
   );
 }
 
+/** What the worker advertises now: nothing while draining. */
+function advertised(state: HostState): readonly inferenceRpc.InferenceRpcVersion[] {
+  return state.draining ? [] : state.versions();
+}
+
 function versionRejection(state: HostState, message: string): Rejection {
-  return { code: "unsupported-version", message, supportedVersions: [...state.versions] };
+  return { code: "unsupported-version", message, supportedVersions: [...advertised(state)] };
+}
+
+function notifyIdle(state: HostState): void {
+  if (state.active > 0 || state.streams > 0) return;
+  for (const resolve of state.idle.splice(0)) resolve();
 }
 
 function rejectedWith(rejection: Rejection): { outcome: "rejected"; rejection: Rejection } {
@@ -313,9 +340,10 @@ function negotiate(
   claimsIn: Claims | undefined,
   input: inferenceRpc.InferenceRpcNegotiateRequestV1,
 ): inferenceRpc.InferenceRpcNegotiateResultV1 {
-  if (state.versions.length === 0) return { outcome: "not-advertised", workerId: state.workerId };
+  const versions = advertised(state);
+  if (versions.length === 0) return { outcome: "not-advertised", workerId: state.workerId };
   if (authorized(claimsIn, "negotiate") === null) return rejectedWith(NO_SCOPE);
-  const version = inferenceRpc.selectInferenceRpcVersion(input.versions, state.versions);
+  const version = inferenceRpc.selectInferenceRpcVersion(input.versions, versions);
   if (version === null) {
     return rejectedWith(versionRejection(state, "no common InferenceRpc version"));
   }
@@ -515,6 +543,7 @@ function settle(
   record.state = "terminal";
   for (const timer of record.timers) clearTimeout(timer);
   state.active -= 1;
+  notifyIdle(state);
   state.settled.push(record.attemptId);
   while (state.settled.length > state.retained) {
     const evicted = state.records.get(state.settled.shift() ?? "");
@@ -600,7 +629,8 @@ function submit(
   input: SubmitRequest,
 ): SubmitResult {
   const version = input.version;
-  if (!state.versions.some((v) => inferenceRpc.compareInferenceRpcVersions(v, version) === 0)) {
+  const versions = advertised(state);
+  if (!versions.some((v) => inferenceRpc.compareInferenceRpcVersions(v, version) === 0)) {
     return rejectedWith(versionRejection(state, "the submit version was not negotiated here"));
   }
   const claims = authorized(claimsIn, "submit");
@@ -755,7 +785,13 @@ async function* streamAttempt(
     return;
   }
   record.streamed = true;
-  yield* runAttempt(state, record, signal);
+  state.streams += 1;
+  try {
+    yield* runAttempt(state, record, signal);
+  } finally {
+    state.streams -= 1;
+    notifyIdle(state);
+  }
 }
 
 // ---- status / cancel ------------------------------------------------------
@@ -792,12 +828,21 @@ function cancelAttempt(
   return { outcome: "cancelled", attemptId: record.attemptId };
 }
 
+function versionsOf(
+  versions: WorkerRpcHostOptions["versions"],
+): () => readonly inferenceRpc.InferenceRpcVersion[] {
+  if (typeof versions === "function") return versions;
+  const fixed = [...(versions ?? [])];
+  return () => fixed;
+}
+
 export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
   const resolvedOpt = opts.resolved;
   const state: HostState = {
     workerId: opts.workerId,
     incarnation: opts.incarnation ?? `inc-${randomUUID()}`,
-    versions: [...(opts.versions ?? [])],
+    versions: versionsOf(opts.versions),
+    draining: false,
     resolve:
       typeof resolvedOpt === "function"
         ? resolvedOpt
@@ -812,6 +857,8 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     cancelIds: new Map(),
     settled: [],
     active: 0,
+    streams: 0,
+    idle: [],
   };
   return {
     workerId: state.workerId,
@@ -823,6 +870,14 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     stream: (claims, input, signal) => streamAttempt(state, claims, input, signal),
     status: (claims, input) => attemptStatus(state, claims, input),
     cancel: (claims, input) => cancelAttempt(state, claims, input),
+    drain: (): Promise<void> => {
+      state.draining = true;
+      const idle = new Promise<void>((resolve) => {
+        state.idle.push(resolve);
+      });
+      notifyIdle(state);
+      return idle;
+    },
     close: (): void => {
       for (const record of state.records.values()) {
         if (record.terminal === undefined) stopAttempt(state, record, "close");

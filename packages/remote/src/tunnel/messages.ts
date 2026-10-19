@@ -102,6 +102,12 @@ export const TunnelReqSchema = z.object({
   id: z.string().min(1),
   method: z.string().min(1),
   params: z.unknown().optional(),
+  /**
+   * A worker-RPC caller's service credential (P4.1), forwarded unread by
+   * central's relay on `inferenceRpc.*` requests only. The node verifies
+   * it against its own hashed bindings; nodes that predate it drop it.
+   */
+  auth: z.object({ serviceCredential: z.string().min(1) }).optional(),
 });
 export type TunnelReq = z.infer<typeof TunnelReqSchema>;
 

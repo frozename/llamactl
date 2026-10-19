@@ -20,6 +20,8 @@ export interface FakeEngineScript {
   pieces: readonly string[];
   /** Stream this many pieces, then hold the response open until the client aborts. */
   holdAfter?: number;
+  /** With `holdAfter`: once this settles, send the rest and finish normally. */
+  release?: Promise<void>;
   /** End the body after the pieces with no finish_reason and no [DONE]. */
   truncate?: boolean;
   /** Answer with this HTTP error status instead of a stream. */
@@ -113,10 +115,19 @@ export function startFakeEngine(): FakeEngine {
       recordAbort();
     };
     req.signal.addEventListener("abort", markAborted, { once: true });
+    const release = script.release;
     return new ReadableStream({
       start(controller): void {
         const sent = hold === undefined ? frames : frames.slice(0, hold);
         for (const frame of sent) controller.enqueue(encoder.encode(frame));
+        if (hold !== undefined && release !== undefined) {
+          void release.then(() => {
+            if (aborted) return;
+            for (const frame of frames.slice(hold)) controller.enqueue(encoder.encode(frame));
+            finished = true;
+            controller.close();
+          });
+        }
         if (hold !== undefined) return;
         finished = true;
         controller.close();

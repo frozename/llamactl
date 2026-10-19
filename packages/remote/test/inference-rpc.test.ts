@@ -1,3 +1,4 @@
+import type * as agentConfigMod from "@llamactl/core/config/agent-config";
 /**
  * P4.1 (#139) — InferenceRpcV1 worker semantics through the embedded
  * client: golden exchanges, negotiation and the N-1 rolling-upgrade
@@ -327,8 +328,6 @@ async function recordGolden(makeClient: () => InferenceRpcClient): Promise<unkno
       ad(LOCAL),
       ad("deploy/worker-a/cli", { backendKind: "cli", bindingId: "fakecli" }),
     ],
-    // Remote transports carry no claims; the server side derives them.
-    resolveClaims: () => GOLDEN_CLAIMS,
   });
   const client = makeClient();
   const exchanges: unknown[] = [];
@@ -1145,7 +1144,15 @@ const TUNNEL_NODE = "worker-a-tunnel";
 interface Transports {
   worker: RunningAgent;
   workerNode: ClusterNode;
-  workerToken: string;
+  /**
+   * The worker's service-credential bindings, as agent.yaml holds them;
+   * read on every call, so a test rotates or revokes by editing them.
+   */
+  bindings: agentConfigMod.AgentWorkerRpcCredential[];
+  /** Bound to `claims()`. */
+  serviceCredential: string;
+  /** Bound to GOLDEN_CLAIMS. */
+  goldenCredential: string;
   central: RunningAgent;
   centralCertificate: string;
   centralFingerprint: string;
@@ -1188,6 +1195,12 @@ async function startTransports(): Promise<Transports> {
   const centralToken = auth.generateToken();
   const workerToken = auth.generateToken();
   const tunnelBearer = auth.generateToken();
+  const service = auth.generateToken();
+  const golden = auth.generateToken();
+  const bindings: agentConfigMod.AgentWorkerRpcCredential[] = [
+    { ...claims(), tokenHash: service.hash },
+    { ...GOLDEN_CLAIMS, tokenHash: golden.hash },
+  ];
   const central = startAgentServer({
     bindHost: "127.0.0.1",
     port: 0,
@@ -1206,6 +1219,14 @@ async function startTransports(): Promise<Transports> {
     tokenHash: workerToken.hash,
     tls: { certPath: workerCert.certPath, keyPath: workerCert.keyPath },
     advertiseMdns: false,
+    workerRpc: {
+      workerId: WORKER,
+      // A fresh copy per call, as agent.yaml is re-read on every call.
+      settings: () => ({
+        versions: [V1_0],
+        serviceCredentials: bindings.map((binding) => ({ ...binding })),
+      }),
+    },
     tunnelDial: {
       url: `wss://127.0.0.1:${String(central.port)}/tunnel`,
       bearer: tunnelBearer.token,
@@ -1225,7 +1246,9 @@ async function startTransports(): Promise<Transports> {
       certificate: workerCert.certPem,
       certificateFingerprint: workerCert.fingerprint,
     },
-    workerToken: workerToken.token,
+    bindings,
+    serviceCredential: service.token,
+    goldenCredential: golden.token,
     central,
     centralCertificate: centralCert.certPem,
     centralFingerprint: centralCert.fingerprint,
@@ -1364,7 +1387,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
   function directClient(extra: Partial<DirectInferenceRpcClientOptions> = {}): InferenceRpcClient {
     return createDirectInferenceRpcClient({
       node: transports.workerNode,
-      token: transports.workerToken,
+      serviceCredential: transports.serviceCredential,
       ...extra,
     });
   }
@@ -1376,6 +1399,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       centralFingerprint: transports.centralFingerprint,
       nodeName: TUNNEL_NODE,
       bearer: transports.centralToken,
+      serviceCredential: transports.serviceCredential,
       ...extra,
     });
   }
@@ -1384,12 +1408,15 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
     direct: (extra: Partial<RemoteExtra> = {}): InferenceRpcClient => directClient(extra),
     tunnel: (extra: Partial<RemoteExtra> = {}): InferenceRpcClient => tunnelClient(extra),
   };
-  type RemoteExtra = Pick<DirectInferenceRpcClientOptions, "limits" | "onStreamQueue">;
+  type RemoteExtra = Pick<
+    DirectInferenceRpcClientOptions,
+    "limits" | "onStreamQueue" | "serviceCredential"
+  >;
   const TRANSPORTS: ("direct" | "tunnel")[] = ["direct", "tunnel"];
 
-  /** The worker host for remote callers; their claims are derived server-side. */
+  /** The worker host for remote callers; serve.ts derives their claims from the credential. */
   function useRemoteHost(opts: Partial<WorkerRpcHostOptions> = {}): WorkerRpcHost {
-    return useHost({ resolveClaims: () => claims(), ...opts });
+    return useHost(opts);
   }
 
   /** Serve `overrides` on top of the current host until the test ends. */
@@ -1432,7 +1459,9 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
 
   describe("golden equivalence (A2)", () => {
     test.each(TRANSPORTS)("the %s exchanges match golden.json by value", async (transport) => {
-      expect(await recordGolden(() => clientFor[transport]())).toEqual(goldenExchanges());
+      const golden = (): InferenceRpcClient =>
+        clientFor[transport]({ serviceCredential: transports.goldenCredential });
+      expect(await recordGolden(golden)).toEqual(goldenExchanges());
     });
   });
 
@@ -1452,13 +1481,15 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
     test("the owner's kubeconfig node selects embedded, direct or tunnel; an undeclared or unpinned owner fails closed", async () => {
       useRemoteHost();
       const fallback: string[] = [];
+      const credentialFile = join(temp.devStorage, "svc-owner.token");
+      writeFileSync(credentialFile, transports.serviceCredential);
+      const ref = `file:${credentialFile}`;
       const peers: PeerNode[] = [
         {
           id: "worker-direct",
           endpoint: transports.worker.url,
           certificate: transports.workerNode.certificate ?? "",
           fingerprint: transports.workerNode.certificateFingerprint ?? "",
-          token: transports.workerToken,
         },
         {
           id: "worker-tunnel",
@@ -1470,14 +1501,27 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
           tunnelRelayToken: transports.centralToken,
           tunnelNodeName: TUNNEL_NODE,
         },
-        { id: "worker-unpinned", endpoint: "https://192.0.2.1:7843", token: "t" },
+        { id: "worker-unpinned", endpoint: "https://192.0.2.1:7843" },
+        {
+          id: "worker-optout",
+          endpoint: transports.worker.url,
+          certificate: transports.workerNode.certificate ?? "",
+        },
       ];
+      // The worker-RPC block a kubeconfig node declares, per owner.
+      const refs: Record<string, string> = {
+        "worker-direct": ref,
+        "worker-tunnel": ref,
+        "worker-unpinned": ref,
+        "worker-undeclared": ref,
+      };
       const acquire = (owner: string, overrides: Partial<Ad> = {}): BackendExecutor | null =>
         acquireWorkerRpcExecutor(candidate(owner, overrides), {
           nodeId: "gw",
           scope: TENANT,
           fallback: recordingFallback(fallback),
           peers: () => peers,
+          serviceCredentialRef: (id) => refs[id],
         });
       expect(acquire("gw")?.describe().id).toBe("worker-rpc-executor:embedded");
       for (const [owner, transport] of [
@@ -1498,6 +1542,8 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         expect(res.status).toBe(503);
         expect(await res.json()).toMatchObject({ error: { code: "target-unavailable" } });
       }
+      // A declared owner the caller holds no credential for keeps the existing path.
+      expect(acquire("worker-optout")).toBeNull();
       expect(acquire("worker-direct", { transport: "local-http" })).toBeNull();
       expect(fallback).toEqual([]);
       expect(engine.requests).toHaveLength(2);
@@ -1963,5 +2009,92 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       expect(statusNow("att-t-timeout")).toMatchObject({ state: "unknown" });
       expect(engine.requests).toHaveLength(0);
     });
+  });
+  /**
+   * X5 — rotation and revocation take effect for new submits over both
+   * transports; accepted attempts are not cut off. The worker's bindings
+   * are read on every call, as `agent serve` reads agent.yaml.
+   */
+  describe("service-credential rotation and revocation (X5)", () => {
+    function rebind(next: agentConfigMod.AgentWorkerRpcCredential[]): () => void {
+      const prior = transports.bindings.splice(0, transports.bindings.length, ...next);
+      return () => {
+        transports.bindings.splice(0, transports.bindings.length, ...prior);
+      };
+    }
+
+    for (const transport of TRANSPORTS) {
+      test(`${transport}: a rotated-out credential is refused for new submits while its accepted attempt completes`, async () => {
+        useRemoteHost();
+        const old = auth.generateToken();
+        const next = auth.generateToken();
+        const undo = rebind([{ ...claims(), tokenHash: old.hash }]);
+        try {
+          let release = (): void => undefined;
+          engine.setScript({
+            pieces: ["Hel", "lo"],
+            holdAfter: 1,
+            release: new Promise<void>((resolve) => {
+              release = resolve;
+            }),
+          });
+          const env = envelope(`att-rotate-${transport}`);
+          const active = (async (): Promise<Response> =>
+            await executorOver(clientFor[transport]({ serviceCredential: old.token })).execute(
+              env,
+              ctxFor(env),
+            ))();
+          await until(() => engine.requests.length === 1);
+          rebind([{ ...claims(), tokenHash: next.hash }]);
+          const refused = await execute(
+            clientFor[transport]({ serviceCredential: old.token }),
+            `att-rotated-${transport}`,
+          );
+          expect(refused.res.status).toBe(403);
+          expect(await refused.res.json()).toMatchObject({ error: { code: "unauthorized-scope" } });
+          release();
+          const res = await active;
+          expect(res.status).toBe(200);
+          expect(await res.text()).toContain("[DONE]");
+          engine.setScript({});
+          const fresh = await execute(
+            clientFor[transport]({ serviceCredential: next.token }),
+            `att-fresh-${transport}`,
+          );
+          expect(fresh.res.status).toBe(200);
+          expect(await fresh.res.text()).toContain("[DONE]");
+          expect(engine.requests).toHaveLength(2);
+        } finally {
+          undo();
+        }
+      });
+
+      test(`${transport}: a revoked deployment ACL refuses new submits before any engine request`, async () => {
+        useRemoteHost();
+        const undo = rebind([
+          {
+            ...claims({ deployments: [] }),
+            tokenHash: auth.hashToken(transports.serviceCredential),
+          },
+        ]);
+        try {
+          // The worker's catalog no longer lists the deployment to this caller.
+          const { res: unlisted } = await execute(clientFor[transport](), `att-acl-${transport}`);
+          expect(unlisted.status).toBe(503);
+          expect(await unlisted.json()).toMatchObject({ error: { code: "target-unavailable" } });
+          // A caller that knows the epoch submits anyway; the claims fence refuses it.
+          const env = envelope(`att-acl-epoch-${transport}`);
+          const res = await executorOver(clientFor[transport](), {
+            expectedEpoch: "epoch-1",
+          }).execute(env, ctxFor(env));
+          expect(res.status).toBe(403);
+          expect(await res.json()).toMatchObject({ error: { code: "unauthorized-scope" } });
+          expect(statusNow(env.attemptId)).toMatchObject({ state: "unknown" });
+          expect(engine.requests).toHaveLength(0);
+        } finally {
+          undo();
+        }
+      });
+    }
   });
 });
