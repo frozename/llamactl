@@ -2,12 +2,15 @@ name: cross-repo-smoke
 
 # Cross-repo schema + integration smoke. Checks out llamactl and its
 # three runtime siblings (nova, sirius-gateway, embersynth) side by
-# side, resolves the `file:` deps by symlinking ../nova into each
-# consumer, and runs scripts/smoke-cross-repo.sh. Catches the class
-# of bug where a `@nova/contracts` schema field gets renamed and only
-# one of the three consumers notices — the seam test in each repo
-# fails loudly instead of silent drift making it to operator-
-# visible behavior.
+# side and runs scripts/smoke-cross-repo.sh. Catches the class of bug
+# where a nova contracts schema field gets renamed and only one of the
+# three consumers notices — the seam test in each repo fails loudly
+# instead of silent drift making it to operator-visible behavior.
+#
+# llamactl resolves @novaproto/* from npm (exact pins) and never reads
+# ../nova. sirius-gateway and embersynth still consume nova through
+# `file:../nova/packages/*` under the old @nova/* names, so the nova
+# checkout stays, pinned for them.
 
 on:
   schedule:
@@ -33,8 +36,9 @@ jobs:
         with:
           repository: frozename/nova
           path: nova
-          # Pinned to the nova commit that llamactl's file: @nova/* dependencies are built
-          # against; unpin after llamactl moves to the published @novaproto/* packages.
+          # Pinned to the nova commit that sirius-gateway's and embersynth's file: @nova/*
+          # dependencies are built against; nova main ships the renamed @novaproto/* packages
+          # with dist entry points. Unpin after both move to the published packages.
           ref: e1a65bd77710afb4b3cf67909bd1984bf80837b1
 
       - name: Checkout sirius-gateway
