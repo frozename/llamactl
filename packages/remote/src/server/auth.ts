@@ -1,3 +1,5 @@
+import type { inferenceRpc } from "@llamactl/core";
+
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 /**
@@ -46,6 +48,47 @@ export function verifyBearer(req: Request, expectedHashHex: string): boolean {
   const token = extractBearer(req);
   if (!token) return false;
   return bearerHashMatches(token, expectedHashHex);
+}
+
+/** A worker-RPC service credential's binding: its hash and the claims it carries (P4.1). */
+export type ServiceCredentialBinding = inferenceRpc.InferenceServiceClaimsV1 & {
+  tokenHash: string;
+};
+
+/**
+ * The header a tunnel caller presents its worker-RPC service credential
+ * in. Central's relay authorizes the relay hop with its own bearer and
+ * forwards this credential, unread, to the node, which verifies it.
+ */
+export const SERVICE_CREDENTIAL_HEADER = "x-llamactl-service-credential";
+
+/**
+ * The claims a worker-RPC service credential is bound to, derived from
+ * the worker's own bindings and never from anything else the caller
+ * sent. Every binding is compared, in constant time, so the timing shows
+ * neither a near miss nor which binding matched. Null when there is no
+ * credential or no binding for it.
+ */
+export function claimsForServiceCredential(
+  token: string | null | undefined,
+  bindings: readonly ServiceCredentialBinding[],
+): inferenceRpc.InferenceServiceClaimsV1 | null {
+  if (token === null || token === undefined || token.length === 0) return null;
+  let match: ServiceCredentialBinding | null = null;
+  for (const binding of bindings) {
+    if (bearerHashMatches(token, binding.tokenHash) && match === null) match = binding;
+  }
+  if (match === null) return null;
+  const { tokenHash: _hash, ...claims } = match;
+  return claims;
+}
+
+/** The claims for the request's bearer when it is a worker-RPC service credential. */
+export function authenticateServiceCredential(
+  req: Request,
+  bindings: readonly ServiceCredentialBinding[],
+): inferenceRpc.InferenceServiceClaimsV1 | null {
+  return claimsForServiceCredential(extractBearer(req), bindings);
 }
 
 /**
