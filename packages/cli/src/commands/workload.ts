@@ -50,8 +50,9 @@ process llamactl did not record is answering on the workload's port).
 
 const DESCRIBE_USAGE = `Usage: llamactl describe workload <name> [--json]
 
-Print a workload manifest plus the live serverStatus from its target
-node, side by side.
+Print a workload manifest plus its live status from the target node,
+side by side (serverStatus for a ModelRun, modelHostStatus for a
+ModelHost).
 
 Usage: llamactl describe node <name> [--json]
 
@@ -654,17 +655,56 @@ function parseDescribeArgs(rest: string[]): { json: boolean } | { exit: number }
   return { json };
 }
 
-async function runDescribeWorkload(name: string, json: boolean): Promise<number> {
-  let manifest: workloadSchema.ModelRun;
+function writeLiveStatus(liveStatus: unknown): void {
+  process.stdout.write(
+    `LiveStatus: ${JSON.stringify(liveStatus, null, 2).replaceAll("\n", "\n            ")}\n`,
+  );
+}
+
+async function runDescribeModelHost(manifest: ModelHostManifest, json: boolean): Promise<number> {
+  let liveStatus: unknown = null;
   try {
-    manifest = workloadStore.loadWorkloadByName(name);
+    const client = getWorkloadNodeClient(manifest.spec.node);
+    liveStatus = await client.modelHostStatus.query({ workload: manifest.metadata.name });
+  } catch (err) {
+    liveStatus = { error: (err as Error).message };
+  }
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ manifest, liveStatus }, null, 2)}\n`);
+    return 0;
+  }
+  const { spec } = manifest;
+  const models = spec.hostedModels
+    .map((m) => (m.lora_path ? `${m.rel} (lora: ${m.lora_path})` : m.rel))
+    .join(", ");
+  process.stdout.write(`Name:       ${manifest.metadata.name}\n`);
+  process.stdout.write(`Kind:       ModelHost\n`);
+  process.stdout.write(`Node:       ${spec.node}\n`);
+  process.stdout.write(`Engine:     ${spec.engine}\n`);
+  process.stdout.write(`Binary:     ${spec.binary}\n`);
+  process.stdout.write(`Models:     ${models}\n`);
+  process.stdout.write(`Endpoint:   ${spec.endpoint.host}:${String(spec.endpoint.port)}\n`);
+  process.stdout.write(`Enabled:    ${String(spec.enabled)}\n`);
+  process.stdout.write(`ExtraArgs:  ${spec.extraArgs.join(" ") || "(none)"}\n`);
+  process.stdout.write(`RestartPolicy: ${spec.restartPolicy}\n`);
+  writeLiveStatus(liveStatus);
+  return 0;
+}
+
+async function runDescribeWorkload(name: string, json: boolean): Promise<number> {
+  let manifest: workloadSchema.ModelRun | ModelHostManifest;
+  try {
+    manifest = workloadStore.loadWorkloadByNameAny(name);
   } catch (err) {
     process.stderr.write(`describe: ${(err as Error).message}\n`);
     return 1;
   }
+  if (manifest.kind === "ModelHost") {
+    return await runDescribeModelHost(manifest, json);
+  }
   let liveStatus: unknown = null;
   try {
-    const client = getNodeClientByName(manifest.spec.node);
+    const client = getWorkloadNodeClient(manifest.spec.node);
     liveStatus = await client.serverStatus.query({ workload: manifest.metadata.name });
   } catch (err) {
     liveStatus = { error: (err as Error).message };
@@ -683,9 +723,7 @@ async function runDescribeWorkload(name: string, json: boolean): Promise<number>
       `Status:     phase=${manifest.status.phase} endpoint=${manifest.status.endpoint ?? "none"} pid=${String(manifest.status.serverPid ?? "none")} since=${manifest.status.lastTransitionTime}\n`,
     );
   }
-  process.stdout.write(
-    `LiveStatus: ${JSON.stringify(liveStatus, null, 2).replaceAll("\n", "\n            ")}\n`,
-  );
+  writeLiveStatus(liveStatus);
   return 0;
 }
 
