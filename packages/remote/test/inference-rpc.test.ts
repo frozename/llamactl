@@ -5,21 +5,46 @@
  * semantics (A5), duplicate attempts and unknown outcomes (A3), and
  * in-process cancellation. Every emitted stream is checked with Nova's
  * `validateExecutionEventSequence`.
+ *
+ * The remote transports run against real agents: the worker serves the
+ * RPC over pinned HTTPS (direct) and dials a central agent whose relay
+ * reaches it over the reverse tunnel (A2 golden equivalence, transport
+ * by declared owner, disconnect at each acceptance point, X3 bounded
+ * streaming, X4 cancellation, client call timeouts).
  */
+import type { PeerNode } from "@llamactl/core/config/peers";
+import type { ClusterNode } from "@llamactl/core/config/schema";
 import type { ResolvedEnv } from "@llamactl/core/types";
 
 import { inferenceContracts, inferenceRpc, routingCatalog } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { type ExecutionEventV1, validateExecutionEventSequence } from "@novaproto/contracts";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { ClientWebSocketConstructor } from "../src/tunnel/tunnel-client.js";
+
 import { envForTemp, makeTempRuntime } from "../../core/test/helpers.js";
-import { configSchema, config as kubecfg } from "../src/index.js";
+import { makePinnedFetch, type PinnedFetch } from "../src/client/links.js";
 import {
+  auth,
+  configSchema,
+  config as kubecfg,
+  type RunningAgent,
+  startAgentServer,
+  tls,
+} from "../src/index.js";
+import {
+  acquireWorkerRpcExecutor,
+  createDirectInferenceRpcClient,
   createEmbeddedInferenceRpcClient,
+  createTunnelInferenceRpcClient,
   createWorkerRpcExecutor,
+  type DirectInferenceRpcClientOptions,
   type InferenceRpcClient,
+  type TunnelInferenceRpcClientOptions,
+  type WorkerRpcExecutorOptions,
 } from "../src/inference/client.js";
 import {
   createWorkerRpcHost,
@@ -30,8 +55,18 @@ import {
   type WorkerRpcHostOptions,
 } from "../src/inference/procedures.js";
 import { type BackendExecutor, createProxy } from "../src/proxy/create-proxy.js";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "../src/safe-fs.js";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../src/safe-fs.js";
+import { DEFAULT_STREAM_LIMITS } from "../src/tunnel/messages.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
+import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
 
 type Claims = inferenceRpc.InferenceServiceClaimsV1;
 type Ad = routingCatalog.RouteAdvertisementV1;
@@ -278,84 +313,92 @@ afterAll(async () => {
   }
 });
 
-describe("golden exchanges", () => {
-  const goldenClaims = claims({
-    serviceId: "svc-golden",
-    deployments: [LOCAL, "deploy/worker-a/cli"],
+const GOLDEN_CLAIMS = claims({
+  serviceId: "svc-golden",
+  deployments: [LOCAL, "deploy/worker-a/cli"],
+});
+
+/** Replays the golden script through `makeClient`, recording each exchange by value. */
+async function recordGolden(makeClient: () => InferenceRpcClient): Promise<unknown[]> {
+  useHost({
+    incarnation: "inc-golden",
+    now: () => GOLDEN_NOW,
+    advertisements: () => [
+      ad(LOCAL),
+      ad("deploy/worker-a/cli", { backendKind: "cli", bindingId: "fakecli" }),
+    ],
+    // Remote transports carry no claims; the server side derives them.
+    resolveClaims: () => GOLDEN_CLAIMS,
   });
+  const client = makeClient();
+  const exchanges: unknown[] = [];
+  const call = async (
+    procedure: string,
+    input: unknown,
+    run: () => Promise<unknown>,
+  ): Promise<unknown> => {
+    const output = await run();
+    exchanges.push({ procedure, input, output });
+    return output;
+  };
+  const negotiate = {
+    versions: [V1_0],
+    requiredFeatures: ["execution-event-v1"],
+    optionalFeatures: ["attempt-status", "x-future"],
+  };
+  await call("negotiate", negotiate, () => client.negotiate(negotiate));
+  const tooNew = {
+    versions: [{ major: 2, minor: 0 }],
+    requiredFeatures: [],
+    optionalFeatures: [],
+  };
+  await call("negotiate", tooNew, () => client.negotiate(tooNew));
+  await call("catalog", null, () => client.catalog());
+  const listing = await client.catalog();
+  const generation = listing.outcome === "catalog" ? listing.catalogGeneration : "";
+  const submitInput = (
+    attemptId: string,
+    deploymentId: string,
+  ): inferenceRpc.InferenceRpcSubmitInputV1 => ({
+    version: V1_0,
+    envelope: envelope(attemptId, {}, GOLDEN_NOW + 60_000),
+    target: {
+      deploymentId,
+      expectedDeploymentEpoch: "epoch-1",
+      catalogGeneration: generation,
+      workerIncarnation: "inc-golden",
+    },
+    cancelId: `cancel-${attemptId}`,
+  });
+  const first = submitInput("att-golden-1", LOCAL);
+  await call("submit", first, () => client.submit(first));
+  await call("stream", { attemptId: "att-golden-1" }, () =>
+    collect(client.stream({ attemptId: "att-golden-1" })),
+  );
+  await call("status", { attemptId: "att-golden-1" }, () =>
+    client.status({ attemptId: "att-golden-1" }),
+  );
+  await call("submit", first, () => client.submit(first));
+  await call("stream", { attemptId: "att-golden-1" }, () =>
+    collect(client.stream({ attemptId: "att-golden-1" })),
+  );
+  const cli = submitInput("att-golden-cli", "deploy/worker-a/cli");
+  await call("submit", cli, () => client.submit(cli));
+  await call("cancel", { attemptId: "att-golden-none" }, () =>
+    client.cancel({ attemptId: "att-golden-none" }),
+  );
+  return JSON.parse(JSON.stringify(exchanges)) as unknown[];
+}
 
-  async function record(): Promise<unknown[]> {
-    useHost({
-      incarnation: "inc-golden",
-      now: () => GOLDEN_NOW,
-      advertisements: () => [
-        ad(LOCAL),
-        ad("deploy/worker-a/cli", { backendKind: "cli", bindingId: "fakecli" }),
-      ],
-    });
-    const client = createEmbeddedInferenceRpcClient(goldenClaims);
-    const exchanges: unknown[] = [];
-    const call = async (
-      procedure: string,
-      input: unknown,
-      run: () => Promise<unknown>,
-    ): Promise<unknown> => {
-      const output = await run();
-      exchanges.push({ procedure, input, output });
-      return output;
-    };
-    const negotiate = {
-      versions: [V1_0],
-      requiredFeatures: ["execution-event-v1"],
-      optionalFeatures: ["attempt-status", "x-future"],
-    };
-    await call("negotiate", negotiate, () => client.negotiate(negotiate));
-    const tooNew = {
-      versions: [{ major: 2, minor: 0 }],
-      requiredFeatures: [],
-      optionalFeatures: [],
-    };
-    await call("negotiate", tooNew, () => client.negotiate(tooNew));
-    await call("catalog", null, () => client.catalog());
-    const listing = await client.catalog();
-    const generation = listing.outcome === "catalog" ? listing.catalogGeneration : "";
-    const submitInput = (
-      attemptId: string,
-      deploymentId: string,
-    ): inferenceRpc.InferenceRpcSubmitInputV1 => ({
-      version: V1_0,
-      envelope: envelope(attemptId, {}, GOLDEN_NOW + 60_000),
-      target: {
-        deploymentId,
-        expectedDeploymentEpoch: "epoch-1",
-        catalogGeneration: generation,
-        workerIncarnation: "inc-golden",
-      },
-      cancelId: `cancel-${attemptId}`,
-    });
-    const first = submitInput("att-golden-1", LOCAL);
-    await call("submit", first, () => client.submit(first));
-    await call("stream", { attemptId: "att-golden-1" }, () =>
-      collect(client.stream({ attemptId: "att-golden-1" })),
-    );
-    await call("status", { attemptId: "att-golden-1" }, () =>
-      client.status({ attemptId: "att-golden-1" }),
-    );
-    await call("submit", first, () => client.submit(first));
-    await call("stream", { attemptId: "att-golden-1" }, () =>
-      collect(client.stream({ attemptId: "att-golden-1" })),
-    );
-    const cli = submitInput("att-golden-cli", "deploy/worker-a/cli");
-    await call("submit", cli, () => client.submit(cli));
-    await call("cancel", { attemptId: "att-golden-none" }, () =>
-      client.cancel({ attemptId: "att-golden-none" }),
-    );
-    return JSON.parse(JSON.stringify(exchanges)) as unknown[];
-  }
+function goldenExchanges(): unknown[] {
+  return (JSON.parse(readFileSync(GOLDEN_PATH, "utf8")) as { exchanges: unknown[] }).exchanges;
+}
 
+describe("golden exchanges", () => {
   test("the embedded exchanges match golden.json by value", async () => {
-    const golden = JSON.parse(readFileSync(GOLDEN_PATH, "utf8")) as { exchanges: unknown[] };
-    expect(await record()).toEqual(golden.exchanges);
+    expect(await recordGolden(() => createEmbeddedInferenceRpcClient(GOLDEN_CLAIMS))).toEqual(
+      goldenExchanges(),
+    );
   });
 
   test("every golden stream is a valid ExecutionEventV1 attempt or a status, never a replay", () => {
@@ -1092,5 +1135,833 @@ describe("the worker-rpc executor behind the unified proxy", () => {
     expect(ok.status).toBe(200);
     expect(await ok.text()).toContain("[DONE]");
     expect(engine.requests).toHaveLength(1);
+  });
+});
+
+// ---- remote transports ------------------------------------------------------
+
+const TUNNEL_NODE = "worker-a-tunnel";
+
+interface Transports {
+  worker: RunningAgent;
+  workerNode: ClusterNode;
+  workerToken: string;
+  central: RunningAgent;
+  centralCertificate: string;
+  centralFingerprint: string;
+  centralToken: string;
+  stop: () => Promise<void>;
+}
+
+/**
+ * A WebSocket constructor that trusts only `ca`. Bun's WebSocket takes TLS
+ * options as its second argument; the DOM typings know only protocols.
+ */
+function pinnedWebSocket(ca: string): ClientWebSocketConstructor {
+  const BunWebSocket = WebSocket as unknown as new (
+    url: string,
+    options: { tls: { ca: string } },
+  ) => WebSocket;
+  return class extends BunWebSocket {
+    constructor(url: string) {
+      super(url, { tls: { ca } });
+    }
+  } as unknown as ClientWebSocketConstructor;
+}
+
+/**
+ * The worker agent serves the RPC over pinned HTTPS and dials the central
+ * agent over a pinned wss tunnel; central's relay is the tunnel transport.
+ * Both agents serve the one published worker host, so either transport
+ * reaches the same attempts.
+ */
+async function startTransports(): Promise<Transports> {
+  const dir = mkdtempSync(join(tmpdir(), "p41-transports-"));
+  const certFor = (name: string): ReturnType<typeof tls.generateSelfSignedCert> =>
+    tls.generateSelfSignedCert({
+      dir: join(dir, name),
+      commonName: "127.0.0.1",
+      hostnames: ["127.0.0.1", "localhost"],
+    });
+  const centralCert = await certFor("central");
+  const workerCert = await certFor("worker");
+  const centralToken = auth.generateToken();
+  const workerToken = auth.generateToken();
+  const tunnelBearer = auth.generateToken();
+  const central = startAgentServer({
+    bindHost: "127.0.0.1",
+    port: 0,
+    tokenHash: centralToken.hash,
+    tls: { certPath: centralCert.certPath, keyPath: centralCert.keyPath },
+    advertiseMdns: false,
+    tunnelCentral: { expectedBearerHash: tunnelBearer.hash },
+  });
+  let markReady = (): void => undefined;
+  const ready = new Promise<void>((resolve) => {
+    markReady = resolve;
+  });
+  const worker = startAgentServer({
+    bindHost: "127.0.0.1",
+    port: 0,
+    tokenHash: workerToken.hash,
+    tls: { certPath: workerCert.certPath, keyPath: workerCert.keyPath },
+    advertiseMdns: false,
+    tunnelDial: {
+      url: `wss://127.0.0.1:${String(central.port)}/tunnel`,
+      bearer: tunnelBearer.token,
+      nodeName: TUNNEL_NODE,
+      WebSocketCtor: pinnedWebSocket(centralCert.certPem),
+      onStateChange: (state) => {
+        if (state === "ready") markReady();
+      },
+    },
+  });
+  await ready;
+  return {
+    worker,
+    workerNode: {
+      name: WORKER,
+      endpoint: worker.url,
+      certificate: workerCert.certPem,
+      certificateFingerprint: workerCert.fingerprint,
+    },
+    workerToken: workerToken.token,
+    central,
+    centralCertificate: centralCert.certPem,
+    centralFingerprint: centralCert.fingerprint,
+    centralToken: centralToken.token,
+    stop: async (): Promise<void> => {
+      await worker.stop();
+      await central.stop();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+async function until(check: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error("condition not met in time");
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+function urlOf(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+  return input instanceof URL ? input.href : input.url;
+}
+
+function frameKind(frame: string): string | undefined {
+  return /"type":"(accepted|content|terminal)"/.exec(frame)?.[1];
+}
+
+/**
+ * A worker stream response whose transport breaks at the first SSE frame
+ * `at` matches: frames before it pass through (and the matching one too
+ * when `forward` is set), then the read side fails and the real body is
+ * cancelled, so the worker sees the disconnect.
+ */
+function cutStream(
+  res: Response,
+  at: (frame: string) => boolean,
+  opts: { forward?: boolean; before?: () => Promise<void> } = {},
+): Response {
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let pending = "";
+  let failure: Error | null = null;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller): Promise<void> {
+      if (failure !== null) {
+        controller.error(failure);
+        return;
+      }
+      const { value, done } = await reader.read();
+      if (done) {
+        controller.close();
+        return;
+      }
+      pending += decoder.decode(value, { stream: true });
+      let out = "";
+      for (let end = pending.indexOf("\n\n"); end !== -1; end = pending.indexOf("\n\n")) {
+        const frame = pending.slice(0, end + 2);
+        pending = pending.slice(end + 2);
+        if (at(frame)) {
+          if (opts.forward === true) out += frame;
+          await opts.before?.();
+          failure = new Error("connection reset by peer");
+          await reader.cancel();
+          break;
+        }
+        out += frame;
+      }
+      if (out !== "") controller.enqueue(encoder.encode(out));
+      else if (failure !== null) controller.error(failure);
+    },
+    async cancel(reason): Promise<void> {
+      await reader.cancel(reason);
+    },
+  });
+  return new Response(body, { status: res.status, headers: res.headers });
+}
+
+function queueSampler(): {
+  sample: (attemptId: string, queuedBytes: number) => void;
+  max: () => number;
+} {
+  let max = 0;
+  return {
+    sample: (_attemptId, queuedBytes): void => {
+      max = Math.max(max, queuedBytes);
+    },
+    max: () => max,
+  };
+}
+
+function recordingCancels(client: InferenceRpcClient, acks: unknown[]): InferenceRpcClient {
+  return {
+    ...client,
+    cancel: async (input): Promise<inferenceRpc.InferenceRpcCancelResultV1> => {
+      const ack = await client.cancel(input);
+      acks.push(ack);
+      return ack;
+    },
+  };
+}
+
+describe("remote transports: direct (pinned TLS) and tunnel (central relay)", () => {
+  let transports: Transports;
+  let guard: ControllerClosedGuard;
+
+  beforeAll(async () => {
+    guard = installControllerClosedGuard();
+    transports = await startTransports();
+  }, 30_000);
+
+  afterAll(async () => {
+    await transports.stop();
+    guard.dispose();
+  });
+
+  function tunnelUp(): boolean {
+    return (
+      transports.central.tunnelServer?.registry().some((e) => e.nodeName === TUNNEL_NODE) === true
+    );
+  }
+
+  beforeEach(async () => {
+    // A test that dropped the tunnel leaves the worker reconnecting.
+    await until(tunnelUp, 10_000);
+  });
+
+  /** Drop the worker's tunnel from central's side; resolves once central let go of it. */
+  async function dropTunnel(): Promise<void> {
+    expect(transports.central.tunnelServer?.disconnect(TUNNEL_NODE)).toBe(true);
+    await until(() => !tunnelUp());
+  }
+
+  function directClient(extra: Partial<DirectInferenceRpcClientOptions> = {}): InferenceRpcClient {
+    return createDirectInferenceRpcClient({
+      node: transports.workerNode,
+      token: transports.workerToken,
+      ...extra,
+    });
+  }
+
+  function tunnelClient(extra: Partial<TunnelInferenceRpcClientOptions> = {}): InferenceRpcClient {
+    return createTunnelInferenceRpcClient({
+      centralUrl: transports.central.url,
+      centralCertificate: transports.centralCertificate,
+      centralFingerprint: transports.centralFingerprint,
+      nodeName: TUNNEL_NODE,
+      bearer: transports.centralToken,
+      ...extra,
+    });
+  }
+
+  const clientFor = {
+    direct: (extra: Partial<RemoteExtra> = {}): InferenceRpcClient => directClient(extra),
+    tunnel: (extra: Partial<RemoteExtra> = {}): InferenceRpcClient => tunnelClient(extra),
+  };
+  type RemoteExtra = Pick<DirectInferenceRpcClientOptions, "limits" | "onStreamQueue">;
+  const TRANSPORTS: ("direct" | "tunnel")[] = ["direct", "tunnel"];
+
+  /** The worker host for remote callers; their claims are derived server-side. */
+  function useRemoteHost(opts: Partial<WorkerRpcHostOptions> = {}): WorkerRpcHost {
+    return useHost({ resolveClaims: () => claims(), ...opts });
+  }
+
+  /** Serve `overrides` on top of the current host until the test ends. */
+  function wrapHost(overrides: Partial<WorkerRpcHost>): WorkerRpcHost {
+    const base = host;
+    if (base === undefined) throw new Error("no host to wrap");
+    const undo = publishWorkerRpcHost({ ...base, ...overrides });
+    const prior = restore;
+    restore = (): void => {
+      undo();
+      prior?.();
+    };
+    return base;
+  }
+
+  function statusNow(attemptId: string): inferenceRpc.InferenceRpcStatusResultV1 {
+    return currentWorkerRpcHost().status(claims(), { attemptId });
+  }
+
+  function executorOver(
+    client: InferenceRpcClient,
+    extra: Partial<WorkerRpcExecutorOptions> = {},
+  ): BackendExecutor {
+    return createWorkerRpcExecutor({
+      client,
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+      ...extra,
+    });
+  }
+
+  async function execute(
+    client: InferenceRpcClient,
+    attemptId: string,
+  ): Promise<{ res: Response; env: inferenceContracts.InferenceEnvelopeV1 }> {
+    const env = envelope(attemptId);
+    return { res: await executorOver(client).execute(env, ctxFor(env)), env };
+  }
+
+  describe("golden equivalence (A2)", () => {
+    test.each(TRANSPORTS)("the %s exchanges match golden.json by value", async (transport) => {
+      expect(await recordGolden(() => clientFor[transport]())).toEqual(goldenExchanges());
+    });
+  });
+
+  describe("transport by declared owner", () => {
+    function candidate(
+      ownerNodeId: string,
+      overrides: Partial<Ad> = {},
+    ): routingCatalog.RouteCandidate {
+      return {
+        advertisement: ad(LOCAL, { ownerNodeId, ...overrides }),
+        alias: `public/${LOCAL}`,
+        source: "advertised",
+        legacyWinner: false,
+      };
+    }
+
+    test("the owner's kubeconfig node selects embedded, direct or tunnel; an undeclared or unpinned owner fails closed", async () => {
+      useRemoteHost();
+      const fallback: string[] = [];
+      const peers: PeerNode[] = [
+        {
+          id: "worker-direct",
+          endpoint: transports.worker.url,
+          certificate: transports.workerNode.certificate ?? "",
+          fingerprint: transports.workerNode.certificateFingerprint ?? "",
+          token: transports.workerToken,
+        },
+        {
+          id: "worker-tunnel",
+          endpoint: "https://127.0.0.1:1",
+          tunnelPreferred: true,
+          tunnelCentralUrl: transports.central.url,
+          tunnelCentralCertificate: transports.centralCertificate,
+          tunnelCentralFingerprint: transports.centralFingerprint,
+          tunnelRelayToken: transports.centralToken,
+          tunnelNodeName: TUNNEL_NODE,
+        },
+        { id: "worker-unpinned", endpoint: "https://192.0.2.1:7843", token: "t" },
+      ];
+      const acquire = (owner: string, overrides: Partial<Ad> = {}): BackendExecutor | null =>
+        acquireWorkerRpcExecutor(candidate(owner, overrides), {
+          nodeId: "gw",
+          scope: TENANT,
+          fallback: recordingFallback(fallback),
+          peers: () => peers,
+        });
+      expect(acquire("gw")?.describe().id).toBe("worker-rpc-executor:embedded");
+      for (const [owner, transport] of [
+        ["worker-direct", "direct"],
+        ["worker-tunnel", "tunnel"],
+      ] as const) {
+        const executor = acquire(owner);
+        expect(executor?.describe().id).toBe(`worker-rpc-executor:${transport}`);
+        const env = envelope(`att-owner-${transport}`);
+        const res = await executor!.execute(env, ctxFor(env));
+        expect(res.status).toBe(200);
+        expect(res.headers.get("x-llamactl-worker-transport")).toBe(transport);
+        expect(await res.text()).toContain("[DONE]");
+      }
+      for (const owner of ["worker-unpinned", "worker-undeclared"]) {
+        const env = envelope(`att-${owner}`);
+        const res = await acquire(owner)!.execute(env, ctxFor(env));
+        expect(res.status).toBe(503);
+        expect(await res.json()).toMatchObject({ error: { code: "target-unavailable" } });
+      }
+      expect(acquire("worker-direct", { transport: "local-http" })).toBeNull();
+      expect(fallback).toEqual([]);
+      expect(engine.requests).toHaveLength(2);
+    });
+  });
+
+  describe("disconnect at each acceptance point (A8, A3, X4)", () => {
+    test("direct, before the acknowledgement: a lost acknowledgement is resolved through status and runs once; a lost submit is unknown", async () => {
+      useRemoteHost();
+      const pinned = makePinnedFetch(transports.workerNode);
+      let reached = 0;
+      const lossy =
+        (sendFirst: boolean): PinnedFetch =>
+        async (input, init) => {
+          if (!urlOf(input).includes("inferenceRpc.submit")) return await pinned(input, init);
+          if (!sendFirst) throw new Error("connection refused");
+          reached += 1;
+          await (await pinned(input, init)).text();
+          throw new Error("connection reset before the acknowledgement");
+        };
+      const queue = queueSampler();
+      const lost = await execute(
+        directClient({ fetch: lossy(true), onStreamQueue: queue.sample }),
+        "att-d-ack",
+      );
+      expect(lost.res.status).toBe(200);
+      const body = await lost.res.text();
+      expect(body).toContain('"content":"Hel"');
+      expect(body.trimEnd().endsWith("data: [DONE]")).toBe(true);
+      expect(reached).toBe(1);
+      expect(engine.requests).toHaveLength(1);
+      expect(statusNow("att-d-ack")).toMatchObject({
+        state: "terminal",
+        terminal: { outcome: "completed" },
+      });
+
+      const never = await execute(directClient({ fetch: lossy(false) }), "att-d-never");
+      expect(never.res.status).toBe(502);
+      expect(await never.res.json()).toMatchObject({ error: { code: "unknown-outcome" } });
+      expect(statusNow("att-d-never")).toMatchObject({ state: "unknown" });
+      expect(engine.requests).toHaveLength(1);
+      expect(queue.max()).toBeLessThanOrEqual(DEFAULT_STREAM_LIMITS.maxQueuedBytes);
+    });
+
+    test("direct, after acceptance before attach: the attempt is cancelled unstarted and nothing runs", async () => {
+      useRemoteHost();
+      const pinned = makePinnedFetch(transports.workerNode);
+      const refusing: PinnedFetch = async (input, init) => {
+        if (urlOf(input).includes("inferenceRpc.stream")) throw new Error("connection refused");
+        return await pinned(input, init);
+      };
+      const { res } = await execute(directClient({ fetch: refusing }), "att-d-attach");
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: { code: "cancelled" } });
+      expect(statusNow("att-d-attach")).toMatchObject({
+        state: "terminal",
+        terminal: { outcome: "cancelled", started: false },
+      });
+      expect(engine.requests).toHaveLength(0);
+    });
+
+    test("direct, after acceptance before the first event: the engine request is aborted and resolved through status", async () => {
+      engine.setScript({ holdAfter: 0 });
+      useRemoteHost();
+      const pinned = makePinnedFetch(transports.workerNode);
+      const cutting: PinnedFetch = async (input, init) => {
+        const res = await pinned(input, init);
+        if (!urlOf(input).includes("inferenceRpc.stream")) return res;
+        return cutStream(res, (frame) => frameKind(frame) === "accepted", {
+          before: () => until(() => engine.requests.length === 1),
+        });
+      };
+      const aborted = engine.nextAbort();
+      const { res } = await execute(directClient({ fetch: cutting }), "att-d-first");
+      await aborted;
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: { code: "cancelled" } });
+      expect(statusNow("att-d-first")).toMatchObject({
+        state: "terminal",
+        terminal: { outcome: "cancelled", started: true },
+      });
+      expect(engine.requests).toHaveLength(1);
+    });
+
+    test("direct, mid-stream: the engine request is aborted and the cancel follows the relayed output", async () => {
+      engine.setScript({ holdAfter: 1 });
+      useRemoteHost();
+      const pinned = makePinnedFetch(transports.workerNode);
+      const cutting: PinnedFetch = async (input, init) => {
+        const res = await pinned(input, init);
+        if (!urlOf(input).includes("inferenceRpc.stream")) return res;
+        return cutStream(res, (frame) => frameKind(frame) === "content", { forward: true });
+      };
+      const aborted = engine.nextAbort();
+      const { res } = await execute(directClient({ fetch: cutting }), "att-d-mid");
+      const body = await res.text();
+      await aborted;
+      expect(body).toContain('"content":"Hel"');
+      expect(body).toContain('"code":"cancelled"');
+      expect(body).not.toContain("[DONE]");
+      expect(statusNow("att-d-mid")).toMatchObject({
+        state: "terminal",
+        terminal: { outcome: "cancelled", started: true },
+      });
+      expect(engine.requests).toHaveLength(1);
+    });
+
+    test("direct, after the terminal before delivery: status proves completion; lost output is never claimed complete", async () => {
+      useRemoteHost();
+      const pinned = makePinnedFetch(transports.workerNode);
+      const cuttingAt =
+        (at: (frame: string) => boolean): PinnedFetch =>
+        async (input, init) => {
+          const res = await pinned(input, init);
+          if (!urlOf(input).includes("inferenceRpc.stream")) return res;
+          return cutStream(res, at);
+        };
+      const onlyTerminal = await execute(
+        directClient({ fetch: cuttingAt((f) => frameKind(f) === "terminal") }),
+        "att-d-term",
+      );
+      const complete = await onlyTerminal.res.text();
+      expect(complete).toContain('"content":"lo"');
+      expect(complete.trimEnd().endsWith("data: [DONE]")).toBe(true);
+
+      const withOutput = await execute(
+        directClient({ fetch: cuttingAt((f) => f.includes('"content":"lo"')) }),
+        "att-d-term-lost",
+      );
+      const partial = await withOutput.res.text();
+      expect(partial).toContain('"content":"Hel"');
+      expect(partial).not.toContain('"content":"lo"');
+      expect(partial).toContain('"code":"incomplete"');
+      expect(partial).not.toContain("[DONE]");
+      for (const attemptId of ["att-d-term", "att-d-term-lost"]) {
+        expect(statusNow(attemptId)).toMatchObject({
+          state: "terminal",
+          terminal: { outcome: "completed" },
+        });
+      }
+      expect(engine.requests).toHaveLength(2);
+      expect(engine.aborts()).toBe(0);
+    });
+
+    test("tunnel, before the acknowledgement: acceptance survives the reconnect and the attempt runs once", async () => {
+      const base = useRemoteHost();
+      let submits = 0;
+      wrapHost({
+        // tRPC awaits the resolver, so the acknowledgement only leaves
+        // after central dropped the tunnel: it is lost with the link.
+        submit: ((
+          claimsIn: Claims | undefined,
+          input: inferenceRpc.InferenceRpcSubmitRequestV1,
+        ) => {
+          submits += 1;
+          const result = base.submit(claimsIn, input);
+          return dropTunnel().then(() => result);
+        }) as unknown as WorkerRpcHost["submit"],
+      });
+      const { res } = await execute(tunnelClient(), "att-t-ack");
+      expect(res.status).toBe(200);
+      const body = await res.text();
+      expect(body).toContain('"content":"Hel"');
+      expect(body.trimEnd().endsWith("data: [DONE]")).toBe(true);
+      expect(submits).toBe(1);
+      expect(engine.requests).toHaveLength(1);
+    });
+
+    test("tunnel, after acceptance before attach: the attempt is cancelled unstarted across the reconnect", async () => {
+      useRemoteHost();
+      const real = tunnelClient();
+      const client: InferenceRpcClient = {
+        ...real,
+        stream: async function* (input, signal) {
+          await dropTunnel();
+          yield* real.stream(input, signal);
+        },
+      };
+      const { res } = await execute(client, "att-t-attach");
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: { code: "cancelled" } });
+      expect(statusNow("att-t-attach")).toMatchObject({
+        state: "terminal",
+        terminal: { outcome: "cancelled", started: false },
+      });
+      expect(engine.requests).toHaveLength(0);
+    });
+
+    test("tunnel, after acceptance before the first event: the drop aborts the engine request", async () => {
+      engine.setScript({ holdAfter: 0 });
+      const base = useRemoteHost();
+      wrapHost({
+        stream: async function* (claimsIn, input, signal) {
+          const frames = base.stream(claimsIn, input, signal)[Symbol.asyncIterator]();
+          await frames.next(); // the acceptance, never forwarded
+          const rest = frames.next(); // starts the engine request
+          await until(() => engine.requests.length === 1);
+          await dropTunnel();
+          await rest;
+          await frames.return?.(undefined);
+          yield* [];
+        },
+      });
+      const aborted = engine.nextAbort();
+      const { res } = await execute(tunnelClient(), "att-t-first");
+      await aborted;
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: { code: "cancelled" } });
+      expect(statusNow("att-t-first")).toMatchObject({
+        state: "terminal",
+        terminal: { outcome: "cancelled", started: true },
+      });
+    });
+
+    test("tunnel, mid-stream: the drop aborts the engine request and the terminal arrives across the reconnect", async () => {
+      engine.setScript({ holdAfter: 1 });
+      useRemoteHost();
+      const real = tunnelClient();
+      const client: InferenceRpcClient = {
+        ...real,
+        stream: async function* (input, signal) {
+          for await (const frame of real.stream(input, signal)) {
+            yield frame;
+            if (frame.frame === "event" && frame.event.type === "content") await dropTunnel();
+          }
+        },
+      };
+      const aborted = engine.nextAbort();
+      const { res } = await execute(client, "att-t-mid");
+      const body = await res.text();
+      await aborted;
+      expect(body).toContain('"content":"Hel"');
+      expect(body).toContain('"code":"cancelled"');
+      expect(body).not.toContain("[DONE]");
+      expect(statusNow("att-t-mid")).toMatchObject({
+        state: "terminal",
+        terminal: { outcome: "cancelled", started: true },
+      });
+      expect(engine.requests).toHaveLength(1);
+    });
+
+    test("tunnel, after the terminal before delivery: the completed terminal is recovered across the reconnect", async () => {
+      const base = useRemoteHost();
+      let outputDelivered = (): void => undefined;
+      const delivered = new Promise<void>((resolve) => {
+        outputDelivered = resolve;
+      });
+      // The worker holds its terminal until the caller has all the output,
+      // then the tunnel drops and the terminal goes out on the dead link.
+      wrapHost({
+        stream: async function* (claimsIn, input, signal) {
+          for await (const frame of base.stream(claimsIn, input, signal)) {
+            if (frame.frame === "event" && frame.event.type === "terminal") {
+              await delivered;
+              await dropTunnel();
+            }
+            yield frame;
+          }
+        },
+      });
+      const real = tunnelClient();
+      const client: InferenceRpcClient = {
+        ...real,
+        stream: async function* (input, signal) {
+          for await (const frame of real.stream(input, signal)) {
+            if (JSON.stringify(frame).includes('"content":"lo"')) outputDelivered();
+            yield frame;
+          }
+        },
+      };
+      const { res } = await execute(client, "att-t-term");
+      const body = await res.text();
+      expect(body).toContain('"content":"lo"');
+      expect(body.trimEnd().endsWith("data: [DONE]")).toBe(true);
+      expect(statusNow("att-t-term")).toMatchObject({
+        state: "terminal",
+        terminal: { outcome: "completed" },
+      });
+      expect(engine.requests).toHaveLength(1);
+      expect(engine.aborts()).toBe(0);
+    });
+  });
+
+  describe("bounded streaming toward a slow consumer (X3)", () => {
+    const limits = { maxFrameBytes: 8 * 1024, maxQueuedBytes: 16 * 1024 };
+
+    test.each(TRANSPORTS)(
+      "%s: queued bytes stay under the cap; overflow ends the stream typed and cancels upstream",
+      async (transport) => {
+        const pieces = Array.from({ length: 400 }, (_, i) => `p${String(i)}-${"x".repeat(200)}`);
+        engine.setScript({ pieces, holdAfter: pieces.length });
+        useRemoteHost();
+        const queue = queueSampler();
+        const acks: unknown[] = [];
+        let centralQueued = 0;
+        const client = recordingCancels(
+          clientFor[transport]({
+            limits,
+            onStreamQueue: (attemptId, bytes) => {
+              queue.sample(attemptId, bytes);
+              centralQueued = Math.max(
+                centralQueued,
+                transports.central.tunnelServer?.queuedBytes(TUNNEL_NODE) ?? 0,
+              );
+            },
+          }),
+          acks,
+        );
+        const aborted = engine.nextAbort();
+        const attemptId = `att-${transport}-slow`;
+        const { res } = await execute(client, attemptId);
+        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+        await reader.read();
+        // The consumer stalls; the overflow cancels the engine request.
+        await aborted;
+        expect(queue.max()).toBeGreaterThan(0);
+        expect(queue.max()).toBeLessThanOrEqual(limits.maxQueuedBytes);
+        expect(centralQueued).toBeLessThanOrEqual(DEFAULT_STREAM_LIMITS.maxQueuedBytes);
+        let rest = "";
+        const decoder = new TextDecoder();
+        for (let r = await reader.read(); !r.done; r = await reader.read()) {
+          rest += decoder.decode(r.value, { stream: true });
+        }
+        expect(rest).toContain('"code":"stream-overflow"');
+        expect(rest).not.toContain("[DONE]");
+        expect(acks).toHaveLength(1);
+        expect(statusNow(attemptId)).toMatchObject({
+          state: "terminal",
+          terminal: { outcome: "cancelled", started: true },
+        });
+      },
+    );
+  });
+
+  describe("cancellation end to end (X4)", () => {
+    test.each(TRANSPORTS)(
+      "%s: a caller cancel reaches the engine request and the worker acknowledges it",
+      async (transport) => {
+        engine.setScript({ holdAfter: 1 });
+        useRemoteHost();
+        const acks: unknown[] = [];
+        const attemptId = `att-${transport}-cancel`;
+        const env = envelope(attemptId);
+        const executor = executorOver(recordingCancels(clientFor[transport](), acks));
+        const res = await executor.execute(env, ctxFor(env));
+        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toContain("Hel");
+        const aborted = engine.nextAbort();
+        expect(executor.cancel(attemptId)).toBe(true);
+        await aborted;
+        // The engine stops before the acknowledgement travels back.
+        await until(() => acks.length > 0);
+        await reader.cancel();
+        expect(acks[0]).toEqual({ outcome: "cancelled", attemptId });
+        expect(statusNow(attemptId)).toMatchObject({ terminal: { outcome: "cancelled" } });
+      },
+    );
+
+    test.each(TRANSPORTS)(
+      "%s: a client that disconnects mid-stream reaches the engine request, and the worker acknowledges",
+      async (transport) => {
+        engine.setScript({ holdAfter: 1 });
+        useRemoteHost();
+        const acks: unknown[] = [];
+        const attemptId = `att-${transport}-gone`;
+        const env = envelope(attemptId);
+        const res = await executorOver(recordingCancels(clientFor[transport](), acks)).execute(
+          env,
+          ctxFor(env),
+        );
+        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+        expect(new TextDecoder().decode((await reader.read()).value)).toContain("Hel");
+        const aborted = engine.nextAbort();
+        await reader.cancel();
+        await aborted;
+        await until(() => acks.length > 0);
+        expect(acks[0]).toMatchObject({ attemptId });
+        expect(statusNow(attemptId)).toMatchObject({
+          terminal: { outcome: "cancelled", started: true },
+        });
+      },
+    );
+
+    test.each(TRANSPORTS)(
+      "%s: a stream the caller leaves stops the engine through the transport alone",
+      async (transport) => {
+        engine.setScript({ holdAfter: 1 });
+        useRemoteHost();
+        const client = clientFor[transport]();
+        const attemptId = `att-${transport}-leave`;
+        expect(rejectionCode(await submit(client, attemptId))).toBe("accepted");
+        const aborted = engine.nextAbort();
+        for await (const frame of client.stream({ attemptId })) {
+          if (frame.frame === "event" && frame.event.type === "content") break;
+        }
+        await aborted;
+        await until(() => isTerminal(attemptId));
+        expect(statusNow(attemptId)).toMatchObject({
+          terminal: { outcome: "cancelled", started: true },
+        });
+      },
+    );
+
+    function isTerminal(attemptId: string): boolean {
+      const status = statusNow(attemptId);
+      return status.outcome === "status" && status.state === "terminal";
+    }
+  });
+
+  describe("client call timeouts", () => {
+    test("direct: a negotiation that times out fails closed with a typed unavailable result", async () => {
+      useRemoteHost();
+      const pinned = makePinnedFetch(transports.workerNode);
+      const stalled: PinnedFetch = async (input, init) => {
+        if (!urlOf(input).includes("inferenceRpc.negotiate")) return await pinned(input, init);
+        return await new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
+        });
+      };
+      const calls: string[] = [];
+      const env = envelope("att-d-timeout");
+      const started = Date.now();
+      const res = await createWorkerRpcExecutor({
+        client: directClient({ fetch: stalled, callTimeoutMs: 100 }),
+        deploymentId: LOCAL,
+        fallback: recordingFallback(calls),
+        nodeId: "gw",
+      }).execute(env, ctxFor(env));
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({
+        error: {
+          code: "target-unavailable",
+          message: expect.stringContaining("timed out") as unknown,
+        },
+      });
+      expect(calls).toEqual([]);
+      expect(engine.requests).toHaveLength(0);
+    });
+
+    test("tunnel: a submit that times out is resolved through status; unknown is surfaced, never replayed", async () => {
+      useRemoteHost();
+      let submits = 0;
+      const stalled: PinnedFetch = async (input, init) => {
+        const body = typeof init?.body === "string" ? init.body : "";
+        if (!body.includes("inferenceRpc.submit")) return await fetch(input, init);
+        submits += 1;
+        return await new Promise<Response>((_, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(Object.assign(new Error("timed out"), { name: "TimeoutError" }));
+          });
+        });
+      };
+      const { res } = await execute(
+        tunnelClient({ fetch: stalled, callTimeoutMs: 100 }),
+        "att-t-timeout",
+      );
+      expect(res.status).toBe(502);
+      expect(await res.json()).toMatchObject({ error: { code: "unknown-outcome" } });
+      expect(submits).toBe(1);
+      expect(statusNow("att-t-timeout")).toMatchObject({ state: "unknown" });
+      expect(engine.requests).toHaveLength(0);
+    });
   });
 });

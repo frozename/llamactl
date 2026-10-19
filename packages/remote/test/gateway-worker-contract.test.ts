@@ -3,11 +3,16 @@
  * A real agent (random port, self-signed certificate) serves the worker
  * RPC on its tRPC route, backed by the shared fake engine. The producer
  * is driven over the wire with certificate-pinned fetch, then again
- * through the P0.2 unified proxy with a `worker-rpc` candidate, and every
- * emitted stream is checked against the consumer's real schema: Nova's
- * `ExecutionEventV1Schema` and `validateExecutionEventSequence`.
+ * through the P0.2 unified proxy with a `worker-rpc` candidate — owned by
+ * the gateway itself (embedded), and by a remote worker reached over its
+ * declared transport: direct pinned TLS, or the reverse tunnel through a
+ * central agent's relay. Every emitted stream is checked against the
+ * consumer's real schema: Nova's `ExecutionEventV1Schema` and
+ * `validateExecutionEventSequence`.
  */
 import type { routingCatalog } from "@llamactl/core";
+import type { PeerNode } from "@llamactl/core/config/peers";
+import type { ClusterNode } from "@llamactl/core/config/schema";
 
 import { resolveEnv } from "@llamactl/core/env";
 import {
@@ -18,10 +23,12 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
+import type { ClientWebSocketConstructor } from "../src/tunnel/tunnel-client.js";
+
 import { envForTemp, makeTempRuntime } from "../../core/test/helpers.js";
 import { makePinnedFetch, type PinnedFetch } from "../src/client/links.js";
-import { config as kubecfg } from "../src/index.js";
-import { createProxy } from "../src/proxy/create-proxy.js";
+import { auth, config as kubecfg, type RunningAgent, startAgentServer, tls } from "../src/index.js";
+import { createProxy, type UnifiedProxy } from "../src/proxy/create-proxy.js";
 import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
 import {
@@ -42,6 +49,7 @@ const LOCAL_DEPLOYMENT = `deploy/${WORKER_ID}/wl-rpc`;
 const AD_ALIAS = "rpc-alias";
 const AD_UPSTREAM = "rpc-upstream";
 const AD_DEPLOYMENT = `deploy/${WORKER_ID}/rpc-ad`;
+const TUNNEL_NODE = `${WORKER_ID}-tunnel`;
 const TENANT = "local";
 const ENV_KEYS = [
   "DEV_STORAGE",
@@ -60,6 +68,10 @@ let pinned: PinnedFetch;
 let bearer = "";
 let guard: ControllerClosedGuard;
 let restoreHost: (() => void) | undefined;
+let workerNode: ClusterNode;
+let central: RunningAgent | undefined;
+let dialer: RunningAgent | undefined;
+let centralTrust: { url: string; certificate: string; fingerprint: string; token: string };
 const envBackup: Record<string, string | undefined> = {};
 const recordedSubmitFrames: unknown[][] = [];
 const recordedStreamFrames: unknown[][] = [];
@@ -242,6 +254,72 @@ function publishRecordingHost(): void {
   restoreHost = procedures.publishWorkerRpcHost(recording);
 }
 
+/**
+ * A WebSocket constructor that trusts only `ca`. Bun's WebSocket takes TLS
+ * options as its second argument; the DOM typings know only protocols.
+ */
+function pinnedWebSocket(ca: string): ClientWebSocketConstructor {
+  const BunWebSocket = WebSocket as unknown as new (
+    url: string,
+    options: { tls: { ca: string } },
+  ) => WebSocket;
+  return class extends BunWebSocket {
+    constructor(url: string) {
+      super(url, { tls: { ca } });
+    }
+  } as unknown as ClientWebSocketConstructor;
+}
+
+/**
+ * A central agent (pinned TLS) and a second agent that dials it as
+ * `TUNNEL_NODE`. Both agents serve the process's one published worker
+ * host, so the tunnel reaches the same worker as the direct dial.
+ */
+async function startTunnel(dir: string): Promise<void> {
+  const cert = await tls.generateSelfSignedCert({
+    dir,
+    commonName: "127.0.0.1",
+    hostnames: ["127.0.0.1", "localhost"],
+  });
+  const relay = auth.generateToken();
+  const tunnelBearer = auth.generateToken();
+  const started = startAgentServer({
+    bindHost: "127.0.0.1",
+    port: 0,
+    tokenHash: relay.hash,
+    tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+    advertiseMdns: false,
+    tunnelCentral: { expectedBearerHash: tunnelBearer.hash },
+  });
+  central = started;
+  let markReady = (): void => undefined;
+  const ready = new Promise<void>((resolve) => {
+    markReady = resolve;
+  });
+  dialer = startAgentServer({
+    bindHost: "127.0.0.1",
+    port: 0,
+    tokenHash: auth.generateToken().hash,
+    advertiseMdns: false,
+    tunnelDial: {
+      url: `wss://127.0.0.1:${String(started.port)}/tunnel`,
+      bearer: tunnelBearer.token,
+      nodeName: TUNNEL_NODE,
+      WebSocketCtor: pinnedWebSocket(cert.certPem),
+      onStateChange: (state) => {
+        if (state === "ready") markReady();
+      },
+    },
+  });
+  await ready;
+  centralTrust = {
+    url: started.url,
+    certificate: cert.certPem,
+    fingerprint: cert.fingerprint,
+    token: relay.token,
+  };
+}
+
 beforeAll(async () => {
   guard = installControllerClosedGuard();
   for (const key of ENV_KEYS) envBackup[key] = process.env[key];
@@ -262,8 +340,10 @@ beforeAll(async () => {
   const node = cfg.clusters.flatMap((c) => c.nodes).find((n) => n.name === WORKER_ID);
   if (node === undefined) throw new Error("cluster node missing from kubeconfig");
   pinned = makePinnedFetch(node);
+  workerNode = node;
   bearer = cfg.users.find((u) => u.name === "me")?.token ?? "";
   publishRecordingHost();
+  await startTunnel(join(temp.devStorage, "tunnel-central"));
 });
 
 beforeEach(() => {
@@ -275,6 +355,8 @@ beforeEach(() => {
 afterAll(async () => {
   try {
     restoreHost?.();
+    await dialer?.stop();
+    await central?.stop();
     await cluster?.cleanup();
     await engine.stop();
     temp.cleanup();
@@ -376,5 +458,78 @@ describe("InferenceRpcV1 gateway–worker round trip", () => {
     });
     expect(engine.requests).toHaveLength(1);
     expect(engine.requests[0]?.body?.["model"]).toBe(AD_UPSTREAM);
+  });
+});
+
+describe("InferenceRpcV1 through the unified proxy to a remote owner", () => {
+  function proxyFor(peer: PeerNode): UnifiedProxy {
+    return createProxy({
+      env: { LLAMACTL_UNIFIED_PROXY: "1" },
+      resolved: () => resolveEnv(),
+      nodeId: "gateway",
+      peers: [peer],
+      advertisements: [workerAdvertisement()],
+    });
+  }
+
+  async function chat(proxy: UnifiedProxy): Promise<{ res: Response; body: string }> {
+    const res = await proxy.handleRequest(
+      new Request("http://127.0.0.1/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: AD_ALIAS,
+          stream: true,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+    );
+    return { res, body: await res.text() };
+  }
+
+  function expectOneRemoteRun(res: Response, body: string, transport: string): void {
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-llamactl-worker-transport")).toBe(transport);
+    expect(body).toContain('"content":"Hel"');
+    expect(body.trimEnd().endsWith("data: [DONE]")).toBe(true);
+    expect(recordedSubmitFrames).toHaveLength(1);
+    expect(recordedStreamFrames).toHaveLength(1);
+    const events = expectOneValidAttempt(recordedStreamFrames[0] ?? []);
+    const terminal = events.at(-1);
+    expect(terminal?.type === "terminal" ? terminal.terminal : null).toMatchObject({
+      outcome: "completed",
+      model: AD_UPSTREAM,
+      deployment: AD_DEPLOYMENT,
+    });
+    expect(engine.requests).toHaveLength(1);
+    expect(engine.requests[0]?.body?.["model"]).toBe(AD_UPSTREAM);
+    expect(engine.requests[0]?.authorization).toBeNull();
+  }
+
+  test("over the direct transport: the owner's pinned endpoint runs the fixed deployment once", async () => {
+    const proxy = proxyFor({
+      id: WORKER_ID,
+      endpoint: workerNode.endpoint,
+      certificate: workerNode.certificate ?? "",
+      fingerprint: workerNode.certificateFingerprint ?? "",
+      token: bearer,
+    });
+    const { res, body } = await chat(proxy);
+    expectOneRemoteRun(res, body, "direct");
+  });
+
+  test("over the tunnel transport: a tunnelPreferred owner runs once through central's relay", async () => {
+    const proxy = proxyFor({
+      id: WORKER_ID,
+      endpoint: "https://192.0.2.1:7843",
+      tunnelPreferred: true,
+      tunnelNodeName: TUNNEL_NODE,
+      tunnelCentralUrl: centralTrust.url,
+      tunnelCentralCertificate: centralTrust.certificate,
+      tunnelCentralFingerprint: centralTrust.fingerprint,
+      tunnelRelayToken: centralTrust.token,
+    });
+    const { res, body } = await chat(proxy);
+    expectOneRemoteRun(res, body, "tunnel");
   });
 });

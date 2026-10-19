@@ -348,13 +348,18 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
     ((req: Request): Promise<Response> => openaiProxy.proxyOpenAI(req, resolve()));
   const now: () => number = opts.now ?? ((): number => Date.now());
   const nodeId = opts.nodeId ?? LOCAL_NODE_NAME;
-  // worker-rpc candidates run on the worker RPC; everything else, and any
-  // owner the RPC cannot reach yet, keeps the default executor.
+  // worker-rpc candidates run on the worker RPC, over the transport their
+  // declared owner's kubeconfig node selects; everything else keeps the
+  // default executor.
   const acquireExecutor =
     opts.acquireExecutor ??
     ((candidate: routingCatalog.RouteCandidate): BackendExecutor =>
-      acquireWorkerRpcExecutor(candidate, { nodeId, scope: EMBEDDED_SCOPE, fallback: executor }) ??
-      executor);
+      acquireWorkerRpcExecutor(candidate, {
+        nodeId,
+        scope: EMBEDDED_SCOPE,
+        fallback: executor,
+        peers: configuredPeers,
+      }) ?? executor);
 
   function configuredPeers(): PeerNode[] {
     if (opts.peers !== undefined) return opts.peers;
