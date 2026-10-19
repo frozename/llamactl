@@ -613,3 +613,113 @@ describe("InferenceRpcV1 through the unified proxy to a remote owner", () => {
     expectOneRemoteRun(res, body, "tunnel");
   });
 });
+
+/**
+ * Production naming, with nothing injected: the gateway learns the
+ * owner's model from its peer snapshot, so listClusterRoutes names the
+ * candidate `deploy/<owner>/<owner>:<model>` with an unknown epoch, while
+ * the worker lists the deployment its real workload directory backs,
+ * `deploy/<owner>/<workload>`. The caller resolves its candidate against
+ * the owner's own catalog by model, never by guessing.
+ */
+describe("InferenceRpcV1 with production deployment naming", () => {
+  const PEER_DEPLOYMENT = `deploy/${WORKER_ID}/${WORKER_ID}:${LOCAL_MODEL}`;
+  let gatewayRuntime: string;
+
+  beforeAll(() => {
+    // The gateway's own runtime serves nothing, so the model is the peer's.
+    gatewayRuntime = join(temp.devStorage, "gateway-runtime");
+    mkdirSync(gatewayRuntime, { recursive: true });
+  });
+
+  function peerProxy(peer: PeerNode, workloads: { modelId: string }[]): UnifiedProxy {
+    const port = Number(new URL(engine.url).port);
+    return createProxy({
+      env: { LLAMACTL_UNIFIED_PROXY: "1" },
+      resolved: () => resolveEnv({ ...process.env, LOCAL_AI_RUNTIME_DIR: gatewayRuntime }),
+      nodeId: "gateway",
+      peers: [peer],
+      peerSnapshots: new Map([
+        [
+          WORKER_ID,
+          {
+            workloads: workloads.map((w) => ({ ...w, port, revision: "boot-1" })),
+            pressure: "NORMAL" as const,
+            fetchedAt: Date.now(),
+          },
+        ],
+      ]),
+    });
+  }
+
+  async function chatModel(proxy: UnifiedProxy, model: string): Promise<Response> {
+    return await proxy.handleRequest(
+      new Request("http://127.0.0.1/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model, stream: true, messages: [{ role: "user", content: "hi" }] }),
+      }),
+    );
+  }
+
+  const peers: Record<"direct" | "tunnel", () => PeerNode> = {
+    direct: () => ({
+      id: WORKER_ID,
+      endpoint: workerNode.endpoint,
+      certificate: workerNode.certificate ?? "",
+      fingerprint: workerNode.certificateFingerprint ?? "",
+    }),
+    tunnel: () => ({
+      id: WORKER_ID,
+      endpoint: "https://192.0.2.1:7843",
+      tunnelPreferred: true,
+      tunnelNodeName: TUNNEL_NODE,
+      tunnelCentralUrl: centralTrust.url,
+      tunnelCentralCertificate: centralTrust.certificate,
+      tunnelCentralFingerprint: centralTrust.fingerprint,
+      tunnelRelayToken: centralTrust.token,
+    }),
+  };
+
+  test.each(["direct", "tunnel"] as const)(
+    "%s: a peer-snapshot candidate runs once on the deployment the owner's workload backs",
+    async (transport) => {
+      const proxy = peerProxy(peers[transport](), [{ modelId: LOCAL_MODEL }]);
+      const catalog = await proxy.shadowCatalog();
+      const candidate = catalog.candidates.get(LOCAL_MODEL)?.[0]?.advertisement;
+      expect(candidate?.deploymentId).toBe(PEER_DEPLOYMENT);
+      expect(candidate?.transport).toBe("worker-rpc");
+      expect(candidate?.deploymentEpoch).toEqual({ status: "unknown" });
+
+      const res = await chatModel(proxy, LOCAL_MODEL);
+      const body = await res.text();
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-llamactl-worker-transport")).toBe(transport);
+      expect(body).toContain('"content":"Hel"');
+      expect(body.trimEnd().endsWith("data: [DONE]")).toBe(true);
+      expect(recordedSubmitFrames).toHaveLength(1);
+      expect(recordedSubmitFrames[0]?.[0]).toMatchObject({
+        outcome: "accepted",
+        deploymentId: LOCAL_DEPLOYMENT,
+      });
+      const events = expectOneValidAttempt(recordedStreamFrames[0] ?? []);
+      const terminal = events.at(-1);
+      expect(terminal?.type === "terminal" ? terminal.terminal : null).toMatchObject({
+        outcome: "completed",
+        model: LOCAL_MODEL,
+        deployment: LOCAL_DEPLOYMENT,
+      });
+      expect(engine.requests).toHaveLength(1);
+      expect(engine.requests[0]?.body?.["model"]).toBe(LOCAL_MODEL);
+    },
+  );
+
+  test("a model the owner's catalog does not list is target-unavailable, with no submit", async () => {
+    const proxy = peerProxy(peers.direct(), [{ modelId: "not-served.gguf" }]);
+    const res = await chatModel(proxy, "not-served.gguf");
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: { code: "target-unavailable" } });
+    expect(recordedSubmitFrames).toHaveLength(0);
+    expect(engine.requests).toHaveLength(0);
+  });
+});

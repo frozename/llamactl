@@ -1084,6 +1084,52 @@ describe("the worker-rpc executor behind the unified proxy", () => {
     expect(engine.requests).toHaveLength(0);
   });
 
+  test("a candidate with an unknown epoch resolves on its owner's catalog by model, never by a guess", async () => {
+    const served = "deploy/worker-a/served";
+    useHost({
+      advertisements: () => [
+        ad(served, { publicModelIds: ["model-one"], upstreamModelId: "model-one-upstream" }),
+        ad("deploy/worker-a/dup-a", { publicModelIds: ["model-dup"] }),
+        // A priority admits a second deployment for the same public model.
+        ad("deploy/worker-a/dup-b", { publicModelIds: ["model-dup"], priority: 1 }),
+      ],
+    });
+    const client = createEmbeddedInferenceRpcClient(
+      claims({ deployments: [served, "deploy/worker-a/dup-a", "deploy/worker-a/dup-b"] }),
+    );
+    // Named the way listClusterRoutes names a peer's model: deploy/<peer>/<peer>:<model>.
+    const run = async (
+      model: string,
+      ownerNodeId = WORKER,
+    ): Promise<{ status: number; body: string }> => {
+      const executor = createWorkerRpcExecutor({
+        client,
+        deploymentId: `deploy/${ownerNodeId}/${ownerNodeId}:${model}`,
+        ownerNodeId,
+        models: [model],
+        fallback: recordingFallback([]),
+        nodeId: "gw",
+      });
+      const env = envelope(`att-resolve-${model}-${ownerNodeId}`);
+      const res = await executor.execute(env, ctxFor(env));
+      return { status: res.status, body: await res.text() };
+    };
+    const ok = await run("model-one");
+    expect(ok.status).toBe(200);
+    expect(ok.body).toContain("[DONE]");
+    expect(engine.requests).toHaveLength(1);
+    expect(engine.requests[0]?.body?.["model"]).toBe("model-one-upstream");
+    for (const refused of [
+      await run("model-dup"),
+      await run("model-unlisted"),
+      await run("model-one", "worker-b"),
+    ]) {
+      expect(refused.status).toBe(503);
+      expect(JSON.parse(refused.body)).toMatchObject({ error: { code: "target-unavailable" } });
+    }
+    expect(engine.requests).toHaveLength(1);
+  });
+
   test("a stale generation refreshes the catalog exactly once, then returns the typed rejection", async () => {
     useHost();
     const real = createEmbeddedInferenceRpcClient(claims());

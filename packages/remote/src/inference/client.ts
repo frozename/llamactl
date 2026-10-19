@@ -825,9 +825,52 @@ interface SubmitPlan {
   client: InferenceRpcClient;
   deploymentId: string;
   expectedEpoch: string | undefined;
+  /** The declared owner; the worker that answers must be it. */
+  ownerNodeId: string | undefined;
+  /** The candidate's models, for resolving it on the owner when its epoch is unknown. */
+  models: readonly string[];
   version: inferenceRpc.InferenceRpcVersion;
+  /** The caller's envelope; the hop is added once the target is known. */
   envelope: Envelope;
+  nodeId: string;
   cancelId: string;
+}
+
+type Listing = Extract<inferenceRpc.InferenceRpcCatalogResultV1, { outcome: "catalog" }>;
+type ListedDeployment = Listing["deployments"][number];
+
+function unavailable(message: string): { rejection: Rejection } {
+  return { rejection: { code: "target-unavailable", message } };
+}
+
+/**
+ * The owner's own entry for the candidate. A candidate whose epoch the
+ * caller knows names the deployment exactly. One the caller learned from
+ * a peer snapshot (`deploy/<peer>/<peer>:<model>`, epoch unknown) does not
+ * share the worker's naming (`deploy/<worker>/<workload>`), so it is
+ * resolved on the owner's catalog by model: the worker must be the
+ * declared owner, and exactly one of its deployments must serve the model.
+ * None, or more than one, is target-unavailable, never a guess.
+ */
+function listedTarget(
+  plan: SubmitPlan,
+  listing: Listing,
+): { entry: ListedDeployment | undefined } | { rejection: Rejection } {
+  const exact = listing.deployments.find((d) => d.deploymentId === plan.deploymentId);
+  if (exact !== undefined || plan.expectedEpoch !== undefined) return { entry: exact };
+  // A model is no deployment id: it names no owner, so scope it to the declared one.
+  if (plan.ownerNodeId !== undefined && listing.workerId !== plan.ownerNodeId) {
+    return unavailable(`the worker answered as '${listing.workerId}', not the declared owner`);
+  }
+  const serving = listing.deployments.filter((d) =>
+    plan.models.some((model) => d.model === model || d.publicModelIds.includes(model)),
+  );
+  const models = plan.models.join("', '");
+  if (serving.length === 0) return unavailable(`the owner lists no deployment serving '${models}'`);
+  if (serving.length > 1) {
+    return unavailable(`${String(serving.length)} of the owner's deployments serve '${models}'`);
+  }
+  return { entry: serving[0] };
 }
 
 async function targetFor(
@@ -835,19 +878,16 @@ async function targetFor(
 ): Promise<{ target: inferenceRpc.InferenceRpcTargetV1 } | { rejection: Rejection }> {
   const listing = await plan.client.catalog();
   if (listing.outcome === "rejected") return { rejection: listing.rejection };
-  const entry = listing.deployments.find((d) => d.deploymentId === plan.deploymentId);
-  const epoch = plan.expectedEpoch ?? entry?.deploymentEpoch ?? null;
+  const listed = listedTarget(plan, listing);
+  if ("rejection" in listed) return listed;
+  const deploymentId = listed.entry?.deploymentId ?? plan.deploymentId;
+  const epoch = plan.expectedEpoch ?? listed.entry?.deploymentEpoch ?? null;
   if (epoch === null) {
-    return {
-      rejection: {
-        code: "target-unavailable",
-        message: `the worker lists no fenceable deployment '${plan.deploymentId}'`,
-      },
-    };
+    return unavailable(`the worker lists no fenceable deployment '${deploymentId}'`);
   }
   return {
     target: {
-      deploymentId: plan.deploymentId,
+      deploymentId,
       expectedDeploymentEpoch: epoch,
       catalogGeneration: listing.catalogGeneration,
       workerIncarnation: listing.workerIncarnation,
@@ -871,7 +911,7 @@ async function submitAgainstCatalog(plan: SubmitPlan): Promise<SubmitAnswer | Re
   try {
     return await plan.client.submit({
       version: plan.version,
-      envelope: plan.envelope,
+      envelope: withHop(plan.envelope, plan.nodeId, resolved.target.deploymentId),
       target: resolved.target,
       cancelId: plan.cancelId,
     });
@@ -1197,6 +1237,13 @@ export interface WorkerRpcExecutorOptions {
   deploymentId: string;
   /** The epoch the caller's catalog selected, when it knows one. */
   expectedEpoch?: string;
+  /** The candidate's declared owner; a worker answering as anyone else is refused. */
+  ownerNodeId?: string;
+  /**
+   * The candidate's upstream and public model ids. Without a known epoch
+   * the candidate is resolved on the owner's catalog by these.
+   */
+  models?: readonly string[];
   /** The existing path, kept for workers that positively report no RPC. */
   fallback: BackendExecutor;
   /** The calling node, appended to the visited-node chain. */
@@ -1248,8 +1295,11 @@ async function runAttempt(
     client: opts.client,
     deploymentId: opts.deploymentId,
     expectedEpoch: opts.expectedEpoch,
+    ownerNodeId: opts.ownerNodeId,
+    models: opts.models ?? [],
     version: negotiated.version,
-    envelope: withHop(envelope, opts.nodeId, opts.deploymentId),
+    envelope,
+    nodeId: opts.nodeId,
     cancelId: `cancel-${ctx.attemptId}`,
   });
   const resolver = resolverFor(opts.client, opts.resolveTimeoutMs ?? DEFAULT_RESOLVE_TIMEOUT_MS);
@@ -1488,6 +1538,8 @@ export function acquireWorkerRpcExecutor(
     client,
     deploymentId: ad.deploymentId,
     ...(ad.deploymentEpoch.status === "known" ? { expectedEpoch: ad.deploymentEpoch.value } : {}),
+    ownerNodeId: ad.ownerNodeId,
+    models: [...new Set([ad.upstreamModelId, ...ad.publicModelIds])],
     fallback: opts.fallback,
     nodeId: opts.nodeId,
   });
