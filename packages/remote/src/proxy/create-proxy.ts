@@ -26,6 +26,7 @@ import {
 } from "@llamactl/core/workloadRuntime";
 import { createHash, randomUUID } from "node:crypto";
 
+import { acquireWorkerRpcExecutor } from "../inference/client.js";
 import { createLegacyLocalExecutor } from "../inference/legacy-local-executor.js";
 
 export interface BackendExecutorDescription {
@@ -346,6 +347,14 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
     opts.passthrough ??
     ((req: Request): Promise<Response> => openaiProxy.proxyOpenAI(req, resolve()));
   const now: () => number = opts.now ?? ((): number => Date.now());
+  const nodeId = opts.nodeId ?? LOCAL_NODE_NAME;
+  // worker-rpc candidates run on the worker RPC; everything else, and any
+  // owner the RPC cannot reach yet, keeps the default executor.
+  const acquireExecutor =
+    opts.acquireExecutor ??
+    ((candidate: routingCatalog.RouteCandidate): BackendExecutor =>
+      acquireWorkerRpcExecutor(candidate, { nodeId, scope: EMBEDDED_SCOPE, fallback: executor }) ??
+      executor);
 
   function configuredPeers(): PeerNode[] {
     if (opts.peers !== undefined) return opts.peers;
@@ -360,7 +369,7 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
     );
     return routingCatalog.buildRouteCatalog({
       routes,
-      nodeId: opts.nodeId ?? LOCAL_NODE_NAME,
+      nodeId,
       now: now(),
       ...(opts.advertisements !== undefined ? { advertisements: opts.advertisements } : {}),
     });
@@ -380,7 +389,7 @@ export function createProxy(opts: UnifiedProxyOptions = {}): UnifiedProxy {
     ...(opts.resolveCredentials !== undefined
       ? { resolveCredentials: opts.resolveCredentials }
       : {}),
-    ...(opts.acquireExecutor !== undefined ? { acquireExecutor: opts.acquireExecutor } : {}),
+    acquireExecutor,
   };
 
   return {
