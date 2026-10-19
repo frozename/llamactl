@@ -660,6 +660,42 @@ describe("I2: existing-config upgrade", () => {
     expect(engine.requests[0]?.body?.["model"]).toBe(MODEL);
   });
 
+  test("agent serve advertises once agent.yaml enables the RPC, and only to the service credential", async () => {
+    const files = await initAgent("cli-enabled");
+    const svc = serviceCredential("svc-cli-enabled");
+    enableWorkerRpc(files, { serviceCredentials: [svc.binding] });
+    const proc = Bun.spawn(["bun", CLI_BIN, "agent", "serve", `--dir=${files.dir}`, "--port=0"], {
+      env: { ...process.env, LLAMACTL_DISABLE_MDNS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    try {
+      const reader = proc.stdout.getReader();
+      let out = "";
+      while (!out.includes("press Ctrl-C")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        out += new TextDecoder().decode(value);
+      }
+      reader.releaseLock();
+      const agent = { url: /agent listening on (\S+)/.exec(out)?.[1] ?? "" } as RunningAgent;
+      const negotiated = await negotiate(files, agent, svc.token);
+      expect(negotiated.status).toBe(200);
+      expect(negotiated.data).toMatchObject({
+        outcome: "negotiated",
+        version: V1_0,
+        workerId: WORKER,
+      });
+      expect((await negotiate(files, agent, files.operatorToken)).data).toMatchObject({
+        outcome: "rejected",
+        rejection: { code: "unauthorized-scope" },
+      });
+    } finally {
+      proc.kill("SIGTERM");
+      await proc.exited;
+    }
+  }, 30_000);
+
   for (const stage of ["upgraded", "rolled back"] as const) {
     for (const flag of [undefined, "1"] as const) {
       test(`I2/I5: an existing cli: binding runs through the legacy path once per call (${stage}, LLAMACTL_UNIFIED_PROXY=${flag ?? "unset"})`, async () => {

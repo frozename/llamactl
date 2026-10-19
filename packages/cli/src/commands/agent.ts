@@ -651,6 +651,16 @@ function buildServeOptions(
           },
         }
       : {}),
+    // InferenceRpcV1 (P4.1): agent.yaml's workerRpc block, re-read on every
+    // RPC call. Absent or listing no version, nothing is advertised.
+    ...(cfg.nodeName !== undefined
+      ? {
+          workerRpc: {
+            workerId: cfg.nodeName,
+            settings: agentConfigMod.workerRpcSettingsReader(join(parsed.dir, "agent.yaml")),
+          },
+        }
+      : {}),
   } as Parameters<typeof startAgentServer>[0];
   if (parsed.noAuth !== undefined) {
     (serverOptions as Parameters<typeof startAgentServer>[0] & { noAuth?: boolean }).noAuth =
