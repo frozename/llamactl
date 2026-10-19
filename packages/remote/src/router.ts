@@ -1701,13 +1701,17 @@ export const router = t.router({
   workloadDescribe: t.procedure
     .input(z.object({ name: z.string().min(1) }))
     .query(async ({ input }) => {
-      const manifest = workloadStoreMod.loadWorkloadByName(input.name);
+      const manifest = workloadStoreMod.loadWorkloadByNameAny(input.name);
       const cfg = kubecfg.loadConfig();
       let liveStatus: unknown;
       try {
         const client = clientForNode(cfg, manifest.spec.node);
-        liveStatus = await queryServerStatusWithTimeout(
-          () => client.serverStatus.query({ workload: manifest.metadata.name }),
+        const workload = manifest.metadata.name;
+        liveStatus = await queryServerStatusWithTimeout<unknown>(
+          () =>
+            manifest.kind === "ModelHost"
+              ? client.modelHostStatus.query({ workload })
+              : client.serverStatus.query({ workload }),
           WORKLOAD_LIST_NODE_TIMEOUT_MS,
         );
       } catch (err) {

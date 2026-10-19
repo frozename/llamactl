@@ -138,6 +138,21 @@ describe("workloadList", () => {
   });
 });
 
+describe("workloadDescribe", () => {
+  test("describes a ModelHost with its modelHostStatus", async () => {
+    process.env["LOCAL_AI_RUNTIME_DIR"] = join(tmp, "runtime");
+    saveModelHost(parseModelHost(modelHostYaml), tmp);
+
+    const caller = router.createCaller({});
+    const result = await caller.workloadDescribe({ name: "mlx-host" });
+
+    expect(result.manifest.kind).toBe("ModelHost");
+    expect(result.manifest.metadata.name).toBe("mlx-host");
+    // No sidecar under the temp runtime dir -> the host reports Stopped.
+    expect(result.liveStatus).toEqual({ state: "Stopped" });
+  });
+});
+
 describe("workloadList foreign-listener detection", () => {
   function writeServerSidecars(
     runtimeDir: string,
