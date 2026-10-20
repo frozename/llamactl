@@ -280,9 +280,16 @@ export const ClusterNodeSchema = z
      * reference resolves, through the shared secret resolver, to the
      * service credential this caller presents to the node's worker RPC;
      * the node keeps only its hash. Absent, the caller keeps the existing
-     * path for the node's deployments.
+     * path for the node's deployments. `relayCredentialRef`, in the same
+     * grammar, names central's relay-only credential for a tunneled
+     * node's relay hop; absent, the hop presents the context user's token.
      */
-    workerRpc: z.object({ serviceCredentialRef: z.string().min(1) }).optional(),
+    workerRpc: z
+      .object({
+        serviceCredentialRef: z.string().min(1),
+        relayCredentialRef: z.string().min(1).optional(),
+      })
+      .optional(),
   })
   .refine(
     (n) => {

@@ -53,6 +53,7 @@ import {
   statSync,
   writeFileSync,
 } from "../src/safe-fs.js";
+import { createTunnelClient } from "../src/tunnel/index.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
 
@@ -1054,7 +1055,11 @@ describe("I5: disconnect and rollback", () => {
     const svc = serviceCredential("svc-base-parse");
     enableWorkerRpc(files, { serviceCredentials: [svc.binding] });
     // The base release's schemas: the same strict-shape z.object, minus the new optional fields.
-    const { workerRpc: _agentBlock, ...baseAgentShape } = agentConfigMod.AgentConfigSchema.shape;
+    const {
+      workerRpc: _agentBlock,
+      workerRpcRelay: _relayBlock,
+      ...baseAgentShape
+    } = agentConfigMod.AgentConfigSchema.shape;
     const BaseAgentConfig = z.object(baseAgentShape);
     const upgraded = parseYaml(readFileSync(files.configPath, "utf8")) as unknown;
     const parsedByBase = BaseAgentConfig.parse(upgraded);
@@ -1092,7 +1097,11 @@ describe("I5: disconnect and rollback", () => {
 describe("I5: every rollback form, over both transports", () => {
   /** What the base release's `agent rotate-token` does: its schema, a new bearer, a re-save. */
   function baseBuildRotateToken(files: WorkerFiles): void {
-    const { workerRpc: _block, ...baseShape } = agentConfigMod.AgentConfigSchema.shape;
+    const {
+      workerRpc: _block,
+      workerRpcRelay: _relay,
+      ...baseShape
+    } = agentConfigMod.AgentConfigSchema.shape;
     const base = z.object(baseShape).parse(parseYaml(readFileSync(files.configPath, "utf8")));
     writeFileSync(
       files.configPath,
@@ -1335,6 +1344,122 @@ describe("I2/I6: a malformed worker-RPC block never stops the agent", () => {
     const second = serviceCredential("svc-cached-2");
     enableWorkerRpc(files, { serviceCredentials: [second.binding] });
     expect(read()?.serviceCredentials.map((b) => b.serviceId)).toEqual(["svc-cached-2"]);
+  });
+});
+
+/**
+ * X5: central's relay-only credential lives in its agent.yaml, next to
+ * the worker block and under the same rules, and `agent serve
+ * --tunnel-central` reads it.
+ */
+describe("the relay-only credential in central's agent.yaml", () => {
+  test("agent serve --tunnel-central relays inferenceRpc.* for it, and nothing else", async () => {
+    const files = await initAgent("relay-central");
+    const relay = auth.generateToken();
+    const tunnelBearer = auth.generateToken();
+    const cfg = agentConfigMod.loadAgentConfig(files.configPath);
+    agentConfigMod.saveAgentConfig(
+      { ...cfg, workerRpcRelay: { tokenHashes: [relay.hash] } },
+      files.configPath,
+    );
+    const proc = Bun.spawn(
+      [
+        "bun",
+        CLI_BIN,
+        "agent",
+        "serve",
+        `--dir=${files.dir}`,
+        "--port=0",
+        "--tunnel-central=true",
+        `--tunnel-bearer=${tunnelBearer.token}`,
+      ],
+      { env: { ...process.env, LLAMACTL_DISABLE_MDNS: "1" }, stdout: "pipe", stderr: "pipe" },
+    );
+    const received: string[] = [];
+    let node: ReturnType<typeof createTunnelClient> | undefined;
+    try {
+      const reader = proc.stdout.getReader();
+      let out = "";
+      while (!out.includes("press Ctrl-C")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        out += new TextDecoder().decode(value);
+      }
+      reader.releaseLock();
+      const url = /agent listening on (\S+)/.exec(out)?.[1] ?? "";
+      let markReady = (): void => undefined;
+      const ready = new Promise<void>((resolve) => {
+        markReady = resolve;
+      });
+      const BunWebSocket = WebSocket as unknown as new (
+        url: string,
+        options: { tls: { ca: string } },
+      ) => WebSocket;
+      node = createTunnelClient({
+        url: `${url.replace("https://", "wss://")}/tunnel`,
+        bearer: tunnelBearer.token,
+        nodeName: "relayed-node",
+        handleRequest: (req) => {
+          received.push(req.method);
+          return Promise.resolve({ outcome: "not-advertised", workerId: "relayed-node" });
+        },
+        WebSocketCtor: class extends BunWebSocket {
+          constructor(target: string) {
+            super(target, { tls: { ca: files.certPem } });
+          }
+        } as unknown as ClientWebSocketConstructor,
+        onStateChange: (state) => {
+          if (state === "ready") markReady();
+        },
+        initialAttemptTimeoutMs: 0,
+      });
+      void node.start();
+      await ready;
+      const relayCall = async (method: string, bearer: string): Promise<number> => {
+        const res = await fetch(`${url}/tunnel-relay/relayed-node`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+          body: JSON.stringify({ method, type: "query", input: { versions: [V1_0] } }),
+          tls: { ca: files.certPem },
+        } as RequestInit);
+        return res.status;
+      };
+      expect(await relayCall("inferenceRpc.negotiate", relay.token)).toBe(200);
+      expect(await relayCall("nodeList", relay.token)).toBe(403);
+      expect(await relayCall("inferenceRpc.negotiate", auth.generateToken().token)).toBe(401);
+      // The operator bearer relays everything, as before.
+      expect(await relayCall("nodeList", files.operatorToken)).toBe(200);
+      expect(received).toEqual(["inferenceRpc.negotiate", "nodeList"]);
+    } finally {
+      node?.stop();
+      proc.kill("SIGTERM");
+      await proc.exited;
+    }
+  }, 30_000);
+
+  test("a relay block that does not validate, or that lists the operator hash, admits nothing", async () => {
+    const files = await initAgent("relay-tolerant");
+    const read = agentConfigMod.workerRpcRelayReader(files.configPath);
+    expect(read()).toBeUndefined();
+    const cfg = agentConfigMod.loadAgentConfig(files.configPath);
+    const relay = auth.generateToken();
+    agentConfigMod.saveAgentConfig(
+      { ...cfg, workerRpcRelay: { tokenHashes: [relay.hash] } },
+      files.configPath,
+    );
+    expect(read()).toEqual({ tokenHashes: [relay.hash] });
+    agentConfigMod.saveAgentConfig(
+      { ...cfg, workerRpcRelay: { tokenHashes: [relay.hash.toUpperCase()] } },
+      files.configPath,
+    );
+    expect(read()).toBeUndefined();
+    agentConfigMod.saveAgentConfig(
+      { ...cfg, workerRpcRelay: { tokenHashes: [auth.hashToken(files.operatorToken)] } },
+      files.configPath,
+    );
+    expect(read()).toBeUndefined();
+    // Either way the agent itself loads.
+    expect(agentConfigMod.loadAgentConfig(files.configPath).tokenHash).toBe(cfg.tokenHash);
   });
 });
 

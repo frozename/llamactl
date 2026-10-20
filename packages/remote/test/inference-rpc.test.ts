@@ -25,6 +25,7 @@ import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { connect } from "node:tls";
 
 import type { ClientWebSocketConstructor } from "../src/tunnel/tunnel-client.js";
 
@@ -1214,6 +1215,8 @@ interface Transports {
   centralCertificate: string;
   centralFingerprint: string;
   centralToken: string;
+  /** Central's relay-only credential: it relays inferenceRpc.* and nothing else. */
+  relayCredential: string;
   stop: () => Promise<void>;
 }
 
@@ -1250,6 +1253,7 @@ async function startTransports(): Promise<Transports> {
   const centralCert = await certFor("central");
   const workerCert = await certFor("worker");
   const centralToken = auth.generateToken();
+  const relayCredential = auth.generateToken();
   const workerToken = auth.generateToken();
   const tunnelBearer = auth.generateToken();
   const service = auth.generateToken();
@@ -1264,7 +1268,10 @@ async function startTransports(): Promise<Transports> {
     tokenHash: centralToken.hash,
     tls: { certPath: centralCert.certPath, keyPath: centralCert.keyPath },
     advertiseMdns: false,
-    tunnelCentral: { expectedBearerHash: tunnelBearer.hash },
+    tunnelCentral: {
+      expectedBearerHash: tunnelBearer.hash,
+      workerRpcRelay: () => ({ tokenHashes: [relayCredential.hash] }),
+    },
   });
   let markReady = (): void => undefined;
   const ready = new Promise<void>((resolve) => {
@@ -1312,6 +1319,7 @@ async function startTransports(): Promise<Transports> {
     centralCertificate: centralCert.certPem,
     centralFingerprint: centralCert.fingerprint,
     centralToken: centralToken.token,
+    relayCredential: relayCredential.token,
     stop: async (): Promise<void> => {
       await worker.stop();
       await central.stop();
@@ -2559,6 +2567,17 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         outcome: "rejected",
         rejection: { code: "unauthorized-scope" },
       });
+      // Nor the very call it collected, through any other relay identity.
+      const sameCall = await relayCall(
+        "inferenceRpc.negotiate",
+        NEGOTIATE,
+        negotiateToken,
+        transports.relayCredential,
+      );
+      expect(sameCall.result).toMatchObject({
+        outcome: "rejected",
+        rejection: { code: "unauthorized-scope" },
+      });
       expect(engine.requests).toHaveLength(0);
     }, 20_000);
 
@@ -2604,6 +2623,192 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       const { signal: _spent, ...again } = request?.init ?? {};
       const replay = await fetch(request?.url ?? "", again);
       expect(((await replay.json()) as { result?: unknown }).result).toMatchObject(refused);
+    });
+  });
+
+  /**
+   * X5 — central's relay-only credential. It admits relaying the
+   * `inferenceRpc.*` procedures to nodes and nothing else: no other relay
+   * method, no other route, however the URL is spelled. Callers present it
+   * for the relay hop through their kubeconfig node's reference; the
+   * operator bearer still relays, as before.
+   */
+  describe("the relay-only credential on central (X5)", () => {
+    test("a kubeconfig reference to it carries inferenceRpc.* end to end", async () => {
+      useRemoteHost();
+      const serviceFile = join(temp.devStorage, "svc-relay-only.token");
+      const relayFile = join(temp.devStorage, "relay-only.token");
+      writeFileSync(serviceFile, transports.serviceCredential);
+      writeFileSync(relayFile, transports.relayCredential);
+      // No context token: only the relay-only credential can open the hop.
+      const peer: PeerNode = {
+        id: "worker-relay-only",
+        endpoint: "https://127.0.0.1:1",
+        tunnelPreferred: true,
+        tunnelNodeName: TUNNEL_NODE,
+        tunnelCentralUrl: transports.central.url,
+        tunnelCentralCertificate: transports.centralCertificate,
+        tunnelCentralFingerprint: transports.centralFingerprint,
+      };
+      const executor = acquireWorkerRpcExecutor(
+        {
+          advertisement: ad(LOCAL, { ownerNodeId: peer.id }),
+          alias: `public/${LOCAL}`,
+          source: "advertised",
+          legacyWinner: false,
+        },
+        {
+          nodeId: "gw",
+          scope: TENANT,
+          fallback: recordingFallback([]),
+          peers: () => [peer],
+          serviceCredentialRef: () => `file:${serviceFile}`,
+          relayCredentialRef: () => `file:${relayFile}`,
+        },
+      );
+      const env = envelope("att-relay-only");
+      const res = await executor!.execute(env, ctxFor(env));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-llamactl-worker-transport")).toBe("tunnel");
+      expect(await res.text()).toContain("[DONE]");
+      expect(engine.requests).toHaveLength(1);
+    });
+
+    test("it reaches no other relay method and no other route, by URL tricks or otherwise", async () => {
+      // A node that records every req frame central sends it.
+      const received: string[] = [];
+      let markReady = (): void => undefined;
+      const ready = new Promise<void>((resolve) => {
+        markReady = resolve;
+      });
+      const spy = createTunnelClient({
+        url: `wss://127.0.0.1:${String(transports.central.port)}/tunnel`,
+        bearer: transports.tunnelBearer,
+        nodeName: "spy-node",
+        handleRequest: (req) => {
+          received.push(req.method);
+          return Promise.resolve({ outcome: "not-advertised", workerId: "spy" });
+        },
+        handleSubscription: (req) => {
+          received.push(req.method);
+          return {
+            subscribe: (handlers): { cancel: () => void } => {
+              handlers.onComplete();
+              return { cancel: (): void => undefined };
+            },
+          };
+        },
+        WebSocketCtor: pinnedWebSocket(transports.centralCertificate),
+        onStateChange: (state) => {
+          if (state === "ready") markReady();
+        },
+        initialAttemptTimeoutMs: 0,
+      });
+      void spy.start();
+      await ready;
+      try {
+        // A raw request, so the path reaches central exactly as spelled.
+        const raw = (
+          verb: string,
+          path: string,
+          bearer: string,
+          body = "",
+        ): Promise<{ status: number; body: string }> =>
+          new Promise((resolve, reject) => {
+            const socket = connect(
+              {
+                host: "127.0.0.1",
+                port: transports.central.port,
+                ca: transports.centralCertificate,
+                checkServerIdentity: () => undefined,
+              },
+              () => {
+                socket.write(
+                  `${verb} ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer ${bearer}\r\n` +
+                    `Content-Type: application/json\r\nContent-Length: ${String(Buffer.byteLength(body))}\r\n` +
+                    `Connection: close\r\n\r\n${body}`,
+                );
+              },
+            );
+            let out = "";
+            socket.on("data", (chunk: Buffer) => (out += chunk.toString("utf8")));
+            socket.on("end", () => {
+              const status = Number(/^HTTP\/1\.1 (\d+)/.exec(out)?.[1] ?? 0);
+              resolve({ status, body: out.slice(out.indexOf("\r\n\r\n") + 4) });
+            });
+            socket.on("error", reject);
+          });
+        const relay = transports.relayCredential;
+        const call = (method: string): string =>
+          JSON.stringify({ method, type: "query", input: { versions: [V1_0] } });
+
+        // The one thing it is for, to a node: an inferenceRpc.* procedure.
+        expect(
+          (await raw("POST", "/tunnel-relay/spy-node", relay, call("inferenceRpc.negotiate")))
+            .status,
+        ).toBe(200);
+        expect(received).toEqual(["inferenceRpc.negotiate"]);
+
+        // Any other relay method, or the right one spelled otherwise, is refused.
+        for (const method of [
+          "env",
+          "nodeList",
+          "inferenceRpc",
+          "inferenceRpc.",
+          "inferenceRpc.x",
+          "inferenceRpc.negotiate,env",
+          "inferenceRpc.negotiate%2Cenv",
+          "inferenceRpc.x/../env",
+          "inferenceRpc.catalog.env",
+          "inferenceRpcX.negotiate",
+          "%69nferenceRpc.catalog",
+          " inferenceRpc.catalog",
+          "inferenceRpc.catalog ",
+          "InferenceRpc.catalog",
+        ]) {
+          for (const query of ["", "?stream=true"]) {
+            const res = await raw("POST", `/tunnel-relay/spy-node${query}`, relay, call(method));
+            expect([method, query, res.status]).toEqual([method, query, 403]);
+          }
+        }
+        expect((await raw("GET", "/tunnel-relay/spy-node", relay)).status).toBe(403);
+        expect(received).toEqual(["inferenceRpc.negotiate"]);
+
+        // Every other route answers it exactly as it answers a stranger.
+        const stranger = auth.generateToken().token;
+        for (const path of [
+          "/trpc/env",
+          "/trpc/nodeList",
+          "/trpc/inferenceRpc.catalog",
+          "/trpc/inferenceRpc.negotiate,env?batch=1&input=%7B%7D",
+          "/trpc/inferenceRpc.negotiate%2Cenv?batch=1&input=%7B%7D",
+          "/trpc/inferenceRpc.negotiate%252Cenv?batch=1&input=%7B%7D",
+          "/trpc/inferenceRpc.x/../env",
+          "/trpc/inferenceRpc.x/%2e%2e/env",
+          "/trpc/inferenceRpc.x%2F..%2Fenv",
+          "/trpc//env",
+          "/trpcXinferenceRpc.negotiate",
+          "/trpc/%69nferenceRpc.catalog,env?batch=1&input=%7B%7D",
+          "/trpc/inferenceRpc.catalog/",
+          "/tunnel-relay/../trpc/env",
+          "/tunnel-relay/spy-node/../../trpc/env",
+          "/v1/models",
+          "/v1/fleet/snapshot",
+          "/metrics",
+        ]) {
+          const asRelay = await raw("GET", path, relay);
+          const asStranger = await raw("GET", path, stranger);
+          expect([path, asRelay.status]).toEqual([path, asStranger.status]);
+          expect(asRelay.status === 200 || asRelay.status === 404).toBe(false);
+        }
+        for (const path of ["/agent/update", "/agent/rollback", "/trpc/inferenceRpc.submit"]) {
+          const asRelay = await raw("POST", path, relay, "{}");
+          expect([path, asRelay.status]).toEqual([path, 401]);
+        }
+        expect(received).toEqual(["inferenceRpc.negotiate"]);
+      } finally {
+        spy.stop();
+      }
     });
   });
 

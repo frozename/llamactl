@@ -6,6 +6,7 @@ import {
   encodeTunnelMessage,
   frameBytes,
   INFERENCE_RPC_STREAM_LIMITS,
+  isInferenceRpcProcedure,
   parseTunnelMessage,
   streamLimitsFor,
   SUBSCRIPTION_STREAM_LIMITS,
@@ -218,5 +219,26 @@ describe("worker-RPC auth on req frames (P4.1 X5)", () => {
       JSON.stringify({ ...req, auth: { serviceCredential: "ll_agt_secret" } }),
     );
     expect(JSON.stringify(parsed)).not.toContain("ll_agt_secret");
+  });
+});
+
+describe("the worker-RPC procedures a relay-only credential may relay (P4.1 X5)", () => {
+  test("exactly the six procedures, named exactly", () => {
+    for (const op of ["negotiate", "catalog", "submit", "stream", "status", "cancel"]) {
+      expect(isInferenceRpcProcedure(`inferenceRpc.${op}`)).toBe(true);
+    }
+    for (const method of [
+      "inferenceRpc",
+      "inferenceRpc.",
+      "inferenceRpc.drain",
+      "inferenceRpc.negotiate,env",
+      "inferenceRpc.catalog.env",
+      "inferenceRpc.x/../env",
+      " inferenceRpc.catalog",
+      "InferenceRpc.catalog",
+      "env",
+    ]) {
+      expect(isInferenceRpcProcedure(method)).toBe(false);
+    }
   });
 });

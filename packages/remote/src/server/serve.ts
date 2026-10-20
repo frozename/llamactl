@@ -1,4 +1,4 @@
-import type { AgentWorkerRpc } from "@llamactl/core/config/agent-config";
+import type { AgentWorkerRpc, AgentWorkerRpcRelay } from "@llamactl/core/config/agent-config";
 
 import { inferenceRpc, openaiProxy } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
@@ -108,6 +108,13 @@ export interface StartAgentOptions {
      *  first hello frame. Distinct from tokenHash — tunnel bearers
      *  are a separate credential. */
     expectedBearerHash: string;
+    /**
+     * Central's relay-only credentials (P4.1), agent.yaml's
+     * `workerRpcRelay` block, read on every relay request. Each admits
+     * only relaying `inferenceRpc.*` calls to nodes; the operator bearer
+     * keeps relaying everything, as before.
+     */
+    workerRpcRelay?: () => AgentWorkerRpcRelay | undefined;
     onNodeConnect?: (nodeName: string) => void;
     onNodeDisconnect?: (nodeName: string, reason: string) => void;
   };
@@ -407,6 +414,7 @@ function handleInfraRoutes(
       forwardingServiceToken(tunnelServer, req),
       opts.tokenHash,
       opts.tunnelJournalPath,
+      opts.tunnelCentral?.workerRpcRelay?.()?.tokenHashes ?? [],
     );
   }
   // Bootstrap registration — unauthenticated by design (nodes have

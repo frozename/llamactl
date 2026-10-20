@@ -549,6 +549,13 @@ agent bearer:
   input, the relay hop's bearer, a nonce and a 60 s expiry. The node
   verifies it against its hashed bindings and refuses replays. Direct
   dials present the credential itself, over pinned TLS.
+- The **relay-only credential** (P4.1) — central's `agent.yaml` lists
+  its SHA-256 under `workerRpcRelay.tokenHashes`. It relays the
+  `inferenceRpc.*` procedures to nodes and nothing else: any other
+  relay method gets 403, every other route 401. A caller presents it
+  for the relay hop through its kubeconfig node's
+  `workerRpc.relayCredentialRef` (`env:`/`keychain:`/`file:`); without
+  one the hop presents the agent bearer, as before.
 
 **Audit trail** — the tunnel server's state transitions log to
 stderr on the agent (e.g. `tunnel: ready`, `tunnel: disconnected`)

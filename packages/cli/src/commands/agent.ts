@@ -647,6 +647,8 @@ function buildServeOptions(
       ? {
           tunnelCentral: {
             expectedBearerHash: auth.hashToken(tunnelCentralBearer),
+            // P4.1: agent.yaml's relay-only credentials, re-read per relay request.
+            workerRpcRelay: agentConfigMod.workerRpcRelayReader(join(parsed.dir, "agent.yaml")),
             // onNodeConnect/onNodeDisconnect land in Slice D (journal).
           },
         }

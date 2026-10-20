@@ -1436,20 +1436,29 @@ function configuredPeer(id: string): PeerNode | undefined {
   }
 }
 
+function kubeconfigWorkerRpc(owner: string): ClusterNode["workerRpc"] {
+  try {
+    const config = loadConfig();
+    const context = currentContext(config);
+    const cluster = config.clusters.find((candidate) => candidate.name === context.cluster);
+    return cluster?.nodes.find((node) => node.name === owner)?.workerRpc;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The secret reference to the caller's service credential for `owner`,
  * from the owner's kubeconfig node. Undefined when the node declares no
  * worker-RPC block: the caller has not opted in for that owner.
  */
 export function kubeconfigServiceCredentialRef(owner: string): string | undefined {
-  try {
-    const config = loadConfig();
-    const context = currentContext(config);
-    const cluster = config.clusters.find((candidate) => candidate.name === context.cluster);
-    return cluster?.nodes.find((node) => node.name === owner)?.workerRpc?.serviceCredentialRef;
-  } catch {
-    return undefined;
-  }
+  return kubeconfigWorkerRpc(owner)?.serviceCredentialRef;
+}
+
+/** The secret reference to central's relay-only credential for `owner`'s relay hop, if any. */
+export function kubeconfigRelayCredentialRef(owner: string): string | undefined {
+  return kubeconfigWorkerRpc(owner)?.relayCredentialRef;
 }
 
 function directClientFor(peer: PeerNode, serviceCredential: string): InferenceRpcClient {
@@ -1464,11 +1473,20 @@ function directClientFor(peer: PeerNode, serviceCredential: string): InferenceRp
   });
 }
 
-function tunnelClientFor(peer: PeerNode, serviceCredential: string): InferenceRpcClient {
+/**
+ * The relay hop presents central's relay-only credential when the owner's
+ * node names one, and otherwise the context user's token, as before.
+ */
+function tunnelClientFor(
+  peer: PeerNode,
+  serviceCredential: string,
+  relayCredential: string | undefined,
+): InferenceRpcClient {
   if (peer.tunnelCentralUrl === undefined) {
     throw new Error(`owner '${peer.id}' prefers the tunnel, but no tunnelCentralUrl is set`);
   }
-  const bearer = peer.tunnelRelayToken ?? configuredPeer(peer.id)?.tunnelRelayToken;
+  const bearer =
+    relayCredential ?? peer.tunnelRelayToken ?? configuredPeer(peer.id)?.tunnelRelayToken;
   if (bearer === undefined) throw new Error(`no tunnel relay credential for owner '${peer.id}'`);
   return createTunnelInferenceRpcClient({
     centralUrl: peer.tunnelCentralUrl,
@@ -1492,23 +1510,32 @@ function tunnelClientFor(peer: PeerNode, serviceCredential: string): InferenceRp
  * the existing path: null. An owner that cannot be reached, or whose
  * credential does not resolve, fails closed; it is never rerouted.
  */
+interface OwnerRefs {
+  service: (owner: string) => string | undefined;
+  relay: (owner: string) => string | undefined;
+}
+
 function ownerClient(
   owner: string,
   peers: readonly PeerNode[],
-  credentialRef: (owner: string) => string | undefined,
+  refs: OwnerRefs,
 ): InferenceRpcClient | null {
   const peer = peers.find((candidate) => candidate.id === owner);
   if (peer === undefined) {
     return unreachableClient("direct", `no kubeconfig agent node declares owner '${owner}'`);
   }
-  const ref = credentialRef(owner);
+  const ref = refs.service(owner);
   if (ref === undefined) return null;
   const transport = peer.tunnelPreferred === true ? "tunnel" : "direct";
   try {
     const credential = resolveSecret(ref);
-    return transport === "tunnel"
-      ? tunnelClientFor(peer, credential)
-      : directClientFor(peer, credential);
+    if (transport === "direct") return directClientFor(peer, credential);
+    const relayRef = refs.relay(owner);
+    return tunnelClientFor(
+      peer,
+      credential,
+      relayRef === undefined ? undefined : resolveSecret(relayRef),
+    );
   } catch (err) {
     return unreachableClient(transport, errorMessage(err));
   }
@@ -1522,6 +1549,8 @@ export interface WorkerRpcAcquireOptions {
   peers?: () => readonly PeerNode[];
   /** The caller's service-credential reference for an owner. Defaults to its kubeconfig node's. */
   serviceCredentialRef?: (owner: string) => string | undefined;
+  /** The relay-only credential reference for an owner's relay hop. Defaults to its kubeconfig node's. */
+  relayCredentialRef?: (owner: string) => string | undefined;
 }
 
 /**
@@ -1538,11 +1567,10 @@ export function acquireWorkerRpcExecutor(
   const client =
     ad.ownerNodeId === opts.nodeId
       ? createEmbeddedInferenceRpcClient(embeddedClaims(opts.nodeId, ad.deploymentId, opts.scope))
-      : ownerClient(
-          ad.ownerNodeId,
-          opts.peers?.() ?? [],
-          opts.serviceCredentialRef ?? kubeconfigServiceCredentialRef,
-        );
+      : ownerClient(ad.ownerNodeId, opts.peers?.() ?? [], {
+          service: opts.serviceCredentialRef ?? kubeconfigServiceCredentialRef,
+          relay: opts.relayCredentialRef ?? kubeconfigRelayCredentialRef,
+        });
   if (client === null) return null;
   return createWorkerRpcExecutor({
     client,

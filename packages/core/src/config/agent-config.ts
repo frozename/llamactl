@@ -48,6 +48,18 @@ export const AgentWorkerRpcSchema = z.object({
 });
 export type AgentWorkerRpc = z.infer<typeof AgentWorkerRpcSchema>;
 
+/**
+ * Central's relay-only credentials (P4.1 X5), each stored only as the
+ * SHA-256 of its token. A relay-only credential admits one thing:
+ * relaying an `inferenceRpc.*` call to a tunneled node. It opens no other
+ * route, and the node still verifies the caller's service token. List
+ * the new hash beside the old one to rotate, then drop the old one.
+ */
+export const AgentWorkerRpcRelaySchema = z.object({
+  tokenHashes: z.array(z.string().regex(SHA256_HEX)).default([]),
+});
+export type AgentWorkerRpcRelay = z.infer<typeof AgentWorkerRpcRelaySchema>;
+
 export const AgentConfigSchema = z.object({
   apiVersion: z.literal("llamactl/v1"),
   kind: z.literal("AgentConfig"),
@@ -65,12 +77,14 @@ export const AgentConfigSchema = z.object({
    * it back as it was read.
    */
   workerRpc: z.unknown().optional(),
+  /** Central's relay-only credentials; opaque here for the same reason. */
+  workerRpcRelay: z.unknown().optional(),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
 /** The blocks only their readers validate; a re-save keeps their source text. */
-const OPAQUE_BLOCKS = ["workerRpc"] as const;
+const OPAQUE_BLOCKS = ["workerRpc", "workerRpcRelay"] as const;
 
 interface BlockSource {
   /** The block's value as read, to tell an unchanged block from an edited one. */
@@ -243,6 +257,30 @@ export function workerRpcSettingsReader(
     }
     if (parsed.data.serviceCredentials.some((b) => b.tokenHash === config.tokenHash)) {
       warnIgnored(path, "workerRpc", "a service credential reuses the operator bearer's hash");
+      return undefined;
+    }
+    return parsed.data;
+  });
+}
+
+/**
+ * Reads central's relay-only credentials from agent.yaml, re-reading the
+ * file whenever it changes. A block that does not validate, or that lists
+ * the operator bearer's own hash, is ignored with a warning: no relay-only
+ * credential is accepted, while the operator bearer relays as before.
+ */
+export function workerRpcRelayReader(
+  path: string = defaultAgentConfigPath(),
+): () => AgentWorkerRpcRelay | undefined {
+  return agentYamlBlockReader(path, (config) => {
+    if (config.workerRpcRelay === undefined) return undefined;
+    const parsed = AgentWorkerRpcRelaySchema.safeParse(config.workerRpcRelay);
+    if (!parsed.success) {
+      warnIgnored(path, "workerRpcRelay", firstIssue(parsed.error));
+      return undefined;
+    }
+    if (parsed.data.tokenHashes.includes(config.tokenHash)) {
+      warnIgnored(path, "workerRpcRelay", "a relay credential reuses the operator bearer's hash");
       return undefined;
     }
     return parsed.data;

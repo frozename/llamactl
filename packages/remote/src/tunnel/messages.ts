@@ -1,3 +1,4 @@
+import { inferenceRpc } from "@llamactl/core";
 import { z } from "zod";
 
 import { SERVICE_TOKEN_MAX_LENGTH } from "../server/auth.js";
@@ -65,6 +66,15 @@ export const SUBSCRIPTION_STREAM_LIMITS: Readonly<StreamLimits> = Object.freeze(
 /** True for a procedure in the worker RPC namespace (`inferenceRpc.*`). */
 export function isInferenceRpcMethod(method: string): boolean {
   return method.startsWith("inferenceRpc.");
+}
+
+const INFERENCE_RPC_PROCEDURES: ReadonlySet<string> = new Set(
+  inferenceRpc.InferenceRpcOperationSchema.options.map((operation) => `inferenceRpc.${operation}`),
+);
+
+/** True only for a procedure the worker RPC serves, named exactly. */
+export function isInferenceRpcProcedure(method: string): boolean {
+  return INFERENCE_RPC_PROCEDURES.has(method);
 }
 
 /** The default policy: the worker RPC's caps for its streams, the frame cap for the rest. */
