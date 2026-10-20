@@ -646,12 +646,15 @@ const DEFAULT_RESOLVE_TIMEOUT_MS = 15_000;
 /**
  * A call that failed before the worker could accept anything: a refused
  * credential is outside the claims, anything else leaves the target
- * unavailable. Both fail closed.
+ * unavailable. Both fail closed. The cause can name a secret reference, a
+ * file path or a peer's address, so it goes to the log; the public client
+ * gets only what failed.
  */
 function refusal(err: unknown, what: string): Rejection {
+  process.stderr.write(`[worker-rpc] ${what}: ${errorMessage(err)}\n`);
   return err instanceof InferenceRpcCredentialRefusedError
     ? { code: "unauthorized-scope", message: `the worker refused the service credential: ${what}` }
-    : { code: "target-unavailable", message: `${what}: ${errorMessage(err)}` };
+    : { code: "target-unavailable", message: what };
 }
 
 /** The only outcome a non-terminal status can resolve to: never a replay. */
@@ -659,11 +662,35 @@ function settledFrom(status: AttemptStatus): ExecutionTerminal {
   return status.terminal ?? UNKNOWN_OUTCOME;
 }
 
-/** Retries an idempotent call through transport loss until `until`; null if it never answered. */
+const OUT_OF_TIME = Symbol("out-of-time");
+
+/** `work`, or OUT_OF_TIME once `ms` pass first. */
+async function withinMs<T>(ms: number, work: Promise<T>): Promise<T | typeof OUT_OF_TIME> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<typeof OUT_OF_TIME>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(OUT_OF_TIME);
+    }, ms);
+  });
+  try {
+    return await Promise.race([work, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Retries an idempotent call through transport loss until `until`; null
+ * if it never answered. The window is hard: each try gets only what is
+ * left of it, however long the call itself would wait.
+ */
 async function retrying<T>(until: number, call: () => Promise<T>): Promise<T | null> {
   for (let delay = 50; ; delay = Math.min(delay * 2, 1000)) {
+    const left = until - Date.now();
+    if (left <= 0) return null;
     try {
-      return await call();
+      const answer = await withinMs(left, call());
+      return answer === OUT_OF_TIME ? null : answer;
     } catch {
       if (Date.now() + delay > until) return null;
       await new Promise((resolve) => setTimeout(resolve, delay));
@@ -772,11 +799,14 @@ async function* attemptItems(
   frames: AsyncIterator<StreamFrame>,
   first: ExecutionEventV1,
 ): AsyncGenerator<AttemptItem> {
-  let sequence = stepExecutionSequence(INITIAL_EXECUTION_SEQUENCE_STATE, first).state;
-  let lastSequence = first.sequence;
+  let sequence = INITIAL_EXECUTION_SEQUENCE_STATE;
+  let lastSequence: number | undefined;
   let broken: unknown;
+  // The first event goes through the same checks: a stream that opens on
+  // anything but its acceptance is a violation, never silently dropped.
+  let next: IteratorResult<StreamFrame> = { done: false, value: { frame: "event", event: first } };
   try {
-    for (let next = await frames.next(); next.done !== true; next = await frames.next()) {
+    for (; next.done !== true; next = await frames.next()) {
       if (next.value.frame !== "event") break;
       const step = stepExecutionSequence(sequence, next.value.event);
       sequence = step.state;
@@ -1010,7 +1040,17 @@ function failureOf(terminal: ExecutionTerminal): Failure {
   }
 }
 
-function errorResponse(envelope: Envelope, failure: Failure, headers: ResponseHeaders): Response {
+/**
+ * Failures whose attempt may have run: an unknown outcome, or one that
+ * completed on another stream. OpenAI SDKs retry a 409 or a 5xx on their
+ * own, which would run the request again, so these say not to.
+ */
+const NOT_RETRYABLE = new Set(["unknown-outcome", "already-terminal"]);
+
+function errorResponse(envelope: Envelope, failure: Failure, headersIn: ResponseHeaders): Response {
+  const headers = NOT_RETRYABLE.has(failure.code)
+    ? { ...headersIn, "x-should-retry": "false" }
+    : headersIn;
   const init = { status: failure.status, headers };
   if (envelope.ingressProtocol === "anthropic-messages") {
     return Response.json(

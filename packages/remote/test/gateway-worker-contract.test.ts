@@ -26,6 +26,7 @@ import {
 } from "@novaproto/contracts";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { connect } from "node:tls";
 
 import type { ClientWebSocketConstructor } from "../src/tunnel/tunnel-client.js";
 
@@ -466,6 +467,52 @@ describe("InferenceRpcV1 gateway–worker round trip", () => {
     // A service credential is no operator bearer anywhere else.
     expect((await trpcCall("nodeList", "GET", undefined)).status).toBe(401);
     expect(engine.requests).toHaveLength(0);
+  });
+
+  test("over the wire: a service credential opens the worker RPC only, however the path is spelled", async () => {
+    const raw = (path: string): Promise<number> =>
+      new Promise((resolve, reject) => {
+        const socket = connect(
+          {
+            host: "127.0.0.1",
+            port: Number(new URL(worker?.url ?? "").port),
+            ca: workerNode.certificate,
+            checkServerIdentity: () => undefined,
+          },
+          () => {
+            socket.write(
+              `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer ${serviceCredential}\r\n` +
+                "Connection: close\r\n\r\n",
+            );
+          },
+        );
+        let out = "";
+        socket.on("data", (chunk: Buffer) => (out += chunk.toString("utf8")));
+        socket.on("end", () => {
+          resolve(Number(/^HTTP\/1\.1 (\d+)/.exec(out)?.[1] ?? 0));
+        });
+        socket.on("error", reject);
+      });
+    // The reviewer's probe list: each names, or decodes to, something besides
+    // an exact worker-RPC procedure, so the credential opens nothing.
+    for (const path of [
+      "/trpc/env",
+      "/trpc/inferenceRpc.negotiate,env?batch=1&input=%7B%7D",
+      "/trpc/inferenceRpc.negotiate%2Cenv?batch=1&input=%7B%7D",
+      "/trpc/inferenceRpc.negotiate%252Cenv?batch=1&input=%7B%7D",
+      "/trpc/inferenceRpc.x/../env",
+      "/trpc/inferenceRpc.x/%2e%2e/env",
+      "/trpc/inferenceRpc.x%2F..%2Fenv",
+      "/trpc//env",
+      "/trpcXinferenceRpc.catalog",
+      "/trpc/%69nferenceRpc.catalog,env?batch=1&input=%7B%7D",
+      "/trpc/inferenceRpc.catalog/",
+      "/trpc/inferenceRpc.catalog.env",
+    ]) {
+      expect([path, await raw(path)]).toEqual([path, 401]);
+    }
+    expect(await raw("/trpc/inferenceRpc.catalog")).toBe(200);
+    expect(await raw("/trpc/%69nferenceRpc.catalog")).toBe(200);
   });
 
   test("over the wire: negotiate, submit and stream run the fixed deployment once", async () => {

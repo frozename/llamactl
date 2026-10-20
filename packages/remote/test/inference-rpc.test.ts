@@ -1309,6 +1309,147 @@ describe("the worker-rpc executor behind the unified proxy", () => {
     expect(engine.requests).toHaveLength(1);
   });
 
+  test("a violation on the stream's first event ends it typed protocol-error, like any other", async () => {
+    useHost();
+    const real = createEmbeddedInferenceRpcClient(claims());
+    // Every event one sequence late: only the first event is out of order.
+    const shifted: InferenceRpcClient = {
+      ...real,
+      stream: async function* (input, signal): AsyncGenerator<StreamFrame> {
+        for await (const frame of real.stream(input, signal)) {
+          yield frame.frame === "event"
+            ? { frame: "event", event: { ...frame.event, sequence: frame.event.sequence + 1 } }
+            : frame;
+        }
+      },
+    };
+    const env = envelope("att-first-event");
+    const res = await createWorkerRpcExecutor({
+      client: shifted,
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    }).execute(env, ctxFor(env));
+    const body = await res.text();
+    expect(body).toContain('"code":"protocol-error"');
+    expect(body).toContain("sequence 1 where 0 was expected");
+    expect(body).not.toContain("[DONE]");
+  });
+
+  test("the resolve window is hard: a status call that hangs gets only what is left of it", async () => {
+    useHost();
+    const real = createEmbeddedInferenceRpcClient(claims());
+    const hanging: InferenceRpcClient = {
+      ...real,
+      submit: () => Promise.reject(new Error("connection reset before the acknowledgement")),
+      status: () =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            resolve({ outcome: "status", attemptId: "att-hard-window", state: "unknown" });
+          }, 3_000);
+        }),
+    };
+    const env = envelope("att-hard-window");
+    const started = Date.now();
+    const res = await createWorkerRpcExecutor({
+      client: hanging,
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+      resolveTimeoutMs: 200,
+    }).execute(env, ctxFor(env));
+    expect(Date.now() - started).toBeLessThan(1_500);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({ error: { code: "unknown-outcome" } });
+  });
+
+  test("an outcome that may have run tells client SDKs not to retry it", async () => {
+    useHost();
+    const client = createEmbeddedInferenceRpcClient(claims());
+    const executor = createWorkerRpcExecutor({
+      client,
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    });
+    const env = envelope("att-no-retry");
+    expect(await (await executor.execute(env, ctxFor(env))).text()).toContain("[DONE]");
+    // The same attempt again: it completed on another stream.
+    const again = await executor.execute(env, ctxFor(env));
+    expect(again.status).toBe(409);
+    expect(again.headers.get("x-should-retry")).toBe("false");
+    const lost: InferenceRpcClient = {
+      ...client,
+      submit: () => Promise.reject(new Error("connection reset")),
+      status: () => Promise.reject(new Error("connection reset")),
+    };
+    const env2 = envelope("att-no-retry-unknown");
+    const unknown = await createWorkerRpcExecutor({
+      client: lost,
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+      resolveTimeoutMs: 100,
+    }).execute(env2, ctxFor(env2));
+    expect(unknown.status).toBe(502);
+    expect(await unknown.json()).toMatchObject({ error: { code: "unknown-outcome" } });
+    expect(unknown.headers.get("x-should-retry")).toBe("false");
+    // A refusal before anything ran keeps the SDK's own retry rules, same status or not.
+    const env3 = envelope("att-no-retry-refused");
+    const refused = await createWorkerRpcExecutor({
+      client: createEmbeddedInferenceRpcClient(
+        claims({ deployments: [LOCAL, "deploy/worker-a/not-here"] }),
+      ),
+      deploymentId: "deploy/worker-a/not-here",
+      expectedEpoch: "epoch-1",
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    }).execute(env3, ctxFor(env3));
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ error: { code: "not-owner" } });
+    expect(refused.headers.get("x-should-retry")).toBeNull();
+    expect(engine.requests).toHaveLength(1);
+  });
+
+  test("a public error names no secret reference or path; the log keeps the detail", async () => {
+    useHost();
+    const secretPath = join(temp.devStorage, "secrets", "worker-b.token");
+    const logged: string[] = [];
+    const write = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      logged.push(String(chunk));
+      return true;
+    };
+    let body = "";
+    try {
+      const executor = acquireWorkerRpcExecutor(
+        {
+          advertisement: ad(LOCAL, { ownerNodeId: "worker-b" }),
+          alias: `public/${LOCAL}`,
+          source: "advertised",
+          legacyWinner: false,
+        },
+        {
+          nodeId: "gw",
+          scope: TENANT,
+          fallback: recordingFallback([]),
+          peers: () => [{ id: "worker-b", endpoint: "https://127.0.0.1:1", certificate: "pem" }],
+          serviceCredentialRef: () => `file:${secretPath}`,
+        },
+      );
+      const env = envelope("att-redacted");
+      const res = await executor!.execute(env, ctxFor(env));
+      expect(res.status).toBe(503);
+      body = await res.text();
+    } finally {
+      process.stderr.write = write;
+    }
+    expect(body).toContain("target-unavailable");
+    expect(body).not.toContain("worker-b.token");
+    expect(body).not.toContain(temp.devStorage);
+    expect(logged.join("")).toContain("worker-b.token");
+  });
+
   test("a stale generation refreshes the catalog exactly once, then returns the typed rejection", async () => {
     useHost();
     const real = createEmbeddedInferenceRpcClient(claims());
@@ -2269,11 +2410,9 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       }).execute(env, ctxFor(env));
       expect(Date.now() - started).toBeLessThan(5000);
       expect(res.status).toBe(503);
+      // The public body says what failed; the timeout itself goes to the log.
       expect(await res.json()).toMatchObject({
-        error: {
-          code: "target-unavailable",
-          message: expect.stringContaining("timed out") as unknown,
-        },
+        error: { code: "target-unavailable", message: "worker RPC negotiation failed" },
       });
       expect(calls).toEqual([]);
       expect(engine.requests).toHaveLength(0);

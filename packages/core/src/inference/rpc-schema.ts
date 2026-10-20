@@ -24,6 +24,12 @@ export const InferenceRpcVersionSchema = z.object({
 });
 export type InferenceRpcVersion = z.infer<typeof InferenceRpcVersionSchema>;
 
+/**
+ * The version this build speaks. A gateway and a worker one minor apart
+ * interoperate (N-1), so a minor bump must never add an enum value, a
+ * frame kind or a required field that an N-1 peer cannot parse; anything
+ * that needs one is a major bump, which negotiation refuses.
+ */
 export const INFERENCE_RPC_VERSION: InferenceRpcVersion = Object.freeze({ major: 1, minor: 0 });
 
 /**

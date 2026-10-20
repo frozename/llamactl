@@ -25,7 +25,7 @@ import {
   type TunnelServer,
   type TunnelState,
 } from "../tunnel/index.js";
-import { isInferenceRpcMethod } from "../tunnel/messages.js";
+import { isInferenceRpcMethod, isInferenceRpcProcedure } from "../tunnel/messages.js";
 import { listWorkloads, saveWorkload } from "../workload/store.js";
 import { handleAgentRollback, handleAgentUpdate } from "./agent-update.js";
 import { type ArtifactsHandlerOptions, handleArtifact } from "./artifacts.js";
@@ -544,18 +544,20 @@ function handleMetricsRoute(
 }
 
 /**
- * True when every procedure a tRPC request names is in the worker RPC
- * namespace. Batched paths are decoded and split the way tRPC splits
- * them, so a service credential never rides along to another procedure.
+ * True when every procedure a tRPC request names, under the endpoint, is
+ * a worker-RPC procedure named exactly. Batched paths are decoded and
+ * split the way tRPC splits them, so a service credential never rides
+ * along to another procedure, nor reaches one by another spelling.
  */
 function inferenceRpcOnly(pathname: string, endpoint: string): boolean {
+  if (!pathname.startsWith(`${endpoint}/`)) return false;
   let paths: string[];
   try {
     paths = decodeURIComponent(pathname.slice(endpoint.length + 1)).split(",");
   } catch {
     return false;
   }
-  return paths.every((path) => isInferenceRpcMethod(path));
+  return paths.every((path) => isInferenceRpcProcedure(path));
 }
 
 /**
@@ -732,7 +734,7 @@ function maybeStartTunnelClient(
   const contextFor = (req: TunnelReq): ReturnType<typeof requestContext> => {
     const params = req.params as { input?: unknown } | undefined;
     const claims =
-      workerRpc !== null && isInferenceRpcMethod(req.method)
+      workerRpc !== null && isInferenceRpcProcedure(req.method)
         ? tokens.claimsFor(
             req.auth?.serviceToken,
             {
