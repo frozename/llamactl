@@ -1,9 +1,9 @@
 /**
  * P4.1 (#139) INSTALL-6 — one case per item, I1 to I6, built from temp
- * runtimes: a clean install with no kubeconfig, a kubeconfig and
- * agent.yaml in the base-release (c2a6a83c) shape, the optional Sirius
- * service absent, the RPC unavailable, and after rollback. Every agent is
- * started the way `llamactl agent serve` starts it, and every caller
+ * runtimes: a clean install with no kubeconfig, a kubeconfig and agent.yaml
+ * in the base-release (717608bf, chore/nova-npm-pins) shape, the optional
+ * Sirius service absent, the RPC unavailable, and after rollback. Every agent
+ * is started the way `llamactl agent serve` starts it, and every caller
  * resolves its owner and service credential from the kubeconfig, as in
  * production. Ends with a required-field diff against the recorded
  * baseline.
@@ -108,7 +108,9 @@ function writeWorkload(): void {
     join(dir, "llama-server.state"),
     JSON.stringify({
       rel: MODEL,
-      extraArgs: [],
+      // A slot save path makes the route KV-eligible, so a /v1 chat through
+      // openaiProxy opens the KV registry inside the snapshot roots below.
+      extraArgs: ["--slot-save-path", join(temp.runtimeDir, "kvstore", "slots", WORKLOAD)],
       host: "127.0.0.1",
       port: Number(new URL(engine.url).port),
       binary: "/x/llama-server",
@@ -450,7 +452,7 @@ function digest(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-/** Bytes and mtime of every file under the given roots. */
+/** sha256, size and mtime of every file under the given roots. */
 function snapshot(roots: readonly string[]): Record<string, string> {
   const out: Record<string, string> = {};
   const walk = (path: string): void => {
@@ -460,7 +462,7 @@ function snapshot(roots: readonly string[]): Record<string, string> {
       for (const entry of readdirSync(path)) walk(join(path, entry));
       return;
     }
-    out[path] = `${digest(path)}@${String(stat.mtimeMs)}`;
+    out[path] = `${digest(path)}@${String(stat.size)}@${String(stat.mtimeMs)}`;
   };
   for (const root of roots) walk(root);
   return out;
@@ -952,15 +954,45 @@ describe("I5: disconnect and rollback", () => {
     const kubeconfig = writeKubeconfig(files, agent, {
       workerRpc: { serviceCredentialRef: svc.ref },
     });
+    // The response cache and KV registry live under LOCAL_AI_RUNTIME_DIR —
+    // openaiProxy's data root (resolveKvDataRoot) — not under devStorage:
+    // drive one deterministic /v1 chat through the proxy so both responses.db
+    // (a temperature:0 body is cache-eligible) and registry.db (the workload's
+    // slot save path makes the route KV-eligible) exist inside the roots below,
+    // then clear the engine so the per-attempt counts asserted after the
+    // rollback stay exact.
+    const pinned = makePinnedFetch({
+      name: WORKER,
+      endpoint: agent.url,
+      certificate: files.certPem,
+    });
+    const primed = await pinned(`${agent.url}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${files.operatorToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        temperature: 0,
+        messages: [{ role: "user", content: "prime" }],
+      }),
+    });
+    expect(primed.status).toBe(200);
+    engine.reset();
     const seeds = [
-      join(temp.devStorage, "responsecache"),
-      join(temp.devStorage, "kvstore"),
+      join(temp.runtimeDir, "responsecache"),
+      join(temp.runtimeDir, "kvstore"),
       join(temp.runtimeDir, "kvstore", "slots", WORKLOAD),
     ];
     for (const dir of seeds) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, "seed.bin"), "seed");
     }
+    // The primed proxy call opened the real stores inside these roots, so the
+    // snapshot covers them — not just the seed files.
+    expect(existsSync(join(temp.runtimeDir, "responsecache", "responses.db"))).toBe(true);
+    expect(existsSync(join(temp.runtimeDir, "kvstore", "registry.db"))).toBe(true);
     let release = (): void => undefined;
     engine.setScript({
       pieces: ["Hel", "lo"],
@@ -1055,12 +1087,15 @@ describe("I5: disconnect and rollback", () => {
     expect(engine.requests).toHaveLength(1);
   }, 30_000);
 
-  test("the base release parses the upgraded configs; an older build that re-saves agent.yaml drops only the worker-RPC block", async () => {
+  test("a non-strict base-shaped schema (HEAD minus workerRpc/workerRpcRelay) strips the additive fields and still parses the upgraded configs", async () => {
     const files = await initAgent("base-parse");
     const original = agentConfigMod.loadAgentConfig(files.configPath);
     const svc = serviceCredential("svc-base-parse");
     enableWorkerRpc(files, { serviceCredentials: [svc.binding] });
-    // The base release's schemas: the same strict-shape z.object, minus the new optional fields.
+    // A base-shaped schema rebuilt from HEAD's shape, minus the additive
+    // fields. This is not the base release running (that run is recorded
+    // separately as evidence); it shows the additive fields are stripped and
+    // the upgraded files still parse, leaving the pre-upgrade shape intact.
     const {
       workerRpc: _agentBlock,
       workerRpcRelay: _relayBlock,
@@ -1070,7 +1105,7 @@ describe("I5: disconnect and rollback", () => {
     const upgraded = parseYaml(readFileSync(files.configPath, "utf8")) as unknown;
     const parsedByBase = BaseAgentConfig.parse(upgraded);
     expect(parsedByBase).toEqual(original);
-    // A re-save by the older build drops the block, which this build reads as not advertised.
+    // A re-save with the base-shaped config drops the block, which this build reads as not advertised.
     agentConfigMod.saveAgentConfig(parsedByBase, files.configPath);
     expect(agentConfigMod.loadAgentConfig(files.configPath)).toEqual(original);
     expect(agentConfigMod.workerRpcSettingsReader(files.configPath)()).toBeUndefined();
@@ -1081,10 +1116,23 @@ describe("I5: disconnect and rollback", () => {
       clusters: { nodes: Record<string, unknown>[] }[];
     };
     const { workerRpc: _nodeBlock, ...baseNodeShape } = configSchema.ClusterNodeSchema.shape;
+    // The non-strict base-shaped node schema strips the additive field, but it
+    // also carries none of ClusterNodeSchema's refine. So validating a node is
+    // done with the real schema after deleting the additive key it predates,
+    // keeping the node refine (agent nodes require an endpoint) in force.
     const BaseNode = z.object(baseNodeShape);
     for (const node of kube.clusters.flatMap((c) => c.nodes)) {
       expect(Object.keys(BaseNode.parse(node))).not.toContain("workerRpc");
+      const { workerRpc: _dropped, ...withoutAdditive } = node;
+      expect(configSchema.ClusterNodeSchema.safeParse(withoutAdditive).success).toBe(true);
     }
+    // Prove the refine is genuinely in force for what we validate: strip the
+    // endpoint an agent node requires and the real schema refuses it, where a
+    // refine-less base shape would silently accept it.
+    const firstNode: Record<string, unknown> = kube.clusters.flatMap((c) => c.nodes)[0] ?? {};
+    const { endpoint: _endpoint, ...noEndpoint } = firstNode;
+    expect(BaseNode.safeParse(noEndpoint).success).toBe(true);
+    expect(configSchema.ClusterNodeSchema.safeParse(noEndpoint).success).toBe(false);
     expect((await negotiate(files, agent, files.operatorToken)).data).toEqual({
       outcome: "not-advertised",
     });
