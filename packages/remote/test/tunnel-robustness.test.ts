@@ -398,4 +398,52 @@ describe("P4.1: bounded tunnel streams and acknowledged cancels", () => {
     await waitFor(() => acks.length === 2, 2000);
     expect(acks[1]).toEqual(["gpu1", "mute-2", "unknown"]);
   });
+
+  test("a websocket drop ends the consumer's stream typed tunnel-disconnected and cancels the node via cleanupSocket", async () => {
+    srv = startServer("tok", { onStreamCancelAck: recordAck });
+    await dialNode(srv.url);
+    let error: (Error & { code?: string }) | null = null;
+    try {
+      for await (const _ of srv.server.sendSubscribe(
+        "gpu1",
+        flood("ws-drop", { n: 1000, pad: 10, delayMs: 5 }),
+      )) {
+        expect(srv.server.disconnect("gpu1")).toBe(true);
+      }
+    } catch (err) {
+      error = err as Error & { code?: string };
+    }
+    expect(error?.code).toBe("tunnel-disconnected");
+    await waitFor(() => node.aborted === 1, 2000);
+  });
+
+  test("a 4409 replacement mid-stream ends central's stream typed tunnel-disconnected", async () => {
+    srv = startServer("tok", { onStreamCancelAck: recordAck });
+    await dialNode(srv.url);
+    const iterator = srv.server
+      .sendSubscribe("gpu1", flood("replaced", { n: 1000, pad: 10, delayMs: 5 }))[
+      Symbol.asyncIterator
+    ]();
+    expect((await iterator.next()).done).toBe(false);
+    const replacement = createTunnelClient({
+      url: srv.url,
+      bearer: "tok",
+      nodeName: "gpu1",
+      handleRequest: () => Promise.resolve(null),
+      handleSubscription: createTunnelSubscriptionHandler(nodeRouter, () => ({})),
+      heartbeat: { intervalMs: 0, timeoutMs: 0 },
+    });
+    await replacement.start();
+    let error: (Error & { code?: string }) | null = null;
+    try {
+      for (let r = await iterator.next(); r.done !== true; r = await iterator.next()) {
+        // drain until the displaced connection errors the stream
+      }
+    } catch (err) {
+      error = err as Error & { code?: string };
+    }
+    expect(error?.code).toBe("tunnel-disconnected");
+    await waitFor(() => node.aborted === 1, 2000);
+    replacement.stop();
+  });
 });

@@ -2656,6 +2656,31 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       expect(engine.requests).toHaveLength(1);
       expect(engine.aborts()).toBe(0);
     });
+
+    test("tunnel: a drop settles the attempt through the node's cleanupSocket alone; a caller cancel that never reaches the worker cannot account for the terminal", async () => {
+      engine.setScript({ holdAfter: 1 });
+      useRemoteHost();
+      const real = tunnelClient();
+      // Stub cancel so the caller's resolver-lost path cannot settle the
+      // worker's attempt: only the node's cleanupSocket can do that here.
+      const client: InferenceRpcClient = {
+        ...real,
+        cancel: async () => ({ outcome: "unknown" as const }),
+      };
+      const attemptId = "att-t-cleanup";
+      const env = envelope(attemptId);
+      const res = await executorOver(client).execute(env, ctxFor(env));
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain("Hel");
+      const aborted = engine.nextAbort();
+      await dropTunnel();
+      await aborted;
+      expect(statusNow(attemptId)).toMatchObject({
+        state: "terminal",
+        terminal: { outcome: "cancelled", started: true },
+      });
+      expect(engine.requests).toHaveLength(1);
+    });
   });
 
   describe("bounded streaming toward a slow consumer (X3)", () => {
