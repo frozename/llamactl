@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { StreamLimits, TunnelCancelOutcome } from "../src/tunnel/messages.js";
 
 import { bearerHashMatches, hashToken } from "../src/server/auth.js";
-import { pumpSubscriptionEvents } from "../src/server/tunnel-relay.js";
+import { nextRelayEvent } from "../src/server/tunnel-relay.js";
 import {
   createTunnelClient,
   createTunnelServer,
@@ -184,9 +184,10 @@ describe("FIX [17]: constant-time hello bearer check", () => {
   });
 });
 
-// FIX [7]/[12] — the SSE pump must not add one abort-event listener per
+// FIX [7]/[12] — the SSE relay must not add one abort-event listener per
 // streamed event. With N events on one stream, the abort-signal listener
-// count must stay bounded (does not grow per event).
+// count must stay bounded (does not grow per event). P4.1 made the relay
+// pull-driven, one step per read; each step holds one listener at most.
 describe("FIX [7]/[12]: SSE pump abort-listener leak", () => {
   test("listener count on the abort signal stays bounded across N events", async () => {
     const N = 50;
@@ -211,15 +212,13 @@ describe("FIX [7]/[12]: SSE pump abort-listener leak", () => {
 
     let maxListeners = 0;
     const enqueued: string[] = [];
-    const controller = {
-      enqueue(chunk: Uint8Array): void {
-        enqueued.push(new TextDecoder().decode(chunk));
-        const count = getEventListeners(signal, "abort").length;
-        if (count > maxListeners) maxListeners = count;
-      },
-    } as unknown as ReadableStreamDefaultController<Uint8Array>;
-
-    await pumpSubscriptionEvents(iterator, controller, encoder, signal);
+    for (;;) {
+      const pending = nextRelayEvent(iterator, signal);
+      maxListeners = Math.max(maxListeners, getEventListeners(signal, "abort").length);
+      const step = await pending;
+      if (step === "aborted" || step.done === true) break;
+      enqueued.push(new TextDecoder().decode(encoder.encode(JSON.stringify(step.value))));
+    }
 
     expect(enqueued.length).toBe(N);
     // RED before the fix: maxListeners grows ~1 per event (≈N).

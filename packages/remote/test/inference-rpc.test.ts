@@ -1905,18 +1905,8 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         useRemoteHost();
         const queue = queueSampler();
         const acks: unknown[] = [];
-        let centralQueued = 0;
         const client = recordingCancels(
-          clientFor[transport]({
-            limits,
-            onStreamQueue: (attemptId, bytes) => {
-              queue.sample(attemptId, bytes);
-              centralQueued = Math.max(
-                centralQueued,
-                transports.central.tunnelServer?.queuedBytes(TUNNEL_NODE) ?? 0,
-              );
-            },
-          }),
+          clientFor[transport]({ limits, onStreamQueue: queue.sample }),
           acks,
         );
         const aborted = engine.nextAbort();
@@ -1928,7 +1918,6 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         await aborted;
         expect(queue.max()).toBeGreaterThan(0);
         expect(queue.max()).toBeLessThanOrEqual(limits.maxQueuedBytes);
-        expect(centralQueued).toBeLessThanOrEqual(INFERENCE_RPC_STREAM_LIMITS.maxQueuedBytes);
         let rest = "";
         const decoder = new TextDecoder();
         for (let r = await reader.read(); !r.done; r = await reader.read()) {
@@ -1943,6 +1932,69 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         });
       },
     );
+
+    /**
+     * X3 on central: a relay client that stops reading. The relay pulls one
+     * event per read, so what the client has not read waits in central's
+     * per-stream queue, which holds at most its cap and then ends the stream
+     * typed, cancelling the attempt upstream.
+     */
+    test("tunnel: a relay client that stops reading leaves central's queue bounded; overflow ends it typed and cancels upstream", async () => {
+      const cap = INFERENCE_RPC_STREAM_LIMITS.maxQueuedBytes;
+      // Several times the cap, in events well under the frame cap; then the
+      // engine holds the response open, so the attempt is still running.
+      const pieces = Array.from({ length: 300 }, () => "z".repeat(48 * 1024));
+      engine.setScript({ pieces, holdAfter: pieces.length });
+      useRemoteHost();
+      const aborted = engine.nextAbort();
+      const attemptId = "att-relay-stalled";
+      expect(await submit(tunnelClient(), attemptId)).toMatchObject({ outcome: "accepted" });
+      const input = { attemptId };
+      const token = auth.mintServiceToken(transports.serviceCredential, {
+        node: TUNNEL_NODE,
+        method: "inferenceRpc.stream",
+        input,
+        relayPrincipal: auth.relayPrincipalOf(transports.centralToken),
+      });
+      // A raw relay stream whose body is never read until the end.
+      const res = await fetch(`${transports.central.url}/tunnel-relay/${TUNNEL_NODE}?stream=true`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${transports.centralToken}`,
+          "content-type": "application/json",
+          [auth.SERVICE_TOKEN_HEADER]: token,
+        },
+        body: JSON.stringify({ method: "inferenceRpc.stream", type: "subscription", input }),
+        tls: { ca: transports.centralCertificate },
+      } as RequestInit);
+      expect(res.status).toBe(200);
+      let maxQueued = 0;
+      const deadline = Date.now() + 20_000;
+      for (;;) {
+        maxQueued = Math.max(
+          maxQueued,
+          transports.central.tunnelServer?.queuedBytes(TUNNEL_NODE) ?? 0,
+        );
+        // Past the cap the bound is already broken; no need to wait for more.
+        const now = statusNow(attemptId);
+        if ((now.outcome === "status" && now.state === "terminal") || maxQueued > cap) break;
+        if (Date.now() > deadline) throw new Error("the attempt never ended");
+        await new Promise((r) => setTimeout(r, 2));
+      }
+      // Central held up to its cap, never more, and the overflow cancelled upstream.
+      expect(maxQueued).toBeGreaterThan(cap / 2);
+      expect(maxQueued).toBeLessThanOrEqual(cap);
+      expect(statusNow(attemptId)).toMatchObject({
+        state: "terminal",
+        terminal: { outcome: "cancelled", started: true },
+      });
+      await aborted;
+      // The late reader gets what central held, then the typed terminal.
+      const late = await res.text();
+      const delivered = Buffer.byteLength(late);
+      expect(late).toContain('"code":"stream-overflow"');
+      expect(delivered).toBeLessThan(pieces.length * 48 * 1024);
+    }, 30_000);
   });
 
   describe("cancellation end to end (X4)", () => {
