@@ -50,10 +50,21 @@ export function verifyBearer(req: Request, expectedHashHex: string): boolean {
   return bearerHashMatches(token, expectedHashHex);
 }
 
-/** A worker-RPC service credential's binding: its hash and the claims it carries (P4.1). */
+/**
+ * A worker-RPC service credential's binding (P4.1): the claims it carries,
+ * the credential's SHA-256 for the direct path, and the per-worker key its
+ * tunnel tokens are checked with (`serviceTunnelKey`). Without the key the
+ * binding refuses tunnel tokens.
+ */
 export type ServiceCredentialBinding = inferenceRpc.InferenceServiceClaimsV1 & {
   tokenHash: string;
+  tunnelKey?: string | undefined;
 };
+
+function claimsOf(binding: ServiceCredentialBinding): inferenceRpc.InferenceServiceClaimsV1 {
+  const { tokenHash: _hash, tunnelKey: _key, ...claims } = binding;
+  return claims;
+}
 
 /**
  * The claims a worker-RPC service credential is bound to, derived from
@@ -71,9 +82,7 @@ export function claimsForServiceCredential(
   for (const binding of bindings) {
     if (bearerHashMatches(token, binding.tokenHash) && match === null) match = binding;
   }
-  if (match === null) return null;
-  const { tokenHash: _hash, ...claims } = match;
-  return claims;
+  return match === null ? null : claimsOf(match);
 }
 
 /** The claims for the request's bearer when it is a worker-RPC service credential. */
@@ -89,25 +98,36 @@ export function authenticateServiceCredential(
  * Central relays a request to whichever node holds the target name, and
  * a name is only as strong as the shared tunnel bearer, so a tunnel
  * caller never sends its reusable service credential. It sends, per
- * call, an HMAC keyed by SHA-256(credential), the hash the worker already
- * keeps as the binding, over the target node name, the procedure, the
- * attempt the call names (a fresh request id for negotiate and catalog),
- * a digest of its input, central's relay principal for the hop, a nonce
- * and an expiry. The worker recomputes every bound value from its own
- * name and the request it is serving, and accepts each nonce once.
+ * call, an HMAC over the target node name, the procedure, the attempt the
+ * call names (a fresh request id for negotiate and catalog), a digest of
+ * its input, central's relay principal for the hop, a nonce and an expiry.
  *
- * Format: `v1.<expiresAtMs>.<nonce>.<base64url subject>.<base64url mac>`.
+ * The MAC key is per worker: HMAC-SHA256(credential,
+ * "llamactl-worker-rpc-token\0" + tunnel node name), which the caller
+ * derives from the credential and the worker keeps as its binding's
+ * `tunnelKey`. The binding's `tokenHash` keys nothing, so reading one
+ * worker's agent.yaml mints tokens for that worker at most. The worker
+ * recomputes every bound value from its own name and the request it is
+ * serving, and accepts each nonce once.
+ *
+ * Format: `v2.<base64url node>.<expiresAtMs>.<nonce>.<base64url subject>.<base64url mac>`.
  */
 export const SERVICE_TOKEN_HEADER = "x-llamactl-service-token";
 export const SERVICE_TOKEN_TTL_MS = 60_000;
 export const SERVICE_TOKEN_MAX_LENGTH = 1024;
 /** Expiries further ahead are refused: the TTL plus the clock skew tolerated. */
 const SERVICE_TOKEN_MAX_AHEAD_MS = 2 * SERVICE_TOKEN_TTL_MS;
-const SERVICE_TOKEN_VERSION = "v1";
+/**
+ * How long a verified nonce is held, on the monotonic clock: past any
+ * expiry a live token can claim, plus room for the wall clock to step
+ * back, so a step back never revives a spent token.
+ */
+export const SERVICE_TOKEN_NONCE_RETENTION_MS = SERVICE_TOKEN_MAX_AHEAD_MS + 10 * 60_000;
+const SERVICE_TOKEN_VERSION = "v2";
 const SERVICE_TOKEN_DOMAIN = "llamactl-worker-rpc-service-token";
+const TUNNEL_KEY_LABEL = "llamactl-worker-rpc-token\0";
 const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 const EXPIRY_PATTERN = /^[0-9]{1,15}$/;
-const NONCE_SWEEP_INTERVAL_MS = 1_000;
 
 /** What a service token is bound to, besides its subject, nonce and expiry. */
 export interface ServiceTokenCall {
@@ -128,6 +148,14 @@ export interface ServiceTokenCall {
  */
 export function relayPrincipalOf(bearer: string): string {
   return createHash("sha256").update(`llamactl-relay-principal\0${bearer}`).digest("base64url");
+}
+
+/**
+ * The per-worker key a credential's tunnel tokens to `node` are minted
+ * and checked with, as hex: what a binding stores as `tunnelKey`.
+ */
+export function serviceTunnelKey(credential: string, node: string): string {
+  return createHmac("sha256", credential).update(`${TUNNEL_KEY_LABEL}${node}`).digest("hex");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -174,9 +202,9 @@ function serviceTokenMac(
   return createHmac("sha256", key).update(JSON.stringify(bound)).digest();
 }
 
-/** Mints the single-use token a tunnel caller sends for one call instead of its credential. */
-export function mintServiceToken(
-  credential: string,
+/** Mints a token for one call under `key`, the target worker's tunnel key. */
+export function mintServiceTokenWithKey(
+  key: Buffer,
   call: ServiceTokenCall,
   opts: { now?: number; ttlMs?: number } = {},
 ): string {
@@ -185,10 +213,10 @@ export function mintServiceToken(
     `req-${randomBytes(12).toString("base64url")}`;
   const expiresAt = (opts.now ?? Date.now()) + (opts.ttlMs ?? SERVICE_TOKEN_TTL_MS);
   const nonce = randomBytes(18).toString("base64url");
-  const key = createHash("sha256").update(credential).digest();
   const mac = serviceTokenMac(key, call, subject, expiresAt, nonce);
   return [
     SERVICE_TOKEN_VERSION,
+    Buffer.from(call.node, "utf8").toString("base64url"),
     String(expiresAt),
     nonce,
     Buffer.from(subject, "utf8").toString("base64url"),
@@ -196,7 +224,18 @@ export function mintServiceToken(
   ].join(".");
 }
 
+/** Mints the single-use token a tunnel caller sends for one call instead of its credential. */
+export function mintServiceToken(
+  credential: string,
+  call: ServiceTokenCall,
+  opts: { now?: number; ttlMs?: number } = {},
+): string {
+  const key = Buffer.from(serviceTunnelKey(credential, call.node), "hex");
+  return mintServiceTokenWithKey(key, call, opts);
+}
+
 interface ParsedServiceToken {
+  node: string;
   expiresAt: number;
   nonce: string;
   subject: string;
@@ -205,20 +244,31 @@ interface ParsedServiceToken {
 
 function parseServiceToken(token: string): ParsedServiceToken | null {
   if (token.length > SERVICE_TOKEN_MAX_LENGTH) return null;
-  const [version, expiry, nonce, subject64, mac64, ...rest] = token.split(".");
+  const [version, node64, expiry, nonce, subject64, mac64, ...rest] = token.split(".");
   if (version !== SERVICE_TOKEN_VERSION || rest.length > 0) return null;
+  if (node64 === undefined || subject64 === undefined || mac64 === undefined) return null;
   if (expiry === undefined || !EXPIRY_PATTERN.test(expiry)) return null;
   if (nonce === undefined || !NONCE_PATTERN.test(nonce)) return null;
-  if (subject64 === undefined || mac64 === undefined) return null;
+  const node = Buffer.from(node64, "base64url").toString("utf8");
   const subject = Buffer.from(subject64, "base64url").toString("utf8");
   const mac = Buffer.from(mac64, "base64url");
-  if (subject.length === 0 || mac.length !== 32) return null;
-  return { expiresAt: Number(expiry), nonce, subject, mac };
+  if (node.length === 0 || subject.length === 0 || mac.length !== 32) return null;
+  return { node, expiresAt: Number(expiry), nonce, subject, mac };
 }
+
+/** Why the worker refused a presented token, as it logs it (never the token). */
+export type ServiceTokenRefusal =
+  | "malformed"
+  | "node"
+  | "expired"
+  | "skew"
+  | "subject"
+  | "replay"
+  | "mac";
 
 export interface ServiceTokenVerifier {
   /**
-   * The claims of the binding a token was minted from, when it was minted
+   * The claims of the binding a token was minted for, when it was minted
    * for this node and this call, has not expired and was never presented
    * before; null otherwise. A token verifies once.
    */
@@ -227,22 +277,25 @@ export interface ServiceTokenVerifier {
     call: Omit<ServiceTokenCall, "node">,
     bindings: readonly ServiceCredentialBinding[],
   ): inferenceRpc.InferenceServiceClaimsV1 | null;
-  /** Nonces held against replay. Each is dropped once its token expires. */
+  /** Nonces held against replay. Each is dropped once its retention passes. */
   heldNonces(): number;
 }
 
-/** Whether a parsed token is live now and names the attempt the call does. */
-function usableFor(
+/** Why a parsed token cannot verify here and now, before its MAC is checked. */
+function refusalFor(
   parsed: ParsedServiceToken,
+  node: string,
   call: Omit<ServiceTokenCall, "node">,
   at: number,
-): boolean {
-  if (at > parsed.expiresAt || parsed.expiresAt - at > SERVICE_TOKEN_MAX_AHEAD_MS) return false;
+): ServiceTokenRefusal | null {
+  if (parsed.node !== node) return "node";
+  if (at > parsed.expiresAt) return "expired";
+  if (parsed.expiresAt - at > SERVICE_TOKEN_MAX_AHEAD_MS) return "skew";
   const named = serviceTokenSubjectOf(call.method, call.input);
-  return named === undefined || named === parsed.subject;
+  return named === undefined || named === parsed.subject ? null : "subject";
 }
 
-/** The binding whose key minted the token; every binding is compared in constant time. */
+/** The binding whose tunnel key minted the token; every keyed binding is compared in constant time. */
 function mintedBy(
   parsed: ParsedServiceToken,
   call: ServiceTokenCall,
@@ -250,7 +303,8 @@ function mintedBy(
 ): ServiceCredentialBinding | null {
   let match: ServiceCredentialBinding | null = null;
   for (const binding of bindings) {
-    const key = Buffer.from(binding.tokenHash, "hex");
+    // A binding without its tunnel key refuses tunnel tokens: the hash is no key.
+    const key = Buffer.from(binding.tunnelKey ?? "", "hex");
     if (key.length !== 32) continue;
     const expected = serviceTokenMac(key, call, parsed.subject, parsed.expiresAt, parsed.nonce);
     if (timingSafeEqual(expected, parsed.mac) && match === null) match = binding;
@@ -259,34 +313,54 @@ function mintedBy(
 }
 
 /**
- * The worker side of service tokens. A verified nonce is held until its
- * token expires, which bounds the set by the verified tokens of one TTL
- * window.
+ * The worker side of service tokens. A token's expiry is a wall-clock
+ * claim and is checked against the wall clock; a verified nonce is held
+ * on the monotonic clock for SERVICE_TOKEN_NONCE_RETENTION_MS, so the set
+ * is bounded by the tokens verified in that window and a wall-clock step
+ * back cannot re-admit a spent token. Every refusal is reported with its
+ * reason through `onRefused`.
  */
 export function createServiceTokenVerifier(opts: {
   node: string;
   now?: () => number;
+  monotonicNow?: () => number;
+  onRefused?: (reason: ServiceTokenRefusal, method: string) => void;
 }): ServiceTokenVerifier {
   const now = opts.now ?? Date.now;
-  const seen = new Map<string, number>();
-  let swept = 0;
+  const monotonicNow = opts.monotonicNow ?? ((): number => performance.now());
+  const seen = new Set<string>();
+  // Held in verification order; one retention for all keeps it in expiry order.
+  const held: { nonce: string; until: number }[] = [];
+  let head = 0;
   const sweep = (at: number): void => {
-    if (at - swept < NONCE_SWEEP_INTERVAL_MS) return;
-    swept = at;
-    for (const [nonce, expiresAt] of seen) if (expiresAt < at) seen.delete(nonce);
+    for (let next = held[head]; next !== undefined && next.until <= at; next = held[head]) {
+      seen.delete(next.nonce);
+      head += 1;
+    }
+    if (head > 1024 && head * 2 > held.length) {
+      held.splice(0, head);
+      head = 0;
+    }
   };
   return {
     claimsFor(token, call, bindings): inferenceRpc.InferenceServiceClaimsV1 | null {
-      const parsed = token === null || token === undefined ? null : parseServiceToken(token);
-      const at = now();
-      if (parsed === null || !usableFor(parsed, call, at)) return null;
+      if (token === null || token === undefined || token.length === 0) return null;
+      const refuse = (reason: ServiceTokenRefusal): null => {
+        opts.onRefused?.(reason, call.method);
+        return null;
+      };
+      const parsed = parseServiceToken(token);
+      if (parsed === null) return refuse("malformed");
+      const early = refusalFor(parsed, opts.node, call, now());
+      if (early !== null) return refuse(early);
+      const at = monotonicNow();
       sweep(at);
-      if (seen.has(parsed.nonce)) return null;
+      if (seen.has(parsed.nonce)) return refuse("replay");
       const match = mintedBy(parsed, { ...call, node: opts.node }, bindings);
-      if (match === null) return null;
-      seen.set(parsed.nonce, parsed.expiresAt);
-      const { tokenHash: _hash, ...claims } = match;
-      return claims;
+      if (match === null) return refuse("mac");
+      seen.add(parsed.nonce);
+      held.push({ nonce: parsed.nonce, until: at + SERVICE_TOKEN_NONCE_RETENTION_MS });
+      return claimsOf(match);
     },
     heldNonces: () => seen.size,
   };

@@ -20,7 +20,7 @@ import * as agentConfigMod from "@llamactl/core/config/agent-config";
 import { listPeers } from "@llamactl/core/config/peers";
 import { resolveEnv } from "@llamactl/core/env";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
@@ -175,6 +175,10 @@ function serviceCredential(
       tenants: [TENANT],
       credentialScopeId: TENANT,
       tokenHash: hash,
+      // The key tunnel tokens to this worker are checked with (AGENTS.md).
+      tunnelKey: createHmac("sha256", token)
+        .update(`llamactl-worker-rpc-token\0${WORKER}-tunnel`)
+        .digest("hex"),
       ...overrides,
     },
   };
@@ -1331,6 +1335,15 @@ describe("I2/I6: a malformed worker-RPC block never stops the agent", () => {
       outcome: "not-advertised",
       workerId: WORKER,
     });
+  });
+
+  test("a binding whose tunnelKey is its tokenHash is ignored, so the stored hash never mints", async () => {
+    const files = await initAgent("hash-as-key");
+    const svc = serviceCredential("svc-hash-as-key");
+    enableWorkerRpc(files, {
+      serviceCredentials: [{ ...svc.binding, tunnelKey: svc.binding.tokenHash }],
+    });
+    expect(agentConfigMod.workerRpcSettingsReader(files.configPath)()).toBeUndefined();
   });
 
   test("the block is re-read only when agent.yaml changes, and a rotation applies without a restart", async () => {

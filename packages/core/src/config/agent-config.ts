@@ -26,14 +26,22 @@ import { llamactlHome, nonEmpty } from "./env.js";
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /**
- * A worker-RPC service credential (P4.1): stored only as the SHA-256 of
- * the token (the agent bearer's mechanics), bound to the claims every
- * request presenting it gets. Rotate by adding the new credential's
- * binding, moving callers over, then removing the old one; revoke by
- * removing the binding.
+ * A worker-RPC service credential (P4.1), bound to the claims every
+ * request presenting it gets. The worker keeps two values derived from
+ * the token, never the token itself: `tokenHash`, its SHA-256 (the agent
+ * bearer's mechanics), checks it on the direct path; `tunnelKey`,
+ * HMAC-SHA256(token, "llamactl-worker-rpc-token\0" + this worker's tunnel
+ * node name), checks the single-use tokens tunnel callers derive from it.
+ * Without `tunnelKey` the binding refuses tunnel callers. Rotate by adding
+ * the new credential's binding, moving callers over, then removing the old
+ * one; revoke by removing the binding.
  */
 export const AgentWorkerRpcCredentialSchema = InferenceServiceClaimsV1Schema.extend({
   tokenHash: z.string().regex(SHA256_HEX),
+  tunnelKey: z.string().regex(SHA256_HEX).optional(),
+}).refine((binding) => binding.tunnelKey !== binding.tokenHash, {
+  message: "tunnelKey must be derived from the token, not be its hash",
+  path: ["tunnelKey"],
 });
 export type AgentWorkerRpcCredential = z.infer<typeof AgentWorkerRpcCredentialSchema>;
 

@@ -23,6 +23,7 @@ import { type ExecutionEventV1, validateExecutionEventSequence } from "@novaprot
 import { initTRPC } from "@trpc/server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect } from "node:tls";
@@ -1510,6 +1511,13 @@ describe("the worker-rpc executor behind the unified proxy", () => {
 
 const TUNNEL_NODE = "worker-a-tunnel";
 
+/** A binding's per-worker tunnel key: HMAC-SHA256(credential, label + tunnel node name). */
+function tunnelKeyOf(credential: string, node = TUNNEL_NODE): string {
+  return createHmac("sha256", credential)
+    .update(`llamactl-worker-rpc-token\0${node}`)
+    .digest("hex");
+}
+
 interface Transports {
   worker: RunningAgent;
   workerNode: ClusterNode;
@@ -1574,8 +1582,8 @@ async function startTransports(): Promise<Transports> {
   const service = auth.generateToken();
   const golden = auth.generateToken();
   const bindings: agentConfigMod.AgentWorkerRpcCredential[] = [
-    { ...claims(), tokenHash: service.hash },
-    { ...GOLDEN_CLAIMS, tokenHash: golden.hash },
+    { ...claims(), tokenHash: service.hash, tunnelKey: tunnelKeyOf(service.token) },
+    { ...GOLDEN_CLAIMS, tokenHash: golden.hash, tunnelKey: tunnelKeyOf(golden.token) },
   ];
   const central = startAgentServer({
     bindHost: "127.0.0.1",
@@ -2948,6 +2956,27 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
 
     test("each token verifies once, on its node, before it expires", async () => {
       useRemoteHost();
+      const logged: string[] = [];
+      const write = process.stderr.write.bind(process.stderr);
+      process.stderr.write = (chunk: string | Uint8Array): boolean => {
+        logged.push(String(chunk));
+        return true;
+      };
+      const presented: string[] = [];
+      try {
+        await verifiesOnce(presented);
+      } finally {
+        process.stderr.write = write;
+      }
+      // The worker logs why it refused each token, never the token.
+      const refusals = logged.filter((line) => line.includes("tunnel token refused"));
+      for (const reason of ["replay", "expired", "node", "mac"]) {
+        expect(refusals.some((line) => line.includes(`(${reason})`))).toBe(true);
+      }
+      for (const token of presented) expect(logged.join("")).not.toContain(token);
+    });
+
+    async function verifiesOnce(presented: string[]): Promise<void> {
       const fresh = tokenFor("inferenceRpc.negotiate", NEGOTIATE);
       const first = await relayCall("inferenceRpc.negotiate", NEGOTIATE, fresh);
       expect(first.result).toMatchObject({ outcome: "negotiated" });
@@ -2988,6 +3017,24 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       const { signal: _spent, ...again } = request?.init ?? {};
       const replay = await fetch(request?.url ?? "", again);
       expect(((await replay.json()) as { result?: unknown }).result).toMatchObject(refused);
+      presented.push(fresh, expired, elsewhere, otherRelay);
+    }
+
+    test("a binding without a tunnelKey refuses tunnel tokens; the direct path still works", async () => {
+      useRemoteHost();
+      const hashOnly = transports.bindings.map(({ tunnelKey: _key, ...binding }) => binding);
+      const prior = transports.bindings.splice(0, transports.bindings.length, ...hashOnly);
+      try {
+        const tunnel = await execute(tunnelClient(), "att-no-tunnel-key");
+        expect(tunnel.res.status).toBe(403);
+        expect(await tunnel.res.json()).toMatchObject({ error: { code: "unauthorized-scope" } });
+        const direct = await execute(directClient(), "att-no-tunnel-key-direct");
+        expect(direct.res.status).toBe(200);
+        expect(await direct.res.text()).toContain("[DONE]");
+        expect(engine.requests).toHaveLength(1);
+      } finally {
+        transports.bindings.splice(0, transports.bindings.length, ...prior);
+      }
     });
   });
 
@@ -3195,7 +3242,9 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         useRemoteHost();
         const old = auth.generateToken();
         const next = auth.generateToken();
-        const undo = rebind([{ ...claims(), tokenHash: old.hash }]);
+        const undo = rebind([
+          { ...claims(), tokenHash: old.hash, tunnelKey: tunnelKeyOf(old.token) },
+        ]);
         try {
           let release = (): void => undefined;
           engine.setScript({
@@ -3212,7 +3261,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
               ctxFor(env),
             ))();
           await until(() => engine.requests.length === 1);
-          rebind([{ ...claims(), tokenHash: next.hash }]);
+          rebind([{ ...claims(), tokenHash: next.hash, tunnelKey: tunnelKeyOf(next.token) }]);
           const refused = await execute(
             clientFor[transport]({ serviceCredential: old.token }),
             `att-rotated-${transport}`,
@@ -3242,6 +3291,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
           {
             ...claims({ deployments: [] }),
             tokenHash: auth.hashToken(transports.serviceCredential),
+            tunnelKey: tunnelKeyOf(transports.serviceCredential),
           },
         ]);
         try {

@@ -730,7 +730,13 @@ function maybeStartTunnelClient(
   // Central forwards a worker-RPC caller's single-use token on the req
   // frame, bound to this node's tunnel name and to the call; the claims
   // it verifies to ride that request's context only.
-  const tokens = createServiceTokenVerifier({ node: opts.tunnelDial.nodeName });
+  const tokens = createServiceTokenVerifier({
+    node: opts.tunnelDial.nodeName,
+    // Why, and for which procedure; never the token.
+    onRefused: (reason, method) => {
+      process.stderr.write(`[worker-rpc] tunnel token refused (${reason}) for ${method}\n`);
+    },
+  });
   const contextFor = (req: TunnelReq): ReturnType<typeof requestContext> => {
     const params = req.params as { input?: unknown } | undefined;
     const claims =

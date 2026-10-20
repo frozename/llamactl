@@ -25,6 +25,7 @@ import {
   validateExecutionEventSequence,
 } from "@novaproto/contracts";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
 import { join } from "node:path";
 import { connect } from "node:tls";
 
@@ -302,6 +303,9 @@ async function startWorker(dir: string): Promise<void> {
         tenants: [TENANT],
         credentialScopeId: TENANT,
         tokenHash: service.hash,
+        tunnelKey: createHmac("sha256", service.token)
+          .update(`llamactl-worker-rpc-token\0${TUNNEL_NODE}`)
+          .digest("hex"),
       },
     ],
   };

@@ -544,11 +544,14 @@ agent bearer:
 - **Worker-RPC service tokens** (P4.1) — a caller's worker-RPC service
   credential never crosses the tunnel, since any node holding the
   tunnel bearer can claim a node name. Each relayed `inferenceRpc.*`
-  call carries a single-use token instead: an HMAC keyed by the
-  credential's SHA-256, bound to the target node name, the call and its
-  input, the relay hop's bearer, a nonce and a 60 s expiry. The node
-  verifies it against its hashed bindings and refuses replays. Direct
-  dials present the credential itself, over pinned TLS.
+  call carries a single-use token instead: an HMAC keyed by a per-worker
+  key derived from the credential and the target's tunnel node name,
+  bound to that node name, the call and its input, the relay hop's
+  bearer, a nonce and a 60 s expiry. The node verifies it against the
+  binding's `tunnelKey` (never its `tokenHash`, so a leaked `agent.yaml`
+  mints nothing, and one worker's key mints nothing for another) and
+  refuses replays. Direct dials present the credential itself, over
+  pinned TLS, checked against `tokenHash`.
 - The **relay-only credential** (P4.1) — central's `agent.yaml` lists
   its SHA-256 under `workerRpcRelay.tokenHashes`. It relays the
   `inferenceRpc.*` procedures to nodes and nothing else: any other
@@ -587,6 +590,28 @@ behind `LLAMACTL_UNIFIED_PROXY=1`.
   every caller's kubeconfig node for it. A build that predates the RPC
   refuses a service credential on a direct dial (HTTP 401), which
   callers fail closed on rather than falling back.
+- **Bind a service credential** on a worker with two values derived
+  from it, never the credential itself: `tokenHash`, its SHA-256 hex
+  (direct dials), and `tunnelKey`, HMAC-SHA256 keyed by the credential
+  over `"llamactl-worker-rpc-token\0"` followed by the worker's tunnel
+  node name (`--tunnel-node-name`, default its `nodeName`), as hex
+  (tunnel callers). A binding without `tunnelKey` refuses tunnel
+  callers. Both are computed with the credential on stdin, so it stays
+  out of argv and shell history:
+
+  ```sh
+  bun -e 'const c = (await Bun.stdin.text()).trim(), n = process.argv.at(-1), h = require("node:crypto"); console.log(`tokenHash: ${h.createHash("sha256").update(c).digest("hex")}\ntunnelKey: ${h.createHmac("sha256", c).update(`llamactl-worker-rpc-token\0${n}`).digest("hex")}`)' <tunnel-node-name> < credential-file
+  ```
+
+  Rotate or revoke as with any binding; a renamed tunnel node needs a
+  new `tunnelKey`.
+
+- **Clocks**: tunnel worker-RPC needs the gateway's and the worker's
+  clocks within ±60 s, since a token expires 60 s after it is minted
+  and the worker refuses one dated further ahead. The worker logs each
+  refused token to stderr with its reason (`expired`, `skew`, `replay`,
+  `mac`, `node`, `subject`, `malformed`) and the procedure, never the
+  token; a run of `expired` or `skew` means the clocks have drifted.
 - **Version window**: a gateway and a worker one minor apart
   interoperate. A minor bump must never add an enum value, a frame kind
   or a required field that an N-1 peer cannot parse; anything that
