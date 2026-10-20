@@ -1015,8 +1015,16 @@ interface Failure {
   status: number;
   code: string;
   message: string;
+  /** False once the worker accepted the attempt: a client SDK retry would run it again. */
+  retryable: boolean;
 }
 
+/**
+ * Every terminal, even an unknown outcome, follows an acceptance that may
+ * have run: a client SDK retry is a fresh attempt id, so attempt dedup
+ * cannot stop it from running the request again. Only a rejection, which
+ * comes before anything was accepted, keeps the SDK's own retry rules.
+ */
 function failureOf(terminal: ExecutionTerminal): Failure {
   switch (terminal.outcome) {
     case "completed": {
@@ -1024,33 +1032,28 @@ function failureOf(terminal: ExecutionTerminal): Failure {
         status: 409,
         code: "already-terminal",
         message: "the attempt completed on another stream; its output is not replayed",
+        retryable: false,
       };
     }
     case "failed": {
       const status = terminal.error.code === "timeout" ? 504 : 502;
-      return { status, code: terminal.error.code, message: terminal.error.message };
+      const { code, message } = terminal.error;
+      return { status, code, message, retryable: false };
     }
     case "cancelled": {
-      return { status: 503, code: "cancelled", message: "the attempt was cancelled" };
+      const message = "the attempt was cancelled";
+      return { status: 503, code: "cancelled", message, retryable: false };
     }
     case "unknown-outcome": {
       const message = terminal.message ?? "the attempt outcome is unknown";
-      return { status: 502, code: "unknown-outcome", message };
+      return { status: 502, code: "unknown-outcome", message, retryable: false };
     }
   }
 }
 
-/**
- * Failures whose attempt may have run: an unknown outcome, or one that
- * completed on another stream. OpenAI SDKs retry a 409 or a 5xx on their
- * own, which would run the request again, so these say not to.
- */
-const NOT_RETRYABLE = new Set(["unknown-outcome", "already-terminal"]);
-
+/** OpenAI and Stainless SDKs retry a 409, 429 or 5xx on their own unless told not to. */
 function errorResponse(envelope: Envelope, failure: Failure, headersIn: ResponseHeaders): Response {
-  const headers = NOT_RETRYABLE.has(failure.code)
-    ? { ...headersIn, "x-should-retry": "false" }
-    : headersIn;
+  const headers = failure.retryable ? headersIn : { ...headersIn, "x-should-retry": "false" };
   const init = { status: failure.status, headers };
   if (envelope.ingressProtocol === "anthropic-messages") {
     return Response.json(
@@ -1268,7 +1271,8 @@ async function outcomeResponse(
   if (outcome.kind === "rejected") {
     release();
     const { code, message } = outcome.rejection;
-    return errorResponse(envelope, { status: REJECTION_STATUS[code], code, message }, headers);
+    const failure = { status: REJECTION_STATUS[code], code, message, retryable: true };
+    return errorResponse(envelope, failure, headers);
   }
   if (outcome.kind === "settled") {
     release();

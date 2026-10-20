@@ -48,6 +48,7 @@ import {
   createWorkerRpcExecutor,
   type DirectInferenceRpcClientOptions,
   type InferenceRpcClient,
+  InferenceRpcStreamOverflowError,
   type TunnelInferenceRpcClientOptions,
   type WorkerRpcExecutorOptions,
 } from "../src/inference/client.js";
@@ -1609,6 +1610,116 @@ describe("the worker-rpc executor behind the unified proxy", () => {
     expect(await refused.json()).toMatchObject({ error: { code: "not-owner" } });
     expect(refused.headers.get("x-should-retry")).toBeNull();
     expect(engine.requests).toHaveLength(1);
+  });
+
+  test("every non-streaming failure after acceptance tells client SDKs not to retry it", async () => {
+    const jsonEnvelope = (
+      attemptId: string,
+      deadline?: number,
+    ): inferenceContracts.InferenceEnvelopeV1 =>
+      envelope(
+        attemptId,
+        {
+          stream: false,
+          features: { ...routingCapabilitiesFeatures(), stream: false },
+          nativeBody: {
+            model: `public/${LOCAL}`,
+            stream: false,
+            messages: [{ role: "user", content: "hi" }],
+          },
+        },
+        deadline,
+      );
+    const run = async (
+      client: InferenceRpcClient,
+      env: inferenceContracts.InferenceEnvelopeV1,
+    ): Promise<{ status: number; retry: string | null; body: unknown }> => {
+      const res = await createWorkerRpcExecutor({
+        client,
+        deploymentId: LOCAL,
+        fallback: recordingFallback([]),
+        nodeId: "gw",
+      }).execute(env, ctxFor(env));
+      return {
+        status: res.status,
+        retry: res.headers.get("x-should-retry"),
+        body: await res.json(),
+      };
+    };
+    const failed = (code: string): unknown => ({ error: { code } });
+    const workerHost = useHost();
+    const real = createEmbeddedInferenceRpcClient(claims());
+
+    // The worker completed, but the stream lost its last content and terminal.
+    const lossy: InferenceRpcClient = {
+      ...real,
+      stream: async function* (input, signal): AsyncGenerator<StreamFrame> {
+        const frames = await collect(real.stream(input, signal));
+        yield* frames.slice(0, -2);
+      },
+    };
+    const lost = await run(lossy, jsonEnvelope("att-json-lost"));
+    expect(lost).toMatchObject({ status: 502, retry: "false", body: failed("incomplete") });
+    expect(await real.status({ attemptId: "att-json-lost" })).toMatchObject({
+      terminal: { outcome: "completed" },
+    });
+
+    engine.setScript({ status: 500 });
+    const upstream = await run(real, jsonEnvelope("att-json-upstream"));
+    expect(upstream).toMatchObject({ status: 502, retry: "false", body: failed("upstream-error") });
+    expect(await real.status({ attemptId: "att-json-upstream" })).toMatchObject({
+      terminal: { outcome: "failed", started: true },
+    });
+
+    engine.setScript({ holdAfter: 1 });
+    const late = await run(real, jsonEnvelope("att-json-timeout", Date.now() + 300));
+    expect(late).toMatchObject({ status: 504, retry: "false", body: failed("timeout") });
+    expect(await real.status({ attemptId: "att-json-timeout" })).toMatchObject({
+      terminal: { outcome: "failed", started: true },
+    });
+
+    const overflowing: InferenceRpcClient = {
+      ...real,
+      stream: async function* (input, signal): AsyncGenerator<StreamFrame> {
+        for await (const frame of real.stream(input, signal)) {
+          yield frame;
+          if (frame.frame === "event" && frame.event.type === "content") {
+            throw new InferenceRpcStreamOverflowError("the stream outran its consumer");
+          }
+        }
+      },
+    };
+    const overflow = await run(overflowing, jsonEnvelope("att-json-overflow"));
+    expect(overflow).toMatchObject({
+      status: 502,
+      retry: "false",
+      body: failed("stream-overflow"),
+    });
+
+    const draining = run(real, jsonEnvelope("att-json-drain"));
+    await until(() => engine.requests.length === 5);
+    const aborted = engine.nextAbort();
+    const drained = workerHost.drain();
+    workerHost.close();
+    await drained;
+    await aborted;
+    expect(await draining).toMatchObject({
+      status: 503,
+      retry: "false",
+      body: failed("cancelled"),
+    });
+    expect(await real.status({ attemptId: "att-json-drain" })).toMatchObject({
+      terminal: { outcome: "cancelled", started: true },
+    });
+
+    // A refusal with the same status as the cancel, before anything was accepted.
+    const unreachable: InferenceRpcClient = {
+      ...real,
+      negotiate: () => Promise.reject(new Error("unreachable")),
+    };
+    const refused = await run(unreachable, jsonEnvelope("att-json-refused"));
+    expect(refused).toMatchObject({ status: 503, retry: null, body: failed("target-unavailable") });
+    expect(engine.requests).toHaveLength(5);
   });
 
   test("a public error names no secret reference or path; the log keeps the detail", async () => {
