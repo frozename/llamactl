@@ -557,8 +557,10 @@ agent bearer:
   `inferenceRpc.*` procedures to nodes and nothing else: any other
   relay method gets 403, every other route 401. A caller presents it
   for the relay hop through its kubeconfig node's
-  `workerRpc.relayCredentialRef` (`env:`/`keychain:`/`file:`); without
-  one the hop presents the agent bearer, as before. Give each gateway
+  `workerRpc.relayCredentialRef` (`env:`/`keychain:`/`file:`), which a
+  tunneled node's worker-RPC block requires: without one the caller
+  fails the attempt closed as target-unavailable and logs why, and never
+  presents the agent bearer on the hop. Give each gateway
   its own relay-only credential, listing one hash per gateway: central
   stamps every relayed frame with the principal of the credential that
   relayed it, and a service token is good only through the principal
@@ -588,7 +590,10 @@ behind `LLAMACTL_UNIFIED_PROXY=1`.
 - **Enable in order**: workers first, then central, then callers. A
   caller that reaches an owner over the tunnel needs central to relay
   its service token, so upgrade central before any caller opts in to
-  tunnel RPC.
+  tunnel RPC, and list the gateway's relay-only credential hash under
+  central's `workerRpcRelay.tokenHashes` before adding
+  `relayCredentialRef` to the caller's `workerRpc` block. A tunneled
+  owner's block without `relayCredentialRef` fails closed.
 - **Roll back** by emptying `versions` or removing the block. Either
   way the owner answers "not advertised" on both transports, new
   requests keep the existing path, and active streams drain.

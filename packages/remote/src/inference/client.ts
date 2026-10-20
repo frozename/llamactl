@@ -38,7 +38,6 @@ import type { z } from "zod";
 
 import { type inferenceContracts, inferenceRpc, type routingCatalog } from "@llamactl/core";
 import { currentContext, loadConfig } from "@llamactl/core/config/kubeconfig";
-import { listPeers } from "@llamactl/core/config/peers";
 import { resolveSecret } from "@llamactl/core/config/secret";
 import {
   buildRelayFetchInit,
@@ -1491,15 +1490,6 @@ function unreachableClient(transport: InferenceRpcTransport, message: string): I
   };
 }
 
-/** Credentials are resolved only for a selected owner, never at catalog build. */
-function configuredPeer(id: string): PeerNode | undefined {
-  try {
-    return listPeers().find((peer) => peer.id === id);
-  } catch {
-    return undefined;
-  }
-}
-
 function kubeconfigWorkerRpc(owner: string): ClusterNode["workerRpc"] {
   try {
     const config = loadConfig();
@@ -1538,24 +1528,23 @@ function directClientFor(peer: PeerNode, serviceCredential: string): InferenceRp
 }
 
 /**
- * The relay hop presents central's relay-only credential when the owner's
- * node names one, and otherwise the context user's token, as before.
+ * The relay hop presents central's relay-only credential, never the
+ * context user's operator bearer: that bearer relays any method, and
+ * every holder shares its relay principal, so a gateway relaying with it
+ * could not be revoked without rotating it for every client.
  */
 function tunnelClientFor(
   peer: PeerNode,
   serviceCredential: string,
-  relayCredential: string | undefined,
+  relayCredential: string,
 ): InferenceRpcClient {
   if (peer.tunnelCentralUrl === undefined) {
     throw new Error(`owner '${peer.id}' prefers the tunnel, but no tunnelCentralUrl is set`);
   }
-  const bearer =
-    relayCredential ?? peer.tunnelRelayToken ?? configuredPeer(peer.id)?.tunnelRelayToken;
-  if (bearer === undefined) throw new Error(`no tunnel relay credential for owner '${peer.id}'`);
   return createTunnelInferenceRpcClient({
     centralUrl: peer.tunnelCentralUrl,
     nodeName: peer.tunnelNodeName ?? peer.id,
-    bearer,
+    bearer: relayCredential,
     serviceCredential,
     ...(peer.tunnelCentralCertificate !== undefined
       ? { centralCertificate: peer.tunnelCentralCertificate }
@@ -1571,8 +1560,9 @@ function tunnelClientFor(
  * declares: the reverse tunnel when it prefers one, else a direct dial
  * pinned to its certificate, presenting the caller's service credential.
  * An owner the caller has not opted in for (no worker-RPC block) keeps
- * the existing path: null. An owner that cannot be reached, or whose
- * credential does not resolve, fails closed; it is never rerouted.
+ * the existing path: null. An owner that cannot be reached, whose
+ * credential does not resolve, or whose tunnel has no relay-only
+ * credential, fails closed; it is never rerouted.
  */
 interface OwnerRefs {
   service: (owner: string) => string | undefined;
@@ -1595,11 +1585,13 @@ function ownerClient(
     const credential = resolveSecret(ref);
     if (transport === "direct") return directClientFor(peer, credential);
     const relayRef = refs.relay(owner);
-    return tunnelClientFor(
-      peer,
-      credential,
-      relayRef === undefined ? undefined : resolveSecret(relayRef),
-    );
+    if (relayRef === undefined) {
+      return unreachableClient(
+        "tunnel",
+        `owner '${owner}' prefers the tunnel, but its workerRpc block names no relayCredentialRef`,
+      );
+    }
+    return tunnelClientFor(peer, credential, resolveSecret(relayRef));
   } catch (err) {
     return unreachableClient(transport, errorMessage(err));
   }

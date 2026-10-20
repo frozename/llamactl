@@ -1850,6 +1850,8 @@ interface Transports {
   centralToken: string;
   /** Central's relay-only credential: it relays inferenceRpc.* and nothing else. */
   relayCredential: string;
+  /** Every /tunnel-relay path central has been asked for, in order. */
+  relayRequests: string[];
   stop: () => Promise<void>;
 }
 
@@ -1895,12 +1897,16 @@ async function startTransports(): Promise<Transports> {
     { ...claims(), tokenHash: service.hash, tunnelKey: tunnelKeyOf(service.token) },
     { ...GOLDEN_CLAIMS, tokenHash: golden.hash, tunnelKey: tunnelKeyOf(golden.token) },
   ];
+  const relayRequests: string[] = [];
   const central = startAgentServer({
     bindHost: "127.0.0.1",
     port: 0,
     tokenHash: centralToken.hash,
     tls: { certPath: centralCert.certPath, keyPath: centralCert.keyPath },
     advertiseMdns: false,
+    onRequest: (url) => {
+      if (url.pathname.startsWith("/tunnel-relay")) relayRequests.push(url.pathname);
+    },
     tunnelCentral: {
       expectedBearerHash: tunnelBearer.hash,
       workerRpcRelay: () => ({ tokenHashes: [relayCredential.hash] }),
@@ -1953,6 +1959,7 @@ async function startTransports(): Promise<Transports> {
     centralFingerprint: centralCert.fingerprint,
     centralToken: centralToken.token,
     relayCredential: relayCredential.token,
+    relayRequests,
     stop: async (): Promise<void> => {
       await worker.stop();
       await central.stop();
@@ -2098,7 +2105,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       centralCertificate: transports.centralCertificate,
       centralFingerprint: transports.centralFingerprint,
       nodeName: TUNNEL_NODE,
-      bearer: transports.centralToken,
+      bearer: transports.relayCredential,
       serviceCredential: transports.serviceCredential,
       ...extra,
     });
@@ -2184,6 +2191,8 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       const credentialFile = join(temp.devStorage, "svc-owner.token");
       writeFileSync(credentialFile, transports.serviceCredential);
       const ref = `file:${credentialFile}`;
+      const relayFile = join(temp.devStorage, "relay-owner.token");
+      writeFileSync(relayFile, transports.relayCredential);
       const peers: PeerNode[] = [
         {
           id: "worker-direct",
@@ -2222,6 +2231,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
           fallback: recordingFallback(fallback),
           peers: () => peers,
           serviceCredentialRef: (id) => refs[id],
+          relayCredentialRef: (id) => (id === "worker-tunnel" ? `file:${relayFile}` : undefined),
         });
       expect(acquire("gw")?.describe().id).toBe("worker-rpc-executor:embedded");
       for (const [owner, transport] of [
@@ -3102,7 +3112,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       method: string,
       input: unknown,
       token: string | undefined,
-      bearer = transports.centralToken,
+      bearer = transports.relayCredential,
     ): Promise<{ status: number; result: unknown }> {
       const res = await fetch(`${transports.central.url}/tunnel-relay/${TUNNEL_NODE}`, {
         method: "POST",
@@ -3129,7 +3139,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
           node: opts.node ?? TUNNEL_NODE,
           method,
           input,
-          relayPrincipal: auth.relayPrincipalOf(opts.bearer ?? transports.centralToken),
+          relayPrincipal: auth.relayPrincipalOf(opts.bearer ?? transports.relayCredential),
         },
         opts.now !== undefined ? { now: opts.now } : {},
       );
@@ -3255,7 +3265,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         "inferenceRpc.negotiate",
         NEGOTIATE,
         negotiateToken,
-        transports.relayCredential,
+        transports.centralToken,
       );
       expect(sameCall.result).toMatchObject({
         outcome: "rejected",
@@ -3352,8 +3362,9 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
    * X5 — central's relay-only credential. It admits relaying the
    * `inferenceRpc.*` procedures to nodes and nothing else: no other relay
    * method, no other route, however the URL is spelled. Callers present it
-   * for the relay hop through their kubeconfig node's reference; the
-   * operator bearer still relays, as before.
+   * for the relay hop through their kubeconfig node's reference, and fail
+   * closed without one rather than present the operator bearer, which
+   * central still accepts for any relay.
    */
   describe("the relay-only credential on central (X5)", () => {
     test("a kubeconfig reference to it carries inferenceRpc.* end to end", async () => {
@@ -3394,6 +3405,60 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       expect(res.headers.get("x-llamactl-worker-transport")).toBe("tunnel");
       expect(await res.text()).toContain("[DONE]");
       expect(engine.requests).toHaveLength(1);
+    });
+
+    test("a tunneled owner whose block names no relay-only credential fails closed, never relaying with the operator bearer", async () => {
+      useRemoteHost();
+      const serviceFile = join(temp.devStorage, "svc-no-relay.token");
+      writeFileSync(serviceFile, transports.serviceCredential);
+      // The context user's token reaches central as its operator bearer.
+      const peer: PeerNode = {
+        id: "worker-no-relay",
+        endpoint: "https://127.0.0.1:1",
+        tunnelPreferred: true,
+        tunnelNodeName: TUNNEL_NODE,
+        tunnelCentralUrl: transports.central.url,
+        tunnelCentralCertificate: transports.centralCertificate,
+        tunnelCentralFingerprint: transports.centralFingerprint,
+        tunnelRelayToken: transports.centralToken,
+      };
+      const fallback: string[] = [];
+      const executor = acquireWorkerRpcExecutor(
+        {
+          advertisement: ad(LOCAL, { ownerNodeId: peer.id }),
+          alias: `public/${LOCAL}`,
+          source: "advertised",
+          legacyWinner: false,
+        },
+        {
+          nodeId: "gw",
+          scope: TENANT,
+          fallback: recordingFallback(fallback),
+          peers: () => [peer],
+          serviceCredentialRef: () => `file:${serviceFile}`,
+          relayCredentialRef: () => undefined,
+        },
+      );
+      const logged: string[] = [];
+      const write = process.stderr.write.bind(process.stderr);
+      process.stderr.write = (chunk: string | Uint8Array): boolean => {
+        logged.push(String(chunk));
+        return true;
+      };
+      const relayedBefore = transports.relayRequests.length;
+      let res: Response;
+      try {
+        const env = envelope("att-no-relay-credential");
+        res = await executor!.execute(env, ctxFor(env));
+      } finally {
+        process.stderr.write = write;
+      }
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: { code: "target-unavailable" } });
+      expect(logged.join("")).toContain("names no relayCredentialRef");
+      expect(transports.relayRequests.slice(relayedBefore)).toEqual([]);
+      expect(fallback).toEqual([]);
+      expect(engine.requests).toHaveLength(0);
     });
 
     test("it reaches no other relay method and no other route, by URL tricks or otherwise", async () => {

@@ -84,6 +84,8 @@ let workerNode: ClusterNode;
 let central: RunningAgent | undefined;
 let dialer: RunningAgent | undefined;
 let centralTrust: { url: string; certificate: string; fingerprint: string; token: string };
+/** Central's relay-only credential, which the gateway's kubeconfig names for the relay hop. */
+const relayOnly = auth.generateToken();
 const envBackup: Record<string, string | undefined> = {};
 const recordedSubmitFrames: unknown[][] = [];
 const recordedStreamFrames: unknown[][] = [];
@@ -280,7 +282,8 @@ function pinnedWebSocket(ca: string): ClientWebSocketConstructor {
  * enabled in its agent.yaml block: version 1.0 and one service
  * credential, made with the agent's token mechanics and kept as a hash.
  * The gateway's kubeconfig declares the node, its pinned certificate and
- * a secret reference to the credential.
+ * secret references to the credential and to central's relay-only
+ * credential.
  */
 async function startWorker(dir: string): Promise<void> {
   const cert = await tls.generateSelfSignedCert({
@@ -319,6 +322,8 @@ async function startWorker(dir: string): Promise<void> {
   });
   const credentialFile = join(dir, "service-credential");
   writeFileSync(credentialFile, service.token);
+  const relayFile = join(dir, "relay-credential");
+  writeFileSync(relayFile, relayOnly.token);
   workerNode = {
     name: WORKER_ID,
     endpoint: worker.url,
@@ -328,7 +333,10 @@ async function startWorker(dir: string): Promise<void> {
   let cfg = configSchema.freshConfig();
   cfg = kubecfg.upsertNode(cfg, "home", {
     ...workerNode,
-    workerRpc: { serviceCredentialRef: `file:${credentialFile}` },
+    workerRpc: {
+      serviceCredentialRef: `file:${credentialFile}`,
+      relayCredentialRef: `file:${relayFile}`,
+    },
   });
   cfg = { ...cfg, users: [{ name: "me", token: operator.token }] };
   const configPath = join(dir, "config");
@@ -347,15 +355,18 @@ async function startTunnel(dir: string): Promise<void> {
     commonName: "127.0.0.1",
     hostnames: ["127.0.0.1", "localhost"],
   });
-  const relay = auth.generateToken();
+  const operator = auth.generateToken();
   const tunnelBearer = auth.generateToken();
   const started = startAgentServer({
     bindHost: "127.0.0.1",
     port: 0,
-    tokenHash: relay.hash,
+    tokenHash: operator.hash,
     tls: { certPath: cert.certPath, keyPath: cert.keyPath },
     advertiseMdns: false,
-    tunnelCentral: { expectedBearerHash: tunnelBearer.hash },
+    tunnelCentral: {
+      expectedBearerHash: tunnelBearer.hash,
+      workerRpcRelay: () => ({ tokenHashes: [relayOnly.hash] }),
+    },
   });
   central = started;
   let markReady = (): void => undefined;
@@ -383,7 +394,7 @@ async function startTunnel(dir: string): Promise<void> {
     url: started.url,
     certificate: cert.certPem,
     fingerprint: cert.fingerprint,
-    token: relay.token,
+    token: operator.token,
   };
 }
 
@@ -609,6 +620,29 @@ describe("InferenceRpcV1 gateway–worker round trip", () => {
   });
 });
 
+/** `work`'s result, and the authorization of every relay request it sent central. */
+async function relayBearers<T>(
+  work: () => Promise<T>,
+): Promise<{ result: T; bearers: (string | null)[] }> {
+  const bearers: (string | null)[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith(`${centralTrust.url}/tunnel-relay`)) {
+        bearers.push(new Headers(init?.headers).get("authorization"));
+      }
+      return realFetch(input, init);
+    },
+    realFetch,
+  );
+  try {
+    return { result: await work(), bearers };
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 describe("InferenceRpcV1 through the unified proxy to a remote owner", () => {
   function proxyFor(peer: PeerNode): UnifiedProxy {
     return createProxy({
@@ -665,7 +699,7 @@ describe("InferenceRpcV1 through the unified proxy to a remote owner", () => {
     expectOneRemoteRun(res, body, "direct");
   });
 
-  test("over the tunnel transport: a tunnelPreferred owner runs once through central's relay", async () => {
+  test("over the tunnel transport: a tunnelPreferred owner runs once through central's relay, opening the hop with the relay-only credential", async () => {
     const proxy = proxyFor({
       id: WORKER_ID,
       endpoint: "https://192.0.2.1:7843",
@@ -676,8 +710,10 @@ describe("InferenceRpcV1 through the unified proxy to a remote owner", () => {
       tunnelCentralFingerprint: centralTrust.fingerprint,
       tunnelRelayToken: centralTrust.token,
     });
-    const { res, body } = await chat(proxy);
-    expectOneRemoteRun(res, body, "tunnel");
+    const { result, bearers } = await relayBearers(() => chat(proxy));
+    expectOneRemoteRun(result.res, result.body, "tunnel");
+    expect(bearers.length).toBeGreaterThan(0);
+    expect(new Set(bearers)).toEqual(new Set([`Bearer ${relayOnly.token}`]));
   });
 });
 

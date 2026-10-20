@@ -282,7 +282,8 @@ export const ClusterNodeSchema = z
      * the node keeps only its hash. Absent, the caller keeps the existing
      * path for the node's deployments. `relayCredentialRef`, in the same
      * grammar, names central's relay-only credential for a tunneled
-     * node's relay hop; absent, the hop presents the context user's token.
+     * node's relay hop. A tunneled node needs it: without it the caller
+     * fails closed rather than present the context user's operator bearer.
      */
     workerRpc: z
       .object({
