@@ -17,13 +17,13 @@ import type { PeerNode } from "@llamactl/core/config/peers";
 import type { ClusterNode } from "@llamactl/core/config/schema";
 import type { ResolvedEnv } from "@llamactl/core/types";
 
-import { inferenceContracts, inferenceRpc, routingCatalog } from "@llamactl/core";
+import { inferenceContracts, inferenceRpc, openaiProxy, routingCatalog } from "@llamactl/core";
 import { resolveEnv } from "@llamactl/core/env";
 import { type ExecutionEventV1, validateExecutionEventSequence } from "@novaproto/contracts";
 import { initTRPC } from "@trpc/server";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect } from "node:tls";
@@ -66,8 +66,10 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "../src/safe-fs.js";
 import {
@@ -287,6 +289,35 @@ function recordingFallback(calls: string[]): BackendExecutor {
     cancel: () => false,
     drain: () => Promise.resolve(),
     close: () => Promise.resolve(),
+  };
+}
+
+interface CacheFileSnapshot {
+  size: number;
+  mtimeMs: number;
+  sha256: string;
+}
+
+function snapshotCacheDir(dir: string): Record<string, CacheFileSnapshot> {
+  const out: Record<string, CacheFileSnapshot> = {};
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    const stat = statSync(full);
+    if (!stat.isFile()) continue;
+    out[name] = {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      sha256: createHash("sha256").update(readFileSync(full)).digest("hex"),
+    };
+  }
+  return out;
+}
+
+function responseCacheCounters(env: ResolvedEnv): { hit: number; miss: number; evict: number } {
+  return {
+    hit: openaiProxy.__getOpenAIProxyResponseCacheHitTotalForTests(env),
+    miss: openaiProxy.__getOpenAIProxyResponseCacheMissTotalForTests(env),
+    evict: openaiProxy.__getOpenAIProxyResponseCacheEvictTotalForTests(env),
   };
 }
 
@@ -740,6 +771,15 @@ describe("non-model targets (A4) and no cache semantics (A5)", () => {
     const client = createEmbeddedInferenceRpcClient(claims());
     const cacheDir = join(temp.devStorage, "responsecache");
     const before = existsSync(cacheDir);
+    // The embedded exact cache is rooted at LOCAL_AI_RUNTIME_DIR (resolveKvDataRoot),
+    // not DEV_STORAGE — checking only the DEV_STORAGE path passed vacuously. Seed the
+    // real cache through the proxy's own runtime so responses.db exists before the RPC.
+    const dataRoot = resolved.LOCAL_AI_RUNTIME_DIR;
+    const seededCacheDir = join(dataRoot, "responsecache");
+    const countersBefore = responseCacheCounters(resolved);
+    expect(existsSync(join(seededCacheDir, "responses.db"))).toBe(true);
+    const snapshotBefore = snapshotCacheDir(seededCacheDir);
+    expect("responses.db" in snapshotBefore).toBe(true);
     for (const exact of ["default", "refresh"] as const) {
       const attemptId = `att-cache-${exact}`;
       const env = envelope(attemptId, { cachePolicy: { exact, semantic: "off" } });
@@ -749,6 +789,8 @@ describe("non-model targets (A4) and no cache semantics (A5)", () => {
     expect(engine.requests).toHaveLength(2);
     expect(before).toBe(false);
     expect(existsSync(cacheDir)).toBe(false);
+    expect(snapshotCacheDir(seededCacheDir)).toEqual(snapshotBefore);
+    expect(responseCacheCounters(resolved)).toEqual(countersBefore);
   });
 });
 
