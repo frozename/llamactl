@@ -51,7 +51,11 @@ jobs:
           path: embersynth
           ref: main
 
-      - name: Setup Bun
+      # The sibling tiers stay on the Bun their repositories pin. llamactl's tier runs on
+      # llamactl's pin (below): Bun 1.3.14's Bun.serve ignores response-body backpressure on
+      # Linux, which the worker-RPC bounded-streaming tests depend on, and embersynth's
+      # streaming-terminal tests do not yet pass on Bun 1.4 (seen on Linux).
+      - name: Setup Bun for the sibling tiers
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -86,4 +90,16 @@ jobs:
           # mDNS discovery tests time out there. The test suite has
           # a dedicated skip env var for exactly this case.
           LLAMACTL_SKIP_MDNS_TESTS: "1"
+          SKIP_LLAMACTL: "1"
         run: bash scripts/smoke-cross-repo.sh
+
+      - name: Setup Bun for the llamactl tier
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Run llamactl tier
+        working-directory: llamactl
+        env:
+          LLAMACTL_SKIP_MDNS_TESTS: "1"
+        run: bun test
