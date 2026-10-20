@@ -558,17 +558,34 @@ offline audit.
 
 **Known gaps**:
 
-- The tunnel protocol defines `stream-event`/`stream-done`/
-  `stream-cancel` frames (`packages/remote/src/tunnel/messages.ts`)
-  and `tunnel-client.ts` can bridge inbound subscription requests
-  into them — but only when a `handleSubscription` is wired. The
-  shipped `llamactl agent serve --dial-central` passes none
-  (`maybeStartTunnelClient` in `packages/remote/src/server/serve.ts`),
-  so a tunneled subscription is answered `subscription-unsupported`.
-  Use direct HTTPS for streaming ops.
 - Fingerprint pinning over the tunnel-relay HTTP call isn't
   implemented — rely on TLS on the central agent's
   `/tunnel-relay` endpoint and trust the system CA.
+
+## Worker RPC (InferenceRpcV1, P4.1) rollout
+
+Two opt-ins, both off by default: a worker advertises when its
+`agent.yaml` `workerRpc` block lists a version, and a caller uses the
+RPC for an owner whose kubeconfig node carries a `workerRpc` block,
+behind `LLAMACTL_UNIFIED_PROXY=1`.
+
+- **Enable in order**: workers first, then central, then callers. A
+  caller that reaches an owner over the tunnel needs central to relay
+  its service token, so upgrade central before any caller opts in to
+  tunnel RPC.
+- **Roll back** by emptying `versions` or removing the block. Either
+  way the owner answers "not advertised" on both transports, new
+  requests keep the existing path, and active streams drain.
+- **Downgrade a worker** only after removing the `workerRpc` block from
+  every caller's kubeconfig node for it. A build that predates the RPC
+  refuses a service credential on a direct dial (HTTP 401), which
+  callers fail closed on rather than falling back.
+- **Version window**: a gateway and a worker one minor apart
+  interoperate. A minor bump must never add an enum value, a frame kind
+  or a required field that an N-1 peer cannot parse; anything that
+  needs one is a major bump.
+- A malformed `workerRpc` block never stops the agent: it is ignored
+  with a warning, nothing is advertised, and re-saves keep it as written.
 
 ## Testing
 

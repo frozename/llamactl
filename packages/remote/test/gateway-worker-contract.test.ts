@@ -440,13 +440,29 @@ describe("InferenceRpcV1 gateway–worker round trip", () => {
       outcome: "rejected",
       rejection: { code: "unauthorized-scope" },
     });
+    // A negotiate needs no credential, and without one learns only a refusal.
     const outsider = await trpcCall(
       "inferenceRpc.negotiate",
       "GET",
       { versions: [{ major: 1, minor: 0 }] },
       auth.generateToken().token,
     );
-    expect(outsider.status).toBe(401);
+    expect(outsider.status).toBe(200);
+    expect(outsider.data).toMatchObject({
+      outcome: "rejected",
+      rejection: { code: "unauthorized-scope" },
+    });
+    expect(Object.keys((outsider.data as { rejection: object }).rejection).sort()).toEqual([
+      "code",
+      "message",
+    ]);
+    const outsiderCatalog = await trpcCall(
+      "inferenceRpc.catalog",
+      "GET",
+      undefined,
+      auth.generateToken().token,
+    );
+    expect(outsiderCatalog.status).toBe(401);
     // A service credential is no operator bearer anywhere else.
     expect((await trpcCall("nodeList", "GET", undefined)).status).toBe(401);
     expect(engine.requests).toHaveLength(0);

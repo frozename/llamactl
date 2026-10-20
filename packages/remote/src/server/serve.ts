@@ -550,6 +550,17 @@ function inferenceRpcOnly(pathname: string, endpoint: string): boolean {
   return paths.every((path) => isInferenceRpcMethod(path));
 }
 
+/**
+ * An unbatched `inferenceRpc.negotiate`. It may run without a credential:
+ * with no claims it can only answer "not advertised" or a typed refusal,
+ * never anything claims-dependent. So an owner that rolled the RPC back
+ * answers a direct caller the way it answers a tunneled one, and the
+ * caller keeps the existing path on both.
+ */
+function negotiateOnly(pathname: string, endpoint: string): boolean {
+  return pathname === `${endpoint}/inferenceRpc.negotiate`;
+}
+
 type InferenceClaims = inferenceRpc.InferenceServiceClaimsV1;
 
 function requestContext(
@@ -588,7 +599,7 @@ function createAgentFetchHandler(args: {
       workerRpc !== null && inferenceRpcOnly(url.pathname, endpoint)
         ? workerRpc.claimsFor(extractBearer(req))
         : null;
-    if (claims === null) {
+    if (claims === null && !negotiateOnly(url.pathname, endpoint)) {
       const denied = authGateReject(req, url.pathname, clientAddress, opts, gate);
       if (denied) return denied;
     }
@@ -793,8 +804,10 @@ interface WorkerRpcServing {
   bindings(): readonly ServiceCredentialBinding[];
   /** The claims a service credential carries under the bindings current now. */
   claimsFor(token: string | null | undefined): InferenceClaims | null;
-  /** Drains active attempts, cancels what outlives the window, then unpublishes. */
-  stop(): Promise<void>;
+  /** Drains active attempts and cancels what outlives the window. */
+  drain(): Promise<void>;
+  /** Stops serving the host; called once the HTTP server has stopped. */
+  unpublish(): void;
 }
 
 // Inside launchd's default 20 s ExitTimeOut, so a SIGTERM'd agent still
@@ -838,15 +851,15 @@ function maybePublishWorkerRpc(opts: StartAgentOptions): WorkerRpcServing | null
   return {
     bindings,
     claimsFor: (token) => claimsForServiceCredential(token, bindings()),
-    stop: async (): Promise<void> => {
+    drain: async (): Promise<void> => {
       const drainMs = config.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
       if (!(await within(drainMs, host.drain()))) {
         // Cancelled attempts end with a typed terminal on their stream.
         host.close();
         await within(TERMINAL_FLUSH_MS, host.drain());
       }
-      restore();
     },
+    unpublish: restore,
   };
 }
 
@@ -945,7 +958,7 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
     },
     stop: async (): Promise<void> => {
       // Worker-RPC attempts drain first, while their transports are up.
-      await workerRpc?.stop();
+      await workerRpc?.drain();
       // Remove exactly the process handlers this call installed so
       // repeated start/stop cycles don't accumulate listeners.
       process.off("uncaughtException", onUncaughtException);
@@ -964,8 +977,11 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       if (mdns) await mdns.stop().catch(() => undefined);
       // A drained or cancelled worker-RPC stream has handed its terminal
       // to its response; let in-flight responses finish before closing.
+      // The host stays published until then, so a status or cancel still
+      // in flight is answered by the attempts it names.
       if (workerRpc !== null) await within(TERMINAL_FLUSH_MS, server.stop());
       void server.stop(true);
+      workerRpc?.unpublish();
     },
     ...(tunnelServer ? { tunnelServer } : {}),
     ...(tunnelClient ? { tunnelClient } : {}),

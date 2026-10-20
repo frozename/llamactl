@@ -22,8 +22,10 @@ import { resolveEnv } from "@llamactl/core/env";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
+
+import type { ClientWebSocketConstructor } from "../src/tunnel/tunnel-client.js";
 
 import { envForTemp, makeTempRuntime } from "../../core/test/helpers.js";
 import { makePinnedFetch } from "../src/client/links.js";
@@ -40,6 +42,7 @@ import {
   acquireWorkerRpcExecutor,
   createEmbeddedInferenceRpcClient,
 } from "../src/inference/client.js";
+import { currentWorkerRpcHost } from "../src/inference/procedures.js";
 import { type BackendExecutor, createProxy } from "../src/proxy/create-proxy.js";
 import {
   chmodSync,
@@ -191,7 +194,10 @@ function enableWorkerRpc(
 }
 
 /** Starts the agent with the options `llamactl agent serve` derives from agent.yaml. */
-function serve(files: WorkerFiles): RunningAgent {
+function serve(
+  files: WorkerFiles,
+  extra: Partial<Parameters<typeof startAgentServer>[0]> = {},
+): RunningAgent {
   const cfg = agentConfigMod.loadAgentConfig(files.configPath);
   const agent = startAgentServer({
     bindHost: cfg.bindHost,
@@ -204,8 +210,79 @@ function serve(files: WorkerFiles): RunningAgent {
       settings: agentConfigMod.workerRpcSettingsReader(files.configPath),
       drainTimeoutMs: 2_000,
     },
+    ...extra,
   });
   agents.push(agent);
+  return agent;
+}
+
+interface Central {
+  agent: RunningAgent;
+  certPem: string;
+  fingerprint: string;
+  operatorToken: string;
+  tunnelBearer: string;
+}
+
+/** A central agent, as `agent serve --tunnel-central` starts one. */
+async function startCentral(name: string): Promise<Central> {
+  const dir = join(temp.devStorage, `central-${name}`);
+  mkdirSync(dir, { recursive: true });
+  const cert = await tls.generateSelfSignedCert({
+    dir,
+    commonName: "127.0.0.1",
+    hostnames: ["127.0.0.1", "localhost"],
+  });
+  const operator = auth.generateToken();
+  const tunnelBearer = auth.generateToken();
+  const agent = startAgentServer({
+    bindHost: "127.0.0.1",
+    port: 0,
+    tokenHash: operator.hash,
+    tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+    advertiseMdns: false,
+    tunnelCentral: { expectedBearerHash: tunnelBearer.hash },
+  });
+  agents.push(agent);
+  return {
+    agent,
+    certPem: cert.certPem,
+    fingerprint: cert.fingerprint,
+    operatorToken: operator.token,
+    tunnelBearer: tunnelBearer.token,
+  };
+}
+
+/** Serves the worker dialing `central` as `nodeName`; resolves once its tunnel is up. */
+async function serveDialing(
+  files: WorkerFiles,
+  central: Central,
+  nodeName: string,
+): Promise<RunningAgent> {
+  let markReady = (): void => undefined;
+  const ready = new Promise<void>((resolve) => {
+    markReady = resolve;
+  });
+  const BunWebSocket = WebSocket as unknown as new (
+    url: string,
+    options: { tls: { ca: string } },
+  ) => WebSocket;
+  const agent = serve(files, {
+    tunnelDial: {
+      url: `wss://127.0.0.1:${String(central.agent.port)}/tunnel`,
+      bearer: central.tunnelBearer,
+      nodeName,
+      WebSocketCtor: class extends BunWebSocket {
+        constructor(url: string) {
+          super(url, { tls: { ca: central.certPem } });
+        }
+      } as unknown as ClientWebSocketConstructor,
+      onStateChange: (state) => {
+        if (state === "ready") markReady();
+      },
+    },
+  });
+  await ready;
   return agent;
 }
 
@@ -214,6 +291,7 @@ function writeKubeconfig(
   files: WorkerFiles,
   agent: RunningAgent,
   extra: Partial<configSchema.ClusterNode> = {},
+  via?: Central,
 ): string {
   let cfg = configSchema.freshConfig();
   cfg = kubecfg.upsertNode(cfg, "home", {
@@ -223,7 +301,18 @@ function writeKubeconfig(
     certificateFingerprint: files.fingerprint,
     ...extra,
   });
-  cfg = { ...cfg, users: [{ name: "me", token: files.operatorToken }] };
+  cfg = { ...cfg, users: [{ name: "me", token: via?.operatorToken ?? files.operatorToken }] };
+  if (via !== undefined) {
+    cfg = {
+      ...cfg,
+      contexts: cfg.contexts.map((context) => ({
+        ...context,
+        tunnelCentralUrl: via.agent.url,
+        tunnelCentralCertificate: via.certPem,
+        tunnelCentralFingerprint: via.fingerprint,
+      })),
+    };
+  }
   const path = join(temp.devStorage, "config");
   kubecfg.saveConfig(cfg, path);
   process.env["LLAMACTL_CONFIG"] = path;
@@ -989,6 +1078,263 @@ describe("I5: disconnect and rollback", () => {
       outcome: "not-advertised",
       workerId: WORKER,
     });
+  });
+});
+
+/**
+ * I5 rollback, on both transports alike: emptying the versions, removing
+ * the block, or an older build's re-save (which drops the block it does
+ * not know) each keep new requests on the existing path. An owner with
+ * nothing advertised answers an unauthenticated negotiate "not
+ * advertised" whatever credential it is shown, so the direct dial does
+ * not fail closed where the tunnel falls back.
+ */
+describe("I5: every rollback form, over both transports", () => {
+  /** What the base release's `agent rotate-token` does: its schema, a new bearer, a re-save. */
+  function baseBuildRotateToken(files: WorkerFiles): void {
+    const { workerRpc: _block, ...baseShape } = agentConfigMod.AgentConfigSchema.shape;
+    const base = z.object(baseShape).parse(parseYaml(readFileSync(files.configPath, "utf8")));
+    writeFileSync(
+      files.configPath,
+      stringifyYaml({ ...base, tokenHash: auth.generateToken().hash }),
+      "utf8",
+    );
+  }
+
+  for (const transport of ["direct", "tunnel"] as const) {
+    test(`${transport}: emptied versions, a removed block and a base-build re-save all keep new requests on the existing path`, async () => {
+      const files = await initAgent(`rollback-forms-${transport}`);
+      const svc = serviceCredential(`svc-rollback-forms-${transport}`);
+      const enable = (): void => {
+        enableWorkerRpc(files, { serviceCredentials: [svc.binding] });
+      };
+      enable();
+      const tunnelNode = `${WORKER}-tunnel`;
+      const central = transport === "tunnel" ? await startCentral(transport) : undefined;
+      const agent =
+        central === undefined ? serve(files) : await serveDialing(files, central, tunnelNode);
+      writeKubeconfig(
+        files,
+        agent,
+        {
+          workerRpc: { serviceCredentialRef: svc.ref },
+          ...(central !== undefined ? { tunnelPreferred: true, tunnelNodeName: tunnelNode } : {}),
+        },
+        central,
+      );
+      const fallback: string[] = [];
+      const run = (attemptId: string): ReturnType<typeof execute> =>
+        execute(gatewayExecutor(fallback)!, attemptId);
+
+      expect(await run("att-enabled-1")).toMatchObject({ status: 200, transport });
+      const cfg = agentConfigMod.loadAgentConfig(files.configPath);
+      agentConfigMod.saveAgentConfig(
+        { ...cfg, workerRpc: { versions: [], serviceCredentials: [svc.binding] } },
+        files.configPath,
+      );
+      expect(await run("att-emptied")).toMatchObject({ status: 299 });
+
+      enable();
+      expect(await run("att-enabled-2")).toMatchObject({ status: 200, transport });
+      const { workerRpc: _removed, ...withoutBlock } = agentConfigMod.loadAgentConfig(
+        files.configPath,
+      );
+      agentConfigMod.saveAgentConfig(withoutBlock, files.configPath);
+      expect(await run("att-removed")).toMatchObject({ status: 299 });
+
+      enable();
+      expect(await run("att-enabled-3")).toMatchObject({ status: 200, transport });
+      baseBuildRotateToken(files);
+      expect(parseYaml(readFileSync(files.configPath, "utf8"))).not.toHaveProperty("workerRpc");
+      expect(await run("att-base-resave")).toMatchObject({ status: 299 });
+
+      expect(fallback).toEqual(["att-emptied", "att-removed", "att-base-resave"]);
+      expect(engine.requests).toHaveLength(3);
+    }, 30_000);
+  }
+
+  test("an unauthenticated negotiate learns only that nothing is advertised, or a typed refusal", async () => {
+    const files = await initAgent("unauthenticated-negotiate");
+    const svc = serviceCredential("svc-unauthenticated");
+    const agent = serve(files);
+    const stranger = auth.generateToken().token;
+    expect((await negotiate(files, agent, stranger)).data).toEqual({
+      outcome: "not-advertised",
+      workerId: WORKER,
+    });
+    enableWorkerRpc(files, { serviceCredentials: [svc.binding] });
+    const refused = await negotiate(files, agent, stranger);
+    expect(refused).toMatchObject({
+      status: 200,
+      data: { outcome: "rejected", rejection: { code: "unauthorized-scope" } },
+    });
+    expect(Object.keys(refused.data as object).sort()).toEqual(["outcome", "rejection"]);
+    // Nothing else in the namespace opens without a credential.
+    const pinned = makePinnedFetch({
+      name: WORKER,
+      endpoint: agent.url,
+      certificate: files.certPem,
+      certificateFingerprint: files.fingerprint,
+    });
+    const headers = { authorization: `Bearer ${stranger}` };
+    for (const path of [
+      "inferenceRpc.catalog",
+      "inferenceRpc.status?input=%7B%22attemptId%22%3A%22a%22%7D",
+      "inferenceRpc.negotiate,inferenceRpc.catalog?batch=1&input=%7B%7D",
+      "inferenceRpc.negotiate%2Cenv?batch=1&input=%7B%7D",
+    ]) {
+      expect((await pinned(`${agent.url}/trpc/${path}`, { headers })).status).toBe(401);
+    }
+  });
+
+  test("the worker host stays published until the HTTP server has stopped", async () => {
+    const files = await initAgent("stop-order");
+    const svc = serviceCredential("svc-stop-order");
+    enableWorkerRpc(files, { serviceCredentials: [svc.binding] });
+    const realServe = Bun.serve;
+    const servedAtStop: string[] = [];
+    Reflect.set(Bun, "serve", ((options: Parameters<typeof Bun.serve>[0]) => {
+      const server = realServe(options);
+      const stop = server.stop.bind(server);
+      Reflect.set(server, "stop", (force?: boolean) => {
+        servedAtStop.push(currentWorkerRpcHost().workerId);
+        return stop(force);
+      });
+      return server;
+    }) as typeof Bun.serve);
+    let agent: RunningAgent;
+    try {
+      agent = serve(files);
+    } finally {
+      Reflect.set(Bun, "serve", realServe);
+    }
+    const published = currentWorkerRpcHost();
+    expect(published.workerId).toBe(WORKER);
+    await agents.splice(agents.indexOf(agent), 1)[0]?.stop();
+    expect(servedAtStop.length).toBeGreaterThan(0);
+    expect(servedAtStop.every((workerId) => workerId === WORKER)).toBe(true);
+    expect(currentWorkerRpcHost()).not.toBe(published);
+  });
+});
+
+/**
+ * I2/I6: the optional blocks never stop the agent. A worker-RPC block that
+ * does not validate is ignored with a warning: the RPC is not advertised,
+ * while `agent serve`, `rotate-token` and `status` run as before and the
+ * block survives their re-saves byte for byte.
+ */
+describe("I2/I6: a malformed worker-RPC block never stops the agent", () => {
+  const MALFORMED = [
+    "workerRpc: # enabled by hand; the digest was pasted in upper case",
+    "  versions: [{major: 1, minor: 0}]",
+    "  serviceCredentials:",
+    `    - {serviceId: s, operations: [submit], deployments: [], models: [], tenants: [t], credentialScopeId: c, tokenHash: ${"A".repeat(64)}}`,
+  ].join("\n");
+
+  async function cliServe(files: WorkerFiles): Promise<{
+    url: string;
+    stop: () => Promise<string>;
+  }> {
+    const proc = Bun.spawn(["bun", CLI_BIN, "agent", "serve", `--dir=${files.dir}`, "--port=0"], {
+      env: { ...process.env, LLAMACTL_DISABLE_MDNS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = proc.stdout.getReader();
+    let out = "";
+    while (!out.includes("press Ctrl-C")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += new TextDecoder().decode(value);
+    }
+    reader.releaseLock();
+    return {
+      url: /agent listening on (\S+)/.exec(out)?.[1] ?? "",
+      stop: async (): Promise<string> => {
+        proc.kill("SIGTERM");
+        await proc.exited;
+        return await new Response(proc.stderr).text();
+      },
+    };
+  }
+
+  function cli(args: string[]): { exitCode: number; stdout: string } {
+    const proc = Bun.spawnSync(["bun", CLI_BIN, "agent", ...args], {
+      env: { ...process.env, LLAMACTL_DISABLE_MDNS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { exitCode: proc.exitCode, stdout: proc.stdout.toString() };
+  }
+
+  test("agent serve, rotate-token and status run; /v1 serves; nothing is advertised; the block is kept byte for byte", async () => {
+    const files = await initAgent("malformed");
+    writeFileSync(files.configPath, `${readFileSync(files.configPath, "utf8")}${MALFORMED}\n`);
+    expect(() => agentConfigMod.loadAgentConfig(files.configPath)).not.toThrow();
+    expect(agentConfigMod.workerRpcSettingsReader(files.configPath)()).toBeUndefined();
+
+    const served = await cliServe(files);
+    let stderr = "";
+    try {
+      expect(served.url).not.toBe("");
+      const agent = { url: served.url } as RunningAgent;
+      const negotiated = await negotiate(files, agent, files.operatorToken);
+      expect(negotiated.data).toEqual({ outcome: "not-advertised", workerId: WORKER });
+      const pinned = makePinnedFetch({
+        name: WORKER,
+        endpoint: served.url,
+        certificate: files.certPem,
+      });
+      const chat = await pinned(`${served.url}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${files.operatorToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "hi" }] }),
+      });
+      expect(chat.status).toBe(200);
+      expect(engine.requests).toHaveLength(1);
+    } finally {
+      stderr = await served.stop();
+    }
+    expect(stderr).toContain("ignoring the workerRpc block");
+
+    const before = readFileSync(files.configPath, "utf8");
+    const rotated = cli(["rotate-token", `--dir=${files.dir}`]);
+    expect(rotated.exitCode).toBe(0);
+    const after = readFileSync(files.configPath, "utf8");
+    expect(after).not.toBe(before);
+    expect(after).toContain(MALFORMED);
+    expect(cli(["status", `--dir=${files.dir}`]).exitCode).toBe(0);
+    expect(readFileSync(files.configPath, "utf8")).toBe(after);
+  }, 30_000);
+
+  test("a block that binds the operator bearer's hash as a service credential is ignored", async () => {
+    const files = await initAgent("operator-hash");
+    const svc = serviceCredential("svc-operator-hash", {
+      tokenHash: auth.hashToken(files.operatorToken),
+    });
+    enableWorkerRpc(files, { serviceCredentials: [svc.binding] });
+    expect(agentConfigMod.workerRpcSettingsReader(files.configPath)()).toBeUndefined();
+    const agent = serve(files);
+    expect((await negotiate(files, agent, files.operatorToken)).data).toEqual({
+      outcome: "not-advertised",
+      workerId: WORKER,
+    });
+  });
+
+  test("the block is re-read only when agent.yaml changes, and a rotation applies without a restart", async () => {
+    const files = await initAgent("cached-read");
+    const first = serviceCredential("svc-cached-1");
+    enableWorkerRpc(files, { serviceCredentials: [first.binding] });
+    const read = agentConfigMod.workerRpcSettingsReader(files.configPath);
+    const settings = read();
+    expect(settings?.serviceCredentials.map((b) => b.serviceId)).toEqual(["svc-cached-1"]);
+    expect(read()).toBe(settings);
+    const second = serviceCredential("svc-cached-2");
+    enableWorkerRpc(files, { serviceCredentials: [second.binding] });
+    expect(read()?.serviceCredentials.map((b) => b.serviceId)).toEqual(["svc-cached-2"]);
   });
 });
 
