@@ -1859,6 +1859,85 @@ describe("the worker-rpc executor behind the unified proxy", () => {
   });
 });
 
+describe("executor hop-count and visited-node limits (F10, A2/X1)", () => {
+  test("withHop takes hopCount past the limit; the worker refuses before any engine request", async () => {
+    useHost();
+    const client = createEmbeddedInferenceRpcClient(claims());
+    const env = envelope("att-exec-hop", { internal: { hopCount: 1, visitedNodes: ["edge"] } });
+    const res = await createWorkerRpcExecutor({
+      client,
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    }).execute(env, ctxFor(env));
+    expect(res.status).toBe(508);
+    expect(await res.json()).toMatchObject({ error: { code: "hop-limit" } });
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("withHop appends the caller's nodeId, creating a visited-node loop", async () => {
+    useHost();
+    const client = createEmbeddedInferenceRpcClient(claims());
+    const env = envelope("att-exec-loop", { internal: { visitedNodes: ["gw"] } });
+    const res = await createWorkerRpcExecutor({
+      client,
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    }).execute(env, ctxFor(env));
+    expect(res.status).toBe(508);
+    expect(await res.json()).toMatchObject({ error: { code: "hop-limit" } });
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("nine distinct visitedNodes plus withHop's nodeId exceeds MAX_VISITED_NODES", async () => {
+    useHost();
+    const client = createEmbeddedInferenceRpcClient(claims());
+    const nine = Array.from({ length: 9 }, (_, i) => `n-${String(i)}`);
+    const env = envelope("att-exec-visited", { internal: { visitedNodes: nine } });
+    const res = await createWorkerRpcExecutor({
+      client,
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    }).execute(env, ctxFor(env));
+    expect(res.status).toBe(508);
+    expect(await res.json()).toMatchObject({ error: { code: "hop-limit" } });
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("the worker receives internal with hopCount 1 and visitedNodes ['gw'] after one hop", async () => {
+    useHost();
+    const base = currentWorkerRpcHost();
+    const received: inferenceContracts.InferenceEnvelopeV1[] = [];
+    const undo = publishWorkerRpcHost({
+      ...base,
+      submit: ((
+        claimsIn: Claims | undefined,
+        input: inferenceRpc.InferenceRpcSubmitRequestV1,
+      ) => {
+        received.push(input.envelope);
+        return base.submit(claimsIn, input);
+      }) as WorkerRpcHost["submit"],
+    });
+    try {
+      const env = envelope("att-exec-hop-record");
+      const res = await createWorkerRpcExecutor({
+        client: createEmbeddedInferenceRpcClient(claims()),
+        deploymentId: LOCAL,
+        fallback: recordingFallback([]),
+        nodeId: "gw",
+      }).execute(env, ctxFor(env));
+      expect(res.status).toBe(200);
+      expect(received).toHaveLength(1);
+      expect(received[0]?.internal?.hopCount).toBe(1);
+      expect(received[0]?.internal?.visitedNodes).toEqual(["gw"]);
+    } finally {
+      undo();
+    }
+  });
+});
+
 // ---- remote transports ------------------------------------------------------
 
 const TUNNEL_NODE = "worker-a-tunnel";
@@ -3730,5 +3809,44 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         }
       });
     }
+  });
+
+  describe("executor hop-count and visited-node limits (F10, A2/X1)", () => {
+    test.each(TRANSPORTS)(
+      "%s: withHop takes hopCount past the limit; the worker refuses before any engine request",
+      async (transport) => {
+        useRemoteHost();
+        const env = envelope(`att-exec-hop-${transport}`, {
+          internal: { hopCount: 1, visitedNodes: ["edge"] },
+        });
+        const res = await executorOver(clientFor[transport]()).execute(env, ctxFor(env));
+        expect(res.status).toBe(508);
+        expect(await res.json()).toMatchObject({ error: { code: "hop-limit" } });
+        expect(engine.requests).toHaveLength(0);
+      },
+    );
+
+    test.each(TRANSPORTS)(
+      "%s: the worker receives internal with hopCount 1 and visitedNodes ['gw'] after one hop",
+      async (transport) => {
+        const base = useRemoteHost();
+        const received: inferenceContracts.InferenceEnvelopeV1[] = [];
+        wrapHost({
+          submit: ((
+            claimsIn: Claims | undefined,
+            input: inferenceRpc.InferenceRpcSubmitRequestV1,
+          ) => {
+            received.push(input.envelope);
+            return base.submit(claimsIn, input);
+          }) as unknown as WorkerRpcHost["submit"],
+        });
+        const env = envelope(`att-exec-hop-record-${transport}`);
+        const res = await executorOver(clientFor[transport]()).execute(env, ctxFor(env));
+        expect(res.status).toBe(200);
+        expect(received).toHaveLength(1);
+        expect(received[0]?.internal?.hopCount).toBe(1);
+        expect(received[0]?.internal?.visitedNodes).toEqual(["gw"]);
+      },
+    );
   });
 });
