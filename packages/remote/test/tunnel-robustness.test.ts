@@ -421,15 +421,15 @@ describe("P4.1: bounded tunnel streams and acknowledged cancels", () => {
     srv = startServer("tok", { onStreamCancelAck: recordAck });
     await dialNode(srv.url);
     const iterator = srv.server
-      .sendSubscribe("gpu1", flood("replaced", { n: 1000, pad: 10, delayMs: 5 }))[
-      Symbol.asyncIterator
-    ]();
+      .sendSubscribe("gpu1", flood("replaced", { n: 1000, pad: 10, delayMs: 5 }))
+      [Symbol.asyncIterator]();
     expect((await iterator.next()).done).toBe(false);
     const replacement = createTunnelClient({
       url: srv.url,
       bearer: "tok",
       nodeName: "gpu1",
-      handleRequest: (req: TunnelReq) => Promise.resolve({ answered: req.method, via: "new-socket" }),
+      handleRequest: (req: TunnelReq) =>
+        Promise.resolve({ answered: req.method, via: "new-socket" }),
       handleSubscription: createTunnelSubscriptionHandler(nodeRouter, () => ({})),
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });

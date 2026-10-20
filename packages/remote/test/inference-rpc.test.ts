@@ -1912,13 +1912,10 @@ describe("executor hop-count and visited-node limits (F10, A2/X1)", () => {
     const received: inferenceContracts.InferenceEnvelopeV1[] = [];
     const undo = publishWorkerRpcHost({
       ...base,
-      submit: ((
-        claimsIn: Claims | undefined,
-        input: inferenceRpc.InferenceRpcSubmitRequestV1,
-      ) => {
+      submit: (claimsIn: Claims | undefined, input: inferenceRpc.InferenceRpcSubmitRequestV1) => {
         received.push(input.envelope);
         return base.submit(claimsIn, input);
-      }) as WorkerRpcHost["submit"],
+      },
     });
     try {
       const env = envelope("att-exec-hop-record");
@@ -2665,7 +2662,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       // worker's attempt: only the node's cleanupSocket can do that here.
       const client: InferenceRpcClient = {
         ...real,
-        cancel: async () => ({ outcome: "unknown" as const }),
+        cancel: () => Promise.resolve({ outcome: "unknown" as const }),
       };
       const attemptId = "att-t-cleanup";
       const env = envelope(attemptId);
@@ -3903,13 +3900,13 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         const base = useRemoteHost();
         const received: inferenceContracts.InferenceEnvelopeV1[] = [];
         wrapHost({
-          submit: ((
+          submit: (
             claimsIn: Claims | undefined,
             input: inferenceRpc.InferenceRpcSubmitRequestV1,
           ) => {
             received.push(input.envelope);
             return base.submit(claimsIn, input);
-          }) as unknown as WorkerRpcHost["submit"],
+          },
         });
         const env = envelope(`att-exec-hop-record-${transport}`);
         const res = await executorOver(clientFor[transport]()).execute(env, ctxFor(env));
