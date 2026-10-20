@@ -129,8 +129,11 @@ export const InferenceRpcNegotiateResultV1Schema = z.discriminatedUnion("outcome
     workerIncarnation: z.string().min(1),
     features: z.array(InferenceRpcFeatureSchema),
   }),
-  /** A positive "no RPC here": keep new requests on the existing path. */
-  z.object({ outcome: z.literal("not-advertised"), workerId: z.string().min(1) }),
+  /**
+   * A positive "no RPC here": keep new requests on the existing path. It
+   * answers anyone, so it names nothing about the worker.
+   */
+  z.object({ outcome: z.literal("not-advertised") }),
   rejected,
 ]);
 export type InferenceRpcNegotiateResultV1 = z.infer<typeof InferenceRpcNegotiateResultV1Schema>;

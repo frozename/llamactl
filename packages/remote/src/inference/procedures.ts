@@ -398,7 +398,7 @@ function negotiate(
   input: inferenceRpc.InferenceRpcNegotiateRequestV1,
 ): inferenceRpc.InferenceRpcNegotiateResultV1 {
   const versions = advertised(state);
-  if (versions.length === 0) return { outcome: "not-advertised", workerId: state.workerId };
+  if (versions.length === 0) return { outcome: "not-advertised" };
   if (authorized(claimsIn, "negotiate") === null) return rejectedWith(NO_SCOPE);
   const version = inferenceRpc.selectInferenceRpcVersion(input.versions, versions);
   if (version === null) {

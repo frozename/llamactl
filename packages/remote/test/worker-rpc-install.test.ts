@@ -324,10 +324,11 @@ function writeKubeconfig(
   return path;
 }
 
+/** Negotiates as `token`, or with no Authorization header when it is null. */
 async function negotiate(
   files: WorkerFiles,
   agent: RunningAgent,
-  token: string,
+  token: string | null,
 ): Promise<{ status: number; data: unknown }> {
   const pinned = makePinnedFetch({
     name: WORKER,
@@ -338,9 +339,10 @@ async function negotiate(
   const input = encodeURIComponent(
     JSON.stringify({ versions: [V1_0], requiredFeatures: ["execution-event-v1"] }),
   );
-  const res = await pinned(`${agent.url}/trpc/inferenceRpc.negotiate?input=${input}`, {
-    headers: { authorization: `Bearer ${token}` },
-  });
+  const res = await pinned(
+    `${agent.url}/trpc/inferenceRpc.negotiate?input=${input}`,
+    token === null ? {} : { headers: { authorization: `Bearer ${token}` } },
+  );
   const body = (await res.json().catch(() => null)) as { result?: { data?: unknown } } | null;
   return { status: res.status, data: body?.result?.data };
 }
@@ -541,7 +543,7 @@ describe("I1: clean install", () => {
     const negotiated = await negotiate(files, agent, files.operatorToken);
     expect(negotiated).toEqual({
       status: 200,
-      data: { outcome: "not-advertised", workerId: WORKER },
+      data: { outcome: "not-advertised" },
     });
     // Local serving through openaiProxy is unchanged.
     const pinned = makePinnedFetch({
@@ -1085,7 +1087,6 @@ describe("I5: disconnect and rollback", () => {
     }
     expect((await negotiate(files, agent, files.operatorToken)).data).toEqual({
       outcome: "not-advertised",
-      workerId: WORKER,
     });
   });
 });
@@ -1171,17 +1172,23 @@ describe("I5: every rollback form, over both transports", () => {
     const svc = serviceCredential("svc-unauthenticated");
     const agent = serve(files);
     const stranger = auth.generateToken().token;
-    expect((await negotiate(files, agent, stranger)).data).toEqual({
-      outcome: "not-advertised",
-      workerId: WORKER,
-    });
+    // A stranger's bearer, or none at all: nothing that names the worker.
+    for (const presented of [stranger, null]) {
+      expect(await negotiate(files, agent, presented)).toEqual({
+        status: 200,
+        data: { outcome: "not-advertised" },
+      });
+    }
     enableWorkerRpc(files, { serviceCredentials: [svc.binding] });
-    const refused = await negotiate(files, agent, stranger);
-    expect(refused).toMatchObject({
-      status: 200,
-      data: { outcome: "rejected", rejection: { code: "unauthorized-scope" } },
-    });
-    expect(Object.keys(refused.data as object).sort()).toEqual(["outcome", "rejection"]);
+    for (const presented of [stranger, null]) {
+      const refused = await negotiate(files, agent, presented);
+      expect(refused).toMatchObject({
+        status: 200,
+        data: { outcome: "rejected", rejection: { code: "unauthorized-scope" } },
+      });
+      expect(Object.keys(refused.data as object).sort()).toEqual(["outcome", "rejection"]);
+      expect(JSON.stringify(refused.data)).not.toContain(WORKER);
+    }
     // Nothing else in the namespace opens without a credential.
     const pinned = makePinnedFetch({
       name: WORKER,
@@ -1292,7 +1299,7 @@ describe("I2/I6: a malformed worker-RPC block never stops the agent", () => {
       expect(served.url).not.toBe("");
       const agent = { url: served.url } as RunningAgent;
       const negotiated = await negotiate(files, agent, files.operatorToken);
-      expect(negotiated.data).toEqual({ outcome: "not-advertised", workerId: WORKER });
+      expect(negotiated.data).toEqual({ outcome: "not-advertised" });
       const pinned = makePinnedFetch({
         name: WORKER,
         endpoint: served.url,
@@ -1333,7 +1340,6 @@ describe("I2/I6: a malformed worker-RPC block never stops the agent", () => {
     const agent = serve(files);
     expect((await negotiate(files, agent, files.operatorToken)).data).toEqual({
       outcome: "not-advertised",
-      workerId: WORKER,
     });
   });
 
@@ -1414,7 +1420,7 @@ describe("the relay-only credential in central's agent.yaml", () => {
         nodeName: "relayed-node",
         handleRequest: (req) => {
           received.push(req.method);
-          return Promise.resolve({ outcome: "not-advertised", workerId: "relayed-node" });
+          return Promise.resolve({ outcome: "not-advertised" });
         },
         WebSocketCtor: class extends BunWebSocket {
           constructor(target: string) {

@@ -433,7 +433,6 @@ describe("negotiation and the rolling-upgrade window", () => {
     const client = createEmbeddedInferenceRpcClient(claims());
     expect(await client.negotiate({ versions: [V1_0] })).toEqual({
       outcome: "not-advertised",
-      workerId: WORKER,
     });
     expect(rejectionCode(await submit(client, "att-unadvertised"))).toBe("unsupported-version");
   });
@@ -3057,7 +3056,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         nodeName: TUNNEL_NODE,
         handleRequest: (req) => {
           captured.push(req);
-          return Promise.resolve({ outcome: "not-advertised", workerId: WORKER });
+          return Promise.resolve({ outcome: "not-advertised" });
         },
         handleSubscription: (req) => {
           captured.push(req);
@@ -3299,7 +3298,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         nodeName: "spy-node",
         handleRequest: (req) => {
           received.push(req.method);
-          return Promise.resolve({ outcome: "not-advertised", workerId: "spy" });
+          return Promise.resolve({ outcome: "not-advertised" });
         },
         handleSubscription: (req) => {
           received.push(req.method);

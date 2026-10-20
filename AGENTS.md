@@ -558,7 +558,13 @@ agent bearer:
   relay method gets 403, every other route 401. A caller presents it
   for the relay hop through its kubeconfig node's
   `workerRpc.relayCredentialRef` (`env:`/`keychain:`/`file:`); without
-  one the hop presents the agent bearer, as before.
+  one the hop presents the agent bearer, as before. Give each gateway
+  its own relay-only credential, listing one hash per gateway: central
+  stamps every relayed frame with the principal of the credential that
+  relayed it, and a service token is good only through the principal
+  its gateway minted it for. Gateways that share a credential share a
+  principal, so either could relay the other's tokens, and neither can
+  be revoked alone.
 
 **Audit trail** — the tunnel server's state transitions log to
 stderr on the agent (e.g. `tunnel: ready`, `tunnel: disconnected`)
