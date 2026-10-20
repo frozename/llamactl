@@ -417,7 +417,7 @@ describe("P4.1: bounded tunnel streams and acknowledged cancels", () => {
     await waitFor(() => node.aborted === 1, 2000);
   });
 
-  test("a 4409 replacement mid-stream ends central's stream typed tunnel-disconnected", async () => {
+  test("a 4409 replacement mid-stream ends central's stream typed tunnel-disconnected and the new socket answers status", async () => {
     srv = startServer("tok", { onStreamCancelAck: recordAck });
     await dialNode(srv.url);
     const iterator = srv.server
@@ -429,7 +429,7 @@ describe("P4.1: bounded tunnel streams and acknowledged cancels", () => {
       url: srv.url,
       bearer: "tok",
       nodeName: "gpu1",
-      handleRequest: () => Promise.resolve(null),
+      handleRequest: (req: TunnelReq) => Promise.resolve({ answered: req.method, via: "new-socket" }),
       handleSubscription: createTunnelSubscriptionHandler(nodeRouter, () => ({})),
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
@@ -444,6 +444,19 @@ describe("P4.1: bounded tunnel streams and acknowledged cancels", () => {
     }
     expect(error?.code).toBe("tunnel-disconnected");
     await waitFor(() => node.aborted === 1, 2000);
+    // The displaced node cancelled its stream, and central's registry now
+    // points at the replacement: a fresh request is answered by the new
+    // socket, proving it took over rather than only that the old one died.
+    let answered: unknown = null;
+    for (let tries = 0; tries < 40 && answered === null; tries++) {
+      try {
+        const res = await srv.server.send("gpu1", { id: `st-${String(tries)}`, method: "status" });
+        answered = res.result;
+      } catch {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    }
+    expect(answered).toEqual({ answered: "status", via: "new-socket" });
     replacement.stop();
   });
 });
