@@ -784,7 +784,8 @@ describe("attempt records: duplicates, status and unknown outcomes (A3)", () => 
 
   test("a resubmit after 1100 other attempts settled is still the existing record, never a second run", async () => {
     let clock = Date.now();
-    const worker = useHost({ now: () => clock });
+    let mono = 0;
+    const worker = useHost({ now: () => clock, monotonicNow: () => mono });
     const owner = claims();
     const client = createEmbeddedInferenceRpcClient(owner);
     const original = envelope("att-evicted");
@@ -805,8 +806,9 @@ describe("attempt records: duplicates, status and unknown outcomes (A3)", () => 
       expect(worker.submit(owner, filler).outcome).toBe("accepted");
       expect(worker.cancel(owner, { attemptId }).outcome).toBe("cancelled");
     }
-    // Long enough for the worker to sweep its records, well inside the deadline.
+    // Later, well inside the deadline.
     clock += 5_000;
+    mono += 5_000;
     expect(await submit(client, "att-evicted", { envelope: original })).toMatchObject({
       outcome: "existing",
       status: { state: "terminal", terminal: { outcome: "completed" } },
@@ -814,9 +816,10 @@ describe("attempt records: duplicates, status and unknown outcomes (A3)", () => 
     expect(await collect(client.stream({ attemptId: "att-evicted" }))).toMatchObject([
       { frame: "unavailable", status: { state: "terminal" } },
     ]);
-    // Past its deadline and the grace period the record goes; the same
+    // Past the horizon and the grace period the record goes; the same
     // submit is then refused by its own deadline, so it still never runs.
     clock = original.deadline + 120_000;
+    mono += inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS + 60_000;
     expect(rejectionCode(await submit(client, "att-evicted", { envelope: original }))).toBe(
       "deadline-exceeded",
     );
@@ -1046,6 +1049,203 @@ describe("attempt records: duplicates, status and unknown outcomes (A3)", () => 
     expect(res.status).toBe(502);
     expect(await res.json()).toMatchObject({ error: { code: "unknown-outcome" } });
     expect(submits).toBe(1);
+    expect(engine.requests).toHaveLength(0);
+  });
+});
+
+/**
+ * B, N1, N2: a settled attempt is kept as a small tombstone for the
+ * deadline horizon plus a minute after its acceptance, on the monotonic
+ * clock, under its owner's (serviceId, credentialScopeId) quota; the
+ * worker-wide cap is only a backstop.
+ */
+describe("attempt records: per-owner quotas, tombstones and retention (B, N1, N2)", () => {
+  /** The documented retention: the deadline horizon plus a minute's grace. */
+  const RETENTION_MS = inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS + 60_000;
+
+  function clocked(opts: Partial<WorkerRpcHostOptions> = {}): {
+    worker: WorkerRpcHost;
+    clock: { wall: number; mono: number };
+  } {
+    const clock = { wall: Date.now(), mono: 0 };
+    const worker = useHost({ now: () => clock.wall, monotonicNow: () => clock.mono, ...opts });
+    return { worker, clock };
+  }
+
+  /** Submits one attempt for `owner` and, unless kept live, cancels it before it streams. */
+  function submitFor(
+    worker: WorkerRpcHost,
+    owner: Claims,
+    fenced: inferenceRpc.InferenceRpcTargetV1,
+    attemptId: string,
+    deadline: number,
+    live = false,
+  ): inferenceRpc.InferenceRpcSubmitResultV1 {
+    const env = envelope(attemptId, { credentialScopeId: owner.credentialScopeId }, deadline);
+    const result = worker.submit(owner, {
+      version: V1_0,
+      envelope: env,
+      target: fenced,
+      cancelId: `cancel-${attemptId}`,
+    });
+    if (result.outcome === "accepted" && !live) worker.cancel(owner, { attemptId });
+    return result;
+  }
+
+  function refusal(result: inferenceRpc.InferenceRpcSubmitResultV1): string {
+    return result.outcome === "rejected"
+      ? `${result.rejection.code}: ${result.rejection.message}`
+      : result.outcome;
+  }
+
+  test("one owner's 16,384 settled attempts leave every other owner admitted (the review's repro)", async () => {
+    const { worker, clock } = clocked();
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    const deadline = clock.wall + 5 * 60_000;
+    for (let i = 0; i < 16_384; i++) {
+      const outcome = submitFor(worker, a, fenced, `att-a-${String(i)}`, deadline).outcome;
+      if (outcome !== "accepted") throw new Error(`attempt ${String(i)}: ${outcome}`);
+    }
+    const b = claims({ serviceId: "svc-b" });
+    expect(rejectionCode(submitFor(worker, b, fenced, "att-b-0", deadline))).toBe("accepted");
+    expect(rejectionCode(submitFor(worker, a, fenced, "att-a-more", deadline))).toBe("accepted");
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("an owner at its quota is refused overloaded; other owners and its own duplicates are not", async () => {
+    const { worker, clock } = clocked({ maxAttemptRecordsPerOwner: 8, maxAttemptRecords: 12 });
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    const deadline = clock.wall + 5 * 60_000;
+    // Live attempts count against the quota as much as settled ones.
+    for (let i = 0; i < 8; i++) {
+      const result = submitFor(worker, a, fenced, `att-q-${String(i)}`, deadline, i % 2 === 0);
+      expect(rejectionCode(result)).toBe("accepted");
+    }
+    expect(refusal(submitFor(worker, a, fenced, "att-q-8", deadline))).toBe(
+      "overloaded: the service is at its attempt record quota",
+    );
+    // A full owner's duplicates are still answered from its records.
+    expect(submitFor(worker, a, fenced, "att-q-1", deadline)).toMatchObject({
+      outcome: "existing",
+      status: { state: "terminal", terminal: { outcome: "cancelled" } },
+    });
+    expect(submitFor(worker, a, fenced, "att-q-0", deadline)).toMatchObject({
+      outcome: "existing",
+      status: { state: "accepted" },
+    });
+    // Another service, and another credential scope of the same service,
+    // are owners of their own.
+    const others = [claims({ serviceId: "svc-b" }), claims({ credentialScopeId: "scope-b" })];
+    for (const [n, other] of others.entries()) {
+      for (let i = 0; i < 2; i++) {
+        const attemptId = `att-other-${String(n)}-${String(i)}`;
+        expect(rejectionCode(submitFor(worker, other, fenced, attemptId, deadline))).toBe(
+          "accepted",
+        );
+      }
+    }
+    // The worker-wide backstop then refuses everyone, without forgetting a record.
+    expect(
+      refusal(submitFor(worker, claims({ serviceId: "svc-c" }), fenced, "att-c", deadline)),
+    ).toBe("overloaded: the worker is at its record limit");
+    expect(worker.status(a, { attemptId: "att-q-1" })).toMatchObject({ state: "terminal" });
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("an owner's quota frees as its oldest records reach their retention, and not before", async () => {
+    const { worker, clock } = clocked({ maxAttemptRecordsPerOwner: 4 });
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    const admitted = (attemptId: string): string | undefined =>
+      rejectionCode(submitFor(worker, a, fenced, attemptId, clock.wall + 60_000));
+    expect([admitted("att-old-0"), admitted("att-old-1")]).toEqual(["accepted", "accepted"]);
+    clock.wall += 10 * 60_000;
+    clock.mono += 10 * 60_000;
+    expect([admitted("att-new-0"), admitted("att-new-1")]).toEqual(["accepted", "accepted"]);
+    expect(admitted("att-full")).toBe("overloaded");
+    clock.wall = clock.wall - 10 * 60_000 + RETENTION_MS - 1;
+    clock.mono = RETENTION_MS - 1;
+    expect(admitted("att-full")).toBe("overloaded");
+    clock.wall += 1;
+    clock.mono += 1;
+    expect([admitted("att-next-0"), admitted("att-next-1")]).toEqual(["accepted", "accepted"]);
+    expect(admitted("att-full")).toBe("overloaded");
+    expect(worker.status(a, { attemptId: "att-old-0" })).toMatchObject({ state: "unknown" });
+    expect(worker.status(a, { attemptId: "att-new-0" })).toMatchObject({ state: "terminal" });
+  });
+
+  test("64 one-second attempts a second at the proxy's 5 min deadline are never refused for retention", async () => {
+    const { worker, clock } = clocked();
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    // Past one full retention, so the records reach their steady state.
+    const seconds = Math.ceil(RETENTION_MS / 1000) + 60;
+    for (let s = 0; s < seconds; s++) {
+      for (let i = 0; i < 64; i++) {
+        const attemptId = `att-rate-${String(s)}-${String(i)}`;
+        const outcome = rejectionCode(
+          submitFor(worker, a, fenced, attemptId, clock.wall + 5 * 60_000),
+        );
+        if (outcome !== "accepted") throw new Error(`second ${String(s)}: ${String(outcome)}`);
+      }
+      clock.wall += 1_000;
+      clock.mono += 1_000;
+    }
+    expect(worker.status(a, { attemptId: "att-rate-0-0" })).toMatchObject({ state: "unknown" });
+    const recent = `att-rate-${String(seconds - 1)}-63`;
+    expect(worker.status(a, { attemptId: recent })).toMatchObject({ state: "terminal" });
+  }, 60_000);
+
+  test("a resubmit inside the horizon is the existing record, however short its first deadline (N2)", async () => {
+    const { worker, clock } = clocked();
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    expect(rejectionCode(submitFor(worker, a, fenced, "att-short", clock.wall + 1_000))).toBe(
+      "accepted",
+    );
+    // Long past that deadline and its grace, well inside the horizon, the
+    // same attempt comes back with a fresh deadline.
+    clock.wall += 5 * 60_000;
+    clock.mono += 5 * 60_000;
+    expect(submitFor(worker, a, fenced, "att-short", clock.wall + 60_000)).toMatchObject({
+      outcome: "existing",
+      status: { state: "terminal", terminal: { outcome: "cancelled" } },
+    });
+    clock.wall += RETENTION_MS - 5 * 60_000 - 1;
+    clock.mono = RETENTION_MS - 1;
+    expect(submitFor(worker, a, fenced, "att-short", clock.wall + 60_000).outcome).toBe("existing");
+    clock.wall += 1;
+    clock.mono += 1;
+    expect(rejectionCode(submitFor(worker, a, fenced, "att-sweep", clock.wall + 60_000))).toBe(
+      "accepted",
+    );
+    expect(worker.status(a, { attemptId: "att-short" })).toMatchObject({ state: "unknown" });
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("a wall-clock step back after the sweep cannot re-admit a settled envelope (N1)", async () => {
+    const { worker, clock } = clocked();
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    const original = envelope("att-step", {}, clock.wall + 5 * 60_000);
+    const resubmit = (): inferenceRpc.InferenceRpcSubmitResultV1 =>
+      worker.submit(a, { version: V1_0, envelope: original, target: fenced, cancelId: "c-step" });
+    expect(rejectionCode(resubmit())).toBe("accepted");
+    worker.cancel(a, { attemptId: "att-step" });
+    // The wall clock jumps two hours ahead while a second passes, a submit
+    // sweeps, and the wall clock steps back.
+    clock.wall += 2 * 3600_000;
+    clock.mono += 1_000;
+    expect(rejectionCode(submitFor(worker, a, fenced, "att-jump", clock.wall + 60_000))).toBe(
+      "accepted",
+    );
+    clock.wall -= 2 * 3600_000;
+    expect(resubmit()).toMatchObject({
+      outcome: "existing",
+      status: { state: "terminal", terminal: { outcome: "cancelled" } },
+    });
     expect(engine.requests).toHaveLength(0);
   });
 });

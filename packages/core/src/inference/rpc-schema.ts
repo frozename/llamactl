@@ -34,10 +34,12 @@ export const INFERENCE_RPC_VERSION: InferenceRpcVersion = Object.freeze({ major:
 
 /**
  * How far ahead an attempt's deadline may lie. Further is refused, typed
- * `deadline-exceeded`: a worker keeps an attempt's record until its
- * deadline, and timers cannot wait past 2^31-1 ms.
+ * `deadline-exceeded`. A worker keeps every attempt's record this long
+ * after accepting it, plus a minute, so the horizon sets how many records
+ * a given rate of attempts holds; 15 min is three times the proxy's own
+ * 5 min deadline.
  */
-export const INFERENCE_RPC_MAX_DEADLINE_MS = 60 * 60 * 1000;
+export const INFERENCE_RPC_MAX_DEADLINE_MS = 15 * 60 * 1000;
 
 /**
  * Worker-routing hops a submit may carry in its envelope's internal
