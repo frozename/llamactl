@@ -946,15 +946,22 @@ async function submitOnce(plan: SubmitPlan): Promise<SubmitAnswer | Refused> {
 async function resolveAccepted(
   client: InferenceRpcClient,
   resolver: Resolver,
-  attemptId: string,
+  envelope: Envelope,
   answer: SubmitAnswer,
   signal: AbortSignal,
 ): Promise<AttemptOutcome> {
+  const { attemptId } = envelope;
   if (answer.outcome === "rejected") return { kind: "rejected", rejection: answer.rejection };
   if (answer.outcome === "accepted") return await openStream(client, resolver, attemptId, signal);
   // A duplicate or a lost acknowledgement: only an attempt that is still
   // waiting for its stream may be attached; anything else is surfaced.
   const status = answer.outcome === "existing" ? answer.status : await resolver.status(attemptId);
+  // The attempt id is another request's: this one was never accepted, and
+  // that one's output is not this caller's to read.
+  if (status?.requestId !== undefined && status.requestId !== envelope.requestId) {
+    const message = "the attempt id belongs to another request";
+    return { kind: "rejected", rejection: { code: "target-unavailable", message } };
+  }
   if (status?.state === "accepted") return await openStream(client, resolver, attemptId, signal);
   return { kind: "settled", terminal: status === null ? UNKNOWN_OUTCOME : settledFrom(status) };
 }
@@ -1313,7 +1320,14 @@ async function runAttempt(
     cancelId: `cancel-${ctx.attemptId}`,
   });
   const resolver = resolverFor(opts.client, opts.resolveTimeoutMs ?? DEFAULT_RESOLVE_TIMEOUT_MS);
-  return await resolveAccepted(opts.client, resolver, envelope.attemptId, answer, signal);
+  return await resolveAccepted(opts.client, resolver, envelope, answer, signal);
+}
+
+/** A deadline past the horizon is refused before anything is sent: no worker would accept it. */
+function beyondHorizon(deadline: number): Rejection | null {
+  if (deadline - Date.now() <= inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS) return null;
+  const horizon = String(inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS);
+  return { code: "deadline-exceeded", message: `the deadline is more than ${horizon} ms ahead` };
 }
 
 export function createWorkerRpcExecutor(opts: WorkerRpcExecutorOptions): BackendExecutor {
@@ -1338,6 +1352,12 @@ export function createWorkerRpcExecutor(opts: WorkerRpcExecutorOptions): Backend
       transports: ["worker-rpc"],
     }),
     execute: async (envelope, ctx): Promise<Response> => {
+      const tooFar = beyondHorizon(ctx.deadline);
+      if (tooFar !== null) {
+        const outcome = { kind: "rejected" as const, rejection: tooFar };
+        const noop = (): void => undefined;
+        return await outcomeResponse(envelope, opts.client.transport, outcome, noop, noop);
+      }
       const controller = new AbortController();
       const watchdog = setTimeout(
         () => {

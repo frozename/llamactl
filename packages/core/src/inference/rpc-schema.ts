@@ -27,6 +27,13 @@ export type InferenceRpcVersion = z.infer<typeof InferenceRpcVersionSchema>;
 export const INFERENCE_RPC_VERSION: InferenceRpcVersion = Object.freeze({ major: 1, minor: 0 });
 
 /**
+ * How far ahead an attempt's deadline may lie. Further is refused, typed
+ * `deadline-exceeded`: a worker keeps an attempt's record until its
+ * deadline, and timers cannot wait past 2^31-1 ms.
+ */
+export const INFERENCE_RPC_MAX_DEADLINE_MS = 60 * 60 * 1000;
+
+/**
  * Worker-routing hops a submit may carry in its envelope's internal
  * selection, counting itself: the caller's one trusted hop. Workers
  * execute locally and never forward.

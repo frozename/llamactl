@@ -781,6 +781,180 @@ describe("attempt records: duplicates, status and unknown outcomes (A3)", () => 
     expect(engine.requests).toHaveLength(1);
   });
 
+  test("a resubmit after 1100 other attempts settled is still the existing record, never a second run", async () => {
+    let clock = Date.now();
+    const worker = useHost({ now: () => clock });
+    const owner = claims();
+    const client = createEmbeddedInferenceRpcClient(owner);
+    const original = envelope("att-evicted");
+    expect(rejectionCode(await submit(client, "att-evicted", { envelope: original }))).toBe(
+      "accepted",
+    );
+    expectValidStream(await collect(client.stream({ attemptId: "att-evicted" })));
+    expect(engine.requests).toHaveLength(1);
+    const fenced = await target(client);
+    for (let i = 0; i < 1100; i++) {
+      const attemptId = `att-filler-${String(i)}`;
+      const filler = {
+        version: V1_0,
+        envelope: envelope(attemptId),
+        target: fenced,
+        cancelId: `cancel-${attemptId}`,
+      };
+      expect(worker.submit(owner, filler).outcome).toBe("accepted");
+      expect(worker.cancel(owner, { attemptId }).outcome).toBe("cancelled");
+    }
+    // Long enough for the worker to sweep its records, well inside the deadline.
+    clock += 5_000;
+    expect(await submit(client, "att-evicted", { envelope: original })).toMatchObject({
+      outcome: "existing",
+      status: { state: "terminal", terminal: { outcome: "completed" } },
+    });
+    expect(await collect(client.stream({ attemptId: "att-evicted" }))).toMatchObject([
+      { frame: "unavailable", status: { state: "terminal" } },
+    ]);
+    // Past its deadline and the grace period the record goes; the same
+    // submit is then refused by its own deadline, so it still never runs.
+    clock = original.deadline + 120_000;
+    expect(rejectionCode(await submit(client, "att-evicted", { envelope: original }))).toBe(
+      "deadline-exceeded",
+    );
+    expect(worker.status(owner, { attemptId: "att-evicted" })).toMatchObject({ state: "unknown" });
+    expect(engine.requests).toHaveLength(1);
+  });
+
+  test("a settled attempt keeps only its status: no envelope, no request body", async () => {
+    const worker = useHost();
+    const owner = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(owner));
+    const bodies: WeakRef<object>[] = [];
+    const submitAndSettle = (i: number): void => {
+      const env = envelope(`att-memory-${String(i)}`, {
+        nativeBody: {
+          model: `public/${LOCAL}`,
+          messages: [{ role: "user", content: "x".repeat(16 * 1024) }],
+        },
+      });
+      bodies.push(new WeakRef(env.nativeBody));
+      const cancelId = `cancel-memory-${String(i)}`;
+      worker.submit(owner, { version: V1_0, envelope: env, target: fenced, cancelId });
+      worker.cancel(owner, { attemptId: env.attemptId });
+    };
+    for (let i = 0; i < 200; i++) submitAndSettle(i);
+    for (let round = 0; round < 2; round++) {
+      await new Promise((r) => setTimeout(r, 0));
+      Bun.gc(true);
+    }
+    // A conservative collector may keep a stray few; a record would keep them all.
+    expect(bodies.filter((ref) => ref.deref() !== undefined).length).toBeLessThan(20);
+    expect(worker.status(owner, { attemptId: "att-memory-0" })).toMatchObject({
+      state: "terminal",
+      deploymentId: LOCAL,
+      terminal: { outcome: "cancelled", started: false },
+    });
+  });
+
+  test("an attempt belongs to its service and credential scope, within its tenant", async () => {
+    const worker = useHost();
+    const owner = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(owner));
+    const accepted = worker.submit(owner, {
+      version: V1_0,
+      envelope: envelope("att-scoped"),
+      target: fenced,
+      cancelId: "cancel-scoped",
+    });
+    expect(accepted.outcome).toBe("accepted");
+    for (const other of [
+      claims({ credentialScopeId: "scope-b" }),
+      claims({ credentialScopeId: "scope-b", tenants: ["tenant-b"] }),
+      claims({ tenants: ["tenant-b"] }),
+    ]) {
+      const frames = await collect(
+        worker.stream(other, { attemptId: "att-scoped" }, new AbortController().signal),
+      );
+      expect(frames).toEqual([
+        { frame: "unavailable", status: { attemptId: "att-scoped", state: "unknown" } },
+      ]);
+      expect(worker.status(other, { attemptId: "att-scoped" })).toMatchObject({
+        state: "unknown",
+      });
+      expect(worker.cancel(other, { attemptId: "att-scoped" })).toEqual({ outcome: "unknown" });
+      expect(worker.cancel(other, { cancelId: "cancel-scoped" })).toEqual({ outcome: "unknown" });
+    }
+    // A resubmit from another scope is refused, never attached to the attempt.
+    const otherScope = claims({ credentialScopeId: "scope-b" });
+    const resubmitted = worker.submit(otherScope, {
+      version: V1_0,
+      envelope: envelope("att-scoped", { credentialScopeId: "scope-b" }),
+      target: fenced,
+      cancelId: "cancel-other",
+    });
+    expect(rejectionCode(resubmitted)).toBe("unauthorized-scope");
+    expect(worker.status(owner, { attemptId: "att-scoped" })).toMatchObject({
+      state: "accepted",
+    });
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("a deadline beyond the horizon is refused typed, by the worker and before a caller sends anything", async () => {
+    const worker = useHost();
+    const owner = claims();
+    const client = createEmbeddedInferenceRpcClient(owner);
+    const far = Date.now() + 30 * 24 * 3600 * 1000;
+    const env = envelope("att-far", {}, far);
+    expect(rejectionCode(await submit(client, "att-far", { envelope: env }))).toBe(
+      "deadline-exceeded",
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(worker.status(owner, { attemptId: "att-far" })).toMatchObject({ state: "unknown" });
+    let negotiations = 0;
+    const counting: InferenceRpcClient = {
+      ...client,
+      negotiate: async (input) => {
+        negotiations += 1;
+        return await client.negotiate(input);
+      },
+    };
+    const res = await createWorkerRpcExecutor({
+      client: counting,
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    }).execute(env, ctxFor(env));
+    expect(res.status).toBe(504);
+    expect(await res.json()).toMatchObject({ error: { code: "deadline-exceeded" } });
+    expect(negotiations).toBe(0);
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("an existing record for another request is never attached", async () => {
+    const worker = useHost();
+    const owner = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(owner));
+    const accepted = worker.submit(owner, {
+      version: V1_0,
+      envelope: envelope("att-shared"),
+      target: fenced,
+      cancelId: "cancel-shared",
+    });
+    expect(accepted.outcome).toBe("accepted");
+    const env = envelope("att-shared", { requestId: "req-another" });
+    const res = await createWorkerRpcExecutor({
+      client: createEmbeddedInferenceRpcClient(owner),
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    }).execute(env, ctxFor(env));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: { code: "target-unavailable" } });
+    expect(worker.status(owner, { attemptId: "att-shared" })).toMatchObject({
+      state: "accepted",
+      requestId: "req-att-shared",
+    });
+    expect(engine.requests).toHaveLength(0);
+  });
+
   test("a lost submit acknowledgement is resolved through status and run exactly once", async () => {
     useHost();
     const real = createEmbeddedInferenceRpcClient(claims());

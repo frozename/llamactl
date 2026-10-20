@@ -86,8 +86,13 @@ export interface WorkerRpcHostOptions {
   /** Defaults to the claims the server put on the request context. */
   resolveClaims?: (ctx: InferenceRpcContext) => Claims | undefined;
   maxActiveAttempts?: number;
-  /** Settled attempts kept for `status`; older ones read as `unknown`. */
-  retainedAttempts?: number;
+  /**
+   * Attempt records kept, unsettled and settled. A settled record is kept
+   * until its deadline plus a grace period, so a resubmit before then gets
+   * the existing record; at the cap, new submits are refused `overloaded`
+   * rather than any record being forgotten early.
+   */
+  maxAttemptRecords?: number;
   /** An accepted attempt whose stream never attaches is cancelled unstarted. */
   streamAttachTimeoutMs?: number;
   incarnation?: string;
@@ -129,21 +134,39 @@ export interface WorkerRpcHost {
 
 type StopReason = "cancel" | "deadline" | "disconnect" | "attach-timeout" | "close";
 
+/** Whose an attempt is: the service, the credential scope and the tenant it ran under. */
+interface AttemptOwner {
+  serviceId: string;
+  credentialScopeId: string;
+  tenantId: string;
+}
+
+/** What an unsettled attempt needs to run; dropped when it settles. */
+interface AttemptRun {
+  deployment: Deployment;
+  envelope: Envelope;
+  backend: WorkerRpcBackend;
+  controller: AbortController;
+  timers: ReturnType<typeof setTimeout>[];
+}
+
 interface AttemptRecord {
   attemptId: string;
   requestId: string;
   cancelId: string;
-  serviceId: string;
-  deployment: Deployment;
-  envelope: Envelope;
-  backend: WorkerRpcBackend;
+  owner: AttemptOwner;
+  deploymentId: string;
+  /** The upstream model the deployment executes. */
+  model: string;
   acceptedAt: string;
+  /** The record is kept until then: its deadline plus RETENTION_GRACE_MS. */
+  retainUntil: number;
   state: Exclude<inferenceRpc.InferenceRpcAttemptState, "unknown">;
   streamed: boolean;
   terminal: ExecutionTerminal | undefined;
   terminalSequence: number | undefined;
-  controller: AbortController;
-  timers: ReturnType<typeof setTimeout>[];
+  /** Until the attempt settles. A settled record keeps only its status. */
+  run: AttemptRun | undefined;
 }
 
 interface HostState {
@@ -155,12 +178,12 @@ interface HostState {
   advertisements: () => readonly Deployment[];
   backends: ReadonlyMap<WorkerRpcBackendKind, WorkerRpcBackend>;
   maxActive: number;
-  retained: number;
+  maxRecords: number;
   attachTimeoutMs: number;
   now: () => number;
   records: Map<string, AttemptRecord>;
   cancelIds: Map<string, string>;
-  settled: string[];
+  lastSweep: number;
   active: number;
   /** Streams attached and not yet ended. */
   streams: number;
@@ -175,8 +198,11 @@ interface WorkerCatalog {
 
 const UNKNOWN_USAGE: UsageObservationV1 = Object.freeze({ source: "unknown" });
 const DEFAULT_MAX_ACTIVE = 64;
-const DEFAULT_RETAINED = 1024;
+const DEFAULT_MAX_RECORDS = 16_384;
 const DEFAULT_ATTACH_TIMEOUT_MS = 30_000;
+/** How long past its deadline a settled record still answers status and resubmits. */
+const RETENTION_GRACE_MS = 60_000;
+const SWEEP_INTERVAL_MS = 1_000;
 const NO_SCOPE: Rejection = Object.freeze({
   code: "unauthorized-scope",
   message: "the service claims do not allow this operation",
@@ -493,16 +519,25 @@ function fenceFeatures(envelope: Envelope): Rejection | null {
   return null;
 }
 
+function fenceDeadline(state: HostState, envelope: Envelope): Rejection | null {
+  const ahead = envelope.deadline - state.now();
+  if (ahead <= 0) {
+    return { code: "deadline-exceeded", message: "the deadline passed before acceptance" };
+  }
+  if (ahead > inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS) {
+    const horizon = String(inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS);
+    return { code: "deadline-exceeded", message: `the deadline is more than ${horizon} ms ahead` };
+  }
+  return null;
+}
+
 function fenceExecution(
   state: HostState,
   deployment: Deployment,
   envelope: Envelope,
 ): { backend: WorkerRpcBackend } | { rejection: Rejection } {
-  if (envelope.deadline <= state.now()) {
-    return {
-      rejection: { code: "deadline-exceeded", message: "the deadline passed before acceptance" },
-    };
-  }
+  const deadline = fenceDeadline(state, envelope);
+  if (deadline !== null) return { rejection: deadline };
   const hops = fenceHops(envelope);
   if (hops !== null) return { rejection: hops };
   const backend = isAvailable(state, deployment) ? backendFor(state, deployment) : undefined;
@@ -519,6 +554,9 @@ function fenceExecution(
   if (state.active >= state.maxActive) {
     return { rejection: { code: "overloaded", message: "the worker is at its attempt limit" } };
   }
+  if (state.records.size >= state.maxRecords) {
+    return { rejection: { code: "overloaded", message: "the worker is at its record limit" } };
+  }
   return { backend };
 }
 
@@ -527,12 +565,17 @@ function statusOf(record: AttemptRecord): AttemptStatus {
     attemptId: record.attemptId,
     state: record.state,
     requestId: record.requestId,
-    deploymentId: record.deployment.deploymentId,
+    deploymentId: record.deploymentId,
     ...(record.terminal !== undefined ? { terminal: record.terminal } : {}),
     ...(record.terminalSequence !== undefined ? { terminalSequence: record.terminalSequence } : {}),
   };
 }
 
+/**
+ * Settles once. The record then keeps only what its status needs: the
+ * envelope, the backend and the deployment go, so a settled attempt holds
+ * no request body however large it was.
+ */
 function settle(
   state: HostState,
   record: AttemptRecord,
@@ -541,23 +584,34 @@ function settle(
   if (record.terminal !== undefined) return record.terminal;
   record.terminal = terminal;
   record.state = "terminal";
-  for (const timer of record.timers) clearTimeout(timer);
+  for (const timer of record.run?.timers ?? []) clearTimeout(timer);
+  record.run = undefined;
   state.active -= 1;
   notifyIdle(state);
-  state.settled.push(record.attemptId);
-  while (state.settled.length > state.retained) {
-    const evicted = state.records.get(state.settled.shift() ?? "");
-    if (evicted === undefined) continue;
-    state.records.delete(evicted.attemptId);
-    if (state.cancelIds.get(evicted.cancelId) === evicted.attemptId) {
-      state.cancelIds.delete(evicted.cancelId);
-    }
-  }
   return terminal;
 }
 
+/**
+ * Forgets settled records past their deadline plus the grace period, never
+ * earlier: until then a resubmit of the attempt gets the existing record.
+ * A record past its deadline can no longer be resubmitted anyway; its
+ * deadline fence refuses it.
+ */
+function sweep(state: HostState): void {
+  const now = state.now();
+  if (now - state.lastSweep < SWEEP_INTERVAL_MS && state.records.size < state.maxRecords) return;
+  state.lastSweep = now;
+  for (const record of state.records.values()) {
+    if (record.terminal === undefined || record.retainUntil > now) continue;
+    state.records.delete(record.attemptId);
+    if (state.cancelIds.get(record.cancelId) === record.attemptId) {
+      state.cancelIds.delete(record.cancelId);
+    }
+  }
+}
+
 function executedBy(record: AttemptRecord): { model: string; deployment: string } {
-  return { model: record.deployment.upstreamModelId, deployment: record.deployment.deploymentId };
+  return { model: record.model, deployment: record.deploymentId };
 }
 
 function stopTerminal(record: AttemptRecord, reason: StopReason): ExecutionTerminal {
@@ -576,8 +630,9 @@ function stopTerminal(record: AttemptRecord, reason: StopReason): ExecutionTermi
 
 /** Settle first, then abort: the running stream sees the recorded terminal. */
 function stopAttempt(state: HostState, record: AttemptRecord, reason: StopReason): void {
+  const controller = record.run?.controller;
   settle(state, record, stopTerminal(record, reason));
-  record.controller.abort(reason);
+  controller?.abort(reason);
 }
 
 function admit(
@@ -588,21 +643,31 @@ function admit(
   backend: WorkerRpcBackend,
 ): AttemptRecord {
   const { envelope } = input;
+  const run: AttemptRun = {
+    deployment,
+    envelope,
+    backend,
+    controller: new AbortController(),
+    timers: [],
+  };
   const record: AttemptRecord = {
     attemptId: envelope.attemptId,
     requestId: envelope.requestId,
     cancelId: input.cancelId,
-    serviceId: claims.serviceId,
-    deployment,
-    envelope,
-    backend,
+    owner: {
+      serviceId: claims.serviceId,
+      credentialScopeId: claims.credentialScopeId,
+      tenantId: envelope.tenantId,
+    },
+    deploymentId: deployment.deploymentId,
+    model: deployment.upstreamModelId,
     acceptedAt: new Date(state.now()).toISOString(),
+    retainUntil: envelope.deadline + RETENTION_GRACE_MS,
     state: "accepted",
     streamed: false,
     terminal: undefined,
     terminalSequence: undefined,
-    controller: new AbortController(),
-    timers: [],
+    run,
   };
   state.records.set(record.attemptId, record);
   state.cancelIds.set(record.cancelId, record.attemptId);
@@ -619,7 +684,7 @@ function admit(
   );
   deadline.unref();
   attach.unref();
-  record.timers.push(deadline, attach);
+  run.timers.push(deadline, attach);
   return record;
 }
 
@@ -639,9 +704,10 @@ function submit(
   const target = catalog.all.find((d) => d.deploymentId === input.target.deploymentId);
   const scope = fenceClaims(claims, input, target);
   if (scope !== null) return rejectedWith(scope);
+  sweep(state);
   const existing = state.records.get(input.envelope.attemptId);
   if (existing !== undefined) {
-    return existing.serviceId === claims.serviceId
+    return ownedBy(existing, claims)
       ? { outcome: "existing", status: statusOf(existing) }
       : rejectedWith(NO_SCOPE);
   }
@@ -700,10 +766,11 @@ function failureTerminal(
 function startBackend(
   record: AttemptRecord,
 ): AsyncIterable<WorkerRpcBackendEvent> | readonly WorkerRpcBackendEvent[] {
+  const run = record.run;
   // Stopped between acceptance and the first pull: nothing starts.
-  if (record.controller.signal.aborted) return [];
+  if (run === undefined || run.controller.signal.aborted) return [];
   record.state = "started";
-  return record.backend.execute(record.deployment, record.envelope, record.controller.signal);
+  return run.backend.execute(run.deployment, run.envelope, run.controller.signal);
 }
 
 async function* runAttempt(
@@ -755,13 +822,25 @@ async function* runAttempt(
   yield { frame: "event", event: { ...last, type: "terminal", terminal } };
 }
 
+/**
+ * An attempt belongs to the service and credential scope that submitted
+ * it, and only while its tenant is still inside the presented claims.
+ */
+function ownedBy(record: AttemptRecord, claims: Claims): boolean {
+  return (
+    record.owner.serviceId === claims.serviceId &&
+    record.owner.credentialScopeId === claims.credentialScopeId &&
+    claims.tenants.includes(record.owner.tenantId)
+  );
+}
+
 function ownedRecord(
   state: HostState,
   claims: Claims,
   attemptId: string,
 ): AttemptRecord | undefined {
   const record = state.records.get(attemptId);
-  return record?.serviceId === claims.serviceId ? record : undefined;
+  return record !== undefined && ownedBy(record, claims) ? record : undefined;
 }
 
 async function* streamAttempt(
@@ -850,12 +929,12 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     advertisements: opts.advertisements ?? ((): readonly Deployment[] => []),
     backends: opts.backends ?? DEFAULT_BACKENDS,
     maxActive: opts.maxActiveAttempts ?? DEFAULT_MAX_ACTIVE,
-    retained: opts.retainedAttempts ?? DEFAULT_RETAINED,
+    maxRecords: opts.maxAttemptRecords ?? DEFAULT_MAX_RECORDS,
     attachTimeoutMs: opts.streamAttachTimeoutMs ?? DEFAULT_ATTACH_TIMEOUT_MS,
     now: opts.now ?? ((): number => Date.now()),
     records: new Map(),
     cancelIds: new Map(),
-    settled: [],
+    lastSweep: 0,
     active: 0,
     streams: 0,
     idle: [],
