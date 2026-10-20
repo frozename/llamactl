@@ -2759,6 +2759,52 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       expect(late).toContain('"code":"stream-overflow"');
       expect(delivered).toBeLessThan(pieces.length * 48 * 1024);
     }, 30_000);
+
+    test.each(TRANSPORTS)(
+      "%s: a terminated frame past the frame cap ends the stream typed, aborts the engine and cancels once",
+      async (transport) => {
+        engine.setScript({ pieces: ["x".repeat(16 * 1024)], holdAfter: 1 });
+        useRemoteHost();
+        const acks: unknown[] = [];
+        const client = recordingCancels(
+          clientFor[transport]({ limits: { maxFrameBytes: 8 * 1024, maxQueuedBytes: 64 * 1024 } }),
+          acks,
+        );
+        const aborted = engine.nextAbort();
+        const attemptId = `att-${transport}-frame-overflow`;
+        const { res } = await execute(client, attemptId);
+        await aborted;
+        const body = await res.text();
+        expect(body).toContain('"code":"stream-overflow"');
+        expect(engine.aborts()).toBe(1);
+        expect(acks).toHaveLength(1);
+      },
+    );
+
+    test("direct: an unterminated frame past the cap ends the stream typed with nothing queued", async () => {
+      useRemoteHost();
+      const pinned = makePinnedFetch(transports.workerNode);
+      const oversized: PinnedFetch = async (input, init) => {
+        if (!urlOf(input).includes("inferenceRpc.stream")) return await pinned(input, init);
+        const body = new ReadableStream<Uint8Array>({
+          start(controller): void {
+            controller.enqueue(
+              new TextEncoder().encode(`data: ${"x".repeat(2 * limits.maxFrameBytes)}`),
+            );
+          },
+        });
+        return new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      };
+      const queue = queueSampler();
+      const client = directClient({ fetch: oversized, limits, onStreamQueue: queue.sample });
+      const { res } = await execute(client, "att-d-unterminated");
+      const body = await res.text();
+      expect(body).toContain('"code":"stream-overflow"');
+      expect(queue.max()).toBe(0);
+    });
   });
 
   describe("cancellation end to end (X4)", () => {
