@@ -31,8 +31,12 @@ import { handleAgentRollback, handleAgentUpdate } from "./agent-update.js";
 import { type ArtifactsHandlerOptions, handleArtifact } from "./artifacts.js";
 import {
   claimsForServiceCredential,
+  createServiceTokenVerifier,
   extractBearer,
-  SERVICE_CREDENTIAL_HEADER,
+  relayPrincipalOf,
+  SERVICE_TOKEN_HEADER,
+  SERVICE_TOKEN_MAX_LENGTH,
+  type ServiceCredentialBinding,
   unauthorizedResponse,
   verifyBearer,
 } from "./auth.js";
@@ -400,7 +404,7 @@ function handleInfraRoutes(
     return handleTunnelRelay(
       req,
       url,
-      forwardingServiceCredential(tunnelServer, req),
+      forwardingServiceToken(tunnelServer, req),
       opts.tokenHash,
       opts.tunnelJournalPath,
     );
@@ -444,17 +448,19 @@ function handleInfraRoutes(
 
 /**
  * The tunnel server as one relay request sees it: a worker-RPC caller's
- * service credential rides, unread, on the `inferenceRpc.*` req frames
- * it sends, for the node to verify. The relay hop itself stays
+ * single-use service token rides, unread, on the `inferenceRpc.*` req
+ * frames it sends, stamped with the relay principal of the bearer this
+ * hop presented, for the node to verify. The relay hop itself stays
  * authorized by central's own bearer.
  */
-function forwardingServiceCredential(server: TunnelServer, req: Request): TunnelServer {
-  const credential = req.headers.get(SERVICE_CREDENTIAL_HEADER);
-  if (credential === null || credential === "") return server;
+function forwardingServiceToken(server: TunnelServer, req: Request): TunnelServer {
+  const token = req.headers.get(SERVICE_TOKEN_HEADER);
+  const bearer = extractBearer(req);
+  if (token === null || token === "" || token.length > SERVICE_TOKEN_MAX_LENGTH) return server;
+  if (bearer === null) return server;
+  const auth = { serviceToken: token, relayPrincipal: relayPrincipalOf(bearer) };
   const withAuth = (frame: Omit<TunnelReq, "type">): Omit<TunnelReq, "type"> =>
-    isInferenceRpcMethod(frame.method)
-      ? { ...frame, auth: { serviceCredential: credential } }
-      : frame;
+    isInferenceRpcMethod(frame.method) ? { ...frame, auth } : frame;
   return {
     ...server,
     send: (nodeName, frame) => server.send(nodeName, withAuth(frame)),
@@ -700,12 +706,23 @@ function maybeStartTunnelClient(
   workerRpc: WorkerRpcServing | null,
 ): TunnelClient | null {
   if (!opts.tunnelDial) return null;
-  // Central forwards a worker-RPC caller's service credential on the req
-  // frame; the claims it verifies to ride that request's context only.
+  // Central forwards a worker-RPC caller's single-use token on the req
+  // frame, bound to this node's tunnel name and to the call; the claims
+  // it verifies to ride that request's context only.
+  const tokens = createServiceTokenVerifier({ node: opts.tunnelDial.nodeName });
   const contextFor = (req: TunnelReq): ReturnType<typeof requestContext> => {
+    const params = req.params as { input?: unknown } | undefined;
     const claims =
       workerRpc !== null && isInferenceRpcMethod(req.method)
-        ? workerRpc.claimsFor(req.auth?.serviceCredential)
+        ? tokens.claimsFor(
+            req.auth?.serviceToken,
+            {
+              method: req.method,
+              input: params?.input,
+              relayPrincipal: req.auth?.relayPrincipal ?? "",
+            },
+            workerRpc.bindings(),
+          )
         : null;
     return requestContext(opts, claims);
   };
@@ -772,6 +789,8 @@ function maybeStartPeerSnapshotPoller(opts: StartAgentOptions): (() => void) | n
 }
 
 interface WorkerRpcServing {
+  /** The service-credential bindings current now. */
+  bindings(): readonly ServiceCredentialBinding[];
   /** The claims a service credential carries under the bindings current now. */
   claimsFor(token: string | null | undefined): InferenceClaims | null;
   /** Drains active attempts, cancels what outlives the window, then unpublishes. */
@@ -814,9 +833,11 @@ function maybePublishWorkerRpc(opts: StartAgentOptions): WorkerRpcServing | null
       ),
   });
   const restore = publishWorkerRpcHost(host);
+  const bindings = (): readonly ServiceCredentialBinding[] =>
+    config.settings()?.serviceCredentials ?? [];
   return {
-    claimsFor: (token) =>
-      claimsForServiceCredential(token, config.settings()?.serviceCredentials ?? []),
+    bindings,
+    claimsFor: (token) => claimsForServiceCredential(token, bindings()),
     stop: async (): Promise<void> => {
       const drainMs = config.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
       if (!(await within(drainMs, host.drain()))) {

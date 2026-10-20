@@ -67,7 +67,11 @@ import {
   rmSync,
   writeFileSync,
 } from "../src/safe-fs.js";
-import { createTunnelClient, createTunnelRouterHandler } from "../src/tunnel/index.js";
+import {
+  createTunnelClient,
+  createTunnelRouterHandler,
+  type TunnelReq,
+} from "../src/tunnel/index.js";
 import { INFERENCE_RPC_STREAM_LIMITS } from "../src/tunnel/messages.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
@@ -2388,6 +2392,218 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         }
         expect(engine.requests).toHaveLength(0);
       });
+    });
+  });
+
+  /**
+   * X5 over the tunnel. Central relays a request to whichever node holds
+   * the target name, and any node holding the shared tunnel bearer can
+   * claim a name. So a tunnel caller never sends its service credential:
+   * each call carries a single-use token derived from it, bound to the
+   * node, the call and its input, central's relay principal, a nonce and
+   * a short expiry.
+   */
+  describe("derived service tokens on the tunnel (X5)", () => {
+    const NEGOTIATE = { versions: [V1_0], requiredFeatures: ["execution-event-v1"] };
+
+    /** One relay call, as a tunnel client makes it, carrying `token`. */
+    async function relayCall(
+      method: string,
+      input: unknown,
+      token: string | undefined,
+      bearer = transports.centralToken,
+    ): Promise<{ status: number; result: unknown }> {
+      const res = await fetch(`${transports.central.url}/tunnel-relay/${TUNNEL_NODE}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${bearer}`,
+          "content-type": "application/json",
+          ...(token !== undefined ? { [auth.SERVICE_TOKEN_HEADER]: token } : {}),
+        },
+        body: JSON.stringify({ method, type: "query", input }),
+        tls: { ca: transports.centralCertificate },
+      } as RequestInit);
+      const body = (await res.json().catch(() => null)) as { result?: unknown } | null;
+      return { status: res.status, result: body?.result };
+    }
+
+    function tokenFor(
+      method: string,
+      input: unknown,
+      opts: { node?: string; now?: number; bearer?: string } = {},
+    ): string {
+      return auth.mintServiceToken(
+        transports.serviceCredential,
+        {
+          node: opts.node ?? TUNNEL_NODE,
+          method,
+          input,
+          relayPrincipal: auth.relayPrincipalOf(opts.bearer ?? transports.centralToken),
+        },
+        opts.now !== undefined ? { now: opts.now } : {},
+      );
+    }
+
+    async function negotiatedThroughRelay(): Promise<boolean> {
+      const { result } = await relayCall(
+        "inferenceRpc.negotiate",
+        NEGOTIATE,
+        tokenFor("inferenceRpc.negotiate", NEGOTIATE),
+      );
+      return (result as { outcome?: string } | undefined)?.outcome === "negotiated";
+    }
+
+    /** Polls until the real worker holds the tunnel name again. */
+    async function realWorkerBack(): Promise<void> {
+      const deadline = Date.now() + 10_000;
+      while (!(await negotiatedThroughRelay().catch(() => false))) {
+        if (Date.now() > deadline) throw new Error("the worker did not reclaim its tunnel name");
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+
+    test("an impersonating node collects no credential and nothing it can reuse", async () => {
+      useRemoteHost();
+      const captured: TunnelReq[] = [];
+      let markReady = (): void => undefined;
+      const ready = new Promise<void>((resolve) => {
+        markReady = resolve;
+      });
+      // Any node holding the shared tunnel bearer can register as the worker.
+      const rogue = createTunnelClient({
+        url: `wss://127.0.0.1:${String(transports.central.port)}/tunnel`,
+        bearer: transports.tunnelBearer,
+        nodeName: TUNNEL_NODE,
+        handleRequest: (req) => {
+          captured.push(req);
+          return Promise.resolve({ outcome: "not-advertised", workerId: WORKER });
+        },
+        handleSubscription: (req) => {
+          captured.push(req);
+          return {
+            subscribe: (handlers): { cancel: () => void } => {
+              handlers.onComplete();
+              return { cancel: (): void => undefined };
+            },
+          };
+        },
+        WebSocketCtor: pinnedWebSocket(transports.centralCertificate),
+        onStateChange: (state) => {
+          if (state === "ready") markReady();
+        },
+        initialAttemptTimeoutMs: 0,
+        reconnect: { minDelayMs: 60_000, maxDelayMs: 60_000 },
+      });
+      void rogue.start();
+      await ready;
+      const client = tunnelClient();
+      const env = envelope("att-impersonated");
+      const target = {
+        deploymentId: LOCAL,
+        expectedDeploymentEpoch: "epoch-1",
+        catalogGeneration: "gen-x",
+        workerIncarnation: "inc-x",
+      };
+      await client.negotiate(NEGOTIATE);
+      const calls: Promise<unknown>[] = [
+        client.catalog(),
+        client.submit({ version: V1_0, envelope: env, target, cancelId: "cancel-imp" }),
+        client.status({ attemptId: env.attemptId }),
+        client.cancel({ attemptId: env.attemptId }),
+        collect(client.stream({ attemptId: env.attemptId })),
+      ];
+      await Promise.allSettled(calls);
+      rogue.stop();
+
+      expect(captured.length).toBe(6);
+      // Nothing that crossed to the node is, or carries, the credential.
+      expect(JSON.stringify(captured)).not.toContain(transports.serviceCredential);
+      const tokens = captured.map((req) => req.auth?.serviceToken ?? "");
+      for (const token of tokens) expect(token.length).toBeGreaterThan(0);
+
+      // What it collected is no credential: the worker refuses it as one.
+      const pinned = makePinnedFetch(transports.workerNode);
+      for (const token of tokens) {
+        const res = await pinned(`${transports.worker.url}/trpc/inferenceRpc.catalog`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        expect(res.status).toBe(401);
+      }
+      // Its own credential, the tunnel bearer, does not open central's relay.
+      const ownBearer = await relayCall(
+        "inferenceRpc.negotiate",
+        NEGOTIATE,
+        tokens[0],
+        transports.tunnelBearer,
+      );
+      expect(ownBearer.status).toBe(401);
+
+      // Delivered to the real worker, a collected token buys no other call.
+      await realWorkerBack();
+      const [negotiateToken, catalogToken] = tokens;
+      const otherInput = await relayCall(
+        "inferenceRpc.negotiate",
+        { ...NEGOTIATE, optionalFeatures: ["cancel-ack"] },
+        negotiateToken,
+      );
+      expect(otherInput.result).toMatchObject({
+        outcome: "rejected",
+        rejection: { code: "unauthorized-scope" },
+      });
+      const otherCall = await relayCall(
+        "inferenceRpc.status",
+        { attemptId: "att-x" },
+        catalogToken,
+      );
+      expect(otherCall.result).toMatchObject({
+        outcome: "rejected",
+        rejection: { code: "unauthorized-scope" },
+      });
+      expect(engine.requests).toHaveLength(0);
+    }, 20_000);
+
+    test("each token verifies once, on its node, before it expires", async () => {
+      useRemoteHost();
+      const fresh = tokenFor("inferenceRpc.negotiate", NEGOTIATE);
+      const first = await relayCall("inferenceRpc.negotiate", NEGOTIATE, fresh);
+      expect(first.result).toMatchObject({ outcome: "negotiated" });
+      const refused = { outcome: "rejected", rejection: { code: "unauthorized-scope" } };
+      // Replayed: the worker has seen its nonce.
+      const replayed = await relayCall("inferenceRpc.negotiate", NEGOTIATE, fresh);
+      expect(replayed.result).toMatchObject(refused);
+      // Expired.
+      const expired = tokenFor("inferenceRpc.negotiate", NEGOTIATE, {
+        now: Date.now() - 2 * auth.SERVICE_TOKEN_TTL_MS,
+      });
+      expect((await relayCall("inferenceRpc.negotiate", NEGOTIATE, expired)).result).toMatchObject(
+        refused,
+      );
+      // Minted for another node.
+      const elsewhere = tokenFor("inferenceRpc.negotiate", NEGOTIATE, { node: "worker-b-tunnel" });
+      expect(
+        (await relayCall("inferenceRpc.negotiate", NEGOTIATE, elsewhere)).result,
+      ).toMatchObject(refused);
+      // Bound to another relay principal than the one central stamps.
+      const otherRelay = tokenFor("inferenceRpc.negotiate", NEGOTIATE, {
+        bearer: auth.generateToken().token,
+      });
+      expect(
+        (await relayCall("inferenceRpc.negotiate", NEGOTIATE, otherRelay)).result,
+      ).toMatchObject(refused);
+      // A real tunnel client's replayed relay request is refused the same way.
+      const sent: { url: string; init: RequestInit }[] = [];
+      const recording = tunnelClient({
+        fetch: (input, init) => {
+          sent.push({ url: urlOf(input), init: init ?? {} });
+          return fetch(input, init);
+        },
+      });
+      expect(await recording.negotiate(NEGOTIATE)).toMatchObject({ outcome: "negotiated" });
+      const [request] = sent;
+      expect(new Headers(request?.init.headers).get(auth.SERVICE_TOKEN_HEADER)).toBeTruthy();
+      const { signal: _spent, ...again } = request?.init ?? {};
+      const replay = await fetch(request?.url ?? "", again);
+      expect(((await replay.json()) as { result?: unknown }).result).toMatchObject(refused);
     });
   });
 

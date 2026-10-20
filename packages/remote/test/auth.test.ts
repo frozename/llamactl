@@ -5,10 +5,15 @@ import { describe, expect, test } from "bun:test";
 import {
   authenticateServiceCredential,
   claimsForServiceCredential,
+  createServiceTokenVerifier,
   extractBearer,
   generateToken,
   hashToken,
+  mintServiceToken,
+  relayPrincipalOf,
+  SERVICE_TOKEN_TTL_MS,
   type ServiceCredentialBinding,
+  type ServiceTokenCall,
   unauthorizedResponse,
   verifyBearer,
 } from "../src/server/auth.js";
@@ -155,5 +160,159 @@ describe("service-credential claims (P4.1)", () => {
     const a = bind("svc-a");
     const broken = { ...a.binding, tokenHash: "not-hex" };
     expect(claimsForServiceCredential(a.token, [broken])).toBeNull();
+  });
+});
+
+/**
+ * P4.1 (#139) X5 — single-use service tokens for the reverse tunnel. A
+ * tunnel caller sends, per call, a token keyed by SHA-256(credential) and
+ * bound to the target node, the call, its input, central's relay
+ * principal, a nonce and an expiry. The worker verifies it against the
+ * same hashed bindings, once.
+ */
+describe("service tokens (P4.1)", () => {
+  const NODE = "worker-a-tunnel";
+  const RELAY = relayPrincipalOf("central-relay-bearer");
+  const NOW = 1_800_000_000_000;
+
+  function claims(serviceId: string): inferenceRpc.InferenceServiceClaimsV1 {
+    return {
+      serviceId,
+      operations: ["negotiate", "catalog", "submit", "stream", "status", "cancel"],
+      deployments: ["deploy/w/a"],
+      models: [],
+      tenants: ["tenant-a"],
+      credentialScopeId: "scope-a",
+    };
+  }
+
+  function bind(serviceId: string): { token: string; binding: ServiceCredentialBinding } {
+    const { token, hash } = generateToken();
+    return { token, binding: { ...claims(serviceId), tokenHash: hash } };
+  }
+
+  function statusCall(attemptId = "att-1"): ServiceTokenCall {
+    return {
+      node: NODE,
+      method: "inferenceRpc.status",
+      input: { attemptId },
+      relayPrincipal: RELAY,
+    };
+  }
+
+  function verifier(
+    clock: { now: number } = { now: NOW },
+  ): ReturnType<typeof createServiceTokenVerifier> {
+    return createServiceTokenVerifier({ node: NODE, now: () => clock.now });
+  }
+
+  function served(call: ServiceTokenCall): Omit<ServiceTokenCall, "node"> {
+    const { node: _node, ...rest } = call;
+    return rest;
+  }
+
+  test("a token verifies once, for its call on its node, and is not the credential", () => {
+    const a = bind("svc-a");
+    const token = mintServiceToken(a.token, statusCall(), { now: NOW });
+    expect(token).not.toContain(a.token);
+    expect(token).not.toContain(a.binding.tokenHash);
+    // It is no credential: neither as a bearer nor as a binding's preimage.
+    expect(claimsForServiceCredential(token, [a.binding])).toBeNull();
+    const v = verifier();
+    expect(v.claimsFor(token, served(statusCall()), [a.binding])).toEqual(claims("svc-a"));
+    // Replayed: refused.
+    expect(v.claimsFor(token, served(statusCall()), [a.binding])).toBeNull();
+  });
+
+  test("a token for another node, call, attempt, input or relay principal is refused", () => {
+    const a = bind("svc-a");
+    const v = verifier();
+    const refusedFor = (call: ServiceTokenCall, served: Omit<ServiceTokenCall, "node">): void => {
+      expect(v.claimsFor(mintServiceToken(a.token, call, { now: NOW }), served, [a.binding])).toBe(
+        null,
+      );
+    };
+    const call = statusCall();
+    refusedFor({ ...call, node: "worker-b-tunnel" }, served(call));
+    refusedFor({ ...call, method: "inferenceRpc.cancel" }, served(call));
+    refusedFor(statusCall("att-2"), served(call));
+    refusedFor(call, { ...served(call), relayPrincipal: relayPrincipalOf("another-bearer") });
+    const negotiate = {
+      node: NODE,
+      method: "inferenceRpc.negotiate",
+      input: { versions: [{ major: 1, minor: 0 }] },
+      relayPrincipal: RELAY,
+    };
+    refusedFor(negotiate, { ...served(negotiate), input: { versions: [{ major: 2, minor: 0 }] } });
+    // The same calls, bound right, verify.
+    expect(
+      v.claimsFor(mintServiceToken(a.token, negotiate, { now: NOW }), served(negotiate), [
+        a.binding,
+      ]),
+    ).toEqual(claims("svc-a"));
+  });
+
+  test("an expired token, or one that expires too far ahead, is refused", () => {
+    const a = bind("svc-a");
+    const clock = { now: NOW };
+    const v = verifier(clock);
+    const token = mintServiceToken(a.token, statusCall(), { now: NOW });
+    clock.now = NOW + SERVICE_TOKEN_TTL_MS + 1;
+    expect(v.claimsFor(token, served(statusCall()), [a.binding])).toBeNull();
+    clock.now = NOW;
+    const farAhead = mintServiceToken(a.token, statusCall(), {
+      now: NOW,
+      ttlMs: 10 * SERVICE_TOKEN_TTL_MS,
+    });
+    expect(v.claimsFor(farAhead, served(statusCall()), [a.binding])).toBeNull();
+  });
+
+  test("a tampered or malformed token is refused", () => {
+    const a = bind("svc-a");
+    const v = verifier();
+    const token = mintServiceToken(a.token, statusCall(), { now: NOW });
+    const parts = token.split(".");
+    const mac = parts[4] ?? "";
+    const flipped = `${mac.slice(0, -2)}${mac.endsWith("AA") ? "BB" : "AA"}`;
+    const tampered = [...parts.slice(0, 4), flipped].join(".");
+    const later = [parts[0], String(NOW + 1000), ...parts.slice(2)].join(".");
+    for (const bad of [tampered, later, "", "v1", `${token}.x`, `v2${token.slice(2)}`, a.token]) {
+      expect(v.claimsFor(bad, served(statusCall()), [a.binding])).toBeNull();
+    }
+    expect(v.claimsFor(token, served(statusCall()), [{ ...a.binding, tokenHash: "x" }])).toBe(null);
+  });
+
+  test("rotation: during the overlap both credentials mint good tokens; then only the new one", () => {
+    const old = bind("svc-a");
+    const next = bind("svc-a");
+    const v = verifier();
+    const overlap = [old.binding, next.binding];
+    for (const credential of [old.token, next.token]) {
+      const token = mintServiceToken(credential, statusCall(), { now: NOW });
+      expect(v.claimsFor(token, served(statusCall()), overlap)?.serviceId).toBe("svc-a");
+    }
+    const rotated = [next.binding];
+    const stale = mintServiceToken(old.token, statusCall(), { now: NOW });
+    expect(v.claimsFor(stale, served(statusCall()), rotated)).toBeNull();
+    const current = mintServiceToken(next.token, statusCall(), { now: NOW });
+    expect(v.claimsFor(current, served(statusCall()), rotated)?.serviceId).toBe("svc-a");
+  });
+
+  test("held nonces are bounded: each is dropped once its token expires", () => {
+    const a = bind("svc-a");
+    const clock = { now: NOW };
+    const v = verifier(clock);
+    for (let i = 0; i < 50; i++) {
+      const call = statusCall(`att-${String(i)}`);
+      expect(
+        v.claimsFor(mintServiceToken(a.token, call, { now: NOW }), served(call), [a.binding]),
+      ).not.toBeNull();
+    }
+    expect(v.heldNonces()).toBe(50);
+    clock.now = NOW + SERVICE_TOKEN_TTL_MS + 1_000;
+    const call = statusCall("att-late");
+    const late = mintServiceToken(a.token, call, { now: clock.now });
+    expect(v.claimsFor(late, served(call), [a.binding])).not.toBeNull();
+    expect(v.heldNonces()).toBe(1);
   });
 });

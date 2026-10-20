@@ -541,6 +541,14 @@ agent bearer:
 - The **agent bearer** — standard kubeconfig user token. Guards
   `/trpc`, `/tunnel-relay/*`, and every other HTTP route on the
   agent. The CLI uses this for relay POSTs.
+- **Worker-RPC service tokens** (P4.1) — a caller's worker-RPC service
+  credential never crosses the tunnel, since any node holding the
+  tunnel bearer can claim a node name. Each relayed `inferenceRpc.*`
+  call carries a single-use token instead: an HMAC keyed by the
+  credential's SHA-256, bound to the target node name, the call and its
+  input, the relay hop's bearer, a nonce and a 60 s expiry. The node
+  verifies it against its hashed bindings and refuses replays. Direct
+  dials present the credential itself, over pinned TLS.
 
 **Audit trail** — the tunnel server's state transitions log to
 stderr on the agent (e.g. `tunnel: ready`, `tunnel: disconnected`)

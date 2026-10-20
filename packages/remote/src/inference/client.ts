@@ -15,9 +15,12 @@
  * cancels the attempt upstream.
  *
  * Remote clients present the caller's service credential, never the
- * operator bearer: as the bearer on a direct dial, and in a header
- * central's relay forwards to the node over the tunnel, whose own hop is
- * authorized by central's relay bearer.
+ * operator bearer: as the bearer on a direct dial, pinned to the owner's
+ * certificate. Over the tunnel the credential never leaves the caller:
+ * central forwards whatever a relay request carries to whichever node
+ * holds the name, so each call carries a fresh single-use token derived
+ * from the credential instead, bound to the node, the call, its input and
+ * the relay hop, whose own bearer central checks.
  *
  * The executor negotiates, fences on the worker's catalog, submits, then
  * consumes the stream, checking every event with Nova's sequence rules.
@@ -53,7 +56,7 @@ import {
 import type { BackendExecutionContext, BackendExecutor } from "../proxy/create-proxy.js";
 
 import { makePinnedFetch, type PinnedFetch } from "../client/links.js";
-import { SERVICE_CREDENTIAL_HEADER } from "../server/auth.js";
+import { mintServiceToken, relayPrincipalOf, SERVICE_TOKEN_HEADER } from "../server/auth.js";
 import {
   frameBytes,
   INFERENCE_RPC_STREAM_LIMITS,
@@ -135,7 +138,10 @@ export interface TunnelInferenceRpcClientOptions extends RemoteInferenceRpcClien
   nodeName: string;
   /** Central's relay bearer: it authorizes the relay hop only and never reaches the node. */
   bearer: string;
-  /** The caller's service credential, forwarded by central to the owner's worker RPC. */
+  /**
+   * The caller's service credential. It never leaves the caller: each call
+   * sends a single-use token derived from it, which the owner verifies.
+   */
   serviceCredential: string;
   /** Defaults to global fetch; the relay request is pinned to central either way. */
   fetch?: PinnedFetch;
@@ -308,26 +314,30 @@ function tunnelWire(opts: TunnelInferenceRpcClientOptions): RpcWire {
   enforceRelayPinning(pinning);
   const timeoutMs = opts.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
   const baseFetch = opts.fetch ?? fetch;
-  // The service credential rides its own header; central forwards it to
-  // the node, which is the one that verifies it.
-  const relayFetch: PinnedFetch = (input, init) => {
-    const headers = new Headers(init?.headers);
-    headers.set(SERVICE_CREDENTIAL_HEADER, opts.serviceCredential);
-    return baseFetch(input, { ...init, headers });
-  };
+  const relayPrincipal = relayPrincipalOf(opts.bearer);
+  // Minted per request, so a retried call never resends a spent token.
+  const relayFetch =
+    (method: string, input: unknown): PinnedFetch =>
+    (url, init) => {
+      const headers = new Headers(init?.headers);
+      const call = { node: opts.nodeName, method, input, relayPrincipal };
+      headers.set(SERVICE_TOKEN_HEADER, mintServiceToken(opts.serviceCredential, call));
+      return baseFetch(url, { ...init, headers });
+    };
   const target = { centralUrl: opts.centralUrl, nodeName: opts.nodeName, bearer: opts.bearer };
   return {
     transport: "tunnel",
     call: async (procedure, type, input): Promise<unknown> => {
+      const method = `${RPC}.${procedure}`;
       try {
         return await callViaTunnelRelay({
           ...target,
           ...pinning,
-          method: `${RPC}.${procedure}`,
+          method,
           type,
           input,
           timeoutMs,
-          fetchImpl: relayFetch,
+          fetchImpl: relayFetch(method, input),
         });
       } catch (err) {
         throw relayError(err);
@@ -347,7 +357,7 @@ function tunnelWire(opts: TunnelInferenceRpcClientOptions): RpcWire {
         },
         { stream: "true" },
       );
-      return relayFetch(url, init);
+      return relayFetch(`${RPC}.stream`, input)(url, init);
     },
     read: ({ name, data }): WireStep => {
       if (name === undefined) return { kind: "frame", data };

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { SERVICE_TOKEN_MAX_LENGTH } from "../src/server/auth.js";
 import {
   cancelOutcomeOf,
   encodeTunnelMessage,
@@ -194,5 +195,28 @@ describe("tunnel frame bounds and the cancel acknowledgement (P4.1 X3, X4)", () 
         error: { code: "subscription-error", message: "boom" },
       }),
     ).toBe("already-terminal");
+  });
+});
+
+describe("worker-RPC auth on req frames (P4.1 X5)", () => {
+  const req = {
+    type: "req",
+    id: "r1",
+    method: "inferenceRpc.status",
+    params: { type: "query", input: { attemptId: "att-1" } },
+  } as const;
+
+  test("a req frame carries a bounded single-use token and its relay principal", () => {
+    const auth = { serviceToken: "v1.1.nonce.c3ViamVjdA.mac", relayPrincipal: "principal" };
+    expect(parseTunnelMessage(JSON.stringify({ ...req, auth }))).toEqual({ ...req, auth });
+    const oversized = { ...auth, serviceToken: "x".repeat(SERVICE_TOKEN_MAX_LENGTH + 1) };
+    expect(parseTunnelMessage(JSON.stringify({ ...req, auth: oversized }))).toBeNull();
+  });
+
+  test("a reusable credential field is no part of the frame", () => {
+    const parsed = parseTunnelMessage(
+      JSON.stringify({ ...req, auth: { serviceCredential: "ll_agt_secret" } }),
+    );
+    expect(JSON.stringify(parsed)).not.toContain("ll_agt_secret");
   });
 });

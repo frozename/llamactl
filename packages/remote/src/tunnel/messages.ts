@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { SERVICE_TOKEN_MAX_LENGTH } from "../server/auth.js";
+
 /**
  * Wire schema for the reverse-tunnel (I.3).
  *
@@ -103,11 +105,18 @@ export const TunnelReqSchema = z.object({
   method: z.string().min(1),
   params: z.unknown().optional(),
   /**
-   * A worker-RPC caller's service credential (P4.1), forwarded unread by
-   * central's relay on `inferenceRpc.*` requests only. The node verifies
-   * it against its own hashed bindings; nodes that predate it drop it.
+   * A worker-RPC caller's single-use service token (P4.1), forwarded
+   * unread by central's relay on `inferenceRpc.*` requests only, with the
+   * relay principal of the bearer the relay hop presented. The node
+   * verifies the token against its own hashed bindings; nodes that
+   * predate it drop the field. Never a reusable credential.
    */
-  auth: z.object({ serviceCredential: z.string().min(1) }).optional(),
+  auth: z
+    .object({
+      serviceToken: z.string().min(1).max(SERVICE_TOKEN_MAX_LENGTH),
+      relayPrincipal: z.string().min(1).max(64),
+    })
+    .optional(),
 });
 export type TunnelReq = z.infer<typeof TunnelReqSchema>;
 
