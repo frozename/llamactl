@@ -229,6 +229,8 @@ interface Central {
   fingerprint: string;
   operatorToken: string;
   tunnelBearer: string;
+  /** A secret reference to central's relay-only credential, for the caller's relay hop. */
+  relayRef: string;
 }
 
 /** A central agent, as `agent serve --tunnel-central` starts one. */
@@ -242,16 +244,23 @@ async function startCentral(name: string): Promise<Central> {
   });
   const operator = auth.generateToken();
   const tunnelBearer = auth.generateToken();
+  const relayOnly = auth.generateToken();
+  const relayFile = join(dir, "relay-only.token");
+  writeFileSync(relayFile, relayOnly.token);
   const agent = startAgentServer({
     bindHost: "127.0.0.1",
     port: 0,
     tokenHash: operator.hash,
     tls: { certPath: cert.certPath, keyPath: cert.keyPath },
     advertiseMdns: false,
-    tunnelCentral: { expectedBearerHash: tunnelBearer.hash },
+    tunnelCentral: {
+      expectedBearerHash: tunnelBearer.hash,
+      workerRpcRelay: () => ({ tokenHashes: [relayOnly.hash] }),
+    },
   });
   agents.push(agent);
   return {
+    relayRef: `file:${relayFile}`,
     agent,
     certPem: cert.certPem,
     fingerprint: cert.fingerprint,
@@ -1179,7 +1188,10 @@ describe("I5: every rollback form, over both transports", () => {
         files,
         agent,
         {
-          workerRpc: { serviceCredentialRef: svc.ref },
+          workerRpc: {
+            serviceCredentialRef: svc.ref,
+            ...(central !== undefined ? { relayCredentialRef: central.relayRef } : {}),
+          },
           ...(central !== undefined ? { tunnelPreferred: true, tunnelNodeName: tunnelNode } : {}),
         },
         central,
