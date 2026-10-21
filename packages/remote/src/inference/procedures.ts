@@ -178,6 +178,8 @@ interface AttemptRecord {
   deploymentId: string;
   /** Monotonic: acceptance plus ATTEMPT_RECORD_RETENTION_MS. */
   retainUntil: number;
+  /** Wall clock: the envelope's deadline; until it passes, a resubmit of that envelope passes the deadline fence. */
+  deadline: number;
   terminal: ExecutionTerminal | undefined;
   terminalSequence: number | undefined;
   run: AttemptRun | undefined;
@@ -667,18 +669,25 @@ function forget(state: HostState, record: AttemptRecord): void {
 }
 
 /**
- * Forgets tombstones whose retention has passed, never earlier, oldest
- * first. Every record is kept the same span from its acceptance, so the
- * acceptance queue is in retainUntil order and the sweep stops at the
- * first record still kept. It also stops at an unsettled one, which the
- * deadline settles long before its retention ends.
+ * Forgets tombstones whose retention has passed and whose envelope deadline
+ * is behind the wall clock, never earlier, oldest first. Every record is kept
+ * the same span from its acceptance, so the acceptance queue is in retainUntil
+ * order and the sweep stops at the first record still kept. It also stops at
+ * an unsettled one, which the deadline settles long before its retention ends.
+ * The wall-clock condition matters only after a backward clock step. Until the
+ * deadline passes again, the same envelope would pass the deadline fence, so
+ * its record stays; records behind it are only kept longer.
  */
 function sweep(state: HostState): void {
   const now = state.monotonicNow();
+  const wall = state.now();
   const queue = state.retained;
   for (
     let next = queue[state.retainedHead];
-    next !== undefined && next.run === undefined && next.retainUntil <= now;
+    next !== undefined &&
+    next.run === undefined &&
+    next.retainUntil <= now &&
+    next.deadline <= wall;
     next = queue[state.retainedHead]
   ) {
     forget(state, next);
@@ -759,6 +768,7 @@ function admit(
     tenantId: envelope.tenantId,
     deploymentId: deployment.deploymentId,
     retainUntil: state.monotonicNow() + ATTEMPT_RECORD_RETENTION_MS,
+    deadline: envelope.deadline,
     terminal: undefined,
     terminalSequence: undefined,
     run,

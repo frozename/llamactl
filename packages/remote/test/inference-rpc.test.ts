@@ -1292,6 +1292,37 @@ describe("attempt records: per-owner quotas, tombstones and retention (B, N1, N2
     expect(worker.status(a, { attemptId: "att-new-0" })).toMatchObject({ state: "terminal" });
   });
 
+  test("a wall-clock step back keeps a record until its envelope's deadline has passed (N1)", async () => {
+    const { worker, clock } = clocked();
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    const start = clock.wall;
+    const original = envelope("att-back", {}, start + inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS);
+    const resubmit = (): inferenceRpc.InferenceRpcSubmitResultV1 =>
+      worker.submit(a, { version: V1_0, envelope: original, target: fenced, cancelId: "c-back" });
+    expect(rejectionCode(resubmit())).toBe("accepted");
+    worker.cancel(a, { attemptId: "att-back" });
+    // Retention passes on the monotonic clock while the wall clock stepped
+    // back two minutes: the deadline is still a minute ahead.
+    clock.mono = RETENTION_MS;
+    clock.wall = start + RETENTION_MS - 2 * 60_000;
+    expect(rejectionCode(submitFor(worker, a, fenced, "att-back-sweep", clock.wall + 60_000))).toBe(
+      "accepted",
+    );
+    expect(resubmit()).toMatchObject({
+      outcome: "existing",
+      status: { state: "terminal", terminal: { outcome: "cancelled" } },
+    });
+    // Once the deadline is behind the wall clock the record goes, and the same envelope is refused by it.
+    clock.wall = original.deadline;
+    expect(rejectionCode(submitFor(worker, a, fenced, "att-back-later", clock.wall + 60_000))).toBe(
+      "accepted",
+    );
+    expect(worker.status(a, { attemptId: "att-back" })).toMatchObject({ state: "unknown" });
+    expect(rejectionCode(resubmit())).toBe("deadline-exceeded");
+    expect(engine.requests).toHaveLength(0);
+  });
+
   test("64 one-second attempts a second at the proxy's 5 min deadline are never refused for retention", async () => {
     const { worker, clock } = clocked();
     const a = claims();
