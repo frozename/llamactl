@@ -212,11 +212,21 @@ describe("strata prepareLaunch", () => {
     await expect(strataEngine.prepareLaunch?.(spec, env)).rejects.toThrow(/no args array/);
   });
 
-  test("throws when --native does not match resolved rel", async () => {
-    const { spec, env } = setup({
+  test("throws when --native does not match resolved rel, naming both settings", async () => {
+    const { spec, env, modelsDir } = setup({
       config: { args: ["--native", "/totally/wrong/path.gguf"], model_name: "qwen-32b.gguf" },
     });
-    await expect(strataEngine.prepareLaunch?.(spec, env)).rejects.toThrow(/--native/);
+    const configPath = spec.extraArgs[spec.extraArgs.indexOf("--config") + 1];
+    await expect(strataEngine.prepareLaunch?.(spec, env)).rejects.toThrow(
+      `strata run-config ${String(configPath)} --native must be ${join(modelsDir, "qwen/qwen-32b.gguf")} (models dir + ModelHost spec.hostedModels[0].rel "qwen/qwen-32b.gguf"); got /totally/wrong/path.gguf. Update the run-config --native and the manifest rel together.`,
+    );
+  });
+
+  test("reports a missing --native as null", async () => {
+    const { spec, env } = setup({ config: { args: [], model_name: "qwen-32b.gguf" } });
+    await expect(strataEngine.prepareLaunch?.(spec, env)).rejects.toThrow(
+      /hostedModels\[0\]\.rel "qwen\/qwen-32b\.gguf"\); got null\./,
+    );
   });
 
   test("throws when native model file does not exist", async () => {

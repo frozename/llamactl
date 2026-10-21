@@ -128,6 +128,41 @@ test("describe workload prints ModelHost fields and modelHostStatus", async () =
   expect(stdout).toContain('"pid": 4242');
 });
 
+test("describe workload prints persisted ModelHost conditions", async () => {
+  writeModelHost();
+  const runtime = {
+    conditions: [
+      {
+        type: "ReconcileError",
+        status: "True",
+        reason: "ApplyFailed",
+        message: "strata run-config --native must be A; got B",
+        firstSeen: "2026-10-21T14:07:00.000Z",
+        lastSeen: "2026-10-21T14:22:00.000Z",
+        lastTransitionTime: "2026-10-21T14:07:00.000Z",
+        count: 90,
+      },
+    ],
+    restarts: 2,
+    lastRestartAt: "2026-10-21T14:02:30.000Z",
+    lastRestartReason: "EngineExited",
+  };
+  __setWorkloadTestSeams({
+    getNodeClientByName: () =>
+      ({
+        modelHostStatus: { query: () => Promise.resolve({ state: "Stopped", runtime }) },
+      }) as unknown as NodeClient,
+  });
+
+  const { result, stdout } = await withCapturedIo(() => runDescribe(["workload", "mlx-host"]));
+
+  expect(result).toBe(0);
+  expect(stdout).toContain("Restarts:   2 (last 2026-10-21T14:02:30.000Z, EngineExited)\n");
+  expect(stdout).toContain(
+    "Conditions:\n  ReconcileError=True ApplyFailed x90 first 2026-10-21T14:07:00.000Z last 2026-10-21T14:22:00.000Z\n    strata run-config --native must be A; got B\n",
+  );
+});
+
 test("describe workload --json returns the ModelHost manifest and live status", async () => {
   writeModelHost();
   const calls: StatusCalls = { modelHost: [], server: [] };

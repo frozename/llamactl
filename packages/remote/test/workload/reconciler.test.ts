@@ -6,6 +6,10 @@ import type { WorkloadClient } from "../../src/workload/apply.js";
 import type { ModelRun } from "../../src/workload/schema.js";
 
 import {
+  modelhostConditionsFile,
+  readModelHostRuntimeStatus,
+} from "../../../core/src/engines/conditions.js";
+import {
   computeModelHostSpecHash,
   readModelHostState,
   writeModelHostState,
@@ -540,5 +544,131 @@ describe("reconcileOnce", () => {
       else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+  describe("ModelHost conditions", () => {
+    const MISMATCH =
+      'strata run-config /cfg/run.json --native must be /models/q3.gguf (models dir + ModelHost spec.hostedModels[0].rel "q3.gguf"); got /models/q4.gguf. Update the run-config --native and the manifest rel together.';
+
+    function startStub(
+      outcome: () => { ok: true; pid: number; state: string } | { ok: false; error: string },
+    ): WorkloadClient["modelHostStart"] {
+      return {
+        subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
+          queueMicrotask(() => {
+            callbacks.onData({ type: "done", result: outcome() });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: (): undefined => undefined };
+        },
+      };
+    }
+
+    async function withRuntime(
+      prefix: string,
+      body: (dir: string, runtime: ReturnType<typeof resolveEnv>) => Promise<void>,
+    ): Promise<void> {
+      const dir = mkdtempSync(join(tmpdir(), prefix));
+      const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
+      try {
+        process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
+        await body(dir, resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir }));
+      } finally {
+        if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+        else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    test("records a ReconcileError across failing passes and clears it on the next start", async () => {
+      await withRuntime("llamactl-reconciler-cond-error-", async (dir, runtime) => {
+        saveModelHost(makeHostManifest(), dir);
+        let startOk = false;
+        const getClient = (): WorkloadClient => ({
+          ...makeClient(),
+          modelHostStatus: { query: () => Promise.resolve({ state: "Stopped" }) },
+          modelHostStart: startStub(() =>
+            startOk ? { ok: true, pid: 4321, state: "Running" } : { ok: false, error: MISMATCH },
+          ),
+        });
+
+        const first = await reconcileOnce({ workloadsDir: dir, getClient });
+        await reconcileOnce({ workloadsDir: dir, getClient });
+        expect(first.reports).toEqual([
+          {
+            kind: "ModelHost",
+            name: "host-a",
+            node: "local",
+            action: "unchanged",
+            error: MISMATCH,
+          },
+        ]);
+        expect(readModelHostRuntimeStatus({ name: "host-a" }, runtime)?.conditions).toEqual([
+          expect.objectContaining({
+            type: "ReconcileError",
+            status: "True",
+            reason: "ApplyFailed",
+            message: MISMATCH,
+            count: 2,
+          }),
+        ]);
+
+        startOk = true;
+        const recovered = await reconcileOnce({ workloadsDir: dir, getClient });
+        expect(recovered.errors).toBe(0);
+        const record = readModelHostRuntimeStatus({ name: "host-a" }, runtime);
+        expect(record?.conditions[0]).toMatchObject({
+          type: "ReconcileError",
+          status: "False",
+          reason: "Recovered",
+          message: MISMATCH,
+          count: 2,
+        });
+        // A first start is not a restart.
+        expect(record?.restarts).toBe(0);
+      });
+    });
+
+    test("flags an engine found dead and counts its restart", async () => {
+      await withRuntime("llamactl-reconciler-cond-dead-", async (dir, runtime) => {
+        const manifest = makeHostManifest();
+        saveModelHost(manifest, dir);
+        seedRunningSidecar(dir, manifest);
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: (): WorkloadClient => ({
+            ...makeClient(),
+            modelHostStatus: { query: () => Promise.resolve({ state: "Stopped" }) },
+            modelHostStart: startStub(() => ({ ok: true, pid: 4321, state: "Running" })),
+          }),
+        });
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "local", action: "started", foundDead: true },
+        ]);
+        expect(readModelHostRuntimeStatus({ name: "host-a" }, runtime)).toMatchObject({
+          restarts: 1,
+          lastRestartReason: "EngineExited",
+          conditions: [],
+        });
+      });
+    });
+
+    test("leaves no local conditions for a remote host", async () => {
+      await withRuntime("llamactl-reconciler-cond-remote-", async (dir, runtime) => {
+        saveModelHost(
+          { ...makeHostManifest(), spec: { ...makeHostManifest().spec, node: "gpu1" } },
+          dir,
+        );
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: (): WorkloadClient => ({
+            ...makeClient(),
+            modelHostStatus: { query: () => Promise.resolve({ state: "Stopped" }) },
+            modelHostStart: startStub(() => ({ ok: false, error: MISMATCH })),
+          }),
+        });
+        expect(result.errors).toBe(1);
+        expect(fs.existsSync(modelhostConditionsFile(runtime, { name: "host-a" }))).toBe(false);
+      });
+    });
   });
 });

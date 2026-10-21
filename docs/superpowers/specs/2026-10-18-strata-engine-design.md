@@ -101,3 +101,107 @@ pilot: `kind: ModelHost`, `spec.engine: strata`, `strata-server` binary,
 loopback `:8080`, and the required `--config` extraArg. The manifest
 comments restate the argv0-symlink, `serve/server.py`, and
 `--native`/`aliases` requirements that prepareLaunch rejects on.
+
+## 8. Switching the hosted model
+
+Two settings name the model, and `prepareLaunch` refuses to launch while
+they disagree (§3):
+
+- the manifest's `spec.hostedModels[0].rel`, relative to the models dir
+  (`LLAMACTL_MODELS_DIR`, falling back to `LLAMA_CPP_MODELS`);
+- the run config's `args[--native]`, an absolute path that must equal
+  `<models dir>/<rel>`.
+
+When only one of them changes, every reconcile pass fails with
+`strata run-config <file> --native must be <models dir>/<rel> (models dir + ModelHost spec.hostedModels[0].rel "<rel>"); got <path>. Update the run-config --native and the manifest rel together.`
+The host stays down until both agree. `controller serve` logs the error once
+to stderr as a `WARN` line, repeats it every 10 minutes while it lasts, and logs
+one line when the host recovers. It also records a `ReconcileError` condition
+(reason, message, first and last seen, failing-pass count), which
+`llamactl describe workload <name>` prints under `Conditions:`.
+
+Change the pair as one edit:
+
+1. Run config:
+   - `--native`: the new shard;
+   - `--ple-gguf`, `--pack` and the tokenizer: the files that belong to the
+     new quant;
+   - `model_name` / `aliases`: must contain the new rel's basename (§3).
+2. Manifest:
+   - `spec.hostedModels[0].rel`: the new shard, relative to the models dir;
+   - `spec.resources.expectedMemoryGiB`: the new resident footprint, since
+     admission budgets against it.
+3. Validate before anything restarts. The drift restart tears the running
+   engine down before `prepareLaunch` reads the new run config, so an
+   inconsistent pair takes the seat down instead of being rejected up front:
+
+   ```sh
+   models="$LLAMACTL_MODELS_DIR"   # or $LLAMA_CPP_MODELS
+   rel=<new rel>
+   jq -r '.args as $a | $a[($a | index("--native")) + 1]' <run-config>.json
+   # must print exactly: $models/$rel
+   test -f "$models/$rel" && echo present
+   jq -r '.model_name, (.aliases // [])[]' <run-config>.json | grep -Fx "$(basename "$rel")"
+   ```
+
+4. Apply the manifest (`llamactl apply -f`, or edit it in the workloads dir).
+   The spec hash changes with `rel`, so the controller restarts the host with
+   the new pair on its next pass. Editing only the run config changes no hash:
+   nothing restarts until the host is bounced, and then it fails as above.
+5. Watch `llamactl describe workload <name>` and the controller's stderr until
+   the host is Running again.
+
+## 9. Memory budget and co-located jobs
+
+A resident Strata seat pins most of a 128 GB unified-memory host. On the Z13
+(124 GiB visible, 8 GiB swap) it holds about 90 to 97 GiB: the expert cache in
+GTT plus the PLE table (about 27 GiB, mlocked under `--ple-io ram`, reclaimable
+under `--ple-io mmap`). That leaves about 25 to 30 GiB for everything else. A
+typed `eslint` or a full `bun test` can take 10 to 27 GiB, so two of them beside
+the seat exhaust memory. The kernel OOM killer then picks Strata: its score
+counts the ~27 GiB of file pages it can see but not the GTT, and killing it
+frees about 97 GiB.
+
+Rules for the seat host:
+
+- Dev jobs must run memory-capped and serialized, e.g. inside
+  `systemd-run --user --scope -p MemoryHigh=… -p MemoryMax=… -p MemorySwapMax=…`.
+  A scope does not accept `OOMScoreAdjust=` (systemd 255 rejects it); wrap the
+  command in `choom -n 900 --` to make the job the preferred victim. Job-side
+  containment, admission and serialization are tracked in
+  frozename/penumbra#250.
+- Lower the seat's OOM priority. The user manager runs at
+  `OOMScoreAdjust=100` and its units inherit a higher default (200 on the
+  Z13). A hand-written user unit for the controller can set
+  `OOMScoreAdjust=100`, the floor for an unprivileged unit under that manager;
+  the engine is spawned as the controller's child and inherits it. Optionally
+  add `MemoryLow=` for reclaim protection of the seat's page cache (it does not
+  cover GTT).
+- A negative `OOMScoreAdjust` needs privilege the user manager does not have:
+  it takes a root-owned drop-in (for example on `user@<uid>.service`, which
+  moves the floor for every unit under that manager) or a system unit with
+  `User=`.
+
+### Seeing an OOM kill
+
+On Linux, `controller serve` reads its own cgroup's `memory.events` after each
+pass. The engine runs in the controller's cgroup, and the kernel bumps
+`oom_kill` there when it kills it. When the counter rises in the pass that
+finds a local ModelHost engine dead, the controller logs
+`modelhost/<name>: engine was OOM-killed (cgroup oom_kill N); restarting`
+and records an `OOMKilled` condition (count, last seen, counter value) next to
+the host's restart count (`restarts`, `lastRestartAt`, `lastRestartReason`).
+A death without an OOM kill logs `engine had exited unexpectedly; restarted`.
+Without cgroup v2 (macOS, cgroup v1 hosts) there is no OOM attribution, but
+deaths are still logged and counted as restarts.
+
+The last counter value is persisted in `<workloads dir>/.controller-oom.json`.
+Under systemd's default `OOMPolicy=stop`, an engine OOM kill stops and
+restarts the controller unit as well; with `KillMode=process` the cgroup and
+its counter survive that restart, so the new controller still attributes the
+kill on its first pass. `OOMPolicy=continue` keeps the controller running
+through the kill instead.
+
+Conditions live in `modelhost.conditions.json` beside `modelhost.state` in the
+workload's runtime dir. Stopping a host keeps them; deleting the workload
+removes them.

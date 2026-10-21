@@ -1732,7 +1732,7 @@ export const router = t.router({
           endpoint: `http://${ep.host}:${String(ep.port)}`,
           statePid,
           listenerPid,
-          status: null,
+          status: status.runtime ? { phase, ...status.runtime } : null,
           workerCount: 0,
           workerNodes: [] as string[],
         };

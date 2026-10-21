@@ -3,6 +3,10 @@ import type { WorkloadKey } from "@llamactl/core/workloadRuntime";
 
 import { type EngineName, ENGINES } from "@llamactl/core/engines";
 import {
+  type ModelHostRuntimeStatus,
+  readModelHostRuntimeStatus,
+} from "@llamactl/core/engines/conditions";
+import {
   computeModelHostSpecHash,
   modelhostPidFile,
   readModelHostState,
@@ -110,6 +114,9 @@ export interface StatusModelHostResult {
    *  established — callers must not sweep, restart over, or report the
    *  record as cleanly stopped. */
   identityUnknown?: boolean;
+  /** Persistent conditions (reconcile errors, OOM kills) and restart count,
+   *  recorded by the controller on this node; absent until one is recorded. */
+  runtime?: ModelHostRuntimeStatus;
 }
 
 function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
@@ -621,8 +628,10 @@ export async function stopModelHost(opts: StopModelHostOptions): Promise<StopMod
 
 export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostResult {
   const resolved = resolveEnv(withRuntimeDir(toRuntimeEnv(opts.env), opts.runtimeDir));
+  const runtimeStatus = readModelHostRuntimeStatus(opts.key, resolved);
+  const runtime = runtimeStatus ? { runtime: runtimeStatus } : {};
   const state = readModelHostState(opts.key, resolved);
-  if (!state) return { state: "Stopped" };
+  if (!state) return { state: "Stopped", ...runtime };
   // A sidecar whose recorded pid is no longer provably ours means the host
   // died or was replaced out-of-band. Report Stopped so the reconciler
   // re-acts on it — but keep the verdict visible: "unknown" is not proof the
@@ -632,11 +641,13 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
     return {
       state: "Stopped",
       ...omitUndefined({ identityUnknown: verdict === "unknown" ? true : undefined }),
+      ...runtime,
     };
   }
   return {
     state: "Running",
     pid: state.pid,
     ...omitUndefined({ specHash: state.specHash }),
+    ...runtime,
   };
 }

@@ -1,3 +1,5 @@
+import type { ModelHostRuntimeStatus } from "@llamactl/core/engines/conditions";
+
 import { modelhostPidFile, readModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { isRecordedPidAlive } from "@llamactl/core/pidIdentity";
@@ -661,11 +663,32 @@ function writeLiveStatus(liveStatus: unknown): void {
   );
 }
 
+/** The persistent ModelHost conditions, one block per condition. */
+export function formatHostRuntime(runtime: ModelHostRuntimeStatus): string {
+  const lines: string[] = [];
+  const restartTail = runtime.lastRestartAt
+    ? ` (last ${runtime.lastRestartAt}, ${runtime.lastRestartReason ?? "unknown"})`
+    : "";
+  lines.push(`Restarts:   ${String(runtime.restarts)}${restartTail}`);
+  if (runtime.conditions.length === 0) return `${lines.join("\n")}\n`;
+  lines.push("Conditions:");
+  for (const c of runtime.conditions) {
+    lines.push(
+      `  ${c.type}=${c.status} ${c.reason} x${String(c.count)} first ${c.firstSeen} last ${c.lastSeen}`,
+      `    ${c.message}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 async function runDescribeModelHost(manifest: ModelHostManifest, json: boolean): Promise<number> {
   let liveStatus: unknown = null;
+  let runtime: ModelHostRuntimeStatus | undefined;
   try {
     const client = getWorkloadNodeClient(manifest.spec.node);
-    liveStatus = await client.modelHostStatus.query({ workload: manifest.metadata.name });
+    const status = await client.modelHostStatus.query({ workload: manifest.metadata.name });
+    liveStatus = status;
+    runtime = status.runtime;
   } catch (err) {
     liveStatus = { error: (err as Error).message };
   }
@@ -687,6 +710,7 @@ async function runDescribeModelHost(manifest: ModelHostManifest, json: boolean):
   process.stdout.write(`Enabled:    ${String(spec.enabled)}\n`);
   process.stdout.write(`ExtraArgs:  ${spec.extraArgs.join(" ") || "(none)"}\n`);
   process.stdout.write(`RestartPolicy: ${spec.restartPolicy}\n`);
+  if (runtime) process.stdout.write(formatHostRuntime(runtime));
   writeLiveStatus(liveStatus);
   return 0;
 }

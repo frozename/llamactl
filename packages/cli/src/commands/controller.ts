@@ -1,10 +1,19 @@
 import { sourceRevision } from "@llamactl/core";
 import {
+  type CgroupOomSample,
+  readCgroupOomSample,
+  readOomBaseline,
+  writeOomBaseline,
+} from "@llamactl/core/cgroupOom";
+import { recordModelHostOomKill } from "@llamactl/core/engines/conditions";
+import { resolveEnv } from "@llamactl/core/env";
+import {
   noderunReconciler,
   workloadLock,
   workloadReconciler,
   workloadStore,
 } from "@llamactl/remote";
+import { join } from "node:path";
 
 import { getNodeClientByName } from "../dispatcher.js";
 import { makeSpecArtifactResolver } from "./noderun-helpers.js";
@@ -29,6 +38,12 @@ Flags:
 A lock file at $LLAMACTL_WORKLOADS_DIR/.controller.lock guards against
 two controllers racing on the same directory. Stale locks from
 crashed controllers are stolen automatically when their PID is gone.
+
+A reconcile error is logged to stderr once per distinct message, again
+every 10 minutes while it persists, and once on recovery. On Linux the
+controller reads its own cgroup's memory.events each pass; when oom_kill
+rises and a local ModelHost engine is found dead, it logs the OOM kill
+and records an OOMKilled condition (see 'llamactl describe workload').
 `;
 
 interface ControllerFlags {
@@ -84,6 +99,178 @@ export function applyControllerSourceGate(
     ...(opts.reloadStaleChecks !== undefined ? { reloadStaleChecks: opts.reloadStaleChecks } : {}),
   });
   return { nextState: r.state, shouldReload: r.shouldReload, currentRev: r.currentRev };
+}
+
+/** How often a reconcile error that keeps repeating is logged again. */
+export const RECONCILE_ERROR_REMINDER_MS = 10 * 60_000;
+
+export interface ReconcileErrorEntry {
+  message: string;
+  firstSeenMs: number;
+  lastLoggedMs: number;
+  /** Consecutive failing passes with this message. */
+  count: number;
+}
+
+export type ReconcileErrorLog = ReadonlyMap<string, ReconcileErrorEntry>;
+
+export interface ControllerLogLine {
+  stream: "stdout" | "stderr";
+  text: string;
+}
+
+type ReportForLog = Pick<
+  workloadReconciler.ReconcileNodeReport,
+  "action" | "error" | "foundDead" | "kind" | "name" | "node"
+>;
+
+function reportLabel(r: ReportForLog): string {
+  return `${r.kind === "ModelHost" ? "modelhost" : "modelrun"}/${r.name} on ${r.node}`;
+}
+
+function stamp(nowMs: number): string {
+  return `[${new Date(nowMs).toISOString()}]`;
+}
+
+/**
+ * Turn one pass's reports into log lines. A reconcile error goes to stderr
+ * as a WARN the first time it is seen and whenever its message changes, is
+ * repeated as a reminder at most every `reminderMs` while it persists, and is
+ * closed by one recovery line; in between it is counted, not printed. Healthy
+ * reports keep their per-pass stdout line. A workload missing from the pass
+ * (deleted) drops out of the state silently.
+ */
+export function reduceReconcileReportLog(
+  state: ReconcileErrorLog,
+  reports: readonly ReportForLog[],
+  nowMs: number,
+  reminderMs: number = RECONCILE_ERROR_REMINDER_MS,
+): { nextState: Map<string, ReconcileErrorEntry>; lines: ControllerLogLine[] } {
+  const ts = stamp(nowMs);
+  const nextState = new Map<string, ReconcileErrorEntry>();
+  const lines: ControllerLogLine[] = [];
+  for (const r of reports) {
+    const label = reportLabel(r);
+    const prev = state.get(label);
+    if (r.error === undefined) {
+      if (prev) {
+        const text = `${ts} ${label}: recovered after ${String(prev.count)} failed pass(es)`;
+        lines.push({ stream: "stderr", text });
+      }
+      lines.push({ stream: "stdout", text: `${ts} ${label}: ${r.action}` });
+      continue;
+    }
+    if (prev?.message !== r.error) {
+      nextState.set(label, { message: r.error, firstSeenMs: nowMs, lastLoggedMs: nowMs, count: 1 });
+      lines.push({ stream: "stderr", text: `${ts} WARN ${label}: ${r.action} error=${r.error}` });
+      continue;
+    }
+    const entry = { ...prev, count: prev.count + 1 };
+    if (nowMs - prev.lastLoggedMs >= reminderMs) {
+      entry.lastLoggedMs = nowMs;
+      const since = new Date(prev.firstSeenMs).toISOString();
+      lines.push({
+        stream: "stderr",
+        text: `${ts} WARN ${label}: still failing (${String(entry.count)} passes since ${since}) error=${r.error}`,
+      });
+    }
+    nextState.set(label, entry);
+  }
+  return { nextState, lines };
+}
+
+export interface OomWatchState {
+  /** Last cgroup sample seen, seeded from the persisted baseline. */
+  last: CgroupOomSample | null;
+  /** Kills counted but not yet matched to a dead engine (held one pass). */
+  pendingKills: number;
+}
+
+/**
+ * Attribute a rise of the controller cgroup's oom_kill counter to the local
+ * ModelHost engines found dead in the same pass. The kernel counts a kill
+ * before the task is gone, so a sample taken after the pass covers every
+ * engine the pass found dead; a kill that lands after a host's status check
+ * is counted first, so an unmatched rise is held for one more pass and then
+ * reported as unattributed. A new cgroup path or a lower counter (the cgroup
+ * was recreated) re-baselines without attributing anything.
+ */
+export function advanceOomWatch(
+  state: OomWatchState,
+  sample: CgroupOomSample | null,
+  deadHosts: readonly string[],
+): { nextState: OomWatchState; oomKilled: string[]; unattributedKills: number } {
+  const quiet = { oomKilled: [], unattributedKills: 0 };
+  if (sample === null) return { nextState: state, ...quiet };
+  const { last } = state;
+  const reset = { last: sample, pendingKills: 0 };
+  if (last?.cgroup !== sample.cgroup || sample.oomKill < last.oomKill) {
+    return { nextState: reset, ...quiet };
+  }
+  const rise = sample.oomKill - last.oomKill;
+  const pending = state.pendingKills + rise;
+  if (pending === 0) return { nextState: reset, ...quiet };
+  if (deadHosts.length > 0) {
+    return { nextState: reset, oomKilled: [...deadHosts], unattributedKills: 0 };
+  }
+  if (rise === 0) return { nextState: reset, oomKilled: [], unattributedKills: pending };
+  return { nextState: { last: sample, pendingKills: pending }, ...quiet };
+}
+
+/** Local ModelHosts this pass found dead that were not already failing. */
+export function newlyDeadHosts(
+  reports: readonly ReportForLog[],
+  errorLog: ReconcileErrorLog,
+): string[] {
+  return reports
+    .filter((r) => r.foundDead === true && !errorLog.has(reportLabel(r)))
+    .map((r) => r.name);
+}
+
+export function deadHostLines(
+  reports: readonly ReportForLog[],
+  deadHosts: readonly string[],
+  watch: { oomKilled: readonly string[]; unattributedKills: number },
+  sample: CgroupOomSample | null,
+  nowMs: number,
+): ControllerLogLine[] {
+  const ts = stamp(nowMs);
+  const counter = String(sample?.oomKill ?? 0);
+  const lines: ControllerLogLine[] = [];
+  for (const name of deadHosts) {
+    if (watch.oomKilled.includes(name)) {
+      const text = `${ts} WARN modelhost/${name}: engine was OOM-killed (cgroup oom_kill ${counter}); restarting`;
+      lines.push({ stream: "stderr", text });
+      continue;
+    }
+    // A death whose restart failed is reported by the reconcile-error line.
+    const report = reports.find((r) => r.kind === "ModelHost" && r.name === name);
+    if (report === undefined || report.error !== undefined) continue;
+    const text = `${ts} WARN ${reportLabel(report)}: engine had exited unexpectedly; restarted`;
+    lines.push({ stream: "stderr", text });
+  }
+  if (watch.unattributedKills > 0) {
+    lines.push({
+      stream: "stderr",
+      text: `${ts} WARN controller cgroup ${sample?.cgroup ?? "?"}: ${String(watch.unattributedKills)} OOM kill(s) (oom_kill ${counter}) not matched to a ModelHost engine`,
+    });
+  }
+  return lines;
+}
+
+function writeLines(lines: readonly ControllerLogLine[]): void {
+  for (const line of lines) {
+    (line.stream === "stderr" ? process.stderr : process.stdout).write(`${line.text}\n`);
+  }
+}
+
+interface ControllerPassState {
+  errors: ReconcileErrorLog;
+  oom: OomWatchState;
+}
+
+function oomBaselineFile(workloadsDir: string): string {
+  return join(workloadsDir, ".controller-oom.json");
 }
 
 function setupSignalHandlers(
@@ -162,14 +349,19 @@ export async function runController(args: string[]): Promise<number> {
   const wakeRef: { wake: (() => void) | null } = { wake: null };
   const { isStopping, onSignal } = setupSignalHandlers(stopping, wakeRef);
 
-  const runOnePass = (): Promise<void> => runReconcilePass(workloadsDir, resolveNodeIdentity);
+  const runOnePass = (state: ControllerPassState): Promise<ControllerPassState> =>
+    runReconcilePass(workloadsDir, resolveNodeIdentity, state);
+  const initialPass: ControllerPassState = {
+    errors: new Map(),
+    oom: { last: readOomBaseline(oomBaselineFile(workloadsDir)), pendingKills: 0 },
+  };
 
   try {
     if (parsed.once) {
-      await runOnePass();
+      await runOnePass(initialPass);
       return 0;
     }
-    await runServeLoop(parsed, stopping, wakeRef, isStopping, runOnePass, startupRev);
+    await runServeLoop(parsed, stopping, wakeRef, isStopping, runOnePass, initialPass, startupRev);
     return 0;
   } finally {
     workloadLock.releaseLock(acquired);
@@ -178,10 +370,43 @@ export async function runController(args: string[]): Promise<number> {
   }
 }
 
+/**
+ * Sample the controller cgroup after a pass, attribute any new OOM kill to
+ * the local engines the pass found dead, record it on their conditions, and
+ * keep the persisted baseline current so a kill during a controller restart
+ * still counts.
+ */
+function observeOomKills(
+  workloadsDir: string,
+  state: ControllerPassState,
+  reports: readonly ReportForLog[],
+  nowMs: number,
+): OomWatchState {
+  const sample = readCgroupOomSample();
+  const deadHosts = newlyDeadHosts(reports, state.errors);
+  const watch = advanceOomWatch(state.oom, sample, deadHosts);
+  const { last } = state.oom;
+  if (sample && (sample.cgroup !== last?.cgroup || sample.oomKill !== last.oomKill)) {
+    writeOomBaseline(oomBaselineFile(workloadsDir), sample);
+  }
+  if (sample) {
+    for (const name of watch.oomKilled) {
+      try {
+        recordModelHostOomKill({ name }, sample.oomKill, resolveEnv(process.env));
+      } catch {
+        // The log line below still reports the kill.
+      }
+    }
+  }
+  writeLines(deadHostLines(reports, deadHosts, watch, sample, nowMs));
+  return watch.nextState;
+}
+
 async function runReconcilePass(
   workloadsDir: string,
   resolveNodeIdentity: (n: string) => string | null,
-): Promise<void> {
+  state: ControllerPassState,
+): Promise<ControllerPassState> {
   // ModelRun pass — converges llama-server lifecycle per manifest.
   const modelrunResult = await workloadReconciler.reconcileOnce({
     workloadsDir,
@@ -207,17 +432,15 @@ async function runReconcilePass(
       );
     },
   });
+  const nowMs = Date.now();
+  const oom = observeOomKills(workloadsDir, state, modelrunResult.reports, nowMs);
   if (modelrunResult.reports.length === 0 && noderunResult.reports.length === 0) {
-    process.stdout.write(`[${new Date().toISOString()}] idle (no manifests in ${workloadsDir})\n`);
-    return;
+    process.stdout.write(`${stamp(nowMs)} idle (no manifests in ${workloadsDir})\n`);
+    return { errors: new Map(), oom };
   }
-  for (const r of modelrunResult.reports) {
-    const tail = r.error ? ` error=${r.error}` : "";
-    const kind = r.kind === "ModelHost" ? "modelhost" : "modelrun";
-    process.stdout.write(
-      `[${new Date().toISOString()}] ${kind}/${r.name} on ${r.node}: ${r.action}${tail}\n`,
-    );
-  }
+  const log = reduceReconcileReportLog(state.errors, modelrunResult.reports, nowMs);
+  writeLines(log.lines);
+  return { errors: log.nextState, oom };
 }
 
 /**
@@ -278,15 +501,19 @@ async function runServeLoop(
   stopping: { value: boolean },
   wakeRef: { wake: (() => void) | null },
   isStopping: () => boolean,
-  runOnePass: () => Promise<void>,
+  runOnePass: (state: ControllerPassState) => Promise<ControllerPassState>,
+  initialPass: ControllerPassState,
   startupRev: string | null,
 ): Promise<void> {
   let staleState: sourceRevision.StaleStreakState = { streak: 0 };
   let lastSourceStaleSig: string | null = null;
+  // Reconcile-error dedup and OOM-watch state, threaded pass to pass like the
+  // source-staleness signature below.
+  let passState = initialPass;
   while (!stopping.value) {
     const start = Date.now();
     try {
-      await runOnePass();
+      passState = await runOnePass(passState);
     } catch (err) {
       process.stderr.write(
         `[${new Date().toISOString()}] reconcile error: ${(err as Error).message}\n`,
