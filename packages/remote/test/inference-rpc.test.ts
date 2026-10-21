@@ -1628,6 +1628,7 @@ describe("the worker-rpc executor behind the unified proxy", () => {
     );
     expect(await res.json()).toEqual({ path: "fallback" });
     expect(calls).toEqual(["fallback"]);
+    expect(res.headers.get("x-llamactl-worker-transport")).toBe("legacy");
     expect(engine.requests).toHaveLength(0);
   });
 
@@ -1940,6 +1941,34 @@ describe("the worker-rpc executor behind the unified proxy", () => {
     const refused = await run(unreachable, jsonEnvelope("att-json-refused"));
     expect(refused).toMatchObject({ status: 503, retry: null, body: failed("target-unavailable") });
     expect(engine.requests).toHaveLength(5);
+  });
+
+  test("an accepted attempt cancelled before it started still tells client SDKs not to retry it", async () => {
+    useHost();
+    const real = createEmbeddedInferenceRpcClient(claims());
+    // Cancelled between acceptance and the stream: the worker proves nothing ran.
+    const cancelledFirst: InferenceRpcClient = {
+      ...real,
+      submit: async (input) => {
+        const answer = await real.submit(input);
+        await real.cancel({ attemptId: input.envelope.attemptId });
+        return answer;
+      },
+    };
+    const env = envelope("att-unstarted-cancel");
+    const res = await createWorkerRpcExecutor({
+      client: cancelledFirst,
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    }).execute(env, ctxFor(env));
+    expect(res.status).toBe(503);
+    expect(res.headers.get("x-should-retry")).toBe("false");
+    expect(await res.json()).toMatchObject({ error: { code: "cancelled" } });
+    expect(await real.status({ attemptId: "att-unstarted-cancel" })).toMatchObject({
+      terminal: { outcome: "cancelled", started: false },
+    });
+    expect(engine.requests).toHaveLength(0);
   });
 
   test("a public error names no secret reference or path; the log keeps the detail", async () => {

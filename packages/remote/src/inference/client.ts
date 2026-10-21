@@ -1014,15 +1014,18 @@ interface Failure {
   status: number;
   code: string;
   message: string;
-  /** False once the worker accepted the attempt: a client SDK retry would run it again. */
+  /** False for every accepted attempt, even one the worker proves never started; see failureOf. */
   retryable: boolean;
 }
 
 /**
- * Every terminal, even an unknown outcome, follows an acceptance that may
- * have run: a client SDK retry is a fresh attempt id, so attempt dedup
- * cannot stop it from running the request again. Only a rejection, which
- * comes before anything was accepted, keeps the SDK's own retry rules.
+ * Every terminal follows an acceptance. Most may have run, and a client
+ * SDK retry is a fresh attempt id that attempt dedup cannot stop. A
+ * cancel or timeout the worker proves never started (`started: false`)
+ * would be safe to retry, but it is reported non-retryable too: one
+ * conservative rule for every accepted attempt, chosen on purpose. Only a
+ * rejection, which comes before anything was accepted, keeps the SDK's
+ * own retry rules.
  */
 function failureOf(terminal: ExecutionTerminal): Failure {
   switch (terminal.outcome) {
@@ -1290,6 +1293,13 @@ async function outcomeResponse(
   }
 }
 
+/** The existing path's response, marked so the attempt shows it left the worker RPC. */
+function legacyPathResponse(res: Response): Response {
+  const headers = new Headers(res.headers);
+  headers.set("x-llamactl-worker-transport", "legacy");
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 // ---- the worker-rpc BackendExecutor ---------------------------------------
 
 export interface WorkerRpcExecutorOptions {
@@ -1375,8 +1385,10 @@ function beyondHorizon(deadline: number): Rejection | null {
 
 export function createWorkerRpcExecutor(opts: WorkerRpcExecutorOptions): BackendExecutor {
   const inFlight = new Map<string, AbortController>();
-  // The worker hears the cancel before the local stream is torn down, so
-  // its acknowledgement records a cancel rather than a disconnect.
+  // Best effort: the cancel is sent before this side aborts its stream,
+  // but a client disconnect aborts ctx.req.signal, which tears the
+  // transport down at once, so the worker may record a disconnect and
+  // answer already-terminal. Either way the engine request is aborted.
   const cancelOnWorker = (attemptId: string, controller: AbortController): void => {
     void opts.client
       .cancel({ attemptId })
@@ -1423,7 +1435,7 @@ export function createWorkerRpcExecutor(opts: WorkerRpcExecutorOptions): Backend
         const outcome = await runAttempt(opts, envelope, ctx, signal);
         if (outcome.kind === "fallback") {
           release();
-          return await opts.fallback.execute(envelope, ctx);
+          return legacyPathResponse(await opts.fallback.execute(envelope, ctx));
         }
         // A consumer that leaves cancels on the worker, so even a client
         // disconnect gets an acknowledged outcome.
@@ -1555,6 +1567,11 @@ function tunnelClientFor(
   });
 }
 
+interface OwnerRefs {
+  service: (owner: string) => string | undefined;
+  relay: (owner: string) => string | undefined;
+}
+
 /**
  * The client for a remote owner, over the transport its kubeconfig node
  * declares: the reverse tunnel when it prefers one, else a direct dial
@@ -1564,11 +1581,6 @@ function tunnelClientFor(
  * credential does not resolve, or whose tunnel has no relay-only
  * credential, fails closed; it is never rerouted.
  */
-interface OwnerRefs {
-  service: (owner: string) => string | undefined;
-  relay: (owner: string) => string | undefined;
-}
-
 function ownerClient(
   owner: string,
   peers: readonly PeerNode[],
