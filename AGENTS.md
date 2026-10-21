@@ -122,6 +122,12 @@ Never skip hooks. If a pre-commit hook fails, investigate — don't
   (`4.1.0`). Trap: the raw ponyfill dispatches events after a client
   `close()`, and tRPC's SSE `return` listener then throws an uncaught
   `Controller is already closed`.
+- The worker-RPC client (`packages/remote/src/inference/client.ts`) is
+  a deliberate exception: it speaks the fetch adapter's HTTP and SSE
+  wire with plain fetch so it can cap frames and read-ahead in bytes
+  and tear the transport down on overflow. A tRPC upgrade must re-check
+  its `return` / `serialized-error` event names and its NOT_FOUND
+  missing-route rule.
 
 ### Dispatcher pattern
 
@@ -594,9 +600,13 @@ behind `LLAMACTL_UNIFIED_PROXY=1`.
   central's `workerRpcRelay.tokenHashes` before adding
   `relayCredentialRef` to the caller's `workerRpc` block. A tunneled
   owner's block without `relayCredentialRef` fails closed.
-- **Roll back** by emptying `versions` or removing the block. Either
-  way the owner answers "not advertised" on both transports, new
-  requests keep the existing path, and active streams drain.
+- **Roll back** by emptying `versions`: the owner answers "not
+  advertised" on both transports, new requests keep the existing path,
+  and active streams drain with resolvable outcomes. Remove the block
+  only after that drain: removing it also drops the service-credential
+  bindings, so `status`, `cancel` and a not-yet-attached stream for an
+  attempt accepted earlier are refused, and its caller can end at
+  `unknown-outcome`.
 - **Downgrade a worker** only after removing the `workerRpc` block from
   every caller's kubeconfig node for it. A build that predates the RPC
   refuses a service credential on a direct dial (HTTP 401), which
@@ -617,6 +627,14 @@ behind `LLAMACTL_UNIFIED_PROXY=1`.
   Rotate or revoke as with any binding; a renamed tunnel node needs a
   new `tunnelKey`.
 
+- **Bind for a llamactl gateway**: the unified proxy presents tenant and
+  credential scope `local`, so the worker's binding needs
+  `tenants: [local]` and `credentialScopeId: local`, with `deployments`
+  naming `deploy/<nodeName>/<workload>` (or `models`). The worker's
+  `agent.yaml` `nodeName` must equal the gateway's kubeconfig node name
+  for it, since a peer-derived candidate resolves only on its declared
+  owner.
+
 - **Clocks**: tunnel worker-RPC needs the gateway's and the worker's
   clocks within ±60 s, since a token expires 60 s after it is minted
   and the worker refuses one dated further ahead. The worker logs each
@@ -626,9 +644,16 @@ behind `LLAMACTL_UNIFIED_PROXY=1`.
 - **Version window**: a gateway and a worker one minor apart
   interoperate. A minor bump must never add an enum value, a frame kind
   or a required field that an N-1 peer cannot parse; anything that
-  needs one is a major bump.
+  needs one is a major bump. A worker advertises only the versions its
+  `agent.yaml` lists, so keep the previous minor listed during a rolling
+  upgrade; a list holding only the new minor refuses every N-1 gateway
+  with `unsupported-version`.
 - A malformed `workerRpc` block never stops the agent: it is ignored
   with a warning, nothing is advertised, and re-saves keep it as written.
+- The caller's kubeconfig `workerRpc` block is validated with the rest
+  of the kubeconfig: a malformed one (a misspelled key, an empty
+  reference) fails kubeconfig loading, and with it every llamactl
+  command and the gateway's peer routes, until it is fixed.
 
 ## Testing
 
