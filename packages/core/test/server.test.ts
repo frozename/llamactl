@@ -363,9 +363,7 @@ describe("server.startServer (error paths)", () => {
     let fetchCalls = -1;
     let spawnCalls = -1;
     try {
-      await Promise.resolve().then(() =>
-        startServer({ key: TEST_KEY, target: "Demo/demo.gguf" }),
-      );
+      await Promise.resolve().then(() => startServer({ key: TEST_KEY, target: "Demo/demo.gguf" }));
     } catch (error) {
       thrown = error;
     } finally {
