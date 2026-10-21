@@ -204,6 +204,18 @@ function useHost(opts: Partial<WorkerRpcHostOptions> = {}): WorkerRpcHost {
   return host;
 }
 
+function wrapHost(overrides: Partial<WorkerRpcHost>): WorkerRpcHost {
+  const base = host;
+  if (base === undefined) throw new Error("no host to wrap");
+  const undo = publishWorkerRpcHost({ ...base, ...overrides });
+  const prior = restore;
+  restore = (): void => {
+    undo();
+    prior?.();
+  };
+  return base;
+}
+
 async function target(
   client: InferenceRpcClient,
   deploymentId = LOCAL,
@@ -869,9 +881,7 @@ describe("non-model targets (A4) and no cache semantics (A5)", () => {
     const client = createEmbeddedInferenceRpcClient(claims());
     const cacheDir = join(temp.devStorage, "responsecache");
     const before = existsSync(cacheDir);
-    // The embedded exact cache is rooted at LOCAL_AI_RUNTIME_DIR (resolveKvDataRoot),
-    // not DEV_STORAGE — checking only the DEV_STORAGE path passed vacuously. Seed the
-    // real cache through the proxy's own runtime so responses.db exists before the RPC.
+    // The embedded exact cache is rooted at LOCAL_AI_RUNTIME_DIR (resolveKvDataRoot), not DEV_STORAGE. responseCacheCounters opens it through the proxy's own runtime, which creates an empty responses.db; it holds no entry, so a read-path regression shows only in the hit and miss counters.
     const dataRoot = resolved.LOCAL_AI_RUNTIME_DIR;
     const seededCacheDir = join(dataRoot, "responsecache");
     const countersBefore = responseCacheCounters(resolved);
@@ -2066,7 +2076,7 @@ describe("the worker-rpc executor behind the unified proxy", () => {
   });
 });
 
-describe("executor hop-count and visited-node limits (F10, A2/X1)", () => {
+describe("hop limits through the executor (embedded)", () => {
   test("withHop takes hopCount past the limit; the worker refuses before any engine request", async () => {
     useHost();
     const client = createEmbeddedInferenceRpcClient(claims());
@@ -2097,48 +2107,50 @@ describe("executor hop-count and visited-node limits (F10, A2/X1)", () => {
     expect(engine.requests).toHaveLength(0);
   });
 
-  test("nine distinct visitedNodes plus withHop's nodeId exceeds MAX_VISITED_NODES", async () => {
+  test("MAX_VISITED_NODES distinct visitedNodes plus withHop's nodeId are refused; one fewer is admitted", async () => {
     useHost();
     const client = createEmbeddedInferenceRpcClient(claims());
-    const nine = Array.from({ length: 9 }, (_, i) => `n-${String(i)}`);
-    const env = envelope("att-exec-visited", { internal: { visitedNodes: nine } });
-    const res = await createWorkerRpcExecutor({
-      client,
-      deploymentId: LOCAL,
-      fallback: recordingFallback([]),
-      nodeId: "gw",
-    }).execute(env, ctxFor(env));
-    expect(res.status).toBe(508);
-    expect(await res.json()).toMatchObject({ error: { code: "hop-limit" } });
+    const max = inferenceRpc.INFERENCE_RPC_MAX_VISITED_NODES;
+    const run = async (attemptId: string, distinct: number): Promise<Response> => {
+      const visitedNodes = Array.from({ length: distinct }, (_, i) => `n-${String(i)}`);
+      const env = envelope(attemptId, { internal: { visitedNodes } });
+      return await createWorkerRpcExecutor({
+        client,
+        deploymentId: LOCAL,
+        fallback: recordingFallback([]),
+        nodeId: "gw",
+      }).execute(env, ctxFor(env));
+    };
+    const over = await run("att-exec-visited-over", max);
+    expect(over.status).toBe(508);
+    expect(await over.json()).toMatchObject({ error: { code: "hop-limit" } });
     expect(engine.requests).toHaveLength(0);
+    const at = await run("att-exec-visited-at", max - 1);
+    expect(at.status).toBe(200);
+    expect(await at.text()).toContain("[DONE]");
+    expect(engine.requests).toHaveLength(1);
   });
 
   test("the worker receives internal with hopCount 1 and visitedNodes ['gw'] after one hop", async () => {
-    useHost();
-    const base = currentWorkerRpcHost();
     const received: inferenceContracts.InferenceEnvelopeV1[] = [];
-    const undo = publishWorkerRpcHost({
-      ...base,
+    const base = useHost();
+    wrapHost({
       submit: (claimsIn: Claims | undefined, input: inferenceRpc.InferenceRpcSubmitRequestV1) => {
         received.push(input.envelope);
         return base.submit(claimsIn, input);
       },
     });
-    try {
-      const env = envelope("att-exec-hop-record");
-      const res = await createWorkerRpcExecutor({
-        client: createEmbeddedInferenceRpcClient(claims()),
-        deploymentId: LOCAL,
-        fallback: recordingFallback([]),
-        nodeId: "gw",
-      }).execute(env, ctxFor(env));
-      expect(res.status).toBe(200);
-      expect(received).toHaveLength(1);
-      expect(received[0]?.internal?.hopCount).toBe(1);
-      expect(received[0]?.internal?.visitedNodes).toEqual(["gw"]);
-    } finally {
-      undo();
-    }
+    const env = envelope("att-exec-hop-record");
+    const res = await createWorkerRpcExecutor({
+      client: createEmbeddedInferenceRpcClient(claims()),
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    }).execute(env, ctxFor(env));
+    expect(res.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0]?.internal?.hopCount).toBe(1);
+    expect(received[0]?.internal?.visitedNodes).toEqual(["gw"]);
   });
 });
 
@@ -2449,19 +2461,6 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
   /** The worker host for remote callers; serve.ts derives their claims from the credential. */
   function useRemoteHost(opts: Partial<WorkerRpcHostOptions> = {}): WorkerRpcHost {
     return useHost(opts);
-  }
-
-  /** Serve `overrides` on top of the current host until the test ends. */
-  function wrapHost(overrides: Partial<WorkerRpcHost>): WorkerRpcHost {
-    const base = host;
-    if (base === undefined) throw new Error("no host to wrap");
-    const undo = publishWorkerRpcHost({ ...base, ...overrides });
-    const prior = restore;
-    restore = (): void => {
-      undo();
-      prior?.();
-    };
-    return base;
   }
 
   function statusNow(attemptId: string): inferenceRpc.InferenceRpcStatusResultV1 {
@@ -2884,6 +2883,14 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         terminal: { outcome: "cancelled", started: true },
       });
       expect(engine.requests).toHaveLength(1);
+      let rest = "";
+      const decoder = new TextDecoder();
+      for (let r = await reader.read(); !r.done; r = await reader.read()) {
+        rest += decoder.decode(r.value, { stream: true });
+      }
+      // The consumer gets the worker's own terminal, read through status once the tunnel is back.
+      expect(rest).toContain('"code":"cancelled"');
+      expect(rest).not.toContain("[DONE]");
     });
   });
 
@@ -3010,11 +3017,15 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       },
     );
 
-    test("direct: an unterminated frame past the cap ends the stream typed with nothing queued", async () => {
+    test("direct: an unterminated frame past the cap ends the stream typed and tears the transport down", async () => {
       useRemoteHost();
+      let transportAborted = false;
       const pinned = makePinnedFetch(transports.workerNode);
       const oversized: PinnedFetch = async (input, init) => {
         if (!urlOf(input).includes("inferenceRpc.stream")) return await pinned(input, init);
+        init?.signal?.addEventListener("abort", () => {
+          transportAborted = true;
+        });
         const body = new ReadableStream<Uint8Array>({
           start(controller): void {
             controller.enqueue(
@@ -3027,12 +3038,12 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
           headers: { "content-type": "text/event-stream" },
         });
       };
-      const queue = queueSampler();
-      const client = directClient({ fetch: oversized, limits, onStreamQueue: queue.sample });
+      const client = directClient({ fetch: oversized, limits });
       const { res } = await execute(client, "att-d-unterminated");
       const body = await res.text();
       expect(body).toContain('"code":"stream-overflow"');
-      expect(queue.max()).toBe(0);
+      expect(res.status).toBe(502);
+      expect(transportAborted).toBe(true);
     });
   });
 
@@ -4086,7 +4097,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
     }
   });
 
-  describe("executor hop-count and visited-node limits (F10, A2/X1)", () => {
+  describe("hop limits through the executor (direct and tunnel)", () => {
     test.each(TRANSPORTS)(
       "%s: withHop takes hopCount past the limit; the worker refuses before any engine request",
       async (transport) => {
