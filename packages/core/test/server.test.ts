@@ -313,6 +313,8 @@ describe("server.startServer (error paths)", () => {
     );
 
     let thrown: unknown;
+    let fetchCalls = -1;
+    let spawnCalls = -1;
     try {
       await Promise.resolve().then(() =>
         startServer({
@@ -324,13 +326,16 @@ describe("server.startServer (error paths)", () => {
     } catch (error) {
       thrown = error;
     } finally {
+      // mockRestore() clears the recorded calls, so capture counts before restoring.
+      fetchCalls = fetchSpy.mock.calls.length;
+      spawnCalls = spawnSpy.mock.calls.length;
       spawnSpy.mockRestore();
       fetchSpy.mockRestore();
     }
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toContain("refusing to bind llama-server to 0.0.0.0");
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(fetchCalls).toBe(0);
+    expect(spawnCalls).toBe(0);
     expect(readServerPid(TEST_KEY)).toBe(4194305);
   });
 
