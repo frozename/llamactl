@@ -36,6 +36,7 @@ import { runSirius } from "./commands/sirius.js";
 import { runSupervisor } from "./commands/supervisor.js";
 import { runTunnel } from "./commands/tunnel.js";
 import { runUninstall } from "./commands/uninstall.js";
+import { runUpdate } from "./commands/update/index.js";
 import { runApply, runDelete, runDescribe, runGet } from "./commands/workload.js";
 import { extractGlobalFlags, setGlobals } from "./dispatcher.js";
 
@@ -219,6 +220,16 @@ Agentic operations:
   llamactl fleet snapshot [--all]             Show local or cluster fleet snapshots
   llamactl fleet status                       Show one-line fleet pressure summary per node
 
+Self-update (source installs):
+  llamactl update [--check]                   Fetch and show what an update to
+      [--ref <ref>] [--json]                   origin/main would change (commits,
+                                              deps, CI, services, model hosts)
+  llamactl update --apply                     Stop the controller, switch the
+      [--allow-red-ci] [--wait-idle <s>]       checkout, bun install, restart the
+                                              services, verify; auto-rollback
+  llamactl update --rollback [<ref>]          Same procedure back to the ref the
+                                              last update came from
+
 More commands will land as the TypeScript core library absorbs the
 historical zsh surface. See https://github.com/frozename/llamactl.
 `;
@@ -311,6 +322,8 @@ async function main(argv: string[]): Promise<number> {
       return await runTunnel(rest);
     case "fleet":
       return await runFleet(rest);
+    case "update":
+      return await runUpdate(rest);
     case undefined:
     case "--help":
     case "-h":
