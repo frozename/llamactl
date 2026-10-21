@@ -161,3 +161,34 @@ describe("gracefulShutdown PID identity gate", () => {
     }
   });
 });
+
+describe("gracefulShutdown SIGKILL escalation", () => {
+  test("returns only after a child that ignores SIGTERM is gone", async () => {
+    const proc = Bun.spawn(
+      [
+        "python3",
+        "-c",
+        "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(60)",
+      ],
+      { stdout: "pipe", stderr: "ignore" },
+    );
+    try {
+      const reader = proc.stdout.getReader();
+      await reader.read();
+      reader.releaseLock();
+      // wait until SIGTERM is ignored so the SIGKILL path is exercised
+      const started = Date.now();
+      await gracefulShutdown(proc.pid, 250);
+      const elapsed = Date.now() - started;
+      expect(elapsed).toBeGreaterThanOrEqual(250);
+      expect(elapsed).toBeLessThan(2000);
+      expect(isAlive(proc.pid)).toBe(false);
+    } finally {
+      try {
+        process.kill(proc.pid, "SIGKILL");
+      } catch {
+        // Best-effort cleanup; failures are not actionable here.
+      }
+    }
+  });
+});
