@@ -277,6 +277,8 @@ describe("tunnel-relay SSE", () => {
   });
 
   test("a request-signal abort with no read in flight still ships the node a stream-cancel", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "relay-sse-reqsignal-"));
+    const journalPath = join(dir, "relay.jsonl");
     // 400 x 5 ms outlasts the wait + poll: a node stream that has
     // already completed has nothing left to cancel.
     harness = await startHarness({
@@ -298,7 +300,13 @@ describe("tunnel-relay SSE", () => {
       body: JSON.stringify({ method: "long", type: "subscription", input: null }),
       signal: ac.signal,
     });
-    const res = await handleTunnelRelay(req, url, harness.tunnelSrv, hashToken(harness.bearer));
+    const res = await handleTunnelRelay(
+      req,
+      url,
+      harness.tunnelSrv,
+      hashToken(harness.bearer),
+      journalPath,
+    );
     expect(res.status).toBe(200);
     const reader = res.body!.getReader();
     const first = await reader.read();
@@ -312,7 +320,30 @@ describe("tunnel-relay SSE", () => {
       await new Promise((r) => setTimeout(r, 10));
     }
     expect(harness.receivedCancel).toHaveLength(1);
+    // Read before reader.cancel(): the body's cancel() journals
+    // client-aborted too, so reading after it would not prove onReqAbort
+    // journaled this line.
+    const entries: TunnelJournalEntry[] = [];
+    const journalDeadline = Date.now() + 1000;
+    while (entries.length === 0 && Date.now() < journalDeadline) {
+      try {
+        entries.push(
+          ...readFileSync(journalPath, "utf8")
+            .split("\n")
+            .filter((l) => l.length > 0)
+            .map((l) => JSON.parse(l) as TunnelJournalEntry)
+            .filter((e) => e.kind === "tunnel-relay-call" || e.kind === "tunnel-relay-error"),
+        );
+      } catch {
+        /* file not yet created */
+      }
+      if (entries.length === 0) await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(entries).toEqual([
+      expect.objectContaining({ kind: "tunnel-relay-error", code: "client-aborted" }),
+    ]);
     await reader.cancel().catch(() => undefined);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   test("SSE rejects without bearer", async () => {
