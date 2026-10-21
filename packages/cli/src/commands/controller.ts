@@ -29,6 +29,9 @@ Flags:
 A lock file at $LLAMACTL_WORKLOADS_DIR/.controller.lock guards against
 two controllers racing on the same directory. Stale locks from
 crashed controllers are stolen automatically when their PID is gone.
+
+A reconcile error is logged to stderr once per distinct message, again
+every 10 minutes while it persists, and once on recovery.
 `;
 
 interface ControllerFlags {
@@ -84,6 +87,94 @@ export function applyControllerSourceGate(
     ...(opts.reloadStaleChecks !== undefined ? { reloadStaleChecks: opts.reloadStaleChecks } : {}),
   });
   return { nextState: r.state, shouldReload: r.shouldReload, currentRev: r.currentRev };
+}
+
+/** How often a reconcile error that keeps repeating is logged again. */
+export const RECONCILE_ERROR_REMINDER_MS = 10 * 60_000;
+
+export interface ReconcileErrorEntry {
+  message: string;
+  firstSeenMs: number;
+  lastLoggedMs: number;
+  /** Consecutive failing passes with this message. */
+  count: number;
+}
+
+export type ReconcileErrorLog = ReadonlyMap<string, ReconcileErrorEntry>;
+
+export interface ControllerLogLine {
+  stream: "stdout" | "stderr";
+  text: string;
+}
+
+type ReportForLog = Pick<
+  workloadReconciler.ReconcileNodeReport,
+  "action" | "error" | "kind" | "name" | "node"
+>;
+
+function reportLabel(r: ReportForLog): string {
+  return `${r.kind === "ModelHost" ? "modelhost" : "modelrun"}/${r.name} on ${r.node}`;
+}
+
+function stamp(nowMs: number): string {
+  return `[${new Date(nowMs).toISOString()}]`;
+}
+
+/**
+ * Turn one pass's reports into log lines. A reconcile error goes to stderr
+ * as a WARN the first time it is seen and whenever its message changes, is
+ * repeated as a reminder at most every `reminderMs` while it persists, and is
+ * closed by one recovery line; in between it is counted, not printed. Healthy
+ * reports keep their per-pass stdout line. A workload missing from the pass
+ * (deleted) drops out of the state silently.
+ */
+export function reduceReconcileReportLog(
+  state: ReconcileErrorLog,
+  reports: readonly ReportForLog[],
+  nowMs: number,
+  reminderMs: number = RECONCILE_ERROR_REMINDER_MS,
+): { nextState: Map<string, ReconcileErrorEntry>; lines: ControllerLogLine[] } {
+  const ts = stamp(nowMs);
+  const nextState = new Map<string, ReconcileErrorEntry>();
+  const lines: ControllerLogLine[] = [];
+  for (const r of reports) {
+    const label = reportLabel(r);
+    const prev = state.get(label);
+    if (r.error === undefined) {
+      if (prev) {
+        const text = `${ts} ${label}: recovered after ${String(prev.count)} failed pass(es)`;
+        lines.push({ stream: "stderr", text });
+      }
+      lines.push({ stream: "stdout", text: `${ts} ${label}: ${r.action}` });
+      continue;
+    }
+    if (prev?.message !== r.error) {
+      nextState.set(label, { message: r.error, firstSeenMs: nowMs, lastLoggedMs: nowMs, count: 1 });
+      lines.push({ stream: "stderr", text: `${ts} WARN ${label}: ${r.action} error=${r.error}` });
+      continue;
+    }
+    const entry = { ...prev, count: prev.count + 1 };
+    if (nowMs - prev.lastLoggedMs >= reminderMs) {
+      entry.lastLoggedMs = nowMs;
+      const since = new Date(prev.firstSeenMs).toISOString();
+      lines.push({
+        stream: "stderr",
+        text: `${ts} WARN ${label}: still failing (${String(entry.count)} passes since ${since}) error=${r.error}`,
+      });
+    }
+    nextState.set(label, entry);
+  }
+  return { nextState, lines };
+}
+
+function writeLines(lines: readonly ControllerLogLine[]): void {
+  for (const line of lines) {
+    (line.stream === "stderr" ? process.stderr : process.stdout).write(`${line.text}\n`);
+  }
+}
+
+interface ControllerPassState {
+  errors: ReconcileErrorLog;
 }
 
 function setupSignalHandlers(
@@ -162,14 +253,16 @@ export async function runController(args: string[]): Promise<number> {
   const wakeRef: { wake: (() => void) | null } = { wake: null };
   const { isStopping, onSignal } = setupSignalHandlers(stopping, wakeRef);
 
-  const runOnePass = (): Promise<void> => runReconcilePass(workloadsDir, resolveNodeIdentity);
+  const runOnePass = (state: ControllerPassState): Promise<ControllerPassState> =>
+    runReconcilePass(workloadsDir, resolveNodeIdentity, state);
+  const initialPass: ControllerPassState = { errors: new Map() };
 
   try {
     if (parsed.once) {
-      await runOnePass();
+      await runOnePass(initialPass);
       return 0;
     }
-    await runServeLoop(parsed, stopping, wakeRef, isStopping, runOnePass, startupRev);
+    await runServeLoop(parsed, stopping, wakeRef, isStopping, runOnePass, initialPass, startupRev);
     return 0;
   } finally {
     workloadLock.releaseLock(acquired);
@@ -181,7 +274,8 @@ export async function runController(args: string[]): Promise<number> {
 async function runReconcilePass(
   workloadsDir: string,
   resolveNodeIdentity: (n: string) => string | null,
-): Promise<void> {
+  state: ControllerPassState,
+): Promise<ControllerPassState> {
   // ModelRun pass — converges llama-server lifecycle per manifest.
   const modelrunResult = await workloadReconciler.reconcileOnce({
     workloadsDir,
@@ -207,17 +301,14 @@ async function runReconcilePass(
       );
     },
   });
+  const nowMs = Date.now();
   if (modelrunResult.reports.length === 0 && noderunResult.reports.length === 0) {
-    process.stdout.write(`[${new Date().toISOString()}] idle (no manifests in ${workloadsDir})\n`);
-    return;
+    process.stdout.write(`${stamp(nowMs)} idle (no manifests in ${workloadsDir})\n`);
+    return { errors: new Map() };
   }
-  for (const r of modelrunResult.reports) {
-    const tail = r.error ? ` error=${r.error}` : "";
-    const kind = r.kind === "ModelHost" ? "modelhost" : "modelrun";
-    process.stdout.write(
-      `[${new Date().toISOString()}] ${kind}/${r.name} on ${r.node}: ${r.action}${tail}\n`,
-    );
-  }
+  const log = reduceReconcileReportLog(state.errors, modelrunResult.reports, nowMs);
+  writeLines(log.lines);
+  return { errors: log.nextState };
 }
 
 /**
@@ -278,15 +369,19 @@ async function runServeLoop(
   stopping: { value: boolean },
   wakeRef: { wake: (() => void) | null },
   isStopping: () => boolean,
-  runOnePass: () => Promise<void>,
+  runOnePass: (state: ControllerPassState) => Promise<ControllerPassState>,
+  initialPass: ControllerPassState,
   startupRev: string | null,
 ): Promise<void> {
   let staleState: sourceRevision.StaleStreakState = { streak: 0 };
   let lastSourceStaleSig: string | null = null;
+  // Reconcile-error dedup state, threaded pass to pass like the
+  // source-staleness signature below.
+  let passState = initialPass;
   while (!stopping.value) {
     const start = Date.now();
     try {
-      await runOnePass();
+      passState = await runOnePass(passState);
     } catch (err) {
       process.stderr.write(
         `[${new Date().toISOString()}] reconcile error: ${(err as Error).message}\n`,
