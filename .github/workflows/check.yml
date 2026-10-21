@@ -16,7 +16,15 @@ concurrency:
 
 jobs:
   check:
-    runs-on: macos-latest
+    # Production llamactl runs on Linux (Ubuntu 24.04); a Linux-only Bun.serve
+    # backpressure defect passed this gate while it ran on macOS only (#178).
+    # Nothing is skipped on Linux: the Linux-only packages/core test failures are
+    # tracked in #177, and this leg merges only after #177 is fixed.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - name: Checkout llamactl
