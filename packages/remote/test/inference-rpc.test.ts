@@ -879,6 +879,25 @@ describe("attempt records: duplicates, status and unknown outcomes (A3)", () => 
     expect(engine.requests).toHaveLength(1);
   });
 
+  test("a duplicate is the existing record while the worker drains or after its deployment ACL is revoked", async () => {
+    const worker = useHost();
+    const client = createEmbeddedInferenceRpcClient(claims());
+    expect(rejectionCode(await submit(client, "att-dup-drain"))).toBe("accepted");
+    const drained = worker.drain();
+    expect(rejectionCode(await submit(client, "att-dup-new"))).toBe("unsupported-version");
+    expect(await submit(client, "att-dup-drain")).toMatchObject({
+      outcome: "existing",
+      status: { attemptId: "att-dup-drain", state: "accepted" },
+    });
+    const revoked = createEmbeddedInferenceRpcClient(claims({ deployments: [] }));
+    expect(await submit(revoked, "att-dup-drain")).toMatchObject({ outcome: "existing" });
+    const other = createEmbeddedInferenceRpcClient(claims({ serviceId: "svc-b" }));
+    expect((await submit(other, "att-dup-drain")).outcome).toBe("rejected");
+    worker.close();
+    await drained;
+    expect(engine.requests).toHaveLength(0);
+  });
+
   test("a resubmit after 1100 other attempts settled is still the existing record, never a second run", async () => {
     let clock = Date.now();
     let mono = 0;
@@ -1393,6 +1412,36 @@ describe("cancellation in process (X4)", () => {
         status: { state: "terminal", terminal: { outcome: "cancelled", started: false } },
       },
     ]);
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("a cancelId names the caller's own attempt, even when another service reuses it", async () => {
+    useHost();
+    const a = createEmbeddedInferenceRpcClient(claims());
+    const b = createEmbeddedInferenceRpcClient(claims({ serviceId: "svc-b" }));
+    for (const [client, id] of [
+      [a, "att-cid-a"],
+      [b, "att-cid-b"],
+    ] as const) {
+      expect(
+        rejectionCode(
+          await client.submit({
+            version: V1_0,
+            envelope: envelope(id),
+            target: await target(client),
+            cancelId: "req-42",
+          }),
+        ),
+      ).toBe("accepted");
+    }
+    expect(await a.cancel({ cancelId: "req-42" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-cid-a",
+    });
+    expect(await b.cancel({ cancelId: "req-42" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-cid-b",
+    });
     expect(engine.requests).toHaveLength(0);
   });
 

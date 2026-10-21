@@ -202,6 +202,7 @@ interface HostState {
   /** Records in acceptance order, which is retainUntil order; swept from `retainedHead`. */
   retained: (AttemptRecord | undefined)[];
   retainedHead: number;
+  /** cancelKey(owner, cancelId) to attemptId. */
   cancelIds: Map<string, string>;
   active: number;
   /** Streams attached and not yet ended. */
@@ -578,6 +579,11 @@ function ownerKey(claims: Claims): string {
   return JSON.stringify([claims.serviceId, claims.credentialScopeId]);
 }
 
+/** cancelIds are chosen by callers, so each owner has its own. */
+function cancelKey(owner: string, cancelId: string): string {
+  return JSON.stringify([owner, cancelId]);
+}
+
 /** Concurrency first, then the owner's record quota, then the worker-wide backstop. */
 function fenceCapacity(state: HostState, claims: Claims): Rejection | null {
   if (state.active >= state.maxActive) {
@@ -652,8 +658,9 @@ function settle(
 
 function forget(state: HostState, record: AttemptRecord): void {
   state.records.delete(record.attemptId);
-  if (state.cancelIds.get(record.cancelId) === record.attemptId) {
-    state.cancelIds.delete(record.cancelId);
+  const key = cancelKey(record.owner.key, record.cancelId);
+  if (state.cancelIds.get(key) === record.attemptId) {
+    state.cancelIds.delete(key);
   }
   record.owner.held -= 1;
   if (record.owner.held === 0) state.owners.delete(record.owner.key);
@@ -759,7 +766,7 @@ function admit(
   owner.held += 1;
   state.records.set(record.attemptId, record);
   state.retained.push(record);
-  state.cancelIds.set(record.cancelId, record.attemptId);
+  state.cancelIds.set(cancelKey(owner.key, record.cancelId), record.attemptId);
   state.active += 1;
   const untilDeadline = Math.max(0, envelope.deadline - state.now());
   const deadline = setTimeout(() => {
@@ -782,24 +789,25 @@ function submit(
   claimsIn: Claims | undefined,
   input: SubmitRequest,
 ): SubmitResult {
+  const claims = authorized(claimsIn, "submit");
+  sweep(state);
+  const existing = state.records.get(input.envelope.attemptId);
+  // A duplicate is answered from its own record before any fence, so a
+  // draining or re-scoped worker still reports the attempt it accepted.
+  if (claims !== null && existing !== undefined && ownedBy(existing, claims)) {
+    return { outcome: "existing", status: statusOf(existing) };
+  }
   const version = input.version;
   const versions = advertised(state);
   if (!versions.some((v) => inferenceRpc.compareInferenceRpcVersions(v, version) === 0)) {
     return rejectedWith(versionRejection(state, "the submit version was not negotiated here"));
   }
-  const claims = authorized(claimsIn, "submit");
   if (claims === null) return rejectedWith(NO_SCOPE);
   const catalog = buildWorkerCatalog(state);
   const target = catalog.all.find((d) => d.deploymentId === input.target.deploymentId);
   const scope = fenceClaims(claims, input, target);
   if (scope !== null) return rejectedWith(scope);
-  sweep(state);
-  const existing = state.records.get(input.envelope.attemptId);
-  if (existing !== undefined) {
-    return ownedBy(existing, claims)
-      ? { outcome: "existing", status: statusOf(existing) }
-      : rejectedWith(NO_SCOPE);
-  }
+  if (existing !== undefined) return rejectedWith(NO_SCOPE);
   const owned = fenceOwnership(state, catalog, input.target);
   if ("rejection" in owned) return rejectedWith(owned.rejection);
   const execution = fenceExecution(state, claims, owned.deployment, input.envelope);
@@ -983,7 +991,10 @@ function cancelAttempt(
 ): inferenceRpc.InferenceRpcCancelResultV1 {
   const claims = authorized(claimsIn, "cancel");
   if (claims === null) return rejectedWith(NO_SCOPE);
-  const attemptId = "attemptId" in input ? input.attemptId : state.cancelIds.get(input.cancelId);
+  const attemptId =
+    "attemptId" in input
+      ? input.attemptId
+      : state.cancelIds.get(cancelKey(ownerKey(claims), input.cancelId));
   const record = attemptId === undefined ? undefined : ownedRecord(state, claims, attemptId);
   if (record === undefined) return { outcome: "unknown" };
   if (record.terminal !== undefined) {
