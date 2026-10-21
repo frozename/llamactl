@@ -7,6 +7,8 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "../
 
 const BIN = join(import.meta.dir, "../src/bin.ts");
 const FAKE_SERVER = join(import.meta.dir, "fixtures", "fake-llama-server.sh");
+// Each case cold-starts the CLI; under a full root `bun test` that start has exceeded bun's 5 s default test timeout, so the test limit must sit above the 10 s spawnSync limit.
+const CLI_SPAWN_TEST_TIMEOUT_MS = 20_000;
 
 function buildWorkloadYaml(binaryPath: string, modelRel = "test/fake-model.gguf"): string {
   return [
@@ -70,7 +72,7 @@ describe("llamactl admit measure", () => {
     });
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/invalid.*port/i);
-  });
+  }, CLI_SPAWN_TEST_TIMEOUT_MS);
 
   test("exits 2 for --port with negative value", () => {
     const r = spawnSync("bun", [BIN, "admit", "measure", yamlPath, "--port=-1"], {
@@ -80,7 +82,7 @@ describe("llamactl admit measure", () => {
     });
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/invalid.*port/i);
-  });
+  }, CLI_SPAWN_TEST_TIMEOUT_MS);
 
   test("exits 2 for path traversal workload name (..) with validation message", () => {
     const r = spawnSync("bun", [BIN, "admit", "measure", "../../../etc/passwd"], {
@@ -89,7 +91,7 @@ describe("llamactl admit measure", () => {
     });
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/invalid workload name/i);
-  });
+  }, CLI_SPAWN_TEST_TIMEOUT_MS);
 
   test("exits 2 for workload name containing path separator with validation message", () => {
     const r = spawnSync("bun", [BIN, "admit", "measure", "foo/bar"], {
@@ -98,7 +100,7 @@ describe("llamactl admit measure", () => {
     });
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/invalid workload name/i);
-  });
+  }, CLI_SPAWN_TEST_TIMEOUT_MS);
 
   test("exits 2 for a workload name that resolves to a missing yaml", () => {
     const r = spawnSync("bun", [BIN, "admit", "measure", "nonexistent-workload-xyz-abc"], {
@@ -107,7 +109,7 @@ describe("llamactl admit measure", () => {
       timeout: 10_000,
     });
     expect(r.status).toBe(2);
-  });
+  }, CLI_SPAWN_TEST_TIMEOUT_MS);
 
   test("exits 2 for an unsupported manifest kind", () => {
     const badYaml = join(tmpDir, "bad.yaml");
@@ -121,7 +123,7 @@ describe("llamactl admit measure", () => {
       timeout: 10_000,
     });
     expect(r.status).toBe(2);
-  });
+  }, CLI_SPAWN_TEST_TIMEOUT_MS);
 
   test("writes cache with expected fields after successful measurement", () => {
     const pythonCheck = spawnSync("python3", ["--version"], { encoding: "utf8" });
