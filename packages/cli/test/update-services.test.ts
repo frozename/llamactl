@@ -7,16 +7,21 @@ import {
   cgroupWithin,
   checkServiceMatch,
   enclosingService,
+  expandSpecifiers,
+  killModeProblem,
   killsChildren,
   launchdManager,
   parseCgroupPath,
   parseEnvFile,
   parseEnvironmentAssignments,
+  parseEnvironmentFileProp,
   parseExecStartArgv,
   parseLaunchctlPrint,
+  parseShowList,
   parseSystemctlShow,
-  parseUnitFile,
+  parseUnitStandardOutput,
   pickServiceManagerKind,
+  readCgroupProcs,
   serviceBun,
   type ServiceInfo,
   stdoutTarget,
@@ -42,6 +47,7 @@ function info(over: Partial<ServiceInfo> = {}): ServiceInfo {
     pid: 1,
     argv: ["/opt/bun", "/srv/llamactl/packages/cli/src/bin.ts", "controller", "serve"],
     cgroup: "/app.slice/llamactl-controller.service",
+    cgroupProcs: null,
     killMode: "process",
     env: {},
     stdoutPath: null,
@@ -68,33 +74,40 @@ describe("systemd parsing", () => {
     expect(parseExecStartArgv("")).toEqual([]);
   });
 
-  test("systemctl cat: later assignments win, empty ones reset lists", () => {
+  test("systemctl cat: the last StandardOutput= wins, an empty one resets", () => {
     const text = [
       "# /home/u/.config/systemd/user/llamactl-controller.service",
       "[Service]",
-      "EnvironmentFile=/srv/llamactl.env",
-      "EnvironmentFile=-/srv/optional.env",
-      'Environment=A=1 "B=two words"',
       "StandardOutput=journal",
       "",
       "# /home/u/.config/systemd/user/llamactl-controller.service.d/override.conf",
       "[Service]",
-      "StandardOutput=append:/srv/state/logs/llamactl-controller.log",
-      "Environment=C=3",
+      "StandardOutput=append:%h/state/logs/llamactl-controller.log",
     ].join("\n");
-    expect(parseUnitFile(text)).toEqual({
-      environment: { A: "1", B: "two words", C: "3" },
-      environmentFiles: [
-        { path: "/srv/llamactl.env", optional: false },
-        { path: "/srv/optional.env", optional: true },
-      ],
-      standardOutput: "append:/srv/state/logs/llamactl-controller.log",
-    });
-    expect(
-      parseUnitFile("EnvironmentFile=/a\nEnvironmentFile=\nEnvironment=X=1\nEnvironment=")
-        .environmentFiles,
-    ).toEqual([]);
-    expect(parseUnitFile("Environment=X=1\nEnvironment=").environment).toEqual({});
+    expect(parseUnitStandardOutput(text)).toBe("append:%h/state/logs/llamactl-controller.log");
+    expect(parseUnitStandardOutput("StandardOutput=file:/a\nStandardOutput=")).toBeNull();
+    expect(parseUnitStandardOutput("[Service]\nType=simple")).toBeNull();
+  });
+
+  test("systemctl show lists and EnvironmentFiles values (systemd 255 format)", () => {
+    const show = [
+      'Environment=A=1 "B=two words"',
+      "EnvironmentFiles=/srv/llamactl.env (ignore_errors=no)",
+      "EnvironmentFiles=/srv/optional.env (ignore_errors=yes)",
+    ].join("\n");
+    expect(parseShowList(show, "EnvironmentFiles").map(parseEnvironmentFileProp)).toEqual([
+      { path: "/srv/llamactl.env", optional: false },
+      { path: "/srv/optional.env", optional: true },
+    ]);
+    expect(parseShowList("Environment=\n", "Environment")).toEqual([]);
+  });
+
+  test("specifiers in a StandardOutput= path", () => {
+    const spec = { h: "/home/u", U: "1000", t: "/run/user/1000" };
+    expect(expandSpecifiers("%h/logs/c.log", spec)).toBe("/home/u/logs/c.log");
+    expect(expandSpecifiers("%t/c-%U.log", spec)).toBe("/run/user/1000/c-1000.log");
+    expect(expandSpecifiers("/l/100%%.log", spec)).toBe("/l/100%.log");
+    expect(expandSpecifiers("/l/%N.log", spec)).toBeNull();
   });
 
   test("stdoutTarget", () => {
@@ -116,39 +129,50 @@ describe("systemd parsing", () => {
 });
 
 describe("systemdManager", () => {
-  test("describe reads state, argv, cgroup, KillMode, env files and the stdout file", async () => {
+  test("describe reads state, argv, cgroup, KillMode, env and the stdout file", async () => {
     const calls: string[][] = [];
     const exec = (argv: readonly string[]): Promise<ExecResult> => {
       calls.push([...argv]);
-      if (argv[2] === "show") return Promise.resolve({ code: 0, stdout: SHOW, stderr: "" });
+      if (argv[2] === "show") {
+        const show = `${SHOW}\nEnvironment=X=1 HOME_LOG=/home/u/l\nEnvironmentFiles=/srv/llamactl.env (ignore_errors=no)`;
+        return Promise.resolve({ code: 0, stdout: show, stderr: "" });
+      }
       if (argv[2] === "cat") {
         return Promise.resolve({
           code: 0,
-          stdout:
-            "[Service]\nEnvironmentFile=/srv/llamactl.env\nEnvironment=X=1\nStandardOutput=append:/srv/c.log\n",
+          stdout: "[Service]\nEnvironment=IGNORED=1\nStandardOutput=append:%h/c.log\n",
           stderr: "",
         });
       }
       return Promise.resolve({ code: 1, stdout: "", stderr: "" });
     };
-    const files = new Map([["/srv/llamactl.env", "DEV_STORAGE=/srv/state\nX=0\n"]]);
-    const mgr = systemdManager(exec, (p) => files.get(p) ?? null);
+    const cg =
+      "/user.slice/user-1000.slice/user@1000.service/app.slice/llamactl-controller.service";
+    const files = new Map([
+      ["/srv/llamactl.env", "DEV_STORAGE=/srv/state\nX=0\n"],
+      [`/sys/fs/cgroup${cg}/cgroup.procs`, "2077114\n2039339\n"],
+    ]);
+    const mgr = systemdManager(exec, (p) => files.get(p) ?? null, { h: "/home/u" });
     const svc = await mgr.describe("controller", "llamactl-controller.service", false);
     expect(svc).toMatchObject({
       loaded: true,
       active: true,
       pid: 2077114,
       killMode: "process",
-      env: { DEV_STORAGE: "/srv/state", X: "1" },
-      stdoutPath: "/srv/c.log",
+      cgroupProcs: [2077114, 2039339],
+      // EnvironmentFile= overrides Environment=, as systemd applies them.
+      env: { DEV_STORAGE: "/srv/state", X: "0", HOME_LOG: "/home/u/l" },
+      stdoutPath: "/home/u/c.log",
       journal: false,
     });
+    expect(svc.env["IGNORED"]).toBeUndefined();
     expect(calls[0]?.slice(0, 4)).toEqual([
       "systemctl",
       "--user",
       "show",
       "llamactl-controller.service",
     ]);
+    expect(calls[0]).toContain("EnvironmentFiles");
   });
 
   test("a unit that is not loaded describes as not loaded", async () => {
@@ -276,25 +300,36 @@ describe("service matching and safety", () => {
     );
     expect(enclosingService("/user.slice/session-2.scope", units)).toBeNull();
     expect(killsChildren(info({ killMode: "control-group" }))).toBe(true);
+    expect(killsChildren(info({ killMode: "mixed" }))).toBe(true);
     expect(killsChildren(info({ killMode: "process" }))).toBe(false);
+  });
+
+  test("KillMode guard reads the unit's cgroup.procs", () => {
+    const files = new Map([["/sys/fs/cgroup/app.slice/c.service/cgroup.procs", "1\n77\n\n"]]);
+    expect(readCgroupProcs("/app.slice/c.service", (p) => files.get(p) ?? null)).toEqual([1, 77]);
+    expect(readCgroupProcs("/app.slice/x.service", () => null)).toBeNull();
+    expect(readCgroupProcs(null, () => "1")).toBeNull();
+    const cg = { pid: 1, cgroupProcs: [1, 77, 78] };
+    expect(killModeProblem(info({ ...cg, killMode: "control-group" }))).toContain(
+      "KillMode=control-group and 2 other process(es) in its cgroup (pid 77, 78)",
+    );
+    expect(killModeProblem(info({ ...cg, killMode: "mixed" }))).toContain("KillMode=mixed");
+    expect(killModeProblem(info({ ...cg, killMode: "process" }))).toBeNull();
+    expect(
+      killModeProblem(info({ pid: 1, cgroupProcs: [1], killMode: "control-group" })),
+    ).toBeNull();
+    expect(
+      killModeProblem(info({ pid: 1, cgroupProcs: null, killMode: "control-group" })),
+    ).toBeNull();
   });
 });
 
 describe("buildInstallCommand", () => {
   const all = (bin: string): string | null => `/usr/bin/${bin}`;
 
-  test("memory-capped scope, high OOM score, heavy-job lock", () => {
-    const cmd = buildInstallCommand({
-      bun: "/opt/bun",
-      platform: "linux",
-      which: all,
-      heavyLock: "/h/.heavy.lock",
-    });
+  test("memory-capped scope at a high OOM score; the lock is not part of it", () => {
+    const cmd = buildInstallCommand({ bun: "/opt/bun", platform: "linux", which: all });
     expect(cmd.argv).toEqual([
-      "flock",
-      "-w",
-      "1800",
-      "/h/.heavy.lock",
       "systemd-run",
       "--user",
       "--scope",
@@ -316,29 +351,18 @@ describe("buildInstallCommand", () => {
       "--frozen-lockfile",
       "--ignore-scripts",
     ]);
-    expect(cmd).toMatchObject({ capped: true, locked: true, warnings: [] });
+    expect(cmd).toMatchObject({ capped: true, warnings: [] });
+    expect(cmd.argv).not.toContain("flock");
   });
 
-  test("falls back to a plain install with warnings", () => {
-    const noChoom = (bin: string): string | null =>
-      bin === "choom" || bin === "flock" ? null : `/usr/bin/${bin}`;
-    const cmd = buildInstallCommand({
-      bun: "/opt/bun",
-      platform: "linux",
-      which: noChoom,
-      heavyLock: "/h/.heavy.lock",
-    });
+  test("falls back to a plain install with a warning", () => {
+    const noChoom = (bin: string): string | null => (bin === "choom" ? null : `/usr/bin/${bin}`);
+    const cmd = buildInstallCommand({ bun: "/opt/bun", platform: "linux", which: noChoom });
     expect(cmd.argv).toEqual(["/opt/bun", "install", "--frozen-lockfile", "--ignore-scripts"]);
-    expect(cmd.warnings).toHaveLength(2);
-    const mac = buildInstallCommand({
-      bun: "/opt/bun",
-      platform: "darwin",
-      which: all,
-      heavyLock: null,
-    });
+    expect(cmd.warnings).toHaveLength(1);
+    const mac = buildInstallCommand({ bun: "/opt/bun", platform: "darwin", which: all });
     expect(mac).toMatchObject({
       capped: false,
-      locked: false,
       argv: ["/opt/bun", "install", "--frozen-lockfile", "--ignore-scripts"],
     });
   });

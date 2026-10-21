@@ -13,6 +13,7 @@ import {
   closeSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   statSync,
@@ -26,7 +27,24 @@ export interface ExecResult {
 
 export interface ExecOptions {
   cwd?: string;
+  /** Kill the command (its whole process group with `processGroup`) after this long. */
   timeoutMs?: number;
+  /**
+   * Run the command in its own process group and kill the group on timeout or
+   * abort, so nothing it spawned outlives it.
+   */
+  processGroup?: boolean;
+  /** Kill the command when this aborts. */
+  signal?: AbortSignal;
+}
+
+/** Exit codes the default exec reports for a command it had to kill. */
+export const EXIT_TIMED_OUT = 124;
+export const EXIT_ABORTED = 130;
+
+/** A held lock; `release` is idempotent. */
+export interface LockHandle {
+  release: () => void;
 }
 
 export type ExecFn = (argv: readonly string[], opts?: ExecOptions) => Promise<ExecResult>;
@@ -72,32 +90,137 @@ export interface UpdateDeps {
   /** Directory of this module, used to find the checkout the CLI runs from. */
   moduleDir: string;
   now: () => number;
-  sleep: (ms: number) => Promise<void>;
+  /** Resolves after `ms`, or as soon as `signal` aborts. */
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /**
+   * Take an exclusive flock(1) on `path`, waiting up to `waitSec`. Null when it
+   * was not acquired in time or `signal` aborted the wait.
+   */
+  acquireLock: (path: string, waitSec: number, signal?: AbortSignal) => Promise<LockHandle | null>;
+  /** Entry names in a directory, or null when it cannot be read. */
+  listDir: (path: string) => string[] | null;
+  /** Call `handler` on SIGINT/SIGTERM until the returned function unsubscribes. */
+  onSignal: (handler: (signal: NodeJS.Signals) => void) => () => void;
   /** Progress lines (stderr under --json so stdout stays machine-readable). */
   log: (line: string) => void;
   stdout: (chunk: string) => void;
   stderr: (chunk: string) => void;
 }
 
-async function defaultExec(argv: readonly string[], opts: ExecOptions = {}): Promise<ExecResult> {
+function killTree(pid: number, group: boolean, sig: NodeJS.Signals): void {
   try {
-    const proc = Bun.spawn({
+    process.kill(group ? -pid : pid, sig);
+  } catch {
+    // Already gone.
+  }
+}
+
+async function defaultExec(argv: readonly string[], opts: ExecOptions = {}): Promise<ExecResult> {
+  let proc: ReturnType<typeof Bun.spawn<"ignore", "pipe", "pipe">>;
+  try {
+    proc = Bun.spawn({
       cmd: [...argv],
       ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
-      ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+      detached: opts.processGroup === true,
     });
+  } catch (err) {
+    return { code: 127, stdout: "", stderr: (err as Error).message };
+  }
+  const group = opts.processGroup === true;
+  // Set from the timer and abort callbacks; an object so it reads as mutable.
+  const killed: { why: "aborted" | "timed out" | null } = { why: null };
+  const kill = (why: "aborted" | "timed out"): void => {
+    killed.why = why;
+    killTree(proc.pid, group, "SIGTERM");
+    setTimeout(() => {
+      killTree(proc.pid, group, "SIGKILL");
+    }, 5000).unref();
+  };
+  const timer =
+    opts.timeoutMs === undefined
+      ? null
+      : setTimeout(() => {
+          kill("timed out");
+        }, opts.timeoutMs);
+  const onAbort = (): void => {
+    kill("aborted");
+  };
+  opts.signal?.addEventListener("abort", onAbort, { once: true });
+  if (opts.signal?.aborted === true) onAbort();
+  try {
     const [code, stdout, stderr] = await Promise.all([
       proc.exited,
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
     ]);
-    return { code, stdout, stderr };
-  } catch (err) {
-    return { code: 127, stdout: "", stderr: (err as Error).message };
+    if (killed.why === null) return { code, stdout, stderr };
+    const exit = killed.why === "timed out" ? EXIT_TIMED_OUT : EXIT_ABORTED;
+    return {
+      code: exit,
+      stdout,
+      stderr: `${stderr}\n${argv[0] ?? "command"} ${killed.why}; killed`,
+    };
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", onAbort);
+    // Nothing the command started may outlive it (e.g. a bun install child).
+    if (group) killTree(proc.pid, true, "SIGKILL");
   }
+}
+
+/**
+ * Hold an flock(1) on `path` in a child that keeps the lock until its stdin
+ * closes: on release, or when this process exits for any reason.
+ */
+async function defaultAcquireLock(
+  path: string,
+  waitSec: number,
+  signal?: AbortSignal,
+): Promise<LockHandle | null> {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+  } catch {
+    // flock reports an unusable path itself.
+  }
+  const proc = Bun.spawn({
+    cmd: ["flock", "-w", String(waitSec), path, "sh", "-c", "echo locked; exec cat >/dev/null"],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "ignore",
+    detached: true,
+  });
+  const release = (): void => {
+    try {
+      void proc.stdin.end();
+    } catch {
+      // Already closed.
+    }
+    killTree(proc.pid, true, "SIGTERM");
+  };
+  const onAbort = (): void => {
+    release();
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const reader = proc.stdout.getReader();
+  let out = "";
+  try {
+    while (!out.includes("locked")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out += new TextDecoder().decode(value);
+    }
+  } finally {
+    reader.releaseLock();
+    signal?.removeEventListener("abort", onAbort);
+  }
+  if (!out.includes("locked") || signal?.aborted === true) {
+    release();
+    return null;
+  }
+  return { release };
 }
 
 async function defaultHttpGet(url: string, opts: HttpOptions): Promise<HttpResponse | null> {
@@ -118,6 +241,30 @@ function defaultReadFile(path: string): string | null {
   } catch {
     return null;
   }
+}
+
+function defaultListDir(path: string): string[] | null {
+  try {
+    return readdirSync(path);
+  } catch {
+    return null;
+  }
+}
+
+function defaultOnSignal(handler: (signal: NodeJS.Signals) => void): () => void {
+  let count = 0;
+  const listener = (sig: NodeJS.Signals): void => {
+    count += 1;
+    // A third signal is the operator insisting: exit without the cleanup.
+    if (count >= 3) process.exit(130);
+    handler(sig);
+  };
+  process.on("SIGINT", listener);
+  process.on("SIGTERM", listener);
+  return () => {
+    process.off("SIGINT", listener);
+    process.off("SIGTERM", listener);
+  };
 }
 
 function defaultReadFileFrom(path: string, offset: number): string | null {
@@ -182,9 +329,21 @@ export function defaultUpdateDeps(): UpdateDeps {
     execPath: process.execPath,
     moduleDir: dirname(fileURLToPath(import.meta.url)),
     now: () => Date.now(),
-    sleep: async (ms): Promise<void> => {
-      await Bun.sleep(ms);
+    sleep: async (ms, signal): Promise<void> => {
+      if (signal?.aborted === true) return;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, ms);
+        function done(): void {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", done);
+          resolve();
+        }
+        signal?.addEventListener("abort", done, { once: true });
+      });
     },
+    acquireLock: defaultAcquireLock,
+    listDir: defaultListDir,
+    onSignal: defaultOnSignal,
     log: (line): void => {
       process.stdout.write(`${line}\n`);
     },

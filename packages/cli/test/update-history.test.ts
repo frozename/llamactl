@@ -4,10 +4,12 @@ import { join } from "node:path";
 
 import {
   applyStartLine,
+  defaultRollbackTarget,
   defaultUpdateHistoryPath,
+  failedLine,
   formatHistoryRef,
-  lastFromRef,
   okLine,
+  parseHistory,
   parseHistoryRef,
   rollbackStartLine,
   rolledBackLine,
@@ -57,29 +59,92 @@ describe("history refs", () => {
   });
 });
 
-describe("lastFromRef", () => {
+describe("defaultRollbackTarget", () => {
+  const C = "c0ffee0c0ffee0c0ffee0c0ffee0c0ffee0c0ff";
+
   test("reads the bash updater's history file", () => {
     const text = [
       `2026-10-21T17:28:23-04:00 from=feat/strata-engine@${A} to=${B}`,
       "2026-10-21T17:28:27-04:00 ok 5b91e5c",
       "",
     ].join("\n");
-    expect(lastFromRef(text)).toEqual({ branch: "feat/strata-engine", sha: A });
+    expect(defaultRollbackTarget(text)).toEqual({ branch: "feat/strata-engine", sha: A });
   });
 
-  test("a rollback entry's from= is the default target, so a second rollback undoes the first", () => {
+  test("a verified rollback's from= is the target, so a second rollback undoes the first", () => {
     const text = [
       `t1 from=feat/strata-engine@${A} to=${B}`,
       "t2 ok 5b91e5c",
       `t3 rollback from=main@${B} to=feat/strata-engine@${A}`,
       "t4 ok 5b5bc51",
     ].join("\n");
-    expect(lastFromRef(text)).toEqual({ branch: "main", sha: B });
+    expect(defaultRollbackTarget(text)).toEqual({ branch: "main", sha: B });
   });
 
-  test("no from= anywhere is null", () => {
-    expect(lastFromRef("")).toBeNull();
-    expect(lastFromRef("t ok abc1234\n")).toBeNull();
+  test("an update that failed and was undone is skipped", () => {
+    const text = [
+      `t1 from=feat/x@${A} to=${B}`,
+      "t2 ok 5b91e5c",
+      `t3 from=main@${B} to=${C}`,
+      "t4 rolled-back to main@5b91e5c",
+    ].join("\n");
+    // The checkout is back at B; the last real update was A -> B.
+    expect(defaultRollbackTarget(text)).toEqual({ branch: "feat/x", sha: A });
+  });
+
+  test("a failed rollback is retried, not reversed", () => {
+    const text = [
+      `t1 from=feat/x@${A} to=${B}`,
+      "t2 ok 5b91e5c",
+      `t3 rollback from=main@${B} to=feat/x@${A}`,
+      "t4 failed 5b5bc51 rollback failed (switch: index.lock)",
+    ].join("\n");
+    expect(defaultRollbackTarget(text)).toEqual({ branch: "feat/x", sha: A });
+    // A rollback killed before it recorded an outcome is retried the same way.
+    expect(defaultRollbackTarget(text.split("\n").slice(0, 3).join("\n"))).toEqual({
+      branch: "feat/x",
+      sha: A,
+    });
+  });
+
+  test("an update whose undo failed too goes back to where it started", () => {
+    const text = [
+      `t1 from=feat/x@${A} to=${B}`,
+      "t2 ok 5b91e5c",
+      `t3 from=main@${B} to=${C}`,
+      "t4 failed c0ffee0 update and rollback failed (install)",
+    ].join("\n");
+    expect(defaultRollbackTarget(text)).toEqual({ branch: "main", sha: B });
+  });
+
+  test("no usable entry is null", () => {
+    expect(defaultRollbackTarget("")).toBeNull();
+    expect(defaultRollbackTarget("t ok abc1234\n")).toBeNull();
+    expect(
+      defaultRollbackTarget(`t1 from=main@${A} to=${B}\nt2 rolled-back to main@5b5bc51\n`),
+    ).toBeNull();
+  });
+
+  test("parseHistory pairs each start line with the outcome that follows it", () => {
+    const entries = parseHistory(
+      [`t1 from=${A} to=${B}`, "t2 ok 5b91e5c", `t3 rollback from=main@${B} to=DETACHED@${A}`].join(
+        "\n",
+      ),
+    );
+    expect(entries).toEqual([
+      {
+        kind: "apply",
+        from: { branch: null, sha: A },
+        to: { branch: null, sha: B },
+        outcome: "ok",
+      },
+      {
+        kind: "rollback",
+        from: { branch: "main", sha: B },
+        to: { branch: null, sha: A },
+        outcome: null,
+      },
+    ]);
   });
 });
 
@@ -98,8 +163,16 @@ describe("history lines", () => {
     );
   });
 
-  test("an apply line written now is what the next rollback reads", () => {
-    const text = applyStartLine("T", { branch: "feat/x", sha: A }, B) + okLine("T", B);
-    expect(lastFromRef(text)).toEqual({ branch: "feat/x", sha: A });
+  test("lines written now are what the next rollback reads", () => {
+    const ok = applyStartLine("T", { branch: "feat/x", sha: A }, B) + okLine("T", B);
+    expect(defaultRollbackTarget(ok)).toEqual({ branch: "feat/x", sha: A });
+    expect(failedLine("T", B, "rollback failed (x)\ny")).toBe(
+      "T failed 5b91e5c rollback failed (x) y\n",
+    );
+    const failedRollback =
+      ok +
+      rollbackStartLine("T", { branch: "main", sha: B }, { branch: "feat/x", sha: A }) +
+      failedLine("T", A, "rollback failed");
+    expect(defaultRollbackTarget(failedRollback)).toEqual({ branch: "feat/x", sha: A });
   });
 });

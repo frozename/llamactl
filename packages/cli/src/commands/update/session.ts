@@ -35,6 +35,7 @@ import {
   checkServiceMatch,
   DEFAULT_UNITS,
   enclosingService,
+  killModeProblem,
   killsChildren,
   makeServiceManager,
   parseCgroupPath,
@@ -151,7 +152,7 @@ async function resolveServices(
     state.problems.push(`${tool} not found; cannot manage the llamactl services`);
     return state;
   }
-  const manager = makeServiceManager(kind, deps.exec, deps.readFile, deps.uid);
+  const manager = makeServiceManager(kind, deps.exec, deps.readFile, deps.uid, deps.env);
   state.manager = manager;
   for (const role of ["controller", "agent"] as const) {
     const { name, explicit } = unitName(flags, deps, kind, role);
@@ -178,34 +179,76 @@ async function snapshotHosts(deps: UpdateDeps, stateEnv: NodeJS.ProcessEnv): Pro
   );
 }
 
-/** Stopping or restarting a unit whose KillMode kills its children must not take a model host down. */
+function loadedUnits(services: ServicesState): ServiceInfo[] {
+  return [services.controller, services.agent].filter((u): u is ServiceInfo => u?.loaded === true);
+}
+
+/**
+ * A unit stop or restart must not take a model host down. With a readable
+ * cgroup, any process besides the unit's main one blocks a KillMode that kills
+ * the cgroup; otherwise fall back to the hosts found through their pid files.
+ */
 function killModeProblems(
   deps: UpdateDeps,
   services: ServicesState,
   hosts: readonly HostStatus[],
 ): string[] {
   if (services.kind !== "systemd") return [];
-  const problems: string[] = [];
-  const units = [services.controller, services.agent].filter((u): u is ServiceInfo => u !== null);
-  for (const unit of units) {
-    if (unit.cgroup === null || !killsChildren(unit)) continue;
-    const cgroup = unit.cgroup;
-    for (const h of hosts) {
-      const hostCgroup = parseCgroupPath(deps.readFile(`/proc/${String(h.pid)}/cgroup`) ?? "");
-      if (hostCgroup !== null && cgroupWithin(hostCgroup, cgroup)) {
-        problems.push(
-          `${unit.name} has KillMode=${String(unit.killMode)}: stopping it would kill ${h.name} (pid ${String(h.pid)}); set KillMode=process on the unit first`,
-        );
-      }
-    }
-  }
-  return problems;
+  return loadedUnits(services).flatMap((unit) => {
+    if (unit.cgroup === null || !killsChildren(unit)) return [];
+    if (unit.cgroupProcs === null) return hostsInUnitCgroup(deps, unit, unit.cgroup, hosts);
+    const problem = killModeProblem(unit);
+    return problem === null ? [] : [problem];
+  });
+}
+
+/** Fallback when the unit's cgroup.procs is unreadable: the hosts found through pid files. */
+function hostsInUnitCgroup(
+  deps: UpdateDeps,
+  unit: ServiceInfo,
+  cgroup: string,
+  hosts: readonly HostStatus[],
+): string[] {
+  return hosts.flatMap((h) => {
+    const hostCgroup = parseCgroupPath(deps.readFile(`/proc/${String(h.pid)}/cgroup`) ?? "");
+    if (hostCgroup === null || !cgroupWithin(hostCgroup, cgroup)) return [];
+    return [
+      `${unit.name} has KillMode=${String(unit.killMode)}: stopping it would kill ${h.name} (pid ${String(h.pid)}); set KillMode=process on the unit first`,
+    ];
+  });
+}
+
+/** A unit whose main process is a model host is the wrong unit (e.g. a misnamed one). */
+function hostUnitProblems(services: ServicesState, hosts: readonly HostStatus[]): string[] {
+  return loadedUnits(services).flatMap((unit) => {
+    const host = hosts.find((h) => h.pid === unit.pid);
+    return host === undefined
+      ? []
+      : [
+          `${unit.name}'s main process (pid ${String(host.pid)}) is model host ${host.name}; refusing to stop or restart it`,
+        ];
+  });
+}
+
+/** Manifests but no running hosts usually means the runtime dir is not the services'. */
+function missingHostsWarning(
+  deps: UpdateDeps,
+  stateEnv: NodeJS.ProcessEnv,
+  hosts: readonly HostStatus[],
+): string[] {
+  if (hosts.length > 0) return [];
+  const dir = workloadStore.defaultWorkloadsDir(stateEnv);
+  const manifests = (deps.listDir(dir) ?? []).filter(
+    (f) => f.endsWith(".yaml") && !f.startsWith("."),
+  );
+  if (manifests.length === 0) return [];
+  return [
+    `${String(manifests.length)} workload manifest(s) in ${dir} but no running managed model host was found; if hosts are running, the runtime dir differs from the services' (check LOCAL_AI_RUNTIME_DIR)`,
+  ];
 }
 
 async function findInsideUnit(deps: UpdateDeps, services: ServicesState): Promise<string | null> {
-  const units = [services.controller, services.agent].filter(
-    (u): u is ServiceInfo => u?.loaded === true,
-  );
+  const units = loadedUnits(services);
   if (units.length === 0) return null;
   if (services.kind === "systemd") {
     return (
@@ -233,7 +276,10 @@ export async function openSession(flags: UpdateFlags, deps: UpdateDeps): Promise
   const settingEnv = { ...controllerEnv, ...deps.env };
   const stateEnv = { ...deps.env, ...controllerEnv };
   const hosts = await snapshotHosts(deps, stateEnv);
-  services.problems.push(...killModeProblems(deps, services, hosts));
+  services.problems.push(
+    ...killModeProblems(deps, services, hosts),
+    ...hostUnitProblems(services, hosts),
+  );
   const agentEndpoint =
     services.agent?.loaded !== true
       ? null
@@ -274,7 +320,7 @@ export async function openSession(flags: UpdateFlags, deps: UpdateDeps): Promise
             nonEmpty(settingEnv["LLAMACTL_UPDATE_CONTROLLER_LOG"]),
           ),
     insideUnit: await findInsideUnit(deps, services),
-    warnings: [...warnings, ...services.warnings],
+    warnings: [...warnings, ...services.warnings, ...missingHostsWarning(deps, stateEnv, hosts)],
   };
 }
 

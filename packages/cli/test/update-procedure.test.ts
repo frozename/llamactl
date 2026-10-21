@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { UpdateDeps } from "../src/commands/update/deps.js";
+import type { HttpResponse, UpdateDeps } from "../src/commands/update/deps.js";
 
 import { runUpdate } from "../src/commands/update/index.js";
 import {
@@ -12,6 +12,7 @@ import {
   AGENT_UNIT,
   BUN,
   CONTROLLER_UNIT,
+  ENV_FILE,
   fakeDeps,
   HISTORY,
   makeWorld,
@@ -25,7 +26,8 @@ interface Report {
   result: string;
   refusals: string[];
   steps: { step: string; ok: boolean; detail: string; warnings: string[] }[];
-  rollbackSteps: { step: string; ok: boolean; detail: string }[];
+  rollbackSteps: { step: string; ok: boolean; detail: string; warnings: string[] }[];
+  finalStart: { step: string; ok: boolean; detail: string } | null;
   error: string | null;
   rollbackTarget: { branch: string | null; sha: string } | null;
 }
@@ -47,7 +49,15 @@ async function run(
 /** Install events carry the full argv; most tests only care that one ran. */
 const eventLabel = (e: string): string => (e.startsWith("install ") ? "install" : e);
 
-const INSTALL = `install flock -w 1800 /h/.heavy.lock systemd-run --user --scope --collect -q -p MemoryHigh=12G -p MemoryMax=16G -p MemorySwapMax=1G -- choom -n 900 -- ${BUN} install --frozen-lockfile --ignore-scripts`;
+const LOCK = "/h/.heavy.lock";
+
+function withHeavyLock(w: World): World {
+  const env = w.files.get(ENV_FILE) ?? "";
+  w.files.set(ENV_FILE, `${env}LLAMACTL_UPDATE_HEAVY_LOCK=${LOCK}\n`);
+  return w;
+}
+
+const INSTALL = `install systemd-run --user --scope --collect -q -p MemoryHigh=12G -p MemoryMax=16G -p MemorySwapMax=1G -- choom -n 900 -- ${BUN} install --frozen-lockfile --ignore-scripts`;
 
 describe("buildDeploySteps", () => {
   test("controller stopped before the switch, started after the install, agent last", () => {
@@ -57,6 +67,7 @@ describe("buildDeploySteps", () => {
       depsChanged: true,
       waitIdleSec: 600,
       restartAgent: true,
+      lock: false,
     });
     expect(steps.map((s) => s.kind)).toEqual([
       "stop-controller",
@@ -70,13 +81,37 @@ describe("buildDeploySteps", () => {
     ]);
   });
 
-  test("no install without dependency changes; no agent restart when not asked", () => {
+  test("the heavy-job lock is held from before the stop until after the start", () => {
+    const steps = buildDeploySteps({
+      sha: sha(4),
+      mode: { kind: "main" },
+      depsChanged: true,
+      waitIdleSec: 600,
+      restartAgent: true,
+      lock: true,
+    });
+    expect(steps.map((s) => s.kind)).toEqual([
+      "lock",
+      "stop-controller",
+      "switch",
+      "install",
+      "start-controller",
+      "unlock",
+      "await-controller",
+      "wait-idle",
+      "restart-agent",
+      "verify",
+    ]);
+  });
+
+  test("no install (and no lock) without dependency changes; no agent restart when not asked", () => {
     const steps = buildDeploySteps({
       sha: sha(1),
       mode: { kind: "detach" },
       depsChanged: false,
       waitIdleSec: 0,
       restartAgent: false,
+      lock: true,
     });
     expect(steps.map((s) => s.kind)).toEqual([
       "stop-controller",
@@ -118,26 +153,30 @@ describe("controller reports", () => {
 
 describe("llamactl update --apply", () => {
   test("runs the ordered procedure and records history", async () => {
-    const w = makeWorld();
-    w.files.set(
-      "/srv/llamactl.env",
-      `${w.files.get("/srv/llamactl.env") ?? ""}LLAMACTL_UPDATE_HEAVY_LOCK=/h/.heavy.lock\n`,
-    );
+    const w = withHeavyLock(makeWorld());
     const { code, report, log } = await run(w, ["--apply"]);
     expect(code).toBe(0);
     expect(report.result).toBe("applied");
+    // The lock is taken before anything stops and dropped once the controller is back.
     expect(w.events).toEqual([
+      `lock ${LOCK}`,
       `stop ${CONTROLLER_UNIT}`,
       `switch -C main ${sha(4)}`,
       INSTALL,
       `start ${CONTROLLER_UNIT}`,
+      `unlock ${LOCK}`,
       `restart ${AGENT_UNIT}`,
     ]);
+    expect(w.installOpts[0]).toMatchObject({ processGroup: true, timeoutMs: 900_000, cwd: REPO });
+    expect(report.finalStart).toBeNull();
+    expect(w.signalHandler).toBeNull();
     expect(report.steps.map((s) => `${s.step}:${String(s.ok)}`)).toEqual([
+      "lock:true",
       "stop-controller:true",
       "switch:true",
       "install:true",
       "start-controller:true",
+      "unlock:true",
       "await-controller:true",
       "wait-idle:true",
       "restart-agent:true",
@@ -176,6 +215,128 @@ describe("llamactl update --apply", () => {
     expect(report.steps.at(-1)).toMatchObject({ step: "install", ok: false });
     expect(w.head).toBe(sha(1));
     expect(w.branch).toBe("feat/strata-engine");
+  });
+
+  test("a rollback whose install fails too still leaves the controller started", async () => {
+    const w = withHeavyLock(makeWorld({ installExits: [1, 1] }));
+    const { code, report } = await run(w, ["--apply"]);
+    expect(code).toBe(1);
+    expect(report.result).toBe("failed");
+    expect(report.rollbackSteps.at(-1)).toMatchObject({ step: "install", ok: false });
+    expect(report.error).toContain("the rollback is unhealthy too");
+    // The rollback reused the lock it already held, then the final start ran and dropped it.
+    expect(w.events).toEqual([
+      `lock ${LOCK}`,
+      `stop ${CONTROLLER_UNIT}`,
+      `switch -C main ${sha(4)}`,
+      INSTALL,
+      `stop ${CONTROLLER_UNIT}`,
+      "switch feat/strata-engine",
+      INSTALL,
+      `start ${CONTROLLER_UNIT}`,
+      `unlock ${LOCK}`,
+    ]);
+    expect(report.finalStart).toMatchObject({ step: "start-controller", ok: true });
+    expect(w.units.get(CONTROLLER_UNIT)?.active).toBe(true);
+    expect(w.files.get(HISTORY)).toMatch(/ failed 4444444 update and rollback failed \(install: /);
+  });
+
+  test("a rollback whose switch fails (stale index.lock) still leaves the controller started", async () => {
+    const w = makeWorld({
+      switchFailures: new Set([sha(1)]),
+      onAgentRestart: (world) => {
+        world.agentHealthy = false;
+      },
+    });
+    const { code, report } = await run(w, ["--apply"]);
+    expect(code).toBe(1);
+    expect(report.rollbackSteps.at(-1)).toMatchObject({ step: "switch", ok: false });
+    expect(report.rollbackSteps.at(-1)?.detail).toContain(".git/index.lock': File exists");
+    // The branch switch fails, the detached fallback fails too, then the final start runs.
+    expect(w.events.slice(-4)).toEqual([
+      `stop ${CONTROLLER_UNIT}`,
+      "switch FAILED feat/strata-engine",
+      `switch FAILED ${sha(1)}`,
+      `start ${CONTROLLER_UNIT}`,
+    ]);
+    expect(report.finalStart).toMatchObject({ ok: true });
+    expect(w.units.get(CONTROLLER_UNIT)?.active).toBe(true);
+  });
+
+  test("a rollback after the lock was released waits for it, then goes ahead without it", async () => {
+    const w = withHeavyLock(
+      makeWorld({
+        lockFreeAfterFirst: false,
+        onAgentRestart: (world) => {
+          world.agentHealthy = world.head === sha(1);
+        },
+      }),
+    );
+    const { code, report } = await run(w, ["--apply"]);
+    expect(code).toBe(1);
+    expect(report.rollbackSteps.every((st) => st.ok)).toBe(true);
+    expect(report.rollbackSteps[0]?.warnings[0]).toContain("going ahead without it");
+    const rollback = w.events.slice(w.events.indexOf(`unlock ${LOCK}`) + 1);
+    // Nothing was stopped while the rollback waited for the lock.
+    expect(rollback.slice(0, 3)).toEqual([
+      `restart ${AGENT_UNIT}`,
+      `lock TIMEOUT ${LOCK}`,
+      `stop ${CONTROLLER_UNIT}`,
+    ]);
+    expect(w.units.get(CONTROLLER_UNIT)?.active).toBe(true);
+    expect(w.head).toBe(sha(1));
+  });
+
+  test("an install that times out (process group killed) rolls back", async () => {
+    const w = makeWorld({ installExits: [124] });
+    const { code, report } = await run(w, ["--apply"]);
+    expect(code).toBe(1);
+    expect(report.steps.at(-1)).toMatchObject({ step: "install", ok: false });
+    expect(report.steps.at(-1)?.detail).toContain("exit 124");
+    expect(w.installOpts.every((o) => o.processGroup === true)).toBe(true);
+    expect(report.rollbackSteps.every((st) => st.ok)).toBe(true);
+    expect(w.units.get(CONTROLLER_UNIT)?.active).toBe(true);
+  });
+
+  test("a signal during the install stops the run and starts the controller again", async () => {
+    const w = withHeavyLock(
+      makeWorld({
+        onInstall: (world) => {
+          world.signalHandler?.("SIGINT");
+        },
+      }),
+    );
+    const { code, report, log } = await run(w, ["--apply"]);
+    expect(code).toBe(130);
+    expect(report.result).toBe("interrupted");
+    expect(report.rollbackSteps).toEqual([]);
+    expect(w.installOpts[0]?.signal?.aborted).toBe(true);
+    expect(w.events.slice(-2)).toEqual([`start ${CONTROLLER_UNIT}`, `unlock ${LOCK}`]);
+    expect(report.finalStart).toMatchObject({ ok: true });
+    expect(w.units.get(CONTROLLER_UNIT)?.active).toBe(true);
+    expect(w.signalHandler).toBeNull();
+    expect(w.files.get(HISTORY)).toMatch(/ failed 4444444 interrupted by a signal\n$/);
+    expect(log).toContain("SIGINT: stopping after the current step");
+  });
+
+  test("a signal while waiting for idle hosts restarts nothing more", async () => {
+    const w = makeWorld();
+    const seat = w.hosts[0];
+    if (seat !== undefined) seat.idle = "busy";
+    const { deps } = fakeDeps(w);
+    let calls = 0;
+    const httpGet = deps.httpGet;
+    const { code, report } = await run(w, ["--apply"], {
+      httpGet: async (url, opts): Promise<HttpResponse | null> => {
+        if (url.endsWith("/metrics") && (calls += 1) === 3) w.signalHandler?.("SIGTERM");
+        return httpGet === undefined ? null : await httpGet(url, opts);
+      },
+    });
+    expect(code).toBe(130);
+    expect(report.steps.at(-1)).toMatchObject({ step: "wait-idle", ok: false });
+    expect(w.events.filter((e) => e.startsWith("restart"))).toEqual([]);
+    expect(report.finalStart).toBeNull();
+    expect(w.units.get(CONTROLLER_UNIT)?.active).toBe(true);
   });
 
   test("an unhealthy agent after the restart rolls back automatically", async () => {
@@ -353,13 +514,57 @@ describe("--apply refusals touch nothing", () => {
     );
   });
 
-  test("a unit whose KillMode would kill a model host", async () => {
+  test("a unit whose KillMode would kill other processes in its cgroup", async () => {
+    const w = makeWorld();
+    const ctl = w.units.get(CONTROLLER_UNIT);
+    if (ctl !== undefined) ctl.killMode = "mixed";
+    expect((await refused(w))[0]).toContain(
+      `${CONTROLLER_UNIT} has KillMode=mixed and 1 other process(es) in its cgroup (pid 2039339)`,
+    );
+  });
+
+  test("the cgroup guard holds even when no host was found through pid files", async () => {
+    const w = makeWorld({ hosts: [] });
+    const agent = w.units.get(AGENT_UNIT);
+    if (agent !== undefined) agent.killMode = "control-group";
+    w.files.set(`/sys/fs/cgroup${UNIT_CGROUP}/${AGENT_UNIT}/cgroup.procs`, "1002\n4100\n");
+    expect((await refused(w))[0]).toContain(`${AGENT_UNIT} has KillMode=control-group`);
+  });
+
+  test("without a readable cgroup, the pid-file hosts guard the KillMode", async () => {
     const w = makeWorld();
     const ctl = w.units.get(CONTROLLER_UNIT);
     if (ctl !== undefined) ctl.killMode = "control-group";
+    w.files.delete(`/sys/fs/cgroup${UNIT_CGROUP}/${CONTROLLER_UNIT}/cgroup.procs`);
     expect((await refused(w))[0]).toContain(
       "KillMode=control-group: stopping it would kill seat (pid 2039339)",
     );
+  });
+
+  test("a unit whose main process is a model host", async () => {
+    const w = makeWorld();
+    const agent = w.units.get(AGENT_UNIT);
+    if (agent !== undefined) agent.pid = 2039339;
+    const reasons = await refused(w, ["--apply", "--agent-unit", AGENT_UNIT]);
+    expect(reasons).toContain(
+      `${AGENT_UNIT}'s main process (pid 2039339) is model host seat; refusing to stop or restart it`,
+    );
+  });
+
+  test("a local main with commits the target lacks", async () => {
+    const w = makeWorld({ commits: [sha(1), sha(2), sha(3), sha(4), sha(5)], originMain: sha(4) });
+    w.branches.set("main", sha(5));
+    expect((await refused(w))[0]).toContain("local branch main (5555555) has commits");
+  });
+
+  test("the heavy-job lock not free within the wait: nothing is stopped", async () => {
+    const w = withHeavyLock(makeWorld({ lockFree: false }));
+    const { code, report } = await run(w, ["--apply"]);
+    expect(code).toBe(1);
+    expect(report.result).toBe("refused");
+    expect(report.refusals[0]).toContain(`could not take the heavy-job lock ${LOCK} within 1800 s`);
+    expect(w.events).toEqual([`lock TIMEOUT ${LOCK}`]);
+    expect(w.files.has(HISTORY)).toBe(false);
   });
 
   test("an unhealthy host before the update", async () => {

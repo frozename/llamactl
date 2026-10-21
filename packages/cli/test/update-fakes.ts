@@ -2,12 +2,15 @@
 // --user units (or launchd jobs), a controller log, model-host and agent HTTP
 // endpoints, and a fake clock — all behind the command's injected deps. No
 // real git, systemctl, launchctl, network or filesystem is touched.
-import type {
-  ExecResult,
-  HttpOptions,
-  HttpResponse,
-  ManagedHost,
-  UpdateDeps,
+import {
+  type ExecOptions,
+  type ExecResult,
+  EXIT_ABORTED,
+  type HttpOptions,
+  type HttpResponse,
+  type LockHandle,
+  type ManagedHost,
+  type UpdateDeps,
 } from "../src/commands/update/deps.js";
 
 export const REPO = "/srv/llamactl";
@@ -66,10 +69,26 @@ export interface World {
   /** Mutating actions only, in order. */
   events: string[];
   installExit: number;
+  installRuns?: number;
+  /** ExecOptions each install ran with. */
+  installOpts: ExecOptions[];
   /** Called on every controller start; default reports every manifest host unchanged. */
   onControllerStart: (w: World) => void;
   /** Called on every agent restart; default leaves the agent healthy. */
   onAgentRestart: (w: World) => void;
+  /** Called when bun install starts (e.g. to deliver a signal mid-install). */
+  onInstall: (w: World) => void;
+  /** Exit code of the install the n-th time it runs (default `installExit`). */
+  installExits: number[];
+  /** `git switch` to any of these targets fails as if .git/index.lock were stale. */
+  switchFailures: Set<string>;
+  /** The heavy-job lock is free (else acquireLock times out). */
+  lockFree: boolean;
+  /** Lock acquisitions in a rollback succeed only while this is true. */
+  lockFreeAfterFirst: boolean;
+  lockAcquisitions: number;
+  /** The handler the command registered for SIGINT/SIGTERM, while registered. */
+  signalHandler: ((sig: NodeJS.Signals) => void) | null;
   launchd: boolean;
 }
 
@@ -158,6 +177,9 @@ export function makeWorld(over: Partial<World> = {}): World {
       ],
       ["/proc/self/cgroup", "0::/user.slice/user-1000.slice/session-2.scope\n"],
       ["/proc/2039339/cgroup", `0::${UNIT_CGROUP}/${CONTROLLER_UNIT}\n`],
+      // The seat was spawned by the controller, so it lives in the controller's cgroup.
+      [`/sys/fs/cgroup${UNIT_CGROUP}/${CONTROLLER_UNIT}/cgroup.procs`, "1001\n2039339\n"],
+      [`/sys/fs/cgroup${UNIT_CGROUP}/${AGENT_UNIT}/cgroup.procs`, "1002\n"],
     ]),
     controllerLog: "[2026-10-21T20:00:00.000Z] modelhost/seat on local: unchanged\n",
     agentHealthy: true,
@@ -165,8 +187,16 @@ export function makeWorld(over: Partial<World> = {}): World {
     calls: [],
     events: [],
     installExit: 0,
+    installOpts: [],
     onControllerStart: defaultControllerStart,
     onAgentRestart: () => undefined,
+    onInstall: () => undefined,
+    installExits: [],
+    switchFailures: new Set(),
+    lockFree: true,
+    lockFreeAfterFirst: true,
+    lockAcquisitions: 0,
+    signalHandler: null,
     launchd: false,
     ...over,
   };
@@ -190,8 +220,15 @@ function resolveRev(w: World, rev: string): string | null {
   return i >= 0 ? (w.commits[i] ?? null) : null;
 }
 
+const INDEX_LOCK = `fatal: Unable to create '${REPO}/.git/index.lock': File exists.`;
+
 function gitSwitch(w: World, args: string[]): ExecResult {
   const rest = args.filter((a) => a !== "--quiet");
+  const target = rest.at(-1) ?? "";
+  if (w.switchFailures.has(target) || w.switchFailures.has(w.branches.get(target) ?? "")) {
+    w.events.push(`switch FAILED ${target}`);
+    return no(INDEX_LOCK, 128);
+  }
   if (rest[0] === "-C") {
     const [, name, target] = rest;
     if (name === undefined || target === undefined) return no();
@@ -269,6 +306,10 @@ function showUnit(w: World, name: string): ExecResult {
       `ExecStart=${exec}`,
       `ControlGroup=${u.cgroup}`,
       `KillMode=${u.killMode}`,
+      "Environment=",
+      ...(u.environmentFile === null
+        ? []
+        : [`EnvironmentFiles=${u.environmentFile} (ignore_errors=no)`]),
       `Id=${name}`,
       "LoadState=loaded",
       `ActiveState=${u.active ? "active" : "inactive"}`,
@@ -394,15 +435,25 @@ function route(w: World, a: string[], uid: number): ExecResult | null {
   return null;
 }
 
-export function fakeExec(w: World, uid = 501): (argv: readonly string[]) => Promise<ExecResult> {
-  return (argv) => {
+function install(w: World, a: string[], opts: ExecOptions | undefined): ExecResult {
+  w.events.push(`install ${a.join(" ")}`);
+  w.installRuns = (w.installRuns ?? 0) + 1;
+  w.onInstall(w);
+  if (opts?.signal?.aborted === true) return no("bun install aborted; killed", EXIT_ABORTED);
+  const exit = w.installExits[w.installRuns - 1] ?? w.installExit;
+  return exit === 0 ? ok() : no("error: lockfile had changes", exit);
+}
+
+export function fakeExec(
+  w: World,
+  uid = 501,
+): (argv: readonly string[], opts?: ExecOptions) => Promise<ExecResult> {
+  return (argv, opts) => {
     const a = [...argv];
     w.calls.push(a);
     if (isInstall(a)) {
-      w.events.push(`install ${a.join(" ")}`);
-      return Promise.resolve(
-        w.installExit === 0 ? ok() : no("error: lockfile had changes", w.installExit),
-      );
+      w.installOpts.push(opts ?? {});
+      return Promise.resolve(install(w, a, opts));
     }
     const result = route(w, a, uid);
     return result === null
@@ -489,6 +540,31 @@ export function fakeDeps(
     sleep: (ms) => {
       w.clock += ms;
       return Promise.resolve();
+    },
+    acquireLock: (path, waitSec): Promise<LockHandle | null> => {
+      w.lockAcquisitions += 1;
+      const free = w.lockAcquisitions === 1 ? w.lockFree : w.lockFreeAfterFirst;
+      if (!free) {
+        w.clock += waitSec * 1000;
+        w.events.push(`lock TIMEOUT ${path}`);
+        return Promise.resolve(null);
+      }
+      w.events.push(`lock ${path}`);
+      let held = true;
+      return Promise.resolve({
+        release: () => {
+          if (held) w.events.push(`unlock ${path}`);
+          held = false;
+        },
+      });
+    },
+    listDir: (path) =>
+      path.endsWith("/workloads") ? [...w.manifests].map((m) => `${m}.yaml`) : null,
+    onSignal: (handler) => {
+      w.signalHandler = handler;
+      return () => {
+        w.signalHandler = null;
+      };
     },
     log: (line) => {
       out.log.push(line);

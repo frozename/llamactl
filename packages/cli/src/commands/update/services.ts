@@ -23,6 +23,8 @@ export interface ServiceInfo {
   cgroup: string | null;
   /** systemd: KillMode (process keeps model hosts alive across a stop). */
   killMode: string | null;
+  /** systemd: pids in the unit's cgroup, or null when unreadable. */
+  cgroupProcs: number[] | null;
   /** Environment the service runs with (Environment= and EnvironmentFile=, or launchd's). */
   env: Record<string, string>;
   /** File the service writes stdout to, when it is a file. */
@@ -69,6 +71,7 @@ function emptyInfo(role: ServiceRole, name: string, explicit: boolean): ServiceI
     pid: null,
     argv: [],
     cgroup: null,
+    cgroupProcs: null,
     killMode: null,
     env: {},
     stdoutPath: null,
@@ -129,54 +132,19 @@ export function parseEnvironmentAssignments(value: string): Record<string, strin
   return out;
 }
 
-export interface UnitFileSettings {
-  environment: Record<string, string>;
-  environmentFiles: { path: string; optional: boolean }[];
-  standardOutput: string | null;
-}
-
 /**
- * The settings `llamactl update` needs from `systemctl cat` (unit file plus
- * drop-ins, in override order): later assignments win, an empty assignment
- * resets a list.
+ * The effective StandardOutput= in `systemctl cat` output (unit file plus
+ * drop-ins in override order): the last assignment wins, an empty one resets.
  */
-export function parseUnitFile(text: string): UnitFileSettings {
-  const settings: UnitFileSettings = {
-    environment: {},
-    environmentFiles: [],
-    standardOutput: null,
-  };
+export function parseUnitStandardOutput(text: string): string | null {
+  let value: string | null = null;
   for (const raw of text.split("\n")) {
     const line = raw.trim();
-    const eq = line.indexOf("=");
-    if (line.startsWith("#") || eq <= 0) continue;
-    applyUnitSetting(settings, line.slice(0, eq).trim(), line.slice(eq + 1).trim());
+    if (!line.startsWith("StandardOutput=")) continue;
+    const v = line.slice("StandardOutput=".length).trim();
+    value = v === "" ? null : v;
   }
-  return settings;
-}
-
-function addEnvironmentFile(settings: UnitFileSettings, value: string): void {
-  if (value === "") {
-    settings.environmentFiles = [];
-    return;
-  }
-  const optional = value.startsWith("-");
-  settings.environmentFiles.push({ path: optional ? value.slice(1) : value, optional });
-}
-
-function applyUnitSetting(settings: UnitFileSettings, key: string, value: string): void {
-  switch (key) {
-    case "StandardOutput":
-      settings.standardOutput = value === "" ? null : value;
-      return;
-    case "Environment":
-      settings.environment =
-        value === "" ? {} : { ...settings.environment, ...parseEnvironmentAssignments(value) };
-      return;
-    case "EnvironmentFile":
-      addEnvironmentFile(settings, value);
-      return;
-  }
+  return value;
 }
 
 /** Where a systemd StandardOutput= setting sends stdout. Unset means the journal. */
@@ -207,15 +175,81 @@ const SHOW_PROPS = [
   "ExecStart",
   "ControlGroup",
   "KillMode",
+  "Environment",
+  "EnvironmentFiles",
 ];
 
 function nonEmptyOrNull(value: string | undefined): string | null {
   return value === undefined || value === "" ? null : value;
 }
 
+/** Every value of a property `systemctl show` prints once per item (EnvironmentFiles). */
+export function parseShowList(stdout: string, key: string): string[] {
+  const prefix = `${key}=`;
+  return stdout
+    .split("\n")
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length))
+    .filter((v) => v !== "");
+}
+
+/** `/path (ignore_errors=no)` → the path and whether a missing file is ignored. */
+export function parseEnvironmentFileProp(value: string): { path: string; optional: boolean } {
+  const match = /^(.*) \(ignore_errors=(yes|no)\)$/.exec(value);
+  return match?.[1] === undefined
+    ? { path: value, optional: false }
+    : { path: match[1], optional: match[2] === "yes" };
+}
+
+/**
+ * Expand the systemd specifiers a user unit's StandardOutput= path may use.
+ * Null when one is left that this does not know (the path is then unusable).
+ */
+export function expandSpecifiers(value: string, spec: Record<string, string>): string | null {
+  const missing: string[] = [];
+  const out = value.replaceAll(/%(.)/g, (_m, c: string) => {
+    if (c === "%") return "%";
+    const v = spec[c];
+    if (v === undefined) missing.push(c);
+    return v ?? "";
+  });
+  return missing.length > 0 ? null : out;
+}
+
+/** Pids in a cgroup (v2 `cgroup.procs`), or null when it cannot be read. */
+export function readCgroupProcs(
+  cgroup: string | null,
+  readFile: (path: string) => string | null,
+): number[] | null {
+  if (cgroup === null) return null;
+  const text = readFile(`/sys/fs/cgroup${cgroup}/cgroup.procs`);
+  if (text === null) return null;
+  return text
+    .split("\n")
+    .map((l) => Number.parseInt(l, 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
+/**
+ * The environment a unit's processes get: Environment=, then EnvironmentFile=
+ * in order (systemd lets the files override Environment=). Both come from
+ * `systemctl show`, so unit specifiers are already expanded.
+ */
+function unitEnvironment(
+  stdout: string,
+  readFile: (path: string) => string | null,
+): Record<string, string> {
+  const env = parseEnvironmentAssignments(parseShowList(stdout, "Environment").join(" "));
+  for (const raw of parseShowList(stdout, "EnvironmentFiles")) {
+    Object.assign(env, parseEnvFile(readFile(parseEnvironmentFileProp(raw).path) ?? ""));
+  }
+  return env;
+}
+
 export function systemdManager(
   exec: ExecFn,
   readFile: (path: string) => string | null,
+  specifiers: Record<string, string> = {},
 ): ServiceManager {
   const ctl = async (...args: string[]): Promise<ExecResult> =>
     await exec(["systemctl", "--user", ...args]);
@@ -227,21 +261,20 @@ export function systemdManager(
       const props = parseSystemctlShow(show.stdout);
       if (show.code !== 0 || props["LoadState"] !== "loaded") return info;
       const pid = Number.parseInt(props["MainPID"] ?? "", 10);
-      const unit = parseUnitFile((await ctl("cat", name)).stdout);
-      const env: Record<string, string> = {};
-      for (const file of unit.environmentFiles)
-        Object.assign(env, parseEnvFile(readFile(file.path) ?? ""));
-      const out = stdoutTarget(unit.standardOutput);
+      // `systemctl show` reports StandardOutput=append without the path.
+      const out = stdoutTarget(parseUnitStandardOutput((await ctl("cat", name)).stdout));
+      const cgroup = nonEmptyOrNull(props["ControlGroup"]);
       return {
         ...info,
         loaded: true,
         active: props["ActiveState"] === "active",
         pid: Number.isFinite(pid) && pid > 0 ? pid : null,
         argv: parseExecStartArgv(props["ExecStart"] ?? ""),
-        cgroup: nonEmptyOrNull(props["ControlGroup"]),
+        cgroup,
+        cgroupProcs: readCgroupProcs(cgroup, readFile),
         killMode: nonEmptyOrNull(props["KillMode"]),
-        env: { ...env, ...unit.environment },
-        stdoutPath: out.path,
+        env: unitEnvironment(show.stdout, readFile),
+        stdoutPath: out.path === null ? null : expandSpecifiers(out.path, specifiers),
         journal: out.journal,
       };
     },
@@ -387,8 +420,14 @@ export function makeServiceManager(
   exec: ExecFn,
   readFile: (path: string) => string | null,
   uid: number,
+  env: NodeJS.ProcessEnv,
 ): ServiceManager {
-  return kind === "systemd" ? systemdManager(exec, readFile) : launchdManager(exec, uid);
+  if (kind === "launchd") return launchdManager(exec, uid);
+  const specifiers: Record<string, string> = { U: String(uid), i: "", I: "" };
+  if (env["HOME"] !== undefined) specifiers["h"] = env["HOME"];
+  if (env["USER"] !== undefined) specifiers["u"] = env["USER"];
+  if (env["XDG_RUNTIME_DIR"] !== undefined) specifiers["t"] = env["XDG_RUNTIME_DIR"];
+  return systemdManager(exec, readFile, specifiers);
 }
 
 // ---- matching and safety ---------------------------------------------------
@@ -472,4 +511,16 @@ export async function ancestorPids(exec: ExecFn, pid: number, max = 64): Promise
 /** A systemd KillMode under which stopping the unit also kills processes it spawned. */
 export function killsChildren(info: ServiceInfo): boolean {
   return info.killMode !== null && info.killMode !== "process" && info.killMode !== "none";
+}
+
+/**
+ * Stopping a unit whose KillMode kills its whole cgroup (control-group, mixed)
+ * while that cgroup holds anything besides the main process would take those
+ * processes down: refuse. Null when it is safe or the cgroup is unreadable.
+ */
+export function killModeProblem(info: ServiceInfo): string | null {
+  if (!killsChildren(info) || info.cgroupProcs === null) return null;
+  const others = info.cgroupProcs.filter((p) => p !== info.pid);
+  if (others.length === 0) return null;
+  return `${info.name} has KillMode=${String(info.killMode)} and ${String(others.length)} other process(es) in its cgroup (pid ${others.join(", ")}): stopping it would kill them; set KillMode=process on the unit first`;
 }

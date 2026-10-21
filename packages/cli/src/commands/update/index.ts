@@ -17,9 +17,10 @@ import {
 } from "./git.js";
 import {
   applyStartLine,
+  defaultRollbackTarget,
+  failedLine,
   formatHistoryRef,
   type HistoryRef,
-  lastFromRef,
   okLine,
   parseHistoryRef,
   rollbackStartLine,
@@ -32,6 +33,8 @@ import {
   DEFAULT_TIMEOUTS,
   type DeployContext,
   type DeployOutcome,
+  ensureControllerRunning,
+  INTERRUPTED,
   runDeploy,
   type StepResult,
 } from "./procedure.js";
@@ -49,17 +52,23 @@ Modes:
                        service and model-host state, and anything --apply
                        would refuse. Changes nothing but the git fetch.
   --apply              Update to the target. Refuses on tracked local changes,
-                       a non-fast-forward target, a target whose CI 'check'
-                       run is not green, unhealthy services or hosts, or when
-                       running inside a unit it would restart. Then: stop the
-                       controller, switch the checkout to the target on branch
-                       main, bun install (when dependencies changed), start the
-                       controller, wait for it to re-adopt the model hosts,
-                       wait for idle hosts, restart the agent, verify. A failed
-                       verification rolls back automatically (exit 1).
+                       a non-fast-forward target, a local main the target
+                       lacks commits of, a target whose CI 'check' run is not
+                       green, unhealthy services or hosts, a unit whose
+                       KillMode would kill other processes, or when running
+                       inside a unit it would restart. Then: take the
+                       heavy-job lock (if set and dependencies changed), stop
+                       the controller, switch the checkout to the target on
+                       branch main, bun install, start the controller, release
+                       the lock, wait for it to re-adopt the model hosts, wait
+                       for idle hosts, restart the agent, verify. A failure
+                       rolls back automatically (exit 1); the controller is
+                       always started again before exiting, also on
+                       SIGINT/SIGTERM (exit 130).
   --rollback [<ref>]   Same procedure back to <ref> (branch@sha, a sha, or any
-                       revision); default: where the last history entry came
-                       from.
+                       revision); default: from the history (undo the last
+                       verified update or rollback, or retry a failed
+                       rollback).
 
 Flags:
   --ref <ref>              Target for --check/--apply (default origin/main).
@@ -77,8 +86,10 @@ Flags:
 Environment (flags win; the controller unit's Environment/EnvironmentFile is
 read too):
   LLAMACTL_UPDATE_HISTORY          History file (default <state home>/update-history.log,
-                                   state home = $DEV_STORAGE or ~/.llamactl).
-  LLAMACTL_UPDATE_HEAVY_LOCK       flock this file around bun install.
+                                   state home = $DEV_STORAGE or ~/.llamactl). Set it
+                                   to keep an earlier update script's history.
+  LLAMACTL_UPDATE_HEAVY_LOCK       Heavy-job lock file, held from before the
+                                   controller stops until it starts (off if unset).
   LLAMACTL_UPDATE_CONTROLLER_UNIT, LLAMACTL_UPDATE_AGENT_UNIT
                                    Same as --controller-unit / --agent-unit.
   LLAMACTL_UPDATE_AGENT_URL        Agent base URL for the health probe.
@@ -97,9 +108,14 @@ type UpdateResult =
   | "check"
   | "error"
   | "failed"
+  | "interrupted"
   | "refused"
   | "rolled-back"
   | "up-to-date";
+
+/** How long --apply/--rollback wait for the heavy-job lock, before stopping anything. */
+export const HEAVY_LOCK_WAIT_SEC = 1800;
+const EXIT_INTERRUPTED = 130;
 
 interface TargetPlan {
   ref: string;
@@ -108,6 +124,8 @@ interface TargetPlan {
   commits: GitCommit[];
   depsChanged: boolean;
   fastForward: boolean;
+  /** Local `main` when it has commits the target lacks (`switch -C main` would drop them). */
+  divergedMain: string | null;
   upToDate: boolean;
   ci: string;
 }
@@ -136,6 +154,8 @@ interface Report {
   warnings: string[];
   steps: StepResult[];
   rollbackSteps: StepResult[];
+  /** The final best-effort controller start, when the controller was found stopped. */
+  finalStart: StepResult | null;
   error: string | null;
 }
 
@@ -156,6 +176,7 @@ function newReport(mode: UpdateMode): Report {
     warnings: [],
     steps: [],
     rollbackSteps: [],
+    finalStart: null,
     error: null,
   };
 }
@@ -215,6 +236,8 @@ async function planTarget(s: Session): Promise<TargetPlan> {
   if (sha === null) throw new UpdateError(`cannot resolve target ${ref}`);
   const cur = s.checkout.sha;
   const fastForward = await isAncestor(s.git, cur, sha);
+  const main = await resolveCommit(s.git, `refs/heads/${DEPLOY_BRANCH}`);
+  const divergedMain = main !== null && !(await isAncestor(s.git, main, sha)) ? main : null;
   const { count, commits } = await commitsBetween(s.git, cur, sha, 40);
   return {
     ref,
@@ -223,6 +246,7 @@ async function planTarget(s: Session): Promise<TargetPlan> {
     commits,
     depsChanged: depsChanged(await changedFiles(s.git, cur, sha)),
     fastForward,
+    divergedMain,
     upToDate: cur === sha && s.checkout.branch === DEPLOY_BRANCH,
     ci: await ciState(s.deps.exec, s.deps.which, s.ghRepo, sha),
   };
@@ -248,6 +272,7 @@ export function applyRefusals(i: {
   dirty: readonly string[];
   repo: string;
   fastForward: boolean;
+  divergedMain: string | null;
   ref: string;
   ci: string;
   allowRedCi: boolean;
@@ -256,6 +281,11 @@ export function applyRefusals(i: {
   const out = commonRefusals(i);
   if (!i.fastForward) {
     out.push(`target ${i.ref} does not contain the current checkout (not a fast-forward)`);
+  }
+  if (i.divergedMain !== null) {
+    out.push(
+      `local branch ${DEPLOY_BRANCH} (${short(i.divergedMain)}) has commits ${i.ref} does not contain; the update would move ${DEPLOY_BRANCH} off them (merge, move or delete that branch first)`,
+    );
   }
   if (i.ci !== "success" && !i.allowRedCi) {
     out.push(`target CI is '${i.ci}' (use --allow-red-ci to override)`);
@@ -284,7 +314,7 @@ export function commonRefusals(i: {
   return out;
 }
 
-function deployContext(s: Session): DeployContext {
+function deployContext(s: Session, signal: AbortSignal): DeployContext {
   const { manager, controller, agent } = s.services;
   if (manager === null || controller === null || agent === null || s.agentEndpoint === null) {
     throw new UpdateError("services are not resolved");
@@ -299,15 +329,95 @@ function deployContext(s: Session): DeployContext {
     agentEndpoint: s.agentEndpoint,
     hostsEnv: s.stateEnv,
     snapshot: s.hosts,
-    install: buildInstallCommand({
-      bun: s.bun,
-      platform: s.deps.platform,
-      which: s.deps.which,
-      heavyLock: s.heavyLock,
-    }),
+    install: buildInstallCommand({ bun: s.bun, platform: s.deps.platform, which: s.deps.which }),
     controllerLog: s.controllerLog,
     timeouts: DEFAULT_TIMEOUTS,
+    lock: heavyLock(s),
+    signal,
   };
+}
+
+function heavyLock(s: Session): DeployContext["lock"] {
+  if (s.heavyLock === null) return null;
+  if (s.deps.which("flock") === null) {
+    s.deps.log(`${P} WARNING: flock not found; not taking the heavy-job lock ${s.heavyLock}`);
+    return null;
+  }
+  return { path: s.heavyLock, handle: null };
+}
+
+/**
+ * Wait for the heavy-job lock before anything is stopped, when this run
+ * installs. Returns why it could not be taken, or null when it is held (or
+ * not needed).
+ */
+async function takeHeavyLock(
+  s: Session,
+  ctx: DeployContext,
+  needed: boolean,
+): Promise<string | null> {
+  if (!needed || ctx.lock === null) return null;
+  const { path } = ctx.lock;
+  s.deps.log(
+    `${P} waiting for the heavy-job lock ${path} (up to ${String(HEAVY_LOCK_WAIT_SEC)} s); nothing is stopped while waiting`,
+  );
+  ctx.lock.handle = await s.deps.acquireLock(path, HEAVY_LOCK_WAIT_SEC, ctx.signal);
+  if (ctx.lock.handle !== null) return null;
+  if (ctx.signal.aborted) return INTERRUPTED;
+  return `could not take the heavy-job lock ${path} within ${String(HEAVY_LOCK_WAIT_SEC)} s (another heavy job holds it); nothing was changed`;
+}
+
+/** Trap SIGINT/SIGTERM for the duration of `run`: the procedure stops after its current step. */
+async function withSignals(
+  s: Session,
+  run: (signal: AbortSignal) => Promise<number>,
+): Promise<number> {
+  const ac = new AbortController();
+  const off = s.deps.onSignal((sig) => {
+    if (!ac.signal.aborted) {
+      s.deps.log(
+        `${P} ${sig}: stopping after the current step; the controller is started again before exiting`,
+      );
+    }
+    ac.abort();
+  });
+  try {
+    return await run(ac.signal);
+  } finally {
+    off();
+  }
+}
+
+function lockNotTaken(s: Session, report: Report, why: string): number {
+  if (why === INTERRUPTED) {
+    report.result = "interrupted";
+    report.error = `${INTERRUPTED} while waiting for the heavy-job lock; nothing was changed`;
+    return EXIT_INTERRUPTED;
+  }
+  return refuse(s, report, [why]);
+}
+
+function interrupted(s: Session, report: Report, sha: string): number {
+  history(s, failedLine(new Date(s.deps.now()).toISOString(), sha, INTERRUPTED));
+  report.result = "interrupted";
+  report.error = `${INTERRUPTED}; the controller is running again, but the checkout may be anywhere between the two refs: run llamactl update --check, then --rollback if needed`;
+  return EXIT_INTERRUPTED;
+}
+
+/** Run a deploy phase, then make sure the controller runs whatever happened. */
+async function guarded(
+  ctx: DeployContext,
+  report: Report,
+  run: () => Promise<number>,
+): Promise<number> {
+  try {
+    return await run();
+  } finally {
+    report.finalStart = await ensureControllerRunning(ctx);
+    if (report.finalStart?.ok === false) {
+      report.error = `${report.error ?? "update failed"}; ${report.finalStart.detail}`;
+    }
+  }
 }
 
 function statusHint(s: Session): string {
@@ -357,6 +467,7 @@ function refusalInput(s: Session, plan: TargetPlan): Parameters<typeof applyRefu
     dirty: s.checkout.dirty,
     repo: s.repo,
     fastForward: plan.fastForward,
+    divergedMain: plan.divergedMain,
     ref: plan.ref,
     ci: plan.ci,
     allowRedCi: s.flags.allowRedCi,
@@ -380,15 +491,30 @@ async function runApply(s: Session, report: Report): Promise<number> {
   }
   const refusals = applyRefusals(refusalInput(s, plan));
   if (refusals.length > 0) return refuse(s, report, refusals);
-  const from: HistoryRef = { branch: s.checkout.branch, sha: s.checkout.sha };
-  history(s, applyStartLine(new Date(s.deps.now()).toISOString(), from, plan.sha));
-  const ctx = deployContext(s);
+  return await withSignals(s, async (signal) => {
+    const ctx = deployContext(s, signal);
+    const lockProblem = await takeHeavyLock(s, ctx, plan.depsChanged);
+    if (lockProblem !== null) return lockNotTaken(s, report, lockProblem);
+    const from: HistoryRef = { branch: s.checkout.branch, sha: s.checkout.sha };
+    history(s, applyStartLine(new Date(s.deps.now()).toISOString(), from, plan.sha));
+    return await guarded(ctx, report, async () => await applyDeploy(s, report, ctx, from, plan));
+  });
+}
+
+async function applyDeploy(
+  s: Session,
+  report: Report,
+  ctx: DeployContext,
+  from: HistoryRef,
+  plan: TargetPlan,
+): Promise<number> {
   const steps = buildDeploySteps({
     sha: plan.sha,
     mode: { kind: "main" },
     depsChanged: plan.depsChanged,
     waitIdleSec: s.flags.waitIdleSec,
     restartAgent: true,
+    lock: ctx.lock !== null,
   });
   const outcome = await runDeploy(steps, ctx);
   report.steps = outcome.results;
@@ -398,6 +524,7 @@ async function runApply(s: Session, report: Report): Promise<number> {
     s.deps.log(`${P} done: ${short(plan.sha)} is live. Roll back with: llamactl update --rollback`);
     return 0;
   }
+  if (outcome.interrupted) return interrupted(s, report, plan.sha);
   return await autoRollback(s, report, ctx, from, plan, outcome);
 }
 
@@ -419,22 +546,27 @@ async function autoRollback(
     depsChanged: plan.depsChanged,
     waitIdleSec: s.flags.waitIdleSec,
     restartAgent: forward.agentRestartAttempted,
+    lock: ctx.lock !== null,
   });
   const back = await runDeploy(steps, ctx);
   report.rollbackSteps = back.results;
+  if (back.interrupted) return interrupted(s, report, plan.sha);
   report.result = "failed";
+  const now = new Date(s.deps.now()).toISOString();
   if (!back.ok) {
+    history(s, failedLine(now, plan.sha, `update and rollback failed (${failedStep(back)})`));
     report.error = `update to ${short(plan.sha)} failed and the rollback is unhealthy too (${failedStep(back)}); check: ${statusHint(s)}`;
     return 1;
   }
-  history(s, rolledBackLine(new Date(s.deps.now()).toISOString(), from));
+  history(s, rolledBackLine(now, from));
   report.error = `update to ${short(plan.sha)} failed verification (${failedStep(forward)}); rolled back to ${formatHistoryRef({ branch: from.branch, sha: short(from.sha) })}`;
   return 1;
 }
 
 async function resolveRollbackTarget(s: Session): Promise<HistoryRef> {
   const arg = s.flags.rollbackRef;
-  const recorded = arg === null ? lastFromRef(s.deps.readFile(s.historyPath) ?? "") : null;
+  const recorded =
+    arg === null ? defaultRollbackTarget(s.deps.readFile(s.historyPath) ?? "") : null;
   if (arg === null && recorded === null) {
     throw new UpdateError(
       `no rollback target: ${s.historyPath} records no previous update (pass a branch@sha or sha)`,
@@ -480,24 +612,47 @@ async function runRollback(s: Session, report: Report): Promise<number> {
     repo: s.repo,
   });
   if (refusals.length > 0) return refuse(s, report, refusals);
-  const from: HistoryRef = { branch: s.checkout.branch, sha: s.checkout.sha };
-  history(s, rollbackStartLine(new Date(s.deps.now()).toISOString(), from, target));
   const changed = depsChanged(await changedFiles(s.git, s.checkout.sha, target.sha));
-  const steps = buildDeploySteps({
-    sha: target.sha,
-    mode,
-    depsChanged: changed,
-    waitIdleSec: s.flags.waitIdleSec,
-    restartAgent: true,
+  return await withSignals(s, async (signal) => {
+    const ctx = deployContext(s, signal);
+    const lockProblem = await takeHeavyLock(s, ctx, changed);
+    if (lockProblem !== null) return lockNotTaken(s, report, lockProblem);
+    const from: HistoryRef = { branch: s.checkout.branch, sha: s.checkout.sha };
+    history(s, rollbackStartLine(new Date(s.deps.now()).toISOString(), from, target));
+    const steps = buildDeploySteps({
+      sha: target.sha,
+      mode,
+      depsChanged: changed,
+      waitIdleSec: s.flags.waitIdleSec,
+      restartAgent: true,
+      lock: ctx.lock !== null,
+    });
+    return await guarded(
+      ctx,
+      report,
+      async () => await rollbackDeploy(s, report, ctx, steps, target),
+    );
   });
-  const outcome = await runDeploy(steps, deployContext(s));
+}
+
+async function rollbackDeploy(
+  s: Session,
+  report: Report,
+  ctx: DeployContext,
+  steps: ReturnType<typeof buildDeploySteps>,
+  target: HistoryRef,
+): Promise<number> {
+  const outcome = await runDeploy(steps, ctx);
   report.steps = outcome.results;
+  if (outcome.interrupted) return interrupted(s, report, target.sha);
+  const now = new Date(s.deps.now()).toISOString();
   if (!outcome.ok) {
+    history(s, failedLine(now, target.sha, `rollback failed (${failedStep(outcome)})`));
     report.result = "failed";
     report.error = `rollback to ${short(target.sha)} is unhealthy (${failedStep(outcome)}); check: ${statusHint(s)}`;
     return 1;
   }
-  history(s, okLine(new Date(s.deps.now()).toISOString(), target.sha));
+  history(s, okLine(now, target.sha));
   report.result = "rolled-back";
   s.deps.log(
     `${P} rolled back to ${short(target.sha)}; update again with: llamactl update --apply`,

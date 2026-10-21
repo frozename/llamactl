@@ -1,10 +1,12 @@
 // The ordered update procedure. `controller serve` exits by itself ~20 s after
 // the checkout's HEAD moves (source-staleness reload), and new code may need
 // new dependencies before it can start, so the controller is stopped before the
-// switch and started only after `bun install`. The agent never reloads itself;
-// it is restarted last, once managed hosts are idle. Rollback is the same
-// procedure pointed at the previous ref.
-import type { ManagedHost, UpdateDeps } from "./deps.js";
+// switch and started only after `bun install`. The heavy-job lock is taken
+// before the stop and held until the start, so nothing waits on it while the
+// controller is down. The agent never reloads itself; it is restarted last,
+// once managed hosts are idle. Rollback is the same procedure pointed at the
+// previous ref, and whatever fails, the controller is started again at the end.
+import type { LockHandle, ManagedHost, UpdateDeps } from "./deps.js";
 import type { AgentEndpoint } from "./probes.js";
 import type { ServiceInfo, ServiceManager } from "./services.js";
 
@@ -14,6 +16,8 @@ import { agentHealthy, hostBaseUrl, hostIdle, hostReady, negotiateOutcome } from
 export type DeployStep =
   | { kind: "await-controller" }
   | { kind: "install" }
+  | { kind: "lock" }
+  | { kind: "unlock" }
   | { kind: "restart-agent" }
   | { kind: "start-controller" }
   | { kind: "stop-controller" }
@@ -27,12 +31,17 @@ export function buildDeploySteps(o: {
   depsChanged: boolean;
   waitIdleSec: number;
   restartAgent: boolean;
+  /** A heavy-job lock is configured: hold it from before the stop until the start. */
+  lock: boolean;
 }): DeployStep[] {
+  const locked = o.lock && o.depsChanged;
   return [
+    ...(locked ? [{ kind: "lock" } as const] : []),
     { kind: "stop-controller" },
     { kind: "switch", sha: o.sha, mode: o.mode },
     ...(o.depsChanged ? [{ kind: "install" } as const] : []),
     { kind: "start-controller" },
+    ...(locked ? [{ kind: "unlock" } as const] : []),
     { kind: "await-controller" },
     ...(o.restartAgent
       ? [{ kind: "wait-idle", seconds: o.waitIdleSec } as const, { kind: "restart-agent" } as const]
@@ -44,7 +53,6 @@ export function buildDeploySteps(o: {
 export interface InstallCommand {
   argv: string[];
   capped: boolean;
-  locked: boolean;
   warnings: string[];
 }
 
@@ -53,14 +61,14 @@ export const INSTALL_MEMORY_LIMITS = ["MemoryHigh=12G", "MemoryMax=16G", "Memory
 /**
  * `bun install --frozen-lockfile --ignore-scripts`, memory-capped in a
  * transient systemd scope at a high OOM score when the host supports it
- * (systemd 255 rejects OOMScoreAdjust on scopes, hence choom), and serialized
- * behind the heavy-job lock when one is configured.
+ * (systemd 255 rejects OOMScoreAdjust on scopes, hence choom). The heavy-job
+ * lock is held around it by the procedure (`lock`/`unlock` steps), not here,
+ * so its wait never eats into the install timeout.
  */
 export function buildInstallCommand(o: {
   bun: string;
   platform: NodeJS.Platform;
   which: (bin: string) => string | null;
-  heavyLock: string | null;
 }): InstallCommand {
   const warnings: string[] = [];
   let argv = [o.bun, "install", "--frozen-lockfile", "--ignore-scripts"];
@@ -85,12 +93,7 @@ export function buildInstallCommand(o: {
   } else {
     warnings.push("systemd-run/choom unavailable: bun install runs without a memory cap");
   }
-  const locked = o.heavyLock !== null && o.which("flock") !== null;
-  if (locked && o.heavyLock !== null) argv = ["flock", "-w", "1800", o.heavyLock, ...argv];
-  else if (o.heavyLock !== null) {
-    warnings.push(`flock unavailable: not taking the heavy-job lock ${o.heavyLock}`);
-  }
-  return { argv, capped, locked, warnings };
+  return { argv, capped, warnings };
 }
 
 export type LogSource = { kind: "file"; path: string } | { kind: "journal" } | { kind: "none" };
@@ -107,6 +110,8 @@ export interface SnapshotHost extends ManagedHost {
 }
 
 export interface DeployTimeouts {
+  /** How long a rollback waits for the heavy-job lock before going ahead without it. */
+  rollbackLockWaitSec: number;
   controllerReportMs: number;
   controllerSettleMs: number;
   serviceStopMs: number;
@@ -119,6 +124,7 @@ export interface DeployTimeouts {
 }
 
 export const DEFAULT_TIMEOUTS: DeployTimeouts = {
+  rollbackLockWaitSec: 300,
   controllerReportMs: 90_000,
   controllerSettleMs: 25_000,
   serviceStopMs: 30_000,
@@ -144,6 +150,15 @@ export interface DeployContext {
   install: InstallCommand;
   controllerLog: LogSource;
   timeouts: DeployTimeouts;
+  /** The heavy-job lock; `handle` is set while it is held. */
+  lock: HeavyLock | null;
+  /** Aborted by SIGINT/SIGTERM: finish the current step, run nothing more. */
+  signal: AbortSignal;
+}
+
+export interface HeavyLock {
+  path: string;
+  handle: LockHandle | null;
 }
 
 export interface StepResult {
@@ -158,6 +173,8 @@ export interface DeployOutcome {
   results: StepResult[];
   /** The procedure got as far as restarting the agent. */
   agentRestartAttempted: boolean;
+  /** A signal stopped the procedure. */
+  interrupted: boolean;
 }
 
 interface RunState {
@@ -181,6 +198,8 @@ const fail = (detail: string, warnings: string[] = []): StepOutcome => ({
 });
 const short = (sha: string): string => sha.slice(0, 7);
 
+export const INTERRUPTED = "interrupted by a signal";
+
 async function pollUntil(
   ctx: DeployContext,
   timeoutMs: number,
@@ -190,8 +209,8 @@ async function pollUntil(
   const deadline = ctx.deps.now() + timeoutMs;
   for (;;) {
     if (await probe()) return true;
-    if (ctx.deps.now() >= deadline) return false;
-    await ctx.deps.sleep(intervalMs);
+    if (ctx.deps.now() >= deadline || ctx.signal.aborted) return false;
+    await ctx.deps.sleep(intervalMs, ctx.signal);
   }
 }
 
@@ -200,6 +219,10 @@ export function stepLabel(
   ctx: Pick<DeployContext, "agent" | "controller">,
 ): string {
   switch (step.kind) {
+    case "lock":
+      return "taking the heavy-job lock before stopping anything";
+    case "unlock":
+      return "releasing the heavy-job lock";
     case "stop-controller":
       return `stopping ${ctx.controller.name} (managed model hosts keep serving)`;
     case "switch":
@@ -217,6 +240,33 @@ export function stepLabel(
     case "verify":
       return "verifying";
   }
+}
+
+/**
+ * Hold the heavy-job lock before anything is stopped. An --apply takes it up
+ * front (and refuses without it), so this only waits in a rollback, which
+ * then goes ahead without the lock rather than leave the failed code running.
+ */
+async function takeLock(ctx: DeployContext): Promise<StepOutcome> {
+  const lock = ctx.lock;
+  if (lock === null) return ok("no heavy-job lock configured");
+  if (lock.handle !== null) return ok(`holding ${lock.path}`);
+  const wait = ctx.timeouts.rollbackLockWaitSec;
+  lock.handle = await ctx.deps.acquireLock(lock.path, wait, ctx.signal);
+  if (lock.handle !== null) return ok(`holding ${lock.path}`);
+  if (ctx.signal.aborted) return fail(INTERRUPTED);
+  return ok(`proceeding without ${lock.path}`, [
+    `could not take the heavy-job lock within ${String(wait)} s; going ahead without it (bun install stays memory-capped)`,
+  ]);
+}
+
+function releaseLock(ctx: DeployContext): StepOutcome {
+  const lock = ctx.lock;
+  const handle = lock?.handle ?? null;
+  if (lock === null || handle === null) return ok("no heavy-job lock held");
+  handle.release();
+  lock.handle = null;
+  return ok(`released ${lock.path}`);
 }
 
 async function stopController(ctx: DeployContext): Promise<StepOutcome> {
@@ -247,14 +297,17 @@ function tail(text: string, lines: number): string {
 }
 
 async function install(ctx: DeployContext): Promise<StepOutcome> {
+  // Its own process group: a timeout or a signal kills everything it started.
   const r = await ctx.deps.exec(ctx.install.argv, {
     cwd: ctx.repo,
     timeoutMs: ctx.timeouts.installMs,
+    processGroup: true,
+    signal: ctx.signal,
   });
   if (r.code === 0) {
     const how = [
       ctx.install.capped ? "memory-capped" : "uncapped",
-      ctx.install.locked ? "under the heavy-job lock" : null,
+      (ctx.lock?.handle ?? null) === null ? null : "under the heavy-job lock",
     ];
     return ok(
       `bun install done (${how.filter((s) => s !== null).join(", ")})`,
@@ -387,8 +440,9 @@ async function settleController(
     if (!(await ctx.manager.isActive(ctx.controller))) {
       return fail(`${ctx.controller.name} is not active`);
     }
+    if (ctx.signal.aborted) return fail(INTERRUPTED);
     if (ctx.deps.now() >= deadline) break;
-    await ctx.deps.sleep(ctx.timeouts.pollMs);
+    await ctx.deps.sleep(ctx.timeouts.pollMs, ctx.signal);
   }
   const settled = `${why}; checked that ${ctx.controller.name} stayed active for ${String(ctx.timeouts.controllerSettleMs / 1000)} s`;
   return adoptionOutcome(ctx, state, null, [settled]);
@@ -430,7 +484,8 @@ async function awaitController(ctx: DeployContext, state: RunState): Promise<Ste
   for (;;) {
     const outcome = await pollControllerOnce(ctx, state, expected, deadline);
     if (outcome !== null) return outcome;
-    await ctx.deps.sleep(ctx.timeouts.pollMs);
+    if (ctx.signal.aborted) return fail(INTERRUPTED);
+    await ctx.deps.sleep(ctx.timeouts.pollMs, ctx.signal);
   }
 }
 
@@ -451,11 +506,12 @@ async function waitIdle(ctx: DeployContext, seconds: number): Promise<StepOutcom
         `${busy.join(", ")} still busy after ${String(seconds)} s; restarting the agent anyway`,
       ]);
     }
+    if (ctx.signal.aborted) return fail(INTERRUPTED);
     if (ctx.deps.now() - lastLogged >= 30_000) {
       ctx.deps.log(`llamactl update: waiting: ${busy.join(", ")} busy`);
       lastLogged = ctx.deps.now();
     }
-    await ctx.deps.sleep(ctx.timeouts.idlePollMs);
+    await ctx.deps.sleep(ctx.timeouts.idlePollMs, ctx.signal);
   }
 }
 
@@ -534,6 +590,10 @@ async function runStep(
   state: RunState,
 ): Promise<StepOutcome> {
   switch (step.kind) {
+    case "lock":
+      return await takeLock(ctx);
+    case "unlock":
+      return releaseLock(ctx);
     case "stop-controller":
       return await stopController(ctx);
     case "switch":
@@ -569,7 +629,7 @@ async function runStepSafely(
   }
 }
 
-/** Run the steps in order, stopping at the first failure. */
+/** Run the steps in order, stopping at the first failure or at a signal. */
 export async function runDeploy(
   steps: readonly DeployStep[],
   ctx: DeployContext,
@@ -578,13 +638,40 @@ export async function runDeploy(
   const results: StepResult[] = [];
   let agentRestartAttempted = false;
   for (const step of steps) {
+    if (ctx.signal.aborted) return { ok: false, results, agentRestartAttempted, interrupted: true };
     ctx.deps.log(`llamactl update: ${stepLabel(step, ctx)}`);
     if (step.kind === "restart-agent") agentRestartAttempted = true;
     const outcome = await runStepSafely(step, ctx, state);
     results.push({ step: step.kind, ...outcome });
     for (const w of outcome.warnings) ctx.deps.log(`llamactl update: WARNING: ${w}`);
     ctx.deps.log(`llamactl update:   ${outcome.ok ? "ok" : "FAILED"}: ${outcome.detail}`);
-    if (!outcome.ok) return { ok: false, results, agentRestartAttempted };
+    if (!outcome.ok) {
+      return { ok: false, results, agentRestartAttempted, interrupted: ctx.signal.aborted };
+    }
   }
-  return { ok: true, results, agentRestartAttempted };
+  return { ok: true, results, agentRestartAttempted, interrupted: false };
+}
+
+/**
+ * The last line of defence on every exit path (failure, failed rollback,
+ * exception, signal): if the controller is not running, start it, then drop
+ * the heavy-job lock. Never throws. Null when the controller was running.
+ */
+export async function ensureControllerRunning(ctx: DeployContext): Promise<StepResult | null> {
+  try {
+    if (await ctx.manager.isActive(ctx.controller)) return null;
+    ctx.deps.log(`llamactl update: ${ctx.controller.name} is not running; starting it`);
+    const r = await ctx.manager.start(ctx.controller);
+    const started = r.code === 0 || (await ctx.manager.isActive(ctx.controller));
+    const detail = started
+      ? `${ctx.controller.name} started`
+      : `could not start ${ctx.controller.name}: ${r.stderr.trim() || `exit ${String(r.code)}`}`;
+    ctx.deps.log(`llamactl update:   ${started ? "ok" : "FAILED"}: ${detail}`);
+    return { step: "start-controller", ok: started, detail, warnings: [] };
+  } catch (err) {
+    const detail = `could not start ${ctx.controller.name}: ${(err as Error).message}`;
+    return { step: "start-controller", ok: false, detail, warnings: [] };
+  } finally {
+    releaseLock(ctx);
+  }
 }

@@ -149,23 +149,24 @@ describe("CI state", () => {
 });
 
 describe("probes", () => {
-  test("classifyIdle reads llama-server slots, Strata JSON metrics and Prometheus gauges", () => {
+  test("classifyIdle prefers Strata's live state, then llama-server slots, then gauges", () => {
     const r = (status: number, body: string): { status: number; body: string } => ({
       status,
       body,
     });
-    expect(classifyIdle(r(200, '[{"is_processing":false},{"is_processing":false}]'), null)).toBe(
-      "idle",
-    );
-    expect(classifyIdle(r(200, '[{"is_processing":true}]'), null)).toBe("busy");
-    expect(classifyIdle(r(501, ""), r(200, '{"live":{"state":"idle","queued":0}}'))).toBe("idle");
-    expect(classifyIdle(null, r(200, '{"live":{"state":"decoding","queued":0}}'))).toBe("busy");
-    expect(classifyIdle(null, r(200, '{"live":{"state":"idle","queued":2}}'))).toBe("busy");
-    expect(
-      classifyIdle(null, r(200, "llamacpp:requests_processing 0\nllamacpp:requests_deferred 0\n")),
-    ).toBe("idle");
-    expect(classifyIdle(null, r(200, "llamacpp:requests_processing 1\n"))).toBe("busy");
-    expect(classifyIdle(null, r(200, "# nothing useful"))).toBe("unknown");
+    const idleSlots = r(200, '[{"is_processing":false},{"is_processing":false}]');
+    expect(classifyIdle(null, idleSlots)).toBe("idle");
+    expect(classifyIdle(null, r(200, '[{"is_processing":true}]'))).toBe("busy");
+    expect(classifyIdle(r(200, '{"live":{"state":"idle","queued":0}}'), r(501, ""))).toBe("idle");
+    expect(classifyIdle(r(200, '{"live":{"state":"decoding","queued":0}}'), null)).toBe("busy");
+    // Strata's /slots ignores queued requests: live.queued wins over idle-looking slots.
+    expect(classifyIdle(r(200, '{"live":{"state":"idle","queued":2}}'), idleSlots)).toBe("busy");
+    // ... and an empty /slots (engine down) says nothing.
+    expect(classifyIdle(null, r(200, "[]"))).toBe("unknown");
+    const gauges = "llamacpp:requests_processing 0\nllamacpp:requests_deferred 0\n";
+    expect(classifyIdle(r(200, gauges), null)).toBe("idle");
+    expect(classifyIdle(r(200, "llamacpp:requests_processing 1\n"), null)).toBe("busy");
+    expect(classifyIdle(r(200, "# nothing useful"), null)).toBe("unknown");
     expect(classifyIdle(null, null)).toBe("unknown");
   });
 
@@ -209,6 +210,7 @@ describe("applyRefusals", () => {
     dirty: [],
     repo: "/r",
     fastForward: true,
+    divergedMain: null,
     ref: "origin/main",
     ci: "success",
     allowRedCi: false,
@@ -224,6 +226,9 @@ describe("applyRefusals", () => {
       "tracked local changes",
     );
     expect(applyRefusals({ ...base, fastForward: false })[0]).toContain("not a fast-forward");
+    expect(applyRefusals({ ...base, divergedMain: sha(9) })[0]).toContain(
+      "local branch main (9999999) has commits origin/main does not contain",
+    );
     expect(applyRefusals({ ...base, ci: "failure" })[0]).toContain("target CI is 'failure'");
     expect(applyRefusals({ ...base, ci: "unknown" })[0]).toContain("--allow-red-ci");
     expect(applyRefusals({ ...base, ci: "failure", allowRedCi: true })).toEqual([]);
@@ -296,6 +301,16 @@ describe("llamactl update --check", () => {
     expect(text).toContain("--apply would refuse: tracked local changes");
     expect(text).toContain("--apply would refuse: target CI is 'none'");
     expect(w.events).toEqual([]);
+  });
+
+  test("warns when manifests exist but no managed host was found", async () => {
+    const w = makeWorld({ hosts: [] });
+    const { deps, out } = fakeDeps(w);
+    expect(await runUpdate(["--json"], deps)).toBe(0);
+    const report = JSON.parse(out.stdout) as { warnings: string[] };
+    expect(report.warnings.join("\n")).toContain(
+      "1 workload manifest(s) in /srv/state/workloads but no running managed model host was found",
+    );
   });
 
   test("an up-to-date checkout on main says so", async () => {

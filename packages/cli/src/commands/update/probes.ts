@@ -118,7 +118,8 @@ function idleFromSlots(slots: HttpResponse | null): IdleState {
   if (slots?.status !== 200) return "unknown";
   try {
     const parsed = JSON.parse(slots.body) as unknown;
-    if (!Array.isArray(parsed)) return "unknown";
+    // An empty list says nothing (Strata answers [] when its engine is down).
+    if (!Array.isArray(parsed) || parsed.length === 0) return "unknown";
     const busy = parsed.some(
       (s) =>
         typeof s === "object" &&
@@ -131,9 +132,10 @@ function idleFromSlots(slots: HttpResponse | null): IdleState {
   }
 }
 
-function idleFromJsonMetrics(body: string): IdleState {
+function idleFromJsonMetrics(metrics: HttpResponse | null): IdleState {
+  if (metrics?.status !== 200) return "unknown";
   try {
-    const parsed = JSON.parse(body) as { live?: { state?: unknown; queued?: unknown } };
+    const parsed = JSON.parse(metrics.body) as { live?: { state?: unknown; queued?: unknown } };
     const state = parsed.live?.state;
     if (typeof state !== "string") return "unknown";
     const queued = parsed.live?.queued;
@@ -144,33 +146,38 @@ function idleFromJsonMetrics(body: string): IdleState {
   }
 }
 
-function idleFromPrometheus(body: string): IdleState {
+function idleFromPrometheus(metrics: HttpResponse | null): IdleState {
+  if (metrics?.status !== 200) return "unknown";
   const values = [
-    ...body.matchAll(/^llamacpp:requests_(?:processing|deferred)\s+(\d+(?:\.\d+)?)/gm),
+    ...metrics.body.matchAll(/^llamacpp:requests_(?:processing|deferred)\s+(\d+(?:\.\d+)?)/gm),
   ].map((m) => Number(m[1]));
   if (values.length === 0) return "unknown";
   return values.every((v) => v === 0) ? "idle" : "busy";
 }
 
 /**
- * Best-effort idle test across engines: llama-server's `/slots`, a JSON
- * `/metrics` with a `live.state` (Strata), or llama-server's Prometheus
- * `/metrics` request gauges. Anything else is `unknown`.
+ * Best-effort idle test across engines, most informative source first: a JSON
+ * `/metrics` with `live.state` and `queued` (Strata, which also counts queued
+ * requests), llama-server's `/slots`, then llama-server's Prometheus `/metrics`
+ * request gauges. Anything else is `unknown`.
  */
-export function classifyIdle(slots: HttpResponse | null, metrics: HttpResponse | null): IdleState {
-  const fromSlots = idleFromSlots(slots);
-  if (fromSlots !== "unknown") return fromSlots;
-  if (metrics?.status !== 200) return "unknown";
-  const fromJson = idleFromJsonMetrics(metrics.body);
-  return fromJson !== "unknown" ? fromJson : idleFromPrometheus(metrics.body);
+export function classifyIdle(metrics: HttpResponse | null, slots: HttpResponse | null): IdleState {
+  for (const state of [
+    idleFromJsonMetrics(metrics),
+    idleFromSlots(slots),
+    idleFromPrometheus(metrics),
+  ]) {
+    if (state !== "unknown") return state;
+  }
+  return "unknown";
 }
 
 export async function hostIdle(httpGet: HttpGetFn, host: ManagedHost): Promise<IdleState> {
   const base = hostBaseUrl(host);
-  const slots = await httpGet(`${base}/slots`, { timeoutMs: 3000 });
-  const fromSlots = idleFromSlots(slots);
-  if (fromSlots !== "unknown") return fromSlots;
-  return classifyIdle(null, await httpGet(`${base}/metrics`, { timeoutMs: 3000 }));
+  const metrics = await httpGet(`${base}/metrics`, { timeoutMs: 3000 });
+  const fromJson = idleFromJsonMetrics(metrics);
+  if (fromJson !== "unknown") return fromJson;
+  return classifyIdle(metrics, await httpGet(`${base}/slots`, { timeoutMs: 3000 }));
 }
 
 /** `gh run list --json status,conclusion` → success | failure | … | pending | none. */

@@ -1,14 +1,14 @@
 // The update history: one line per event, appended, never rewritten.
 //
-//   <iso> from=<branch>@<sha> to=<sha>                  an --apply started
-//   <iso> ok <short>                                    the procedure verified
-//   <iso> rolled-back to <branch>@<short>               --apply failed and was undone
+//   <iso> from=<branch>@<sha> to=<sha>                   an --apply started
 //   <iso> rollback from=<branch>@<sha> to=<branch>@<sha> a --rollback started
+//   <iso> ok <short>                                     ... and verified
+//   <iso> rolled-back to <branch>@<short>                ... --apply failed and was undone
+//   <iso> failed <short> <why>                           ... failed (and, for --apply, so did the undo)
 //
-// A detached checkout is written as the bare sha. `--rollback` with no target
-// goes to the `from=` of the last line that has one, so a second --rollback
-// undoes the first. Same format as the bash llamactl-update it replaces, so an
-// existing history file keeps working.
+// A detached checkout is written as the bare sha. The bash llamactl-update this
+// replaces wrote the same lines (minus `failed`), so pointing
+// LLAMACTL_UPDATE_HISTORY at its file carries the history over.
 import { llamactlHome } from "@llamactl/core/config/env";
 import { join } from "node:path";
 
@@ -18,8 +18,18 @@ export interface HistoryRef {
   sha: string;
 }
 
+export interface HistoryEntry {
+  kind: "apply" | "rollback";
+  from: HistoryRef;
+  /** The target; for an apply line only the sha is recorded. */
+  to: HistoryRef;
+  /** null: no outcome line followed (the run was killed). */
+  outcome: "failed" | "ok" | "rolled-back" | null;
+}
+
 const SHA_RE = /^[0-9a-f]{7,40}$/;
-const FROM_RE = /(?:^|\s)from=(\S+)/;
+const START_RE = /(?:^|\s)(rollback )?from=(\S+) to=(\S+)/;
+const OUTCOME_RE = /^\S+ (ok|rolled-back|failed)(?:\s|$)/;
 
 /**
  * The update history path: $LLAMACTL_UPDATE_HISTORY, else
@@ -47,12 +57,53 @@ export function parseHistoryRef(text: string): HistoryRef | null {
   return { branch, sha };
 }
 
-/** The `from=` ref of the last history line that records one. */
-export function lastFromRef(historyText: string): HistoryRef | null {
-  const lines = historyText.split("\n");
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const match = FROM_RE.exec(lines[i] ?? "");
-    if (match?.[1] !== undefined) return parseHistoryRef(match[1]);
+function parseStartLine(line: string): HistoryEntry | null {
+  const start = START_RE.exec(line);
+  if (start?.[2] === undefined || start[3] === undefined) return null;
+  const from = parseHistoryRef(start[2]);
+  const to = parseHistoryRef(start[3]);
+  if (from === null || to === null) return null;
+  return { kind: start[1] === undefined ? "apply" : "rollback", from, to, outcome: null };
+}
+
+/** Parse history lines into entries, each with the outcome line that followed it. */
+export function parseHistory(historyText: string): HistoryEntry[] {
+  const entries: HistoryEntry[] = [];
+  for (const line of historyText.split("\n")) {
+    const entry = parseStartLine(line);
+    if (entry !== null) {
+      entries.push(entry);
+      continue;
+    }
+    const outcome = OUTCOME_RE.exec(line)?.[1];
+    const last = entries.at(-1);
+    if (last?.outcome === null && outcome !== undefined) {
+      last.outcome = outcome as HistoryEntry["outcome"];
+    }
+  }
+  return entries;
+}
+
+/**
+ * Where `--rollback` goes without a target, judged by the newest entry that
+ * says where the checkout should be:
+ *
+ * - an apply that verified, or a rollback that verified: back to its `from`
+ *   (so a second rollback undoes the first);
+ * - an apply that failed and was undone: skipped, the checkout is back at its
+ *   `from` already, so the entry before it decides;
+ * - an apply whose undo failed too, or that never recorded an outcome: its
+ *   `from`, where the checkout was before it;
+ * - a rollback that failed or never recorded an outcome: its `to`, i.e. retry
+ *   it rather than turning around.
+ */
+export function defaultRollbackTarget(historyText: string): HistoryRef | null {
+  const entries = parseHistory(historyText);
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const e = entries[i];
+    if (e === undefined || (e.kind === "apply" && e.outcome === "rolled-back")) continue;
+    if (e.kind === "rollback" && e.outcome !== "ok") return e.to;
+    return e.from;
   }
   return null;
 }
@@ -68,6 +119,10 @@ export function rollbackStartLine(iso: string, from: HistoryRef, to: HistoryRef)
 
 export function okLine(iso: string, sha: string): string {
   return `${iso} ok ${sha.slice(0, 7)}\n`;
+}
+
+export function failedLine(iso: string, sha: string, why: string): string {
+  return `${iso} failed ${sha.slice(0, 7)} ${why.replaceAll("\n", " ")}\n`;
 }
 
 export function rolledBackLine(iso: string, to: HistoryRef): string {
