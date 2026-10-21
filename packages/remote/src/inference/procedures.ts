@@ -128,6 +128,7 @@ interface AttemptRecord {
   state: Exclude<inferenceRpc.InferenceRpcAttemptState, "unknown">;
   streamed: boolean;
   terminal: ExecutionTerminal | undefined;
+  terminalSequence: number | undefined;
   controller: AbortController;
   timers: ReturnType<typeof setTimeout>[];
 }
@@ -500,6 +501,7 @@ function statusOf(record: AttemptRecord): AttemptStatus {
     requestId: record.requestId,
     deploymentId: record.deployment.deploymentId,
     ...(record.terminal !== undefined ? { terminal: record.terminal } : {}),
+    ...(record.terminalSequence !== undefined ? { terminalSequence: record.terminalSequence } : {}),
   };
 }
 
@@ -569,6 +571,7 @@ function admit(
     state: "accepted",
     streamed: false,
     terminal: undefined,
+    terminalSequence: undefined,
     controller: new AbortController(),
     timers: [],
   };
@@ -717,7 +720,9 @@ async function* runAttempt(
     // The consumer left mid-stream: that is a disconnect, never an orphan.
     if (record.terminal === undefined) stopAttempt(state, record, "disconnect");
   }
-  yield { frame: "event", event: { ...identity(), type: "terminal", terminal } };
+  const last = identity();
+  record.terminalSequence = last.sequence;
+  yield { frame: "event", event: { ...last, type: "terminal", terminal } };
 }
 
 function ownedRecord(

@@ -1,10 +1,17 @@
 import { initTRPC } from "@trpc/server";
+import { observable } from "@trpc/server/observable";
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 
-import type { TunnelReq } from "../src/tunnel/messages.js";
-
-import { createTunnelSubscriptionHandler } from "../src/tunnel/router-bridge.js";
+import {
+  TUNNEL_STREAM_CANCELLED,
+  TUNNEL_STREAM_OVERFLOW,
+  type TunnelReq,
+} from "../src/tunnel/messages.js";
+import {
+  createTunnelSubscriptionHandler,
+  type TunnelSubscription,
+} from "../src/tunnel/router-bridge.js";
 
 /**
  * B.2 coverage — `createTunnelSubscriptionHandler` must resolve
@@ -191,5 +198,135 @@ describe("createTunnelSubscriptionHandler", () => {
     });
     await new Promise((r) => setTimeout(r, 30));
     expect(error).not.toBeNull();
+  });
+});
+
+/**
+ * P4.1 (#139) X3 — the bridge's subscription buffer is bounded in bytes.
+ * A producer that outruns its consumer ends with a typed
+ * `stream-overflow`, what was already queued is still delivered (nothing
+ * is dropped silently), and the producer is torn down.
+ */
+describe("bounded subscription buffer (P4.1 X3)", () => {
+  const PAD = 1000;
+  const limits = { maxFrameBytes: 4096, maxQueuedBytes: 16 * 1024 };
+  const producer = { teardowns: 0, finishedNaturally: false, generatorClosed: 0 };
+
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- tRPC BuiltRouter internals are unnameable; the bridge accepts any router instance.
+  function buildBoundsRouter() {
+    return t.router({
+      // Emits a synchronous burst, faster than any consumer can drain,
+      // and would only finish on its own a little later. The bridge still
+      // accepts Observable subscriptions, and they are what its buffer holds.
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- drives the bridge's Observable buffer.
+      burst: t.procedure.input(z.object({ n: z.number().int().min(1) })).subscription(({ input }) =>
+        observable<{ i: number; pad: string }>((emit) => {
+          for (let i = 0; i < input.n; i++) emit.next({ i, pad: "x".repeat(PAD) });
+          const timer = setTimeout(() => {
+            producer.finishedNaturally = true;
+            emit.complete();
+          }, 30);
+          return (): void => {
+            clearTimeout(timer);
+            producer.teardowns += 1;
+          };
+        }),
+      ),
+      oversized: t.procedure.subscription(async function* () {
+        try {
+          await Promise.resolve();
+          yield { small: true };
+          yield { pad: "x".repeat(8 * 1024) };
+          yield { never: true };
+        } finally {
+          producer.generatorClosed += 1;
+        }
+      }),
+      slow: t.procedure.subscription(async function* ({ signal }) {
+        for (let i = 0; i < 100; i++) {
+          if (signal?.aborted) break;
+          yield { i };
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      }),
+    });
+  }
+
+  interface Settled {
+    error: (Error & { code?: string }) | null;
+    complete: boolean;
+  }
+
+  function settle(
+    sub: TunnelSubscription,
+    events: unknown[],
+  ): Promise<Settled> & {
+    cancel: () => void;
+  } {
+    let cancel = (): void => undefined;
+    const done = new Promise<Settled>((resolve) => {
+      cancel = sub.subscribe({
+        onEvent: (d) => events.push(d),
+        onError: (e) => {
+          resolve({ error: e, complete: false });
+        },
+        onComplete: () => {
+          resolve({ error: null, complete: true });
+        },
+      }).cancel;
+    });
+    return Object.assign(done, {
+      cancel: (): void => {
+        cancel();
+      },
+    });
+  }
+
+  test("a burst past the queued-byte cap ends typed, delivers what was queued and tears the producer down", async () => {
+    Object.assign(producer, { teardowns: 0, finishedNaturally: false });
+    const makeSub = createTunnelSubscriptionHandler(buildBoundsRouter(), () => ({}), limits);
+    const events: { i: number; pad: string }[] = [];
+    const result = await settle(makeSub(makeReq("burst", { n: 200 })), events);
+    const queuedBytes = events.reduce((sum, e) => sum + Buffer.byteLength(JSON.stringify(e)), 0);
+    expect(result.error?.code ?? null).toBe(TUNNEL_STREAM_OVERFLOW);
+    expect(result.complete).toBe(false);
+    expect(events.length).toBeGreaterThan(0);
+    expect(queuedBytes).toBeLessThanOrEqual(limits.maxQueuedBytes);
+    // A gap-free prefix: the overflow ended the stream, it dropped nothing.
+    expect(events.map((e) => e.i)).toEqual(events.map((_, i) => i));
+    expect(producer.teardowns).toBe(1);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(producer.finishedNaturally).toBe(false);
+  });
+
+  test("an event above the frame cap ends the stream typed and closes the generator", async () => {
+    producer.generatorClosed = 0;
+    const makeSub = createTunnelSubscriptionHandler(buildBoundsRouter(), () => ({}), limits);
+    const events: unknown[] = [];
+    const result = await settle(makeSub(makeReq("oversized", undefined)), events);
+    expect(result.error?.code ?? null).toBe(TUNNEL_STREAM_OVERFLOW);
+    expect(events).toEqual([{ small: true }]);
+    expect(producer.generatorClosed).toBe(1);
+  });
+
+  test("traffic inside the default limits flows untouched", async () => {
+    Object.assign(producer, { teardowns: 0, finishedNaturally: false });
+    const makeSub = createTunnelSubscriptionHandler(buildBoundsRouter(), () => ({}));
+    const events: unknown[] = [];
+    const result = await settle(makeSub(makeReq("burst", { n: 20 })), events);
+    expect(result).toEqual({ error: null, complete: true });
+    expect(events).toHaveLength(20);
+  });
+
+  test("a cancel is acknowledged with the typed stream-cancelled error, never a success-shaped end", async () => {
+    const makeSub = createTunnelSubscriptionHandler(buildBoundsRouter(), () => ({}), limits);
+    const events: unknown[] = [];
+    const running = settle(makeSub(makeReq("slow", undefined)), events);
+    await new Promise((r) => setTimeout(r, 20));
+    running.cancel();
+    const result = await running;
+    expect(result.error?.code ?? null).toBe(TUNNEL_STREAM_CANCELLED);
+    expect(result.complete).toBe(false);
+    expect(events.length).toBeGreaterThan(0);
   });
 });

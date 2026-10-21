@@ -16,6 +16,7 @@ import {
   createTunnelClient,
   createTunnelRouterHandler,
   createTunnelServer,
+  createTunnelSubscriptionHandler,
   type TunnelClient,
   type TunnelServer,
   type TunnelState,
@@ -605,19 +606,22 @@ function maybePublishAgentMdns(
 // server is already up at this point; the tunnel client runs in
 // the background and uses its own reconnect loop, so an unreachable
 // central never blocks the local agent. Bridges inbound `req`
-// frames from central into the same appRouter the /trpc endpoint
-// serves.
+// frames from central — queries, mutations and subscriptions — into
+// the same appRouter the /trpc endpoint serves.
 function maybeStartTunnelClient(opts: StartAgentOptions): TunnelClient | null {
   if (!opts.tunnelDial) return null;
-  const caller = appRouter.createCaller({
+  const ctx = {
     ...(opts.fleetJournalPath !== undefined ? { fleetJournalPath: opts.fleetJournalPath } : {}),
-  });
+  };
+  const caller = appRouter.createCaller(ctx);
   const handleRequest = createTunnelRouterHandler(caller);
+  const handleSubscription = createTunnelSubscriptionHandler(appRouter, () => ({ ...ctx }));
   const tunnelClient = createTunnelClient({
     url: opts.tunnelDial.url,
     bearer: opts.tunnelDial.bearer,
     nodeName: opts.tunnelDial.nodeName,
     handleRequest,
+    handleSubscription,
     ...(opts.tunnelDial.onStateChange !== undefined
       ? { onStateChange: opts.tunnelDial.onStateChange }
       : {}),

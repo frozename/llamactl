@@ -2,8 +2,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { StreamLimits } from "../src/tunnel/messages.js";
+
 import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
-import { hashToken } from "../src/server/auth.js";
+import { generateToken, hashToken } from "../src/server/auth.js";
+import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import { handleTunnelRelay } from "../src/server/tunnel-relay.js";
 import {
   createTunnelClient,
@@ -84,6 +87,7 @@ async function startHarness(script: {
   delayMs?: number;
   throwErr?: Error;
   journalPath?: string;
+  streamLimits?: StreamLimits;
 }): Promise<RunningHarness> {
   const bearer = "relay-bearer";
   const tunnelBearer = "tunnel-bearer";
@@ -92,6 +96,7 @@ async function startHarness(script: {
   const receivedCancel: string[] = [];
   const tunnelSrv = createTunnelServer({
     expectedBearerHash: hashToken(tunnelBearer),
+    ...(script.streamLimits !== undefined ? { streamLimits: script.streamLimits } : {}),
   });
   const bun = Bun.serve({
     port: 0,
@@ -355,5 +360,104 @@ describe("tunnel-relay SSE", () => {
     const parsed = JSON.parse(done!.data);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access -- test uses dynamic fixture/proxy data.
     expect(parsed.ok).toBe(false);
+  });
+});
+
+describe("P4.1: bounded relay streams", () => {
+  let harness: RunningHarness | undefined;
+  afterEach(async () => {
+    if (harness) await harness.stop();
+    harness = undefined;
+  });
+
+  test("central's stream-overflow reaches the relay client as a typed done frame", async () => {
+    harness = await startHarness({
+      events: [{ small: true }, { pad: "x".repeat(8 * 1024) }, { never: true }],
+      streamLimits: { maxFrameBytes: 4096, maxQueuedBytes: 16 * 1024 },
+    });
+    const res = await fetch(
+      `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/node1?stream=true`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${harness.bearer}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ method: "big", type: "subscription", input: null }),
+      },
+    );
+    const frames = await readSSE(res);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- test parses SSE payloads.
+    expect(frames.filter((f) => !f.event).map((f) => JSON.parse(f.data))).toEqual([
+      { small: true },
+    ]);
+    const done = frames.find((f) => f.event === "done");
+    expect(JSON.parse(done?.data ?? "null")).toMatchObject({
+      ok: false,
+      error: { code: "stream-overflow" },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(harness.receivedCancel).toHaveLength(1);
+  });
+});
+
+describe("P4.1: an agent serves tunneled subscriptions", () => {
+  const agents: RunningAgent[] = [];
+  afterEach(async () => {
+    for (const agent of agents.splice(0)) await agent.stop();
+  });
+
+  test("an agent dialing central serves tunneled subscriptions from its own router", async () => {
+    const relay = generateToken();
+    const tunnelBearer = `tun_${Math.random().toString(36).slice(2)}`;
+    const central = startAgentServer({
+      bindHost: "127.0.0.1",
+      port: 0,
+      tokenHash: relay.hash,
+      tunnelCentral: { expectedBearerHash: hashToken(tunnelBearer) },
+    });
+    agents.push(central);
+    let markReady = (): void => undefined;
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    const dialer = startAgentServer({
+      bindHost: "127.0.0.1",
+      port: 0,
+      tokenHash: generateToken().hash,
+      tunnelDial: {
+        url: `ws://127.0.0.1:${String(central.port)}/tunnel`,
+        bearer: tunnelBearer,
+        nodeName: "dialer",
+        onStateChange: (state) => {
+          if (state === "ready") markReady();
+        },
+      },
+    });
+    agents.push(dialer);
+    await ready;
+
+    const res = await fetch(`${central.url}/tunnel-relay/dialer?stream=true`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${relay.token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        method: "inferenceRpc.stream",
+        type: "subscription",
+        input: { attemptId: "att-none" },
+      }),
+    });
+    const frames = await readSSE(res);
+    // The worker RPC stream answered from the dialing agent's router: no
+    // claims ride an unauthenticated tunnel context, so it refuses typed.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- test parses SSE payloads.
+    expect(frames.filter((f) => !f.event).map((f) => JSON.parse(f.data))).toEqual([
+      {
+        frame: "rejected",
+        rejection: expect.objectContaining({ code: "unauthorized-scope" }) as unknown,
+      },
+    ]);
+    expect(JSON.parse(frames.find((f) => f.event === "done")?.data ?? "null")).toEqual({
+      ok: true,
+    });
   });
 });

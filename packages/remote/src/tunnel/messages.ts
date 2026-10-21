@@ -19,6 +19,40 @@ export const TUNNEL_CLOSE_UNAUTHORIZED = 4401;
 export const TUNNEL_CLOSE_BAD_HELLO = 4400;
 export const TUNNEL_CLOSE_HELLO_TIMEOUT = 4408;
 
+/**
+ * Frame and queue bounds (P4.1 X3). A frame above
+ * TUNNEL_MAX_FRAME_BYTES is malformed; the cap matches Bun's default
+ * WebSocket maxPayloadLength, so nothing larger crossed the wire before.
+ * Subscription streams are tighter: one event may carry at most
+ * `maxFrameBytes`, and a consumer may fall at most `maxQueuedBytes`
+ * behind its producer. Past either cap the stream ends with a typed
+ * `stream-overflow` error and its producer is cancelled; events are never
+ * dropped silently. 1 MiB per event admits a large single-chunk tool-call
+ * argument; 4 MiB of backlog is minutes of token output, so only a stalled
+ * consumer overflows.
+ */
+export const TUNNEL_MAX_FRAME_BYTES = 16 * 1024 * 1024;
+
+export interface StreamLimits {
+  maxFrameBytes: number;
+  maxQueuedBytes: number;
+}
+
+export const DEFAULT_STREAM_LIMITS: Readonly<StreamLimits> = Object.freeze({
+  maxFrameBytes: 1024 * 1024,
+  maxQueuedBytes: 4 * 1024 * 1024,
+});
+
+/** `stream-done` error code: a frame or queued-byte cap was exceeded. */
+export const TUNNEL_STREAM_OVERFLOW = "stream-overflow";
+
+/** `stream-done` error code acknowledging a `stream-cancel`. */
+export const TUNNEL_STREAM_CANCELLED = "stream-cancelled";
+
+export function frameBytes(raw: string): number {
+  return Buffer.byteLength(raw, "utf8");
+}
+
 export const TunnelHelloSchema = z.object({
   type: z.literal("hello"),
   bearer: z.string().min(1),
@@ -103,6 +137,25 @@ export const TunnelStreamCancelSchema = z.object({
 });
 export type TunnelStreamCancel = z.infer<typeof TunnelStreamCancelSchema>;
 
+/**
+ * The node acknowledges a `stream-cancel` with the stream's one
+ * `stream-done`, typed `stream-cancelled` when the cancel stopped it. The
+ * acknowledgement rides `stream-done` because that is the only terminal
+ * frame a node ships. A `stream-done` of any other shape means the stream
+ * had already ended; no acknowledgement before the link drops is `unknown`.
+ */
+export const TunnelStreamCancelAckSchema = TunnelStreamDoneSchema.extend({
+  ok: z.literal(false),
+  error: z.object({ code: z.literal(TUNNEL_STREAM_CANCELLED), message: z.string() }),
+});
+export type TunnelStreamCancelAck = z.infer<typeof TunnelStreamCancelAckSchema>;
+
+export type TunnelCancelOutcome = "cancelled" | "already-terminal" | "unknown";
+
+export function cancelOutcomeOf(done: TunnelStreamDone): Exclude<TunnelCancelOutcome, "unknown"> {
+  return TunnelStreamCancelAckSchema.safeParse(done).success ? "cancelled" : "already-terminal";
+}
+
 export const TunnelMessageSchema = z.discriminatedUnion("type", [
   TunnelHelloSchema,
   TunnelHelloAckSchema,
@@ -117,6 +170,7 @@ export const TunnelMessageSchema = z.discriminatedUnion("type", [
 export type TunnelMessage = z.infer<typeof TunnelMessageSchema>;
 
 export function parseTunnelMessage(raw: string): TunnelMessage | null {
+  if (frameBytes(raw) > TUNNEL_MAX_FRAME_BYTES) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
