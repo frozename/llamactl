@@ -716,7 +716,10 @@ describe("acceptance fencing before any engine request (X1, X2, X5)", () => {
     expect(terminalOf(frames)).toMatchObject({
       outcome: "failed",
       started: false,
-      error: { code: "target-unavailable", message: expect.stringContaining("no longer owns") },
+      error: {
+        code: "target-unavailable",
+        message: expect.stringContaining("no longer owns") as unknown,
+      },
     });
     expect(engine.requests).toHaveLength(0);
   });
