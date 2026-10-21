@@ -135,6 +135,9 @@ describe("server.startServer (error paths)", () => {
     for (const [k, v] of Object.entries(envForTemp(temp))) {
       if (v !== undefined) process.env[k] = v;
     }
+    // Never fall back to the default 127.0.0.1:8080, which a real server may hold on this host.
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "65534";
     process.env["LLAMA_CPP_BIN"] = join(temp.devStorage, "nonexistent-bin");
     mkdirSync(temp.runtimeDir, { recursive: true });
   });
@@ -289,6 +292,46 @@ describe("server.startServer (error paths)", () => {
     }
     expect(thrown).toBeInstanceOf(Error);
     expect((thrown as Error).message).toContain("refusing to bind llama-server to 0.0.0.0");
+  });
+
+  test("refuses a non-loopback host bind before stopping the tracked server or probing the port", async () => {
+    const modelDir = join(temp.modelsDir, "Demo");
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(join(modelDir, "demo.gguf"), "");
+    const binDir = join(temp.devStorage, "fake-bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
+    process.env["LLAMA_CPP_BIN"] = binDir;
+
+    const dir = ensureWorkloadRuntimeDir(resolveEnv(), TEST_KEY);
+    writeFileSync(join(dir, "llama-server.pid"), "4194305\n");
+
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((() =>
+      Promise.resolve(new Response("occupied", { status: 200 }))) as unknown as typeof fetch);
+    const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
+      mockSpawnImplementation(12345),
+    );
+
+    let thrown: unknown;
+    try {
+      await Promise.resolve().then(() =>
+        startServer({
+          key: TEST_KEY,
+          target: "Demo/demo.gguf",
+          extraArgs: ["--host", "0.0.0.0"],
+        }),
+      );
+    } catch (error) {
+      thrown = error;
+    } finally {
+      spawnSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("refusing to bind llama-server to 0.0.0.0");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(spawnSpy).not.toHaveBeenCalled();
+    expect(readServerPid(TEST_KEY)).toBe(4194305);
   });
 
   test("allows a non-loopback host bind when allowExternalBind is set", async () => {

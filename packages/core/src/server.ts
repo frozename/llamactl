@@ -1195,6 +1195,9 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   if ("result" in validation) return validation.result;
   const { rel } = validation;
 
+  // Refuse before stopServer or the port probe: a refused start must not stop the running instance, and the refusal must not depend on what answers on the port.
+  validateHostBind(opts.extraArgs ?? [], opts.allowExternalBind);
+
   // Stop any existing instance. When the recorded pid's identity cannot be
   // proven, refuse to start: a replacement would either orphan the tracked
   // process or fight it for the port.
@@ -1230,7 +1233,6 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   const prepared = prepareLaunchArgs(opts, rel, resolved, env, key);
   const { launchArgs, tunedProfile } = prepared;
 
-  validateHostBind(launchArgs, opts.allowExternalBind);
   const pid = await launchAndRecordServer(
     opts,
     resolved,
