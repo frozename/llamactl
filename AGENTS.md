@@ -650,10 +650,18 @@ behind `LLAMACTL_UNIFIED_PROXY=1`.
   with `unsupported-version`.
 - A malformed `workerRpc` block never stops the agent: it is ignored
   with a warning, nothing is advertised, and re-saves keep it as written.
+- A service credential and a relay-only credential must be different
+  secrets. If one hash is both a `workerRpc` service credential and a
+  `workerRpcRelay` token hash, both blocks are ignored with a warning:
+  the node advertises nothing and accepts no relay-only credential.
 - The caller's kubeconfig `workerRpc` block is validated with the rest
-  of the kubeconfig: a malformed one (a misspelled key, an empty
-  reference) fails kubeconfig loading, and with it every llamactl
-  command and the gateway's peer routes, until it is fixed.
+  of the kubeconfig: a missing or empty `serviceCredentialRef`, or an
+  empty `relayCredentialRef`, fails kubeconfig loading, and with it every
+  llamactl command and the gateway's peer routes, until it is fixed.
+  Unknown keys are dropped without a warning: a misspelled
+  `relayCredentialRef` loads cleanly and every tunneled owner then fails
+  closed at runtime, and a misspelled `workerRpc` block name keeps the
+  existing path.
 
 ## Testing
 
