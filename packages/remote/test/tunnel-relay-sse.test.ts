@@ -289,7 +289,7 @@ describe("tunnel-relay SSE", () => {
     );
     // Call handleTunnelRelay directly, not through Bun.serve, so nothing
     // else cancels the body when the request signal aborts.
-    const req = new Request(url, {
+    const req = new Request(String(url), {
       method: "POST",
       headers: {
         authorization: `Bearer ${harness.bearer}`,
