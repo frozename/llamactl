@@ -13,6 +13,7 @@
     "./config/schema": "./src/config/schema.ts",
     "./config/secret": "./src/config/secret.ts",
     "./engines": "./src/engines/index.ts",
+    "./engines/conditions": "./src/engines/conditions.ts",
     "./engines/state": "./src/engines/state.ts",
     "./engines/types": "./src/engines/types.ts",
     "./env": "./src/env.ts",

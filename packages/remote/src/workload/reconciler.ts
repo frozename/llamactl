@@ -1,4 +1,10 @@
 import {
+  type ModelHostRestartReason,
+  recordModelHostReconcileError,
+  recordModelHostReconcileRecovered,
+  recordModelHostRestart,
+} from "@llamactl/core/engines/conditions";
+import {
   computeModelHostSpecHash,
   readModelHostState,
   removeModelHostState,
@@ -34,6 +40,9 @@ export interface ReconcileNodeReport {
   node: string;
   action: ApplyResult["action"] | "skipped-deleted";
   error?: string;
+  /** ModelHost on the local node only: a launch record exists but the engine
+   *  was not running, i.e. it exited or was killed since the last pass. */
+  foundDead?: boolean;
 }
 
 export interface ReconcileResult {
@@ -217,17 +226,87 @@ async function reconcileModelRun(
  */
 function classifyHostReconcile(
   spec: ModelHostManifest["spec"],
-  name: string,
+  localState: ReturnType<typeof readModelHostState>,
   current: { state: string; specHash?: string },
 ): "sweep-disabled" | "converged" | "apply" {
   if (!spec.enabled && current.state !== "Running") return "sweep-disabled";
   const desiredHash = computeModelHostSpecHash(specForHash(spec));
-  const observedHash =
-    spec.node === LOCAL_NODE_ID
-      ? readModelHostState({ name }, resolveEnv(process.env))?.specHash
-      : current.specHash;
+  const observedHash = spec.node === LOCAL_NODE_ID ? localState?.specHash : current.specHash;
   if (current.state === "Running" && observedHash === desiredHash) return "converged";
   return "apply";
+}
+
+type HostOutcome =
+  | { kind: "ok"; recovered: string; restart?: ModelHostRestartReason }
+  | { kind: "error"; reason: string; message: string };
+
+/**
+ * Persist the pass outcome in the local host's conditions sidecar. Only the
+ * local node's runtime dir is reachable from here; a remote host's
+ * conditions belong to the controller on that node. Bookkeeping failures
+ * (disk full, permissions) must never turn a pass into an error.
+ */
+function recordHostOutcome(
+  spec: ModelHostManifest["spec"],
+  name: string,
+  outcome: HostOutcome,
+): void {
+  if (spec.node !== LOCAL_NODE_ID) return;
+  const resolved = resolveEnv(process.env);
+  try {
+    if (outcome.kind === "error") {
+      recordModelHostReconcileError({ name }, outcome, resolved);
+      return;
+    }
+    if (outcome.restart) recordModelHostRestart({ name }, outcome.restart, resolved);
+    recordModelHostReconcileRecovered({ name }, outcome.recovered, resolved);
+  } catch {
+    // Conditions are observability; the reconcile result stands without them.
+  }
+}
+
+function pushHostReport(
+  reports: ReconcileNodeReport[],
+  spec: ModelHostManifest["spec"],
+  name: string,
+  action: ReconcileNodeReport["action"],
+  extra: { error?: { reason: string; message: string }; foundDead?: boolean },
+): number {
+  reports.push({
+    kind: "ModelHost",
+    name,
+    node: spec.node,
+    action,
+    ...(extra.error !== undefined ? { error: extra.error.message } : {}),
+    ...(extra.foundDead === true ? { foundDead: true } : {}),
+  });
+  if (extra.error === undefined) return 0;
+  recordHostOutcome(spec, name, { kind: "error", ...extra.error });
+  return 1;
+}
+
+function restartReason(wasRunning: boolean, foundDead: boolean): ModelHostRestartReason | null {
+  if (wasRunning) return "SpecChanged";
+  return foundDead ? "EngineExited" : null;
+}
+
+/**
+ * A disabled host that isn't Running may still have a stale sidecar (e.g. a
+ * dead-pid sidecar left by an out-of-band exit). statusModelHost reports
+ * Stopped for a dead pid, so this short-circuit runs before the apply path
+ * that would otherwise remove it — sweep it here so the sidecar does not
+ * leak. No-op when the sidecar is already absent.
+ */
+function sweepDisabledHost(
+  spec: ModelHostManifest["spec"],
+  name: string,
+  reports: ReconcileNodeReport[],
+): number {
+  if (spec.node === LOCAL_NODE_ID) {
+    removeModelHostState({ name }, resolveEnv(process.env));
+  }
+  recordHostOutcome(spec, name, { kind: "ok", recovered: "Disabled" });
+  return pushHostReport(reports, spec, name, "unchanged", {});
 }
 
 /**
@@ -251,32 +330,23 @@ async function reconcileModelHost(
     // and do not spawn over it. Report the uncertainty so the pass surfaces
     // it instead of looking clean.
     if (current.identityUnknown === true) {
-      reports.push({
-        kind: "ModelHost",
-        name,
-        node: spec.node,
-        action: "unchanged",
-        error: "pid identity unknown; preserving state for a later pass",
+      return pushHostReport(reports, spec, name, "unchanged", {
+        error: {
+          reason: "PidIdentityUnknown",
+          message: "pid identity unknown; preserving state for a later pass",
+        },
       });
-      return 1;
     }
-    const decision = classifyHostReconcile(spec, name, current);
-    if (decision === "sweep-disabled") {
-      // A disabled host that isn't Running may still have a stale sidecar
-      // (e.g. a dead-pid sidecar left by an out-of-band exit). statusModelHost
-      // reports Stopped for a dead pid, so this short-circuit now runs before
-      // the apply path that would otherwise remove it — sweep it here so the
-      // sidecar does not leak. No-op when the sidecar is already absent.
-      if (spec.node === LOCAL_NODE_ID) {
-        removeModelHostState({ name }, resolveEnv(process.env));
-      }
-      reports.push({ kind: "ModelHost", name, node: spec.node, action: "unchanged" });
-      return 0;
-    }
+    const localState =
+      spec.node === LOCAL_NODE_ID ? readModelHostState({ name }, resolveEnv(process.env)) : null;
+    const decision = classifyHostReconcile(spec, localState, current);
+    if (decision === "sweep-disabled") return sweepDisabledHost(spec, name, reports);
     if (decision === "converged") {
-      reports.push({ kind: "ModelHost", name, node: spec.node, action: "unchanged" });
-      return 0;
+      recordHostOutcome(spec, name, { kind: "ok", recovered: "Recovered" });
+      return pushHostReport(reports, spec, name, "unchanged", {});
     }
+    const wasRunning = current.state === "Running";
+    const foundDead = !wasRunning && localState !== null;
     const result = await applyOneModelHost(
       manifest,
       opts.getClient,
@@ -289,21 +359,29 @@ async function reconcileModelHost(
         getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
       },
     );
-    const action = current.state === "Running" ? "restarted" : "started";
+    const action = wasRunning ? "restarted" : "started";
     if (result.ok && result.kind === "ModelHost") {
-      reports.push({ kind: "ModelHost", name, node: spec.node, action });
+      pushHostReport(reports, spec, name, action, { foundDead });
       saveModelHost(result.manifest, dir);
+      const restart = restartReason(wasRunning, foundDead);
+      recordHostOutcome(spec, name, {
+        kind: "ok",
+        recovered: "Recovered",
+        ...(restart !== null ? { restart } : {}),
+      });
       return 0;
     }
     // applyOneModelHost only emits {ok:true, kind:'ModelHost'} or
     // {ok:false, error}; the ModelRun shape can't arrive here, but
     // narrow defensively for TS.
     const errMsg = result.ok ? "unexpected non-ModelHost outcome" : result.error;
-    reports.push({ kind: "ModelHost", name, node: spec.node, action: "unchanged", error: errMsg });
-    return 1;
+    return pushHostReport(reports, spec, name, "unchanged", {
+      error: { reason: "ApplyFailed", message: errMsg },
+      foundDead,
+    });
   } catch (err) {
-    const message = (err as Error).message;
-    reports.push({ kind: "ModelHost", name, node: spec.node, action: "unchanged", error: message });
-    return 1;
+    return pushHostReport(reports, spec, name, "unchanged", {
+      error: { reason: "ReconcileFailed", message: (err as Error).message },
+    });
   }
 }

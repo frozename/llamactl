@@ -3,8 +3,13 @@ import { type spawn as nodeSpawn, spawn as spawnImpostor } from "node:child_proc
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import {
+  recordModelHostOomKill,
+  recordModelHostReconcileError,
+} from "../../../core/src/engines/conditions.js";
 import { ENGINES } from "../../../core/src/engines/index.js";
 import { computeModelHostSpecHash } from "../../../core/src/engines/state.js";
+import { resolveEnv } from "../../../core/src/env.js";
 import {
   existsSync,
   mkdirSync,
@@ -461,6 +466,30 @@ describe("server/modelhost", () => {
           runtimeDir: join(tmp, "runtime"),
         }),
       ).toEqual({ state: "Stopped" });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("statusModelHost surfaces persisted conditions after the host stopped", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-conditions-"));
+    const runtimeDir = join(tmp, "runtime");
+    const key = { name: "mlx-host-server" };
+    const resolved = resolveEnv({ LOCAL_AI_RUNTIME_DIR: runtimeDir });
+    try {
+      recordModelHostReconcileError(
+        key,
+        { reason: "ApplyFailed", message: "strata run-config --native must be A; got B" },
+        resolved,
+        new Date("2026-10-21T14:07:00.000Z"),
+      );
+      recordModelHostOomKill(key, 2, resolved, new Date("2026-10-21T14:02:12.000Z"));
+      const st = statusModelHost({ key, runtimeDir });
+      expect(st.state).toBe("Stopped");
+      expect(st.runtime?.conditions.map((c) => [c.type, c.status, c.reason])).toEqual([
+        ["ReconcileError", "True", "ApplyFailed"],
+        ["OOMKilled", "True", "CgroupOOMKill"],
+      ]);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
