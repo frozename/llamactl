@@ -454,7 +454,7 @@ describe("P4.1: bounded tunnel streams and acknowledged cancels", () => {
       // points at the replacement: a fresh request is answered by the new
       // socket, proving it took over rather than only that the old one died.
       let answered: unknown = null;
-      for (let tries = 0; tries < 100; tries++) {
+      for (let tries = 0; tries < 100 && answered === null; tries++) {
         try {
           const res = await srv.server.send("gpu1", {
             id: `st-${String(tries)}`,

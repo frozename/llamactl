@@ -735,6 +735,30 @@ describe("acceptance fencing before any engine request (X1, X2, X5)", () => {
     });
     expect(engine.requests).toHaveLength(0);
   });
+
+  test("a deployment whose epoch became unknown at the stream is refused with that reason (X2)", async () => {
+    let known = true;
+    useHost({
+      advertisements: () => [
+        ad(LOCAL, {
+          deploymentEpoch: known
+            ? routingCatalog.knownRevision("epoch-1")
+            : routingCatalog.UNKNOWN_REVISION,
+        }),
+      ],
+    });
+    const client = createEmbeddedInferenceRpcClient(claims());
+    expect(rejectionCode(await submit(client, "att-epoch-unknown"))).toBe("accepted");
+    known = false;
+    const frames = await collect(client.stream({ attemptId: "att-epoch-unknown" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "failed",
+      started: false,
+      error: { code: "target-unavailable", message: "the deployment epoch is unknown" },
+    });
+    expect(engine.requests).toHaveLength(0);
+  });
 });
 
 describe("non-model targets (A4) and no cache semantics (A5)", () => {
@@ -3538,6 +3562,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
           const res = await executorOver(client, {
             fallback: recordingFallback(fallback),
           }).execute(env, ctxFor(env));
+          expect(res.headers.get("x-llamactl-worker-transport")).toBe("legacy");
           expect(await res.json()).toEqual({ path: "fallback" });
           expect(fallback).toEqual(["fallback"]);
         } finally {

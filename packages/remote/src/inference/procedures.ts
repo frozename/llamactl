@@ -930,7 +930,8 @@ function movedSinceAcceptance(state: HostState, accepted: Deployment): string | 
     return `the worker no longer owns deployment '${accepted.deploymentId}'`;
   }
   const epoch = epochOf(current);
-  return epoch === epochOf(accepted) ? null : `deployment epoch is now '${String(epoch)}'`;
+  if (epoch === epochOf(accepted)) return null;
+  return epoch === null ? "the deployment epoch is unknown" : `deployment epoch is now '${epoch}'`;
 }
 
 function startBackend(

@@ -111,7 +111,7 @@ export const TunnelReqSchema = z.object({
   params: z.unknown().optional(),
   /**
    * A worker-RPC caller's single-use service token (P4.1), forwarded
-   * unread by central's relay on `inferenceRpc.*` requests only, with the
+   * unread by central's relay on the worker-RPC procedures' requests, named exactly, with the
    * relay principal of the bearer the relay hop presented. The node
    * verifies the token against its own hashed bindings; nodes that
    * predate it drop the field. Never a reusable credential.
