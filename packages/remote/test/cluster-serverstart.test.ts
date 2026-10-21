@@ -214,4 +214,60 @@ describe("cluster-serverstart: remote serverStart over SSE", () => {
     const stop = await client.serverStop.mutate({ workload: "fake-model", graceSeconds: 2 });
     expect(stop).toBeDefined();
   });
+
+  test("a refused host bind arrives as a failed done event, not a subscription error", async () => {
+    const client = createRemoteNodeClient({
+      url: agent!.url,
+      token: agentToken,
+      certificate: certPem,
+      certificateFingerprint: fingerprint,
+    });
+
+    const events: Record<string, unknown>[] = [];
+    const errors: unknown[] = [];
+    let finalResult: { ok: boolean; error?: string } | null = null;
+
+    // Settle on either path so the assertions below can tell which one the refusal took. A
+    // refusal never spawns anything, so the deadline stays under bun's per-test timeout and a
+    // stream that never settles fails here with a message instead of as a bare test timeout.
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error("serverStart neither completed nor errored"));
+      }, 4_000);
+      const sub = client.serverStart.subscribe(
+        {
+          workload: "fake-model",
+          target: "fake-repo/fake-model.gguf",
+          extraArgs: ["--host", "0.0.0.0"],
+          timeoutSeconds: 8,
+        },
+        {
+          onData: (e: unknown) => {
+            const evt = e as Record<string, unknown>;
+            events.push(evt);
+            if (evt["type"] === "done") {
+              finalResult = evt["result"] as typeof finalResult;
+            }
+          },
+          onError: (err: unknown) => {
+            errors.push(err);
+            clearTimeout(timer);
+            resolve();
+          },
+          onComplete: () => {
+            clearTimeout(timer);
+            resolve();
+          },
+        },
+      );
+      void sub;
+    });
+
+    expect(errors).toEqual([]);
+    expect(events.map((e) => e["type"])).toEqual(["done"]);
+    expect(finalResult).not.toBeNull();
+    const result = finalResult as unknown as { ok: boolean; error?: string };
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("refusing to bind llama-server to 0.0.0.0");
+  });
 });

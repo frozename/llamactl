@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import { join } from "node:path";
 
 import {
@@ -9,10 +10,11 @@ import {
   keepAliveStopFile,
   readKeepAlivePid,
   readKeepAliveState,
+  runKeepAliveWorker,
   sleepWithAbort,
   stopKeepAlive,
 } from "../src/keepAlive.js";
-import { existsSync, mkdirSync, writeFileSync } from "../src/safe-fs.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "../src/safe-fs.js";
 import { envForTemp, makeTempRuntime } from "./helpers.js";
 
 describe("keepAlive path helpers", () => {
@@ -186,5 +188,71 @@ describe("stopKeepAlive", () => {
     const result = await stopKeepAlive({ key: { name: "test-wl" } });
     expect(result.stopped).toBe(true);
     expect(readKeepAlivePid()).toBeNull();
+  });
+});
+
+describe("runKeepAliveWorker", () => {
+  let temp: ReturnType<typeof makeTempRuntime>;
+  let originalEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    temp = makeTempRuntime();
+    originalEnv = { ...process.env };
+    for (const [k, v] of Object.entries(envForTemp(temp))) {
+      if (v !== undefined) process.env[k] = v;
+    }
+    mkdirSync(temp.runtimeDir, { recursive: true });
+  });
+  afterEach(() => {
+    process.env = originalEnv;
+    temp.cleanup();
+  });
+
+  test("records a host-bind refusal as start-failed and backs off", async () => {
+    const modelDir = join(temp.modelsDir, "Demo");
+    mkdirSync(modelDir, { recursive: true });
+    writeFileSync(join(modelDir, "demo.gguf"), "");
+    const binDir = join(temp.devStorage, "fake-bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
+    process.env["LLAMA_CPP_BIN"] = binDir;
+    process.env["LLAMA_CPP_HOST"] = "0.0.0.0";
+    process.env["LLAMA_CPP_PORT"] = "65534";
+
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((() =>
+      Promise.reject(new Error("connection refused"))) as unknown as typeof fetch);
+    const spawnSpy = spyOn(childProcess, "spawn");
+
+    const controller = new AbortController();
+    let spawnCalls = -1;
+    let state = readKeepAliveState();
+    let escaped: unknown = null;
+    try {
+      const worker = runKeepAliveWorker({
+        key: { name: "test-wl" },
+        target: "Demo/demo.gguf",
+        signal: controller.signal,
+      }).catch((error: unknown) => {
+        escaped = error;
+      });
+      // The first backoff is a full second, so polling sees start-failed before the loop retries.
+      for (let i = 0; i < 300 && state?.state !== "start-failed"; i += 1) {
+        await sleepWithAbort(0.01);
+        state = readKeepAliveState();
+      }
+      controller.abort();
+      await worker;
+    } finally {
+      spawnCalls = spawnSpy.mock.calls.length;
+      spawnSpy.mockRestore();
+      fetchSpy.mockRestore();
+    }
+    expect(escaped).toBeNull();
+    expect(state?.state).toBe("start-failed");
+    expect(state?.restarts).toBe(1);
+    expect(readFileSync(keepAliveLogFile(), "utf8")).toContain(
+      "start-failed rel=Demo/demo.gguf error=refusing to bind llama-server to 0.0.0.0",
+    );
+    expect(spawnCalls).toBe(0);
   });
 });

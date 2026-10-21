@@ -32,6 +32,7 @@ metadata:
   name: ${name}
 spec:
   node: ${node}
+  allowExternalBind: true
   target:
     kind: rel
     value: llama-7b.gguf

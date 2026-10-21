@@ -249,3 +249,193 @@ describe("D3 — convergeServerUnderLock partial-worker cleanup", () => {
     expect(cleanupStops.length).toBeGreaterThan(0);
   });
 });
+
+describe("host-bind refusal", () => {
+  interface BindTrace {
+    serverStopCalls: string[];
+    serverStartCalls: string[];
+    rpcServerStartCalls: string[];
+    rpcServerStopCalls: { node: string; graceSeconds: number | undefined }[];
+  }
+
+  function newTrace(): BindTrace {
+    return {
+      serverStopCalls: [],
+      serverStartCalls: [],
+      rpcServerStartCalls: [],
+      rpcServerStopCalls: [],
+    };
+  }
+
+  // Every workload reports up on 127.0.0.1 with no extraArgs, so the manifests below are mismatched
+  // (apply would stop the coordinator) and their eviction target is live (apply would stop it).
+  function tracedClient(node: string, trace: BindTrace, startError?: string): WorkloadClient {
+    const client: WorkloadClient = {
+      ...makeBaseClient(),
+      serverStatus: {
+        async query() {
+          await Promise.resolve();
+          return {
+            state: "up",
+            rel: "model.gguf",
+            extraArgs: [],
+            pid: 123,
+            host: "127.0.0.1",
+            port: 65533,
+            binary: null,
+            endpoint: "http://127.0.0.1:65533",
+          };
+        },
+      },
+      serverStop: {
+        async mutate(input) {
+          await Promise.resolve();
+          trace.serverStopCalls.push(input.workload);
+          return {};
+        },
+      },
+      serverStart: {
+        subscribe(input, callbacks) {
+          trace.serverStartCalls.push(input.workload);
+          queueMicrotask(() => {
+            callbacks.onData({
+              type: "done",
+              result:
+                startError === undefined
+                  ? { ok: true, pid: 42, endpoint: "http://127.0.0.1:65533" }
+                  : { ok: false, pid: null, endpoint: "http://0.0.0.0:65533", error: startError },
+            });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: () => undefined };
+        },
+      },
+      rpcServerStart: {
+        subscribe(_input, callbacks) {
+          trace.rpcServerStartCalls.push(node);
+          queueMicrotask(() => {
+            callbacks.onData({
+              type: "done",
+              result: { ok: true, pid: 99, endpoint: "0.0.0.0:50052" },
+            });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: () => undefined };
+        },
+      },
+      rpcServerStop: {
+        async mutate(input) {
+          await Promise.resolve();
+          trace.rpcServerStopCalls.push({ node, graceSeconds: input?.graceSeconds });
+          return {};
+        },
+      },
+    };
+    return client;
+  }
+
+  function evictingManifest(spec: Partial<ModelRun["spec"]>): ModelRun {
+    const base = manifestWithWorkers();
+    return {
+      ...base,
+      metadata: { ...base.metadata, annotations: { "llamactl.io/evict": "victim" } },
+      spec: { ...base.spec, ...spec },
+    };
+  }
+
+  test.each([
+    {
+      label: "a non-loopback --host",
+      manifest: evictingManifest({ extraArgs: ["--host", "127.0.0.1", "--host", "0.0.0.0"] }),
+    },
+    {
+      label: "a non-loopback endpoint host",
+      manifest: evictingManifest({ endpoint: { host: "0.0.0.0" } }),
+    },
+  ])("refuses $label before evicting, stopping or starting anything", async ({ manifest }) => {
+    const trace = newTrace();
+    const result = await applyOne(
+      manifest,
+      (node) => tracedClient(node, trace),
+      undefined,
+      undefined,
+      { listManifests: () => [] },
+    );
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.error).toContain("refusing to bind llama-server to 0.0.0.0");
+    expect(trace.serverStopCalls).toEqual([]);
+    expect(trace.rpcServerStartCalls).toEqual([]);
+    expect(trace.rpcServerStopCalls).toEqual([]);
+    expect(trace.serverStartCalls).toEqual([]);
+  });
+
+  test("leaves a matching running workload Running even when its bind would be refused", async () => {
+    const trace = newTrace();
+    const live: WorkloadClient = {
+      ...tracedClient("coordinator", trace),
+      serverStatus: {
+        async query() {
+          await Promise.resolve();
+          return {
+            state: "up",
+            rel: "model.gguf",
+            extraArgs: [],
+            pid: 123,
+            host: "0.0.0.0",
+            port: 65533,
+            binary: null,
+            endpoint: "http://0.0.0.0:65533",
+          };
+        },
+      },
+    };
+    const manifest: ModelRun = {
+      ...baseManifest(),
+      spec: { ...baseManifest().spec, endpoint: { host: "0.0.0.0", port: 65533 } },
+    };
+    const result = await applyOne(manifest, () => live, undefined, undefined, {
+      listManifests: () => [],
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.action).toBe("unchanged");
+    expect(result.statusSection.phase).toBe("Running");
+    expect(result.statusSection.serverPid).toBe(123);
+    expect(trace.serverStopCalls).toEqual([]);
+    expect(trace.serverStartCalls).toEqual([]);
+  });
+
+  test("lets a non-loopback endpoint host through with allowExternalBind", async () => {
+    const trace = newTrace();
+    const result = await applyOne(
+      evictingManifest({ allowExternalBind: true, endpoint: { host: "0.0.0.0" } }),
+      (node) => tracedClient(node, trace),
+      undefined,
+      undefined,
+      { listManifests: () => [] },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.statusSection.phase).toBe("Running");
+    expect(trace.serverStartCalls).toEqual(["test-run"]);
+  });
+
+  test("a node-side refusal stops the started workers and returns Failed", async () => {
+    const trace = newTrace();
+    const refusal =
+      "refusing to bind llama-server to 0.0.0.0 without `allowExternalBind: true` in the workload spec";
+    const result = await applyOne(
+      manifestWithWorkers(),
+      (node) => tracedClient(node, trace, refusal),
+      undefined,
+      undefined,
+      { listManifests: () => [] },
+    );
+    expect(result.statusSection.phase).toBe("Failed");
+    expect(result.error).toBe(refusal);
+    expect(trace.serverStartCalls).toEqual(["test-run"]);
+    expect(trace.rpcServerStartCalls).toEqual(["worker0", "worker1"]);
+    expect(trace.rpcServerStopCalls.filter((c) => c.graceSeconds === 3)).toEqual([
+      { node: "worker1", graceSeconds: 3 },
+      { node: "worker0", graceSeconds: 3 },
+    ]);
+  });
+});

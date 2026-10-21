@@ -10,6 +10,7 @@ import { Badge, Button } from "@/ui";
 import type { ChatStore } from "./store";
 import type { CapabilityTag, Conversation, Message } from "./types";
 
+import { serverStartOutcome } from "./server-start-outcome";
 import { CAPABILITY_TAGS } from "./types";
 
 const DEFAULT_RAG_TOP_K = 5;
@@ -259,9 +260,10 @@ function LocalServerActions({
     picked && workload ? { target: picked, workload } : skipToken,
     {
       onData: (evt: unknown) => {
-        const e = evt as { type?: string; result?: { ok?: boolean } };
-        if (e.type === "done" && e.result?.ok) {
-          setPicked("");
+        const outcome = serverStartOutcome(evt);
+        if (outcome === "pending") return;
+        setPicked("");
+        if (outcome === "started") {
           void utils.nodeModels.invalidate();
           void utils.serverStatus.invalidate(workload ? { workload } : undefined);
           onStarted?.();

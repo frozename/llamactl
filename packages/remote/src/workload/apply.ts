@@ -1,6 +1,6 @@
 import type { spawn as nodeSpawn } from "node:child_process";
 
-import { target as targetMod } from "@llamactl/core";
+import { server as serverMod, target as targetMod } from "@llamactl/core";
 import { ENGINES } from "@llamactl/core/engines";
 import {
   computeModelHostSpecHash,
@@ -1104,12 +1104,31 @@ async function startCoordinator(
   }
 }
 
+/**
+ * The node refuses a bad bind only at serverStart, after eviction and the mismatched-server stop
+ * have already run, so a start that would be refused is failed here while nothing has been torn
+ * down. Without spec.endpoint.host the node's LLAMA_CPP_HOST decides the bind; only the node can
+ * refuse that. A matching workload starts nothing, so its live server keeps its Running report.
+ */
+function refuseHostBindBeforeTeardown(ctx: ConvergeServerContext): ApplyResult | null {
+  if (ctx.matches) return null;
+  const refusal = serverMod.hostBindRefusal(
+    ctx.desiredArgs,
+    ctx.manifest.spec.endpoint?.host,
+    ctx.manifest.spec.allowExternalBind,
+  );
+  return refusal === null ? null : failedApplyResult("unchanged", refusal, ctx.now);
+}
+
 async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
   const { manifest, client, getClient, onEvent, now, status, matches, desiredArgs, evictTargets } =
     ctx;
   const admission = admitServerBudget(ctx);
   if (!admission.ok) return admission.result;
   const adm = admission.adm;
+
+  const bindRefusal = refuseHostBindBeforeTeardown(ctx);
+  if (bindRefusal !== null) return bindRefusal;
 
   // Evict only AFTER admission succeeds and from INSIDE the node lock.
   // Eviction is destructive: stopping the victims for a workload that
