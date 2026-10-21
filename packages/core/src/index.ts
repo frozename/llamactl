@@ -10,6 +10,7 @@ export * as env from "./env.js";
 export * as fsAtomic from "./fsAtomic.js";
 export * as hf from "./hf.js";
 export * as inferenceContracts from "./inference/contracts.js";
+export * as inferenceRpc from "./inference/rpc-schema.js";
 export * as keepAlive from "./keepAlive.js";
 export * as lmstudio from "./lmstudio.js";
 export * as mmproj from "./mmproj.js";
