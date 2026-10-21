@@ -1333,19 +1333,25 @@ interface LaunchArgs {
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
-function findArgValue(args: readonly string[], flag: string): string | null {
+function findArgValues(args: readonly string[], flag: string): string[] {
+  const values: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
     const tok = args[i];
     if (tok === undefined) continue;
-    if (tok === flag) return args[i + 1] ?? null;
-    if (tok.startsWith(flag + "=")) return tok.slice(flag.length + 1);
+    if (tok === flag) {
+      const value = args[i + 1];
+      if (value !== undefined) values.push(value);
+    } else if (tok.startsWith(flag + "=")) {
+      values.push(tok.slice(flag.length + 1));
+    }
   }
-  return null;
+  return values;
 }
 
 function validateHostBind(args: readonly string[], allowExternalBind: boolean | undefined): void {
-  const host = findArgValue(args, "--host");
-  if (host === null || LOOPBACK_HOSTS.has(host)) return;
+  // llama-server applies a repeated --host in order (last wins), so any non-loopback occurrence may be the bind it ends up using.
+  const host = findArgValues(args, "--host").find((value) => !LOOPBACK_HOSTS.has(value));
+  if (host === undefined) return;
   if (allowExternalBind === true) return;
   throw new Error(
     `refusing to bind llama-server to ${host} without \`allowExternalBind: true\` in the workload spec`,

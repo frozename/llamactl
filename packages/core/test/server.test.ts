@@ -533,6 +533,92 @@ describe("server.startServer (error paths)", () => {
     expect(readServerPid(TEST_KEY)).toBe(4194305);
   });
 
+  test.each([
+    { extraArgs: ["--host", "127.0.0.1", "--host", "0.0.0.0"] },
+    { extraArgs: ["--host=127.0.0.1", "--host", "0.0.0.0"] },
+    { extraArgs: ["--host", "0.0.0.0", "--host", "127.0.0.1"] },
+    { extraArgs: ["--host", "0.0.0.0", "--host=127.0.0.1"] },
+  ])(
+    "refuses a non-loopback --host in any position before stopping or probing: $extraArgs",
+    async ({ extraArgs }) => {
+      const modelDir = join(temp.modelsDir, "Demo");
+      mkdirSync(modelDir, { recursive: true });
+      writeFileSync(join(modelDir, "demo.gguf"), "");
+      const binDir = join(temp.devStorage, "fake-bin");
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
+      process.env["LLAMA_CPP_BIN"] = binDir;
+
+      const dir = ensureWorkloadRuntimeDir(resolveEnv(), TEST_KEY);
+      writeFileSync(join(dir, "llama-server.pid"), "4194305\n");
+
+      const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((() =>
+        Promise.resolve(new Response("occupied", { status: 200 }))) as unknown as typeof fetch);
+      const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
+        mockSpawnImplementation(12345),
+      );
+
+      let thrown: unknown;
+      let fetchCalls = -1;
+      let spawnCalls = -1;
+      try {
+        await Promise.resolve().then(() =>
+          startServer({ key: TEST_KEY, target: "Demo/demo.gguf", extraArgs: [...extraArgs] }),
+        );
+      } catch (error) {
+        thrown = error;
+      } finally {
+        fetchCalls = fetchSpy.mock.calls.length;
+        spawnCalls = spawnSpy.mock.calls.length;
+        spawnSpy.mockRestore();
+        fetchSpy.mockRestore();
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toContain("refusing to bind llama-server to 0.0.0.0");
+      expect(fetchCalls).toBe(0);
+      expect(spawnCalls).toBe(0);
+      expect(readServerPid(TEST_KEY)).toBe(4194305);
+    },
+  );
+
+  test.each([
+    { extraArgs: ["--host", "127.0.0.1", "--host", "0.0.0.0"] },
+    { extraArgs: ["--host", "0.0.0.0", "--host=127.0.0.1"] },
+  ])(
+    "allows a non-loopback --host in any position with allowExternalBind: $extraArgs",
+    async ({ extraArgs }) => {
+      const modelDir = join(temp.modelsDir, "Demo");
+      mkdirSync(modelDir, { recursive: true });
+      writeFileSync(join(modelDir, "demo.gguf"), "");
+      const binDir = join(temp.devStorage, "fake-bin");
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(join(binDir, "llama-server"), "#!/bin/sh\nexit 0\n");
+      process.env["LLAMA_CPP_BIN"] = binDir;
+      process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+
+      const spawnSpy = spyOn(childProcess, "spawn").mockImplementation(
+        mockSpawnImplementation(process.pid),
+      );
+      const fetchSpy = mockReadinessFetch();
+
+      try {
+        const result = await startServer({
+          key: TEST_KEY,
+          target: "Demo/demo.gguf",
+          extraArgs: [...extraArgs],
+          allowExternalBind: true,
+        });
+        expect(result.ok).toBe(true);
+        expect(spawnSpy).toHaveBeenCalled();
+        const fullArgs = spawnSpy.mock.calls[0]?.[1] ?? [];
+        expect(fullArgs).toContain("0.0.0.0");
+      } finally {
+        spawnSpy.mockRestore();
+        fetchSpy.mockRestore();
+      }
+    },
+  );
+
   test("lets a loopback extraArgs --host win over a non-loopback LLAMA_CPP_HOST", async () => {
     const modelDir = join(temp.modelsDir, "Demo");
     mkdirSync(modelDir, { recursive: true });
