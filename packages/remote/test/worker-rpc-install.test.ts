@@ -654,6 +654,8 @@ describe("I1: clean install", () => {
         "supervisor",
         "tunnel",
         "uninstall",
+        // `llamactl update` (self-update for source installs), not the worker RPC.
+        "update",
       ].sort(),
     );
     const agentCommands = join(import.meta.dir, "..", "..", "cli", "src", "commands", "agent.ts");
@@ -676,6 +678,12 @@ describe("I1: clean install", () => {
         .split(" ")
         .map((name) => `LLAMACTL_${name}`),
     );
+    // Read only by `llamactl update` (self-update for source installs), not the worker RPC.
+    for (const name of "AGENT_UNIT AGENT_URL CONTROLLER_LOG CONTROLLER_UNIT GH_REPO HEAVY_LOCK HISTORY".split(
+      " ",
+    )) {
+      BASELINE_ENV.add(`LLAMACTL_UPDATE_${name}`);
+    }
     const sources = join(import.meta.dir, "..", "..");
     const read = new Set<string>();
     for (const pkg of readdirSync(sources)) {
