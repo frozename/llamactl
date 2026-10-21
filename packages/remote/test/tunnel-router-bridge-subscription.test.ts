@@ -330,3 +330,48 @@ describe("bounded subscription buffer (P4.1 X3)", () => {
     expect(events.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * P4.1 (#139) — the 1 MiB event cap is the worker RPC's. Other tunneled
+ * subscriptions (log tails, ops-chat journals, chat streams) can carry a
+ * single event past 1 MiB, so by default they keep the cap a tunnel frame
+ * always had: 16 MiB, Bun's WebSocket payload limit.
+ */
+describe("per-subscription event caps", () => {
+  const BIG = 2 * 1024 * 1024;
+
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- tRPC BuiltRouter internals are unnameable; the bridge accepts any router instance.
+  function buildCapsRouter() {
+    const big = t.procedure.subscription(async function* () {
+      await Promise.resolve();
+      yield { pad: "x".repeat(BIG) };
+    });
+    return t.router({ serverLogs: big, inferenceRpc: t.router({ stream: big }) });
+  }
+
+  function run(method: string): Promise<{ events: number; code: string | null }> {
+    const makeSub = createTunnelSubscriptionHandler(buildCapsRouter(), () => ({}));
+    let events = 0;
+    return new Promise((resolve) => {
+      makeSub(makeReq(method, undefined)).subscribe({
+        onEvent: () => {
+          events += 1;
+        },
+        onError: (e) => {
+          resolve({ events, code: (e as Error & { code?: string }).code ?? e.message });
+        },
+        onComplete: () => {
+          resolve({ events, code: null });
+        },
+      });
+    });
+  }
+
+  test("a non-RPC subscription delivers a 2 MiB event under the default limits", async () => {
+    expect(await run("serverLogs")).toEqual({ events: 1, code: null });
+  });
+
+  test("an inferenceRpc subscription ends a 2 MiB event typed stream-overflow", async () => {
+    expect(await run("inferenceRpc.stream")).toEqual({ events: 0, code: TUNNEL_STREAM_OVERFLOW });
+  });
+});

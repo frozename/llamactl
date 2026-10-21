@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { StreamLimits, TunnelCancelOutcome } from "../src/tunnel/messages.js";
 
 import { bearerHashMatches, hashToken } from "../src/server/auth.js";
-import { pumpSubscriptionEvents } from "../src/server/tunnel-relay.js";
+import { nextRelayEvent } from "../src/server/tunnel-relay.js";
 import {
   createTunnelClient,
   createTunnelServer,
@@ -184,9 +184,10 @@ describe("FIX [17]: constant-time hello bearer check", () => {
   });
 });
 
-// FIX [7]/[12] — the SSE pump must not add one abort-event listener per
+// FIX [7]/[12] — the SSE relay must not add one abort-event listener per
 // streamed event. With N events on one stream, the abort-signal listener
-// count must stay bounded (does not grow per event).
+// count must stay bounded (does not grow per event). P4.1 made the relay
+// pull-driven, one step per read; each step holds one listener at most.
 describe("FIX [7]/[12]: SSE pump abort-listener leak", () => {
   test("listener count on the abort signal stays bounded across N events", async () => {
     const N = 50;
@@ -211,15 +212,13 @@ describe("FIX [7]/[12]: SSE pump abort-listener leak", () => {
 
     let maxListeners = 0;
     const enqueued: string[] = [];
-    const controller = {
-      enqueue(chunk: Uint8Array): void {
-        enqueued.push(new TextDecoder().decode(chunk));
-        const count = getEventListeners(signal, "abort").length;
-        if (count > maxListeners) maxListeners = count;
-      },
-    } as unknown as ReadableStreamDefaultController<Uint8Array>;
-
-    await pumpSubscriptionEvents(iterator, controller, encoder, signal);
+    for (;;) {
+      const pending = nextRelayEvent(iterator, signal);
+      maxListeners = Math.max(maxListeners, getEventListeners(signal, "abort").length);
+      const step = await pending;
+      if (step === "aborted" || step.done === true) break;
+      enqueued.push(new TextDecoder().decode(encoder.encode(JSON.stringify(step.value))));
+    }
 
     expect(enqueued.length).toBe(N);
     // RED before the fix: maxListeners grows ~1 per event (≈N).
@@ -398,5 +397,66 @@ describe("P4.1: bounded tunnel streams and acknowledged cancels", () => {
     expect(srv.server.disconnect("gpu1")).toBe(true);
     await waitFor(() => acks.length === 2, 2000);
     expect(acks[1]).toEqual(["gpu1", "mute-2", "unknown"]);
+  });
+
+  test("a websocket drop ends the consumer's stream typed tunnel-disconnected and cancels the node via cleanupSocket", async () => {
+    srv = startServer("tok", { onStreamCancelAck: recordAck });
+    await dialNode(srv.url);
+    let error: (Error & { code?: string }) | null = null;
+    try {
+      for await (const _ of srv.server.sendSubscribe(
+        "gpu1",
+        flood("ws-drop", { n: 1000, pad: 10, delayMs: 5 }),
+      )) {
+        expect(srv.server.disconnect("gpu1")).toBe(true);
+      }
+    } catch (err) {
+      error = err as Error & { code?: string };
+    }
+    expect(error?.code).toBe("tunnel-disconnected");
+    await waitFor(() => node.aborted === 1, 2000);
+  });
+
+  test("a 4409 replacement mid-stream ends central's stream typed tunnel-disconnected and the new socket answers status", async () => {
+    srv = startServer("tok", { onStreamCancelAck: recordAck });
+    await dialNode(srv.url);
+    const iterator = srv.server
+      .sendSubscribe("gpu1", flood("replaced", { n: 1000, pad: 10, delayMs: 5 }))
+      [Symbol.asyncIterator]();
+    expect((await iterator.next()).done).toBe(false);
+    const replacement = createTunnelClient({
+      url: srv.url,
+      bearer: "tok",
+      nodeName: "gpu1",
+      handleRequest: (req: TunnelReq) =>
+        Promise.resolve({ answered: req.method, via: "new-socket" }),
+      handleSubscription: createTunnelSubscriptionHandler(nodeRouter, () => ({})),
+      heartbeat: { intervalMs: 0, timeoutMs: 0 },
+    });
+    await replacement.start();
+    let error: (Error & { code?: string }) | null = null;
+    try {
+      for (let r = await iterator.next(); r.done !== true; r = await iterator.next()) {
+        // drain until the displaced connection errors the stream
+      }
+    } catch (err) {
+      error = err as Error & { code?: string };
+    }
+    expect(error?.code).toBe("tunnel-disconnected");
+    await waitFor(() => node.aborted === 1, 2000);
+    // The displaced node cancelled its stream, and central's registry now
+    // points at the replacement: a fresh request is answered by the new
+    // socket, proving it took over rather than only that the old one died.
+    let answered: unknown = null;
+    for (let tries = 0; tries < 40 && answered === null; tries++) {
+      try {
+        const res = await srv.server.send("gpu1", { id: `st-${String(tries)}`, method: "status" });
+        answered = res.result;
+      } catch {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    }
+    expect(answered).toEqual({ answered: "status", via: "new-socket" });
+    replacement.stop();
   });
 });

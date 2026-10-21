@@ -1,4 +1,7 @@
+import { inferenceRpc } from "@llamactl/core";
 import { z } from "zod";
+
+import { SERVICE_TOKEN_MAX_LENGTH } from "../server/auth.js";
 
 /**
  * Wire schema for the reverse-tunnel (I.3).
@@ -23,13 +26,11 @@ export const TUNNEL_CLOSE_HELLO_TIMEOUT = 4408;
  * Frame and queue bounds (P4.1 X3). A frame above
  * TUNNEL_MAX_FRAME_BYTES is malformed; the cap matches Bun's default
  * WebSocket maxPayloadLength, so nothing larger crossed the wire before.
- * Subscription streams are tighter: one event may carry at most
- * `maxFrameBytes`, and a consumer may fall at most `maxQueuedBytes`
+ * Subscription streams are bounded per stream: one event may carry at
+ * most `maxFrameBytes`, and a consumer may fall at most `maxQueuedBytes`
  * behind its producer. Past either cap the stream ends with a typed
  * `stream-overflow` error and its producer is cancelled; events are never
- * dropped silently. 1 MiB per event admits a large single-chunk tool-call
- * argument; 4 MiB of backlog is minutes of token output, so only a stalled
- * consumer overflows.
+ * dropped silently.
  */
 export const TUNNEL_MAX_FRAME_BYTES = 16 * 1024 * 1024;
 
@@ -38,10 +39,52 @@ export interface StreamLimits {
   maxQueuedBytes: number;
 }
 
-export const DEFAULT_STREAM_LIMITS: Readonly<StreamLimits> = Object.freeze({
+/** Fixed caps, or caps chosen per subscription by its procedure path. */
+export type StreamLimitsPolicy = StreamLimits | ((method: string) => StreamLimits);
+
+/**
+ * The worker RPC's caps. 1 MiB per event admits a large single-chunk
+ * tool-call argument; 4 MiB of backlog is minutes of token output, so
+ * only a stalled consumer overflows.
+ */
+export const INFERENCE_RPC_STREAM_LIMITS: Readonly<StreamLimits> = Object.freeze({
   maxFrameBytes: 1024 * 1024,
   maxQueuedBytes: 4 * 1024 * 1024,
 });
+
+/**
+ * Every other subscription. Log tails, ops-chat journals and chat
+ * streams can carry a single event past 1 MiB, so one event may still
+ * fill a whole frame, as before the caps; the backlog is bounded at four
+ * such frames.
+ */
+export const SUBSCRIPTION_STREAM_LIMITS: Readonly<StreamLimits> = Object.freeze({
+  maxFrameBytes: TUNNEL_MAX_FRAME_BYTES,
+  maxQueuedBytes: 4 * TUNNEL_MAX_FRAME_BYTES,
+});
+
+/** True for a procedure in the worker RPC namespace (`inferenceRpc.*`). */
+export function isInferenceRpcMethod(method: string): boolean {
+  return method.startsWith("inferenceRpc.");
+}
+
+const INFERENCE_RPC_PROCEDURES: ReadonlySet<string> = new Set(
+  inferenceRpc.InferenceRpcOperationSchema.options.map((operation) => `inferenceRpc.${operation}`),
+);
+
+/** True only for a procedure the worker RPC serves, named exactly. */
+export function isInferenceRpcProcedure(method: string): boolean {
+  return INFERENCE_RPC_PROCEDURES.has(method);
+}
+
+/** The default policy: the worker RPC's caps for its streams, the frame cap for the rest. */
+export function streamLimitsFor(method: string): StreamLimits {
+  return isInferenceRpcMethod(method) ? INFERENCE_RPC_STREAM_LIMITS : SUBSCRIPTION_STREAM_LIMITS;
+}
+
+export function resolveStreamLimits(policy: StreamLimitsPolicy, method: string): StreamLimits {
+  return typeof policy === "function" ? policy(method) : policy;
+}
 
 /** `stream-done` error code: a frame or queued-byte cap was exceeded. */
 export const TUNNEL_STREAM_OVERFLOW = "stream-overflow";
@@ -71,6 +114,19 @@ export const TunnelReqSchema = z.object({
   id: z.string().min(1),
   method: z.string().min(1),
   params: z.unknown().optional(),
+  /**
+   * A worker-RPC caller's single-use service token (P4.1), forwarded
+   * unread by central's relay on `inferenceRpc.*` requests only, with the
+   * relay principal of the bearer the relay hop presented. The node
+   * verifies the token against its own hashed bindings; nodes that
+   * predate it drop the field. Never a reusable credential.
+   */
+  auth: z
+    .object({
+      serviceToken: z.string().min(1).max(SERVICE_TOKEN_MAX_LENGTH),
+      relayPrincipal: z.string().min(1).max(64),
+    })
+    .optional(),
 });
 export type TunnelReq = z.infer<typeof TunnelReqSchema>;
 

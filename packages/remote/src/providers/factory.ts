@@ -21,7 +21,7 @@ import {
   type UnifiedStreamEvent,
 } from "@novaproto/contracts";
 
-import type { PinnedFetchFactory } from "../client/links.js";
+import { makePinnedFetch, type PinnedFetchFactory } from "../client/links.js";
 
 /**
  * Factory that turns a kubeconfig cloud node + resolved API key into
@@ -202,9 +202,9 @@ export function providerForNode(opts: {
    *  trace back to the parent gateway. */
   cfg?: Config;
   env?: NodeJS.ProcessEnv;
-  /** Runtime-specific pinned-fetch factory for agent nodes. Omit for
-   *  CLI (Bun's native fetch picks up `tls.ca` from the link layer).
-   *  Electron main passes `makeNodePinnedFetch`. */
+  /** Runtime-specific pinned-fetch factory for agent nodes. Omitted, an
+   *  agent that declares a certificate is dialed with Bun's
+   *  `makePinnedFetch`. Electron main passes `makeNodePinnedFetch`. */
   fetchFactory?: PinnedFetchFactory;
   /** Usage telemetry hook forwarded into the OpenAI-compat adapter.
    *  Fires exactly once per call / stream attempt with a
@@ -243,7 +243,13 @@ export function providerForNode(opts: {
   }
   const token = resolveToken(user, env);
   const baseUrl = node.endpoint.replace(/\/$/, "") + "/v1";
-  const fetchImpl = fetchFactory ? fetchFactory(node) : undefined;
+  // An agent that declares a certificate is dialed pinned to it, whatever
+  // the caller passed; global fetch would reject its self-signed cert.
+  const fetchImpl = fetchFactory
+    ? fetchFactory(node)
+    : node.certificate !== undefined
+      ? makePinnedFetch(node)
+      : undefined;
   return createOpenAICompatProvider({
     name: node.name,
     displayName: node.name,

@@ -1,8 +1,11 @@
 /**
  * P4.1 (#139) BOUNDARY — the gateway–worker InferenceRpcV1 round trip.
  * A real agent (random port, self-signed certificate) serves the worker
- * RPC on its tRPC route, backed by the shared fake engine. The producer
- * is driven over the wire with certificate-pinned fetch, then again
+ * RPC on its tRPC route, backed by the shared fake engine, configured as
+ * `agent serve` configures it from agent.yaml: callers present a service
+ * credential the worker holds only as a hash, and the claims every call
+ * runs under are derived from it server-side. The producer is driven
+ * over the wire with certificate-pinned fetch, then again
  * through the P0.2 unified proxy with a `worker-rpc` candidate — owned by
  * the gateway itself (embedded), and by a remote worker reached over its
  * declared transport: direct pinned TLS, or the reverse tunnel through a
@@ -11,6 +14,7 @@
  * `validateExecutionEventSequence`.
  */
 import type { routingCatalog } from "@llamactl/core";
+import type { AgentWorkerRpc } from "@llamactl/core/config/agent-config";
 import type { PeerNode } from "@llamactl/core/config/peers";
 import type { ClusterNode } from "@llamactl/core/config/schema";
 
@@ -21,22 +25,26 @@ import {
   validateExecutionEventSequence,
 } from "@novaproto/contracts";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { createHmac } from "node:crypto";
 import { join } from "node:path";
+import { connect } from "node:tls";
 
 import type { ClientWebSocketConstructor } from "../src/tunnel/tunnel-client.js";
 
 import { envForTemp, makeTempRuntime } from "../../core/test/helpers.js";
 import { makePinnedFetch, type PinnedFetch } from "../src/client/links.js";
-import { auth, config as kubecfg, type RunningAgent, startAgentServer, tls } from "../src/index.js";
+import {
+  auth,
+  configSchema,
+  config as kubecfg,
+  type RunningAgent,
+  startAgentServer,
+  tls,
+} from "../src/index.js";
 import { createProxy, type UnifiedProxy } from "../src/proxy/create-proxy.js";
 import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
-import {
-  type Cluster,
-  type ControllerClosedGuard,
-  installControllerClosedGuard,
-  makeCluster,
-} from "./helpers.js";
+import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
 
 // Loaded lazily so this boundary test still runs against a base without the
 // worker RPC module: there its RED is an assertion failure on the wire, not
@@ -63,15 +71,21 @@ const ENV_KEYS = [
 
 let temp: ReturnType<typeof makeTempRuntime>;
 let engine: FakeEngine;
-let cluster: Cluster | undefined;
+let worker: RunningAgent | undefined;
 let pinned: PinnedFetch;
-let bearer = "";
+/** The operator bearer: it reaches the route but carries no inference claims. */
+let operatorBearer = "";
+/** The gateway's service credential, bound on the worker to the contract claims. */
+let serviceCredential = "";
+let workerRpcSettings: AgentWorkerRpc;
 let guard: ControllerClosedGuard;
 let restoreHost: (() => void) | undefined;
 let workerNode: ClusterNode;
 let central: RunningAgent | undefined;
 let dialer: RunningAgent | undefined;
 let centralTrust: { url: string; certificate: string; fingerprint: string; token: string };
+/** Central's relay-only credential, which the gateway's kubeconfig names for the relay hop. */
+const relayOnly = auth.generateToken();
 const envBackup: Record<string, string | undefined> = {};
 const recordedSubmitFrames: unknown[][] = [];
 const recordedStreamFrames: unknown[][] = [];
@@ -155,7 +169,7 @@ function envelope(attemptId: string, model: string): Record<string, unknown> {
 }
 
 function trpcUrl(path: string, input?: unknown): string {
-  const base = `${cluster?.nodes[0]?.url ?? ""}/trpc/${path}`;
+  const base = `${worker?.url ?? ""}/trpc/${path}`;
   return input === undefined ? base : `${base}?input=${encodeURIComponent(JSON.stringify(input))}`;
 }
 
@@ -163,6 +177,7 @@ async function trpcCall(
   path: string,
   method: "GET" | "POST",
   input?: unknown,
+  bearer = serviceCredential,
 ): Promise<{ status: number; data: unknown }> {
   const res = await pinned(method === "GET" ? trpcUrl(path, input) : trpcUrl(path), {
     method,
@@ -176,7 +191,7 @@ async function trpcCall(
 /** Read a tRPC SSE subscription to its end, returning each data payload. */
 async function trpcStream(path: string, input: unknown): Promise<unknown[]> {
   const res = await pinned(trpcUrl(path, input), {
-    headers: { authorization: `Bearer ${bearer}`, accept: "text/event-stream" },
+    headers: { authorization: `Bearer ${serviceCredential}`, accept: "text/event-stream" },
   });
   expect(res.status).toBe(200);
   const text = await res.text();
@@ -223,17 +238,9 @@ function publishRecordingHost(): void {
   const host = procedures.createWorkerRpcHost({
     workerId: WORKER_ID,
     versions: [{ major: 1, minor: 0 }],
+    // The claims each call runs under are the ones serve.ts verified
+    // from the presented service credential.
     advertisements: () => [workerAdvertisement()],
-    // Service-credential claims arrive with the auth stage; until then the
-    // test stands in for the authenticator with fixed server-side claims.
-    resolveClaims: () => ({
-      serviceId: "contract-test",
-      operations: ["negotiate", "catalog", "submit", "stream", "status", "cancel"],
-      deployments: [LOCAL_DEPLOYMENT, AD_DEPLOYMENT],
-      models: [],
-      tenants: [TENANT],
-      credentialScopeId: TENANT,
-    }),
   });
   const recording: typeof host = {
     ...host,
@@ -271,6 +278,73 @@ function pinnedWebSocket(ca: string): ClientWebSocketConstructor {
 }
 
 /**
+ * The worker as `agent init` + `agent serve` set it up, with the RPC
+ * enabled in its agent.yaml block: version 1.0 and one service
+ * credential, made with the agent's token mechanics and kept as a hash.
+ * The gateway's kubeconfig declares the node, its pinned certificate and
+ * secret references to the credential and to central's relay-only
+ * credential.
+ */
+async function startWorker(dir: string): Promise<void> {
+  const cert = await tls.generateSelfSignedCert({
+    dir,
+    commonName: "127.0.0.1",
+    hostnames: ["127.0.0.1", "localhost"],
+  });
+  const operator = auth.generateToken();
+  const service = auth.generateToken();
+  operatorBearer = operator.token;
+  serviceCredential = service.token;
+  workerRpcSettings = {
+    versions: [{ major: 1, minor: 0 }],
+    serviceCredentials: [
+      {
+        serviceId: "contract-test",
+        operations: ["negotiate", "catalog", "submit", "stream", "status", "cancel"],
+        deployments: [LOCAL_DEPLOYMENT, AD_DEPLOYMENT],
+        models: [],
+        tenants: [TENANT],
+        credentialScopeId: TENANT,
+        tokenHash: service.hash,
+        tunnelKey: createHmac("sha256", service.token)
+          .update(`llamactl-worker-rpc-token\0${TUNNEL_NODE}`)
+          .digest("hex"),
+      },
+    ],
+  };
+  worker = startAgentServer({
+    bindHost: "127.0.0.1",
+    port: 0,
+    tokenHash: operator.hash,
+    tls: { certPath: cert.certPath, keyPath: cert.keyPath },
+    advertiseMdns: false,
+    workerRpc: { workerId: WORKER_ID, settings: () => workerRpcSettings },
+  });
+  const credentialFile = join(dir, "service-credential");
+  writeFileSync(credentialFile, service.token);
+  const relayFile = join(dir, "relay-credential");
+  writeFileSync(relayFile, relayOnly.token);
+  workerNode = {
+    name: WORKER_ID,
+    endpoint: worker.url,
+    certificate: cert.certPem,
+    certificateFingerprint: cert.fingerprint,
+  };
+  let cfg = configSchema.freshConfig();
+  cfg = kubecfg.upsertNode(cfg, "home", {
+    ...workerNode,
+    workerRpc: {
+      serviceCredentialRef: `file:${credentialFile}`,
+      relayCredentialRef: `file:${relayFile}`,
+    },
+  });
+  cfg = { ...cfg, users: [{ name: "me", token: operator.token }] };
+  const configPath = join(dir, "config");
+  kubecfg.saveConfig(cfg, configPath);
+  process.env["LLAMACTL_CONFIG"] = configPath;
+}
+
+/**
  * A central agent (pinned TLS) and a second agent that dials it as
  * `TUNNEL_NODE`. Both agents serve the process's one published worker
  * host, so the tunnel reaches the same worker as the direct dial.
@@ -281,15 +355,18 @@ async function startTunnel(dir: string): Promise<void> {
     commonName: "127.0.0.1",
     hostnames: ["127.0.0.1", "localhost"],
   });
-  const relay = auth.generateToken();
+  const operator = auth.generateToken();
   const tunnelBearer = auth.generateToken();
   const started = startAgentServer({
     bindHost: "127.0.0.1",
     port: 0,
-    tokenHash: relay.hash,
+    tokenHash: operator.hash,
     tls: { certPath: cert.certPath, keyPath: cert.keyPath },
     advertiseMdns: false,
-    tunnelCentral: { expectedBearerHash: tunnelBearer.hash },
+    tunnelCentral: {
+      expectedBearerHash: tunnelBearer.hash,
+      workerRpcRelay: () => ({ tokenHashes: [relayOnly.hash] }),
+    },
   });
   central = started;
   let markReady = (): void => undefined;
@@ -301,6 +378,7 @@ async function startTunnel(dir: string): Promise<void> {
     port: 0,
     tokenHash: auth.generateToken().hash,
     advertiseMdns: false,
+    workerRpc: { workerId: WORKER_ID, settings: () => workerRpcSettings },
     tunnelDial: {
       url: `wss://127.0.0.1:${String(started.port)}/tunnel`,
       bearer: tunnelBearer.token,
@@ -316,7 +394,7 @@ async function startTunnel(dir: string): Promise<void> {
     url: started.url,
     certificate: cert.certPem,
     fingerprint: cert.fingerprint,
-    token: relay.token,
+    token: operator.token,
   };
 }
 
@@ -334,16 +412,11 @@ beforeAll(async () => {
 
   engine = startFakeEngine();
   writeLlamaServerWorkload(temp.runtimeDir, "wl-rpc", Number(new URL(engine.url).port));
-  cluster = await makeCluster({ nodes: [{ name: WORKER_ID }] });
-  process.env["LLAMACTL_CONFIG"] = cluster.clusterConfigPath;
-  const cfg = kubecfg.loadConfig(cluster.clusterConfigPath);
-  const node = cfg.clusters.flatMap((c) => c.nodes).find((n) => n.name === WORKER_ID);
-  if (node === undefined) throw new Error("cluster node missing from kubeconfig");
-  pinned = makePinnedFetch(node);
-  workerNode = node;
-  bearer = cfg.users.find((u) => u.name === "me")?.token ?? "";
-  publishRecordingHost();
+  await startWorker(join(temp.devStorage, "worker"));
+  pinned = makePinnedFetch(workerNode);
   await startTunnel(join(temp.devStorage, "tunnel-central"));
+  // Published last: the agents above publish their own hosts as they start.
+  publishRecordingHost();
 });
 
 beforeEach(() => {
@@ -357,7 +430,7 @@ afterAll(async () => {
     restoreHost?.();
     await dialer?.stop();
     await central?.stop();
-    await cluster?.cleanup();
+    await worker?.stop();
     await engine.stop();
     temp.cleanup();
   } finally {
@@ -371,6 +444,92 @@ afterAll(async () => {
 });
 
 describe("InferenceRpcV1 gateway–worker round trip", () => {
+  test("over the wire: the operator bearer reaches the route but carries no claims", async () => {
+    const negotiated = await trpcCall(
+      "inferenceRpc.negotiate",
+      "GET",
+      { versions: [{ major: 1, minor: 0 }] },
+      operatorBearer,
+    );
+    expect(negotiated.status).toBe(200);
+    expect(negotiated.data).toMatchObject({
+      outcome: "rejected",
+      rejection: { code: "unauthorized-scope" },
+    });
+    // A negotiate needs no credential, and without one learns only a refusal.
+    const outsider = await trpcCall(
+      "inferenceRpc.negotiate",
+      "GET",
+      { versions: [{ major: 1, minor: 0 }] },
+      auth.generateToken().token,
+    );
+    expect(outsider.status).toBe(200);
+    expect(outsider.data).toMatchObject({
+      outcome: "rejected",
+      rejection: { code: "unauthorized-scope" },
+    });
+    expect(Object.keys((outsider.data as { rejection: object }).rejection).sort()).toEqual([
+      "code",
+      "message",
+    ]);
+    const outsiderCatalog = await trpcCall(
+      "inferenceRpc.catalog",
+      "GET",
+      undefined,
+      auth.generateToken().token,
+    );
+    expect(outsiderCatalog.status).toBe(401);
+    // A service credential is no operator bearer anywhere else.
+    expect((await trpcCall("nodeList", "GET", undefined)).status).toBe(401);
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("over the wire: a service credential opens the worker RPC only, however the path is spelled", async () => {
+    const raw = (path: string): Promise<number> =>
+      new Promise((resolve, reject) => {
+        const socket = connect(
+          {
+            host: "127.0.0.1",
+            port: Number(new URL(worker?.url ?? "").port),
+            ca: workerNode.certificate,
+            checkServerIdentity: () => undefined,
+          },
+          () => {
+            socket.write(
+              `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer ${serviceCredential}\r\n` +
+                "Connection: close\r\n\r\n",
+            );
+          },
+        );
+        let out = "";
+        socket.on("data", (chunk: Buffer) => (out += chunk.toString("utf8")));
+        socket.on("end", () => {
+          resolve(Number(/^HTTP\/1\.1 (\d+)/.exec(out)?.[1] ?? 0));
+        });
+        socket.on("error", reject);
+      });
+    // The reviewer's probe list: each names, or decodes to, something besides
+    // an exact worker-RPC procedure, so the credential opens nothing.
+    for (const path of [
+      "/trpc/env",
+      "/trpc/inferenceRpc.negotiate,env?batch=1&input=%7B%7D",
+      "/trpc/inferenceRpc.negotiate%2Cenv?batch=1&input=%7B%7D",
+      "/trpc/inferenceRpc.negotiate%252Cenv?batch=1&input=%7B%7D",
+      "/trpc/inferenceRpc.x/../env",
+      "/trpc/inferenceRpc.x/%2e%2e/env",
+      "/trpc/inferenceRpc.x%2F..%2Fenv",
+      "/trpc//env",
+      "/trpcXinferenceRpc.catalog",
+      "/trpc/%69nferenceRpc.catalog,env?batch=1&input=%7B%7D",
+      "/trpc/inferenceRpc.catalog/",
+      "/trpc/inferenceRpc.catalog.env",
+    ]) {
+      expect([path, await raw(path)]).toEqual([path, 401]);
+    }
+    expect(await raw("/trpc/inferenceRpc.catalog")).toBe(200);
+    expect(await raw("/trpc/%69nferenceRpc.catalog")).toBe(200);
+  });
+
   test("over the wire: negotiate, submit and stream run the fixed deployment once", async () => {
     const negotiated = await trpcCall("inferenceRpc.negotiate", "GET", {
       versions: [{ major: 1, minor: 0 }],
@@ -461,6 +620,29 @@ describe("InferenceRpcV1 gateway–worker round trip", () => {
   });
 });
 
+/** `work`'s result, and the authorization of every relay request it sent central. */
+async function relayBearers<T>(
+  work: () => Promise<T>,
+): Promise<{ result: T; bearers: (string | null)[] }> {
+  const bearers: (string | null)[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = Object.assign(
+    (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.startsWith(`${centralTrust.url}/tunnel-relay`)) {
+        bearers.push(new Headers(init?.headers).get("authorization"));
+      }
+      return realFetch(input, init);
+    },
+    realFetch,
+  );
+  try {
+    return { result: await work(), bearers };
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 describe("InferenceRpcV1 through the unified proxy to a remote owner", () => {
   function proxyFor(peer: PeerNode): UnifiedProxy {
     return createProxy({
@@ -512,13 +694,12 @@ describe("InferenceRpcV1 through the unified proxy to a remote owner", () => {
       endpoint: workerNode.endpoint,
       certificate: workerNode.certificate ?? "",
       fingerprint: workerNode.certificateFingerprint ?? "",
-      token: bearer,
     });
     const { res, body } = await chat(proxy);
     expectOneRemoteRun(res, body, "direct");
   });
 
-  test("over the tunnel transport: a tunnelPreferred owner runs once through central's relay", async () => {
+  test("over the tunnel transport: a tunnelPreferred owner runs once through central's relay, opening the hop with the relay-only credential", async () => {
     const proxy = proxyFor({
       id: WORKER_ID,
       endpoint: "https://192.0.2.1:7843",
@@ -529,7 +710,119 @@ describe("InferenceRpcV1 through the unified proxy to a remote owner", () => {
       tunnelCentralFingerprint: centralTrust.fingerprint,
       tunnelRelayToken: centralTrust.token,
     });
-    const { res, body } = await chat(proxy);
-    expectOneRemoteRun(res, body, "tunnel");
+    const { result, bearers } = await relayBearers(() => chat(proxy));
+    expectOneRemoteRun(result.res, result.body, "tunnel");
+    expect(bearers.length).toBeGreaterThan(0);
+    expect(new Set(bearers)).toEqual(new Set([`Bearer ${relayOnly.token}`]));
+  });
+});
+
+/**
+ * Production naming, with nothing injected: the gateway learns the
+ * owner's model from its peer snapshot, so listClusterRoutes names the
+ * candidate `deploy/<owner>/<owner>:<model>` with an unknown epoch, while
+ * the worker lists the deployment its real workload directory backs,
+ * `deploy/<owner>/<workload>`. The caller resolves its candidate against
+ * the owner's own catalog by model, never by guessing.
+ */
+describe("InferenceRpcV1 with production deployment naming", () => {
+  const PEER_DEPLOYMENT = `deploy/${WORKER_ID}/${WORKER_ID}:${LOCAL_MODEL}`;
+  let gatewayRuntime: string;
+
+  beforeAll(() => {
+    // The gateway's own runtime serves nothing, so the model is the peer's.
+    gatewayRuntime = join(temp.devStorage, "gateway-runtime");
+    mkdirSync(gatewayRuntime, { recursive: true });
+  });
+
+  function peerProxy(peer: PeerNode, workloads: { modelId: string }[]): UnifiedProxy {
+    const port = Number(new URL(engine.url).port);
+    return createProxy({
+      env: { LLAMACTL_UNIFIED_PROXY: "1" },
+      resolved: () => resolveEnv({ ...process.env, LOCAL_AI_RUNTIME_DIR: gatewayRuntime }),
+      nodeId: "gateway",
+      peers: [peer],
+      peerSnapshots: new Map([
+        [
+          WORKER_ID,
+          {
+            workloads: workloads.map((w) => ({ ...w, port, revision: "boot-1" })),
+            pressure: "NORMAL" as const,
+            fetchedAt: Date.now(),
+          },
+        ],
+      ]),
+    });
+  }
+
+  async function chatModel(proxy: UnifiedProxy, model: string): Promise<Response> {
+    return await proxy.handleRequest(
+      new Request("http://127.0.0.1/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model, stream: true, messages: [{ role: "user", content: "hi" }] }),
+      }),
+    );
+  }
+
+  const peers: Record<"direct" | "tunnel", () => PeerNode> = {
+    direct: () => ({
+      id: WORKER_ID,
+      endpoint: workerNode.endpoint,
+      certificate: workerNode.certificate ?? "",
+      fingerprint: workerNode.certificateFingerprint ?? "",
+    }),
+    tunnel: () => ({
+      id: WORKER_ID,
+      endpoint: "https://192.0.2.1:7843",
+      tunnelPreferred: true,
+      tunnelNodeName: TUNNEL_NODE,
+      tunnelCentralUrl: centralTrust.url,
+      tunnelCentralCertificate: centralTrust.certificate,
+      tunnelCentralFingerprint: centralTrust.fingerprint,
+      tunnelRelayToken: centralTrust.token,
+    }),
+  };
+
+  test.each(["direct", "tunnel"] as const)(
+    "%s: a peer-snapshot candidate runs once on the deployment the owner's workload backs",
+    async (transport) => {
+      const proxy = peerProxy(peers[transport](), [{ modelId: LOCAL_MODEL }]);
+      const catalog = await proxy.shadowCatalog();
+      const candidate = catalog.candidates.get(LOCAL_MODEL)?.[0]?.advertisement;
+      expect(candidate?.deploymentId).toBe(PEER_DEPLOYMENT);
+      expect(candidate?.transport).toBe("worker-rpc");
+      expect(candidate?.deploymentEpoch).toEqual({ status: "unknown" });
+
+      const res = await chatModel(proxy, LOCAL_MODEL);
+      const body = await res.text();
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-llamactl-worker-transport")).toBe(transport);
+      expect(body).toContain('"content":"Hel"');
+      expect(body.trimEnd().endsWith("data: [DONE]")).toBe(true);
+      expect(recordedSubmitFrames).toHaveLength(1);
+      expect(recordedSubmitFrames[0]?.[0]).toMatchObject({
+        outcome: "accepted",
+        deploymentId: LOCAL_DEPLOYMENT,
+      });
+      const events = expectOneValidAttempt(recordedStreamFrames[0] ?? []);
+      const terminal = events.at(-1);
+      expect(terminal?.type === "terminal" ? terminal.terminal : null).toMatchObject({
+        outcome: "completed",
+        model: LOCAL_MODEL,
+        deployment: LOCAL_DEPLOYMENT,
+      });
+      expect(engine.requests).toHaveLength(1);
+      expect(engine.requests[0]?.body?.["model"]).toBe(LOCAL_MODEL);
+    },
+  );
+
+  test("a model the owner's catalog does not list is target-unavailable, with no submit", async () => {
+    const proxy = peerProxy(peers.direct(), [{ modelId: "not-served.gguf" }]);
+    const res = await chatModel(proxy, "not-served.gguf");
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ error: { code: "target-unavailable" } });
+    expect(recordedSubmitFrames).toHaveLength(0);
+    expect(engine.requests).toHaveLength(0);
   });
 });

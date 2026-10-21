@@ -401,6 +401,47 @@ describe("P4.1: bounded relay streams", () => {
   });
 });
 
+describe("P4.1: central's default caps are per subscription", () => {
+  let harness: RunningHarness | undefined;
+  afterEach(async () => {
+    if (harness) await harness.stop();
+    harness = undefined;
+  });
+
+  async function relay(method: string): Promise<SSEFrame[]> {
+    harness = await startHarness({ events: [{ pad: "x".repeat(2 * 1024 * 1024) }] });
+    const res = await fetch(
+      `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/node1?stream=true`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${harness.bearer}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ method, type: "subscription", input: null }),
+      },
+    );
+    return await readSSE(res);
+  }
+
+  test("a 2 MiB event on a non-RPC subscription is relayed, as before the RPC caps", async () => {
+    const frames = await relay("serverLogs");
+    expect(frames.filter((f) => !f.event)).toHaveLength(1);
+    expect(JSON.parse(frames.find((f) => f.event === "done")?.data ?? "null")).toEqual({
+      ok: true,
+    });
+  });
+
+  test("the same event on an inferenceRpc subscription ends typed stream-overflow", async () => {
+    const frames = await relay("inferenceRpc.stream");
+    expect(frames.filter((f) => !f.event)).toHaveLength(0);
+    expect(JSON.parse(frames.find((f) => f.event === "done")?.data ?? "null")).toMatchObject({
+      ok: false,
+      error: { code: "stream-overflow" },
+    });
+  });
+});
+
 describe("P4.1: an agent serves tunneled subscriptions", () => {
   const agents: RunningAgent[] = [];
   afterEach(async () => {

@@ -24,7 +24,22 @@ export const InferenceRpcVersionSchema = z.object({
 });
 export type InferenceRpcVersion = z.infer<typeof InferenceRpcVersionSchema>;
 
+/**
+ * The version this build speaks. A gateway and a worker one minor apart
+ * interoperate (N-1), so a minor bump must never add an enum value, a
+ * frame kind or a required field that an N-1 peer cannot parse; anything
+ * that needs one is a major bump, which negotiation refuses.
+ */
 export const INFERENCE_RPC_VERSION: InferenceRpcVersion = Object.freeze({ major: 1, minor: 0 });
+
+/**
+ * How far ahead an attempt's deadline may lie. Further is refused, typed
+ * `deadline-exceeded`. A worker keeps every attempt's record this long
+ * after accepting it, plus a minute, so the horizon sets how many records
+ * a given rate of attempts holds; 15 min is three times the proxy's own
+ * 5 min deadline.
+ */
+export const INFERENCE_RPC_MAX_DEADLINE_MS = 15 * 60 * 1000;
 
 /**
  * Worker-routing hops a submit may carry in its envelope's internal
@@ -114,8 +129,11 @@ export const InferenceRpcNegotiateResultV1Schema = z.discriminatedUnion("outcome
     workerIncarnation: z.string().min(1),
     features: z.array(InferenceRpcFeatureSchema),
   }),
-  /** A positive "no RPC here": keep new requests on the existing path. */
-  z.object({ outcome: z.literal("not-advertised"), workerId: z.string().min(1) }),
+  /**
+   * A positive "no RPC here": keep new requests on the existing path. It
+   * answers anyone, so it names nothing about the worker.
+   */
+  z.object({ outcome: z.literal("not-advertised") }),
   rejected,
 ]);
 export type InferenceRpcNegotiateResultV1 = z.infer<typeof InferenceRpcNegotiateResultV1Schema>;

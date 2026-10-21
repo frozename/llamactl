@@ -1,9 +1,72 @@
 import { dirname, join } from "node:path";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import {
+  isMap,
+  isNode,
+  isScalar,
+  parseDocument,
+  parse as parseYaml,
+  stringify as stringifyYaml,
+} from "yaml";
 import { z } from "zod";
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "../safe-fs.js";
+import {
+  InferenceRpcVersionSchema,
+  InferenceServiceClaimsV1Schema,
+} from "../inference/rpc-schema.js";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "../safe-fs.js";
 import { llamactlHome, nonEmpty } from "./env.js";
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * A worker-RPC service credential (P4.1), bound to the claims every
+ * request presenting it gets. The worker keeps two values derived from
+ * the token, never the token itself: `tokenHash`, its SHA-256 (the agent
+ * bearer's mechanics), checks it on the direct path; `tunnelKey`,
+ * HMAC-SHA256(token, "llamactl-worker-rpc-token\0" + this worker's tunnel
+ * node name), checks the single-use tokens tunnel callers derive from it.
+ * Without `tunnelKey` the binding refuses tunnel callers. Rotate by adding
+ * the new credential's binding, moving callers over, then removing the old
+ * one; revoke by removing the binding.
+ */
+export const AgentWorkerRpcCredentialSchema = InferenceServiceClaimsV1Schema.extend({
+  tokenHash: z.string().regex(SHA256_HEX),
+  tunnelKey: z.string().regex(SHA256_HEX).optional(),
+}).refine((binding) => binding.tunnelKey !== binding.tokenHash, {
+  message: "tunnelKey must be derived from the token, not be its hash",
+  path: ["tunnelKey"],
+});
+export type AgentWorkerRpcCredential = z.infer<typeof AgentWorkerRpcCredentialSchema>;
+
+/**
+ * The optional InferenceRpcV1 worker block. Absent or with no versions,
+ * the RPC is not advertised; emptying `versions` stops the advertisement
+ * for new requests while active streams drain.
+ */
+export const AgentWorkerRpcSchema = z.object({
+  versions: z.array(InferenceRpcVersionSchema).default([]),
+  serviceCredentials: z.array(AgentWorkerRpcCredentialSchema).default([]),
+});
+export type AgentWorkerRpc = z.infer<typeof AgentWorkerRpcSchema>;
+
+/**
+ * Central's relay-only credentials (P4.1 X5), each stored only as the
+ * SHA-256 of its token. A relay-only credential admits one thing:
+ * relaying an `inferenceRpc.*` call to a tunneled node. It opens no other
+ * route, and the node still verifies the caller's service token. List
+ * the new hash beside the old one to rotate, then drop the old one.
+ */
+export const AgentWorkerRpcRelaySchema = z.object({
+  tokenHashes: z.array(z.string().regex(SHA256_HEX)).default([]),
+});
+export type AgentWorkerRpcRelay = z.infer<typeof AgentWorkerRpcRelaySchema>;
 
 export const AgentConfigSchema = z.object({
   apiVersion: z.literal("llamactl/v1"),
@@ -13,11 +76,33 @@ export const AgentConfigSchema = z.object({
   port: z.number().int().min(0).max(65535).default(7843),
   certPath: z.string(),
   keyPath: z.string(),
-  tokenHash: z.string().regex(/^[0-9a-f]{64}$/),
+  tokenHash: z.string().regex(SHA256_HEX),
   fingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  /**
+   * The optional worker-RPC block, opaque here so a malformed one never
+   * stops the agent, its token rotation or its status: only its reader
+   * validates it, and an invalid block is not advertised. Re-saves write
+   * it back as it was read.
+   */
+  workerRpc: z.unknown().optional(),
+  /** Central's relay-only credentials; opaque here for the same reason. */
+  workerRpcRelay: z.unknown().optional(),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
+
+/** The blocks only their readers validate; a re-save keeps their source text. */
+const OPAQUE_BLOCKS = ["workerRpc", "workerRpcRelay"] as const;
+
+interface BlockSource {
+  /** The block's value as read, to tell an unchanged block from an edited one. */
+  json: string;
+  /** The block's source text, key included. */
+  text: string;
+}
+
+/** Each file's opaque blocks as last loaded, keyed by path. */
+const loadedBlocks = new Map<string, Map<string, BlockSource>>();
 
 export function defaultAgentDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = nonEmpty(env["LLAMACTL_AGENT_DIR"]);
@@ -30,13 +115,76 @@ export function defaultAgentConfigPath(env: NodeJS.ProcessEnv = process.env): st
   return join(defaultAgentDir(env), "agent.yaml");
 }
 
+/** The source span of a top-level `key: value` pair, from the key to the value's end. */
+function pairSpan(pair: { key: unknown; value: unknown }): [string, number, number] | null {
+  if (!isScalar(pair.key) || typeof pair.key.value !== "string") return null;
+  const keyRange = pair.key.range;
+  const valueRange = isNode(pair.value) ? pair.value.range : undefined;
+  if (!keyRange || !valueRange) return null;
+  return [pair.key.value, keyRange[0], valueRange[2]];
+}
+
+function blockSources(raw: string, value: unknown): Map<string, BlockSource> {
+  const out = new Map<string, BlockSource>();
+  const doc = parseDocument(raw);
+  if (!isMap(doc.contents) || typeof value !== "object" || value === null) return out;
+  for (const pair of doc.contents.items) {
+    const span = pairSpan(pair);
+    if (span === null || !(OPAQUE_BLOCKS as readonly string[]).includes(span[0])) continue;
+    const [key, start, end] = span;
+    const json = JSON.stringify((value as Record<string, unknown>)[key]) as string | undefined;
+    if (json !== undefined) out.set(key, { json, text: raw.slice(start, end).trimEnd() });
+  }
+  return out;
+}
+
 export function loadAgentConfig(path: string = defaultAgentConfigPath()): AgentConfig {
   if (!existsSync(path)) {
     throw new Error(`agent config not found at ${path} — run 'llamactl agent init' first`);
   }
   const raw = readFileSync(path, "utf8");
   const parsed = parseYaml(raw) as unknown;
-  return AgentConfigSchema.parse(parsed);
+  const config = AgentConfigSchema.parse(parsed);
+  loadedBlocks.set(path, blockSources(raw, parsed));
+  return config;
+}
+
+function sameValues(a: unknown, b: Record<string, unknown>): boolean {
+  if (typeof a !== "object" || a === null) return false;
+  const read = a as Record<string, unknown>;
+  const keys = new Set([...Object.keys(read), ...Object.keys(b)]);
+  return [...keys].every(
+    (key) =>
+      (JSON.stringify(read[key]) as string | undefined) ===
+      (JSON.stringify(b[key]) as string | undefined),
+  );
+}
+
+/**
+ * The YAML to write: an opaque block unchanged since it was loaded from
+ * this file is written back as its source text, byte for byte, as long as
+ * the result reads as the same config.
+ */
+function serialize(config: AgentConfig, path: string): string {
+  const plain = stringifyYaml(config);
+  const sources = loadedBlocks.get(path);
+  if (sources === undefined) return plain;
+  const rest: Record<string, unknown> = { ...config };
+  const kept: string[] = [];
+  for (const key of OPAQUE_BLOCKS) {
+    const source = sources.get(key);
+    const json = JSON.stringify(rest[key]) as string | undefined;
+    if (source === undefined || json !== source.json) continue;
+    Reflect.deleteProperty(rest, key);
+    kept.push(`${source.text}\n`);
+  }
+  if (kept.length === 0) return plain;
+  const spliced = `${stringifyYaml(rest)}${kept.join("")}`;
+  try {
+    return sameValues(parseYaml(spliced), config) ? spliced : plain;
+  } catch {
+    return plain;
+  }
 }
 
 export function saveAgentConfig(
@@ -45,12 +193,106 @@ export function saveAgentConfig(
 ): void {
   AgentConfigSchema.parse(config);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, stringifyYaml(config), "utf8");
+  writeFileSync(path, serialize(config, path), "utf8");
   try {
     chmodSync(path, 0o600);
   } catch {
     // best-effort
   }
+}
+
+function warnIgnored(path: string, block: string, reason: string): void {
+  process.stderr.write(`[agent] ${path}: ignoring the ${block} block (${reason})\n`);
+}
+
+function firstIssue(error: z.ZodError): string {
+  const issue = error.issues[0];
+  if (issue === undefined) return "invalid";
+  const at = issue.path.length > 0 ? `${issue.path.join(".")}: ` : "";
+  return `${at}${issue.message}`;
+}
+
+/**
+ * A reader of one agent.yaml block that re-reads the file only when it
+ * changed: the same inode, size, mtime and ctime reuse the last result,
+ * so a request costs one stat and a rotation still applies to the next
+ * request without a restart. A file that is missing or does not parse
+ * yields undefined.
+ */
+function agentYamlBlockReader<T>(
+  path: string,
+  select: (config: AgentConfig) => T | undefined,
+): () => T | undefined {
+  let stamp: string | null = null;
+  let value: T | undefined;
+  return () => {
+    let next: string;
+    try {
+      const stat = statSync(path);
+      next = [stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
+    } catch {
+      stamp = null;
+      return undefined;
+    }
+    if (next === stamp) return value;
+    stamp = next;
+    try {
+      value = select(AgentConfigSchema.parse(parseYaml(readFileSync(path, "utf8"))));
+    } catch {
+      value = undefined;
+    }
+    return value;
+  };
+}
+
+/**
+ * Reads agent.yaml's worker-RPC block, re-reading the file whenever it
+ * changes, so a rotated or revoked credential, or a stopped
+ * advertisement, applies to the next request without a restart. A block
+ * that does not validate, or that binds the operator bearer's hash as a
+ * service credential, is ignored with a warning: nothing is advertised
+ * and no credential is accepted, while the agent itself runs on.
+ */
+export function workerRpcSettingsReader(
+  path: string = defaultAgentConfigPath(),
+): () => AgentWorkerRpc | undefined {
+  return agentYamlBlockReader(path, (config) => {
+    if (config.workerRpc === undefined) return undefined;
+    const parsed = AgentWorkerRpcSchema.safeParse(config.workerRpc);
+    if (!parsed.success) {
+      warnIgnored(path, "workerRpc", firstIssue(parsed.error));
+      return undefined;
+    }
+    if (parsed.data.serviceCredentials.some((b) => b.tokenHash === config.tokenHash)) {
+      warnIgnored(path, "workerRpc", "a service credential reuses the operator bearer's hash");
+      return undefined;
+    }
+    return parsed.data;
+  });
+}
+
+/**
+ * Reads central's relay-only credentials from agent.yaml, re-reading the
+ * file whenever it changes. A block that does not validate, or that lists
+ * the operator bearer's own hash, is ignored with a warning: no relay-only
+ * credential is accepted, while the operator bearer relays as before.
+ */
+export function workerRpcRelayReader(
+  path: string = defaultAgentConfigPath(),
+): () => AgentWorkerRpcRelay | undefined {
+  return agentYamlBlockReader(path, (config) => {
+    if (config.workerRpcRelay === undefined) return undefined;
+    const parsed = AgentWorkerRpcRelaySchema.safeParse(config.workerRpcRelay);
+    if (!parsed.success) {
+      warnIgnored(path, "workerRpcRelay", firstIssue(parsed.error));
+      return undefined;
+    }
+    if (parsed.data.tokenHashes.includes(config.tokenHash)) {
+      warnIgnored(path, "workerRpcRelay", "a relay credential reuses the operator bearer's hash");
+      return undefined;
+    }
+    return parsed.data;
+  });
 }
 
 export interface BootstrapBlob {

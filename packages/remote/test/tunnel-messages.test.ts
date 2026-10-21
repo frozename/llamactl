@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
 
+import { SERVICE_TOKEN_MAX_LENGTH } from "../src/server/auth.js";
 import {
   cancelOutcomeOf,
-  DEFAULT_STREAM_LIMITS,
   encodeTunnelMessage,
   frameBytes,
+  INFERENCE_RPC_STREAM_LIMITS,
+  isInferenceRpcProcedure,
   parseTunnelMessage,
+  streamLimitsFor,
+  SUBSCRIPTION_STREAM_LIMITS,
   TUNNEL_MAX_FRAME_BYTES,
   TUNNEL_STREAM_CANCELLED,
   type TunnelMessage,
@@ -157,10 +161,20 @@ describe("tunnel frame bounds and the cancel acknowledgement (P4.1 X3, X4)", () 
   });
 
   test("the stream caps fit one frame and admit at least one full event of backlog", () => {
-    expect(DEFAULT_STREAM_LIMITS.maxFrameBytes).toBeLessThanOrEqual(
-      DEFAULT_STREAM_LIMITS.maxQueuedBytes,
-    );
-    expect(DEFAULT_STREAM_LIMITS.maxQueuedBytes).toBeLessThan(TUNNEL_MAX_FRAME_BYTES);
+    for (const limits of [INFERENCE_RPC_STREAM_LIMITS, SUBSCRIPTION_STREAM_LIMITS]) {
+      expect(limits.maxFrameBytes).toBeLessThanOrEqual(TUNNEL_MAX_FRAME_BYTES);
+      expect(limits.maxFrameBytes).toBeLessThanOrEqual(limits.maxQueuedBytes);
+    }
+    expect(INFERENCE_RPC_STREAM_LIMITS.maxQueuedBytes).toBeLessThan(TUNNEL_MAX_FRAME_BYTES);
+  });
+
+  test("the default policy keeps the 1 MiB event cap to the worker RPC; other streams keep the frame cap", () => {
+    expect(streamLimitsFor("inferenceRpc.stream")).toEqual(INFERENCE_RPC_STREAM_LIMITS);
+    expect(INFERENCE_RPC_STREAM_LIMITS.maxFrameBytes).toBe(1024 * 1024);
+    for (const method of ["serverLogs", "opsSessionWatch", "chatStream", "inferenceRpcX"]) {
+      expect(streamLimitsFor(method)).toEqual(SUBSCRIPTION_STREAM_LIMITS);
+    }
+    expect(SUBSCRIPTION_STREAM_LIMITS.maxFrameBytes).toBe(TUNNEL_MAX_FRAME_BYTES);
   });
 
   test("a stream-done typed stream-cancelled acknowledges a cancel; any other end is already-terminal", () => {
@@ -182,5 +196,49 @@ describe("tunnel frame bounds and the cancel acknowledgement (P4.1 X3, X4)", () 
         error: { code: "subscription-error", message: "boom" },
       }),
     ).toBe("already-terminal");
+  });
+});
+
+describe("worker-RPC auth on req frames (P4.1 X5)", () => {
+  const req = {
+    type: "req",
+    id: "r1",
+    method: "inferenceRpc.status",
+    params: { type: "query", input: { attemptId: "att-1" } },
+  } as const;
+
+  test("a req frame carries a bounded single-use token and its relay principal", () => {
+    const auth = { serviceToken: "v1.1.nonce.c3ViamVjdA.mac", relayPrincipal: "principal" };
+    expect(parseTunnelMessage(JSON.stringify({ ...req, auth }))).toEqual({ ...req, auth });
+    const oversized = { ...auth, serviceToken: "x".repeat(SERVICE_TOKEN_MAX_LENGTH + 1) };
+    expect(parseTunnelMessage(JSON.stringify({ ...req, auth: oversized }))).toBeNull();
+  });
+
+  test("a reusable credential field is no part of the frame", () => {
+    const parsed = parseTunnelMessage(
+      JSON.stringify({ ...req, auth: { serviceCredential: "ll_agt_secret" } }),
+    );
+    expect(JSON.stringify(parsed)).not.toContain("ll_agt_secret");
+  });
+});
+
+describe("the worker-RPC procedures a relay-only credential may relay (P4.1 X5)", () => {
+  test("exactly the six procedures, named exactly", () => {
+    for (const op of ["negotiate", "catalog", "submit", "stream", "status", "cancel"]) {
+      expect(isInferenceRpcProcedure(`inferenceRpc.${op}`)).toBe(true);
+    }
+    for (const method of [
+      "inferenceRpc",
+      "inferenceRpc.",
+      "inferenceRpc.drain",
+      "inferenceRpc.negotiate,env",
+      "inferenceRpc.catalog.env",
+      "inferenceRpc.x/../env",
+      " inferenceRpc.catalog",
+      "InferenceRpc.catalog",
+      "env",
+    ]) {
+      expect(isInferenceRpcProcedure(method)).toBe(false);
+    }
   });
 });

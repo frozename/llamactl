@@ -541,6 +541,32 @@ agent bearer:
 - The **agent bearer** — standard kubeconfig user token. Guards
   `/trpc`, `/tunnel-relay/*`, and every other HTTP route on the
   agent. The CLI uses this for relay POSTs.
+- **Worker-RPC service tokens** (P4.1) — a caller's worker-RPC service
+  credential never crosses the tunnel, since any node holding the
+  tunnel bearer can claim a node name. Each relayed `inferenceRpc.*`
+  call carries a single-use token instead: an HMAC keyed by a per-worker
+  key derived from the credential and the target's tunnel node name,
+  bound to that node name, the call and its input, the relay hop's
+  bearer, a nonce and a 60 s expiry. The node verifies it against the
+  binding's `tunnelKey` (never its `tokenHash`, so a leaked `agent.yaml`
+  mints nothing, and one worker's key mints nothing for another) and
+  refuses replays. Direct dials present the credential itself, over
+  pinned TLS, checked against `tokenHash`.
+- The **relay-only credential** (P4.1) — central's `agent.yaml` lists
+  its SHA-256 under `workerRpcRelay.tokenHashes`. It relays the
+  `inferenceRpc.*` procedures to nodes and nothing else: any other
+  relay method gets 403, every other route 401. A caller presents it
+  for the relay hop through its kubeconfig node's
+  `workerRpc.relayCredentialRef` (`env:`/`keychain:`/`file:`), which a
+  tunneled node's worker-RPC block requires: without one the caller
+  fails the attempt closed as target-unavailable and logs why, and never
+  presents the agent bearer on the hop. Give each gateway
+  its own relay-only credential, listing one hash per gateway: central
+  stamps every relayed frame with the principal of the credential that
+  relayed it, and a service token is good only through the principal
+  its gateway minted it for. Gateways that share a credential share a
+  principal, so either could relay the other's tokens, and neither can
+  be revoked alone.
 
 **Audit trail** — the tunnel server's state transitions log to
 stderr on the agent (e.g. `tunnel: ready`, `tunnel: disconnected`)
@@ -550,17 +576,59 @@ offline audit.
 
 **Known gaps**:
 
-- The tunnel protocol defines `stream-event`/`stream-done`/
-  `stream-cancel` frames (`packages/remote/src/tunnel/messages.ts`)
-  and `tunnel-client.ts` can bridge inbound subscription requests
-  into them — but only when a `handleSubscription` is wired. The
-  shipped `llamactl agent serve --dial-central` passes none
-  (`maybeStartTunnelClient` in `packages/remote/src/server/serve.ts`),
-  so a tunneled subscription is answered `subscription-unsupported`.
-  Use direct HTTPS for streaming ops.
 - Fingerprint pinning over the tunnel-relay HTTP call isn't
   implemented — rely on TLS on the central agent's
   `/tunnel-relay` endpoint and trust the system CA.
+
+## Worker RPC (InferenceRpcV1, P4.1) rollout
+
+Two opt-ins, both off by default: a worker advertises when its
+`agent.yaml` `workerRpc` block lists a version, and a caller uses the
+RPC for an owner whose kubeconfig node carries a `workerRpc` block,
+behind `LLAMACTL_UNIFIED_PROXY=1`.
+
+- **Enable in order**: workers first, then central, then callers. A
+  caller that reaches an owner over the tunnel needs central to relay
+  its service token, so upgrade central before any caller opts in to
+  tunnel RPC, and list the gateway's relay-only credential hash under
+  central's `workerRpcRelay.tokenHashes` before adding
+  `relayCredentialRef` to the caller's `workerRpc` block. A tunneled
+  owner's block without `relayCredentialRef` fails closed.
+- **Roll back** by emptying `versions` or removing the block. Either
+  way the owner answers "not advertised" on both transports, new
+  requests keep the existing path, and active streams drain.
+- **Downgrade a worker** only after removing the `workerRpc` block from
+  every caller's kubeconfig node for it. A build that predates the RPC
+  refuses a service credential on a direct dial (HTTP 401), which
+  callers fail closed on rather than falling back.
+- **Bind a service credential** on a worker with two values derived
+  from it, never the credential itself: `tokenHash`, its SHA-256 hex
+  (direct dials), and `tunnelKey`, HMAC-SHA256 keyed by the credential
+  over `"llamactl-worker-rpc-token\0"` followed by the worker's tunnel
+  node name (`--tunnel-node-name`, default its `nodeName`), as hex
+  (tunnel callers). A binding without `tunnelKey` refuses tunnel
+  callers. Both are computed with the credential on stdin, so it stays
+  out of argv and shell history:
+
+  ```sh
+  bun -e 'const c = (await Bun.stdin.text()).trim(), n = process.argv.at(-1), h = require("node:crypto"); console.log(`tokenHash: ${h.createHash("sha256").update(c).digest("hex")}\ntunnelKey: ${h.createHmac("sha256", c).update(`llamactl-worker-rpc-token\0${n}`).digest("hex")}`)' <tunnel-node-name> < credential-file
+  ```
+
+  Rotate or revoke as with any binding; a renamed tunnel node needs a
+  new `tunnelKey`.
+
+- **Clocks**: tunnel worker-RPC needs the gateway's and the worker's
+  clocks within ±60 s, since a token expires 60 s after it is minted
+  and the worker refuses one dated further ahead. The worker logs each
+  refused token to stderr with its reason (`expired`, `skew`, `replay`,
+  `mac`, `node`, `subject`, `malformed`) and the procedure, never the
+  token; a run of `expired` or `skew` means the clocks have drifted.
+- **Version window**: a gateway and a worker one minor apart
+  interoperate. A minor bump must never add an enum value, a frame kind
+  or a required field that an N-1 peer cannot parse; anything that
+  needs one is a major bump.
+- A malformed `workerRpc` block never stops the agent: it is ignored
+  with a warning, nothing is advertised, and re-saves keep it as written.
 
 ## Testing
 
