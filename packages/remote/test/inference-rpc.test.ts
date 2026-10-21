@@ -704,6 +704,22 @@ describe("acceptance fencing before any engine request (X1, X2, X5)", () => {
     expectValidStream(await collect(client.stream({ attemptId: "att-same-epoch" })));
     expect(engine.requests).toHaveLength(1);
   });
+
+  test("a deployment the worker no longer owns at the stream is never dialled (X2)", async () => {
+    let owner = WORKER;
+    useHost({ advertisements: () => [ad(LOCAL, { ownerNodeId: owner })] });
+    const client = createEmbeddedInferenceRpcClient(claims());
+    expect(rejectionCode(await submit(client, "att-moved-away"))).toBe("accepted");
+    owner = "worker-b";
+    const frames = await collect(client.stream({ attemptId: "att-moved-away" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "failed",
+      started: false,
+      error: { code: "target-unavailable", message: expect.stringContaining("no longer owns") },
+    });
+    expect(engine.requests).toHaveLength(0);
+  });
 });
 
 describe("non-model targets (A4) and no cache semantics (A5)", () => {
