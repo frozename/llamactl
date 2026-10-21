@@ -209,7 +209,7 @@ test("genuinely changed rel/host/port still triggers restart", async () => {
   const manifest = mkManifest("delta");
   manifest.spec.target = { kind: "rel", value: "b.gguf" };
   manifest.spec.endpoint = {
-    host: "127.0.0.2",
+    host: "localhost",
     port: 8199,
   };
   const result = await applyOne(manifest, () => makeClient(state));

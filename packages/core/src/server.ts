@@ -813,13 +813,14 @@ interface ResolvedLaunchTarget {
 /**
  * Resolve the start target to a rel + model path + binary, failing
  * fast (as a ready-to-return `StartServerResult`) when any of them
- * is missing on disk.
+ * is missing on disk or the host bind is refused.
  */
 function resolveAndValidateTarget(
   opts: StartServerOptions,
   resolved: ResolvedEnv,
   launchEndpoint: StartServerOptions["endpoint"],
   env: NodeJS.ProcessEnv,
+  launchHost: string,
 ): ResolvedLaunchTarget | { result: StartServerResult } {
   const rel = resolveTarget(opts.target, env);
   if (!rel) {
@@ -856,6 +857,11 @@ function resolveAndValidateTarget(
         `llama-server binary not found: ${bin}`,
       ),
     };
+  }
+  // Refuse before stopServer or the port probe: a refused start must not stop the running instance, and the refusal must not depend on what answers on the port.
+  const bindRefusal = hostBindRefusal(opts.extraArgs ?? [], launchHost, opts.allowExternalBind);
+  if (bindRefusal !== null) {
+    return { result: startServerError(resolved, launchEndpoint, null, false, bindRefusal) };
   }
   return { rel, modelPath, bin };
 }
@@ -1191,12 +1197,9 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   const launchEndpoint = opts.endpoint;
   const launchHost = launchEndpoint?.host ?? resolved.LLAMA_CPP_HOST;
   const launchPort = launchEndpoint?.port ?? resolved.LLAMA_CPP_PORT;
-  const validation = resolveAndValidateTarget(opts, resolved, launchEndpoint, env);
+  const validation = resolveAndValidateTarget(opts, resolved, launchEndpoint, env, launchHost);
   if ("result" in validation) return validation.result;
   const { rel } = validation;
-
-  // Refuse before stopServer or the port probe: a refused start must not stop the running instance, and the refusal must not depend on what answers on the port.
-  validateHostBind(hostBindArgs(opts.extraArgs ?? [], launchHost), opts.allowExternalBind);
 
   // Stop any existing instance. When the recorded pid's identity cannot be
   // proven, refuse to start: a replacement would either orphan the tracked
@@ -1348,18 +1351,38 @@ function findArgValues(args: readonly string[], flag: string): string[] {
   return values;
 }
 
-function validateHostBind(args: readonly string[], allowExternalBind: boolean | undefined): void {
+function refuseHostBind(
+  args: readonly string[],
+  allowExternalBind: boolean | undefined,
+): string | null {
   // llama-server applies a repeated --host in order (last wins), so any non-loopback occurrence may be the bind it ends up using.
   const host = findArgValues(args, "--host").find((value) => !LOOPBACK_HOSTS.has(value));
-  if (host === undefined) return;
-  if (allowExternalBind === true) return;
-  throw new Error(
-    `refusing to bind llama-server to ${host} without \`allowExternalBind: true\` in the workload spec`,
-  );
+  if (host === undefined) return null;
+  if (allowExternalBind === true) return null;
+  return `refusing to bind llama-server to ${host} without \`allowExternalBind: true\` in the workload spec`;
+}
+
+function validateHostBind(args: readonly string[], allowExternalBind: boolean | undefined): void {
+  const refusal = refuseHostBind(args, allowExternalBind);
+  if (refusal !== null) throw new Error(refusal);
 }
 
 function hostBindArgs(extraArgs: readonly string[], fallbackHost: string): readonly string[] {
   return hasFlag(extraArgs, "--host") ? extraArgs : ["--host", fallbackHost];
+}
+
+/**
+ * The refusal message when `extraArgs` (or `fallbackHost`, which binds only when they carry no
+ * --host) would put llama-server on a non-loopback host without `allowExternalBind`, else null.
+ * Callers that cannot know the node's fallback host pass undefined and check `extraArgs` alone.
+ */
+export function hostBindRefusal(
+  extraArgs: readonly string[],
+  fallbackHost: string | undefined,
+  allowExternalBind: boolean | undefined,
+): string | null {
+  const args = fallbackHost === undefined ? extraArgs : hostBindArgs(extraArgs, fallbackHost);
+  return refuseHostBind(args, allowExternalBind);
 }
 
 async function launchBackground(opts: LaunchArgs): Promise<number> {
