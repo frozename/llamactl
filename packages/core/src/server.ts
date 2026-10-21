@@ -1196,7 +1196,11 @@ export async function startServer(opts: StartServerOptions): Promise<StartServer
   const { rel } = validation;
 
   // Refuse before stopServer or the port probe: a refused start must not stop the running instance, and the refusal must not depend on what answers on the port.
-  validateHostBind(opts.extraArgs ?? [], opts.allowExternalBind);
+  const extraArgs = opts.extraArgs ?? [];
+  validateHostBind(
+    hasFlag(extraArgs, "--host") ? extraArgs : ["--host", String(launchHost)],
+    opts.allowExternalBind,
+  );
 
   // Stop any existing instance. When the recorded pid's identity cannot be
   // proven, refuse to start: a replacement would either orphan the tracked
