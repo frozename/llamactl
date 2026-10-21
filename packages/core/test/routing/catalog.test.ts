@@ -719,7 +719,7 @@ describe("core stays adapter-free", () => {
       [`import { x } from "./capabilities.js"`, false],
       [`import { x } from "../types.js"`, false],
       [`export * from "./sub/index.js"`, false],
-      [`import type { U } from "@nova/contracts"`, false],
+      [`import type { U } from "@novaproto/contracts"`, false],
       [`const m = await import("./lazy.js")`, false],
     ];
     for (const [code, banned] of probes) {

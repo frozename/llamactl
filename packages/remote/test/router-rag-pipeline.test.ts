@@ -1,4 +1,4 @@
-import type { RetrievalProvider } from "@nova/contracts";
+import type { RetrievalProvider } from "@novaproto/contracts";
 
 import { saveConfig, upsertNode } from "@llamactl/core/config/kubeconfig";
 import { freshConfig } from "@llamactl/core/config/schema";

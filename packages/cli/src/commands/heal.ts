@@ -307,7 +307,7 @@ export async function runHeal(argv: string[]): Promise<number> {
 
   // Boot the in-proc MCP client once (not per-tick) when facade mode
   // is enabled. `createDefaultToolClient` mounts @llamactl/mcp +
-  // @nova/mcp in-process via InMemoryTransport and routes by
+  // @novaproto/mcp in-process via InMemoryTransport and routes by
   // tool-name prefix — exactly the harness runbooks use.
   let toolHandle: DefaultToolClientHandle | null = null;
   if (flags.useFacade) {

@@ -1,39 +1,48 @@
 ---
-description: Refresh @nova/* file: deps + verify the cross-repo fleet.
+description: Move llamactl to newly released @novaproto/* versions + verify the cross-repo fleet.
 ---
 
-Use after a Nova schema or package bump. Walks every downstream
-consumer, refreshes lockfiles, runs their test suites.
+Use after Nova releases a `@novaproto/*` package to npm. llamactl
+consumes Nova only through exact npm pins; sirius-gateway and
+embersynth still consume it through `file:../nova/packages/*`.
 
 Sequence:
 
-1. **Confirm Nova is green first.**
+1. **Confirm the release is live.** Every version you are about to
+   pin must be on npm, and `@novaproto/mcp` / `@novaproto/mcp-shared`
+   must pin the same `@novaproto/contracts` version llamactl will:
 
    ```bash
-   (cd ../nova && bun test && bun run typecheck)
+   npm view @novaproto/contracts versions
+   npm view @novaproto/mcp@<version> dependencies
+   npm view @novaproto/mcp-shared@<version> dependencies
    ```
 
-   If red, fix Nova before propagating.
+2. **Bump the pins.** Exact versions, no `^`/`~`, in every package
+   that declares them:
 
-2. **Refresh each consumer.** For every repo that depends on
-   `@nova/*` via `file:` (llamactl, sirius-gateway, embersynth,
-   plus any new consumer):
+   ```bash
+   grep -n '"@novaproto/' packages/*/package.json
+   ```
+
+3. **Refresh and verify llamactl:**
+
+   ```bash
+   bun install
+   bun run typecheck
+   bun test
+   ```
+
+4. **Refresh the file:-dep consumers** (sirius-gateway, embersynth)
+   when the Nova change also matters to them:
 
    ```bash
    (cd ../<consumer> && bun install && bun test)
    ```
 
-3. **Llamactl last** since it's the most sensitive:
-
-   ```bash
-   bun install
-   bun test
-   bun run typecheck
-   ```
-
-4. **Report** per-repo test counts and any drift (failing tests,
+5. **Report** per-repo test counts and any drift (failing tests,
    type errors, unexpected schema breaks). If anything's red, STOP
    and surface it — don't auto-fix consumer bugs under a nova sync.
 
-5. **Commit the lockfile bumps per consumer**, not globally. One
-   commit per repo, same slice title tying them together.
+6. **Commit per repo.** In llamactl: the pins, `bun.lock` and any
+   adaptation in one commit.

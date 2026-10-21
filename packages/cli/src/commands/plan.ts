@@ -1,5 +1,5 @@
 import { createDefaultToolClient } from "@llamactl/agents";
-import { createOpenAICompatProvider } from "@nova/contracts";
+import { createOpenAICompatProvider } from "@novaproto/contracts";
 import {
   createLlmExecutor,
   DEFAULT_ALLOWLIST,
@@ -7,7 +7,7 @@ import {
   type PlannerExecutor,
   runPlanner,
   stubPlannerExecutor,
-} from "@nova/mcp";
+} from "@novaproto/mcp";
 
 import { required } from "../required.js";
 
@@ -91,7 +91,7 @@ USAGE:
 
 Translates a natural-language operational goal into a validated
 sequence of MCP tool calls. The planner sees the current
-@llamactl/mcp + @nova/mcp catalog filtered by the default
+@llamactl/mcp + @novaproto/mcp catalog filtered by the default
 allowlist (destructive mutations gated off by default). A stub
 executor is available for smoke testing without hitting a real
 model.

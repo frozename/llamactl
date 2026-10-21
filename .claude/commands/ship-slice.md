@@ -26,9 +26,10 @@ in `AGENTS.md`:
 
    All green before you move on.
 
-4. **Cross-repo sweep.** If the slice touches `@nova/*`, bump the
-   Nova package first, then in llamactl + sirius-gateway +
-   embersynth:
+4. **Cross-repo sweep.** If the slice needs a Nova change, release
+   the `@novaproto/*` package first and bump llamactl's exact pins
+   (see AGENTS.md "Cross-repo discipline"), then in llamactl +
+   sirius-gateway + embersynth:
 
    ```bash
    (cd ../sirius-gateway && bun install && bun test)

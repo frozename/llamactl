@@ -3,7 +3,7 @@
 # integration suites in the dependency order nova → sirius-gateway
 # → embersynth → llamactl, plus llamactl's own cross-repo seam test
 # (packages/remote/test/cross-repo-seam.test.ts) that pins the
-# @nova/contracts shape.
+# @novaproto/contracts shape.
 #
 # Exits non-zero at the first failing repo so the operator knows
 # exactly which boundary broke. Each repo's test output streams to

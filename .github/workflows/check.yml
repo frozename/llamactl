@@ -1,9 +1,8 @@
 name: check
 
 # Mainline PR gate for typecheck, package tests, formatting, and the
-# advisory lint baseline burn-down. Mirrors the sibling checkout layout
-# used by the other CI workflows because this repo depends on
-# `file:../../../nova/packages/*`.
+# advisory lint baseline burn-down. llamactl resolves its @novaproto/*
+# dependencies from npm (exact pins), so no nova checkout is needed.
 
 on:
   push:
@@ -25,23 +24,10 @@ jobs:
         with:
           path: llamactl
 
-      - name: Checkout nova
-        uses: actions/checkout@v4
-        with:
-          repository: frozename/nova
-          # Pinned to the nova commit that llamactl's file: @nova/* dependencies are built
-          # against; unpin after llamactl moves to the published @novaproto/* packages.
-          ref: e1a65bd77710afb4b3cf67909bd1984bf80837b1
-          path: nova
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.3
-
-      - name: Install nova
-        working-directory: nova
-        run: bun install --frozen-lockfile || bun install
 
       - name: Install llamactl
         working-directory: llamactl

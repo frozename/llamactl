@@ -8,7 +8,7 @@ import type {
   SearchResponse,
   StoreRequest,
   StoreResponse,
-} from "@nova/contracts";
+} from "@novaproto/contracts";
 import type postgres from "postgres";
 
 import type { Embedder } from "../embedding.js";

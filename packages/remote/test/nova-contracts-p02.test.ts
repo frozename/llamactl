@@ -1,15 +1,15 @@
-import * as contracts from "@nova/contracts";
+import * as contracts from "@novaproto/contracts";
 import { describe, expect, test } from "bun:test";
 
 /**
- * P0.2 tripwire: the installed @nova/contracts must expose the 0.2.0
+ * P0.2 tripwire: the installed @novaproto/contracts must expose the 0.2.0
  * surface this repo now consumes — `projectUsageRecordV2ToV1` and a
  * `StreamCompletionSchema` that includes 'eof'. A namespace import
  * keeps an older install failing the ASSERTION (missing exports read
  * as undefined) rather than failing module resolution — so a stale
  * nova pin shows up as a red test here, not a SyntaxError.
  */
-describe("@nova/contracts P0.2 surface", () => {
+describe("@novaproto/contracts P0.2 surface", () => {
   test("projectUsageRecordV2ToV1 is exported and functional", () => {
     expect(typeof contracts.projectUsageRecordV2ToV1).toBe("function");
     // Fully-observed chat usage projects to a V1 row; a partial or

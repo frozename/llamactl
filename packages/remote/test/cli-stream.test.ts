@@ -1,4 +1,4 @@
-import type { UnifiedAiRequest, UnifiedStreamEvent } from "@nova/contracts";
+import type { UnifiedAiRequest, UnifiedStreamEvent } from "@novaproto/contracts";
 
 import { type CliBinding, CliBindingSchema } from "@llamactl/core/config/schema";
 import { describe, expect, test } from "bun:test";

@@ -1,5 +1,5 @@
 import type { ClusterNode, Config, User } from "@llamactl/core/config/schema";
-import type { OpenAICompatUsageObservation } from "@nova/contracts";
+import type { OpenAICompatUsageObservation } from "@novaproto/contracts";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";

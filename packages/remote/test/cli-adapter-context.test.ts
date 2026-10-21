@@ -4,7 +4,7 @@ import type {
   OpenAICompatUsageObservation,
   UnifiedAiRequest,
   UnifiedStreamEvent,
-} from "@nova/contracts";
+} from "@novaproto/contracts";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";

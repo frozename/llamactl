@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 
 const llamactlMcpReal = { ...(await import("@llamactl/mcp")) };
-const novaMcpReal = { ...(await import("@nova/mcp")) };
+const novaMcpReal = { ...(await import("@novaproto/mcp")) };
 const clientReal = { ...(await import("@modelcontextprotocol/sdk/client/index.js")) };
 const transportReal = { ...(await import("@modelcontextprotocol/sdk/inMemory.js")) };
 
@@ -88,7 +88,7 @@ void mock.module("@llamactl/mcp", () => ({
   buildMcpServer: (): ReturnType<typeof makeServer> => makeServer("llamactl"),
 }));
 
-void mock.module("@nova/mcp", () => ({
+void mock.module("@novaproto/mcp", () => ({
   ...novaMcpReal,
   buildNovaMcpServer: (): ReturnType<typeof makeServer> => makeServer("nova"),
 }));
@@ -109,7 +109,7 @@ const { createDefaultToolClient } = await import("../src/harness.js");
 
 afterAll(() => {
   void mock.module("@llamactl/mcp", () => llamactlMcpReal);
-  void mock.module("@nova/mcp", () => novaMcpReal);
+  void mock.module("@novaproto/mcp", () => novaMcpReal);
   void mock.module("@modelcontextprotocol/sdk/client/index.js", () => clientReal);
   void mock.module("@modelcontextprotocol/sdk/inMemory.js", () => transportReal);
 });

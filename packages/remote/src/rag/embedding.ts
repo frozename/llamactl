@@ -16,7 +16,7 @@ import type {
   AiProvider,
   UnifiedEmbeddingRequest,
   UnifiedEmbeddingResponse,
-} from "@nova/contracts";
+} from "@novaproto/contracts";
 
 import { RagError } from "./errors.js";
 
@@ -97,7 +97,7 @@ async function defaultBuildProvider(opts: EmbedderFactoryOptions): Promise<AiPro
   // lives on a separate host with no llamactl agent at all. `node`
   // still carries its audit-label role in error messages.
   if (binding.baseUrl) {
-    const { createOpenAICompatProvider } = await import("@nova/contracts");
+    const { createOpenAICompatProvider } = await import("@novaproto/contracts");
     let apiKey = "";
     if (binding.apiKeyRef) {
       const { resolveSecret } = await import("@llamactl/core/config/secret");

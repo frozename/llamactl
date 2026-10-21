@@ -14,18 +14,20 @@ import { resolve } from "node:path";
 // main-process Node 20.18 ESM loader chokes on several CJS→ESM interop
 // edges, so we emit the main + preload bundles as CommonJS (.cjs) which
 // gives us decades of stable Electron packaging behaviour.
-// Workspace + @nova/* deps are TS-source packages (no pre-build). If
+// Workspace deps are TS-source packages (no pre-build). If
 // electron-vite's default externalizeDepsPlugin externalizes them,
 // Electron's ESM loader at runtime fails to resolve their internal
-// `.js` imports against `.ts` files. Keep them *bundled* by excluding
-// them from the externalize list; everything else (native modules,
-// heavy libs like @trpc, undici) still externalizes via the plugin.
+// `.js` imports against `.ts` files. @novaproto/* ship compiled ESM from
+// npm but reach the app only through those workspace packages, so they
+// are bundled with them. Keep all of these *bundled* by excluding them
+// from the externalize list; everything else (native modules, heavy
+// libs like @trpc, undici) still externalizes via the plugin.
 const WORKSPACE_BUNDLE = [
   "@llamactl/core",
   "@llamactl/remote",
-  "@nova/contracts",
-  "@nova/mcp",
-  "@nova/mcp-shared",
+  "@novaproto/contracts",
+  "@novaproto/mcp",
+  "@novaproto/mcp-shared",
 ];
 
 export default defineConfig({

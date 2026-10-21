@@ -17,12 +17,12 @@ import {
   StoreRequestSchema,
   type StoreResponse,
   UnifiedAiRequestSchema,
-} from "@nova/contracts";
+} from "@novaproto/contracts";
 import { describe, expect, test } from "bun:test";
 
 /**
  * Cross-repo seam test — proves llamactl can resolve every
- * `@nova/contracts` symbol it actively uses and that the shapes
+ * `@novaproto/contracts` symbol it actively uses and that the shapes
  * haven't drifted from what the router / adapters expect. Guards
  * against the class of regressions where a nova schema field gets
  * renamed / tightened and llamactl's compile-clean suite doesn't
@@ -40,7 +40,7 @@ import { describe, expect, test } from "bun:test";
  * llamactl against nova before trying to unbreak downstream tests.
  */
 
-describe("cross-repo seam: @nova/contracts imports + schema shapes", () => {
+describe("cross-repo seam: @novaproto/contracts imports + schema shapes", () => {
   test("SearchRequestSchema parses a minimal search", () => {
     const req = SearchRequestSchema.parse({ query: "hi" });
     // Defaulting behavior we rely on in router.ragSearch:

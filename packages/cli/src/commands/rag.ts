@@ -263,7 +263,7 @@ function autoResolveKb(): { name: string } | { error: string } {
 
 /**
  * Shape the search results come back in — the tRPC procedure returns
- * `SearchResponse` from @nova/contracts, but we narrow to just the
+ * `SearchResponse` from @novaproto/contracts, but we narrow to just the
  * fields we consume so the command doesn't depend on @nova types at
  * call sites.
  */

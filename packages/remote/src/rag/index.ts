@@ -7,7 +7,7 @@ import type { ClusterNode, Config } from "@llamactl/core/config/schema";
  *
  * v1 providers: `chroma` (MCP-proxied), `pgvector` (native SQL).
  */
-import type { RetrievalProvider } from "@nova/contracts";
+import type { RetrievalProvider } from "@novaproto/contracts";
 
 import type { Embedder } from "./embedding.js";
 

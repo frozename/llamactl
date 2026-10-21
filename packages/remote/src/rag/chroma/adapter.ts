@@ -11,7 +11,7 @@ import type {
   SearchResult,
   StoreRequest,
   StoreResponse,
-} from "@nova/contracts";
+} from "@novaproto/contracts";
 
 import type { Embedder } from "../embedding.js";
 import type { ChromaMcpClient, ChromaToolResult } from "./client.js";

@@ -193,7 +193,7 @@ export const RagPipelineSpecSchema = z.object({
    * usage today (chroma embeds internally; pgvector's delegated
    * embedder return shape doesn't thread through the RetrievalProvider
    * contract), so precise cost visibility would require changes
-   * in `@nova/contracts`. The v1 compromise: let the operator
+   * in `@novaproto/contracts`. The v1 compromise: let the operator
    * declare a rate per chunk and/or per doc, and the runtime
    * multiplies that by the observed totals to surface an estimate.
    * Both fields are optional — set what matches your embedder's

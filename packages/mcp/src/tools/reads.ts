@@ -15,7 +15,7 @@ import {
   router,
   workloadStore,
 } from "@llamactl/remote";
-import { toTextContent } from "@nova/mcp-shared";
+import { toTextContent } from "@novaproto/mcp-shared";
 import { z } from "zod";
 
 export function registerReadTools(server: McpServer): void {

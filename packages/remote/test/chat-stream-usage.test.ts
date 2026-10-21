@@ -1,5 +1,5 @@
 import type { ClusterNode } from "@llamactl/core/config/schema";
-import type { UnifiedAiRequest, UnifiedStreamEvent } from "@nova/contracts";
+import type { UnifiedAiRequest, UnifiedStreamEvent } from "@novaproto/contracts";
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";

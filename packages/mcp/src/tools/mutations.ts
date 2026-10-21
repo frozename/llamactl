@@ -8,7 +8,7 @@ import {
   router,
   workloadStore,
 } from "@llamactl/remote";
-import { appendAudit, toTextContent } from "@nova/mcp-shared";
+import { appendAudit, toTextContent } from "@novaproto/mcp-shared";
 import { z } from "zod";
 
 import {

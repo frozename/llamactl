@@ -1,4 +1,4 @@
-import type { PlannerExecutor } from "@nova/mcp";
+import type { PlannerExecutor } from "@novaproto/mcp";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";

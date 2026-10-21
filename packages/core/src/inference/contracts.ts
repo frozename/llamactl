@@ -2,10 +2,10 @@
  * InferenceEnvelopeV1 — the unified router's request seam (P0.2, design §4.2).
  * Carries authenticated-context identity, the requested feature set and the
  * original validated native body (kept frozen so no hop mutates the caller's
- * bytes). Normalized chat payloads reuse @nova/contracts directly; this file
+ * bytes). Normalized chat payloads reuse @novaproto/contracts directly; this file
  * adds only the routing wrapper.
  */
-import { UnifiedAiRequestSchema } from "@nova/contracts";
+import { UnifiedAiRequestSchema } from "@novaproto/contracts";
 import { z } from "zod";
 
 import {

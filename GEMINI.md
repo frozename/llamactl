@@ -39,7 +39,9 @@ zsh test/run-all.zsh                 # full sweep with shell smoke
 
 ## Cross-repo checks
 
-If your change touches `@nova/*`, run after Nova bumps:
+If your change needs a Nova change, Nova releases `@novaproto/*` to
+npm first; then bump the exact pins in `packages/*/package.json` and
+run:
 
 ```bash
 bun install
