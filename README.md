@@ -153,6 +153,20 @@ bun packages/cli/src/bin.ts get workloads
 bun packages/cli/src/bin.ts artifacts fetch --verify-sig
 ```
 
+### Updating a source install
+
+A host that runs the controller and agent as services from this checkout
+updates itself in place; the model hosts keep serving:
+
+```bash
+llamactl update            # fetch; show commits, dependency changes, CI, services, hosts
+llamactl update --apply    # stop controller, switch, bun install, restart, verify; auto-rollback
+llamactl update --rollback # back to where the last update came from
+```
+
+See [`docs/self-update.md`](./docs/self-update.md) for the procedure, its
+gates and the systemd/launchd configuration.
+
 ## CLI surface (selected)
 
 | Verb                                                   | Purpose                                                                 |
@@ -175,6 +189,7 @@ bun packages/cli/src/bin.ts artifacts fetch --verify-sig
 | `runbook list / run`                                   | Deterministic operator automation.                                      |
 | `sirius providers list / add / remove`                 | Sirius-gateway config edits.                                            |
 | `embersynth sync`                                      | Push llamactl-derived config to embersynth.                             |
+| `update [--check \| --apply \| --rollback]`            | Self-update a source install; model hosts keep serving.                 |
 
 Run `llamactl <verb> --help` for the full flag surface.
 
@@ -229,6 +244,9 @@ same harness.
 - `docs/releases.md` — tagging, release workflow, artifact binding.
 - `docs/tsv-schemas.md` — curated-models, preset-overrides,
   llama-bench-profiles, llama-bench-history, bench-vision schemas.
+- `docs/self-update.md` — `llamactl update`: check, apply and roll back
+  a source install (git checkout + bun services) without stopping the
+  model hosts.
 - `docs/` gains more as features stabilize.
 
 ## Tests
