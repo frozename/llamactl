@@ -174,6 +174,7 @@ function assertNativeMatches(
   argsStr: string[],
   env: EngineBootEnv,
   hostedModel: ModelHostHostedModel,
+  configPath: string,
 ): void {
   const modelsDir = env.LLAMACTL_MODELS_DIR ?? env.LLAMA_CPP_MODELS;
   if (!modelsDir) {
@@ -188,9 +189,11 @@ function assertNativeMatches(
   }
   const nativeIdx = argsStr.indexOf("--native");
   const nativeValue = nativeIdx === -1 ? null : (argsStr[nativeIdx + 1] ?? null);
+  // Two settings name the model and must move together: the manifest's rel
+  // and the run-config's --native. Name both so the fix is obvious from the log.
   if (nativeValue !== expectedNative) {
     throw new Error(
-      `strata run-config --native must be ${expectedNative}; got ${String(nativeValue)}`,
+      `strata run-config ${configPath} --native must be ${expectedNative} (models dir + ModelHost spec.hostedModels[0].rel "${hostedModel.rel}"); got ${String(nativeValue)}. Update the run-config --native and the manifest rel together.`,
     );
   }
   if (!existsSync(expectedNative)) {
@@ -227,7 +230,7 @@ async function prepareStrataLaunch(
   }
   const argsStr = args.map((a) => String(a));
 
-  assertNativeMatches(argsStr, env, hostedModel);
+  assertNativeMatches(argsStr, env, hostedModel, configPath);
   assertAdvertisesModel(config, basename(hostedModel.rel));
 
   const host = config["host"];
