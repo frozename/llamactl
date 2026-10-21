@@ -250,7 +250,8 @@ function agentYamlBlockReader<T>(
  * changes, so a rotated or revoked credential, or a stopped
  * advertisement, applies to the next request without a restart. A block
  * that does not validate, or that binds the operator bearer's hash as a
- * service credential, is ignored with a warning: nothing is advertised
+ * service credential, or whose credential also appears in the sibling
+ * workerRpcRelay block, is ignored with a warning: nothing is advertised
  * and no credential is accepted, while the agent itself runs on.
  */
 export function workerRpcSettingsReader(
@@ -267,6 +268,12 @@ export function workerRpcSettingsReader(
       warnIgnored(path, "workerRpc", "a service credential reuses the operator bearer's hash");
       return undefined;
     }
+    const relay = AgentWorkerRpcRelaySchema.safeParse(config.workerRpcRelay);
+    const relayHashes = relay.success ? relay.data.tokenHashes : [];
+    if (parsed.data.serviceCredentials.some((b) => relayHashes.includes(b.tokenHash))) {
+      warnIgnored(path, "workerRpc", "a service credential is also a relay-only credential");
+      return undefined;
+    }
     return parsed.data;
   });
 }
@@ -274,8 +281,10 @@ export function workerRpcSettingsReader(
 /**
  * Reads central's relay-only credentials from agent.yaml, re-reading the
  * file whenever it changes. A block that does not validate, or that lists
- * the operator bearer's own hash, is ignored with a warning: no relay-only
- * credential is accepted, while the operator bearer relays as before.
+ * the operator bearer's own hash, or whose credential also appears in the
+ * sibling workerRpc block as a service credential, is ignored with a
+ * warning: no relay-only credential is accepted, while the operator bearer
+ * relays as before.
  */
 export function workerRpcRelayReader(
   path: string = defaultAgentConfigPath(),
@@ -289,6 +298,14 @@ export function workerRpcRelayReader(
     }
     if (parsed.data.tokenHashes.includes(config.tokenHash)) {
       warnIgnored(path, "workerRpcRelay", "a relay credential reuses the operator bearer's hash");
+      return undefined;
+    }
+    const worker = AgentWorkerRpcSchema.safeParse(config.workerRpc);
+    const serviceHashes = worker.success
+      ? worker.data.serviceCredentials.map((b) => b.tokenHash)
+      : [];
+    if (parsed.data.tokenHashes.some((hash) => serviceHashes.includes(hash))) {
+      warnIgnored(path, "workerRpcRelay", "a relay credential is also a service credential");
       return undefined;
     }
     return parsed.data;

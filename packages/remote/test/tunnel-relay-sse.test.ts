@@ -13,6 +13,7 @@ import {
   createTunnelServer,
   type TunnelJournalEntry,
   type TunnelReq,
+  type TunnelServer,
   type TunnelSubscription,
 } from "../src/tunnel/index.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
@@ -79,6 +80,7 @@ interface RunningHarness {
   bunPort: number;
   bearer: string;
   bun: ReturnType<typeof Bun.serve>;
+  tunnelSrv: TunnelServer;
   receivedCancel: string[];
 }
 
@@ -157,6 +159,7 @@ async function startHarness(script: {
     bunPort,
     bearer,
     bun,
+    tunnelSrv,
     receivedCancel,
     async stop(): Promise<void> {
       client.stop();
@@ -271,6 +274,77 @@ describe("tunnel-relay SSE", () => {
     // Give the cancel propagation time to round-trip.
     await new Promise((r) => setTimeout(r, 150));
     expect(harness.receivedCancel.length).toBeGreaterThan(0);
+  });
+
+  test("a request-signal abort with no read in flight still ships the node a stream-cancel", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "relay-sse-reqsignal-"));
+    const journalPath = join(dir, "relay.jsonl");
+    // 400 x 5 ms outlasts the wait + poll: a node stream that has
+    // already completed has nothing left to cancel.
+    harness = await startHarness({
+      events: Array.from({ length: 400 }, (_, i) => ({ i })),
+      delayMs: 5,
+    });
+    const ac = new AbortController();
+    const url = new URL(
+      `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/node1?stream=true`,
+    );
+    // Call handleTunnelRelay directly, not through Bun.serve, so nothing
+    // else cancels the body when the request signal aborts.
+    const req = new Request(String(url), {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${harness.bearer}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ method: "long", type: "subscription", input: null }),
+      signal: ac.signal,
+    });
+    const res = await handleTunnelRelay(
+      req,
+      url,
+      harness.tunnelSrv,
+      hashToken(harness.bearer),
+      journalPath,
+    );
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    // Let the body's queue refill so no pull is in flight at abort time.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(harness.receivedCancel).toEqual([]);
+    ac.abort();
+    const deadline = Date.now() + 1000;
+    while (harness.receivedCancel.length !== 1 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(harness.receivedCancel).toHaveLength(1);
+    // Read before reader.cancel(): the body's cancel() journals
+    // client-aborted too, so reading after it would not prove onReqAbort
+    // journaled this line.
+    let entries: TunnelJournalEntry[] = [];
+    const journalDeadline = Date.now() + 1000;
+    while (entries.length === 0 && Date.now() < journalDeadline) {
+      try {
+        entries = readFileSync(journalPath, "utf8")
+          .split("\n")
+          .filter((l) => l.length > 0)
+          .map((l) => JSON.parse(l) as TunnelJournalEntry)
+          .filter((e) => e.kind === "tunnel-relay-call" || e.kind === "tunnel-relay-error");
+      } catch {
+        /* file not yet created */
+      }
+      if (entries.length === 0) await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(entries).toEqual([
+      expect.objectContaining({
+        kind: "tunnel-relay-error",
+        code: "client-aborted",
+      }) as TunnelJournalEntry,
+    ]);
+    await reader.cancel().catch(() => undefined);
+    rmSync(dir, { recursive: true, force: true });
   });
 
   test("SSE rejects without bearer", async () => {

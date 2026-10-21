@@ -204,6 +204,18 @@ function useHost(opts: Partial<WorkerRpcHostOptions> = {}): WorkerRpcHost {
   return host;
 }
 
+function wrapHost(overrides: Partial<WorkerRpcHost>): WorkerRpcHost {
+  const base = host;
+  if (base === undefined) throw new Error("no host to wrap");
+  const undo = publishWorkerRpcHost({ ...base, ...overrides });
+  const prior = restore;
+  restore = (): void => {
+    undo();
+    prior?.();
+  };
+  return base;
+}
+
 async function target(
   client: InferenceRpcClient,
   deploymentId = LOCAL,
@@ -616,7 +628,20 @@ describe("acceptance fencing before any engine request (X1, X2, X5)", () => {
   test("execution runs exactly the fixed deployment and reports what executed, with no credential", async () => {
     useHost({ advertisements: () => [ad(LOCAL, { publicModelIds: ["friendly-alias"] })] });
     const client = createEmbeddedInferenceRpcClient(claims());
-    expect(rejectionCode(await submit(client, "att-x1"))).toBe("accepted");
+    expect(
+      rejectionCode(
+        await submit(client, "att-x1", {
+          envelope: envelope("att-x1", {
+            publicModelId: "friendly-alias",
+            nativeBody: {
+              model: "friendly-alias",
+              stream: true,
+              messages: [{ role: "user", content: "hi" }],
+            },
+          }),
+        }),
+      ),
+    ).toBe("accepted");
     const frames = await collect(client.stream({ attemptId: "att-x1" }));
     expectValidStream(frames);
     expect(terminalOf(frames)).toMatchObject({
@@ -629,6 +654,110 @@ describe("acceptance fencing before any engine request (X1, X2, X5)", () => {
     expect(engine.requests).toHaveLength(1);
     expect(engine.requests[0]?.body?.["model"]).toBe(UPSTREAM);
     expect(engine.requests[0]?.authorization).toBeNull();
+  });
+
+  test("a model the target deployment does not serve is refused typed, before any engine request (X1)", async () => {
+    useHost();
+    const client = createEmbeddedInferenceRpcClient(claims());
+    const asked = (attemptId: string, model: string): inferenceContracts.InferenceEnvelopeV1 =>
+      envelope(attemptId, {
+        publicModelId: model,
+        nativeBody: { model, stream: true, messages: [{ role: "user", content: "hi" }] },
+      });
+    expect(
+      await submit(client, "att-x1-other", { envelope: asked("att-x1-other", "other-model") }),
+    ).toMatchObject({
+      outcome: "rejected",
+      rejection: {
+        code: "target-unavailable",
+        message: expect.stringContaining("other-model") as unknown,
+      },
+    });
+    expect(await collect(client.stream({ attemptId: "att-x1-other" }))).toEqual([
+      { frame: "unavailable", status: { attemptId: "att-x1-other", state: "unknown" } },
+    ]);
+    expect(
+      rejectionCode(
+        await submit(client, "att-x1-upstream", {
+          envelope: asked("att-x1-upstream", UPSTREAM),
+        }),
+      ),
+    ).toBe("accepted");
+    expect(
+      rejectionCode(
+        await submit(client, "att-x1-public", {
+          envelope: asked("att-x1-public", `public/${LOCAL}`),
+        }),
+      ),
+    ).toBe("accepted");
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("a deployment that restarted between acceptance and the stream is never dialled (X2)", async () => {
+    let epoch = "epoch-1";
+    useHost({
+      advertisements: () => [ad(LOCAL, { deploymentEpoch: routingCatalog.knownRevision(epoch) })],
+    });
+    const client = createEmbeddedInferenceRpcClient(claims());
+    expect(rejectionCode(await submit(client, "att-restarted"))).toBe("accepted");
+    epoch = "epoch-2";
+    const frames = await collect(client.stream({ attemptId: "att-restarted" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "failed",
+      started: false,
+      error: { code: "target-unavailable" },
+    });
+    expect(await client.status({ attemptId: "att-restarted" })).toMatchObject({
+      state: "terminal",
+      terminal: { outcome: "failed", started: false },
+    });
+    expect(rejectionCode(await submit(client, "att-same-epoch"))).toBe("accepted");
+    expectValidStream(await collect(client.stream({ attemptId: "att-same-epoch" })));
+    expect(engine.requests).toHaveLength(1);
+  });
+
+  test("a deployment the worker no longer owns at the stream is never dialled (X2)", async () => {
+    let owner = WORKER;
+    useHost({ advertisements: () => [ad(LOCAL, { ownerNodeId: owner })] });
+    const client = createEmbeddedInferenceRpcClient(claims());
+    expect(rejectionCode(await submit(client, "att-moved-away"))).toBe("accepted");
+    owner = "worker-b";
+    const frames = await collect(client.stream({ attemptId: "att-moved-away" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "failed",
+      started: false,
+      error: {
+        code: "target-unavailable",
+        message: expect.stringContaining("no longer owns") as unknown,
+      },
+    });
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("a deployment whose epoch became unknown at the stream is refused with that reason (X2)", async () => {
+    let known = true;
+    useHost({
+      advertisements: () => [
+        ad(LOCAL, {
+          deploymentEpoch: known
+            ? routingCatalog.knownRevision("epoch-1")
+            : routingCatalog.UNKNOWN_REVISION,
+        }),
+      ],
+    });
+    const client = createEmbeddedInferenceRpcClient(claims());
+    expect(rejectionCode(await submit(client, "att-epoch-unknown"))).toBe("accepted");
+    known = false;
+    const frames = await collect(client.stream({ attemptId: "att-epoch-unknown" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "failed",
+      started: false,
+      error: { code: "target-unavailable", message: "the deployment epoch is unknown" },
+    });
+    expect(engine.requests).toHaveLength(0);
   });
 });
 
@@ -737,9 +866,14 @@ describe("non-model targets (A4) and no cache semantics (A5)", () => {
     expect(rejectionCode(await submit(client, "att-local-unregistered"))).toBe(
       "target-unavailable",
     );
-    expect(rejectionCode(await submit(client, "att-cli-registered", { deploymentId: CLI }))).toBe(
-      "accepted",
-    );
+    expect(
+      rejectionCode(
+        await submit(client, "att-cli-registered", {
+          deploymentId: CLI,
+          envelope: envelope("att-cli-registered", { publicModelId: `public/${CLI}` }),
+        }),
+      ),
+    ).toBe("accepted");
     expectValidStream(await collect(client.stream({ attemptId: "att-cli-registered" })));
     expect(executed).toBe(1);
     expect(existsSync(cliMarker)).toBe(false);
@@ -771,9 +905,7 @@ describe("non-model targets (A4) and no cache semantics (A5)", () => {
     const client = createEmbeddedInferenceRpcClient(claims());
     const cacheDir = join(temp.devStorage, "responsecache");
     const before = existsSync(cacheDir);
-    // The embedded exact cache is rooted at LOCAL_AI_RUNTIME_DIR (resolveKvDataRoot),
-    // not DEV_STORAGE — checking only the DEV_STORAGE path passed vacuously. Seed the
-    // real cache through the proxy's own runtime so responses.db exists before the RPC.
+    // The embedded exact cache is rooted at LOCAL_AI_RUNTIME_DIR (resolveKvDataRoot), not DEV_STORAGE. responseCacheCounters opens it through the proxy's own runtime, which creates an empty responses.db; it holds no entry, so a read-path regression shows only in the hit and miss counters.
     const dataRoot = resolved.LOCAL_AI_RUNTIME_DIR;
     const seededCacheDir = join(dataRoot, "responsecache");
     const countersBefore = responseCacheCounters(resolved);
@@ -822,6 +954,25 @@ describe("attempt records: duplicates, status and unknown outcomes (A3)", () => 
     expect(rejectionCode(await submit(other, "att-dup"))).toBe("unauthorized-scope");
     expect(await other.status({ attemptId: "att-dup" })).toMatchObject({ state: "unknown" });
     expect(engine.requests).toHaveLength(1);
+  });
+
+  test("a duplicate is the existing record while the worker drains or after its deployment ACL is revoked", async () => {
+    const worker = useHost();
+    const client = createEmbeddedInferenceRpcClient(claims());
+    expect(rejectionCode(await submit(client, "att-dup-drain"))).toBe("accepted");
+    const drained = worker.drain();
+    expect(rejectionCode(await submit(client, "att-dup-new"))).toBe("unsupported-version");
+    expect(await submit(client, "att-dup-drain")).toMatchObject({
+      outcome: "existing",
+      status: { attemptId: "att-dup-drain", state: "accepted" },
+    });
+    const revoked = createEmbeddedInferenceRpcClient(claims({ deployments: [] }));
+    expect(await submit(revoked, "att-dup-drain")).toMatchObject({ outcome: "existing" });
+    const other = createEmbeddedInferenceRpcClient(claims({ serviceId: "svc-b" }));
+    expect((await submit(other, "att-dup-drain")).outcome).toBe("rejected");
+    worker.close();
+    await drained;
+    expect(engine.requests).toHaveLength(0);
   });
 
   test("a resubmit after 1100 other attempts settled is still the existing record, never a second run", async () => {
@@ -1218,6 +1369,37 @@ describe("attempt records: per-owner quotas, tombstones and retention (B, N1, N2
     expect(worker.status(a, { attemptId: "att-new-0" })).toMatchObject({ state: "terminal" });
   });
 
+  test("a wall-clock step back keeps a record until its envelope's deadline has passed (N1)", async () => {
+    const { worker, clock } = clocked();
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    const start = clock.wall;
+    const original = envelope("att-back", {}, start + inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS);
+    const resubmit = (): inferenceRpc.InferenceRpcSubmitResultV1 =>
+      worker.submit(a, { version: V1_0, envelope: original, target: fenced, cancelId: "c-back" });
+    expect(rejectionCode(resubmit())).toBe("accepted");
+    worker.cancel(a, { attemptId: "att-back" });
+    // Retention passes on the monotonic clock while the wall clock stepped
+    // back two minutes: the deadline is still a minute ahead.
+    clock.mono = RETENTION_MS;
+    clock.wall = start + RETENTION_MS - 2 * 60_000;
+    expect(rejectionCode(submitFor(worker, a, fenced, "att-back-sweep", clock.wall + 60_000))).toBe(
+      "accepted",
+    );
+    expect(resubmit()).toMatchObject({
+      outcome: "existing",
+      status: { state: "terminal", terminal: { outcome: "cancelled" } },
+    });
+    // Once the deadline is behind the wall clock the record goes, and the same envelope is refused by it.
+    clock.wall = original.deadline;
+    expect(rejectionCode(submitFor(worker, a, fenced, "att-back-later", clock.wall + 60_000))).toBe(
+      "accepted",
+    );
+    expect(worker.status(a, { attemptId: "att-back" })).toMatchObject({ state: "unknown" });
+    expect(rejectionCode(resubmit())).toBe("deadline-exceeded");
+    expect(engine.requests).toHaveLength(0);
+  });
+
   test("64 one-second attempts a second at the proxy's 5 min deadline are never refused for retention", async () => {
     const { worker, clock } = clocked();
     const a = claims();
@@ -1290,6 +1472,93 @@ describe("attempt records: per-owner quotas, tombstones and retention (B, N1, N2
     });
     expect(engine.requests).toHaveLength(0);
   });
+
+  test("a record kept for its deadline after a wall-clock step back holds up no other record (N1)", async () => {
+    const { worker, clock } = clocked({ maxAttemptRecordsPerOwner: 4 });
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    const admitted = (attemptId: string): string | undefined =>
+      rejectionCode(submitFor(worker, a, fenced, attemptId, clock.wall + 60_000));
+    expect(admitted("att-step")).toBe("accepted");
+    // The wall clock jumps two hours ahead while a second passes, att-jump is
+    // accepted with a deadline two hours and a minute out, and the wall clock
+    // steps back.
+    clock.wall += 2 * 3600_000;
+    clock.mono += 1_000;
+    const jump = envelope("att-jump", {}, clock.wall + 60_000);
+    const resubmit = (): inferenceRpc.InferenceRpcSubmitResultV1 =>
+      worker.submit(a, { version: V1_0, envelope: jump, target: fenced, cancelId: "c-jump" });
+    expect(rejectionCode(resubmit())).toBe("accepted");
+    worker.cancel(a, { attemptId: "att-jump" });
+    clock.wall -= 2 * 3600_000;
+    // Every 20 minutes the record before is past its retention and its
+    // deadline; att-jump, still waiting on its deadline, holds none of them
+    // back, so the quota of four never fills.
+    for (const attemptId of ["att-c", "att-d", "att-e", "att-f"]) {
+      clock.wall += 20 * 60_000;
+      clock.mono += 20 * 60_000;
+      expect(admitted(attemptId)).toBe("accepted");
+    }
+    expect(resubmit()).toMatchObject({
+      outcome: "existing",
+      status: { state: "terminal", terminal: { outcome: "cancelled" } },
+    });
+    // It still counts against the quota: with att-f, two more fill it.
+    expect([admitted("att-g"), admitted("att-h")]).toEqual(["accepted", "accepted"]);
+    expect(refusal(submitFor(worker, a, fenced, "att-i", clock.wall + 60_000))).toBe(
+      "overloaded: the service is at its attempt record quota",
+    );
+    // It is the existing record until the wall clock reaches its deadline, and goes then.
+    clock.mono += jump.deadline - 1 - clock.wall;
+    clock.wall = jump.deadline - 1;
+    expect(resubmit()).toMatchObject({ outcome: "existing", status: { state: "terminal" } });
+    clock.wall += 1;
+    clock.mono += 1;
+    expect(rejectionCode(resubmit())).toBe("deadline-exceeded");
+    expect(worker.status(a, { attemptId: "att-jump" })).toMatchObject({ state: "unknown" });
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("records kept for their deadlines go as each deadline passes, not in acceptance order (N1)", async () => {
+    const { worker, clock } = clocked();
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    const start = clock.wall;
+    const admitted = (attemptId: string): string | undefined =>
+      rejectionCode(submitFor(worker, a, fenced, attemptId, clock.wall + 60_000));
+    // Accepted a second apart with the wall clock 3, 1, 2 and then 4 hours
+    // ahead, so each deadline is that many hours and a minute out; once the
+    // wall clock has stepped back, att-back is accepted behind them.
+    for (const hours of [3, 1, 2, 4]) {
+      clock.wall = start + hours * 3600_000;
+      clock.mono += 1_000;
+      expect(admitted(`att-${String(hours)}h`)).toBe("accepted");
+    }
+    clock.wall = start;
+    clock.mono += 1_000;
+    expect(admitted("att-back")).toBe("accepted");
+    const stateOf = (attemptId: string): string => {
+      const result = worker.status(a, { attemptId });
+      return result.outcome === "status" ? result.state : result.outcome;
+    };
+    const states = (): string[] => [1, 2, 3, 4].map((hours) => stateOf(`att-${String(hours)}h`));
+    // Every retention passes and so does att-back's deadline: one sweep sets
+    // the four aside to wait on their deadlines and forgets att-back behind them.
+    clock.wall = start + 60_000;
+    clock.mono += RETENTION_MS;
+    expect(admitted("att-tick-0")).toBe("accepted");
+    expect(stateOf("att-back")).toBe("unknown");
+    expect(states()).toEqual(["terminal", "terminal", "terminal", "terminal"]);
+    // Each goes at the first sweep at or after its deadline, and only it; the
+    // last sweep comes after two deadlines and forgets both.
+    for (const hours of [1, 2, 4]) {
+      clock.wall = start + hours * 3600_000 + 60_000;
+      clock.mono += 1_000;
+      expect(admitted(`att-tick-${String(hours)}`)).toBe("accepted");
+      expect(states()).toEqual([1, 2, 3, 4].map((h) => (h <= hours ? "unknown" : "terminal")));
+    }
+    expect(engine.requests).toHaveLength(0);
+  });
 });
 
 describe("cancellation in process (X4)", () => {
@@ -1338,6 +1607,36 @@ describe("cancellation in process (X4)", () => {
         status: { state: "terminal", terminal: { outcome: "cancelled", started: false } },
       },
     ]);
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("a cancelId names the caller's own attempt, even when another service reuses it", async () => {
+    useHost();
+    const a = createEmbeddedInferenceRpcClient(claims());
+    const b = createEmbeddedInferenceRpcClient(claims({ serviceId: "svc-b" }));
+    for (const [client, id] of [
+      [a, "att-cid-a"],
+      [b, "att-cid-b"],
+    ] as const) {
+      expect(
+        rejectionCode(
+          await client.submit({
+            version: V1_0,
+            envelope: envelope(id),
+            target: await target(client),
+            cancelId: "req-42",
+          }),
+        ),
+      ).toBe("accepted");
+    }
+    expect(await a.cancel({ cancelId: "req-42" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-cid-a",
+    });
+    expect(await b.cancel({ cancelId: "req-42" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-cid-b",
+    });
     expect(engine.requests).toHaveLength(0);
   });
 
@@ -1450,6 +1749,7 @@ describe("the worker-rpc executor behind the unified proxy", () => {
     );
     expect(await res.json()).toEqual({ path: "fallback" });
     expect(calls).toEqual(["fallback"]);
+    expect(res.headers.get("x-llamactl-worker-transport")).toBe("legacy");
     expect(engine.requests).toHaveLength(0);
   });
 
@@ -1532,7 +1832,7 @@ describe("the worker-rpc executor behind the unified proxy", () => {
         fallback: recordingFallback([]),
         nodeId: "gw",
       });
-      const env = envelope(`att-resolve-${model}-${ownerNodeId}`);
+      const env = envelope(`att-resolve-${model}-${ownerNodeId}`, { publicModelId: model });
       const res = await executor.execute(env, ctxFor(env));
       return { status: res.status, body: await res.text() };
     };
@@ -1764,6 +2064,34 @@ describe("the worker-rpc executor behind the unified proxy", () => {
     expect(engine.requests).toHaveLength(5);
   });
 
+  test("an accepted attempt cancelled before it started still tells client SDKs not to retry it", async () => {
+    useHost();
+    const real = createEmbeddedInferenceRpcClient(claims());
+    // Cancelled between acceptance and the stream: the worker proves nothing ran.
+    const cancelledFirst: InferenceRpcClient = {
+      ...real,
+      submit: async (input) => {
+        const answer = await real.submit(input);
+        await real.cancel({ attemptId: input.envelope.attemptId });
+        return answer;
+      },
+    };
+    const env = envelope("att-unstarted-cancel");
+    const res = await createWorkerRpcExecutor({
+      client: cancelledFirst,
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    }).execute(env, ctxFor(env));
+    expect(res.status).toBe(503);
+    expect(res.headers.get("x-should-retry")).toBe("false");
+    expect(await res.json()).toMatchObject({ error: { code: "cancelled" } });
+    expect(await real.status({ attemptId: "att-unstarted-cancel" })).toMatchObject({
+      terminal: { outcome: "cancelled", started: false },
+    });
+    expect(engine.requests).toHaveLength(0);
+  });
+
   test("a public error names no secret reference or path; the log keeps the detail", async () => {
     useHost();
     const secretPath = join(temp.devStorage, "secrets", "worker-b.token");
@@ -1859,7 +2187,7 @@ describe("the worker-rpc executor behind the unified proxy", () => {
   });
 });
 
-describe("executor hop-count and visited-node limits (F10, A2/X1)", () => {
+describe("hop limits through the executor (embedded)", () => {
   test("withHop takes hopCount past the limit; the worker refuses before any engine request", async () => {
     useHost();
     const client = createEmbeddedInferenceRpcClient(claims());
@@ -1890,48 +2218,50 @@ describe("executor hop-count and visited-node limits (F10, A2/X1)", () => {
     expect(engine.requests).toHaveLength(0);
   });
 
-  test("nine distinct visitedNodes plus withHop's nodeId exceeds MAX_VISITED_NODES", async () => {
+  test("MAX_VISITED_NODES distinct visitedNodes plus withHop's nodeId are refused; one fewer is admitted", async () => {
     useHost();
     const client = createEmbeddedInferenceRpcClient(claims());
-    const nine = Array.from({ length: 9 }, (_, i) => `n-${String(i)}`);
-    const env = envelope("att-exec-visited", { internal: { visitedNodes: nine } });
-    const res = await createWorkerRpcExecutor({
-      client,
-      deploymentId: LOCAL,
-      fallback: recordingFallback([]),
-      nodeId: "gw",
-    }).execute(env, ctxFor(env));
-    expect(res.status).toBe(508);
-    expect(await res.json()).toMatchObject({ error: { code: "hop-limit" } });
+    const max = inferenceRpc.INFERENCE_RPC_MAX_VISITED_NODES;
+    const run = async (attemptId: string, distinct: number): Promise<Response> => {
+      const visitedNodes = Array.from({ length: distinct }, (_, i) => `n-${String(i)}`);
+      const env = envelope(attemptId, { internal: { visitedNodes } });
+      return await createWorkerRpcExecutor({
+        client,
+        deploymentId: LOCAL,
+        fallback: recordingFallback([]),
+        nodeId: "gw",
+      }).execute(env, ctxFor(env));
+    };
+    const over = await run("att-exec-visited-over", max);
+    expect(over.status).toBe(508);
+    expect(await over.json()).toMatchObject({ error: { code: "hop-limit" } });
     expect(engine.requests).toHaveLength(0);
+    const at = await run("att-exec-visited-at", max - 1);
+    expect(at.status).toBe(200);
+    expect(await at.text()).toContain("[DONE]");
+    expect(engine.requests).toHaveLength(1);
   });
 
   test("the worker receives internal with hopCount 1 and visitedNodes ['gw'] after one hop", async () => {
-    useHost();
-    const base = currentWorkerRpcHost();
     const received: inferenceContracts.InferenceEnvelopeV1[] = [];
-    const undo = publishWorkerRpcHost({
-      ...base,
+    const base = useHost();
+    wrapHost({
       submit: (claimsIn: Claims | undefined, input: inferenceRpc.InferenceRpcSubmitRequestV1) => {
         received.push(input.envelope);
         return base.submit(claimsIn, input);
       },
     });
-    try {
-      const env = envelope("att-exec-hop-record");
-      const res = await createWorkerRpcExecutor({
-        client: createEmbeddedInferenceRpcClient(claims()),
-        deploymentId: LOCAL,
-        fallback: recordingFallback([]),
-        nodeId: "gw",
-      }).execute(env, ctxFor(env));
-      expect(res.status).toBe(200);
-      expect(received).toHaveLength(1);
-      expect(received[0]?.internal?.hopCount).toBe(1);
-      expect(received[0]?.internal?.visitedNodes).toEqual(["gw"]);
-    } finally {
-      undo();
-    }
+    const env = envelope("att-exec-hop-record");
+    const res = await createWorkerRpcExecutor({
+      client: createEmbeddedInferenceRpcClient(claims()),
+      deploymentId: LOCAL,
+      fallback: recordingFallback([]),
+      nodeId: "gw",
+    }).execute(env, ctxFor(env));
+    expect(res.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(received[0]?.internal?.hopCount).toBe(1);
+    expect(received[0]?.internal?.visitedNodes).toEqual(["gw"]);
   });
 });
 
@@ -2242,19 +2572,6 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
   /** The worker host for remote callers; serve.ts derives their claims from the credential. */
   function useRemoteHost(opts: Partial<WorkerRpcHostOptions> = {}): WorkerRpcHost {
     return useHost(opts);
-  }
-
-  /** Serve `overrides` on top of the current host until the test ends. */
-  function wrapHost(overrides: Partial<WorkerRpcHost>): WorkerRpcHost {
-    const base = host;
-    if (base === undefined) throw new Error("no host to wrap");
-    const undo = publishWorkerRpcHost({ ...base, ...overrides });
-    const prior = restore;
-    restore = (): void => {
-      undo();
-      prior?.();
-    };
-    return base;
   }
 
   function statusNow(attemptId: string): inferenceRpc.InferenceRpcStatusResultV1 {
@@ -2677,6 +2994,14 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         terminal: { outcome: "cancelled", started: true },
       });
       expect(engine.requests).toHaveLength(1);
+      let rest = "";
+      const decoder = new TextDecoder();
+      for (let r = await reader.read(); !r.done; r = await reader.read()) {
+        rest += decoder.decode(r.value, { stream: true });
+      }
+      // The consumer gets the worker's own terminal, read through status once the tunnel is back.
+      expect(rest).toContain('"code":"cancelled"');
+      expect(rest).not.toContain("[DONE]");
     });
   });
 
@@ -2803,11 +3128,15 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       },
     );
 
-    test("direct: an unterminated frame past the cap ends the stream typed with nothing queued", async () => {
+    test("direct: an unterminated frame past the cap ends the stream typed and tears the transport down", async () => {
       useRemoteHost();
+      let transportAborted = false;
       const pinned = makePinnedFetch(transports.workerNode);
       const oversized: PinnedFetch = async (input, init) => {
         if (!urlOf(input).includes("inferenceRpc.stream")) return await pinned(input, init);
+        init?.signal?.addEventListener("abort", () => {
+          transportAborted = true;
+        });
         const body = new ReadableStream<Uint8Array>({
           start(controller): void {
             controller.enqueue(
@@ -2820,12 +3149,12 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
           headers: { "content-type": "text/event-stream" },
         });
       };
-      const queue = queueSampler();
-      const client = directClient({ fetch: oversized, limits, onStreamQueue: queue.sample });
+      const client = directClient({ fetch: oversized, limits });
       const { res } = await execute(client, "att-d-unterminated");
       const body = await res.text();
       expect(body).toContain('"code":"stream-overflow"');
-      expect(queue.max()).toBe(0);
+      expect(res.status).toBe(502);
+      expect(transportAborted).toBe(true);
     });
   });
 
@@ -3233,6 +3562,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
           const res = await executorOver(client, {
             fallback: recordingFallback(fallback),
           }).execute(env, ctxFor(env));
+          expect(res.headers.get("x-llamactl-worker-transport")).toBe("legacy");
           expect(await res.json()).toEqual({ path: "fallback" });
           expect(fallback).toEqual(["fallback"]);
         } finally {
@@ -3879,7 +4209,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
     }
   });
 
-  describe("executor hop-count and visited-node limits (F10, A2/X1)", () => {
+  describe("hop limits through the executor (direct and tunnel)", () => {
     test.each(TRANSPORTS)(
       "%s: withHop takes hopCount past the limit; the worker refuses before any engine request",
       async (transport) => {

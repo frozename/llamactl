@@ -403,21 +403,23 @@ describe("P4.1: bounded tunnel streams and acknowledged cancels", () => {
     srv = startServer("tok", { onStreamCancelAck: recordAck });
     await dialNode(srv.url);
     let error: (Error & { code?: string }) | null = null;
+    let disconnected: boolean | undefined;
     try {
       for await (const _ of srv.server.sendSubscribe(
         "gpu1",
         flood("ws-drop", { n: 1000, pad: 10, delayMs: 5 }),
       )) {
-        expect(srv.server.disconnect("gpu1")).toBe(true);
+        disconnected ??= srv.server.disconnect("gpu1");
       }
     } catch (err) {
       error = err as Error & { code?: string };
     }
+    expect(disconnected).toBe(true);
     expect(error?.code).toBe("tunnel-disconnected");
     await waitFor(() => node.aborted === 1, 2000);
   });
 
-  test("a 4409 replacement mid-stream ends central's stream typed tunnel-disconnected and the new socket answers status", async () => {
+  test("a 4409 replacement mid-stream ends central's stream typed tunnel-disconnected, and central routes new requests to the replacement socket", async () => {
     srv = startServer("tok", { onStreamCancelAck: recordAck });
     await dialNode(srv.url);
     const iterator = srv.server
@@ -434,29 +436,39 @@ describe("P4.1: bounded tunnel streams and acknowledged cancels", () => {
       heartbeat: { intervalMs: 0, timeoutMs: 0 },
     });
     await replacement.start();
-    let error: (Error & { code?: string }) | null = null;
     try {
-      for (let r = await iterator.next(); r.done !== true; r = await iterator.next()) {
-        // drain until the displaced connection errors the stream
-      }
-    } catch (err) {
-      error = err as Error & { code?: string };
-    }
-    expect(error?.code).toBe("tunnel-disconnected");
-    await waitFor(() => node.aborted === 1, 2000);
-    // The displaced node cancelled its stream, and central's registry now
-    // points at the replacement: a fresh request is answered by the new
-    // socket, proving it took over rather than only that the old one died.
-    let answered: unknown = null;
-    for (let tries = 0; tries < 40 && answered === null; tries++) {
+      let error: (Error & { code?: string }) | null = null;
       try {
-        const res = await srv.server.send("gpu1", { id: `st-${String(tries)}`, method: "status" });
-        answered = res.result;
-      } catch {
-        await new Promise((r) => setTimeout(r, 25));
+        for (let r = await iterator.next(); r.done !== true; r = await iterator.next()) {
+          // drain until the displaced connection errors the stream
+        }
+      } catch (err) {
+        error = err as Error & { code?: string };
       }
+      expect(error?.code).toBe("tunnel-disconnected");
+      await waitFor(() => node.aborted === 1, 2000);
+      // stop the displaced client, so it cannot reconnect and displace the replacement
+      tunnel?.stop();
+      tunnel = null;
+      // The displaced node cancelled its stream, and central's registry now
+      // points at the replacement: a fresh request is answered by the new
+      // socket, proving it took over rather than only that the old one died.
+      let answered: unknown = null;
+      for (let tries = 0; tries < 100 && answered === null; tries++) {
+        try {
+          const res = await srv.server.send("gpu1", {
+            id: `st-${String(tries)}`,
+            method: "status",
+          });
+          answered = res.result;
+        } catch {
+          // central may not yet have swapped the registry pointer
+        }
+        if (answered === null) await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(answered).toEqual({ answered: "status", via: "new-socket" });
+    } finally {
+      replacement.stop();
     }
-    expect(answered).toEqual({ answered: "status", via: "new-socket" });
-    replacement.stop();
   });
 });

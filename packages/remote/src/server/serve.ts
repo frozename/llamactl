@@ -8,9 +8,13 @@ import { join } from "node:path";
 
 import type { ModelRun } from "../workload/schema.js";
 
-import { createWorkerRpcHost, publishWorkerRpcHost } from "../inference/procedures.js";
+import {
+  createWorkerRpcHost,
+  type InferenceRpcContext,
+  publishWorkerRpcHost,
+} from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
-import { router as appRouter } from "../router.js";
+import { type AgentRouterContext, router as appRouter } from "../router.js";
 import { handleFleetSnapshotRoute } from "../routes/fleet.js";
 import { existsSync, readFileSync } from "../safe-fs.js";
 import { startSearchIngest, stopSearchIngest } from "../search/ingest/lifecycle.js";
@@ -25,7 +29,7 @@ import {
   type TunnelServer,
   type TunnelState,
 } from "../tunnel/index.js";
-import { isInferenceRpcMethod, isInferenceRpcProcedure } from "../tunnel/messages.js";
+import { isInferenceRpcProcedure } from "../tunnel/messages.js";
 import { listWorkloads, saveWorkload } from "../workload/store.js";
 import { handleAgentRollback, handleAgentUpdate } from "./agent-update.js";
 import { type ArtifactsHandlerOptions, handleArtifact } from "./artifacts.js";
@@ -456,8 +460,8 @@ function handleInfraRoutes(
 
 /**
  * The tunnel server as one relay request sees it: a worker-RPC caller's
- * single-use service token rides, unread, on the `inferenceRpc.*` req
- * frames it sends, stamped with the relay principal of the bearer this
+ * single-use service token rides, unread, on the worker-RPC procedures' req
+ * frames, named exactly, stamped with the relay principal of the bearer this
  * hop presented, for the node to verify. The relay hop itself stays
  * authorized by central's own bearer.
  */
@@ -468,7 +472,7 @@ function forwardingServiceToken(server: TunnelServer, req: Request): TunnelServe
   if (bearer === null) return server;
   const auth = { serviceToken: token, relayPrincipal: relayPrincipalOf(bearer) };
   const withAuth = (frame: Omit<TunnelReq, "type">): Omit<TunnelReq, "type"> =>
-    isInferenceRpcMethod(frame.method) ? { ...frame, auth } : frame;
+    isInferenceRpcProcedure(frame.method) ? { ...frame, auth } : frame;
   return {
     ...server,
     send: (nodeName, frame) => server.send(nodeName, withAuth(frame)),
@@ -576,11 +580,12 @@ type InferenceClaims = inferenceRpc.InferenceServiceClaimsV1;
 function requestContext(
   opts: StartAgentOptions,
   claims: InferenceClaims | null,
-): { fleetJournalPath?: string; inferenceClaims?: InferenceClaims } {
-  return {
-    ...(opts.fleetJournalPath !== undefined ? { fleetJournalPath: opts.fleetJournalPath } : {}),
-    ...(claims !== null ? { inferenceClaims: claims } : {}),
-  };
+): AgentRouterContext & InferenceRpcContext {
+  // Assigned field by field so a renamed context field fails to compile.
+  const context: AgentRouterContext & InferenceRpcContext = {};
+  if (opts.fleetJournalPath !== undefined) context.fleetJournalPath = opts.fleetJournalPath;
+  if (claims !== null) context.inferenceClaims = claims;
+  return context;
 }
 
 function createAgentFetchHandler(args: {

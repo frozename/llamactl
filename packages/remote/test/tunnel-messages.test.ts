@@ -177,6 +177,18 @@ describe("tunnel frame bounds and the cancel acknowledgement (P4.1 X3, X4)", () 
     expect(SUBSCRIPTION_STREAM_LIMITS.maxFrameBytes).toBe(TUNNEL_MAX_FRAME_BYTES);
   });
 
+  test("the worker RPC's caps follow its six procedures named exactly, not the namespace prefix", () => {
+    expect(streamLimitsFor("inferenceRpc.stream")).toEqual(INFERENCE_RPC_STREAM_LIMITS);
+    for (const method of [
+      "inferenceRpc.drain",
+      "inferenceRpc.",
+      "inferenceRpc.stream.x",
+      "inferenceRpc.stream,env",
+    ]) {
+      expect(streamLimitsFor(method)).toEqual(SUBSCRIPTION_STREAM_LIMITS);
+    }
+  });
+
   test("a stream-done typed stream-cancelled acknowledges a cancel; any other end is already-terminal", () => {
     const ack: TunnelStreamDone = {
       type: "stream-done",

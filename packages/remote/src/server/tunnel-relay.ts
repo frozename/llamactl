@@ -261,7 +261,8 @@ function streamErrorOf(err: unknown): { code: string; message: string } {
  *
  * On client disconnect (`req.signal` or the body's cancel), the
  * iterator's `return()` releases the subscription id and ships a
- * `stream-cancel` to the node.
+ * `stream-cancel` to the node — either signal closes the iterator,
+ * whether or not a read is in flight.
  */
 function handleStream(
   req: Request,
@@ -273,16 +274,22 @@ function handleStream(
 ): Response {
   const encoder = new TextEncoder();
   const finish = makeStreamFinish(journal, nodeName, method, performance.now());
+  let iterator: AsyncIterator<unknown> | undefined;
   // A dedicated AbortController lets us close the subscription iter
   // even if `req.signal` isn't supported by the runtime; we still
   // wire req.signal into it when available.
   const abort = new AbortController();
   const onReqAbort = (): void => {
     abort.abort();
+    // A reader that stopped reading has no pull in flight to see the
+    // abort, so the subscription is closed here; return() ships stream-cancel.
+    if (iterator !== undefined) {
+      void closeIterator(iterator);
+      finish(false, "client-aborted", "client disconnected");
+    }
   };
   if (req.signal.aborted) abort.abort();
   else req.signal.addEventListener("abort", onReqAbort, { once: true });
-  let iterator: AsyncIterator<unknown> | undefined;
   const subscription = (): AsyncIterator<unknown> => {
     iterator ??= tunnelServer
       .sendSubscribe(nodeName, {

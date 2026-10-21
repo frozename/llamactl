@@ -108,8 +108,9 @@ function writeWorkload(): void {
     join(dir, "llama-server.state"),
     JSON.stringify({
       rel: MODEL,
-      // A slot save path makes the route KV-eligible, so a /v1 chat through
-      // openaiProxy opens the KV registry inside the snapshot roots below.
+      // A slot save path makes the route KV-eligible for every case in this file; only the fake
+      // engine's SSE answers keep KV persistence off (maybePersistKv skips event streams). The I5
+      // rollback test relies on it to open the KV registry inside the snapshot roots below.
       extraArgs: ["--slot-save-path", join(temp.runtimeDir, "kvstore", "slots", WORKLOAD)],
       host: "127.0.0.1",
       port: Number(new URL(engine.url).port),
@@ -1539,6 +1540,32 @@ describe("the relay-only credential in central's agent.yaml", () => {
     expect(read()).toBeUndefined();
     // Either way the agent itself loads.
     expect(agentConfigMod.loadAgentConfig(files.configPath).tokenHash).toBe(cfg.tokenHash);
+  });
+
+  test("a credential bound both as relay-only and as a service credential is ignored by both readers", async () => {
+    const files = await initAgent("relay-cross-reuse");
+    const svc = serviceCredential("svc-cross-reuse");
+    enableWorkerRpc(files, { serviceCredentials: [svc.binding] });
+    const cfg = agentConfigMod.loadAgentConfig(files.configPath);
+    agentConfigMod.saveAgentConfig(
+      { ...cfg, workerRpcRelay: { tokenHashes: [svc.binding.tokenHash] } },
+      files.configPath,
+    );
+    expect(agentConfigMod.workerRpcRelayReader(files.configPath)()).toBeUndefined();
+    expect(agentConfigMod.workerRpcSettingsReader(files.configPath)()).toBeUndefined();
+    const relay = auth.generateToken();
+    agentConfigMod.saveAgentConfig(
+      { ...cfg, workerRpcRelay: { tokenHashes: [relay.hash] } },
+      files.configPath,
+    );
+    expect(agentConfigMod.workerRpcRelayReader(files.configPath)()).toEqual({
+      tokenHashes: [relay.hash],
+    });
+    expect(
+      agentConfigMod
+        .workerRpcSettingsReader(files.configPath)()
+        ?.serviceCredentials.map((b) => b.serviceId),
+    ).toEqual(["svc-cross-reuse"]);
   });
 });
 

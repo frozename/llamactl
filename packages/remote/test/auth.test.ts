@@ -174,10 +174,11 @@ function tunnelKeyOf(credential: string, node: string): string {
 
 /**
  * P4.1 (#139) X5 — single-use service tokens for the reverse tunnel. A
- * tunnel caller sends, per call, a token keyed by SHA-256(credential) and
- * bound to the target node, the call, its input, central's relay
- * principal, a nonce and an expiry. The worker verifies it against the
- * same hashed bindings, once.
+ * tunnel caller sends, per call, a token keyed by the binding's per-worker
+ * tunnelKey, HMAC-SHA256(credential, "llamactl-worker-rpc-token\0" + node),
+ * and bound to the target node, the call, its input, central's relay
+ * principal, a nonce and an expiry. The worker verifies it against that
+ * tunnelKey, once; the stored tokenHash never mints one.
  */
 describe("service tokens (P4.1)", () => {
   const NODE = "worker-a-tunnel";

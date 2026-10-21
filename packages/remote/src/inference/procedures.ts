@@ -178,6 +178,8 @@ interface AttemptRecord {
   deploymentId: string;
   /** Monotonic: acceptance plus ATTEMPT_RECORD_RETENTION_MS. */
   retainUntil: number;
+  /** Wall clock: the envelope's deadline; until it passes, a resubmit of that envelope passes the deadline fence. */
+  deadline: number;
   terminal: ExecutionTerminal | undefined;
   terminalSequence: number | undefined;
   run: AttemptRun | undefined;
@@ -202,6 +204,13 @@ interface HostState {
   /** Records in acceptance order, which is retainUntil order; swept from `retainedHead`. */
   retained: (AttemptRecord | undefined)[];
   retainedHead: number;
+  /**
+   * Records past their retention whose envelope deadline is still ahead of
+   * the wall clock, as a min-heap on deadline: each envelope has its own
+   * deadline, so they become forgettable in no order a queue could keep.
+   */
+  awaitingDeadline: AttemptRecord[];
+  /** cancelKey(owner, cancelId) to attemptId. */
   cancelIds: Map<string, string>;
   active: number;
   /** Streams attached and not yet ended. */
@@ -550,6 +559,18 @@ function fenceFeatures(envelope: Envelope): Rejection | null {
   return null;
 }
 
+/** X1: the caller asked for a model this deployment serves, by its exact or a public id. */
+function fenceModel(deployment: Deployment, envelope: Envelope): Rejection | null {
+  const asked = envelope.publicModelId;
+  if (asked === deployment.upstreamModelId || deployment.publicModelIds.includes(asked)) {
+    return null;
+  }
+  return {
+    code: "target-unavailable",
+    message: `deployment '${deployment.deploymentId}' does not serve model '${asked}'`,
+  };
+}
+
 function fenceDeadline(state: HostState, envelope: Envelope): Rejection | null {
   const ahead = envelope.deadline - state.now();
   if (ahead <= 0) {
@@ -564,6 +585,11 @@ function fenceDeadline(state: HostState, envelope: Envelope): Rejection | null {
 
 function ownerKey(claims: Claims): string {
   return JSON.stringify([claims.serviceId, claims.credentialScopeId]);
+}
+
+/** cancelIds are chosen by callers, so each owner has its own. */
+function cancelKey(owner: string, cancelId: string): string {
+  return JSON.stringify([owner, cancelId]);
 }
 
 /** Concurrency first, then the owner's record quota, then the worker-wide backstop. */
@@ -600,6 +626,8 @@ function fenceExecution(
       },
     };
   }
+  const model = fenceModel(deployment, envelope);
+  if (model !== null) return { rejection: model };
   const features = fenceFeatures(envelope);
   if (features !== null) return { rejection: features };
   const capacity = fenceCapacity(state, claims);
@@ -638,35 +666,86 @@ function settle(
 
 function forget(state: HostState, record: AttemptRecord): void {
   state.records.delete(record.attemptId);
-  if (state.cancelIds.get(record.cancelId) === record.attemptId) {
-    state.cancelIds.delete(record.cancelId);
+  const key = cancelKey(record.owner.key, record.cancelId);
+  if (state.cancelIds.get(key) === record.attemptId) {
+    state.cancelIds.delete(key);
   }
   record.owner.held -= 1;
   if (record.owner.held === 0) state.owners.delete(record.owner.key);
 }
 
+/** The sweep reads only the earliest deadline, so the records waiting are never scanned. */
+function pushByDeadline(heap: AttemptRecord[], record: AttemptRecord): void {
+  let at = heap.push(record) - 1;
+  while (at > 0) {
+    const parent = Math.floor((at - 1) / 2);
+    const above = heap[parent];
+    if (above === undefined || above.deadline <= record.deadline) break;
+    heap[at] = above;
+    at = parent;
+  }
+  heap[at] = record;
+}
+
+/** Removes the earliest deadline, at index 0, keeping the heap ordered. */
+function popEarliestDeadline(heap: AttemptRecord[]): void {
+  const last = heap.pop();
+  if (last === undefined || heap.length === 0) return;
+  let at = 0;
+  for (;;) {
+    let child = 2 * at + 1;
+    let below = heap[child];
+    if (below === undefined) break;
+    const right = heap[child + 1];
+    if (right !== undefined && right.deadline < below.deadline) {
+      child += 1;
+      below = right;
+    }
+    if (last.deadline <= below.deadline) break;
+    heap[at] = below;
+    at = child;
+  }
+  heap[at] = last;
+}
+
 /**
- * Forgets tombstones whose retention has passed, never earlier, oldest
- * first. Every record is kept the same span from its acceptance, so the
- * acceptance queue is in retainUntil order and the sweep stops at the
- * first record still kept. It also stops at an unsettled one, which the
- * deadline settles long before its retention ends.
+ * Forgets tombstones whose retention has passed and whose envelope deadline
+ * is behind the wall clock, never earlier. Every record is kept the same span
+ * from its acceptance, so the acceptance queue is in retainUntil order and the
+ * sweep stops at the first record still in its retention. It also stops at an
+ * unsettled one, which the deadline settles long before its retention ends.
+ * The wall-clock condition matters only after a backward clock step: until the
+ * deadline passes again, the same envelope would pass the deadline fence, so
+ * its record stays. It waits in `awaitingDeadline`, not at the head of the
+ * queue, where it would keep every owner's later records past their own
+ * retention and fill their quotas; it counts against its own owner's quota
+ * and the backstop until it is forgotten.
  */
 function sweep(state: HostState): void {
   const now = state.monotonicNow();
+  const wall = state.now();
   const queue = state.retained;
   for (
     let next = queue[state.retainedHead];
     next !== undefined && next.run === undefined && next.retainUntil <= now;
     next = queue[state.retainedHead]
   ) {
-    forget(state, next);
     queue[state.retainedHead] = undefined;
     state.retainedHead += 1;
+    if (next.deadline <= wall) {
+      forget(state, next);
+    } else {
+      pushByDeadline(state.awaitingDeadline, next);
+    }
   }
   if (state.retainedHead > 1024 && state.retainedHead * 2 > queue.length) {
     queue.splice(0, state.retainedHead);
     state.retainedHead = 0;
+  }
+  const awaiting = state.awaitingDeadline;
+  for (let next = awaiting[0]; next !== undefined && next.deadline <= wall; next = awaiting[0]) {
+    popEarliestDeadline(awaiting);
+    forget(state, next);
   }
 }
 
@@ -738,6 +817,7 @@ function admit(
     tenantId: envelope.tenantId,
     deploymentId: deployment.deploymentId,
     retainUntil: state.monotonicNow() + ATTEMPT_RECORD_RETENTION_MS,
+    deadline: envelope.deadline,
     terminal: undefined,
     terminalSequence: undefined,
     run,
@@ -745,7 +825,7 @@ function admit(
   owner.held += 1;
   state.records.set(record.attemptId, record);
   state.retained.push(record);
-  state.cancelIds.set(record.cancelId, record.attemptId);
+  state.cancelIds.set(cancelKey(owner.key, record.cancelId), record.attemptId);
   state.active += 1;
   const untilDeadline = Math.max(0, envelope.deadline - state.now());
   const deadline = setTimeout(() => {
@@ -768,24 +848,25 @@ function submit(
   claimsIn: Claims | undefined,
   input: SubmitRequest,
 ): SubmitResult {
+  const claims = authorized(claimsIn, "submit");
+  sweep(state);
+  const existing = state.records.get(input.envelope.attemptId);
+  // A duplicate is answered from its own record before any fence, so a
+  // draining or re-scoped worker still reports the attempt it accepted.
+  if (claims !== null && existing !== undefined && ownedBy(existing, claims)) {
+    return { outcome: "existing", status: statusOf(existing) };
+  }
   const version = input.version;
   const versions = advertised(state);
   if (!versions.some((v) => inferenceRpc.compareInferenceRpcVersions(v, version) === 0)) {
     return rejectedWith(versionRejection(state, "the submit version was not negotiated here"));
   }
-  const claims = authorized(claimsIn, "submit");
   if (claims === null) return rejectedWith(NO_SCOPE);
   const catalog = buildWorkerCatalog(state);
   const target = catalog.all.find((d) => d.deploymentId === input.target.deploymentId);
   const scope = fenceClaims(claims, input, target);
   if (scope !== null) return rejectedWith(scope);
-  sweep(state);
-  const existing = state.records.get(input.envelope.attemptId);
-  if (existing !== undefined) {
-    return ownedBy(existing, claims)
-      ? { outcome: "existing", status: statusOf(existing) }
-      : rejectedWith(NO_SCOPE);
-  }
+  if (existing !== undefined) return rejectedWith(NO_SCOPE);
   const owned = fenceOwnership(state, catalog, input.target);
   if ("rejection" in owned) return rejectedWith(owned.rejection);
   const execution = fenceExecution(state, claims, owned.deployment, input.envelope);
@@ -838,11 +919,39 @@ function failureTerminal(
   };
 }
 
+/**
+ * X2 again at the dial: a restart between acceptance and the stream would
+ * send the request to whatever process now holds the endpoint and report
+ * the accepted deployment as what ran.
+ */
+function movedSinceAcceptance(state: HostState, accepted: Deployment): string | null {
+  const current = buildWorkerCatalog(state).owned.get(accepted.deploymentId);
+  if (current === undefined) {
+    return `the worker no longer owns deployment '${accepted.deploymentId}'`;
+  }
+  const epoch = epochOf(current);
+  if (epoch === epochOf(accepted)) return null;
+  return epoch === null ? "the deployment epoch is unknown" : `deployment epoch is now '${epoch}'`;
+}
+
 function startBackend(
+  state: HostState,
+  record: AttemptRecord,
   run: AttemptRun,
 ): AsyncIterable<WorkerRpcBackendEvent> | readonly WorkerRpcBackendEvent[] {
   // Stopped between acceptance and the first pull: nothing starts.
   if (run.controller.signal.aborted) return [];
+  const moved = movedSinceAcceptance(state, run.deployment);
+  if (moved !== null) {
+    // Nothing started: the stream ends on this typed terminal, never at the engine.
+    settle(state, record, {
+      outcome: "failed",
+      started: false,
+      error: { code: "target-unavailable", message: moved, retryable: false },
+      usage: UNKNOWN_USAGE,
+    });
+    return [];
+  }
   run.state = "started";
   return run.backend.execute(run.deployment, run.envelope, run.controller.signal);
 }
@@ -871,7 +980,7 @@ async function* runAttempt(
       frame: "event",
       event: { ...identity(), type: "accepted", acceptedAt: run.acceptedAt },
     };
-    for await (const out of startBackend(run)) {
+    for await (const out of startBackend(state, record, run)) {
       if (record.terminal !== undefined) break;
       if (out.type === "end") {
         settle(state, record, endTerminal(run, out));
@@ -969,7 +1078,10 @@ function cancelAttempt(
 ): inferenceRpc.InferenceRpcCancelResultV1 {
   const claims = authorized(claimsIn, "cancel");
   if (claims === null) return rejectedWith(NO_SCOPE);
-  const attemptId = "attemptId" in input ? input.attemptId : state.cancelIds.get(input.cancelId);
+  const attemptId =
+    "attemptId" in input
+      ? input.attemptId
+      : state.cancelIds.get(cancelKey(ownerKey(claims), input.cancelId));
   const record = attemptId === undefined ? undefined : ownedRecord(state, claims, attemptId);
   if (record === undefined) return { outcome: "unknown" };
   if (record.terminal !== undefined) {
@@ -1010,6 +1122,7 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     owners: new Map(),
     retained: [],
     retainedHead: 0,
+    awaitingDeadline: [],
     cancelIds: new Map(),
     active: 0,
     streams: 0,
