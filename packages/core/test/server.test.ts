@@ -135,7 +135,7 @@ describe("server.startServer (error paths)", () => {
     for (const [k, v] of Object.entries(envForTemp(temp))) {
       if (v !== undefined) process.env[k] = v;
     }
-    // Never fall back to the default 127.0.0.1:8080, which a real server may hold on this host.
+    // Never fall back to the default localhost port, which a real server may hold on this host.
     process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
     process.env["LLAMA_CPP_PORT"] = "65534";
     process.env["LLAMA_CPP_BIN"] = join(temp.devStorage, "nonexistent-bin");
