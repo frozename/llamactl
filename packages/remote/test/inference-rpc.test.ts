@@ -616,7 +616,20 @@ describe("acceptance fencing before any engine request (X1, X2, X5)", () => {
   test("execution runs exactly the fixed deployment and reports what executed, with no credential", async () => {
     useHost({ advertisements: () => [ad(LOCAL, { publicModelIds: ["friendly-alias"] })] });
     const client = createEmbeddedInferenceRpcClient(claims());
-    expect(rejectionCode(await submit(client, "att-x1"))).toBe("accepted");
+    expect(
+      rejectionCode(
+        await submit(client, "att-x1", {
+          envelope: envelope("att-x1", {
+            publicModelId: "friendly-alias",
+            nativeBody: {
+              model: "friendly-alias",
+              stream: true,
+              messages: [{ role: "user", content: "hi" }],
+            },
+          }),
+        }),
+      ),
+    ).toBe("accepted");
     const frames = await collect(client.stream({ attemptId: "att-x1" }));
     expectValidStream(frames);
     expect(terminalOf(frames)).toMatchObject({
@@ -629,6 +642,43 @@ describe("acceptance fencing before any engine request (X1, X2, X5)", () => {
     expect(engine.requests).toHaveLength(1);
     expect(engine.requests[0]?.body?.["model"]).toBe(UPSTREAM);
     expect(engine.requests[0]?.authorization).toBeNull();
+  });
+
+  test("a model the target deployment does not serve is refused typed, before any engine request (X1)", async () => {
+    useHost();
+    const client = createEmbeddedInferenceRpcClient(claims());
+    const asked = (attemptId: string, model: string): inferenceContracts.InferenceEnvelopeV1 =>
+      envelope(attemptId, {
+        publicModelId: model,
+        nativeBody: { model, stream: true, messages: [{ role: "user", content: "hi" }] },
+      });
+    expect(
+      await submit(client, "att-x1-other", { envelope: asked("att-x1-other", "other-model") }),
+    ).toMatchObject({
+      outcome: "rejected",
+      rejection: {
+        code: "target-unavailable",
+        message: expect.stringContaining("other-model") as unknown,
+      },
+    });
+    expect(await collect(client.stream({ attemptId: "att-x1-other" }))).toEqual([
+      { frame: "unavailable", status: { attemptId: "att-x1-other", state: "unknown" } },
+    ]);
+    expect(
+      rejectionCode(
+        await submit(client, "att-x1-upstream", {
+          envelope: asked("att-x1-upstream", UPSTREAM),
+        }),
+      ),
+    ).toBe("accepted");
+    expect(
+      rejectionCode(
+        await submit(client, "att-x1-public", {
+          envelope: asked("att-x1-public", `public/${LOCAL}`),
+        }),
+      ),
+    ).toBe("accepted");
+    expect(engine.requests).toHaveLength(0);
   });
 });
 
@@ -737,9 +787,14 @@ describe("non-model targets (A4) and no cache semantics (A5)", () => {
     expect(rejectionCode(await submit(client, "att-local-unregistered"))).toBe(
       "target-unavailable",
     );
-    expect(rejectionCode(await submit(client, "att-cli-registered", { deploymentId: CLI }))).toBe(
-      "accepted",
-    );
+    expect(
+      rejectionCode(
+        await submit(client, "att-cli-registered", {
+          deploymentId: CLI,
+          envelope: envelope("att-cli-registered", { publicModelId: `public/${CLI}` }),
+        }),
+      ),
+    ).toBe("accepted");
     expectValidStream(await collect(client.stream({ attemptId: "att-cli-registered" })));
     expect(executed).toBe(1);
     expect(existsSync(cliMarker)).toBe(false);
@@ -1532,7 +1587,7 @@ describe("the worker-rpc executor behind the unified proxy", () => {
         fallback: recordingFallback([]),
         nodeId: "gw",
       });
-      const env = envelope(`att-resolve-${model}-${ownerNodeId}`);
+      const env = envelope(`att-resolve-${model}-${ownerNodeId}`, { publicModelId: model });
       const res = await executor.execute(env, ctxFor(env));
       return { status: res.status, body: await res.text() };
     };

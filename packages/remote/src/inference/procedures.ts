@@ -550,6 +550,18 @@ function fenceFeatures(envelope: Envelope): Rejection | null {
   return null;
 }
 
+/** X1: the caller asked for a model this deployment serves, by its exact or a public id. */
+function fenceModel(deployment: Deployment, envelope: Envelope): Rejection | null {
+  const asked = envelope.publicModelId;
+  if (asked === deployment.upstreamModelId || deployment.publicModelIds.includes(asked)) {
+    return null;
+  }
+  return {
+    code: "target-unavailable",
+    message: `deployment '${deployment.deploymentId}' does not serve model '${asked}'`,
+  };
+}
+
 function fenceDeadline(state: HostState, envelope: Envelope): Rejection | null {
   const ahead = envelope.deadline - state.now();
   if (ahead <= 0) {
@@ -600,6 +612,8 @@ function fenceExecution(
       },
     };
   }
+  const model = fenceModel(deployment, envelope);
+  if (model !== null) return { rejection: model };
   const features = fenceFeatures(envelope);
   if (features !== null) return { rejection: features };
   const capacity = fenceCapacity(state, claims);
