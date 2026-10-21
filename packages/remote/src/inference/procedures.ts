@@ -870,11 +870,38 @@ function failureTerminal(
   };
 }
 
+/**
+ * X2 again at the dial: a restart between acceptance and the stream would
+ * send the request to whatever process now holds the endpoint and report
+ * the accepted deployment as what ran.
+ */
+function movedSinceAcceptance(state: HostState, accepted: Deployment): string | null {
+  const current = buildWorkerCatalog(state).owned.get(accepted.deploymentId);
+  if (current === undefined) {
+    return `the worker no longer owns deployment '${accepted.deploymentId}'`;
+  }
+  const epoch = epochOf(current);
+  return epoch === epochOf(accepted) ? null : `deployment epoch is now '${String(epoch)}'`;
+}
+
 function startBackend(
+  state: HostState,
+  record: AttemptRecord,
   run: AttemptRun,
 ): AsyncIterable<WorkerRpcBackendEvent> | readonly WorkerRpcBackendEvent[] {
   // Stopped between acceptance and the first pull: nothing starts.
   if (run.controller.signal.aborted) return [];
+  const moved = movedSinceAcceptance(state, run.deployment);
+  if (moved !== null) {
+    // Nothing started: the stream ends on this typed terminal, never at the engine.
+    settle(state, record, {
+      outcome: "failed",
+      started: false,
+      error: { code: "target-unavailable", message: moved, retryable: false },
+      usage: UNKNOWN_USAGE,
+    });
+    return [];
+  }
   run.state = "started";
   return run.backend.execute(run.deployment, run.envelope, run.controller.signal);
 }
@@ -903,7 +930,7 @@ async function* runAttempt(
       frame: "event",
       event: { ...identity(), type: "accepted", acceptedAt: run.acceptedAt },
     };
-    for await (const out of startBackend(run)) {
+    for await (const out of startBackend(state, record, run)) {
       if (record.terminal !== undefined) break;
       if (out.type === "end") {
         settle(state, record, endTerminal(run, out));

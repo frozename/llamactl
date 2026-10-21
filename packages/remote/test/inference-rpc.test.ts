@@ -680,6 +680,30 @@ describe("acceptance fencing before any engine request (X1, X2, X5)", () => {
     ).toBe("accepted");
     expect(engine.requests).toHaveLength(0);
   });
+
+  test("a deployment that restarted between acceptance and the stream is never dialled (X2)", async () => {
+    let epoch = "epoch-1";
+    useHost({
+      advertisements: () => [ad(LOCAL, { deploymentEpoch: routingCatalog.knownRevision(epoch) })],
+    });
+    const client = createEmbeddedInferenceRpcClient(claims());
+    expect(rejectionCode(await submit(client, "att-restarted"))).toBe("accepted");
+    epoch = "epoch-2";
+    const frames = await collect(client.stream({ attemptId: "att-restarted" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "failed",
+      started: false,
+      error: { code: "target-unavailable" },
+    });
+    expect(await client.status({ attemptId: "att-restarted" })).toMatchObject({
+      state: "terminal",
+      terminal: { outcome: "failed", started: false },
+    });
+    expect(rejectionCode(await submit(client, "att-same-epoch"))).toBe("accepted");
+    expectValidStream(await collect(client.stream({ attemptId: "att-same-epoch" })));
+    expect(engine.requests).toHaveLength(1);
+  });
 });
 
 describe("non-model targets (A4) and no cache semantics (A5)", () => {
