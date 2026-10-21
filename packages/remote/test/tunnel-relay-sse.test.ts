@@ -323,24 +323,25 @@ describe("tunnel-relay SSE", () => {
     // Read before reader.cancel(): the body's cancel() journals
     // client-aborted too, so reading after it would not prove onReqAbort
     // journaled this line.
-    const entries: TunnelJournalEntry[] = [];
+    let entries: TunnelJournalEntry[] = [];
     const journalDeadline = Date.now() + 1000;
     while (entries.length === 0 && Date.now() < journalDeadline) {
       try {
-        entries.push(
-          ...readFileSync(journalPath, "utf8")
-            .split("\n")
-            .filter((l) => l.length > 0)
-            .map((l) => JSON.parse(l) as TunnelJournalEntry)
-            .filter((e) => e.kind === "tunnel-relay-call" || e.kind === "tunnel-relay-error"),
-        );
+        entries = readFileSync(journalPath, "utf8")
+          .split("\n")
+          .filter((l) => l.length > 0)
+          .map((l) => JSON.parse(l) as TunnelJournalEntry)
+          .filter((e) => e.kind === "tunnel-relay-call" || e.kind === "tunnel-relay-error");
       } catch {
         /* file not yet created */
       }
       if (entries.length === 0) await new Promise((r) => setTimeout(r, 10));
     }
     expect(entries).toEqual([
-      expect.objectContaining({ kind: "tunnel-relay-error", code: "client-aborted" }),
+      expect.objectContaining({
+        kind: "tunnel-relay-error",
+        code: "client-aborted",
+      }) as TunnelJournalEntry,
     ]);
     await reader.cancel().catch(() => undefined);
     rmSync(dir, { recursive: true, force: true });
