@@ -63,11 +63,6 @@ export const SUBSCRIPTION_STREAM_LIMITS: Readonly<StreamLimits> = Object.freeze(
   maxQueuedBytes: 4 * TUNNEL_MAX_FRAME_BYTES,
 });
 
-/** True for a procedure in the worker RPC namespace (`inferenceRpc.*`). */
-export function isInferenceRpcMethod(method: string): boolean {
-  return method.startsWith("inferenceRpc.");
-}
-
 const INFERENCE_RPC_PROCEDURES: ReadonlySet<string> = new Set(
   inferenceRpc.InferenceRpcOperationSchema.options.map((operation) => `inferenceRpc.${operation}`),
 );
@@ -77,9 +72,9 @@ export function isInferenceRpcProcedure(method: string): boolean {
   return INFERENCE_RPC_PROCEDURES.has(method);
 }
 
-/** The default policy: the worker RPC's caps for its streams, the frame cap for the rest. */
+/** The default policy: the worker RPC's caps for its six procedures, the frame cap for every other stream. */
 export function streamLimitsFor(method: string): StreamLimits {
-  return isInferenceRpcMethod(method) ? INFERENCE_RPC_STREAM_LIMITS : SUBSCRIPTION_STREAM_LIMITS;
+  return isInferenceRpcProcedure(method) ? INFERENCE_RPC_STREAM_LIMITS : SUBSCRIPTION_STREAM_LIMITS;
 }
 
 export function resolveStreamLimits(policy: StreamLimitsPolicy, method: string): StreamLimits {
