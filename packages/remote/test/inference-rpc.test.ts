@@ -1448,6 +1448,93 @@ describe("attempt records: per-owner quotas, tombstones and retention (B, N1, N2
     });
     expect(engine.requests).toHaveLength(0);
   });
+
+  test("a record kept for its deadline after a wall-clock step back holds up no other record (N1)", async () => {
+    const { worker, clock } = clocked({ maxAttemptRecordsPerOwner: 4 });
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    const admitted = (attemptId: string): string | undefined =>
+      rejectionCode(submitFor(worker, a, fenced, attemptId, clock.wall + 60_000));
+    expect(admitted("att-step")).toBe("accepted");
+    // The wall clock jumps two hours ahead while a second passes, att-jump is
+    // accepted with a deadline two hours and a minute out, and the wall clock
+    // steps back.
+    clock.wall += 2 * 3600_000;
+    clock.mono += 1_000;
+    const jump = envelope("att-jump", {}, clock.wall + 60_000);
+    const resubmit = (): inferenceRpc.InferenceRpcSubmitResultV1 =>
+      worker.submit(a, { version: V1_0, envelope: jump, target: fenced, cancelId: "c-jump" });
+    expect(rejectionCode(resubmit())).toBe("accepted");
+    worker.cancel(a, { attemptId: "att-jump" });
+    clock.wall -= 2 * 3600_000;
+    // Every 20 minutes the record before is past its retention and its
+    // deadline; att-jump, still waiting on its deadline, holds none of them
+    // back, so the quota of four never fills.
+    for (const attemptId of ["att-c", "att-d", "att-e", "att-f"]) {
+      clock.wall += 20 * 60_000;
+      clock.mono += 20 * 60_000;
+      expect(admitted(attemptId)).toBe("accepted");
+    }
+    expect(resubmit()).toMatchObject({
+      outcome: "existing",
+      status: { state: "terminal", terminal: { outcome: "cancelled" } },
+    });
+    // It still counts against the quota: with att-f, two more fill it.
+    expect([admitted("att-g"), admitted("att-h")]).toEqual(["accepted", "accepted"]);
+    expect(refusal(submitFor(worker, a, fenced, "att-i", clock.wall + 60_000))).toBe(
+      "overloaded: the service is at its attempt record quota",
+    );
+    // It is the existing record until the wall clock reaches its deadline, and goes then.
+    clock.mono += jump.deadline - 1 - clock.wall;
+    clock.wall = jump.deadline - 1;
+    expect(resubmit()).toMatchObject({ outcome: "existing", status: { state: "terminal" } });
+    clock.wall += 1;
+    clock.mono += 1;
+    expect(rejectionCode(resubmit())).toBe("deadline-exceeded");
+    expect(worker.status(a, { attemptId: "att-jump" })).toMatchObject({ state: "unknown" });
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("records kept for their deadlines go as each deadline passes, not in acceptance order (N1)", async () => {
+    const { worker, clock } = clocked();
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    const start = clock.wall;
+    const admitted = (attemptId: string): string | undefined =>
+      rejectionCode(submitFor(worker, a, fenced, attemptId, clock.wall + 60_000));
+    // Accepted a second apart with the wall clock 3, 1, 2 and then 4 hours
+    // ahead, so each deadline is that many hours and a minute out; once the
+    // wall clock has stepped back, att-back is accepted behind them.
+    for (const hours of [3, 1, 2, 4]) {
+      clock.wall = start + hours * 3600_000;
+      clock.mono += 1_000;
+      expect(admitted(`att-${String(hours)}h`)).toBe("accepted");
+    }
+    clock.wall = start;
+    clock.mono += 1_000;
+    expect(admitted("att-back")).toBe("accepted");
+    const stateOf = (attemptId: string): string => {
+      const result = worker.status(a, { attemptId });
+      return result.outcome === "status" ? result.state : result.outcome;
+    };
+    const states = (): string[] => [1, 2, 3, 4].map((hours) => stateOf(`att-${String(hours)}h`));
+    // Every retention passes and so does att-back's deadline: one sweep sets
+    // the four aside to wait on their deadlines and forgets att-back behind them.
+    clock.wall = start + 60_000;
+    clock.mono += RETENTION_MS;
+    expect(admitted("att-tick-0")).toBe("accepted");
+    expect(stateOf("att-back")).toBe("unknown");
+    expect(states()).toEqual(["terminal", "terminal", "terminal", "terminal"]);
+    // Each goes at the first sweep at or after its deadline, and only it; the
+    // last sweep comes after two deadlines and forgets both.
+    for (const hours of [1, 2, 4]) {
+      clock.wall = start + hours * 3600_000 + 60_000;
+      clock.mono += 1_000;
+      expect(admitted(`att-tick-${String(hours)}`)).toBe("accepted");
+      expect(states()).toEqual([1, 2, 3, 4].map((h) => (h <= hours ? "unknown" : "terminal")));
+    }
+    expect(engine.requests).toHaveLength(0);
+  });
 });
 
 describe("cancellation in process (X4)", () => {

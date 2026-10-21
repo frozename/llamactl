@@ -204,6 +204,12 @@ interface HostState {
   /** Records in acceptance order, which is retainUntil order; swept from `retainedHead`. */
   retained: (AttemptRecord | undefined)[];
   retainedHead: number;
+  /**
+   * Records past their retention whose envelope deadline is still ahead of
+   * the wall clock, as a min-heap on deadline: each envelope has its own
+   * deadline, so they become forgettable in no order a queue could keep.
+   */
+  awaitingDeadline: AttemptRecord[];
   /** cancelKey(owner, cancelId) to attemptId. */
   cancelIds: Map<string, string>;
   active: number;
@@ -668,15 +674,52 @@ function forget(state: HostState, record: AttemptRecord): void {
   if (record.owner.held === 0) state.owners.delete(record.owner.key);
 }
 
+/** The sweep reads only the earliest deadline, so the records waiting are never scanned. */
+function pushByDeadline(heap: AttemptRecord[], record: AttemptRecord): void {
+  let at = heap.push(record) - 1;
+  while (at > 0) {
+    const parent = Math.floor((at - 1) / 2);
+    const above = heap[parent];
+    if (above === undefined || above.deadline <= record.deadline) break;
+    heap[at] = above;
+    at = parent;
+  }
+  heap[at] = record;
+}
+
+/** Removes the earliest deadline, at index 0, keeping the heap ordered. */
+function popEarliestDeadline(heap: AttemptRecord[]): void {
+  const last = heap.pop();
+  if (last === undefined || heap.length === 0) return;
+  let at = 0;
+  for (;;) {
+    let child = 2 * at + 1;
+    let below = heap[child];
+    if (below === undefined) break;
+    const right = heap[child + 1];
+    if (right !== undefined && right.deadline < below.deadline) {
+      child += 1;
+      below = right;
+    }
+    if (last.deadline <= below.deadline) break;
+    heap[at] = below;
+    at = child;
+  }
+  heap[at] = last;
+}
+
 /**
  * Forgets tombstones whose retention has passed and whose envelope deadline
- * is behind the wall clock, never earlier, oldest first. Every record is kept
- * the same span from its acceptance, so the acceptance queue is in retainUntil
- * order and the sweep stops at the first record still kept. It also stops at
- * an unsettled one, which the deadline settles long before its retention ends.
- * The wall-clock condition matters only after a backward clock step. Until the
+ * is behind the wall clock, never earlier. Every record is kept the same span
+ * from its acceptance, so the acceptance queue is in retainUntil order and the
+ * sweep stops at the first record still in its retention. It also stops at an
+ * unsettled one, which the deadline settles long before its retention ends.
+ * The wall-clock condition matters only after a backward clock step: until the
  * deadline passes again, the same envelope would pass the deadline fence, so
- * its record stays; records behind it are only kept longer.
+ * its record stays. It waits in `awaitingDeadline`, not at the head of the
+ * queue, where it would keep every owner's later records past their own
+ * retention and fill their quotas; it counts against its own owner's quota
+ * and the backstop until it is forgotten.
  */
 function sweep(state: HostState): void {
   const now = state.monotonicNow();
@@ -684,19 +727,25 @@ function sweep(state: HostState): void {
   const queue = state.retained;
   for (
     let next = queue[state.retainedHead];
-    next !== undefined &&
-    next.run === undefined &&
-    next.retainUntil <= now &&
-    next.deadline <= wall;
+    next !== undefined && next.run === undefined && next.retainUntil <= now;
     next = queue[state.retainedHead]
   ) {
-    forget(state, next);
     queue[state.retainedHead] = undefined;
     state.retainedHead += 1;
+    if (next.deadline <= wall) {
+      forget(state, next);
+    } else {
+      pushByDeadline(state.awaitingDeadline, next);
+    }
   }
   if (state.retainedHead > 1024 && state.retainedHead * 2 > queue.length) {
     queue.splice(0, state.retainedHead);
     state.retainedHead = 0;
+  }
+  const awaiting = state.awaitingDeadline;
+  for (let next = awaiting[0]; next !== undefined && next.deadline <= wall; next = awaiting[0]) {
+    popEarliestDeadline(awaiting);
+    forget(state, next);
   }
 }
 
@@ -1072,6 +1121,7 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     owners: new Map(),
     retained: [],
     retainedHead: 0,
+    awaitingDeadline: [],
     cancelIds: new Map(),
     active: 0,
     streams: 0,
