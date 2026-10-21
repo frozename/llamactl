@@ -1,11 +1,21 @@
 import { describe, expect, test } from "bun:test";
 
+import { SERVICE_TOKEN_MAX_LENGTH } from "../src/server/auth.js";
 import {
+  cancelOutcomeOf,
   encodeTunnelMessage,
+  frameBytes,
+  INFERENCE_RPC_STREAM_LIMITS,
+  isInferenceRpcProcedure,
   parseTunnelMessage,
+  streamLimitsFor,
+  SUBSCRIPTION_STREAM_LIMITS,
+  TUNNEL_MAX_FRAME_BYTES,
+  TUNNEL_STREAM_CANCELLED,
   type TunnelMessage,
   TunnelMessageSchema,
   type TunnelStreamCancel,
+  TunnelStreamCancelAckSchema,
   type TunnelStreamDone,
   type TunnelStreamEvent,
 } from "../src/tunnel/messages.js";
@@ -130,6 +140,105 @@ describe("tunnel message: streaming variants", () => {
     ];
     for (const f of frames) {
       expect(TunnelMessageSchema.safeParse(f).success).toBe(true);
+    }
+  });
+});
+
+describe("tunnel frame bounds and the cancel acknowledgement (P4.1 X3, X4)", () => {
+  test("a frame above TUNNEL_MAX_FRAME_BYTES is malformed; a frame at the cap still parses", () => {
+    const frame = (data: string): string =>
+      encodeTunnelMessage({ type: "stream-event", id: "s", index: 0, data });
+    const fill = TUNNEL_MAX_FRAME_BYTES - frameBytes(frame(""));
+    const atCap = frame("x".repeat(fill));
+    expect(frameBytes(atCap)).toBe(TUNNEL_MAX_FRAME_BYTES);
+    expect(parseTunnelMessage(atCap)).not.toBeNull();
+    expect(parseTunnelMessage(frame("x".repeat(fill + 1)))).toBeNull();
+  });
+
+  test("frame bytes are UTF-8 bytes, so multi-byte text cannot slip under a cap", () => {
+    expect(frameBytes("\u00e9")).toBe(2);
+    expect(frameBytes("\u{1F999}")).toBe(4);
+  });
+
+  test("the stream caps fit one frame and admit at least one full event of backlog", () => {
+    for (const limits of [INFERENCE_RPC_STREAM_LIMITS, SUBSCRIPTION_STREAM_LIMITS]) {
+      expect(limits.maxFrameBytes).toBeLessThanOrEqual(TUNNEL_MAX_FRAME_BYTES);
+      expect(limits.maxFrameBytes).toBeLessThanOrEqual(limits.maxQueuedBytes);
+    }
+    expect(INFERENCE_RPC_STREAM_LIMITS.maxQueuedBytes).toBeLessThan(TUNNEL_MAX_FRAME_BYTES);
+  });
+
+  test("the default policy keeps the 1 MiB event cap to the worker RPC; other streams keep the frame cap", () => {
+    expect(streamLimitsFor("inferenceRpc.stream")).toEqual(INFERENCE_RPC_STREAM_LIMITS);
+    expect(INFERENCE_RPC_STREAM_LIMITS.maxFrameBytes).toBe(1024 * 1024);
+    for (const method of ["serverLogs", "opsSessionWatch", "chatStream", "inferenceRpcX"]) {
+      expect(streamLimitsFor(method)).toEqual(SUBSCRIPTION_STREAM_LIMITS);
+    }
+    expect(SUBSCRIPTION_STREAM_LIMITS.maxFrameBytes).toBe(TUNNEL_MAX_FRAME_BYTES);
+  });
+
+  test("a stream-done typed stream-cancelled acknowledges a cancel; any other end is already-terminal", () => {
+    const ack: TunnelStreamDone = {
+      type: "stream-done",
+      id: "s",
+      ok: false,
+      error: { code: TUNNEL_STREAM_CANCELLED, message: "cancelled by central" },
+    };
+    expect(parseTunnelMessage(encodeTunnelMessage(ack))).toEqual(ack);
+    expect(TunnelStreamCancelAckSchema.safeParse(ack).success).toBe(true);
+    expect(cancelOutcomeOf(ack)).toBe("cancelled");
+    expect(cancelOutcomeOf({ type: "stream-done", id: "s", ok: true })).toBe("already-terminal");
+    expect(
+      cancelOutcomeOf({
+        type: "stream-done",
+        id: "s",
+        ok: false,
+        error: { code: "subscription-error", message: "boom" },
+      }),
+    ).toBe("already-terminal");
+  });
+});
+
+describe("worker-RPC auth on req frames (P4.1 X5)", () => {
+  const req = {
+    type: "req",
+    id: "r1",
+    method: "inferenceRpc.status",
+    params: { type: "query", input: { attemptId: "att-1" } },
+  } as const;
+
+  test("a req frame carries a bounded single-use token and its relay principal", () => {
+    const auth = { serviceToken: "v1.1.nonce.c3ViamVjdA.mac", relayPrincipal: "principal" };
+    expect(parseTunnelMessage(JSON.stringify({ ...req, auth }))).toEqual({ ...req, auth });
+    const oversized = { ...auth, serviceToken: "x".repeat(SERVICE_TOKEN_MAX_LENGTH + 1) };
+    expect(parseTunnelMessage(JSON.stringify({ ...req, auth: oversized }))).toBeNull();
+  });
+
+  test("a reusable credential field is no part of the frame", () => {
+    const parsed = parseTunnelMessage(
+      JSON.stringify({ ...req, auth: { serviceCredential: "ll_agt_secret" } }),
+    );
+    expect(JSON.stringify(parsed)).not.toContain("ll_agt_secret");
+  });
+});
+
+describe("the worker-RPC procedures a relay-only credential may relay (P4.1 X5)", () => {
+  test("exactly the six procedures, named exactly", () => {
+    for (const op of ["negotiate", "catalog", "submit", "stream", "status", "cancel"]) {
+      expect(isInferenceRpcProcedure(`inferenceRpc.${op}`)).toBe(true);
+    }
+    for (const method of [
+      "inferenceRpc",
+      "inferenceRpc.",
+      "inferenceRpc.drain",
+      "inferenceRpc.negotiate,env",
+      "inferenceRpc.catalog.env",
+      "inferenceRpc.x/../env",
+      " inferenceRpc.catalog",
+      "InferenceRpc.catalog",
+      "env",
+    ]) {
+      expect(isInferenceRpcProcedure(method)).toBe(false);
     }
   });
 });

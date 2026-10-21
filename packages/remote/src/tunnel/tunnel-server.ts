@@ -5,11 +5,19 @@ import {
   type TunnelJournalEntry,
 } from "./journal.js";
 import {
+  cancelOutcomeOf,
   encodeTunnelMessage,
+  frameBytes,
   parseTunnelMessage,
+  resolveStreamLimits,
+  type StreamLimits,
+  streamLimitsFor,
+  type StreamLimitsPolicy,
   TUNNEL_CLOSE_BAD_HELLO,
   TUNNEL_CLOSE_HELLO_TIMEOUT,
   TUNNEL_CLOSE_UNAUTHORIZED,
+  TUNNEL_STREAM_OVERFLOW,
+  type TunnelCancelOutcome,
   type TunnelMessage,
   type TunnelReq,
   type TunnelRes,
@@ -20,13 +28,20 @@ import {
  * distinct Map from `pending` (req/res) so late stream-event frames
  * never mis-resolve a query/mutation promise, and vice versa.
  *
- *   push(data)  — called on every stream-event frame.
+ *   push(data, bytes) — called on every stream-event frame, with the
+ *                       frame's size in bytes.
  *   done(error?) — called on the stream-done frame; undefined error
  *                  means clean completion.
  */
 interface SubscriptionHandlers {
-  push: (value: unknown) => void;
+  push: (value: unknown, bytes: number) => void;
   done: (error?: { code: string; message: string }) => void;
+}
+
+/** What a subscription iterable needs from its server: the caps and the cancel path. */
+interface StreamControl {
+  limits: StreamLimits;
+  cancel: (id: string) => void;
 }
 
 /**
@@ -84,6 +99,10 @@ interface ConnectionState {
   helloTimer: ReturnType<typeof setTimeout> | null;
   pending: Map<string, { resolve: (r: TunnelRes) => void; reject: (err: Error) => void }>;
   subscriptions: Map<string, SubscriptionHandlers>;
+  /** Streams central cancelled, awaiting the node's acknowledging stream-done. */
+  cancelling: Map<string, (outcome: TunnelCancelOutcome) => void>;
+  /** Queued bytes per stream whose consumer has not drained or left it. */
+  queues: Map<string, () => number>;
 }
 
 export interface TunnelServerOptions {
@@ -106,6 +125,12 @@ export interface TunnelServerOptions {
    *  rejects with a `tunnel-request-timeout`-coded error. Defaults to
    *  {@link DEFAULT_REQUEST_TIMEOUT_MS}. */
   requestTimeoutMs?: number;
+  /** Per-stream frame and queued-byte caps, fixed or chosen by the
+   *  subscription's procedure path. Defaults to `streamLimitsFor`. */
+  streamLimits?: StreamLimitsPolicy;
+  /** Observes how each stream-cancel resolved: the node's acknowledgement,
+   *  or `unknown` when the link dropped or the request timeout passed first. */
+  onStreamCancelAck?: (nodeName: string, id: string, outcome: TunnelCancelOutcome) => void;
 }
 
 export interface TunnelServer {
@@ -128,6 +153,11 @@ export interface TunnelServer {
    * the iterator's `.return()` (e.g. by breaking out of a
    * `for await`) sends a `stream-cancel` back to the node and
    * releases the correlation-id slot.
+   *
+   * Bounded (P4.1 X3): a frame above `streamLimits.maxFrameBytes`, or
+   * a consumer that lets more than `streamLimits.maxQueuedBytes`
+   * queue, ends the stream — after the values already queued — with
+   * an error coded `stream-overflow`, and cancels the node's stream.
    */
   sendSubscribe: (nodeName: string, req: Omit<TunnelReq, "type">) => AsyncIterable<unknown>;
   registry: () => TunnelRegistryEntry[];
@@ -139,6 +169,15 @@ export interface TunnelServer {
    *  a timed-out or settled request must leave this at the steady
    *  state, never accumulate. Returns 0 for an unknown node. */
   pendingCount: (nodeName: string) => number;
+  /** Bytes queued toward slow consumers across a node's streams. Exposed
+   *  for bound assertions: never above `maxQueuedBytes` per stream. */
+  queuedBytes: (nodeName: string) => number;
+}
+
+type StreamError = { code: string; message: string };
+
+function streamFailure(error: StreamError): Error & { code: string } {
+  return Object.assign(new Error(error.message), { code: error.code });
 }
 
 /**
@@ -148,76 +187,94 @@ export interface TunnelServer {
  * stream-done resolves the iterator as either "complete" or throws
  * with the agent-reported error. Iterator `return()` ships a
  * stream-cancel frame and releases the correlation-id slot so a
- * later event after cancel is silently dropped.
+ * later event after cancel is silently dropped. The buffer is
+ * bounded by `streams.limits`; past a cap the stream ends typed
+ * `stream-overflow` and the node's stream is cancelled.
  */
 function buildSubscriptionIterable(
   ws: BunServerWebSocket,
   state: ConnectionState,
   req: TunnelReq,
+  streams: StreamControl,
 ): AsyncIterable<unknown> {
   // Typed as an internal tagged union so the next()-side consumer
   // knows which branch to take after a Deferred resolves.
   type Entry =
-    | { kind: "value"; value: unknown }
-    | { kind: "error"; error: { code: string; message: string } }
+    | { kind: "value"; value: unknown; bytes: number }
+    | { kind: "error"; error: StreamError }
     | { kind: "complete" };
+  const { maxFrameBytes, maxQueuedBytes } = streams.limits;
   return {
     [Symbol.asyncIterator](): AsyncIterator<unknown> {
       const buffer: Entry[] = [];
+      let queuedBytes = 0;
       let pending: {
         resolve: (r: IteratorResult<unknown>) => void;
         reject: (e: Error) => void;
       } | null = null;
       let registered = false;
       let finished = false;
-      const handlers: SubscriptionHandlers = {
-        push(value) {
-          if (finished) return;
-          if (pending) {
-            const p = pending;
-            pending = null;
-            p.resolve({ value, done: false });
-          } else {
-            buffer.push({ kind: "value", value });
-          }
-        },
-        done(error) {
-          if (finished) return;
-          finished = true;
-          state.subscriptions.delete(req.id);
-          if (error) {
-            if (pending) {
-              const p = pending;
-              pending = null;
-              p.reject(Object.assign(new Error(error.message), { code: error.code }));
-            } else {
-              buffer.push({ kind: "error", error });
-            }
-          } else {
-            if (pending) {
-              const p = pending;
-              pending = null;
-              p.resolve({ value: undefined, done: true });
-            } else {
-              buffer.push({ kind: "complete" });
-            }
-          }
-        },
+      const release = (): void => {
+        state.queues.delete(req.id);
       };
-      const cleanup = (): void => {
+      const finish = (entry: Exclude<Entry, { kind: "value" }>): void => {
         if (finished) return;
         finished = true;
         state.subscriptions.delete(req.id);
-        try {
-          ws.send(encodeTunnelMessage({ type: "stream-cancel", id: req.id }));
-        } catch {
-          // ws already gone; nothing to ship.
+        const p = pending;
+        pending = null;
+        if (!p) {
+          buffer.push(entry);
+          return;
         }
+        release();
+        if (entry.kind === "error") p.reject(streamFailure(entry.error));
+        else p.resolve({ value: undefined, done: true });
+      };
+      // Never drop silently: the consumer still gets what was queued,
+      // then the typed terminal, and the node stops producing.
+      const overflow = (message: string): void => {
+        finish({ kind: "error", error: { code: TUNNEL_STREAM_OVERFLOW, message } });
+        streams.cancel(req.id);
+      };
+      const handlers: SubscriptionHandlers = {
+        push(value, bytes) {
+          if (finished) return;
+          if (bytes > maxFrameBytes) {
+            overflow(
+              `a ${String(bytes)}-byte stream-event exceeds the ${String(maxFrameBytes)}-byte frame cap`,
+            );
+          } else if (pending) {
+            const p = pending;
+            pending = null;
+            p.resolve({ value, done: false });
+          } else if (queuedBytes + bytes > maxQueuedBytes) {
+            overflow(
+              `a slow consumer let ${String(queuedBytes + bytes)} bytes queue past the ${String(maxQueuedBytes)}-byte cap`,
+            );
+          } else {
+            queuedBytes += bytes;
+            buffer.push({ kind: "value", value, bytes });
+          }
+        },
+        done(error) {
+          finish(error ? { kind: "error", error } : { kind: "complete" });
+        },
+      };
+      const cleanup = (): void => {
+        buffer.length = 0;
+        queuedBytes = 0;
+        release();
+        if (finished) return;
+        finished = true;
+        state.subscriptions.delete(req.id);
+        if (registered) streams.cancel(req.id);
       };
       const ensureRegistered = (): void => {
         if (registered) return;
         registered = true;
         state.subscriptions.set(req.id, handlers);
+        state.queues.set(req.id, () => queuedBytes);
         try {
           ws.send(encodeTunnelMessage(req));
         } catch (err) {
@@ -230,19 +287,20 @@ function buildSubscriptionIterable(
       return {
         async next(): Promise<IteratorResult<unknown>> {
           ensureRegistered();
-          if (buffer.length > 0) {
-            const head = buffer.shift();
-            if (!head) return { value: undefined, done: true };
-            if (head.kind === "value") return { value: head.value, done: false };
-            if (head.kind === "complete") return { value: undefined, done: true };
-            throw Object.assign(new Error(head.error.message), {
-              code: head.error.code,
+          const head = buffer.shift();
+          if (head?.kind === "value") {
+            queuedBytes -= head.bytes;
+            return { value: head.value, done: false };
+          }
+          if (head === undefined && !finished) {
+            return await new Promise<IteratorResult<unknown>>((resolve, reject) => {
+              pending = { resolve, reject };
             });
           }
-          if (finished) return { value: undefined, done: true };
-          return await new Promise<IteratorResult<unknown>>((resolve, reject) => {
-            pending = { resolve, reject };
-          });
+          // Over and drained: nothing of this stream stays queued.
+          release();
+          if (head?.kind === "error") throw streamFailure(head.error);
+          return { value: undefined, done: true };
         },
         return(): Promise<IteratorResult<unknown>> {
           cleanup();
@@ -256,6 +314,60 @@ function buildSubscriptionIterable(
       };
     },
   };
+}
+
+/**
+ * Ship a stream-cancel and await the node's acknowledging stream-done
+ * (P4.1 X4). The node cancels every stream itself when the link drops,
+ * so a cancel that sees neither an acknowledgement nor a drop within
+ * the request timeout resolves as `unknown` rather than leaking.
+ */
+function sendStreamCancel(
+  ctx: TunnelServerContext,
+  ws: BunServerWebSocket,
+  state: ConnectionState,
+  id: string,
+): void {
+  const nodeName = state.nodeName ?? "";
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const settle = (outcome: TunnelCancelOutcome): void => {
+    if (state.cancelling.get(id) !== settle) return;
+    state.cancelling.delete(id);
+    if (timer) clearTimeout(timer);
+    ctx.opts.onStreamCancelAck?.(nodeName, id, outcome);
+  };
+  state.cancelling.set(id, settle);
+  if (ctx.requestTimeoutMs > 0 && Number.isFinite(ctx.requestTimeoutMs)) {
+    timer = setTimeout(() => {
+      settle("unknown");
+    }, ctx.requestTimeoutMs);
+  }
+  try {
+    ws.send(encodeTunnelMessage({ type: "stream-cancel", id }));
+  } catch {
+    // ws already gone; nothing to ship.
+    settle("unknown");
+  }
+}
+
+function streamControl(
+  ctx: TunnelServerContext,
+  ws: BunServerWebSocket,
+  state: ConnectionState,
+  method: string,
+): StreamControl {
+  return {
+    limits: resolveStreamLimits(ctx.streamLimits, method),
+    cancel: (id: string): void => {
+      sendStreamCancel(ctx, ws, state, id);
+    },
+  };
+}
+
+function queuedBytesOf(state: ConnectionState): number {
+  let total = 0;
+  for (const bytes of state.queues.values()) total += bytes();
+  return total;
 }
 
 function getState(ws: BunServerWebSocket): ConnectionState {
@@ -337,6 +449,7 @@ interface TunnelServerContext {
   journal: (entry: TunnelJournalEntry) => void;
   /** Resolved per-request timeout (ms) for send()/registry send. */
   requestTimeoutMs: number;
+  streamLimits: StreamLimitsPolicy;
 }
 
 function registerNode(ctx: TunnelServerContext, ws: BunServerWebSocket, nodeName: string): void {
@@ -401,6 +514,9 @@ function unregisterNode(ctx: TunnelServerContext, ws: BunServerWebSocket, reason
     done({ code: "tunnel-disconnected", message: reason });
   }
   state.subscriptions.clear();
+  // The node cancels its own streams on the drop; the acknowledgement
+  // it would have sent is lost with the link.
+  for (const settle of [...state.cancelling.values()]) settle("unknown");
 }
 
 /** First-message authentication: a `hello` frame carrying the bearer. */
@@ -463,11 +579,13 @@ function resolvePendingRes(state: ConnectionState, msg: TunnelRes): void {
 function pushStreamEvent(
   state: ConnectionState,
   msg: Extract<TunnelMessage, { type: "stream-event" }>,
+  bytes: number,
 ): void {
   const sub = state.subscriptions.get(msg.id);
-  if (sub) sub.push(msg.data);
+  if (sub) sub.push(msg.data, bytes);
 }
 
+/** A stream-done ends a live stream, or acknowledges a cancel central sent. */
 function finishStream(
   state: ConnectionState,
   msg: Extract<TunnelMessage, { type: "stream-done" }>,
@@ -476,7 +594,9 @@ function finishStream(
   if (sub) {
     state.subscriptions.delete(msg.id);
     sub.done(msg.ok ? undefined : msg.error);
+    return;
   }
+  state.cancelling.get(msg.id)?.(cancelOutcomeOf(msg));
 }
 
 function handleTunnelMessage(
@@ -505,7 +625,7 @@ function handleTunnelMessage(
     return;
   }
   if (msg.type === "stream-event") {
-    pushStreamEvent(state, msg);
+    pushStreamEvent(state, msg, frameBytes(raw));
     return;
   }
   if (msg.type === "stream-done") {
@@ -589,7 +709,8 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
     }
   };
   const requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const ctx: TunnelServerContext = { opts, clock, nodes, journal, requestTimeoutMs };
+  const streamLimits = opts.streamLimits ?? streamLimitsFor;
+  const ctx: TunnelServerContext = { opts, clock, nodes, journal, requestTimeoutMs, streamLimits };
 
   return {
     handleUpgrade(req, server): Response | undefined {
@@ -601,6 +722,8 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
         helloTimer: null,
         pending: new Map(),
         subscriptions: new Map(),
+        cancelling: new Map(),
+        queues: new Map(),
       };
 
       const upgraded = server.upgrade(req, { data: state });
@@ -675,7 +798,7 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       }
       const state = getState(ws);
       const full: TunnelReq = { type: "req", ...req };
-      return buildSubscriptionIterable(ws, state, full);
+      return buildSubscriptionIterable(ws, state, full, streamControl(ctx, ws, state, req.method));
     },
     registry(): TunnelRegistryEntry[] {
       return buildRegistry(ctx);
@@ -694,6 +817,10 @@ export function createTunnelServer(opts: TunnelServerOptions): TunnelServer {
       const ws = nodes.get(nodeName);
       if (!ws) return 0;
       return getState(ws).pending.size;
+    },
+    queuedBytes(nodeName): number {
+      const ws = nodes.get(nodeName);
+      return ws ? queuedBytesOf(getState(ws)) : 0;
     },
   };
 }

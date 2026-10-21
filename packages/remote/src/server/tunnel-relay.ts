@@ -1,7 +1,41 @@
 import type { TunnelServer } from "../tunnel/index.js";
 
 import { appendTunnelJournal, type TunnelJournalEntry } from "../tunnel/journal.js";
+import { isInferenceRpcProcedure } from "../tunnel/messages.js";
 import { unauthorizedResponse, verifyBearer } from "./auth.js";
+
+function relayOnlyRefusal(): Response {
+  return Response.json(
+    { error: { code: "FORBIDDEN", message: "this credential relays inferenceRpc.* calls only" } },
+    { status: 403 },
+  );
+}
+
+/** Every hash is compared, in constant time, whichever matches. */
+function relayCredentialMatches(req: Request, hashes: readonly string[]): boolean {
+  let matched = false;
+  for (const hash of hashes) if (verifyBearer(req, hash)) matched = true;
+  return matched;
+}
+
+type RelayAccess = "operator" | "relay-only";
+
+/**
+ * Who is relaying: the operator bearer, for anything, or a relay-only
+ * credential, for `inferenceRpc.*` POSTs only. Otherwise the HTTP-layer
+ * rejection (401, 403 or 405), which is not a tunnel event.
+ */
+function relayAccess(
+  req: Request,
+  tokenHash: string,
+  relayCredentialHashes: readonly string[],
+): RelayAccess | Response {
+  if (verifyBearer(req, tokenHash)) {
+    return req.method === "POST" ? "operator" : new Response("method not allowed", { status: 405 });
+  }
+  if (!relayCredentialMatches(req, relayCredentialHashes)) return unauthorizedResponse();
+  return req.method === "POST" ? "relay-only" : relayOnlyRefusal();
+}
 
 /**
  * HTTP bridge from the CLI to a tunneled node.
@@ -12,6 +46,8 @@ import { unauthorizedResponse, verifyBearer } from "./auth.js";
  *   - 502 when the tunnel isn't connected or send() throws
  *   - 400 on malformed input
  *   - 401 without valid bearer
+ *   - 403 for a relay-only credential asking for anything else than an
+ *     `inferenceRpc.*` procedure
  *   - 405 on non-POST verbs
  *
  * POST /tunnel-relay/<nodeName>?stream=true
@@ -21,16 +57,19 @@ import { unauthorizedResponse, verifyBearer } from "./auth.js";
  *   `stream-done` ships as an `event: done\ndata: {...}\n\n` frame
  *   then the stream closes.
  *
- * Cancellation: the SSE handler wires `req.signal` from Bun's fetch
- * API into the `for await` loop consuming `tunnelServer.sendSubscribe`;
- * on client disconnect, `break` triggers the iterator's `return()`
- * which ships a `stream-cancel` frame to the node so it can release
- * observer resources. Same enforcement as POSTs: bearer + (optional)
- * journal entries.
+ * Cancellation: the SSE handler races each read of
+ * `tunnelServer.sendSubscribe` against `req.signal` from Bun's fetch
+ * API; on client disconnect the iterator's `return()` ships a
+ * `stream-cancel` frame to the node so it can release observer
+ * resources. Same enforcement as POSTs: bearer + (optional) journal
+ * entries.
  *
  * Note: nodeName is URL-decoded. Bearer is the agent's tokenHash
  * (same one guarding /trpc); the tunnel bearer is separate and
- * guards only the inbound /tunnel WS upgrade.
+ * guards only the inbound /tunnel WS upgrade. A relay-only credential
+ * (P4.1, `relayCredentialHashes`) relays exactly the `inferenceRpc.*`
+ * procedures, POSTed by name; anything else it asks for is a 403, and it
+ * opens no other route on the agent.
  *
  * Journal policy: the `tunnel-relay-call` / `tunnel-relay-error`
  * entries fire ONLY for the actual tunnel-send path (the inner
@@ -50,6 +89,7 @@ export async function handleTunnelRelay(
   tunnelServer: TunnelServer,
   tokenHash: string,
   journalPath?: string,
+  relayCredentialHashes: readonly string[] = [],
 ): Promise<Response> {
   const journal = (entry: TunnelJournalEntry): void => {
     try {
@@ -58,14 +98,9 @@ export async function handleTunnelRelay(
       // swallowed; appendTunnelJournal already stderr-warns once.
     }
   };
-  if (!verifyBearer(req, tokenHash)) {
-    // 401 — HTTP-layer rejection, not a tunnel event. See module doc.
-    return unauthorizedResponse();
-  }
-  if (req.method !== "POST") {
-    // 405 — HTTP-layer rejection, not a tunnel event. See module doc.
-    return new Response("method not allowed", { status: 405 });
-  }
+  const access = relayAccess(req, tokenHash, relayCredentialHashes);
+  // 401/403/405 — HTTP-layer rejections, not tunnel events. See module doc.
+  if (access instanceof Response) return access;
   const nodeName = decodeURIComponent(url.pathname.slice("/tunnel-relay/".length));
   // 400 branches below — HTTP-layer rejection, not a tunnel event.
   if (!nodeName) return new Response("missing node name", { status: 400 });
@@ -85,6 +120,7 @@ export async function handleTunnelRelay(
   }
 
   const method = body.method;
+  if (access === "relay-only" && !isInferenceRpcProcedure(method)) return relayOnlyRefusal();
   const stream = url.searchParams.get("stream") === "true";
   if (stream) {
     return handleStream(req, tunnelServer, nodeName, method, body.input, journal);
@@ -173,69 +209,59 @@ async function closeIterator<T>(iterator: AsyncIterator<T>): Promise<void> {
   }
 }
 
-// Race each next() against the abort signal so a mid-stream
-// client disconnect terminates the read loop without waiting
-// for the next event from the node.
-export async function pumpSubscriptionEvents<T>(
+/**
+ * One relay step: the subscription's next event, or "aborted" once the
+ * client is gone, whichever comes first. The abort listener lives for the
+ * step only, so a long stream never accumulates listeners.
+ */
+export async function nextRelayEvent<T>(
   iterator: AsyncIterator<T>,
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  encoder: TextEncoder,
   signal: AbortSignal,
-): Promise<void> {
-  // Register the abort listener ONCE for the whole stream and reuse a
-  // single abort promise across every iteration. Adding the listener
-  // inside the loop (one per event) accumulates listeners for the
-  // stream's lifetime — a MaxListeners warning + memory growth on a
-  // long stream. `removeEventListener` in a finally guarantees the
-  // handler is detached when the pump exits for any reason.
-  let abortResolve: (() => void) | null = null;
-  const abortPromise = new Promise<{ aborted: true }>((resolve) => {
-    abortResolve = (): void => {
-      resolve({ aborted: true });
+): Promise<IteratorResult<T> | "aborted"> {
+  if (signal.aborted) return "aborted";
+  let onAbort = (): void => undefined;
+  const aborted = new Promise<"aborted">((resolve) => {
+    onAbort = (): void => {
+      resolve("aborted");
     };
+    signal.addEventListener("abort", onAbort, { once: true });
   });
-  const onAbort = (): void => {
-    abortResolve?.();
-  };
-  if (signal.aborted) onAbort();
-  else signal.addEventListener("abort", onAbort, { once: true });
   try {
-    for (;;) {
-      if (signal.aborted) {
-        await closeIterator(iterator);
-        break;
-      }
-      const nextPromise = iterator.next();
-      const step = await Promise.race([nextPromise.then((r) => ({ step: r })), abortPromise]);
-      if ("aborted" in step) {
-        await closeIterator(iterator);
-        break;
-      }
-      const { step: result } = step;
-      if (result.done) break;
-      try {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(result.value)}\n\n`));
-      } catch {
-        // controller closed (downstream sink gone). Bail out.
-        await closeIterator(iterator);
-        break;
-      }
-    }
+    return await Promise.race([iterator.next(), aborted]);
   } finally {
     signal.removeEventListener("abort", onAbort);
   }
 }
 
+function doneFrame(
+  done: { ok: true } | { ok: false; error: { code: string; message: string } },
+): string {
+  return `event: done\ndata: ${JSON.stringify(done)}\n\n`;
+}
+
+function streamErrorOf(err: unknown): { code: string; message: string } {
+  const message = err instanceof Error ? err.message : String(err);
+  const code =
+    typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
+      ? err.code
+      : "tunnel-send-failed";
+  return { code, message };
+}
+
 /**
- * Stream subscription events over SSE. The ReadableStream pulls
- * from `tunnelServer.sendSubscribe(...)` and writes standard SSE
- * frames:
+ * Stream subscription events over SSE:
  *   data: {...}\n\n              — each event
  *   event: done\ndata: {...}\n\n — terminal frame
  *
- * On client disconnect (`req.signal.aborted`), the `for await`
- * `break` triggers the iterator's `return()` which releases the
- * subscription id + ships a `stream-cancel` to the node.
+ * Pull-driven (P4.1 X3): each read of the body takes one event from
+ * `tunnelServer.sendSubscribe(...)`. A client that stops reading stops
+ * the pulls, so what it has not read waits in central's per-stream queue,
+ * which is bounded and ends the stream typed `stream-overflow` (cancelling
+ * the node's stream) instead of growing this body without limit.
+ *
+ * On client disconnect (`req.signal` or the body's cancel), the
+ * iterator's `return()` releases the subscription id and ships a
+ * `stream-cancel` to the node.
  */
 function handleStream(
   req: Request,
@@ -246,7 +272,7 @@ function handleStream(
   journal: (e: TunnelJournalEntry) => void,
 ): Response {
   const encoder = new TextEncoder();
-  const start = performance.now();
+  const finish = makeStreamFinish(journal, nodeName, method, performance.now());
   // A dedicated AbortController lets us close the subscription iter
   // even if `req.signal` isn't supported by the runtime; we still
   // wire req.signal into it when available.
@@ -256,62 +282,58 @@ function handleStream(
   };
   if (req.signal.aborted) abort.abort();
   else req.signal.addEventListener("abort", onReqAbort, { once: true });
-  const body = new ReadableStream<Uint8Array>({
-    async start(controller): Promise<void> {
-      const iter = tunnelServer.sendSubscribe(nodeName, {
+  let iterator: AsyncIterator<unknown> | undefined;
+  const subscription = (): AsyncIterator<unknown> => {
+    iterator ??= tunnelServer
+      .sendSubscribe(nodeName, {
         id: crypto.randomUUID(),
         method,
         params: { type: "subscription", input },
-      });
-      const finish = makeStreamFinish(journal, nodeName, method, start);
+      })
+      [Symbol.asyncIterator]();
+    return iterator;
+  };
+  const end = (controller: ReadableStreamDefaultController<Uint8Array>, frame?: string): void => {
+    req.signal.removeEventListener("abort", onReqAbort);
+    try {
+      if (frame !== undefined) controller.enqueue(encoder.encode(frame));
+      controller.close();
+    } catch {
+      /* controller closed */
+    }
+  };
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller): Promise<void> {
+      const source = subscription();
+      let step: IteratorResult<unknown> | "aborted";
       try {
-        const iterator = iter[Symbol.asyncIterator]();
-        await pumpSubscriptionEvents(iterator, controller, encoder, abort.signal);
-        if (abort.signal.aborted) {
-          finish(false, "client-aborted", "client disconnected");
-        } else {
-          try {
-            controller.enqueue(
-              encoder.encode(`event: done\ndata: ${JSON.stringify({ ok: true })}\n\n`),
-            );
-          } catch {
-            /* controller closed */
-          }
-          finish(true);
-        }
+        step = await nextRelayEvent(source, abort.signal);
       } catch (err) {
-        const message = (err as Error).message;
-        const code =
-          typeof err === "object" && err !== null && "code" in err && typeof err.code === "string"
-            ? err.code
-            : "tunnel-send-failed";
-        try {
-          controller.enqueue(
-            encoder.encode(
-              `event: done\ndata: ${JSON.stringify({
-                ok: false,
-                error: { code, message },
-              })}\n\n`,
-            ),
-          );
-        } catch {
-          /* controller closed */
-        }
-        finish(false, code, message);
-      } finally {
-        req.signal.removeEventListener("abort", onReqAbort);
-        try {
-          controller.close();
-        } catch {
-          /* ignore */
-        }
+        const error = streamErrorOf(err);
+        finish(false, error.code, error.message);
+        end(controller, doneFrame({ ok: false, error }));
+        return;
       }
+      if (step === "aborted") {
+        await closeIterator(source);
+        finish(false, "client-aborted", "client disconnected");
+        end(controller);
+        return;
+      }
+      if (step.done === true) {
+        finish(true);
+        end(controller, doneFrame({ ok: true }));
+        return;
+      }
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(step.value)}\n\n`));
     },
-    cancel(): void {
-      // Downstream reader aborted (e.g. the HTTP client closed the
-      // SSE connection). Mirror into our own abort controller so
-      // the iterator.return() path ships stream-cancel to the node.
+    async cancel(): Promise<void> {
+      // Downstream reader aborted (e.g. the HTTP client closed the SSE
+      // connection): the iterator's return() ships stream-cancel.
       abort.abort();
+      req.signal.removeEventListener("abort", onReqAbort);
+      if (iterator !== undefined) await closeIterator(iterator);
+      finish(false, "client-aborted", "client disconnected");
     },
   });
   return new Response(body, {

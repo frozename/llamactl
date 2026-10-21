@@ -275,6 +275,22 @@ export const ClusterNodeSchema = z
      * as a virtual `<agent>.<cli-name>` provider-kind node.
      */
     cli: z.array(CliBindingSchema).optional(),
+    /**
+     * InferenceRpcV1 caller settings for this agent (P4.1). The
+     * reference resolves, through the shared secret resolver, to the
+     * service credential this caller presents to the node's worker RPC;
+     * the node keeps only its hash. Absent, the caller keeps the existing
+     * path for the node's deployments. `relayCredentialRef`, in the same
+     * grammar, names central's relay-only credential for a tunneled
+     * node's relay hop. A tunneled node needs it: without it the caller
+     * fails closed rather than present the context user's operator bearer.
+     */
+    workerRpc: z
+      .object({
+        serviceCredentialRef: z.string().min(1),
+        relayCredentialRef: z.string().min(1).optional(),
+      })
+      .optional(),
   })
   .refine(
     (n) => {

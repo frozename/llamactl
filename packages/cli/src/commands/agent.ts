@@ -647,7 +647,19 @@ function buildServeOptions(
       ? {
           tunnelCentral: {
             expectedBearerHash: auth.hashToken(tunnelCentralBearer),
+            // P4.1: agent.yaml's relay-only credentials, re-read per relay request.
+            workerRpcRelay: agentConfigMod.workerRpcRelayReader(join(parsed.dir, "agent.yaml")),
             // onNodeConnect/onNodeDisconnect land in Slice D (journal).
+          },
+        }
+      : {}),
+    // InferenceRpcV1 (P4.1): agent.yaml's workerRpc block, re-read on every
+    // RPC call. Absent or listing no version, nothing is advertised.
+    ...(cfg.nodeName !== undefined
+      ? {
+          workerRpc: {
+            workerId: cfg.nodeName,
+            settings: agentConfigMod.workerRpcSettingsReader(join(parsed.dir, "agent.yaml")),
           },
         }
       : {}),

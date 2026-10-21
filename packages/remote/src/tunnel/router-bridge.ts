@@ -1,6 +1,15 @@
 import { type AnyTRPCRouter, callTRPCProcedure } from "@trpc/server";
 
-import type { TunnelReq } from "./messages.js";
+import {
+  frameBytes,
+  resolveStreamLimits,
+  type StreamLimits,
+  streamLimitsFor,
+  type StreamLimitsPolicy,
+  TUNNEL_STREAM_CANCELLED,
+  TUNNEL_STREAM_OVERFLOW,
+  type TunnelReq,
+} from "./messages.js";
 
 /**
  * Agent-side bridge between the reverse tunnel's `req` frames and a
@@ -132,14 +141,26 @@ export interface TunnelSubscription {
  *     procedure via `signal`; `cancel()` aborts it, which the
  *     generator body translates into `signal.aborted` and bails out.
  *     That's the same shape the HTTPS SSE path uses.
+ *   - A cancelled stream ends through `onError` typed
+ *     `stream-cancelled`: the node's acknowledgement of central's
+ *     `stream-cancel` (P4.1 X4), never a success-shaped end.
+ *   - Streams are bounded (P4.1 X3): an event above
+ *     `limits.maxFrameBytes`, or an Observable backlog above
+ *     `limits.maxQueuedBytes`, ends the stream through `onError` typed
+ *     `stream-overflow` and cancels the producer. The caps are chosen
+ *     per procedure path; by default only the worker RPC's are tight.
+ *   - `createContext` sees the req frame, so a context can carry what
+ *     the frame authenticates (the worker RPC's service claims).
  */
 export function createTunnelSubscriptionHandler(
   router: AnyTRPCRouter,
-  createContext: () => unknown,
+  createContext: (req: TunnelReq) => unknown,
+  policy: StreamLimitsPolicy = streamLimitsFor,
 ): (req: TunnelReq) => TunnelSubscription {
   return (req: TunnelReq): TunnelSubscription => {
     const params = (req.params ?? {}) as TunnelRouterParams;
     const path = req.method;
+    const limits = resolveStreamLimits(policy, path);
     return {
       subscribe(handlers): { cancel(): void } {
         const abort = new AbortController();
@@ -148,8 +169,8 @@ export function createTunnelSubscriptionHandler(
         // no-ops so duplicate teardown is safe.
         let settled = false;
         // `cancelled` — external `cancel()` was called. Distinct
-        // from `settled` because we must still fire onComplete after
-        // the generator body observes the abort and returns cleanly.
+        // from `settled` because the terminal callback still fires
+        // after the generator body observes the abort and returns.
         let cancelled = false;
         const safeError = (err: Error): void => {
           if (settled) return;
@@ -160,7 +181,11 @@ export function createTunnelSubscriptionHandler(
             // caller's onError threw; nothing sane to do
           }
         };
-        const safeComplete = (): void => {
+        const finish = (): void => {
+          if (cancelled) {
+            safeError(streamError(TUNNEL_STREAM_CANCELLED, `subscription '${path}' cancelled`));
+            return;
+          }
           if (settled) return;
           settled = true;
           try {
@@ -176,31 +201,29 @@ export function createTunnelSubscriptionHandler(
               router,
               path,
               getRawInput: () => Promise.resolve(params.input),
-              ctx: createContext(),
+              ctx: createContext(req),
               type: "subscription",
               signal: abort.signal,
               batchIndex: 0,
             });
           } catch (err) {
-            // If callTRPCProcedure rejected because we aborted before
-            // the procedure resolved, treat as a clean complete.
-            if (cancelled) {
-              safeComplete();
-              return;
-            }
-            safeError(err as Error);
+            // Aborted before the procedure resolved: still a cancel.
+            if (cancelled) finish();
+            else safeError(err as Error);
             return;
           }
           // The procedure's return could be an AsyncIterable (async
           // generator) or an Observable. Normalise to AsyncIterable.
-          const iterable = toAsyncIterable(result, abort.signal);
+          const iterable = toAsyncIterable(result, abort.signal, limits);
           if (!iterable) {
             safeError(new Error(`subscription '${path}' did not return an async iterable`));
             return;
           }
-          try {
-            for await (const value of iterable) {
-              if (abort.signal.aborted) break;
+          await pumpEvents(iterable, {
+            abort,
+            limits,
+            isCancelled: () => cancelled,
+            onEvent: (value) => {
               try {
                 handlers.onEvent(value);
               } catch {
@@ -208,18 +231,10 @@ export function createTunnelSubscriptionHandler(
                 // tunnel client catches and ships a stream-done
                 // {ok:false} on its own. Don't double-close here.
               }
-            }
-            safeComplete();
-          } catch (err) {
-            // Abort-driven teardown surfaces as a throw from the
-            // iterator's `.return()` path in some runtimes; if the
-            // caller asked to cancel, treat it as a clean complete.
-            if (abort.signal.aborted || cancelled) {
-              safeComplete();
-              return;
-            }
-            safeError(err as Error);
-          }
+            },
+            finish,
+            fail: safeError,
+          });
         };
         void pump();
         return {
@@ -238,18 +253,76 @@ export function createTunnelSubscriptionHandler(
   };
 }
 
+function streamError(code: string, message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
+}
+
+function isStreamOverflow(err: unknown): err is Error {
+  return err instanceof Error && (err as { code?: unknown }).code === TUNNEL_STREAM_OVERFLOW;
+}
+
+/** Serialized size of one event: what its stream-event frame will carry. */
+function eventBytes(value: unknown): number {
+  const json = JSON.stringify(value) as string | undefined;
+  return json === undefined ? 0 : frameBytes(json);
+}
+
+interface PumpOptions {
+  abort: AbortController;
+  limits: StreamLimits;
+  isCancelled: () => boolean;
+  onEvent: (value: unknown) => void;
+  finish: () => void;
+  fail: (err: Error) => void;
+}
+
+async function pumpEvents(iterable: AsyncIterable<unknown>, opts: PumpOptions): Promise<void> {
+  try {
+    for await (const value of iterable) {
+      if (opts.abort.signal.aborted) break;
+      const bytes = eventBytes(value);
+      if (bytes > opts.limits.maxFrameBytes) {
+        throw streamError(
+          TUNNEL_STREAM_OVERFLOW,
+          `a ${String(bytes)}-byte event exceeds the ${String(opts.limits.maxFrameBytes)}-byte frame cap`,
+        );
+      }
+      opts.onEvent(value);
+    }
+    opts.finish();
+  } catch (err) {
+    // Leaving the loop already closed the producer; abort its signal too.
+    if (isStreamOverflow(err)) {
+      opts.abort.abort();
+      opts.fail(err);
+      return;
+    }
+    // Abort-driven teardown surfaces as a throw from the iterator's
+    // `.return()` path in some runtimes; a cancel is still a cancel.
+    if (opts.abort.signal.aborted || opts.isCancelled()) {
+      opts.finish();
+      return;
+    }
+    opts.fail(err as Error);
+  }
+}
+
 /**
  * Convert a subscription's raw return to an AsyncIterable. The
  * return may be:
  *   - AsyncIterable (async generator) — passed through.
  *   - Observable ({subscribe(observer): TeardownLogic}) — wrapped
- *     into an AsyncIterable that pulls via push-pull deferreds.
+ *     into a bounded AsyncIterable that pulls via push-pull deferreds.
  *   - anything else — rejected; the caller surfaces an error frame.
  */
-function toAsyncIterable(value: unknown, signal: AbortSignal): AsyncIterable<unknown> | null {
+function toAsyncIterable(
+  value: unknown,
+  signal: AbortSignal,
+  limits: StreamLimits,
+): AsyncIterable<unknown> | null {
   if (value === null || value === undefined) return null;
   if (isAsyncIterable(value)) return value;
-  if (isObservable(value)) return observableToAsyncIterable(value, signal);
+  if (isObservable(value)) return observableToAsyncIterable(value, signal, limits);
   return null;
 }
 
@@ -273,98 +346,114 @@ function isObservable(value: unknown): value is MinimalObservable {
   return typeof (value as { subscribe?: unknown }).subscribe === "function";
 }
 
+type BufferedEntry =
+  | { kind: "v"; value: unknown; bytes: number }
+  | { kind: "e"; err: unknown }
+  | { kind: "c" };
+
+interface PendingPull {
+  resolve: (v: IteratorResult<unknown>) => void;
+  reject: (e: unknown) => void;
+}
+
+function deliver(pull: PendingPull, entry: BufferedEntry): void {
+  if (entry.kind === "v") pull.resolve({ value: entry.value, done: false });
+  else if (entry.kind === "c") pull.resolve({ value: undefined, done: true });
+  else pull.reject(entry.err);
+}
+
+function unsubscribeQuietly(handle: ReturnType<MinimalObservable["subscribe"]>): void {
+  try {
+    if (typeof handle === "function") handle();
+    else handle?.unsubscribe();
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Push-pull bridge from Observable → AsyncIterable. Values pushed
- * faster than the consumer pulls are buffered in an array; pulls
- * with no pending value await a Deferred. Abort via the supplied
- * signal tears down the observable subscription (via the returned
- * teardown from `observable.subscribe`) and completes the iterator.
+ * faster than the consumer pulls are buffered, bounded by
+ * `limits.maxQueuedBytes` of serialized events: a backlog past the cap
+ * ends the iterator typed `stream-overflow` after the values already
+ * queued, and unsubscribes the Observable. Pulls with no pending value
+ * await a Deferred. Abort via the supplied signal tears down the
+ * observable subscription and completes the iterator.
  */
 function observableToAsyncIterable(
   observable: MinimalObservable,
   signal: AbortSignal,
+  limits: StreamLimits,
 ): AsyncIterable<unknown> {
   return {
     [Symbol.asyncIterator](): AsyncIterator<unknown> {
-      const buffer: (
-        | { kind: "v"; value: unknown }
-        | { kind: "e"; err: unknown }
-        | { kind: "c" }
-      )[] = [];
-      let pending: {
-        resolve: (v: IteratorResult<unknown>) => void;
-        reject: (e: unknown) => void;
-      } | null = null;
+      const buffer: BufferedEntry[] = [];
+      let queuedBytes = 0;
+      let pending: PendingPull | null = null;
       let done = false;
-      const teardownHandle = observable.subscribe({
+      // `handle` is unset while `subscribe` runs: a synchronous burst can
+      // overflow before the teardown handle exists.
+      const source: {
+        handle: ReturnType<MinimalObservable["subscribe"]> | null;
+        overflowed: boolean;
+      } = { handle: null, overflowed: false };
+      const settle = (entry: BufferedEntry): void => {
+        const pull = pending;
+        pending = null;
+        if (pull) deliver(pull, entry);
+        else buffer.push(entry);
+      };
+      const end = (entry: Exclude<BufferedEntry, { kind: "v" }>): void => {
+        if (done) return;
+        done = true;
+        settle(entry);
+      };
+      const teardown = (): void => {
+        if (source.handle !== null) unsubscribeQuietly(source.handle);
+      };
+      source.handle = observable.subscribe({
         next(v) {
           if (done) return;
           if (pending) {
-            const p = pending;
-            pending = null;
-            p.resolve({ value: v, done: false });
-          } else {
-            buffer.push({ kind: "v", value: v });
+            settle({ kind: "v", value: v, bytes: 0 });
+            return;
           }
+          const bytes = eventBytes(v);
+          if (queuedBytes + bytes > limits.maxQueuedBytes) {
+            source.overflowed = true;
+            const message = `a slow consumer let ${String(queuedBytes + bytes)} bytes queue past the ${String(limits.maxQueuedBytes)}-byte cap`;
+            end({ kind: "e", err: streamError(TUNNEL_STREAM_OVERFLOW, message) });
+            teardown();
+            return;
+          }
+          queuedBytes += bytes;
+          buffer.push({ kind: "v", value: v, bytes });
         },
         error(err) {
-          if (done) return;
-          done = true;
-          if (pending) {
-            const p = pending;
-            pending = null;
-            p.reject(err);
-          } else {
-            buffer.push({ kind: "e", err });
-          }
+          end({ kind: "e", err });
         },
         complete() {
-          if (done) return;
-          done = true;
-          if (pending) {
-            const p = pending;
-            pending = null;
-            p.resolve({ value: undefined, done: true });
-          } else {
-            buffer.push({ kind: "c" });
-          }
+          end({ kind: "c" });
         },
       });
-      const teardown = (): void => {
-        if (typeof teardownHandle === "function") teardownHandle();
-        else if (
-          teardownHandle &&
-          typeof (teardownHandle as { unsubscribe?: unknown }).unsubscribe === "function"
-        ) {
-          teardownHandle.unsubscribe();
-        }
-      };
+      if (source.overflowed) teardown();
       const onAbort = (): void => {
         if (done) return;
         done = true;
-        try {
-          teardown();
-        } catch {
-          // ignore
-        }
-        if (pending) {
-          const p = pending;
-          pending = null;
-          p.resolve({ value: undefined, done: true });
-        } else {
-          buffer.push({ kind: "c" });
-        }
+        teardown();
+        settle({ kind: "c" });
       };
       if (signal.aborted) onAbort();
       else signal.addEventListener("abort", onAbort, { once: true });
       return {
         async next(): Promise<IteratorResult<unknown>> {
-          if (buffer.length > 0) {
-            const head = buffer.shift();
-            if (!head) return { value: undefined, done: true };
-            if (head.kind === "v") return { value: head.value, done: false };
-            if (head.kind === "c") return { value: undefined, done: true };
-            throw head.err;
+          const head = buffer.shift();
+          if (head !== undefined) {
+            if (head.kind === "v") queuedBytes -= head.bytes;
+            if (head.kind === "e") throw head.err;
+            return head.kind === "v"
+              ? { value: head.value, done: false }
+              : { value: undefined, done: true };
           }
           if (done) return { value: undefined, done: true };
           return await new Promise<IteratorResult<unknown>>((resolve, reject) => {
@@ -374,11 +463,7 @@ function observableToAsyncIterable(
         return(): Promise<IteratorResult<unknown>> {
           if (!done) {
             done = true;
-            try {
-              teardown();
-            } catch {
-              // ignore
-            }
+            teardown();
           }
           return Promise.resolve({ value: undefined, done: true });
         },

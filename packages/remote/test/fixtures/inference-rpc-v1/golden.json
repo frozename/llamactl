@@ -1,0 +1,495 @@
+{
+  "contract": "InferenceRpcV1",
+  "version": {
+    "major": 1,
+    "minor": 0
+  },
+  "events": "ExecutionEventV1 from @novaproto/contracts 0.2.0",
+  "note": "Transport-independent exchanges, recorded through the embedded client against the shared fake engine. Every transport must reproduce them by value.",
+  "exchanges": [
+    {
+      "procedure": "negotiate",
+      "input": {
+        "versions": [
+          {
+            "major": 1,
+            "minor": 0
+          }
+        ],
+        "requiredFeatures": ["execution-event-v1"],
+        "optionalFeatures": ["attempt-status", "x-future"]
+      },
+      "output": {
+        "outcome": "negotiated",
+        "version": {
+          "major": 1,
+          "minor": 0
+        },
+        "workerId": "worker-a",
+        "workerIncarnation": "inc-golden",
+        "features": ["attempt-status", "execution-event-v1"]
+      }
+    },
+    {
+      "procedure": "negotiate",
+      "input": {
+        "versions": [
+          {
+            "major": 2,
+            "minor": 0
+          }
+        ],
+        "requiredFeatures": [],
+        "optionalFeatures": []
+      },
+      "output": {
+        "outcome": "rejected",
+        "rejection": {
+          "code": "unsupported-version",
+          "message": "no common InferenceRpc version",
+          "supportedVersions": [
+            {
+              "major": 1,
+              "minor": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "procedure": "catalog",
+      "input": null,
+      "output": {
+        "outcome": "catalog",
+        "workerId": "worker-a",
+        "workerIncarnation": "inc-golden",
+        "catalogGeneration": "gen-890a16f6463457ea",
+        "deployments": [
+          {
+            "deploymentId": "deploy/worker-a/cli",
+            "model": "upstream-model",
+            "publicModelIds": ["public/deploy/worker-a/cli"],
+            "backendKind": "cli",
+            "deploymentEpoch": "epoch-1",
+            "availability": "unavailable"
+          },
+          {
+            "deploymentId": "deploy/worker-a/local",
+            "model": "upstream-model",
+            "publicModelIds": ["public/deploy/worker-a/local"],
+            "backendKind": "local-model",
+            "deploymentEpoch": "epoch-1",
+            "availability": "available"
+          }
+        ]
+      }
+    },
+    {
+      "procedure": "submit",
+      "input": {
+        "version": {
+          "major": 1,
+          "minor": 0
+        },
+        "envelope": {
+          "schemaVersion": 1,
+          "requestId": "req-att-golden-1",
+          "attemptId": "att-golden-1",
+          "deadline": 1792411260000,
+          "tenantId": "tenant-a",
+          "projectId": "tenant-a",
+          "credentialScopeId": "scope-a",
+          "operation": "generate",
+          "ingressProtocol": "openai-chat",
+          "publicModelId": "public/deploy/worker-a/local",
+          "features": {
+            "operation": "generate",
+            "protocol": "openai-chat",
+            "stream": true,
+            "modalities": ["text"],
+            "tools": false,
+            "structuredOutput": false,
+            "session": false,
+            "cancellation": true
+          },
+          "stream": true,
+          "nativeBody": {
+            "model": "public/deploy/worker-a/local",
+            "stream": true,
+            "messages": [
+              {
+                "role": "user",
+                "content": "hi"
+              }
+            ]
+          },
+          "headerFingerprint": {
+            "allowlist": ["content-type"],
+            "fingerprint": "test"
+          },
+          "cachePolicy": {
+            "exact": "default",
+            "semantic": "off"
+          }
+        },
+        "target": {
+          "deploymentId": "deploy/worker-a/local",
+          "expectedDeploymentEpoch": "epoch-1",
+          "catalogGeneration": "gen-890a16f6463457ea",
+          "workerIncarnation": "inc-golden"
+        },
+        "cancelId": "cancel-att-golden-1"
+      },
+      "output": {
+        "outcome": "accepted",
+        "requestId": "req-att-golden-1",
+        "attemptId": "att-golden-1",
+        "workerId": "worker-a",
+        "workerIncarnation": "inc-golden",
+        "deploymentId": "deploy/worker-a/local",
+        "deploymentEpoch": "epoch-1",
+        "acceptedAt": "2026-10-19T12:00:00.000Z"
+      }
+    },
+    {
+      "procedure": "stream",
+      "input": {
+        "attemptId": "att-golden-1"
+      },
+      "output": [
+        {
+          "frame": "event",
+          "event": {
+            "v": 1,
+            "requestId": "req-att-golden-1",
+            "attemptId": "att-golden-1",
+            "sequence": 0,
+            "type": "accepted",
+            "acceptedAt": "2026-10-19T12:00:00.000Z"
+          }
+        },
+        {
+          "frame": "event",
+          "event": {
+            "v": 1,
+            "requestId": "req-att-golden-1",
+            "attemptId": "att-golden-1",
+            "sequence": 1,
+            "type": "content",
+            "payload": {
+              "type": "chunk",
+              "chunk": {
+                "id": "chatcmpl-fake-1",
+                "object": "chat.completion.chunk",
+                "model": "upstream-model",
+                "created": 1700000000,
+                "choices": [
+                  {
+                    "index": 0,
+                    "delta": {
+                      "role": "assistant",
+                      "content": "Hel"
+                    },
+                    "finish_reason": null
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "frame": "event",
+          "event": {
+            "v": 1,
+            "requestId": "req-att-golden-1",
+            "attemptId": "att-golden-1",
+            "sequence": 2,
+            "type": "content",
+            "payload": {
+              "type": "chunk",
+              "chunk": {
+                "id": "chatcmpl-fake-1",
+                "object": "chat.completion.chunk",
+                "model": "upstream-model",
+                "created": 1700000000,
+                "choices": [
+                  {
+                    "index": 0,
+                    "delta": {
+                      "content": "lo"
+                    },
+                    "finish_reason": null
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "frame": "event",
+          "event": {
+            "v": 1,
+            "requestId": "req-att-golden-1",
+            "attemptId": "att-golden-1",
+            "sequence": 3,
+            "type": "content",
+            "payload": {
+              "type": "chunk",
+              "chunk": {
+                "id": "chatcmpl-fake-1",
+                "object": "chat.completion.chunk",
+                "model": "upstream-model",
+                "created": 1700000000,
+                "choices": [
+                  {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "frame": "event",
+          "event": {
+            "v": 1,
+            "requestId": "req-att-golden-1",
+            "attemptId": "att-golden-1",
+            "sequence": 4,
+            "type": "terminal",
+            "terminal": {
+              "outcome": "completed",
+              "completion": "upstream",
+              "finishReason": "stop",
+              "model": "upstream-model",
+              "deployment": "deploy/worker-a/local",
+              "usage": {
+                "source": "observed",
+                "input_tokens": 5,
+                "output_tokens": 2,
+                "total_tokens": 7,
+                "upstream_request_id": "chatcmpl-fake-1"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "procedure": "status",
+      "input": {
+        "attemptId": "att-golden-1"
+      },
+      "output": {
+        "outcome": "status",
+        "attemptId": "att-golden-1",
+        "state": "terminal",
+        "requestId": "req-att-golden-1",
+        "deploymentId": "deploy/worker-a/local",
+        "terminal": {
+          "outcome": "completed",
+          "completion": "upstream",
+          "finishReason": "stop",
+          "model": "upstream-model",
+          "deployment": "deploy/worker-a/local",
+          "usage": {
+            "source": "observed",
+            "input_tokens": 5,
+            "output_tokens": 2,
+            "total_tokens": 7,
+            "upstream_request_id": "chatcmpl-fake-1"
+          }
+        },
+        "terminalSequence": 4
+      }
+    },
+    {
+      "procedure": "submit",
+      "input": {
+        "version": {
+          "major": 1,
+          "minor": 0
+        },
+        "envelope": {
+          "schemaVersion": 1,
+          "requestId": "req-att-golden-1",
+          "attemptId": "att-golden-1",
+          "deadline": 1792411260000,
+          "tenantId": "tenant-a",
+          "projectId": "tenant-a",
+          "credentialScopeId": "scope-a",
+          "operation": "generate",
+          "ingressProtocol": "openai-chat",
+          "publicModelId": "public/deploy/worker-a/local",
+          "features": {
+            "operation": "generate",
+            "protocol": "openai-chat",
+            "stream": true,
+            "modalities": ["text"],
+            "tools": false,
+            "structuredOutput": false,
+            "session": false,
+            "cancellation": true
+          },
+          "stream": true,
+          "nativeBody": {
+            "model": "public/deploy/worker-a/local",
+            "stream": true,
+            "messages": [
+              {
+                "role": "user",
+                "content": "hi"
+              }
+            ]
+          },
+          "headerFingerprint": {
+            "allowlist": ["content-type"],
+            "fingerprint": "test"
+          },
+          "cachePolicy": {
+            "exact": "default",
+            "semantic": "off"
+          }
+        },
+        "target": {
+          "deploymentId": "deploy/worker-a/local",
+          "expectedDeploymentEpoch": "epoch-1",
+          "catalogGeneration": "gen-890a16f6463457ea",
+          "workerIncarnation": "inc-golden"
+        },
+        "cancelId": "cancel-att-golden-1"
+      },
+      "output": {
+        "outcome": "existing",
+        "status": {
+          "attemptId": "att-golden-1",
+          "state": "terminal",
+          "requestId": "req-att-golden-1",
+          "deploymentId": "deploy/worker-a/local",
+          "terminal": {
+            "outcome": "completed",
+            "completion": "upstream",
+            "finishReason": "stop",
+            "model": "upstream-model",
+            "deployment": "deploy/worker-a/local",
+            "usage": {
+              "source": "observed",
+              "input_tokens": 5,
+              "output_tokens": 2,
+              "total_tokens": 7,
+              "upstream_request_id": "chatcmpl-fake-1"
+            }
+          },
+          "terminalSequence": 4
+        }
+      }
+    },
+    {
+      "procedure": "stream",
+      "input": {
+        "attemptId": "att-golden-1"
+      },
+      "output": [
+        {
+          "frame": "unavailable",
+          "status": {
+            "attemptId": "att-golden-1",
+            "state": "terminal",
+            "requestId": "req-att-golden-1",
+            "deploymentId": "deploy/worker-a/local",
+            "terminal": {
+              "outcome": "completed",
+              "completion": "upstream",
+              "finishReason": "stop",
+              "model": "upstream-model",
+              "deployment": "deploy/worker-a/local",
+              "usage": {
+                "source": "observed",
+                "input_tokens": 5,
+                "output_tokens": 2,
+                "total_tokens": 7,
+                "upstream_request_id": "chatcmpl-fake-1"
+              }
+            },
+            "terminalSequence": 4
+          }
+        }
+      ]
+    },
+    {
+      "procedure": "submit",
+      "input": {
+        "version": {
+          "major": 1,
+          "minor": 0
+        },
+        "envelope": {
+          "schemaVersion": 1,
+          "requestId": "req-att-golden-cli",
+          "attemptId": "att-golden-cli",
+          "deadline": 1792411260000,
+          "tenantId": "tenant-a",
+          "projectId": "tenant-a",
+          "credentialScopeId": "scope-a",
+          "operation": "generate",
+          "ingressProtocol": "openai-chat",
+          "publicModelId": "public/deploy/worker-a/local",
+          "features": {
+            "operation": "generate",
+            "protocol": "openai-chat",
+            "stream": true,
+            "modalities": ["text"],
+            "tools": false,
+            "structuredOutput": false,
+            "session": false,
+            "cancellation": true
+          },
+          "stream": true,
+          "nativeBody": {
+            "model": "public/deploy/worker-a/local",
+            "stream": true,
+            "messages": [
+              {
+                "role": "user",
+                "content": "hi"
+              }
+            ]
+          },
+          "headerFingerprint": {
+            "allowlist": ["content-type"],
+            "fingerprint": "test"
+          },
+          "cachePolicy": {
+            "exact": "default",
+            "semantic": "off"
+          }
+        },
+        "target": {
+          "deploymentId": "deploy/worker-a/cli",
+          "expectedDeploymentEpoch": "epoch-1",
+          "catalogGeneration": "gen-890a16f6463457ea",
+          "workerIncarnation": "inc-golden"
+        },
+        "cancelId": "cancel-att-golden-cli"
+      },
+      "output": {
+        "outcome": "rejected",
+        "rejection": {
+          "code": "target-unavailable",
+          "message": "no executable cli backend for 'deploy/worker-a/cli'"
+        }
+      }
+    },
+    {
+      "procedure": "cancel",
+      "input": {
+        "attemptId": "att-golden-none"
+      },
+      "output": {
+        "outcome": "unknown"
+      }
+    }
+  ]
+}

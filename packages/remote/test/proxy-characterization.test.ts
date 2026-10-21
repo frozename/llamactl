@@ -286,7 +286,7 @@ describe("POST /v1/chat/completions via/rag JSON path (P0.1)", () => {
   // /v1/chat/completions, falls through to node1's local openaiProxy,
   // and the workload routed there (wl-via-node → the loopback "cloud")
   // answers 200.
-  test.failing("via targeting an agent node reaches the agent's own /v1 surface", async () => {
+  test("via targeting an agent node reaches the agent's own /v1 surface", async () => {
     const runtimeRoot = process.env["LOCAL_AI_RUNTIME_DIR"];
     const cloudPort = cloud?.port;
     if (runtimeRoot === undefined || cloudPort === undefined)

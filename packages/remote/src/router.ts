@@ -70,6 +70,7 @@ import * as benchScheduleMod from "./bench/schedule.js";
 import * as benchScheduleLoopMod from "./bench/scheduleLoop.js";
 import { type CallerSubscriptionHandlers, subscribeViaCaller } from "./client/caller-subscribe.js";
 import { buildPinnedLinks } from "./client/links.js";
+import { inferenceRpcRouter } from "./inference/procedures.js";
 import * as infraInstallMod from "./infra/install.js";
 import * as infraLayoutMod from "./infra/layout.js";
 import * as infraServicesMod from "./infra/services.js";
@@ -4149,6 +4150,9 @@ export const router = t.router({
     });
     return { hits };
   }),
+
+  // P4.1 worker RPC (InferenceRpcV1); handlers live in inference/procedures.ts.
+  inferenceRpc: inferenceRpcRouter,
 });
 
 export type AppRouter = typeof router;
