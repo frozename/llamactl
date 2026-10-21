@@ -1,6 +1,8 @@
 import { isProcessAlive, psColumn, type SignalIdentity, verifyPidFile } from "../pidIdentity.js";
 
 const POLL_MS = 100;
+// A SIGKILLed process can take seconds to release model memory and its port, and must be reaped before kill(pid, 0) fails.
+const KILL_WAIT_MS = 5_000;
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -69,6 +71,11 @@ export async function gracefulShutdown(
     process.kill(target, "SIGKILL");
   } catch {
     // Best-effort cleanup; failures are not actionable here.
+  }
+
+  const killDeadline = Date.now() + KILL_WAIT_MS;
+  while (Date.now() < killDeadline && isProcessAlive(pid)) {
+    await sleep(POLL_MS);
   }
 }
 
