@@ -107,6 +107,9 @@ export interface TunnelClient {
   waitUntilReady(timeoutMs?: number): Promise<void>;
   isReady(): boolean;
   state(): TunnelState;
+  /** Resolves once no request awaits its `res` and no subscription its
+   *  stream-done, or once the socket that would carry them is gone. */
+  whenIdle(): Promise<void>;
 }
 
 const ACK_TIMEOUT_DEFAULT = 5000;
@@ -155,6 +158,14 @@ interface TunnelClientContext {
    *  fires through the normal router-bridge handler so the server
    *  side of the tunnel gets its terminal stream-done frame. */
   activeSubscriptions: Map<string, { cancel: () => void }>;
+  /**
+   * Each request until its `res` is sent, and each subscription until
+   * its stream-done is sent. A cancelled subscription stays here after
+   * it leaves activeSubscriptions: central waits for the stream-done
+   * that acknowledges the cancel.
+   */
+  inFlight: Set<object>;
+  idleWaiters: (() => void)[];
 }
 
 function setState(ctx: TunnelClientContext, next: TunnelState): void {
@@ -167,6 +178,16 @@ function setState(ctx: TunnelClientContext, next: TunnelState): void {
       w.resolve();
     }
   }
+}
+
+function notifyIdle(ctx: TunnelClientContext): void {
+  if (ctx.inFlight.size > 0) return;
+  for (const resolve of ctx.idleWaiters.splice(0)) resolve();
+}
+
+function settleInFlight(ctx: TunnelClientContext, token: object): void {
+  ctx.inFlight.delete(token);
+  notifyIdle(ctx);
 }
 
 function detachSocket(ws: ClientWebSocket): void {
@@ -224,6 +245,9 @@ function cleanupSocket(ctx: TunnelClientContext): void {
     }
   }
   ctx.activeSubscriptions.clear();
+  // Their frames can no longer reach central, which fails them itself.
+  ctx.inFlight.clear();
+  notifyIdle(ctx);
 }
 
 function computeBackoff(ctx: TunnelClientContext): number {
@@ -342,6 +366,8 @@ function doHandleSubscription(ctx: TunnelClientContext, req: TunnelReq): void {
     }
     return;
   }
+  const token = {};
+  ctx.inFlight.add(token);
   const handle = sub.subscribe({
     onEvent: (data) => {
       try {
@@ -374,6 +400,7 @@ function doHandleSubscription(ctx: TunnelClientContext, req: TunnelReq): void {
       } catch {
         /* ignore */
       }
+      settleInFlight(ctx, token);
     },
     onComplete: () => {
       ctx.activeSubscriptions.delete(req.id);
@@ -388,6 +415,7 @@ function doHandleSubscription(ctx: TunnelClientContext, req: TunnelReq): void {
       } catch {
         /* ignore */
       }
+      settleInFlight(ctx, token);
     },
   });
   ctx.activeSubscriptions.set(req.id, handle);
@@ -418,12 +446,15 @@ function handleReqMessage(ctx: TunnelClientContext, msg: TunnelReq): void {
     doHandleSubscription(ctx, msg);
     return;
   }
+  const token = {};
+  ctx.inFlight.add(token);
   void doHandleRequest(ctx, msg).then((res) => {
     try {
       ctx.ws?.send(encodeTunnelMessage(res));
     } catch {
       /* ignore */
     }
+    settleInFlight(ctx, token);
   });
 }
 
@@ -632,6 +663,13 @@ async function waitUntilTunnelReady(ctx: TunnelClientContext, timeoutMs = 10000)
   });
 }
 
+function whenTunnelIdle(ctx: TunnelClientContext): Promise<void> {
+  if (ctx.inFlight.size === 0) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    ctx.idleWaiters.push(resolve);
+  });
+}
+
 export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
   const WebSocketCtor =
     opts.WebSocketCtor ?? (globalThis as { WebSocket?: ClientWebSocketConstructor }).WebSocket;
@@ -660,6 +698,8 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
     readyWaiters: [],
     firstAttemptResolver: null,
     activeSubscriptions: new Map(),
+    inFlight: new Set(),
+    idleWaiters: [],
   };
 
   return {
@@ -671,5 +711,6 @@ export function createTunnelClient(opts: TunnelClientOptions): TunnelClient {
     waitUntilReady: (timeoutMs) => waitUntilTunnelReady(ctx, timeoutMs),
     isReady: () => ctx.state === "ready",
     state: () => ctx.state,
+    whenIdle: () => whenTunnelIdle(ctx),
   };
 }

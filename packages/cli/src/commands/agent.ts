@@ -743,8 +743,9 @@ async function runServe(args: string[]): Promise<number> {
     process.once("SIGINT", handle);
     process.once("SIGTERM", handle);
   });
-  // running.stop() tears down the tunnel client (when present)
-  // before the HTTP server stops — see startAgentServer's stop().
+  // running.stop() keeps the tunnel client (when present) up while the
+  // HTTP server stops gracefully, and stops it before the forced stop —
+  // see startAgentServer's stop().
   await running.stop();
   return 0;
 }

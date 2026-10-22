@@ -13,6 +13,7 @@ import {
   DEFAULT_SHARED_MAX_ACTIVE_PER_OWNER,
   type InferenceRpcContext,
   publishWorkerRpcHost,
+  type WorkerRpcHostOptions,
 } from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
 import { type AgentRouterContext, router as appRouter } from "../router.js";
@@ -176,6 +177,8 @@ export interface StartAgentOptions {
     workerId: string;
     settings: () => AgentWorkerRpc | undefined;
     drainTimeoutMs?: number;
+    /** Stands in for the engines, so a test can hold a backend's unwind after a cancel. */
+    backends?: WorkerRpcHostOptions["backends"];
   };
 }
 
@@ -836,7 +839,7 @@ interface WorkerRpcServing {
 // cancels what outlives the drain instead of being killed mid-stream.
 const DEFAULT_DRAIN_TIMEOUT_MS = 15_000;
 /** How long streams get to deliver their terminal, after a cancel and again on the wire. */
-const TERMINAL_FLUSH_MS = 1_000;
+export const TERMINAL_FLUSH_MS = 1_000;
 
 function within(ms: number, work: Promise<void>): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -881,6 +884,7 @@ function maybePublishWorkerRpc(opts: StartAgentOptions): WorkerRpcServing | null
   const spoken = inferenceRpc.inferenceRpcVersionsSpokenAt(inferenceRpc.INFERENCE_RPC_VERSION);
   const host = createWorkerRpcHost({
     workerId: config.workerId,
+    ...(config.backends !== undefined ? { backends: config.backends } : {}),
     versions: () =>
       (config.settings()?.versions ?? []).filter((v) =>
         spoken.some((s) => inferenceRpc.compareInferenceRpcVersions(s, v) === 0),
@@ -1013,23 +1017,42 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       process.off("unhandledRejection", onUnhandledRejection);
       stopSearchIngest();
       stopPeerSnapshotPoller?.();
-      // Best-effort — never let a tunnel-client teardown error
-      // prevent the HTTP server from also stopping.
-      if (tunnelClient) {
-        try {
-          tunnelClient.stop();
-        } catch {
-          /* ignore */
+      try {
+        // A drained or cancelled worker-RPC stream has handed its terminal
+        // to its response; let in-flight responses finish before closing.
+        // Tunneled calls never pass through the HTTP server, so the tunnel
+        // stays up until it is idle too, in the same window. The host stays
+        // published until then, so a status or cancel still in flight, over
+        // either transport, is answered by the attempts it names.
+        if (workerRpc !== null) {
+          await within(
+            TERMINAL_FLUSH_MS,
+            Promise.all([server.stop(), tunnelClient?.whenIdle()]).then(() => undefined),
+          );
+        }
+      } finally {
+        // Best-effort — never let a tunnel-client teardown error
+        // prevent the HTTP server from also stopping.
+        if (tunnelClient) {
+          try {
+            tunnelClient.stop();
+          } catch {
+            /* ignore */
+          }
+        }
+        void server.stop(true);
+        workerRpc?.unpublish();
+        // Last, and bounded: bonjour's stop has no timeout, and a hung one
+        // must not keep the tunnel serving or hold stop() open. That keeps
+        // stop() within the drain timeout plus three flush windows (the
+        // drain's, the shared one above and this one), or two without mDNS.
+        if (mdns) {
+          await within(
+            TERMINAL_FLUSH_MS,
+            mdns.stop().catch(() => undefined),
+          );
         }
       }
-      if (mdns) await mdns.stop().catch(() => undefined);
-      // A drained or cancelled worker-RPC stream has handed its terminal
-      // to its response; let in-flight responses finish before closing.
-      // The host stays published until then, so a status or cancel still
-      // in flight is answered by the attempts it names.
-      if (workerRpc !== null) await within(TERMINAL_FLUSH_MS, server.stop());
-      void server.stop(true);
-      workerRpc?.unpublish();
     },
     ...(tunnelServer ? { tunnelServer } : {}),
     ...(tunnelClient ? { tunnelClient } : {}),
