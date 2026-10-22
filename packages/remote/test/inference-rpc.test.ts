@@ -1669,6 +1669,62 @@ describe("per-owner active-attempt share (#191)", () => {
     expect(submitAs(worker, a, fenced, "att-done-2")).toBe("accepted");
     expect(engine.requests).toHaveLength(1);
   });
+
+  test("an attempt stopped at its deadline gives its slot back", async () => {
+    engine.setScript({ holdAfter: 1 });
+    const worker = useHost({ maxActiveAttemptsPerOwner: 1 });
+    const a = claims();
+    const client = createEmbeddedInferenceRpcClient(a);
+    const fenced = await target(client);
+    const aborted = engine.nextAbort();
+    const soon = envelope("att-dl-0", {}, Date.now() + 300);
+    expect(rejectionCode(await submit(client, "att-dl-0", { envelope: soon }))).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-dl-1")).toBe(SHARE_REFUSAL);
+    const frames = await collect(client.stream({ attemptId: "att-dl-0" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "failed",
+      error: { code: "timeout" },
+    });
+    await aborted;
+    expect(submitAs(worker, a, fenced, "att-dl-2")).toBe("accepted");
+  });
+
+  test("a consumer that disconnects mid-stream gives its slot back", async () => {
+    engine.setScript({ holdAfter: 1 });
+    const worker = useHost({ maxActiveAttemptsPerOwner: 1 });
+    const a = claims();
+    const client = createEmbeddedInferenceRpcClient(a);
+    const fenced = await target(client);
+    expect(submitAs(worker, a, fenced, "att-gone-0")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-gone-1")).toBe(SHARE_REFUSAL);
+    const aborted = engine.nextAbort();
+    for await (const frame of client.stream({ attemptId: "att-gone-0" })) {
+      if (frame.frame === "event" && frame.event.type === "content") break;
+    }
+    await aborted;
+    expect(await client.status({ attemptId: "att-gone-0" })).toMatchObject({
+      state: "terminal",
+      terminal: { outcome: "cancelled", started: true },
+    });
+    expect(submitAs(worker, a, fenced, "att-gone-2")).toBe("accepted");
+  });
+
+  test("closing the host gives every owner's slots back", async () => {
+    const worker = useHost({ maxActiveAttemptsPerOwner: 1 });
+    const a = claims();
+    const client = createEmbeddedInferenceRpcClient(a);
+    const fenced = await target(client);
+    expect(submitAs(worker, a, fenced, "att-close-0")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-close-1")).toBe(SHARE_REFUSAL);
+    worker.close();
+    expect(await client.status({ attemptId: "att-close-0" })).toMatchObject({
+      state: "terminal",
+      terminal: { outcome: "cancelled", started: false },
+    });
+    expect(submitAs(worker, a, fenced, "att-close-2")).toBe("accepted");
+    expect(engine.requests).toHaveLength(0);
+  });
 });
 
 describe("cancellation in process (X4)", () => {

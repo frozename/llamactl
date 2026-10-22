@@ -852,12 +852,18 @@ function within(ms: number, work: Promise<void>): Promise<boolean> {
 
 /**
  * Each owner's share of the active attempts when agent.yaml sets none.
- * Undefined, the host's whole cap: with one owner bound there is nobody
- * to keep slots for. Two bindings of one owner, as in a rotation, are
- * still one owner.
+ * Undefined, the host's whole cap: with one owner bound to submit there
+ * is nobody to keep slots for. Two bindings of one owner, as in a
+ * rotation, are still one owner. A binding that cannot submit, such as a
+ * status or catalog monitor, never holds a slot, so counting it would
+ * only cut the submitters' share.
  */
 function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): number | undefined {
-  const owners = new Set(bindings.map((b) => JSON.stringify([b.serviceId, b.credentialScopeId])));
+  const owners = new Set(
+    bindings
+      .filter((b) => b.operations.includes("submit"))
+      .map((b) => JSON.stringify([b.serviceId, b.credentialScopeId])),
+  );
   return owners.size > 1 ? DEFAULT_SHARED_MAX_ACTIVE_PER_OWNER : undefined;
 }
 

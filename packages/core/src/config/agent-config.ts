@@ -56,9 +56,9 @@ export const AgentWorkerRpcSchema = z.object({
   /**
    * Unsettled attempts one owner, a (serviceId, credentialScopeId), may
    * hold. Unset, the share depends on how many distinct owners the
-   * bindings name (serve.ts). An invalid value is dropped alone rather
-   * than failing the block, which would drop every credential binding
-   * with it and strand the attempts they already hold.
+   * bindings that may submit name (serve.ts). An invalid value is
+   * dropped alone rather than failing the block, which would drop every
+   * credential binding with it and strand the attempts they already hold.
    */
   maxActiveAttemptsPerOwner: z.number().int().positive().optional().catch(undefined),
 });
@@ -277,14 +277,6 @@ export function workerRpcSettingsReader(
       warnIgnored(path, "workerRpc", firstIssue(parsed.error));
       return undefined;
     }
-    if (
-      parsed.data.maxActiveAttemptsPerOwner === undefined &&
-      setsKey(config.workerRpc, "maxActiveAttemptsPerOwner")
-    ) {
-      process.stderr.write(
-        `[agent] ${path}: ignoring workerRpc.maxActiveAttemptsPerOwner (not a positive integer); the default share applies\n`,
-      );
-    }
     if (parsed.data.serviceCredentials.some((b) => b.tokenHash === config.tokenHash)) {
       warnIgnored(path, "workerRpc", "a service credential reuses the operator bearer's hash");
       return undefined;
@@ -294,6 +286,15 @@ export function workerRpcSettingsReader(
     if (parsed.data.serviceCredentials.some((b) => relayHashes.includes(b.tokenHash))) {
       warnIgnored(path, "workerRpc", "a service credential is also a relay-only credential");
       return undefined;
+    }
+    // Last, so a block ignored whole is not first told its default share applies.
+    if (
+      parsed.data.maxActiveAttemptsPerOwner === undefined &&
+      setsKey(config.workerRpc, "maxActiveAttemptsPerOwner")
+    ) {
+      process.stderr.write(
+        `[agent] ${path}: ignoring workerRpc.maxActiveAttemptsPerOwner (not a positive integer); the default share applies\n`,
+      );
     }
     return parsed.data;
   });

@@ -2,7 +2,7 @@
  * #191 through `agent serve`'s wiring: agent.yaml's `workerRpc` block, read
  * as `agent serve` reads it, sets each owner's share of the worker's 64
  * active attempts, with a default that depends on how many distinct owners
- * the block binds.
+ * the block binds to submit.
  */
 import { inferenceContracts, inferenceRpc } from "@llamactl/core";
 import * as agentConfigMod from "@llamactl/core/config/agent-config";
@@ -228,6 +228,30 @@ describe("agent.yaml's workerRpc.maxActiveAttemptsPerOwner through agent serve (
     expect(submitAs(a, fenced)).toBe(SHARE_REFUSAL);
   });
 
+  test("unset, a binding that cannot submit is not an owner, so a lone submitter keeps the whole cap", () => {
+    const a = owner("svc-a");
+    const monitor: Claims = { ...owner("svc-monitor"), operations: ["catalog", "status"] };
+    writeWorkerRpc({ serviceCredentials: bound(a, monitor) });
+    serve();
+    const fenced = fencedTarget(a);
+    expect(submitMany(a, fenced, 64)).toEqual(accepted(64));
+    expect(submitAs(a, fenced)).toBe(SHARE_REFUSAL);
+  });
+
+  test("unset, the default follows the live bindings: a second owner bound while the agent runs cuts the first to 48, and unbinding it restores the whole cap", () => {
+    const a = owner("svc-a");
+    const onlyA = bound(a);
+    writeWorkerRpc({ serviceCredentials: onlyA });
+    serve();
+    const fenced = fencedTarget(a);
+    expect(submitMany(a, fenced, 48)).toEqual(accepted(48));
+    writeWorkerRpc({ serviceCredentials: [...onlyA, ...bound(owner("svc-b"))] });
+    expect(submitAs(a, fenced)).toBe(SHARE_REFUSAL);
+    writeWorkerRpc({ serviceCredentials: onlyA });
+    expect(submitMany(a, fenced, 16)).toEqual(accepted(16));
+    expect(submitAs(a, fenced)).toBe(SHARE_REFUSAL);
+  });
+
   test("a set share wins over the default and applies to the next submit without a restart", () => {
     const a = owner("svc-a");
     writeWorkerRpc({ serviceCredentials: bound(a), maxActiveAttemptsPerOwner: 2 });
@@ -271,5 +295,21 @@ describe("agent.yaml's workerRpc.maxActiveAttemptsPerOwner through agent serve (
     const fenced = fencedTarget(a);
     expect(submitMany(a, fenced, 48)).toEqual(accepted(48));
     expect(submitAs(a, fenced)).toBe(SHARE_REFUSAL);
+  });
+
+  test("a block ignored whole warns only that it is ignored, not that its default share applies", () => {
+    const operatorHash = agentConfigMod.loadAgentConfig(configPath).tokenHash;
+    writeWorkerRpc({
+      serviceCredentials: [{ ...owner("svc-a"), tokenHash: operatorHash }],
+      maxActiveAttemptsPerOwner: 0,
+    });
+    const { result, stderr } = withStderr(() =>
+      agentConfigMod.workerRpcSettingsReader(configPath)(),
+    );
+    expect(result).toBeUndefined();
+    expect(stderr).toContain(
+      "ignoring the workerRpc block (a service credential reuses the operator bearer's hash)",
+    );
+    expect(stderr).not.toContain("maxActiveAttemptsPerOwner");
   });
 });

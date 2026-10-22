@@ -639,9 +639,12 @@ behind `LLAMACTL_UNIFIED_PROXY=1`.
   `credentialScopeId` pair across the bindings, may hold only its share
   of them; a submit past it is refused `overloaded`, which a gateway
   answers with HTTP 429. Unset, the share is the whole cap while the
-  bindings name one owner, and 48 once they name two or more, so no one
-  owner can take every slot. Two bindings of one owner, as during a
-  rotation, are still one owner. The gateway's in-process owner on its
+  bindings that may submit name one owner, and 48 once they name two or
+  more, so no one owner can take every slot; it follows the bindings as
+  they change, without a restart. Two bindings of one owner, as during a
+  rotation, are still one owner, and a binding whose `operations` omit
+  `submit`, such as a status or catalog monitor, is not counted, since it
+  never holds a slot. The gateway's in-process owner on its
   own node (`embedded:<nodeId>`) is held to the share but not counted,
   since no binding names it. Set `workerRpc.maxActiveAttemptsPerOwner`
   to override the default for every owner; it is read on every submit,
