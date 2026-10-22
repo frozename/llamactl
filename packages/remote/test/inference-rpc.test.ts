@@ -4387,4 +4387,52 @@ describe("a cancelId shared by tenant bindings of one owner (#186)", () => {
     expect(__workerRpcCancelIdIndexSizeForTests(worker)).toBe(0);
     expect(worker.cancel(a, { cancelId: "c" })).toEqual({ outcome: "unknown" });
   });
+
+  test("a binding presenting both tenants indexes each attempt under its envelope's tenant", async () => {
+    const start = Date.now();
+    const clock = { wall: start, mono: 0 };
+    const worker = useHost({ now: () => clock.wall, monotonicNow: () => clock.mono });
+    const a = claims({ tenants: [T1] });
+    const b = claims({ tenants: [T2] });
+    const both = claims({ tenants: [T1, T2] });
+    const fenced = await target(createEmbeddedInferenceRpcClient(both));
+    // One attempt per presented tenant, so no fixed pick among the binding's
+    // tenants indexes both where a single-tenant binding and the sweep look.
+    for (const [attemptId, tenantId] of [
+      ["att-both-t2", T2],
+      ["att-both-t1", T1],
+    ] as const) {
+      expect(
+        submitWith(worker, both, fenced, {
+          attemptId,
+          tenantId,
+          cancelId: "c",
+          deadline: clock.wall + 60_000,
+        }),
+      ).toBe("accepted");
+    }
+    expect(worker.cancel(b, { cancelId: "c" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-both-t2",
+    });
+    expect(worker.cancel(a, { cancelId: "c" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-both-t1",
+    });
+    expect(__workerRpcCancelIdIndexSizeForTests(worker)).toBe(2);
+    clock.wall = start + RETENTION_MS;
+    clock.mono = RETENTION_MS;
+    // Only a submit sweeps, and one the worker refuses leaves no record of its own.
+    const refused = worker.submit(both, {
+      version: { major: 9, minor: 0 },
+      envelope: envelope("att-sweep", { tenantId: T1 }, clock.wall + 60_000),
+      target: fenced,
+      cancelId: "c-sweep",
+    });
+    expect(refused.outcome).toBe("rejected");
+    for (const attemptId of ["att-both-t2", "att-both-t1"]) {
+      expect(worker.status(both, { attemptId })).toMatchObject({ state: "unknown" });
+    }
+    expect(__workerRpcCancelIdIndexSizeForTests(worker)).toBe(0);
+  });
 });
