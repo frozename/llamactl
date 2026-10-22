@@ -655,14 +655,26 @@ behind `LLAMACTL_UNIFIED_PROXY=1`.
   secrets. If one hash is both a `workerRpc` service credential and a
   `workerRpcRelay` token hash, both blocks are ignored with a warning:
   the node advertises nothing and accepts no relay-only credential.
-- The caller's kubeconfig `workerRpc` block is validated with the rest
-  of the kubeconfig: a missing or empty `serviceCredentialRef`, or an
-  empty `relayCredentialRef`, fails kubeconfig loading, and with it every
-  llamactl command and the gateway's peer routes, until it is fixed.
-  Unknown keys are dropped without a warning: a misspelled
-  `relayCredentialRef` loads cleanly and every tunneled owner then fails
-  closed at runtime, and a misspelled `workerRpc` block name keeps the
-  existing path.
+- The caller's kubeconfig `workerRpc` block is opaque to kubeconfig
+  loading, so a malformed block never stops a llamactl command or
+  another owner's routes, and re-saves keep it as written. Each
+  worker-RPC attempt validates its owner's block: a missing or empty
+  `serviceCredentialRef`, an empty `relayCredentialRef`, a block that is
+  not a mapping, or an unknown key such as a misspelled
+  `relayCredentialsRef` fails that owner closed with
+  `target-unavailable`, and the `[worker-rpc]` stderr line names the
+  owner and the offending key. A misspelled block name such as
+  `workerRPC` is still dropped without a warning, and the node keeps the
+  existing path. Because unknown keys fail closed, a key added to this
+  block in a later release makes an older build refuse that owner after
+  a rollback: remove the key before rolling back. A build from before
+  this per-owner validation checks the block at load instead: it drops
+  unknown keys without a warning, and its re-saves erase them from disk,
+  while a block that is null, not a mapping, or has a missing or empty
+  `serviceCredentialRef` or an empty `relayCredentialRef` fails all
+  kubeconfig loading there, and with it every llamactl command and the
+  gateway's peer routes. Before rolling back to such a build, fix or
+  remove every block this build refuses.
 
 ## Testing
 
