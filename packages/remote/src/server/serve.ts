@@ -115,7 +115,7 @@ export interface StartAgentOptions {
     /**
      * Central's relay-only credentials (P4.1), agent.yaml's
      * `workerRpcRelay` block, read on every relay request. Each admits
-     * only relaying `inferenceRpc.*` calls to nodes; the operator bearer
+     * only relaying the worker-RPC procedures to nodes; the operator bearer
      * keeps relaying everything, as before.
      */
     workerRpcRelay?: () => AgentWorkerRpcRelay | undefined;
@@ -165,7 +165,7 @@ export interface StartAgentOptions {
    * Serve the InferenceRpcV1 worker (P4.1). `workerId` is the node's
    * kubeconfig name, which the worker's deployment ids embed.
    * `settings` (agent.yaml's `workerRpc` block) is read on every RPC
-   * call: a service credential is accepted, on `inferenceRpc.*` only,
+   * call: a service credential is accepted, on the worker-RPC procedures only,
    * when it matches a binding, and the versions it lists that this build
    * speaks are advertised. Absent or listing no version, the RPC is not
    * advertised, as before. `stop()` drains active attempts for up to
@@ -608,7 +608,7 @@ function createAgentFetchHandler(args: {
       return new Response("not found", { status: 404 });
     }
     // A worker-RPC service credential stands in for the operator bearer
-    // on inferenceRpc.* alone, and carries its verified claims; the
+    // on the worker-RPC procedures alone, and carries its verified claims; the
     // operator bearer keeps its scope and carries none.
     const claims =
       workerRpc !== null && inferenceRpcOnly(url.pathname, endpoint)

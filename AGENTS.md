@@ -549,7 +549,7 @@ agent bearer:
   agent. The CLI uses this for relay POSTs.
 - **Worker-RPC service tokens** (P4.1) — a caller's worker-RPC service
   credential never crosses the tunnel, since any node holding the
-  tunnel bearer can claim a node name. Each relayed `inferenceRpc.*`
+  tunnel bearer can claim a node name. Each relayed worker-RPC
   call carries a single-use token instead: an HMAC keyed by a per-worker
   key derived from the credential and the target's tunnel node name,
   bound to that node name, the call and its input, the relay hop's
@@ -559,8 +559,9 @@ agent bearer:
   refuses replays. Direct dials present the credential itself, over
   pinned TLS, checked against `tokenHash`.
 - The **relay-only credential** (P4.1) — central's `agent.yaml` lists
-  its SHA-256 under `workerRpcRelay.tokenHashes`. It relays the
-  `inferenceRpc.*` procedures to nodes and nothing else: any other
+  its SHA-256 under `workerRpcRelay.tokenHashes`. It relays the six
+  worker-RPC procedures (`inferenceRpc.negotiate`, `catalog`, `submit`,
+  `stream`, `status` and `cancel`) to nodes and nothing else: any other
   relay method gets 403, every other route 401. A caller presents it
   for the relay hop through its kubeconfig node's
   `workerRpc.relayCredentialRef` (`env:`/`keychain:`/`file:`), which a

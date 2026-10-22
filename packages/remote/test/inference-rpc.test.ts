@@ -2296,7 +2296,7 @@ interface Transports {
   centralCertificate: string;
   centralFingerprint: string;
   centralToken: string;
-  /** Central's relay-only credential: it relays inferenceRpc.* and nothing else. */
+  /** Central's relay-only credential: it relays the worker-RPC procedures and nothing else. */
   relayCredential: string;
   /** Every /tunnel-relay path central has been asked for, in order. */
   relayRequests: string[];
@@ -3879,14 +3879,14 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
 
   /**
    * X5 — central's relay-only credential. It admits relaying the
-   * `inferenceRpc.*` procedures to nodes and nothing else: no other relay
+   * worker-RPC procedures to nodes and nothing else: no other relay
    * method, no other route, however the URL is spelled. Callers present it
    * for the relay hop through their kubeconfig node's reference, and fail
    * closed without one rather than present the operator bearer, which
    * central still accepts for any relay.
    */
   describe("the relay-only credential on central (X5)", () => {
-    test("a kubeconfig reference to it carries inferenceRpc.* end to end", async () => {
+    test("a kubeconfig reference to it carries the worker-RPC procedures end to end", async () => {
       useRemoteHost();
       const serviceFile = join(temp.devStorage, "svc-relay-only.token");
       const relayFile = join(temp.devStorage, "relay-only.token");
@@ -4048,7 +4048,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         const call = (method: string): string =>
           JSON.stringify({ method, type: "query", input: { versions: [V1_0] } });
 
-        // The one thing it is for, to a node: an inferenceRpc.* procedure.
+        // The one thing it is for, to a node: a worker-RPC procedure.
         expect(
           (await raw("POST", "/tunnel-relay/spy-node", relay, call("inferenceRpc.negotiate")))
             .status,

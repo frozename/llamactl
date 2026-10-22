@@ -1441,7 +1441,7 @@ describe("I2/I6: a malformed worker-RPC block never stops the agent", () => {
  * --tunnel-central` reads it.
  */
 describe("the relay-only credential in central's agent.yaml", () => {
-  test("agent serve --tunnel-central relays inferenceRpc.* for it, and nothing else", async () => {
+  test("agent serve --tunnel-central relays only the worker-RPC procedures for it", async () => {
     const files = await initAgent("relay-central");
     const relay = auth.generateToken();
     const tunnelBearer = auth.generateToken();
