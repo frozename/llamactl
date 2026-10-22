@@ -356,7 +356,7 @@ test("listWorkloadRoutes lists nothing for a name that is not a workload directo
     writeRunWorkload(join(t.runtimeDir, "workloads"), 4008, "org/stray.gguf");
     const listed = listLocalRoutes(t.resolved, recordingIdentity([]));
     expect(listed.map((r) => r.workload)).toEqual(["a"]);
-    for (const name of ["", ".", "..", "a/.", "missing", "file", "link"]) {
+    for (const name of ["", ".", "..", "a/.", "a\0", "missing", "file", "link"]) {
       expect(listWorkloadRoutes(t.resolved, name, recordingIdentity([]))).toEqual([]);
     }
   } finally {

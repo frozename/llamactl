@@ -345,6 +345,8 @@ export function listWorkloadRoutes(
 ): LocalRoute[] {
   const root = workloadRuntimeRoot(resolved);
   if (name === "" || name === "." || name === ".." || basename(name) !== name) return [];
+  // lstat throws on a NUL byte rather than reporting no entry.
+  if (name.includes("\0")) return [];
   if (lstatSync(join(root, name), { throwIfNoEntry: false })?.isDirectory() !== true) return [];
   const dr = dirPidRecords(root, name, resolved);
   return routesForDir(dr, verifyPidFiles(recordsOf(dr), deps), resolved);

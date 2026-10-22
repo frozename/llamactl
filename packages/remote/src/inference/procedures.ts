@@ -945,7 +945,11 @@ function failureTerminal(
  * the accepted deployment as what ran. Only the accepted deployment's own
  * workload is re-read: its pid is the one a restart changes, and the
  * identity pass over every workload would block the event loop at every
- * stream start.
+ * stream start. Advertisements are admitted against that workload's routes
+ * alone, so for an advertisement-owned deployment the answer can differ
+ * from the full catalog's either way: another workload's alias no longer
+ * rejects an advertisement, which can then shadow a later one. That
+ * matters only once the worker host is given advertisements.
  */
 function movedSinceAcceptance(state: HostState, accepted: Deployment): string | null {
   const workload = routingCatalog.workloadOfDeployment(accepted.deploymentId, state.workerId);

@@ -4255,7 +4255,7 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
   const RUN_PID = 5001;
   const RUN_REL = "org/dial-run.gguf";
   const OTHER_PID = 5101;
-  const NAMES = [RUN, "dial-other", "dial-other-later"];
+  const NAMES = [RUN, "dial-other", "dial-other-later", "dial-other-broken"];
   const verified: number[][] = [];
   const gone = new Set<number>();
   const pidIdentity: NonNullable<WorkerRpcHostOptions["pidIdentity"]> = {
@@ -4273,7 +4273,7 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
   const workloadDir = (name: string): string =>
     join(resolved.LOCAL_AI_RUNTIME_DIR, "workloads", name);
 
-  function writeRun(name: string, pid: number, rel: string): void {
+  function writeRun(name: string, pid: number, rel: string, bindHost = "127.0.0.1"): void {
     const dir = workloadDir(name);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "llama-server.pid"), `${String(pid)}\n`);
@@ -4282,7 +4282,7 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
       JSON.stringify({
         rel,
         extraArgs: [],
-        host: "127.0.0.1",
+        host: bindHost,
         port: new URL(engine.url).port,
         pid,
         startedAt: new Date().toISOString(),
@@ -4370,5 +4370,22 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
       },
     });
     expect(engine.requests).toHaveLength(0);
+  });
+
+  test("a workload the full catalog cannot list does not stop another's stream", async () => {
+    const client = await acceptOnRun("att-dial-unrelated");
+    // The advertisement schema rejects this endpoint, so listing every
+    // workload would now throw: only a re-check of the accepted workload
+    // alone lets its stream start.
+    writeRun("dial-other-broken", 5103, "org/dial-other-broken.gguf", "not a host");
+    const frames = await collect(client.stream({ attemptId: "att-dial-unrelated" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "completed",
+      model: RUN_REL,
+      deployment: RUN_DEPLOYMENT,
+    });
+    expect(verified).toEqual([[RUN_PID]]);
+    expect(engine.requests).toHaveLength(1);
   });
 });
