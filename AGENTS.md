@@ -666,7 +666,14 @@ behind `LLAMACTL_UNIFIED_PROXY=1`.
   `workerRPC` is still dropped without a warning, and the node keeps the
   existing path. Because unknown keys fail closed, a key added to this
   block in a later release makes an older build refuse that owner after
-  a rollback: remove the key before rolling back.
+  a rollback: remove the key before rolling back. A build from before
+  this per-owner validation checks the block at load instead: it drops
+  unknown keys without a warning, and its re-saves erase them from disk,
+  while a block that is null, not a mapping, or has a missing or empty
+  `serviceCredentialRef` or an empty `relayCredentialRef` fails all
+  kubeconfig loading there, and with it every llamactl command and the
+  gateway's peer routes. Before rolling back to such a build, fix or
+  remove every block this build refuses.
 
 ## Testing
 

@@ -1509,8 +1509,10 @@ function unreachableClient(transport: InferenceRpcTransport, message: string): I
 /**
  * The owner's kubeconfig worker-RPC block, validated here because loading
  * keeps it opaque: a malformed block refuses this owner only. A present
- * block that does not validate throws, naming the owner and the first
- * issue, so the caller fails closed instead of reading it as no opt-in.
+ * block that does not validate throws, naming the owner and every issue,
+ * so the caller fails closed instead of reading it as no opt-in. Unknown
+ * keys come first because a misspelled required key is also reported as
+ * missing, and only the unknown key names what the operator typed.
  */
 function kubeconfigWorkerRpc(owner: string): NodeWorkerRpc | undefined {
   let block: unknown;
@@ -1525,11 +1527,16 @@ function kubeconfigWorkerRpc(owner: string): NodeWorkerRpc | undefined {
   if (block === undefined) return undefined;
   const parsed = NodeWorkerRpcSchema.safeParse(block);
   if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    const at = issue === undefined || issue.path.length === 0 ? "" : `${issue.path.join(".")}: `;
-    throw new Error(
-      `owner '${owner}' has an invalid workerRpc block: ${at}${issue?.message ?? "invalid"}`,
-    );
+    const { issues } = parsed.error;
+    const detail = [
+      ...issues.filter((issue) => issue.code === "unrecognized_keys"),
+      ...issues.filter((issue) => issue.code !== "unrecognized_keys"),
+    ]
+      .map((issue) =>
+        issue.path.length === 0 ? issue.message : `${issue.path.join(".")}: ${issue.message}`,
+      )
+      .join("; ");
+    throw new Error(`owner '${owner}' has an invalid workerRpc block: ${detail}`);
   }
   return parsed.data;
 }

@@ -4,8 +4,9 @@
  * that does not validate fails that owner closed, over its own transport,
  * with the offending key named in the log; it never reads as "not opted
  * in", which would silently put the owner back on the existing path.
- * Owners without a block keep the existing path even while another
- * node's block is malformed.
+ * Another node's malformed block leaves every other owner as it was: an
+ * owner with a valid block keeps its worker-RPC client, and an owner
+ * without one keeps the existing path.
  */
 import type { PeerNode } from "@llamactl/core/config/peers";
 
@@ -182,11 +183,15 @@ describe("kubeconfig workerRpc block, validated per owner", () => {
     writeKubeconfig({
       "w-typo": { serviceCredentialRef: "env:LLAMACTL_T190_SVC", relayCredentialsRef: "env:R" },
       "w-no-service": { relayCredentialRef: "env:LLAMACTL_T190_RELAY" },
+      "w-empty-service": { serviceCredentialRef: "" },
+      "w-empty-relay": { serviceCredentialRef: "env:LLAMACTL_T190_SVC", relayCredentialRef: "" },
       "w-null": null,
     });
     const cases = [
       { owner: "w-typo", tunnel: true, names: "relayCredentialsRef" },
       { owner: "w-no-service", tunnel: false, names: "serviceCredentialRef" },
+      { owner: "w-empty-service", tunnel: false, names: "serviceCredentialRef" },
+      { owner: "w-empty-relay", tunnel: true, names: "relayCredentialRef" },
       { owner: "w-null", tunnel: false, names: "invalid workerRpc block" },
     ];
     const peers = cases.map((c) => peer(c.owner, c.tunnel));
@@ -204,12 +209,37 @@ describe("kubeconfig workerRpc block, validated per owner", () => {
     }
   });
 
-  test("an owner without a block keeps the existing path while another node's block is malformed", () => {
+  test("a misspelled required key is named before the key it leaves missing", async () => {
+    writeKubeconfig({ "w-svc-typo": { serviceCredentialsRef: "env:LLAMACTL_T190_SVC" } });
+    const fallback: string[] = [];
+    const executor = acquire("w-svc-typo", [peer("w-svc-typo", false)], fallback);
+    expect(executor).not.toBeNull();
+    const { res, logged } = await execute(executor!, "w-svc-typo");
+    expect(res.status).toBe(503);
+    expect(logged).toContain("owner 'w-svc-typo' has an invalid workerRpc block");
+    const misspelled = logged.indexOf("serviceCredentialsRef");
+    expect(misspelled).toBeGreaterThanOrEqual(0);
+    expect(logged.indexOf("serviceCredentialRef")).toBeGreaterThan(misspelled);
+    expect(fallback).toEqual([]);
+  });
+
+  test("another node's malformed block leaves a valid owner its client and a plain owner the existing path", async () => {
+    const credential = join(temp.devStorage, "service-credential");
+    writeFileSync(credential, "t190-service-credential");
     writeKubeconfig({
-      "w-typo": { serviceCredentialRef: "env:LLAMACTL_T190_SVC", relayCredentialsRef: "env:R" },
+      "w-null": null,
+      "w-valid": { serviceCredentialRef: `file:${credential}` },
       "w-plain": undefined,
     });
-    const peers = [peer("w-typo", true), peer("w-plain", false)];
+    const peers = [peer("w-null", false), peer("w-valid", false), peer("w-plain", false)];
     expect(acquire("w-plain", peers, [])).toBeNull();
+    const fallback: string[] = [];
+    const executor = acquire("w-valid", peers, fallback);
+    expect(executor).not.toBeNull();
+    const { res, logged } = await execute(executor!, "w-valid");
+    expect(res.headers.get("x-llamactl-worker-transport")).toBe("direct");
+    expect(logged).not.toContain("workerRpc block");
+    expect(logged).not.toContain("w-null");
+    expect(fallback).toEqual([]);
   });
 });
