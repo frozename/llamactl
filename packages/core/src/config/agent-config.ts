@@ -67,7 +67,7 @@ export type AgentWorkerRpc = z.infer<typeof AgentWorkerRpcSchema>;
 /**
  * Central's relay-only credentials (P4.1 X5), each stored only as the
  * SHA-256 of its token. A relay-only credential admits one thing:
- * relaying an `inferenceRpc.*` call to a tunneled node. It opens no other
+ * relaying a worker-RPC procedure call to a tunneled node. It opens no other
  * route, and the node still verifies the caller's service token. List
  * the new hash beside the old one to rotate, then drop the old one.
  */
