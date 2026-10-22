@@ -4250,6 +4250,147 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
   });
 });
 
+describe("the dial-time re-check reads only the accepted workload (X2)", () => {
+  const RUN = "dial-run";
+  const RUN_DEPLOYMENT = `deploy/${WORKER}/${RUN}`;
+  const RUN_PID = 5001;
+  const RUN_REL = "org/dial-run.gguf";
+  const OTHER_PID = 5101;
+  const NAMES = [RUN, "dial-other", "dial-other-later", "dial-other-broken"];
+  const verified: number[][] = [];
+  const gone = new Set<number>();
+  const pidIdentity: NonNullable<WorkerRpcHostOptions["pidIdentity"]> = {
+    probe: (pid) => {
+      if (gone.has(pid)) {
+        throw Object.assign(new Error(`pid ${String(pid)} is gone`), { code: "ESRCH" });
+      }
+    },
+    processStartMsMany: (pids) => {
+      verified.push([...pids]);
+      return new Map(pids.map((pid) => [pid, 0]));
+    },
+  };
+
+  const workloadDir = (name: string): string =>
+    join(resolved.LOCAL_AI_RUNTIME_DIR, "workloads", name);
+
+  function writeRun(name: string, pid: number, rel: string, bindHost = "127.0.0.1"): void {
+    const dir = workloadDir(name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "llama-server.pid"), `${String(pid)}\n`);
+    writeFileSync(
+      join(dir, "llama-server.state"),
+      JSON.stringify({
+        rel,
+        extraArgs: [],
+        host: bindHost,
+        port: new URL(engine.url).port,
+        pid,
+        startedAt: new Date().toISOString(),
+        tunedProfile: null,
+      }),
+    );
+  }
+
+  /** Accepts `attemptId` on the run workload, then forgets the pids acceptance verified. */
+  async function acceptOnRun(attemptId: string): Promise<InferenceRpcClient> {
+    useHost({ advertisements: () => [], pidIdentity });
+    const client = createEmbeddedInferenceRpcClient(claims({ deployments: [RUN_DEPLOYMENT] }));
+    const asked = envelope(attemptId, {
+      publicModelId: RUN_REL,
+      nativeBody: { model: RUN_REL, stream: true, messages: [{ role: "user", content: "hi" }] },
+    });
+    expect(
+      rejectionCode(
+        await submit(client, attemptId, { deploymentId: RUN_DEPLOYMENT, envelope: asked }),
+      ),
+    ).toBe("accepted");
+    verified.length = 0;
+    return client;
+  }
+
+  beforeEach(() => {
+    writeRun(RUN, RUN_PID, RUN_REL);
+    writeRun("dial-other", OTHER_PID, "org/dial-other.gguf");
+  });
+
+  afterEach(() => {
+    for (const name of NAMES) rmSync(workloadDir(name), { recursive: true, force: true });
+    verified.length = 0;
+    gone.clear();
+  });
+
+  test("the stream verifies the accepted pid alone, at the epoch the catalog listed", async () => {
+    const client = await acceptOnRun("att-dial-one");
+    const listing = await client.catalog();
+    expect(
+      listing.outcome === "catalog"
+        ? listing.deployments.find((d) => d.deploymentId === RUN_DEPLOYMENT)?.deploymentEpoch
+        : listing.outcome,
+    ).toBe(`pid:${String(RUN_PID)}`);
+    // Unrelated workloads change between acceptance and the dial.
+    gone.add(OTHER_PID);
+    writeRun("dial-other-later", 5102, "org/dial-other-later.gguf");
+    verified.length = 0;
+    const frames = await collect(client.stream({ attemptId: "att-dial-one" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "completed",
+      model: RUN_REL,
+      deployment: RUN_DEPLOYMENT,
+    });
+    expect(verified).toEqual([[RUN_PID]]);
+    expect(engine.requests).toHaveLength(1);
+  });
+
+  test("a workload restarted between acceptance and the stream is never dialled", async () => {
+    const client = await acceptOnRun("att-dial-restarted");
+    writeRun(RUN, 5009, RUN_REL);
+    const frames = await collect(client.stream({ attemptId: "att-dial-restarted" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "failed",
+      started: false,
+      error: { code: "target-unavailable", message: "deployment epoch is now 'pid:5009'" },
+    });
+    expect(verified).toEqual([[5009]]);
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("a workload stopped between acceptance and the stream is never dialled", async () => {
+    const client = await acceptOnRun("att-dial-stopped");
+    gone.add(RUN_PID);
+    const frames = await collect(client.stream({ attemptId: "att-dial-stopped" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "failed",
+      started: false,
+      error: {
+        code: "target-unavailable",
+        message: `the worker no longer owns deployment '${RUN_DEPLOYMENT}'`,
+      },
+    });
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("a workload the full catalog cannot list does not stop another's stream", async () => {
+    const client = await acceptOnRun("att-dial-unrelated");
+    // The advertisement schema rejects this endpoint, so listing every
+    // workload would now throw: only a re-check of the accepted workload
+    // alone lets its stream start.
+    writeRun("dial-other-broken", 5103, "org/dial-other-broken.gguf", "not a host");
+    const frames = await collect(client.stream({ attemptId: "att-dial-unrelated" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "completed",
+      model: RUN_REL,
+      deployment: RUN_DEPLOYMENT,
+    });
+    expect(verified).toEqual([[RUN_PID]]);
+    expect(engine.requests).toHaveLength(1);
+  });
+});
+
 describe("a cancelId shared by tenant bindings of one owner (#186)", () => {
   const RETENTION_MS = inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS + 60_000;
   const T1 = "tenant-1";

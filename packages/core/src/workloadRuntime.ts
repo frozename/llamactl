@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import type { EngineName } from "./engines/index.js";
 import type { ResolvedEnv } from "./types.js";
@@ -13,6 +13,7 @@ import {
 } from "./pidIdentity.js";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -283,30 +284,34 @@ interface DirPidRecords {
   run?: PidRecordQuery;
 }
 
-function collectPidRecords(
-  root: string,
+function dirPidRecords(root: string, name: string, resolved: ResolvedEnv): DirPidRecords {
+  const dr: DirPidRecords = { name };
+  const hostPidPath = modelhostPidFile(resolved, { name });
+  const hostPid = readPidFile(hostPidPath);
+  if (hostPid !== null) dr.host = { recordPath: hostPidPath, pid: hostPid };
+  const runPidPath = join(root, name, "llama-server.pid");
+  const runPid = readPidFile(runPidPath);
+  if (runPid !== null) dr.run = { recordPath: runPidPath, pid: runPid };
+  return dr;
+}
+
+function recordsOf(dr: DirPidRecords): PidRecordQuery[] {
+  return [dr.host, dr.run].filter((rec) => rec !== undefined);
+}
+
+function routesForDir(
+  dr: DirPidRecords,
+  verdicts: ReadonlyMap<string, PidVerdict>,
   resolved: ResolvedEnv,
-): { dirs: DirPidRecords[]; records: PidRecordQuery[] } {
-  const dirs: DirPidRecords[] = [];
-  const records: PidRecordQuery[] = [];
-  for (const dirent of readdirSync(root, { withFileTypes: true })) {
-    if (!dirent.isDirectory()) continue;
-    const dr: DirPidRecords = { name: dirent.name };
-    const hostPidPath = modelhostPidFile(resolved, { name: dirent.name });
-    const hostPid = readPidFile(hostPidPath);
-    if (hostPid !== null) {
-      dr.host = { recordPath: hostPidPath, pid: hostPid };
-      records.push(dr.host);
-    }
-    const runPidPath = join(root, dirent.name, "llama-server.pid");
-    const runPid = readPidFile(runPidPath);
-    if (runPid !== null) {
-      dr.run = { recordPath: runPidPath, pid: runPid };
-      records.push(dr.run);
-    }
-    dirs.push(dr);
+): LocalRoute[] {
+  if (dr.host !== undefined) {
+    const hostVerdict = verdicts.get(dr.host.recordPath) ?? "unknown";
+    const hostRoutes = modelHostRoutesForDir(dr.name, resolved, dr.host.pid, hostVerdict);
+    if (hostRoutes !== null) return hostRoutes;
   }
-  return { dirs, records };
+  if (dr.run === undefined) return [];
+  const runVerdict = verdicts.get(dr.run.recordPath) ?? "unknown";
+  return modelRunRoutesForDir(dr.name, dr.run.pid, runVerdict, resolved);
 }
 
 export function listLocalRoutes(
@@ -315,26 +320,36 @@ export function listLocalRoutes(
 ): LocalRoute[] {
   const root = workloadRuntimeRoot(resolved);
   if (!existsSync(root)) return [];
-  const { dirs, records } = collectPidRecords(root, resolved);
+  const dirs = readdirSync(root, { withFileTypes: true })
+    .filter((dirent) => dirent.isDirectory())
+    .map((dirent) => dirPidRecords(root, dirent.name, resolved));
   // One batched identity pass: a single ps call covers every pid file under
   // the runtime dir, so route listing scales with the workload count.
-  const verdicts = verifyPidFiles(records, deps);
-  const out: LocalRoute[] = [];
-  for (const dr of dirs) {
-    if (dr.host !== undefined) {
-      const hostVerdict = verdicts.get(dr.host.recordPath) ?? "unknown";
-      const hostRoutes = modelHostRoutesForDir(dr.name, resolved, dr.host.pid, hostVerdict);
-      if (hostRoutes !== null) {
-        out.push(...hostRoutes);
-        continue;
-      }
-    }
-    if (dr.run !== undefined) {
-      const runVerdict = verdicts.get(dr.run.recordPath) ?? "unknown";
-      out.push(...modelRunRoutesForDir(dr.name, dr.run.pid, runVerdict, resolved));
-    }
-  }
-  return out;
+  const verdicts = verifyPidFiles(
+    dirs.flatMap((dr) => recordsOf(dr)),
+    deps,
+  );
+  return dirs.flatMap((dr) => routesForDir(dr, verdicts, resolved));
+}
+
+/**
+ * listLocalRoutes for one workload: only that workload's pid records are
+ * verified, so re-checking one deployment does not pay an identity pass
+ * over every workload. A name listLocalRoutes would never read, anything
+ * but a directory directly under the runtime root, lists nothing.
+ */
+export function listWorkloadRoutes(
+  resolved: ResolvedEnv,
+  name: string,
+  deps?: PidIdentityDeps,
+): LocalRoute[] {
+  const root = workloadRuntimeRoot(resolved);
+  if (name === "" || name === "." || name === ".." || basename(name) !== name) return [];
+  // lstat throws on a NUL byte rather than reporting no entry.
+  if (name.includes("\0")) return [];
+  if (lstatSync(join(root, name), { throwIfNoEntry: false })?.isDirectory() !== true) return [];
+  const dr = dirPidRecords(root, name, resolved);
+  return routesForDir(dr, verifyPidFiles(recordsOf(dr), deps), resolved);
 }
 
 export function listWorkloadDirs(resolved: ResolvedEnv = resolveEnv()): string[] {
