@@ -10,6 +10,7 @@ import type { ModelRun } from "../workload/schema.js";
 
 import {
   createWorkerRpcHost,
+  DEFAULT_SHARED_MAX_ACTIVE_PER_OWNER,
   type InferenceRpcContext,
   publishWorkerRpcHost,
 } from "../inference/procedures.js";
@@ -850,10 +851,29 @@ function within(ms: number, work: Promise<void>): Promise<boolean> {
 }
 
 /**
+ * Each owner's share of the active attempts when agent.yaml sets none.
+ * Undefined, the host's whole cap: with one owner bound to submit there
+ * is nobody to keep slots for. Two bindings of one owner, as in a
+ * rotation, are still one owner. A binding that cannot submit, such as a
+ * status or catalog monitor, never holds a slot, so counting it would
+ * only cut the submitters' share.
+ */
+function defaultActiveShare(bindings: readonly ServiceCredentialBinding[]): number | undefined {
+  const owners = new Set(
+    bindings
+      .filter((b) => b.operations.includes("submit"))
+      .map((b) => JSON.stringify([b.serviceId, b.credentialScopeId])),
+  );
+  return owners.size > 1 ? DEFAULT_SHARED_MAX_ACTIVE_PER_OWNER : undefined;
+}
+
+/**
  * Publishes this agent's worker-RPC host (P4.1). It advertises the
  * versions agent.yaml lists that this build speaks, read on every call,
  * so emptying the list stops the advertisement for new requests while
- * accepted attempts run on.
+ * accepted attempts run on. Each owner's share of the active attempts is
+ * read on every submit too, so it can be changed without a restart, which
+ * would drain and then cancel every attempt in flight.
  */
 function maybePublishWorkerRpc(opts: StartAgentOptions): WorkerRpcServing | null {
   const config = opts.workerRpc;
@@ -865,6 +885,13 @@ function maybePublishWorkerRpc(opts: StartAgentOptions): WorkerRpcServing | null
       (config.settings()?.versions ?? []).filter((v) =>
         spoken.some((s) => inferenceRpc.compareInferenceRpcVersions(s, v) === 0),
       ),
+    maxActiveAttemptsPerOwner: () => {
+      const settings = config.settings();
+      return (
+        settings?.maxActiveAttemptsPerOwner ??
+        defaultActiveShare(settings?.serviceCredentials ?? [])
+      );
+    },
   });
   const restore = publishWorkerRpcHost(host);
   const bindings = (): readonly ServiceCredentialBinding[] =>

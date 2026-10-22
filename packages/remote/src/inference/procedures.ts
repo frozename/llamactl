@@ -94,6 +94,14 @@ export interface WorkerRpcHostOptions {
   resolveClaims?: (ctx: InferenceRpcContext) => Claims | undefined;
   maxActiveAttempts?: number;
   /**
+   * Unsettled attempts one owner, a (serviceId, credentialScopeId), may
+   * hold, checked before `maxActiveAttempts` so one owner cannot take
+   * every slot from the others. A function is read on every submit, so a
+   * changed share applies to the next one; unset, or a function returning
+   * undefined, the share is the whole of `maxActiveAttempts`.
+   */
+  maxActiveAttemptsPerOwner?: number | (() => number | undefined);
+  /**
    * Attempt records one owner, a (serviceId, credentialScopeId), may hold,
    * unsettled and settled. Every record is kept for the deadline horizon
    * plus a minute after acceptance, so a resubmit within the horizon gets
@@ -151,12 +159,17 @@ export interface WorkerRpcHost {
 
 type StopReason = "cancel" | "deadline" | "disconnect" | "attach-timeout" | "close";
 
-/** An owner, the service and credential scope its records belong to, and how many it holds. */
+/**
+ * An owner, the service and credential scope its records belong to, how
+ * many it holds and how many of those are unsettled. An owner outlives its
+ * unsettled records, since only sweeping a settled one forgets it.
+ */
 interface AttemptOwner {
   key: string;
   serviceId: string;
   credentialScopeId: string;
   held: number;
+  active: number;
 }
 
 /** What an unsettled attempt needs to run and report; dropped when it settles. */
@@ -204,6 +217,7 @@ interface HostState {
   pidIdentity: PidIdentityDeps | undefined;
   backends: ReadonlyMap<WorkerRpcBackendKind, WorkerRpcBackend>;
   maxActive: number;
+  maxActivePerOwner: () => number;
   maxRecords: number;
   maxRecordsPerOwner: number;
   attachTimeoutMs: number;
@@ -241,6 +255,12 @@ interface WorkerCatalog {
 
 const UNKNOWN_USAGE: UsageObservationV1 = Object.freeze({ source: "unknown" });
 const DEFAULT_MAX_ACTIVE = 64;
+/**
+ * The default share once a worker binds two or more owners: 16 below the
+ * cap, so no one owner can take every slot. With one owner there is
+ * nobody to keep slots for, so it keeps the whole cap.
+ */
+export const DEFAULT_SHARED_MAX_ACTIVE_PER_OWNER = DEFAULT_MAX_ACTIVE - 16;
 /**
  * A record is kept 16 min, so an owner's default quota sustains 136
  * attempts a second, twice what 64 concurrent one-second attempts need.
@@ -619,12 +639,20 @@ function cancelKey(owner: string, tenantId: string, cancelId: string): string {
   return JSON.stringify([owner, tenantId, cancelId]);
 }
 
-/** Concurrency first, then the owner's record quota, then the worker-wide backstop. */
+/**
+ * The owner's active share first, so an owner at it is told so even when
+ * the worker is full too; then concurrency, the owner's record quota and
+ * the worker-wide backstop.
+ */
 function fenceCapacity(state: HostState, claims: Claims): Rejection | null {
+  const owner = state.owners.get(ownerKey(claims));
+  if ((owner?.active ?? 0) >= state.maxActivePerOwner()) {
+    return { code: "overloaded", message: "the service is at its active attempt share" };
+  }
   if (state.active >= state.maxActive) {
     return { code: "overloaded", message: "the worker is at its attempt limit" };
   }
-  const held = state.owners.get(ownerKey(claims))?.held ?? 0;
+  const held = owner?.held ?? 0;
   if (held >= state.maxRecordsPerOwner) {
     return { code: "overloaded", message: "the service is at its attempt record quota" };
   }
@@ -687,6 +715,7 @@ function settle(
   for (const timer of record.run?.timers ?? []) clearTimeout(timer);
   record.run = undefined;
   state.active -= 1;
+  record.owner.active -= 1;
   notifyIdle(state);
   return terminal;
 }
@@ -811,6 +840,7 @@ function ownerOf(state: HostState, claims: Claims): AttemptOwner {
       serviceId: claims.serviceId,
       credentialScopeId: claims.credentialScopeId,
       held: 0,
+      active: 0,
     };
     state.owners.set(key, owner);
   }
@@ -852,6 +882,7 @@ function admit(
     run,
   };
   owner.held += 1;
+  owner.active += 1;
   state.records.set(record.attemptId, record);
   state.retained.push(record);
   state.cancelIds.set(cancelKey(owner.key, record.tenantId, record.cancelId), record.attemptId);
@@ -1159,6 +1190,13 @@ function versionsOf(
   return () => fixed;
 }
 
+/** Falls back at call time, so a function that stops returning a share restores the whole cap. */
+function activeShareOf(opts: WorkerRpcHostOptions): () => number {
+  const maxActive = opts.maxActiveAttempts ?? DEFAULT_MAX_ACTIVE;
+  const share = opts.maxActiveAttemptsPerOwner;
+  return () => (typeof share === "function" ? share() : share) ?? maxActive;
+}
+
 const hostStates = new WeakMap<WorkerRpcHost, HostState>();
 
 /** How many cancelIds `host` indexes; undefined for a host createWorkerRpcHost did not make. */
@@ -1181,6 +1219,7 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     pidIdentity: opts.pidIdentity,
     backends: opts.backends ?? DEFAULT_BACKENDS,
     maxActive: opts.maxActiveAttempts ?? DEFAULT_MAX_ACTIVE,
+    maxActivePerOwner: activeShareOf(opts),
     maxRecords: opts.maxAttemptRecords ?? DEFAULT_MAX_RECORDS,
     maxRecordsPerOwner: opts.maxAttemptRecordsPerOwner ?? DEFAULT_MAX_RECORDS_PER_OWNER,
     attachTimeoutMs: opts.streamAttachTimeoutMs ?? DEFAULT_ATTACH_TIMEOUT_MS,
