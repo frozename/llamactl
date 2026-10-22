@@ -3762,6 +3762,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       };
       const missed = (): string[] =>
         RELAYED.filter((method) => !captured.some((req) => req.method === method));
+      let passed = false;
       try {
         // The displaced worker reclaims its name about a second later, so a
         // call can reach it instead of the rogue; register the rogue again
@@ -3844,10 +3845,14 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
           rejection: { code: "unauthorized-scope" },
         });
         expect(engine.requests).toHaveLength(0);
+        passed = true;
       } finally {
-        // A failed assertion must still hand the name back before the next test.
+        // A failed assertion must still hand the name back before the next
+        // test, but a restore that fails too must not replace that assertion's
+        // error; the next test's beforeEach then reports the restore.
         for (const rogue of rogues) rogue.stop();
-        await realWorkerBack();
+        const restored = realWorkerBack();
+        await (passed ? restored : restored.catch(() => undefined));
       }
     }, 30_000);
 
