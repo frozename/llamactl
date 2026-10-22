@@ -255,4 +255,30 @@ describe("tunnel client: whenIdle (#192)", () => {
     expect(await settledSoon(client.whenIdle())).toBe(true);
     await drained;
   });
+
+  test("a dropped socket releases a pending wait without stop()", async () => {
+    const arrived = deferred();
+    const answer = deferred();
+    const { server, client } = await connect({
+      handleRequest: async (): Promise<unknown> => {
+        arrived.resolve();
+        await answer.promise;
+        return "unsent";
+      },
+    });
+    const res = server
+      .send(NODE, { id: "req-drop", method: "inferenceRpc.status", params: {} })
+      .then(
+        () => "answered",
+        () => "failed",
+      );
+    await arrived.promise;
+    const idle = client.whenIdle();
+    expect(await settledSoon(idle)).toBe(false);
+    expect(server.disconnect(NODE)).toBe(true);
+    await until(() => client.state() === "disconnected");
+    expect(await settledSoon(idle)).toBe(true);
+    expect(await res).toBe("failed");
+    answer.resolve();
+  });
 });

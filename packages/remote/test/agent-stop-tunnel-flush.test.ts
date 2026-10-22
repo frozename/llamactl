@@ -7,6 +7,7 @@
 import type * as agentConfigMod from "@llamactl/core/config/agent-config";
 
 import { inferenceContracts, inferenceRpc } from "@llamactl/core";
+import { Bonjour } from "bonjour-service";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { join } from "node:path";
@@ -25,6 +26,7 @@ import {
   type WorkerRpcBackendEvent,
 } from "../src/inference/procedures.js";
 import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
+import { TERMINAL_FLUSH_MS } from "../src/server/serve.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
 
 type StreamFrame = inferenceRpc.InferenceRpcStreamFrameV1;
@@ -37,8 +39,6 @@ const MODEL = "flush/model.gguf";
 const DEPLOYMENT = `deploy/${WORKER}/${WORKLOAD}`;
 const V1_0 = { major: 1, minor: 0 };
 const DRAIN_MS = 200;
-/** serve.ts's TERMINAL_FLUSH_MS. */
-const FLUSH_MS = 1_000;
 const ENV_KEYS = ["DEV_STORAGE", "LOCAL_AI_RUNTIME_DIR", "LLAMA_CPP_MODELS"] as const;
 
 let temp: ReturnType<typeof makeTempRuntime>;
@@ -194,6 +194,7 @@ async function startWorker(
   central: Central,
   backend: WorkerRpcBackend,
   around: (start: () => RunningAgent) => RunningAgent = (start) => start(),
+  advertiseMdns = false,
 ): Promise<Harness> {
   const cert = await certIn("worker");
   const operator = auth.generateToken();
@@ -220,7 +221,7 @@ async function startWorker(
       port: 0,
       tokenHash: operator.hash,
       tls: { certPath: cert.certPath, keyPath: cert.keyPath },
-      advertiseMdns: false,
+      advertiseMdns,
       workerRpc: {
         workerId: WORKER,
         settings: () => ({ versions: [V1_0], serviceCredentials: [{ ...binding }] }),
@@ -348,7 +349,7 @@ describe("agent stop() and the worker's tunnel (#192)", () => {
     const stopping = stopWorker(harness);
     await held.aborted;
     // Past the drain's own flush window, inside the shared one.
-    await new Promise((resolve) => setTimeout(resolve, FLUSH_MS + 250));
+    await new Promise((resolve) => setTimeout(resolve, TERMINAL_FLUSH_MS + 250));
     expect(await harness.client.status({ attemptId: "att-flush" })).toMatchObject({
       outcome: "status",
       attemptId: "att-flush",
@@ -377,11 +378,85 @@ describe("agent stop() and the worker's tunnel (#192)", () => {
     await held.started;
     const startedAt = performance.now();
     await stopWorker(harness);
-    expect(performance.now() - startedAt).toBeLessThan(DRAIN_MS + 2 * FLUSH_MS + 750);
+    expect(performance.now() - startedAt).toBeLessThan(DRAIN_MS + 2 * TERMINAL_FLUSH_MS + 750);
     expect(harness.worker.tunnelClient?.state()).toBe("stopped");
     held.release();
     await streamed;
   }, 20_000);
+
+  test("when the HTTP stop and the tunnel both stay busy, they share one flush window", async () => {
+    const held = heldBackend();
+    const realServe = Bun.serve;
+    let closeConnection = (): void => undefined;
+    const harness = await startWorker(await startCentral(), held.backend, (start) => {
+      Reflect.set(Bun, "serve", ((options: Parameters<typeof Bun.serve>[0]) => {
+        const server = realServe(options);
+        const stop = server.stop.bind(server);
+        Reflect.set(server, "stop", (force?: boolean) => {
+          if (force === true) {
+            closeConnection();
+            return stop(true);
+          }
+          // A connection that only the forced stop closes.
+          return new Promise<void>((resolve) => {
+            closeConnection = resolve;
+          });
+        });
+        return server;
+      }) as typeof Bun.serve);
+      try {
+        return start();
+      } finally {
+        Reflect.set(Bun, "serve", realServe);
+      }
+    });
+    expect(await submit(harness.client, "att-busy")).toMatchObject({ outcome: "accepted" });
+    const streamed = (async (): Promise<void> => {
+      for await (const _ of harness.client.stream({ attemptId: "att-busy" })) {
+        // Only the stream's end matters here.
+      }
+    })().catch(() => undefined);
+    await held.started;
+    const startedAt = performance.now();
+    await stopWorker(harness);
+    // The drain's window, then one shared window; a second would cost a whole one more.
+    expect(performance.now() - startedAt).toBeLessThan(
+      DRAIN_MS + 2 * TERMINAL_FLUSH_MS + TERMINAL_FLUSH_MS / 2,
+    );
+    expect(harness.worker.tunnelClient?.state()).toBe("stopped");
+    held.release();
+    await streamed;
+  }, 20_000);
+
+  test("a hung mDNS teardown starts once the tunnel is down and holds stop() one flush window at most", async () => {
+    const realPublish: unknown = Reflect.get(Bonjour.prototype, "publish");
+    let worker: RunningAgent | undefined;
+    const tunnelAtTeardown: (string | undefined)[] = [];
+    const harness = await startWorker(
+      await startCentral(),
+      heldBackend().backend,
+      (start) => {
+        Reflect.set(Bonjour.prototype, "publish", () => ({
+          on: (): undefined => undefined,
+          stop: (done: () => void): void => {
+            tunnelAtTeardown.push(worker?.tunnelClient?.state());
+            releases.push(done);
+          },
+        }));
+        try {
+          worker = start();
+          return worker;
+        } finally {
+          Reflect.set(Bonjour.prototype, "publish", realPublish);
+        }
+      },
+      true,
+    );
+    const startedAt = performance.now();
+    await stopWorker(harness);
+    expect(performance.now() - startedAt).toBeLessThan(TERMINAL_FLUSH_MS + 750);
+    expect(tunnelAtTeardown).toEqual(["stopped"]);
+  });
 
   test("a failing HTTP stop still stops the tunnel, then the server, then unpublishes the host", async () => {
     const realServe = Bun.serve;
