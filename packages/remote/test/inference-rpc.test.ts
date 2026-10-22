@@ -1562,6 +1562,115 @@ describe("attempt records: per-owner quotas, tombstones and retention (B, N1, N2
   });
 });
 
+/**
+ * #191: an owner, a (serviceId, credentialScopeId), may hold only its
+ * share of the worker's active attempts, so it cannot starve the others,
+ * and every way an attempt settles gives its slot back.
+ */
+describe("per-owner active-attempt share (#191)", () => {
+  const SHARE_REFUSAL = "overloaded: the service is at its active attempt share";
+
+  /** Submits for `owner`, whose credential scope the envelope must carry. */
+  function submitAs(
+    worker: WorkerRpcHost,
+    owner: Claims,
+    fenced: inferenceRpc.InferenceRpcTargetV1,
+    attemptId: string,
+  ): string {
+    const result = worker.submit(owner, {
+      version: V1_0,
+      envelope: envelope(attemptId, { credentialScopeId: owner.credentialScopeId }),
+      target: fenced,
+      cancelId: `cancel-${attemptId}`,
+    });
+    return result.outcome === "rejected"
+      ? `${result.rejection.code}: ${result.rejection.message}`
+      : result.outcome;
+  }
+
+  test("with a share of 2, an owner's third attempt is refused overloaded while other owners are accepted", async () => {
+    const worker = useHost({ maxActiveAttemptsPerOwner: 2 });
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    expect(submitAs(worker, a, fenced, "att-share-a-0")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-share-a-1")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-share-a-2")).toBe(SHARE_REFUSAL);
+    // A duplicate is answered from its record before any fence.
+    expect(submitAs(worker, a, fenced, "att-share-a-0")).toBe("existing");
+    // Another service, and another credential scope of the same service,
+    // are owners of their own.
+    const others = [claims({ serviceId: "svc-b" }), claims({ credentialScopeId: "scope-b" })];
+    for (const [n, other] of others.entries()) {
+      expect(submitAs(worker, other, fenced, `att-share-other-${String(n)}-0`)).toBe("accepted");
+      expect(submitAs(worker, other, fenced, `att-share-other-${String(n)}-1`)).toBe("accepted");
+      expect(submitAs(worker, other, fenced, `att-share-other-${String(n)}-2`)).toBe(SHARE_REFUSAL);
+    }
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("a share given as a function is read on every submit, and undefined is the worker cap", async () => {
+    let share: number | undefined = 1;
+    const worker = useHost({ maxActiveAttempts: 3, maxActiveAttemptsPerOwner: () => share });
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    expect(submitAs(worker, a, fenced, "att-live-0")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-live-1")).toBe(SHARE_REFUSAL);
+    share = 2;
+    expect(submitAs(worker, a, fenced, "att-live-2")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-live-3")).toBe(SHARE_REFUSAL);
+    share = undefined;
+    expect(submitAs(worker, a, fenced, "att-live-4")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-live-5")).toBe(SHARE_REFUSAL);
+    const b = claims({ serviceId: "svc-b" });
+    expect(submitAs(worker, b, fenced, "att-live-b")).toBe(
+      "overloaded: the worker is at its attempt limit",
+    );
+  });
+
+  test("a cancel gives the owner's slot back", async () => {
+    const worker = useHost({ maxActiveAttemptsPerOwner: 2 });
+    const a = claims();
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    expect(submitAs(worker, a, fenced, "att-cancel-0")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-cancel-1")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-cancel-2")).toBe(SHARE_REFUSAL);
+    worker.cancel(a, { attemptId: "att-cancel-0" });
+    expect(submitAs(worker, a, fenced, "att-cancel-3")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-cancel-4")).toBe(SHARE_REFUSAL);
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("an attempt never attached gives its slot back at the attach timeout", async () => {
+    const worker = useHost({ maxActiveAttemptsPerOwner: 1, streamAttachTimeoutMs: 20 });
+    const a = claims();
+    const client = createEmbeddedInferenceRpcClient(a);
+    const fenced = await target(client);
+    expect(submitAs(worker, a, fenced, "att-attach-0")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-attach-1")).toBe(SHARE_REFUSAL);
+    await Bun.sleep(60);
+    expect(await client.status({ attemptId: "att-attach-0" })).toMatchObject({
+      state: "terminal",
+      terminal: { outcome: "cancelled", started: false },
+    });
+    expect(submitAs(worker, a, fenced, "att-attach-2")).toBe("accepted");
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("an attempt that runs to its terminal gives its slot back", async () => {
+    const worker = useHost({ maxActiveAttemptsPerOwner: 1 });
+    const a = claims();
+    const client = createEmbeddedInferenceRpcClient(a);
+    const fenced = await target(client);
+    expect(submitAs(worker, a, fenced, "att-done-0")).toBe("accepted");
+    expect(submitAs(worker, a, fenced, "att-done-1")).toBe(SHARE_REFUSAL);
+    const frames = await collect(client.stream({ attemptId: "att-done-0" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({ outcome: "completed" });
+    expect(submitAs(worker, a, fenced, "att-done-2")).toBe("accepted");
+    expect(engine.requests).toHaveLength(1);
+  });
+});
+
 describe("cancellation in process (X4)", () => {
   test("a caller cancel reaches the engine and is acknowledged once", async () => {
     engine.setScript({ holdAfter: 1 });

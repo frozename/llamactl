@@ -53,6 +53,14 @@ export type AgentWorkerRpcCredential = z.infer<typeof AgentWorkerRpcCredentialSc
 export const AgentWorkerRpcSchema = z.object({
   versions: z.array(InferenceRpcVersionSchema).default([]),
   serviceCredentials: z.array(AgentWorkerRpcCredentialSchema).default([]),
+  /**
+   * Unsettled attempts one owner, a (serviceId, credentialScopeId), may
+   * hold. Unset, the share depends on how many distinct owners the
+   * bindings name (serve.ts). An invalid value is dropped alone rather
+   * than failing the block, which would drop every credential binding
+   * with it and strand the attempts they already hold.
+   */
+  maxActiveAttemptsPerOwner: z.number().int().positive().optional().catch(undefined),
 });
 export type AgentWorkerRpc = z.infer<typeof AgentWorkerRpcSchema>;
 
@@ -205,6 +213,11 @@ function warnIgnored(path: string, block: string, reason: string): void {
   process.stderr.write(`[agent] ${path}: ignoring the ${block} block (${reason})\n`);
 }
 
+/** Whether `block` sets `key` at all; the leniently parsed share reads the same whether invalid or unset. */
+function setsKey(block: unknown, key: string): boolean {
+  return typeof block === "object" && block !== null && key in block;
+}
+
 function firstIssue(error: z.ZodError): string {
   const issue = error.issues[0];
   if (issue === undefined) return "invalid";
@@ -263,6 +276,14 @@ export function workerRpcSettingsReader(
     if (!parsed.success) {
       warnIgnored(path, "workerRpc", firstIssue(parsed.error));
       return undefined;
+    }
+    if (
+      parsed.data.maxActiveAttemptsPerOwner === undefined &&
+      setsKey(config.workerRpc, "maxActiveAttemptsPerOwner")
+    ) {
+      process.stderr.write(
+        `[agent] ${path}: ignoring workerRpc.maxActiveAttemptsPerOwner (not a positive integer); the default share applies\n`,
+      );
     }
     if (parsed.data.serviceCredentials.some((b) => b.tokenHash === config.tokenHash)) {
       warnIgnored(path, "workerRpc", "a service credential reuses the operator bearer's hash");

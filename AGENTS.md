@@ -634,6 +634,22 @@ behind `LLAMACTL_UNIFIED_PROXY=1`.
   `agent.yaml` `nodeName` must equal the gateway's kubeconfig node name
   for it, since a peer-derived candidate resolves only on its declared
   owner.
+- **Share the active-attempt cap**: a worker runs at most 64 unsettled
+  attempts, and each owner, a distinct `serviceId` and
+  `credentialScopeId` pair across the bindings, may hold only its share
+  of them; a submit past it is refused `overloaded`, which a gateway
+  answers with HTTP 429. Unset, the share is the whole cap while the
+  bindings name one owner, and 48 once they name two or more, so no one
+  owner can take every slot. Two bindings of one owner, as during a
+  rotation, are still one owner. The gateway's in-process owner on its
+  own node (`embedded:<nodeId>`) is held to the share but not counted,
+  since no binding names it. Set `workerRpc.maxActiveAttemptsPerOwner`
+  to override the default for every owner; it is read on every submit,
+  so a change applies without a restart, and lowering it refuses new
+  submits without stopping attempts already accepted. To cut off one
+  credential, remove its binding instead. A value that is not a
+  positive integer is ignored with a warning and the default applies;
+  the rest of the block, its bindings included, stays in force.
 
 - **Clocks**: tunnel worker-RPC needs the gateway's and the worker's
   clocks within ±60 s, since a token expires 60 s after it is minted
