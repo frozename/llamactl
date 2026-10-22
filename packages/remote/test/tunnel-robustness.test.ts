@@ -15,6 +15,7 @@ import {
   type TunnelReq,
   type TunnelSubscription,
 } from "../src/tunnel/index.js";
+import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
 
 interface RunningServer {
   stop: () => Promise<void>;
@@ -28,9 +29,13 @@ interface ServerOptions {
   onStreamCancelAck?: (nodeName: string, id: string, outcome: TunnelCancelOutcome) => void;
 }
 
+const tunnelJournal = useTempTunnelJournal();
+guardDefaultTunnelJournal();
+
 function startServer(bearer: string, opts: ServerOptions = {}): RunningServer {
   const srv = createTunnelServer({
     expectedBearerHash: hashToken(bearer),
+    journalPath: tunnelJournal.path,
     ...opts,
   });
   const bun = Bun.serve({

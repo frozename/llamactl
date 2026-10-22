@@ -1,13 +1,42 @@
 import { auth, tunnel } from "@llamactl/remote";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { handleTunnelRelay } from "../../remote/src/server/tunnel-relay.js";
+import { existsSync, mkdtempSync, rmSync } from "../src/safe-fs.js";
 import { __resetInsecureTunnelWarning, buildTunnelSubscribe } from "../src/tunnel-dispatch.js";
 
 const { createTunnelClient, createTunnelServer } = tunnel;
 const { hashToken } = auth;
 type TunnelReq = tunnel.TunnelReq;
 type TunnelSubscription = tunnel.TunnelSubscription;
+
+const OVERRIDE_KEY = "LLAMACTL_TUNNEL_JOURNAL";
+// Without an explicit path the tunnel server and relay journal to the
+// operator's real tunnel journal. The default is pointed into the same
+// directory from module load on, before any hook, so a missing path fails
+// the file instead of reaching the real journal.
+const journalDir = mkdtempSync(join(tmpdir(), "llamactl-cli-tunnel-journal-"));
+const journalPath = join(journalDir, "journal.jsonl");
+const fallbackJournal = join(journalDir, "default", "journal.jsonl");
+const savedOverride = process.env[OVERRIDE_KEY];
+process.env[OVERRIDE_KEY] = fallbackJournal;
+
+afterAll(async () => {
+  // stop() does not await the server's close handler, which journals the
+  // disconnect a moment later and would recreate a directory removed first.
+  await new Promise((r) => setTimeout(r, 100));
+  if (savedOverride === undefined) Reflect.deleteProperty(process.env, OVERRIDE_KEY);
+  else process.env[OVERRIDE_KEY] = savedOverride;
+  const leaked = existsSync(fallbackJournal);
+  rmSync(journalDir, { recursive: true, force: true });
+  if (leaked) {
+    throw new Error(
+      `a tunnel journal write fell back to ${OVERRIDE_KEY}; pass journalPath explicitly`,
+    );
+  }
+});
 
 /**
  * B.5 coverage — end-to-end subscription over the reverse-tunnel
@@ -37,6 +66,7 @@ async function startHarness(script: {
   const receivedCancel: string[] = [];
   const tunnelSrv = createTunnelServer({
     expectedBearerHash: hashToken(tunnelBearer),
+    journalPath,
   });
   const bun = Bun.serve({
     port: 0,
@@ -47,7 +77,7 @@ async function startHarness(script: {
         return tunnelSrv.handleUpgrade(req, server) ?? new Response("no", { status: 400 });
       }
       if (url.pathname.startsWith("/tunnel-relay/")) {
-        return await handleTunnelRelay(req, url, tunnelSrv, bearerHash);
+        return await handleTunnelRelay(req, url, tunnelSrv, bearerHash, journalPath);
       }
       return new Response("404", { status: 404 });
     },

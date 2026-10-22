@@ -13,6 +13,7 @@ import {
   type TunnelReq,
   type TunnelState,
 } from "../src/tunnel/index.js";
+import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
 
 // Bun's built-in WebSocket on the client side is globalThis.WebSocket.
 // The server is Bun.serve with a websocket handler.
@@ -26,11 +27,15 @@ interface RunningServer {
   disconnects: { node: string; reason: string }[];
 }
 
+const tunnelJournal = useTempTunnelJournal();
+guardDefaultTunnelJournal();
+
 function startServer(bearer: string, opts: { fixedTime?: string } = {}): RunningServer {
   const connects: string[] = [];
   const disconnects: { node: string; reason: string }[] = [];
   const srv = createTunnelServer({
     expectedBearerHash: hashToken(bearer),
+    journalPath: tunnelJournal.path,
     onNodeConnect: (n) => connects.push(n),
     onNodeDisconnect: (n, r) => disconnects.push({ node: n, reason: r }),
     ...(opts.fixedTime ? { clock: (): Date => new Date(opts.fixedTime!) } : {}),

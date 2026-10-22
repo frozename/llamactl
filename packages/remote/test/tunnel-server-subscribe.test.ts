@@ -7,6 +7,7 @@ import {
   type TunnelReq,
   type TunnelSubscription,
 } from "../src/tunnel/index.js";
+import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
 
 /**
  * B.3 coverage — `sendSubscribe` on the central tunnel server.
@@ -33,12 +34,16 @@ interface RunningPair {
   receivedCancel: string[];
 }
 
+const tunnelJournal = useTempTunnelJournal();
+guardDefaultTunnelJournal();
+
 async function startPair(script: Map<string, ScriptedSub>): Promise<RunningPair> {
   const bearer = "secret-bearer";
   const nodeName = "n1";
   const receivedCancel: string[] = [];
   const srv = createTunnelServer({
     expectedBearerHash: hashToken(bearer),
+    journalPath: tunnelJournal.path,
   });
   const bun = Bun.serve({
     port: 0,

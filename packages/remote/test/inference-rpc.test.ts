@@ -81,6 +81,7 @@ import {
 import { INFERENCE_RPC_STREAM_LIMITS } from "../src/tunnel/messages.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
+import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
 
 type Claims = inferenceRpc.InferenceServiceClaimsV1;
 type Ad = routingCatalog.RouteAdvertisementV1;
@@ -367,6 +368,9 @@ afterAll(async () => {
     }
   }
 });
+
+const tunnelJournal = useTempTunnelJournal();
+guardDefaultTunnelJournal();
 
 const GOLDEN_CLAIMS = claims({
   serviceId: "svc-golden",
@@ -2356,6 +2360,7 @@ async function startTransports(): Promise<Transports> {
     onRequest: (url) => {
       if (url.pathname.startsWith("/tunnel-relay")) relayRequests.push(url.pathname);
     },
+    tunnelJournalPath: tunnelJournal.path,
     tunnelCentral: {
       expectedBearerHash: tunnelBearer.hash,
       workerRpcRelay: () => ({ tokenHashes: [relayCredential.hash] }),
@@ -3683,9 +3688,24 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
       }
     }
 
-    test("an impersonating node collects no credential and nothing it can reuse", async () => {
-      useRemoteHost();
-      const captured: TunnelReq[] = [];
+    beforeEach(async () => {
+      // The outer readiness check accepts any holder of the name, a rogue
+      // central has not dropped yet included; only the real worker negotiates.
+      await realWorkerBack();
+    });
+
+    const RELAYED = ["negotiate", "catalog", "submit", "status", "cancel", "stream"].map(
+      (procedure) => `inferenceRpc.${procedure}`,
+    );
+
+    /**
+     * Registers a node under the worker's tunnel name that records every
+     * frame central relays to it; resolves once central has registered it.
+     */
+    async function startRogue(
+      captured: TunnelReq[],
+      rogues: ReturnType<typeof createTunnelClient>[],
+    ): Promise<void> {
       let markReady = (): void => undefined;
       const ready = new Promise<void>((resolve) => {
         markReady = resolve;
@@ -3715,8 +3735,15 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         initialAttemptTimeoutMs: 0,
         reconnect: { minDelayMs: 60_000, maxDelayMs: 60_000 },
       });
+      rogues.push(rogue);
       void rogue.start();
       await ready;
+    }
+
+    test("an impersonating node collects no credential and nothing it can reuse", async () => {
+      useRemoteHost();
+      const captured: TunnelReq[] = [];
+      const rogues: ReturnType<typeof createTunnelClient>[] = [];
       const client = tunnelClient();
       const env = envelope("att-impersonated");
       const target = {
@@ -3725,74 +3752,110 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         catalogGeneration: "gen-x",
         workerIncarnation: "inc-x",
       };
-      await client.negotiate(NEGOTIATE);
-      const calls: Promise<unknown>[] = [
-        client.catalog(),
-        client.submit({ version: V1_0, envelope: env, target, cancelId: "cancel-imp" }),
-        client.status({ attemptId: env.attemptId }),
-        client.cancel({ attemptId: env.attemptId }),
-        collect(client.stream({ attemptId: env.attemptId })),
-      ];
-      await Promise.allSettled(calls);
-      rogue.stop();
+      const calls: Record<string, () => Promise<unknown>> = {
+        "inferenceRpc.negotiate": () => client.negotiate(NEGOTIATE),
+        "inferenceRpc.catalog": () => client.catalog(),
+        "inferenceRpc.submit": () =>
+          client.submit({ version: V1_0, envelope: env, target, cancelId: "cancel-imp" }),
+        "inferenceRpc.status": () => client.status({ attemptId: env.attemptId }),
+        "inferenceRpc.cancel": () => client.cancel({ attemptId: env.attemptId }),
+        "inferenceRpc.stream": () => collect(client.stream({ attemptId: env.attemptId })),
+      };
+      const missed = (): string[] =>
+        RELAYED.filter((method) => !captured.some((req) => req.method === method));
+      let passed = false;
+      try {
+        // The displaced worker reclaims its name about a second later, so a
+        // call can reach it instead of the rogue; register the rogue again
+        // and repeat only what it missed.
+        const deadline = Date.now() + 10_000;
+        while (missed().length > 0) {
+          if (Date.now() > deadline) {
+            throw new Error(`the rogue never received ${missed().join(", ")}`);
+          }
+          await startRogue(captured, rogues);
+          const pending = missed();
+          if (pending.includes("inferenceRpc.negotiate")) {
+            await calls["inferenceRpc.negotiate"]?.().catch(() => undefined);
+          }
+          await Promise.allSettled(
+            pending
+              .filter((method) => method !== "inferenceRpc.negotiate")
+              .map(async (method) => await calls[method]?.()),
+          );
+        }
+        for (const rogue of rogues) rogue.stop();
 
-      expect(captured.length).toBe(6);
-      // Nothing that crossed to the node is, or carries, the credential.
-      expect(JSON.stringify(captured)).not.toContain(transports.serviceCredential);
-      const tokens = captured.map((req) => req.auth?.serviceToken ?? "");
-      for (const token of tokens) expect(token.length).toBeGreaterThan(0);
+        // Nothing that crossed to the node is, or carries, the credential.
+        for (const req of captured) {
+          expect(req.auth?.serviceToken ?? "").not.toBe("");
+          expect(JSON.stringify(req)).not.toContain(transports.serviceCredential);
+        }
+        const tokens = captured.map((req) => req.auth?.serviceToken ?? "");
+        const tokenOf = (method: string): string =>
+          captured.find((req) => req.method === method)?.auth?.serviceToken ?? "";
 
-      // What it collected is no credential: the worker refuses it as one.
-      const pinned = makePinnedFetch(transports.workerNode);
-      for (const token of tokens) {
-        const res = await pinned(`${transports.worker.url}/trpc/inferenceRpc.catalog`, {
-          headers: { authorization: `Bearer ${token}` },
+        // What it collected is no credential: the worker refuses it as one.
+        const pinned = makePinnedFetch(transports.workerNode);
+        for (const token of tokens) {
+          const res = await pinned(`${transports.worker.url}/trpc/inferenceRpc.catalog`, {
+            headers: { authorization: `Bearer ${token}` },
+          });
+          expect(res.status).toBe(401);
+        }
+        const negotiateToken = tokenOf("inferenceRpc.negotiate");
+        const catalogToken = tokenOf("inferenceRpc.catalog");
+        // Its own credential, the tunnel bearer, does not open central's relay.
+        const ownBearer = await relayCall(
+          "inferenceRpc.negotiate",
+          NEGOTIATE,
+          negotiateToken,
+          transports.tunnelBearer,
+        );
+        expect(ownBearer.status).toBe(401);
+
+        // Delivered to the real worker, a collected token buys no other call.
+        await realWorkerBack();
+        const otherInput = await relayCall(
+          "inferenceRpc.negotiate",
+          { ...NEGOTIATE, optionalFeatures: ["cancel-ack"] },
+          negotiateToken,
+        );
+        expect(otherInput.result).toMatchObject({
+          outcome: "rejected",
+          rejection: { code: "unauthorized-scope" },
         });
-        expect(res.status).toBe(401);
+        const otherCall = await relayCall(
+          "inferenceRpc.status",
+          { attemptId: "att-x" },
+          catalogToken,
+        );
+        expect(otherCall.result).toMatchObject({
+          outcome: "rejected",
+          rejection: { code: "unauthorized-scope" },
+        });
+        // Nor the very call it collected, through any other relay identity.
+        const sameCall = await relayCall(
+          "inferenceRpc.negotiate",
+          NEGOTIATE,
+          negotiateToken,
+          transports.centralToken,
+        );
+        expect(sameCall.result).toMatchObject({
+          outcome: "rejected",
+          rejection: { code: "unauthorized-scope" },
+        });
+        expect(engine.requests).toHaveLength(0);
+        passed = true;
+      } finally {
+        // A failed assertion must still hand the name back before the next
+        // test, but a restore that fails too must not replace that assertion's
+        // error; the next test's beforeEach then reports the restore.
+        for (const rogue of rogues) rogue.stop();
+        const restored = realWorkerBack();
+        await (passed ? restored : restored.catch(() => undefined));
       }
-      // Its own credential, the tunnel bearer, does not open central's relay.
-      const ownBearer = await relayCall(
-        "inferenceRpc.negotiate",
-        NEGOTIATE,
-        tokens[0],
-        transports.tunnelBearer,
-      );
-      expect(ownBearer.status).toBe(401);
-
-      // Delivered to the real worker, a collected token buys no other call.
-      await realWorkerBack();
-      const [negotiateToken, catalogToken] = tokens;
-      const otherInput = await relayCall(
-        "inferenceRpc.negotiate",
-        { ...NEGOTIATE, optionalFeatures: ["cancel-ack"] },
-        negotiateToken,
-      );
-      expect(otherInput.result).toMatchObject({
-        outcome: "rejected",
-        rejection: { code: "unauthorized-scope" },
-      });
-      const otherCall = await relayCall(
-        "inferenceRpc.status",
-        { attemptId: "att-x" },
-        catalogToken,
-      );
-      expect(otherCall.result).toMatchObject({
-        outcome: "rejected",
-        rejection: { code: "unauthorized-scope" },
-      });
-      // Nor the very call it collected, through any other relay identity.
-      const sameCall = await relayCall(
-        "inferenceRpc.negotiate",
-        NEGOTIATE,
-        negotiateToken,
-        transports.centralToken,
-      );
-      expect(sameCall.result).toMatchObject({
-        outcome: "rejected",
-        rejection: { code: "unauthorized-scope" },
-      });
-      expect(engine.requests).toHaveLength(0);
-    }, 20_000);
+    }, 30_000);
 
     test("each token verifies once, on its node, before it expires", async () => {
       useRemoteHost();

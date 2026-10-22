@@ -11,6 +11,7 @@ import {
   parseTunnelMessage,
   type TunnelState,
 } from "../src/tunnel/index.js";
+import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
 
 /**
  * Phase I.3.2 — agent-side DIAL-OUT (tunnelDial) integration.
@@ -33,6 +34,9 @@ interface CentralHandle {
   wsUrl: string;
 }
 
+const tunnelJournal = useTempTunnelJournal();
+guardDefaultTunnelJournal();
+
 function bootCentralAgent(): CentralHandle {
   const { token: agentToken, hash: agentHash } = generateToken();
   const tunnelBearer = `tun_${Math.random().toString(36).slice(2)}`;
@@ -42,6 +46,7 @@ function bootCentralAgent(): CentralHandle {
     tokenHash: agentHash,
     advertiseMdns: false,
     tunnelCentral: { expectedBearerHash: hashToken(tunnelBearer) },
+    tunnelJournalPath: tunnelJournal.path,
   });
   return {
     agent,

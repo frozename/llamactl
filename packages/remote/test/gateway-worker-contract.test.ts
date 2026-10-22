@@ -45,6 +45,7 @@ import { createProxy, type UnifiedProxy } from "../src/proxy/create-proxy.js";
 import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
+import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
 
 // Loaded lazily so this boundary test still runs against a base without the
 // worker RPC module: there its RED is an assertion failure on the wire, not
@@ -363,6 +364,7 @@ async function startTunnel(dir: string): Promise<void> {
     tokenHash: operator.hash,
     tls: { certPath: cert.certPath, keyPath: cert.keyPath },
     advertiseMdns: false,
+    tunnelJournalPath: tunnelJournal.path,
     tunnelCentral: {
       expectedBearerHash: tunnelBearer.hash,
       workerRpcRelay: () => ({ tokenHashes: [relayOnly.hash] }),
@@ -442,6 +444,9 @@ afterAll(async () => {
     guard.dispose();
   }
 });
+
+const tunnelJournal = useTempTunnelJournal();
+guardDefaultTunnelJournal();
 
 describe("InferenceRpcV1 gateway–worker round trip", () => {
   test("over the wire: the operator bearer reaches the route but carries no claims", async () => {
