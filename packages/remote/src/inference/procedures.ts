@@ -182,6 +182,8 @@ interface AttemptRecord {
   cancelId: string;
   owner: AttemptOwner;
   tenantId: string;
+  /** Of the attempts one cancelId names under different tenants, a cancel takes the latest admitted. */
+  admission: number;
   deploymentId: string;
   /** Monotonic: acceptance plus ATTEMPT_RECORD_RETENTION_MS. */
   retainUntil: number;
@@ -218,8 +220,13 @@ interface HostState {
    * deadline, so they become forgettable in no order a queue could keep.
    */
   awaitingDeadline: AttemptRecord[];
-  /** cancelKey(owner, cancelId) to attemptId. */
+  /**
+   * cancelKey(owner, tenant, cancelId) to attemptId. Keyed by tenant as
+   * ownedBy is: bindings of one owner can present different tenants, and
+   * one binding's attempt must not shadow another's under a shared cancelId.
+   */
   cancelIds: Map<string, string>;
+  admissions: number;
   active: number;
   /** Streams attached and not yet ended. */
   streams: number;
@@ -607,9 +614,9 @@ function ownerKey(claims: Claims): string {
   return JSON.stringify([claims.serviceId, claims.credentialScopeId]);
 }
 
-/** cancelIds are chosen by callers, so each owner has its own. */
-function cancelKey(owner: string, cancelId: string): string {
-  return JSON.stringify([owner, cancelId]);
+/** cancelIds are chosen by callers, so each owner, and within it each tenant, has its own. */
+function cancelKey(owner: string, tenantId: string, cancelId: string): string {
+  return JSON.stringify([owner, tenantId, cancelId]);
 }
 
 /** Concurrency first, then the owner's record quota, then the worker-wide backstop. */
@@ -686,7 +693,7 @@ function settle(
 
 function forget(state: HostState, record: AttemptRecord): void {
   state.records.delete(record.attemptId);
-  const key = cancelKey(record.owner.key, record.cancelId);
+  const key = cancelKey(record.owner.key, record.tenantId, record.cancelId);
   if (state.cancelIds.get(key) === record.attemptId) {
     state.cancelIds.delete(key);
   }
@@ -829,12 +836,14 @@ function admit(
     streamed: false,
   };
   const owner = ownerOf(state, claims);
+  state.admissions += 1;
   const record: AttemptRecord = {
     attemptId: envelope.attemptId,
     requestId: envelope.requestId,
     cancelId: input.cancelId,
     owner,
     tenantId: envelope.tenantId,
+    admission: state.admissions,
     deploymentId: deployment.deploymentId,
     retainUntil: state.monotonicNow() + ATTEMPT_RECORD_RETENTION_MS,
     deadline: envelope.deadline,
@@ -845,7 +854,7 @@ function admit(
   owner.held += 1;
   state.records.set(record.attemptId, record);
   state.retained.push(record);
-  state.cancelIds.set(cancelKey(owner.key, record.cancelId), record.attemptId);
+  state.cancelIds.set(cancelKey(owner.key, record.tenantId, record.cancelId), record.attemptId);
   state.active += 1;
   const untilDeadline = Math.max(0, envelope.deadline - state.now());
   const deadline = setTimeout(() => {
@@ -1102,6 +1111,27 @@ function attemptStatus(
   return { outcome: "status", ...status };
 }
 
+/**
+ * Each presented tenant indexes its own attempt under `cancelId`; of those,
+ * the latest admitted is the one the caller last named by it.
+ */
+function cancelTarget(
+  state: HostState,
+  claims: Claims,
+  cancelId: string,
+): AttemptRecord | undefined {
+  const owner = ownerKey(claims);
+  let latest: AttemptRecord | undefined;
+  for (const tenantId of claims.tenants) {
+    const attemptId = state.cancelIds.get(cancelKey(owner, tenantId, cancelId));
+    const record = attemptId === undefined ? undefined : ownedRecord(state, claims, attemptId);
+    if (record !== undefined && (latest === undefined || record.admission > latest.admission)) {
+      latest = record;
+    }
+  }
+  return latest;
+}
+
 function cancelAttempt(
   state: HostState,
   claimsIn: Claims | undefined,
@@ -1109,11 +1139,10 @@ function cancelAttempt(
 ): inferenceRpc.InferenceRpcCancelResultV1 {
   const claims = authorized(claimsIn, "cancel");
   if (claims === null) return rejectedWith(NO_SCOPE);
-  const attemptId =
+  const record =
     "attemptId" in input
-      ? input.attemptId
-      : state.cancelIds.get(cancelKey(ownerKey(claims), input.cancelId));
-  const record = attemptId === undefined ? undefined : ownedRecord(state, claims, attemptId);
+      ? ownedRecord(state, claims, input.attemptId)
+      : cancelTarget(state, claims, input.cancelId);
   if (record === undefined) return { outcome: "unknown" };
   if (record.terminal !== undefined) {
     return { outcome: "already-terminal", attemptId: record.attemptId };
@@ -1128,6 +1157,13 @@ function versionsOf(
   if (typeof versions === "function") return versions;
   const fixed = [...(versions ?? [])];
   return () => fixed;
+}
+
+const hostStates = new WeakMap<WorkerRpcHost, HostState>();
+
+/** How many cancelIds `host` indexes; undefined for a host createWorkerRpcHost did not make. */
+export function __workerRpcCancelIdIndexSizeForTests(host: WorkerRpcHost): number | undefined {
+  return hostStates.get(host)?.cancelIds.size;
 }
 
 export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
@@ -1156,11 +1192,12 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
     retainedHead: 0,
     awaitingDeadline: [],
     cancelIds: new Map(),
+    admissions: 0,
     active: 0,
     streams: 0,
     idle: [],
   };
-  return {
+  const host: WorkerRpcHost = {
     workerId: state.workerId,
     incarnation: state.incarnation,
     resolveClaims: opts.resolveClaims ?? ((ctx): Claims | undefined => ctx.inferenceClaims),
@@ -1184,6 +1221,8 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
       }
     },
   };
+  hostStates.set(host, state);
+  return host;
 }
 
 let publishedHost: WorkerRpcHost | null = null;

@@ -53,6 +53,7 @@ import {
   type WorkerRpcExecutorOptions,
 } from "../src/inference/client.js";
 import {
+  __workerRpcCancelIdIndexSizeForTests,
   createWorkerRpcHost,
   currentWorkerRpcHost,
   publishWorkerRpcHost,
@@ -2296,7 +2297,7 @@ interface Transports {
   centralCertificate: string;
   centralFingerprint: string;
   centralToken: string;
-  /** Central's relay-only credential: it relays inferenceRpc.* and nothing else. */
+  /** Central's relay-only credential: it relays the worker-RPC procedures and nothing else. */
   relayCredential: string;
   /** Every /tunnel-relay path central has been asked for, in order. */
   relayRequests: string[];
@@ -3879,14 +3880,14 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
 
   /**
    * X5 — central's relay-only credential. It admits relaying the
-   * `inferenceRpc.*` procedures to nodes and nothing else: no other relay
+   * worker-RPC procedures to nodes and nothing else: no other relay
    * method, no other route, however the URL is spelled. Callers present it
    * for the relay hop through their kubeconfig node's reference, and fail
    * closed without one rather than present the operator bearer, which
    * central still accepts for any relay.
    */
   describe("the relay-only credential on central (X5)", () => {
-    test("a kubeconfig reference to it carries inferenceRpc.* end to end", async () => {
+    test("a kubeconfig reference to it carries the worker-RPC procedures end to end", async () => {
       useRemoteHost();
       const serviceFile = join(temp.devStorage, "svc-relay-only.token");
       const relayFile = join(temp.devStorage, "relay-only.token");
@@ -4048,7 +4049,7 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         const call = (method: string): string =>
           JSON.stringify({ method, type: "query", input: { versions: [V1_0] } });
 
-        // The one thing it is for, to a node: an inferenceRpc.* procedure.
+        // The one thing it is for, to a node: a worker-RPC procedure.
         expect(
           (await raw("POST", "/tunnel-relay/spy-node", relay, call("inferenceRpc.negotiate")))
             .status,
@@ -4387,5 +4388,192 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
     });
     expect(verified).toEqual([[RUN_PID]]);
     expect(engine.requests).toHaveLength(1);
+  });
+});
+
+describe("a cancelId shared by tenant bindings of one owner (#186)", () => {
+  const RETENTION_MS = inferenceRpc.INFERENCE_RPC_MAX_DEADLINE_MS + 60_000;
+  const T1 = "tenant-1";
+  const T2 = "tenant-2";
+
+  function submitWith(
+    worker: WorkerRpcHost,
+    binding: Claims,
+    fenced: inferenceRpc.InferenceRpcTargetV1,
+    attempt: { attemptId: string; tenantId: string; cancelId: string; deadline?: number },
+  ): string | undefined {
+    return rejectionCode(
+      worker.submit(binding, {
+        version: V1_0,
+        envelope: envelope(attempt.attemptId, { tenantId: attempt.tenantId }, attempt.deadline),
+        target: fenced,
+        cancelId: attempt.cancelId,
+      }),
+    );
+  }
+
+  test("two bindings with different tenants each cancel their own attempt by it", async () => {
+    const worker = useHost();
+    const a = claims({ tenants: [T1] });
+    const b = claims({ tenants: [T2] });
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    expect(
+      submitWith(worker, a, fenced, { attemptId: "att-t1", tenantId: T1, cancelId: "c" }),
+    ).toBe("accepted");
+    expect(
+      submitWith(worker, b, fenced, { attemptId: "att-t2", tenantId: T2, cancelId: "c" }),
+    ).toBe("accepted");
+    expect(worker.cancel(a, { cancelId: "c" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-t1",
+    });
+    expect(worker.status(b, { attemptId: "att-t2" })).toMatchObject({ state: "accepted" });
+    expect(worker.cancel(b, { cancelId: "c" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-t2",
+    });
+    expect(worker.cancel(a, { cancelId: "c" })).toEqual({
+      outcome: "already-terminal",
+      attemptId: "att-t1",
+    });
+    expect(engine.requests).toHaveLength(0);
+  });
+
+  test("a binding presenting both tenants cancels the latest attempt to use the cancelId", async () => {
+    const worker = useHost();
+    const a = claims({ tenants: [T1] });
+    const b = claims({ tenants: [T2] });
+    const both = claims({ tenants: [T1, T2] });
+    const fenced = await target(createEmbeddedInferenceRpcClient(both));
+    // c-x's latest attempt is under the second presented tenant and c-y's
+    // under the first, so no fixed tenant order finds both.
+    for (const [binding, tenantId, attemptId, cancelId] of [
+      [a, T1, "att-x-old", "c-x"],
+      [b, T2, "att-x-new", "c-x"],
+      [b, T2, "att-y-old", "c-y"],
+      [a, T1, "att-y-new", "c-y"],
+    ] as const) {
+      expect(submitWith(worker, binding, fenced, { attemptId, tenantId, cancelId })).toBe(
+        "accepted",
+      );
+    }
+    expect(worker.cancel(both, { cancelId: "c-x" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-x-new",
+    });
+    expect(worker.cancel(both, { cancelId: "c-y" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-y-new",
+    });
+    expect(worker.cancel(a, { cancelId: "c-x" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-x-old",
+    });
+    expect(worker.cancel(b, { cancelId: "c-y" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-y-old",
+    });
+  });
+
+  test("the cancelId index is empty once every record has been swept", async () => {
+    const start = Date.now();
+    const clock = { wall: start, mono: 0 };
+    const worker = useHost({ now: () => clock.wall, monotonicNow: () => clock.mono });
+    const a = claims({ tenants: [T1] });
+    const b = claims({ tenants: [T2] });
+    const other = claims({ serviceId: "svc-b", tenants: [T1] });
+    const fenced = await target(createEmbeddedInferenceRpcClient(a));
+    const settled = (binding: Claims, attemptId: string, tenantId: string): void => {
+      const deadline = clock.wall + 60_000;
+      expect(
+        submitWith(worker, binding, fenced, { attemptId, tenantId, cancelId: "c", deadline }),
+      ).toBe("accepted");
+      expect(worker.cancel(binding, { attemptId })).toMatchObject({ outcome: "cancelled" });
+    };
+    // Only a submit sweeps, and one the worker refuses leaves no record of its own.
+    const sweepAt = (offset: number): void => {
+      clock.wall = start + offset;
+      clock.mono = offset;
+      const refused = worker.submit(a, {
+        version: { major: 9, minor: 0 },
+        envelope: envelope("att-sweep", { tenantId: T1 }, clock.wall + 60_000),
+        target: fenced,
+        cancelId: "c-sweep",
+      });
+      expect(refused.outcome).toBe("rejected");
+    };
+    settled(a, "att-1", T1);
+    clock.wall = start + 1_000;
+    clock.mono = 1_000;
+    settled(b, "att-2", T2);
+    settled(a, "att-3", T1);
+    settled(other, "att-4", T1);
+    expect(__workerRpcCancelIdIndexSizeForTests(worker)).toBe(3);
+    // att-1 is swept first; att-3 has since taken its key, which stays.
+    sweepAt(RETENTION_MS);
+    expect(worker.status(a, { attemptId: "att-1" })).toMatchObject({ state: "unknown" });
+    expect(worker.cancel(a, { cancelId: "c" })).toEqual({
+      outcome: "already-terminal",
+      attemptId: "att-3",
+    });
+    expect(__workerRpcCancelIdIndexSizeForTests(worker)).toBe(3);
+    sweepAt(RETENTION_MS + 1_000);
+    for (const [binding, attemptId] of [
+      [b, "att-2"],
+      [a, "att-3"],
+      [other, "att-4"],
+    ] as const) {
+      expect(worker.status(binding, { attemptId })).toMatchObject({ state: "unknown" });
+    }
+    expect(__workerRpcCancelIdIndexSizeForTests(worker)).toBe(0);
+    expect(worker.cancel(a, { cancelId: "c" })).toEqual({ outcome: "unknown" });
+  });
+
+  test("a binding presenting both tenants indexes each attempt under its envelope's tenant", async () => {
+    const start = Date.now();
+    const clock = { wall: start, mono: 0 };
+    const worker = useHost({ now: () => clock.wall, monotonicNow: () => clock.mono });
+    const a = claims({ tenants: [T1] });
+    const b = claims({ tenants: [T2] });
+    const both = claims({ tenants: [T1, T2] });
+    const fenced = await target(createEmbeddedInferenceRpcClient(both));
+    // One attempt per presented tenant, so no fixed pick among the binding's
+    // tenants indexes both where a single-tenant binding and the sweep look.
+    for (const [attemptId, tenantId] of [
+      ["att-both-t2", T2],
+      ["att-both-t1", T1],
+    ] as const) {
+      expect(
+        submitWith(worker, both, fenced, {
+          attemptId,
+          tenantId,
+          cancelId: "c",
+          deadline: clock.wall + 60_000,
+        }),
+      ).toBe("accepted");
+    }
+    expect(worker.cancel(b, { cancelId: "c" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-both-t2",
+    });
+    expect(worker.cancel(a, { cancelId: "c" })).toEqual({
+      outcome: "cancelled",
+      attemptId: "att-both-t1",
+    });
+    expect(__workerRpcCancelIdIndexSizeForTests(worker)).toBe(2);
+    clock.wall = start + RETENTION_MS;
+    clock.mono = RETENTION_MS;
+    // Only a submit sweeps, and one the worker refuses leaves no record of its own.
+    const refused = worker.submit(both, {
+      version: { major: 9, minor: 0 },
+      envelope: envelope("att-sweep", { tenantId: T1 }, clock.wall + 60_000),
+      target: fenced,
+      cancelId: "c-sweep",
+    });
+    expect(refused.outcome).toBe("rejected");
+    for (const attemptId of ["att-both-t2", "att-both-t1"]) {
+      expect(worker.status(both, { attemptId })).toMatchObject({ state: "unknown" });
+    }
+    expect(__workerRpcCancelIdIndexSizeForTests(worker)).toBe(0);
   });
 });
