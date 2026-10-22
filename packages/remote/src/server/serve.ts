@@ -12,6 +12,7 @@ import {
   createWorkerRpcHost,
   type InferenceRpcContext,
   publishWorkerRpcHost,
+  type WorkerRpcHostOptions,
 } from "../inference/procedures.js";
 import { dispatchProxyRequest, publishUnifiedPeerSnapshots } from "../proxy/create-proxy.js";
 import { type AgentRouterContext, router as appRouter } from "../router.js";
@@ -175,6 +176,8 @@ export interface StartAgentOptions {
     workerId: string;
     settings: () => AgentWorkerRpc | undefined;
     drainTimeoutMs?: number;
+    /** Stands in for the engines, so a test can hold a backend's unwind after a cancel. */
+    backends?: WorkerRpcHostOptions["backends"];
   };
 }
 
@@ -861,6 +864,7 @@ function maybePublishWorkerRpc(opts: StartAgentOptions): WorkerRpcServing | null
   const spoken = inferenceRpc.inferenceRpcVersionsSpokenAt(inferenceRpc.INFERENCE_RPC_VERSION);
   const host = createWorkerRpcHost({
     workerId: config.workerId,
+    ...(config.backends !== undefined ? { backends: config.backends } : {}),
     versions: () =>
       (config.settings()?.versions ?? []).filter((v) =>
         spoken.some((s) => inferenceRpc.compareInferenceRpcVersions(s, v) === 0),
@@ -986,23 +990,34 @@ export function startAgentServer(opts: StartAgentOptions): RunningAgent {
       process.off("unhandledRejection", onUnhandledRejection);
       stopSearchIngest();
       stopPeerSnapshotPoller?.();
-      // Best-effort — never let a tunnel-client teardown error
-      // prevent the HTTP server from also stopping.
-      if (tunnelClient) {
-        try {
-          tunnelClient.stop();
-        } catch {
-          /* ignore */
-        }
-      }
       if (mdns) await mdns.stop().catch(() => undefined);
-      // A drained or cancelled worker-RPC stream has handed its terminal
-      // to its response; let in-flight responses finish before closing.
-      // The host stays published until then, so a status or cancel still
-      // in flight is answered by the attempts it names.
-      if (workerRpc !== null) await within(TERMINAL_FLUSH_MS, server.stop());
-      void server.stop(true);
-      workerRpc?.unpublish();
+      try {
+        // A drained or cancelled worker-RPC stream has handed its terminal
+        // to its response; let in-flight responses finish before closing.
+        // Tunneled calls never pass through the HTTP server, so the tunnel
+        // stays up until it is idle too: one window for both keeps stop()
+        // within the drain timeout plus two flush windows. The host stays
+        // published until then, so a status or cancel still in flight, over
+        // either transport, is answered by the attempts it names.
+        if (workerRpc !== null) {
+          await within(
+            TERMINAL_FLUSH_MS,
+            Promise.all([server.stop(), tunnelClient?.whenIdle()]).then(() => undefined),
+          );
+        }
+      } finally {
+        // Best-effort — never let a tunnel-client teardown error
+        // prevent the HTTP server from also stopping.
+        if (tunnelClient) {
+          try {
+            tunnelClient.stop();
+          } catch {
+            /* ignore */
+          }
+        }
+        void server.stop(true);
+        workerRpc?.unpublish();
+      }
     },
     ...(tunnelServer ? { tunnelServer } : {}),
     ...(tunnelClient ? { tunnelClient } : {}),
