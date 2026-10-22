@@ -6,7 +6,12 @@ import { unauthorizedResponse, verifyBearer } from "./auth.js";
 
 function relayOnlyRefusal(): Response {
   return Response.json(
-    { error: { code: "FORBIDDEN", message: "this credential relays inferenceRpc.* calls only" } },
+    {
+      error: {
+        code: "FORBIDDEN",
+        message: "this credential relays the worker-RPC procedures only",
+      },
+    },
     { status: 403 },
   );
 }
@@ -22,8 +27,8 @@ type RelayAccess = "operator" | "relay-only";
 
 /**
  * Who is relaying: the operator bearer, for anything, or a relay-only
- * credential, for `inferenceRpc.*` POSTs only. Otherwise the HTTP-layer
- * rejection (401, 403 or 405), which is not a tunnel event.
+ * credential, for POSTs of the worker-RPC procedures only. Otherwise the
+ * HTTP-layer rejection (401, 403 or 405), which is not a tunnel event.
  */
 function relayAccess(
   req: Request,
@@ -46,8 +51,8 @@ function relayAccess(
  *   - 502 when the tunnel isn't connected or send() throws
  *   - 400 on malformed input
  *   - 401 without valid bearer
- *   - 403 for a relay-only credential asking for anything else than an
- *     `inferenceRpc.*` procedure
+ *   - 403 for a relay-only credential asking for anything other than a
+ *     worker-RPC procedure, named exactly
  *   - 405 on non-POST verbs
  *
  * POST /tunnel-relay/<nodeName>?stream=true
@@ -67,9 +72,10 @@ function relayAccess(
  * Note: nodeName is URL-decoded. Bearer is the agent's tokenHash
  * (same one guarding /trpc); the tunnel bearer is separate and
  * guards only the inbound /tunnel WS upgrade. A relay-only credential
- * (P4.1, `relayCredentialHashes`) relays exactly the `inferenceRpc.*`
- * procedures, POSTed by name; anything else it asks for is a 403, and it
- * opens no other route on the agent.
+ * (P4.1, `relayCredentialHashes`) relays exactly the six worker-RPC
+ * procedures (`inferenceRpc.negotiate`, `catalog`, `submit`, `stream`,
+ * `status` and `cancel`), POSTed by name; anything else it asks for is a
+ * 403, and it opens no other route on the agent.
  *
  * Journal policy: the `tunnel-relay-call` / `tunnel-relay-error`
  * entries fire ONLY for the actual tunnel-send path (the inner
