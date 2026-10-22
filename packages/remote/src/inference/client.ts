@@ -33,11 +33,15 @@
  * on the existing path; every other negotiation failure fails closed.
  */
 import type { PeerNode } from "@llamactl/core/config/peers";
-import type { ClusterNode } from "@llamactl/core/config/schema";
 import type { z } from "zod";
 
 import { type inferenceContracts, inferenceRpc, type routingCatalog } from "@llamactl/core";
 import { currentContext, loadConfig } from "@llamactl/core/config/kubeconfig";
+import {
+  type ClusterNode,
+  type NodeWorkerRpc,
+  NodeWorkerRpcSchema,
+} from "@llamactl/core/config/schema";
 import { resolveSecret } from "@llamactl/core/config/secret";
 import {
   buildRelayFetchInit,
@@ -1502,27 +1506,48 @@ function unreachableClient(transport: InferenceRpcTransport, message: string): I
   };
 }
 
-function kubeconfigWorkerRpc(owner: string): ClusterNode["workerRpc"] {
+/**
+ * The owner's kubeconfig worker-RPC block, validated here because loading
+ * keeps it opaque: a malformed block refuses this owner only. A present
+ * block that does not validate throws, naming the owner and the first
+ * issue, so the caller fails closed instead of reading it as no opt-in.
+ */
+function kubeconfigWorkerRpc(owner: string): NodeWorkerRpc | undefined {
+  let block: unknown;
   try {
     const config = loadConfig();
     const context = currentContext(config);
     const cluster = config.clusters.find((candidate) => candidate.name === context.cluster);
-    return cluster?.nodes.find((node) => node.name === owner)?.workerRpc;
+    block = cluster?.nodes.find((node) => node.name === owner)?.workerRpc;
   } catch {
     return undefined;
   }
+  if (block === undefined) return undefined;
+  const parsed = NodeWorkerRpcSchema.safeParse(block);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const at = issue === undefined || issue.path.length === 0 ? "" : `${issue.path.join(".")}: `;
+    throw new Error(
+      `owner '${owner}' has an invalid workerRpc block: ${at}${issue?.message ?? "invalid"}`,
+    );
+  }
+  return parsed.data;
 }
 
 /**
  * The secret reference to the caller's service credential for `owner`,
  * from the owner's kubeconfig node. Undefined when the node declares no
- * worker-RPC block: the caller has not opted in for that owner.
+ * worker-RPC block: the caller has not opted in for that owner. Throws
+ * when the block does not validate.
  */
 export function kubeconfigServiceCredentialRef(owner: string): string | undefined {
   return kubeconfigWorkerRpc(owner)?.serviceCredentialRef;
 }
 
-/** The secret reference to central's relay-only credential for `owner`'s relay hop, if any. */
+/**
+ * The secret reference to central's relay-only credential for `owner`'s
+ * relay hop, if any. Throws when the block does not validate.
+ */
 export function kubeconfigRelayCredentialRef(owner: string): string | undefined {
   return kubeconfigWorkerRpc(owner)?.relayCredentialRef;
 }
@@ -1578,8 +1603,9 @@ interface OwnerRefs {
  * pinned to its certificate, presenting the caller's service credential.
  * An owner the caller has not opted in for (no worker-RPC block) keeps
  * the existing path: null. An owner that cannot be reached, whose
- * credential does not resolve, or whose tunnel has no relay-only
- * credential, fails closed; it is never rerouted.
+ * worker-RPC block does not validate, whose credential does not resolve,
+ * or whose tunnel has no relay-only credential, fails closed; it is never
+ * rerouted.
  */
 function ownerClient(
   owner: string,
@@ -1590,10 +1616,10 @@ function ownerClient(
   if (peer === undefined) {
     return unreachableClient("direct", `no kubeconfig agent node declares owner '${owner}'`);
   }
-  const ref = refs.service(owner);
-  if (ref === undefined) return null;
   const transport = peer.tunnelPreferred === true ? "tunnel" : "direct";
   try {
+    const ref = refs.service(owner);
+    if (ref === undefined) return null;
     const credential = resolveSecret(ref);
     if (transport === "direct") return directClientFor(peer, credential);
     const relayRef = refs.relay(owner);

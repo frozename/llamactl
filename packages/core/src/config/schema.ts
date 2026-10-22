@@ -238,6 +238,24 @@ export const ProviderBindingSchema = z.object({
 });
 export type ProviderBinding = z.infer<typeof ProviderBindingSchema>;
 
+/**
+ * A caller's InferenceRpcV1 settings for one kubeconfig agent node (P4.1).
+ * `serviceCredentialRef` resolves, through the shared secret resolver, to
+ * the service credential this caller presents to the node's worker RPC;
+ * the node keeps only its hash. `relayCredentialRef`, in the same grammar,
+ * names central's relay-only credential for a tunneled node's relay hop.
+ * A tunneled node needs it: without it the caller fails closed rather than
+ * present the context user's operator bearer. Strict, so a misspelled key
+ * refuses the owner with the key's name instead of being dropped.
+ */
+export const NodeWorkerRpcSchema = z
+  .object({
+    serviceCredentialRef: z.string().min(1),
+    relayCredentialRef: z.string().min(1).optional(),
+  })
+  .strict();
+export type NodeWorkerRpc = z.infer<typeof NodeWorkerRpcSchema>;
+
 export const ClusterNodeSchema = z
   .object({
     name: z.string().min(1),
@@ -276,21 +294,13 @@ export const ClusterNodeSchema = z
      */
     cli: z.array(CliBindingSchema).optional(),
     /**
-     * InferenceRpcV1 caller settings for this agent (P4.1). The
-     * reference resolves, through the shared secret resolver, to the
-     * service credential this caller presents to the node's worker RPC;
-     * the node keeps only its hash. Absent, the caller keeps the existing
-     * path for the node's deployments. `relayCredentialRef`, in the same
-     * grammar, names central's relay-only credential for a tunneled
-     * node's relay hop. A tunneled node needs it: without it the caller
-     * fails closed rather than present the context user's operator bearer.
+     * InferenceRpcV1 caller settings for this agent (P4.1), a
+     * NodeWorkerRpcSchema block. Opaque here so a malformed block refuses
+     * only this owner's worker-RPC attempts, which validate it, rather than
+     * every kubeconfig load; re-saves write it back as it was read. Absent,
+     * the caller keeps the existing path for the node's deployments.
      */
-    workerRpc: z
-      .object({
-        serviceCredentialRef: z.string().min(1),
-        relayCredentialRef: z.string().min(1).optional(),
-      })
-      .optional(),
+    workerRpc: z.unknown().optional(),
   })
   .refine(
     (n) => {
