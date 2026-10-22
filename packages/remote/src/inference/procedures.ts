@@ -1,3 +1,4 @@
+import type { PidIdentityDeps } from "@llamactl/core/pidIdentity";
 import type { ResolvedEnv } from "@llamactl/core/types";
 
 /**
@@ -20,7 +21,11 @@ import type { ResolvedEnv } from "@llamactl/core/types";
 import { type inferenceContracts, inferenceRpc, routingCatalog } from "@llamactl/core";
 import { LOCAL_NODE_NAME } from "@llamactl/core/config/schema";
 import { resolveEnv } from "@llamactl/core/env";
-import { listLocalRoutes } from "@llamactl/core/workloadRuntime";
+import {
+  listLocalRoutes,
+  listWorkloadRoutes,
+  type LocalRoute,
+} from "@llamactl/core/workloadRuntime";
 import {
   createOpenAICompatProvider,
   type ExecutionContentPayload,
@@ -81,6 +86,8 @@ export interface WorkerRpcHostOptions {
   resolved?: ResolvedEnv | (() => ResolvedEnv);
   /** Extra catalog input (the P0.2 advertisement seam). Foreign-owned entries never run. */
   advertisements?: () => readonly Deployment[];
+  /** Identity checks for the worker's own workload pids; `ps` by default. */
+  pidIdentity?: PidIdentityDeps;
   /** The backend-kind registration point. Defaults to `local-model` only. */
   backends?: ReadonlyMap<WorkerRpcBackendKind, WorkerRpcBackend>;
   /** Defaults to the claims the server put on the request context. */
@@ -192,6 +199,7 @@ interface HostState {
   draining: boolean;
   resolve: () => ResolvedEnv;
   advertisements: () => readonly Deployment[];
+  pidIdentity: PidIdentityDeps | undefined;
   backends: ReadonlyMap<WorkerRpcBackendKind, WorkerRpcBackend>;
   maxActive: number;
   maxRecords: number;
@@ -324,9 +332,13 @@ function epochOf(deployment: Deployment): string | null {
   return deployment.deploymentEpoch.status === "known" ? deployment.deploymentEpoch.value : null;
 }
 
-function buildWorkerCatalog(state: HostState): WorkerCatalog {
+/** The catalog over `routes` and the advertisements, and what this worker owns of it by id. */
+function ownedDeployments(
+  state: HostState,
+  routes: readonly LocalRoute[],
+): { all: Deployment[]; owned: Deployment[] } {
   const catalog = routingCatalog.buildRouteCatalog({
-    routes: listLocalRoutes(state.resolve()),
+    routes,
     nodeId: state.workerId,
     now: state.now(),
     advertisements: state.advertisements(),
@@ -334,6 +346,14 @@ function buildWorkerCatalog(state: HostState): WorkerCatalog {
   const owned = catalog.deployments
     .filter((d) => d.ownerNodeId === state.workerId)
     .sort((a, b) => (a.deploymentId < b.deploymentId ? -1 : 1));
+  return { all: catalog.deployments, owned };
+}
+
+function buildWorkerCatalog(state: HostState): WorkerCatalog {
+  const { all, owned } = ownedDeployments(
+    state,
+    listLocalRoutes(state.resolve(), state.pidIdentity),
+  );
   const hash = createHash("sha256");
   for (const d of owned) {
     const identity = [
@@ -348,7 +368,7 @@ function buildWorkerCatalog(state: HostState): WorkerCatalog {
   }
   return {
     generation: `gen-${hash.digest("hex").slice(0, 16)}`,
-    all: catalog.deployments,
+    all,
     owned: new Map(owned.map((d) => [d.deploymentId, d])),
   };
 }
@@ -922,10 +942,17 @@ function failureTerminal(
 /**
  * X2 again at the dial: a restart between acceptance and the stream would
  * send the request to whatever process now holds the endpoint and report
- * the accepted deployment as what ran.
+ * the accepted deployment as what ran. Only the accepted deployment's own
+ * workload is re-read: its pid is the one a restart changes, and the
+ * identity pass over every workload would block the event loop at every
+ * stream start.
  */
 function movedSinceAcceptance(state: HostState, accepted: Deployment): string | null {
-  const current = buildWorkerCatalog(state).owned.get(accepted.deploymentId);
+  const workload = routingCatalog.workloadOfDeployment(accepted.deploymentId, state.workerId);
+  const routes =
+    workload === null ? [] : listWorkloadRoutes(state.resolve(), workload, state.pidIdentity);
+  const { owned } = ownedDeployments(state, routes);
+  const current = new Map(owned.map((d) => [d.deploymentId, d])).get(accepted.deploymentId);
   if (current === undefined) {
     return `the worker no longer owns deployment '${accepted.deploymentId}'`;
   }
@@ -1111,6 +1138,7 @@ export function createWorkerRpcHost(opts: WorkerRpcHostOptions): WorkerRpcHost {
         ? resolvedOpt
         : (): ResolvedEnv => resolvedOpt ?? resolveEnv(),
     advertisements: opts.advertisements ?? ((): readonly Deployment[] => []),
+    pidIdentity: opts.pidIdentity,
     backends: opts.backends ?? DEFAULT_BACKENDS,
     maxActive: opts.maxActiveAttempts ?? DEFAULT_MAX_ACTIVE,
     maxRecords: opts.maxAttemptRecords ?? DEFAULT_MAX_RECORDS,

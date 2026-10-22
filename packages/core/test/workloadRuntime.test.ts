@@ -2,15 +2,18 @@ import { expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { PidIdentityDeps } from "../src/pidIdentity.js";
 import type { ResolvedEnv } from "../src/types.js";
 
 import { writeModelHostState } from "../src/engines/state.js";
+import { buildRouteCatalog, knownRevision, workloadOfDeployment } from "../src/routing/catalog.js";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "../src/safe-fs.js";
 import {
@@ -18,6 +21,7 @@ import {
   listLocalRoutes,
   listLocalWorkloads,
   listWorkloadDirs,
+  listWorkloadRoutes,
   migrateLegacySingletonRuntime,
   workloadRuntimeDir,
 } from "../src/workloadRuntime.js";
@@ -272,6 +276,117 @@ test("migrateLegacySingletonRuntime is a no-op on second invocation", () => {
     writeFileSync(join(t.runtimeDir, "llama-server.pid"), "1\n");
     const out = migrateLegacySingletonRuntime(t.resolved, []);
     expect(out.kind).toBe("skipped");
+  } finally {
+    t.cleanup();
+  }
+});
+
+const writeRunWorkload = (dir: string, pid: number, rel: string): void => {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "llama-server.pid"), `${String(pid)}\n`);
+  writeFileSync(
+    join(dir, "llama-server.state"),
+    JSON.stringify({
+      rel,
+      extraArgs: [],
+      host: "127.0.0.1",
+      port: 8090,
+      pid,
+      startedAt: "t",
+      tunedProfile: null,
+    }),
+  );
+};
+
+/** Every recorded pid is alive; each start-time lookup records the pids it was asked for. */
+const recordingIdentity = (batches: number[][]): PidIdentityDeps => ({
+  probe: (): void => undefined,
+  processStartMsMany: (pids): Map<number, number> => {
+    batches.push([...pids]);
+    return new Map(pids.map((pid) => [pid, 0]));
+  },
+});
+
+test("listWorkloadRoutes lists one workload's routes and verifies its pid alone", () => {
+  const t = tempEnv();
+  try {
+    writeRunWorkload(join(t.runtimeDir, "workloads", "a"), 4001, "org/a.gguf");
+    writeRunWorkload(join(t.runtimeDir, "workloads", "b"), 4002, "org/b.gguf");
+    writeModelHostState(
+      {
+        kind: "ModelHost" as const,
+        engine: "omlx" as const,
+        pid: 4003,
+        host: "127.0.0.1",
+        port: 8094,
+        modelAliases: ["c-one", "c-two"],
+        startedAt: "2026-05-19T00:00:00Z",
+      },
+      { name: "c" },
+      t.resolved,
+    );
+    const batches: number[][] = [];
+    const routes = listWorkloadRoutes(t.resolved, "b", recordingIdentity(batches));
+    expect(batches).toEqual([[4002]]);
+    const allBatches: number[][] = [];
+    const all = listLocalRoutes(t.resolved, recordingIdentity(allBatches));
+    expect(allBatches.map((pids) => [...pids].sort((x, y) => x - y))).toEqual([[4001, 4002, 4003]]);
+    expect(routes).toHaveLength(1);
+    expect(routes).toEqual(all.filter((r) => r.workload === "b"));
+    const hostBatches: number[][] = [];
+    const hostRoutes = listWorkloadRoutes(t.resolved, "c", recordingIdentity(hostBatches));
+    expect(hostBatches).toEqual([[4003]]);
+    expect(hostRoutes).toHaveLength(2);
+    expect(hostRoutes).toEqual(all.filter((r) => r.workload === "c"));
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("listWorkloadRoutes lists nothing for a name that is not a workload directory", () => {
+  const t = tempEnv();
+  try {
+    writeRunWorkload(join(t.runtimeDir, "workloads", "a"), 4001, "org/a.gguf");
+    writeFileSync(join(t.runtimeDir, "workloads", "file"), "");
+    symlinkSync(join(t.runtimeDir, "workloads", "a"), join(t.runtimeDir, "workloads", "link"));
+    // A legacy singleton's records sit in the runtime root, one level above
+    // the workloads: a name escaping upward must not reach them.
+    writeRunWorkload(t.runtimeDir, 4009, "org/legacy.gguf");
+    // Stray records in the workloads root itself, which no name may reach either.
+    writeRunWorkload(join(t.runtimeDir, "workloads"), 4008, "org/stray.gguf");
+    const listed = listLocalRoutes(t.resolved, recordingIdentity([]));
+    expect(listed.map((r) => r.workload)).toEqual(["a"]);
+    for (const name of ["", ".", "..", "a/.", "missing", "file", "link"]) {
+      expect(listWorkloadRoutes(t.resolved, name, recordingIdentity([]))).toEqual([]);
+    }
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("one workload's routes give its deployment the epoch the full catalog gives it", () => {
+  const t = tempEnv();
+  try {
+    writeRunWorkload(join(t.runtimeDir, "workloads", "a"), 4001, "org/a.gguf");
+    writeRunWorkload(join(t.runtimeDir, "workloads", "b"), 4002, "org/b.gguf");
+    const deps = recordingIdentity([]);
+    const full = buildRouteCatalog({
+      routes: listLocalRoutes(t.resolved, deps),
+      nodeId: "node-1",
+      now: 1,
+    });
+    const fromFull = full.deployments.filter((d) => d.deploymentId === "deploy/node-1/b");
+    expect(fromFull.map((d) => d.deploymentEpoch)).toEqual([knownRevision("pid:4002")]);
+    const workload = workloadOfDeployment("deploy/node-1/b", "node-1");
+    expect(workload).toBe("b");
+    const one = buildRouteCatalog({
+      routes: listWorkloadRoutes(t.resolved, workload ?? "", deps),
+      nodeId: "node-1",
+      now: 1,
+    });
+    expect(one.deployments).toEqual(fromFull);
+    expect(workloadOfDeployment("deploy/node-2/b", "node-1")).toBeNull();
+    expect(workloadOfDeployment("route/node-1/b", "node-1")).toBeNull();
   } finally {
     t.cleanup();
   }

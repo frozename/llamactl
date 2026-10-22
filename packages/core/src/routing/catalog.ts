@@ -202,6 +202,21 @@ function upstreamIdFor(group: DeploymentGroup): string {
   return first ?? "";
 }
 
+function deploymentIdFor(owner: string, workload: string): string {
+  return `deploy/${owner}/${workload}`;
+}
+
+/**
+ * The workload a node's own local deployment id names, or null for any
+ * other id, so a caller re-checking one deployment can re-read that
+ * workload alone. An advertisement may reuse the id shape: the name is
+ * only a candidate until it is found among the workload directories.
+ */
+export function workloadOfDeployment(deploymentId: string, nodeId: string): string | null {
+  const prefix = deploymentIdFor(nodeId, "");
+  return deploymentId.startsWith(prefix) ? deploymentId.slice(prefix.length) : null;
+}
+
 function adForGroup(group: DeploymentGroup): RouteAdvertisementV1 {
   // Legacy-derived advertisements go through the same schema validation
   // as added ones — the endpoint is rewritten to its credential-free
@@ -210,7 +225,7 @@ function adForGroup(group: DeploymentGroup): RouteAdvertisementV1 {
   return RouteAdvertisementV1Schema.parse({
     schemaVersion: 1,
     routeId: `route/${group.owner}/${group.workload}`,
-    deploymentId: `deploy/${group.owner}/${group.workload}`,
+    deploymentId: deploymentIdFor(group.owner, group.workload),
     backendId: `backend/${group.owner}/${group.workload}`,
     ownerNodeId: group.owner,
     publicModelIds: [...group.models],
