@@ -80,6 +80,7 @@ import {
 import { INFERENCE_RPC_STREAM_LIMITS } from "../src/tunnel/messages.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
+import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
 
 type Claims = inferenceRpc.InferenceServiceClaimsV1;
 type Ad = routingCatalog.RouteAdvertisementV1;
@@ -366,6 +367,9 @@ afterAll(async () => {
     }
   }
 });
+
+const tunnelJournal = useTempTunnelJournal();
+guardDefaultTunnelJournal();
 
 const GOLDEN_CLAIMS = claims({
   serviceId: "svc-golden",
@@ -2355,6 +2359,7 @@ async function startTransports(): Promise<Transports> {
     onRequest: (url) => {
       if (url.pathname.startsWith("/tunnel-relay")) relayRequests.push(url.pathname);
     },
+    tunnelJournalPath: tunnelJournal.path,
     tunnelCentral: {
       expectedBearerHash: tunnelBearer.hash,
       workerRpcRelay: () => ({ tokenHashes: [relayCredential.hash] }),

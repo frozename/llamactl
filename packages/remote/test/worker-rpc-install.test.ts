@@ -56,6 +56,7 @@ import {
 import { createTunnelClient } from "../src/tunnel/index.js";
 import { type FakeEngine, startFakeEngine } from "./fixtures/inference-rpc-v1/fake-engine.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
+import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
 
 const WORKER = "worker-i6";
 const GATEWAY = "gateway-i6";
@@ -254,6 +255,7 @@ async function startCentral(name: string): Promise<Central> {
     tokenHash: operator.hash,
     tls: { certPath: cert.certPath, keyPath: cert.keyPath },
     advertiseMdns: false,
+    tunnelJournalPath: tunnelJournal.path,
     tunnelCentral: {
       expectedBearerHash: tunnelBearer.hash,
       workerRpcRelay: () => ({ tokenHashes: [relayOnly.hash] }),
@@ -539,6 +541,9 @@ afterAll(async () => {
     guard.dispose();
   }
 });
+
+const tunnelJournal = useTempTunnelJournal();
+guardDefaultTunnelJournal();
 
 describe("I1: clean install", () => {
   test("with no kubeconfig and no worker-RPC fields, the agent serves as before and does not advertise the RPC", async () => {
@@ -1461,7 +1466,15 @@ describe("the relay-only credential in central's agent.yaml", () => {
         "--tunnel-central=true",
         `--tunnel-bearer=${tunnelBearer.token}`,
       ],
-      { env: { ...process.env, LLAMACTL_DISABLE_MDNS: "1" }, stdout: "pipe", stderr: "pipe" },
+      {
+        env: {
+          ...process.env,
+          LLAMACTL_DISABLE_MDNS: "1",
+          LLAMACTL_TUNNEL_JOURNAL: tunnelJournal.path,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
     );
     const received: string[] = [];
     let node: ReturnType<typeof createTunnelClient> | undefined;

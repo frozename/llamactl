@@ -17,6 +17,7 @@ import {
   type TunnelSubscription,
 } from "../src/tunnel/index.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
+import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
 
 /**
  * B.4 coverage — end-to-end SSE relay. Boots a central agent with
@@ -98,6 +99,7 @@ async function startHarness(script: {
   const receivedCancel: string[] = [];
   const tunnelSrv = createTunnelServer({
     expectedBearerHash: hashToken(tunnelBearer),
+    journalPath: tunnelJournal.path,
     ...(script.streamLimits !== undefined ? { streamLimits: script.streamLimits } : {}),
   });
   const bun = Bun.serve({
@@ -109,7 +111,13 @@ async function startHarness(script: {
         return tunnelSrv.handleUpgrade(req, server) ?? new Response("no", { status: 400 });
       }
       if (url.pathname.startsWith("/tunnel-relay/")) {
-        return await handleTunnelRelay(req, url, tunnelSrv, bearerHash, script.journalPath);
+        return await handleTunnelRelay(
+          req,
+          url,
+          tunnelSrv,
+          bearerHash,
+          script.journalPath ?? tunnelJournal.path,
+        );
       }
       return new Response("404", { status: 404 });
     },
@@ -181,6 +189,9 @@ beforeAll(() => {
 afterAll(() => {
   controllerGuard.dispose();
 });
+
+const tunnelJournal = useTempTunnelJournal();
+guardDefaultTunnelJournal();
 
 describe("tunnel-relay SSE", () => {
   let harness: RunningHarness | undefined;
@@ -530,6 +541,7 @@ describe("P4.1: an agent serves tunneled subscriptions", () => {
       port: 0,
       tokenHash: relay.hash,
       tunnelCentral: { expectedBearerHash: hashToken(tunnelBearer) },
+      tunnelJournalPath: tunnelJournal.path,
     });
     agents.push(central);
     let markReady = (): void => undefined;

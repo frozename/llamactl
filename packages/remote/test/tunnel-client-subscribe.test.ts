@@ -7,6 +7,7 @@ import {
   type TunnelReq,
   type TunnelSubscription,
 } from "../src/tunnel/index.js";
+import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
 
 /**
  * B.3 coverage — verify the tunnel CLIENT ships stream frames in
@@ -14,6 +15,9 @@ import {
  * we can inspect the on-wire sequence via `sendSubscribe`'s
  * iterator (which is the server's parsed stream view).
  */
+
+const tunnelJournal = useTempTunnelJournal();
+guardDefaultTunnelJournal();
 
 describe("tunnel-client: handleSubscription", () => {
   const stops: (() => Promise<void> | void)[] = [];
@@ -23,7 +27,10 @@ describe("tunnel-client: handleSubscription", () => {
 
   test("events arrive in agent-emit order", async () => {
     const bearer = "b";
-    const srv = createTunnelServer({ expectedBearerHash: hashToken(bearer) });
+    const srv = createTunnelServer({
+      expectedBearerHash: hashToken(bearer),
+      journalPath: tunnelJournal.path,
+    });
     const bun = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -81,7 +88,10 @@ describe("tunnel-client: handleSubscription", () => {
 
   test("server-initiated stream-cancel tears down the agent subscription", async () => {
     const bearer = "b";
-    const srv = createTunnelServer({ expectedBearerHash: hashToken(bearer) });
+    const srv = createTunnelServer({
+      expectedBearerHash: hashToken(bearer),
+      journalPath: tunnelJournal.path,
+    });
     const bun = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -149,7 +159,10 @@ describe("tunnel-client: handleSubscription", () => {
 
   test("missing handleSubscription → stream-done with error frame", async () => {
     const bearer = "b";
-    const srv = createTunnelServer({ expectedBearerHash: hashToken(bearer) });
+    const srv = createTunnelServer({
+      expectedBearerHash: hashToken(bearer),
+      journalPath: tunnelJournal.path,
+    });
     const bun = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",

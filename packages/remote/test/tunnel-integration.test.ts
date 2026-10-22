@@ -8,6 +8,7 @@ import {
   parseTunnelMessage,
   type TunnelReq,
 } from "../src/tunnel/index.js";
+import { guardDefaultTunnelJournal, useTempTunnelJournal } from "./tunnel-journal-sandbox.js";
 
 /**
  * Phase I.3.1 — agent-side mounting of tunnelServer + /tunnel-relay.
@@ -27,6 +28,9 @@ interface AgentHandle {
   wsUrl: string;
 }
 
+const tunnelJournal = useTempTunnelJournal();
+guardDefaultTunnelJournal();
+
 function bootAgentWithTunnel(): AgentHandle {
   const { token: agentToken, hash: agentHash } = generateToken();
   const tunnelBearer = `tun_${Math.random().toString(36).slice(2)}`;
@@ -35,6 +39,7 @@ function bootAgentWithTunnel(): AgentHandle {
     port: 0,
     tokenHash: agentHash,
     tunnelCentral: { expectedBearerHash: hashToken(tunnelBearer) },
+    tunnelJournalPath: tunnelJournal.path,
   });
   return {
     agent,
