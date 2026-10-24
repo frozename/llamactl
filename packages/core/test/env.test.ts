@@ -37,6 +37,19 @@ describe("env.resolveEnv", () => {
     expect(resolved.LLAMA_CPP_QWEN_CTX_SIZE).toBe("16384");
   });
 
+  test("large-128g profile lifts context sizes", () => {
+    const resolved = resolveEnv({
+      DEV_STORAGE: "/tmp/ds",
+      LLAMA_CPP_MACHINE_PROFILE: "large-128g",
+    });
+    expect(resolved.LLAMA_CPP_MACHINE_PROFILE).toBe("large-128g");
+    expect(resolved.LLAMA_CPP_GEMMA_CTX_SIZE).toBe("65536");
+    expect(resolved.LLAMA_CPP_QWEN_CTX_SIZE).toBe("131072");
+    expect(resolved.LLAMA_CPP_DEFAULT_MODEL).toBe(
+      "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+    );
+  });
+
   test("provider=lmstudio rewires provider URL + api key", () => {
     const resolved = resolveEnv({
       DEV_STORAGE: "/tmp/ds",

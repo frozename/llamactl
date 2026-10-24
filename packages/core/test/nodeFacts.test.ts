@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { collectNodeFacts, detectGpu, resolveNodeName, resolveVersions } from "../src/nodeFacts.js";
 import { detectMemoryBytes } from "../src/profile.js";
+import { MACHINE_PROFILES } from "../src/types.js";
 
 const originalEnv = { ...process.env };
 
@@ -68,7 +69,7 @@ describe("collectNodeFacts", () => {
   test("returns all documented fields", () => {
     const facts = collectNodeFacts();
     expect(typeof facts.nodeName).toBe("string");
-    expect(["mac-mini-16g", "balanced", "macbook-pro-48g"]).toContain(facts.profile);
+    expect([...MACHINE_PROFILES]).toContain(facts.profile);
     expect(facts.memBytes === null || typeof facts.memBytes === "number").toBe(true);
     expect(typeof facts.os).toBe("string");
     expect(typeof facts.arch).toBe("string");

@@ -59,6 +59,10 @@ describe("discovery.pickFile", () => {
     const siblings = ["model-Q8_0.gguf", "model-UD-Q4_K_XL.gguf", "model-UD-Q5_K_XL.gguf"];
     expect(pickFile("macbook-pro-48g", siblings)).toBe("model-UD-Q4_K_XL.gguf");
   });
+  test("large-128g prefers UD-Q4_K_XL", () => {
+    const siblings = ["model-Q8_0.gguf", "model-UD-Q4_K_XL.gguf", "model-UD-Q5_K_XL.gguf"];
+    expect(pickFile("large-128g", siblings)).toBe("model-UD-Q4_K_XL.gguf");
+  });
   test("falls back to the first sibling when nothing matches preferences", () => {
     const siblings = ["weird.gguf"];
     expect(pickFile("balanced", siblings)).toBe("weird.gguf");
