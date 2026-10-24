@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { access } from "../safe-fs-promises.js";
 import { existsSync, constants as fsConstants, mkdirSync, readFileSync } from "../safe-fs.js";
+import { collectAgentStatus, formatAgentStatus } from "./agent-status.js";
 import { runHeal } from "./heal.js";
 
 const USAGE = `Usage: llamactl agent <subcommand>
@@ -49,8 +50,9 @@ Subcommands:
       unset). Point it at the journal the fleet-supervisor writes so
       the agent serves fresh snapshots, not a DEV_STORAGE-dependent
       default.
-  status [--dir=<path>]
-      Print the agent config and its advertised URL.
+  status [--dir=<path>] [--host=<host>] [--json]
+      Report the agent config, whether /healthz answers, a loopback-only
+      bind, and cert expiry + SAN coverage of the advertised host.
   heal [flags]
       Run the self-healing loop (observe + journal + plan/execute).
       See 'llamactl agent heal --help' for full flag set. Also
@@ -136,10 +138,13 @@ ${DIR_FLAG_HELP}
 
 const STATUS_USAGE = `Usage: llamactl agent status [flags]
 
-Print the agent config and its advertised URL.
+Report the agent config, whether /healthz answers, a loopback-only
+bind, and cert expiry + SAN coverage of the advertised host.
 
 Flags:
 ${DIR_FLAG_HELP}
+  --host=<host>    Host remote clients dial, to check cert SAN coverage
+  --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
 
@@ -157,7 +162,7 @@ export async function runAgent(args: string[]): Promise<number> {
     case "serve":
       return await runServe(rest);
     case "status":
-      return runStatus(rest);
+      return await runStatus(rest);
     case "heal":
       return await runHeal(rest);
     case "install-launchd": {
@@ -750,7 +755,7 @@ async function runServe(args: string[]): Promise<number> {
   return 0;
 }
 
-function runStatus(args: string[]): number {
+async function runStatus(args: string[]): Promise<number> {
   if (args.some(isHelpFlag)) {
     process.stdout.write(STATUS_USAGE);
     return 0;
@@ -766,27 +771,43 @@ function runStatus(args: string[]): number {
     return 1;
   }
   const cfg = agentConfigMod.loadAgentConfig(cfgPath);
-  const out = {
+  const report = await collectAgentStatus({
     configPath: cfgPath,
-    nodeName: cfg.nodeName,
-    bind: `${cfg.bindHost}:${String(cfg.port)}`,
-    certPath: cfg.certPath,
-    keyPath: cfg.keyPath,
-    fingerprint: cfg.fingerprint,
-  };
-  process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+    cfg,
+    ...(parsed.host !== undefined ? { advertisedHost: parsed.host } : {}),
+  });
+  if (parsed.json) process.stdout.write(`${JSON.stringify(report)}\n`);
+  else process.stdout.write(formatAgentStatus(report));
   return 0;
 }
 
-function parseStatusFlags(args: string[]): { dir: string } | { error: string } {
-  let dir = agentConfigMod.defaultAgentDir();
+interface StatusFlags {
+  dir: string;
+  host?: string; // the host remote clients dial, for SAN coverage
+  json: boolean;
+}
+
+function parseStatusFlags(args: string[]): StatusFlags | { error: string } {
+  const flags: StatusFlags = { dir: agentConfigMod.defaultAgentDir(), json: false };
   for (const arg of args) {
+    if (arg === "--json") {
+      flags.json = true;
+      continue;
+    }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent status: flag must be --key=value: ${arg}` };
-    if (k === "--dir") dir = v;
-    else return { error: `agent status: unknown flag ${k}` };
+    switch (k) {
+      case "--dir":
+        flags.dir = v;
+        break;
+      case "--host":
+        flags.host = v;
+        break;
+      default:
+        return { error: `agent status: unknown flag ${k}` };
+    }
   }
-  return { dir };
+  return flags;
 }
 
 function splitFlag(arg: string): [string, string | undefined] {
