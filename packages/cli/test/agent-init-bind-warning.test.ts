@@ -81,7 +81,7 @@ describe("initBindWarning", () => {
   });
 
   test("stays silent for a non-loopback bind", () => {
-    expect(initBindWarning("192.168.1.50", "0.0.0.0", true)).toBeNull();
+    expect(initBindWarning("192.168.1.50", "0.0.0.0", false)).toBeNull();
   });
 });
 
@@ -98,6 +98,8 @@ describe("agent init bind warning", () => {
     expect(r.err).toContain("warning:");
     expect(r.err).toContain("192.168.1.50");
     expect(r.err).toContain("--bind=0.0.0.0");
+    expect(r.err).toContain("127.0.0.1");
+    expect(r.err.split("\n").filter((l) => l.includes("warning")).length).toBe(1);
     expect(r.out).toContain("llamactl node add probe --bootstrap ");
     expect(r.out).not.toContain("warning");
     expect(agentConfig.loadAgentConfig(join(tmp, "agent.yaml")).bindHost).toBe("127.0.0.1");
@@ -119,6 +121,8 @@ describe("agent init bind warning", () => {
     expect(record.bindHost).toBe("127.0.0.1");
     expect(record.blob.length).toBeGreaterThan(0);
     expect(r.err).toContain("--bind=0.0.0.0");
+    expect(r.err.split("\n").filter((l) => l.includes("warning")).length).toBe(1);
+    expect(r.out).not.toContain("warning");
   });
 
   test("explicit non-loopback --bind does not warn", async () => {
