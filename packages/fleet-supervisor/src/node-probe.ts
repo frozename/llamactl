@@ -1,5 +1,7 @@
 import type { NodeMemSnapshot } from "./types.js";
 
+import { readFileSync } from "./safe-fs.js";
+
 const PAGE_FIELDS: Record<
   string,
   "free_mb" | "active_mb" | "inactive_mb" | "wired_mb" | "compressor_mb"
@@ -56,8 +58,48 @@ export function parseVmStatOutput(raw: string): NodeMemSnapshot {
   return snap;
 }
 
+export function parseProcMeminfo(raw: string): NodeMemSnapshot {
+  const values: Record<string, number> = {};
+  for (const line of raw.split("\n")) {
+    const match = /^(\w+):\s+(\d+) kB/.exec(line);
+    const key = match?.[1];
+    const valueText = match?.[2];
+    if (key === undefined || valueText === undefined) continue;
+    values[key] = parseInt(valueText, 10);
+  }
+
+  const toMb = (kb: number | undefined): number => (kb ?? 0) / 1024;
+  const swapTotal = values["SwapTotal"];
+  const swapFree = values["SwapFree"];
+
+  const snap: NodeMemSnapshot = {
+    free_mb: toMb(values["MemAvailable"]),
+    active_mb: toMb(values["Active"]),
+    // MemAvailable already includes reclaimable inactive pages, and
+    // packages/remote/src/server/peer-snapshot-poller.ts sums free_mb +
+    // inactive_mb, so a non-zero value here would double-count.
+    inactive_mb: 0,
+    wired_mb: toMb(values["Unevictable"]),
+    compressor_mb:
+      swapTotal !== undefined && swapFree !== undefined
+        ? Math.max(0, (swapTotal - swapFree) / 1024)
+        : 0,
+    // meminfo carries no swap in/out counters.
+    swap_in: 0,
+    swap_out: 0,
+  };
+
+  if (values["MemTotal"] === undefined || values["MemAvailable"] === undefined) {
+    snap.available = false;
+  }
+
+  return snap;
+}
+
 export async function probeNodeMem(opts?: {
   exec?: (cmd: string) => Promise<string>;
+  platform?: NodeJS.Platform;
+  readFile?: (path: string) => Promise<string>;
 }): Promise<NodeMemSnapshot> {
   const exec =
     opts?.exec ??
@@ -66,5 +108,31 @@ export async function probeNodeMem(opts?: {
       if (proc.exitCode !== 0) return Promise.resolve("");
       return Promise.resolve(new TextDecoder().decode(proc.stdout));
     });
-  return parseVmStatOutput(await exec("vm_stat"));
+  const readFile =
+    opts?.readFile ??
+    ((path: string): Promise<string> => {
+      try {
+        return Promise.resolve(readFileSync(path, "utf8"));
+      } catch {
+        return Promise.resolve("");
+      }
+    });
+  const platform = opts?.platform ?? process.platform;
+
+  if (platform === "darwin") {
+    return parseVmStatOutput(await exec("vm_stat"));
+  }
+  if (platform === "linux") {
+    return parseProcMeminfo(await readFile("/proc/meminfo").catch(() => ""));
+  }
+  return {
+    free_mb: 0,
+    active_mb: 0,
+    inactive_mb: 0,
+    wired_mb: 0,
+    compressor_mb: 0,
+    swap_in: 0,
+    swap_out: 0,
+    available: false,
+  };
 }
