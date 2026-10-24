@@ -9,7 +9,7 @@ import { runHeal } from "./heal.js";
 const USAGE = `Usage: llamactl agent <subcommand>
 
 Subcommands:
-  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--json]
+  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--no-loopback-san] [--json]
       Generate a TLS cert + bearer token, write agent.yaml.
       Default output is a human-readable summary + a 'llamactl node add'
       bootstrap line. With --json emits a single-line JSON record
@@ -92,7 +92,10 @@ ${DIR_FLAG_HELP}
   --port=<n>       Port the agent listens on (default: 7843)
   --name=<node>    Node name recorded in agent.yaml (default: this machine's hostname)
   --bind=<host>    Address the agent binds to (default: 127.0.0.1)
-  --san=<host,...> Certificate SANs (default: the --host and --bind values)
+  --san=<host,...> Certificate SANs (default: the --host and --bind values).
+                   127.0.0.1, ::1 and localhost are always added when
+                   --bind is a wildcard or loopback address.
+  --no-loopback-san  Do not add the loopback SANs on a wildcard bind
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -199,8 +202,27 @@ interface InitFlags {
   nodeName: string;
   bindHost: string; // what Bun.serve binds to
   sans: string[]; // SANs baked into the cert
+  loopbackSan: boolean; // add loopback SANs when the bind covers them
   json: boolean; // emit single-line JSON instead of human summary
 }
+
+// A wildcard or loopback bind still serves https://127.0.0.1, so certs
+// minted for those binds must include loopback SANs or local clients
+// that trust the cert fail verification (#217).
+function bindCoversLoopback(bindHost: string): boolean {
+  if (
+    bindHost === "0.0.0.0" ||
+    bindHost === "::" ||
+    bindHost === "::1" ||
+    bindHost === "localhost" ||
+    bindHost === "::ffff:127.0.0.1"
+  ) {
+    return true;
+  }
+  return bindHost.startsWith("127.");
+}
+
+const LOOPBACK_SANS = ["127.0.0.1", "::1", "localhost"];
 
 function parseInitFlags(args: string[]): InitFlags | { error: string } {
   const flags: InitFlags = {
@@ -210,12 +232,18 @@ function parseInitFlags(args: string[]): InitFlags | { error: string } {
     nodeName: hostname() || "local",
     bindHost: "127.0.0.1",
     sans: [],
+    loopbackSan: true,
     json: false,
   };
   for (const arg of args) {
-    // --json is a flag-only switch; everything else is --key=value.
+    // --json and --no-loopback-san are flag-only switches; the rest
+    // are --key=value.
     if (arg === "--json") {
       flags.json = true;
+      continue;
+    }
+    if (arg === "--no-loopback-san") {
+      flags.loopbackSan = false;
       continue;
     }
     const [k, v] = splitFlag(arg);
@@ -275,11 +303,16 @@ async function runInit(args: string[]): Promise<number> {
     return 1;
   }
 
-  const sans = f.sans.length > 0 ? f.sans : [f.host, f.bindHost];
+  const requestedSans = f.sans.length > 0 ? f.sans : [f.host, f.bindHost];
+  const sans =
+    f.loopbackSan && bindCoversLoopback(f.bindHost)
+      ? [...requestedSans, ...LOOPBACK_SANS]
+      : requestedSans;
+  const dedupedSans = dedupe(sans);
   const cert = await tls.generateSelfSignedCert({
     dir: f.dir,
     commonName: f.host,
-    hostnames: dedupe(sans),
+    hostnames: dedupedSans,
   });
 
   const token = auth.generateToken();
@@ -315,6 +348,7 @@ async function runInit(args: string[]): Promise<number> {
         `key    ${cert.keyPath}`,
         `bind   ${f.bindHost}:${String(f.port)}`,
         `fp     ${cert.fingerprint}`,
+        `sans   ${dedupedSans.join(",")}`,
       ].join("\n") + "\n",
     );
     const record = {
@@ -336,6 +370,7 @@ async function runInit(args: string[]): Promise<number> {
       `key    ${cert.keyPath}`,
       `bind   ${f.bindHost}:${String(f.port)}`,
       `fp     ${cert.fingerprint}`,
+      `sans   ${dedupedSans.join(",")}`,
       ``,
       `On the control plane, run:`,
       ``,
