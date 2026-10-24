@@ -674,6 +674,8 @@ describe("I1: clean install", () => {
       "rotate-token",
       "rpc-doctor",
       "serve",
+      // `llamactl agent set-token` (#222), not the worker RPC.
+      "set-token",
       "status",
       "update",
     ]);
