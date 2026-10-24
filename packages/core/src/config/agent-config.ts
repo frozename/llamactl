@@ -18,7 +18,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "../safe-fs.js";
 import { llamactlHome, nonEmpty } from "./env.js";
@@ -195,17 +197,37 @@ function serialize(config: AgentConfig, path: string): string {
   }
 }
 
+/**
+ * Writes via a 0600 tmp in the same dir + a rename, so the credential
+ * hash is never readable under the umask mid-write and a concurrent
+ * reader sees either the old or the new file, never a partial one.
+ */
 export function saveAgentConfig(
   config: AgentConfig,
   path: string = defaultAgentConfigPath(),
 ): void {
   AgentConfigSchema.parse(config);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, serialize(config, path), "utf8");
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  const tmp = join(
+    dir,
+    `.${path.slice(dir.length + 1)}.tmp-${String(process.pid)}-${Math.random().toString(36).slice(2)}`,
+  );
+  writeFileSync(tmp, serialize(config, path), { encoding: "utf8", mode: 0o600 });
   try {
-    chmodSync(path, 0o600);
+    chmodSync(tmp, 0o600);
   } catch {
     // best-effort
+  }
+  try {
+    renameSync(tmp, path);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // the rename may have consumed it
+    }
+    throw err;
   }
 }
 
