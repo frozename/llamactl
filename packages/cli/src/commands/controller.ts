@@ -217,6 +217,17 @@ export function advanceOomWatch(
   return { nextState: { last: sample, pendingKills: pending }, ...quiet };
 }
 
+/**
+ * The sample to persist as the baseline: the counter through the last kill the
+ * controller has accounted for. A kill held in `pendingKills` stays above the
+ * baseline, so a controller restarted by OOMPolicy=stop sees the rise again on
+ * its first pass instead of logging a plain unexpected exit.
+ */
+export function oomBaselineFor(state: OomWatchState): CgroupOomSample | null {
+  if (state.last === null) return null;
+  return { cgroup: state.last.cgroup, oomKill: state.last.oomKill - state.pendingKills };
+}
+
 /** Local ModelHosts this pass found dead that were not already failing. */
 export function newlyDeadHosts(
   reports: readonly ReportForLog[],
@@ -385,9 +396,10 @@ function observeOomKills(
   const sample = readCgroupOomSample();
   const deadHosts = newlyDeadHosts(reports, state.errors);
   const watch = advanceOomWatch(state.oom, sample, deadHosts);
-  const { last } = state.oom;
-  if (sample && (sample.cgroup !== last?.cgroup || sample.oomKill !== last.oomKill)) {
-    writeOomBaseline(oomBaselineFile(workloadsDir), sample);
+  const before = oomBaselineFor(state.oom);
+  const after = oomBaselineFor(watch.nextState);
+  if (after !== null && (after.cgroup !== before?.cgroup || after.oomKill !== before.oomKill)) {
+    writeOomBaseline(oomBaselineFile(workloadsDir), after);
   }
   if (sample) {
     for (const name of watch.oomKilled) {
