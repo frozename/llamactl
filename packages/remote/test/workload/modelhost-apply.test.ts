@@ -299,6 +299,191 @@ describe("applyManifest — kind dispatch", () => {
     }
   });
 
+  function makeExternalBindManifest(spec: Partial<ModelHostManifest["spec"]>): ModelHostManifest {
+    return {
+      apiVersion: "llamactl/v1",
+      kind: "ModelHost",
+      metadata: { name: "mlx-host-bind" },
+      spec: {
+        engine: "omlx",
+        node: "mac-mini",
+        enabled: true,
+        binary: "/usr/bin/true",
+        endpoint: { host: "0.0.0.0", port: 18094 },
+        hostedModels: [{ rel: "mlx-community/Bind-Test-4bit" }],
+        extraArgs: [],
+        restartPolicy: "Always",
+        timeoutSeconds: 60,
+        ...spec,
+      },
+    };
+  }
+
+  test("applyOneModelHost refuses a non-loopback endpoint without allowExternalBind", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-bind-refuse-"));
+    let startSubscribes = 0;
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
+      },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStart: {
+        subscribe: (_input, callbacks) => {
+          startSubscribes += 1;
+          queueMicrotask(() => {
+            callbacks.onData({ type: "done", result: { ok: true, pid: 123, state: "Running" } });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: () => undefined };
+        },
+      },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 123 }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
+    };
+
+    try {
+      const result = await applyManifest({
+        manifest: makeExternalBindManifest({}),
+        workloadsDir: join(tmp, "workloads"),
+        getNodeBudgetGiB: () => 64,
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain("allowExternalBind");
+      expect(startSubscribes).toBe(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("applyOneModelHost dispatches modelHostStart when allowExternalBind is set", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-bind-allow-"));
+    let startSubscribes = 0;
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
+      },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStart: {
+        subscribe: (_input, callbacks) => {
+          startSubscribes += 1;
+          queueMicrotask(() => {
+            callbacks.onData({ type: "done", result: { ok: true, pid: 123, state: "Running" } });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: () => undefined };
+        },
+      },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 123 }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
+    };
+
+    try {
+      const result = await applyManifest({
+        manifest: makeExternalBindManifest({ allowExternalBind: true }),
+        workloadsDir: join(tmp, "workloads"),
+        getNodeBudgetGiB: () => 64,
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      expect(startSubscribes).toBe(1);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("applyOneModelHost can still disable a ModelHost bound externally", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-bind-disable-"));
+    let stopCalls = 0;
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
+      },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStop: {
+        mutate: () => {
+          stopCalls += 1;
+          return Promise.resolve({ ok: true });
+        },
+      },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Stopped", pid: null }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
+    };
+
+    try {
+      const result = await applyManifest({
+        manifest: makeExternalBindManifest({ enabled: false }),
+        workloadsDir: join(tmp, "workloads"),
+        getNodeBudgetGiB: () => 64,
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      expect(stopCalls).toBe(1);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("applyOneModelHost uses a single directory scan for admission", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-admission-scan-"));
     const workloadsDir = join(tmp, "workloads");

@@ -30,6 +30,8 @@ import { basename, resolve, sep } from "node:path";
 
 import { existsSync, openSync } from "../safe-fs.js";
 import {
+  modelHostBindRefusal,
+  modelHostExternalBindHost,
   type ModelHostManifest,
   ModelHostManifestSchema,
   specForEngine,
@@ -74,6 +76,9 @@ export interface StartModelHostOptions {
    */
   findListenerPid?: (endpoint: { host: string; port: number }) => Promise<number | null>;
   readProcessCommand?: (pid: number) => Promise<string | null> | string | null;
+  /** Sink for the external-bind warning; injectable for tests. Defaults to
+   *  writing the message plus a newline to process.stderr. */
+  warn?: (message: string) => void;
 }
 
 export interface StartModelHostResult {
@@ -488,6 +493,22 @@ function teardownChildSilently(
   return Promise.resolve();
 }
 
+// Loud stderr line on every launch that knowingly exposes an unauthenticated
+// engine past loopback — the opt-in is per-workload, so the operator running
+// the agent should still see it in the agent log.
+function warnExternalBind(manifest: ModelHostManifest, opts: StartModelHostOptions): void {
+  const externalHost = modelHostExternalBindHost(manifest.spec);
+  if (externalHost === null || manifest.spec.allowExternalBind !== true) return;
+  const warn =
+    opts.warn ??
+    ((message: string): void => {
+      process.stderr.write(`${message}\n`);
+    });
+  warn(
+    `[agent] WARNING: ModelHost ${manifest.metadata.name} (${manifest.spec.engine}) is binding an unauthenticated engine to ${externalHost}:${String(manifest.spec.endpoint.port)} (spec.allowExternalBind: true)`,
+  );
+}
+
 export async function startModelHost(opts: StartModelHostOptions): Promise<StartModelHostResult> {
   const env = toRuntimeEnv(opts.env);
   const runtimeEnv = withRuntimeDir(env, opts.runtimeDir);
@@ -516,11 +537,22 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     return result;
   }
 
+  // Refuse an exposed bind BEFORE any teardown: reapOrAdoptPriorHost would
+  // otherwise kill a live host to make room for a spawn we then deny.
+  const bindRefusal = modelHostBindRefusal(manifest);
+  if (bindRefusal !== null) {
+    const result = { ok: false, pid: null, error: bindRefusal };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
+
   const early = await reapOrAdoptPriorHost(manifest, opts, resolved, engine);
   if (early) {
     opts.onEvent?.({ type: "done", result: early });
     return early;
   }
+
+  warnExternalBind(manifest, opts);
 
   const bootEnv: EngineBootEnv = {
     ...omitUndefined({

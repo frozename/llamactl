@@ -557,6 +557,142 @@ describe("server/modelhost", () => {
     }
   });
 
+  test("refuses a non-loopback bind before reaping the prior live host", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-bind-reap-"));
+    const { workloadsDir, runtimeDir, manifest } = makeManifest(tmp);
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const tornDown: number[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const events: unknown[] = [];
+    const impostor = spawnImpostor("/bin/sleep", ["60"], {
+      stdio: "ignore",
+      argv0: "omlx",
+    });
+    try {
+      if (impostor.pid === undefined) throw new Error("impostor spawn failed");
+      const hostDir = join(runtimeDir, "workloads", "mlx-host-server");
+      mkdirSync(hostDir, { recursive: true });
+      writeFileSync(join(hostDir, "modelhost.pid"), `${String(impostor.pid)}\n`);
+      writeFileSync(
+        join(hostDir, "modelhost.state"),
+        JSON.stringify({
+          kind: "ModelHost",
+          engine: "omlx",
+          pid: impostor.pid,
+          host: "127.0.0.1",
+          port: 8094,
+          modelAliases: ["mlx-community/Qwen3-8B-MLX-4bit", "Qwen3-8B-MLX-4bit"],
+          startedAt: new Date().toISOString(),
+        }),
+      );
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        manifest: {
+          ...manifest,
+          spec: { ...manifest.spec, endpoint: { host: "0.0.0.0", port: 8094 } },
+        },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        onEvent: (event) => {
+          events.push(event);
+        },
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("allowExternalBind");
+      // The refusal lands before the teardown: the prior host is untouched.
+      expect(tornDown).toEqual([]);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(readFileSync(join(hostDir, "modelhost.state"), "utf8")).toContain(
+        `"pid":${String(impostor.pid)}`,
+      );
+      const done = events.find((event) => (event as { type?: string }).type === "done") as
+        | { result?: { ok?: boolean; error?: string } }
+        | undefined;
+      expect(done?.result?.ok).toBe(false);
+      expect(done?.result?.error).toContain("allowExternalBind");
+    } finally {
+      engine.teardown = originalTeardown;
+      try {
+        impostor.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("warns once when an allowed external bind proceeds to spawn", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-bind-warn-"));
+    const { workloadsDir, runtimeDir, manifest } = makeManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const warnings: string[] = [];
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        manifest: {
+          ...manifest,
+          spec: {
+            ...manifest.spec,
+            endpoint: { host: "0.0.0.0", port: 8094 },
+            allowExternalBind: true,
+          },
+        },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        warn: (message) => {
+          warnings.push(message);
+        },
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const [, args] = spawn.mock.calls[0] as unknown as [string, string[], unknown];
+      expect(args[args.indexOf("--host") + 1]).toBe("0.0.0.0");
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("0.0.0.0:8094");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("does not warn for the default loopback endpoint", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-bind-nowarn-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const warnings: string[] = [];
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        warn: (message) => {
+          warnings.push(message);
+        },
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(warnings).toEqual([]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("refuses to record a stale pid when the spawned child already exited", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-stalepid-"));
     const { workloadsDir, runtimeDir } = makeManifest(tmp);
