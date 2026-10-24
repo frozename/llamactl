@@ -1,6 +1,6 @@
 import { resolveEnv } from "@llamactl/core/env";
 import { expect, test } from "bun:test";
-import { tmpdir } from "node:os";
+import { tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 
 import type { ModelHostManifest } from "./modelhost-schema.js";
@@ -186,6 +186,15 @@ test("defaultNodeBudgetGiB returns the manifest value when present, else 75% of 
   expect(defaultNodeBudgetGiB(48)).toBe(48);
   const auto = defaultNodeBudgetGiB();
   expect(auto).toBeGreaterThan(0);
+});
+
+test("defaultNodeBudgetGiB sizes from the node's reported memory when the manifest is silent", () => {
+  const hostGiB = totalmem() / 1024 ** 3;
+  expect(defaultNodeBudgetGiB(undefined, 124 * 1024 ** 3)).toBe(93);
+  expect(defaultNodeBudgetGiB(48, 124 * 1024 ** 3)).toBe(48);
+  expect(defaultNodeBudgetGiB(undefined, null)).toBe(hostGiB * 0.75);
+  expect(defaultNodeBudgetGiB(undefined, 0)).toBe(hostGiB * 0.75);
+  expect(defaultNodeBudgetGiB(undefined, NaN)).toBe(hostGiB * 0.75);
 });
 
 test("estimateWorkloadMemoryGiB returns null for gateway workloads", () => {

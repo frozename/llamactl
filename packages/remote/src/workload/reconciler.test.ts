@@ -1,6 +1,6 @@
 import { computeModelHostSpecHash } from "@llamactl/core/engines/state";
 import { expect, test } from "bun:test";
-import { tmpdir } from "node:os";
+import { tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 
 import type { WorkloadClient } from "./apply.js";
@@ -424,6 +424,66 @@ test("reconcile preserves renamed manifests without resurrecting the old name", 
     ]);
     expect(existsSync(originalPath)).toBe(false);
     expect(existsSync(renamedPath)).toBe(true);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile admits a remote ModelHost from the node's reported memory without a NodeRun", async () => {
+  const hostGiB = totalmem() / 1024 ** 3;
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-nodemem-"));
+  const name = "nodemem-host";
+  const manifest = makeManifest(name);
+  saveModelHost(
+    { ...manifest, spec: { ...manifest.spec, resources: { expectedMemoryGiB: 2 * hostGiB } } },
+    workloadsDir,
+  );
+  const nodeFactsCalls = { count: 0 };
+  const client: WorkloadClient = {
+    ...makeSlowStoppedClient(0),
+    nodeFacts: {
+      query: () => {
+        nodeFactsCalls.count += 1;
+        return Promise.resolve({ memBytes: 4 * hostGiB * 1024 ** 3 });
+      },
+    },
+  };
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(0);
+    expect(result.reports).toEqual([
+      { kind: "ModelHost", name, node: "mac-mini", action: "started" },
+    ]);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile keeps a NodeRun budget for ModelHost and never queries nodeFacts", async () => {
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-noderun-budget-"));
+  writeHighBudgetNodeRun(workloadsDir);
+  const name = "budgeted-host";
+  const manifest = makeManifest(name);
+  saveModelHost(
+    { ...manifest, spec: { ...manifest.spec, resources: { expectedMemoryGiB: 8 } } },
+    workloadsDir,
+  );
+  const nodeFactsCalls = { count: 0 };
+  const client: WorkloadClient = {
+    ...makeSlowStoppedClient(0),
+    nodeFacts: {
+      query: () => {
+        nodeFactsCalls.count += 1;
+        return Promise.resolve({ memBytes: 1 * 1024 ** 3 });
+      },
+    },
+  };
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(0);
+    expect(nodeFactsCalls.count).toBe(0);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
   }
