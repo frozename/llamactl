@@ -672,6 +672,7 @@ describe("applyManifest — kind dispatch", () => {
   });
 
   test("ModelRun manifests still take the legacy path", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelrun-legacy-"));
     const fakeSpawn = mock(() => {
       throw new Error("spawn should not be called for ModelRun manifests");
     });
@@ -692,19 +693,24 @@ describe("applyManifest — kind dispatch", () => {
       },
     };
 
-    const result = await applyManifest({
-      manifest,
-      getClient: () => makeModelRunClient(),
-      spawn: fakeSpawn,
-    });
-    if (!result.ok) console.error("ERROR:", result);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.kind).toBe("ModelRun");
-      if (result.kind !== "ModelRun") return;
-      expect(result.result.action).toBe("started");
+    try {
+      const result = await applyManifest({
+        manifest,
+        getClient: () => makeModelRunClient(),
+        spawn: fakeSpawn,
+        workloadsDir: tmp,
+      });
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.kind).toBe("ModelRun");
+        if (result.kind !== "ModelRun") return;
+        expect(result.result.action).toBe("started");
+      }
+      expect(fakeSpawn).not.toHaveBeenCalled();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
     }
-    expect(fakeSpawn).not.toHaveBeenCalled();
   });
 
   test("smoke flow: apply ModelHost, list it, disable it, then reconcile after kill -9", async () => {
