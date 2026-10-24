@@ -47,6 +47,7 @@ describe("agent subcommand --help", () => {
     ["rotate-token", ["--dir=", "--host=", "--json"]],
     ["serve", ["--dir=", "--bind=", "--port=", "--no-auth", "--dial-central="]],
     ["status", ["--dir="]],
+    ["token", ["add", "list", "revoke", "--out="]],
   ];
 
   for (const [sub, flags] of cases) {

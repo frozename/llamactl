@@ -64,6 +64,12 @@ Subcommands:
       ~/Library/LaunchAgents (user) or /Library/LaunchDaemons (system),
       and load it via launchctl. --dry-run prints the plist + launchctl
       plan without touching disk.
+  token <subcommand>
+      Manage named operator bearer tokens (add / list / revoke). Each
+      named token authenticates the agent's authed API routes exactly
+      as the primary bearer does, and can be revoked on its own; the
+      agent re-reads them per request, so add and revoke apply without
+      a restart. See 'llamactl agent token --help'.
   rpc-doctor [--node=<name>] [--json]
       Verify $LLAMA_CPP_BIN/rpc-server is available for tensor-parallel
       workloads. Checks the local node by default; pass --node=<name>
@@ -175,6 +181,10 @@ export async function runAgent(args: string[]): Promise<number> {
     case "rpc-doctor": {
       const { runRpcDoctor } = await import("./agent-rpc-doctor.js");
       return await runRpcDoctor(rest);
+    }
+    case "token": {
+      const { runAgentToken } = await import("./agent-token.js");
+      return await runAgentToken(rest);
     }
     case "cli": {
       const { runAgentCli } = await import("./cli-doctor.js");
@@ -607,7 +617,7 @@ function validateServeWiring(parsed: ServeFlags): ServeWiring | { error: string 
   return { dialUrl, dialBearer, tunnelCentralOn, tunnelCentralBearer };
 }
 
-function buildServeOptions(
+export function buildServeOptions(
   parsed: ServeFlags,
   cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
   wiring: ServeWiring,
@@ -618,6 +628,9 @@ function buildServeOptions(
     bindHost: parsed.bindHost ?? cfg.bindHost,
     port: parsed.port ?? cfg.port,
     tokenHash: cfg.tokenHash,
+    // Named operator bearer tokens (#218), re-read on every request, so
+    // 'agent token add' / 'revoke' apply without a restart.
+    bearerTokens: agentConfigMod.bearerTokensReader(join(parsed.dir, "agent.yaml")),
     tls: { certPath: cfg.certPath, keyPath: cfg.keyPath },
     // Publish cluster peers' fleet snapshots so peer models route through this
     // proxy with prefix-cache. No-op when listPeers() is empty (single-node).

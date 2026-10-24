@@ -675,6 +675,8 @@ describe("I1: clean install", () => {
       "rpc-doctor",
       "serve",
       "status",
+      // #218: named operator bearer tokens, added after the base release.
+      "token",
       "update",
     ]);
     // Every LLAMACTL_* variable the sources read existed at the base release.
