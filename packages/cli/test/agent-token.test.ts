@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { buildServeOptions, parseServeFlags, runAgent } from "../src/commands/agent.js";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "../src/safe-fs.js";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "../src/safe-fs.js";
 import { parseJsonArray, parseJsonRecord } from "./helpers.js";
 
 let stdoutBuf = "";
@@ -123,6 +123,47 @@ describe("agent token", () => {
     }
   });
 
+  test("add --out failure leaves agent.yaml untouched and prints no token", async () => {
+    capture();
+    try {
+      const dir = await seedAgent();
+      const configPath = join(dir, "agent.yaml");
+      const before = readFileSync(configPath, "utf8");
+      stdoutBuf = "";
+
+      const code = await runAgent([
+        "token",
+        "add",
+        "ci",
+        `--dir=${dir}`,
+        `--out=${join(dir, "no/such/dir/ci.token")}`,
+      ]);
+      expect(code).toBe(1);
+      expect(readFileSync(configPath, "utf8")).toBe(before);
+      expect(agentConfigMod.loadAgentConfig(configPath).bearerTokens).toBeUndefined();
+      expect(stdoutBuf).not.toContain("ll_agt_");
+    } finally {
+      restore();
+    }
+  });
+
+  test("add --out over an existing file leaves it at mode 0600", async () => {
+    capture();
+    try {
+      const dir = await seedAgent();
+      const out = join(dir, "ci.token");
+      writeFileSync(out, "placeholder", { mode: 0o644 });
+
+      expect(await runAgent(["token", "add", "ci", `--dir=${dir}`, `--out=${out}`])).toBe(0);
+      expect(statSync(out).mode & 0o777).toBe(0o600);
+      const token = readFileSync(out, "utf8").trimEnd();
+      expect(token.startsWith("ll_agt_")).toBe(true);
+      expect(bearerEntries(dir)[0]?.tokenHash).toBe(auth.hashToken(token));
+    } finally {
+      restore();
+    }
+  });
+
   test("add --json emits one line with the token, or with out when --out is set", async () => {
     capture();
     try {
@@ -210,27 +251,59 @@ describe("agent token", () => {
     }
   });
 
+  /** Seed a config whose bearerTokens block fails validation (duplicate names). */
+  async function seedMalformedBlock(): Promise<{ dir: string; before: string }> {
+    const dir = await seedAgent();
+    const configPath = join(dir, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(configPath);
+    agentConfigMod.saveAgentConfig(
+      {
+        ...cfg,
+        bearerTokens: [
+          { name: "ci", tokenHash: auth.hashToken("a"), createdAt: "2026-01-01T00:00:00.000Z" },
+          { name: "ci", tokenHash: auth.hashToken("b"), createdAt: "2026-01-01T00:00:00.000Z" },
+        ],
+      },
+      configPath,
+    );
+    return { dir, before: readFileSync(configPath, "utf8") };
+  }
+
   test("a malformed block makes add exit 1 and leaves the file byte-identical", async () => {
     capture();
     try {
-      const dir = await seedAgent();
-      const configPath = join(dir, "agent.yaml");
-      const cfg = agentConfigMod.loadAgentConfig(configPath);
-      agentConfigMod.saveAgentConfig(
-        {
-          ...cfg,
-          bearerTokens: [
-            { name: "ci", tokenHash: auth.hashToken("a"), createdAt: "2026-01-01T00:00:00.000Z" },
-            { name: "ci", tokenHash: auth.hashToken("b"), createdAt: "2026-01-01T00:00:00.000Z" },
-          ],
-        },
-        configPath,
-      );
-      const before = readFileSync(configPath, "utf8");
-
+      const { dir, before } = await seedMalformedBlock();
       expect(await runAgent(["token", "add", "graf", `--dir=${dir}`])).toBe(1);
-      expect(stderrBuf).toContain(configPath);
-      expect(readFileSync(configPath, "utf8")).toBe(before);
+      expect(stderrBuf).toContain(join(dir, "agent.yaml"));
+      expect(readFileSync(join(dir, "agent.yaml"), "utf8")).toBe(before);
+    } finally {
+      restore();
+    }
+  });
+
+  test("a malformed block makes revoke exit 1 and leaves the file byte-identical", async () => {
+    capture();
+    try {
+      const { dir, before } = await seedMalformedBlock();
+      expect(await runAgent(["token", "revoke", "ci", `--dir=${dir}`])).toBe(1);
+      expect(stderrBuf).toContain(join(dir, "agent.yaml"));
+      expect(readFileSync(join(dir, "agent.yaml"), "utf8")).toBe(before);
+    } finally {
+      restore();
+    }
+  });
+
+  test("help is only usage as the first argument; add help mints the token", async () => {
+    capture();
+    try {
+      const dir = await seedAgent();
+      expect(await runAgent(["token", "add", "help", `--dir=${dir}`])).toBe(0);
+      expect(bearerEntries(dir).map((e) => e.name)).toEqual(["help"]);
+      expect(await runAgent(["token", "revoke", "help", `--dir=${dir}`])).toBe(0);
+
+      stdoutBuf = "";
+      expect(await runAgent(["token", "help"])).toBe(0);
+      expect(stdoutBuf).toContain("Usage: llamactl agent token");
     } finally {
       restore();
     }

@@ -9,7 +9,7 @@
 import { agentConfig as agentConfigMod, auth } from "@llamactl/remote";
 import { join } from "node:path";
 
-import { chmodSync, existsSync, writeFileSync } from "../safe-fs.js";
+import { chmodSync, existsSync, renameSync, unlinkSync, writeFileSync } from "../safe-fs.js";
 
 export const TOKEN_USAGE = `Usage: llamactl agent token <subcommand> [flags]
 
@@ -31,7 +31,7 @@ no restart is needed.
 `;
 
 function isHelpFlag(arg: string): boolean {
-  return arg === "--help" || arg === "-h" || arg === "help";
+  return arg === "--help" || arg === "-h";
 }
 
 function splitFlag(arg: string): [string, string | undefined] {
@@ -71,6 +71,27 @@ function parseTokenFlags(args: string[]): TokenFlags | { error: string } {
 function fail(msg: string): 1 {
   process.stderr.write(`agent token: ${msg}\n`);
   return 1;
+}
+
+/**
+ * Write the token at 0600 even when `out` already exists at a wider mode:
+ * a sibling temp file is created at 0600 and renamed over the target, so
+ * the token is never readable at the old mode.
+ */
+function writeTokenFile(out: string, token: string): void {
+  const tmp = `${out}.tmp-${String(process.pid)}-${String(Date.now())}`;
+  try {
+    writeFileSync(tmp, `${token}\n`, { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, out);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // the temp file may not exist; the original error stands
+    }
+    throw err;
+  }
 }
 
 /** The recorded block, or null when absent. Fails on a malformed block. */
@@ -124,19 +145,21 @@ function tokenAdd(name: string | undefined, args: string[]): number {
     tokenHash: minted.hash,
     createdAt: new Date().toISOString(),
   };
+
+  // The token file first: if it can't be written the token would be
+  // useless, and agent.yaml stays untouched rather than recording a
+  // hash whose token was lost.
+  if (flags.out !== undefined) {
+    try {
+      writeTokenFile(flags.out, minted.token);
+    } catch (err) {
+      return fail(`failed to write ${flags.out}: ${(err as Error).message}; ${name} not recorded`);
+    }
+  }
   agentConfigMod.saveAgentConfig(
     { ...state.config, bearerTokens: [...(state.entries ?? []), entry] },
     state.configPath,
   );
-
-  if (flags.out !== undefined) {
-    try {
-      writeFileSync(flags.out, `${minted.token}\n`, { mode: 0o600 });
-      chmodSync(flags.out, 0o600);
-    } catch (err) {
-      return fail(`recorded ${name} but failed to write ${flags.out}: ${(err as Error).message}`);
-    }
-  }
 
   reportAdd(flags, state.configPath, name, minted.token, entry.createdAt);
   return 0;
@@ -207,7 +230,9 @@ function tokenRevoke(name: string | undefined, args: string[]): number {
 }
 
 export async function runAgentToken(args: string[]): Promise<number> {
-  if (args.length === 0 || args.some(isHelpFlag)) {
+  // 'help' counts only as the first argument, so `token add help` mints a
+  // token named 'help'.
+  if (args.length === 0 || args[0] === "help" || args.some(isHelpFlag)) {
     process.stdout.write(TOKEN_USAGE);
     return 0;
   }

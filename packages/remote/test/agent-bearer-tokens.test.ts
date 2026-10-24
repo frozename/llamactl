@@ -34,6 +34,22 @@ function bearerEntry(name: string, tokenHash: string): agentConfigMod.AgentBeare
   return { name, tokenHash, createdAt: "2026-10-24T00:00:00.000Z" };
 }
 
+/** Run fn with stderr captured; returns what it wrote. */
+function captureStderr(fn: () => void): string {
+  const original = process.stderr.write.bind(process.stderr);
+  let buf = "";
+  process.stderr.write = (chunk: string | Uint8Array): boolean => {
+    buf += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  };
+  try {
+    fn();
+  } finally {
+    process.stderr.write = original;
+  }
+  return buf;
+}
+
 describe("bearerTokensReader", () => {
   let dir: string;
   let configPath: string;
@@ -60,7 +76,19 @@ describe("bearerTokensReader", () => {
   test("duplicate names are ignored", () => {
     const entries = [bearerEntry("ci", HEX("c")), bearerEntry("ci", HEX("d"))];
     agentConfigMod.saveAgentConfig(baseConfig({ bearerTokens: entries }), configPath);
-    expect(agentConfigMod.bearerTokensReader(configPath)()).toBeUndefined();
+    const stderr = captureStderr(() => {
+      expect(agentConfigMod.bearerTokensReader(configPath)()).toBeUndefined();
+    });
+    expect(stderr).toContain("ignoring the bearerTokens block");
+  });
+
+  test("two distinct names sharing one hash are ignored", () => {
+    const entries = [bearerEntry("ci", HEX("c")), bearerEntry("grafana", HEX("c"))];
+    agentConfigMod.saveAgentConfig(baseConfig({ bearerTokens: entries }), configPath);
+    const stderr = captureStderr(() => {
+      expect(agentConfigMod.bearerTokensReader(configPath)()).toBeUndefined();
+    });
+    expect(stderr).toContain("ignoring the bearerTokens block");
   });
 
   test("a malformed hash is ignored and the config still loads", () => {
@@ -87,7 +115,25 @@ describe("bearerTokensReader", () => {
       }),
       configPath,
     );
-    expect(agentConfigMod.bearerTokensReader(configPath)()).toBeUndefined();
+    const stderr = captureStderr(() => {
+      expect(agentConfigMod.bearerTokensReader(configPath)()).toBeUndefined();
+    });
+    expect(stderr).toContain("ignoring the bearerTokens block");
+  });
+
+  test("a hash reused as a worker-RPC relay credential is ignored", () => {
+    const shared = HEX("c");
+    agentConfigMod.saveAgentConfig(
+      baseConfig({
+        bearerTokens: [bearerEntry("ci", shared)],
+        workerRpcRelay: { tokenHashes: [shared] },
+      }),
+      configPath,
+    );
+    const stderr = captureStderr(() => {
+      expect(agentConfigMod.bearerTokensReader(configPath)()).toBeUndefined();
+    });
+    expect(stderr).toContain("ignoring the bearerTokens block");
   });
 
   test("the same reader sees a later revoke", () => {
