@@ -670,6 +670,7 @@ describe("I1: clean install", () => {
       "help",
       "init",
       "install-launchd",
+      "install-systemd",
       "rollback",
       "rotate-token",
       "rpc-doctor",

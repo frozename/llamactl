@@ -62,8 +62,17 @@ Subcommands:
       macOS only. Resolve an agent binary (existing path, GitHub release,
       or local bun build --compile), render a launchd plist, write it to
       ~/Library/LaunchAgents (user) or /Library/LaunchDaemons (system),
-      and load it via launchctl. --dry-run prints the plist + launchctl
-      plan without touching disk.
+       and load it via launchctl. --dry-run prints the plist + launchctl
+       plan without touching disk.
+  install-systemd [--scope=user|system] [--binary=<path> | --from-release=<tag> | --from-source]
+                  [--install-path=<path>] [--dir=<path>] [--bind=<host>] [--port=<n>]
+                  [--log-dir=<path>] [--env=KEY=VAL]... [--env-file=<path>]...
+                  [--repo=<owner/repo>] [--dry-run] [--force]
+      Linux only. Resolve an agent binary (existing path, GitHub release,
+      or local bun build --compile), render a systemd unit, write it to
+      ~/.config/systemd/user (user) or /etc/systemd/system (system), and
+      enable + restart it via systemctl. --dry-run prints the unit +
+      systemctl plan without touching disk.
   rpc-doctor [--node=<name>] [--json]
       Verify $LLAMA_CPP_BIN/rpc-server is available for tensor-parallel
       workloads. Checks the local node by default; pass --node=<name>
@@ -163,6 +172,10 @@ export async function runAgent(args: string[]): Promise<number> {
     case "install-launchd": {
       const { runAgentInstallLaunchd } = await import("./agent-install/index.js");
       return await runAgentInstallLaunchd(rest);
+    }
+    case "install-systemd": {
+      const { runAgentInstallSystemd } = await import("./agent-install/systemd.js");
+      return await runAgentInstallSystemd(rest);
     }
     case "update": {
       const { runAgentUpdate } = await import("./agent-update.js");

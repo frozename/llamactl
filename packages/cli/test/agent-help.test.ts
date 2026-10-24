@@ -47,6 +47,7 @@ describe("agent subcommand --help", () => {
     ["rotate-token", ["--dir=", "--host=", "--json"]],
     ["serve", ["--dir=", "--bind=", "--port=", "--no-auth", "--dial-central="]],
     ["status", ["--dir="]],
+    ["install-systemd", ["--scope=", "--bind=", "--port=", "--env-file=", "--dry-run"]],
   ];
 
   for (const [sub, flags] of cases) {
