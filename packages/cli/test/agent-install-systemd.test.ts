@@ -451,6 +451,27 @@ describe("runAgentInstallSystemd preconditions", () => {
     expect(stderrChunks.join("")).toContain("requires root");
   });
 
+  test("--scope=system non-root with a user-writable install path → exit 1, zero spawns", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "install-systemd-nonroot-"));
+    try {
+      const stub = makeSpawnStub({});
+      const { deps, stderrChunks } = makeTestDeps({
+        getuid: () => 501,
+        spawnSync: stub.spawn,
+        env: { HOME: tmp, USER: "tester" },
+      });
+      const code = await runAgentInstallSystemd(
+        ["--scope=system", `--install-path=${join(tmp, "bin", "llamactl-agent")}`],
+        deps,
+      );
+      expect(code).toBe(1);
+      expect(stderrChunks.join("")).toContain("requires root");
+      expect(stub.calls.length).toBe(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("non-linux live run → exit 1 with only-supported-on-Linux", async () => {
     const { deps, stderrChunks } = makeTestDeps({ platform: "darwin" });
     const code = await runAgentInstallSystemd(["--from-source"], deps);
@@ -499,6 +520,8 @@ describe("runAgentInstallSystemd --dry-run", () => {
       const binary = join(tmp, "agent-bin");
       writeFileSync(binary, "#!/bin/sh\necho ok\n", { mode: 0o755 });
       chmodSync(binary, 0o755);
+      const installPath = join(tmp, "bin", "llamactl-agent");
+      const dirArg = join(tmp, "agent");
 
       let wroteCount = 0;
       const stub = makeSpawnStub({});
@@ -523,7 +546,14 @@ describe("runAgentInstallSystemd --dry-run", () => {
       });
 
       const code = await runAgentInstallSystemd(
-        ["--dry-run", `--binary=${binary}`, `--install-path=${join(tmp, "bin", UNIT_NAME)}`],
+        [
+          "--dry-run",
+          `--binary=${binary}`,
+          `--install-path=${installPath}`,
+          `--dir=${dirArg}`,
+          "--bind=0.0.0.0",
+          "--port=7843",
+        ],
         deps,
       );
       expect(code).toBe(0);
@@ -532,13 +562,88 @@ describe("runAgentInstallSystemd --dry-run", () => {
 
       const out = stdoutChunks.join("");
       expect(out).toContain("[Unit]");
-      expect(out).toContain("ExecStart=");
+      expect(out).toContain(
+        `ExecStart=${installPath} agent serve --dir=${dirArg} --bind=0.0.0.0 --port=7843\n`,
+      );
+      expect(out).toContain("Restart=always");
       expect(out).toContain("WantedBy=default.target");
       expect(out).toContain(`# unit path: ${join(tmp, ".config", "systemd", "user", UNIT_NAME)}`);
       expect(out).toContain("# systemctl --user daemon-reload");
       expect(out).toContain(`# systemctl --user enable ${UNIT_NAME}`);
       expect(out).toContain(`# systemctl --user restart ${UNIT_NAME}`);
       expect(out).toContain("# loginctl enable-linger tester  (if Linger=no)");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("--env value with a newline exits 1 before anything is copied", async () => {
+    const stub = makeSpawnStub({});
+    let wroteCount = 0;
+    const { deps, stderrChunks } = makeTestDeps({
+      spawnSync: stub.spawn,
+      fs: {
+        ...defaultFs(),
+        copyFileSync: (..._args: Parameters<FsLike["copyFileSync"]>): void => {
+          wroteCount++;
+        },
+      },
+    });
+    const code = await runAgentInstallSystemd(["--dry-run", "--env=FOO=a\nb"], deps);
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toContain("newline");
+    expect(stub.calls.length).toBe(0);
+    expect(wroteCount).toBe(0);
+  });
+
+  test("system scope: multi-user.target, WorkingDirectory, /etc unit path, no --user plans", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "install-systemd-dryrun-system-"));
+    try {
+      const binary = join(tmp, "agent-bin");
+      writeFileSync(binary, "#!/bin/sh\necho ok\n", { mode: 0o755 });
+      chmodSync(binary, 0o755);
+      const dirArg = join(tmp, "agent");
+
+      let wroteCount = 0;
+      const stub = makeSpawnStub({});
+      const { deps, stdoutChunks } = makeTestDeps({
+        getuid: () => 0,
+        spawnSync: stub.spawn,
+        env: { HOME: tmp, USER: "tester" },
+        fs: {
+          ...defaultFs(),
+          existsSync,
+          mkdirSync: ((..._args: Parameters<FsLike["mkdirSync"]>): void => {
+            wroteCount++;
+          }) as FsLike["mkdirSync"],
+          chmodSync,
+          accessSync: accessFromDisk,
+          writeFileSync: () => {
+            wroteCount++;
+          },
+          copyFileSync: () => {
+            wroteCount++;
+          },
+        } as unknown as FsLike,
+      });
+
+      const code = await runAgentInstallSystemd(
+        ["--dry-run", "--scope=system", `--binary=${binary}`, `--dir=${dirArg}`],
+        deps,
+      );
+      expect(code).toBe(0);
+      expect(wroteCount).toBe(0);
+      expect(stub.calls.length).toBe(0);
+
+      const out = stdoutChunks.join("");
+      expect(out).toContain("WantedBy=multi-user.target");
+      expect(out).toContain(`WorkingDirectory=${dirArg}`);
+      expect(out).toContain(`# unit path: /etc/systemd/system/${UNIT_NAME}`);
+      expect(out).toContain("# systemctl daemon-reload");
+      expect(out).toContain(`# systemctl enable ${UNIT_NAME}`);
+      expect(out).toContain(`# systemctl restart ${UNIT_NAME}`);
+      expect(out).not.toContain("# systemctl --user");
+      expect(out).not.toContain("loginctl");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
@@ -565,6 +670,14 @@ describe("runAgentInstallSystemd loopback warning", () => {
 
   test("--bind=127.0.0.1 warns about loopback", async () => {
     expect(await stderrForBind("--bind=127.0.0.1")).toContain("loopback");
+  });
+
+  test("--bind=localhost warns about loopback", async () => {
+    expect(await stderrForBind("--bind=localhost")).toContain("loopback");
+  });
+
+  test("--bind=::1 warns about loopback", async () => {
+    expect(await stderrForBind("--bind=::1")).toContain("loopback");
   });
 
   test("--bind=0.0.0.0 does not warn", async () => {
@@ -696,6 +809,43 @@ describe("runAgentInstallSystemd live install", () => {
     }
   });
 
+  test("loginctl returning null stdout+status warns without crashing the install", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "install-systemd-linger-null-"));
+    try {
+      const brokenLoginctl = {
+        pid: 0,
+        output: [null, null, null],
+        stdout: null,
+        stderr: null,
+        status: null,
+        signal: null,
+        error: new Error("spawnSync loginctl ENOENT"),
+      } as unknown as SpawnSyncReturns<string>;
+      const stub = makeSpawnStub({
+        responses: [
+          {
+            match: (c): boolean => c === "loginctl",
+            response: brokenLoginctl,
+          },
+        ],
+        fallback: okExit("ActiveState=active\nMainPID=7\n"),
+      });
+      const { deps, stdoutChunks, stderrChunks } = makeTestDeps({
+        spawnSync: stub.spawn,
+        env: { HOME: tmp, USER: "tester" },
+        fs: { ...defaultFs(), existsSync, mkdirSync, writeFileSync: writeFileFromDisk },
+      });
+      const code = await runAgentInstallSystemd([], deps);
+      expect(code).toBe(0);
+      expect(stdoutChunks.join("")).toContain("Installed:");
+      const err = stderrChunks.join("");
+      expect(err).toContain("could not check lingering");
+      expect(err).toContain("loginctl enable-linger tester");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("systemctl restart failure → exit 1 surfacing its stderr", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "install-systemd-restartfail-"));
     try {
@@ -746,6 +896,60 @@ describe("runAgentInstallSystemd live install", () => {
       const err = stderrChunks.join("");
       expect(err).toContain("did not become active");
       expect(err).toContain(`journalctl --user -u ${UNIT_NAME} -n 50`);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("poll keeps waiting on ActiveState=active with MainPID=0 → exit 1", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "install-systemd-zeropid-"));
+    try {
+      let ticks = 0;
+      const stub = makeSpawnStub({
+        fallback: okExit("ActiveState=active\nMainPID=0\n"),
+      });
+      const { deps, stderrChunks, stdoutChunks } = makeTestDeps({
+        spawnSync: stub.spawn,
+        env: { HOME: tmp, USER: "tester" },
+        now: () => {
+          ticks += 500;
+          return ticks;
+        },
+        fs: { ...defaultFs(), existsSync, mkdirSync, writeFileSync: writeFileFromDisk },
+      });
+      const code = await runAgentInstallSystemd([], deps);
+      expect(code).toBe(1);
+      expect(stderrChunks.join("")).toContain("did not become active");
+      expect(stdoutChunks.join("")).not.toContain("Installed:");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("poll: activating then active → success with the delayed pid", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "install-systemd-poll-activate-"));
+    try {
+      const stub = makeSpawnStub({
+        responses: [
+          {
+            match: (c, a): boolean => c === "systemctl" && a.includes("show"),
+            response: okExit("ActiveState=activating\nMainPID=0\n"),
+          },
+        ],
+        fallback: okExit("ActiveState=active\nMainPID=4321\n"),
+      });
+      const { deps, stdoutChunks } = makeTestDeps({
+        spawnSync: stub.spawn,
+        env: { HOME: tmp, USER: "tester" },
+        fs: { ...defaultFs(), existsSync, mkdirSync, writeFileSync: writeFileFromDisk },
+      });
+      const code = await runAgentInstallSystemd([], deps);
+      expect(code).toBe(0);
+      expect(stdoutChunks.join("")).toContain("4321");
+      const showCalls = stub.calls.filter(
+        (c) => c.command === "systemctl" && c.args.includes("show"),
+      );
+      expect(showCalls.length).toBe(2);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

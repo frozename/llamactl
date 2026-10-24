@@ -95,7 +95,19 @@ interface InstallSystemdFlagState {
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+// Newlines in unit values would let a flag smuggle directives into the
+// unit file. Reject them at the parser so nothing is copied or written
+// before buildSystemdUnit's throw would fire.
+function rejectNewline(flag: string, v: string): { error: string } | null {
+  if (/\n|\r/.test(v)) {
+    return { error: `agent install-systemd: ${flag} must not contain newline characters` };
+  }
+  return null;
+}
+
 function requireAbsolutePath(flag: string, v: string): { error: string } | null {
+  const newline = rejectNewline(flag, v);
+  if (newline) return newline;
   if (!v.startsWith("/")) {
     return { error: `agent install-systemd: ${flag} must be an absolute path (got ${v})` };
   }
@@ -113,6 +125,8 @@ function applySystemdEnvFlag(v: string, state: InstallSystemdFlagState): { error
       error: `agent install-systemd: invalid --env key "${key}" (expected [A-Za-z_][A-Za-z0-9_]*)`,
     };
   }
+  const newline = rejectNewline("--env value", v.slice(eq + 1));
+  if (newline) return newline;
   state.envOverrides[key] = v.slice(eq + 1);
   return null;
 }
@@ -179,9 +193,12 @@ function applySystemdKeyValueFlag(
       }
       state.scope = v;
       return null;
-    case "--bind":
+    case "--bind": {
+      const newline = rejectNewline("--bind", v);
+      if (newline) return newline;
       state.bind = v;
       return null;
+    }
     case "--port":
       return applySystemdPortFlag(v, state);
     case "--env":
@@ -461,6 +478,23 @@ interface SystemdPollResult {
   reason?: string;
 }
 
+// A missing systemctl can leave stdout/stderr null at runtime even
+// though SpawnSyncReturns<string> types them as strings; read through
+// this shape so a stubbed/failed probe degrades instead of crashing.
+interface SpawnProbeResult {
+  status: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  error?: Error | null;
+}
+
+function firstPresent(...values: (string | null | undefined)[]): string {
+  for (const value of values) {
+    if (value !== null && value !== undefined && value !== "") return value;
+  }
+  return "";
+}
+
 /**
  * Poll `systemctl show` for up to `timeoutMs`, declaring healthy only
  * when the unit reports ActiveState=active with a positive MainPID.
@@ -475,12 +509,12 @@ async function pollSystemdUnitActive(
   const deadline = deps.now() + timeoutMs;
   let lastState = "";
   while (deps.now() < deadline) {
-    const res = deps.spawnSync(
+    const res: SpawnProbeResult = deps.spawnSync(
       "systemctl",
       [...systemdCtlArgs(scope), "show", "-p", "ActiveState", "-p", "MainPID", unitName],
       { encoding: "utf8" },
     );
-    const props = parseSystemctlShow(res.stdout);
+    const props = parseSystemctlShow(res.stdout ?? "");
     const pid = Number.parseInt(props["MainPID"] ?? "", 10);
     if (res.status === 0 && props["ActiveState"] === "active" && Number.isFinite(pid) && pid > 0) {
       return { ok: true, pid };
@@ -505,12 +539,17 @@ async function pollSystemdUnitActive(
 function checkLinger(deps: InstallLaunchdDeps, scope: "user" | "system"): void {
   if (scope !== "user") return;
   const user = systemdUser(deps);
-  const res = deps.spawnSync("loginctl", ["show-user", user, "-p", "Linger"], {
+  const res: SpawnProbeResult = deps.spawnSync("loginctl", ["show-user", user, "-p", "Linger"], {
     encoding: "utf8",
   });
-  if (res.stdout.includes("Linger=yes")) return;
+  const stdout = res.stdout ?? "";
+  if (stdout.includes("Linger=yes")) return;
+  const cause =
+    res.error !== null && res.error !== undefined
+      ? `could not check lingering for ${user} (${res.error.message})`
+      : `lingering is off for ${user}`;
   deps.stderr(
-    `agent install-systemd: warning: lingering is off for ${user}; the unit stops at logout ` +
+    `agent install-systemd: warning: ${cause}; the unit stops at logout ` +
       `and takes the agent with it. Keep it up across logout with: loginctl enable-linger ${user}\n`,
   );
 }
@@ -542,13 +581,16 @@ async function executeSystemdInstall(
     ["restart", targets.unitName],
   ];
   for (const step of steps) {
-    const res = deps.spawnSync("systemctl", [...systemdCtlArgs(parsed.scope), ...step], {
-      encoding: "utf8",
-    });
+    const res: SpawnProbeResult = deps.spawnSync(
+      "systemctl",
+      [...systemdCtlArgs(parsed.scope), ...step],
+      {
+        encoding: "utf8",
+      },
+    );
     if (res.status !== 0) {
-      deps.stderr(
-        `agent install-systemd: systemctl ${step.join(" ")} failed: ${res.stderr || res.stdout}\n`,
-      );
+      const detail = firstPresent(res.stderr, res.stdout, res.error?.message);
+      deps.stderr(`agent install-systemd: systemctl ${step.join(" ")} failed: ${detail}\n`);
       return { code: 1 };
     }
   }
@@ -620,7 +662,16 @@ export async function runAgentInstallSystemd(
   const installedPath = await resolveBinaryOrReport(deps, parsed, targets.installPath);
   if (installedPath === null) return 1;
 
-  const unit = assembleSystemdUnit(deps, parsed, targets, installedPath);
+  // The parser rejects newline-bearing flag values, so a throw here
+  // means an unexpected template failure — report it instead of
+  // crashing the CLI after the binary has already been copied.
+  let unit: string;
+  try {
+    unit = assembleSystemdUnit(deps, parsed, targets, installedPath);
+  } catch (err) {
+    deps.stderr(`agent install-systemd: ${(err as Error).message}\n`);
+    return 1;
+  }
   warnIfLoopbackBind(deps, parsed.bind);
 
   if (parsed.dryRun) {

@@ -62,8 +62,8 @@ Subcommands:
       macOS only. Resolve an agent binary (existing path, GitHub release,
       or local bun build --compile), render a launchd plist, write it to
       ~/Library/LaunchAgents (user) or /Library/LaunchDaemons (system),
-       and load it via launchctl. --dry-run prints the plist + launchctl
-       plan without touching disk.
+      and load it via launchctl. --dry-run prints the plist + launchctl
+      plan without touching disk.
   install-systemd [--scope=user|system] [--binary=<path> | --from-release=<tag> | --from-source]
                   [--install-path=<path>] [--dir=<path>] [--bind=<host>] [--port=<n>]
                   [--log-dir=<path>] [--env=KEY=VAL]... [--env-file=<path>]...
