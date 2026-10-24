@@ -65,10 +65,8 @@ function wrapProcedure<T extends object>(
             reject(new NodeRpcTimeoutError(node, label, timeoutMs));
           }, timeoutMs);
         });
-        return Promise.race([
-          deadline,
-          Promise.resolve(Reflect.apply(value, target, args)),
-        ]).finally((): void => {
+        const call = Promise.resolve().then((): unknown => Reflect.apply(value, target, args));
+        return Promise.race([deadline, call]).finally((): void => {
           clearTimeout(timer);
         });
       };

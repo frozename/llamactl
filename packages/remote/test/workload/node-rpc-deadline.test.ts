@@ -68,6 +68,66 @@ describe("withNodeRpcDeadline", () => {
     expect(err).toBe(failure);
   });
 
+  test("a query that throws synchronously rejects with the original Error", async () => {
+    const rejections: unknown[] = [];
+    const listener = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on("unhandledRejection", listener);
+    try {
+      const failure = new Error("sync query boom");
+      const client = {
+        serverStatus: {
+          query: (_input: { workload: string }): Promise<never> => {
+            throw failure;
+          },
+        },
+      };
+      const wrapped = withNodeRpcDeadline(client, "z13", timeouts);
+      const err = await wrapped.serverStatus.query({ workload: "run-a" }).then(
+        (): null => null,
+        (e: unknown): unknown => e,
+      );
+      expect(err).toBe(failure);
+      await new Promise((resolve): void => {
+        setTimeout(resolve, timeouts.queryMs + 50);
+      });
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", listener);
+    }
+  });
+
+  test("a mutate that throws synchronously rejects with the original Error", async () => {
+    const rejections: unknown[] = [];
+    const listener = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on("unhandledRejection", listener);
+    try {
+      const failure = new Error("sync mutate boom");
+      const client = {
+        serverStop: {
+          mutate: (_input: { workload: string }): Promise<never> => {
+            throw failure;
+          },
+        },
+      };
+      const wrapped = withNodeRpcDeadline(client, "gpu1", timeouts);
+      const err = await wrapped.serverStop.mutate({ workload: "run-a" }).then(
+        (): null => null,
+        (e: unknown): unknown => e,
+      );
+      expect(err).toBe(failure);
+      await new Promise((resolve): void => {
+        setTimeout(resolve, timeouts.mutateMs + 50);
+      });
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", listener);
+    }
+  });
+
   test("subscribe is passed through unchanged", () => {
     const unsubscribable = { unsubscribe: (): undefined => undefined };
     let seenInput: unknown = null;
