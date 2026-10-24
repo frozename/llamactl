@@ -6,6 +6,7 @@ import {
   profileFromMemory,
   resolveProfile,
 } from "../src/profile.js";
+import { resolveTarget } from "../src/target.js";
 
 describe("profile.normalizeProfile", () => {
   test("canonicalises the three primary names", () => {
@@ -65,6 +66,14 @@ describe("profile.resolveProfile", () => {
   });
   test("large-128g override resolves", () => {
     expect(resolveProfile({ LLAMA_CPP_MACHINE_PROFILE: "large-128g" })).toBe("large-128g");
+  });
+});
+
+describe("profile.resolveTarget", () => {
+  test("qwen on large-128g resolves the UD-Q4_K_XL rel", () => {
+    expect(resolveTarget("qwen", { LLAMA_CPP_MACHINE_PROFILE: "large-128g" })).toBe(
+      "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+    );
   });
 });
 

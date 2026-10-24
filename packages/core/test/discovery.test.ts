@@ -1,14 +1,21 @@
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+import type { DiscoveryFit } from "../src/discovery.js";
 import type { HFModelInfo } from "../src/schemas.js";
+import type { MachineProfile } from "../src/types.js";
 
 import {
   classifyRepo,
+  discoveryFit,
   eligibleGgufSiblings,
   filterMatches,
   fitScore,
   pickFile,
 } from "../src/discovery.js";
+import { repoTreeCacheFile } from "../src/hf.js";
+import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 describe("discovery.classifyRepo", () => {
   test("pipeline=image-text-to-text short-circuits to multimodal", () => {
@@ -79,6 +86,72 @@ describe("discovery.fitScore", () => {
     expect(fitScore("fair")).toBe(3);
     expect(fitScore("poor")).toBe(2);
     expect(fitScore("unknown")).toBe(1);
+  });
+});
+
+describe("discovery.discoveryFit size tiers", () => {
+  const GIB = 1024 ** 3;
+  const FILE = "model.gguf";
+
+  async function withSeededTree(
+    fn: (
+      probe: (repo: string, bytes: number, profile: MachineProfile) => Promise<DiscoveryFit>,
+    ) => Promise<void>,
+  ): Promise<void> {
+    const runtimeDir = mkdtempSync(join(tmpdir(), "llamactl-fit-"));
+    const keys = [
+      "LOCAL_AI_RUNTIME_DIR",
+      "LOCAL_AI_RECOMMENDATIONS_SOURCE",
+      "LOCAL_AI_HF_CACHE_TTL_SECONDS",
+    ];
+    const saved = new Map(keys.map((k) => [k, process.env[k]]));
+    process.env["LOCAL_AI_RUNTIME_DIR"] = runtimeDir;
+    process.env["LOCAL_AI_RECOMMENDATIONS_SOURCE"] = "hf";
+    process.env["LOCAL_AI_HF_CACHE_TTL_SECONDS"] = "3600";
+    const probe = async (
+      repo: string,
+      bytes: number,
+      profile: MachineProfile,
+    ): Promise<DiscoveryFit> => {
+      const tree = [{ type: "file", path: FILE, size: bytes, lfs: { size: bytes } }];
+      writeFileSync(repoTreeCacheFile(runtimeDir, repo), JSON.stringify(tree));
+      return await discoveryFit(profile, repo, "general", FILE);
+    };
+    try {
+      await fn(probe);
+    } finally {
+      for (const [k, v] of saved) {
+        if (v === undefined) Reflect.deleteProperty(process.env, k);
+        else process.env[k] = v;
+      }
+      rmSync(runtimeDir, { recursive: true, force: true });
+    }
+  }
+
+  test("large-128g tiers break at 72 / 96 / 112 GiB", async () => {
+    await withSeededTree(async (probe) => {
+      const repo = "meta/sizefit-neutral";
+      expect(await probe(repo, 72 * GIB, "large-128g")).toBe("excellent");
+      expect(await probe(repo, 72 * GIB + 1, "large-128g")).toBe("good");
+      expect(await probe(repo, 96 * GIB, "large-128g")).toBe("good");
+      expect(await probe(repo, 96 * GIB + 1, "large-128g")).toBe("fair");
+      expect(await probe(repo, 112 * GIB, "large-128g")).toBe("fair");
+      expect(await probe(repo, 112 * GIB + 1, "large-128g")).toBe("poor");
+    });
+  });
+
+  test("a ~60 GiB 120b repo is poor on 48g but not on large-128g", async () => {
+    await withSeededTree(async (probe) => {
+      const repo = "meta/sizefit-120b";
+      expect(await probe(repo, 60 * GIB, "macbook-pro-48g")).toBe("poor");
+      expect(await probe(repo, 60 * GIB, "large-128g")).toBe("excellent");
+    });
+  });
+
+  test("405b stays poor even on large-128g", async () => {
+    await withSeededTree(async (probe) => {
+      expect(await probe("meta/sizefit-405b", 60 * GIB, "large-128g")).toBe("poor");
+    });
   });
 });
 

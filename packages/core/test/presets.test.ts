@@ -1,12 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
+import type { PresetName } from "../src/presets.js";
+
 import {
   deletePresetOverride,
+  PRESET_NAMES,
   readPresetOverrides,
   resolvePreset,
   writePresetOverride,
 } from "../src/presets.js";
+import { normalizeProfile } from "../src/profile.js";
 import { copyFileSync, existsSync, readFileSync } from "../src/safe-fs.js";
 import { envForTemp, FIXTURE_DIR, makeTempRuntime } from "./helpers.js";
 
@@ -29,10 +33,20 @@ describe("presets.resolvePreset", () => {
     expect(res.rel).toBe("gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf");
     expect(res.source).toBeNull();
   });
-  test("builtin large-128g:best matches the macbook-pro-48g builtin", () => {
-    expect(resolvePreset("large-128g", "best", {}).rel).toBe(
-      resolvePreset("macbook-pro-48g", "best", {}).rel,
-    );
+  test("builtin large-128g mirrors the macbook-pro-48g ladder", () => {
+    expect(normalizeProfile("large-128g")).not.toBeNull();
+    const expected: Record<PresetName, string> = {
+      best: "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+      vision: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+      balanced: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+      fast: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
+    };
+    for (const preset of PRESET_NAMES) {
+      const res = resolvePreset("large-128g", preset, {});
+      expect(res.rel).toBe(expected[preset]);
+      expect(res.source).toBeNull();
+      expect(res.rel).toBe(resolvePreset("macbook-pro-48g", preset, {}).rel);
+    }
   });
   test("env-var override wins over file override", () => {
     const temp = makeTempRuntime();

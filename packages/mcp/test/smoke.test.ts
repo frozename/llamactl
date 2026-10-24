@@ -11,6 +11,7 @@ import { saveNodeRun } from "../../remote/src/workload/noderun-store.js";
 import { saveWorkload } from "../../remote/src/workload/store.js";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "../src/safe-fs.js";
 import { buildMcpServer, type WorkloadDeleteDryRunResult } from "../src/server.js";
+import { PROFILE_ENUM } from "../src/tools/shared.js";
 
 /**
  * Smoke tests for the llamactl MCP surface. Every mutation has a
@@ -966,5 +967,12 @@ describe("@llamactl/mcp M.1 pipeline-tool pickup", () => {
       .map((t) => t.name)
       .filter((n) => n.startsWith("llamactl.") && !n.startsWith("llamactl.pipeline."));
     expect(llamactlTools.length).toBe(55);
+  });
+});
+
+describe("@llamactl/mcp profile enum", () => {
+  test("PROFILE_ENUM accepts every machine profile including large-128g", () => {
+    expect(PROFILE_ENUM.parse("large-128g")).toBe("large-128g");
+    expect(PROFILE_ENUM.parse("macbook-pro-48g")).toBe("macbook-pro-48g");
   });
 });
