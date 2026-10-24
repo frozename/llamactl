@@ -356,7 +356,7 @@ async function reconcileModelHost(
       {
         env: process.env,
         workloadsDir: dir,
-        getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
+        getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName),
       },
     );
     const action = wasRunning ? "restarted" : "started";
