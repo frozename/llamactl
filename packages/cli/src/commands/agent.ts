@@ -18,7 +18,7 @@ import { runHeal } from "./heal.js";
 const USAGE = `Usage: llamactl agent <subcommand>
 
 Subcommands:
-  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--json]
+  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--force] [--json]
       Generate a TLS cert + bearer token, write agent.yaml.
       Default output is a human-readable summary + a 'llamactl node add'
       bootstrap line. With --json emits a single-line JSON record
@@ -127,6 +127,10 @@ ${DIR_FLAG_HELP}
   --bind=<host>    Address the agent binds to (default: 127.0.0.1; pass 0.0.0.0 to accept remote connections)
   --san=<host,...> Certificate SANs; repeatable, comma lists ok
                    (--host is always included; default: the --host and --bind values)
+  --force          Re-init over an existing agent.yaml: move agent.yaml,
+                   agent.crt and agent.key into
+                   <dir>/agent-backup-<timestamp>-XXXXXX/ first
+                   (mints a new cert and token)
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -289,6 +293,7 @@ export interface InitFlags {
   bindExplicit: boolean; // whether --bind was passed
   sans: string[]; // SANs baked into the cert
   json: boolean; // emit single-line JSON instead of human summary
+  force: boolean; // --force: back up an existing agent.yaml/cert/key and re-init
 }
 
 export function parseInitFlags(args: string[]): InitFlags | { error: string } {
@@ -301,11 +306,16 @@ export function parseInitFlags(args: string[]): InitFlags | { error: string } {
     bindExplicit: false,
     sans: [],
     json: false,
+    force: false,
   };
   for (const arg of args) {
-    // --json is a flag-only switch; everything else is --key=value.
+    // --json and --force are flag-only switches; everything else is --key=value.
     if (arg === "--json") {
       flags.json = true;
+      continue;
+    }
+    if (arg === "--force") {
+      flags.force = true;
       continue;
     }
     const [k, v] = splitFlag(arg);
@@ -352,6 +362,23 @@ export function resolveInitSans(f: Pick<InitFlags, "host" | "bindHost" | "sans">
   return dedupe(f.sans.length > 0 ? [f.host, ...f.sans] : [f.host, f.bindHost]);
 }
 
+// #209: move the files init rewrites into a fresh timestamped subdir of the agent dir.
+export function backupAgentState(
+  dir: string,
+  now: Date = new Date(),
+): { backupDir: string; moved: string[] } {
+  const stamp = now.toISOString().replaceAll(/[:.]/g, "-");
+  const backupDir = mkdtempSync(join(dir, `agent-backup-${stamp}-`));
+  const moved: string[] = [];
+  for (const name of ["agent.yaml", "agent.crt", "agent.key"]) {
+    const src = join(dir, name);
+    if (!existsSync(src)) continue;
+    renameSync(src, join(backupDir, name));
+    moved.push(name);
+  }
+  return { backupDir, moved };
+}
+
 async function runInit(args: string[]): Promise<number> {
   if (args.some(isHelpFlag)) {
     process.stdout.write(INIT_USAGE);
@@ -366,11 +393,20 @@ async function runInit(args: string[]): Promise<number> {
   mkdirSync(f.dir, { recursive: true });
 
   const configPath = join(f.dir, "agent.yaml");
+  let backup: { backupDir: string; moved: string[] } | null = null;
   if (existsSync(configPath)) {
-    process.stderr.write(
-      `agent config already exists at ${configPath}. Remove it (and the cert/key) to re-init.\n`,
-    );
-    return 1;
+    if (!f.force) {
+      process.stderr.write(
+        `agent config already exists at ${configPath}. Pass --force to move it and the cert/key into a timestamped backup and re-init.\n`,
+      );
+      return 1;
+    }
+    try {
+      backup = backupAgentState(f.dir);
+    } catch (err) {
+      process.stderr.write(`agent init --force: backup failed: ${(err as Error).message}\n`);
+      return 1;
+    }
   }
 
   const sans = resolveInitSans(f);
@@ -396,6 +432,12 @@ async function runInit(args: string[]): Promise<number> {
 
   const bindWarn = initBindWarning(f.host, f.bindHost, f.bindExplicit);
   if (bindWarn !== null) process.stderr.write(bindWarn);
+
+  if (backup !== null) {
+    process.stderr.write(
+      `agent init: backed up ${backup.moved.join(", ")} to ${backup.backupDir}. The token and cert fingerprint changed: restart the agent and re-add this node on the control plane with 'llamactl node add ${f.nodeName} --bootstrap <blob> --force'.\n`,
+    );
+  }
 
   const url = `https://${f.host}:${String(f.port)}`;
   const bootstrap = agentConfigMod.encodeBootstrap({
@@ -442,7 +484,7 @@ async function runInit(args: string[]): Promise<number> {
       ``,
       `On the control plane, run:`,
       ``,
-      `  llamactl node add ${f.nodeName} --bootstrap ${bootstrap}`,
+      `  llamactl node add ${f.nodeName} --bootstrap ${bootstrap}${backup !== null ? " --force" : ""}`,
       ``,
     ].join("\n"),
   );
