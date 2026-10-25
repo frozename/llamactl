@@ -27,6 +27,7 @@ import { listModelHosts, saveModelHost } from "./modelhost-store.js";
 import {
   DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
   DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
+  type NodeRpcPassState,
   type NodeRpcTimeouts,
   withNodeRpcDeadline,
 } from "./node-rpc-deadline.js";
@@ -120,16 +121,20 @@ function hostSpecsEqual(manifest: ModelHostManifest, current: Record<string, unk
  * persisted manifest's status section is updated in place so
  * `llamactl get workloads` reflects the latest pass. Node .query /
  * .mutate RPCs carry a per-call deadline (see node-rpc-deadline.ts)
- * so one unreachable node cannot stall the rest of the pass.
+ * so one unreachable node cannot stall the rest of the pass. After
+ * the first timeout on a node, that node's remaining calls in the
+ * pass fail fast with NodeRpcSkippedError; the next pass retries it.
  */
 export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileResult> {
   const timeouts: NodeRpcTimeouts = {
     queryMs: opts.rpcTimeouts?.queryMs ?? DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
     mutateMs: opts.rpcTimeouts?.mutateMs ?? DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
   };
+  const pass: NodeRpcPassState = { timedOut: new Map() };
   const deadlineOpts: ReconcileOptions = {
     ...opts,
-    getClient: (nodeName) => withNodeRpcDeadline(opts.getClient(nodeName), nodeName, timeouts),
+    getClient: (nodeName) =>
+      withNodeRpcDeadline(opts.getClient(nodeName), nodeName, timeouts, pass),
   };
   const dir = opts.workloadsDir ?? defaultWorkloadsDir();
   const all = listWorkloads(dir);
