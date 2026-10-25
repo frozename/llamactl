@@ -49,6 +49,7 @@ describe("agent subcommand --help", () => {
     ["serve", ["--dir=", "--bind=", "--port=", "--no-auth", "--dial-central="]],
     ["status", ["--dir=", "--host=", "--json"]],
     ["install-systemd", ["--scope=", "--bind=", "--port=", "--env-file=", "--dry-run"]],
+    ["token", ["add", "list", "revoke", "--out="]],
   ];
 
   for (const [sub, flags] of cases) {
