@@ -21,7 +21,7 @@ import { runHeal } from "./heal.js";
 const USAGE = `Usage: llamactl agent <subcommand>
 
 Subcommands:
-  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--json]
+  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--no-loopback-san] [--json]
       Generate a TLS cert + bearer token, write agent.yaml.
       Default output is a human-readable summary + a 'llamactl node add'
       bootstrap line. With --json emits a single-line JSON record
@@ -134,7 +134,10 @@ ${DIR_FLAG_HELP}
   --name=<node>    Node name recorded in agent.yaml (default: this machine's hostname)
   --bind=<host>    Address the agent binds to (default: 127.0.0.1; pass 0.0.0.0 to accept remote connections)
   --san=<host,...> Certificate SANs; repeatable, comma lists ok
-                   (--host is always included; default: the --host and --bind values)
+                   (--host is always included; default: the --host and --bind values).
+                   127.0.0.1, ::1 and localhost are also added when
+                   --bind is a wildcard or loopback address.
+  --no-loopback-san  Do not add the loopback SANs on a wildcard bind
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -312,8 +315,29 @@ export interface InitFlags {
   bindHost: string; // what Bun.serve binds to
   bindExplicit: boolean; // whether --bind was passed
   sans: string[]; // SANs baked into the cert
+  loopbackSan: boolean; // add loopback SANs when the bind covers them
   json: boolean; // emit single-line JSON instead of human summary
 }
+
+// A wildcard or loopback bind still serves https://127.0.0.1, so certs
+// minted for those binds must include loopback SANs or local clients
+// that trust the cert fail verification (#217). Distinct from
+// isLoopbackHost: a wildcard 0.0.0.0 or :: bind covers loopback but is
+// not itself a loopback host.
+function bindCoversLoopback(bindHost: string): boolean {
+  if (
+    bindHost === "0.0.0.0" ||
+    bindHost === "::" ||
+    bindHost === "::1" ||
+    bindHost === "localhost" ||
+    bindHost === "::ffff:127.0.0.1"
+  ) {
+    return true;
+  }
+  return bindHost.startsWith("127.");
+}
+
+const LOOPBACK_SANS = ["127.0.0.1", "::1", "localhost"];
 
 export function parseInitFlags(args: string[]): InitFlags | { error: string } {
   const flags: InitFlags = {
@@ -324,12 +348,18 @@ export function parseInitFlags(args: string[]): InitFlags | { error: string } {
     bindHost: "127.0.0.1",
     bindExplicit: false,
     sans: [],
+    loopbackSan: true,
     json: false,
   };
   for (const arg of args) {
-    // --json is a flag-only switch; everything else is --key=value.
+    // --json and --no-loopback-san are flag-only switches; the rest
+    // are --key=value.
     if (arg === "--json") {
       flags.json = true;
+      continue;
+    }
+    if (arg === "--no-loopback-san") {
+      flags.loopbackSan = false;
       continue;
     }
     const [k, v] = splitFlag(arg);
@@ -397,7 +427,11 @@ async function runInit(args: string[]): Promise<number> {
     return 1;
   }
 
-  const sans = resolveInitSans(f);
+  const requestedSans = resolveInitSans(f);
+  const sans =
+    f.loopbackSan && bindCoversLoopback(f.bindHost)
+      ? dedupe([...requestedSans, ...LOOPBACK_SANS])
+      : requestedSans;
   const cert = await tls.generateSelfSignedCert({
     dir: f.dir,
     commonName: f.host,
