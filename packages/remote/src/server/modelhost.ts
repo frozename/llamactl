@@ -1,4 +1,8 @@
-import type { EngineBootEnv, ModelHostSpecForEngine } from "@llamactl/core/engines/types";
+import type {
+  EngineBootEnv,
+  ModelHostReadiness,
+  ModelHostSpecForEngine,
+} from "@llamactl/core/engines/types";
 import type { WorkloadKey } from "@llamactl/core/workloadRuntime";
 
 import { type EngineName, ENGINES } from "@llamactl/core/engines";
@@ -67,6 +71,7 @@ export interface StartModelHostOptions {
   probeReady?: (
     endpoint: { host: string; port: number },
     timeoutMs: number,
+    readiness?: ModelHostReadiness,
   ) => Promise<{ ready: boolean; modelIds: string[] }>;
   /**
    * Discover the pid of the process currently listening on an endpoint.
@@ -289,7 +294,11 @@ async function tryAdoptLiveHost(
   priorSpecHash: string | undefined,
 ): Promise<StartModelHostResult | "relaunch" | null> {
   const endpoint = manifest.spec.endpoint;
-  const readiness = await probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS).catch(() => ({
+  const readiness = await probeReady(
+    endpoint,
+    ADOPT_PROBE_TIMEOUT_MS,
+    manifest.spec.readiness,
+  ).catch(() => ({
     ready: false,
     modelIds: [] as string[],
   }));
@@ -402,7 +411,7 @@ async function reapOrAdoptPriorHost(
       resolved,
       opts.probeReady ??
         ((endpoint, timeoutMs): Promise<{ ready: boolean; modelIds: string[] }> =>
-          engine.probeReady(endpoint, timeoutMs)),
+          engine.probeReady(endpoint, timeoutMs, manifest.spec.readiness)),
       livePid,
       engine,
       priorState.specHash,
@@ -599,6 +608,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     const readiness = await (opts.probeReady ?? engine.probeReady)(
       endpoint,
       (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000,
+      spec.readiness,
     );
     if (!readiness.ready) {
       throw new Error("modelhost failed readiness probe");

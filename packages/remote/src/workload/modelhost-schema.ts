@@ -42,6 +42,14 @@ export const ModelHostEndpointSchema = z
   })
   .strict();
 
+export const ModelHostReadinessSchema = z
+  .object({
+    path: z.string().startsWith("/"),
+    expectStatus: z.number().int().default(200),
+    expectJson: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+  })
+  .strict();
+
 export const ModelHostSpecSchema = z
   .object({
     // Engine selection. The registry in packages/core/src/engines/ holds
@@ -69,6 +77,10 @@ export const ModelHostSpecSchema = z
     // the controller sends, and older remote agents reject unknown keys on
     // this strict schema. Absent means false.
     allowExternalBind: z.boolean().optional(),
+    // Opt-in readiness probe (issue #220): engines that list their id on
+    // /v1/models before they can serve (Gufo) declare a probe endpoint that
+    // actually means "can serve". Absent means today's /v1/models behaviour.
+    readiness: ModelHostReadinessSchema.optional(),
   })
   .strict();
 
@@ -210,6 +222,7 @@ export function specForEngine(spec: ModelHostSpec): ModelHostSpecForEngine {
     hostedModels: spec.hostedModels.map(normalizeHostedModel),
     extraArgs: spec.extraArgs,
     timeoutSeconds: spec.timeoutSeconds,
+    ...(spec.readiness !== undefined ? { readiness: spec.readiness } : {}),
     ...(spec.resources !== undefined
       ? {
           resources: {
