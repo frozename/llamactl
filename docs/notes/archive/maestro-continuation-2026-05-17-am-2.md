@@ -80,5 +80,5 @@ Five commits across two repos, plus live config and one workload swap.
 1. `git status --short && launchctl list | grep penumbra && git log --oneline origin/main -5`
 2. `mcp__penumbra__handoff_list_pending` → confirm clean
 3. `tail -200 ~/.penumbra/launchd.daemon.out.log | grep -E "judge pool|promoted session|judge failed" | tail -10` — confirm first post-restart two-judge promotion has landed
-4. `curl -sk -m 5 -H "Authorization: Bearer ll_agt_hhMIvwSymXSysUkGE4g_azFFX1GRRy5P" https://192.168.68.76:7843/v1/models` — confirm mac-mini gateway still exposes granite-3b
+4. `curl -sk -m 5 -H "Authorization: Bearer <redacted>" https://192.168.68.76:7843/v1/models` — confirm mac-mini gateway still exposes granite-3b
 5. If two-judge promotion confirmed, mark Task #8 completed and pick next thread: home-mgmt re-eval (#2 in §3 above) or B-instr spec (#3).
