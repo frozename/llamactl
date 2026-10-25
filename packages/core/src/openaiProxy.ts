@@ -265,8 +265,10 @@ type RouteEntry = {
   certificate?: string;
   token?: string;
   targetNodeId?: string;
-  /** Peer boot token (the peer server's /v1/models `created`); folded into the
-   *  response-cache epoch so a peer restart/swap invalidates cross-node entries. */
+  /** Peer workload's boot token: its runtime-record epoch when llamactl
+   *  manages it, else its /v1/models `created` once two consecutive reads
+   *  agree, null otherwise; folded into the response-cache epoch so a peer
+   *  restart/swap invalidates cross-node entries. */
   revision?: string | null;
 };
 
@@ -902,12 +904,12 @@ async function cacheHitResponse(
  *  - local workloads use their tracked epoch (changes on restart);
  *  - peer routes have no local epoch, so key on a synthetic epoch
  *    (peer node + model id + the peer's boot token `revision`). The revision
- *    is the peer server's /v1/models `created` (start time), carried in the
- *    peer snapshot; it changes when the peer restarts — including a model/quant
- *    swap under the same alias — so the cache invalidates automatically. When a
- *    peer doesn't advertise a revision (older node / engine without `created`),
- *    the epoch falls back to node+model (today's behaviour: stable, no
- *    restart-invalidation).
+ *    is the peer workload's runtime-record epoch when llamactl manages it,
+ *    else its /v1/models `created` once two consecutive reads agree; it changes
+ *    when the peer restarts — including a model/quant swap under the same
+ *    alias — so the cache invalidates automatically. When a peer doesn't
+ *    advertise a revision (older node / unreachable), the epoch falls back to
+ *    node+model (today's behaviour: stable, no restart-invalidation).
  */
 function responseCacheEpochForRoute(route: RoutedEntry, resolved: ResolvedEnv): string | null {
   const isPeer = "isPeer" in route && route.isPeer;
