@@ -124,17 +124,12 @@ ${DIR_FLAG_HELP}
   --host=<host>    Hostname/IP this node advertises externally (default: 127.0.0.1)
   --port=<n>       Port the agent listens on (default: 7843)
   --name=<node>    Node name recorded in agent.yaml (default: this machine's hostname)
-<<<<<<< HEAD
-  --bind=<host>    Address the agent binds to (default: 127.0.0.1)
-  --san=<host,...> Certificate SANs (default: the --host and --bind values).
-                   127.0.0.1, ::1 and localhost are always added when
-                   --bind is a wildcard or loopback address.
-  --no-loopback-san  Do not add the loopback SANs on a wildcard bind
-=======
   --bind=<host>    Address the agent binds to (default: 127.0.0.1; pass 0.0.0.0 to accept remote connections)
   --san=<host,...> Certificate SANs; repeatable, comma lists ok
-                   (--host is always included; default: the --host and --bind values)
->>>>>>> origin/main
+                   (--host is always included; default: the --host and --bind values).
+                   127.0.0.1, ::1 and localhost are also added when
+                   --bind is a wildcard or loopback address.
+  --no-loopback-san  Do not add the loopback SANs on a wildcard bind
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -300,10 +295,11 @@ export interface InitFlags {
   json: boolean; // emit single-line JSON instead of human summary
 }
 
-<<<<<<< HEAD
 // A wildcard or loopback bind still serves https://127.0.0.1, so certs
 // minted for those binds must include loopback SANs or local clients
-// that trust the cert fail verification (#217).
+// that trust the cert fail verification (#217). Distinct from
+// isLoopbackHost: a wildcard 0.0.0.0 or :: bind covers loopback but is
+// not itself a loopback host.
 function bindCoversLoopback(bindHost: string): boolean {
   if (
     bindHost === "0.0.0.0" ||
@@ -319,10 +315,7 @@ function bindCoversLoopback(bindHost: string): boolean {
 
 const LOOPBACK_SANS = ["127.0.0.1", "::1", "localhost"];
 
-function parseInitFlags(args: string[]): InitFlags | { error: string } {
-=======
 export function parseInitFlags(args: string[]): InitFlags | { error: string } {
->>>>>>> origin/main
   const flags: InitFlags = {
     dir: agentConfigMod.defaultAgentDir(),
     host: "127.0.0.1",
@@ -410,24 +403,15 @@ async function runInit(args: string[]): Promise<number> {
     return 1;
   }
 
-<<<<<<< HEAD
-  const requestedSans = f.sans.length > 0 ? f.sans : [f.host, f.bindHost];
+  const requestedSans = resolveInitSans(f);
   const sans =
     f.loopbackSan && bindCoversLoopback(f.bindHost)
-      ? [...requestedSans, ...LOOPBACK_SANS]
+      ? dedupe([...requestedSans, ...LOOPBACK_SANS])
       : requestedSans;
-  const dedupedSans = dedupe(sans);
-  const cert = await tls.generateSelfSignedCert({
-    dir: f.dir,
-    commonName: f.host,
-    hostnames: dedupedSans,
-=======
-  const sans = resolveInitSans(f);
   const cert = await tls.generateSelfSignedCert({
     dir: f.dir,
     commonName: f.host,
     hostnames: sans,
->>>>>>> origin/main
   });
 
   const token = auth.generateToken();
@@ -467,7 +451,6 @@ async function runInit(args: string[]): Promise<number> {
         `bind   ${f.bindHost}:${String(f.port)}`,
         `sans   ${sans.join(",")}`,
         `fp     ${cert.fingerprint}`,
-        `sans   ${dedupedSans.join(",")}`,
       ].join("\n") + "\n",
     );
     const record = {
@@ -490,7 +473,6 @@ async function runInit(args: string[]): Promise<number> {
       `bind   ${f.bindHost}:${String(f.port)}`,
       `sans   ${sans.join(",")}`,
       `fp     ${cert.fingerprint}`,
-      `sans   ${dedupedSans.join(",")}`,
       ``,
       `On the control plane, run:`,
       ``,
