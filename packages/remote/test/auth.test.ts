@@ -12,6 +12,8 @@ import {
   generateToken,
   hashToken,
   mintServiceToken,
+  namedBearerFor,
+  type NamedBearerToken,
   relayPrincipalOf,
   SERVICE_TOKEN_TTL_MS,
   type ServiceCredentialBinding,
@@ -57,6 +59,38 @@ describe("auth", () => {
     const req = new Request("http://x/");
     const { hash } = generateToken();
     expect(verifyBearer(req, hash)).toBe(false);
+  });
+});
+
+/**
+ * #218 — the agent accepts several named operator bearers beside the
+ * primary one. Each entry is checked in constant time, like every other
+ * bearer comparison in this module.
+ */
+describe("namedBearerFor", () => {
+  test("a match among several entries returns its name", () => {
+    const ci = generateToken();
+    const grafana = generateToken();
+    const tokens: NamedBearerToken[] = [
+      { name: "ci", tokenHash: ci.hash },
+      { name: "grafana", tokenHash: grafana.hash },
+    ];
+    expect(namedBearerFor(ci.token, tokens)).toBe("ci");
+    expect(namedBearerFor(grafana.token, tokens)).toBe("grafana");
+  });
+
+  test("a wrong, tampered, null or empty token returns null", () => {
+    const ci = generateToken();
+    const tokens: NamedBearerToken[] = [{ name: "ci", tokenHash: ci.hash }];
+    expect(namedBearerFor(generateToken().token, tokens)).toBeNull();
+    const tampered = ci.token.replace(/.$/, ci.token.endsWith("a") ? "b" : "a");
+    expect(namedBearerFor(tampered, tokens)).toBeNull();
+    expect(namedBearerFor(null, tokens)).toBeNull();
+    expect(namedBearerFor("", tokens)).toBeNull();
+  });
+
+  test("an empty list returns null", () => {
+    expect(namedBearerFor(generateToken().token, [])).toBeNull();
   });
 });
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { WorkloadSnapshot } from "../src/types.js";
 
-import { parseVmStatOutput, probeNodeMem } from "../src/node-probe.js";
+import { parseProcMeminfo, parseVmStatOutput, probeNodeMem } from "../src/node-probe.js";
 import { detectPressure, PressureWindow } from "../src/policy.js";
 
 const THRESHOLDS = {
@@ -55,7 +55,27 @@ Pages active:                        912.`;
 
 describe("probeNodeMem unavailable", () => {
   it("yields available:false when exec returns empty string", async () => {
-    const snap = await probeNodeMem({ exec: () => Promise.resolve("") });
+    const snap = await probeNodeMem({
+      platform: "darwin",
+      exec: () => Promise.resolve(""),
+    });
+    expect(snap.available).toBe(false);
+  });
+
+  it("yields available:false when /proc/meminfo is empty", () => {
+    expect(parseProcMeminfo("").available).toBe(false);
+  });
+
+  it("yields available:false when MemAvailable is missing", () => {
+    const snap = parseProcMeminfo("MemTotal:       65536000 kB\nActive:   2048000 kB");
+    expect(snap.available).toBe(false);
+  });
+
+  it("yields available:false on linux when reading /proc/meminfo rejects", async () => {
+    const snap = await probeNodeMem({
+      platform: "linux",
+      readFile: () => Promise.reject(new Error("x")),
+    });
     expect(snap.available).toBe(false);
   });
 });

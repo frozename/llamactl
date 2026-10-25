@@ -134,7 +134,7 @@ export interface InstallLaunchdDeps {
   env: NodeJS.ProcessEnv;
 }
 
-function defaultDeps(): InstallLaunchdDeps {
+export function defaultDeps(): InstallLaunchdDeps {
   return {
     spawnSync: nodeSpawnSync as unknown as SpawnSyncLike,
     fs: {
@@ -573,7 +573,7 @@ const PLIST_ENV_KEYS = [
   "AI_ROOT",
 ] as const;
 
-function buildPlistEnv(
+export function buildPlistEnv(
   processEnv: NodeJS.ProcessEnv,
   overrides: Record<string, string>,
 ): Record<string, string> {
@@ -993,7 +993,7 @@ async function executeInstallWithResult(opts: ExecuteInstallOpts): Promise<Execu
   return { code: 0, ...(pollResult.pid !== undefined ? { pid: pollResult.pid } : {}) };
 }
 
-function defaultAgentDir(deps: InstallLaunchdDeps, homeDir: string): string {
+export function defaultAgentDir(deps: InstallLaunchdDeps, homeDir: string): string {
   const devStorage = deps.env["DEV_STORAGE"];
   const node = (deps.env["LLAMACTL_NODE_NAME"] ?? hostname()).trim() || "local";
   if (devStorage) return join(devStorage, "agent", node);

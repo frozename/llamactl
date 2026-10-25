@@ -23,7 +23,7 @@ Filters:
   <anything else>         accepted when it matches the class or appears
                           anywhere in the repo id (fallthrough)
 
-Profile: current | all | mac-mini-16g | balanced | macbook-pro-48g.
+Profile: current | all | mac-mini-16g | balanced | macbook-pro-48g | large-128g.
 Limit: number of HF repos to scan. Defaults to LOCAL_AI_DISCOVERY_LIMIT.
 `;
 

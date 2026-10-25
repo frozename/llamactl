@@ -51,6 +51,33 @@ export function verifyBearer(req: Request, expectedHashHex: string): boolean {
 }
 
 /**
+ * A named operator bearer token (#218): the name it is revoked by and
+ * the SHA-256 of its token, as agent.yaml's bearerTokens block holds it.
+ */
+export interface NamedBearerToken {
+  name: string;
+  tokenHash: string;
+}
+
+/**
+ * The name of the bearer token a request presents, matched against
+ * every entry in constant time, so the timing shows neither a near miss
+ * nor which entry matched. Null when there is no token or no entry for
+ * it. The primary bearer is not an entry: `verifyBearer` checks it.
+ */
+export function namedBearerFor(
+  token: string | null | undefined,
+  tokens: readonly NamedBearerToken[],
+): string | null {
+  if (token === null || token === undefined || token.length === 0) return null;
+  let match: string | null = null;
+  for (const entry of tokens) {
+    if (bearerHashMatches(token, entry.tokenHash) && match === null) match = entry.name;
+  }
+  return match;
+}
+
+/**
  * A worker-RPC service credential's binding (P4.1): the claims it carries,
  * the credential's SHA-256 for the direct path, and the per-worker key its
  * tunnel tokens are checked with (`serviceTunnelKey`). Without the key the

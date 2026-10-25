@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { access } from "../safe-fs-promises.js";
 import {
+<<<<<<< HEAD
   chmodSync,
   existsSync,
   constants as fsConstants,
@@ -13,6 +14,17 @@ import {
   unlinkSync,
   writeFileSync,
 } from "../safe-fs.js";
+=======
+  existsSync,
+  constants as fsConstants,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+} from "../safe-fs.js";
+import { collectAgentStatus, formatAgentStatus } from "./agent-status.js";
+>>>>>>> origin/main
 import { runHeal } from "./heal.js";
 
 const USAGE = `Usage: llamactl agent <subcommand>
@@ -35,12 +47,24 @@ Subcommands:
       so it loads the new tokenHash. The default --host is 127.0.0.1;
       override when the operator's kubeconfig records a different
       advertised endpoint.
+<<<<<<< HEAD
   set-token (--hash=<sha256-hex> | --token-file=<path>) [--dir=<path>]
       Adopt an externally issued token (e.g. a central's cluster token)
       as agent.yaml's tokenHash, keeping the TLS cert/key. Writes the
       previous agent.yaml to agent.yaml.bak first. Restart the agent
       after setting it so it loads the new tokenHash.
   serve [--dir=<path>] [--bind=<host>] [--host=<host>] [--port=<n>] [--no-auth]
+=======
+   rotate-cert [--dir=<path>] [--host=<host>] [--san=<host,...>] [--token-file=<path>] [--json]
+       Rotate the TLS cert/key without touching the bearer token. Reads
+       agent.yaml, generates a fresh cert with the requested SANs (e.g.
+       to add a LAN IP) and updates only the pinned fingerprint. Pass
+       --token-file=<path> holding the current plaintext token to also
+       emit a bootstrap blob; without it the control plane still pins
+       the old cert. Restart the agent afterwards so it loads the new
+       cert.
+   serve [--dir=<path>] [--bind=<host>] [--host=<host>] [--port=<n>] [--no-auth]
+>>>>>>> origin/main
         [--dial-central=<wss-url>] [--central-bearer=<token>] [--tunnel-node-name=<name>]
         [--tunnel-central=true] [--tunnel-bearer=<token>] [--tunnel-journal=<path>]
         [--fleet-journal=<path>]
@@ -63,8 +87,9 @@ Subcommands:
       unset). Point it at the journal the fleet-supervisor writes so
       the agent serves fresh snapshots, not a DEV_STORAGE-dependent
       default.
-  status [--dir=<path>]
-      Print the agent config and its advertised URL.
+  status [--dir=<path>] [--host=<host>] [--json]
+      Report the agent config, whether /healthz answers, a loopback-only
+      bind, and cert expiry + SAN coverage of the advertised host.
   heal [flags]
       Run the self-healing loop (observe + journal + plan/execute).
       See 'llamactl agent heal --help' for full flag set. Also
@@ -78,6 +103,21 @@ Subcommands:
       ~/Library/LaunchAgents (user) or /Library/LaunchDaemons (system),
       and load it via launchctl. --dry-run prints the plist + launchctl
       plan without touching disk.
+  install-systemd [--scope=user|system] [--binary=<path> | --from-release=<tag> | --from-source]
+                  [--install-path=<path>] [--dir=<path>] [--bind=<host>] [--port=<n>]
+                  [--log-dir=<path>] [--env=KEY=VAL]... [--env-file=<path>]...
+                  [--repo=<owner/repo>] [--dry-run] [--force]
+      Linux only. Resolve an agent binary (existing path, GitHub release,
+      or local bun build --compile), render a systemd unit, write it to
+      ~/.config/systemd/user (user) or /etc/systemd/system (system), and
+      enable + restart it via systemctl. --dry-run prints the unit +
+      systemctl plan without touching disk.
+  token <subcommand>
+      Manage named operator bearer tokens (add / list / revoke). Each
+      named token authenticates the agent's authed API routes exactly
+      as the primary bearer does, and can be revoked on its own; the
+      agent re-reads them per request, so add and revoke apply without
+      a restart. See 'llamactl agent token --help'.
   rpc-doctor [--node=<name>] [--json]
       Verify $LLAMA_CPP_BIN/rpc-server is available for tensor-parallel
       workloads. Checks the local node by default; pass --node=<name>
@@ -105,8 +145,9 @@ ${DIR_FLAG_HELP}
   --host=<host>    Hostname/IP this node advertises externally (default: 127.0.0.1)
   --port=<n>       Port the agent listens on (default: 7843)
   --name=<node>    Node name recorded in agent.yaml (default: this machine's hostname)
-  --bind=<host>    Address the agent binds to (default: 127.0.0.1)
-  --san=<host,...> Certificate SANs (default: the --host and --bind values)
+  --bind=<host>    Address the agent binds to (default: 127.0.0.1; pass 0.0.0.0 to accept remote connections)
+  --san=<host,...> Certificate SANs; repeatable, comma lists ok
+                   (--host is always included; default: the --host and --bind values)
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -123,6 +164,7 @@ ${DIR_FLAG_HELP}
   -h, --help       Show this help
 `;
 
+<<<<<<< HEAD
 const SET_TOKEN_USAGE = `Usage: llamactl agent set-token (--hash=<sha256-hex> | --token-file=<path>) [flags]
 
 Adopt an externally issued token as agent.yaml's tokenHash, keeping the
@@ -135,6 +177,23 @@ ${DIR_FLAG_HELP}
   --token-file=<path>  File holding the new bearer token; hashed locally,
                      never printed
   -h, --help         Show this help
+=======
+const ROTATE_CERT_USAGE = `Usage: llamactl agent rotate-cert [flags]
+
+Rotate the TLS cert/key in agent.yaml, keeping the bearer token.
+Restart the agent afterwards so it loads the new cert.
+
+Flags:
+${DIR_FLAG_HELP}
+  --host=<host>    Cert CN and host in the emitted bootstrap URL (default: 127.0.0.1)
+  --san=<host,...> Certificate SANs; repeatable (default: the --host and bindHost)
+  --token-file=<path>
+                   File holding the current plaintext token. Verified
+                   against tokenHash before any write; when it matches,
+                   a bootstrap blob is emitted.
+  --json           Emit a single-line JSON record instead of the human summary
+  -h, --help       Show this help
+>>>>>>> origin/main
 `;
 
 const SERVE_USAGE = `Usage: llamactl agent serve [flags]
@@ -164,15 +223,42 @@ ${DIR_FLAG_HELP}
 
 const STATUS_USAGE = `Usage: llamactl agent status [flags]
 
-Print the agent config and its advertised URL.
+Report the agent config, whether /healthz answers, a loopback-only
+bind, and cert expiry + SAN coverage of the advertised host.
 
 Flags:
 ${DIR_FLAG_HELP}
+  --host=<host>    Host remote clients dial, to check cert SAN coverage
+  --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
 
 function isHelpFlag(arg: string): boolean {
   return arg === "-h" || arg === "--help";
+}
+
+// #210: a non-loopback advertised host on a loopback bind is unreachable remotely.
+export function isLoopbackHost(host: string): boolean {
+  const h = host.toLowerCase();
+  const stripped = h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : h;
+  if (stripped === "localhost" || stripped === "::1" || stripped === "::ffff:127.0.0.1") {
+    return true;
+  }
+  return stripped.startsWith("127.") && /^[\d.]+$/.test(stripped);
+}
+
+// #210: null means no warning; the returned line always ends in "\n".
+export function initBindWarning(
+  host: string,
+  bindHost: string,
+  bindExplicit: boolean,
+): string | null {
+  if (bindExplicit || isLoopbackHost(host) || !isLoopbackHost(bindHost)) return null;
+  return (
+    `warning: advertised host ${host} is not reachable from other machines: ` +
+    `the agent binds ${bindHost}. Pass --bind=0.0.0.0 (or --bind=${host}) so ` +
+    `'llamactl node add' on a remote control plane can connect.\n`
+  );
 }
 
 export async function runAgent(args: string[]): Promise<number> {
@@ -182,17 +268,26 @@ export async function runAgent(args: string[]): Promise<number> {
       return await runInit(rest);
     case "rotate-token":
       return await runRotateToken(rest);
+<<<<<<< HEAD
     case "set-token":
       return runSetToken(rest);
+=======
+    case "rotate-cert":
+      return await runRotateCert(rest);
+>>>>>>> origin/main
     case "serve":
       return await runServe(rest);
     case "status":
-      return runStatus(rest);
+      return await runStatus(rest);
     case "heal":
       return await runHeal(rest);
     case "install-launchd": {
       const { runAgentInstallLaunchd } = await import("./agent-install/index.js");
       return await runAgentInstallLaunchd(rest);
+    }
+    case "install-systemd": {
+      const { runAgentInstallSystemd } = await import("./agent-install/systemd.js");
+      return await runAgentInstallSystemd(rest);
     }
     case "update": {
       const { runAgentUpdate } = await import("./agent-update.js");
@@ -205,6 +300,10 @@ export async function runAgent(args: string[]): Promise<number> {
     case "rpc-doctor": {
       const { runRpcDoctor } = await import("./agent-rpc-doctor.js");
       return await runRpcDoctor(rest);
+    }
+    case "token": {
+      const { runAgentToken } = await import("./agent-token.js");
+      return await runAgentToken(rest);
     }
     case "cli": {
       const { runAgentCli } = await import("./cli-doctor.js");
@@ -222,23 +321,25 @@ export async function runAgent(args: string[]): Promise<number> {
   }
 }
 
-interface InitFlags {
+export interface InitFlags {
   dir: string;
   host: string; // the hostname/IP this node advertises externally
   port: number;
   nodeName: string;
   bindHost: string; // what Bun.serve binds to
+  bindExplicit: boolean; // whether --bind was passed
   sans: string[]; // SANs baked into the cert
   json: boolean; // emit single-line JSON instead of human summary
 }
 
-function parseInitFlags(args: string[]): InitFlags | { error: string } {
+export function parseInitFlags(args: string[]): InitFlags | { error: string } {
   const flags: InitFlags = {
     dir: agentConfigMod.defaultAgentDir(),
     host: "127.0.0.1",
     port: 7843,
     nodeName: hostname() || "local",
     bindHost: "127.0.0.1",
+    bindExplicit: false,
     sans: [],
     json: false,
   };
@@ -270,18 +371,26 @@ function parseInitFlags(args: string[]): InitFlags | { error: string } {
         break;
       case "--bind":
         flags.bindHost = v;
+        flags.bindExplicit = true;
         break;
       case "--san":
-        flags.sans = v
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
+        flags.sans.push(
+          ...v
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        );
         break;
       default:
         return { error: `agent init: unknown flag ${k}` };
     }
   }
   return flags;
+}
+
+export function resolveInitSans(f: Pick<InitFlags, "host" | "bindHost" | "sans">): string[] {
+  // --host must always be in the cert: the bootstrap URL is https://<host>:<port>.
+  return dedupe(f.sans.length > 0 ? [f.host, ...f.sans] : [f.host, f.bindHost]);
 }
 
 async function runInit(args: string[]): Promise<number> {
@@ -305,11 +414,11 @@ async function runInit(args: string[]): Promise<number> {
     return 1;
   }
 
-  const sans = f.sans.length > 0 ? f.sans : [f.host, f.bindHost];
+  const sans = resolveInitSans(f);
   const cert = await tls.generateSelfSignedCert({
     dir: f.dir,
     commonName: f.host,
-    hostnames: dedupe(sans),
+    hostnames: sans,
   });
 
   const token = auth.generateToken();
@@ -325,6 +434,9 @@ async function runInit(args: string[]): Promise<number> {
     fingerprint: cert.fingerprint,
   };
   agentConfigMod.saveAgentConfig(config, configPath);
+
+  const bindWarn = initBindWarning(f.host, f.bindHost, f.bindExplicit);
+  if (bindWarn !== null) process.stderr.write(bindWarn);
 
   const url = `https://${f.host}:${String(f.port)}`;
   const bootstrap = agentConfigMod.encodeBootstrap({
@@ -344,6 +456,7 @@ async function runInit(args: string[]): Promise<number> {
         `cert   ${cert.certPath}`,
         `key    ${cert.keyPath}`,
         `bind   ${f.bindHost}:${String(f.port)}`,
+        `sans   ${sans.join(",")}`,
         `fp     ${cert.fingerprint}`,
       ].join("\n") + "\n",
     );
@@ -365,6 +478,7 @@ async function runInit(args: string[]): Promise<number> {
       `cert   ${cert.certPath}`,
       `key    ${cert.keyPath}`,
       `bind   ${f.bindHost}:${String(f.port)}`,
+      `sans   ${sans.join(",")}`,
       `fp     ${cert.fingerprint}`,
       ``,
       `On the control plane, run:`,
@@ -498,6 +612,7 @@ export async function runRotateToken(args: string[]): Promise<number> {
   return 0;
 }
 
+<<<<<<< HEAD
 interface SetTokenFlags {
   dir: string;
   hash?: string;
@@ -509,23 +624,65 @@ function parseSetTokenFlags(args: string[]): SetTokenFlags | { error: string } {
   for (const arg of args) {
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent set-token: flag must be --key=value: ${arg}` };
+=======
+interface RotateCertFlags {
+  dir: string;
+  host: string;
+  sans: string[];
+  tokenFile?: string;
+  json: boolean;
+}
+
+function parseRotateCertFlags(args: string[]): RotateCertFlags | { error: string } {
+  const flags: RotateCertFlags = {
+    dir: agentConfigMod.defaultAgentDir(),
+    host: "127.0.0.1",
+    sans: [],
+    json: false,
+  };
+  for (const arg of args) {
+    if (arg === "--json") {
+      flags.json = true;
+      continue;
+    }
+    const [k, v] = splitFlag(arg);
+    if (v === undefined) return { error: `agent rotate-cert: flag must be --key=value: ${arg}` };
+>>>>>>> origin/main
     switch (k) {
       case "--dir":
         flags.dir = v;
         break;
+<<<<<<< HEAD
       case "--hash":
         flags.hash = v;
+=======
+      case "--host":
+        flags.host = v;
+        break;
+      case "--san":
+        flags.sans.push(
+          ...v
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        );
+>>>>>>> origin/main
         break;
       case "--token-file":
         flags.tokenFile = v;
         break;
       default:
+<<<<<<< HEAD
         return { error: `agent set-token: unknown flag ${k}` };
+=======
+        return { error: `agent rotate-cert: unknown flag ${k}` };
+>>>>>>> origin/main
     }
   }
   return flags;
 }
 
+<<<<<<< HEAD
 /** Turn --hash / --token-file into the tokenHash, never echoing the token. */
 function resolveSetTokenHash(f: SetTokenFlags): string | { error: string } {
   if (f.hash !== undefined) {
@@ -534,10 +691,25 @@ function resolveSetTokenHash(f: SetTokenFlags): string | { error: string } {
     return hash.toLowerCase();
   }
   const tokenFile = String(f.tokenFile);
+=======
+/**
+ * Read and verify --token-file against agent.yaml's tokenHash. A blob
+ * needs the plaintext token (agent.yaml stores only the hash), and the
+ * check runs before any write so a wrong token touches nothing.
+ * Returns null when no --token-file was given.
+ */
+function readRotateCertToken(
+  tokenFile: string | undefined,
+  tokenHash: string,
+  configPath: string,
+): string | null | 1 {
+  if (tokenFile === undefined) return null;
+>>>>>>> origin/main
   let token: string;
   try {
     token = readFileSync(tokenFile, "utf8").trim();
   } catch (err) {
+<<<<<<< HEAD
     return { error: `failed to read ${tokenFile}: ${(err as Error).message}` };
   }
   if (token === "") return { error: `token file is empty: ${tokenFile}` };
@@ -581,11 +753,43 @@ export function runSetToken(args: string[]): number {
     return 0;
   }
   const parsed = parseSetTokenFlags(args);
+=======
+    process.stderr.write(
+      `agent rotate-cert: failed to read --token-file ${tokenFile}: ${(err as Error).message}\n`,
+    );
+    return 1;
+  }
+  if (token === "") {
+    process.stderr.write(`agent rotate-cert: token file ${tokenFile} is empty.\n`);
+    return 1;
+  }
+  if (!auth.bearerHashMatches(token, tokenHash)) {
+    process.stderr.write(
+      `agent rotate-cert: token from ${tokenFile} does not match tokenHash in ${configPath}. Nothing written.\n`,
+    );
+    return 1;
+  }
+  return token;
+}
+
+/**
+ * Rotate the TLS cert/key without touching the bearer token. Cheap
+ * counterpart to rotate-token: use it when the cert needs new SANs
+ * (e.g. a LAN IP) but the kubeconfig token is still valid.
+ */
+export async function runRotateCert(args: string[]): Promise<number> {
+  if (args.some(isHelpFlag)) {
+    process.stdout.write(ROTATE_CERT_USAGE);
+    return 0;
+  }
+  const parsed = parseRotateCertFlags(args);
+>>>>>>> origin/main
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 1;
   }
   const f = parsed;
+<<<<<<< HEAD
   if ((f.hash === undefined) === (f.tokenFile === undefined)) {
     process.stderr.write("agent set-token: exactly one of --hash or --token-file is required\n");
     return 1;
@@ -636,6 +840,104 @@ export function runSetToken(args: string[]): number {
     ].join("\n"),
   );
   return 0;
+=======
+  const configPath = join(f.dir, "agent.yaml");
+  if (!existsSync(configPath)) {
+    process.stderr.write(
+      `agent rotate-cert: ${configPath} not found. Run 'llamactl agent init' first.\n`,
+    );
+    return 1;
+  }
+
+  const existing = agentConfigMod.loadAgentConfig(configPath);
+  const token = readRotateCertToken(f.tokenFile, existing.tokenHash, configPath);
+  if (token === 1) return 1;
+
+  const sans = f.sans.length > 0 ? dedupe(f.sans) : dedupe([f.host, existing.bindHost]);
+
+  // generateSelfSignedCert writes agent.key/agent.crt directly into its
+  // dir, so stage first and rename into place only after success.
+  const staging = mkdtempSync(join(f.dir, ".rotate-cert-"));
+  try {
+    const cert = await tls.generateSelfSignedCert({
+      dir: staging,
+      commonName: f.host,
+      hostnames: sans,
+    });
+    renameSync(cert.keyPath, existing.keyPath);
+    renameSync(cert.certPath, existing.certPath);
+    agentConfigMod.saveAgentConfig({ ...existing, fingerprint: cert.fingerprint }, configPath);
+
+    const blob =
+      token === null
+        ? null
+        : agentConfigMod.encodeBootstrap({
+            url: `https://${f.host}:${String(existing.port)}`,
+            fingerprint: cert.fingerprint,
+            token,
+            certificate: cert.certPem,
+          });
+
+    if (f.json) {
+      process.stderr.write(
+        [
+          `rotated cert in ${configPath}`,
+          `key    ${existing.keyPath}`,
+          `was    ${existing.fingerprint}`,
+          `now    ${cert.fingerprint}`,
+          `sans   ${sans.join(",")}`,
+          `tokenHash unchanged`,
+        ].join("\n") + "\n",
+      );
+      const record = {
+        configPath,
+        nodeName: existing.nodeName,
+        bindHost: existing.bindHost,
+        port: existing.port,
+        fingerprint: cert.fingerprint,
+        previousFingerprint: existing.fingerprint,
+        sans,
+        blob,
+      };
+      process.stdout.write(`${JSON.stringify(record)}\n`);
+      return 0;
+    }
+
+    const lines = [
+      `rotated cert in ${configPath}`,
+      `cert   ${existing.certPath}`,
+      `was    ${existing.fingerprint}`,
+      `now    ${cert.fingerprint}`,
+      `sans   ${sans.join(",")}`,
+      `tokenHash unchanged`,
+      ``,
+      `Restart the agent so it loads the new cert (the cert is read only at startup).`,
+      ``,
+    ];
+    if (blob !== null) {
+      lines.push(
+        `On the control plane, re-pin the new cert with:`,
+        ``,
+        `  llamactl node add ${String(existing.nodeName)} --bootstrap ${blob} --force`,
+        ``,
+      );
+    } else {
+      lines.push(
+        `The control plane still pins the old cert. To emit a bootstrap blob,`,
+        `re-run with --token-file=<file holding the current token>, or run`,
+        `'llamactl agent rotate-token' to get a fresh blob.`,
+        ``,
+      );
+    }
+    process.stdout.write(lines.join("\n"));
+    return 0;
+  } catch (err) {
+    process.stderr.write(`agent rotate-cert: ${(err as Error).message}\n`);
+    return 1;
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+>>>>>>> origin/main
 }
 
 export interface ServeFlags {
@@ -777,7 +1079,7 @@ function validateServeWiring(parsed: ServeFlags): ServeWiring | { error: string 
   return { dialUrl, dialBearer, tunnelCentralOn, tunnelCentralBearer };
 }
 
-function buildServeOptions(
+export function buildServeOptions(
   parsed: ServeFlags,
   cfg: ReturnType<typeof agentConfigMod.loadAgentConfig>,
   wiring: ServeWiring,
@@ -788,6 +1090,9 @@ function buildServeOptions(
     bindHost: parsed.bindHost ?? cfg.bindHost,
     port: parsed.port ?? cfg.port,
     tokenHash: cfg.tokenHash,
+    // Named operator bearer tokens (#218), re-read on every request, so
+    // 'agent token add' / 'revoke' apply without a restart.
+    bearerTokens: agentConfigMod.bearerTokensReader(join(parsed.dir, "agent.yaml")),
     tls: { certPath: cfg.certPath, keyPath: cfg.keyPath },
     // Publish cluster peers' fleet snapshots so peer models route through this
     // proxy with prefix-cache. No-op when listPeers() is empty (single-node).
@@ -920,7 +1225,7 @@ async function runServe(args: string[]): Promise<number> {
   return 0;
 }
 
-function runStatus(args: string[]): number {
+async function runStatus(args: string[]): Promise<number> {
   if (args.some(isHelpFlag)) {
     process.stdout.write(STATUS_USAGE);
     return 0;
@@ -936,27 +1241,43 @@ function runStatus(args: string[]): number {
     return 1;
   }
   const cfg = agentConfigMod.loadAgentConfig(cfgPath);
-  const out = {
+  const report = await collectAgentStatus({
     configPath: cfgPath,
-    nodeName: cfg.nodeName,
-    bind: `${cfg.bindHost}:${String(cfg.port)}`,
-    certPath: cfg.certPath,
-    keyPath: cfg.keyPath,
-    fingerprint: cfg.fingerprint,
-  };
-  process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+    cfg,
+    ...(parsed.host !== undefined ? { advertisedHost: parsed.host } : {}),
+  });
+  if (parsed.json) process.stdout.write(`${JSON.stringify(report)}\n`);
+  else process.stdout.write(formatAgentStatus(report));
   return 0;
 }
 
-function parseStatusFlags(args: string[]): { dir: string } | { error: string } {
-  let dir = agentConfigMod.defaultAgentDir();
+interface StatusFlags {
+  dir: string;
+  host?: string; // the host remote clients dial, for SAN coverage
+  json: boolean;
+}
+
+function parseStatusFlags(args: string[]): StatusFlags | { error: string } {
+  const flags: StatusFlags = { dir: agentConfigMod.defaultAgentDir(), json: false };
   for (const arg of args) {
+    if (arg === "--json") {
+      flags.json = true;
+      continue;
+    }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent status: flag must be --key=value: ${arg}` };
-    if (k === "--dir") dir = v;
-    else return { error: `agent status: unknown flag ${k}` };
+    switch (k) {
+      case "--dir":
+        flags.dir = v;
+        break;
+      case "--host":
+        flags.host = v;
+        break;
+      default:
+        return { error: `agent status: unknown flag ${k}` };
+    }
   }
-  return { dir };
+  return flags;
 }
 
 function splitFlag(arg: string): [string, string | undefined] {

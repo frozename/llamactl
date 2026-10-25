@@ -78,6 +78,32 @@ export const AgentWorkerRpcRelaySchema = z.object({
 });
 export type AgentWorkerRpcRelay = z.infer<typeof AgentWorkerRpcRelaySchema>;
 
+/** The name a named operator bearer token (#218) is recorded and revoked by. */
+export const BEARER_TOKEN_NAME = /^[a-z0-9][a-z0-9._-]{0,62}$/;
+
+/**
+ * A named operator bearer token (#218), stored only as the SHA-256 of its
+ * token, like the primary bearer. Each one authenticates the agent's
+ * authed API routes exactly as `tokenHash` does, and can be revoked on
+ * its own; the primary bearer rotates wholesale with `rotate-token`.
+ */
+export const AgentBearerTokenSchema = z.object({
+  name: z.string().regex(BEARER_TOKEN_NAME),
+  tokenHash: z.string().regex(SHA256_HEX),
+  createdAt: z.string().min(1),
+});
+export type AgentBearerToken = z.infer<typeof AgentBearerTokenSchema>;
+
+export const AgentBearerTokensSchema = z
+  .array(AgentBearerTokenSchema)
+  .refine((entries) => new Set(entries.map((e) => e.name)).size === entries.length, {
+    message: "token names must be unique",
+  })
+  .refine((entries) => new Set(entries.map((e) => e.tokenHash)).size === entries.length, {
+    message: "token hashes must be unique",
+  });
+export type AgentBearerTokens = z.infer<typeof AgentBearerTokensSchema>;
+
 export const AgentConfigSchema = z.object({
   apiVersion: z.literal("llamactl/v1"),
   kind: z.literal("AgentConfig"),
@@ -97,12 +123,19 @@ export const AgentConfigSchema = z.object({
   workerRpc: z.unknown().optional(),
   /** Central's relay-only credentials; opaque here for the same reason. */
   workerRpcRelay: z.unknown().optional(),
+  /**
+   * The named operator bearer tokens (#218), opaque here like workerRpc:
+   * only its reader validates it, an invalid block is ignored (the
+   * primary bearer keeps authenticating), and re-saves write it back as
+   * it was read.
+   */
+  bearerTokens: z.unknown().optional(),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
 /** The blocks only their readers validate; a re-save keeps their source text. */
-const OPAQUE_BLOCKS = ["workerRpc", "workerRpcRelay"] as const;
+const OPAQUE_BLOCKS = ["workerRpc", "workerRpcRelay", "bearerTokens"] as const;
 
 interface BlockSource {
   /** The block's value as read, to tell an unchanged block from an edited one. */
@@ -382,6 +415,42 @@ export function workerRpcRelayReader(
       : [];
     if (parsed.data.tokenHashes.some((hash) => serviceHashes.includes(hash))) {
       warnIgnored(path, "workerRpcRelay", "a relay credential is also a service credential");
+      return undefined;
+    }
+    return parsed.data;
+  });
+}
+
+/**
+ * Reads agent.yaml's named operator bearer tokens (#218), re-reading the
+ * file whenever it changes, so an added or revoked token applies to the
+ * next request without a restart. A block that does not validate, or
+ * whose hash also appears in the sibling workerRpc or workerRpcRelay
+ * block, is ignored with a warning: only the primary bearer
+ * authenticates, while the agent itself runs on.
+ */
+export function bearerTokensReader(
+  path: string = defaultAgentConfigPath(),
+): () => AgentBearerTokens | undefined {
+  return agentYamlBlockReader(path, (config) => {
+    if (config.bearerTokens === undefined) return undefined;
+    const parsed = AgentBearerTokensSchema.safeParse(config.bearerTokens);
+    if (!parsed.success) {
+      warnIgnored(path, "bearerTokens", firstIssue(parsed.error));
+      return undefined;
+    }
+    const worker = AgentWorkerRpcSchema.safeParse(config.workerRpc);
+    const serviceHashes = worker.success
+      ? worker.data.serviceCredentials.map((b) => b.tokenHash)
+      : [];
+    const relay = AgentWorkerRpcRelaySchema.safeParse(config.workerRpcRelay);
+    const relayHashes = relay.success ? relay.data.tokenHashes : [];
+    if (
+      parsed.data.some(
+        (e) => serviceHashes.includes(e.tokenHash) || relayHashes.includes(e.tokenHash),
+      )
+    ) {
+      warnIgnored(path, "bearerTokens", "a bearer token hash is also a worker-RPC credential");
       return undefined;
     }
     return parsed.data;
