@@ -1,4 +1,8 @@
-import type { ModelHostHostedModel, ModelHostSpecForEngine } from "@llamactl/core/engines/types";
+import type {
+  ModelHostHostedModel,
+  ModelHostReadiness,
+  ModelHostSpecForEngine,
+} from "@llamactl/core/engines/types";
 
 import { omitUndefined } from "@llamactl/core/object";
 import { z } from "zod";
@@ -54,6 +58,14 @@ export const ModelHostEndpointSchema = z
   })
   .strict();
 
+export const ModelHostReadinessSchema = z
+  .object({
+    path: z.string().startsWith("/"),
+    expectStatus: z.number().int().default(200),
+    expectJson: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+  })
+  .strict();
+
 export const ModelHostSpecSchema = z
   .object({
     // Engine selection. The registry in packages/core/src/engines/ holds
@@ -81,6 +93,10 @@ export const ModelHostSpecSchema = z
     // the controller sends, and older remote agents reject unknown keys on
     // this strict schema. Absent means false.
     allowExternalBind: z.boolean().optional(),
+    // Opt-in readiness probe (issue #220): engines that list their id on
+    // /v1/models before they can serve (Gufo) declare a probe endpoint that
+    // actually means "can serve". Absent means today's /v1/models behaviour.
+    readiness: ModelHostReadinessSchema.optional(),
   })
   .strict();
 
@@ -210,11 +226,28 @@ function normalizeHostedModel(m: ModelHostSpec["hostedModels"][number]): ModelHo
 }
 
 /**
+ * Normalize a parsed readiness probe into the engine-layer `ModelHostReadiness`
+ * shape. Zod infers `expectJson` as `T | undefined`, but the engine interface
+ * (under exactOptionalPropertyTypes) declares it absent-or-present.
+ */
+export function normalizeReadiness(
+  readiness: ModelHostSpec["readiness"],
+): ModelHostReadiness | undefined {
+  if (readiness === undefined) return undefined;
+  return {
+    path: readiness.path,
+    expectStatus: readiness.expectStatus,
+    ...omitUndefined({ expectJson: readiness.expectJson }),
+  };
+}
+
+/**
  * Normalize a parsed `ModelHostSpec` into the engine-layer `ModelHostSpecForEngine`
  * shape. Bridges the zod-inferred `T | undefined` optionals (hosted-model and
  * resources fields) to the engine interface's absent-or-present optionals.
  */
 export function specForEngine(spec: ModelHostSpec): ModelHostSpecForEngine {
+  const readiness = normalizeReadiness(spec.readiness);
   return {
     engine: spec.engine,
     binary: spec.binary,
@@ -222,6 +255,7 @@ export function specForEngine(spec: ModelHostSpec): ModelHostSpecForEngine {
     hostedModels: spec.hostedModels.map(normalizeHostedModel),
     extraArgs: spec.extraArgs,
     timeoutSeconds: spec.timeoutSeconds,
+    ...(readiness !== undefined ? { readiness } : {}),
     ...(spec.resources !== undefined
       ? {
           resources: {

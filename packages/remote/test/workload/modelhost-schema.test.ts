@@ -6,6 +6,7 @@ import {
   modelHostBindRefusal,
   type ModelHostManifest,
   ModelHostManifestSchema,
+  specForEngine,
 } from "../../src/workload/modelhost-schema.js";
 
 function hostWithLabels(labels?: Record<string, string>): ModelHostManifest {
@@ -244,6 +245,77 @@ describe("ModelHostManifestSchema", () => {
     const result = ModelHostManifestSchema.safeParse(valid);
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.spec.allowExternalBind).toBeUndefined();
+  });
+});
+
+describe("spec.readiness", () => {
+  test("accepts a readiness probe on a ModelHost manifest", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: {
+        ...valid.spec,
+        readiness: { path: "/ready", expectStatus: 200, expectJson: { status: "ready" } },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.spec.readiness).toEqual({
+        path: "/ready",
+        expectStatus: 200,
+        expectJson: { status: "ready" },
+      });
+    }
+  });
+
+  test("defaults expectStatus to 200 when omitted", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, readiness: { path: "/ready" } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.spec.readiness?.expectStatus).toBe(200);
+  });
+
+  test("rejects a readiness path without a leading slash", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, readiness: { path: "ready" } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects unknown keys inside readiness", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, readiness: { path: "/ready", timeoutMs: 500 } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects non-scalar expectJson values", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, readiness: { path: "/ready", expectJson: { meta: { a: 1 } } } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("omitting readiness leaves it undefined (today's behaviour)", () => {
+    const result = ModelHostManifestSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.spec.readiness).toBeUndefined();
+  });
+
+  test("specForEngine threads readiness to the engine layer", () => {
+    const parsed = ModelHostManifestSchema.parse({
+      ...valid,
+      spec: { ...valid.spec, readiness: { path: "/ready", expectJson: { status: "ready" } } },
+    });
+    expect(specForEngine(parsed.spec).readiness).toEqual({
+      path: "/ready",
+      expectStatus: 200,
+      expectJson: { status: "ready" },
+    });
   });
 });
 

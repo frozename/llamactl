@@ -16,5 +16,6 @@ export type {
   EngineBootEnv,
   EngineName,
   ModelHostHostedModel,
+  ModelHostReadiness,
   ModelHostSpecForEngine,
 } from "./types.js";
