@@ -61,6 +61,20 @@ function sanEntries(x509: X509Certificate): string[] {
     .filter(Boolean);
 }
 
+// Bun renders IPv6 SANs fully expanded (0:0:0:0:0:0:0:1); compress them.
+function normalizeSan(entry: string): string {
+  return isIP(entry) === 6 ? new URL(`https://[${entry}]/`).hostname.slice(1, -1) : entry;
+}
+
+/** #210: the cert's SAN entries, IPv6 compressed; [] when the cert cannot be read or parsed. */
+export function readCertSans(certPath: string): string[] {
+  try {
+    return sanEntries(new X509Certificate(readFileSync(certPath, "utf8"))).map(normalizeSan);
+  } catch {
+    return [];
+  }
+}
+
 function coversHost(x509: X509Certificate, host: string): boolean {
   return isIP(host) === 0 ? x509.checkHost(host) !== undefined : x509.checkIP(host) !== undefined;
 }
