@@ -72,7 +72,9 @@ function writeManifest(options?: { node?: string; binary?: string }): string {
       "  engine: omlx",
       `  binary: ${options?.binary ?? join(tmp, "omlx")}`,
       "  resources:",
-      "    expectedMemoryGiB: 12",
+      // Small reservation: the apply path admits against the default node
+      // budget (75% of the test machine's RAM), which is ~5 GiB on CI runners.
+      "    expectedMemoryGiB: 1",
       "  endpoint:",
       "    host: 127.0.0.1",
       "    port: 8094",
