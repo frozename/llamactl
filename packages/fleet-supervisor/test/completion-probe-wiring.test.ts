@@ -460,39 +460,104 @@ describe("makeDefaultProbeFn completion wiring", () => {
       classification: "wedge",
       consecutiveFailures: (opts.priorConsecutiveFailures ?? 0) + 1,
     });
-    const fetchWithCreated =
-      (created: number) =>
-      async (url: string): Promise<Response> => {
-        if (url.endsWith("/health")) return new Response("ok", { status: 200 });
-        if (url.endsWith("/v1/models"))
-          return new Response(JSON.stringify({ data: [{ id: "granite-3b", created }] }), {
-            status: 200,
-          });
-        return new Response("", { status: 404 });
-      };
+    let created = 1_000;
+    const mutableCreatedFetch = async (url: string): Promise<Response> => {
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      if (url.endsWith("/v1/models"))
+        return new Response(JSON.stringify({ data: [{ id: "granite-3b", created }] }), {
+          status: 200,
+        });
+      return new Response("", { status: 404 });
+    };
     const state = { ...freshState(), lastRevision: new Map<string, string | null>() };
     const target = { ...TARGET, completionProbe: { ...PROBE_CONFIG, everyNTicks: 1 } };
-
-    await makeDefaultProbeFn({
-      fetch: fetchWithCreated(1_000) as unknown as typeof fetch,
+    const probeFn = makeDefaultProbeFn({
+      fetch: mutableCreatedFetch as unknown as typeof fetch,
       timeoutMs: 500,
       consecutiveErrors: new Map(),
       completion: { ...state, probe: fakeProbe },
-    })(target);
+    });
+
+    await probeFn(target);
+    await probeFn(target);
     expect(state.lastRevision.get("granite-judge")).toBe("1000");
 
     // a stale ring from the old boot, then the server restarts (revision flips) without
     // /health ever dropping — the ring must be invalidated so it can't mask a wedge.
     state.latencySamples.set("granite-judge", [9_000, 9_000, 9_000, 9_000, 9_000]);
 
-    await makeDefaultProbeFn({
-      fetch: fetchWithCreated(2_000) as unknown as typeof fetch,
-      timeoutMs: 500,
-      consecutiveErrors: new Map(),
-      completion: { ...state, probe: fakeProbe },
-    })(target);
+    created = 2_000;
+    // First read of the new boot is unconfirmed (revision null): it must not
+    // overwrite "1000" nor clear the ring yet.
+    await probeFn(target);
+    expect(state.lastRevision.get("granite-judge")).toBe("1000");
 
+    // Second read agrees: the confirmed flip clears the stale ring.
+    await probeFn(target);
     expect(state.lastRevision.get("granite-judge")).toBe("2000");
     expect(state.latencySamples.has("granite-judge")).toBe(false);
+  });
+});
+
+describe("makeDefaultProbeFn revision stability", () => {
+  const PLAIN_TARGET: WorkloadTarget = {
+    name: "plain",
+    endpoint: "http://127.0.0.1:8090",
+    kind: "ModelHost",
+  };
+
+  it("keeps revision null while every read returns a new created (request-time clock)", async () => {
+    let nextCreated = 1_792_877_007;
+    const driftingFetch = async (url: string): Promise<Response> => {
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      if (url.endsWith("/v1/models")) {
+        const body = { data: [{ id: "granite-3b", created: nextCreated }] };
+        nextCreated += 4;
+        return new Response(JSON.stringify(body), { status: 200 });
+      }
+      return new Response("", { status: 404 });
+    };
+    const probeFn = makeDefaultProbeFn({
+      fetch: driftingFetch as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+    });
+
+    const a = await probeFn(PLAIN_TARGET);
+    const b = await probeFn(PLAIN_TARGET);
+    const c = await probeFn(PLAIN_TARGET);
+
+    expect(a.revision).toBeNull();
+    expect(b.revision).toBeNull();
+    expect(c.revision).toBeNull();
+  });
+
+  it("publishes revision only once two consecutive reads agree", async () => {
+    let created = 1_000;
+    const mutableCreatedFetch = async (url: string): Promise<Response> => {
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      if (url.endsWith("/v1/models"))
+        return new Response(JSON.stringify({ data: [{ id: "granite-3b", created }] }), {
+          status: 200,
+        });
+      return new Response("", { status: 404 });
+    };
+    const probeFn = makeDefaultProbeFn({
+      fetch: mutableCreatedFetch as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+    });
+
+    const revisions: (string | null)[] = [];
+    created = 1_000;
+    revisions.push((await probeFn(PLAIN_TARGET)).revision ?? null);
+    created = 1_000;
+    revisions.push((await probeFn(PLAIN_TARGET)).revision ?? null);
+    created = 2_000;
+    revisions.push((await probeFn(PLAIN_TARGET)).revision ?? null);
+    created = 2_000;
+    revisions.push((await probeFn(PLAIN_TARGET)).revision ?? null);
+
+    expect(revisions).toEqual([null, "1000", null, "2000"]);
   });
 });

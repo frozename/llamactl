@@ -127,12 +127,11 @@ function invalidateStaleRingOnRestart(
   revision: string | null,
 ): void {
   if (!state.lastRevision) return;
+  // An unconfirmed read (null) must not overwrite the last confirmed revision:
+  // a confirmed → null → new-confirmed restart still has to clear the ring.
+  if (typeof revision !== "string") return;
   const prevRevision = state.lastRevision.get(name);
-  if (
-    typeof prevRevision === "string" &&
-    typeof revision === "string" &&
-    prevRevision !== revision
-  ) {
+  if (typeof prevRevision === "string" && prevRevision !== revision) {
     state.latencySamples?.delete(name);
     state.lastSlotProgress?.delete(name);
   }
@@ -282,12 +281,17 @@ async function runCompletionProbe(
 export function makeDefaultProbeFn(
   deps: ProbeFnDeps,
 ): (target: WorkloadTarget) => Promise<WorkloadSnapshot> {
+  // One entry per workload for the lifetime of the loop: the boot token is
+  // only trusted once two consecutive /v1/models reads agree.
+  const lastCreated = new Map<string, number | null>();
   return async (target): Promise<WorkloadSnapshot> => {
     const result = await defaultProbeWorkload(target, {
       ...omitUndefined({ fetch: deps.fetch }),
       timeoutMs: deps.timeoutMs,
       priorConsecutiveErrors: deps.consecutiveErrors.get(target.name) ?? 0,
+      priorCreated: lastCreated.get(target.name) ?? null,
     });
+    lastCreated.set(target.name, result.created);
     deps.consecutiveErrors.set(target.name, result.consecutiveErrors);
     const completionProbe = await runCompletionProbe(target, result, deps);
     return {

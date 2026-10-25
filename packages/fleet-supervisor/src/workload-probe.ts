@@ -24,6 +24,12 @@ export interface WorkloadProbeOptions {
   timeoutMs?: number;
   priorConsecutiveErrors?: number;
   /**
+   * The max `created` from this workload's previous successful /v1/models
+   * read, when one exists. A read is only trusted as a boot token when it
+   * agrees with this value.
+   */
+  priorCreated?: number | null;
+  /**
    * If true, allow probes to non-loopback / non-private targets. Default false
    * (supervisor's expected use case is local + LAN-private workloads only).
    * Set true to opt into probing public hosts (still SSRF-bounded by the
@@ -38,12 +44,17 @@ export interface WorkloadProbeResult {
   models: string[];
   /**
    * Boot token for cross-node cache invalidation: the served model's `created`
-   * (the server's start time, from /v1/models), stringified. It changes when the
-   * server restarts — including a model/quant swap under the same alias — so a
-   * consumer keying a cache on it invalidates automatically. null when unknown
-   * (unreachable, no /v1/models, or the engine omits `created`).
+   * from /v1/models, stringified — but only once two consecutive reads agree.
+   * llama.cpp-family engines stamp `created` with the request time, so a single
+   * read changes on every poll and is meaningless as a boot token; agreement
+   * across two reads is the signal that the value is a real start time. null
+   * until confirmed (first read, drifting values, unreachable, no /v1/models,
+   * or the engine omits `created`).
    */
   revision: string | null;
+  /** Raw max `created` from this read; null when unreachable, the endpoint is
+   *  invalid, /v1/models fails, or `created` is absent. */
+  created: number | null;
   consecutiveErrors: number;
 }
 
@@ -173,6 +184,7 @@ export async function probeWorkload(
     fetch: fetchFn = globalThis.fetch,
     timeoutMs = 5000,
     priorConsecutiveErrors = 0,
+    priorCreated = null,
     allowPublicEndpoints = false,
   } = opts;
 
@@ -185,6 +197,7 @@ export async function probeWorkload(
         healthLatencyMs: 0,
         models: [],
         revision: null,
+        created: null,
         consecutiveErrors: priorConsecutiveErrors + 1,
       };
     }
@@ -210,12 +223,14 @@ export async function probeWorkload(
         healthLatencyMs: latency,
         models: [],
         revision: null,
+        created: null,
         consecutiveErrors: priorConsecutiveErrors + 1,
       };
     }
 
     let models: string[] = [];
     let revision: string | null = null;
+    let created: number | null = null;
     try {
       // Reuse the same per-probe timeout budget for /v1/models. A malicious
       // endpoint that returns /health fast then stalls /v1/models would
@@ -228,13 +243,17 @@ export async function probeWorkload(
         const body = (await modelsRes.json()) as { data: { id: string; created?: number }[] };
         models = body.data.map((m) => m.id);
         // A workload serves one server; its model objects share the server's
-        // `created` (start time). Take the max as the boot token — it changes on
-        // restart/swap, stays fixed within a boot (so cache hits persist).
+        // `created`. Take the max, but only trust it as a boot token once two
+        // consecutive reads agree: llama.cpp-family engines stamp `created` with
+        // the request time, so a lone read changes every poll.
         const maxCreated = body.data.reduce(
           (max, m) => (typeof m.created === "number" && m.created > max ? m.created : max),
           0,
         );
-        revision = maxCreated > 0 ? String(maxCreated) : null;
+        created = maxCreated > 0 ? maxCreated : null;
+        if (maxCreated > 0 && maxCreated === priorCreated) {
+          revision = String(maxCreated);
+        }
       }
     } catch {
       // models fetch failure does not make the endpoint unreachable
@@ -242,7 +261,14 @@ export async function probeWorkload(
       clearTimeout(timer);
     }
 
-    return { reachable: true, healthLatencyMs: latency, models, revision, consecutiveErrors: 0 };
+    return {
+      reachable: true,
+      healthLatencyMs: latency,
+      models,
+      revision,
+      created,
+      consecutiveErrors: 0,
+    };
   } catch {
     clearTimeout(timer);
     return {
@@ -250,6 +276,7 @@ export async function probeWorkload(
       healthLatencyMs: Date.now() - start,
       models: [],
       revision: null,
+      created: null,
       consecutiveErrors: priorConsecutiveErrors + 1,
     };
   }

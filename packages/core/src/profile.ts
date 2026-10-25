@@ -8,6 +8,7 @@ const OMLX_MAX_MODEL_MEMORY_GIB_BY_PROFILE: Record<MachineProfile, number> = {
   "mac-mini-16g": 12,
   balanced: 24,
   "macbook-pro-48g": 32,
+  "large-128g": 96,
 };
 
 function darwinMemoryBytes(): number | null {
@@ -44,20 +45,23 @@ export function detectMemoryBytes(): number | null {
 }
 
 /**
- * Pick a machine profile from detected memory. Matches the historical
- * zsh thresholds exactly so bench records key into the same buckets:
+ * Pick a machine profile from detected memory. The lower thresholds
+ * match the historical zsh values exactly so bench records key into
+ * the same buckets:
  *   <= 16 GiB  -> mac-mini-16g
  *   <= 32 GiB  -> balanced
- *   > 32 GiB   -> macbook-pro-48g
- * Unknown memory (non-darwin, detection failure) defaults to the most
- * capable profile to avoid over-restricting context on unidentified
+ *   <= 64 GiB  -> macbook-pro-48g
+ *   > 64 GiB   -> large-128g
+ * Unknown memory (non-darwin, detection failure) defaults to
+ * macbook-pro-48g to avoid over-restricting context on unidentified
  * hardware.
  */
 export function profileFromMemory(memoryBytes: number | null): MachineProfile {
   if (memoryBytes === null) return "macbook-pro-48g";
   if (memoryBytes <= 17_179_869_184) return "mac-mini-16g";
   if (memoryBytes <= 34_359_738_368) return "balanced";
-  return "macbook-pro-48g";
+  if (memoryBytes <= 68_719_476_736) return "macbook-pro-48g";
+  return "large-128g";
 }
 
 /** Normalise any user-facing alias onto the canonical profile name. */
@@ -80,6 +84,10 @@ export function normalizeProfile(raw: string | undefined): MachineProfile | null
     case "48g":
     case "best":
       return "macbook-pro-48g";
+    case "large-128g":
+    case "large":
+    case "128g":
+      return "large-128g";
     default:
       return null;
   }

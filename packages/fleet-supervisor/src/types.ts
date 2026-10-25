@@ -76,7 +76,9 @@ export interface WorkloadSnapshot {
   /**
    * Boot token (the served model's `created` start time) used by cross-node
    * consumers to invalidate caches when this workload's server restarts/swaps.
-   * Optional for back-compat: snapshots from older nodes omit it.
+   * Published only once two consecutive probe reads agree, so a request-time
+   * `created` clock never looks like a restart. Optional for back-compat:
+   * snapshots from older nodes omit it.
    */
   revision?: string | null;
   /**

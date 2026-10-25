@@ -671,4 +671,60 @@ describe("reconcileOnce", () => {
       });
     });
   });
+
+  describe("node RPC deadlines", () => {
+    test("an unreachable node times out without stalling the pass", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-timeout-"));
+      try {
+        const run: ModelRun = {
+          ...makeRunManifest(),
+          spec: { ...makeRunManifest().spec, node: "z13" },
+        };
+        const host: ModelHostManifest = {
+          ...makeHostManifest(),
+          spec: { ...makeHostManifest().spec, node: "mac-mini" },
+        };
+        saveWorkload(run, dir);
+        saveModelHost(host, dir);
+
+        const startedAt = Date.now();
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          rpcTimeouts: { queryMs: 50, mutateMs: 50 },
+          getClient: (node): WorkloadClient =>
+            node === "z13"
+              ? {
+                  ...makeClient(),
+                  serverStatus: {
+                    query: (): Promise<never> => new Promise<never>(() => undefined),
+                  },
+                }
+              : {
+                  ...makeClient(),
+                  modelHostStatus: {
+                    query: (): Promise<{ state: string; pid: number; specHash: string }> =>
+                      Promise.resolve({
+                        state: "Running",
+                        pid: 1234,
+                        specHash: computeModelHostSpecHash(specForHash(host.spec)),
+                      }),
+                  },
+                },
+        });
+
+        expect(Date.now() - startedAt).toBeLessThan(2000);
+        expect(result.errors).toBe(1);
+        const runReport = result.reports.find((r) => r.name === "run-a");
+        expect(runReport?.node).toBe("z13");
+        expect(runReport?.action).toBe("unchanged");
+        expect(runReport?.error).toMatch(/z13/);
+        expect(runReport?.error).toMatch(/did not respond/);
+        const hostReport = result.reports.find((r) => r.name === "host-a");
+        expect(hostReport?.action).toBe("unchanged");
+        expect(hostReport?.error).toBeUndefined();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
 });
