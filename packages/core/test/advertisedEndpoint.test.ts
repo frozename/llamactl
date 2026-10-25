@@ -162,6 +162,24 @@ describe("resolveNodeAdvertisedEndpoint", () => {
     expect(resolveNodeAdvertisedEndpoint(resolved, routes)).toBe("http://127.0.0.1:8094");
   });
 
+  test("brackets an IPv6 loopback ModelHost in the advertised URL", () => {
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "8080";
+    delete process.env["LLAMA_CPP_ADVERTISED_HOST"];
+    const resolved = resolveEnv();
+    const routes = [route({ kind: "ModelHost", host: "::1", port: 8094 })];
+    expect(resolveNodeAdvertisedEndpoint(resolved, routes)).toBe("http://[::1]:8094");
+  });
+
+  test("does not double-bracket an already-bracketed IPv6 ModelHost", () => {
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    process.env["LLAMA_CPP_PORT"] = "8080";
+    delete process.env["LLAMA_CPP_ADVERTISED_HOST"];
+    const resolved = resolveEnv();
+    const routes = [route({ kind: "ModelHost", host: "[::1]", port: 8094 })];
+    expect(resolveNodeAdvertisedEndpoint(resolved, routes)).toBe("http://[::1]:8094");
+  });
+
   test("picks the first ModelHost by workload name and leaves the input untouched", () => {
     process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
     process.env["LLAMA_CPP_PORT"] = "8080";

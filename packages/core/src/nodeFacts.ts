@@ -5,6 +5,7 @@ import type { MachineProfile, ResolvedEnv } from "./types.js";
 import type { LocalRoute } from "./workloadRuntime.js";
 
 import { resolveBuildId } from "./build.js";
+import { formatHostForUrl } from "./engines/lifecycle.js";
 import { resolveEnv } from "./env.js";
 import { detectMemoryBytes, resolveProfile } from "./profile.js";
 import { advertisedEndpoint, dialableHost } from "./server.js";
@@ -97,7 +98,9 @@ export function resolveNodeAdvertisedEndpoint(
       (a, b) => a.workload.localeCompare(b.workload) || a.port - b.port,
     );
     const first = sorted[0];
-    if (first) return `http://${dialableHost(first.host, resolved)}:${String(first.port)}`;
+    if (first) {
+      return `http://${formatHostForUrl(dialableHost(first.host, resolved))}:${String(first.port)}`;
+    }
   }
   return advertisedEndpoint(resolved);
 }
