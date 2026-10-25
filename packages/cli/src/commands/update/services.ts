@@ -42,6 +42,8 @@ export interface ServiceManager {
   start: (info: ServiceInfo) => Promise<ExecResult>;
   restart: (info: ServiceInfo) => Promise<ExecResult>;
   isActive: (info: ServiceInfo) => Promise<boolean>;
+  /** Raw unit state for failure detail: launchd's `state`, null when not loaded. */
+  state: (info: ServiceInfo) => Promise<string | null>;
   /** Service stdout written since `sinceMs`, for services logging to the journal. */
   journalSince: (info: ServiceInfo, sinceMs: number) => Promise<string | null>;
 }
@@ -285,6 +287,10 @@ export function systemdManager(
     start: async (info) => await ctl("start", info.name),
     restart: async (info) => await ctl("restart", info.name),
     isActive: async (info) => (await ctl("is-active", "--quiet", info.name)).code === 0,
+    state: async (info): Promise<string | null> => {
+      const stdout = (await ctl("is-active", info.name)).stdout.trim();
+      return stdout === "" ? null : stdout;
+    },
     journalSince: async (info, sinceMs): Promise<string | null> => {
       const r = await exec([
         "journalctl",
@@ -414,6 +420,7 @@ export function launchdManager(exec: ExecFn, uid: number): ServiceManager {
     },
     restart: async (info) => await exec(["launchctl", "kickstart", "-k", target(info)]),
     isActive: async (info) => (await print(info.name))?.state === "running",
+    state: async (info) => (await print(info.name))?.state ?? null,
     journalSince: () => Promise.resolve(null),
   };
 }

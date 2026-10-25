@@ -177,7 +177,10 @@ named unit. Stops, starts and restarts go through `systemctl --user`.
 `com.llamactl.agent` in `gui/<uid>`. The controller is stopped with
 `launchctl bootout` and started with `launchctl bootstrap` from the plist
 launchd reports for it, so a job registered without a plist cannot be updated;
-the agent is restarted with `launchctl kickstart -k`. When `com.llamactl.agent`
+the agent is restarted with `launchctl kickstart -k`. A freshly bootstrapped
+job shows `state = xpcproxy` (its spawn trampoline) for a moment before
+`state = running`; the updater waits up to 45 s for `running` before calling
+such a unit inactive. When `com.llamactl.agent`
 is not loaded and no agent name was configured explicitly, the updater also
 tries `com.llamactl.node-agent`, the label `llamactl infra` deploys use. The
 other control-plane jobs (`llamactl infra restart-control-plane`'s allowlist:
