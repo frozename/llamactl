@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { collectNodeFacts, detectGpu, resolveNodeName, resolveVersions } from "../src/nodeFacts.js";
+import {
+  collectNodeFacts,
+  detectGpu,
+  LLAMACTL_VERSION,
+  resolveNodeName,
+  resolveVersions,
+} from "../src/nodeFacts.js";
 import { detectMemoryBytes } from "../src/profile.js";
 
 const originalEnv = { ...process.env };
@@ -46,6 +52,11 @@ describe("resolveVersions", () => {
     if (v.bun !== "unknown") {
       expect(v.bun).toMatch(/^\d+\.\d+\.\d+/);
     }
+  });
+
+  test("llamactl field matches the exported LLAMACTL_VERSION", () => {
+    const v = resolveVersions();
+    expect(v.llamactl).toBe(LLAMACTL_VERSION);
   });
 });
 

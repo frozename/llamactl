@@ -50,7 +50,7 @@ const STARTED_AT = new Date().toISOString();
 // Hard-coded for now; package.json reads involve tsconfig/import-attrs
 // gymnastics that aren't worth it for a version string. Bump here when
 // cutting a release.
-const LLAMACTL_VERSION = "0.0.0";
+export const LLAMACTL_VERSION = "0.0.0";
 
 export function resolveNodeName(env: NodeJS.ProcessEnv = process.env): string {
   const override = env["LLAMACTL_NODE_NAME"]?.trim();
