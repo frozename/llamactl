@@ -85,12 +85,19 @@ function jsonResponse(body: RegisterSuccessBody | RegisterFailureBody, status: n
 type ParsedRegisterPayload = { payload: RegisterRequestBody } | { response: Response };
 
 async function parseRegisterPayload(req: Request): Promise<ParsedRegisterPayload> {
-  let raw: Record<string, unknown>;
+  let parsedJson: unknown;
   try {
-    raw = (await req.json()) as Record<string, unknown>;
+    parsedJson = await req.json();
   } catch {
     return { response: jsonResponse({ ok: false, error: "invalid JSON body" }, 400) };
   }
+  // `null` parses as valid JSON but has no properties; reading
+  // properties off it (or a number/string) throws a TypeError before
+  // auth. Treat any non-object parse result as an invalid body.
+  if (typeof parsedJson !== "object" || parsedJson === null || Array.isArray(parsedJson)) {
+    return { response: jsonResponse({ ok: false, error: "invalid JSON body" }, 400) };
+  }
+  const raw = parsedJson as Record<string, unknown>;
   if (typeof raw["bootstrapToken"] !== "string" || raw["bootstrapToken"].length === 0) {
     return { response: jsonResponse({ ok: false, error: "bootstrapToken is required" }, 400) };
   }

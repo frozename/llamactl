@@ -238,6 +238,26 @@ describe("handleRegister", () => {
     expect(res.status).toBe(405);
   });
 
+  test("null JSON body rejected with 400 instead of rejecting", async () => {
+    const req = new Request("http://agent/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "null",
+    });
+    const res = await handleRegister(req, { bootstrapTokensDir: tokensDir, kubeconfigPath });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid JSON body");
+  });
+
+  test("non-object JSON body (array) rejected with 400", async () => {
+    const { status, body } = await callRegister([]);
+    expect(status).toBe(400);
+    expect(body["ok"]).toBe(false);
+    expect(String(body["error"])).toBe("invalid JSON body");
+  });
+
   test("missing bootstrapToken rejected with 400", async () => {
     const { status, body } = await callRegister({ blob: makeBlob() });
     expect(status).toBe(400);
