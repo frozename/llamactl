@@ -53,6 +53,7 @@ describe("agent subcommand --help", () => {
         "--bind=",
         "--san=",
         "--no-loopback-san",
+        "--force",
         "default: 7843",
       ],
     ],

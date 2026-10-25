@@ -209,6 +209,7 @@ describe("buildSystemdUnit", () => {
         "Type=simple",
         "ExecStart=/home/tester/.local/bin/llamactl-agent agent serve --dir=/home/tester/agent",
         "Restart=always",
+        "KillMode=process",
         "RestartSec=10",
         'Environment="PATH=/usr/bin"',
         'Environment="DEV_STORAGE=/srv/ai"',
@@ -566,6 +567,7 @@ describe("runAgentInstallSystemd --dry-run", () => {
         `ExecStart=${installPath} agent serve --dir=${dirArg} --bind=0.0.0.0 --port=7843\n`,
       );
       expect(out).toContain("Restart=always");
+      expect(out).toContain("KillMode=process");
       expect(out).toContain("WantedBy=default.target");
       expect(out).toContain(`# unit path: ${join(tmp, ".config", "systemd", "user", UNIT_NAME)}`);
       expect(out).toContain("# systemctl --user daemon-reload");
@@ -637,6 +639,7 @@ describe("runAgentInstallSystemd --dry-run", () => {
 
       const out = stdoutChunks.join("");
       expect(out).toContain("WantedBy=multi-user.target");
+      expect(out).toContain("KillMode=process");
       expect(out).toContain(`WorkingDirectory=${dirArg}`);
       expect(out).toContain(`# unit path: /etc/systemd/system/${UNIT_NAME}`);
       expect(out).toContain("# systemctl daemon-reload");

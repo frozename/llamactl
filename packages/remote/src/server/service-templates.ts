@@ -94,6 +94,7 @@ Wants=network-online.target
 Type=simple
 ExecStart=${opts.binaryPath} agent serve --dir=${opts.agentDir}
 Restart=always
+KillMode=process
 RestartSec=3
 Environment=LLAMACTL_AGENT_DIR=${opts.agentDir}
 StandardOutput=append:${opts.logDir}/llamactl-agent.log

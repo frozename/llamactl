@@ -25,7 +25,8 @@
     "audit": "scripts/audit.sh diff",
     "audit:update": "scripts/audit.sh update",
     "audit:functional": "scripts/audit.sh functional",
-    "typecheck:strict": "bun scripts/typecheck-strict.ts"
+    "typecheck:strict": "bun scripts/typecheck-strict.ts",
+    "secrets:scan": "bun scripts/secret-scan.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9",
