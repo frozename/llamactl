@@ -9,6 +9,7 @@ import {
 const LAUNCHCTL_LIST = [
   "PID\tStatus\tLabel",
   "501\t0\tcom.llamactl.controller",
+  "1233\t0\tcom.llamactl.fleet-aggregator",
   "-\t0\tcom.llamactl.fleet-supervisor",
   "1234\t0\tcom.llamactl.internal-proxy",
   "1235\t0\tcom.llamactl.node-agent",
@@ -20,6 +21,7 @@ describe("parseControlPlaneLabels", () => {
   test("returns exactly the llamactl labels, sorted + deduped", () => {
     expect(parseControlPlaneLabels(LAUNCHCTL_LIST)).toEqual([
       "com.llamactl.controller",
+      "com.llamactl.fleet-aggregator",
       "com.llamactl.fleet-supervisor",
       "com.llamactl.internal-proxy",
       "com.llamactl.node-agent",
@@ -95,6 +97,7 @@ describe("restartControlPlane", () => {
     // (b) one kickstart -k gui/<uid>/<label> per discovered label, exact cmds.
     expect(captured.slice(1)).toEqual([
       ["launchctl", "kickstart", "-k", "gui/501/com.llamactl.controller"],
+      ["launchctl", "kickstart", "-k", "gui/501/com.llamactl.fleet-aggregator"],
       ["launchctl", "kickstart", "-k", "gui/501/com.llamactl.fleet-supervisor"],
       ["launchctl", "kickstart", "-k", "gui/501/com.llamactl.internal-proxy"],
       ["launchctl", "kickstart", "-k", "gui/501/com.llamactl.node-agent"],
@@ -104,6 +107,7 @@ describe("restartControlPlane", () => {
     expect(result.dryRun).toBe(false);
     expect(result.restarted).toEqual([
       { label: "com.llamactl.controller", code: 0, stdout: "", stderr: "" },
+      { label: "com.llamactl.fleet-aggregator", code: 0, stdout: "", stderr: "" },
       { label: "com.llamactl.fleet-supervisor", code: 0, stdout: "", stderr: "" },
       {
         label: "com.llamactl.internal-proxy",
@@ -114,7 +118,7 @@ describe("restartControlPlane", () => {
       { label: "com.llamactl.node-agent", code: 0, stdout: "", stderr: "" },
     ]);
     // (d) did NOT abort after the failure — node-agent still kickstarted.
-    expect(result.restarted.length).toBe(4);
+    expect(result.restarted.length).toBe(5);
   });
 
   test("dry-run lists labels via launchctl list but never kickstarts", async () => {
@@ -132,6 +136,7 @@ describe("restartControlPlane", () => {
     expect(result.dryRun).toBe(true);
     expect(result.restarted.map((r) => r.label)).toEqual([
       "com.llamactl.controller",
+      "com.llamactl.fleet-aggregator",
       "com.llamactl.fleet-supervisor",
       "com.llamactl.internal-proxy",
       "com.llamactl.node-agent",
@@ -147,6 +152,7 @@ describe("restartControlPlane", () => {
     const result = await restartControlPlane({ host: "darwin", runner, uid: 501 });
     expect(result.restarted.map((r) => r.label)).toEqual([
       "com.llamactl.controller",
+      "com.llamactl.fleet-aggregator",
       "com.llamactl.fleet-supervisor",
       "com.llamactl.internal-proxy",
       "com.llamactl.node-agent",
@@ -159,6 +165,7 @@ describe("restartControlPlane", () => {
     const listWithCron = [
       "PID\tStatus\tLabel",
       "501\t0\tcom.llamactl.controller",
+      "1233\t0\tcom.llamactl.fleet-aggregator",
       "-\t0\tcom.llamactl.fleet-supervisor",
       "1234\t0\tcom.llamactl.internal-proxy",
       "1235\t0\tcom.llamactl.node-agent",
@@ -174,9 +181,10 @@ describe("restartControlPlane", () => {
 
     const result = await restartControlPlane({ host: "darwin", runner, uid: 501 });
 
-    // Only the 4 real control-plane labels are kickstarted, never the cron.
+    // Only the 5 real control-plane labels are kickstarted, never the cron.
     expect(result.restarted.map((r) => r.label)).toEqual([
       "com.llamactl.controller",
+      "com.llamactl.fleet-aggregator",
       "com.llamactl.fleet-supervisor",
       "com.llamactl.internal-proxy",
       "com.llamactl.node-agent",
@@ -184,6 +192,7 @@ describe("restartControlPlane", () => {
     const kickstartArgs = captured.slice(1).map((c) => c[c.length - 1]);
     expect(kickstartArgs).toEqual([
       "gui/501/com.llamactl.controller",
+      "gui/501/com.llamactl.fleet-aggregator",
       "gui/501/com.llamactl.fleet-supervisor",
       "gui/501/com.llamactl.internal-proxy",
       "gui/501/com.llamactl.node-agent",

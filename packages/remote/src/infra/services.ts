@@ -342,8 +342,8 @@ export async function runServiceLifecycle(
 // ---- Control-plane bulk restart (restart-on-deploy) -------------
 //
 // llamactl's long-running control-plane services (controller,
-// fleet-supervisor, internal-proxy/node-agent) have no reconcile
-// loop on their HTTP servers — the only way to reload fresh code
+// fleet-aggregator, fleet-supervisor, internal-proxy/node-agent) have
+// no reconcile loop on their HTTP servers — the only way to reload fresh code
 // after a deploy is to kickstart the launchd jobs. Labels are
 // discovered at RUNTIME from `launchctl list`, NOT from repo plist
 // files, because at least one service (the controller) is registered
@@ -359,6 +359,7 @@ const DEFAULT_CONTROL_PLANE_PREFIX = "com.llamactl.";
  */
 export const CONTROL_PLANE_LABELS: readonly string[] = [
   "com.llamactl.controller",
+  "com.llamactl.fleet-aggregator",
   "com.llamactl.fleet-supervisor",
   "com.llamactl.internal-proxy",
   "com.llamactl.node-agent",

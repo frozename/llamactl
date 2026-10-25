@@ -3,7 +3,7 @@
 // hosts, the agent, and whether this process runs inside a unit it would
 // restart. Read-only apart from `git fetch`.
 import { sourceRevision } from "@llamactl/core";
-import { workloadStore } from "@llamactl/remote";
+import { infraServices, workloadStore } from "@llamactl/remote";
 import { join } from "node:path";
 
 import type { UpdateDeps } from "./deps.js";
@@ -37,9 +37,11 @@ import {
   enclosingService,
   killModeProblem,
   killsChildren,
+  LAUNCHD_AGENT_FALLBACK,
   makeServiceManager,
   parseCgroupPath,
   pickServiceManagerKind,
+  runsCheckout,
   serviceBun,
   type ServiceInfo,
   type ServiceManager,
@@ -156,14 +158,46 @@ async function resolveServices(
   state.manager = manager;
   for (const role of ["controller", "agent"] as const) {
     const { name, explicit } = unitName(flags, deps, kind, role);
-    const info = await manager.describe(role, name, explicit);
+    let info = await manager.describe(role, name, explicit);
+    // Hosts deployed by `llamactl infra` run the agent as com.llamactl.node-agent.
+    if (role === "agent" && kind === "launchd" && !explicit && !info.loaded) {
+      const infraAgent = await manager.describe(role, LAUNCHD_AGENT_FALLBACK, false);
+      if (infraAgent.loaded) info = infraAgent;
+    }
     state[role] = info;
     const match = checkServiceMatch(info, repo);
     state.problems.push(...match.problems);
     state.warnings.push(...match.warnings);
   }
+  if (kind === "launchd")
+    state.warnings.push(...(await leftBehindControlPlane(deps, manager, state, repo)));
   if (state.problems.length > 0) state.problems.push(UNIT_HELP);
   return state;
+}
+
+/**
+ * launchd control-plane jobs that run this checkout but are neither the
+ * resolved controller nor agent: `llamactl update` leaves them running old
+ * code, so it says so. Read-only; never stops, starts or restarts them.
+ */
+async function leftBehindControlPlane(
+  deps: UpdateDeps,
+  manager: ServiceManager,
+  state: ServicesState,
+  repo: string,
+): Promise<string[]> {
+  const resolved = new Set([state.controller?.name, state.agent?.name]);
+  const warnings: string[] = [];
+  for (const label of infraServices.CONTROL_PLANE_LABELS) {
+    if (resolved.has(label)) continue;
+    // The role only labels the record; only the command line matters here.
+    const info = await manager.describe("agent", label, false);
+    if (!info.loaded || !runsCheckout(info, repo)) continue;
+    warnings.push(
+      `${label} runs this checkout and llamactl update does not restart it; after --apply restart it with: llamactl infra restart-control-plane (or launchctl kickstart -k gui/${String(deps.uid)}/${label})`,
+    );
+  }
+  return warnings;
 }
 
 async function snapshotHosts(deps: UpdateDeps, stateEnv: NodeJS.ProcessEnv): Promise<HostStatus[]> {
