@@ -140,7 +140,7 @@ describe("agent init --force (#209)", () => {
       expect(newTokenHash).not.toBe(seedTokenHash);
 
       const record = parseJsonRecord(stdoutBuf.trim());
-      expect(record.fingerprint).not.toBe(seedRecord.fingerprint);
+      expect(record["fingerprint"]).not.toBe(seedRecord["fingerprint"]);
       expect(Object.keys(record).sort()).toEqual([
         "bindHost",
         "blob",
