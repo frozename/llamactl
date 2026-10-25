@@ -74,6 +74,39 @@ export interface ReconcileOptions {
   rpcTimeouts?: Partial<NodeRpcTimeouts>;
 }
 
+async function queryNodeMemBytes(client: WorkloadClient): Promise<number | null> {
+  if (!client.nodeFacts) return null;
+  try {
+    return (await client.nodeFacts.query()).memBytes;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Size the admission budget for a ModelRun on `nodeName`. An explicit
+ * NodeRun budget wins; `local` uses the controller's RAM; otherwise
+ * 75% of the node's reported memory, queried at most once per node
+ * per pass. A missing, rejected or timed-out nodeFacts falls back to
+ * the controller's RAM.
+ */
+async function resolveModelRunBudgetGiB(
+  nodeName: string,
+  nodeBudgetByName: Map<string, number | undefined>,
+  nodeMemBytesByName: Map<string, Promise<number | null>>,
+  getClient: (nodeName: string) => WorkloadClient,
+): Promise<number> {
+  const explicit = nodeBudgetByName.get(nodeName);
+  if (explicit !== undefined) return explicit;
+  if (nodeName === LOCAL_NODE_ID) return defaultNodeBudgetGiB();
+  let memBytes = nodeMemBytesByName.get(nodeName);
+  if (memBytes === undefined) {
+    memBytes = queryNodeMemBytes(getClient(nodeName));
+    nodeMemBytesByName.set(nodeName, memBytes);
+  }
+  return defaultNodeBudgetGiB(undefined, await memBytes);
+}
+
 function hostSpecSnapshot(manifest: ModelHostManifest): Record<string, unknown> {
   const { spec } = manifest;
   return {
@@ -135,17 +168,25 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
   const all = listWorkloads(dir);
   const hosts = listModelHosts(dir);
   // Absent NodeRun budgets stay undefined rather than resolving to the
-  // controller's RAM here, so the ModelHost path can fall through to the
-  // target node's reported memory.
+  // controller's RAM here, so both the ModelRun and ModelHost paths can
+  // fall through to the target node's reported memory.
   const nodeBudgetByName = new Map<string, number | undefined>(
     listNodeRuns(dir).map((nodeRun) => [nodeRun.metadata.name, nodeRun.spec.budget?.memoryGiB]),
   );
+  const nodeMemBytesByName = new Map<string, Promise<number | null>>();
   const manifests = opts.filter ? all.filter(opts.filter) : all;
   const reports: ReconcileNodeReport[] = [];
   let errors = 0;
 
   for (const manifest of manifests) {
-    errors += await reconcileModelRun(manifest, deadlineOpts, dir, nodeBudgetByName, reports);
+    errors += await reconcileModelRun(
+      manifest,
+      deadlineOpts,
+      dir,
+      nodeBudgetByName,
+      nodeMemBytesByName,
+      reports,
+    );
   }
 
   for (const manifest of hosts) {
@@ -164,6 +205,7 @@ async function reconcileModelRun(
   opts: ReconcileOptions,
   dir: string,
   nodeBudgetByName: Map<string, number | undefined>,
+  nodeMemBytesByName: Map<string, Promise<number | null>>,
   reports: ReconcileNodeReport[],
 ): Promise<number> {
   const name = manifest.metadata.name;
@@ -185,7 +227,8 @@ async function reconcileModelRun(
       {
         workloadsDir: dir,
         ...(opts.resolveNodeIdentity && { resolveNodeIdentity: opts.resolveNodeIdentity }),
-        getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
+        getNodeBudgetGiB: (nodeName) =>
+          resolveModelRunBudgetGiB(nodeName, nodeBudgetByName, nodeMemBytesByName, opts.getClient),
       },
     );
     if (result.error) errors++;
