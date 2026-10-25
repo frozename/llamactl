@@ -213,13 +213,13 @@ export function saveAgentConfig(
     dir,
     `.${path.slice(dir.length + 1)}.tmp-${String(process.pid)}-${Math.random().toString(36).slice(2)}`,
   );
-  writeFileSync(tmp, serialize(config, path), { encoding: "utf8", mode: 0o600 });
   try {
-    chmodSync(tmp, 0o600);
-  } catch {
-    // best-effort
-  }
-  try {
+    writeFileSync(tmp, serialize(config, path), { encoding: "utf8", mode: 0o600 });
+    try {
+      chmodSync(tmp, 0o600);
+    } catch {
+      // best-effort
+    }
     renameSync(tmp, path);
   } catch (err) {
     try {

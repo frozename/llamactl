@@ -11,6 +11,7 @@ import {
   chmodSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -64,5 +65,23 @@ describe("saveAgentConfig", () => {
 
     expect(statSync(cfgPath).mode & 0o777).toBe(0o600);
     expect(loadAgentConfig(cfgPath)).toEqual(CONFIG);
+  });
+
+  test("a failed write leaves the target untouched and no tmp behind", () => {
+    saveAgentConfig(CONFIG, cfgPath);
+    const before = readFileSync(cfgPath);
+    const inoBefore = statSync(cfgPath).ino;
+    chmodSync(tmp, 0o500);
+    try {
+      expect(() => {
+        saveAgentConfig({ ...CONFIG, tokenHash: "c".repeat(64) }, cfgPath);
+      }).toThrow();
+    } finally {
+      chmodSync(tmp, 0o700);
+    }
+
+    expect(readFileSync(cfgPath)).toEqual(before);
+    expect(statSync(cfgPath).ino).toBe(inoBefore);
+    expect(readdirSync(tmp).sort()).toEqual(["agent.yaml"]);
   });
 });
