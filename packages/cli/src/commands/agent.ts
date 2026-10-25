@@ -4,17 +4,7 @@ import { join } from "node:path";
 
 import { access } from "../safe-fs-promises.js";
 import {
-<<<<<<< HEAD
   chmodSync,
-  existsSync,
-  constants as fsConstants,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "../safe-fs.js";
-=======
   existsSync,
   constants as fsConstants,
   mkdirSync,
@@ -22,9 +12,10 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  unlinkSync,
+  writeFileSync,
 } from "../safe-fs.js";
 import { collectAgentStatus, formatAgentStatus } from "./agent-status.js";
->>>>>>> origin/main
 import { runHeal } from "./heal.js";
 
 const USAGE = `Usage: llamactl agent <subcommand>
@@ -47,14 +38,11 @@ Subcommands:
       so it loads the new tokenHash. The default --host is 127.0.0.1;
       override when the operator's kubeconfig records a different
       advertised endpoint.
-<<<<<<< HEAD
   set-token (--hash=<sha256-hex> | --token-file=<path>) [--dir=<path>]
       Adopt an externally issued token (e.g. a central's cluster token)
       as agent.yaml's tokenHash, keeping the TLS cert/key. Writes the
       previous agent.yaml to agent.yaml.bak first. Restart the agent
       after setting it so it loads the new tokenHash.
-  serve [--dir=<path>] [--bind=<host>] [--host=<host>] [--port=<n>] [--no-auth]
-=======
    rotate-cert [--dir=<path>] [--host=<host>] [--san=<host,...>] [--token-file=<path>] [--json]
        Rotate the TLS cert/key without touching the bearer token. Reads
        agent.yaml, generates a fresh cert with the requested SANs (e.g.
@@ -64,7 +52,6 @@ Subcommands:
        the old cert. Restart the agent afterwards so it loads the new
        cert.
    serve [--dir=<path>] [--bind=<host>] [--host=<host>] [--port=<n>] [--no-auth]
->>>>>>> origin/main
         [--dial-central=<wss-url>] [--central-bearer=<token>] [--tunnel-node-name=<name>]
         [--tunnel-central=true] [--tunnel-bearer=<token>] [--tunnel-journal=<path>]
         [--fleet-journal=<path>]
@@ -164,7 +151,6 @@ ${DIR_FLAG_HELP}
   -h, --help       Show this help
 `;
 
-<<<<<<< HEAD
 const SET_TOKEN_USAGE = `Usage: llamactl agent set-token (--hash=<sha256-hex> | --token-file=<path>) [flags]
 
 Adopt an externally issued token as agent.yaml's tokenHash, keeping the
@@ -177,7 +163,8 @@ ${DIR_FLAG_HELP}
   --token-file=<path>  File holding the new bearer token; hashed locally,
                      never printed
   -h, --help         Show this help
-=======
+`;
+
 const ROTATE_CERT_USAGE = `Usage: llamactl agent rotate-cert [flags]
 
 Rotate the TLS cert/key in agent.yaml, keeping the bearer token.
@@ -193,7 +180,6 @@ ${DIR_FLAG_HELP}
                    a bootstrap blob is emitted.
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
->>>>>>> origin/main
 `;
 
 const SERVE_USAGE = `Usage: llamactl agent serve [flags]
@@ -268,13 +254,10 @@ export async function runAgent(args: string[]): Promise<number> {
       return await runInit(rest);
     case "rotate-token":
       return await runRotateToken(rest);
-<<<<<<< HEAD
     case "set-token":
       return runSetToken(rest);
-=======
     case "rotate-cert":
       return await runRotateCert(rest);
->>>>>>> origin/main
     case "serve":
       return await runServe(rest);
     case "status":
@@ -612,7 +595,6 @@ export async function runRotateToken(args: string[]): Promise<number> {
   return 0;
 }
 
-<<<<<<< HEAD
 interface SetTokenFlags {
   dir: string;
   hash?: string;
@@ -624,65 +606,23 @@ function parseSetTokenFlags(args: string[]): SetTokenFlags | { error: string } {
   for (const arg of args) {
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent set-token: flag must be --key=value: ${arg}` };
-=======
-interface RotateCertFlags {
-  dir: string;
-  host: string;
-  sans: string[];
-  tokenFile?: string;
-  json: boolean;
-}
-
-function parseRotateCertFlags(args: string[]): RotateCertFlags | { error: string } {
-  const flags: RotateCertFlags = {
-    dir: agentConfigMod.defaultAgentDir(),
-    host: "127.0.0.1",
-    sans: [],
-    json: false,
-  };
-  for (const arg of args) {
-    if (arg === "--json") {
-      flags.json = true;
-      continue;
-    }
-    const [k, v] = splitFlag(arg);
-    if (v === undefined) return { error: `agent rotate-cert: flag must be --key=value: ${arg}` };
->>>>>>> origin/main
     switch (k) {
       case "--dir":
         flags.dir = v;
         break;
-<<<<<<< HEAD
       case "--hash":
         flags.hash = v;
-=======
-      case "--host":
-        flags.host = v;
-        break;
-      case "--san":
-        flags.sans.push(
-          ...v
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        );
->>>>>>> origin/main
         break;
       case "--token-file":
         flags.tokenFile = v;
         break;
       default:
-<<<<<<< HEAD
         return { error: `agent set-token: unknown flag ${k}` };
-=======
-        return { error: `agent rotate-cert: unknown flag ${k}` };
->>>>>>> origin/main
     }
   }
   return flags;
 }
 
-<<<<<<< HEAD
 /** Turn --hash / --token-file into the tokenHash, never echoing the token. */
 function resolveSetTokenHash(f: SetTokenFlags): string | { error: string } {
   if (f.hash !== undefined) {
@@ -691,25 +631,10 @@ function resolveSetTokenHash(f: SetTokenFlags): string | { error: string } {
     return hash.toLowerCase();
   }
   const tokenFile = String(f.tokenFile);
-=======
-/**
- * Read and verify --token-file against agent.yaml's tokenHash. A blob
- * needs the plaintext token (agent.yaml stores only the hash), and the
- * check runs before any write so a wrong token touches nothing.
- * Returns null when no --token-file was given.
- */
-function readRotateCertToken(
-  tokenFile: string | undefined,
-  tokenHash: string,
-  configPath: string,
-): string | null | 1 {
-  if (tokenFile === undefined) return null;
->>>>>>> origin/main
   let token: string;
   try {
     token = readFileSync(tokenFile, "utf8").trim();
   } catch (err) {
-<<<<<<< HEAD
     return { error: `failed to read ${tokenFile}: ${(err as Error).message}` };
   }
   if (token === "") return { error: `token file is empty: ${tokenFile}` };
@@ -753,43 +678,11 @@ export function runSetToken(args: string[]): number {
     return 0;
   }
   const parsed = parseSetTokenFlags(args);
-=======
-    process.stderr.write(
-      `agent rotate-cert: failed to read --token-file ${tokenFile}: ${(err as Error).message}\n`,
-    );
-    return 1;
-  }
-  if (token === "") {
-    process.stderr.write(`agent rotate-cert: token file ${tokenFile} is empty.\n`);
-    return 1;
-  }
-  if (!auth.bearerHashMatches(token, tokenHash)) {
-    process.stderr.write(
-      `agent rotate-cert: token from ${tokenFile} does not match tokenHash in ${configPath}. Nothing written.\n`,
-    );
-    return 1;
-  }
-  return token;
-}
-
-/**
- * Rotate the TLS cert/key without touching the bearer token. Cheap
- * counterpart to rotate-token: use it when the cert needs new SANs
- * (e.g. a LAN IP) but the kubeconfig token is still valid.
- */
-export async function runRotateCert(args: string[]): Promise<number> {
-  if (args.some(isHelpFlag)) {
-    process.stdout.write(ROTATE_CERT_USAGE);
-    return 0;
-  }
-  const parsed = parseRotateCertFlags(args);
->>>>>>> origin/main
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 1;
   }
   const f = parsed;
-<<<<<<< HEAD
   if ((f.hash === undefined) === (f.tokenFile === undefined)) {
     process.stderr.write("agent set-token: exactly one of --hash or --token-file is required\n");
     return 1;
@@ -840,7 +733,105 @@ export async function runRotateCert(args: string[]): Promise<number> {
     ].join("\n"),
   );
   return 0;
-=======
+}
+
+interface RotateCertFlags {
+  dir: string;
+  host: string;
+  sans: string[];
+  tokenFile?: string;
+  json: boolean;
+}
+
+function parseRotateCertFlags(args: string[]): RotateCertFlags | { error: string } {
+  const flags: RotateCertFlags = {
+    dir: agentConfigMod.defaultAgentDir(),
+    host: "127.0.0.1",
+    sans: [],
+    json: false,
+  };
+  for (const arg of args) {
+    if (arg === "--json") {
+      flags.json = true;
+      continue;
+    }
+    const [k, v] = splitFlag(arg);
+    if (v === undefined) return { error: `agent rotate-cert: flag must be --key=value: ${arg}` };
+    switch (k) {
+      case "--dir":
+        flags.dir = v;
+        break;
+      case "--host":
+        flags.host = v;
+        break;
+      case "--san":
+        flags.sans.push(
+          ...v
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        );
+        break;
+      case "--token-file":
+        flags.tokenFile = v;
+        break;
+      default:
+        return { error: `agent rotate-cert: unknown flag ${k}` };
+    }
+  }
+  return flags;
+}
+
+/**
+ * Read and verify --token-file against agent.yaml's tokenHash. A blob
+ * needs the plaintext token (agent.yaml stores only the hash), and the
+ * check runs before any write so a wrong token touches nothing.
+ * Returns null when no --token-file was given.
+ */
+function readRotateCertToken(
+  tokenFile: string | undefined,
+  tokenHash: string,
+  configPath: string,
+): string | null | 1 {
+  if (tokenFile === undefined) return null;
+  let token: string;
+  try {
+    token = readFileSync(tokenFile, "utf8").trim();
+  } catch (err) {
+    process.stderr.write(
+      `agent rotate-cert: failed to read --token-file ${tokenFile}: ${(err as Error).message}\n`,
+    );
+    return 1;
+  }
+  if (token === "") {
+    process.stderr.write(`agent rotate-cert: token file ${tokenFile} is empty.\n`);
+    return 1;
+  }
+  if (!auth.bearerHashMatches(token, tokenHash)) {
+    process.stderr.write(
+      `agent rotate-cert: token from ${tokenFile} does not match tokenHash in ${configPath}. Nothing written.\n`,
+    );
+    return 1;
+  }
+  return token;
+}
+
+/**
+ * Rotate the TLS cert/key without touching the bearer token. Cheap
+ * counterpart to rotate-token: use it when the cert needs new SANs
+ * (e.g. a LAN IP) but the kubeconfig token is still valid.
+ */
+export async function runRotateCert(args: string[]): Promise<number> {
+  if (args.some(isHelpFlag)) {
+    process.stdout.write(ROTATE_CERT_USAGE);
+    return 0;
+  }
+  const parsed = parseRotateCertFlags(args);
+  if ("error" in parsed) {
+    process.stderr.write(`${parsed.error}\n`);
+    return 1;
+  }
+  const f = parsed;
   const configPath = join(f.dir, "agent.yaml");
   if (!existsSync(configPath)) {
     process.stderr.write(
@@ -937,7 +928,6 @@ export async function runRotateCert(args: string[]): Promise<number> {
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }
->>>>>>> origin/main
 }
 
 export interface ServeFlags {
