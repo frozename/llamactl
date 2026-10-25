@@ -1,7 +1,14 @@
-export type Mode = "file" | "candidate" | "test";
-export type Profile = "mac-mini-16g" | "balanced" | "macbook-pro-48g";
+import type { MachineProfile } from "@llamactl/core";
 
-export const PROFILES: readonly Profile[] = ["mac-mini-16g", "balanced", "macbook-pro-48g"];
+export type Mode = "file" | "candidate" | "test";
+export type Profile = MachineProfile;
+
+export const PROFILES: readonly Profile[] = [
+  "mac-mini-16g",
+  "balanced",
+  "macbook-pro-48g",
+  "large-128g",
+];
 export const MAX_LOG_LINES = 250;
 
 export interface PullCardSpec {

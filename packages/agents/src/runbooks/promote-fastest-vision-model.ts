@@ -4,10 +4,13 @@ import type { Runbook, RunbookStep } from "../types.js";
 
 import { parseToolJson } from "../types.js";
 
-const ProfileSchema = z.enum(["mac-mini-16g", "balanced", "macbook-pro-48g"]);
+// Mirrors MACHINE_PROFILES in packages/core/src/types.ts. Copied by hand
+// because packages/agents does not depend on @llamactl/core.
+const BUILTIN_PROFILES = ["mac-mini-16g", "balanced", "macbook-pro-48g", "large-128g"] as const;
+const ProfileSchema = z.enum(BUILTIN_PROFILES);
 const ParamsSchema = z.object({
   /** If set, only promote on this one profile. Otherwise fan out over
-   *  all three built-in profiles. */
+   *  every built-in profile. */
   profile: ProfileSchema.optional(),
 });
 
@@ -67,9 +70,7 @@ export const promoteFastestVisionModel: Runbook<Params> = {
     }
     ctx.log(`promote-fastest-vision-model: top candidate ${top.rel}`);
 
-    const profiles = params.profile
-      ? [params.profile]
-      : (["mac-mini-16g", "balanced", "macbook-pro-48g"] as const);
+    const profiles = params.profile ? [params.profile] : BUILTIN_PROFILES;
     for (const profile of profiles) {
       const promoteRaw = await ctx.tools.callTool({
         name: "llamactl.catalog.promote",
