@@ -206,7 +206,13 @@ const fail = (detail: string, warnings: string[] = []): StepOutcome => ({
 });
 const short = (sha: string): string => sha.slice(0, 7);
 
+const inactiveDetail = (name: string, graceMs: number, lastState: string | null): string =>
+  `${name} is not active after ${String(graceMs / 1000)} s (last state: ${lastState ?? "not loaded"})`;
+
 export const INTERRUPTED = "interrupted by a signal";
+
+/** launchd's spawn trampoline states and systemd's activating: worth a grace wait. */
+const SPAWNING_STATES = new Set(["xpcproxy", "spawn scheduled", "activating"]);
 
 /**
  * Wait for a just-started or just-restarted unit to report active. launchd
@@ -508,7 +514,7 @@ async function awaitController(ctx: DeployContext, state: RunState): Promise<Ste
   if (!spawned.active) {
     if (ctx.signal.aborted) return fail(INTERRUPTED);
     return fail(
-      `${ctx.controller.name} is not active after ${String(ctx.timeouts.controllerStartMs / 1000)} s (last state: ${spawned.lastState ?? "not loaded"})`,
+      inactiveDetail(ctx.controller.name, ctx.timeouts.controllerStartMs, spawned.lastState),
     );
   }
   if (ctx.controllerLog.kind === "none") {
@@ -595,11 +601,19 @@ async function verify(ctx: DeployContext, state: RunState, sha: string): Promise
   if (head !== sha) {
     problems.push(`HEAD is ${head === null ? "unknown" : short(head)}, expected ${short(sha)}`);
   }
-  if (!(await awaitActive(ctx, ctx.controller, ctx.timeouts.controllerStartMs)).active) {
-    problems.push(`${ctx.controller.name} is not active`);
+  const controllerSpawn = await awaitActive(ctx, ctx.controller, ctx.timeouts.controllerStartMs);
+  if (!controllerSpawn.active) {
+    problems.push(
+      inactiveDetail(
+        ctx.controller.name,
+        ctx.timeouts.controllerStartMs,
+        controllerSpawn.lastState,
+      ),
+    );
   }
+  const agentSpawn = await awaitActive(ctx, ctx.agent, ctx.timeouts.controllerStartMs);
   const agentOk =
-    (await awaitActive(ctx, ctx.agent, ctx.timeouts.controllerStartMs)).active &&
+    agentSpawn.active &&
     (await pollUntil(
       ctx,
       ctx.timeouts.agentHealthyMs,
@@ -607,7 +621,11 @@ async function verify(ctx: DeployContext, state: RunState, sha: string): Promise
       async () => await agentHealthy(ctx.deps.httpGet, ctx.agentEndpoint),
     ));
   if (!agentOk) {
-    problems.push(`agent ${ctx.agent.name} is not healthy (${ctx.agentEndpoint.url}/healthz)`);
+    problems.push(
+      agentSpawn.active
+        ? `agent ${ctx.agent.name} is not healthy (${ctx.agentEndpoint.url}/healthz)`
+        : inactiveDetail(ctx.agent.name, ctx.timeouts.controllerStartMs, agentSpawn.lastState),
+    );
   }
   const notReady = await hostsNotReady(ctx, state);
   if (notReady.length > 0) problems.push(`model hosts not ready: ${notReady.join(", ")}`);
@@ -694,8 +712,14 @@ export async function runDeploy(
  */
 export async function ensureControllerRunning(ctx: DeployContext): Promise<StepResult | null> {
   try {
-    if ((await awaitActive(ctx, ctx.controller, ctx.timeouts.controllerStartMs)).active) {
-      return null;
+    if (await ctx.manager.isActive(ctx.controller)) return null;
+    // Only a spawn in progress is worth waiting out: an unloaded or finally
+    // inactive unit never becomes active on its own, so start it at once.
+    const state = await ctx.manager.state(ctx.controller);
+    if (state !== null && SPAWNING_STATES.has(state)) {
+      if ((await awaitActive(ctx, ctx.controller, ctx.timeouts.controllerStartMs)).active) {
+        return null;
+      }
     }
     ctx.deps.log(`llamactl update: ${ctx.controller.name} is not running; starting it`);
     const r = await ctx.manager.start(ctx.controller);

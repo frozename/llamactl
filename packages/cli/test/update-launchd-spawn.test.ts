@@ -129,6 +129,30 @@ describe("launchd spawn window", () => {
     expect(report.error).not.toContain("unhealthy");
   });
 
+  test("verify reports the grace and the last state for an agent stuck in xpcproxy", async () => {
+    const w = spawnWorld({ agent: { spawnPrints: Number.POSITIVE_INFINITY } });
+    const { code, report } = await run(w, ["--apply"]);
+    expect(code).toBe(1);
+    const step = report.steps.find((s) => s.step === "verify");
+    expect(step?.ok).toBe(false);
+    expect(step?.detail).toContain(
+      "com.llamactl.agent is not active after 45 s (last state: xpcproxy)",
+    );
+  });
+
+  test("a double install failure bootstraps the controller without waiting out the grace", async () => {
+    const w = spawnWorld({});
+    w.installExit = 1;
+    const startClock = w.clock;
+    const { report } = await run(w, ["--apply"]);
+    expect(report.result).toBe("failed");
+    expect(report.finalStart).toMatchObject({ step: "start-controller", ok: true });
+    expect(w.events.filter((e) => e.startsWith("bootstrap "))).toEqual([
+      "bootstrap com.llamactl.controller",
+    ]);
+    expect(w.clock).toBe(startClock);
+  });
+
   test("ensureControllerRunning waits out an xpcproxy spawn instead of bootstrapping again", async () => {
     const w = spawnWorld({});
     const { deps } = fakeDeps(w);
