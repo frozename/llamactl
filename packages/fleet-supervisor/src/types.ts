@@ -1,3 +1,11 @@
+/**
+ * Why a node memory snapshot is unavailable.
+ * - `unsupported-platform`: the platform has no memory probe (neither darwin nor linux).
+ * - `no-data`: the probe ran but produced no usable figures (empty or unreadable
+ *   output, or required fields missing).
+ */
+export type NodeMemUnavailableReason = "unsupported-platform" | "no-data";
+
 export interface NodeMemSnapshot {
   free_mb: number;
   active_mb: number;
@@ -6,8 +14,10 @@ export interface NodeMemSnapshot {
   compressor_mb: number;
   swap_in: number;
   swap_out: number;
-  /** False when the probe failed or produced no parseable data. Absent means available. */
+  /** False when the probe failed or produced no parseable data. Absent means available. See `unavailable_reason`. */
   available?: boolean;
+  /** Set only when `available` is false; absent when the snapshot is available. */
+  unavailable_reason?: NodeMemUnavailableReason;
 }
 
 export interface CompletionProbeSnapshot {

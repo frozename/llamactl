@@ -17,6 +17,7 @@ describe("parseVmStatOutput", () => {
   it("produces correct NodeMemSnapshot from known output", () => {
     const snap = parseVmStatOutput(FAKE_VM_STAT);
     expect(snap.available).not.toBe(false);
+    expect(snap.unavailable_reason).toBeUndefined();
     expect(snap.free_mb).toBeCloseTo((1031 * 16384) / 1024 / 1024, 0);
     expect(snap.active_mb).toBeCloseTo((912 * 16384) / 1024 / 1024, 0);
     expect(snap.compressor_mb).toBeCloseTo((2600 * 16384) / 1024 / 1024, 0);
@@ -60,6 +61,7 @@ describe("parseProcMeminfo", () => {
   it("produces correct NodeMemSnapshot from known /proc/meminfo output", () => {
     const snap = parseProcMeminfo(MEMINFO);
     expect(snap.available).not.toBe(false);
+    expect(snap.unavailable_reason).toBeUndefined();
     expect(snap.free_mb).toBe(40000);
     expect(snap.active_mb).toBe(20000);
     expect(snap.wired_mb).toBe(64);
@@ -122,6 +124,7 @@ describe("probeNodeMem platform routing", () => {
       },
     });
     expect(snap.available).toBe(false);
+    expect(snap.unavailable_reason).toBe("unsupported-platform");
     expect(snap.free_mb).toBe(0);
     expect(snap.active_mb).toBe(0);
     expect(snap.inactive_mb).toBe(0);

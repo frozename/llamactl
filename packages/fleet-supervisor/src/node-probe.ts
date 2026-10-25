@@ -53,6 +53,7 @@ export function parseVmStatOutput(raw: string): NodeMemSnapshot {
 
   if (matchedPageFields < Object.keys(PAGE_FIELDS).length) {
     snap.available = false;
+    snap.unavailable_reason = "no-data";
   }
 
   return snap;
@@ -91,6 +92,7 @@ export function parseProcMeminfo(raw: string): NodeMemSnapshot {
 
   if (values["MemTotal"] === undefined || values["MemAvailable"] === undefined) {
     snap.available = false;
+    snap.unavailable_reason = "no-data";
   }
 
   return snap;
@@ -134,5 +136,6 @@ export async function probeNodeMem(opts?: {
     swap_in: 0,
     swap_out: 0,
     available: false,
+    unavailable_reason: "unsupported-platform",
   };
 }

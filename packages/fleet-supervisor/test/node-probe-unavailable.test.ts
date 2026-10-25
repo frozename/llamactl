@@ -32,6 +32,7 @@ describe("parseVmStatOutput unavailable", () => {
     const snap = parseVmStatOutput("");
     // RED before fix: snap.available is undefined (field does not exist)
     expect(snap.available).toBe(false);
+    expect(snap.unavailable_reason).toBe("no-data");
   });
 
   it("returns available:false when raw matches no known vm_stat fields", () => {
@@ -45,6 +46,7 @@ Pages free:                         1031.
 Pages active:                        912.`;
     const snap = parseVmStatOutput(FAKE);
     expect(snap.available).toBe(false);
+    expect(snap.unavailable_reason).toBe("no-data");
     expect(snap.free_mb).toBeGreaterThan(0);
     expect(snap.active_mb).toBeGreaterThan(0);
     expect(snap.inactive_mb).toBe(0);
@@ -60,15 +62,19 @@ describe("probeNodeMem unavailable", () => {
       exec: () => Promise.resolve(""),
     });
     expect(snap.available).toBe(false);
+    expect(snap.unavailable_reason).toBe("no-data");
   });
 
   it("yields available:false when /proc/meminfo is empty", () => {
-    expect(parseProcMeminfo("").available).toBe(false);
+    const snap = parseProcMeminfo("");
+    expect(snap.available).toBe(false);
+    expect(snap.unavailable_reason).toBe("no-data");
   });
 
   it("yields available:false when MemAvailable is missing", () => {
     const snap = parseProcMeminfo("MemTotal:       65536000 kB\nActive:   2048000 kB");
     expect(snap.available).toBe(false);
+    expect(snap.unavailable_reason).toBe("no-data");
   });
 
   it("yields available:false on linux when reading /proc/meminfo rejects", async () => {
@@ -77,6 +83,7 @@ describe("probeNodeMem unavailable", () => {
       readFile: () => Promise.reject(new Error("x")),
     });
     expect(snap.available).toBe(false);
+    expect(snap.unavailable_reason).toBe("no-data");
   });
 });
 
