@@ -244,9 +244,16 @@ describe("handleRegister", () => {
       headers: { "content-type": "application/json" },
       body: "null",
     });
-    const res = await handleRegister(req, { bootstrapTokensDir: tokensDir, kubeconfigPath });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { ok: boolean; error: string };
+    let res: Response | undefined;
+    let rejected = false;
+    try {
+      res = await handleRegister(req, { bootstrapTokensDir: tokensDir, kubeconfigPath });
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(false);
+    expect(res?.status).toBe(400);
+    const body = (await res!.json()) as { ok: boolean; error: string };
     expect(body.ok).toBe(false);
     expect(body.error).toBe("invalid JSON body");
   });
