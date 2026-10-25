@@ -1,5 +1,6 @@
 import type { ModelHostRuntimeStatus } from "@llamactl/core/engines/conditions";
 
+import { ENGINES } from "@llamactl/core/engines";
 import { modelhostPidFile, readModelHostState } from "@llamactl/core/engines/state";
 import { resolveEnv } from "@llamactl/core/env";
 import { isRecordedPidAlive } from "@llamactl/core/pidIdentity";
@@ -14,12 +15,15 @@ import {
   noderunStore,
   workloadApply,
   workloadGatewayHandlers,
+  workloadLock,
   type workloadSchema,
   workloadStore,
 } from "@llamactl/remote";
 import {
+  LOCAL_NODE_ID,
   type ModelHostManifest,
   ModelHostManifestSchema,
+  specForEngine,
 } from "@llamactl/remote/workload/modelhost-schema";
 import { listModelHosts, saveModelHost } from "@llamactl/remote/workload/modelhost-store";
 import { resolve as resolvePath } from "node:path";
@@ -41,6 +45,11 @@ Reconcile a ModelRun manifest against the target node:
 
 The accepted manifest is persisted under $DEV_STORAGE/workloads/<name>.yaml
 so 'llamactl get workloads' can list it afterwards.
+
+For a ModelHost with node: local while the controller service holds the
+workloads lock, apply only validates the manifest and hands the start off
+to the controller's next reconcile pass, so the engine runs under the
+controller's limits rather than this shell's.
 `;
 
 const GET_USAGE = `Usage: llamactl get workloads [--json]
@@ -415,6 +424,45 @@ function renderNodeRunOutcomes(result: noderunApply.NodeRunApplyResult): void {
   }
 }
 
+// Spawning the engine here would leave it in the caller's cgroup (e.g.
+// a desktop-app terminal scope), outside the controller unit's
+// OOMScoreAdjust and limits, dying with that scope. When the controller
+// owns the workloads dir, validate the spec and let its reconciler do
+// the spawn under its own service instead. Returns null when the
+// in-process path should run unchanged.
+function handoffLocalModelHost(manifest: ModelHostManifest, json: boolean): number | null {
+  if (manifest.spec.node !== LOCAL_NODE_ID || !manifest.spec.enabled) return null;
+  const workloadsDir = workloadStore.defaultWorkloadsDir();
+  const controllerPid = workloadLock.liveLockHolder(workloadsDir);
+  if (controllerPid === null) {
+    process.stderr.write(
+      `apply: no controller is running for ${workloadsDir}; starting modelhost/${manifest.metadata.name} from this process, so the engine stays in this shell's cgroup, outside the controller service's limits\n`,
+    );
+    return null;
+  }
+  const engine = ENGINES[manifest.spec.engine];
+  const validation = engine.validateSpec(specForEngine(manifest.spec));
+  if (!validation.ok) {
+    process.stderr.write(`apply: ${validation.error}\n`);
+    return 1;
+  }
+  const name = manifest.metadata.name;
+  if (json) {
+    process.stdout.write(
+      `${JSON.stringify(
+        { action: "handed-off", kind: "ModelHost", name, node: LOCAL_NODE_ID, controllerPid },
+        null,
+        2,
+      )}\n`,
+    );
+  } else {
+    process.stdout.write(
+      `modelhost/${name}: handed off to controller pid=${String(controllerPid)}; it starts the engine under its own service on its next reconcile pass ('llamactl get workloads' shows when it is Running)\n`,
+    );
+  }
+  return 0;
+}
+
 async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number> {
   let manifest: unknown;
   try {
@@ -440,6 +488,9 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
   })();
   if (!parsedHost) return 1;
   saveModelHost(parsedHost);
+
+  const handedOff = handoffLocalModelHost(parsedHost, json);
+  if (handedOff !== null) return handedOff;
 
   try {
     const outcome = await workloadApply.applyManifest({

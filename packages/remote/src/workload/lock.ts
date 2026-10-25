@@ -59,6 +59,24 @@ export function acquireLock(workloadsDir: string): LockHandle | { error: string 
   }
 }
 
+/** The pid recorded in the lock file when that process is still alive;
+ *  null when no lock file exists, it is unreadable/non-numeric, or the
+ *  holder is dead. Lets callers defer work to the controller instead of
+ *  duplicating it in their own process. */
+export function liveLockHolder(workloadsDir: string): number | null {
+  let content: string;
+  try {
+    content = readFileSync(lockFilePath(workloadsDir), "utf8");
+  } catch {
+    return null;
+  }
+  const holder = Number.parseInt(content.trim(), 10);
+  if (!Number.isFinite(holder) || holder <= 0 || !isProcessAlive(holder)) {
+    return null;
+  }
+  return holder;
+}
+
 export function releaseLock(handle: LockHandle): void {
   try {
     closeSync(handle.fd);

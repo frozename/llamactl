@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { recommendationsForProfile } from "../src/recommendations.js";
+import { expandRequestedProfile, recommendationsForProfile } from "../src/recommendations.js";
+import { MACHINE_PROFILES } from "../src/types.js";
 
 /**
  * Recommendation-ladder safety: the rels picked for each machine
@@ -42,6 +43,8 @@ const MAX_MODEL_SIZE_BY_PROFILE_GB: Record<string, number> = {
   balanced: 22,
   // macbook-pro-48g — Metal cap ~36 GB; allow up to ~32 for the rel.
   "macbook-pro-48g": 32,
+  // large-128g — platform-neutral box; the shipped ladder stays well inside.
+  "large-128g": 96,
 };
 
 /**
@@ -89,7 +92,7 @@ function estimateRelSizeGb(rel: string): number {
 }
 
 describe("recommendationsForProfile — fit-envelope guarantees", () => {
-  for (const profile of ["mac-mini-16g", "balanced", "macbook-pro-48g"] as const) {
+  for (const profile of ["mac-mini-16g", "balanced", "macbook-pro-48g", "large-128g"] as const) {
     test(`every rel for ${profile} fits the profile's max model size`, () => {
       const rows = recommendationsForProfile(profile, HERMETIC_ENV);
       const ceiling = MAX_MODEL_SIZE_BY_PROFILE_GB[profile]!;
@@ -132,5 +135,18 @@ describe("recommendationsForProfile — fit-envelope guarantees", () => {
       (r) => r.target === "qwen27",
     );
     expect(proQwen27!.rel).toBe("Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf");
+  });
+
+  test("large-128g qwen row recommends the 131072 ctx", () => {
+    const rows = recommendationsForProfile("large-128g", HERMETIC_ENV);
+    const qwen = rows.find((r) => r.target === "qwen");
+    expect(qwen).toBeDefined();
+    expect(qwen!.ctx).toBe("131072");
+  });
+
+  test('expandRequestedProfile("all") covers every machine profile', () => {
+    const profiles = expandRequestedProfile("all", HERMETIC_ENV);
+    expect(profiles).toEqual([...MACHINE_PROFILES]);
+    expect(profiles).toContain("large-128g");
   });
 });

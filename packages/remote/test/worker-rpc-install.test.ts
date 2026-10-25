@@ -661,6 +661,8 @@ describe("I1: clean install", () => {
         "uninstall",
         // `llamactl update` (self-update for source installs), not the worker RPC.
         "update",
+        // `llamactl version` prints the build version, not the worker RPC.
+        "version",
       ].sort(),
     );
     const agentCommands = join(import.meta.dir, "..", "..", "cli", "src", "commands", "agent.ts");
@@ -670,11 +672,16 @@ describe("I1: clean install", () => {
       "help",
       "init",
       "install-launchd",
+      "install-systemd",
       "rollback",
+      // `llamactl agent rotate-cert` (frozename/llamactl#209).
+      "rotate-cert",
       "rotate-token",
       "rpc-doctor",
       "serve",
       "status",
+      // #218: named operator bearer tokens, added after the base release.
+      "token",
       "update",
     ]);
     // Every LLAMACTL_* variable the sources read existed at the base release.

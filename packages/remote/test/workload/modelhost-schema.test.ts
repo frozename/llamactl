@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+<<<<<<< HEAD
   externalManagerOf,
   MANAGED_BY_LABEL,
   type ModelHostManifest,
@@ -13,6 +14,11 @@ function hostWithLabels(labels?: Record<string, string>): ModelHostManifest {
     metadata: { name: "host-a", ...(labels !== undefined ? { labels } : {}) },
   });
 }
+=======
+  modelHostBindRefusal,
+  ModelHostManifestSchema,
+} from "../../src/workload/modelhost-schema.js";
+>>>>>>> origin/main
 
 const valid = {
   apiVersion: "llamactl/v1",
@@ -219,6 +225,78 @@ describe("ModelHostManifestSchema", () => {
     const result = ModelHostManifestSchema.safeParse(valid);
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.spec.priority).toBeUndefined();
+  });
+
+  test("accepts allowExternalBind true and false", () => {
+    for (const allowExternalBind of [true, false]) {
+      const result = ModelHostManifestSchema.safeParse({
+        ...valid,
+        spec: { ...valid.spec, allowExternalBind },
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  test("rejects non-boolean allowExternalBind", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, allowExternalBind: "yes" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("omitting allowExternalBind leaves it undefined (absent means false)", () => {
+    const result = ModelHostManifestSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.spec.allowExternalBind).toBeUndefined();
+  });
+});
+
+describe("modelHostBindRefusal", () => {
+  test("returns null for loopback endpoint hosts", () => {
+    for (const host of ["127.0.0.1", "localhost", "::1"]) {
+      const manifest = ModelHostManifestSchema.parse({
+        ...valid,
+        spec: { ...valid.spec, endpoint: { host, port: 8094 } },
+      });
+      expect(modelHostBindRefusal(manifest)).toBeNull();
+    }
+  });
+
+  test("refuses an endpoint host of 0.0.0.0 without the opt-in", () => {
+    const manifest = ModelHostManifestSchema.parse({
+      ...valid,
+      spec: { ...valid.spec, endpoint: { host: "0.0.0.0", port: 8094 } },
+    });
+    const refusal = modelHostBindRefusal(manifest);
+    expect(refusal).toContain("0.0.0.0");
+    expect(refusal).toContain("allowExternalBind");
+  });
+
+  test("refuses a --host override in extraArgs that escapes loopback", () => {
+    const trailing = ModelHostManifestSchema.parse({
+      ...valid,
+      spec: { ...valid.spec, extraArgs: ["--host", "0.0.0.0"] },
+    });
+    expect(modelHostBindRefusal(trailing)).toContain("0.0.0.0");
+    const inline = ModelHostManifestSchema.parse({
+      ...valid,
+      spec: { ...valid.spec, extraArgs: ["--host=192.168.1.5"] },
+    });
+    expect(modelHostBindRefusal(inline)).toContain("192.168.1.5");
+  });
+
+  test("returns null when allowExternalBind is true", () => {
+    const manifest = ModelHostManifestSchema.parse({
+      ...valid,
+      spec: {
+        ...valid.spec,
+        endpoint: { host: "0.0.0.0", port: 8094 },
+        extraArgs: ["--host", "0.0.0.0"],
+        allowExternalBind: true,
+      },
+    });
+    expect(modelHostBindRefusal(manifest)).toBeNull();
   });
 });
 

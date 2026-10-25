@@ -76,6 +76,11 @@ export const ModelHostSpecSchema = z
     timeoutSeconds: z.number().int().positive().max(600).default(60),
     env: z.record(z.string(), z.string()).optional(),
     priority: z.number().int().min(0).max(100).optional(),
+    // Opt-in for binding the engine to a non-loopback host. Deliberately NOT
+    // .default(false): a defaulted key would be serialized into every manifest
+    // the controller sends, and older remote agents reject unknown keys on
+    // this strict schema. Absent means false.
+    allowExternalBind: z.boolean().optional(),
   })
   .strict();
 
@@ -100,6 +105,44 @@ export const ModelHostManifestSchema = z
 
 export type ModelHostManifest = z.infer<typeof ModelHostManifestSchema>;
 export type ModelHostSpec = z.infer<typeof ModelHostSpecSchema>;
+
+// Mirrors LOOPBACK_HOSTS in packages/core/src/server.ts: hosts in this set
+// are unreachable from outside the machine, so they need no opt-in.
+const LOCAL_BIND_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+
+/**
+ * The first bind host on the ModelHost launch path that is not loopback:
+ * `spec.endpoint.host` first, then every `--host <v>` / `--host=<v>` value in
+ * `spec.extraArgs` (the engines append extraArgs after their own `--host`, so
+ * a later occurrence wins on the command line too). Null when every candidate
+ * is local.
+ */
+export function modelHostExternalBindHost(
+  spec: Pick<ModelHostSpec, "endpoint" | "extraArgs">,
+): string | null {
+  const candidates: string[] = [spec.endpoint.host];
+  for (let i = 0; i < spec.extraArgs.length; i += 1) {
+    const token = spec.extraArgs[i];
+    if (token === "--host") {
+      const value = spec.extraArgs[i + 1];
+      if (value !== undefined) candidates.push(value);
+    } else if (token?.startsWith("--host=")) {
+      candidates.push(token.slice("--host=".length));
+    }
+  }
+  return candidates.find((host) => !LOCAL_BIND_HOSTS.has(host)) ?? null;
+}
+
+/**
+ * Refusal message when the manifest would bind an unauthenticated engine to a
+ * non-loopback host without `allowExternalBind: true`, else null.
+ */
+export function modelHostBindRefusal(manifest: ModelHostManifest): string | null {
+  const host = modelHostExternalBindHost(manifest.spec);
+  if (host === null) return null;
+  if (manifest.spec.allowExternalBind === true) return null;
+  return `refusing to bind ModelHost ${manifest.metadata.name} to ${host} without \`allowExternalBind: true\` in the workload spec`;
+}
 
 /**
  * Normalize a parsed `ModelHostSpec` so its optional `resources.expectedMemoryGiB`

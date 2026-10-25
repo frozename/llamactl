@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { generateToken, hashToken } from "../src/server/auth.js";
 import { type RunningAgent, startAgentServer } from "../src/server/serve.js";
 import {
@@ -338,45 +338,67 @@ describe("startAgentServer with tunnelDial", () => {
   });
 
   test("central relays workloadApply mutation to the dialing node", async () => {
-    const central = bootCentralAgent();
-    centrals.push(central);
+    // The relayed apply lands in the dialing agent's default workloads dir;
+    // pin it to a temp dir so nothing reaches the operator's live store.
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-relay-apply-"));
+    tempDirs.push(dir);
+    const savedWorkloadsDir = process.env["LLAMACTL_WORKLOADS_DIR"];
+    process.env["LLAMACTL_WORKLOADS_DIR"] = dir;
+    try {
+      const central = bootCentralAgent();
+      centrals.push(central);
 
-    const dialer = bootDialingAgent({
-      url: central.wsUrl,
-      bearer: central.tunnelBearer,
-      nodeName: "nodeB",
-    });
-    dialers.push(dialer);
+      const dialer = bootDialingAgent({
+        url: central.wsUrl,
+        bearer: central.tunnelBearer,
+        nodeName: "nodeB",
+      });
+      dialers.push(dialer);
 
-    await waitFor(() => dialer.agent.tunnelClient!.isReady());
-    await waitFor(() => central.agent.tunnelServer!.registry().some((e) => e.nodeName === "nodeB"));
+      await waitFor(() => dialer.agent.tunnelClient!.isReady());
+      await waitFor(() =>
+        central.agent.tunnelServer!.registry().some((e) => e.nodeName === "nodeB"),
+      );
 
-    const resp = await fetch(`${central.baseUrl}/tunnel-relay/nodeB`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${central.agentToken}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        method: "workloadApply",
-        type: "mutation",
-        input: { yaml: disabledModelRunYaml("relay-apply") },
-      }),
-    });
-    expect(resp.status).toBe(200);
-    const body = (await resp.json()) as {
-      type: string;
-      result?: { action?: unknown; name?: unknown; node?: unknown; status?: { phase?: unknown } };
-      error?: { code: string; message: string };
-    };
-    expect(body.type).toBe("res");
-    expect(body.error).toBeUndefined();
-    expect(body.result).toMatchObject({
-      action: "unchanged",
-      name: "relay-apply",
-      node: "local",
-      status: { phase: "Stopped" },
-    });
+      const resp = await fetch(`${central.baseUrl}/tunnel-relay/nodeB`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${central.agentToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          method: "workloadApply",
+          type: "mutation",
+          input: { yaml: disabledModelRunYaml("relay-apply") },
+        }),
+      });
+      expect(resp.status).toBe(200);
+      const body = (await resp.json()) as {
+        type: string;
+        result?: {
+          action?: unknown;
+          name?: unknown;
+          node?: unknown;
+          path?: unknown;
+          status?: { phase?: unknown };
+        };
+        error?: { code: string; message: string };
+      };
+      expect(body.type).toBe("res");
+      expect(body.error).toBeUndefined();
+      expect(body.result).toMatchObject({
+        action: "unchanged",
+        name: "relay-apply",
+        node: "local",
+        path: join(dir, "relay-apply.yaml"),
+        status: { phase: "Stopped" },
+      });
+      expect(existsSync(join(dir, "relay-apply.yaml"))).toBe(true);
+    } finally {
+      if (savedWorkloadsDir === undefined)
+        Reflect.deleteProperty(process.env, "LLAMACTL_WORKLOADS_DIR");
+      else process.env["LLAMACTL_WORKLOADS_DIR"] = savedWorkloadsDir;
+    }
   });
 
   test("disconnect → reconnect: tunnel re-establishes and second relay call succeeds", async () => {

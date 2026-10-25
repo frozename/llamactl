@@ -141,7 +141,7 @@ export function registerReadTools(server: McpServer): void {
     {
       title: "Local node hardware facts",
       description:
-        "Return the control plane's own hardware inventory — profile (mac-mini-16g | balanced | macbook-pro-48g), memory bytes, OS/arch, GPU kind, llama.cpp build id, versions. Remote-node facts need the dispatcher; this tool covers the control-plane case.",
+        "Return the control plane's own hardware inventory — profile (mac-mini-16g | balanced | macbook-pro-48g | large-128g), memory bytes, OS/arch, GPU kind, llama.cpp build id, versions. Remote-node facts need the dispatcher; this tool covers the control-plane case.",
       inputSchema: {},
     },
     () => toTextContent(nodeFactsMod.collectNodeFacts()),
