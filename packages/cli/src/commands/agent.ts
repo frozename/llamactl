@@ -101,7 +101,8 @@ ${DIR_FLAG_HELP}
   --port=<n>       Port the agent listens on (default: 7843)
   --name=<node>    Node name recorded in agent.yaml (default: this machine's hostname)
   --bind=<host>    Address the agent binds to (default: 127.0.0.1)
-  --san=<host,...> Certificate SANs (default: the --host and --bind values)
+  --san=<host,...> Certificate SANs; repeatable, comma lists ok
+                   (--host is always included; default: the --host and --bind values)
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -205,7 +206,7 @@ export async function runAgent(args: string[]): Promise<number> {
   }
 }
 
-interface InitFlags {
+export interface InitFlags {
   dir: string;
   host: string; // the hostname/IP this node advertises externally
   port: number;
@@ -215,7 +216,7 @@ interface InitFlags {
   json: boolean; // emit single-line JSON instead of human summary
 }
 
-function parseInitFlags(args: string[]): InitFlags | { error: string } {
+export function parseInitFlags(args: string[]): InitFlags | { error: string } {
   const flags: InitFlags = {
     dir: agentConfigMod.defaultAgentDir(),
     host: "127.0.0.1",
@@ -255,16 +256,23 @@ function parseInitFlags(args: string[]): InitFlags | { error: string } {
         flags.bindHost = v;
         break;
       case "--san":
-        flags.sans = v
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean);
+        flags.sans.push(
+          ...v
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        );
         break;
       default:
         return { error: `agent init: unknown flag ${k}` };
     }
   }
   return flags;
+}
+
+export function resolveInitSans(f: Pick<InitFlags, "host" | "bindHost" | "sans">): string[] {
+  // --host must always be in the cert: the bootstrap URL is https://<host>:<port>.
+  return dedupe(f.sans.length > 0 ? [f.host, ...f.sans] : [f.host, f.bindHost]);
 }
 
 async function runInit(args: string[]): Promise<number> {
@@ -288,11 +296,11 @@ async function runInit(args: string[]): Promise<number> {
     return 1;
   }
 
-  const sans = f.sans.length > 0 ? f.sans : [f.host, f.bindHost];
+  const sans = resolveInitSans(f);
   const cert = await tls.generateSelfSignedCert({
     dir: f.dir,
     commonName: f.host,
-    hostnames: dedupe(sans),
+    hostnames: sans,
   });
 
   const token = auth.generateToken();
@@ -327,6 +335,7 @@ async function runInit(args: string[]): Promise<number> {
         `cert   ${cert.certPath}`,
         `key    ${cert.keyPath}`,
         `bind   ${f.bindHost}:${String(f.port)}`,
+        `sans   ${sans.join(",")}`,
         `fp     ${cert.fingerprint}`,
       ].join("\n") + "\n",
     );
@@ -348,6 +357,7 @@ async function runInit(args: string[]): Promise<number> {
       `cert   ${cert.certPath}`,
       `key    ${cert.keyPath}`,
       `bind   ${f.bindHost}:${String(f.port)}`,
+      `sans   ${sans.join(",")}`,
       `fp     ${cert.fingerprint}`,
       ``,
       `On the control plane, run:`,
