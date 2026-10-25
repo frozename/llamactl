@@ -36,6 +36,10 @@ export interface FakeUnit {
   standardOutput: string | null;
   environmentFile: string | null;
   plistPath?: string | null;
+  /** launchd: `launchctl print` calls showing `state = xpcproxy` after each bootstrap/kickstart. */
+  spawnPrints?: number;
+  /** launchd: xpcproxy prints left; set to Infinity for a job that never finishes spawning. */
+  spawnRemaining?: number;
 }
 
 export interface FakeHost extends ManagedHost {
@@ -373,6 +377,14 @@ function launchdName(w: World, args: readonly string[], prefix: string): string 
   return (cmd === "kickstart" ? a2 : a1).slice(prefix.length);
 }
 
+function launchdState(u: FakeUnit): string {
+  if (u.spawnRemaining !== undefined && u.spawnRemaining > 0) {
+    u.spawnRemaining -= 1;
+    return "xpcproxy";
+  }
+  return u.active ? "running" : "not running";
+}
+
 function launchdPrint(name: string, u: FakeUnit, prefix: string): ExecResult {
   const args = u.argv.map((a) => `\t\t${a}`).join("\n");
   return ok(
@@ -381,7 +393,7 @@ function launchdPrint(name: string, u: FakeUnit, prefix: string): ExecResult {
       "\tactive count = 1",
       `\tpath = ${u.plistPath ?? ""}`,
       "\ttype = LaunchAgent",
-      `\tstate = ${u.active ? "running" : "not running"}`,
+      `\tstate = ${launchdState(u)}`,
       "",
       `\tprogram = ${u.argv[0] ?? ""}`,
       "\targuments = {",
@@ -403,6 +415,7 @@ function launchdAction(w: World, cmd: string, name: string, u: FakeUnit): ExecRe
   w.events.push(`${cmd} ${name}`);
   u.loaded = cmd !== "bootout";
   u.active = cmd !== "bootout";
+  u.spawnRemaining = cmd === "bootout" ? 0 : (u.spawnPrints ?? 0);
   if (cmd === "bootstrap" && name === "com.llamactl.controller") w.onControllerStart(w);
   if (cmd === "kickstart" && name === "com.llamactl.agent") w.onAgentRestart(w);
   return ok();
