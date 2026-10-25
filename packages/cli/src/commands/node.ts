@@ -1,12 +1,14 @@
 import type { Config } from "@llamactl/core/config/schema";
 
 import {
+  assertTokenReplaceable,
   currentContext,
   defaultConfigPath,
   loadConfig,
   mutateConfig,
   removeNode,
   resolveNode,
+  TokenConflictError,
   upsertNode,
 } from "@llamactl/core/config/kubeconfig";
 import { omitUndefined } from "@llamactl/core/object";
@@ -32,10 +34,10 @@ const USAGE = `Usage: llamactl node <subcommand>
 Subcommands:
   ls [--json]
       List nodes in the current context.
-  add <name> --bootstrap <blob> [--force]
+  add <name> --bootstrap <blob> [--force] [--replace-token]
       Decode a bootstrap blob from 'llamactl agent init' and persist it.
   add <name> --server <url> --fingerprint <sha256:...>
-      [--token <tok>|--token-file <p>] [--force]
+      [--token <tok>|--token-file <p>] [--force] [--replace-token]
       Register a node explicitly.
   add-rag <name> --provider <chroma|pgvector> --endpoint <e>
       [--collection <c>] [--embedder-node <n> --embedder-model <m>]
@@ -59,6 +61,10 @@ Subcommands:
 By default, 'add' verifies the node is reachable with the supplied
 credentials before persisting. Pass --force to skip the check
 (useful when registering a node that isn't online yet).
+
+Every remote agent node authenticates with the same context-user
+token, so 'add' refuses to replace a differing token while other
+remote agent nodes exist; pass --replace-token to replace it anyway.
 
 Kubeconfig path: $LLAMACTL_CONFIG, or $DEV_STORAGE/config, or ~/.llamactl/config.
 `;
@@ -135,6 +141,7 @@ interface AddFlags {
   tokenFile?: string;
   certificate?: string; // inline PEM (currently unused; written if bootstrap + fetch succeeds)
   force: boolean;
+  replaceToken: boolean;
 }
 
 function assignAddFlag(flags: AddFlags, key: string, value: string | undefined): boolean {
@@ -163,11 +170,15 @@ function parseAdd(args: string[]): AddFlags | { error: string } {
   if (args.length === 0) return { error: "node add: missing <name>" };
   const [name, ...rest] = args;
   if (!name || name.startsWith("-")) return { error: "node add: missing <name>" };
-  const flags: AddFlags = { name, force: false };
+  const flags: AddFlags = { name, force: false, replaceToken: false };
   for (let i = 0; i < rest.length; i++) {
     const arg = required(rest[i]);
     if (arg === "--force") {
       flags.force = true;
+      continue;
+    }
+    if (arg === "--replace-token") {
+      flags.replaceToken = true;
       continue;
     }
     if (assignAddFlag(flags, arg, rest[i + 1])) {
@@ -330,18 +341,33 @@ async function runAdd(args: string[]): Promise<number> {
 
   const cfgPath = defaultConfigPath();
   let ctxName = "";
-  mutateConfigLocked(cfgPath, (cfg: Config) => {
-    const ctx = currentContext(cfg);
-    ctxName = ctx.name;
-    const withUser = persistUserToken(cfg, ctx.user, token);
-    const nodeEntry: configSchema.ClusterNode = {
-      name: f.name,
-      endpoint: url,
-      certificateFingerprint: fingerprint,
-    };
-    if (certificate) nodeEntry.certificate = certificate;
-    return upsertNode(withUser, ctx.cluster, nodeEntry);
-  });
+  try {
+    mutateConfigLocked(cfgPath, (cfg: Config) => {
+      const ctx = currentContext(cfg);
+      ctxName = ctx.name;
+      if (!f.replaceToken) assertTokenReplaceable(cfg, ctx.cluster, ctx.user, token, f.name);
+      const withUser = persistUserToken(cfg, ctx.user, token);
+      const nodeEntry: configSchema.ClusterNode = {
+        name: f.name,
+        endpoint: url,
+        certificateFingerprint: fingerprint,
+      };
+      if (certificate) nodeEntry.certificate = certificate;
+      return upsertNode(withUser, ctx.cluster, nodeEntry);
+    });
+  } catch (err) {
+    if (!(err instanceof TokenConflictError)) throw err;
+    process.stderr.write(
+      [
+        `node add: ${err.message}`,
+        `  the new node's bearer would replace the shared user token and`,
+        `  cut off the nodes listed above; pass --replace-token to`,
+        `  replace it anyway.`,
+        "",
+      ].join("\n"),
+    );
+    return 1;
+  }
   renderAddResult(f.name, url, ctxName, probeFacts);
   return 0;
 }
