@@ -115,6 +115,7 @@ describe("agent init SANs (#217)", () => {
       "init",
       `--dir=${tmp}`,
       "--json",
+      "--host=192.168.1.5",
       "--bind=0.0.0.0",
       "--san=192.168.1.5",
       "--no-loopback-san",
