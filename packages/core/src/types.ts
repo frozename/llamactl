@@ -3,7 +3,7 @@
  * default quant preferences, and preset mappings. Values kept in sync
  * with the historical zsh library so tuned bench records keep matching.
  */
-export type MachineProfile = "mac-mini-16g" | "balanced" | "macbook-pro-48g";
+export type MachineProfile = "mac-mini-16g" | "balanced" | "macbook-pro-48g" | "large-128g";
 
 /**
  * Runtime tuple of every machine profile. `satisfies` pins the array to
@@ -15,6 +15,7 @@ export const MACHINE_PROFILES = [
   "mac-mini-16g",
   "balanced",
   "macbook-pro-48g",
+  "large-128g",
 ] as const satisfies readonly MachineProfile[];
 
 /**

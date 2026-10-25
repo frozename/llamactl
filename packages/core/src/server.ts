@@ -108,6 +108,24 @@ export function endpoint(
   return `http://${host}:${String(port)}`;
 }
 
+const WILDCARD_HOSTS = new Set(["0.0.0.0", "::", "[::]"]);
+
+export function isWildcardHost(host: string): boolean {
+  return WILDCARD_HOSTS.has(host);
+}
+
+/**
+ * Turn a bind host into something a remote caller can actually dial.
+ * Wildcards ("any interface") are never dialable, so they collapse
+ * to the advertised host, then the configured host, then loopback.
+ */
+export function dialableHost(host: string, resolved: ResolvedEnv): string {
+  if (!isWildcardHost(host)) return host;
+  if (resolved.LLAMA_CPP_ADVERTISED_HOST) return resolved.LLAMA_CPP_ADVERTISED_HOST;
+  if (!isWildcardHost(resolved.LLAMA_CPP_HOST)) return resolved.LLAMA_CPP_HOST;
+  return "127.0.0.1";
+}
+
 /**
  * URL external callers should use to reach llama-server. Falls back to
  * the bind endpoint when LLAMA_CPP_ADVERTISED_HOST is unset, which
@@ -119,8 +137,11 @@ export function advertisedEndpoint(
   resolved: ResolvedEnv = resolveEnv(),
   override?: { host?: string; port?: number | string },
 ): string {
-  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Empty string means "fall back to bind host" for advertised host.
-  const host = resolved.LLAMA_CPP_ADVERTISED_HOST || override?.host || resolved.LLAMA_CPP_HOST;
+  /* eslint-disable @typescript-eslint/prefer-nullish-coalescing -- Empty string means "fall back to bind host" for advertised host. */
+  const host =
+    resolved.LLAMA_CPP_ADVERTISED_HOST ||
+    dialableHost(override?.host || resolved.LLAMA_CPP_HOST, resolved);
+  /* eslint-enable @typescript-eslint/prefer-nullish-coalescing */
   const port = override?.port ?? resolved.LLAMA_CPP_PORT;
   return `http://${host}:${String(port)}`;
 }

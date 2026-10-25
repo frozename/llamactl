@@ -15,7 +15,7 @@ function qwen36ForProfile(profile: MachineProfile): string {
     case "balanced":
       return "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf";
     case "macbook-pro-48g":
-    default:
+    case "large-128g":
       return "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf";
   }
 }
