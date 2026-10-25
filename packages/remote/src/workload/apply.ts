@@ -847,7 +847,8 @@ interface ApplyOneOpts {
    */
   resolveNodeIdentity?: (nodeName: string) => string | null;
   listManifests?: () => ModelRun[];
-  getNodeBudgetGiB?: (nodeName: string) => number | undefined;
+  /** May be async so a caller can size a remote node from its reported memory. */
+  getNodeBudgetGiB?: (nodeName: string) => number | undefined | Promise<number | undefined>;
 }
 
 type ServerStatusSnapshot = Awaited<ReturnType<WorkloadClient["serverStatus"]["query"]>>;
@@ -1016,9 +1017,11 @@ interface ConvergeServerContext {
   evictTargets: string[];
 }
 
-function admitServerBudget(
+async function admitServerBudget(
   ctx: ConvergeServerContext,
-): { ok: true; adm: Extract<AdmissionResult, { ok: true }> } | { ok: false; result: ApplyResult } {
+): Promise<
+  { ok: true; adm: Extract<AdmissionResult, { ok: true }> } | { ok: false; result: ApplyResult }
+> {
   const { manifest, opts, evictTargets, now } = ctx;
   const listManifests =
     opts?.listManifests ?? ((): ModelRun[] => listWorkloads(opts?.workloadsDir));
@@ -1029,7 +1032,7 @@ function admitServerBudget(
       m.spec.enabled &&
       !evictTargets.includes(m.metadata.name),
   );
-  const budget = opts?.getNodeBudgetGiB?.(manifest.spec.node) ?? Number.POSITIVE_INFINITY;
+  const budget = (await opts?.getNodeBudgetGiB?.(manifest.spec.node)) ?? Number.POSITIVE_INFINITY;
   const forceAdmit = manifest.metadata.annotations["llamactl.io/force-admit"] === "true";
   const adm = computeNodeBudget({
     nodeName: manifest.spec.node,
@@ -1165,7 +1168,7 @@ function refuseHostBindBeforeTeardown(ctx: ConvergeServerContext): ApplyResult |
 async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<ApplyResult> {
   const { manifest, client, getClient, onEvent, now, status, matches, desiredArgs, evictTargets } =
     ctx;
-  const admission = admitServerBudget(ctx);
+  const admission = await admitServerBudget(ctx);
   if (!admission.ok) return admission.result;
   const adm = admission.adm;
 

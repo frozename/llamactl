@@ -43,8 +43,21 @@ afterEach(() => {
 
 describe("agent subcommand --help", () => {
   const cases: [string, string[]][] = [
-    ["init", ["--dir=", "--host=", "--port=", "--name=", "--bind=", "--san=", "default: 7843"]],
+    [
+      "init",
+      [
+        "--dir=",
+        "--host=",
+        "--port=",
+        "--name=",
+        "--bind=",
+        "--san=",
+        "--no-loopback-san",
+        "default: 7843",
+      ],
+    ],
     ["rotate-token", ["--dir=", "--host=", "--json"]],
+    ["set-token", ["--dir=", "--hash=", "--token-file="]],
     ["rotate-cert", ["--dir=", "--host=", "--san=", "--token-file=", "--json"]],
     ["serve", ["--dir=", "--bind=", "--port=", "--no-auth", "--dial-central="]],
     ["status", ["--dir=", "--host=", "--json"]],
