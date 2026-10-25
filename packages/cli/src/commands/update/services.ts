@@ -51,6 +51,9 @@ export const DEFAULT_UNITS: Record<ServiceManagerKind, Record<ServiceRole, strin
   launchd: { controller: "com.llamactl.controller", agent: "com.llamactl.agent" },
 };
 
+/** launchd: hosts deployed by `llamactl infra` register the agent under this label. */
+export const LAUNCHD_AGENT_FALLBACK = "com.llamactl.node-agent";
+
 export function pickServiceManagerKind(
   requested: string | null | undefined,
   platform: NodeJS.Platform,
@@ -441,6 +444,12 @@ function runsVerb(argv: readonly string[], role: ServiceRole): boolean {
   return i >= 0 && argv[i + 1] === "serve";
 }
 
+/** Does this unit's command line run this checkout's bin.ts? */
+export function runsCheckout(info: ServiceInfo, repo: string): boolean {
+  const entry = cliEntry(repo);
+  return info.argv.some((a) => a.startsWith("/") && resolve(a) === entry);
+}
+
 /**
  * Does this unit run `<role> serve` from this checkout? A default-named unit
  * must prove it; an explicitly named one is trusted with a warning when its
@@ -452,7 +461,7 @@ export function checkServiceMatch(
 ): { problems: string[]; warnings: string[] } {
   if (!info.loaded) return { problems: [`${info.name} is not loaded`], warnings: [] };
   const entry = cliEntry(repo);
-  const fromCheckout = info.argv.some((a) => a.startsWith("/") && resolve(a) === entry);
+  const fromCheckout = runsCheckout(info, repo);
   const verb = runsVerb(info.argv, info.role);
   if (fromCheckout && verb) return { problems: [], warnings: [] };
   const what = `${info.name} does not run '${info.role} serve' from ${entry} (command: ${info.argv.join(" ") || "unknown"})`;

@@ -177,7 +177,14 @@ named unit. Stops, starts and restarts go through `systemctl --user`.
 `com.llamactl.agent` in `gui/<uid>`. The controller is stopped with
 `launchctl bootout` and started with `launchctl bootstrap` from the plist
 launchd reports for it, so a job registered without a plist cannot be updated;
-the agent is restarted with `launchctl kickstart -k`.
+the agent is restarted with `launchctl kickstart -k`. When `com.llamactl.agent`
+is not loaded and no agent name was configured explicitly, the updater also
+tries `com.llamactl.node-agent`, the label `llamactl infra` deploys use. The
+other control-plane jobs (`llamactl infra restart-control-plane`'s allowlist:
+fleet-aggregator, fleet-supervisor, internal-proxy, node-agent) are never
+stopped or restarted by `llamactl update`; when one of them runs this checkout,
+`--check` and `--apply` warn that it keeps running old code until
+`llamactl infra restart-control-plane` restarts it.
 
 Bun: the update installs with the bun binary in the controller's (or agent's)
 command line, else the one running `llamactl update`.
