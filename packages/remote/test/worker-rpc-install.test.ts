@@ -672,6 +672,8 @@ describe("I1: clean install", () => {
       "install-launchd",
       "install-systemd",
       "rollback",
+      // `llamactl agent rotate-cert` (frozename/llamactl#209).
+      "rotate-cert",
       "rotate-token",
       "rpc-doctor",
       "serve",
