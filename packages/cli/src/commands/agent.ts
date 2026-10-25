@@ -21,7 +21,7 @@ import { runHeal } from "./heal.js";
 const USAGE = `Usage: llamactl agent <subcommand>
 
 Subcommands:
-  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--no-loopback-san] [--json]
+  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--no-loopback-san] [--force] [--json]
       Generate a TLS cert + bearer token, write agent.yaml.
       Default output is a human-readable summary + a 'llamactl node add'
       bootstrap line. With --json emits a single-line JSON record
@@ -138,6 +138,10 @@ ${DIR_FLAG_HELP}
                    127.0.0.1, ::1 and localhost are also added when
                    --bind is a wildcard or loopback address.
   --no-loopback-san  Do not add the loopback SANs on a wildcard bind
+  --force          Re-init over an existing agent.yaml: move agent.yaml,
+                   agent.crt and agent.key into
+                   <dir>/agent-backup-<timestamp>-XXXXXX/ first
+                   (mints a new cert and token)
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -317,6 +321,7 @@ export interface InitFlags {
   sans: string[]; // SANs baked into the cert
   loopbackSan: boolean; // add loopback SANs when the bind covers them
   json: boolean; // emit single-line JSON instead of human summary
+  force: boolean; // --force: back up an existing agent.yaml/cert/key and re-init
 }
 
 // A wildcard or loopback bind still serves https://127.0.0.1, so certs
@@ -339,6 +344,49 @@ function bindCoversLoopback(bindHost: string): boolean {
 
 const LOOPBACK_SANS = ["127.0.0.1", "::1", "localhost"];
 
+function initCertSans(f: InitFlags, requestedSans: string[]): string[] {
+  return f.loopbackSan && bindCoversLoopback(f.bindHost)
+    ? dedupe([...requestedSans, ...LOOPBACK_SANS])
+    : requestedSans;
+}
+
+function assignInitValueFlag(flags: InitFlags, k: string, v: string): string | null {
+  switch (k) {
+    case "--dir":
+      flags.dir = v;
+      break;
+    case "--host":
+      flags.host = v;
+      break;
+    case "--port": {
+      const n = Number.parseInt(v, 10);
+      if (!Number.isFinite(n) || n < 0 || n > 65535) {
+        return `agent init: invalid --port: ${v}`;
+      }
+      flags.port = n;
+      break;
+    }
+    case "--name":
+      flags.nodeName = v;
+      break;
+    case "--bind":
+      flags.bindHost = v;
+      flags.bindExplicit = true;
+      break;
+    case "--san":
+      flags.sans.push(
+        ...v
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      );
+      break;
+    default:
+      return `agent init: unknown flag ${k}`;
+  }
+  return null;
+}
+
 export function parseInitFlags(args: string[]): InitFlags | { error: string } {
   const flags: InitFlags = {
     dir: agentConfigMod.defaultAgentDir(),
@@ -350,12 +398,17 @@ export function parseInitFlags(args: string[]): InitFlags | { error: string } {
     sans: [],
     loopbackSan: true,
     json: false,
+    force: false,
   };
   for (const arg of args) {
-    // --json and --no-loopback-san are flag-only switches; the rest
-    // are --key=value.
+    // --json, --force and --no-loopback-san are flag-only switches; the
+    // rest are --key=value.
     if (arg === "--json") {
       flags.json = true;
+      continue;
+    }
+    if (arg === "--force") {
+      flags.force = true;
       continue;
     }
     if (arg === "--no-loopback-san") {
@@ -364,39 +417,8 @@ export function parseInitFlags(args: string[]): InitFlags | { error: string } {
     }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent init: flag must be --key=value: ${arg}` };
-    switch (k) {
-      case "--dir":
-        flags.dir = v;
-        break;
-      case "--host":
-        flags.host = v;
-        break;
-      case "--port": {
-        const n = Number.parseInt(v, 10);
-        if (!Number.isFinite(n) || n < 0 || n > 65535) {
-          return { error: `agent init: invalid --port: ${v}` };
-        }
-        flags.port = n;
-        break;
-      }
-      case "--name":
-        flags.nodeName = v;
-        break;
-      case "--bind":
-        flags.bindHost = v;
-        flags.bindExplicit = true;
-        break;
-      case "--san":
-        flags.sans.push(
-          ...v
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        );
-        break;
-      default:
-        return { error: `agent init: unknown flag ${k}` };
-    }
+    const err = assignInitValueFlag(flags, k, v);
+    if (err !== null) return { error: err };
   }
   return flags;
 }
@@ -404,6 +426,23 @@ export function parseInitFlags(args: string[]): InitFlags | { error: string } {
 export function resolveInitSans(f: Pick<InitFlags, "host" | "bindHost" | "sans">): string[] {
   // --host must always be in the cert: the bootstrap URL is https://<host>:<port>.
   return dedupe(f.sans.length > 0 ? [f.host, ...f.sans] : [f.host, f.bindHost]);
+}
+
+// #209: move the files init rewrites into a fresh timestamped subdir of the agent dir.
+export function backupAgentState(
+  dir: string,
+  now: Date = new Date(),
+): { backupDir: string; moved: string[] } {
+  const stamp = now.toISOString().replaceAll(/[:.]/g, "-");
+  const backupDir = mkdtempSync(join(dir, `agent-backup-${stamp}-`));
+  const moved: string[] = [];
+  for (const name of ["agent.yaml", "agent.crt", "agent.key"]) {
+    const src = join(dir, name);
+    if (!existsSync(src)) continue;
+    renameSync(src, join(backupDir, name));
+    moved.push(name);
+  }
+  return { backupDir, moved };
 }
 
 async function runInit(args: string[]): Promise<number> {
@@ -420,18 +459,24 @@ async function runInit(args: string[]): Promise<number> {
   mkdirSync(f.dir, { recursive: true });
 
   const configPath = join(f.dir, "agent.yaml");
+  let backup: { backupDir: string; moved: string[] } | null = null;
   if (existsSync(configPath)) {
-    process.stderr.write(
-      `agent config already exists at ${configPath}. Remove it (and the cert/key) to re-init.\n`,
-    );
-    return 1;
+    if (!f.force) {
+      process.stderr.write(
+        `agent config already exists at ${configPath}. Pass --force to move it and the cert/key into a timestamped backup and re-init.\n`,
+      );
+      return 1;
+    }
+    try {
+      backup = backupAgentState(f.dir);
+    } catch (err) {
+      process.stderr.write(`agent init --force: backup failed: ${(err as Error).message}\n`);
+      return 1;
+    }
   }
 
   const requestedSans = resolveInitSans(f);
-  const sans =
-    f.loopbackSan && bindCoversLoopback(f.bindHost)
-      ? dedupe([...requestedSans, ...LOOPBACK_SANS])
-      : requestedSans;
+  const sans = initCertSans(f, requestedSans);
   const cert = await tls.generateSelfSignedCert({
     dir: f.dir,
     commonName: f.host,
@@ -454,6 +499,12 @@ async function runInit(args: string[]): Promise<number> {
 
   const bindWarn = initBindWarning(f.host, f.bindHost, f.bindExplicit);
   if (bindWarn !== null) process.stderr.write(bindWarn);
+
+  if (backup !== null) {
+    process.stderr.write(
+      `agent init: backed up ${backup.moved.join(", ")} to ${backup.backupDir}. The token and cert fingerprint changed: restart the agent and re-add this node on the control plane with 'llamactl node add ${f.nodeName} --bootstrap <blob> --force'.\n`,
+    );
+  }
 
   const url = `https://${f.host}:${String(f.port)}`;
   const bootstrap = agentConfigMod.encodeBootstrap({
@@ -500,7 +551,7 @@ async function runInit(args: string[]): Promise<number> {
       ``,
       `On the control plane, run:`,
       ``,
-      `  llamactl node add ${f.nodeName} --bootstrap ${bootstrap}`,
+      `  llamactl node add ${f.nodeName} --bootstrap ${bootstrap}${backup !== null ? " --force" : ""}`,
       ``,
     ].join("\n"),
   );
