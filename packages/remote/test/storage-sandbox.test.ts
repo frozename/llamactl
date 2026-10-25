@@ -1,8 +1,7 @@
+import { defaultConfigPath } from "@llamactl/core/config/kubeconfig";
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-
-import { defaultConfigPath } from "@llamactl/core/config/kubeconfig";
 
 import { defaultWorkloadsDir } from "../src/workload/store.js";
 import { SANDBOX_PREFIX, sandboxOperatorStorage } from "./storage-sandbox.js";
@@ -17,7 +16,7 @@ describe("storage sandbox preload", () => {
   test("DEV_STORAGE points at a fresh sandbox under the system temp dir", () => {
     const root = process.env["DEV_STORAGE"];
     expect(root).toBeDefined();
-    expect(dirname(root as string)).toBe(tmpdir());
+    expect(dirname(root!)).toBe(tmpdir());
     expect(root!.startsWith(join(tmpdir(), SANDBOX_PREFIX))).toBe(true);
   });
 
