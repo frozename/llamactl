@@ -8,11 +8,16 @@ import {
 import { recordModelHostOomKill } from "@llamactl/core/engines/conditions";
 import { resolveEnv } from "@llamactl/core/env";
 import {
+  modelHostStore,
   noderunReconciler,
   workloadLock,
   workloadReconciler,
   workloadStore,
 } from "@llamactl/remote";
+import {
+  externalManagerOf,
+  type ModelHostManifest,
+} from "@llamactl/remote/workload/modelhost-schema";
 import { join } from "node:path";
 
 import { getNodeClientByName } from "../dispatcher.js";
@@ -30,6 +35,8 @@ converges:
 Flags:
   --interval=<s>   Seconds between reconcile passes (default 10).
   --once           Run one pass then exit (useful for cron-driven setups).
+  --force          Start even when ModelHosts carry a llamactl.io/managed-by
+                   label. Labeled hosts stay skipped by the reconciler.
   --no-reload-on-source-change
                    Keep running even when the controller's own git HEAD
                    moves after startup. Default: exit on a debounced change
@@ -49,15 +56,18 @@ and records an OOMKilled condition (see 'llamactl describe workload').
 interface ControllerFlags {
   intervalMs: number;
   once: boolean;
+  force: boolean;
   reloadOnSourceChange: boolean;
 }
 
 export function parseFlags(args: string[]): ControllerFlags | { error: string } {
   let intervalMs = 10_000;
   let once = false;
+  let force = false;
   let reloadOnSourceChange = true;
   for (const arg of args) {
     if (arg === "--once") once = true;
+    else if (arg === "--force") force = true;
     else if (arg === "--no-reload-on-source-change") reloadOnSourceChange = false;
     else if (arg === "-h" || arg === "--help") return { error: "help" };
     else if (arg.startsWith("--interval=")) {
@@ -70,7 +80,26 @@ export function parseFlags(args: string[]): ControllerFlags | { error: string } 
       return { error: `controller: unknown flag ${arg}` };
     }
   }
-  return { intervalMs, once, reloadOnSourceChange };
+  return { intervalMs, once, force, reloadOnSourceChange };
+}
+
+/**
+ * Refusal message when the store holds ModelHosts marked as managed by
+ * another controller (llamactl.io/managed-by), or null when none are.
+ * --force only lets the controller start; the reconciler still skips those
+ * hosts, so a retired local controller can never reclaim a central seat.
+ */
+export function externallyManagedRefusal(hosts: readonly ModelHostManifest[]): string | null {
+  const labeled = hosts.flatMap((host) => {
+    const manager = externalManagerOf(host);
+    return manager !== null ? [`modelhost/${host.metadata.name} (${manager})`] : [];
+  });
+  if (labeled.length === 0) return null;
+  return (
+    `ModelHosts are managed by another controller (llamactl.io/managed-by): ` +
+    `${labeled.join(", ")}; refusing to start these seats. ` +
+    `Re-run with --force to start anyway (labeled hosts stay skipped).`
+  );
 }
 
 /**
@@ -177,6 +206,16 @@ export function reduceReconcileReportLog(
     nextState.set(label, entry);
   }
   return { nextState, lines };
+}
+
+/**
+ * The startup gate: null when the controller may proceed, otherwise the
+ * refusal message. --force only lets the controller start; the reconciler
+ * still skips the labeled hosts each pass.
+ */
+function externalSeatRefusal(parsed: ControllerFlags, workloadsDir: string): string | null {
+  if (parsed.force) return null;
+  return externallyManagedRefusal(modelHostStore.listModelHosts(workloadsDir));
 }
 
 export interface OomWatchState {
@@ -303,23 +342,34 @@ function setupSignalHandlers(
   return { isStopping, onSignal };
 }
 
-export async function runController(args: string[]): Promise<number> {
+/**
+ * Subcommand + flag preflight. Returns the serve flags, or a process exit
+ * code once USAGE / the error has been written. Extracted from runController
+ * to keep that function within the complexity budget.
+ */
+function parseServeInvocation(args: string[]): ControllerFlags | { code: number } {
   const [sub, ...rest] = args;
   if (sub === undefined || sub === "-h" || sub === "--help" || sub === "help") {
     process.stdout.write(USAGE);
-    return sub === undefined ? 1 : 0;
+    return { code: sub === undefined ? 1 : 0 };
   }
   if (sub !== "serve") {
     process.stderr.write(`Unknown controller subcommand: ${sub}\n\n${USAGE}`);
-    return 1;
+    return { code: 1 };
   }
-
   const parsed = parseFlags(rest);
   if ("error" in parsed) {
     const stream = parsed.error === "help" ? process.stdout : process.stderr;
     stream.write(USAGE);
-    return parsed.error === "help" ? 0 : 1;
+    return { code: parsed.error === "help" ? 0 : 1 };
   }
+  return parsed;
+}
+
+export async function runController(args: string[]): Promise<number> {
+  const invocation = parseServeInvocation(args);
+  if ("code" in invocation) return invocation.code;
+  const parsed = invocation;
 
   const { config: kubecfg } = await import("@llamactl/remote");
   const cfgPath = process.env["LLAMACTL_CONFIG"] ?? kubecfg.defaultConfigPath();
@@ -328,6 +378,11 @@ export async function runController(args: string[]): Promise<number> {
   // `??`, which fed an "undefined/.llamactl" path when HOME was
   // unset and kept an empty-string DEV_STORAGE).
   const workloadsDir = workloadStore.defaultWorkloadsDir();
+  const refusal = externalSeatRefusal(parsed, workloadsDir);
+  if (refusal !== null) {
+    process.stderr.write(`controller: ${refusal}\n`);
+    return 1;
+  }
   const cfg = kubecfg.loadConfig(cfgPath);
   const resolveNodeIdentity = (n: string): string | null => {
     try {

@@ -22,8 +22,13 @@ import {
   type ApplyResult,
   type WorkloadClient,
 } from "./apply.js";
-import { LOCAL_NODE_ID, type ModelHostManifest, specForHash } from "./modelhost-schema.js";
-import { listModelHosts, saveModelHost } from "./modelhost-store.js";
+import {
+  externalManagerOf,
+  LOCAL_NODE_ID,
+  type ModelHostManifest,
+  specForHash,
+} from "./modelhost-schema.js";
+import { listModelHosts, loadModelHostByName, saveModelHost } from "./modelhost-store.js";
 import {
   DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
   DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
@@ -45,8 +50,11 @@ export interface ReconcileNodeReport {
   kind?: "ModelRun" | "ModelHost";
   name: string;
   node: string;
-  action: ApplyResult["action"] | "skipped-deleted";
+  action: ApplyResult["action"] | "skipped-deleted" | "skipped-external";
   error?: string;
+  /** Set with action "skipped-external": the manager named in the host's
+   *  llamactl.io/managed-by label. */
+  managedBy?: string;
   /** ModelHost on the local node only: a launch record exists but the engine
    *  was not running, i.e. it exited or was killed since the last pass. */
   foundDead?: boolean;
@@ -377,10 +385,61 @@ function sweepDisabledHost(
 }
 
 /**
- * Reconcile one ModelHost manifest. Pushes its report onto `reports`
- * and returns the number of errors observed.
+ * Reconcile one ModelHost manifest. A host labeled llamactl.io/managed-by
+ * belongs to another controller: report skipped-external and touch nothing
+ * else — no client, no status query, no start/stop, no sidecar sweep, no
+ * conditions write, no save.
  */
 async function reconcileModelHost(
+  manifest: ModelHostManifest,
+  opts: ReconcileOptions,
+  dir: string,
+  nodeBudgetByName: Map<string, number | undefined>,
+  reports: ReconcileNodeReport[],
+): Promise<number> {
+  // The pass-start snapshot goes stale while earlier hosts are awaited: a
+  // hand-over marker written to this host's file mid-pass must be honoured
+  // before any client access, so re-read it here.
+  let current = manifest;
+  try {
+    current = loadModelHostByName(manifest.metadata.name, dir);
+  } catch {
+    // Manifest vanished or became unreadable mid-pass; fall through with the
+    // snapshot so the regular error paths report it.
+  }
+  const managedBy = externalManagerOf(current);
+  if (managedBy !== null) {
+    const { spec } = current;
+    const name = current.metadata.name;
+    reports.push({
+      kind: "ModelHost",
+      name,
+      node: spec.node,
+      action: "skipped-external",
+      managedBy,
+    });
+    return 0;
+  }
+  return await reconcileUnmanagedModelHost(current, opts, dir, nodeBudgetByName, reports);
+}
+
+/**
+ * Persist the applied manifest unless the on-disk copy gained an external
+ * managed-by marker (or vanished) while the apply was awaited: another
+ * controller owns the hand-over now, so the stale in-memory manifest must
+ * not be written back over it.
+ */
+function saveAppliedHost(manifest: ModelHostManifest, name: string, dir: string): void {
+  let claimed = true;
+  try {
+    claimed = externalManagerOf(loadModelHostByName(name, dir)) !== null;
+  } catch {
+    // claimed stays true: the vanished or unreadable file is not ours to recreate.
+  }
+  if (!claimed) saveModelHost(manifest, dir);
+}
+
+async function reconcileUnmanagedModelHost(
   manifest: ModelHostManifest,
   opts: ReconcileOptions,
   dir: string,
@@ -429,7 +488,7 @@ async function reconcileModelHost(
     const action = wasRunning ? "restarted" : "started";
     if (result.ok && result.kind === "ModelHost") {
       pushHostReport(reports, spec, name, action, { foundDead });
-      saveModelHost(result.manifest, dir);
+      saveAppliedHost(result.manifest, name, dir);
       const restart = restartReason(wasRunning, foundDead);
       recordHostOutcome(spec, name, {
         kind: "ok",
