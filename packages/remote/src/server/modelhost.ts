@@ -30,13 +30,10 @@ import { basename, resolve, sep } from "node:path";
 
 import { existsSync, openSync } from "../safe-fs.js";
 import {
-<<<<<<< HEAD
   externalManagerOf,
   MANAGED_BY_LABEL,
-=======
   modelHostBindRefusal,
   modelHostExternalBindHost,
->>>>>>> origin/main
   type ModelHostManifest,
   ModelHostManifestSchema,
   specForEngine,
@@ -498,7 +495,6 @@ function teardownChildSilently(
   return Promise.resolve();
 }
 
-<<<<<<< HEAD
 /**
  * A pushed inline manifest (e.g. from the central controller's apply) must
  * not erase a managed-by marker already on disk for the same name. A label
@@ -524,7 +520,8 @@ function mergeDiskManagedByLabel(
       labels: { ...manifest.metadata.labels, [MANAGED_BY_LABEL]: diskManager },
     },
   };
-=======
+}
+
 // Loud stderr line on every launch that knowingly exposes an unauthenticated
 // engine past loopback — the opt-in is per-workload, so the operator running
 // the agent should still see it in the agent log.
@@ -539,7 +536,6 @@ function warnExternalBind(manifest: ModelHostManifest, opts: StartModelHostOptio
   warn(
     `[agent] WARNING: ModelHost ${manifest.metadata.name} (${manifest.spec.engine}) is binding an unauthenticated engine to ${externalHost}:${String(manifest.spec.endpoint.port)} (spec.allowExternalBind: true)`,
   );
->>>>>>> origin/main
 }
 
 export async function startModelHost(opts: StartModelHostOptions): Promise<StartModelHostResult> {
@@ -558,12 +554,6 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     opts.onEvent?.({ type: "done", result });
     return result;
   }
-<<<<<<< HEAD
-  if (opts.manifest) {
-    saveModelHost(mergeDiskManagedByLabel(manifest, opts.workloadsDir), opts.workloadsDir);
-  }
-=======
->>>>>>> origin/main
   const engine = ENGINES[manifest.spec.engine];
   const spec = buildModelHostSpec(manifest);
   const validation = engine.validateSpec(spec);
@@ -586,7 +576,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   // gate have passed: a refused start must not replace the previously saved
   // desired state with a manifest the controller will always refuse.
   if (opts.manifest) {
-    saveModelHost(manifest, opts.workloadsDir);
+    saveModelHost(mergeDiskManagedByLabel(manifest, opts.workloadsDir), opts.workloadsDir);
   }
 
   const early = await reapOrAdoptPriorHost(manifest, opts, resolved, engine);

@@ -369,7 +369,7 @@ async function reconcileUnmanagedModelHost(
   manifest: ModelHostManifest,
   opts: ReconcileOptions,
   dir: string,
-  nodeBudgetByName: Map<string, number>,
+  nodeBudgetByName: Map<string, number | undefined>,
   reports: ReconcileNodeReport[],
 ): Promise<number> {
   const name = manifest.metadata.name;

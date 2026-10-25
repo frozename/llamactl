@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-<<<<<<< HEAD
   externalManagerOf,
   MANAGED_BY_LABEL,
+  modelHostBindRefusal,
   type ModelHostManifest,
   ModelHostManifestSchema,
 } from "../../src/workload/modelhost-schema.js";
@@ -14,11 +14,6 @@ function hostWithLabels(labels?: Record<string, string>): ModelHostManifest {
     metadata: { name: "host-a", ...(labels !== undefined ? { labels } : {}) },
   });
 }
-=======
-  modelHostBindRefusal,
-  ModelHostManifestSchema,
-} from "../../src/workload/modelhost-schema.js";
->>>>>>> origin/main
 
 const valid = {
   apiVersion: "llamactl/v1",

@@ -672,7 +672,6 @@ describe("reconcileOnce", () => {
     });
   });
 
-<<<<<<< HEAD
   describe("externally managed ModelHosts", () => {
     function withManagedBy(manifest: ModelHostManifest): ModelHostManifest {
       return {
@@ -793,7 +792,12 @@ describe("reconcileOnce", () => {
       } finally {
         if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
         else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
-=======
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+  });
+
   describe("node RPC deadlines", () => {
     test("an unreachable node times out without stalling the pass", async () => {
       const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-timeout-"));
@@ -845,7 +849,6 @@ describe("reconcileOnce", () => {
         expect(hostReport?.action).toBe("unchanged");
         expect(hostReport?.error).toBeUndefined();
       } finally {
->>>>>>> origin/main
         rmSync(dir, { recursive: true, force: true });
       }
     });
