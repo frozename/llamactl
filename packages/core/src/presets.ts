@@ -46,6 +46,12 @@ const BUILTIN_PRESETS: Record<MachineProfile, Record<PresetName, string>> = {
     balanced: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
     fast: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
   },
+  "large-128g": {
+    best: "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+    vision: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    balanced: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    fast: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
+  },
 };
 
 /**

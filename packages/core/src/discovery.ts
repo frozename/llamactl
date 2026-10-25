@@ -150,6 +150,14 @@ const QUANT_PREFS: Record<MachineProfile, readonly string[]> = {
     "Q8_0.gguf",
     "UD-Q6_K_XL.gguf",
   ],
+  "large-128g": [
+    "UD-Q4_K_XL.gguf",
+    "UD-Q5_K_XL.gguf",
+    "UD-Q4_K_M.gguf",
+    "Q4_K_M.gguf",
+    "Q8_0.gguf",
+    "UD-Q6_K_XL.gguf",
+  ],
 } as const;
 
 /**
@@ -227,6 +235,7 @@ const SIZE_TIERS: Record<MachineProfile, { excellent: number; good: number; fair
   "mac-mini-16g": { excellent: 8.5, good: 12.5, fair: 16.5 },
   balanced: { excellent: 20.0, good: 28.0, fair: 36.0 },
   "macbook-pro-48g": { excellent: 30.0, good: 42.0, fair: 52.0 },
+  "large-128g": { excellent: 72.0, good: 96.0, fair: 112.0 },
 };
 
 function sizeFit(gib: number, profile: MachineProfile): DiscoveryFit {
@@ -290,6 +299,8 @@ function applyRepoQuantOverrides(
       return balancedOverrides(base, repoL, file);
     case "macbook-pro-48g":
       return /671b|405b|123b|120b/.test(repoL) ? "poor" : base;
+    case "large-128g":
+      return /671b|405b/.test(repoL) ? "poor" : base;
   }
 }
 

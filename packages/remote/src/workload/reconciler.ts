@@ -24,6 +24,12 @@ import {
 } from "./apply.js";
 import { LOCAL_NODE_ID, type ModelHostManifest, specForHash } from "./modelhost-schema.js";
 import { listModelHosts, saveModelHost } from "./modelhost-store.js";
+import {
+  DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
+  DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
+  type NodeRpcTimeouts,
+  withNodeRpcDeadline,
+} from "./node-rpc-deadline.js";
 import { listNodeRuns } from "./noderun-store.js";
 import {
   defaultWorkloadsDir,
@@ -63,6 +69,9 @@ export interface ReconcileOptions {
   onEvent?: (e: ApplyEvent & { name: string }) => void;
   /** Optional filter to only reconcile a subset. */
   filter?: (m: ModelRun) => boolean;
+  /** Per-call deadlines for node .query / .mutate RPCs; defaults to
+   *  DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS / DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS. */
+  rpcTimeouts?: Partial<NodeRpcTimeouts>;
 }
 
 function hostSpecSnapshot(manifest: ModelHostManifest): Record<string, unknown> {
@@ -109,28 +118,38 @@ function hostSpecsEqual(manifest: ModelHostManifest, current: Record<string, unk
  * workload is applied in sequence (avoids N parallel serverStart
  * subscriptions competing for the same port on a shared node). The
  * persisted manifest's status section is updated in place so
- * `llamactl get workloads` reflects the latest pass.
+ * `llamactl get workloads` reflects the latest pass. Node .query /
+ * .mutate RPCs carry a per-call deadline (see node-rpc-deadline.ts)
+ * so one unreachable node cannot stall the rest of the pass.
  */
 export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileResult> {
+  const timeouts: NodeRpcTimeouts = {
+    queryMs: opts.rpcTimeouts?.queryMs ?? DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
+    mutateMs: opts.rpcTimeouts?.mutateMs ?? DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
+  };
+  const deadlineOpts: ReconcileOptions = {
+    ...opts,
+    getClient: (nodeName) => withNodeRpcDeadline(opts.getClient(nodeName), nodeName, timeouts),
+  };
   const dir = opts.workloadsDir ?? defaultWorkloadsDir();
   const all = listWorkloads(dir);
   const hosts = listModelHosts(dir);
-  const nodeBudgetByName = new Map<string, number>(
-    listNodeRuns(dir).map((nodeRun) => [
-      nodeRun.metadata.name,
-      defaultNodeBudgetGiB(nodeRun.spec.budget?.memoryGiB),
-    ]),
+  // Absent NodeRun budgets stay undefined rather than resolving to the
+  // controller's RAM here, so the ModelHost path can fall through to the
+  // target node's reported memory.
+  const nodeBudgetByName = new Map<string, number | undefined>(
+    listNodeRuns(dir).map((nodeRun) => [nodeRun.metadata.name, nodeRun.spec.budget?.memoryGiB]),
   );
   const manifests = opts.filter ? all.filter(opts.filter) : all;
   const reports: ReconcileNodeReport[] = [];
   let errors = 0;
 
   for (const manifest of manifests) {
-    errors += await reconcileModelRun(manifest, opts, dir, nodeBudgetByName, reports);
+    errors += await reconcileModelRun(manifest, deadlineOpts, dir, nodeBudgetByName, reports);
   }
 
   for (const manifest of hosts) {
-    errors += await reconcileModelHost(manifest, opts, dir, nodeBudgetByName, reports);
+    errors += await reconcileModelHost(manifest, deadlineOpts, dir, nodeBudgetByName, reports);
   }
 
   return { reports, errors };
@@ -144,7 +163,7 @@ async function reconcileModelRun(
   manifest: ModelRun,
   opts: ReconcileOptions,
   dir: string,
-  nodeBudgetByName: Map<string, number>,
+  nodeBudgetByName: Map<string, number | undefined>,
   reports: ReconcileNodeReport[],
 ): Promise<number> {
   const name = manifest.metadata.name;
@@ -317,7 +336,7 @@ async function reconcileModelHost(
   manifest: ModelHostManifest,
   opts: ReconcileOptions,
   dir: string,
-  nodeBudgetByName: Map<string, number>,
+  nodeBudgetByName: Map<string, number | undefined>,
   reports: ReconcileNodeReport[],
 ): Promise<number> {
   const name = manifest.metadata.name;
@@ -356,7 +375,7 @@ async function reconcileModelHost(
       {
         env: process.env,
         workloadsDir: dir,
-        getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
+        getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName),
       },
     );
     const action = wasRunning ? "restarted" : "started";
