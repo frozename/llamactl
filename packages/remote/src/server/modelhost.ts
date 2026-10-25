@@ -525,9 +525,6 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     opts.onEvent?.({ type: "done", result });
     return result;
   }
-  if (opts.manifest) {
-    saveModelHost(manifest, opts.workloadsDir);
-  }
   const engine = ENGINES[manifest.spec.engine];
   const spec = buildModelHostSpec(manifest);
   const validation = engine.validateSpec(spec);
@@ -544,6 +541,13 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     const result = { ok: false, pid: null, error: bindRefusal };
     opts.onEvent?.({ type: "done", result });
     return result;
+  }
+
+  // Persist the accepted inline manifest only once validation and the bind
+  // gate have passed: a refused start must not replace the previously saved
+  // desired state with a manifest the controller will always refuse.
+  if (opts.manifest) {
+    saveModelHost(manifest, opts.workloadsDir);
   }
 
   const early = await reapOrAdoptPriorHost(manifest, opts, resolved, engine);

@@ -631,6 +631,117 @@ describe("server/modelhost", () => {
     }
   });
 
+  test("a refused external-bind inline start leaves the saved manifest unchanged", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-bindrefuse-save-"));
+    const { workloadsDir, runtimeDir, manifest } = makeManifest(tmp);
+    const manifestPath = join(workloadsDir, "mlx-host-server.yaml");
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const accepted = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+      expect(accepted.ok).toBe(true);
+      const savedBefore = readFileSync(manifestPath, "utf8");
+
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        manifest: {
+          ...manifest,
+          spec: { ...manifest.spec, endpoint: { host: "0.0.0.0", port: 8094 } },
+        },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("allowExternalBind");
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(readFileSync(manifestPath, "utf8")).toBe(savedBefore);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("an engine-validation failure on an inline start leaves the saved manifest unchanged", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-validate-save-"));
+    const { workloadsDir, runtimeDir, manifest } = makeManifest(tmp);
+    const manifestPath = join(workloadsDir, "mlx-host-server.yaml");
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const accepted = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+      expect(accepted.ok).toBe(true);
+      const savedBefore = readFileSync(manifestPath, "utf8");
+
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        manifest: {
+          ...manifest,
+          spec: { ...manifest.spec, binary: join(tmp, "missing-omlx") },
+        },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("binary not found");
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(readFileSync(manifestPath, "utf8")).toBe(savedBefore);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("an allowed external-bind inline start still persists the manifest", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-bindallow-save-"));
+    const { workloadsDir, runtimeDir, manifest } = makeManifest(tmp);
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        manifest: {
+          ...manifest,
+          spec: {
+            ...manifest.spec,
+            endpoint: { host: "0.0.0.0", port: 8094 },
+            allowExternalBind: true,
+          },
+        },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        warn: () => undefined,
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(readFileSync(join(workloadsDir, "mlx-host-server.yaml"), "utf8")).toContain(
+        "host: 0.0.0.0",
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("warns once when an allowed external bind proceeds to spawn", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-bind-warn-"));
     const { workloadsDir, runtimeDir, manifest } = makeManifest(tmp);
