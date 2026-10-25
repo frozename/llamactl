@@ -1,4 +1,4 @@
-import { execFileSync, execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 
 import type { MachineProfile, ResolvedEnv } from "./types.js";
@@ -11,7 +11,7 @@ import { detectMemoryBytes, resolveProfile } from "./profile.js";
 import { advertisedEndpoint, dialableHost } from "./server.js";
 import { listLocalRoutes } from "./workloadRuntime.js";
 
-export type GpuKind = "metal" | "cuda" | "rocm" | "cpu";
+export type GpuKind = "metal" | "cuda" | "rocm" | "vulkan" | "cpu";
 
 export interface GpuInfo {
   kind: GpuKind;
@@ -115,21 +115,33 @@ export function resolveVersions(_env: NodeJS.ProcessEnv = process.env): Versions
 
 // ----- GPU detection -----------------------------------------------------
 
-export function detectGpu(): GpuInfo | null {
-  if (process.platform === "darwin") return detectMetal();
-  if (process.platform === "linux") {
-    return detectNvidia() ?? detectRocm() ?? { kind: "cpu" };
+export type GpuProbeExec = (file: string, args: string[]) => string;
+
+export interface GpuProbeDeps {
+  platform?: NodeJS.Platform;
+  exec?: GpuProbeExec;
+}
+
+const defaultGpuExec: GpuProbeExec = (file, args) =>
+  execFileSync(file, args, {
+    stdio: ["ignore", "pipe", "ignore"],
+    encoding: "utf8",
+    timeout: 2000,
+  });
+
+export function detectGpu(deps: GpuProbeDeps = {}): GpuInfo | null {
+  const platform = deps.platform ?? process.platform;
+  const exec = deps.exec ?? defaultGpuExec;
+  if (platform === "darwin") return detectMetal(exec);
+  if (platform === "linux") {
+    return detectNvidia(exec) ?? detectRocm(exec) ?? detectVulkan(exec) ?? { kind: "cpu" };
   }
   return { kind: "cpu" };
 }
 
-function detectMetal(): GpuInfo | null {
+function detectMetal(exec: GpuProbeExec): GpuInfo | null {
   try {
-    const raw = execSync("system_profiler SPDisplaysDataType -json", {
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8",
-      timeout: 2000,
-    }).trim();
+    const raw = exec("system_profiler", ["SPDisplaysDataType", "-json"]).trim();
     const parsed = JSON.parse(raw) as {
       SPDisplaysDataType?: Record<string, unknown>[];
     };
@@ -152,13 +164,12 @@ function detectMetal(): GpuInfo | null {
   }
 }
 
-function detectNvidia(): GpuInfo | null {
+function detectNvidia(exec: GpuProbeExec): GpuInfo | null {
   try {
-    const out = execSync("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits", {
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8",
-      timeout: 2000,
-    }).trim();
+    const out = exec("nvidia-smi", [
+      "--query-gpu=name,memory.total",
+      "--format=csv,noheader,nounits",
+    ]).trim();
     if (!out) return null;
     const firstLine = out.split("\n")[0];
     if (!firstLine) return null;
@@ -173,14 +184,42 @@ function detectNvidia(): GpuInfo | null {
   }
 }
 
-function detectRocm(): GpuInfo | null {
+function detectRocm(exec: GpuProbeExec): GpuInfo | null {
   try {
-    execSync("rocminfo", {
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8",
-      timeout: 2000,
-    });
+    const out = exec("rocminfo", []);
+    // rocminfo exits 0 on CPU-only APUs too; only a listed GPU agent
+    // proves the ROCm stack actually drives a GPU.
+    if (!/^\s*Device Type:\s*GPU\s*$/m.test(out)) return null;
     return { kind: "rocm" };
+  } catch {
+    return null;
+  }
+}
+
+function detectVulkan(exec: GpuProbeExec): GpuInfo | null {
+  try {
+    const out = exec("vulkaninfo", ["--summary"]);
+    const blocks: { type: string; name: string }[] = [];
+    let current: { type: string; name: string } | null = null;
+    for (const line of out.split("\n")) {
+      if (/^GPU\d+:/.test(line)) {
+        current = { type: "", name: "" };
+        blocks.push(current);
+        continue;
+      }
+      if (!current) continue;
+      const type = /^\s*deviceType\s*=\s*(\S+)/.exec(line)?.[1];
+      if (type) current.type = type;
+      const name = /^\s*deviceName\s*=\s*(\S.*)$/.exec(line)?.[1]?.trim();
+      if (name) current.name = name;
+    }
+    const pick =
+      blocks.find((b) => b.type === "PHYSICAL_DEVICE_TYPE_DISCRETE_GPU") ??
+      blocks.find((b) => b.type === "PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU");
+    if (!pick) return null;
+    const info: GpuInfo = { kind: "vulkan" };
+    if (pick.name) info.name = pick.name;
+    return info;
   } catch {
     return null;
   }

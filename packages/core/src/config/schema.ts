@@ -3,7 +3,7 @@ import { z } from "zod";
 import { MACHINE_PROFILES } from "../types.js";
 
 export const GpuFactsSchema = z.object({
-  kind: z.enum(["metal", "cuda", "rocm", "cpu"]),
+  kind: z.enum(["metal", "cuda", "rocm", "vulkan", "cpu"]),
   name: z.string().optional(),
   memoryMB: z.number().optional(),
 });
