@@ -106,6 +106,12 @@ export interface ProbeFnDeps {
   timeoutMs: number;
   consecutiveErrors: Map<string, number>;
   completion?: CompletionProbeState;
+  /**
+   * Boot token for workloads local to this node, read from the llamactl
+   * runtime record (stable per process, changes on restart). When it returns
+   * a string it takes precedence over the two-read /v1/models `created` rule.
+   */
+  readLocalRevision?: (target: WorkloadTarget) => string | null;
 }
 
 function clearCompletionProbeState(state: CompletionProbeState, name: string): void {
@@ -284,15 +290,24 @@ export function makeDefaultProbeFn(
   // One entry per workload for the lifetime of the loop: the boot token is
   // only trusted once two consecutive /v1/models reads agree.
   const lastCreated = new Map<string, number | null>();
+  const readLocal = (target: WorkloadTarget): string | null => {
+    try {
+      return deps.readLocalRevision?.(target) ?? null;
+    } catch {
+      return null;
+    }
+  };
   return async (target): Promise<WorkloadSnapshot> => {
-    const result = await defaultProbeWorkload(target, {
+    const probed = await defaultProbeWorkload(target, {
       ...omitUndefined({ fetch: deps.fetch }),
       timeoutMs: deps.timeoutMs,
       priorConsecutiveErrors: deps.consecutiveErrors.get(target.name) ?? 0,
       priorCreated: lastCreated.get(target.name) ?? null,
     });
-    lastCreated.set(target.name, result.created);
-    deps.consecutiveErrors.set(target.name, result.consecutiveErrors);
+    lastCreated.set(target.name, probed.created);
+    deps.consecutiveErrors.set(target.name, probed.consecutiveErrors);
+    const localRevision = probed.reachable ? readLocal(target) : null;
+    const result = localRevision !== null ? { ...probed, revision: localRevision } : probed;
     const completionProbe = await runCompletionProbe(target, result, deps);
     return {
       name: target.name,

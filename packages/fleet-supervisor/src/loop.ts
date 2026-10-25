@@ -12,6 +12,7 @@ import type {
 import type { WorkloadTarget } from "./workload-probe.js";
 
 import { appendFleetJournal, defaultFleetJournalPath } from "./journal.js";
+import { makeLocalRevisionReader } from "./local-revision.js";
 import {
   applyPressureTransition,
   applyWorkloadDegradation,
@@ -48,6 +49,12 @@ export interface SupervisorLoopOptions {
   fetch?: typeof globalThis.fetch;
   probeNodeMem?: () => Promise<NodeMemSnapshot>;
   probeWorkload?: (target: WorkloadTarget) => Promise<WorkloadSnapshot>;
+  /**
+   * Boot token for workloads local to this node. Defaults to
+   * `makeLocalRevisionReader()`, which reads llamactl runtime records
+   * (startedAt + rel) under the resolved env.
+   */
+  readLocalRevision?: (target: WorkloadTarget) => string | null;
   writeJournal?: (entry: FleetJournalEntry) => void;
   journalPath?: string;
   onTick?: (snapshot: FleetSnapshotEntry) => void | Promise<void>;
@@ -319,6 +326,7 @@ export function startSupervisorLoop(opts: SupervisorLoopOptions): SupervisorLoop
       timeoutMs: probeTimeoutMs,
       consecutiveErrors,
       completion: completionState,
+      readLocalRevision: opts.readLocalRevision ?? makeLocalRevisionReader(),
     });
   const unreachableFallback = makeUnreachableFallback(consecutiveErrors);
 
