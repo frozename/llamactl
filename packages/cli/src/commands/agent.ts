@@ -116,7 +116,7 @@ ${DIR_FLAG_HELP}
   --host=<host>    Hostname/IP this node advertises externally (default: 127.0.0.1)
   --port=<n>       Port the agent listens on (default: 7843)
   --name=<node>    Node name recorded in agent.yaml (default: this machine's hostname)
-  --bind=<host>    Address the agent binds to (default: 127.0.0.1)
+  --bind=<host>    Address the agent binds to (default: 127.0.0.1; pass 0.0.0.0 to accept remote connections)
   --san=<host,...> Certificate SANs; repeatable, comma lists ok
                    (--host is always included; default: the --host and --bind values)
   --json           Emit a single-line JSON record instead of the human summary
@@ -190,6 +190,30 @@ function isHelpFlag(arg: string): boolean {
   return arg === "-h" || arg === "--help";
 }
 
+// #210: a non-loopback advertised host on a loopback bind is unreachable remotely.
+export function isLoopbackHost(host: string): boolean {
+  const h = host.toLowerCase();
+  const stripped = h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : h;
+  if (stripped === "localhost" || stripped === "::1" || stripped === "::ffff:127.0.0.1") {
+    return true;
+  }
+  return stripped.startsWith("127.") && /^[\d.]+$/.test(stripped);
+}
+
+// #210: null means no warning; the returned line always ends in "\n".
+export function initBindWarning(
+  host: string,
+  bindHost: string,
+  bindExplicit: boolean,
+): string | null {
+  if (bindExplicit || isLoopbackHost(host) || !isLoopbackHost(bindHost)) return null;
+  return (
+    `warning: advertised host ${host} is not reachable from other machines: ` +
+    `the agent binds ${bindHost}. Pass --bind=0.0.0.0 (or --bind=${host}) so ` +
+    `'llamactl node add' on a remote control plane can connect.\n`
+  );
+}
+
 export async function runAgent(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   switch (sub) {
@@ -247,6 +271,7 @@ export interface InitFlags {
   port: number;
   nodeName: string;
   bindHost: string; // what Bun.serve binds to
+  bindExplicit: boolean; // whether --bind was passed
   sans: string[]; // SANs baked into the cert
   json: boolean; // emit single-line JSON instead of human summary
 }
@@ -258,6 +283,7 @@ export function parseInitFlags(args: string[]): InitFlags | { error: string } {
     port: 7843,
     nodeName: hostname() || "local",
     bindHost: "127.0.0.1",
+    bindExplicit: false,
     sans: [],
     json: false,
   };
@@ -289,6 +315,7 @@ export function parseInitFlags(args: string[]): InitFlags | { error: string } {
         break;
       case "--bind":
         flags.bindHost = v;
+        flags.bindExplicit = true;
         break;
       case "--san":
         flags.sans.push(
@@ -351,6 +378,9 @@ async function runInit(args: string[]): Promise<number> {
     fingerprint: cert.fingerprint,
   };
   agentConfigMod.saveAgentConfig(config, configPath);
+
+  const bindWarn = initBindWarning(f.host, f.bindHost, f.bindExplicit);
+  if (bindWarn !== null) process.stderr.write(bindWarn);
 
   const url = `https://${f.host}:${String(f.port)}`;
   const bootstrap = agentConfigMod.encodeBootstrap({
