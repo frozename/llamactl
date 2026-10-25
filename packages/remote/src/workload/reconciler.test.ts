@@ -58,6 +58,18 @@ function makeRunManifest(name: string, port = 8181): Parameters<typeof saveWorkl
   };
 }
 
+function makeSizedRunManifest(
+  name: string,
+  expectedMemoryGiB: number,
+  port = 8181,
+  node = "mac-mini",
+): Parameters<typeof saveWorkload>[0] {
+  const manifest = makeRunManifest(name, port);
+  manifest.spec.node = node;
+  manifest.spec.resources = { expectedMemoryGiB };
+  return manifest;
+}
+
 function writeHighBudgetNodeRun(dir: string): void {
   writeFileSync(
     join(dir, "mac-mini.yaml"),
@@ -565,6 +577,161 @@ test("reconcile refuses a budgetless NodeRun's ModelHost past the node's reporte
     expect(result.reports[0]?.action).toBe("unchanged");
     expect(result.reports[0]?.error).toContain(`Budget is ${(hostGiB * 0.1875).toFixed(1)} GiB`);
     expect(nodeFactsCalls.count).toBe(1);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile admits a remote ModelRun from the node's reported memory without a NodeRun", async () => {
+  const hostGiB = totalmem() / 1024 ** 3;
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-run-nodemem-"));
+  const name = "run-nodemem";
+  saveWorkload(makeSizedRunManifest(name, 2 * hostGiB), workloadsDir);
+  const calls = { count: 0 };
+  const client: WorkloadClient = {
+    ...makeRunClient(new Map()),
+    nodeFacts: {
+      query: () => {
+        calls.count += 1;
+        return Promise.resolve({ memBytes: 4 * hostGiB * 1024 ** 3 });
+      },
+    },
+  };
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(0);
+    expect(result.reports).toEqual([
+      { kind: "ModelRun", name, node: "mac-mini", action: "started" },
+    ]);
+    expect(calls.count).toBe(1);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile refuses a remote ModelRun past a smaller node's reported memory", async () => {
+  const hostGiB = totalmem() / 1024 ** 3;
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-run-small-"));
+  const name = "run-small-node";
+  saveWorkload(makeSizedRunManifest(name, hostGiB / 2), workloadsDir);
+  const calls = { count: 0 };
+  const client: WorkloadClient = {
+    ...makeRunClient(new Map()),
+    nodeFacts: {
+      query: () => {
+        calls.count += 1;
+        return Promise.resolve({ memBytes: (hostGiB / 4) * 1024 ** 3 });
+      },
+    },
+  };
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(1);
+    expect(result.reports[0]?.action).toBe("pending");
+    expect(result.reports[0]?.error).toContain(`Budget is ${(hostGiB * 0.1875).toFixed(1)} GiB`);
+    expect(calls.count).toBe(1);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile keeps a NodeRun budget for a ModelRun and never queries nodeFacts", async () => {
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-run-noderun-budget-"));
+  writeHighBudgetNodeRun(workloadsDir);
+  const name = "run-budgeted";
+  saveWorkload(makeSizedRunManifest(name, 8), workloadsDir);
+  const calls = { count: 0 };
+  const client: WorkloadClient = {
+    ...makeRunClient(new Map()),
+    nodeFacts: {
+      query: () => {
+        calls.count += 1;
+        return Promise.resolve({ memBytes: 1 * 1024 ** 3 });
+      },
+    },
+  };
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(0);
+    expect(result.reports[0]?.action).toBe("started");
+    expect(calls.count).toBe(0);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile queries nodeFacts once per node per pass for several remote ModelRuns", async () => {
+  const hostGiB = totalmem() / 1024 ** 3;
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-run-multi-"));
+  saveWorkload(makeSizedRunManifest("aaa-run", hostGiB / 4, 8181), workloadsDir);
+  saveWorkload(makeSizedRunManifest("bbb-run", hostGiB / 4, 8182), workloadsDir);
+  const calls = { count: 0 };
+  const client: WorkloadClient = {
+    ...makeRunClient(new Map()),
+    nodeFacts: {
+      query: () => {
+        calls.count += 1;
+        return Promise.resolve({ memBytes: 4 * hostGiB * 1024 ** 3 });
+      },
+    },
+  };
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(0);
+    expect(result.reports.map((r) => r.action)).toEqual(["started", "started"]);
+    expect(calls.count).toBe(1);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile falls back to the controller budget for a remote ModelRun when nodeFacts rejects", async () => {
+  const hostGiB = totalmem() / 1024 ** 3;
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-run-reject-"));
+  const name = "run-facts-reject";
+  saveWorkload(makeSizedRunManifest(name, hostGiB / 2), workloadsDir);
+  const client: WorkloadClient = {
+    ...makeRunClient(new Map()),
+    nodeFacts: {
+      query: () => Promise.reject(new Error("unreachable")),
+    },
+  };
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(0);
+    expect(result.reports[0]?.action).toBe("started");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("reconcile never queries nodeFacts for a ModelRun on the local node", async () => {
+  const hostGiB = totalmem() / 1024 ** 3;
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-reconcile-run-local-"));
+  const name = "run-local";
+  saveWorkload(makeSizedRunManifest(name, hostGiB / 2, 8181, "local"), workloadsDir);
+  const calls = { count: 0 };
+  const client: WorkloadClient = {
+    ...makeRunClient(new Map()),
+    nodeFacts: {
+      query: () => {
+        calls.count += 1;
+        return Promise.resolve({ memBytes: 4 * hostGiB * 1024 ** 3 });
+      },
+    },
+  };
+
+  try {
+    const result = await reconcileOnce({ workloadsDir, getClient: () => client });
+    expect(result.errors).toBe(0);
+    expect(result.reports[0]?.node).toBe("local");
+    expect(result.reports[0]?.action).toBe("started");
+    expect(calls.count).toBe(0);
   } finally {
     rmSync(workloadsDir, { recursive: true, force: true });
   }
