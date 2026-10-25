@@ -2,8 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
-import { acquireLock, lockFilePath, releaseLock, writeStaleLock } from "../src/workload/lock.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import {
+  acquireLock,
+  liveLockHolder,
+  lockFilePath,
+  releaseLock,
+  writeStaleLock,
+} from "../src/workload/lock.js";
 
 let dir: string;
 beforeEach(() => {
@@ -51,5 +57,31 @@ describe("acquireLock / releaseLock", () => {
 
   test("lockFilePath is stable within a workloads dir", () => {
     expect(lockFilePath(dir)).toBe(join(dir, ".controller.lock"));
+  });
+});
+
+describe("liveLockHolder", () => {
+  test("returns null when no lock file exists", () => {
+    expect(liveLockHolder(dir)).toBeNull();
+  });
+
+  test("returns the holder pid while the lock is held by this process", () => {
+    const handle = acquireLock(dir);
+    try {
+      expect("error" in handle).toBe(false);
+      expect(liveLockHolder(dir)).toBe(process.pid);
+    } finally {
+      if (!("error" in handle)) releaseLock(handle);
+    }
+  });
+
+  test("returns null for a stale lock whose PID is gone", () => {
+    writeStaleLock(dir, 4_294_967_290);
+    expect(liveLockHolder(dir)).toBeNull();
+  });
+
+  test("returns null when the lock content is not a pid", () => {
+    writeFileSync(lockFilePath(dir), "garbage");
+    expect(liveLockHolder(dir)).toBeNull();
   });
 });
