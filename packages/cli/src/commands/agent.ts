@@ -21,11 +21,7 @@ import { runHeal } from "./heal.js";
 const USAGE = `Usage: llamactl agent <subcommand>
 
 Subcommands:
-<<<<<<< HEAD
-  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--force] [--json]
-=======
-  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--no-loopback-san] [--json]
->>>>>>> origin/main
+  init [--dir=<path>] [--host=<host>] [--port=<n>] [--name=<node>] [--bind=<host>] [--san=<host,...>] [--no-loopback-san] [--force] [--json]
       Generate a TLS cert + bearer token, write agent.yaml.
       Default output is a human-readable summary + a 'llamactl node add'
       bootstrap line. With --json emits a single-line JSON record
@@ -138,18 +134,14 @@ ${DIR_FLAG_HELP}
   --name=<node>    Node name recorded in agent.yaml (default: this machine's hostname)
   --bind=<host>    Address the agent binds to (default: 127.0.0.1; pass 0.0.0.0 to accept remote connections)
   --san=<host,...> Certificate SANs; repeatable, comma lists ok
-<<<<<<< HEAD
-                   (--host is always included; default: the --host and --bind values)
-  --force          Re-init over an existing agent.yaml: move agent.yaml,
-                   agent.crt and agent.key into
-                   <dir>/agent-backup-<timestamp>-XXXXXX/ first
-                   (mints a new cert and token)
-=======
                    (--host is always included; default: the --host and --bind values).
                    127.0.0.1, ::1 and localhost are also added when
                    --bind is a wildcard or loopback address.
   --no-loopback-san  Do not add the loopback SANs on a wildcard bind
->>>>>>> origin/main
+  --force          Re-init over an existing agent.yaml: move agent.yaml,
+                   agent.crt and agent.key into
+                   <dir>/agent-backup-<timestamp>-XXXXXX/ first
+                   (mints a new cert and token)
   --json           Emit a single-line JSON record instead of the human summary
   -h, --help       Show this help
 `;
@@ -352,6 +344,49 @@ function bindCoversLoopback(bindHost: string): boolean {
 
 const LOOPBACK_SANS = ["127.0.0.1", "::1", "localhost"];
 
+function initCertSans(f: InitFlags, requestedSans: string[]): string[] {
+  return f.loopbackSan && bindCoversLoopback(f.bindHost)
+    ? dedupe([...requestedSans, ...LOOPBACK_SANS])
+    : requestedSans;
+}
+
+function assignInitValueFlag(flags: InitFlags, k: string, v: string): string | null {
+  switch (k) {
+    case "--dir":
+      flags.dir = v;
+      break;
+    case "--host":
+      flags.host = v;
+      break;
+    case "--port": {
+      const n = Number.parseInt(v, 10);
+      if (!Number.isFinite(n) || n < 0 || n > 65535) {
+        return `agent init: invalid --port: ${v}`;
+      }
+      flags.port = n;
+      break;
+    }
+    case "--name":
+      flags.nodeName = v;
+      break;
+    case "--bind":
+      flags.bindHost = v;
+      flags.bindExplicit = true;
+      break;
+    case "--san":
+      flags.sans.push(
+        ...v
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      );
+      break;
+    default:
+      return `agent init: unknown flag ${k}`;
+  }
+  return null;
+}
+
 export function parseInitFlags(args: string[]): InitFlags | { error: string } {
   const flags: InitFlags = {
     dir: agentConfigMod.defaultAgentDir(),
@@ -366,60 +401,24 @@ export function parseInitFlags(args: string[]): InitFlags | { error: string } {
     force: false,
   };
   for (const arg of args) {
-<<<<<<< HEAD
-    // --json and --force are flag-only switches; everything else is --key=value.
-=======
-    // --json and --no-loopback-san are flag-only switches; the rest
-    // are --key=value.
->>>>>>> origin/main
+    // --json, --force and --no-loopback-san are flag-only switches; the
+    // rest are --key=value.
     if (arg === "--json") {
       flags.json = true;
       continue;
     }
-<<<<<<< HEAD
     if (arg === "--force") {
       flags.force = true;
-=======
+      continue;
+    }
     if (arg === "--no-loopback-san") {
       flags.loopbackSan = false;
->>>>>>> origin/main
       continue;
     }
     const [k, v] = splitFlag(arg);
     if (v === undefined) return { error: `agent init: flag must be --key=value: ${arg}` };
-    switch (k) {
-      case "--dir":
-        flags.dir = v;
-        break;
-      case "--host":
-        flags.host = v;
-        break;
-      case "--port": {
-        const n = Number.parseInt(v, 10);
-        if (!Number.isFinite(n) || n < 0 || n > 65535) {
-          return { error: `agent init: invalid --port: ${v}` };
-        }
-        flags.port = n;
-        break;
-      }
-      case "--name":
-        flags.nodeName = v;
-        break;
-      case "--bind":
-        flags.bindHost = v;
-        flags.bindExplicit = true;
-        break;
-      case "--san":
-        flags.sans.push(
-          ...v
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-        );
-        break;
-      default:
-        return { error: `agent init: unknown flag ${k}` };
-    }
+    const err = assignInitValueFlag(flags, k, v);
+    if (err !== null) return { error: err };
   }
   return flags;
 }
@@ -477,10 +476,7 @@ async function runInit(args: string[]): Promise<number> {
   }
 
   const requestedSans = resolveInitSans(f);
-  const sans =
-    f.loopbackSan && bindCoversLoopback(f.bindHost)
-      ? dedupe([...requestedSans, ...LOOPBACK_SANS])
-      : requestedSans;
+  const sans = initCertSans(f, requestedSans);
   const cert = await tls.generateSelfSignedCert({
     dir: f.dir,
     commonName: f.host,
