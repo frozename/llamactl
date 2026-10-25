@@ -38,6 +38,7 @@ import {
   modelHostExternalBindHost,
   type ModelHostManifest,
   ModelHostManifestSchema,
+  normalizeReadiness,
   specForEngine,
   specForHash,
 } from "../workload/modelhost-schema.js";
@@ -297,7 +298,7 @@ async function tryAdoptLiveHost(
   const readiness = await probeReady(
     endpoint,
     ADOPT_PROBE_TIMEOUT_MS,
-    manifest.spec.readiness,
+    normalizeReadiness(manifest.spec.readiness),
   ).catch(() => ({
     ready: false,
     modelIds: [] as string[],
@@ -411,7 +412,7 @@ async function reapOrAdoptPriorHost(
       resolved,
       opts.probeReady ??
         ((endpoint, timeoutMs): Promise<{ ready: boolean; modelIds: string[] }> =>
-          engine.probeReady(endpoint, timeoutMs, manifest.spec.readiness)),
+          engine.probeReady(endpoint, timeoutMs, normalizeReadiness(manifest.spec.readiness))),
       livePid,
       engine,
       priorState.specHash,
