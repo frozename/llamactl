@@ -45,9 +45,23 @@ describe("agent subcommand --help", () => {
   const cases: [string, string[]][] = [
     [
       "init",
+<<<<<<< HEAD
       ["--dir=", "--host=", "--port=", "--name=", "--bind=", "--san=", "--force", "default: 7843"],
+=======
+      [
+        "--dir=",
+        "--host=",
+        "--port=",
+        "--name=",
+        "--bind=",
+        "--san=",
+        "--no-loopback-san",
+        "default: 7843",
+      ],
+>>>>>>> origin/main
     ],
     ["rotate-token", ["--dir=", "--host=", "--json"]],
+    ["set-token", ["--dir=", "--hash=", "--token-file="]],
     ["rotate-cert", ["--dir=", "--host=", "--san=", "--token-file=", "--json"]],
     ["serve", ["--dir=", "--bind=", "--port=", "--no-auth", "--dial-central="]],
     ["status", ["--dir=", "--host=", "--json"]],
