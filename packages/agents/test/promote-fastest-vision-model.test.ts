@@ -109,12 +109,13 @@ describe("promote-fastest-vision-model runbook", () => {
       "llamactl.catalog.promote",
       "llamactl.catalog.promote",
       "llamactl.catalog.promote",
+      "llamactl.catalog.promote",
       "llamactl.embersynth.sync",
     ]);
-    // All three promote calls target the top rel + vision preset + dryRun=true.
+    // Every promote call targets the top rel + vision preset + dryRun=true.
     const promoteCalls = calls.filter((c) => c.name === "llamactl.catalog.promote");
     const profilesUsed = promoteCalls.map((c) => c.arguments["profile"]).sort();
-    expect(profilesUsed).toEqual(["balanced", "mac-mini-16g", "macbook-pro-48g"]);
+    expect(profilesUsed).toEqual(["balanced", "large-128g", "mac-mini-16g", "macbook-pro-48g"]);
     for (const c of promoteCalls) {
       expect(c.arguments["rel"]).toBe(VISION_REL);
       expect(c.arguments["preset"]).toBe("vision");
@@ -145,6 +146,28 @@ describe("promote-fastest-vision-model runbook", () => {
     const promoteCalls = calls.filter((c) => c.name === "llamactl.catalog.promote");
     expect(promoteCalls).toHaveLength(1);
     expect(promoteCalls[0]!.arguments["profile"]).toBe("macbook-pro-48g");
+  });
+
+  test("single-profile variant accepts large-128g", async () => {
+    const { client, calls } = makeClient({
+      "llamactl.bench.compare": () =>
+        benchResponse([{ rel: VISION_REL, class: "multimodal", installed: true, gen_tps: "30.0" }]),
+      "llamactl.catalog.promote": () => ({ dryRun: true }),
+      "llamactl.embersynth.sync": () => ({ dryRun: true }),
+    });
+    const result = await runRunbook(
+      "promote-fastest-vision-model",
+      { profile: "large-128g" },
+      {
+        dryRun: true,
+        log: () => {},
+        toolClient: client,
+      },
+    );
+    expect(result.ok).toBe(true);
+    const promoteCalls = calls.filter((c) => c.name === "llamactl.catalog.promote");
+    expect(promoteCalls).toHaveLength(1);
+    expect(promoteCalls[0]!.arguments["profile"]).toBe("large-128g");
   });
 
   test("wet-run forwards dryRun:false to mutation tools", async () => {
