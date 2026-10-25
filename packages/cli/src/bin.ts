@@ -37,6 +37,7 @@ import { runSupervisor } from "./commands/supervisor.js";
 import { runTunnel } from "./commands/tunnel.js";
 import { runUninstall } from "./commands/uninstall.js";
 import { runUpdate } from "./commands/update/index.js";
+import { runVersion } from "./commands/version.js";
 import { runApply, runDelete, runDescribe, runGet } from "./commands/workload.js";
 import { extractGlobalFlags, setGlobals } from "./dispatcher.js";
 
@@ -45,6 +46,7 @@ const USAGE = `llamactl — local-first toolkit for running llama.cpp
 Usage:
   llamactl env --eval                         Emit POSIX export lines for eval
   llamactl env --json                         Emit the resolved environment as JSON
+  llamactl --version [--json]                 Print version (+ git sha/date for source installs)
   llamactl catalog list [all|builtin|custom]  List curated + custom catalog rows
       [--json|--tsv]
   llamactl bench show <target>                Latest tuned bench record for target
@@ -324,6 +326,9 @@ async function main(argv: string[]): Promise<number> {
       return await runFleet(rest);
     case "update":
       return await runUpdate(rest);
+    case "--version":
+    case "version":
+      return await runVersion(rest);
     case undefined:
     case "--help":
     case "-h":
