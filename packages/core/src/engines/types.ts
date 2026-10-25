@@ -33,6 +33,19 @@ export interface ModelHostHostedModel {
   };
 }
 
+/**
+ * Optional readiness probe (issue #220): some engines (e.g. Gufo behind a
+ * llama-server shim) list their id on /v1/models and answer /health before
+ * the weights are loaded. A probe declares the endpoint that actually means
+ * "can serve": GET <path> must return expectStatus, and when expectJson is
+ * set, the JSON body must contain those top-level key/values.
+ */
+export interface ModelHostReadiness {
+  path: string;
+  expectStatus?: number;
+  expectJson?: Record<string, string | number | boolean>;
+}
+
 export interface ModelHostSpecForEngine {
   engine: EngineName;
   binary: string;
@@ -41,6 +54,7 @@ export interface ModelHostSpecForEngine {
   resources?: { expectedMemoryGiB?: number };
   extraArgs: string[];
   timeoutSeconds: number;
+  readiness?: ModelHostReadiness;
 }
 
 export interface EngineAdapter {
@@ -53,11 +67,13 @@ export interface EngineAdapter {
   ): { binary: string; args: string[]; envOverrides?: Record<string, string> };
   /**
    * Resolves when the engine is serving at least one model (not just process-alive).
-   * `modelIds` lists what the engine advertises via /v1/models.
+   * `modelIds` lists what the engine advertises via /v1/models. When `readiness`
+   * is given, the probe endpoint must also pass before ready flips true.
    */
   probeReady(
     endpoint: { host: string; port: number },
     timeoutMs: number,
+    readiness?: ModelHostReadiness,
   ): Promise<{ ready: boolean; modelIds: string[] }>;
   /**
    * Tear down the engine process. When `identity` carries a `recordPath`,
