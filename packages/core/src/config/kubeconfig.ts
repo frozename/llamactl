@@ -23,6 +23,7 @@ import {
   type Context,
   freshConfig,
   LOCAL_NODE_NAME,
+  resolveNodeKind,
   type User,
 } from "./schema.js";
 import { resolveSecret } from "./secret.js";
@@ -551,6 +552,63 @@ export function resolveNode(
   if (virtualNode) return { node: virtualNode, context, user };
 
   throw new Error(`node '${nodeName}' not found in cluster '${cluster.name}'`);
+}
+
+export class TokenConflictError extends Error {
+  userName: string;
+  nodes: string[];
+
+  constructor(message: string, userName: string, nodes: string[]) {
+    super(message);
+    this.name = "TokenConflictError";
+    this.userName = userName;
+    this.nodes = nodes;
+  }
+}
+
+/**
+ * Guard for the two paths (`node add`, POST /register) that overwrite
+ * the context user's bearer with a new node's token. That bearer is
+ * shared by every remote agent node in the cluster, so a replacement
+ * silently cuts off the existing ones unless the incoming token is
+ * already the current one. Throws TokenConflictError naming the
+ * affected nodes when it would; the caller surfaces the override
+ * (`--replace-token`) or a 409.
+ */
+export function assertTokenReplaceable(
+  config: Config,
+  clusterName: string,
+  userName: string,
+  incomingToken: string,
+  nodeName: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const user = config.users.find((u) => u.name === userName);
+  if (!user) return;
+  let current = user.token;
+  if (current === undefined && user.tokenRef) {
+    try {
+      current = resolveSecret(user.tokenRef, env);
+    } catch {
+      current = undefined;
+    }
+  }
+  if (current === undefined || current === incomingToken) return;
+  const cluster = config.clusters.find((c) => c.name === clusterName);
+  const nodes = (cluster?.nodes ?? [])
+    .filter(
+      (n) =>
+        n.name !== nodeName &&
+        resolveNodeKind(n) === "agent" &&
+        !n.endpoint.startsWith("inproc://"),
+    )
+    .map((n) => n.name);
+  if (nodes.length === 0) return;
+  throw new TokenConflictError(
+    `user '${userName}' already has a token; replacing it would cut off ${String(nodes.length)} other agent node(s): ${nodes.join(", ")}`,
+    userName,
+    nodes,
+  );
 }
 
 export function resolveToken(user: User, env: NodeJS.ProcessEnv = process.env): string {

@@ -18,7 +18,9 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "../safe-fs.js";
 import { llamactlHome, nonEmpty } from "./env.js";
@@ -228,18 +230,70 @@ function serialize(config: AgentConfig, path: string): string {
   }
 }
 
+const TMP_WRITE_ATTEMPTS = 5;
+
+function isExistError(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | null)?.code === "EEXIST";
+}
+
+/**
+ * One exclusive write-and-rename attempt. Returns null on success, the
+ * EEXIST error when the tmp path was already taken, and throws anything
+ * else; only a tmp this attempt created is ever unlinked.
+ */
+function exclusiveWriteAttempt(tmp: string, contents: string, path: string): Error | null {
+  let created = false;
+  try {
+    writeFileSync(tmp, contents, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    created = true;
+    try {
+      chmodSync(tmp, 0o600);
+    } catch {
+      // best-effort
+    }
+    renameSync(tmp, path);
+    return null;
+  } catch (err) {
+    if (created) {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        // the rename may have consumed it
+      }
+    }
+    if (isExistError(err)) return err as Error;
+    throw err;
+  }
+}
+
+/**
+ * Writes via a 0600 tmp in the same dir + a rename, so the credential
+ * hash is never readable under the umask mid-write and a concurrent
+ * reader sees either the old or the new file, never a partial one.
+ * The tmp is created exclusively ('wx'): a truncating open on a path an
+ * attacker pre-planted as a symlink would write through it to the link's
+ * target, so on EEXIST we retry under a fresh suffix and never touch,
+ * and never unlink, an entry this call did not create.
+ */
 export function saveAgentConfig(
   config: AgentConfig,
   path: string = defaultAgentConfigPath(),
 ): void {
   AgentConfigSchema.parse(config);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, serialize(config, path), "utf8");
-  try {
-    chmodSync(path, 0o600);
-  } catch {
-    // best-effort
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  const contents = serialize(config, path);
+  const prefix = `.${path.slice(dir.length + 1)}.tmp-${String(process.pid)}-`;
+  let lastCollision: Error | null = null;
+  for (let attempt = 0; attempt < TMP_WRITE_ATTEMPTS; attempt++) {
+    const tmp = join(dir, `${prefix}${Math.random().toString(36).slice(2)}`);
+    lastCollision = exclusiveWriteAttempt(tmp, contents, path);
+    if (lastCollision === null) return;
   }
+  throw new Error(
+    `could not create a temp file next to ${path}: ${String(TMP_WRITE_ATTEMPTS)} attempts all collided with an existing entry`,
+    { cause: lastCollision },
+  );
 }
 
 function warnIgnored(path: string, block: string, reason: string): void {
