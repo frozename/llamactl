@@ -21,6 +21,7 @@ import {
 } from "@llamactl/remote";
 import {
   LOCAL_NODE_ID,
+  modelHostExternalBindHost,
   type ModelHostManifest,
   ModelHostManifestSchema,
   specForEngine,
@@ -57,6 +58,10 @@ const GET_USAGE = `Usage: llamactl get workloads [--json]
 List every workload manifest and the live phase of its target node
 (Running / Stopped / Mismatch / Unreachable / Foreign — Foreign means a
 process llamactl did not record is answering on the workload's port).
+
+A ModelHost that binds a non-loopback host gets a trailing 'warning:'
+line, and its --json row carries exposedBind (host:port, or null) and
+allowExternalBind.
 `;
 
 const DESCRIBE_USAGE = `Usage: llamactl describe workload <name> [--json]
@@ -599,6 +604,13 @@ async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> 
   }
 }
 
+export function modelHostExposedBind(manifest: ModelHostManifest): string | null {
+  const host = modelHostExternalBindHost(manifest.spec);
+  if (host === null) return null;
+  const h = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `${h}:${String(manifest.spec.endpoint.port)}`;
+}
+
 export async function runGet(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   let json = false;
@@ -665,6 +677,8 @@ export async function runGet(args: string[]): Promise<number> {
           statePid,
           listenerPid,
           gateway: false,
+          exposedBind: modelHostExposedBind(manifest),
+          allowExternalBind: manifest.spec.allowExternalBind === true,
         };
       }),
     )),
@@ -690,7 +704,27 @@ export async function runGet(args: string[]): Promise<number> {
       `${pad(r.name, nameW)}  ${pad(r.node, nodeW)}  ${pad(r.kind, kindW)}  ${pad(r.phase, phaseW)}  ${r.rel}\n`,
     );
   }
+  writeExternalBindWarnings(rows);
   return 0;
+}
+
+function writeExternalBindWarnings(
+  rows: readonly {
+    kind: string;
+    name: string;
+    exposedBind?: string | null;
+    allowExternalBind?: boolean;
+  }[],
+): void {
+  for (const r of rows) {
+    if (r.kind !== "modelhost" || r.exposedBind === null || r.exposedBind === undefined) continue;
+    const suffix = r.allowExternalBind
+      ? " (spec.allowExternalBind: true)"
+      : "; spec.allowExternalBind is not true, so its next start is refused";
+    process.stdout.write(
+      `warning: modelhost/${r.name} binds an unauthenticated engine to ${r.exposedBind}${suffix}\n`,
+    );
+  }
 }
 
 function parseDescribeArgs(rest: string[]): { json: boolean } | { exit: number } {
