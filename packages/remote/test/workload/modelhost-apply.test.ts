@@ -2,7 +2,7 @@ import type { spawn as nodeSpawn } from "node:child_process";
 
 import { openAggregatorDb, writeSnapshot } from "@llamactl/fleet-supervisor";
 import { describe, expect, mock, spyOn, test } from "bun:test";
-import { tmpdir } from "node:os";
+import { tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 
 import type { ModelHostManifest } from "../../src/workload/modelhost-schema.js";
@@ -596,6 +596,151 @@ describe("applyManifest — kind dispatch", () => {
     expect(result.error).toContain("would reserve 18.0 GiB");
 
     rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const hostGiB = totalmem() / 1024 ** 3;
+
+  function modelHostOnNode(
+    name: string,
+    expectedMemoryGiB: number,
+    node: string,
+  ): ModelHostManifest {
+    const manifest = makeModelHostManifest(name, expectedMemoryGiB);
+    return { ...manifest, spec: { ...manifest.spec, node } };
+  }
+
+  function makeNodeFactsClient(memBytes: number | "reject"): {
+    client: WorkloadClient;
+    nodeFactsCalls: { count: number };
+  } {
+    const nodeFactsCalls = { count: 0 };
+    const client: WorkloadClient = {
+      serverStatus: {
+        query: () =>
+          Promise.resolve({
+            state: "down",
+            rel: null,
+            extraArgs: [],
+            pid: null,
+            host: null,
+            port: null,
+            binary: null,
+            endpoint: "",
+          }),
+      },
+      serverStop: { mutate: () => Promise.resolve({ ok: true }) },
+      serverStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      modelHostStart: {
+        subscribe: (_input, callbacks) => {
+          queueMicrotask(() => {
+            callbacks.onData({ type: "done", result: { ok: true, pid: 123, state: "Running" } });
+            callbacks.onComplete();
+          });
+          return { unsubscribe: () => undefined };
+        },
+      },
+      modelHostStop: { mutate: () => Promise.resolve({ ok: true }) },
+      modelHostStatus: { query: () => Promise.resolve({ state: "Running", pid: 123 }) },
+      rpcServerStart: { subscribe: () => ({ unsubscribe: () => undefined }) },
+      rpcServerStop: { mutate: () => Promise.resolve({ ok: true }) },
+      rpcServerDoctor: {
+        query: () => Promise.resolve({ ok: true, path: null, llamaCppBin: null }),
+      },
+      nodeFacts: {
+        query: () => {
+          nodeFactsCalls.count += 1;
+          if (memBytes === "reject") return Promise.reject(new Error("node unreachable"));
+          return Promise.resolve({ memBytes });
+        },
+      },
+    };
+    return { client, nodeFactsCalls };
+  }
+
+  test("remote ModelHost admission budget comes from the node's reported memory", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-nodemem-"));
+    const { client, nodeFactsCalls } = makeNodeFactsClient(4 * hostGiB * 1024 ** 3);
+    try {
+      const result = await applyManifest({
+        manifest: modelHostOnNode("mlx-host-nodemem", 2 * hostGiB, "mac-mini"),
+        workloadsDir: join(tmp, "workloads"),
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+      expect(nodeFactsCalls.count).toBe(1);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("remote ModelHost is refused against the node's own budget, not the controller's", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-nodemem-refuse-"));
+    const { client } = makeNodeFactsClient((hostGiB / 4) * 1024 ** 3);
+    try {
+      const result = await applyManifest({
+        manifest: modelHostOnNode("mlx-host-nodemem-refuse", hostGiB / 2, "mac-mini"),
+        workloadsDir: join(tmp, "workloads"),
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain(`Budget is ${(hostGiB * 0.1875).toFixed(1)} GiB`);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("explicit node budget and local nodes never query nodeFacts", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-nodemem-skip-"));
+    const { client, nodeFactsCalls } = makeNodeFactsClient(1 * 1024 ** 3);
+    try {
+      const explicit = await applyManifest({
+        manifest: modelHostOnNode("mlx-host-nodemem-explicit", 8, "mac-mini"),
+        workloadsDir: join(tmp, "workloads"),
+        getNodeBudgetGiB: () => 1024,
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+      if (!explicit.ok) console.error("ERROR:", explicit);
+      expect(explicit.ok).toBe(true);
+
+      const local = await applyManifest({
+        manifest: modelHostOnNode("mlx-host-nodemem-local", 1, "local"),
+        workloadsDir: join(tmp, "workloads"),
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+      if (!local.ok) console.error("ERROR:", local);
+      expect(local.ok).toBe(true);
+      expect(nodeFactsCalls.count).toBe(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("remote ModelHost falls back to the controller budget when nodeFacts rejects", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-nodemem-reject-"));
+    const { client } = makeNodeFactsClient("reject");
+    try {
+      const result = await applyManifest({
+        manifest: modelHostOnNode("mlx-host-nodemem-reject", hostGiB / 2, "mac-mini"),
+        workloadsDir: join(tmp, "workloads"),
+        getClient: () => client,
+        spawn: spawnStub,
+        env: { ...process.env, LOCAL_AI_RUNTIME_DIR: tmp },
+      });
+      if (!result.ok) console.error("ERROR:", result);
+      expect(result.ok).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test("applyOneModelHost surfaces modelHostStop failures when disabling", async () => {

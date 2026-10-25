@@ -54,8 +54,14 @@ export function sumReservedForNode(manifests: ModelRun[], nodeName: string): num
   );
 }
 
-export function defaultNodeBudgetGiB(nodeBudgetFromManifest?: number): number {
+export function defaultNodeBudgetGiB(
+  nodeBudgetFromManifest?: number,
+  nodeMemBytes?: number | null,
+): number {
   if (typeof nodeBudgetFromManifest === "number") return nodeBudgetFromManifest;
+  if (typeof nodeMemBytes === "number" && Number.isFinite(nodeMemBytes) && nodeMemBytes > 0) {
+    return (nodeMemBytes / 1024 ** 3) * 0.75;
+  }
   return (totalmem() / 1024 ** 3) * 0.75;
 }
 

@@ -149,6 +149,11 @@ export interface WorkloadClient {
   resolveTarget?: {
     query(input: string): Promise<string | null>;
   };
+  /** Node-reported facts; memBytes sizes remote ModelHost admission budgets.
+   *  Served by every real client through the router's nodeFacts procedure. */
+  nodeFacts?: {
+    query(): Promise<{ memBytes: number | null }>;
+  };
 }
 
 export type ApplyAction = "unchanged" | "started" | "restarted" | "pending";
@@ -179,8 +184,9 @@ export interface ApplyManifestOptions {
   env?: NodeJS.ProcessEnv;
   /** Override the workloads directory; defaults to `defaultWorkloadsDir()`. */
   workloadsDir?: string;
-  /** Resolve the node's memory budget for admission control. */
-  getNodeBudgetGiB?: (nodeName: string) => number;
+  /** Resolve the node's memory budget for admission control. Returning
+   *  undefined means "no explicit budget"; the caller sizes it itself. */
+  getNodeBudgetGiB?: (nodeName: string) => number | undefined;
   /** Bubble up per-workload progress events for logging. */
   onEvent?: (event: ApplyEvent) => void;
   /** Map a node name to a stable identity for port-collision detection across node aliases. */
@@ -415,13 +421,40 @@ async function disableModelHost(
   };
 }
 
+const NODE_FACTS_TIMEOUT_MS = 10_000;
+
+async function resolveModelHostBudgetGiB(
+  manifest: ModelHostManifest,
+  opts: Omit<ApplyManifestOptions, "manifest">,
+  client: WorkloadClient,
+): Promise<number> {
+  const explicit = opts.getNodeBudgetGiB?.(manifest.spec.node);
+  if (explicit !== undefined) return explicit;
+  if (manifest.spec.node === LOCAL_NODE_ID) return defaultNodeBudgetGiB();
+  // A black-holed node must not stall admission: absent, rejected or
+  // timed-out facts all fall back to the controller's own RAM.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        resolve(null);
+      }, NODE_FACTS_TIMEOUT_MS);
+    });
+    const query = client.nodeFacts?.query() ?? Promise.resolve(null);
+    const facts = await Promise.race([query.catch(() => null), timeout]);
+    return defaultNodeBudgetGiB(undefined, facts?.memBytes ?? null);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 function admitModelHostBudget(
   manifest: ModelHostManifest,
   opts: Omit<ApplyManifestOptions, "manifest">,
   resolved: ReturnType<typeof resolveEnv>,
   firstHostedModel: ModelHostManifest["spec"]["hostedModels"][number],
+  budget: number,
 ): { ok: false; error: string } | null {
-  const budget = opts.getNodeBudgetGiB?.(manifest.spec.node) ?? defaultNodeBudgetGiB();
   const workloadsDir = opts.workloadsDir ?? defaultWorkloadsDir();
   const livingManifests = listAnyWorkloadsForAdmission(workloadsDir, resolved)
     .filter((m) => m.metadata.name !== manifest.metadata.name)
@@ -580,7 +613,8 @@ async function applyModelHostManifest(
   if (!firstHostedModel) {
     return { ok: false, error: `ModelHost ${manifest.metadata.name} has no hosted models` };
   }
-  const rejected = admitModelHostBudget(manifest, opts, resolved, firstHostedModel);
+  const budget = await resolveModelHostBudgetGiB(manifest, opts, client);
+  const rejected = admitModelHostBudget(manifest, opts, resolved, firstHostedModel, budget);
   if (rejected) return rejected;
 
   const started = await startModelHostProcess(client, manifest);
@@ -604,7 +638,7 @@ export async function applyOneModelHost(
   opts?: {
     env?: NodeJS.ProcessEnv;
     workloadsDir?: string;
-    getNodeBudgetGiB?: (nodeName: string) => number;
+    getNodeBudgetGiB?: (nodeName: string) => number | undefined;
     supervisor?: {
       currentFreeGiB: number;
       headroomMinGiB: number;
@@ -813,7 +847,7 @@ interface ApplyOneOpts {
    */
   resolveNodeIdentity?: (nodeName: string) => string | null;
   listManifests?: () => ModelRun[];
-  getNodeBudgetGiB?: (nodeName: string) => number;
+  getNodeBudgetGiB?: (nodeName: string) => number | undefined;
 }
 
 type ServerStatusSnapshot = Awaited<ReturnType<WorkloadClient["serverStatus"]["query"]>>;

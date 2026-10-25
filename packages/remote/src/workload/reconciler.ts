@@ -115,11 +115,11 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
   const dir = opts.workloadsDir ?? defaultWorkloadsDir();
   const all = listWorkloads(dir);
   const hosts = listModelHosts(dir);
-  const nodeBudgetByName = new Map<string, number>(
-    listNodeRuns(dir).map((nodeRun) => [
-      nodeRun.metadata.name,
-      defaultNodeBudgetGiB(nodeRun.spec.budget?.memoryGiB),
-    ]),
+  // Absent NodeRun budgets stay undefined rather than resolving to the
+  // controller's RAM here, so the ModelHost path can fall through to the
+  // target node's reported memory.
+  const nodeBudgetByName = new Map<string, number | undefined>(
+    listNodeRuns(dir).map((nodeRun) => [nodeRun.metadata.name, nodeRun.spec.budget?.memoryGiB]),
   );
   const manifests = opts.filter ? all.filter(opts.filter) : all;
   const reports: ReconcileNodeReport[] = [];
@@ -144,7 +144,7 @@ async function reconcileModelRun(
   manifest: ModelRun,
   opts: ReconcileOptions,
   dir: string,
-  nodeBudgetByName: Map<string, number>,
+  nodeBudgetByName: Map<string, number | undefined>,
   reports: ReconcileNodeReport[],
 ): Promise<number> {
   const name = manifest.metadata.name;
@@ -317,7 +317,7 @@ async function reconcileModelHost(
   manifest: ModelHostManifest,
   opts: ReconcileOptions,
   dir: string,
-  nodeBudgetByName: Map<string, number>,
+  nodeBudgetByName: Map<string, number | undefined>,
   reports: ReconcileNodeReport[],
 ): Promise<number> {
   const name = manifest.metadata.name;
@@ -356,7 +356,7 @@ async function reconcileModelHost(
       {
         env: process.env,
         workloadsDir: dir,
-        getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName) ?? defaultNodeBudgetGiB(),
+        getNodeBudgetGiB: (nodeName) => nodeBudgetByName.get(nodeName),
       },
     );
     const action = wasRunning ? "restarted" : "started";
