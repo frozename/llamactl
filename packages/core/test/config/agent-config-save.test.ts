@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, type Mock, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,11 +9,14 @@ import {
 } from "../../src/config/agent-config.js";
 import {
   chmodSync,
+  existsSync,
+  lstatSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "../../src/safe-fs.js";
 
@@ -37,6 +40,17 @@ const CONFIG: AgentConfig = {
 
 let tmp = "";
 let cfgPath = "";
+
+const plantedName = `.agent.yaml.tmp-${String(process.pid)}-planted`;
+
+function stubRandomSuffix(...suffixes: string[]): Mock<() => number> {
+  let call = 0;
+  return spyOn(Math, "random").mockImplementation(() => {
+    const suffix = suffixes[call % suffixes.length]!;
+    call += 1;
+    return { toString: () => `00${suffix}` } as unknown as number;
+  });
+}
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-agent-save-"));
@@ -83,5 +97,61 @@ describe("saveAgentConfig", () => {
     expect(readFileSync(cfgPath)).toEqual(before);
     expect(statSync(cfgPath).ino).toBe(inoBefore);
     expect(readdirSync(tmp).sort()).toEqual(["agent.yaml"]);
+  });
+
+  test("a regular file planted at the first temp path survives; the save retries", () => {
+    const planted = join(tmp, plantedName);
+    writeFileSync(planted, "planted content\n");
+    const spy = stubRandomSuffix("planted", "second");
+    try {
+      saveAgentConfig(CONFIG, cfgPath);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(existsSync(planted)).toBe(true);
+    expect(readFileSync(planted, "utf8")).toBe("planted content\n");
+    expect(loadAgentConfig(cfgPath)).toEqual(CONFIG);
+    expect(readdirSync(tmp).sort()).toEqual([plantedName, "agent.yaml"]);
+  });
+
+  test("a symlink planted at the first temp path: link and target survive; the save retries", () => {
+    const victim = join(tmp, "victim.txt");
+    writeFileSync(victim, "victim content\n");
+    const planted = join(tmp, plantedName);
+    symlinkSync(victim, planted);
+    const spy = stubRandomSuffix("planted", "second");
+    try {
+      saveAgentConfig(CONFIG, cfgPath);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(readFileSync(victim, "utf8")).toBe("victim content\n");
+    expect(lstatSync(planted).isSymbolicLink()).toBe(true);
+    expect(readFileSync(planted, "utf8")).toBe("victim content\n");
+    expect(loadAgentConfig(cfgPath)).toEqual(CONFIG);
+    expect(readdirSync(tmp).sort()).toEqual([plantedName, "agent.yaml", "victim.txt"]);
+  });
+
+  test("every temp path collides: a clear error, agent.yaml and the planted entry untouched", () => {
+    saveAgentConfig(CONFIG, cfgPath);
+    const before = readFileSync(cfgPath, "utf8");
+    const inoBefore = statSync(cfgPath).ino;
+    const planted = join(tmp, plantedName);
+    writeFileSync(planted, "planted content\n");
+    const spy = stubRandomSuffix("planted");
+    try {
+      expect(() => {
+        saveAgentConfig({ ...CONFIG, tokenHash: "c".repeat(64) }, cfgPath);
+      }).toThrow(/collided/);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(readFileSync(planted, "utf8")).toBe("planted content\n");
+    expect(readFileSync(cfgPath, "utf8")).toBe(before);
+    expect(statSync(cfgPath).ino).toBe(inoBefore);
+    expect(readdirSync(tmp).sort()).toEqual([plantedName, "agent.yaml"]);
   });
 });
