@@ -1,10 +1,15 @@
-import type { schemas } from "@llamactl/core";
+import type { MachineProfile, schemas } from "@llamactl/core";
 
 export type PresetOverride = schemas.PresetOverride;
-export type Profile = "mac-mini-16g" | "balanced" | "macbook-pro-48g";
+export type Profile = MachineProfile;
 export type Preset = "best" | "vision" | "balanced" | "fast";
 
-export const PROFILES: readonly Profile[] = ["mac-mini-16g", "balanced", "macbook-pro-48g"];
+export const PROFILES: readonly Profile[] = [
+  "mac-mini-16g",
+  "balanced",
+  "macbook-pro-48g",
+  "large-128g",
+];
 export const PRESETS: readonly Preset[] = ["best", "vision", "balanced", "fast"];
 
 export const GROUPS: { title: string; keys: string[] }[] = [
