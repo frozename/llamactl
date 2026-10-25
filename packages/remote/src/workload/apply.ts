@@ -36,6 +36,7 @@ import {
 } from "./admission.js";
 import {
   LOCAL_NODE_ID,
+  modelHostBindRefusal,
   type ModelHostManifest,
   ModelHostManifestSchema,
   specForEngine,
@@ -566,6 +567,13 @@ async function applyModelHostManifest(
 
   if (!manifest.spec.enabled) {
     return await disableModelHost(manifest, client, resolved);
+  }
+
+  // Refuse the exposed bind before budget + start. Disabling an already
+  // exposed host must keep working, so this sits after the disable branch.
+  const bindRefusal = modelHostBindRefusal(manifest);
+  if (bindRefusal !== null) {
+    return { ok: false, error: bindRefusal };
   }
 
   const firstHostedModel = manifest.spec.hostedModels[0];
