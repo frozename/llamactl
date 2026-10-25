@@ -561,3 +561,147 @@ describe("makeDefaultProbeFn revision stability", () => {
     expect(revisions).toEqual([null, "1000", null, "2000"]);
   });
 });
+
+describe("makeDefaultProbeFn local runtime-record revision", () => {
+  const LOCAL_TARGET: WorkloadTarget = {
+    name: "plain",
+    endpoint: "http://127.0.0.1:8090",
+    kind: "ModelHost",
+  };
+
+  function fixedCreatedFetch(created: number) {
+    return async (url: string): Promise<Response> => {
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      if (url.endsWith("/v1/models"))
+        return new Response(JSON.stringify({ data: [{ id: "granite-3b", created }] }), {
+          status: 200,
+        });
+      return new Response("", { status: 404 });
+    };
+  }
+
+  it("uses the local runtime-record revision while /v1/models created drifts", async () => {
+    let nextCreated = 1_792_877_007;
+    const driftingFetch = async (url: string): Promise<Response> => {
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      if (url.endsWith("/v1/models")) {
+        const body = { data: [{ id: "granite-3b", created: nextCreated }] };
+        nextCreated += 4;
+        return new Response(JSON.stringify(body), { status: 200 });
+      }
+      return new Response("", { status: 404 });
+    };
+    const probeFn = makeDefaultProbeFn({
+      fetch: driftingFetch as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+      readLocalRevision: () => "epoch-1",
+    });
+
+    const a = await probeFn(LOCAL_TARGET);
+    const b = await probeFn(LOCAL_TARGET);
+    const c = await probeFn(LOCAL_TARGET);
+
+    expect(a.revision).toBe("epoch-1");
+    expect(b.revision).toBe("epoch-1");
+    expect(c.revision).toBe("epoch-1");
+  });
+
+  it("changes the revision when the local record changes (restart)", async () => {
+    const revisions = ["epoch-1", "epoch-1", "epoch-2"];
+    let calls = 0;
+    const probeFn = makeDefaultProbeFn({
+      fetch: fixedCreatedFetch(1_000) as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+      readLocalRevision: () => revisions[calls++] ?? "epoch-2",
+    });
+
+    const seen: (string | null)[] = [];
+    seen.push((await probeFn(LOCAL_TARGET)).revision ?? null);
+    seen.push((await probeFn(LOCAL_TARGET)).revision ?? null);
+    seen.push((await probeFn(LOCAL_TARGET)).revision ?? null);
+
+    expect(seen).toEqual(["epoch-1", "epoch-1", "epoch-2"]);
+  });
+
+  it("falls back to the two-read rule when there is no local record", async () => {
+    const probeFn = makeDefaultProbeFn({
+      fetch: fixedCreatedFetch(1_000) as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+      readLocalRevision: () => null,
+    });
+
+    const first = await probeFn(LOCAL_TARGET);
+    const second = await probeFn(LOCAL_TARGET);
+
+    expect([first.revision, second.revision]).toEqual([null, "1000"]);
+  });
+
+  it("publishes null when /health is unreachable even with a local record", async () => {
+    const downFetch = async (): Promise<Response> => new Response("down", { status: 503 });
+    const probeFn = makeDefaultProbeFn({
+      fetch: downFetch as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+      readLocalRevision: () => "epoch-1",
+    });
+
+    const snap = await probeFn(LOCAL_TARGET);
+
+    expect(snap.revision).toBeNull();
+    expect(snap.reachable).toBe(false);
+  });
+
+  it("a throwing reader falls back without failing the probe", async () => {
+    const probeFn = makeDefaultProbeFn({
+      fetch: fixedCreatedFetch(1_000) as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+      readLocalRevision: (): string | null => {
+        throw new Error("record unreadable");
+      },
+    });
+
+    const first = await probeFn(LOCAL_TARGET);
+    const second = await probeFn(LOCAL_TARGET);
+
+    expect([first.revision, second.revision]).toEqual([null, "1000"]);
+  });
+
+  it("a local revision flip clears the stale latency ring", async () => {
+    const fakeProbe = async (
+      _endpoint: string,
+      opts: { priorConsecutiveFailures?: number },
+    ): Promise<CompletionProbeResult> => ({
+      ok: false,
+      status: null,
+      latencyMs: 500,
+      classification: "wedge",
+      consecutiveFailures: (opts.priorConsecutiveFailures ?? 0) + 1,
+    });
+    let localRevision = "epoch-1";
+    const state = { ...freshState(), lastRevision: new Map<string, string | null>() };
+    const target = { ...TARGET, completionProbe: { ...PROBE_CONFIG, everyNTicks: 1 } };
+    const probeFn = makeDefaultProbeFn({
+      fetch: healthyFetch() as unknown as typeof fetch,
+      timeoutMs: 500,
+      consecutiveErrors: new Map(),
+      completion: { ...state, probe: fakeProbe },
+      readLocalRevision: () => localRevision,
+    });
+
+    await probeFn(target);
+    expect(state.lastRevision.get("granite-judge")).toBe("epoch-1");
+
+    // Stale ring from the old boot; the workload restarts (record rewritten)
+    // without /health ever dropping — the ring must be invalidated.
+    state.latencySamples.set("granite-judge", [9_000, 9_000, 9_000, 9_000, 9_000]);
+
+    localRevision = "epoch-2";
+    await probeFn(target);
+    expect(state.lastRevision.get("granite-judge")).toBe("epoch-2");
+    expect(state.latencySamples.has("granite-judge")).toBe(false);
+  });
+});
