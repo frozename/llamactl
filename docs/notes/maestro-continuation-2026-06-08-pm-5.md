@@ -91,7 +91,7 @@ gains. Plus the original pm-3 stability items (1 + 2) at the start.
 - mac-mini: granite :8086 ✅, bge-m3 :8098 ✅, supervisor ✅, node-agent :7843 ✅,
   ~56 % free RAM.
 - Cluster token (kubeconfig `/Users/acordeiro/DevStorage/config`, user `me`):
-  `ll_agt_hhMIvwSymXSysUkGE4g_azFFX1GRRy5P`. mac-mini cert pinned in that config +
+  `<redacted>`. mac-mini cert pinned in that config +
   at `~/.llamactl/certs/mac-mini.pem`.
 - Tree clean except untracked `docs/notes/*`. `main == origin` was true at session
   start; **this session's commits are local-only (not pushed)** — main is
