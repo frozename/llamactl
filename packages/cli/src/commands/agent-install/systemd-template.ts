@@ -67,6 +67,7 @@ export function buildSystemdUnit(opts: BuildSystemdUnitOptions): string {
   lines.push("Type=simple");
   lines.push(`ExecStart=${[opts.execPath, ...opts.args].map(escapeExecArg).join(" ")}`);
   lines.push("Restart=always");
+  lines.push("KillMode=process");
   lines.push("RestartSec=10");
   if (opts.scope === "system" && opts.workingDir !== undefined) {
     lines.push(`WorkingDirectory=${escapePathValue(opts.workingDir)}`);

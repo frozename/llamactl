@@ -41,6 +41,10 @@ jobs:
         working-directory: llamactl
         run: bun install --frozen-lockfile
 
+      - name: Secret scan
+        working-directory: llamactl
+        run: bun run secrets:scan
+
       - name: Typecheck
         working-directory: llamactl
         run: bun run typecheck

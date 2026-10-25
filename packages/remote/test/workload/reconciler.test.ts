@@ -947,5 +947,80 @@ describe("reconcileOnce", () => {
         rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    test("a node that timed out is skipped for the rest of the pass", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-skip-"));
+      try {
+        const runA: ModelRun = {
+          ...makeRunManifest(),
+          spec: { ...makeRunManifest().spec, node: "z13" },
+        };
+        const runB: ModelRun = {
+          ...makeRunManifest(),
+          metadata: { name: "run-b", labels: {}, annotations: {} },
+          spec: {
+            ...makeRunManifest().spec,
+            node: "z13",
+            target: { kind: "rel", value: "mlx-community/run-b.gguf" },
+          },
+        };
+        const host: ModelHostManifest = {
+          ...makeHostManifest(),
+          spec: { ...makeHostManifest().spec, node: "mac-mini" },
+        };
+        saveWorkload(runA, dir);
+        saveWorkload(runB, dir);
+        saveModelHost(host, dir);
+
+        let z13Calls = 0;
+        const startedAt = Date.now();
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          rpcTimeouts: { queryMs: 50, mutateMs: 50 },
+          getClient: (node): WorkloadClient =>
+            node === "z13"
+              ? {
+                  ...makeClient(),
+                  serverStatus: {
+                    query: (): Promise<never> => {
+                      z13Calls++;
+                      return new Promise<never>(() => undefined);
+                    },
+                  },
+                }
+              : {
+                  ...makeClient(),
+                  modelHostStatus: {
+                    query: (): Promise<{ state: string; pid: number; specHash: string }> =>
+                      Promise.resolve({
+                        state: "Running",
+                        pid: 1234,
+                        specHash: computeModelHostSpecHash(specForHash(host.spec)),
+                      }),
+                  },
+                },
+        });
+
+        expect(z13Calls).toBe(1);
+        expect(result.errors).toBe(2);
+        const runAReport = result.reports.find((r) => r.name === "run-a");
+        const runBReport = result.reports.find((r) => r.name === "run-b");
+        expect(runAReport?.node).toBe("z13");
+        expect(runAReport?.action).toBe("unchanged");
+        expect(runAReport?.error).toMatch(/z13/);
+        expect(runBReport?.node).toBe("z13");
+        expect(runBReport?.action).toBe("unchanged");
+        expect(runBReport?.error).toMatch(/z13/);
+        const errors = [runAReport?.error ?? "", runBReport?.error ?? ""];
+        expect(errors.filter((e) => e.includes("did not respond"))).toHaveLength(1);
+        expect(errors.filter((e) => e.includes("skipped"))).toHaveLength(1);
+        const hostReport = result.reports.find((r) => r.name === "host-a");
+        expect(hostReport?.action).toBe("unchanged");
+        expect(hostReport?.error).toBeUndefined();
+        expect(Date.now() - startedAt).toBeLessThan(2000);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 });
