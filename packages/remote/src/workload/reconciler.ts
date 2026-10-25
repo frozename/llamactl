@@ -24,6 +24,12 @@ import {
 } from "./apply.js";
 import { LOCAL_NODE_ID, type ModelHostManifest, specForHash } from "./modelhost-schema.js";
 import { listModelHosts, saveModelHost } from "./modelhost-store.js";
+import {
+  DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
+  DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
+  type NodeRpcTimeouts,
+  withNodeRpcDeadline,
+} from "./node-rpc-deadline.js";
 import { listNodeRuns } from "./noderun-store.js";
 import {
   defaultWorkloadsDir,
@@ -63,6 +69,9 @@ export interface ReconcileOptions {
   onEvent?: (e: ApplyEvent & { name: string }) => void;
   /** Optional filter to only reconcile a subset. */
   filter?: (m: ModelRun) => boolean;
+  /** Per-call deadlines for node .query / .mutate RPCs; defaults to
+   *  DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS / DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS. */
+  rpcTimeouts?: Partial<NodeRpcTimeouts>;
 }
 
 function hostSpecSnapshot(manifest: ModelHostManifest): Record<string, unknown> {
@@ -109,9 +118,19 @@ function hostSpecsEqual(manifest: ModelHostManifest, current: Record<string, unk
  * workload is applied in sequence (avoids N parallel serverStart
  * subscriptions competing for the same port on a shared node). The
  * persisted manifest's status section is updated in place so
- * `llamactl get workloads` reflects the latest pass.
+ * `llamactl get workloads` reflects the latest pass. Node .query /
+ * .mutate RPCs carry a per-call deadline (see node-rpc-deadline.ts)
+ * so one unreachable node cannot stall the rest of the pass.
  */
 export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileResult> {
+  const timeouts: NodeRpcTimeouts = {
+    queryMs: opts.rpcTimeouts?.queryMs ?? DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
+    mutateMs: opts.rpcTimeouts?.mutateMs ?? DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
+  };
+  const deadlineOpts: ReconcileOptions = {
+    ...opts,
+    getClient: (nodeName) => withNodeRpcDeadline(opts.getClient(nodeName), nodeName, timeouts),
+  };
   const dir = opts.workloadsDir ?? defaultWorkloadsDir();
   const all = listWorkloads(dir);
   const hosts = listModelHosts(dir);
@@ -126,11 +145,11 @@ export async function reconcileOnce(opts: ReconcileOptions): Promise<ReconcileRe
   let errors = 0;
 
   for (const manifest of manifests) {
-    errors += await reconcileModelRun(manifest, opts, dir, nodeBudgetByName, reports);
+    errors += await reconcileModelRun(manifest, deadlineOpts, dir, nodeBudgetByName, reports);
   }
 
   for (const manifest of hosts) {
-    errors += await reconcileModelHost(manifest, opts, dir, nodeBudgetByName, reports);
+    errors += await reconcileModelHost(manifest, deadlineOpts, dir, nodeBudgetByName, reports);
   }
 
   return { reports, errors };
