@@ -21,7 +21,11 @@ let runtimeDir = "";
 let tokensDir = "";
 let kubeconfigPath = "";
 
-function seedKubeconfig(path: string): void {
+function seedKubeconfig(
+  path: string,
+  extraNodes: Record<string, unknown>[] = [],
+  token = "initial-operator-token",
+): void {
   writeFileSync(
     path,
     stringifyYaml({
@@ -32,10 +36,10 @@ function seedKubeconfig(path: string): void {
       clusters: [
         {
           name: "home",
-          nodes: [{ name: "local", endpoint: "inproc://local" }],
+          nodes: [{ name: "local", endpoint: "inproc://local" }, ...extraNodes],
         },
       ],
-      users: [{ name: "me", token: "initial-operator-token" }],
+      users: [{ name: "me", token }],
     }),
   );
 }
@@ -234,9 +238,86 @@ describe("handleRegister", () => {
     expect(res.status).toBe(405);
   });
 
+  test("null JSON body rejected with 400 instead of rejecting", async () => {
+    const req = new Request("http://agent/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "null",
+    });
+    let res: Response | undefined;
+    let rejected = false;
+    try {
+      res = await handleRegister(req, { bootstrapTokensDir: tokensDir, kubeconfigPath });
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(false);
+    expect(res?.status).toBe(400);
+    const body = (await res!.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe("invalid JSON body");
+  });
+
+  test("non-object JSON body (array) rejected with 400", async () => {
+    const { status, body } = await callRegister([]);
+    expect(status).toBe(400);
+    expect(body["ok"]).toBe(false);
+    expect(String(body["error"])).toBe("invalid JSON body");
+  });
+
   test("missing bootstrapToken rejected with 400", async () => {
     const { status, body } = await callRegister({ blob: makeBlob() });
     expect(status).toBe(400);
     expect(String(body["error"])).toMatch(/bootstrapToken is required/);
+  });
+
+  test("token replacing a shared bearer with other agent nodes present: 409, no write", async () => {
+    seedKubeconfig(kubeconfigPath, [
+      {
+        name: "mac-mini",
+        endpoint: "https://mac-mini.lan:7843",
+        certificateFingerprint: "sha256:" + "a".repeat(64),
+      },
+    ]);
+    const { token } = generateBootstrapToken({
+      nodeName: "gpu1",
+      centralUrl: "https://central.lan:7843",
+      dir: tokensDir,
+    });
+    const { status, body } = await callRegister({ bootstrapToken: token, blob: makeBlob() });
+    expect(status).toBe(409);
+    expect(body["ok"]).toBe(false);
+    expect(String(body["error"])).toContain("mac-mini");
+
+    const cfg = loadConfig(kubeconfigPath);
+    const cluster = cfg.clusters.find((c) => c.name === "home")!;
+    expect(cluster.nodes.map((n) => n.name).sort()).toEqual(["local", "mac-mini"]);
+    const operator = cfg.users.find((u) => u.name === "me")!;
+    expect(operator.token).toBe("initial-operator-token");
+  });
+
+  test("operator token already equal to the node's token: 200 despite other agent nodes", async () => {
+    seedKubeconfig(
+      kubeconfigPath,
+      [
+        {
+          name: "mac-mini",
+          endpoint: "https://mac-mini.lan:7843",
+          certificateFingerprint: "sha256:" + "a".repeat(64),
+        },
+      ],
+      "node-minted-token",
+    );
+    const { token } = generateBootstrapToken({
+      nodeName: "gpu1",
+      centralUrl: "https://central.lan:7843",
+      dir: tokensDir,
+    });
+    const { status, body } = await callRegister({ bootstrapToken: token, blob: makeBlob() });
+    expect(status).toBe(200);
+    expect(body["ok"]).toBe(true);
+    const cfg = loadConfig(kubeconfigPath);
+    const cluster = cfg.clusters.find((c) => c.name === "home")!;
+    expect(cluster.nodes.some((n) => n.name === "gpu1")).toBe(true);
   });
 });

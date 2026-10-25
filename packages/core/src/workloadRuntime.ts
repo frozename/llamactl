@@ -43,9 +43,11 @@ export interface LocalRoute {
 }
 
 export interface PeerSnapshot {
-  /** revision = the peer server's boot token (its /v1/models `created`), used to
-   *  invalidate cross-node response caches on a peer restart/swap. Optional for
-   *  back-compat with peers that don't advertise it. */
+  /** revision = the peer workload's boot token: its runtime-record epoch when
+   *  llamactl manages it, else its /v1/models `created` once two consecutive
+   *  reads agree, null otherwise. Used to invalidate cross-node response
+   *  caches on a peer restart/swap. Optional for back-compat with peers that
+   *  don't advertise it. */
   workloads: { modelId: string; port: number; revision?: string | null }[];
   pressure: "NORMAL" | "HIGH";
   fetchedAt: number;
@@ -59,8 +61,10 @@ export type ClusterRoute =
       certificate?: string;
       token?: string;
       targetNodeId: string;
-      /** Boot token of the peer's server (its /v1/models `created`); changes on
-       *  restart/swap so the proxy can invalidate the cross-node response cache. */
+      /** Boot token of the peer's workload: its runtime-record epoch when
+       *  llamactl manages it, else its /v1/models `created` once two
+       *  consecutive reads agree, null otherwise; changes on restart/swap so
+       *  the proxy can invalidate the cross-node response cache. */
       revision?: string | null;
     });
 
