@@ -5,9 +5,12 @@ import { join } from "node:path";
 
 import {
   advanceOomWatch,
+  type ControllerLogLine,
   deadHostLines,
   newlyDeadHosts,
+  observeOomKills,
   oomBaselineFor,
+  type OomObserveDeps,
   RECONCILE_ERROR_REMINDER_MS,
   type ReconcileErrorLog,
   reduceReconcileReportLog,
@@ -273,6 +276,62 @@ describe("OOM baseline across a controller restart", () => {
       expect(deadHostLines([dead], hosts, b, sample(2), T0).map((l) => l.text)).toEqual([
         "[2026-10-21T14:07:00.000Z] WARN modelhost/strata-qwen38-mtp: engine was OOM-killed (cgroup oom_kill 2); restarting",
       ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("observeOomKills itself persists the baseline a restarted controller needs", () => {
+    // A bootstrap pass lands the baseline at oom_kill 1. Controller A then
+    // samples the kill at 2 while the host still answers its status check, so
+    // it holds the kill in pendingKills and must not lift the file above 1.
+    // Controller B starts from the file alone and attributes the kill.
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-oom-observe-"));
+    try {
+      const recorded: [string, number][] = [];
+      const lines: ControllerLogLine[] = [];
+      let next = sample(1);
+      const deps: OomObserveDeps = {
+        readSample: () => next,
+        recordKill: (name, oomKill) => {
+          recorded.push([name, oomKill]);
+        },
+        writeLines: (out) => {
+          lines.push(...out);
+        },
+      };
+      const alive = [{ ...healthy, action: "unchanged" as const }];
+      const booted = observeOomKills(
+        dir,
+        { errors: new Map(), oom: { last: null, pendingKills: 0 } },
+        alive,
+        T0,
+        deps,
+      );
+      expect(booted).toEqual({ last: sample(1), pendingKills: 0 });
+
+      next = sample(2);
+      const a = observeOomKills(dir, { errors: new Map(), oom: booted }, alive, T0, deps);
+      expect(a).toEqual({ last: sample(2), pendingKills: 1 });
+      expect(recorded).toEqual([]);
+      expect(readOomBaseline(join(dir, ".controller-oom.json"))).toEqual(sample(1));
+
+      const dead = { ...healthy, action: "started" as const, foundDead: true };
+      const b = observeOomKills(
+        dir,
+        {
+          errors: new Map(),
+          oom: { last: readOomBaseline(join(dir, ".controller-oom.json")), pendingKills: 0 },
+        },
+        [dead],
+        T0,
+        deps,
+      );
+      expect(b).toEqual({ last: sample(2), pendingKills: 0 });
+      expect(recorded).toEqual([["strata-qwen38-mtp", 2]]);
+      expect(lines.map((l) => l.text)).toContain(
+        "[2026-10-21T14:07:00.000Z] WARN modelhost/strata-qwen38-mtp: engine was OOM-killed (cgroup oom_kill 2); restarting",
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
