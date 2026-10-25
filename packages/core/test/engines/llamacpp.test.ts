@@ -1,9 +1,16 @@
+import type { Server } from "bun";
+
 import { describe, expect, test } from "bun:test";
 
 import type { EngineBootEnv, ModelHostSpecForEngine } from "../../src/engines/types.js";
 
 import { ENGINES } from "../../src/engines/index.js";
 import { formatHostForUrl, gracefulShutdown } from "../../src/engines/lifecycle.js";
+
+function endpointOf(server: Server<undefined>): { host: string; port: number } {
+  if (server.port === undefined) throw new Error("probe server did not bind a port");
+  return { host: "127.0.0.1", port: server.port };
+}
 
 const baseSpec: ModelHostSpecForEngine = {
   engine: "llamacpp",
@@ -152,6 +159,98 @@ describe("llamacpp engine adapter", () => {
     globalThis.fetch = originalFetch;
     expect(result.ready).toBe(true);
     expect(result.modelIds).toContain("granite-4.1-3b-Q8_0.gguf");
+  });
+
+  test("probeReady waits for the readiness probe even when /v1/models already lists a model", async () => {
+    let serveReady = false;
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path === "/v1/models") {
+          return Response.json({ object: "list", data: [{ id: "gufo-qwen38-mtp" }] });
+        }
+        if (path === "/ready") {
+          return serveReady
+            ? Response.json({ status: "ready", model: "gufo-qwen38-mtp" })
+            : new Response("loading", { status: 503 });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const endpoint = endpointOf(server);
+    try {
+      const notReady = await ENGINES.llamacpp.probeReady(endpoint, 400, {
+        path: "/ready",
+        expectStatus: 200,
+        expectJson: { status: "ready" },
+      });
+      expect(notReady.ready).toBe(false);
+      serveReady = true;
+      const ready = await ENGINES.llamacpp.probeReady(endpoint, 2000, {
+        path: "/ready",
+        expectStatus: 200,
+        expectJson: { status: "ready" },
+      });
+      expect(ready.ready).toBe(true);
+      expect(ready.modelIds).toContain("gufo-qwen38-mtp");
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test("probeReady stays not ready while the readiness body mismatches expectJson", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path === "/v1/models") {
+          return Response.json({ object: "list", data: [{ id: "gufo-qwen38-mtp" }] });
+        }
+        if (path === "/ready") {
+          return Response.json({ status: "warming", model: "gufo-qwen38-mtp" });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const endpoint = endpointOf(server);
+    try {
+      const mismatch = await ENGINES.llamacpp.probeReady(endpoint, 400, {
+        path: "/ready",
+        expectJson: { status: "ready" },
+      });
+      expect(mismatch.ready).toBe(false);
+      const matched = await ENGINES.llamacpp.probeReady(endpoint, 2000, {
+        path: "/ready",
+        expectJson: { status: "warming" },
+      });
+      expect(matched.ready).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  test("probeReady without readiness ignores the probe endpoint entirely", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path === "/v1/models") {
+          return Response.json({ object: "list", data: [{ id: "gufo-qwen38-mtp" }] });
+        }
+        return new Response("loading", { status: 503 });
+      },
+    });
+    try {
+      const result = await ENGINES.llamacpp.probeReady(endpointOf(server), 2000);
+      expect(result.ready).toBe(true);
+      expect(result.modelIds).toContain("gufo-qwen38-mtp");
+    } finally {
+      await server.stop();
+    }
   });
 
   test("formatHostForUrl brackets IPv6 literals", () => {

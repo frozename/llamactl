@@ -1,4 +1,8 @@
-import type { EngineBootEnv, ModelHostSpecForEngine } from "@llamactl/core/engines/types";
+import type {
+  EngineBootEnv,
+  ModelHostReadiness,
+  ModelHostSpecForEngine,
+} from "@llamactl/core/engines/types";
 import type { WorkloadKey } from "@llamactl/core/workloadRuntime";
 
 import { type EngineName, ENGINES } from "@llamactl/core/engines";
@@ -30,10 +34,13 @@ import { basename, resolve, sep } from "node:path";
 
 import { existsSync, openSync } from "../safe-fs.js";
 import {
+  externalManagerOf,
+  MANAGED_BY_LABEL,
   modelHostBindRefusal,
   modelHostExternalBindHost,
   type ModelHostManifest,
   ModelHostManifestSchema,
+  normalizeReadiness,
   specForEngine,
   specForHash,
 } from "../workload/modelhost-schema.js";
@@ -67,6 +74,7 @@ export interface StartModelHostOptions {
   probeReady?: (
     endpoint: { host: string; port: number },
     timeoutMs: number,
+    readiness?: ModelHostReadiness,
   ) => Promise<{ ready: boolean; modelIds: string[] }>;
   /**
    * Discover the pid of the process currently listening on an endpoint.
@@ -289,7 +297,11 @@ async function tryAdoptLiveHost(
   priorSpecHash: string | undefined,
 ): Promise<StartModelHostResult | "relaunch" | null> {
   const endpoint = manifest.spec.endpoint;
-  const readiness = await probeReady(endpoint, ADOPT_PROBE_TIMEOUT_MS).catch(() => ({
+  const readiness = await probeReady(
+    endpoint,
+    ADOPT_PROBE_TIMEOUT_MS,
+    normalizeReadiness(manifest.spec.readiness),
+  ).catch(() => ({
     ready: false,
     modelIds: [] as string[],
   }));
@@ -402,7 +414,7 @@ async function reapOrAdoptPriorHost(
       resolved,
       opts.probeReady ??
         ((endpoint, timeoutMs): Promise<{ ready: boolean; modelIds: string[] }> =>
-          engine.probeReady(endpoint, timeoutMs)),
+          engine.probeReady(endpoint, timeoutMs, normalizeReadiness(manifest.spec.readiness))),
       livePid,
       engine,
       priorState.specHash,
@@ -493,6 +505,33 @@ function teardownChildSilently(
   return Promise.resolve();
 }
 
+/**
+ * A pushed inline manifest (e.g. from the central controller's apply) must
+ * not erase a managed-by marker already on disk for the same name. A label
+ * present on the pushed manifest wins; a missing/malformed on-disk copy is
+ * ignored.
+ */
+function mergeDiskManagedByLabel(
+  manifest: ModelHostManifest,
+  workloadsDir?: string,
+): ModelHostManifest {
+  if (externalManagerOf(manifest) !== null) return manifest;
+  let diskManager: string | null = null;
+  try {
+    diskManager = externalManagerOf(loadModelHostByName(manifest.metadata.name, workloadsDir));
+  } catch {
+    return manifest;
+  }
+  if (diskManager === null) return manifest;
+  return {
+    ...manifest,
+    metadata: {
+      ...manifest.metadata,
+      labels: { ...manifest.metadata.labels, [MANAGED_BY_LABEL]: diskManager },
+    },
+  };
+}
+
 // Loud stderr line on every launch that knowingly exposes an unauthenticated
 // engine past loopback — the opt-in is per-workload, so the operator running
 // the agent should still see it in the agent log.
@@ -547,7 +586,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
   // gate have passed: a refused start must not replace the previously saved
   // desired state with a manifest the controller will always refuse.
   if (opts.manifest) {
-    saveModelHost(manifest, opts.workloadsDir);
+    saveModelHost(mergeDiskManagedByLabel(manifest, opts.workloadsDir), opts.workloadsDir);
   }
 
   const early = await reapOrAdoptPriorHost(manifest, opts, resolved, engine);
@@ -599,6 +638,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     const readiness = await (opts.probeReady ?? engine.probeReady)(
       endpoint,
       (opts.timeoutSeconds ?? manifest.spec.timeoutSeconds) * 1000,
+      spec.readiness,
     );
     if (!readiness.ready) {
       throw new Error("modelhost failed readiness probe");

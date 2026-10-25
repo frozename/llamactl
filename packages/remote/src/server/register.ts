@@ -2,9 +2,11 @@ import type { ClusterNode, Config } from "@llamactl/core/config/schema";
 
 import { decodeBootstrap } from "@llamactl/core/config/agent-config";
 import {
+  assertTokenReplaceable,
   currentContext,
   defaultConfigPath,
   mutateConfig,
+  TokenConflictError,
   upsertNode,
 } from "@llamactl/core/config/kubeconfig";
 
@@ -80,6 +82,37 @@ function jsonResponse(body: RegisterSuccessBody | RegisterFailureBody, status: n
   });
 }
 
+type ParsedRegisterPayload = { payload: RegisterRequestBody } | { response: Response };
+
+async function parseRegisterPayload(req: Request): Promise<ParsedRegisterPayload> {
+  let parsedJson: unknown;
+  try {
+    parsedJson = await req.json();
+  } catch {
+    return { response: jsonResponse({ ok: false, error: "invalid JSON body" }, 400) };
+  }
+  // `null` parses as valid JSON but has no properties; reading
+  // properties off it (or a number/string) throws a TypeError before
+  // auth. Treat any non-object parse result as an invalid body.
+  if (typeof parsedJson !== "object" || parsedJson === null || Array.isArray(parsedJson)) {
+    return { response: jsonResponse({ ok: false, error: "invalid JSON body" }, 400) };
+  }
+  const raw = parsedJson as Record<string, unknown>;
+  if (typeof raw["bootstrapToken"] !== "string" || raw["bootstrapToken"].length === 0) {
+    return { response: jsonResponse({ ok: false, error: "bootstrapToken is required" }, 400) };
+  }
+  if (typeof raw["blob"] !== "string" || raw["blob"].length === 0) {
+    return { response: jsonResponse({ ok: false, error: "blob is required" }, 400) };
+  }
+  return {
+    payload: {
+      bootstrapToken: raw["bootstrapToken"],
+      blob: raw["blob"],
+      ...(typeof raw["nodeName"] === "string" ? { nodeName: raw["nodeName"] } : {}),
+    },
+  };
+}
+
 export async function handleRegister(
   req: Request,
   opts: RegisterHandlerOptions = {},
@@ -87,23 +120,9 @@ export async function handleRegister(
   if (req.method !== "POST") {
     return jsonResponse({ ok: false, error: "method not allowed" }, 405);
   }
-  let payload: RegisterRequestBody;
-  try {
-    const raw = (await req.json()) as Record<string, unknown>;
-    if (typeof raw["bootstrapToken"] !== "string" || raw["bootstrapToken"].length === 0) {
-      return jsonResponse({ ok: false, error: "bootstrapToken is required" }, 400);
-    }
-    if (typeof raw["blob"] !== "string" || raw["blob"].length === 0) {
-      return jsonResponse({ ok: false, error: "blob is required" }, 400);
-    }
-    payload = {
-      bootstrapToken: raw["bootstrapToken"],
-      blob: raw["blob"],
-      ...(typeof raw["nodeName"] === "string" ? { nodeName: raw["nodeName"] } : {}),
-    };
-  } catch {
-    return jsonResponse({ ok: false, error: "invalid JSON body" }, 400);
-  }
+  const parsed = await parseRegisterPayload(req);
+  if ("response" in parsed) return parsed.response;
+  const payload = parsed.payload;
 
   const consumeOpts: ConsumeOptions = {
     ...(opts.bootstrapTokensDir ? { dir: opts.bootstrapTokensDir } : {}),
@@ -141,10 +160,37 @@ export async function handleRegister(
   const cfgPath = opts.kubeconfigPath ?? defaultConfigPath();
   let clusterName = "";
   let contextName = "";
-  mutateConfigLocked(cfgPath, (cfg: Config) => {
+  try {
+    const names = writeRegistration(cfgPath, nodeName, decoded);
+    clusterName = names.cluster;
+    contextName = names.context;
+  } catch (err) {
+    if (!(err instanceof TokenConflictError)) throw err;
+    return jsonResponse({ ok: false, error: err.message }, 409);
+  }
+
+  return jsonResponse(
+    {
+      ok: true,
+      nodeName,
+      cluster: clusterName,
+      context: contextName,
+    },
+    200,
+  );
+}
+
+function writeRegistration(
+  cfgPath: string,
+  nodeName: string,
+  decoded: ReturnType<typeof decodeBootstrap>,
+): { cluster: string; context: string } {
+  const next = mutateConfigLocked(cfgPath, (cfg: Config) => {
     const ctx = currentContext(cfg);
-    clusterName = ctx.cluster;
-    contextName = ctx.name;
+    // The bootstrap token has authenticated the caller by this point.
+    // Replacing the shared user bearer would cut off the cluster's
+    // other agent nodes; there is no override on this endpoint.
+    assertTokenReplaceable(cfg, ctx.cluster, ctx.user, decoded.token, nodeName);
     const withUser = {
       ...cfg,
       users: cfg.users.map((u) => (u.name === ctx.user ? { ...u, token: decoded.token } : u)),
@@ -157,14 +203,6 @@ export async function handleRegister(
     };
     return upsertNode(withUser, ctx.cluster, entry);
   });
-
-  return jsonResponse(
-    {
-      ok: true,
-      nodeName,
-      cluster: clusterName,
-      context: contextName,
-    },
-    200,
-  );
+  const ctx = currentContext(next);
+  return { cluster: ctx.cluster, context: ctx.name };
 }

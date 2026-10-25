@@ -1,9 +1,20 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  externalManagerOf,
+  MANAGED_BY_LABEL,
   modelHostBindRefusal,
+  type ModelHostManifest,
   ModelHostManifestSchema,
+  specForEngine,
 } from "../../src/workload/modelhost-schema.js";
+
+function hostWithLabels(labels?: Record<string, string>): ModelHostManifest {
+  return ModelHostManifestSchema.parse({
+    ...valid,
+    metadata: { name: "host-a", ...(labels !== undefined ? { labels } : {}) },
+  });
+}
 
 const valid = {
   apiVersion: "llamactl/v1",
@@ -237,6 +248,77 @@ describe("ModelHostManifestSchema", () => {
   });
 });
 
+describe("spec.readiness", () => {
+  test("accepts a readiness probe on a ModelHost manifest", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: {
+        ...valid.spec,
+        readiness: { path: "/ready", expectStatus: 200, expectJson: { status: "ready" } },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.spec.readiness).toEqual({
+        path: "/ready",
+        expectStatus: 200,
+        expectJson: { status: "ready" },
+      });
+    }
+  });
+
+  test("defaults expectStatus to 200 when omitted", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, readiness: { path: "/ready" } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.spec.readiness?.expectStatus).toBe(200);
+  });
+
+  test("rejects a readiness path without a leading slash", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, readiness: { path: "ready" } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects unknown keys inside readiness", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, readiness: { path: "/ready", timeoutMs: 500 } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects non-scalar expectJson values", () => {
+    const result = ModelHostManifestSchema.safeParse({
+      ...valid,
+      spec: { ...valid.spec, readiness: { path: "/ready", expectJson: { meta: { a: 1 } } } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("omitting readiness leaves it undefined (today's behaviour)", () => {
+    const result = ModelHostManifestSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.spec.readiness).toBeUndefined();
+  });
+
+  test("specForEngine threads readiness to the engine layer", () => {
+    const parsed = ModelHostManifestSchema.parse({
+      ...valid,
+      spec: { ...valid.spec, readiness: { path: "/ready", expectJson: { status: "ready" } } },
+    });
+    expect(specForEngine(parsed.spec).readiness).toEqual({
+      path: "/ready",
+      expectStatus: 200,
+      expectJson: { status: "ready" },
+    });
+  });
+});
+
 describe("modelHostBindRefusal", () => {
   test("returns null for loopback endpoint hosts", () => {
     for (const host of ["127.0.0.1", "localhost", "::1"]) {
@@ -282,5 +364,37 @@ describe("modelHostBindRefusal", () => {
       },
     });
     expect(modelHostBindRefusal(manifest)).toBeNull();
+  });
+});
+
+describe("externalManagerOf", () => {
+  test("MANAGED_BY_LABEL is the documented label key", () => {
+    expect(MANAGED_BY_LABEL).toBe("llamactl.io/managed-by");
+  });
+
+  test("returns the manager for a labeled manifest", () => {
+    expect(externalManagerOf(hostWithLabels({ [MANAGED_BY_LABEL]: "mac-mini" }))).toBe("mac-mini");
+  });
+
+  test("returns null when metadata.labels is absent", () => {
+    expect(externalManagerOf(hostWithLabels())).toBeNull();
+  });
+
+  test("returns null when only other labels are present", () => {
+    expect(externalManagerOf(hostWithLabels({ tier: "prod" }))).toBeNull();
+  });
+
+  test("returns null for an empty label value", () => {
+    expect(externalManagerOf(hostWithLabels({ [MANAGED_BY_LABEL]: "" }))).toBeNull();
+  });
+
+  test("returns null for a whitespace-only label value", () => {
+    expect(externalManagerOf(hostWithLabels({ [MANAGED_BY_LABEL]: "  " }))).toBeNull();
+  });
+
+  test("trims surrounding whitespace from the manager", () => {
+    expect(externalManagerOf(hostWithLabels({ [MANAGED_BY_LABEL]: "  mac-mini  " }))).toBe(
+      "mac-mini",
+    );
   });
 });

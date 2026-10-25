@@ -84,11 +84,12 @@ export interface WorkloadSnapshot {
   reachable: boolean;
   consecutiveErrors: number;
   /**
-   * Boot token (the served model's `created` start time) used by cross-node
-   * consumers to invalidate caches when this workload's server restarts/swaps.
-   * Published only once two consecutive probe reads agree, so a request-time
-   * `created` clock never looks like a restart. Optional for back-compat:
-   * snapshots from older nodes omit it.
+   * Boot token used by cross-node consumers to invalidate caches when this
+   * workload's server restarts/swaps. For a llamactl-managed workload local to
+   * the node it is the runtime-record epoch (startedAt + rel); otherwise it is
+   * the server's `/v1/models` `created`, published only once two consecutive
+   * probe reads agree, and null otherwise. Optional for back-compat: snapshots
+   * from older nodes omit it.
    */
   revision?: string | null;
   /**
