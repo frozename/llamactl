@@ -5,6 +5,18 @@ import { z } from "zod";
 
 export const LOCAL_NODE_ID = "local" as const;
 
+/**
+ * Label marking a ModelHost as supervised by another controller (e.g. a
+ * central one after a node's local controller is retired). Local
+ * reconcilers skip labeled hosts; see externalManagerOf.
+ */
+export const MANAGED_BY_LABEL = "llamactl.io/managed-by";
+
+export function externalManagerOf(manifest: ModelHostManifest): string | null {
+  const manager = manifest.metadata.labels?.[MANAGED_BY_LABEL]?.trim();
+  return manager === undefined || manager === "" ? null : manager;
+}
+
 export const ModelHostHostedModelSchema = z
   .object({
     rel: z.string().min(1),

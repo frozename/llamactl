@@ -671,4 +671,129 @@ describe("reconcileOnce", () => {
       });
     });
   });
+
+  describe("externally managed ModelHosts", () => {
+    function withManagedBy(manifest: ModelHostManifest): ModelHostManifest {
+      return {
+        ...manifest,
+        metadata: { ...manifest.metadata, labels: { "llamactl.io/managed-by": "mac-mini" } },
+      };
+    }
+
+    function stoppedClient(onStart?: () => void): WorkloadClient {
+      return {
+        ...makeClient(),
+        modelHostStatus: { query: () => Promise.resolve({ state: "Stopped" }) },
+        modelHostStart: {
+          subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
+            onStart?.();
+            queueMicrotask(() => {
+              callbacks.onData({ type: "done", result: { ok: true } });
+              callbacks.onComplete();
+            });
+            return { unsubscribe: (): undefined => undefined };
+          },
+        },
+      };
+    }
+
+    test("reports skipped-external for an enabled labeled host without any client access", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-external-"));
+      const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
+      let clientCalls = 0;
+      try {
+        saveModelHost(withManagedBy(makeHostManifest()), dir);
+        process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
+
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: (): WorkloadClient => {
+            clientCalls++;
+            return stoppedClient();
+          },
+        });
+
+        expect(result.reports).toEqual([
+          {
+            kind: "ModelHost",
+            name: "host-a",
+            node: "local",
+            action: "skipped-external",
+            managedBy: "mac-mini",
+          },
+        ]);
+        expect(result.errors).toBe(0);
+        expect(clientCalls).toBe(0);
+      } finally {
+        if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+        else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("preserves the sidecar of a disabled labeled host", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-external-sweep-"));
+      const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
+      try {
+        const base = makeHostManifest();
+        saveModelHost(withManagedBy({ ...base, spec: { ...base.spec, enabled: false } }), dir);
+        process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
+        seedRunningSidecar(dir, base);
+
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: () => stoppedClient(),
+        });
+
+        expect(result.errors).toBe(0);
+        expect(result.reports[0]?.action).toBe("skipped-external");
+        expect(
+          readModelHostState({ name: "host-a" }, resolveEnv({ LOCAL_AI_RUNTIME_DIR: dir })),
+        ).not.toBeNull();
+      } finally {
+        if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+        else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("skips only the labeled host in a mixed store", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-external-mixed-"));
+      const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
+      let startCalls = 0;
+      try {
+        const base = makeHostManifest();
+        const hostB: ModelHostManifest = {
+          ...base,
+          metadata: { name: "host-b" },
+          spec: { ...base.spec, endpoint: { host: "127.0.0.1", port: 18095 } },
+        };
+        saveModelHost(withManagedBy(base), dir);
+        saveModelHost(hostB, dir);
+        process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
+
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: () => stoppedClient(() => startCalls++),
+        });
+
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          {
+            kind: "ModelHost",
+            name: "host-a",
+            node: "local",
+            action: "skipped-external",
+            managedBy: "mac-mini",
+          },
+          { kind: "ModelHost", name: "host-b", node: "local", action: "started" },
+        ]);
+        expect(startCalls).toBe(1);
+      } finally {
+        if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+        else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
 });

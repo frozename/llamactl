@@ -22,7 +22,12 @@ import {
   type ApplyResult,
   type WorkloadClient,
 } from "./apply.js";
-import { LOCAL_NODE_ID, type ModelHostManifest, specForHash } from "./modelhost-schema.js";
+import {
+  externalManagerOf,
+  LOCAL_NODE_ID,
+  type ModelHostManifest,
+  specForHash,
+} from "./modelhost-schema.js";
 import { listModelHosts, saveModelHost } from "./modelhost-store.js";
 import { listNodeRuns } from "./noderun-store.js";
 import {
@@ -38,8 +43,11 @@ export interface ReconcileNodeReport {
   kind?: "ModelRun" | "ModelHost";
   name: string;
   node: string;
-  action: ApplyResult["action"] | "skipped-deleted";
+  action: ApplyResult["action"] | "skipped-deleted" | "skipped-external";
   error?: string;
+  /** Set with action "skipped-external": the manager named in the host's
+   *  llamactl.io/managed-by label. */
+  managedBy?: string;
   /** ModelHost on the local node only: a launch record exists but the engine
    *  was not running, i.e. it exited or was killed since the last pass. */
   foundDead?: boolean;
@@ -310,10 +318,35 @@ function sweepDisabledHost(
 }
 
 /**
- * Reconcile one ModelHost manifest. Pushes its report onto `reports`
- * and returns the number of errors observed.
+ * Reconcile one ModelHost manifest. A host labeled llamactl.io/managed-by
+ * belongs to another controller: report skipped-external and touch nothing
+ * else — no client, no status query, no start/stop, no sidecar sweep, no
+ * conditions write, no save.
  */
 async function reconcileModelHost(
+  manifest: ModelHostManifest,
+  opts: ReconcileOptions,
+  dir: string,
+  nodeBudgetByName: Map<string, number>,
+  reports: ReconcileNodeReport[],
+): Promise<number> {
+  const managedBy = externalManagerOf(manifest);
+  if (managedBy !== null) {
+    const { spec } = manifest;
+    const name = manifest.metadata.name;
+    reports.push({
+      kind: "ModelHost",
+      name,
+      node: spec.node,
+      action: "skipped-external",
+      managedBy,
+    });
+    return 0;
+  }
+  return await reconcileUnmanagedModelHost(manifest, opts, dir, nodeBudgetByName, reports);
+}
+
+async function reconcileUnmanagedModelHost(
   manifest: ModelHostManifest,
   opts: ReconcileOptions,
   dir: string,

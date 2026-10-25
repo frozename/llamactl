@@ -20,8 +20,13 @@ import {
   writeFileSync,
 } from "../../src/safe-fs.js";
 import { startModelHost, statusModelHost, stopModelHost } from "../../src/server/modelhost.js";
-import { ModelHostManifestSchema, specForHash } from "../../src/workload/modelhost-schema.js";
-import { loadModelHostByName } from "../../src/workload/modelhost-store.js";
+import {
+  MANAGED_BY_LABEL,
+  type ModelHostManifest,
+  ModelHostManifestSchema,
+  specForHash,
+} from "../../src/workload/modelhost-schema.js";
+import { loadModelHostByName, saveModelHost } from "../../src/workload/modelhost-store.js";
 
 interface ManifestFixture {
   manifest: {
@@ -130,6 +135,58 @@ describe("server/modelhost", () => {
         "name: mlx-host-inline",
       );
       expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves the on-disk managed-by label when the inline manifest omits it", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-managed-by-"));
+    const workloadsDir = join(tmp, "workloads");
+    const runtimeDir = join(tmp, "runtime");
+    const fakeBinary = join(tmp, "omlx");
+    mkdirSync(workloadsDir, { recursive: true });
+    writeFileSync(fakeBinary, "#!/bin/sh\nexit 0\n");
+    const unlabeled: ModelHostManifest = {
+      apiVersion: "llamactl/v1",
+      kind: "ModelHost",
+      metadata: { name: "mlx-host-inline" },
+      spec: {
+        engine: "omlx",
+        node: "mac-mini",
+        enabled: true,
+        binary: fakeBinary,
+        endpoint: { host: "127.0.0.1", port: 8098 },
+        hostedModels: [{ rel: "mlx-community/Qwen3-8B-MLX-4bit" }],
+        extraArgs: ["--max-concurrent-requests", "2"],
+        restartPolicy: "Always",
+        timeoutSeconds: 60,
+      },
+    };
+    saveModelHost(
+      {
+        ...unlabeled,
+        metadata: { name: "mlx-host-inline", labels: { [MANAGED_BY_LABEL]: "mac-mini" } },
+      },
+      workloadsDir,
+    );
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+
+    try {
+      const result = await startModelHost({
+        key: { name: "mlx-host-inline" },
+        manifest: unlabeled,
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(
+        loadModelHostByName("mlx-host-inline", workloadsDir).metadata.labels?.[MANAGED_BY_LABEL],
+      ).toBe("mac-mini");
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

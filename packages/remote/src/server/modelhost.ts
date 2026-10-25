@@ -30,6 +30,8 @@ import { basename, resolve, sep } from "node:path";
 
 import { existsSync, openSync } from "../safe-fs.js";
 import {
+  externalManagerOf,
+  MANAGED_BY_LABEL,
   type ModelHostManifest,
   ModelHostManifestSchema,
   specForEngine,
@@ -488,6 +490,33 @@ function teardownChildSilently(
   return Promise.resolve();
 }
 
+/**
+ * A pushed inline manifest (e.g. from the central controller's apply) must
+ * not erase a managed-by marker already on disk for the same name. A label
+ * present on the pushed manifest wins; a missing/malformed on-disk copy is
+ * ignored.
+ */
+function mergeDiskManagedByLabel(
+  manifest: ModelHostManifest,
+  workloadsDir?: string,
+): ModelHostManifest {
+  if (externalManagerOf(manifest) !== null) return manifest;
+  let diskManager: string | null = null;
+  try {
+    diskManager = externalManagerOf(loadModelHostByName(manifest.metadata.name, workloadsDir));
+  } catch {
+    return manifest;
+  }
+  if (diskManager === null) return manifest;
+  return {
+    ...manifest,
+    metadata: {
+      ...manifest.metadata,
+      labels: { ...manifest.metadata.labels, [MANAGED_BY_LABEL]: diskManager },
+    },
+  };
+}
+
 export async function startModelHost(opts: StartModelHostOptions): Promise<StartModelHostResult> {
   const env = toRuntimeEnv(opts.env);
   const runtimeEnv = withRuntimeDir(env, opts.runtimeDir);
@@ -505,7 +534,7 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     return result;
   }
   if (opts.manifest) {
-    saveModelHost(manifest, opts.workloadsDir);
+    saveModelHost(mergeDiskManagedByLabel(manifest, opts.workloadsDir), opts.workloadsDir);
   }
   const engine = ENGINES[manifest.spec.engine];
   const spec = buildModelHostSpec(manifest);
