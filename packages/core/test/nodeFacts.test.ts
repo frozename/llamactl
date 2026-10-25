@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { collectNodeFacts, detectGpu, resolveNodeName, resolveVersions } from "../src/nodeFacts.js";
+import { GpuFactsSchema } from "../src/config/schema.js";
+import {
+  collectNodeFacts,
+  detectGpu,
+  LLAMACTL_VERSION,
+  resolveNodeName,
+  resolveVersions,
+} from "../src/nodeFacts.js";
 import { detectMemoryBytes } from "../src/profile.js";
+import { MACHINE_PROFILES } from "../src/types.js";
 
 const originalEnv = { ...process.env };
 
@@ -47,13 +55,18 @@ describe("resolveVersions", () => {
       expect(v.bun).toMatch(/^\d+\.\d+\.\d+/);
     }
   });
+
+  test("llamactl field matches the exported LLAMACTL_VERSION", () => {
+    const v = resolveVersions();
+    expect(v.llamactl).toBe(LLAMACTL_VERSION);
+  });
 });
 
 describe("detectGpu", () => {
   test("returns a GpuInfo or null without throwing", () => {
     const gpu = detectGpu();
     if (gpu !== null) {
-      expect(["metal", "cuda", "rocm", "cpu"]).toContain(gpu.kind);
+      expect(["metal", "cuda", "rocm", "vulkan", "cpu"]).toContain(gpu.kind);
     }
   });
 
@@ -64,11 +77,140 @@ describe("detectGpu", () => {
   });
 });
 
+function fakeExec(outputs: Record<string, string>): {
+  exec: (file: string, args: string[]) => string;
+  calls: string[];
+} {
+  const calls: string[] = [];
+  const exec = (file: string, args: string[]): string => {
+    calls.push([file, ...args].join(" "));
+    const out = outputs[file];
+    if (out === undefined) throw new Error(`${file}: not found`);
+    return out;
+  };
+  return { exec, calls };
+}
+
+const ROCM_GPU = `*******
+Agent 1
+*******
+  Name:                    AMD Ryzen AI MAX+ 395
+  Device Type:             CPU
+*******
+Agent 2
+*******
+  Name:                    gfx1151
+  Marketing Name:          AMD Radeon Graphics
+  Device Type:             GPU
+`;
+
+const ROCM_CPU_ONLY = `*******
+Agent 1
+*******
+  Name:                    AMD Ryzen AI MAX+ 395
+  Device Type:             CPU
+`;
+
+const VULKAN_SUMMARY = `Devices:
+========
+GPU0:
+\tapiVersion         = 1.3.274
+\tdeviceType         = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
+\tdeviceName         = AMD Radeon Graphics (RADV GFX1151)
+\tdriverName         = radv
+GPU1:
+\tdeviceType         = PHYSICAL_DEVICE_TYPE_CPU
+\tdeviceName         = llvmpipe (LLVM 17.0.6, 256 bits)
+\tdriverName         = llvmpipe
+`;
+
+const VULKAN_LLVMPIPE_ONLY = `Devices:
+========
+GPU0:
+\tdeviceType         = PHYSICAL_DEVICE_TYPE_CPU
+\tdeviceName         = llvmpipe (LLVM 17.0.6, 256 bits)
+\tdriverName         = llvmpipe
+`;
+
+describe("detectGpu with stubbed probes", () => {
+  test("cuda via nvidia-smi", () => {
+    const { exec, calls } = fakeExec({
+      "nvidia-smi": "NVIDIA GeForce RTX 4090, 24564\n",
+    });
+    const gpu = detectGpu({ platform: "linux", exec });
+    expect(gpu).toEqual({ kind: "cuda", name: "NVIDIA GeForce RTX 4090", memoryMB: 24564 });
+    expect(calls.length).toBe(1);
+  });
+
+  test("rocm when rocminfo lists a GPU agent", () => {
+    const { exec } = fakeExec({ rocminfo: ROCM_GPU });
+    const gpu = detectGpu({ platform: "linux", exec });
+    expect(gpu?.kind).toBe("rocm");
+  });
+
+  test("cpu when rocminfo lists only a CPU agent and no vulkaninfo", () => {
+    const { exec } = fakeExec({ rocminfo: ROCM_CPU_ONLY });
+    const gpu = detectGpu({ platform: "linux", exec });
+    expect(gpu).toEqual({ kind: "cpu" });
+  });
+
+  test("vulkan fallback when rocminfo lists only a CPU agent", () => {
+    const { exec } = fakeExec({ rocminfo: ROCM_CPU_ONLY, vulkaninfo: VULKAN_SUMMARY });
+    const gpu = detectGpu({ platform: "linux", exec });
+    expect(gpu).toEqual({ kind: "vulkan", name: "AMD Radeon Graphics (RADV GFX1151)" });
+  });
+
+  test("vulkan when only vulkaninfo is installed", () => {
+    const { exec } = fakeExec({ vulkaninfo: VULKAN_SUMMARY });
+    const gpu = detectGpu({ platform: "linux", exec });
+    expect(gpu).toEqual({ kind: "vulkan", name: "AMD Radeon Graphics (RADV GFX1151)" });
+  });
+
+  test("llvmpipe-only vulkan output stays cpu", () => {
+    const { exec } = fakeExec({ vulkaninfo: VULKAN_LLVMPIPE_ONLY });
+    const gpu = detectGpu({ platform: "linux", exec });
+    expect(gpu).toEqual({ kind: "cpu" });
+  });
+
+  test("discrete GPU wins over integrated", () => {
+    const { exec } = fakeExec({
+      vulkaninfo: `Devices:
+========
+GPU0:
+\tdeviceType         = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
+\tdeviceName         = AMD Radeon Graphics (RADV GFX1151)
+GPU1:
+\tdeviceType         = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
+\tdeviceName         = AMD Radeon RX 7900 XTX (RADV NAVI31)
+`,
+    });
+    const gpu = detectGpu({ platform: "linux", exec });
+    expect(gpu?.name).toBe("AMD Radeon RX 7900 XTX (RADV NAVI31)");
+  });
+
+  test("cpu when nothing is installed", () => {
+    const { exec } = fakeExec({});
+    const gpu = detectGpu({ platform: "linux", exec });
+    expect(gpu).toEqual({ kind: "cpu" });
+  });
+
+  test("win32 returns cpu without probing", () => {
+    const { exec, calls } = fakeExec({});
+    const gpu = detectGpu({ platform: "win32", exec });
+    expect(gpu).toEqual({ kind: "cpu" });
+    expect(calls).toEqual([]);
+  });
+
+  test("GpuFactsSchema accepts vulkan kind", () => {
+    expect(GpuFactsSchema.parse({ kind: "vulkan", name: "x" }).kind).toBe("vulkan");
+  });
+});
+
 describe("collectNodeFacts", () => {
   test("returns all documented fields", () => {
     const facts = collectNodeFacts();
     expect(typeof facts.nodeName).toBe("string");
-    expect(["mac-mini-16g", "balanced", "macbook-pro-48g"]).toContain(facts.profile);
+    expect([...MACHINE_PROFILES]).toContain(facts.profile);
     expect(facts.memBytes === null || typeof facts.memBytes === "number").toBe(true);
     expect(typeof facts.os).toBe("string");
     expect(typeof facts.arch).toBe("string");

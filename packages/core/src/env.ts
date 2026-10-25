@@ -11,12 +11,14 @@ const GEMMA_CTX_BY_PROFILE: Record<MachineProfile, string> = {
   "mac-mini-16g": "16384",
   balanced: "24576",
   "macbook-pro-48g": "32768",
+  "large-128g": "65536",
 };
 
 const QWEN_CTX_BY_PROFILE: Record<MachineProfile, string> = {
   "mac-mini-16g": "16384",
   balanced: "32768",
   "macbook-pro-48g": "65536",
+  "large-128g": "131072",
 };
 
 /**
@@ -40,6 +42,11 @@ const DEFAULT_MODEL_CHOICES: Record<MachineProfile, readonly string[]> = {
     "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
     "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
   ],
+  "large-128g": [
+    "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+    "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
+  ],
 } as const;
 
 /** First choice used when no file in the ladder exists on disk. */
@@ -47,6 +54,7 @@ const DEFAULT_MODEL_FALLBACK: Record<MachineProfile, string> = {
   "mac-mini-16g": "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
   balanced: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
   "macbook-pro-48g": "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+  "large-128g": "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
 };
 
 function pick(override: string | undefined, fallback: string): string {

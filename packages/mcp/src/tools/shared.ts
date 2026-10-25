@@ -1,8 +1,9 @@
+import { MACHINE_PROFILES } from "@llamactl/core";
 import { z } from "zod";
 
 export const SERVER_SLUG = "llamactl";
 
-export const PROFILE_ENUM = z.enum(["mac-mini-16g", "balanced", "macbook-pro-48g"]);
+export const PROFILE_ENUM = z.enum(MACHINE_PROFILES);
 export const PRESET_ENUM = z.enum(["best", "vision", "balanced", "fast"]);
 
 export type WorkloadDeleteDryRunResult = {

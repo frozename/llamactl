@@ -39,6 +39,8 @@ import {
   claimsForServiceCredential,
   createServiceTokenVerifier,
   extractBearer,
+  namedBearerFor,
+  type NamedBearerToken,
   relayPrincipalOf,
   SERVICE_TOKEN_HEADER,
   SERVICE_TOKEN_MAX_LENGTH,
@@ -69,6 +71,13 @@ export interface StartAgentOptions {
   port?: number; // default 0 (let OS pick)
   endpoint?: string; // default '/trpc'
   tokenHash: string; // SHA-256 hex of the expected bearer token
+  /**
+   * Named operator bearer tokens (#218), read on every request, so an
+   * added or revoked token applies without a restart. Each authenticates
+   * the authed API routes exactly as `tokenHash` does; the tunnel relay,
+   * self-update and rollback stay primary-only.
+   */
+  bearerTokens?: () => readonly NamedBearerToken[] | undefined;
   noAuth?: boolean;
   tls?: { certPath: string; keyPath: string }; // omit for plain HTTP (test-only)
   onRequest?: (url: URL) => void;
@@ -330,8 +339,9 @@ function makeNoAuthGate(noAuth: boolean, bindHost: string): NoAuthGate {
 /**
  * Run the shared bearer-auth gate for a route: no-auth-eligible
  * requests are logged and admitted; everything else must carry a
- * valid bearer. Returns the 401 response when the request must be
- * rejected, null when it may proceed.
+ * valid bearer — the primary one or one of the named tokens. Returns
+ * the 401 response when the request must be rejected, null when it
+ * may proceed.
  */
 function authGateReject(
   req: Request,
@@ -344,10 +354,9 @@ function authGateReject(
     gate.logUnauthenticatedNoAuthRequest(req, address);
     return null;
   }
-  if (!verifyBearer(req, opts.tokenHash)) {
-    return unauthorizedResponse();
-  }
-  return null;
+  if (verifyBearer(req, opts.tokenHash)) return null;
+  if (namedBearerFor(extractBearer(req), opts.bearerTokens?.() ?? []) !== null) return null;
+  return unauthorizedResponse();
 }
 
 async function handleOpenAIRoute(

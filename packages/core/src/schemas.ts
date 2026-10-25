@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { MACHINE_PROFILES } from "./types.js";
+
 /**
  * On-disk wire formats for the TSV state files that the shell library
  * and the upcoming TS library both read and write. Each row is parsed
@@ -42,7 +44,7 @@ export const curatedTsvFields = [
  * briefly before `updated_at` was added.
  */
 export const PresetOverride = z.object({
-  profile: z.enum(["mac-mini-16g", "balanced", "macbook-pro-48g"]),
+  profile: z.enum(MACHINE_PROFILES),
   preset: z.enum(["best", "vision", "balanced", "fast"]),
   rel: z.string().min(1),
   updated_at: z.string().optional().default(""),
