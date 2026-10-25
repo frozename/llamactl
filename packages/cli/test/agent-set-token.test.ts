@@ -7,11 +7,13 @@ import { runAgent } from "../src/commands/agent.js";
 import {
   appendFileSync,
   existsSync,
+  lstatSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "../src/safe-fs.js";
 
@@ -207,5 +209,59 @@ describe("agent set-token", () => {
     const r = await capture(["set-token", `--dir=${tmp}`, `--hash=${"e".repeat(64)}`]);
     expect(r.code).toBe(1);
     expect(existsSync(join(tmp, "agent.yaml"))).toBe(false);
+  });
+
+  test("an existing backup symlink is replaced, never written through", async () => {
+    const dir = await seed();
+    const cfgPath = join(dir, "agent.yaml");
+    const before = readFileSync(cfgPath);
+    const victim = join(tmp, "victim");
+    writeFileSync(victim, "do not overwrite me\n");
+    symlinkSync(victim, `${cfgPath}.bak`);
+
+    const r = await capture(["set-token", `--dir=${dir}`, `--hash=${"9".repeat(64)}`]);
+    expect(r.code).toBe(0);
+
+    expect(readFileSync(victim, "utf8")).toBe("do not overwrite me\n");
+    const bak = `${cfgPath}.bak`;
+    expect(lstatSync(bak).isSymbolicLink()).toBe(false);
+    expect(readFileSync(bak)).toEqual(before);
+    expect(statSync(bak).mode & 0o777).toBe(0o600);
+  });
+
+  test("a repeated backup replaces the prior one in place", async () => {
+    const dir = await seed();
+    const cfgPath = join(dir, "agent.yaml");
+    const bak = `${cfgPath}.bak`;
+    const v0 = readFileSync(cfgPath);
+
+    const first = await capture(["set-token", `--dir=${dir}`, `--hash=${"a".repeat(64)}`]);
+    expect(first.code).toBe(0);
+    expect(readFileSync(bak)).toEqual(v0);
+    const v1 = readFileSync(cfgPath);
+
+    const second = await capture(["set-token", `--dir=${dir}`, `--hash=${"b".repeat(64)}`]);
+    expect(second.code).toBe(0);
+
+    expect(readFileSync(bak)).toEqual(v1);
+    expect(readFileSync(cfgPath)).not.toEqual(v1);
+    expect(statSync(bak).mode & 0o777).toBe(0o600);
+    expect(readdirSync(dir).filter((name) => name.includes(".tmp-"))).toEqual([]);
+  });
+
+  test("a fresh backup is created at 0600 under a 022 umask", async () => {
+    const dir = await seed();
+    const cfgPath = join(dir, "agent.yaml");
+    const bak = `${cfgPath}.bak`;
+    const prevUmask = process.umask(0o022);
+    try {
+      const r = await capture(["set-token", `--dir=${dir}`, `--hash=${"7".repeat(64)}`]);
+      expect(r.code).toBe(0);
+    } finally {
+      process.umask(prevUmask);
+    }
+
+    expect(statSync(bak).mode & 0o777).toBe(0o600);
+    expect(readdirSync(dir).filter((name) => name.includes(".tmp-"))).toEqual([]);
   });
 });

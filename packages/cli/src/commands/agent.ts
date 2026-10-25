@@ -9,6 +9,8 @@ import {
   constants as fsConstants,
   mkdirSync,
   readFileSync,
+  renameSync,
+  unlinkSync,
   writeFileSync,
 } from "../safe-fs.js";
 import { runHeal } from "./heal.js";
@@ -543,6 +545,32 @@ function resolveSetTokenHash(f: SetTokenFlags): string | { error: string } {
 }
 
 /**
+ * Put the previous agent.yaml bytes at `bak` via an exclusively created
+ * 0600 tmp in the same dir + a rename, so a symlink planted at `bak` is
+ * replaced rather than written through, and the secrets it copies are
+ * never readable under the umask between creation and chmod.
+ */
+function writeBackup(bak: string, raw: Buffer): void {
+  const tmp = `${bak}.tmp-${String(process.pid)}-${Math.random().toString(36).slice(2)}`;
+  try {
+    writeFileSync(tmp, raw, { mode: 0o600, flag: "wx" });
+    try {
+      chmodSync(tmp, 0o600);
+    } catch {
+      // best-effort
+    }
+    renameSync(tmp, bak);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // the rename may have consumed it
+    }
+    throw err;
+  }
+}
+
+/**
  * Adopt an externally issued token (e.g. a central's cluster token) as
  * agent.yaml's tokenHash instead of hand-editing the file. The token
  * itself is never printed, only its hash lands on disk.
@@ -591,8 +619,7 @@ export function runSetToken(args: string[]): number {
   }
 
   const bak = `${configPath}.bak`;
-  writeFileSync(bak, raw);
-  chmodSync(bak, 0o600);
+  writeBackup(bak, raw);
   agentConfigMod.saveAgentConfig({ ...existing, tokenHash }, configPath);
 
   process.stdout.write(
