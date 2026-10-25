@@ -1,3 +1,5 @@
+import type { ModelHostReadiness } from "./types.js";
+
 import { isProcessAlive, psColumn, type SignalIdentity, verifyPidFile } from "../pidIdentity.js";
 
 const POLL_MS = 100;
@@ -96,9 +98,35 @@ async function fetchModelIds(
   return (body.data ?? []).map((model) => model.id ?? "").filter(Boolean);
 }
 
+async function fetchReadinessOk(
+  endpoint: { host: string; port: number },
+  readiness: ModelHostReadiness,
+  timeoutMs: number,
+): Promise<boolean> {
+  const response = await fetch(
+    `http://${formatHostForUrl(endpoint.host)}:${String(endpoint.port)}${readiness.path}`,
+    {
+      signal: AbortSignal.timeout(timeoutMs),
+    },
+  );
+  if (response.status !== (readiness.expectStatus ?? 200)) {
+    return false;
+  }
+  if (readiness.expectJson === undefined) {
+    return true;
+  }
+  const body: unknown = await response.json().catch(() => null);
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return false;
+  }
+  const record = body as Record<string, unknown>;
+  return Object.entries(readiness.expectJson).every(([key, value]) => record[key] === value);
+}
+
 export async function pollUntilModelIds(
   endpoint: { host: string; port: number },
   timeoutMs: number,
+  readiness?: ModelHostReadiness,
 ): Promise<{ ready: boolean; modelIds: string[] }> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -106,7 +134,17 @@ export async function pollUntilModelIds(
       const remaining = deadline - Date.now();
       const modelIds = await fetchModelIds(endpoint, Math.min(1000, Math.max(1, remaining)));
       if (modelIds.length > 0) {
-        return { ready: true, modelIds };
+        const readinessRemaining = deadline - Date.now();
+        const readinessOk =
+          readiness === undefined ||
+          (await fetchReadinessOk(
+            endpoint,
+            readiness,
+            Math.min(1000, Math.max(1, readinessRemaining)),
+          ));
+        if (readinessOk) {
+          return { ready: true, modelIds };
+        }
       }
     } catch {
       // Best-effort cleanup; failures are not actionable here.

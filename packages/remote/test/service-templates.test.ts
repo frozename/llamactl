@@ -66,6 +66,7 @@ describe("generateSystemdUnit", () => {
       "ExecStart=/home/me/.llamactl/bin/llamactl-agent agent serve --dir=/home/me/.llamactl",
     );
     expect(unit).toContain("Restart=always");
+    expect(unit).toContain("KillMode=process");
     expect(unit).toContain("Environment=LLAMACTL_AGENT_DIR=/home/me/.llamactl");
     expect(unit).toContain("StandardOutput=append:/home/me/.llamactl/logs/llamactl-agent.log");
     expect(unit).toContain("StandardError=append:/home/me/.llamactl/logs/llamactl-agent.err");
