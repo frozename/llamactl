@@ -12,7 +12,7 @@ import {
   renameSync,
   rmSync,
 } from "../safe-fs.js";
-import { collectAgentStatus, formatAgentStatus } from "./agent-status.js";
+import { collectAgentStatus, formatAgentStatus, readCertSans } from "./agent-status.js";
 import { runHeal } from "./heal.js";
 
 const USAGE = `Usage: llamactl agent <subcommand>
@@ -222,6 +222,19 @@ export function initBindWarning(
     `warning: advertised host ${host} is not reachable from other machines: ` +
     `the agent binds ${bindHost}. Pass --bind=0.0.0.0 (or --bind=${host}) so ` +
     `'llamactl node add' on a remote control plane can connect.\n`
+  );
+}
+
+// #210: `agent serve` on a loopback bind whose cert names a non-loopback host.
+export function serveBindWarning(bindHost: string, certSans: readonly string[]): string | null {
+  if (!isLoopbackHost(bindHost)) return null;
+  const advertised = certSans.filter(
+    (san) => san !== "0.0.0.0" && san !== "::" && !isLoopbackHost(san),
+  );
+  if (advertised.length === 0) return null;
+  return (
+    `warning: agent binds ${bindHost} (loopback only) but its cert names ${advertised.join(", ")}: ` +
+    `remote control planes cannot connect. Pass --bind=0.0.0.0 (or --bind=<host>) to accept remote connections.\n`
   );
 }
 
@@ -1020,6 +1033,8 @@ async function runServe(args: string[]): Promise<number> {
   const cfg = agentConfigMod.loadAgentConfig(cfgPath);
   await waitForReadable(cfg.certPath, 30_000);
   await waitForReadable(cfg.keyPath, 30_000);
+  const bindWarn = serveBindWarning(parsed.bindHost ?? cfg.bindHost, readCertSans(cfg.certPath));
+  if (bindWarn !== null) process.stderr.write(bindWarn);
   const dialNodeName = parsed.tunnelNodeName ?? cfg.nodeName ?? "agent";
 
   let running;
