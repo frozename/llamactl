@@ -18,7 +18,7 @@ import { resolveEnv } from "../../../core/src/env.js";
 import * as fs from "../../src/safe-fs.js";
 import { mkdtempSync, rmSync } from "../../src/safe-fs.js";
 import { type ModelHostManifest, specForHash } from "../../src/workload/modelhost-schema.js";
-import { saveModelHost } from "../../src/workload/modelhost-store.js";
+import { loadModelHostByName, saveModelHost } from "../../src/workload/modelhost-store.js";
 import { reconcileOnce, type ReconcileResult } from "../../src/workload/reconciler.js";
 import { saveWorkload } from "../../src/workload/store.js";
 
@@ -796,6 +796,101 @@ describe("reconcileOnce", () => {
       }
     });
 
+    test("honours a marker written to a later host while an earlier host's start awaits", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-external-race-"));
+      const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
+      const started: string[] = [];
+      try {
+        const base = makeHostManifest();
+        const hostB: ModelHostManifest = {
+          ...base,
+          metadata: { name: "host-b" },
+          spec: { ...base.spec, endpoint: { host: "127.0.0.1", port: 18095 } },
+        };
+        saveModelHost(base, dir);
+        saveModelHost(hostB, dir);
+        process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
+
+        const client: WorkloadClient = {
+          ...makeClient(),
+          modelHostStatus: { query: () => Promise.resolve({ state: "Stopped" }) },
+          modelHostStart: {
+            subscribe: (input, callbacks): { unsubscribe: () => undefined } => {
+              started.push(input.workload);
+              if (input.workload === "host-a") {
+                saveModelHost(withManagedBy(hostB), dir);
+              }
+              queueMicrotask(() => {
+                callbacks.onData({ type: "done", result: { ok: true } });
+                callbacks.onComplete();
+              });
+              return { unsubscribe: (): undefined => undefined };
+            },
+          },
+        };
+
+        const result = await reconcileOnce({ workloadsDir: dir, getClient: () => client });
+
+        expect(started).toEqual(["host-a"]);
+        expect(loadModelHostByName("host-b", dir).metadata.labels?.["llamactl.io/managed-by"]).toBe(
+          "mac-mini",
+        );
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "local", action: "started" },
+          {
+            kind: "ModelHost",
+            name: "host-b",
+            node: "local",
+            action: "skipped-external",
+            managedBy: "mac-mini",
+          },
+        ]);
+      } finally {
+        if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+        else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("keeps a marker written during the host's own in-flight start", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-external-self-race-"));
+      const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
+      try {
+        const manifest = makeHostManifest();
+        saveModelHost(manifest, dir);
+        process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
+
+        const client: WorkloadClient = {
+          ...makeClient(),
+          modelHostStatus: { query: () => Promise.resolve({ state: "Stopped" }) },
+          modelHostStart: {
+            subscribe: (input, callbacks): { unsubscribe: () => undefined } => {
+              saveModelHost(withManagedBy(loadModelHostByName(input.workload, dir)), dir);
+              queueMicrotask(() => {
+                callbacks.onData({ type: "done", result: { ok: true } });
+                callbacks.onComplete();
+              });
+              return { unsubscribe: (): undefined => undefined };
+            },
+          },
+        };
+
+        const result = await reconcileOnce({ workloadsDir: dir, getClient: () => client });
+
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "local", action: "started" },
+        ]);
+        expect(loadModelHostByName("host-a", dir).metadata.labels?.["llamactl.io/managed-by"]).toBe(
+          "mac-mini",
+        );
+      } finally {
+        if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+        else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("node RPC deadlines", () => {

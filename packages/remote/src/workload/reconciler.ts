@@ -28,7 +28,7 @@ import {
   type ModelHostManifest,
   specForHash,
 } from "./modelhost-schema.js";
-import { listModelHosts, saveModelHost } from "./modelhost-store.js";
+import { listModelHosts, loadModelHostByName, saveModelHost } from "./modelhost-store.js";
 import {
   DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
   DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
@@ -349,10 +349,20 @@ async function reconcileModelHost(
   nodeBudgetByName: Map<string, number | undefined>,
   reports: ReconcileNodeReport[],
 ): Promise<number> {
-  const managedBy = externalManagerOf(manifest);
+  // The pass-start snapshot goes stale while earlier hosts are awaited: a
+  // hand-over marker written to this host's file mid-pass must be honoured
+  // before any client access, so re-read it here.
+  let current = manifest;
+  try {
+    current = loadModelHostByName(manifest.metadata.name, dir);
+  } catch {
+    // Manifest vanished or became unreadable mid-pass; fall through with the
+    // snapshot so the regular error paths report it.
+  }
+  const managedBy = externalManagerOf(current);
   if (managedBy !== null) {
-    const { spec } = manifest;
-    const name = manifest.metadata.name;
+    const { spec } = current;
+    const name = current.metadata.name;
     reports.push({
       kind: "ModelHost",
       name,
@@ -362,7 +372,23 @@ async function reconcileModelHost(
     });
     return 0;
   }
-  return await reconcileUnmanagedModelHost(manifest, opts, dir, nodeBudgetByName, reports);
+  return await reconcileUnmanagedModelHost(current, opts, dir, nodeBudgetByName, reports);
+}
+
+/**
+ * Persist the applied manifest unless the on-disk copy gained an external
+ * managed-by marker (or vanished) while the apply was awaited: another
+ * controller owns the hand-over now, so the stale in-memory manifest must
+ * not be written back over it.
+ */
+function saveAppliedHost(manifest: ModelHostManifest, name: string, dir: string): void {
+  let claimed = true;
+  try {
+    claimed = externalManagerOf(loadModelHostByName(name, dir)) !== null;
+  } catch {
+    // claimed stays true: the vanished or unreadable file is not ours to recreate.
+  }
+  if (!claimed) saveModelHost(manifest, dir);
 }
 
 async function reconcileUnmanagedModelHost(
@@ -414,7 +440,7 @@ async function reconcileUnmanagedModelHost(
     const action = wasRunning ? "restarted" : "started";
     if (result.ok && result.kind === "ModelHost") {
       pushHostReport(reports, spec, name, action, { foundDead });
-      saveModelHost(result.manifest, dir);
+      saveAppliedHost(result.manifest, name, dir);
       const restart = restartReason(wasRunning, foundDead);
       recordHostOutcome(spec, name, {
         kind: "ok",
