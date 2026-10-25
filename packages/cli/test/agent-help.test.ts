@@ -45,8 +45,11 @@ describe("agent subcommand --help", () => {
   const cases: [string, string[]][] = [
     ["init", ["--dir=", "--host=", "--port=", "--name=", "--bind=", "--san=", "default: 7843"]],
     ["rotate-token", ["--dir=", "--host=", "--json"]],
+    ["rotate-cert", ["--dir=", "--host=", "--san=", "--token-file=", "--json"]],
     ["serve", ["--dir=", "--bind=", "--port=", "--no-auth", "--dial-central="]],
-    ["status", ["--dir="]],
+    ["status", ["--dir=", "--host=", "--json"]],
+    ["install-systemd", ["--scope=", "--bind=", "--port=", "--env-file=", "--dry-run"]],
+    ["token", ["add", "list", "revoke", "--out="]],
   ];
 
   for (const [sub, flags] of cases) {

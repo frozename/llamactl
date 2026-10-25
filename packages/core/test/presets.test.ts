@@ -1,12 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
+import type { PresetName } from "../src/presets.js";
+
 import {
   deletePresetOverride,
+  PRESET_NAMES,
   readPresetOverrides,
   resolvePreset,
   writePresetOverride,
 } from "../src/presets.js";
+import { normalizeProfile } from "../src/profile.js";
 import { copyFileSync, existsSync, readFileSync } from "../src/safe-fs.js";
 import { envForTemp, FIXTURE_DIR, makeTempRuntime } from "./helpers.js";
 
@@ -28,6 +32,21 @@ describe("presets.resolvePreset", () => {
     const res = resolvePreset("macbook-pro-48g", "best", {});
     expect(res.rel).toBe("gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf");
     expect(res.source).toBeNull();
+  });
+  test("builtin large-128g mirrors the macbook-pro-48g ladder", () => {
+    expect(normalizeProfile("large-128g")).not.toBeNull();
+    const expected: Record<PresetName, string> = {
+      best: "gemma-4-31B-it-GGUF/gemma-4-31B-it-UD-Q4_K_XL.gguf",
+      vision: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+      balanced: "gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+      fast: "gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q8_0.gguf",
+    };
+    for (const preset of PRESET_NAMES) {
+      const res = resolvePreset("large-128g", preset, {});
+      expect(res.rel).toBe(expected[preset]);
+      expect(res.source).toBeNull();
+      expect(res.rel).toBe(resolvePreset("macbook-pro-48g", preset, {}).rel);
+    }
   });
   test("env-var override wins over file override", () => {
     const temp = makeTempRuntime();
@@ -71,6 +90,16 @@ describe("presets.writePresetOverride (round-trip)", () => {
     const file = env["LOCAL_AI_PRESET_OVERRIDES_FILE"]!;
     const body = readFileSync(file, "utf8");
     expect(body).toContain("balanced\tbest\tsome/model.gguf");
+  });
+
+  test("large-128g row round-trips through the override file", () => {
+    writePresetOverride("large-128g", "best", "big/model.gguf", env);
+    const rows = readPresetOverrides(env["LOCAL_AI_PRESET_OVERRIDES_FILE"]!);
+    const row = rows.find((r) => r.profile === "large-128g" && r.preset === "best");
+    expect(row?.rel).toBe("big/model.gguf");
+    const res = resolvePreset("large-128g", "best", env);
+    expect(res.rel).toBe("big/model.gguf");
+    expect(res.source).toBe("file");
   });
 
   test("re-promote replaces in place (no row growth)", () => {

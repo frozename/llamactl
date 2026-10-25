@@ -217,6 +217,17 @@ export function advanceOomWatch(
   return { nextState: { last: sample, pendingKills: pending }, ...quiet };
 }
 
+/**
+ * The sample to persist as the baseline: the counter through the last kill the
+ * controller has accounted for. A kill held in `pendingKills` stays above the
+ * baseline, so a controller restarted by OOMPolicy=stop sees the rise again on
+ * its first pass instead of logging a plain unexpected exit.
+ */
+export function oomBaselineFor(state: OomWatchState): CgroupOomSample | null {
+  if (state.last === null) return null;
+  return { cgroup: state.last.cgroup, oomKill: state.last.oomKill - state.pendingKills };
+}
+
 /** Local ModelHosts this pass found dead that were not already failing. */
 export function newlyDeadHosts(
   reports: readonly ReportForLog[],
@@ -370,35 +381,53 @@ export async function runController(args: string[]): Promise<number> {
   }
 }
 
+/** Seam over observeOomKills' four side effects; defaults are the production calls. */
+export interface OomObserveDeps {
+  readSample?: () => CgroupOomSample | null;
+  writeBaseline?: (file: string, sample: CgroupOomSample) => void;
+  recordKill?: (name: string, oomKill: number) => void;
+  writeLines?: (lines: readonly ControllerLogLine[]) => void;
+}
+
 /**
  * Sample the controller cgroup after a pass, attribute any new OOM kill to
  * the local engines the pass found dead, record it on their conditions, and
  * keep the persisted baseline current so a kill during a controller restart
  * still counts.
  */
-function observeOomKills(
+export function observeOomKills(
   workloadsDir: string,
   state: ControllerPassState,
   reports: readonly ReportForLog[],
   nowMs: number,
+  deps: OomObserveDeps = {},
 ): OomWatchState {
-  const sample = readCgroupOomSample();
+  const readSample = deps.readSample ?? readCgroupOomSample;
+  const writeBaseline = deps.writeBaseline ?? writeOomBaseline;
+  const recordKill =
+    deps.recordKill ??
+    ((name: string, oomKill: number): void => {
+      recordModelHostOomKill({ name }, oomKill, resolveEnv(process.env));
+    });
+  const emit = deps.writeLines ?? writeLines;
+  const sample = readSample();
   const deadHosts = newlyDeadHosts(reports, state.errors);
   const watch = advanceOomWatch(state.oom, sample, deadHosts);
-  const { last } = state.oom;
-  if (sample && (sample.cgroup !== last?.cgroup || sample.oomKill !== last.oomKill)) {
-    writeOomBaseline(oomBaselineFile(workloadsDir), sample);
+  const before = oomBaselineFor(state.oom);
+  const after = oomBaselineFor(watch.nextState);
+  if (after !== null && (after.cgroup !== before?.cgroup || after.oomKill !== before.oomKill)) {
+    writeBaseline(oomBaselineFile(workloadsDir), after);
   }
   if (sample) {
     for (const name of watch.oomKilled) {
       try {
-        recordModelHostOomKill({ name }, sample.oomKill, resolveEnv(process.env));
+        recordKill(name, sample.oomKill);
       } catch {
         // The log line below still reports the kill.
       }
     }
   }
-  writeLines(deadHostLines(reports, deadHosts, watch, sample, nowMs));
+  emit(deadHostLines(reports, deadHosts, watch, sample, nowMs));
   return watch.nextState;
 }
 

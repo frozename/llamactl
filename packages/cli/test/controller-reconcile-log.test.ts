@@ -1,15 +1,21 @@
-import type { CgroupOomSample } from "@llamactl/core/cgroupOom";
-
+import { type CgroupOomSample, readOomBaseline, writeOomBaseline } from "@llamactl/core/cgroupOom";
 import { describe, expect, it } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   advanceOomWatch,
+  type ControllerLogLine,
   deadHostLines,
   newlyDeadHosts,
+  observeOomKills,
+  oomBaselineFor,
+  type OomObserveDeps,
   RECONCILE_ERROR_REMINDER_MS,
   type ReconcileErrorLog,
   reduceReconcileReportLog,
 } from "../src/commands/controller.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 /**
  * Unit coverage for the controller's pass-to-pass log state: reconcile-error
@@ -234,5 +240,100 @@ describe("dead-host lines", () => {
       "[2026-10-21T14:07:00.000Z] WARN modelhost/strata-qwen38-mtp on local: engine had exited unexpectedly; restarted",
       `[2026-10-21T14:07:00.000Z] WARN controller cgroup ${SERVICE}: 1 OOM kill(s) (oom_kill 3) not matched to a ModelHost engine`,
     ]);
+  });
+});
+
+describe("OOM baseline across a controller restart", () => {
+  const sample = (oomKill: number, cgroup = SERVICE): CgroupOomSample => ({ cgroup, oomKill });
+
+  it("persists the counter through the last attributed kill", () => {
+    expect(oomBaselineFor({ last: sample(2), pendingKills: 1 })).toEqual(sample(1));
+  });
+
+  it("persists the latest sample when nothing is held", () => {
+    expect(oomBaselineFor({ last: sample(2), pendingKills: 0 })).toEqual(sample(2));
+    expect(oomBaselineFor({ last: null, pendingKills: 0 })).toBeNull();
+  });
+
+  it("a kill held when OOMPolicy=stop restarts the controller is attributed by the next controller", () => {
+    // The kill lands after the host's status check, so controller A holds it
+    // in pendingKills. The persisted baseline must stay below the sample so
+    // controller B, restarted by OOMPolicy=stop, still sees the rise.
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-oom-baseline-"));
+    const file = join(dir, ".controller-oom.json");
+    try {
+      const a = advanceOomWatch({ last: sample(1), pendingKills: 0 }, sample(2), []);
+      expect(a).toMatchObject({ oomKilled: [], nextState: { pendingKills: 1 } });
+      const baseline = oomBaselineFor(a.nextState);
+      expect(baseline).not.toBeNull();
+      writeOomBaseline(file, baseline!);
+
+      const state = { last: readOomBaseline(file), pendingKills: 0 };
+      const dead = { ...healthy, action: "started" as const, foundDead: true };
+      const hosts = newlyDeadHosts([dead], new Map());
+      const b = advanceOomWatch(state, sample(2), hosts);
+      expect(b.oomKilled).toEqual(["strata-qwen38-mtp"]);
+      expect(deadHostLines([dead], hosts, b, sample(2), T0).map((l) => l.text)).toEqual([
+        "[2026-10-21T14:07:00.000Z] WARN modelhost/strata-qwen38-mtp: engine was OOM-killed (cgroup oom_kill 2); restarting",
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("observeOomKills itself persists the baseline a restarted controller needs", () => {
+    // A bootstrap pass lands the baseline at oom_kill 1. Controller A then
+    // samples the kill at 2 while the host still answers its status check, so
+    // it holds the kill in pendingKills and must not lift the file above 1.
+    // Controller B starts from the file alone and attributes the kill.
+    const dir = mkdtempSync(join(tmpdir(), "llamactl-oom-observe-"));
+    try {
+      const recorded: [string, number][] = [];
+      const lines: ControllerLogLine[] = [];
+      let next = sample(1);
+      const deps: OomObserveDeps = {
+        readSample: () => next,
+        recordKill: (name, oomKill) => {
+          recorded.push([name, oomKill]);
+        },
+        writeLines: (out) => {
+          lines.push(...out);
+        },
+      };
+      const alive = [{ ...healthy, action: "unchanged" as const }];
+      const booted = observeOomKills(
+        dir,
+        { errors: new Map(), oom: { last: null, pendingKills: 0 } },
+        alive,
+        T0,
+        deps,
+      );
+      expect(booted).toEqual({ last: sample(1), pendingKills: 0 });
+
+      next = sample(2);
+      const a = observeOomKills(dir, { errors: new Map(), oom: booted }, alive, T0, deps);
+      expect(a).toEqual({ last: sample(2), pendingKills: 1 });
+      expect(recorded).toEqual([]);
+      expect(readOomBaseline(join(dir, ".controller-oom.json"))).toEqual(sample(1));
+
+      const dead = { ...healthy, action: "started" as const, foundDead: true };
+      const b = observeOomKills(
+        dir,
+        {
+          errors: new Map(),
+          oom: { last: readOomBaseline(join(dir, ".controller-oom.json")), pendingKills: 0 },
+        },
+        [dead],
+        T0,
+        deps,
+      );
+      expect(b).toEqual({ last: sample(2), pendingKills: 0 });
+      expect(recorded).toEqual([["strata-qwen38-mtp", 2]]);
+      expect(lines.map((l) => l.text)).toContain(
+        "[2026-10-21T14:07:00.000Z] WARN modelhost/strata-qwen38-mtp: engine was OOM-killed (cgroup oom_kill 2); restarting",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

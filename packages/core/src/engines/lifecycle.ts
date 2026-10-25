@@ -8,7 +8,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export function formatHostForUrl(host: string): string {
-  return host.includes(":") ? `[${host}]` : host;
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
 /**

@@ -71,9 +71,51 @@ describe("probeWorkload", () => {
     };
     const result = await probeWorkload(
       { name: "granite-mini-3b", endpoint: "http://127.0.0.1:8086", kind: "ModelRun" },
-      { fetch: fakeFetch as unknown as typeof fetch, timeoutMs: 500 },
+      { fetch: fakeFetch as unknown as typeof fetch, timeoutMs: 500, priorCreated: 1780988120 },
     );
     expect(result.revision).toBe("1780988120");
+    expect(result.created).toBe(1780988120);
+  });
+
+  it("revision is null on the first read: no prior to confirm against", async () => {
+    const fakeFetch = async (url: string): Promise<Response> => {
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      if (url.endsWith("/v1/models"))
+        return new Response(
+          JSON.stringify({
+            data: [
+              { id: "granite-mini-3b", created: 1780988120 },
+              { id: "granite-rel", created: 1780988100 },
+            ],
+          }),
+          { status: 200 },
+        );
+      return new Response("", { status: 404 });
+    };
+    const result = await probeWorkload(
+      { name: "granite-mini-3b", endpoint: "http://127.0.0.1:8086", kind: "ModelRun" },
+      { fetch: fakeFetch as unknown as typeof fetch, timeoutMs: 500 },
+    );
+    expect(result.revision).toBeNull();
+    expect(result.created).toBe(1780988120);
+  });
+
+  it("revision is null when `created` drifts between reads (request-time clock)", async () => {
+    const fakeFetch = async (url: string): Promise<Response> => {
+      if (url.endsWith("/health")) return new Response("ok", { status: 200 });
+      if (url.endsWith("/v1/models"))
+        return new Response(
+          JSON.stringify({ data: [{ id: "granite-mini-3b", created: 1792877011 }] }),
+          { status: 200 },
+        );
+      return new Response("", { status: 404 });
+    };
+    const result = await probeWorkload(
+      { name: "granite-mini-3b", endpoint: "http://127.0.0.1:8086", kind: "ModelRun" },
+      { fetch: fakeFetch as unknown as typeof fetch, timeoutMs: 500, priorCreated: 1792877007 },
+    );
+    expect(result.revision).toBeNull();
+    expect(result.created).toBe(1792877011);
   });
 
   it("revision is null when /v1/models omits `created` (older engine)", async () => {
@@ -88,5 +130,6 @@ describe("probeWorkload", () => {
       { fetch: fakeFetch as unknown as typeof fetch, timeoutMs: 500 },
     );
     expect(result.revision).toBeNull();
+    expect(result.created).toBeNull();
   });
 });

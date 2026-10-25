@@ -1,12 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 
-import type { MachineProfile } from "./types.js";
+import type { MachineProfile, ResolvedEnv } from "./types.js";
+import type { LocalRoute } from "./workloadRuntime.js";
 
 import { resolveBuildId } from "./build.js";
+import { formatHostForUrl } from "./engines/lifecycle.js";
 import { resolveEnv } from "./env.js";
 import { detectMemoryBytes, resolveProfile } from "./profile.js";
-import { advertisedEndpoint } from "./server.js";
+import { advertisedEndpoint, dialableHost } from "./server.js";
+import { listLocalRoutes } from "./workloadRuntime.js";
 
 export type GpuKind = "metal" | "cuda" | "rocm" | "vulkan" | "cpu";
 
@@ -34,8 +37,10 @@ export interface NodeFacts {
   versions: Versions;
   startedAt: string; // ISO-8601
   /**
-   * URL this node advertises for its llama-server, derived from
-   * LLAMA_CPP_ADVERTISED_HOST / LLAMA_CPP_HOST / LLAMA_CPP_PORT.
+   * URL this node advertises for its llama-server. A running
+   * ModelHost's verified bind (host + port) takes precedence over
+   * the LLAMA_CPP_ADVERTISED_HOST / LLAMA_CPP_HOST / LLAMA_CPP_PORT
+   * env, which only describes the default llama-server binding.
    * Orchestrators use this to reach the node's OpenAI-compatible
    * endpoint without needing to know how the node is bound.
    */
@@ -50,7 +55,7 @@ const STARTED_AT = new Date().toISOString();
 // Hard-coded for now; package.json reads involve tsconfig/import-attrs
 // gymnastics that aren't worth it for a version string. Bump here when
 // cutting a release.
-const LLAMACTL_VERSION = "0.0.0";
+export const LLAMACTL_VERSION = "0.0.0";
 
 export function resolveNodeName(env: NodeJS.ProcessEnv = process.env): string {
   const override = env["LLAMACTL_NODE_NAME"]?.trim();
@@ -72,8 +77,32 @@ export function collectNodeFacts(env: NodeJS.ProcessEnv = process.env): NodeFact
     gpu: detectGpu(),
     versions: resolveVersions(env),
     startedAt: STARTED_AT,
-    advertisedEndpoint: resolved ? advertisedEndpoint(resolved) : "",
+    advertisedEndpoint: resolved
+      ? resolveNodeAdvertisedEndpoint(resolved, safeListLocalRoutes(resolved))
+      : "",
   };
+}
+
+/**
+ * URL external callers should use to reach this node. A verified
+ * ModelHost's actual bind takes precedence over the env, since the
+ * env describes what llama-server would bind, not what is serving.
+ */
+export function resolveNodeAdvertisedEndpoint(
+  resolved: ResolvedEnv,
+  routes: readonly LocalRoute[],
+): string {
+  const hosts = routes.filter((route) => route.kind === "ModelHost");
+  if (hosts.length > 0) {
+    const sorted = [...hosts].sort(
+      (a, b) => a.workload.localeCompare(b.workload) || a.port - b.port,
+    );
+    const first = sorted[0];
+    if (first) {
+      return `http://${formatHostForUrl(dialableHost(first.host, resolved))}:${String(first.port)}`;
+    }
+  }
+  return advertisedEndpoint(resolved);
 }
 
 export function resolveVersions(_env: NodeJS.ProcessEnv = process.env): Versions {
@@ -234,6 +263,14 @@ function safeResolveEnv(env: NodeJS.ProcessEnv): ReturnType<typeof resolveEnv> |
     return resolveEnv(env);
   } catch {
     return null;
+  }
+}
+
+function safeListLocalRoutes(resolved: ResolvedEnv): LocalRoute[] {
+  try {
+    return listLocalRoutes(resolved);
+  } catch {
+    return [];
   }
 }
 
