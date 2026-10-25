@@ -6,6 +6,7 @@ import { summaryForRel } from "./hf.js";
 import { type PresetName, type PresetOverrideSource, resolvePreset } from "./presets.js";
 import { normalizeProfile } from "./profile.js";
 import { quantFromRel } from "./quant.js";
+import { MACHINE_PROFILES } from "./types.js";
 
 /** Recommendation row shape consumed by the CLI and (eventually) the UI. */
 export interface RecommendationRow {
@@ -57,6 +58,7 @@ function qwen36ForProfile(profile: MachineProfile): string {
     case "balanced":
       return "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf";
     case "macbook-pro-48g":
+    case "large-128g":
       return "Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf";
   }
 }
@@ -72,6 +74,7 @@ function qwen35ForProfile(profile: MachineProfile): string {
       return "Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-IQ2_M.gguf";
     case "balanced":
     case "macbook-pro-48g":
+    case "large-128g":
       return "Qwen3.5-27B-GGUF/Qwen3.5-27B-UD-Q5_K_XL.gguf";
   }
 }
@@ -80,12 +83,14 @@ const QWEN_CTX_BY_PROFILE: Record<MachineProfile, string> = {
   "mac-mini-16g": "16384",
   balanced: "32768",
   "macbook-pro-48g": "65536",
+  "large-128g": "131072",
 };
 
 const GEMMA_CTX_BY_PROFILE: Record<MachineProfile, string> = {
   "mac-mini-16g": "16384",
   balanced: "24576",
   "macbook-pro-48g": "32768",
+  "large-128g": "65536",
 };
 
 /**
@@ -178,9 +183,9 @@ export async function recommendationsWithHf(
 
 /**
  * Expand a user-facing `requested_profile` into the set of canonical
- * profiles to display. `all` → the three known profiles in the shell
- * order; `current` (or empty) → the active machine profile; anything
- * else normalises through `normalizeProfile`.
+ * profiles to display. `all` → every known profile in the shell order;
+ * `current` (or empty) → the active machine profile; anything else
+ * normalises through `normalizeProfile`.
  */
 export function expandRequestedProfile(
   requested: string | undefined,
@@ -190,7 +195,7 @@ export function expandRequestedProfile(
   const active = normalizeProfile(resolved.LLAMA_CPP_MACHINE_PROFILE) ?? "macbook-pro-48g";
   switch (requested) {
     case "all":
-      return ["mac-mini-16g", "balanced", "macbook-pro-48g"];
+      return [...MACHINE_PROFILES];
     case undefined:
     case "":
     case "current":
