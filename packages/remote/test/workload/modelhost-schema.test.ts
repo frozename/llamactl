@@ -1,10 +1,20 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  externalManagerOf,
+  MANAGED_BY_LABEL,
   modelHostBindRefusal,
+  type ModelHostManifest,
   ModelHostManifestSchema,
   specForEngine,
 } from "../../src/workload/modelhost-schema.js";
+
+function hostWithLabels(labels?: Record<string, string>): ModelHostManifest {
+  return ModelHostManifestSchema.parse({
+    ...valid,
+    metadata: { name: "host-a", ...(labels !== undefined ? { labels } : {}) },
+  });
+}
 
 const valid = {
   apiVersion: "llamactl/v1",
@@ -354,5 +364,37 @@ describe("modelHostBindRefusal", () => {
       },
     });
     expect(modelHostBindRefusal(manifest)).toBeNull();
+  });
+});
+
+describe("externalManagerOf", () => {
+  test("MANAGED_BY_LABEL is the documented label key", () => {
+    expect(MANAGED_BY_LABEL).toBe("llamactl.io/managed-by");
+  });
+
+  test("returns the manager for a labeled manifest", () => {
+    expect(externalManagerOf(hostWithLabels({ [MANAGED_BY_LABEL]: "mac-mini" }))).toBe("mac-mini");
+  });
+
+  test("returns null when metadata.labels is absent", () => {
+    expect(externalManagerOf(hostWithLabels())).toBeNull();
+  });
+
+  test("returns null when only other labels are present", () => {
+    expect(externalManagerOf(hostWithLabels({ tier: "prod" }))).toBeNull();
+  });
+
+  test("returns null for an empty label value", () => {
+    expect(externalManagerOf(hostWithLabels({ [MANAGED_BY_LABEL]: "" }))).toBeNull();
+  });
+
+  test("returns null for a whitespace-only label value", () => {
+    expect(externalManagerOf(hostWithLabels({ [MANAGED_BY_LABEL]: "  " }))).toBeNull();
+  });
+
+  test("trims surrounding whitespace from the manager", () => {
+    expect(externalManagerOf(hostWithLabels({ [MANAGED_BY_LABEL]: "  mac-mini  " }))).toBe(
+      "mac-mini",
+    );
   });
 });

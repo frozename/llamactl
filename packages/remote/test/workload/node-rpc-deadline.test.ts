@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { NodeRpcTimeoutError, withNodeRpcDeadline } from "../../src/workload/node-rpc-deadline.js";
+import {
+  type NodeRpcPassState,
+  NodeRpcSkippedError,
+  NodeRpcTimeoutError,
+  withNodeRpcDeadline,
+} from "../../src/workload/node-rpc-deadline.js";
 
 const timeouts = { queryMs: 30, mutateMs: 60 };
 
@@ -163,5 +168,130 @@ describe("withNodeRpcDeadline", () => {
       typeof client & { resolveTarget?: { query: (value: string) => Promise<string | null> } }
     >(client, "z13", timeouts);
     expect(wrapped.resolveTarget).toBeUndefined();
+  });
+});
+
+describe("withNodeRpcDeadline per-pass skip", () => {
+  test("after a timeout, later calls to the same node in the pass fail fast without reaching the node", async () => {
+    const pass: NodeRpcPassState = { timedOut: new Map() };
+    const client1 = {
+      serverStatus: {
+        query: (_input: { workload: string }): Promise<never> =>
+          new Promise<never>(() => undefined),
+      },
+    };
+    const wrapped1 = withNodeRpcDeadline(client1, "z13", timeouts, pass);
+    const first = await wrapped1.serverStatus.query({ workload: "run-a" }).then(
+      (): null => null,
+      (e: unknown): unknown => e,
+    );
+    expect(first).toBeInstanceOf(NodeRpcTimeoutError);
+    expect(pass.timedOut.get("z13")).toBe(first as NodeRpcTimeoutError);
+
+    let calls = 0;
+    const client2 = {
+      serverStatus: {
+        query: (_input: { workload: string }): Promise<{ state: string }> => {
+          calls++;
+          return Promise.resolve({ state: "down" });
+        },
+      },
+      serverStop: {
+        mutate: (_input: { workload: string }): Promise<{ ok: boolean }> => {
+          calls++;
+          return Promise.resolve({ ok: true });
+        },
+      },
+    };
+    const wrapped2 = withNodeRpcDeadline(client2, "z13", timeouts, pass);
+    const skippedQuery = await wrapped2.serverStatus.query({ workload: "run-a" }).then(
+      (): null => null,
+      (e: unknown): unknown => e,
+    );
+    expect(skippedQuery).toBeInstanceOf(NodeRpcSkippedError);
+    const skip = skippedQuery as NodeRpcSkippedError;
+    expect(skip.node).toBe("z13");
+    expect(skip.procedure).toBe("serverStatus.query");
+    expect(skip.earlier).toBe(first as NodeRpcTimeoutError);
+    expect(skip.message).toMatch(/skipped/);
+    expect(skip.message).toMatch(/timed out after 30 ms/);
+
+    const skippedMutate = await wrapped2.serverStop.mutate({ workload: "run-a" }).then(
+      (): null => null,
+      (e: unknown): unknown => e,
+    );
+    expect(skippedMutate).toBeInstanceOf(NodeRpcSkippedError);
+    expect((skippedMutate as NodeRpcSkippedError).procedure).toBe("serverStop.mutate");
+    expect(calls).toBe(0);
+  });
+
+  test("a timeout on one node does not skip another node", async () => {
+    const pass: NodeRpcPassState = { timedOut: new Map() };
+    const silent = {
+      serverStatus: {
+        query: (_input: { workload: string }): Promise<never> =>
+          new Promise<never>(() => undefined),
+      },
+    };
+    const wrappedSilent = withNodeRpcDeadline(silent, "z13", timeouts, pass);
+    await wrappedSilent.serverStatus.query({ workload: "run-a" }).catch((): undefined => undefined);
+    expect(pass.timedOut.has("z13")).toBe(true);
+
+    let calls = 0;
+    const status = { state: "down" };
+    const client = {
+      serverStatus: {
+        query: (_input: { workload: string }): Promise<{ state: string }> => {
+          calls++;
+          return Promise.resolve(status);
+        },
+      },
+    };
+    const wrapped = withNodeRpcDeadline(client, "mac-mini", timeouts, pass);
+    expect(await wrapped.serverStatus.query({ workload: "run-a" })).toEqual(status);
+    expect(calls).toBe(1);
+  });
+
+  test("an underlying rejection does not mark the node", async () => {
+    const pass: NodeRpcPassState = { timedOut: new Map() };
+    let calls = 0;
+    const client = {
+      serverStatus: {
+        query: (_input: { workload: string }): Promise<never> => {
+          calls++;
+          return Promise.reject(new Error("boom"));
+        },
+      },
+    };
+    const wrapped = withNodeRpcDeadline(client, "z13", timeouts, pass);
+    await wrapped.serverStatus.query({ workload: "run-a" }).catch((): undefined => undefined);
+    expect(pass.timedOut.size).toBe(0);
+    await wrapped.serverStatus.query({ workload: "run-a" }).catch((): undefined => undefined);
+    expect(calls).toBe(2);
+  });
+
+  test("without a pass state a timeout does not skip later calls", async () => {
+    const silent = {
+      serverStatus: {
+        query: (_input: { workload: string }): Promise<never> =>
+          new Promise<never>(() => undefined),
+      },
+    };
+    const wrappedSilent = withNodeRpcDeadline(silent, "z13", timeouts);
+    await wrappedSilent.serverStatus.query({ workload: "run-a" }).catch((): undefined => undefined);
+
+    let calls = 0;
+    const status = { state: "down" };
+    const client = {
+      serverStatus: {
+        query: (_input: { workload: string }): Promise<{ state: string }> => {
+          calls++;
+          return Promise.resolve(status);
+        },
+      },
+    };
+    const wrapped = withNodeRpcDeadline(client, "z13", timeouts);
+    expect(await wrapped.serverStatus.query({ workload: "run-a" })).toEqual(status);
+    expect(calls).toBe(1);
   });
 });

@@ -1,1 +1,2 @@
+bun scripts/secret-scan.ts --staged
 bunx lint-staged
