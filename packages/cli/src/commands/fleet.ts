@@ -15,6 +15,7 @@ import {
 } from "@llamactl/fleet-supervisor";
 
 import { existsSync, readFileSync } from "../safe-fs.js";
+import { defaultVersionDeps, resolveVersionInfo } from "./version.js";
 
 const USAGE = `Usage: llamactl fleet <subcommand>
 
@@ -29,6 +30,7 @@ interface FleetDeps {
   readLocalSnapshot?: () => Promise<FleetSnapshotEntry | null>;
   readPeers?: () => PeerNode[];
   fetchPeerSnapshot?: (peer: PeerNode) => Promise<FleetSnapshotEntry | null>;
+  readCommit?: () => string | null;
 }
 
 interface SnapshotRow {
@@ -131,7 +133,10 @@ function resolveFleetDeps(deps: FleetDeps): Required<FleetDeps> {
       const fetcher = createPeerFetch(peer);
       return await fetcher();
     });
-  return { readLocalSnapshot, readPeers, fetchPeerSnapshot };
+  // #290: the commit the running code was loaded from; null (printed as unknown) without git.
+  const readCommit =
+    deps.readCommit ?? ((): string | null => resolveVersionInfo(defaultVersionDeps()).commit);
+  return { readLocalSnapshot, readPeers, fetchPeerSnapshot, readCommit };
 }
 
 async function runFleetSnapshot(rest: string[], fullDeps: Required<FleetDeps>): Promise<number> {
@@ -227,9 +232,21 @@ export function staleTransition(
   return { key, line: `${now.toISOString()} fleet aggregator: ${detail}\n` };
 }
 
+// #290: the start line names the running commit, so a crash loop can be tied to a deploy.
+// A null commit (no checkout, or git missing from PATH under launchd) prints commit=unknown.
+export function aggregatorStartLine(
+  now: Date,
+  commit: string | null,
+  dbPath: string,
+  peerCount: number,
+): string {
+  return `${now.toISOString()} fleet aggregator: serving db=${dbPath} peers=${String(peerCount)} commit=${commit ?? "unknown"}\n`;
+}
+
 async function runFleetAggregatorServe(
   rest: string[],
   readPeers: () => PeerNode[],
+  readCommit: () => string | null,
 ): Promise<number> {
   const once = rest.includes("--once");
   const dbPath = parseFlagValue(rest, "--db") ?? defaultAggregatorDbPath();
@@ -238,9 +255,7 @@ async function runFleetAggregatorServe(
     process.stderr.write(line);
   };
   // #290: one timestamped line per start, so a crash loop shows up as repeated start times.
-  log(
-    `${new Date().toISOString()} fleet aggregator: serving db=${dbPath} peers=${String(peers.length)}\n`,
-  );
+  log(aggregatorStartLine(new Date(), readCommit(), dbPath, peers.length));
   const db = openAggregatorDb(dbPath);
   const aggregator = new FleetAggregator({
     peers,
@@ -307,7 +322,7 @@ export async function runFleet(args: string[], deps: FleetDeps = {}): Promise<nu
   }
 
   if (sub === "aggregator" && rest[0] === "serve") {
-    return await runFleetAggregatorServe(rest, fullDeps.readPeers);
+    return await runFleetAggregatorServe(rest, fullDeps.readPeers, fullDeps.readCommit);
   }
 
   console.error(`Unknown fleet subcommand: ${sub}`);

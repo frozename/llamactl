@@ -51,7 +51,7 @@ export function formatVersion(info: VersionInfo): string {
   return `llamactl ${info.version}`;
 }
 
-function defaultVersionDeps(): VersionDeps {
+export function defaultVersionDeps(): VersionDeps {
   return {
     version: nodeFacts.LLAMACTL_VERSION,
     moduleDir: dirname(fileURLToPath(import.meta.url)),
