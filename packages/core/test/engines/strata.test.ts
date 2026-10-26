@@ -49,6 +49,46 @@ function baseSpec(extra: Partial<ModelHostSpecForEngine> = {}): ModelHostSpecFor
   };
 }
 
+// #220: /v1/models always lists the model; /ready answers 503 until setServeReady(true).
+function readinessServer(modelId: string): {
+  endpoint: { host: string; port: number };
+  readyHits: () => number;
+  setServeReady: (value: boolean) => void;
+  stop: () => Promise<void>;
+} {
+  let serveReady = false;
+  let hits = 0;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/v1/models") {
+        return Response.json({ object: "list", data: [{ id: modelId }] });
+      }
+      if (path === "/ready") {
+        hits += 1;
+        return serveReady
+          ? Response.json({ status: "ready", model: modelId })
+          : new Response("loading", { status: 503 });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const { port } = server;
+  if (port === undefined) throw new Error("probe server did not bind a port");
+  return {
+    endpoint: { host: "127.0.0.1", port },
+    readyHits: (): number => hits,
+    setServeReady: (value): void => {
+      serveReady = value;
+    },
+    stop: async (): Promise<void> => {
+      await server.stop();
+    },
+  };
+}
+
 describe("strata validateSpec", () => {
   test("accepts a well-formed spec", () => {
     expect(strataEngine.validateSpec(baseSpec())).toEqual({ ok: true });
@@ -418,6 +458,36 @@ describe("strata teardown", () => {
     const h = teardownHarness({ childCommands: ["/bin/engine --server-foo"], alive: () => true });
     await h.engine.teardown(999);
     expect(h.killCalls).toEqual([]);
+  });
+});
+
+describe("strata probeReady", () => {
+  test("probeReady waits for the readiness probe even when /v1/models already lists a model", async () => {
+    const probe = readinessServer("qwen-32b.gguf");
+    const readiness = { path: "/ready", expectStatus: 200, expectJson: { status: "ready" } };
+    try {
+      const notReady = await strataEngine.probeReady(probe.endpoint, 400, readiness);
+      expect(notReady.ready).toBe(false);
+      probe.setServeReady(true);
+      const ready = await strataEngine.probeReady(probe.endpoint, 2000, readiness);
+      expect(ready.ready).toBe(true);
+      expect(ready.modelIds).toContain("qwen-32b.gguf");
+      expect(probe.readyHits()).toBeGreaterThan(0);
+    } finally {
+      await probe.stop();
+    }
+  });
+
+  test("probeReady without readiness keeps the /v1/models-only behaviour", async () => {
+    const probe = readinessServer("qwen-32b.gguf");
+    try {
+      const result = await strataEngine.probeReady(probe.endpoint, 2000);
+      expect(result.ready).toBe(true);
+      expect(result.modelIds).toContain("qwen-32b.gguf");
+      expect(probe.readyHits()).toBe(0);
+    } finally {
+      await probe.stop();
+    }
   });
 });
 
