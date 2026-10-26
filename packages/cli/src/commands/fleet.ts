@@ -1,5 +1,8 @@
+import type { Database } from "bun:sqlite";
+
 import { listPeers, type PeerNode } from "@llamactl/core/config/peers";
 import {
+  type AggregatedSnapshot,
   createPeerFetch,
   DEFAULT_PRESSURE_THRESHOLDS,
   defaultAggregatorDbPath,
@@ -163,6 +166,42 @@ function runFleetJournalTail(rest: string[]): number {
   return 0;
 }
 
+export interface PersistSnapshotsOptions {
+  write?: (db: Database, node: string, snapshot: FleetSnapshotEntry) => void;
+  log?: (line: string) => void;
+  now?: () => Date;
+}
+
+// #290: write each aggregated snapshot on its own, so one failed row (for example
+// SQLITE_BUSY while another process reads cluster.db) does not drop the rest of the cycle.
+export function persistSnapshots(
+  db: Database,
+  rows: readonly AggregatedSnapshot[],
+  opts: PersistSnapshotsOptions = {},
+): number {
+  const write = opts.write ?? writeSnapshot;
+  const log =
+    opts.log ??
+    ((line: string): void => {
+      process.stderr.write(line);
+    });
+  const now = opts.now ?? ((): Date => new Date());
+  let failed = 0;
+  for (const row of rows) {
+    if (row.snapshot === null) continue;
+    try {
+      write(db, row.nodeId, row.snapshot);
+    } catch (err) {
+      failed += 1;
+      const message = err instanceof Error ? err.message : String(err);
+      log(
+        `${now().toISOString()} fleet aggregator: snapshot write failed for node ${row.nodeId}: ${message}\n`,
+      );
+    }
+  }
+  return failed;
+}
+
 async function runFleetAggregatorServe(
   rest: string[],
   readPeers: () => PeerNode[],
@@ -180,10 +219,7 @@ async function runFleetAggregatorServe(
   });
 
   const persist = (): void => {
-    for (const row of aggregator.getAll()) {
-      if (row.snapshot === null) continue;
-      writeSnapshot(db, row.nodeId, row.snapshot);
-    }
+    persistSnapshots(db, aggregator.getAll());
   };
 
   if (once) {
