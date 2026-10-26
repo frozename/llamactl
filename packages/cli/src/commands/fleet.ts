@@ -202,6 +202,31 @@ export function persistSnapshots(
   return failed;
 }
 
+export interface StaleTransition {
+  key: string;
+  line: string | null;
+}
+
+// #290: report the set of stale peers only when it changes, so the stderr log gets one
+// line per change instead of one per 30 s cycle. Errors are logged as the aggregator stored them.
+export function staleTransition(
+  prevKey: string | null,
+  rows: readonly AggregatedSnapshot[],
+  now: Date,
+): StaleTransition {
+  const stale = rows
+    .filter((row) => row.stale)
+    .map((row) => ({ nodeId: row.nodeId, reason: row.error ?? "stale" }))
+    .sort((a, b) => a.nodeId.localeCompare(b.nodeId));
+  const key = JSON.stringify(stale.map((entry) => [entry.nodeId, entry.reason]));
+  if (key === prevKey) return { key, line: null };
+  const detail =
+    stale.length === 0
+      ? `all ${String(rows.length)} peers fresh`
+      : `stale peers: ${stale.map((entry) => `${entry.nodeId} (${entry.reason})`).join(", ")}`;
+  return { key, line: `${now.toISOString()} fleet aggregator: ${detail}\n` };
+}
+
 async function runFleetAggregatorServe(
   rest: string[],
   readPeers: () => PeerNode[],
@@ -209,6 +234,13 @@ async function runFleetAggregatorServe(
   const once = rest.includes("--once");
   const dbPath = parseFlagValue(rest, "--db") ?? defaultAggregatorDbPath();
   const peers = readPeers();
+  const log = (line: string): void => {
+    process.stderr.write(line);
+  };
+  // #290: one timestamped line per start, so a crash loop shows up as repeated start times.
+  log(
+    `${new Date().toISOString()} fleet aggregator: serving db=${dbPath} peers=${String(peers.length)}\n`,
+  );
   const db = openAggregatorDb(dbPath);
   const aggregator = new FleetAggregator({
     peers,
@@ -218,8 +250,13 @@ async function runFleetAggregatorServe(
     },
   });
 
+  let staleKey: string | null = null;
   const persist = (): void => {
-    persistSnapshots(db, aggregator.getAll());
+    const rows = aggregator.getAll();
+    persistSnapshots(db, rows);
+    const transition = staleTransition(staleKey, rows, new Date());
+    staleKey = transition.key;
+    if (transition.line !== null) log(transition.line);
   };
 
   if (once) {
