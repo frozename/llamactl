@@ -43,7 +43,7 @@ Subcommands:
       as agent.yaml's tokenHash, keeping the TLS cert/key. Writes the
       previous agent.yaml to agent.yaml.bak first. Restart the agent
       after setting it so it loads the new tokenHash.
-   rotate-cert [--dir=<path>] [--host=<host>] [--san=<host,...>] [--token-file=<path>] [--json]
+   rotate-cert [--dir=<path>] [--host=<host>] [--san=<host,...>] [--no-loopback-san] [--token-file=<path>] [--json]
        Rotate the TLS cert/key without touching the bearer token. Reads
        agent.yaml, generates a fresh cert with the requested SANs (e.g.
        to add a LAN IP) and updates only the pinned fingerprint. Pass
@@ -180,7 +180,10 @@ Restart the agent afterwards so it loads the new cert.
 Flags:
 ${DIR_FLAG_HELP}
   --host=<host>    Cert CN and host in the emitted bootstrap URL (default: 127.0.0.1)
-  --san=<host,...> Certificate SANs; repeatable (default: the --host and bindHost)
+  --san=<host,...> Certificate SANs; repeatable (default: the --host and bindHost).
+                   127.0.0.1, ::1 and localhost are also added when
+                   agent.yaml's bindHost is a wildcard or loopback address.
+  --no-loopback-san  Do not add the loopback SANs on a wildcard or loopback bind
   --token-file=<path>
                    File holding the current plaintext token. Verified
                    against tokenHash before any write; when it matches,
@@ -839,6 +842,7 @@ interface RotateCertFlags {
   sans: string[];
   tokenFile?: string;
   json: boolean;
+  loopbackSan: boolean; // add loopback SANs when agent.yaml's bindHost covers them
 }
 
 function parseRotateCertFlags(args: string[]): RotateCertFlags | { error: string } {
@@ -847,10 +851,15 @@ function parseRotateCertFlags(args: string[]): RotateCertFlags | { error: string
     host: "127.0.0.1",
     sans: [],
     json: false,
+    loopbackSan: true,
   };
   for (const arg of args) {
     if (arg === "--json") {
       flags.json = true;
+      continue;
+    }
+    if (arg === "--no-loopback-san") {
+      flags.loopbackSan = false;
       continue;
     }
     const [k, v] = splitFlag(arg);
@@ -942,7 +951,13 @@ export async function runRotateCert(args: string[]): Promise<number> {
   const token = readRotateCertToken(f.tokenFile, existing.tokenHash, configPath);
   if (token === 1) return 1;
 
-  const sans = f.sans.length > 0 ? dedupe(f.sans) : dedupe([f.host, existing.bindHost]);
+  const requestedSans = f.sans.length > 0 ? dedupe(f.sans) : dedupe([f.host, existing.bindHost]);
+  // #217: a wildcard or loopback bind still serves https://127.0.0.1, so keep
+  // the loopback SANs that agent init adds unless --no-loopback-san is passed.
+  const sans =
+    f.loopbackSan && bindCoversLoopback(existing.bindHost)
+      ? dedupe([...requestedSans, ...LOOPBACK_SANS])
+      : requestedSans;
 
   // generateSelfSignedCert writes agent.key/agent.crt directly into its
   // dir, so stage first and rename into place only after success.

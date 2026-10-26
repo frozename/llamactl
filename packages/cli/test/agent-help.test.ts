@@ -59,7 +59,10 @@ describe("agent subcommand --help", () => {
     ],
     ["rotate-token", ["--dir=", "--host=", "--json"]],
     ["set-token", ["--dir=", "--hash=", "--token-file="]],
-    ["rotate-cert", ["--dir=", "--host=", "--san=", "--token-file=", "--json"]],
+    [
+      "rotate-cert",
+      ["--dir=", "--host=", "--san=", "--no-loopback-san", "--token-file=", "--json"],
+    ],
     ["serve", ["--dir=", "--bind=", "--port=", "--no-auth", "--dial-central="]],
     ["status", ["--dir=", "--host=", "--json"]],
     ["install-systemd", ["--scope=", "--bind=", "--port=", "--env-file=", "--dry-run"]],
