@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { defaultCompositesDir } from "../src/composite/store.js";
 import { defaultWorkloadsDir } from "../src/workload/store.js";
 import { SANDBOX_PREFIX, sandboxOperatorStorage } from "./storage-sandbox.js";
 
@@ -25,22 +26,34 @@ describe("storage sandbox preload", () => {
     expect(defaultWorkloadsDir().startsWith(prefix)).toBe(true);
     expect(defaultConfigPath().startsWith(prefix)).toBe(true);
   });
+
+  test("the composites dir resolves inside the sandbox", () => {
+    const root = process.env["DEV_STORAGE"];
+    expect(root).toBeDefined();
+    expect(process.env["LLAMACTL_COMPOSITES_DIR"]).toBe(join(root!, "composites"));
+    expect(defaultCompositesDir()).toBe(join(root!, "composites"));
+  });
 });
 
 describe("sandboxOperatorStorage", () => {
-  test("overrides DEV_STORAGE and strips the state-dir overrides", () => {
+  test("reroots DEV_STORAGE and the composites dir and strips the state-dir overrides", () => {
     const env: NodeJS.ProcessEnv = {
       DEV_STORAGE: "/live",
+      LLAMACTL_COMPOSITES_DIR: "/live/composites",
       LLAMACTL_CONFIG: "/live/config",
+      LLAMACTL_HOME: "/live/repo",
       LLAMACTL_WORKLOADS_DIR: "/live/wl",
       PATH: "/bin",
     };
     sandboxOperatorStorage(env, "/sandbox");
     expect(env["DEV_STORAGE"]).toBe("/sandbox");
+    expect(env["LLAMACTL_COMPOSITES_DIR"]).toBe(join("/sandbox", "composites"));
+    expect(env["LLAMACTL_HOME"]).toBe("/live/repo");
     expect("LLAMACTL_CONFIG" in env).toBe(false);
     expect("LLAMACTL_WORKLOADS_DIR" in env).toBe(false);
     expect(env["PATH"]).toBe("/bin");
     expect(defaultWorkloadsDir(env)).toBe(join("/sandbox", "workloads"));
     expect(defaultConfigPath(env)).toBe(join("/sandbox", "config"));
+    expect(defaultCompositesDir(env)).toBe(join("/sandbox", "composites"));
   });
 });
