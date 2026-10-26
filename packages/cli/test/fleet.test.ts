@@ -1,8 +1,17 @@
+import {
+  type AggregatedSnapshot,
+  getLatestPerNode,
+  openAggregatorDb,
+  writeSnapshot,
+} from "@llamactl/fleet-supervisor";
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { FleetSnapshotEntry } from "../../fleet-supervisor/src/types.js";
 
-import { runFleet } from "../src/commands/fleet.js";
+import { persistSnapshots, type PersistSnapshotsOptions, runFleet } from "../src/commands/fleet.js";
+import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 const snap = (
   node: string,
@@ -134,5 +143,84 @@ describe("fleet command", () => {
     );
     expect(result).toBe(1);
     expect(out).toContain("no local fleet-snapshot entry found");
+  });
+});
+
+const NOW = (): Date => new Date("2026-10-26T10:00:00.000Z");
+
+const aggregated = (nodeId: string): AggregatedSnapshot => ({
+  nodeId,
+  fetchedAt: 0,
+  snapshot: snap(nodeId, 2048, 100),
+  stale: false,
+});
+
+describe("persistSnapshots", () => {
+  test("keeps writing after a row fails and logs one timestamped line for it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fleet-persist-test-"));
+    const db = openAggregatorDb(join(dir, "cluster.db"));
+    try {
+      const calls: string[] = [];
+      const lines: string[] = [];
+      const log = (line: string): void => {
+        lines.push(line);
+      };
+      const write: NonNullable<PersistSnapshotsOptions["write"]> = (d, node, snapshot) => {
+        calls.push(node);
+        if (node === "node-2") throw new Error("database is locked");
+        writeSnapshot(d, node, snapshot);
+      };
+      const rows: AggregatedSnapshot[] = [
+        aggregated("node-1"),
+        aggregated("node-2"),
+        aggregated("node-3"),
+        { nodeId: "node-4", fetchedAt: null, snapshot: null, stale: true },
+      ];
+      let failed = -1;
+      expect(() => {
+        failed = persistSnapshots(db, rows, { write, log, now: NOW });
+      }).not.toThrow();
+      expect(failed).toBe(1);
+      expect(calls).toEqual(["node-1", "node-2", "node-3"]);
+      expect(getLatestPerNode(db).map((row) => row.node)).toEqual(["node-1", "node-3"]);
+      expect(lines).toEqual([
+        "2026-10-26T10:00:00.000Z fleet aggregator: snapshot write failed for node node-2: database is locked\n",
+      ]);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a later cycle with the default writer persists every row after a failing cycle", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fleet-persist-test-"));
+    const db = openAggregatorDb(join(dir, "cluster.db"));
+    try {
+      const lines: string[] = [];
+      const log = (line: string): void => {
+        lines.push(line);
+      };
+      const rows = [aggregated("node-1"), aggregated("node-2"), aggregated("node-3")];
+      let firstFailed = -1;
+      expect(() => {
+        firstFailed = persistSnapshots(db, rows, {
+          write: () => {
+            throw new Error("database is locked");
+          },
+          log,
+          now: NOW,
+        });
+      }).not.toThrow();
+      expect(firstFailed).toBe(3);
+      expect(lines).toHaveLength(3);
+      expect(getLatestPerNode(db)).toHaveLength(0);
+
+      expect(persistSnapshots(db, rows, { log, now: NOW })).toBe(0);
+      expect(lines).toHaveLength(3);
+      expect(getLatestPerNode(db).map((row) => row.node)).toEqual(["node-1", "node-2", "node-3"]);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
