@@ -31,6 +31,46 @@ const baseSpec: ModelHostSpecForEngine = {
   timeoutSeconds: 60,
 };
 
+// #220: /v1/models always lists the model; /ready answers 503 until setServeReady(true).
+function readinessServer(modelId: string): {
+  endpoint: { host: string; port: number };
+  readyHits: () => number;
+  setServeReady: (value: boolean) => void;
+  stop: () => Promise<void>;
+} {
+  let serveReady = false;
+  let hits = 0;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(req) {
+      const path = new URL(req.url).pathname;
+      if (path === "/v1/models") {
+        return Response.json({ object: "list", data: [{ id: modelId }] });
+      }
+      if (path === "/ready") {
+        hits += 1;
+        return serveReady
+          ? Response.json({ status: "ready", model: modelId })
+          : new Response("loading", { status: 503 });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const { port } = server;
+  if (port === undefined) throw new Error("probe server did not bind a port");
+  return {
+    endpoint: { host: "127.0.0.1", port },
+    readyHits: (): number => hits,
+    setServeReady: (value): void => {
+      serveReady = value;
+    },
+    stop: async (): Promise<void> => {
+      await server.stop();
+    },
+  };
+}
+
 describe("omlx engine adapter", () => {
   test("validateSpec passes when binary exists", () => {
     const result = ENGINES.omlx.validateSpec(baseSpec);
@@ -255,6 +295,34 @@ describe("omlx engine adapter", () => {
     globalThis.fetch = originalFetch;
     expect(result.ready).toBe(false);
     expect(elapsed).toBeLessThan(1200);
+  });
+
+  test("probeReady waits for the readiness probe even when /v1/models already lists a model", async () => {
+    const probe = readinessServer("Qwen3-8B-MLX-4bit");
+    const readiness = { path: "/ready", expectStatus: 200, expectJson: { status: "ready" } };
+    try {
+      const notReady = await ENGINES.omlx.probeReady(probe.endpoint, 400, readiness);
+      expect(notReady.ready).toBe(false);
+      probe.setServeReady(true);
+      const ready = await ENGINES.omlx.probeReady(probe.endpoint, 2000, readiness);
+      expect(ready.ready).toBe(true);
+      expect(ready.modelIds).toContain("Qwen3-8B-MLX-4bit");
+      expect(probe.readyHits()).toBeGreaterThan(0);
+    } finally {
+      await probe.stop();
+    }
+  });
+
+  test("probeReady without readiness keeps the /v1/models-only behaviour", async () => {
+    const probe = readinessServer("Qwen3-8B-MLX-4bit");
+    try {
+      const result = await ENGINES.omlx.probeReady(probe.endpoint, 2000);
+      expect(result.ready).toBe(true);
+      expect(result.modelIds).toContain("Qwen3-8B-MLX-4bit");
+      expect(probe.readyHits()).toBe(0);
+    } finally {
+      await probe.stop();
+    }
   });
 
   test("teardown returns quickly when the process exits on its own", async () => {
