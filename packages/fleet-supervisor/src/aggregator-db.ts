@@ -79,6 +79,8 @@ export function defaultAggregatorDbPath(): string {
 export function openAggregatorDb(path: string = defaultAggregatorDbPath()): Database {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
+  // #290: wait up to 15 s for a concurrent reader instead of failing with SQLITE_BUSY.
+  db.run("PRAGMA busy_timeout = 15000");
   ensureSchema(db);
   return db;
 }

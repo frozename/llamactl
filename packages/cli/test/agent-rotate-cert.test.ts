@@ -4,6 +4,7 @@ import { X509Certificate } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { readCertSans } from "../src/commands/agent-status.js";
 import { runAgent } from "../src/commands/agent.js";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 import { parseJsonRecord } from "./helpers.js";
@@ -47,7 +48,7 @@ function certSans(certPath: string): string[] {
     .filter(Boolean);
 }
 
-async function seedAgent(): Promise<{ fingerprint: string; blob: string }> {
+async function seedAgent(extraArgs: string[] = []): Promise<{ fingerprint: string; blob: string }> {
   captureStdout();
   try {
     const code = await runAgent([
@@ -56,6 +57,7 @@ async function seedAgent(): Promise<{ fingerprint: string; blob: string }> {
       "--host=127.0.0.1",
       "--port=7843",
       "--json",
+      ...extraArgs,
     ]);
     expect(code).toBe(0);
     const record = lastJsonRecord();
@@ -125,7 +127,7 @@ describe("agent rotate-cert", () => {
       expect(code).toBe(0);
       const record = lastJsonRecord();
       expect(Array.isArray(record["sans"])).toBe(true);
-      expect((record["sans"] as unknown[]).length).toBe(2);
+      expect(record["sans"]).toEqual(["a.local", "b.local", "127.0.0.1", "::1", "localhost"]);
     } finally {
       restore();
     }
@@ -209,5 +211,74 @@ describe("agent rotate-cert", () => {
     } finally {
       restore();
     }
+  });
+});
+
+async function rotateJson(args: string[]): Promise<Record<string, unknown>> {
+  captureStdout();
+  try {
+    const code = await runAgent(["rotate-cert", `--dir=${dir}`, ...args, "--json"]);
+    expect(code).toBe(0);
+    return lastJsonRecord();
+  } finally {
+    restore();
+  }
+}
+
+describe("agent rotate-cert loopback SANs (#217)", () => {
+  test("wildcard bind: explicit --san keeps the loopback SANs", async () => {
+    await seedAgent(["--bind=0.0.0.0"]);
+    const record = await rotateJson(["--san=192.168.1.5"]);
+    expect(record["sans"]).toEqual(["192.168.1.5", "127.0.0.1", "::1", "localhost"]);
+    const certPath = join(dir, "agent.crt");
+    expect(readCertSans(certPath).sort()).toEqual(
+      ["192.168.1.5", "127.0.0.1", "::1", "localhost"].sort(),
+    );
+  });
+
+  test("--no-loopback-san leaves only the requested SANs", async () => {
+    await seedAgent(["--bind=0.0.0.0"]);
+    const record = await rotateJson(["--san=192.168.1.5", "--no-loopback-san"]);
+    expect(record["sans"]).toEqual(["192.168.1.5"]);
+    const certPath = join(dir, "agent.crt");
+    expect(readCertSans(certPath)).toEqual(["192.168.1.5"]);
+  });
+
+  test("loopback bind: explicit --san keeps the loopback SANs", async () => {
+    await seedAgent();
+    const record = await rotateJson(["--san=192.168.1.5"]);
+    expect(record["sans"]).toEqual(["192.168.1.5", "127.0.0.1", "::1", "localhost"]);
+    const certPath = join(dir, "agent.crt");
+    expect(readCertSans(certPath).sort()).toEqual(
+      ["192.168.1.5", "127.0.0.1", "::1", "localhost"].sort(),
+    );
+  });
+
+  test("IPv6 wildcard bind keeps the loopback SANs", async () => {
+    await seedAgent(["--bind=::"]);
+    const record = await rotateJson(["--san=192.168.1.5"]);
+    expect(record["sans"]).toEqual(["192.168.1.5", "127.0.0.1", "::1", "localhost"]);
+    const certPath = join(dir, "agent.crt");
+    expect(readCertSans(certPath).sort()).toEqual(
+      ["192.168.1.5", "127.0.0.1", "::1", "localhost"].sort(),
+    );
+  });
+
+  test("wildcard bind: default SANs gain the loopback SANs", async () => {
+    await seedAgent(["--bind=0.0.0.0"]);
+    const record = await rotateJson([]);
+    expect(record["sans"]).toEqual(["127.0.0.1", "0.0.0.0", "::1", "localhost"]);
+    const certPath = join(dir, "agent.crt");
+    expect(readCertSans(certPath).sort()).toEqual(
+      ["127.0.0.1", "0.0.0.0", "::1", "localhost"].sort(),
+    );
+  });
+
+  test("non-loopback bind adds no loopback SANs", async () => {
+    await seedAgent(["--bind=192.168.1.5"]);
+    const record = await rotateJson(["--san=192.168.1.5"]);
+    expect(record["sans"]).toEqual(["192.168.1.5"]);
+    const certPath = join(dir, "agent.crt");
+    expect(readCertSans(certPath)).toEqual(["192.168.1.5"]);
   });
 });

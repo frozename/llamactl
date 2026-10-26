@@ -189,8 +189,8 @@ export const omlxEngine: EngineAdapter = {
     return { binary: spec.binary, args };
   },
 
-  async probeReady(endpoint, timeoutMs) {
-    return await pollUntilModelIds(endpoint, timeoutMs);
+  async probeReady(endpoint, timeoutMs, readiness) {
+    return await pollUntilModelIds(endpoint, timeoutMs, readiness);
   },
 
   async teardown(pid, identity) {
