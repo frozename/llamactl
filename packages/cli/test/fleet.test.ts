@@ -10,7 +10,12 @@ import { join } from "node:path";
 
 import type { FleetSnapshotEntry } from "../../fleet-supervisor/src/types.js";
 
-import { persistSnapshots, type PersistSnapshotsOptions, runFleet } from "../src/commands/fleet.js";
+import {
+  persistSnapshots,
+  type PersistSnapshotsOptions,
+  runFleet,
+  staleTransition,
+} from "../src/commands/fleet.js";
 import { mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 const snap = (
@@ -221,6 +226,106 @@ describe("persistSnapshots", () => {
     } finally {
       db.close();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+const staleRow = (nodeId: string, error?: string): AggregatedSnapshot => ({
+  nodeId,
+  fetchedAt: null,
+  snapshot: null,
+  stale: true,
+  ...(error !== undefined ? { error } : {}),
+});
+
+describe("staleTransition", () => {
+  test("reports the stale set once with each error, then stays quiet while it is unchanged", () => {
+    const rows = [aggregated("node-1"), staleRow("node-2", "ECONNREFUSED")];
+    const first = staleTransition(null, rows, NOW());
+    expect(first.line).toBe(
+      "2026-10-26T10:00:00.000Z fleet aggregator: stale peers: node-2 (ECONNREFUSED)\n",
+    );
+    const second = staleTransition(first.key, rows, NOW());
+    expect(second.line).toBeNull();
+    expect(second.key).toBe(first.key);
+  });
+
+  test("reports recovery once as all peers fresh", () => {
+    const stale = staleTransition(
+      null,
+      [aggregated("node-1"), staleRow("node-2", "ECONNREFUSED")],
+      NOW(),
+    );
+    const fresh = [aggregated("node-1"), aggregated("node-2")];
+    const recovered = staleTransition(stale.key, fresh, NOW());
+    expect(recovered.line).toBe("2026-10-26T10:00:00.000Z fleet aggregator: all 2 peers fresh\n");
+    expect(staleTransition(recovered.key, fresh, NOW()).line).toBeNull();
+  });
+
+  test("the first cycle writes one line even when every peer is fresh", () => {
+    expect(staleTransition(null, [aggregated("node-1"), aggregated("node-2")], NOW()).line).toBe(
+      "2026-10-26T10:00:00.000Z fleet aggregator: all 2 peers fresh\n",
+    );
+  });
+
+  test("a changed error on the same stale node is a new line", () => {
+    const first = staleTransition(null, [staleRow("node-2", "ECONNREFUSED")], NOW());
+    const changed = staleTransition(
+      first.key,
+      [staleRow("node-2", "peer node-2 returned 503")],
+      NOW(),
+    );
+    expect(changed.line).toBe(
+      "2026-10-26T10:00:00.000Z fleet aggregator: stale peers: node-2 (peer node-2 returned 503)\n",
+    );
+  });
+
+  test("sorts stale peers by node id and labels a row without an error as stale", () => {
+    const rows = [staleRow("node-b"), staleRow("node-a", "fetch failed"), aggregated("node-c")];
+    expect(staleTransition(null, rows, NOW()).line).toBe(
+      "2026-10-26T10:00:00.000Z fleet aggregator: stale peers: node-a (fetch failed), node-b (stale)\n",
+    );
+  });
+
+  test("the same stale set in a different row order writes nothing", () => {
+    const first = staleTransition(null, [staleRow("node-a", "x"), staleRow("node-b", "y")], NOW());
+    const reordered = staleTransition(
+      first.key,
+      [staleRow("node-b", "y"), staleRow("node-a", "x")],
+      NOW(),
+    );
+    expect(reordered.line).toBeNull();
+  });
+});
+
+describe("fleet aggregator serve", () => {
+  test("--once writes a timestamped start line and the peer summary to stderr", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fleet-serve-test-"));
+    const dbPath = join(dir, "cluster.db");
+    let out = "";
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): true => {
+      out += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    };
+    let result = -1;
+    try {
+      result = await runFleet(["aggregator", "serve", "--once", "--db", dbPath], {
+        readPeers: () => [],
+      });
+    } finally {
+      process.stderr.write = orig;
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(result).toBe(0);
+    const lines = out.split("\n").filter((line) => line.includes("fleet aggregator:"));
+    expect(lines.map((line) => line.slice(line.indexOf(" ") + 1))).toEqual([
+      `fleet aggregator: serving db=${dbPath} peers=0`,
+      "fleet aggregator: all 0 peers fresh",
+    ]);
+    for (const line of lines) {
+      const stamp = line.slice(0, line.indexOf(" "));
+      expect(new Date(stamp).toISOString()).toBe(stamp);
     }
   });
 });
