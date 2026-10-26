@@ -6,6 +6,7 @@ import type {
   EngineAdapter,
   EngineBootEnv,
   ModelHostHostedModel,
+  ModelHostReadiness,
   ModelHostSpecForEngine,
 } from "./types.js";
 
@@ -295,8 +296,9 @@ export function createStrataEngine(deps?: Partial<StrataEngineDeps>): EngineAdap
     probeReady: async (
       endpoint: { host: string; port: number },
       timeoutMs: number,
+      readiness?: ModelHostReadiness,
     ): Promise<{ ready: boolean; modelIds: string[] }> =>
-      await pollUntilModelIds(endpoint, timeoutMs),
+      await pollUntilModelIds(endpoint, timeoutMs, readiness),
     async teardown(pid: number, identity?: SignalIdentity): Promise<void> {
       const engines = engineChildren(pid);
       // gracefulShutdown declines to signal an unverifiable pid — when a
