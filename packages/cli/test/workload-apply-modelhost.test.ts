@@ -10,7 +10,14 @@ import {
   __setWorkloadTestSeams,
   runApply,
 } from "../src/commands/workload.js";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "../src/safe-fs.js";
 
 let tmp = "";
 const originalEnv = { ...process.env };
@@ -57,7 +64,13 @@ function withCapturedIo<T>(
     });
 }
 
-function writeManifest(options?: { node?: string; binary?: string }): string {
+function writeManifest(options?: {
+  node?: string;
+  binary?: string;
+  host?: string;
+  enabled?: boolean;
+  allowExternalBind?: boolean;
+}): string {
   const manifestPath = join(tmp, "mlx-host.yaml");
   writeFileSync(
     manifestPath,
@@ -67,7 +80,7 @@ function writeManifest(options?: { node?: string; binary?: string }): string {
       "metadata:",
       "  name: mlx-host",
       "spec:",
-      "  enabled: true",
+      `  enabled: ${String(options?.enabled ?? true)}`,
       `  node: ${options?.node ?? "local"}`,
       "  engine: omlx",
       `  binary: ${options?.binary ?? join(tmp, "omlx")}`,
@@ -76,12 +89,13 @@ function writeManifest(options?: { node?: string; binary?: string }): string {
       // budget (75% of the test machine's RAM), which is ~5 GiB on CI runners.
       "    expectedMemoryGiB: 1",
       "  endpoint:",
-      "    host: 127.0.0.1",
+      `    host: ${options?.host ?? "127.0.0.1"}`,
       "    port: 8094",
       "  hostedModels:",
       "    - rel: mlx-community/Qwen3-8B-MLX-4bit",
       "  extraArgs: []",
       "  timeoutSeconds: 60",
+      ...(options?.allowExternalBind === true ? ["  allowExternalBind: true"] : []),
       "",
     ].join("\n"),
     "utf8",
@@ -91,6 +105,10 @@ function writeManifest(options?: { node?: string; binary?: string }): string {
 
 function writeLock(pid: number): void {
   writeFileSync(join(process.env["LLAMACTL_WORKLOADS_DIR"]!, ".controller.lock"), String(pid));
+}
+
+function savedManifestPath(): string {
+  return join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "mlx-host.yaml");
 }
 
 function stubStartClient(): { startCalls: () => number } {
@@ -182,6 +200,7 @@ test("apply handoff validates the engine spec and fails without a client call", 
   expect(code).toBe(1);
   expect(stderr).toContain("binary not found");
   expect(clientCalls).toBe(0);
+  expect(existsSync(savedManifestPath())).toBe(false);
 });
 
 test("apply without a controller still starts in-process and warns about the cgroup", async () => {
@@ -230,4 +249,119 @@ test("apply for a remote node ignores the local controller lock", async () => {
   expect(code).toBe(0);
   expect(startCalls()).toBe(1);
   expect(stderr).not.toContain("no controller");
+});
+
+test("apply refuses an exposed ModelHost bind without persisting it", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  const manifestPath = writeManifest({ host: "0.0.0.0" });
+  const { startCalls } = stubStartClient();
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("refusing to bind ModelHost mlx-host to 0.0.0.0");
+  expect(stderr).not.toContain("no controller is running");
+  expect(startCalls()).toBe(0);
+  expect(existsSync(savedManifestPath())).toBe(false);
+});
+
+test("a refused apply leaves the previously saved manifest unchanged", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeLock(process.pid);
+  let clientCalls = 0;
+  __setWorkloadTestSeams({
+    getNodeClientByName: () => {
+      clientCalls++;
+      throw new Error("no node client may be used");
+    },
+  });
+
+  const firstPath = writeManifest();
+  const first = await withCapturedIo(() => runApply(["-f", firstPath]));
+  expect(first.result).toBe(0);
+
+  const before = readFileSync(savedManifestPath(), "utf8");
+
+  const secondPath = writeManifest({ host: "0.0.0.0" });
+  const second = await withCapturedIo(() => runApply(["-f", secondPath]));
+
+  expect(second.result).toBe(1);
+  expect(second.stderr).toContain("refusing to bind ModelHost");
+  expect(readFileSync(savedManifestPath(), "utf8")).toBe(before);
+  expect(clientCalls).toBe(0);
+});
+
+test("apply refuses an exposed bind instead of handing it to the controller", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeLock(process.pid);
+  let clientCalls = 0;
+  __setWorkloadTestSeams({
+    getNodeClientByName: () => {
+      clientCalls++;
+      throw new Error("no node client may be used");
+    },
+  });
+  const manifestPath = writeManifest({ host: "0.0.0.0" });
+
+  const {
+    result: code,
+    stdout,
+    stderr,
+  } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("refusing to bind ModelHost mlx-host to 0.0.0.0");
+  expect(stdout).not.toContain("handed off");
+  expect(clientCalls).toBe(0);
+  expect(existsSync(savedManifestPath())).toBe(false);
+});
+
+test("apply hands off an exposed bind that sets allowExternalBind", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeLock(process.pid);
+  let clientCalls = 0;
+  __setWorkloadTestSeams({
+    getNodeClientByName: () => {
+      clientCalls++;
+      throw new Error("no node client may be used");
+    },
+  });
+  const manifestPath = writeManifest({ host: "0.0.0.0", allowExternalBind: true });
+
+  const {
+    result: code,
+    stdout,
+    stderr,
+  } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(0);
+  expect(stdout).toContain(`controller pid=${String(process.pid)}`);
+  expect(stderr).not.toContain("refusing");
+  const saved = readFileSync(savedManifestPath(), "utf8");
+  expect(saved).toContain("allowExternalBind: true");
+  expect(saved).toContain("host: 0.0.0.0");
+});
+
+test("apply still disables an exposed ModelHost without allowExternalBind", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  const manifestPath = writeManifest({ host: "0.0.0.0", enabled: false });
+  let stopCalls = 0;
+  __setWorkloadTestSeams({
+    getNodeClientByName: () =>
+      ({
+        modelHostStop: {
+          mutate: () => {
+            stopCalls++;
+            return Promise.resolve({ ok: true });
+          },
+        },
+      }) as unknown as NodeClient,
+  });
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(0);
+  expect(stopCalls).toBe(1);
+  expect(stderr).not.toContain("refusing");
+  expect(existsSync(savedManifestPath())).toBe(true);
 });

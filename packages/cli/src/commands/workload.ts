@@ -21,6 +21,7 @@ import {
 } from "@llamactl/remote";
 import {
   LOCAL_NODE_ID,
+  modelHostBindRefusal,
   modelHostExternalBindHost,
   type ModelHostManifest,
   ModelHostManifestSchema,
@@ -451,6 +452,8 @@ function handoffLocalModelHost(manifest: ModelHostManifest, json: boolean): numb
     process.stderr.write(`apply: ${validation.error}\n`);
     return 1;
   }
+  // #214: persist only a spec the engine accepts; the controller reconciles from this file.
+  saveModelHost(manifest);
   const name = manifest.metadata.name;
   if (json) {
     process.stdout.write(
@@ -479,10 +482,6 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
     return 1;
   }
 
-  // Persist the desired-state manifest BEFORE dispatching modelHostStart.
-  // The agent's startModelHost handler loads the manifest by name from
-  // the workloads dir, so the file must exist before the subscription
-  // begins. Validation happens inside saveModelHost via Zod.
   const parsedHost = ((): ModelHostManifest | null => {
     try {
       return ModelHostManifestSchema.parse(manifest);
@@ -492,10 +491,25 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
     }
   })();
   if (!parsedHost) return 1;
-  saveModelHost(parsedHost);
+
+  // #214: refuse an exposed bind before anything is persisted, so a refused
+  // manifest never replaces the last accepted desired state. A disabled host
+  // is not refused, so an exposed host can still be turned off (same order as
+  // applyManifest).
+  const bindRefusal = parsedHost.spec.enabled ? modelHostBindRefusal(parsedHost) : null;
+  if (bindRefusal !== null) {
+    process.stderr.write(`apply: ${bindRefusal}\n`);
+    return 1;
+  }
 
   const handedOff = handoffLocalModelHost(parsedHost, json);
   if (handedOff !== null) return handedOff;
+
+  // Persist the desired-state manifest BEFORE dispatching modelHostStart.
+  // The agent's startModelHost handler loads the manifest by name from
+  // the workloads dir, so the file must exist before the subscription
+  // begins. Validation happens inside saveModelHost via Zod.
+  saveModelHost(parsedHost);
 
   try {
     const outcome = await workloadApply.applyManifest({
