@@ -166,7 +166,7 @@ describe("mutateConfig — cross-process concurrency", () => {
 
   test("throws with a clear error when the lock is held by a live process beyond the retry window", async () => {
     // Spawn a child that grabs the lock and then sleeps well past the
-    // parent's retry deadline (50ms * 40 = 2s). The parent's
+    // parent's ~2s acquire deadline. The parent's
     // mutateConfig must throw rather than lose or clobber a write.
     const holderScript = `
       import { openSync, writeSync } from "node:fs";
@@ -197,11 +197,13 @@ describe("mutateConfig — cross-process concurrency", () => {
         mutateConfig(cfgPath, (cfg) =>
           upsertNode(cfg, "home", { name: "shouldnotpersist", endpoint: "https://x:8" }),
         ),
-      ).toThrow(/still held after/);
+      ).toThrow(/still held after \d+ms/);
       const elapsed = Date.now() - start;
-      // Bounded wait: ~2s (50ms * 40) minus scheduling slop.
+      // Bounded wait: the acquire loop stops at a 2s deadline plus at most one
+      // attempt, so 4s leaves a wide margin on slow runners. The deadline itself
+      // is pinned on a fake clock in kubeconfig-lock-deadline.test.ts.
       expect(elapsed).toBeGreaterThanOrEqual(1_500);
-      expect(elapsed).toBeLessThan(6_000);
+      expect(elapsed).toBeLessThan(4_000);
 
       // And the mutation must NOT have leaked into the config.
       const cfg = loadConfig(cfgPath);
