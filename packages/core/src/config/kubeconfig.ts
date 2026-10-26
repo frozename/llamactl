@@ -61,8 +61,8 @@ export function saveConfig(config: Config, path: string = defaultConfigPath()): 
  * race: two writers can each read the same baseline, one saves after
  * the other, and the loser's mutation silently disappears. This
  * wrapper holds a `${path}.lock` pidfile for the entire load / fn /
- * save window, so concurrent callers serialize (bounded 50ms x 40
- * retries wait; then a clear throw) instead of clobbering.
+ * save window, so concurrent callers serialize (a wait bounded by a
+ * ~2s deadline, then a clear throw) instead of clobbering.
  *
  * `fn` must be synchronous and pure Config->Config — any awaits
  * would extend the critical section unbounded. Callers that need to
@@ -116,6 +116,19 @@ export const lockProbe: {
 const LOCK_RETRY_INTERVAL_MS = 50;
 const LOCK_MAX_RETRIES = 40;
 const LOCK_LOSS_MAX_ATTEMPTS = 3;
+const LOCK_ACQUIRE_TIMEOUT_MS = 2_000; // acquireConfigLock gives up once this much time has passed
+
+/**
+ * Test seam for the acquire deadline: the clock and the sleep that
+ * acquireConfigLock uses. A test swaps in a fake clock to pin the
+ * deadline without real waits. Production code never sets these.
+ */
+export const lockTiming: { now: () => number; sleep: (ms: number) => void } = {
+  now: (): number => Date.now(),
+  sleep: (ms: number): void => {
+    sleepSync(ms);
+  },
+};
 
 /**
  * Ownership tokens this process has written into the lockfile. The
@@ -134,23 +147,30 @@ let lockTokenCounter = 0;
 function acquireConfigLock(configPath: string): ConfigLockHandle {
   const lockPath = `${configPath}.lock`;
   mkdirSync(dirname(lockPath), { recursive: true });
+  const start = lockTiming.now();
+  const deadline = start + LOCK_ACQUIRE_TIMEOUT_MS;
   let lastHolder = -1;
-  for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
+  let remaining = LOCK_ACQUIRE_TIMEOUT_MS;
+  while (remaining > 0) {
     const reaped = reapIfStale(lockPath);
     if (typeof reaped !== "number") return reaped;
     lastHolder = reaped;
     const acquired = tryOpenLock(lockPath);
     if (acquired) return acquired;
     // This synchronous backoff blocks this thread while waiting, by design.
-    // Config writes are infrequent and the critical section is short (sub-ms),
-    // so bounded contention wait is acceptable and keeps the lock discipline
-    // strict even if contention lasts up to ~2,000ms.
-    if (attempt < LOCK_MAX_RETRIES - 1) sleepSync(LOCK_RETRY_INTERVAL_MS);
+    // Config writes are infrequent and the critical section is short (sub-ms).
+    // The wait is bounded by a deadline, not an attempt count, so slow sleeps
+    // or slow syscalls cannot stretch it much past LOCK_ACQUIRE_TIMEOUT_MS:
+    // the last sleep is clipped to the time left.
+    remaining = deadline - lockTiming.now();
+    if (remaining > 0) {
+      lockTiming.sleep(Math.min(LOCK_RETRY_INTERVAL_MS, remaining));
+    }
   }
-  const totalMs = LOCK_RETRY_INTERVAL_MS * LOCK_MAX_RETRIES;
+  const waitedMs = lockTiming.now() - start;
   const holderNote = lastHolder > 0 ? ` (held by pid=${String(lastHolder)})` : "";
   throw new Error(
-    `kubeconfig lock at ${lockPath} still held after ${String(totalMs)}ms${holderNote}`,
+    `kubeconfig lock at ${lockPath} still held after ${String(waitedMs)}ms (limit ${String(LOCK_ACQUIRE_TIMEOUT_MS)}ms)${holderNote}`,
   );
 }
 
