@@ -9,6 +9,7 @@ import { benchProfileFile } from "../src/bench/store.js";
 import { resolveBuildId } from "../src/build.js";
 import { ctxForModel } from "../src/ctx.js";
 import { resolveEnv } from "../src/env.js";
+import { processCommand } from "../src/pidIdentity.js";
 import { mkdirSync, writeFileSync } from "../src/safe-fs.js";
 import {
   readServerPid,
@@ -41,6 +42,9 @@ import { envForTemp, makeTempRuntime } from "./helpers.js";
 // In every other test one process.kill spy sees every signal startServer sends.
 // A call aimed at a pid <= 0 is recorded and never forwarded (kill(0) would signal
 // this runner's own process group), and every spied test asserts there was none.
+// Every seam-free test whose retry stops the argv fake (T7 (i)-(iv), T12a, T12b, T15,
+// T18, T19, T21) waits in each launch's first waiting event until ps shows the exec'd
+// command line, and asserts the retry stop was not refused before counting launches (#291).
 
 const KEY = { name: "mmproj-retry-wl" };
 // T20's second workload, started concurrently with KEY on its own port.
@@ -73,6 +77,12 @@ const FOREIGN_LISTENER = "another process is likely bound to this port";
 // What the first pid "is" once the identity seam stops vouching for it.
 const FOREIGN_COMMAND = "/bin/sleep 30";
 const TEST_TIMEOUT_MS = 20_000;
+// What a refused retry stop reports (server.ts retryWithMmprojSafeFlags).
+const REFUSED_RETRY = "refusing mmproj retry";
+// #291: bound on waiting for the argv fake to reach `exec -a`, and T21's pre-exec sleep:
+// past the first poll's 1 s, with ~3 s left inside the bound for a loaded machine.
+const ARGV_EXEC_DEADLINE_MS = 5000;
+const SLOW_EXEC_SECONDS = 2;
 
 interface SentSignal {
   pid: number;
@@ -123,6 +133,11 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+/** Blocking sleep for a wait that must finish inside a synchronous onEvent callback. */
+const sleepSync = (ms: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+
 /** Poll until the pid is gone; Bun reaps exited children on the event loop. */
 const waitForExit = async (pid: number, timeoutMs = 3000): Promise<boolean> => {
   const deadline = Date.now() + timeoutMs;
@@ -152,6 +167,8 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
   let kills: KillSpy;
   let commandHook: ((pid: number, argv: string | null) => string | null) | null;
   let spies: { mockRestore: () => void }[];
+  /** #291: per launched pid, how many ps reads waitForArgvExec needed before `exec -a` showed. */
+  let execPolls: Map<number, number>;
 
   const identity = {
     processCommand: (pid: number): string | null => {
@@ -291,10 +308,60 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
    * script's path and the launch args (then /bin/sleep's own "30"), as a real
    * llama-server's does. Its default basename is not llama-server, so a missing
    * sidecar makes a stop refuse; T15 names it llama-server under LLAMA_CPP_BIN.
+   * `preExecSleepSeconds` > 0 makes bash sleep that long before `exec -a` (T21).
    */
-  const useArgvFakeBinary = (path = join(temp.devStorage, "argv-fake-llama-server")): void => {
+  const useArgvFakeBinary = (
+    path = join(temp.devStorage, "argv-fake-llama-server"),
+    preExecSleepSeconds = 0,
+  ): void => {
     binary = path;
-    writeFileSync(binary, '#!/bin/bash\nexec -a "$0 $*" /bin/sleep 30\n', { mode: 0o755 });
+    const preExec = preExecSleepSeconds > 0 ? `sleep ${String(preExecSleepSeconds)}\n` : "";
+    writeFileSync(binary, `#!/bin/bash\n${preExec}exec -a "$0 $*" /bin/sleep 30\n`, {
+      mode: 0o755,
+    });
+  };
+
+  /**
+   * #291: until bash reaches `exec -a`, `ps -o command=` shows `/bin/bash <script> ...`, which a
+   * seam-free stop reads as an unverifiable identity and refuses. Block, bounded, until the pid's
+   * real command line starts with the fake's path. Returns how many ps reads that took.
+   */
+  const waitForArgvExec = (pid: number): number => {
+    const deadline = Date.now() + ARGV_EXEC_DEADLINE_MS;
+    let polls = 0;
+    let command: string | null = null;
+    while (Date.now() <= deadline) {
+      polls += 1;
+      command = processCommand(pid);
+      if (command !== null && (command === binary || command.startsWith(`${binary} `))) {
+        return polls;
+      }
+      sleepSync(25);
+    }
+    throw new Error(
+      `argv fake pid ${String(pid)} did not reach exec -a within ${String(ARGV_EXEC_DEADLINE_MS)} ms; ps -o command= shows: ${command ?? "<no output>"}`,
+    );
+  };
+
+  /** Wrap a seam-free test's onEvent: each launch's first `waiting` event waits for `exec -a` first. */
+  const waitingForArgvExec =
+    (onEvent: (e: ServerEvent) => void) =>
+    (e: ServerEvent): void => {
+      const pid = launches[launches.length - 1]?.pid;
+      if (e.type === "waiting" && pid !== undefined && !execPolls.has(pid)) {
+        execPolls.set(pid, waitForArgvExec(pid));
+      }
+      onEvent(e);
+    };
+
+  /** #291: a refused retry stop fails here, naming the first pid's real command line, before any launch count. */
+  const expectRetryStopNotRefused = (error: string | undefined): void => {
+    const message = error ?? "";
+    const firstPid = launches[0]?.pid ?? 0;
+    const detail = message.includes(REFUSED_RETRY)
+      ? ` | first pid ${String(firstPid)} ps -o command=: ${processCommand(firstPid) ?? "<no output: ps failed or pid gone>"}`
+      : "";
+    expect(`${message}${detail}`).not.toContain(REFUSED_RETRY);
   };
 
   /** Restore the fetch and process.kill spies; a second call (afterEach after T12a) is a no-op. */
@@ -330,6 +397,7 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       duringAbort: null,
     };
     commandHook = null;
+    execPolls = new Map();
     spies = [
       spyOn(globalThis, "fetch").mockImplementation(fakeHealth as unknown as typeof fetch),
       spyOn(process, "kill").mockImplementation(fakeKill),
@@ -653,17 +721,19 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
         if (!c.mmproj) extraArgs = ["--slot-save-path", "auto"];
         const controller = new AbortController();
         const timeoutPids: number[] = [];
+        const onEvent = (e: ServerEvent): void => {
+          if (e.type === "timeout") timeoutPids.push(e.pid);
+          if (e.type === "launch" && launches.length === c.healthyAt) healthy = true;
+        };
         const res = await start(
-          (e) => {
-            if (e.type === "timeout") timeoutPids.push(e.pid);
-            if (e.type === "launch" && launches.length === c.healthyAt) healthy = true;
-          },
+          c.refuseRetryStop ? onEvent : waitingForArgvExec(onEvent),
           controller.signal,
           true,
           false,
         );
         // R2e: every listener startServer added is removed, not just disarmed.
         expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+        if (!c.refuseRetryStop) expectRetryStopNotRefused(res.error);
         expect(launches).toHaveLength(c.launches);
         expect(res.ok).toBe(c.ok);
         expect(res.retried).toBe(c.retried);
@@ -824,7 +894,7 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
         state: Omit<ServerState, "startedAt"> | null;
       }[] = [];
       const res = await start(
-        (e) => {
+        waitingForArgvExec((e) => {
           if (e.type === "timeout") timeoutPids.push(e.pid);
           if (e.type === "waiting" && launches.length === 2 && duringRetryPoll.length === 0) {
             duringRetryPoll.push({
@@ -832,7 +902,7 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
               state: withoutStartedAt(readServerState(KEY, resolved)),
             });
           }
-        },
+        }),
         undefined,
         true,
         false,
@@ -841,6 +911,7 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       // listener there makes the start fail before launching, and this says so.
       expect(res.error ?? "").not.toContain(PORT_BOUND);
       expect(res.error ?? "").not.toContain(FOREIGN_LISTENER);
+      expectRetryStopNotRefused(res.error);
       expect(launches).toHaveLength(2);
       const firstPid = launches[0]!.pid;
       const retryPid = launches[1]!.pid;
@@ -876,7 +947,7 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       const sentDuringAbort: SentSignal[] = [];
       let scheduled = false;
       const res = await start(
-        (e) => {
+        waitingForArgvExec((e) => {
           if (e.type === "waiting" && launches.length === 2 && !scheduled) {
             scheduled = true;
             // Lands in the retry poll's 1 s sleep; abort() runs its listeners synchronously.
@@ -884,11 +955,12 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
               sentDuringAbort.push(...abortCapturing(controller));
             }, 10);
           }
-        },
+        }),
         controller.signal,
         true,
         false,
       );
+      expectRetryStopNotRefused(res.error);
       expect(launches).toHaveLength(2);
       const firstPid = launches[0]!.pid;
       const retryPid = launches[1]!.pid;
@@ -1025,22 +1097,25 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
         extraArgs,
         timeoutSeconds: 1,
         skipTuned: true,
-        onEvent: recordingLaunches((e) => {
-          if (e.type === "timeout") timeoutPids.push(e.pid);
-          if (e.type !== "waiting") return;
-          if (launches.length === 1 && firstStates.length === 0) {
-            firstStates.push(readServerState(KEY, resolved));
-          }
-          if (launches.length === 2 && duringRetryPoll.length === 0) {
-            const state = readServerState(KEY, resolved);
-            duringRetryPoll.push({
-              pid: readServerPid(KEY, resolved),
-              state: withoutStartedAt(state),
-              startedAt: state?.startedAt ?? null,
-            });
-          }
-        }),
+        onEvent: recordingLaunches(
+          waitingForArgvExec((e) => {
+            if (e.type === "timeout") timeoutPids.push(e.pid);
+            if (e.type !== "waiting") return;
+            if (launches.length === 1 && firstStates.length === 0) {
+              firstStates.push(readServerState(KEY, resolved));
+            }
+            if (launches.length === 2 && duringRetryPoll.length === 0) {
+              const state = readServerState(KEY, resolved);
+              duringRetryPoll.push({
+                pid: readServerPid(KEY, resolved),
+                state: withoutStartedAt(state),
+                startedAt: state?.startedAt ?? null,
+              });
+            }
+          }),
+        ),
       });
+      expectRetryStopNotRefused(res.error);
       expect(launches).toHaveLength(2);
       const firstPid = launches[0]!.pid;
       const retryPid = launches[1]!.pid;
@@ -1147,15 +1222,16 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       const controller = new AbortController();
       writeThroughputProfile();
       const res = await start(
-        (e) => {
+        waitingForArgvExec((e) => {
           if (e.type === "launch" && launches.length === 2) healthy = true;
-        },
+        }),
         controller.signal,
         false,
         false,
       );
       // R2e on the retry-ready return, which resolves from inside the retry.
       expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+      expectRetryStopNotRefused(res.error);
       expect(launches).toHaveLength(2);
       const retryPid = launches[1]!.pid;
       expect(res.ok).toBe(true);
@@ -1199,13 +1275,14 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
         allowExternalBind: true,
         timeoutSeconds: 1,
         skipTuned: true,
-        onEvent: recordingLaunches(() => undefined),
+        onEvent: recordingLaunches(waitingForArgvExec(() => undefined)),
       }).then(
         (res) => ({ res, error: null }),
         (error: unknown) => ({ res: null, error: String(error) }),
       );
       // R5: the retry launch keeps allowExternalBind, so its host-bind check does not throw.
       expect(settled.error).toBeNull();
+      expectRetryStopNotRefused(settled.res?.error);
       expect(launches).toHaveLength(2);
       const firstPid = launches[0]!.pid;
       const retryPid = launches[1]!.pid;
@@ -1301,6 +1378,46 @@ describe("startServer mmproj safe-flag retry bookkeeping", () => {
       expect(await waitForExit(pids.b)).toBe(true);
       expect(readServerPid(KEY_B, resolved)).toBeNull();
       expect(readServerState(KEY_B, resolved)).toBeNull();
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "T21 slow-exec seam-free retry: the first waiting event waits for exec -a, so the retry's real stop stops the first pid",
+    async () => {
+      // #291: bash sleeps SLOW_EXEC_SECONDS before `exec -a`, past the first poll's 1 s.
+      // Without the wait in the first `waiting` event, the retry's real ps read still sees
+      // /bin/bash and the stop refuses with REFUSED_RETRY after one launch.
+      useArgvFakeBinary(undefined, SLOW_EXEC_SECONDS);
+      const timeoutPids: number[] = [];
+      const res = await start(
+        waitingForArgvExec((e) => {
+          if (e.type === "timeout") timeoutPids.push(e.pid);
+        }),
+        undefined,
+        true,
+        false,
+      );
+      expectRetryStopNotRefused(res.error);
+      expect(launches).toHaveLength(2);
+      const firstPid = launches[0]!.pid;
+      const retryPid = launches[1]!.pid;
+      // Premise: each launch's first ps read still showed the pre-exec bash command line.
+      expect(execPolls.get(firstPid)).toBeGreaterThan(1);
+      expect(execPolls.get(retryPid)).toBeGreaterThan(1);
+      expect(res.ok).toBe(false);
+      expect(res.retried).toBe(true);
+      expect(res.error).toContain(TIMED_OUT);
+      // The retry's real stop verified and stopped the first pid.
+      expect(isAlive(firstPid)).toBe(false);
+      expect(timeoutPids).toEqual([retryPid]);
+      expect(res.pid).toBe(retryPid);
+
+      // No identity seam: the retry pid also waited for exec -a, so its real stop matches.
+      const stop = await stopServer({ key: KEY, resolved, graceSeconds: 1 });
+      expect(stop).toEqual({ stopped: true, pid: retryPid, killed: false });
+      expect(await waitForExit(retryPid)).toBe(true);
+      expect(kills.nonPositive).toEqual([]);
     },
     TEST_TIMEOUT_MS,
   );
