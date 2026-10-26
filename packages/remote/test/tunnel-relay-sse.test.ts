@@ -76,6 +76,17 @@ async function readSSE(res: Response, maxFrames = 50): Promise<SSEFrame[]> {
   return out;
 }
 
+/**
+ * Poll `check` every 5 ms until it holds or `timeoutMs` passes. It never
+ * throws: the caller's own `expect` reports a condition that did not hold.
+ */
+async function until(check: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check() && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 interface RunningHarness {
   stop: () => Promise<void>;
   bunPort: number;
@@ -91,6 +102,8 @@ async function startHarness(script: {
   throwErr?: Error;
   journalPath?: string;
   streamLimits?: StreamLimits;
+  /** #271: after the scripted events, stay subscribed until cancelled or this many ms pass. */
+  holdOpenUntilCancelMs?: number;
 }): Promise<RunningHarness> {
   const bearer = "relay-bearer";
   const tunnelBearer = "tunnel-bearer";
@@ -127,13 +140,27 @@ async function startHarness(script: {
   const handleSubscription = (req: TunnelReq): TunnelSubscription => ({
     subscribe(handlers): { cancel(): void } {
       let cancelled = false;
+      let wakeOnCancel = (): void => undefined;
       const isCancelled = (): boolean => cancelled;
+      const holdMs = script.holdOpenUntilCancelMs;
       void (async (): Promise<void> => {
         for (const ev of script.events) {
           if (isCancelled()) break;
           await new Promise((r) => setTimeout(r, script.delayMs ?? 2));
           if (isCancelled()) break;
           handlers.onEvent(ev);
+        }
+        if (!isCancelled() && holdMs !== undefined) {
+          // #271: stay subscribed until central's stream-cancel lands, so the
+          // cancel never races this producer's own completion. The timer only
+          // bounds a cancel that never comes.
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, holdMs);
+            wakeOnCancel = (): void => {
+              clearTimeout(timer);
+              resolve();
+            };
+          });
         }
         if (isCancelled()) {
           handlers.onComplete();
@@ -149,6 +176,7 @@ async function startHarness(script: {
         cancel(): void {
           cancelled = true;
           receivedCancel.push(req.id);
+          wakeOnCancel();
         },
       };
     },
@@ -505,7 +533,9 @@ describe("P4.1: bounded relay streams", () => {
     harness = await startHarness({
       events: [{ small: true }, { pad: "x".repeat(8 * 1024) }, { never: true }],
       streamLimits: { maxFrameBytes: 4096, maxQueuedBytes: 16 * 1024 },
+      holdOpenUntilCancelMs: 2000,
     });
+    const { receivedCancel } = harness;
     const res = await fetch(
       `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/node1?stream=true`,
       {
@@ -527,8 +557,39 @@ describe("P4.1: bounded relay streams", () => {
       ok: false,
       error: { code: "stream-overflow" },
     });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(harness.receivedCancel).toHaveLength(1);
+    await until(() => receivedCancel.length === 1, 2000);
+    expect(receivedCancel).toHaveLength(1);
+  });
+
+  test("the overflow's stream-cancel reaches a producer that would end right after the oversized event", async () => {
+    // #271: with nothing scripted after the oversized event, the producer
+    // ships it and completes in one synchronous continuation, before
+    // central's stream-cancel can arrive. Only the hold keeps the
+    // subscription live for the cancel.
+    harness = await startHarness({
+      events: [{ small: true }, { pad: "x".repeat(8 * 1024) }],
+      streamLimits: { maxFrameBytes: 4096, maxQueuedBytes: 16 * 1024 },
+      holdOpenUntilCancelMs: 2000,
+    });
+    const { receivedCancel } = harness;
+    const res = await fetch(
+      `http://127.0.0.1:${String(harness.bunPort)}/tunnel-relay/node1?stream=true`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${harness.bearer}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ method: "big-last", type: "subscription", input: null }),
+      },
+    );
+    const frames = await readSSE(res);
+    expect(JSON.parse(frames.find((f) => f.event === "done")?.data ?? "null")).toMatchObject({
+      ok: false,
+      error: { code: "stream-overflow" },
+    });
+    await until(() => receivedCancel.length === 1, 2000);
+    expect(receivedCancel).toHaveLength(1);
   });
 });
 
