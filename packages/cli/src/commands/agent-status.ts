@@ -3,6 +3,7 @@
 // SAN coverage of the host the operator advertises.
 import type { AgentConfig } from "@llamactl/core/config/agent-config";
 
+import { findTcpListenerPid } from "@llamactl/core/probe";
 import { X509Certificate } from "node:crypto";
 import { isIP } from "node:net";
 
@@ -23,6 +24,8 @@ export interface AgentStatusReport {
   keyPath: string;
   fingerprint: string;
   running: boolean;
+  /** pid holding the agent's TCP listener; null when not running or not resolvable. */
+  listenerPid: number | null;
   probeUrl: string;
   loopbackOnly: boolean;
   cert: AgentCertStatus | { error: string };
@@ -32,6 +35,8 @@ export interface AgentStatusReport {
 }
 
 export type ProbeFn = (url: string) => Promise<boolean>;
+
+export type ListenerPidFn = (host: string, port: number) => Promise<number | null>;
 
 export function isLoopbackHost(host: string): boolean {
   if (host === "localhost" || host === "::1" || host === "[::1]") return true;
@@ -79,17 +84,33 @@ function coversHost(x509: X509Certificate, host: string): boolean {
   return isIP(host) === 0 ? x509.checkHost(host) !== undefined : x509.checkIP(host) !== undefined;
 }
 
+// Only a live agent has a listener to name; skipping the lookup otherwise
+// keeps lsof out of the common "agent is down" path. A separate function so
+// collectAgentStatus stays under the cognitive-complexity gate.
+async function lookupListenerPid(
+  running: boolean,
+  host: string,
+  port: number,
+  find: ListenerPidFn = findTcpListenerPid,
+): Promise<number | null> {
+  if (!running) return null;
+  return await find(host, port).catch(() => null);
+}
+
 export async function collectAgentStatus(o: {
   configPath: string;
   cfg: AgentConfig;
   advertisedHost?: string;
   probe?: ProbeFn;
+  findListenerPid?: ListenerPidFn;
 }): Promise<AgentStatusReport> {
   const warnings: string[] = [];
   const bind = `${o.cfg.bindHost}:${String(o.cfg.port)}`;
   const loopbackOnly = isLoopbackHost(o.cfg.bindHost);
-  const probeUrl = `https://${urlHost(o.cfg.bindHost)}:${String(o.cfg.port)}/healthz`;
+  const probeHost = urlHost(o.cfg.bindHost);
+  const probeUrl = `https://${probeHost}:${String(o.cfg.port)}/healthz`;
   const running = await (o.probe ?? defaultProbe)(probeUrl);
+  const listenerPid = await lookupListenerPid(running, probeHost, o.cfg.port, o.findListenerPid);
 
   let cert: AgentStatusReport["cert"];
   let x509: X509Certificate | null = null;
@@ -131,6 +152,7 @@ export async function collectAgentStatus(o: {
     keyPath: o.cfg.keyPath,
     fingerprint: o.cfg.fingerprint,
     running,
+    listenerPid,
     probeUrl,
     loopbackOnly,
     cert,
@@ -148,12 +170,17 @@ function certLines(cert: AgentStatusReport["cert"]): string[] {
   ];
 }
 
+function pidSuffix(r: AgentStatusReport): string {
+  if (!r.running) return "";
+  return ` pid=${r.listenerPid === null ? "unknown" : String(r.listenerPid)}`;
+}
+
 export function formatAgentStatus(r: AgentStatusReport): string {
   const lines = [
     `config  ${r.configPath}`,
     `node    ${r.nodeName ?? "(unset)"}`,
     `bind    ${r.bind}${r.loopbackOnly ? " (loopback only)" : ""}`,
-    `running ${r.running ? "yes" : "no"} (${r.probeUrl})`,
+    `running ${r.running ? "yes" : "no"} (${r.probeUrl})${pidSuffix(r)}`,
     `cert    ${r.certPath}`,
     ...certLines(r.cert),
   ];

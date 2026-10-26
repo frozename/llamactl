@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { type AgentStatusReport, isLoopbackHost } from "../src/commands/agent-status.js";
+import {
+  type AgentStatusReport,
+  collectAgentStatus,
+  formatAgentStatus,
+  isLoopbackHost,
+} from "../src/commands/agent-status.js";
 import { runAgent } from "../src/commands/agent.js";
 import { mkdtempSync, rmSync, unlinkSync } from "../src/safe-fs.js";
 
@@ -79,6 +84,7 @@ describe("agent status", () => {
     expect(r.out.trimEnd().split("\n")).toHaveLength(1);
     const rep = parseReport(r.out);
     expect(rep.running).toBe(false);
+    expect(rep.listenerPid).toBeNull();
     expect(rep.probeUrl).toBe("https://127.0.0.1:59996/healthz");
     expect(rep.loopbackOnly).toBe(true);
     const cert = rep.cert as { sans: string[]; notAfter: string; expired: boolean };
@@ -162,6 +168,102 @@ describe("agent status", () => {
     const r = await capture(["status", "--bogus"]);
     expect(r.code).toBe(1);
     expect(r.err).toContain("bogus");
+  });
+});
+
+describe("agent status listener pid", () => {
+  test("running agent reports the pid from the lookup on the probe host", async () => {
+    await seedInit();
+    const cfgPath = join(tmp, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+    const calls: [string, number][] = [];
+    const report = await collectAgentStatus({
+      configPath: cfgPath,
+      cfg,
+      probe: () => Promise.resolve(true),
+      findListenerPid: (host, port) => {
+        calls.push([host, port]);
+        return Promise.resolve(4242);
+      },
+    });
+    expect(report.listenerPid).toBe(4242);
+    expect(calls).toEqual([["127.0.0.1", 59996]]);
+    expect(formatAgentStatus(report)).toContain(
+      "running yes (https://127.0.0.1:59996/healthz) pid=4242\n",
+    );
+  });
+
+  test("running agent with no resolvable pid prints pid=unknown", async () => {
+    await seedInit();
+    const cfgPath = join(tmp, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+    const calls: [string, number][] = [];
+    const report = await collectAgentStatus({
+      configPath: cfgPath,
+      cfg,
+      probe: () => Promise.resolve(true),
+      findListenerPid: (host, port) => {
+        calls.push([host, port]);
+        return Promise.resolve(null);
+      },
+    });
+    expect(report.listenerPid).toBeNull();
+    expect(calls).toEqual([["127.0.0.1", 59996]]);
+    expect(formatAgentStatus(report)).toContain(
+      "running yes (https://127.0.0.1:59996/healthz) pid=unknown\n",
+    );
+  });
+
+  test("a rejecting lookup degrades to pid=unknown", async () => {
+    await seedInit();
+    const cfgPath = join(tmp, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+    const report = await collectAgentStatus({
+      configPath: cfgPath,
+      cfg,
+      probe: () => Promise.resolve(true),
+      findListenerPid: () => Promise.reject(new Error("lsof failed")),
+    });
+    expect(report.listenerPid).toBeNull();
+    expect(formatAgentStatus(report)).toContain(" pid=unknown\n");
+  });
+
+  test("not running never calls the lookup", async () => {
+    await seedInit();
+    const cfgPath = join(tmp, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+    const calls: [string, number][] = [];
+    const report = await collectAgentStatus({
+      configPath: cfgPath,
+      cfg,
+      probe: () => Promise.resolve(false),
+      findListenerPid: (host, port) => {
+        calls.push([host, port]);
+        return Promise.resolve(4242);
+      },
+    });
+    expect(calls).toEqual([]);
+    expect(report.listenerPid).toBeNull();
+    expect(formatAgentStatus(report)).toContain("running no (https://127.0.0.1:59996/healthz)\n");
+    expect(formatAgentStatus(report)).not.toContain("pid=");
+  });
+
+  test("wildcard bind looks the pid up on 127.0.0.1", async () => {
+    await seedInit(["--bind=0.0.0.0"]);
+    const cfgPath = join(tmp, "agent.yaml");
+    const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+    const calls: [string, number][] = [];
+    const report = await collectAgentStatus({
+      configPath: cfgPath,
+      cfg,
+      probe: () => Promise.resolve(true),
+      findListenerPid: (host, port) => {
+        calls.push([host, port]);
+        return Promise.resolve(7);
+      },
+    });
+    expect(calls).toEqual([["127.0.0.1", 59996]]);
+    expect(report.listenerPid).toBe(7);
   });
 });
 

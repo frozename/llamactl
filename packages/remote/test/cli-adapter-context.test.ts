@@ -18,6 +18,7 @@ import {
   type SpawnResult,
 } from "../src/cli/adapter.js";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
+import { parsePidLine, pidAlive, readPid } from "./pid-file.js";
 
 /**
  * ProviderExecutionContext coverage for the CLI subprocess adapter,
@@ -54,15 +55,6 @@ function sleepyScript(pidFile: string): string {
   // `exec` keeps the same pid for `sleep`, so the pidfile tracks the
   // real spawned child end-to-end.
   return `echo $$ > ${pidFile}; exec sleep 30`;
-}
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function waitFor(cond: () => boolean, ms = 5_000): Promise<void> {
@@ -122,8 +114,7 @@ describe("createResponse — ProviderExecutionContext", () => {
     const provider = sleepyProvider(pidFile, entries);
     const caller = new AbortController();
     const pending = provider.createResponse(minimalReq, { signal: caller.signal });
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
     expect(pidAlive(pid)).toBe(true);
 
     caller.abort();
@@ -146,8 +137,7 @@ describe("createResponse — ProviderExecutionContext", () => {
     const entries: unknown[] = [];
     const provider = sleepyProvider(pidFile, entries);
     const pending = provider.createResponse(minimalReq, { deadline: Date.now() + 150 });
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
 
     let thrown: unknown;
     try {
@@ -196,8 +186,7 @@ describe("createResponse — ProviderExecutionContext", () => {
     const entries: unknown[] = [];
     const provider = sleepyProvider(pidFile, entries, { timeoutMs: 150 });
     const pending = provider.createResponse(minimalReq);
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
 
     let thrown: unknown;
     try {
@@ -224,8 +213,13 @@ describe("default spawners — pre-aborted signals", () => {
     // The pre-aborted signal fired onAbort before the child could run.
     expect(res.aborted).toBe(true);
     if (existsSync(pidFile)) {
-      const pid = Number(readFileSync(pidFile, "utf8").trim());
-      await waitFor(() => !pidAlive(pid));
+      // The child has exited, so the file is final. It is empty when the kill landed
+      // between the shell's truncating `>` and the echo; then there is no pid to reap.
+      const text = readFileSync(pidFile, "utf8");
+      if (text !== "") {
+        const pid = parsePidLine(text);
+        await waitFor(() => !pidAlive(pid));
+      }
     }
   });
 
@@ -248,8 +242,13 @@ describe("default spawners — pre-aborted signals", () => {
     expect(exited).not.toBeNull();
     expect(exited!.aborted).toBe(true);
     if (existsSync(pidFile)) {
-      const pid = Number(readFileSync(pidFile, "utf8").trim());
-      await waitFor(() => !pidAlive(pid));
+      // The child has exited, so the file is final. It is empty when the kill landed
+      // between the shell's truncating `>` and the echo; then there is no pid to reap.
+      const text = readFileSync(pidFile, "utf8");
+      if (text !== "") {
+        const pid = parsePidLine(text);
+        await waitFor(() => !pidAlive(pid));
+      }
     }
   });
 });
@@ -276,8 +275,7 @@ describe("SIGKILL escalation — a child that ignores SIGTERM still dies", () =>
     });
     const caller = new AbortController();
     const pending = provider.createResponse(minimalReq, { signal: caller.signal });
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
     expect(pidAlive(pid)).toBe(true);
 
     caller.abort();
@@ -329,8 +327,7 @@ describe("SIGKILL escalation — a child that ignores SIGTERM still dies", () =>
         thrown = err;
       }
     })();
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
 
     caller.abort();
     await Promise.race([
@@ -479,8 +476,7 @@ describe("streamResponse — real subprocess", () => {
     const entries: unknown[] = [];
     const provider = streamProvider(sleepyScript(pidFile), entries, 150);
     const collectP = collect(provider.streamResponse!(minimalReq));
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
     const events = await collectP;
     const errors = events.filter(
       (e): e is Extract<UnifiedStreamEvent, { type: "error" }> => e.type === "error",
@@ -508,8 +504,7 @@ describe("streamResponse — real subprocess", () => {
         thrown = err;
       }
     })();
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
     caller.abort();
     await consume;
     expect((thrown as Error).name).toBe("AbortError");
@@ -560,7 +555,7 @@ describe("streamResponse — real subprocess", () => {
     expect(errors[0]!.error.code).toBe("truncated");
     expect(errors[0]!.error.retryable).toBe(false);
     expect(events.some((e) => e.type === "done")).toBe(false);
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = parsePidLine(readFileSync(pidFile, "utf8"));
     await waitFor(() => !pidAlive(pid));
     expect(entries).toHaveLength(1);
     const e = entries[0] as Record<string, unknown>;
