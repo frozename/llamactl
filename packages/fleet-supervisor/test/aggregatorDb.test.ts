@@ -11,7 +11,7 @@ import {
   SNAPSHOT_RETENTION_PER_NODE,
   writeSnapshot,
 } from "../src/aggregator-db.js";
-import { existsSync, mkdtempSync, rmSync } from "../src/safe-fs.js";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
 
 const snapshot = (node: string, ts: string, freeMb: number): FleetSnapshotEntry => ({
   kind: "fleet-snapshot",
@@ -270,4 +270,61 @@ describe("aggregator db", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test("openAggregatorDb sets busy_timeout to 15000", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
+    try {
+      const db = openAggregatorDb(join(dir, "cluster.db"));
+      const row = db.query("PRAGMA busy_timeout").get() as { timeout: number } | null;
+      expect(row?.timeout).toBe(15000);
+      db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("writeSnapshot waits for a read transaction held by another process instead of throwing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aggr-db-test-"));
+    const dbPath = join(dir, "cluster.db");
+    const readyPath = join(dir, "reader-ready");
+    const holderPath = join(dir, "holder.mjs");
+    const db = openAggregatorDb(dbPath);
+    writeFileSync(
+      holderPath,
+      [
+        'import { Database } from "bun:sqlite";',
+        'import { writeFileSync } from "node:fs";',
+        "const db = new Database(process.env.DB_PATH);",
+        'db.run("BEGIN");',
+        'db.query("SELECT count(*) AS n FROM node_snapshots").get();',
+        'writeFileSync(process.env.READY_PATH, "1");',
+        "await Bun.sleep(Number(process.env.HOLD_MS));",
+        'db.run("COMMIT");',
+        "db.close();",
+      ].join("\n"),
+    );
+    const holder = Bun.spawn({
+      cmd: [process.execPath, "run", holderPath],
+      env: { ...process.env, DB_PATH: dbPath, READY_PATH: readyPath, HOLD_MS: "1500" },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    try {
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline && !existsSync(readyPath)) {
+        await Bun.sleep(20);
+      }
+      expect(existsSync(readyPath)).toBe(true);
+      expect(() => {
+        writeSnapshot(db, "mac-mini", snapshot("mac-mini", "2026-05-25T17:00:00Z", 2048));
+      }).not.toThrow();
+      expect(await holder.exited).toBe(0);
+      expect(getLatestPerNode(db).map((row) => row.node)).toEqual(["mac-mini"]);
+    } finally {
+      holder.kill();
+      await holder.exited;
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
