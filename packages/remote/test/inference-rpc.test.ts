@@ -2429,6 +2429,9 @@ describe("hop limits through the executor (embedded)", () => {
       nodeId: "gw",
     }).execute(env, ctxFor(env));
     expect(res.status).toBe(200);
+    // Read the stream to its end so this test's engine dial lands inside this test (#272).
+    expect(await res.text()).toContain("[DONE]");
+    expect(engine.requests.map((r) => r.body?.["model"])).toEqual([UPSTREAM]);
     expect(received).toHaveLength(1);
     expect(received[0]?.internal?.hopCount).toBe(1);
     expect(received[0]?.internal?.visitedNodes).toEqual(["gw"]);
@@ -4470,6 +4473,9 @@ describe("remote transports: direct (pinned TLS) and tunnel (central relay)", ()
         const env = envelope(`att-exec-hop-record-${transport}`);
         const res = await executorOver(clientFor[transport]()).execute(env, ctxFor(env));
         expect(res.status).toBe(200);
+        // Read the stream to its end so this test's engine dial lands inside this test (#272).
+        expect(await res.text()).toContain("[DONE]");
+        expect(engine.requests.map((r) => r.body?.["model"])).toEqual([UPSTREAM]);
         expect(received).toHaveLength(1);
         expect(received[0]?.internal?.hopCount).toBe(1);
         expect(received[0]?.internal?.visitedNodes).toEqual(["gw"]);
@@ -4537,6 +4543,11 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
     return client;
   }
 
+  /** Engine requests for the run workload only; an earlier test's late dial carries another model (#272). */
+  function runRequests(): FakeEngine["requests"] {
+    return engine.requests.filter((r) => r.body?.["model"] === RUN_REL);
+  }
+
   beforeEach(() => {
     writeRun(RUN, RUN_PID, RUN_REL);
     writeRun("dial-other", OTHER_PID, "org/dial-other.gguf");
@@ -4568,7 +4579,31 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
       deployment: RUN_DEPLOYMENT,
     });
     expect(verified).toEqual([[RUN_PID]]);
-    expect(engine.requests).toHaveLength(1);
+    expect(runRequests()).toHaveLength(1);
+  });
+
+  test("an engine request leaked from an earlier test does not count toward the run workload (#272)", async () => {
+    const client = await acceptOnRun("att-dial-leak");
+    // Force the CI ordering: an earlier test's late engine dial lands inside this test.
+    const stray = await fetch(`${engine.url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: UPSTREAM,
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    expect(await stray.text()).toContain("[DONE]");
+    const frames = await collect(client.stream({ attemptId: "att-dial-leak" }));
+    expectValidStream(frames);
+    expect(terminalOf(frames)).toMatchObject({
+      outcome: "completed",
+      model: RUN_REL,
+      deployment: RUN_DEPLOYMENT,
+    });
+    expect(engine.requests.map((r) => r.body?.["model"])).toEqual([UPSTREAM, RUN_REL]);
+    expect(runRequests()).toHaveLength(1);
   });
 
   test("a workload restarted between acceptance and the stream is never dialled", async () => {
@@ -4582,7 +4617,7 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
       error: { code: "target-unavailable", message: "deployment epoch is now 'pid:5009'" },
     });
     expect(verified).toEqual([[5009]]);
-    expect(engine.requests).toHaveLength(0);
+    expect(runRequests()).toHaveLength(0);
   });
 
   test("a workload stopped between acceptance and the stream is never dialled", async () => {
@@ -4598,7 +4633,7 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
         message: `the worker no longer owns deployment '${RUN_DEPLOYMENT}'`,
       },
     });
-    expect(engine.requests).toHaveLength(0);
+    expect(runRequests()).toHaveLength(0);
   });
 
   test("a workload the full catalog cannot list does not stop another's stream", async () => {
@@ -4615,7 +4650,7 @@ describe("the dial-time re-check reads only the accepted workload (X2)", () => {
       deployment: RUN_DEPLOYMENT,
     });
     expect(verified).toEqual([[RUN_PID]]);
-    expect(engine.requests).toHaveLength(1);
+    expect(runRequests()).toHaveLength(1);
   });
 });
 
