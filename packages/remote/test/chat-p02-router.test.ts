@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { router } from "../src/router.js";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "../src/safe-fs.js";
 import { type ControllerClosedGuard, installControllerClosedGuard } from "./helpers.js";
+import { pidAlive, readPid } from "./pid-file.js";
 
 /**
  * P0.2 router coverage — cancellation + provenance-honest usage over
@@ -69,15 +70,6 @@ const flush = (): Promise<void> =>
   new Promise((r) => {
     setTimeout(r, 0);
   });
-
-function pidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function waitFor(cond: () => boolean, ms = 5_000): Promise<void> {
   const start = Date.now();
@@ -360,8 +352,7 @@ describe("chatStream — non-streaming provider fallback", () => {
         thrown = err;
       }
     })();
-    await waitFor(() => existsSync(pidFile));
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    const pid = await readPid(pidFile);
     expect(pidAlive(pid)).toBe(true);
 
     caller.abort();
