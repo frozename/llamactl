@@ -4,6 +4,12 @@
 import type { AgentConfig } from "@llamactl/core/config/agent-config";
 
 import { findTcpListenerPid } from "@llamactl/core/probe";
+import {
+  LOCAL_NODE_ID,
+  modelHostExternalBindHost,
+  type ModelHostManifest,
+} from "@llamactl/remote/workload/modelhost-schema";
+import { listModelHosts } from "@llamactl/remote/workload/modelhost-store";
 import { X509Certificate } from "node:crypto";
 import { isIP } from "node:net";
 
@@ -31,12 +37,23 @@ export interface AgentStatusReport {
   cert: AgentCertStatus | { error: string };
   advertisedHost: string | null;
   advertisedHostCovered: boolean | null;
+  exposedModelHosts: ExposedModelHost[];
   warnings: string[];
 }
 
 export type ProbeFn = (url: string) => Promise<boolean>;
 
 export type ListenerPidFn = (host: string, port: number) => Promise<number | null>;
+
+/** #214: an enabled ModelHost on this node whose engine binds a non-loopback host. */
+export interface ExposedModelHost {
+  name: string;
+  /** host:port, IPv6 bracketed (same shape as `get workloads` exposedBind). */
+  bind: string;
+  allowExternalBind: boolean;
+}
+
+export type ListModelHostsFn = () => ModelHostManifest[];
 
 export function isLoopbackHost(host: string): boolean {
   if (host === "localhost" || host === "::1" || host === "[::1]") return true;
@@ -97,12 +114,55 @@ async function lookupListenerPid(
   return await find(host, port).catch(() => null);
 }
 
+function bracketedBind(host: string, port: number): string {
+  const h = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `${h}:${String(port)}`;
+}
+
+// #214: enabled ModelHosts on this node (spec.node "local" or the agent's own
+// node name) whose engine binds a non-loopback host. A failing read yields []
+// so status still reports. A separate function so collectAgentStatus stays
+// under the cognitive-complexity gate.
+export function collectExposedModelHosts(
+  nodeName: string | undefined,
+  list: ListModelHostsFn = () => listModelHosts(),
+): ExposedModelHost[] {
+  let manifests: ModelHostManifest[];
+  try {
+    manifests = list();
+  } catch {
+    return [];
+  }
+  const out: ExposedModelHost[] = [];
+  for (const manifest of manifests) {
+    const { spec } = manifest;
+    if (!spec.enabled) continue;
+    if (spec.node !== LOCAL_NODE_ID && spec.node !== nodeName) continue;
+    const host = modelHostExternalBindHost(spec);
+    if (host === null) continue;
+    out.push({
+      name: manifest.metadata.name,
+      bind: bracketedBind(host, spec.endpoint.port),
+      allowExternalBind: spec.allowExternalBind === true,
+    });
+  }
+  return out;
+}
+
+function exposedModelHostWarning(h: ExposedModelHost): string {
+  const suffix = h.allowExternalBind
+    ? " (spec.allowExternalBind: true)"
+    : "; spec.allowExternalBind is not true, so its next start is refused";
+  return `modelhost/${h.name} binds an unauthenticated engine to ${h.bind}${suffix}`;
+}
+
 export async function collectAgentStatus(o: {
   configPath: string;
   cfg: AgentConfig;
   advertisedHost?: string;
   probe?: ProbeFn;
   findListenerPid?: ListenerPidFn;
+  listModelHosts?: ListModelHostsFn;
 }): Promise<AgentStatusReport> {
   const warnings: string[] = [];
   const bind = `${o.cfg.bindHost}:${String(o.cfg.port)}`;
@@ -143,6 +203,8 @@ export async function collectAgentStatus(o: {
   if (loopbackOnly) {
     warnings.push(`agent binds ${bind} (loopback only); remote control planes cannot reach it`);
   }
+  const exposedModelHosts = collectExposedModelHosts(o.cfg.nodeName, o.listModelHosts);
+  warnings.push(...exposedModelHosts.map(exposedModelHostWarning));
 
   return {
     configPath: o.configPath,
@@ -158,6 +220,7 @@ export async function collectAgentStatus(o: {
     cert,
     advertisedHost: o.advertisedHost ?? null,
     advertisedHostCovered,
+    exposedModelHosts,
     warnings,
   };
 }
