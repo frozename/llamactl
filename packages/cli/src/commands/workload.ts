@@ -20,7 +20,9 @@ import {
   workloadStore,
 } from "@llamactl/remote";
 import {
+  externalManagerOf,
   LOCAL_NODE_ID,
+  MANAGED_BY_LABEL,
   modelHostBindRefusal,
   modelHostExternalBindHost,
   type ModelHostManifest,
@@ -63,6 +65,12 @@ process llamactl did not record is answering on the workload's port).
 A ModelHost that binds a non-loopback host gets a trailing 'warning:'
 line, and its --json row carries exposedBind (host:port, or null) and
 allowExternalBind.
+
+Every --json row also carries managedBy: the llamactl.io/managed-by label
+of a ModelHost (the controller that supervises it), or null for an
+unlabeled ModelHost and for every ModelRun. Each labeled ModelHost gets
+a trailing 'note:' line, because this node's controller does not
+reconcile it.
 `;
 
 const DESCRIBE_USAGE = `Usage: llamactl describe workload <name> [--json]
@@ -668,6 +676,7 @@ export async function runGet(args: string[]): Promise<number> {
     ...(await Promise.all(manifests.map(inspect))).map((row) => ({
       ...row,
       kind: "modelrun" as const,
+      managedBy: null,
     })),
     ...(await Promise.all(
       modelHosts.map(async (manifest) => {
@@ -709,6 +718,7 @@ export async function runGet(args: string[]): Promise<number> {
           gateway: false,
           exposedBind: modelHostExposedBind(manifest),
           allowExternalBind: manifest.spec.allowExternalBind === true,
+          managedBy: externalManagerOf(manifest),
         };
       }),
     )),
@@ -735,6 +745,7 @@ export async function runGet(args: string[]): Promise<number> {
     );
   }
   writeExternalBindWarnings(rows);
+  writeManagedByNotes(rows);
   return 0;
 }
 
@@ -753,6 +764,19 @@ function writeExternalBindWarnings(
       : "; spec.allowExternalBind is not true, so its next start is refused";
     process.stdout.write(
       `warning: modelhost/${r.name} binds an unauthenticated engine to ${r.exposedBind}${suffix}\n`,
+    );
+  }
+}
+
+// #223: name the controller that supervises each externally managed ModelHost,
+// on its own line so the table columns stay unchanged for scripts that parse them.
+function writeManagedByNotes(
+  rows: readonly { kind: string; name: string; managedBy: string | null }[],
+): void {
+  for (const r of rows) {
+    if (r.kind !== "modelhost" || r.managedBy === null) continue;
+    process.stdout.write(
+      `note: modelhost/${r.name} is managed by ${r.managedBy} (${MANAGED_BY_LABEL}); this controller does not reconcile it\n`,
     );
   }
 }
