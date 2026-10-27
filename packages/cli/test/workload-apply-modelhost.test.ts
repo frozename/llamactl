@@ -203,6 +203,62 @@ test("apply handoff validates the engine spec and fails without a client call", 
   expect(existsSync(savedManifestPath())).toBe(false);
 });
 
+test("in-process apply validates the engine spec before persisting", async () => {
+  const manifestPath = writeManifest({ binary: join(tmp, "missing-omlx") });
+  let clientCalls = 0;
+  __setWorkloadTestSeams({
+    getNodeClientByName: () => {
+      clientCalls++;
+      throw new Error("no node client may be used for a refused spec");
+    },
+  });
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("binary not found");
+  expect(clientCalls).toBe(0);
+  expect(existsSync(savedManifestPath())).toBe(false);
+});
+
+test("in-process apply validates a disabled local host before persisting", async () => {
+  const manifestPath = writeManifest({ binary: join(tmp, "missing-omlx"), enabled: false });
+  let clientCalls = 0;
+  __setWorkloadTestSeams({
+    getNodeClientByName: () => {
+      clientCalls++;
+      throw new Error("no node client may be used for a refused spec");
+    },
+  });
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("binary not found");
+  expect(clientCalls).toBe(0);
+  expect(existsSync(savedManifestPath())).toBe(false);
+});
+
+test("an engine-refused in-process apply leaves the previously saved manifest unchanged", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  const { startCalls } = stubStartClient();
+
+  const firstPath = writeManifest();
+  const first = await withCapturedIo(() => runApply(["-f", firstPath]));
+  expect(first.result).toBe(0);
+  expect(startCalls()).toBe(1);
+
+  const before = readFileSync(savedManifestPath(), "utf8");
+
+  const secondPath = writeManifest({ binary: join(tmp, "missing-omlx") });
+  const second = await withCapturedIo(() => runApply(["-f", secondPath]));
+
+  expect(second.result).toBe(1);
+  expect(second.stderr).toContain("binary not found");
+  expect(readFileSync(savedManifestPath(), "utf8")).toBe(before);
+  expect(startCalls()).toBe(1);
+});
+
 test("apply without a controller still starts in-process and warns about the cgroup", async () => {
   writeFileSync(join(tmp, "omlx"), "", "utf8");
   const manifestPath = writeManifest();
