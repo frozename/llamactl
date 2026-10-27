@@ -1,6 +1,12 @@
 import type { NodeRun } from "./noderun-schema.js";
 
 import {
+  DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
+  type NodeRpcPassState,
+  type NodeRpcTimeouts,
+  withNodeRpcDeadline,
+} from "./node-rpc-deadline.js";
+import {
   applyNodeRun,
   type ArtifactResolver,
   type NodeRunApplyResult,
@@ -18,6 +24,8 @@ import { defaultNodeRunsDir, listNodeRuns, saveNodeRun } from "./noderun-store.j
  * separate because the diff semantics differ — ModelRun converges on
  * a single llama-server start/restart; NodeRun converges on a set
  * of infra packages and may issue many ops per pass.
+ * Node queries carry the per-call deadline from node-rpc-deadline.ts, with the
+ * same per-pass skip as reconcileOnce; mutations stay unbounded.
  */
 
 export interface NodeRunReconcileReport {
@@ -49,6 +57,19 @@ export interface NodeRunReconcileOptions {
   /** Narrow the reconcile to a subset of manifests (e.g., "only
    *  those labelled env=dev"). */
   filter?: (m: NodeRun) => boolean;
+  /** #221: per-call deadline for node queries (infraList, and any query the artifact
+   *  resolver makes on the client it is handed). Default DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS.
+   *  Mutations are never bounded here: infraInstall downloads tarballs. */
+  rpcTimeouts?: { queryMs?: number };
+}
+
+/** #221: bound node queries; leave .mutate unbounded (null) so a long infraInstall
+ *  download never inherits a deadline. */
+function nodeRunRpcTimeouts(opts: NodeRunReconcileOptions): NodeRpcTimeouts {
+  return {
+    queryMs: opts.rpcTimeouts?.queryMs ?? DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
+    mutateMs: null,
+  };
 }
 
 export async function reconcileNodeRunsOnce(
@@ -59,12 +80,16 @@ export async function reconcileNodeRunsOnce(
   const filtered = opts.filter ? manifests.filter(opts.filter) : manifests;
   const reports: NodeRunReconcileReport[] = [];
   let errors = 0;
+  const timeouts = nodeRunRpcTimeouts(opts);
+  // One pass state per call: after a node's first timeout, its later NodeRuns in this
+  // pass fail fast with NodeRpcSkippedError. The next pass tries the node again.
+  const pass: NodeRpcPassState = { timedOut: new Map() };
 
   for (const manifest of filtered) {
     const name = manifest.metadata.name;
     const node = manifest.spec.node;
     try {
-      const client = opts.getClient(node);
+      const client = withNodeRpcDeadline(opts.getClient(node), node, timeouts, pass);
       const resolveArtifact = opts.getArtifactResolver(node, client);
       const result = await applyNodeRun(manifest, { client, resolveArtifact });
       const actionCount = result.actions.filter((a) => a.type !== "skip").length;
