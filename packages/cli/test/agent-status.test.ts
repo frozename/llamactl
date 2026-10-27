@@ -3,6 +3,11 @@ import {
   type RunningAgent,
   startAgentServer,
 } from "@llamactl/remote";
+import {
+  type ModelHostManifest,
+  ModelHostManifestSchema,
+} from "@llamactl/remote/workload/modelhost-schema";
+import { saveModelHost } from "@llamactl/remote/workload/modelhost-store";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -64,6 +69,52 @@ function parseReport(out: string): AgentStatusReport {
   return JSON.parse(out) as AgentStatusReport;
 }
 
+function modelHost(
+  name: string,
+  opts: {
+    host: string;
+    port?: number;
+    node?: string;
+    enabled?: boolean;
+    allowExternalBind?: boolean;
+    extraArgs?: string[];
+  },
+): ModelHostManifest {
+  return ModelHostManifestSchema.parse({
+    apiVersion: "llamactl/v1",
+    kind: "ModelHost",
+    metadata: { name },
+    spec: {
+      engine: "llamacpp",
+      node: opts.node ?? "local",
+      enabled: opts.enabled ?? true,
+      binary: "/usr/bin/false",
+      endpoint: { host: opts.host, port: opts.port ?? 8080 },
+      hostedModels: [{ rel: "org/model.gguf" }],
+      ...(opts.extraArgs !== undefined ? { extraArgs: opts.extraArgs } : {}),
+      ...(opts.allowExternalBind !== undefined
+        ? { allowExternalBind: opts.allowExternalBind }
+        : {}),
+    },
+  });
+}
+
+async function statusWithModelHosts(
+  listModelHosts: () => ModelHostManifest[],
+  nodeName?: string,
+): Promise<AgentStatusReport> {
+  await seedInit();
+  const cfgPath = join(tmp, "agent.yaml");
+  const loaded = agentConfigMod.loadAgentConfig(cfgPath);
+  const cfg = nodeName === undefined ? loaded : { ...loaded, nodeName };
+  return await collectAgentStatus({
+    configPath: cfgPath,
+    cfg,
+    probe: () => Promise.resolve(false),
+    listModelHosts,
+  });
+}
+
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "llamactl-agent-status-"));
 });
@@ -87,6 +138,7 @@ describe("agent status", () => {
     expect(rep.listenerPid).toBeNull();
     expect(rep.probeUrl).toBe("https://127.0.0.1:59996/healthz");
     expect(rep.loopbackOnly).toBe(true);
+    expect(Array.isArray(rep.exposedModelHosts)).toBe(true);
     const cert = rep.cert as { sans: string[]; notAfter: string; expired: boolean };
     expect(cert.sans).toContain("127.0.0.1");
     expect(cert.sans).toContain("localhost");
@@ -264,6 +316,95 @@ describe("agent status listener pid", () => {
     });
     expect(calls).toEqual([["127.0.0.1", 59996]]);
     expect(report.listenerPid).toBe(7);
+  });
+});
+
+describe("agent status exposed ModelHost binds", () => {
+  test("flags an enabled local ModelHost bound to 0.0.0.0", async () => {
+    const report = await statusWithModelHosts(() => [
+      modelHost("exposed", { host: "0.0.0.0", allowExternalBind: true }),
+      modelHost("loopback", { host: "127.0.0.1" }),
+    ]);
+    expect(report.exposedModelHosts).toEqual([
+      { name: "exposed", bind: "0.0.0.0:8080", allowExternalBind: true },
+    ]);
+    expect(report.warnings).toContain(
+      "modelhost/exposed binds an unauthenticated engine to 0.0.0.0:8080 (spec.allowExternalBind: true)",
+    );
+    expect(report.warnings.some((w) => w.includes("modelhost/loopback"))).toBe(false);
+    expect(formatAgentStatus(report)).toContain(
+      "warning: modelhost/exposed binds an unauthenticated engine to 0.0.0.0:8080 (spec.allowExternalBind: true)\n",
+    );
+  });
+
+  test("an exposed bind without allowExternalBind says its next start is refused", async () => {
+    const report = await statusWithModelHosts(() => [
+      modelHost("lan", { host: "192.168.1.5", port: 9000 }),
+    ]);
+    expect(report.exposedModelHosts).toEqual([
+      { name: "lan", bind: "192.168.1.5:9000", allowExternalBind: false },
+    ]);
+    expect(report.warnings).toContain(
+      "modelhost/lan binds an unauthenticated engine to 192.168.1.5:9000; spec.allowExternalBind is not true, so its next start is refused",
+    );
+  });
+
+  test("catches --host in extraArgs and brackets an IPv6 bind", async () => {
+    const report = await statusWithModelHosts(() => [
+      modelHost("argv", { host: "127.0.0.1", extraArgs: ["--host", "0.0.0.0"] }),
+      modelHost("v6", { host: "::", port: 8081 }),
+    ]);
+    expect(report.exposedModelHosts).toEqual([
+      { name: "argv", bind: "0.0.0.0:8080", allowExternalBind: false },
+      { name: "v6", bind: "[::]:8081", allowExternalBind: false },
+    ]);
+  });
+
+  test("skips disabled hosts and other nodes, keeps the agent's own node name", async () => {
+    const report = await statusWithModelHosts(
+      () => [
+        modelHost("off", { host: "0.0.0.0", enabled: false }),
+        modelHost("other", { host: "0.0.0.0", node: "mini" }),
+        modelHost("named", { host: "0.0.0.0", node: "studio" }),
+      ],
+      "studio",
+    );
+    expect(report.exposedModelHosts).toEqual([
+      { name: "named", bind: "0.0.0.0:8080", allowExternalBind: false },
+    ]);
+    expect(
+      report.warnings.some((w) => w.includes("modelhost/off") || w.includes("modelhost/other")),
+    ).toBe(false);
+  });
+
+  test("a failing ModelHost read reports none", async () => {
+    const report = await statusWithModelHosts(() => {
+      throw new Error("workloads dir unreadable");
+    });
+    expect(report.exposedModelHosts).toEqual([]);
+    expect(report.warnings.some((w) => w.includes("modelhost/"))).toBe(false);
+  });
+
+  test("status --json reads exposed ModelHosts from the workloads dir", async () => {
+    await seedInit();
+    const dir = join(tmp, "workloads");
+    saveModelHost(modelHost("exposed", { host: "0.0.0.0", allowExternalBind: true }), dir);
+    const prev = process.env["LLAMACTL_WORKLOADS_DIR"];
+    process.env["LLAMACTL_WORKLOADS_DIR"] = dir;
+    try {
+      const r = await capture(["status", `--dir=${tmp}`, "--json"]);
+      expect(r.code).toBe(0);
+      expect(r.out.trimEnd().split("\n")).toHaveLength(1);
+      expect(parseReport(r.out).exposedModelHosts).toEqual([
+        { name: "exposed", bind: "0.0.0.0:8080", allowExternalBind: true },
+      ]);
+    } finally {
+      if (prev === undefined) {
+        Reflect.deleteProperty(process.env, "LLAMACTL_WORKLOADS_DIR");
+      } else {
+        process.env["LLAMACTL_WORKLOADS_DIR"] = prev;
+      }
+    }
   });
 });
 
