@@ -15,7 +15,12 @@ import {
   unlinkSync,
   writeFileSync,
 } from "../safe-fs.js";
-import { collectAgentStatus, formatAgentStatus, readCertSans } from "./agent-status.js";
+import {
+  collectAgentStatus,
+  defaultDescribeService,
+  formatAgentStatus,
+  readCertSans,
+} from "./agent-status.js";
 import { runHeal } from "./heal.js";
 
 const USAGE = `Usage: llamactl agent <subcommand>
@@ -220,7 +225,8 @@ ${DIR_FLAG_HELP}
 const STATUS_USAGE = `Usage: llamactl agent status [flags]
 
 Report the agent config, whether /healthz answers, a loopback-only
-bind, and cert expiry + SAN coverage of the advertised host.
+bind, cert expiry + SAN coverage of the advertised host, and the
+launchd label or systemd --user unit that manages the agent.
 
 Flags:
 ${DIR_FLAG_HELP}
@@ -1349,6 +1355,7 @@ async function runStatus(args: string[]): Promise<number> {
   const report = await collectAgentStatus({
     configPath: cfgPath,
     cfg,
+    describeService: defaultDescribeService,
     ...(parsed.host !== undefined ? { advertisedHost: parsed.host } : {}),
   });
   if (parsed.json) process.stdout.write(`${JSON.stringify(report)}\n`);

@@ -14,7 +14,15 @@ import { X509Certificate } from "node:crypto";
 import { isIP } from "node:net";
 
 import { readFileSync } from "../safe-fs.js";
+import { defaultUpdateDeps, type UpdateDeps } from "./update/deps.js";
 import { urlHost } from "./update/probes.js";
+import {
+  DEFAULT_UNITS,
+  LAUNCHD_AGENT_FALLBACK,
+  makeServiceManager,
+  pickServiceManagerKind,
+  type ServiceManagerKind,
+} from "./update/services.js";
 
 export interface AgentCertStatus {
   sans: string[];
@@ -32,6 +40,8 @@ export interface AgentStatusReport {
   running: boolean;
   /** pid holding the agent's TCP listener; null when not running or not resolvable. */
   listenerPid: number | null;
+  /** #211: service manager entry for the agent; null when not looked up or unsupported. */
+  service: AgentServiceStatus | null;
   probeUrl: string;
   loopbackOnly: boolean;
   cert: AgentCertStatus | { error: string };
@@ -44,6 +54,20 @@ export interface AgentStatusReport {
 export type ProbeFn = (url: string) => Promise<boolean>;
 
 export type ListenerPidFn = (host: string, port: number) => Promise<number | null>;
+
+/** #211: the launchd label or systemd --user unit managing the agent. Exactly these five fields. */
+export interface AgentServiceStatus {
+  manager: ServiceManagerKind;
+  /** launchd label or systemd unit. */
+  name: string;
+  loaded: boolean;
+  active: boolean;
+  pid: number | null;
+}
+
+export type DescribeServiceFn = () => Promise<AgentServiceStatus | null>;
+
+export type ServiceProbeDeps = Pick<UpdateDeps, "env" | "exec" | "platform" | "readFile" | "uid">;
 
 /** #214: an enabled ModelHost on this node whose engine binds a non-loopback host. */
 export interface ExposedModelHost {
@@ -114,6 +138,59 @@ async function lookupListenerPid(
   return await find(host, port).catch(() => null);
 }
 
+// #211: which launchd label or systemd --user unit manages the agent, resolved
+// the way `llamactl update` does (update/session.ts): the default agent unit,
+// and on launchd the `llamactl infra` label when the default is not loaded.
+// Copies five fields by name: a ServiceInfo also carries the unit's env and argv.
+export async function describeAgentService(
+  d: ServiceProbeDeps,
+): Promise<AgentServiceStatus | null> {
+  const kind = pickServiceManagerKind(null, d.platform);
+  if (kind === null) return null;
+  const manager = makeServiceManager(kind, d.exec, d.readFile, d.uid, d.env);
+  let info = await manager.describe("agent", DEFAULT_UNITS[kind].agent, false);
+  if (kind === "launchd" && !info.loaded) {
+    const fallback = await manager.describe("agent", LAUNCHD_AGENT_FALLBACK, false);
+    if (fallback.loaded) info = fallback;
+  }
+  return {
+    manager: kind,
+    name: info.name,
+    loaded: info.loaded,
+    active: info.active,
+    pid: info.pid,
+  };
+}
+
+const SERVICE_EXEC_TIMEOUT_MS = 2000;
+
+/** The production describer `agent status` uses: read-only launchctl/systemctl calls, each bounded. */
+export async function defaultDescribeService(): Promise<AgentServiceStatus | null> {
+  const d = defaultUpdateDeps();
+  const deps: ServiceProbeDeps = {
+    platform: d.platform,
+    exec: async (argv) => await d.exec(argv, { timeoutMs: SERVICE_EXEC_TIMEOUT_MS }),
+    readFile: d.readFile,
+    uid: d.uid,
+    env: d.env,
+  };
+  return await describeAgentService(deps);
+}
+
+// No describer means no lookup, so tests and other callers never exec
+// launchctl or systemctl. A failing describer degrades to null. The copy keeps
+// only the five fields even if a describer hands back more: the unit's env
+// (LLAMACTL_TUNNEL_BEARER on the controller host, #289) must never reach --json.
+// A separate function so collectAgentStatus stays under the cognitive-complexity gate.
+async function lookupService(
+  describer: DescribeServiceFn | undefined,
+): Promise<AgentServiceStatus | null> {
+  if (describer === undefined) return null;
+  const s = await describer().catch(() => null);
+  if (s === null) return null;
+  return { manager: s.manager, name: s.name, loaded: s.loaded, active: s.active, pid: s.pid };
+}
+
 function bracketedBind(host: string, port: number): string {
   const h = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
   return `${h}:${String(port)}`;
@@ -162,6 +239,7 @@ export async function collectAgentStatus(o: {
   advertisedHost?: string;
   probe?: ProbeFn;
   findListenerPid?: ListenerPidFn;
+  describeService?: DescribeServiceFn;
   listModelHosts?: ListModelHostsFn;
 }): Promise<AgentStatusReport> {
   const warnings: string[] = [];
@@ -171,6 +249,7 @@ export async function collectAgentStatus(o: {
   const probeUrl = `https://${probeHost}:${String(o.cfg.port)}/healthz`;
   const running = await (o.probe ?? defaultProbe)(probeUrl);
   const listenerPid = await lookupListenerPid(running, probeHost, o.cfg.port, o.findListenerPid);
+  const service = await lookupService(o.describeService);
 
   let cert: AgentStatusReport["cert"];
   let x509: X509Certificate | null = null;
@@ -215,6 +294,7 @@ export async function collectAgentStatus(o: {
     fingerprint: o.cfg.fingerprint,
     running,
     listenerPid,
+    service,
     probeUrl,
     loopbackOnly,
     cert,
@@ -238,12 +318,20 @@ function pidSuffix(r: AgentStatusReport): string {
   return ` pid=${r.listenerPid === null ? "unknown" : String(r.listenerPid)}`;
 }
 
+function serviceLines(s: AgentServiceStatus | null): string[] {
+  if (s === null) return [];
+  if (!s.loaded) return [`service ${s.manager} ${s.name} (not loaded)`];
+  const pid = s.pid === null ? "" : ` pid=${String(s.pid)}`;
+  return [`service ${s.manager} ${s.name} (loaded, ${s.active ? "active" : "inactive"})${pid}`];
+}
+
 export function formatAgentStatus(r: AgentStatusReport): string {
   const lines = [
     `config  ${r.configPath}`,
     `node    ${r.nodeName ?? "(unset)"}`,
     `bind    ${r.bind}${r.loopbackOnly ? " (loopback only)" : ""}`,
     `running ${r.running ? "yes" : "no"} (${r.probeUrl})${pidSuffix(r)}`,
+    ...serviceLines(r.service),
     `cert    ${r.certPath}`,
     ...certLines(r.cert),
   ];
