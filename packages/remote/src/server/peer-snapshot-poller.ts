@@ -97,14 +97,15 @@ async function readPeerSnapshotDirectWithTimeout(
     certificate: peer.certificate,
     fingerprint: peer.fingerprint,
   } as ClusterNode);
-  const target = new URL("/v1/fleet/snapshot", peer.endpoint);
+  // #306: ask agents without a fleet journal for their local routes; older agents ignore the parameter.
+  const target = new URL("/v1/fleet/snapshot?include=local-routes", peer.endpoint);
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
   try {
     const res = await pinnedFetch(target, { method: "GET", headers, signal: controller.signal });
-    if (!res.ok) return null; // 204 (no journal entry yet) or error
+    if (!res.ok) return null; // 204 (no journal entry and no local routes) or error
     return (await Promise.race([
       res.json(),
       new Promise<never>((_, reject) => {
