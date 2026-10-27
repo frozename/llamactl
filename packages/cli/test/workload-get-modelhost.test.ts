@@ -1,4 +1,8 @@
-import { ModelHostManifestSchema } from "@llamactl/remote/workload/modelhost-schema";
+import { workloadSchema, workloadStore } from "@llamactl/remote";
+import {
+  MANAGED_BY_LABEL,
+  ModelHostManifestSchema,
+} from "@llamactl/remote/workload/modelhost-schema";
 import { saveModelHost } from "@llamactl/remote/workload/modelhost-store";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
@@ -57,13 +61,14 @@ function writeHost(options: {
   port: number;
   extraArgs?: string[];
   allowExternalBind?: boolean;
+  labels?: Record<string, string>;
 }): void {
   const allow = options.allowExternalBind === true;
   saveModelHost(
     ModelHostManifestSchema.parse({
       apiVersion: "llamactl/v1",
       kind: "ModelHost",
-      metadata: { name: options.name },
+      metadata: { name: options.name, ...(options.labels ? { labels: options.labels } : {}) },
       spec: {
         engine: "omlx",
         node: "local",
@@ -82,10 +87,26 @@ interface GetRow {
   name: string;
   exposedBind: string | null;
   allowExternalBind: boolean;
+  managedBy: string | null;
 }
 
 function parseRows(stdout: string): GetRow[] {
   return JSON.parse(stdout) as GetRow[];
+}
+
+function writeGatewayRun(name: string, labels: Record<string, string>): void {
+  workloadStore.saveWorkload(
+    workloadSchema.ModelRunSchema.parse({
+      apiVersion: "llamactl/v1",
+      kind: "ModelRun",
+      metadata: { name, labels },
+      spec: {
+        node: "gw-node",
+        target: { kind: "rel", value: "fake-org/fake-model.gguf" },
+        gateway: true,
+      },
+    }),
+  );
 }
 
 test("json: 0.0.0.0 endpoint with allowExternalBind reports exposedBind", async () => {
@@ -156,4 +177,84 @@ test("text: exposed host without the opt-in says its next start is refused", asy
 
   expect(code).toBe(0);
   expect(stdout).toContain("spec.allowExternalBind is not true, so its next start is refused");
+});
+
+test("json: managedBy carries the llamactl.io/managed-by label, null without it", async () => {
+  writeHost({
+    name: "seat-a",
+    host: "127.0.0.1",
+    port: 8101,
+    labels: { [MANAGED_BY_LABEL]: "central-m4" },
+  });
+  writeHost({ name: "seat-b", host: "127.0.0.1", port: 8102 });
+
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads", "--json"]));
+
+  expect(code).toBe(0);
+  expect(stdout).not.toContain("note: ");
+  const rows = parseRows(stdout);
+  expect(rows.find((r) => r.name === "seat-a")?.managedBy).toBe("central-m4");
+  expect(rows.find((r) => r.name === "seat-b")?.managedBy).toBeNull();
+});
+
+test("json: a whitespace-only managed-by label reads as null", async () => {
+  writeHost({
+    name: "seat-w",
+    host: "127.0.0.1",
+    port: 8103,
+    labels: { [MANAGED_BY_LABEL]: "   " },
+  });
+
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads", "--json"]));
+
+  expect(code).toBe(0);
+  const row = parseRows(stdout).find((r) => r.name === "seat-w");
+  expect(row?.managedBy).toBeNull();
+});
+
+test("json: ModelRun rows carry managedBy null even when labeled", async () => {
+  writeGatewayRun("gw-run", { [MANAGED_BY_LABEL]: "central-m4" });
+
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads", "--json"]));
+
+  expect(code).toBe(0);
+  const row = parseRows(stdout).find((r) => r.name === "gw-run");
+  if (!row) throw new Error("gw-run row missing");
+  expect(row.kind).toBe("modelrun");
+  expect("managedBy" in row).toBe(true);
+  expect(row.managedBy).toBeNull();
+});
+
+test("text: one note line per externally managed host, table columns unchanged", async () => {
+  writeHost({
+    name: "seat-a",
+    host: "127.0.0.1",
+    port: 8101,
+    labels: { [MANAGED_BY_LABEL]: "central-m4" },
+  });
+  writeHost({ name: "seat-b", host: "127.0.0.1", port: 8102 });
+
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads"]));
+  const lines = stdout.split("\n");
+
+  expect(code).toBe(0);
+  expect(lines[0]).toMatch(/^NAME +NODE +KIND +PHASE +REL$/);
+  expect(lines.find((l) => l.startsWith("seat-a"))).toMatch(
+    /^seat-a +local +modelhost +unknown +mlx-community\/Qwen3-8B-MLX-4bit$/,
+  );
+  const notes = lines.filter((l) => l.startsWith("note: "));
+  expect(notes).toEqual([
+    "note: modelhost/seat-a is managed by central-m4 (llamactl.io/managed-by); this controller does not reconcile it",
+  ]);
+  const noteIndex = lines.indexOf(notes[0]!);
+  const seatBIndex = lines.findIndex((l) => l.startsWith("seat-b"));
+  expect(noteIndex).toBeGreaterThan(seatBIndex);
+});
+
+test("help: GET_USAGE describes managedBy", async () => {
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads", "--help"]));
+
+  expect(code).toBe(0);
+  expect(stdout).toContain("managedBy");
+  expect(stdout).toContain("'note:'");
 });

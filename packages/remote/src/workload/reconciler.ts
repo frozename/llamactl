@@ -33,6 +33,8 @@ import {
   DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS,
   DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
   type NodeRpcPassState,
+  NodeRpcSkippedError,
+  NodeRpcTimeoutError,
   type NodeRpcTimeouts,
   withNodeRpcDeadline,
 } from "./node-rpc-deadline.js";
@@ -58,6 +60,10 @@ export interface ReconcileNodeReport {
   /** ModelHost on the local node only: a launch record exists but the engine
    *  was not running, i.e. it exited or was killed since the last pass. */
   foundDead?: boolean;
+  /** #221: set only when the row's error is a node RPC deadline timeout or
+   *  a per-pass skip after one (NodeRpcTimeoutError / NodeRpcSkippedError).
+   *  The error message itself is unchanged. */
+  reason?: "NodeUnreachable";
 }
 
 export interface ReconcileResult {
@@ -114,6 +120,16 @@ async function resolveModelRunBudgetGiB(
     nodeMemBytesByName.set(nodeName, memBytes);
   }
   return defaultNodeBudgetGiB(undefined, await memBytes);
+}
+
+/** #221: a node RPC deadline timeout, or a per-pass skip after one. */
+function isNodeUnreachableError(err: unknown): boolean {
+  return err instanceof NodeRpcTimeoutError || err instanceof NodeRpcSkippedError;
+}
+
+/** The report field for an error caught while reconciling one workload. */
+function nodeUnreachableField(err: unknown): Pick<ReconcileNodeReport, "reason"> {
+  return isNodeUnreachableError(err) ? { reason: "NodeUnreachable" } : {};
 }
 
 function hostSpecSnapshot(manifest: ModelHostManifest): Record<string, unknown> {
@@ -280,7 +296,14 @@ async function reconcileModelRun(
   } catch (err) {
     errors++;
     const message = (err as Error).message;
-    reports.push({ kind: "ModelRun", name, node: spec.node, action: "unchanged", error: message });
+    reports.push({
+      kind: "ModelRun",
+      name,
+      node: spec.node,
+      action: "unchanged",
+      error: message,
+      ...nodeUnreachableField(err),
+    });
   }
   return errors;
 }
@@ -340,12 +363,31 @@ function recordHostOutcome(
   }
 }
 
+interface HostReportExtra {
+  error?: { reason: string; message: string };
+  foundDead?: boolean;
+  reason?: "NodeUnreachable";
+}
+
+/**
+ * #221: the pushHostReport extra for an error caught while reconciling one
+ * ModelHost. A node RPC timeout or skip is NodeUnreachable, both on the
+ * report and in the local ReconcileError condition; anything else stays
+ * ReconcileFailed. The message is unchanged.
+ */
+function caughtHostError(err: unknown): HostReportExtra {
+  const message = (err as Error).message;
+  return isNodeUnreachableError(err)
+    ? { error: { reason: "NodeUnreachable", message }, reason: "NodeUnreachable" }
+    : { error: { reason: "ReconcileFailed", message } };
+}
+
 function pushHostReport(
   reports: ReconcileNodeReport[],
   spec: ModelHostManifest["spec"],
   name: string,
   action: ReconcileNodeReport["action"],
-  extra: { error?: { reason: string; message: string }; foundDead?: boolean },
+  extra: HostReportExtra,
 ): number {
   reports.push({
     kind: "ModelHost",
@@ -354,6 +396,7 @@ function pushHostReport(
     action,
     ...(extra.error !== undefined ? { error: extra.error.message } : {}),
     ...(extra.foundDead === true ? { foundDead: true } : {}),
+    ...(extra.reason !== undefined ? { reason: extra.reason } : {}),
   });
   if (extra.error === undefined) return 0;
   recordHostOutcome(spec, name, { kind: "error", ...extra.error });
@@ -506,8 +549,6 @@ async function reconcileUnmanagedModelHost(
       foundDead,
     });
   } catch (err) {
-    return pushHostReport(reports, spec, name, "unchanged", {
-      error: { reason: "ReconcileFailed", message: (err as Error).message },
-    });
+    return pushHostReport(reports, spec, name, "unchanged", caughtHostError(err));
   }
 }
