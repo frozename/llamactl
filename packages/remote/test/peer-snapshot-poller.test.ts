@@ -279,7 +279,9 @@ describe("startPeerSnapshotPoller", () => {
         { modelId: "granite-mini-3b", port: 8086, revision: "rev-1" },
       ]);
       expect(captured).toHaveLength(1);
-      expect(captured[0]!.url).toBe("https://macmini.ai:7843/v1/fleet/snapshot");
+      expect(captured[0]!.url).toBe(
+        "https://macmini.ai:7843/v1/fleet/snapshot?include=local-routes",
+      );
       const init = captured[0]!.init as RequestInit & { tls?: { ca?: string } };
       expect(init.method).toBe("GET");
       expect(init.tls).toEqual({ ca: cert.certPem });
@@ -287,6 +289,49 @@ describe("startPeerSnapshotPoller", () => {
     } finally {
       rmSync(certDir, { recursive: true, force: true });
     }
+  });
+
+  test("direct peer fetch asks for the local-routes fallback and maps its workloads (#306)", async () => {
+    const captured: string[] = [];
+    globalThis.fetch = ((input: Request | string | URL) => {
+      captured.push(requestUrl(input));
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            kind: "local-routes",
+            ts: "2026-10-27T12:00:00.000Z",
+            workloads: [
+              {
+                name: "w1",
+                models: ["alias-a", "alias-b"],
+                endpoint: "http://127.0.0.1:8080",
+                reachable: true,
+                revision: "rev-1",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }) as typeof fetch;
+
+    const snapshot = await __peerSnapshotInternals.fetchPeerSnapshot(
+      { id: "z13", endpoint: "https://127.0.0.1:7843", token: "peer-token" },
+      1234,
+    );
+
+    expect(captured).toHaveLength(1);
+    const url = new URL(captured[0]!);
+    expect(url.pathname).toBe("/v1/fleet/snapshot");
+    expect(url.searchParams.get("include")).toBe("local-routes");
+    expect(snapshot).toEqual({
+      workloads: [
+        { modelId: "alias-a", port: 8080, revision: "rev-1" },
+        { modelId: "alias-b", port: 8080, revision: "rev-1" },
+      ],
+      pressure: "NORMAL",
+      fetchedAt: 1234,
+    });
   });
 
   test("slow peer fetch does not block healthy peer publishes across ticks", async () => {
