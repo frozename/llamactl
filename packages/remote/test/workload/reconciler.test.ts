@@ -670,6 +670,40 @@ describe("reconcileOnce", () => {
         expect(fs.existsSync(modelhostConditionsFile(runtime, { name: "host-a" }))).toBe(false);
       });
     });
+
+    test("records a NodeUnreachable ReconcileError when the local node times out", async () => {
+      await withRuntime("llamactl-reconciler-cond-unreachable-", async (dir, runtime) => {
+        saveModelHost(makeHostManifest(), dir);
+        const message = "node 'local' did not respond to modelHostStatus.query within 20 ms";
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          rpcTimeouts: { queryMs: 20, mutateMs: 20 },
+          getClient: (): WorkloadClient => ({
+            ...makeClient(),
+            modelHostStatus: { query: (): Promise<never> => new Promise<never>(() => undefined) },
+          }),
+        });
+        expect(result.errors).toBe(1);
+        expect(result.reports).toEqual([
+          {
+            kind: "ModelHost",
+            name: "host-a",
+            node: "local",
+            action: "unchanged",
+            error: message,
+            reason: "NodeUnreachable",
+          },
+        ]);
+        expect(readModelHostRuntimeStatus({ name: "host-a" }, runtime)?.conditions).toEqual([
+          expect.objectContaining({
+            type: "ReconcileError",
+            status: "True",
+            reason: "NodeUnreachable",
+            message,
+          }),
+        ]);
+      });
+    });
   });
 
   describe("externally managed ModelHosts", () => {
@@ -1018,6 +1052,145 @@ describe("reconcileOnce", () => {
         expect(hostReport?.action).toBe("unchanged");
         expect(hostReport?.error).toBeUndefined();
         expect(Date.now() - startedAt).toBeLessThan(2000);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("ModelHosts on a timed-out node report NodeUnreachable, the skipped one included", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-unreachable-host-"));
+      try {
+        const hostA: ModelHostManifest = {
+          ...makeHostManifest(),
+          spec: { ...makeHostManifest().spec, node: "z13" },
+        };
+        const hostB: ModelHostManifest = {
+          ...makeHostManifest(),
+          metadata: { name: "host-b" },
+          spec: {
+            ...makeHostManifest().spec,
+            node: "z13",
+            endpoint: { host: "127.0.0.1", port: 18095 },
+          },
+        };
+        saveModelHost(hostA, dir);
+        saveModelHost(hostB, dir);
+
+        let z13Calls = 0;
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          rpcTimeouts: { queryMs: 20, mutateMs: 20 },
+          getClient: (): WorkloadClient => ({
+            ...makeClient(),
+            modelHostStatus: {
+              query: (): Promise<never> => {
+                z13Calls++;
+                return new Promise<never>(() => undefined);
+              },
+            },
+          }),
+        });
+
+        expect(z13Calls).toBe(1);
+        expect(result.errors).toBe(2);
+        const a = result.reports.find((r) => r.name === "host-a");
+        const b = result.reports.find((r) => r.name === "host-b");
+        expect([a?.kind, b?.kind]).toEqual(["ModelHost", "ModelHost"]);
+        expect([a?.action, b?.action]).toEqual(["unchanged", "unchanged"]);
+        expect([a?.reason, b?.reason]).toEqual(["NodeUnreachable", "NodeUnreachable"]);
+        const errors = [a?.error ?? "", b?.error ?? ""];
+        expect(
+          errors.filter((e) => e.includes("did not respond to modelHostStatus.query")),
+        ).toHaveLength(1);
+        expect(
+          errors.filter((e) => e.includes("skipped modelHostStatus.query for this pass")),
+        ).toHaveLength(1);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("ModelRuns on a timed-out node report NodeUnreachable, the skipped one included", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-unreachable-run-"));
+      try {
+        const runA: ModelRun = {
+          ...makeRunManifest(),
+          spec: { ...makeRunManifest().spec, node: "z13" },
+        };
+        const runB: ModelRun = {
+          ...makeRunManifest(),
+          metadata: { name: "run-b", labels: {}, annotations: {} },
+          spec: {
+            ...makeRunManifest().spec,
+            node: "z13",
+            target: { kind: "rel", value: "mlx-community/run-b.gguf" },
+          },
+        };
+        saveWorkload(runA, dir);
+        saveWorkload(runB, dir);
+
+        let z13Calls = 0;
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          rpcTimeouts: { queryMs: 20, mutateMs: 20 },
+          getClient: (): WorkloadClient => ({
+            ...makeClient(),
+            serverStatus: {
+              query: (): Promise<never> => {
+                z13Calls++;
+                return new Promise<never>(() => undefined);
+              },
+            },
+          }),
+        });
+
+        expect(z13Calls).toBe(1);
+        expect(result.errors).toBe(2);
+        const a = result.reports.find((r) => r.name === "run-a");
+        const b = result.reports.find((r) => r.name === "run-b");
+        expect([a?.kind, b?.kind]).toEqual(["ModelRun", "ModelRun"]);
+        expect([a?.action, b?.action]).toEqual(["unchanged", "unchanged"]);
+        expect([a?.reason, b?.reason]).toEqual(["NodeUnreachable", "NodeUnreachable"]);
+        const errors = [a?.error ?? "", b?.error ?? ""];
+        expect(
+          errors.filter((e) => e.includes("did not respond to serverStatus.query")),
+        ).toHaveLength(1);
+        expect(
+          errors.filter((e) => e.includes("skipped serverStatus.query for this pass")),
+        ).toHaveLength(1);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("an error the node answers with carries no NodeUnreachable reason", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "llamactl-reconciler-answered-error-"));
+      try {
+        saveWorkload(
+          { ...makeRunManifest(), spec: { ...makeRunManifest().spec, node: "z13" } },
+          dir,
+        );
+        saveModelHost(
+          { ...makeHostManifest(), spec: { ...makeHostManifest().spec, node: "z13" } },
+          dir,
+        );
+
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          rpcTimeouts: { queryMs: 60_000, mutateMs: 60_000 },
+          getClient: (): WorkloadClient => ({
+            ...makeClient(),
+            serverStatus: { query: (): Promise<never> => Promise.reject(new Error("boom")) },
+            modelHostStatus: { query: (): Promise<never> => Promise.reject(new Error("boom")) },
+          }),
+        });
+
+        expect(result.errors).toBe(2);
+        expect(result.reports).toEqual([
+          { kind: "ModelRun", name: "run-a", node: "z13", action: "unchanged", error: "boom" },
+          { kind: "ModelHost", name: "host-a", node: "z13", action: "unchanged", error: "boom" },
+        ]);
+        expect(result.reports.filter((r) => "reason" in r)).toEqual([]);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
