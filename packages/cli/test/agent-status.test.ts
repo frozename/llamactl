@@ -13,10 +13,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  type AgentServiceStatus,
   type AgentStatusReport,
   collectAgentStatus,
+  describeAgentService,
+  type DescribeServiceFn,
   formatAgentStatus,
   isLoopbackHost,
+  type ServiceProbeDeps,
 } from "../src/commands/agent-status.js";
 import { runAgent } from "../src/commands/agent.js";
 import { mkdtempSync, rmSync, unlinkSync } from "../src/safe-fs.js";
@@ -67,6 +71,66 @@ async function seedInit(extraArgs: string[] = []): Promise<void> {
 
 function parseReport(out: string): AgentStatusReport {
   return JSON.parse(out) as AgentStatusReport;
+}
+
+const SERVICE_KEYS = ["active", "loaded", "manager", "name", "pid"];
+const LEAK_MARKER = "leak-marker-6d1f";
+const NODE_AGENT: AgentServiceStatus = {
+  manager: "launchd",
+  name: "com.llamactl.node-agent",
+  loaded: true,
+  active: true,
+  pid: 4242,
+};
+
+async function statusWithService(describeService?: DescribeServiceFn): Promise<AgentStatusReport> {
+  await seedInit();
+  const cfgPath = join(tmp, "agent.yaml");
+  const cfg = agentConfigMod.loadAgentConfig(cfgPath);
+  return await collectAgentStatus({
+    configPath: cfgPath,
+    cfg,
+    probe: () => Promise.resolve(false),
+    listModelHosts: () => [],
+    ...(describeService === undefined ? {} : { describeService }),
+  });
+}
+
+function launchctlPrint(label: string, pid: number): string {
+  return [
+    `gui/501/${label} = {`,
+    "\tstate = running",
+    "\targuments = {",
+    "\t\t/opt/bun",
+    "\t\tagent",
+    "\t\tserve",
+    "\t}",
+    "\tenvironment = {",
+    `\t\tLLAMACTL_TUNNEL_BEARER => ${LEAK_MARKER}`,
+    "\t}",
+    `\tpid = ${String(pid)}`,
+    "}",
+  ].join("\n");
+}
+
+function fakeLaunchctl(
+  loaded: Record<string, string>,
+  calls: string[][],
+): ServiceProbeDeps["exec"] {
+  return (argv) => {
+    calls.push([...argv]);
+    const label = (argv[2] ?? "").split("/").pop() ?? "";
+    const stdout = loaded[label];
+    return Promise.resolve(
+      stdout === undefined
+        ? { code: 113, stdout: "", stderr: "Could not find service" }
+        : { code: 0, stdout, stderr: "" },
+    );
+  };
+}
+
+function serviceDeps(platform: NodeJS.Platform, exec: ServiceProbeDeps["exec"]): ServiceProbeDeps {
+  return { platform, exec, readFile: () => null, uid: 501, env: {} };
 }
 
 function modelHost(
@@ -136,6 +200,11 @@ describe("agent status", () => {
     const rep = parseReport(r.out);
     expect(rep.running).toBe(false);
     expect(rep.listenerPid).toBeNull();
+    expect(Object.keys(rep)).toContain("service");
+    if (process.platform === "linux" || process.platform === "darwin") {
+      expect(rep.service).not.toBeNull();
+      expect(Object.keys(rep.service ?? {}).sort()).toEqual(SERVICE_KEYS);
+    }
     expect(rep.probeUrl).toBe("https://127.0.0.1:59996/healthz");
     expect(rep.loopbackOnly).toBe(true);
     expect(Array.isArray(rep.exposedModelHosts)).toBe(true);
@@ -405,6 +474,158 @@ describe("agent status exposed ModelHost binds", () => {
         process.env["LLAMACTL_WORKLOADS_DIR"] = prev;
       }
     }
+  });
+});
+
+describe("agent status service manager", () => {
+  test("describeService result lands in the report and on the human service line", async () => {
+    const report = await statusWithService(() => Promise.resolve(NODE_AGENT));
+    expect(report.service).toEqual(NODE_AGENT);
+    const text = formatAgentStatus(report);
+    expect(text).toContain("\nservice launchd com.llamactl.node-agent (loaded, active) pid=4242\n");
+    expect(text).toContain("(https://127.0.0.1:59996/healthz)\nservice launchd");
+    expect(JSON.stringify(report)).not.toMatch(/"(?:env|argv)":/);
+  });
+
+  test("a describer that returns extra fields is cut to the five whitelisted keys", async () => {
+    const leaky = {
+      ...NODE_AGENT,
+      env: { LLAMACTL_TUNNEL_BEARER: LEAK_MARKER },
+      argv: ["/opt/bun", LEAK_MARKER],
+    };
+    const report = await statusWithService(() => Promise.resolve(leaky));
+    expect(Object.keys(report.service ?? {}).sort()).toEqual(SERVICE_KEYS);
+    expect(JSON.stringify(report)).not.toContain(LEAK_MARKER);
+    expect(formatAgentStatus(report)).not.toContain(LEAK_MARKER);
+  });
+
+  test("not loaded and loaded-inactive units render without a pid", async () => {
+    const report = await statusWithService(() => Promise.resolve(NODE_AGENT));
+    expect(
+      formatAgentStatus({
+        ...report,
+        service: {
+          manager: "systemd",
+          name: "llamactl-agent.service",
+          loaded: false,
+          active: false,
+          pid: null,
+        },
+      }),
+    ).toContain("\nservice systemd llamactl-agent.service (not loaded)\n");
+    expect(
+      formatAgentStatus({
+        ...report,
+        service: {
+          manager: "systemd",
+          name: "llamactl-agent.service",
+          loaded: true,
+          active: false,
+          pid: null,
+        },
+      }),
+    ).toContain("\nservice systemd llamactl-agent.service (loaded, inactive)\n");
+  });
+
+  test("a rejecting describer degrades to service null", async () => {
+    const report = await statusWithService(() => Promise.reject(new Error("launchctl failed")));
+    expect(report.service).toBeNull();
+    expect(formatAgentStatus(report)).not.toContain("\nservice ");
+  });
+
+  test("no describer reports service null and prints no service line", async () => {
+    const report = await statusWithService();
+    expect(report.service).toBeNull();
+    expect(formatAgentStatus(report)).not.toContain("\nservice ");
+  });
+});
+
+describe("describeAgentService", () => {
+  test("launchd falls back to com.llamactl.node-agent and drops env and argv", async () => {
+    const calls: string[][] = [];
+    const s = await describeAgentService(
+      serviceDeps(
+        "darwin",
+        fakeLaunchctl(
+          { "com.llamactl.node-agent": launchctlPrint("com.llamactl.node-agent", 4242) },
+          calls,
+        ),
+      ),
+    );
+    expect(s).toEqual(NODE_AGENT);
+    expect(Object.keys(s ?? {}).sort()).toEqual(SERVICE_KEYS);
+    expect(JSON.stringify(s)).not.toContain(LEAK_MARKER);
+    expect(calls).toEqual([
+      ["launchctl", "print", "gui/501/com.llamactl.agent"],
+      ["launchctl", "print", "gui/501/com.llamactl.node-agent"],
+    ]);
+  });
+
+  test("launchd uses a loaded default label without a fallback lookup", async () => {
+    const calls: string[][] = [];
+    const s = await describeAgentService(
+      serviceDeps(
+        "darwin",
+        fakeLaunchctl({ "com.llamactl.agent": launchctlPrint("com.llamactl.agent", 99) }, calls),
+      ),
+    );
+    expect(s).toEqual({
+      manager: "launchd",
+      name: "com.llamactl.agent",
+      loaded: true,
+      active: true,
+      pid: 99,
+    });
+    expect(calls).toEqual([["launchctl", "print", "gui/501/com.llamactl.agent"]]);
+  });
+
+  test("launchd with nothing loaded reports the default label as not loaded", async () => {
+    const calls: string[][] = [];
+    const s = await describeAgentService(serviceDeps("darwin", fakeLaunchctl({}, calls)));
+    expect(s).toEqual({
+      manager: "launchd",
+      name: "com.llamactl.agent",
+      loaded: false,
+      active: false,
+      pid: null,
+    });
+    expect(calls).toHaveLength(2);
+  });
+
+  test("systemd describes llamactl-agent.service in the user scope and drops its env", async () => {
+    const calls: string[][] = [];
+    const exec: ServiceProbeDeps["exec"] = (argv) => {
+      calls.push([...argv]);
+      const stdout =
+        argv[2] === "show"
+          ? `Id=llamactl-agent.service\nLoadState=loaded\nActiveState=active\nMainPID=777\nEnvironment=LLAMACTL_TUNNEL_BEARER=${LEAK_MARKER}\n`
+          : "";
+      return Promise.resolve({ code: 0, stdout, stderr: "" });
+    };
+    const s = await describeAgentService(serviceDeps("linux", exec));
+    expect(s).toEqual({
+      manager: "systemd",
+      name: "llamactl-agent.service",
+      loaded: true,
+      active: true,
+      pid: 777,
+    });
+    expect(JSON.stringify(s)).not.toContain(LEAK_MARKER);
+    expect(calls.map((c) => c.slice(0, 4))).toEqual([
+      ["systemctl", "--user", "show", "llamactl-agent.service"],
+      ["systemctl", "--user", "cat", "llamactl-agent.service"],
+    ]);
+  });
+
+  test("an unsupported platform returns null and runs nothing", async () => {
+    const calls: string[][] = [];
+    const exec: ServiceProbeDeps["exec"] = (argv) => {
+      calls.push([...argv]);
+      return Promise.reject(new Error("must not exec"));
+    };
+    const s = await describeAgentService(serviceDeps("win32", exec));
+    expect(s).toBeNull();
+    expect(calls).toEqual([]);
   });
 });
 

@@ -6,6 +6,7 @@
  * covers the unbounded .query / .mutate calls. Within one reconcile
  * pass, once a node has timed out, the remaining calls to it in that
  * pass fail fast via NodeRpcSkippedError (see NodeRpcPassState).
+ * A null mutateMs leaves mutations unbounded.
  */
 
 export const DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS = 10_000;
@@ -13,7 +14,10 @@ export const DEFAULT_NODE_RPC_MUTATE_TIMEOUT_MS = 30_000;
 
 export interface NodeRpcTimeouts {
   queryMs: number;
-  mutateMs: number;
+  /** null leaves .mutate unbounded: the wrapper hands back the procedure's own mutate.
+   *  Never use Infinity or a huge number for that: setTimeout clamps delays above
+   *  2^31-1 ms to 1 ms. */
+  mutateMs: number | null;
 }
 
 export class NodeRpcTimeoutError extends Error {
@@ -80,8 +84,9 @@ function wrapProcedure<T extends object>(
     get(target, prop): unknown {
       const value: unknown = Reflect.get(target, prop);
       if (typeof prop !== "string" || (prop !== "query" && prop !== "mutate")) return value;
-      if (typeof value !== "function") return value;
       const timeoutMs = prop === "query" ? timeouts.queryMs : timeouts.mutateMs;
+      // #221: a null deadline leaves the call unbounded; return the procedure's own function.
+      if (typeof value !== "function" || timeoutMs === null) return value;
       const label = `${name}.${prop}`;
       return (...args: unknown[]): Promise<unknown> => {
         const earlier = pass?.timedOut.get(node);

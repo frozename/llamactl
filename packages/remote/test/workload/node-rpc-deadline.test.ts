@@ -169,6 +169,26 @@ describe("withNodeRpcDeadline", () => {
     >(client, "z13", timeouts);
     expect(wrapped.resolveTarget).toBeUndefined();
   });
+
+  test("mutateMs null hands back the procedure's own mutate and still bounds queries", async () => {
+    const rawMutate = (_input: { pkg: string }): Promise<{ ok: boolean }> =>
+      Promise.resolve({ ok: true });
+    const client = {
+      infraInstall: { mutate: rawMutate },
+      infraList: {
+        query: (): Promise<never> => new Promise<never>(() => undefined),
+      },
+    };
+    const wrapped = withNodeRpcDeadline(client, "z13", { queryMs: 5, mutateMs: null });
+    expect(wrapped.infraInstall.mutate).toBe(rawMutate);
+    const err = await wrapped.infraList.query().then(
+      (): null => null,
+      (e: unknown): unknown => e,
+    );
+    expect(err).toBeInstanceOf(NodeRpcTimeoutError);
+    expect((err as NodeRpcTimeoutError).procedure).toBe("infraList.query");
+    expect((err as NodeRpcTimeoutError).timeoutMs).toBe(5);
+  });
 });
 
 describe("withNodeRpcDeadline per-pass skip", () => {
