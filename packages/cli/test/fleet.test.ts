@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { FleetSnapshotEntry } from "../../fleet-supervisor/src/types.js";
 
 import {
+  aggregatorStartLine,
   persistSnapshots,
   type PersistSnapshotsOptions,
   runFleet,
@@ -298,8 +299,22 @@ describe("staleTransition", () => {
   });
 });
 
+describe("aggregatorStartLine", () => {
+  test("ends the start line with the running commit", () => {
+    expect(aggregatorStartLine(NOW(), "abc1234", "/tmp/c.db", 2)).toBe(
+      "2026-10-26T10:00:00.000Z fleet aggregator: serving db=/tmp/c.db peers=2 commit=abc1234\n",
+    );
+  });
+
+  test("prints commit=unknown when the commit cannot be read", () => {
+    expect(aggregatorStartLine(NOW(), null, "/tmp/c.db", 2)).toBe(
+      "2026-10-26T10:00:00.000Z fleet aggregator: serving db=/tmp/c.db peers=2 commit=unknown\n",
+    );
+  });
+});
+
 describe("fleet aggregator serve", () => {
-  test("--once writes a timestamped start line and the peer summary to stderr", async () => {
+  test("--once writes a timestamped start line with the commit and the peer summary to stderr", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fleet-serve-test-"));
     const dbPath = join(dir, "cluster.db");
     let out = "";
@@ -312,6 +327,7 @@ describe("fleet aggregator serve", () => {
     try {
       result = await runFleet(["aggregator", "serve", "--once", "--db", dbPath], {
         readPeers: () => [],
+        readCommit: () => "abc1234",
       });
     } finally {
       process.stderr.write = orig;
@@ -320,12 +336,39 @@ describe("fleet aggregator serve", () => {
     expect(result).toBe(0);
     const lines = out.split("\n").filter((line) => line.includes("fleet aggregator:"));
     expect(lines.map((line) => line.slice(line.indexOf(" ") + 1))).toEqual([
-      `fleet aggregator: serving db=${dbPath} peers=0`,
+      `fleet aggregator: serving db=${dbPath} peers=0 commit=abc1234`,
       "fleet aggregator: all 0 peers fresh",
     ]);
     for (const line of lines) {
       const stamp = line.slice(0, line.indexOf(" "));
       expect(new Date(stamp).toISOString()).toBe(stamp);
     }
+  });
+
+  test("--once starts and prints commit=unknown when the commit cannot be read", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fleet-serve-test-"));
+    const dbPath = join(dir, "cluster.db");
+    let out = "";
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): true => {
+      out += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    };
+    let result = -1;
+    try {
+      result = await runFleet(["aggregator", "serve", "--once", "--db", dbPath], {
+        readPeers: () => [],
+        readCommit: () => null,
+      });
+    } finally {
+      process.stderr.write = orig;
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(result).toBe(0);
+    const lines = out.split("\n").filter((line) => line.includes("fleet aggregator:"));
+    expect(lines.map((line) => line.slice(line.indexOf(" ") + 1))).toEqual([
+      `fleet aggregator: serving db=${dbPath} peers=0 commit=unknown`,
+      "fleet aggregator: all 0 peers fresh",
+    ]);
   });
 });
