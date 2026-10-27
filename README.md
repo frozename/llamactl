@@ -1,5 +1,9 @@
 # llamactl
 
+<p align="center">
+  <img src="./.github/branding/logo.png" alt="llamactl logo" width="640" />
+</p>
+
 Local-first control plane for llama.cpp fleets. Discover models,
 tune and benchmark presets, run `llama-server` on one or many
 machines, and deploy the same infra everywhere through declarative
