@@ -471,6 +471,22 @@ function handoffLocalModelHost(manifest: ModelHostManifest, json: boolean): numb
   return 0;
 }
 
+// #214: on the in-process path (no controller, or a disabled local host),
+// validate the engine spec before applyModelHostFromRaw persists it, so a spec
+// the engine refuses never replaces the last accepted manifest. Disabled local
+// hosts are validated too, as validateModelHostAdmission does before its
+// disable branch. Returns null when apply should continue in-process.
+function handoffOrRefuseLocalModelHost(manifest: ModelHostManifest, json: boolean): number | null {
+  const handedOff = handoffLocalModelHost(manifest, json);
+  if (handedOff !== null) return handedOff;
+  if (manifest.spec.node !== LOCAL_NODE_ID) return null;
+  const engine = ENGINES[manifest.spec.engine];
+  const validation = engine.validateSpec(specForEngine(manifest.spec));
+  if (validation.ok) return null;
+  process.stderr.write(`apply: ${validation.error}\n`);
+  return 1;
+}
+
 async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number> {
   let manifest: unknown;
   try {
@@ -502,7 +518,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
     return 1;
   }
 
-  const handedOff = handoffLocalModelHost(parsedHost, json);
+  const handedOff = handoffOrRefuseLocalModelHost(parsedHost, json);
   if (handedOff !== null) return handedOff;
 
   // Persist the desired-state manifest BEFORE dispatching modelHostStart.
