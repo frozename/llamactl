@@ -75,6 +75,38 @@ function mockClient(live: InstalledInfra[] = []): NodeRunInfraClient {
   };
 }
 
+/** A client whose infraList.query never settles, like a suspended node; counts the calls. */
+function silentClient(calls: { infraList: number }): NodeRunInfraClient {
+  return {
+    ...mockClient(),
+    infraList: {
+      query(): Promise<InstalledInfra[]> {
+        calls.infraList++;
+        return new Promise<InstalledInfra[]>(() => undefined);
+      },
+    },
+  };
+}
+
+/** Wait for `cond` across timer turns, at most `turns` turns of 5 ms; never a fixed sleep. */
+async function waitUntil(cond: () => boolean, turns = 400): Promise<void> {
+  let left = turns;
+  while (left > 0 && !cond()) {
+    left--;
+    await new Promise<void>((resolve): void => {
+      setTimeout(resolve, 5);
+    });
+  }
+}
+
+/** Procedure references typed as plain values, so the identity checks never touch a method. */
+interface InfraProcedureRefs {
+  infraActivate: { mutate: unknown };
+  infraInstall: { mutate: unknown };
+  infraList: { query: unknown };
+  infraUninstall: { mutate: unknown };
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "llamactl-noderun-reconciler-"));
 });
@@ -164,5 +196,83 @@ describe("reconcileNodeRunsOnce", () => {
     expect(failed.error).toMatch(/node unreachable/);
     const ok = result.reports.find((r) => r.name === "b")!;
     expect(ok.phase).toBe("Converged");
+  });
+});
+
+describe("reconcileNodeRunsOnce node RPC deadline", () => {
+  test("a silent node fails its first NodeRun after one query deadline and skips the rest of the pass", async () => {
+    saveNodeRun(sampleManifest("a-run", "z13"), dir);
+    saveNodeRun(sampleManifest("b-run", "z13"), dir);
+    const calls = { infraList: 0 };
+    const silent = silentClient(calls);
+    const state = { settled: false };
+    const run = reconcileNodeRunsOnce({
+      workloadsDir: dir,
+      getClient: () => silent,
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
+        Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
+      rpcTimeouts: { queryMs: 5 },
+    }).finally((): void => {
+      state.settled = true;
+    });
+    await waitUntil((): boolean => state.settled);
+    expect(state.settled).toBe(true);
+    const result = await run;
+    expect(result.errors).toBe(2);
+    expect(result.reports.map((r) => r.name)).toEqual(["a-run", "b-run"]);
+    const first = result.reports.find((r) => r.name === "a-run")!;
+    const second = result.reports.find((r) => r.name === "b-run")!;
+    expect(first.phase).toBe("Failed");
+    expect(first.error).toMatch(/did not respond to infraList\.query within 5 ms/);
+    expect(second.phase).toBe("Failed");
+    expect(second.error).toMatch(/skipped infraList\.query for this pass/);
+    expect(calls.infraList).toBe(1);
+  });
+
+  test("a silent node does not hold up NodeRuns on another node", async () => {
+    saveNodeRun(sampleManifest("a-run", "z13"), dir);
+    saveNodeRun(sampleManifest("b-run", "mac-mini"), dir);
+    const silent = silentClient({ infraList: 0 });
+    const state = { settled: false };
+    const run = reconcileNodeRunsOnce({
+      workloadsDir: dir,
+      getClient: (node) => (node === "z13" ? silent : mockClient()),
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
+        Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
+      rpcTimeouts: { queryMs: 5 },
+    }).finally((): void => {
+      state.settled = true;
+    });
+    await waitUntil((): boolean => state.settled);
+    expect(state.settled).toBe(true);
+    const result = await run;
+    expect(result.errors).toBe(1);
+    const down = result.reports.find((r) => r.name === "a-run")!;
+    const up = result.reports.find((r) => r.name === "b-run")!;
+    expect(down.phase).toBe("Failed");
+    expect(down.error).toMatch(/did not respond to infraList\.query within 5 ms/);
+    expect(up.phase).toBe("Converged");
+  });
+
+  test("the client handed to the artifact resolver bounds queries and leaves mutations unwrapped", async () => {
+    saveNodeRun(sampleManifest("a-run", "z13"), dir);
+    const raw = mockClient();
+    const seen: NodeRunInfraClient[] = [];
+    await reconcileNodeRunsOnce({
+      workloadsDir: dir,
+      getClient: () => raw,
+      getArtifactResolver: (_node, client) => {
+        seen.push(client);
+        return (): Promise<{ tarballUrl: string; sha256: string }> =>
+          Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) });
+      },
+    });
+    expect(seen).toHaveLength(1);
+    const rawRefs: InfraProcedureRefs = raw;
+    const handedRefs: InfraProcedureRefs = seen[0]!;
+    expect(handedRefs.infraList.query).not.toBe(rawRefs.infraList.query);
+    expect(handedRefs.infraInstall.mutate).toBe(rawRefs.infraInstall.mutate);
+    expect(handedRefs.infraActivate.mutate).toBe(rawRefs.infraActivate.mutate);
+    expect(handedRefs.infraUninstall.mutate).toBe(rawRefs.infraUninstall.mutate);
   });
 });
