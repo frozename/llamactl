@@ -66,6 +66,10 @@ A ModelHost on another node reports what that node's agent says
 (modelHostStatus): Running, Stopped, unknown when the node cannot
 confirm the recorded pid, or Unreachable when the node does not answer.
 
+Each node query (serverStatus for a ModelRun, modelHostStatus for a
+ModelHost) has a 10 s deadline: a node that does not answer within
+10 s reads Unreachable, and the other rows are not held up.
+
 A ModelHost that binds a non-loopback host gets a trailing 'warning:'
 line, and its --json row carries exposedBind (host:port, or null) and
 allowExternalBind.
@@ -107,6 +111,8 @@ export interface NodeBudgetView {
 
 interface WorkloadTestSeams {
   getNodeClientByName?: typeof getNodeClientByName;
+  /** #221: deadline in ms for each node status query in `get workloads` (default GET_NODE_QUERY_TIMEOUT_MS). */
+  nodeQueryTimeoutMs?: number;
 }
 
 let workloadTestSeams: WorkloadTestSeams = {};
@@ -121,6 +127,29 @@ export function __resetWorkloadTestSeams(): void {
 
 function getWorkloadNodeClient(name: string): NodeClient {
   return (workloadTestSeams.getNodeClientByName ?? getNodeClientByName)(name);
+}
+
+// #221: same value as DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS in
+// packages/remote/src/workload/node-rpc-deadline.ts, which @llamactl/remote does not export.
+const GET_NODE_QUERY_TIMEOUT_MS = 10_000;
+
+// #221: race one node status query against a deadline, so a node that never answers
+// (suspended laptop, Wi-Fi drop) cannot stall `get workloads`. On timeout this rejects and
+// the caller's catch maps it to Unreachable. The timer is cleared on every path, so it
+// cannot keep the process alive. Shaped like queryServerStatusWithTimeout in packages/remote/src/router.ts.
+async function withNodeQueryDeadline<T>(node: string, query: () => Promise<T>): Promise<T> {
+  const timeoutMs = workloadTestSeams.nodeQueryTimeoutMs ?? GET_NODE_QUERY_TIMEOUT_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject): void => {
+    timer = setTimeout((): void => {
+      reject(new Error(`node '${node}' did not answer within ${String(timeoutMs)} ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([query(), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function renderNodeBudget(budget: NodeBudgetView): string {
@@ -613,8 +642,10 @@ async function inspect(manifest: workloadSchema.ModelRun): Promise<WorkloadRow> 
   }
 
   try {
-    const client = getNodeClientByName(manifest.spec.node);
-    const status = await client.serverStatus.query({ workload: manifest.metadata.name });
+    const client = getWorkloadNodeClient(manifest.spec.node);
+    const status = await withNodeQueryDeadline(manifest.spec.node, () =>
+      client.serverStatus.query({ workload: manifest.metadata.name }),
+    );
     const desired = manifest.spec.target.value;
     const running = status.state === "up";
     let phase: WorkloadRow["phase"] = "Stopped";
@@ -698,7 +729,9 @@ async function inspectRemoteModelHost(manifest: ModelHostManifest): Promise<Mode
   const endpoint = formatEndpoint(manifest.spec.endpoint.host, manifest.spec.endpoint.port);
   try {
     const client = getWorkloadNodeClient(manifest.spec.node);
-    const status = await client.modelHostStatus.query({ workload: manifest.metadata.name });
+    const status = await withNodeQueryDeadline(manifest.spec.node, () =>
+      client.modelHostStatus.query({ workload: manifest.metadata.name }),
+    );
     if (status.state === "Running") {
       return { phase: "Running", endpoint, statePid: status.pid ?? null, listenerPid: null };
     }

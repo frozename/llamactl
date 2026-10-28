@@ -144,6 +144,84 @@ function writeGatewayRun(name: string, labels: Record<string, string>): void {
   );
 }
 
+type ServerStatusReply = {
+  state: "up" | "down";
+  rel: string | null;
+  endpoint: string | null;
+  pid: number | null;
+  listenerPid: number | null;
+  foreign: boolean;
+};
+
+function writeRun(name: string, node: string): void {
+  workloadStore.saveWorkload(
+    workloadSchema.ModelRunSchema.parse({
+      apiVersion: "llamactl/v1",
+      kind: "ModelRun",
+      metadata: { name },
+      spec: { node, target: { kind: "rel", value: "fake-org/fake-model.gguf" } },
+    }),
+  );
+}
+
+// #221: every query to `hungNode` stays pending until release(); every other node answers at once.
+// release() only lets the test finish cleanly. With the deadline the row is already Unreachable by then.
+function stubHungNode(hungNode: string): { release: () => void } {
+  let open = (): void => undefined;
+  const hung = new Promise<void>((resolve): void => {
+    open = (): void => {
+      resolve();
+    };
+  });
+  function answer<T>(node: string, reply: T): Promise<T> {
+    return node === hungNode ? hung.then((): T => reply) : Promise.resolve(reply);
+  }
+  __setWorkloadTestSeams({
+    getNodeClientByName: (node: string): NodeClient =>
+      ({
+        modelHostStatus: {
+          query: (): Promise<StatusReply> => answer(node, { state: "Running", pid: 4242 }),
+        },
+        serverStatus: {
+          query: (): Promise<ServerStatusReply> =>
+            answer(node, {
+              state: "up",
+              rel: "fake-org/fake-model.gguf",
+              endpoint: "http://127.0.0.1:8200",
+              pid: 4100,
+              listenerPid: 4100,
+              foreign: false,
+            }),
+        },
+      }) as unknown as NodeClient,
+    nodeQueryTimeoutMs: 1,
+  });
+  return {
+    release: (): void => {
+      open();
+    },
+  };
+}
+
+// Resolves "settled" when `work` settles first, or "stalled" after `limitMs`. The bound only
+// turns a hang into an assertion failure; with the 1 ms deadline the work settles far sooner.
+async function settledWithin(
+  work: Promise<unknown>,
+  limitMs: number,
+): Promise<"settled" | "stalled"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stall = new Promise<"stalled">((resolve): void => {
+    timer = setTimeout((): void => {
+      resolve("stalled");
+    }, limitMs);
+  });
+  try {
+    return await Promise.race([work.then((): "settled" => "settled"), stall]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 test("json: 0.0.0.0 endpoint with allowExternalBind reports exposedBind", async () => {
   writeHost({ name: "open-host", host: "0.0.0.0", port: 8094, allowExternalBind: true });
 
@@ -293,6 +371,7 @@ test("help: GET_USAGE describes managedBy", async () => {
   expect(stdout).toContain("managedBy");
   expect(stdout).toContain("'note:'");
   expect(stdout).toContain("modelHostStatus");
+  expect(stdout).toContain("10 s deadline");
 });
 
 test("json: remote ModelHost reads Running and pid from the node client", async () => {
@@ -376,4 +455,49 @@ test("text: a remote Running ModelHost shows Running in the table", async () => 
   expect(stdout.split("\n").find((l) => l.startsWith("gufo-remote"))).toMatch(
     /^gufo-remote +z13 +modelhost +Running +mlx-community\/Qwen3-8B-MLX-4bit$/,
   );
+});
+
+test("json: a remote ModelHost whose node never answers reads Unreachable without stalling the table (#221)", async () => {
+  writeHost({ name: "hung-host", host: "127.0.0.1", port: 8120, node: "gpu1" });
+  writeHost({ name: "live-host", host: "127.0.0.1", port: 8121, node: "z13" });
+  const stub = stubHungNode("gpu1");
+
+  const pending = withCapturedIo(() => runGet(["workloads", "--json"]));
+  const outcome = await settledWithin(pending, 2_000);
+  stub.release();
+  const { result: code, stdout } = await pending;
+
+  expect(outcome).toBe("settled");
+  expect(code).toBe(0);
+  const rows = parseRows(stdout);
+  const hung = rows.find((r) => r.name === "hung-host");
+  expect(hung?.phase).toBe("Unreachable");
+  expect(hung?.statePid).toBeNull();
+  expect(hung?.endpoint).toBe("http://127.0.0.1:8120");
+  const live = rows.find((r) => r.name === "live-host");
+  expect(live?.phase).toBe("Running");
+  expect(live?.statePid).toBe(4242);
+});
+
+test("json: a ModelRun whose node never answers reads Unreachable without stalling the table (#221)", async () => {
+  writeRun("hung-run", "gpu1");
+  writeRun("live-run", "z13");
+  const stub = stubHungNode("gpu1");
+
+  const pending = withCapturedIo(() => runGet(["workloads", "--json"]));
+  const outcome = await settledWithin(pending, 2_000);
+  stub.release();
+  const { result: code, stdout } = await pending;
+
+  expect(outcome).toBe("settled");
+  expect(code).toBe(0);
+  const rows = parseRows(stdout);
+  const hung = rows.find((r) => r.name === "hung-run");
+  expect(hung?.kind).toBe("modelrun");
+  expect(hung?.phase).toBe("Unreachable");
+  expect(hung?.endpoint).toBeNull();
+  const live = rows.find((r) => r.name === "live-run");
+  expect(live?.phase).toBe("Running");
+  expect(live?.statePid).toBe(4100);
+  expect(live?.endpoint).toBe("http://127.0.0.1:8200");
 });
