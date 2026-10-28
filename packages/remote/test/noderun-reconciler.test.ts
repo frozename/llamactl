@@ -8,6 +8,7 @@ import type { InstalledInfra } from "../src/infra/layout.js";
 import type { NodeRunInfraClient } from "../src/workload/noderun-apply.js";
 
 import { mkdtempSync, readFileSync, rmSync } from "../src/safe-fs.js";
+import { NodeRpcSkippedError, NodeRpcTimeoutError } from "../src/workload/node-rpc-deadline.js";
 import { reconcileNodeRunsOnce } from "../src/workload/noderun-reconciler.js";
 import { type NodeRun, NodeRunSchema } from "../src/workload/noderun-schema.js";
 import { saveNodeRun } from "../src/workload/noderun-store.js";
@@ -84,6 +85,16 @@ function silentClient(calls: { infraList: number }): NodeRunInfraClient {
         calls.infraList++;
         return new Promise<InstalledInfra[]>(() => undefined);
       },
+    },
+  };
+}
+
+/** A client whose infraList.query rejects at once with `err`; no deadline has to fire. */
+function rejectingClient(err: Error): NodeRunInfraClient {
+  return {
+    ...mockClient(),
+    infraList: {
+      query: (): Promise<InstalledInfra[]> => Promise.reject(err),
     },
   };
 }
@@ -274,5 +285,80 @@ describe("reconcileNodeRunsOnce node RPC deadline", () => {
     expect(handedRefs.infraInstall.mutate).toBe(rawRefs.infraInstall.mutate);
     expect(handedRefs.infraActivate.mutate).toBe(rawRefs.infraActivate.mutate);
     expect(handedRefs.infraUninstall.mutate).toBe(rawRefs.infraUninstall.mutate);
+  });
+
+  test("a NodeRun whose node query timed out reports reason NodeUnreachable", async () => {
+    saveNodeRun(sampleManifest("a-run", "z13"), dir);
+    const timeout = new NodeRpcTimeoutError("z13", "infraList.query", 5);
+    const seen: string[] = [];
+    const result = await reconcileNodeRunsOnce({
+      workloadsDir: dir,
+      getClient: () => rejectingClient(timeout),
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
+        Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
+      rpcTimeouts: { queryMs: 60_000 },
+      onReport: (r) => {
+        seen.push(r.reason ?? "none");
+      },
+    });
+    expect(result.errors).toBe(1);
+    expect(result.reports).toEqual([
+      {
+        name: "a-run",
+        node: "z13",
+        phase: "Failed",
+        actions: 0,
+        errors: 1,
+        error: timeout.message,
+        reason: "NodeUnreachable",
+      },
+    ]);
+    expect(seen).toEqual(["NodeUnreachable"]);
+  });
+
+  test("a NodeRun skipped after an earlier timeout reports reason NodeUnreachable", async () => {
+    saveNodeRun(sampleManifest("b-run", "z13"), dir);
+    const earlier = new NodeRpcTimeoutError("z13", "infraList.query", 5);
+    const skipped = new NodeRpcSkippedError("z13", "infraList.query", earlier);
+    const result = await reconcileNodeRunsOnce({
+      workloadsDir: dir,
+      getClient: () => rejectingClient(skipped),
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
+        Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
+      rpcTimeouts: { queryMs: 60_000 },
+    });
+    expect(result.errors).toBe(1);
+    expect(result.reports).toEqual([
+      {
+        name: "b-run",
+        node: "z13",
+        phase: "Failed",
+        actions: 0,
+        errors: 1,
+        error: skipped.message,
+        reason: "NodeUnreachable",
+      },
+    ]);
+  });
+
+  test("an error the node answers with carries no NodeUnreachable reason", async () => {
+    saveNodeRun(sampleManifest("a-run", "z13"), dir);
+    const seen: string[] = [];
+    const result = await reconcileNodeRunsOnce({
+      workloadsDir: dir,
+      getClient: () => rejectingClient(new Error("boom")),
+      getArtifactResolver: () => (): Promise<{ tarballUrl: string; sha256: string }> =>
+        Promise.resolve({ tarballUrl: "https://x", sha256: "a".repeat(64) }),
+      rpcTimeouts: { queryMs: 60_000 },
+      onReport: (r) => {
+        seen.push(r.reason ?? "none");
+      },
+    });
+    expect(result.errors).toBe(1);
+    expect(result.reports).toEqual([
+      { name: "a-run", node: "z13", phase: "Failed", actions: 0, errors: 1, error: "boom" },
+    ]);
+    expect(result.reports.filter((r) => "reason" in r)).toEqual([]);
+    expect(seen).toEqual(["none"]);
   });
 });
