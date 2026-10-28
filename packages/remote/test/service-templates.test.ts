@@ -73,4 +73,11 @@ describe("generateSystemdUnit", () => {
     expect(unit).toContain("[Install]");
     expect(unit).toContain("WantedBy=default.target");
   });
+
+  test("sets OOMScoreAdjust=100 right after KillMode=process (#196)", () => {
+    const unit = generateSystemdUnit(OPTS);
+    expect(unit).toContain("\nKillMode=process\nOOMScoreAdjust=100\nRestartSec=3\n");
+    const oomLines = unit.split("\n").filter((line) => line.startsWith("OOMScoreAdjust="));
+    expect(oomLines).toEqual(["OOMScoreAdjust=100"]);
+  });
 });
