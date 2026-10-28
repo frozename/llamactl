@@ -773,7 +773,13 @@ export function statusModelHost(opts: StatusModelHostOptions): StatusModelHostRe
   // died or was replaced out-of-band. Report Stopped so the reconciler
   // re-acts on it — but keep the verdict visible: "unknown" is not proof the
   // pid is gone, and deletion paths must not act on it.
-  const verdict = verifyPidFile(modelhostPidFile(resolved, opts.key), state.pid, opts.identity);
+  // #317: corroborate the engine argv0 exactly as stopModelHost does, so
+  // status never reports Running for a pid that stop would refuse.
+  const verdict = verifyPidFile(
+    modelhostPidFile(resolved, opts.key),
+    state.pid,
+    hostIdentityDeps(state.engine, opts.identity),
+  );
   if (verdict !== "alive") {
     return {
       state: "Stopped",
