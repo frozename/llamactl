@@ -135,7 +135,7 @@ function nodeRunFixture(name: string, memoryGiB?: number): unknown {
 describe("llamactl enable/disable", () => {
   test("enable passes the NodeRun budget lookup to a ModelHost apply", async () => {
     await Bun.write(join(workloadsDir, "mlx-host.yaml"), makeModelHostManifest(false));
-    const seen: { opts?: RecordedApplyOpts } = {};
+    const seen: { opts?: RecordedApplyOpts | undefined } = {};
     const result = await setWorkloadEnabledWithDeps("mlx-host", true, {
       ...deps(),
       listNodeRuns: () => [nodeRunFixture("z13", 12), nodeRunFixture("gpu2")],
@@ -155,7 +155,7 @@ describe("llamactl enable/disable", () => {
 
   test("enable passes the NodeRun budget lookup to a ModelRun apply", async () => {
     saveWorkload(makeManifest(false), workloadsDir);
-    const seen: { opts?: RecordedApplyOpts } = {};
+    const seen: { opts?: RecordedApplyOpts | undefined } = {};
     let listCalls = 0;
     const result = await setWorkloadEnabledWithDeps("gemma-qa", true, {
       ...deps(),
