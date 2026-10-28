@@ -111,6 +111,48 @@ function savedManifestPath(): string {
   return join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "mlx-host.yaml");
 }
 
+function writeNodeRun(memoryGiB?: number): void {
+  writeFileSync(
+    join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "gpu1.yaml"),
+    [
+      "apiVersion: llamactl/v1",
+      "kind: NodeRun",
+      "metadata:",
+      "  name: gpu1",
+      "spec:",
+      "  node: gpu1",
+      ...(memoryGiB !== undefined ? ["  budget:", `    memoryGiB: ${String(memoryGiB)}`] : []),
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+}
+
+function writeModelRunManifest(): string {
+  const manifestPath = join(tmp, "gemma-qa.yaml");
+  writeFileSync(
+    manifestPath,
+    [
+      "apiVersion: llamactl/v1",
+      "kind: ModelRun",
+      "metadata:",
+      "  name: gemma-qa",
+      "spec:",
+      "  node: gpu1",
+      "  enabled: true",
+      "  target:",
+      "    kind: rel",
+      "    value: fake-org/fake-model.gguf",
+      "  resources:",
+      "    expectedMemoryGiB: 1",
+      "  restartPolicy: Always",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  return manifestPath;
+}
+
 function stubStartClient(): { startCalls: () => number } {
   let calls = 0;
   __setWorkloadTestSeams({
@@ -420,4 +462,57 @@ test("apply still disables an exposed ModelHost without allowExternalBind", asyn
   expect(stopCalls).toBe(1);
   expect(stderr).not.toContain("refusing");
   expect(existsSync(savedManifestPath())).toBe(true);
+});
+
+test("apply refuses a remote ModelHost past its NodeRun budget", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeNodeRun(0.5);
+  const manifestPath = writeManifest({ node: "gpu1" });
+  const { startCalls } = stubStartClient();
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("Budget is 0.5 GiB");
+  expect(startCalls()).toBe(0);
+});
+
+test("apply keeps the default budget for a remote ModelHost whose NodeRun sets none", async () => {
+  writeFileSync(join(tmp, "omlx"), "", "utf8");
+  writeNodeRun();
+  const manifestPath = writeManifest({ node: "gpu1" });
+  const { startCalls } = stubStartClient();
+
+  const { result: code } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(0);
+  expect(startCalls()).toBe(1);
+});
+
+test("apply refuses a remote ModelRun past its NodeRun budget", async () => {
+  writeNodeRun(0.5);
+  const manifestPath = writeModelRunManifest();
+  let startCalls = 0;
+  __setWorkloadTestSeams({
+    getNodeClientByName: () =>
+      ({
+        serverStatus: {
+          query: () =>
+            Promise.resolve({ state: "down", rel: null, extraArgs: [], pid: null, endpoint: null }),
+        },
+        serverStart: {
+          subscribe: () => {
+            startCalls++;
+            throw new Error("serverStart must not be called");
+          },
+        },
+      }) as unknown as NodeClient,
+  });
+
+  const { result: code, stderr } = await withCapturedIo(() => runApply(["-f", manifestPath]));
+
+  expect(code).toBe(1);
+  expect(stderr).toContain("Budget is 0.5 GiB");
+  expect(startCalls).toBe(0);
+  expect(existsSync(join(process.env["LLAMACTL_WORKLOADS_DIR"]!, "gemma-qa.yaml"))).toBe(false);
 });

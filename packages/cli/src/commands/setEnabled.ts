@@ -2,6 +2,7 @@ import type { ModelHostManifest } from "@llamactl/remote/workload/modelhost-sche
 
 import {
   config as kubecfg,
+  type noderunStore,
   workloadApply,
   type workloadSchema,
   workloadStore,
@@ -10,6 +11,7 @@ import { applyOneModelHost } from "@llamactl/remote/workload/apply";
 import { loadModelHostByName, saveModelHost } from "@llamactl/remote/workload/modelhost-store";
 
 import { getNodeClientByName } from "../dispatcher.js";
+import { nodeRunBudgetLookup } from "./noderun-helpers.js";
 
 export interface SetEnabledResult {
   code: number;
@@ -26,6 +28,7 @@ export interface SetEnabledDeps {
   loadConfig?: typeof kubecfg.loadConfig;
   resolveNode?: typeof kubecfg.resolveNode;
   getNodeClientByName?: typeof getNodeClientByName;
+  listNodeRuns?: typeof noderunStore.listNodeRuns;
 }
 
 function loadManifest(
@@ -62,6 +65,7 @@ async function applyModelRunManifest(
         return null;
       }
     },
+    getNodeBudgetGiB: nodeRunBudgetLookup(deps.listNodeRuns),
   });
   return result.error ?? null;
 }
@@ -72,8 +76,11 @@ async function applyModelHostManifest(
 ): Promise<string | null> {
   const getClient = deps.getNodeClientByName ?? getNodeClientByName;
   (deps.saveModelHost ?? saveModelHost)(manifest);
-  const outcome = await (deps.applyOneModelHost ?? applyOneModelHost)(manifest, (n) =>
-    getClient(n),
+  const outcome = await (deps.applyOneModelHost ?? applyOneModelHost)(
+    manifest,
+    (n) => getClient(n),
+    undefined,
+    { getNodeBudgetGiB: nodeRunBudgetLookup(deps.listNodeRuns) },
   );
   return outcome.ok ? null : outcome.error;
 }
