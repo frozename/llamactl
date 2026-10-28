@@ -62,6 +62,10 @@ List every workload manifest and the live phase of its target node
 (Running / Stopped / Mismatch / Unreachable / Foreign — Foreign means a
 process llamactl did not record is answering on the workload's port).
 
+A ModelHost on another node reports what that node's agent says
+(modelHostStatus): Running, Stopped, unknown when the node cannot
+confirm the recorded pid, or Unreachable when the node does not answer.
+
 A ModelHost that binds a non-loopback host gets a trailing 'warning:'
 line, and its --json row carries exposedBind (host:port, or null) and
 allowExternalBind.
@@ -649,6 +653,60 @@ export function modelHostExposedBind(manifest: ModelHostManifest): string | null
   return `${h}:${String(manifest.spec.endpoint.port)}`;
 }
 
+type ModelHostLive = {
+  phase: WorkloadRow["phase"] | "unknown";
+  endpoint: string | null;
+  statePid: number | null;
+  listenerPid: number | null;
+};
+
+async function inspectLocalModelHost(manifest: ModelHostManifest): Promise<ModelHostLive> {
+  const state = readModelHostState({ name: manifest.metadata.name });
+  const endpoint = state ? formatEndpoint(state.host, state.port) : null;
+  let phase: ModelHostLive["phase"] = "unknown";
+  let statePid: number | null = null;
+  let listenerPid: number | null = null;
+  if (state) {
+    statePid = isRecordedPidAlive(
+      modelhostPidFile(resolveEnv(), { name: manifest.metadata.name }),
+      state.pid,
+    )
+      ? state.pid
+      : null;
+    // A reachable endpoint is only proof that *something* answers —
+    // compare the pid holding the port against the recorded live
+    // pid so a foreign squatter can't read as Running while
+    // listLocalRoutes has already dropped the route.
+    const ownership = await probeEndpointOwnership(state.host, state.port);
+    listenerPid = ownership.listenerPid;
+    if (!ownership.reachable) {
+      phase = "Unreachable";
+    } else if (statePid === null || (listenerPid !== null && listenerPid !== statePid)) {
+      phase = "Foreign";
+    } else {
+      phase = "Running";
+    }
+  }
+  return { phase, endpoint, statePid, listenerPid };
+}
+
+// #307: a remote ModelHost's state file lives on its own node, so ask that
+// node's agent (as describe does) instead of reading this host's runtime dir.
+async function inspectRemoteModelHost(manifest: ModelHostManifest): Promise<ModelHostLive> {
+  const endpoint = formatEndpoint(manifest.spec.endpoint.host, manifest.spec.endpoint.port);
+  try {
+    const client = getWorkloadNodeClient(manifest.spec.node);
+    const status = await client.modelHostStatus.query({ workload: manifest.metadata.name });
+    if (status.state === "Running") {
+      return { phase: "Running", endpoint, statePid: status.pid ?? null, listenerPid: null };
+    }
+    const phase = status.identityUnknown === true ? "unknown" : "Stopped";
+    return { phase, endpoint, statePid: null, listenerPid: null };
+  } catch {
+    return { phase: "Unreachable", endpoint, statePid: null, listenerPid: null };
+  }
+}
+
 export async function runGet(args: string[]): Promise<number> {
   const [sub, ...rest] = args;
   let json = false;
@@ -680,41 +738,19 @@ export async function runGet(args: string[]): Promise<number> {
     })),
     ...(await Promise.all(
       modelHosts.map(async (manifest) => {
-        const state = readModelHostState({ name: manifest.metadata.name });
-        const endpoint = state ? formatEndpoint(state.host, state.port) : null;
-        let phase: WorkloadRow["phase"] | "unknown" = "unknown";
-        let statePid: number | null = null;
-        let listenerPid: number | null = null;
-        if (state) {
-          statePid = isRecordedPidAlive(
-            modelhostPidFile(resolveEnv(), { name: manifest.metadata.name }),
-            state.pid,
-          )
-            ? state.pid
-            : null;
-          // A reachable endpoint is only proof that *something* answers —
-          // compare the pid holding the port against the recorded live
-          // pid so a foreign squatter can't read as Running while
-          // listLocalRoutes has already dropped the route.
-          const ownership = await probeEndpointOwnership(state.host, state.port);
-          listenerPid = ownership.listenerPid;
-          if (!ownership.reachable) {
-            phase = "Unreachable";
-          } else if (statePid === null || (listenerPid !== null && listenerPid !== statePid)) {
-            phase = "Foreign";
-          } else {
-            phase = "Running";
-          }
-        }
+        const live =
+          manifest.spec.node === LOCAL_NODE_ID
+            ? await inspectLocalModelHost(manifest)
+            : await inspectRemoteModelHost(manifest);
         return {
           kind: "modelhost" as const,
           name: manifest.metadata.name,
           node: manifest.spec.node,
-          phase,
+          phase: live.phase,
           rel: manifest.spec.hostedModels.map((m) => m.rel).join(", "),
-          endpoint,
-          statePid,
-          listenerPid,
+          endpoint: live.endpoint,
+          statePid: live.statePid,
+          listenerPid: live.listenerPid,
           gateway: false,
           exposedBind: modelHostExposedBind(manifest),
           allowExternalBind: manifest.spec.allowExternalBind === true,
