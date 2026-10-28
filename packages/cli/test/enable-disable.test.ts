@@ -114,7 +114,81 @@ function deps(): SetEnabledDeps {
   } as unknown as SetEnabledDeps;
 }
 
+interface RecordedApplyOpts {
+  getNodeBudgetGiB?: (nodeName: string) => unknown;
+  resolveNodeIdentity?: (nodeName: string) => string | null;
+}
+
+function nodeRunFixture(name: string, memoryGiB?: number): unknown {
+  return {
+    apiVersion: "llamactl/v1",
+    kind: "NodeRun",
+    metadata: { name, labels: {} },
+    spec: {
+      node: name,
+      infra: [],
+      ...(memoryGiB !== undefined ? { budget: { memoryGiB } } : {}),
+    },
+  };
+}
+
 describe("llamactl enable/disable", () => {
+  test("enable passes the NodeRun budget lookup to a ModelHost apply", async () => {
+    await Bun.write(join(workloadsDir, "mlx-host.yaml"), makeModelHostManifest(false));
+    const seen: { opts?: RecordedApplyOpts } = {};
+    const result = await setWorkloadEnabledWithDeps("mlx-host", true, {
+      ...deps(),
+      listNodeRuns: () => [nodeRunFixture("z13", 12), nodeRunFixture("gpu2")],
+      applyOneModelHost: (_m: unknown, _g: unknown, _e: unknown, opts?: RecordedApplyOpts) => {
+        applyCalls++;
+        seen.opts = opts;
+        return Promise.resolve({ error: null });
+      },
+    } as unknown as SetEnabledDeps);
+
+    expect(result.code).toBe(0);
+    expect(applyCalls).toBe(1);
+    expect(seen.opts?.getNodeBudgetGiB?.("z13")).toBe(12);
+    expect(seen.opts?.getNodeBudgetGiB?.("gpu2")).toBeUndefined();
+    expect(seen.opts?.getNodeBudgetGiB?.("other")).toBeUndefined();
+  });
+
+  test("enable passes the NodeRun budget lookup to a ModelRun apply", async () => {
+    saveWorkload(makeManifest(false), workloadsDir);
+    const seen: { opts?: RecordedApplyOpts } = {};
+    let listCalls = 0;
+    const result = await setWorkloadEnabledWithDeps("gemma-qa", true, {
+      ...deps(),
+      listNodeRuns: () => {
+        listCalls++;
+        return [nodeRunFixture("z13", 12), nodeRunFixture("gpu2")];
+      },
+      applyOne: (_m: unknown, _g: unknown, _e: unknown, _d: unknown, opts?: RecordedApplyOpts) => {
+        applyCalls++;
+        seen.opts = opts;
+        return Promise.resolve({
+          action: "started",
+          statusSection: {
+            phase: "Running",
+            endpoint: null,
+            serverPid: null,
+            lastTransitionTime: "2026-05-13T00:00:00.000Z",
+            conditions: [],
+          },
+          error: null,
+        });
+      },
+    } as unknown as SetEnabledDeps);
+
+    expect(result.code).toBe(0);
+    expect(applyCalls).toBe(1);
+    expect(listCalls).toBe(0);
+    expect(seen.opts?.resolveNodeIdentity?.("gpu1")).toBe("https://gpu1");
+    expect(seen.opts?.getNodeBudgetGiB?.("z13")).toBe(12);
+    expect(seen.opts?.getNodeBudgetGiB?.("gpu2")).toBeUndefined();
+    expect(listCalls).toBe(2);
+  });
+
   test("disable routes a ModelHost through its own manifest path", async () => {
     await Bun.write(join(workloadsDir, "mlx-host.yaml"), makeModelHostManifest(true));
 

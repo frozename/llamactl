@@ -36,7 +36,7 @@ import { parse as parseYaml } from "yaml";
 import { getNodeClientByName } from "../dispatcher.js";
 import { required } from "../required.js";
 import { existsSync, readFileSync, rmSync } from "../safe-fs.js";
-import { makeSpecArtifactResolver } from "./noderun-helpers.js";
+import { makeSpecArtifactResolver, nodeRunBudgetLookup } from "./noderun-helpers.js";
 
 const APPLY_USAGE = `Usage: llamactl apply -f <manifest.yaml> [--evict <name>]... [--force]
 
@@ -302,11 +302,12 @@ async function applyModelRunFromRaw(
       });
     result = await workloadApply.applyOne(
       manifest,
-      (name) => getNodeClientByName(name),
+      (name) => getWorkloadNodeClient(name),
       undefined,
       gatewayDispatch,
       {
         resolveNodeIdentity: (n) => lookupNode(n)?.endpoint ?? null,
+        getNodeBudgetGiB: nodeRunBudgetLookup(),
       },
     );
   } catch (err) {
@@ -543,6 +544,7 @@ async function applyModelHostFromRaw(raw: string, json: boolean): Promise<number
     const outcome = await workloadApply.applyManifest({
       manifest: parsedHost,
       getClient: (name) => getWorkloadNodeClient(name),
+      getNodeBudgetGiB: nodeRunBudgetLookup(),
     });
     if (!outcome.ok) {
       process.stderr.write(`apply: ${outcome.error}\n`);
