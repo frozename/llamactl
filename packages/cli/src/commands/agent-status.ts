@@ -55,7 +55,7 @@ export type ProbeFn = (url: string) => Promise<boolean>;
 
 export type ListenerPidFn = (host: string, port: number) => Promise<number | null>;
 
-/** #211: the launchd label or systemd --user unit managing the agent. Exactly these five fields. */
+/** #211: the launchd label or systemd --user unit managing the agent. Exactly these named fields; linger only on systemd. */
 export interface AgentServiceStatus {
   manager: ServiceManagerKind;
   /** launchd label or systemd unit. */
@@ -63,6 +63,11 @@ export interface AgentServiceStatus {
   loaded: boolean;
   active: boolean;
   pid: number | null;
+  /**
+   * systemd only: logind Linger for this uid (a --user agent survives logout
+   * only when true); null when unknown. Absent on launchd.
+   */
+  linger?: boolean | null;
 }
 
 export type DescribeServiceFn = () => Promise<AgentServiceStatus | null>;
@@ -138,10 +143,26 @@ async function lookupListenerPid(
   return await find(host, port).catch(() => null);
 }
 
+// #211: whether logind keeps this user's systemd manager, and so a --user
+// agent, running after logout. Anything but a clean "yes" or "no" (no logind,
+// a non-zero exit, a spawn failure) is unknown. Never throws.
+async function readLinger(exec: ServiceProbeDeps["exec"], uid: number): Promise<boolean | null> {
+  try {
+    const r = await exec(["loginctl", "show-user", String(uid), "--property=Linger", "--value"]);
+    if (r.code !== 0) return null;
+    const value = r.stdout.trim();
+    if (value === "yes") return true;
+    if (value === "no") return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // #211: which launchd label or systemd --user unit manages the agent, resolved
 // the way `llamactl update` does (update/session.ts): the default agent unit,
 // and on launchd the `llamactl infra` label when the default is not loaded.
-// Copies five fields by name: a ServiceInfo also carries the unit's env and argv.
+// Copies five fields by name, plus linger on systemd: a ServiceInfo also carries the unit's env and argv.
 export async function describeAgentService(
   d: ServiceProbeDeps,
 ): Promise<AgentServiceStatus | null> {
@@ -153,13 +174,16 @@ export async function describeAgentService(
     const fallback = await manager.describe("agent", LAUNCHD_AGENT_FALLBACK, false);
     if (fallback.loaded) info = fallback;
   }
-  return {
+  const status: AgentServiceStatus = {
     manager: kind,
     name: info.name,
     loaded: info.loaded,
     active: info.active,
     pid: info.pid,
   };
+  // Linger is a per-user logind setting, so it is read even when the unit is not loaded.
+  if (kind === "systemd") status.linger = await readLinger(d.exec, d.uid);
+  return status;
 }
 
 const SERVICE_EXEC_TIMEOUT_MS = 2000;
@@ -179,8 +203,9 @@ export async function defaultDescribeService(): Promise<AgentServiceStatus | nul
 
 // No describer means no lookup, so tests and other callers never exec
 // launchctl or systemctl. A failing describer degrades to null. The copy keeps
-// only the five fields even if a describer hands back more: the unit's env
-// (LLAMACTL_TUNNEL_BEARER on the controller host, #289) must never reach --json.
+// only the named fields (five, plus linger when present) even if a describer
+// hands back more: the unit's env (LLAMACTL_TUNNEL_BEARER on the controller
+// host, #289) must never reach --json.
 // A separate function so collectAgentStatus stays under the cognitive-complexity gate.
 async function lookupService(
   describer: DescribeServiceFn | undefined,
@@ -188,7 +213,15 @@ async function lookupService(
   if (describer === undefined) return null;
   const s = await describer().catch(() => null);
   if (s === null) return null;
-  return { manager: s.manager, name: s.name, loaded: s.loaded, active: s.active, pid: s.pid };
+  const out: AgentServiceStatus = {
+    manager: s.manager,
+    name: s.name,
+    loaded: s.loaded,
+    active: s.active,
+    pid: s.pid,
+  };
+  if (s.linger !== undefined) out.linger = s.linger;
+  return out;
 }
 
 function bracketedBind(host: string, port: number): string {
@@ -318,11 +351,20 @@ function pidSuffix(r: AgentStatusReport): string {
   return ` pid=${r.listenerPid === null ? "unknown" : String(r.listenerPid)}`;
 }
 
+function lingerSuffix(linger: boolean | null | undefined): string {
+  if (linger === undefined) return "";
+  if (linger === null) return " linger=unknown";
+  return linger ? " linger=yes" : " linger=no";
+}
+
 function serviceLines(s: AgentServiceStatus | null): string[] {
   if (s === null) return [];
-  if (!s.loaded) return [`service ${s.manager} ${s.name} (not loaded)`];
+  const linger = lingerSuffix(s.linger);
+  if (!s.loaded) return [`service ${s.manager} ${s.name} (not loaded)${linger}`];
   const pid = s.pid === null ? "" : ` pid=${String(s.pid)}`;
-  return [`service ${s.manager} ${s.name} (loaded, ${s.active ? "active" : "inactive"})${pid}`];
+  return [
+    `service ${s.manager} ${s.name} (loaded, ${s.active ? "active" : "inactive"})${pid}${linger}`,
+  ];
 }
 
 export function formatAgentStatus(r: AgentStatusReport): string {
