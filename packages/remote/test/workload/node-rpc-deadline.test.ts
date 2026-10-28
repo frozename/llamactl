@@ -7,6 +7,8 @@ import {
   withNodeRpcDeadline,
 } from "../../src/workload/node-rpc-deadline.js";
 
+type CallOptions = { signal?: AbortSignal; context?: unknown };
+
 const timeouts = { queryMs: 30, mutateMs: 60 };
 
 describe("withNodeRpcDeadline", () => {
@@ -313,5 +315,177 @@ describe("withNodeRpcDeadline per-pass skip", () => {
     const wrapped = withNodeRpcDeadline(client, "z13", timeouts);
     expect(await wrapped.serverStatus.query({ workload: "run-a" })).toEqual(status);
     expect(calls).toBe(1);
+  });
+});
+
+describe("withNodeRpcDeadline abort signal", () => {
+  test("a timed-out query aborts the signal it handed to the procedure", async () => {
+    const seen: (CallOptions | undefined)[] = [];
+    const client = {
+      modelHostStatus: {
+        query: (_input: { workload: string }, opts?: CallOptions): Promise<never> => {
+          seen.push(opts);
+          return new Promise<never>(() => undefined);
+        },
+      },
+    };
+    const wrapped = withNodeRpcDeadline(client, "z13", timeouts);
+    const err = await wrapped.modelHostStatus.query({ workload: "host-a" }).then(
+      (): null => null,
+      (e: unknown): unknown => e,
+    );
+    expect(err).toBeInstanceOf(NodeRpcTimeoutError);
+    expect(seen).toHaveLength(1);
+    const signal = seen[0]?.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(true);
+    expect(signal?.reason).toBe(err);
+  });
+
+  test("a timed-out mutate aborts its signal", async () => {
+    const seen: (CallOptions | undefined)[] = [];
+    const client = {
+      serverStop: {
+        mutate: (_input: { workload: string }, opts?: CallOptions): Promise<never> => {
+          seen.push(opts);
+          return new Promise<never>(() => undefined);
+        },
+      },
+    };
+    const wrapped = withNodeRpcDeadline(client, "gpu1", timeouts);
+    const err = await wrapped.serverStop.mutate({ workload: "run-a" }).then(
+      (): null => null,
+      (e: unknown): unknown => e,
+    );
+    expect(err).toBeInstanceOf(NodeRpcTimeoutError);
+    expect((err as NodeRpcTimeoutError).timeoutMs).toBe(60);
+    expect(seen).toHaveLength(1);
+    const signal = seen[0]?.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(true);
+    expect(signal?.reason).toBe(err);
+  });
+
+  test("a query that settles before the deadline never aborts its signal", async () => {
+    const seen: (CallOptions | undefined)[] = [];
+    const client = {
+      modelHostStatus: {
+        query: (_input: { workload: string }, opts?: CallOptions): Promise<{ state: string }> => {
+          seen.push(opts);
+          return Promise.resolve({ state: "Running" });
+        },
+      },
+    };
+    const wrapped = withNodeRpcDeadline(client, "z13", timeouts);
+    expect(await wrapped.modelHostStatus.query({ workload: "host-a" })).toEqual({
+      state: "Running",
+    });
+    const signal = seen[0]?.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+    await new Promise((resolve): void => {
+      setTimeout(resolve, timeouts.queryMs + 50);
+    });
+    expect(signal?.aborted).toBe(false);
+  });
+
+  test("caller options are kept and a caller signal is composed", async () => {
+    const seen: (CallOptions | undefined)[] = [];
+    const outer = new AbortController();
+    const reason = new Error("caller cancelled");
+    outer.abort(reason);
+    const client = {
+      modelHostStatus: {
+        query: (_input: { workload: string }, opts?: CallOptions): Promise<{ state: string }> => {
+          seen.push(opts);
+          return Promise.resolve({ state: "Running" });
+        },
+      },
+    };
+    const wrapped = withNodeRpcDeadline(client, "z13", timeouts);
+    await wrapped.modelHostStatus.query(
+      { workload: "host-a" },
+      { signal: outer.signal, context: { tag: "reconcile" } },
+    );
+    expect(seen[0]?.context).toEqual({ tag: "reconcile" });
+    expect(seen[0]?.signal).toBeInstanceOf(AbortSignal);
+    expect(seen[0]?.signal).not.toBe(outer.signal);
+    expect(seen[0]?.signal?.aborted).toBe(true);
+    expect(seen[0]?.signal?.reason).toBe(reason);
+  });
+
+  test("the deadline aborts the composed signal but not the caller signal", async () => {
+    const seen: (CallOptions | undefined)[] = [];
+    const outer = new AbortController();
+    const client = {
+      modelHostStatus: {
+        query: (_input: { workload: string }, opts?: CallOptions): Promise<never> => {
+          seen.push(opts);
+          return new Promise<never>(() => undefined);
+        },
+      },
+    };
+    const wrapped = withNodeRpcDeadline(client, "z13", timeouts);
+    const err = await wrapped.modelHostStatus
+      .query({ workload: "host-a" }, { signal: outer.signal })
+      .then(
+        (): null => null,
+        (e: unknown): unknown => e,
+      );
+    expect(err).toBeInstanceOf(NodeRpcTimeoutError);
+    expect(seen[0]?.signal?.aborted).toBe(true);
+    expect(seen[0]?.signal?.reason).toBe(err);
+    expect(outer.signal.aborted).toBe(false);
+  });
+
+  test("the deadline error wins over a procedure that rejects on abort", async () => {
+    const pass: NodeRpcPassState = { timedOut: new Map() };
+    const client = {
+      modelHostStatus: {
+        query: (_input: { workload: string }, opts?: CallOptions): Promise<never> =>
+          new Promise<never>((_resolve, reject): void => {
+            opts?.signal?.addEventListener("abort", (): void => {
+              reject(new Error("aborted by signal"));
+            });
+          }),
+      },
+    };
+    const wrapped = withNodeRpcDeadline(client, "z13", timeouts, pass);
+    const err = await wrapped.modelHostStatus.query({ workload: "host-a" }).then(
+      (): null => null,
+      (e: unknown): unknown => e,
+    );
+    expect(err).toBeInstanceOf(NodeRpcTimeoutError);
+    expect(pass.timedOut.get("z13")).toBe(err as NodeRpcTimeoutError);
+  });
+
+  test("a skipped call never reaches the procedure or builds a signal", async () => {
+    const pass: NodeRpcPassState = { timedOut: new Map() };
+    const silent = {
+      serverStatus: {
+        query: (_input: { workload: string }): Promise<never> =>
+          new Promise<never>(() => undefined),
+      },
+    };
+    const wrappedSilent = withNodeRpcDeadline(silent, "z13", timeouts, pass);
+    await wrappedSilent.serverStatus.query({ workload: "run-a" }).catch((): undefined => undefined);
+    expect(pass.timedOut.has("z13")).toBe(true);
+
+    const seen: (CallOptions | undefined)[] = [];
+    const client = {
+      serverStatus: {
+        query: (_input: { workload: string }, opts?: CallOptions): Promise<{ state: string }> => {
+          seen.push(opts);
+          return Promise.resolve({ state: "down" });
+        },
+      },
+    };
+    const wrapped = withNodeRpcDeadline(client, "z13", timeouts, pass);
+    const err = await wrapped.serverStatus.query({ workload: "run-a" }).then(
+      (): null => null,
+      (e: unknown): unknown => e,
+    );
+    expect(err).toBeInstanceOf(NodeRpcSkippedError);
+    expect(seen).toHaveLength(0);
   });
 });
