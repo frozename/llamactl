@@ -408,6 +408,52 @@ describe("server/modelhost", () => {
     }
   });
 
+  test("startModelHost creates the workload runtime dir so the first launch gets a boot log", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-bootlog-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const bootLogPath = join(runtimeDir, "workloads", "mlx-host-server", "modelhost.boot.log");
+    // #333: a never-seen host has no <runtime>/workloads/<name>/ yet. The boot
+    // log must already be open when the engine is spawned, not degrade to
+    // stdio "ignore".
+    const bootLogAtSpawn: boolean[] = [];
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>): { pid: number } => {
+      bootLogAtSpawn.push(existsSync(bootLogPath));
+      return { pid: 4321 };
+    });
+    try {
+      expect(existsSync(join(runtimeDir, "workloads", "mlx-host-server"))).toBe(false);
+      const result = await startModelHost({
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        // omlx prepareLaunch writes its isolated model dir under
+        // LLAMACTL_RUNTIME_DIR; keep it out of runtimeDir so only the boot-log
+        // path can create the workload dir there.
+        env: { ...modelHostEnv(tmp), LLAMACTL_RUNTIME_DIR: join(tmp, "omlx-runtime") },
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: () => Promise.resolve({ ready: true, modelIds: [] }),
+      });
+
+      expect(result.ok).toBe(true);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const [, , options] = spawn.mock.calls[0] as unknown as [
+        string,
+        string[],
+        { stdio?: "ignore" | ("ignore" | number)[] },
+      ];
+      expect(options.stdio).not.toBe("ignore");
+      const stdio = Array.isArray(options.stdio) ? options.stdio : [];
+      expect(stdio).toHaveLength(3);
+      expect(stdio[0]).toBe("ignore");
+      expect(typeof stdio[1]).toBe("number");
+      expect(stdio[2]).toBe(stdio[1]);
+      expect(bootLogAtSpawn).toEqual([true]);
+      expect(existsSync(bootLogPath)).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("startModelHost records the resolved slotSavePath in state and preserves raw extraArgs in the spec hash input", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-slotpath-"));
     const { workloadsDir, runtimeDir, manifest: baseManifest } = makeManifest(tmp);
