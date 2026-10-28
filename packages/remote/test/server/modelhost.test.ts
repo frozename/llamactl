@@ -88,6 +88,37 @@ function modelHostEnv(tmp: string): NodeJS.ProcessEnv {
   };
 }
 
+interface ReadinessGate {
+  promise: Promise<{ ready: boolean; modelIds: string[] }>;
+  open: () => void;
+}
+
+function readinessGate(): ReadinessGate {
+  let release: (value: { ready: boolean; modelIds: string[] }) => void = () => undefined;
+  const promise = new Promise<{ ready: boolean; modelIds: string[] }>((resolve) => {
+    release = resolve;
+  });
+  return {
+    promise,
+    open: (): void => {
+      release({ ready: true, modelIds: [] });
+    },
+  };
+}
+
+// Bounded condition wait: polls every 5 ms for at most 2 s, never a fixed sleep.
+async function waitFor(condition: () => boolean, label: string): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    if (condition()) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 5);
+    });
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
 describe("server/modelhost", () => {
   test("persists inline manifest to workloadsDir before start", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-inline-"));
@@ -1349,6 +1380,165 @@ describe("server/modelhost", () => {
       } catch {
         // already gone
       }
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("a concurrent start for the same workload joins the in-flight start instead of spawning", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-join-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const tornDown: number[] = [];
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const gate = readinessGate();
+    let probeCalls = 0;
+    const probeReady = (): Promise<{ ready: boolean; modelIds: string[] }> => {
+      probeCalls += 1;
+      return gate.promise;
+    };
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const eventsA: unknown[] = [];
+    const eventsB: unknown[] = [];
+    try {
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+      const common = {
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+      };
+      const firstPromise = startModelHost({
+        ...common,
+        probeReady,
+        onEvent: (event: unknown): void => {
+          eventsA.push(event);
+        },
+      });
+      const secondPromise = startModelHost({
+        ...common,
+        probeReady,
+        onEvent: (event: unknown): void => {
+          eventsB.push(event);
+        },
+      });
+      await waitFor(() => probeCalls >= 1, "first start to reach readiness");
+      expect(eventsB).toEqual([]);
+      gate.open();
+      const [first, second] = await Promise.all([firstPromise, secondPromise]);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(probeCalls).toBe(1);
+      expect(first).toEqual({ ok: true, pid: 4321 });
+      expect(second).toEqual({ ok: true, pid: 4321 });
+      expect(eventsA).toEqual([{ type: "done", result: { ok: true, pid: 4321 } }]);
+      expect(eventsB).toEqual([{ type: "done", result: { ok: true, pid: 4321 } }]);
+      expect(tornDown).toEqual([]);
+    } finally {
+      engine.teardown = originalTeardown;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("a concurrent start with a different spec is refused while one is in flight", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-conflict-"));
+    const fixture = makeManifest(tmp);
+    const { workloadsDir, runtimeDir } = fixture;
+    const tornDown: number[] = [];
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    const gate = readinessGate();
+    let probeCalls = 0;
+    const probeReady = (): Promise<{ ready: boolean; modelIds: string[] }> => {
+      probeCalls += 1;
+      return gate.promise;
+    };
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>) => ({ pid: 4321 }) as const);
+    const eventsA: unknown[] = [];
+    const eventsB: unknown[] = [];
+    try {
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+      const common = {
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+      };
+      const firstPromise = startModelHost({
+        ...common,
+        probeReady,
+        onEvent: (event: unknown): void => {
+          eventsA.push(event);
+        },
+      });
+      const secondPromise = startModelHost({
+        ...common,
+        manifest: {
+          ...fixture.manifest,
+          spec: { ...fixture.manifest.spec, endpoint: { host: "127.0.0.1", port: 8095 } },
+        },
+        probeReady,
+        onEvent: (event: unknown): void => {
+          eventsB.push(event);
+        },
+      });
+      await waitFor(() => probeCalls >= 1, "first start to reach readiness");
+      gate.open();
+      const [first, second] = await Promise.all([firstPromise, secondPromise]);
+      expect(second).toEqual({
+        ok: false,
+        pid: null,
+        error: "modelHostStart already in progress for mlx-host-server with a different spec",
+      });
+      expect(eventsB).toEqual([{ type: "done", result: second }]);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(first).toEqual({ ok: true, pid: 4321 });
+      expect(tornDown).toEqual([]);
+    } finally {
+      engine.teardown = originalTeardown;
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("a settled start releases the in-flight slot for the next start", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-release-"));
+    const { workloadsDir, runtimeDir } = makeManifest(tmp);
+    const tornDown: number[] = [];
+    const engine = ENGINES.omlx;
+    const originalTeardown = engine.teardown.bind(engine);
+    let spawnCalls = 0;
+    const spawn = mock((..._args: Parameters<typeof nodeSpawn>): { pid?: number } => {
+      spawnCalls += 1;
+      return spawnCalls === 1 ? {} : { pid: 4321 };
+    });
+    try {
+      engine.teardown = mock((pid: number) => {
+        tornDown.push(pid);
+        return Promise.resolve();
+      });
+      const common = {
+        key: { name: "mlx-host-server" },
+        workloadsDir,
+        runtimeDir,
+        env: modelHostEnv(tmp),
+        spawn: spawn as unknown as typeof nodeSpawn,
+        probeReady: (): Promise<{ ready: boolean; modelIds: string[] }> =>
+          Promise.resolve({ ready: true, modelIds: [] }),
+      };
+      const failed = await startModelHost(common);
+      const retried = await startModelHost(common);
+      expect(failed).toEqual({ ok: false, pid: null, error: "failed to spawn modelhost process" });
+      expect(retried).toEqual({ ok: true, pid: 4321 });
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(tornDown).toEqual([]);
+    } finally {
+      engine.teardown = originalTeardown;
       rmSync(tmp, { recursive: true, force: true });
     }
   });
