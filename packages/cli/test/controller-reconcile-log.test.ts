@@ -185,6 +185,47 @@ describe("advanceOomWatch", () => {
     });
   });
 
+  it("reports a held kill as unattributed while the counter keeps rising (#196)", () => {
+    const first = advanceOomWatch({ last: sample(0), pendingKills: 0 }, sample(1), []);
+    const second = advanceOomWatch(first.nextState, sample(2), []);
+    expect(second).toEqual({
+      nextState: { last: sample(2), pendingKills: 1 },
+      oomKilled: [],
+      unattributedKills: 1,
+    });
+    expect(oomBaselineFor(second.nextState)).toEqual(sample(1));
+    const third = advanceOomWatch(second.nextState, sample(2), []);
+    expect(third).toEqual({
+      nextState: { last: sample(2), pendingKills: 0 },
+      oomKilled: [],
+      unattributedKills: 1,
+    });
+  });
+
+  it("accounts for every kill of a steady storm exactly once (#196)", () => {
+    let state: Parameters<typeof advanceOomWatch>[0] = { last: sample(0), pendingKills: 0 };
+    const reported: number[] = [];
+    for (const counter of [1, 2, 3, 4, 5]) {
+      const r = advanceOomWatch(state, sample(counter), []);
+      reported.push(r.unattributedKills);
+      state = r.nextState;
+    }
+    expect(reported).toEqual([0, 1, 1, 1, 1]);
+    expect(state).toEqual({ last: sample(5), pendingKills: 1 });
+    const drained = advanceOomWatch(state, sample(5), []);
+    expect(drained.unattributedKills).toBe(1);
+    expect(drained.nextState.pendingKills).toBe(0);
+  });
+
+  it("still gives every held and new kill to a host found dead in the pass", () => {
+    const r = advanceOomWatch({ last: sample(1), pendingKills: 2 }, sample(4), ["h"]);
+    expect(r).toEqual({
+      nextState: { last: sample(4), pendingKills: 0 },
+      oomKilled: ["h"],
+      unattributedKills: 0,
+    });
+  });
+
   it("does nothing while the counter is flat", () => {
     const r = advanceOomWatch({ last: sample(3), pendingKills: 0 }, sample(3), ["h"]);
     expect(r.oomKilled).toEqual([]);
@@ -335,5 +376,50 @@ describe("OOM baseline across a controller restart", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("observeOomKills logs a held kill as unattributed while the counter keeps rising (#196)", () => {
+    const written: CgroupOomSample[] = [];
+    const recorded: string[] = [];
+    const lines: ControllerLogLine[] = [];
+    let next = sample(2);
+    const deps: OomObserveDeps = {
+      readSample: () => next,
+      writeBaseline: (_file, s) => {
+        written.push(s);
+      },
+      recordKill: (name) => {
+        recorded.push(name);
+      },
+      writeLines: (out) => {
+        lines.push(...out);
+      },
+    };
+    const alive = [{ ...healthy, action: "unchanged" as const }];
+    const a = observeOomKills(
+      "/unused-workloads-dir",
+      { errors: new Map(), oom: { last: sample(1), pendingKills: 0 } },
+      alive,
+      T0,
+      deps,
+    );
+    expect(a).toEqual({ last: sample(2), pendingKills: 1 });
+    expect(lines).toEqual([]);
+    expect(written).toEqual([]);
+
+    next = sample(3);
+    const b = observeOomKills(
+      "/unused-workloads-dir",
+      { errors: new Map(), oom: a },
+      alive,
+      T0,
+      deps,
+    );
+    expect(b).toEqual({ last: sample(3), pendingKills: 1 });
+    expect(recorded).toEqual([]);
+    expect(written).toEqual([sample(2)]);
+    expect(lines.map((l) => l.text)).toEqual([
+      `[2026-10-21T14:07:00.000Z] WARN controller cgroup ${SERVICE}: 1 OOM kill(s) (oom_kill 3) not matched to a ModelHost engine`,
+    ]);
   });
 });
