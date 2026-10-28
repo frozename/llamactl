@@ -477,6 +477,141 @@ test("cancelling the client response stream mid-output cancels the upstream body
   }
 });
 
+test("cancelling the client response stream aborts the upstream fetch signal", async () => {
+  const t = tempEnv();
+  try {
+    let upstreamCancelled = false;
+    const seen: { signal: AbortSignal | null } = { signal: null };
+    const gated = new ReadableStream<Uint8Array>({
+      start(controller): void {
+        controller.enqueue(
+          new TextEncoder().encode('data: {"choices":[{"delta":{"content":"chunk-1"}}]}\n\n'),
+        );
+        // Deliberately never closes — the client hangs up mid-stream.
+      },
+      cancel(): void {
+        upstreamCancelled = true;
+      },
+    });
+    globalThis.fetch = ((_input: Request | URL | string, init?: RequestInit) => {
+      seen.signal = init?.signal ?? null;
+      return Promise.resolve(
+        new Response(gated, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "no-such-model",
+          messages: [{ role: "user", content: "hi" }],
+          stream: true,
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(seen.signal).not.toBeNull();
+    expect(seen.signal?.aborted).toBe(false);
+
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(new TextDecoder().decode(first.value)).toContain("chunk-1");
+    expect(seen.signal?.aborted).toBe(false);
+
+    await reader.cancel();
+    expect(seen.signal?.aborted).toBe(true);
+    expect(upstreamCancelled).toBe(true);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a normally completed upstream stream leaves the upstream fetch signal unaborted", async () => {
+  const t = tempEnv();
+  try {
+    const seen: { signal: AbortSignal | null } = { signal: null };
+    const sse = 'data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n';
+    globalThis.fetch = ((_input: Request | URL | string, init?: RequestInit) => {
+      seen.signal = init?.signal ?? null;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller): void {
+              controller.enqueue(new TextEncoder().encode(sse));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+      );
+    }) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "no-such-model",
+          messages: [{ role: "user", content: "hi" }],
+          stream: true,
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(sse);
+    expect(seen.signal).not.toBeNull();
+    expect(seen.signal?.aborted).toBe(false);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("a wrapped upstream JSON response keeps status, statusText and headers", async () => {
+  const t = tempEnv();
+  try {
+    const seen: { signal: AbortSignal | null } = { signal: null };
+    globalThis.fetch = ((_input: Request | URL | string, init?: RequestInit) => {
+      seen.signal = init?.signal ?? null;
+      return Promise.resolve(
+        new Response('{"ok":true}', {
+          status: 201,
+          statusText: "Created",
+          headers: { "content-type": "application/json", "x-upstream-marker": "kept" },
+        }),
+      );
+    }) as unknown as typeof fetch;
+
+    const res = await openaiProxy.proxyOpenAI(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "no-such-model",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }),
+      t.env,
+    );
+
+    expect(res.status).toBe(201);
+    expect(res.statusText).toBe("Created");
+    expect(res.headers.get("x-upstream-marker")).toBe("kept");
+    expect(await res.json()).toEqual({ ok: true });
+  } finally {
+    t.cleanup();
+  }
+});
+
 test("a truncated upstream SSE body is passed to the client verbatim", async () => {
   const t = tempEnv();
   try {

@@ -1923,12 +1923,12 @@ function requestBodyContainsOmlxRequestHandle(bodyText: string | undefined): boo
 }
 
 function composeAbortSignals(
-  a: AbortSignal | null | undefined,
-  b: AbortSignal | null | undefined,
+  ...candidates: (AbortSignal | null | undefined)[]
 ): AbortSignal | undefined {
   const signals: AbortSignal[] = [];
-  if (a) signals.push(a);
-  if (b) signals.push(b);
+  for (const candidate of candidates) {
+    if (candidate) signals.push(candidate);
+  }
   if (signals.length === 0) return undefined;
   if (signals.length === 1) return signals[0];
   const anyFn = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any;
@@ -1949,6 +1949,52 @@ function composeAbortSignals(
   return controller.signal;
 }
 
+// Statuses whose Response must have a null body; never wrap them.
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+
+/**
+ * #316: return `upstream` with a body that aborts `upstreamAbort` when the
+ * client cancels it, so the upstream fetch is torn down explicitly instead of
+ * relying on body-cancel propagation alone. Chunks, close and errors pass
+ * through unchanged; normal completion never aborts.
+ */
+function abortUpstreamOnBodyCancel(upstream: Response, upstreamAbort: AbortController): Response {
+  if (upstream.body === null || NULL_BODY_STATUSES.has(upstream.status)) return upstream;
+  const reader = upstream.body.getReader();
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller): Promise<void> {
+      let chunk: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        chunk = await reader.read();
+      } catch (error) {
+        if (cancelled) return;
+        throw error;
+      }
+      if (cancelled) return;
+      if (chunk.done) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(chunk.value);
+    },
+    async cancel(reason: unknown): Promise<void> {
+      cancelled = true;
+      upstreamAbort.abort();
+      try {
+        await reader.cancel(reason);
+      } catch {
+        // The abort above may already have errored the upstream body.
+      }
+    },
+  });
+  return new Response(body, {
+    status: upstream.status,
+    statusText: upstream.statusText,
+    headers: upstream.headers,
+  });
+}
+
 async function forward(context: ProxyContext): Promise<Response> {
   if (context.route?.isPeer && requestBodyContainsOmlxRequestHandle(context.bodyText)) {
     return Response.json({ error: "cross-node slot ops not supported" }, { status: 400 });
@@ -1967,8 +2013,11 @@ async function forward(context: ProxyContext): Promise<Response> {
   // disconnect promptly cancels upstream inference and releases warm-hit lease
   // + registry reservation via the finally in proxyOpenAI. Compose with any
   // pre-existing signal already staged on init (e.g. a timeout) rather than
-  // stomping on it.
-  init.signal = composeAbortSignals(context.req.signal, context.init.signal) ?? null;
+  // stomping on it. The per-request controller is aborted when the client
+  // cancels the response body (#316).
+  const upstreamAbort = new AbortController();
+  init.signal =
+    composeAbortSignals(context.req.signal, context.init.signal, upstreamAbort.signal) ?? null;
 
   let upstream: Response;
   try {
@@ -1991,7 +2040,7 @@ async function forward(context: ProxyContext): Promise<Response> {
   if (context.route?.isPeer && upstream.status === 502 && !context.req.signal.aborted) {
     invalidateRouteCacheEntry(context.route.model);
   }
-  return upstream;
+  return abortUpstreamOnBodyCancel(upstream, upstreamAbort);
 }
 
 function checkFalseHit(kv: KvRequestState, firstResponseToken: string | null): boolean {
