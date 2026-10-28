@@ -253,7 +253,14 @@ export function advanceOomWatch(
     return { nextState: reset, oomKilled: [...deadHosts], unattributedKills: 0 };
   }
   if (rise === 0) return { nextState: reset, oomKilled: [], unattributedKills: pending };
-  return { nextState: { last: sample, pendingKills: pending }, ...quiet };
+  // #196: kills held from the previous pass have waited their one pass, so
+  // report them now and hold only this pass's rise. Re-holding them with the
+  // new rise would never report them while the counter keeps climbing.
+  return {
+    nextState: { last: sample, pendingKills: rise },
+    oomKilled: [],
+    unattributedKills: state.pendingKills,
+  };
 }
 
 /**
