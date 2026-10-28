@@ -1344,6 +1344,60 @@ describe("server/modelhost", () => {
     }
   });
 
+  test("statusModelHost reports identityUnknown for a live pid whose argv0 is not the engine binary", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-statuscmd-"));
+    const runtimeDir = join(tmp, "runtime");
+    const key = { name: "mlx-host-server" };
+    // #317: status must agree with stop. The recorded pid is alive, but its
+    // argv0 is not omlx, so stop refuses it and status must not say Running.
+    const identity = {
+      processStartMs: (): number => 0,
+      processCommand: (): string => "/bin/sleep 60",
+    };
+    try {
+      const hostDir = seedImpostorSidecar(runtimeDir, process.pid, false);
+      expect(statusModelHost({ key, runtimeDir, identity })).toEqual({
+        state: "Stopped",
+        identityUnknown: true,
+      });
+      const tornDown: number[] = [];
+      const stopped = await stopModelHost({
+        key,
+        runtimeDir,
+        identity,
+        teardown: (teardownPid) => {
+          tornDown.push(teardownPid);
+          return Promise.resolve();
+        },
+      });
+      expect(stopped).toEqual({ ok: false, pid: process.pid, error: "pid identity unknown" });
+      expect(tornDown).toEqual([]);
+      expect(existsSync(join(hostDir, "modelhost.state"))).toBe(true);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("statusModelHost still reports Running when the live pid's argv0 is the engine binary", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-statuscmd-ok-"));
+    const runtimeDir = join(tmp, "runtime");
+    try {
+      seedImpostorSidecar(runtimeDir, process.pid, false);
+      expect(
+        statusModelHost({
+          key: { name: "mlx-host-server" },
+          runtimeDir,
+          identity: {
+            processStartMs: (): number => 0,
+            processCommand: (): string => "/opt/omlx/bin/omlx serve --port 8094",
+          },
+        }),
+      ).toEqual({ state: "Running", pid: process.pid });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("stopModelHost reports ok:false and preserves state while identity is unknown", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-unkstop-"));
     const runtimeDir = join(tmp, "runtime");
