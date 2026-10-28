@@ -548,47 +548,46 @@ function warnExternalBind(manifest: ModelHostManifest, opts: StartModelHostOptio
   );
 }
 
-export async function startModelHost(opts: StartModelHostOptions): Promise<StartModelHostResult> {
-  const env = toRuntimeEnv(opts.env);
-  const runtimeEnv = withRuntimeDir(env, opts.runtimeDir);
-  const resolved = resolveEnv(runtimeEnv);
-  const manifest = opts.manifest
-    ? ModelHostManifestSchema.parse(opts.manifest)
-    : loadModelHostByName(opts.key.name, opts.workloadsDir);
-  if (manifest.metadata.name !== opts.key.name) {
-    const result = {
+// #318: at most one start per ModelHost in flight in this agent process. A
+// second startModelHost for the same workload (the CLI's in-process apply
+// racing the controller's tick) joins the running start instead of spawning a
+// competing engine: the pid sidecar is only written after readiness, so the
+// second call's reapOrAdoptPriorHost cannot see the first child.
+interface InFlightModelHostStart {
+  specHash: string;
+  promise: Promise<StartModelHostResult>;
+}
+const inFlightModelHostStarts = new Map<string, InFlightModelHostStart>();
+
+async function joinInFlightModelHostStart(
+  inFlight: InFlightModelHostStart,
+  specHash: string,
+  name: string,
+): Promise<StartModelHostResult> {
+  if (inFlight.specHash !== specHash) {
+    return {
       ok: false,
       pid: null,
-      error: `modelHostStart workload mismatch: expected ${opts.key.name}, got ${manifest.metadata.name}`,
+      error: `modelHostStart already in progress for ${name} with a different spec`,
     };
-    opts.onEvent?.({ type: "done", result });
-    return result;
   }
-  const engine = ENGINES[manifest.spec.engine];
-  const spec = buildModelHostSpec(manifest);
-  const validation = engine.validateSpec(spec);
-  if (!validation.ok) {
-    const result = { ok: false, pid: null, error: validation.error };
-    opts.onEvent?.({ type: "done", result });
-    return result;
-  }
+  return await inFlight.promise;
+}
 
-  // Refuse an exposed bind BEFORE any teardown: reapOrAdoptPriorHost would
-  // otherwise kill a live host to make room for a spawn we then deny.
-  const bindRefusal = modelHostBindRefusal(manifest);
-  if (bindRefusal !== null) {
-    const result = { ok: false, pid: null, error: bindRefusal };
-    opts.onEvent?.({ type: "done", result });
-    return result;
-  }
+interface ModelHostLaunchContext {
+  env: NodeJS.ProcessEnv;
+  runtimeEnv: NodeJS.ProcessEnv;
+  resolved: ReturnType<typeof resolveEnv>;
+  engine: (typeof ENGINES)[keyof typeof ENGINES];
+  spec: ModelHostSpecForEngine;
+}
 
-  // Persist the accepted inline manifest only once validation and the bind
-  // gate have passed: a refused start must not replace the previously saved
-  // desired state with a manifest the controller will always refuse.
-  if (opts.manifest) {
-    saveModelHost(mergeDiskManagedByLabel(manifest, opts.workloadsDir), opts.workloadsDir);
-  }
-
+async function launchModelHost(
+  manifest: ModelHostManifest,
+  opts: StartModelHostOptions,
+  ctx: ModelHostLaunchContext,
+): Promise<StartModelHostResult> {
+  const { env, runtimeEnv, resolved, engine, spec } = ctx;
   const early = await reapOrAdoptPriorHost(manifest, opts, resolved, engine);
   if (early) {
     opts.onEvent?.({ type: "done", result: early });
@@ -671,6 +670,68 @@ export async function startModelHost(opts: StartModelHostOptions): Promise<Start
     const result = { ok: false, pid: null, error: message };
     opts.onEvent?.({ type: "done", result });
     return result;
+  }
+}
+
+export async function startModelHost(opts: StartModelHostOptions): Promise<StartModelHostResult> {
+  const env = toRuntimeEnv(opts.env);
+  const runtimeEnv = withRuntimeDir(env, opts.runtimeDir);
+  const resolved = resolveEnv(runtimeEnv);
+  const manifest = opts.manifest
+    ? ModelHostManifestSchema.parse(opts.manifest)
+    : loadModelHostByName(opts.key.name, opts.workloadsDir);
+  if (manifest.metadata.name !== opts.key.name) {
+    const result = {
+      ok: false,
+      pid: null,
+      error: `modelHostStart workload mismatch: expected ${opts.key.name}, got ${manifest.metadata.name}`,
+    };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
+  const engine = ENGINES[manifest.spec.engine];
+  const spec = buildModelHostSpec(manifest);
+  const validation = engine.validateSpec(spec);
+  if (!validation.ok) {
+    const result = { ok: false, pid: null, error: validation.error };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
+
+  // Refuse an exposed bind BEFORE any teardown: reapOrAdoptPriorHost would
+  // otherwise kill a live host to make room for a spawn we then deny.
+  const bindRefusal = modelHostBindRefusal(manifest);
+  if (bindRefusal !== null) {
+    const result = { ok: false, pid: null, error: bindRefusal };
+    opts.onEvent?.({ type: "done", result });
+    return result;
+  }
+
+  // Persist the accepted inline manifest only once validation and the bind
+  // gate have passed: a refused start must not replace the previously saved
+  // desired state with a manifest the controller will always refuse.
+  if (opts.manifest) {
+    saveModelHost(mergeDiskManagedByLabel(manifest, opts.workloadsDir), opts.workloadsDir);
+  }
+
+  const startKey = `${resolved.LOCAL_AI_RUNTIME_DIR}\0${opts.key.name}`;
+  const specHash = computeModelHostSpecHash(specForHash(manifest.spec));
+  const inFlight = inFlightModelHostStarts.get(startKey);
+  if (inFlight) {
+    const joined = await joinInFlightModelHostStart(inFlight, specHash, opts.key.name);
+    opts.onEvent?.({ type: "done", result: joined });
+    return joined;
+  }
+  // Register synchronously, before the first await inside launchModelHost can
+  // yield, so a start entering on the next tick always finds this one.
+  const promise = launchModelHost(manifest, opts, { env, runtimeEnv, resolved, engine, spec });
+  inFlightModelHostStarts.set(startKey, { specHash, promise });
+  try {
+    return await promise;
+  } finally {
+    // Only the start that registered the entry reaches this line, and no other
+    // start can register while it is present, so the delete is unconditional.
+    inFlightModelHostStarts.delete(startKey);
   }
 }
 
