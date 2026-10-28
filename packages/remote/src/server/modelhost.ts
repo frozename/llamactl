@@ -30,9 +30,9 @@ import {
   verifyPidFile,
 } from "@llamactl/core/pidIdentity";
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { basename, resolve, sep } from "node:path";
+import { basename, dirname, resolve, sep } from "node:path";
 
-import { existsSync, openSync } from "../safe-fs.js";
+import { existsSync, mkdirSync, openSync } from "../safe-fs.js";
 import {
   externalManagerOf,
   MANAGED_BY_LABEL,
@@ -487,6 +487,9 @@ function openBootLogFd(workloadName: string, runtimeDir: string): "ignore" | num
     return "ignore";
   }
   try {
+    // #333: a never-seen workload has no <runtime>/workloads/<name>/ yet and
+    // openSync does not create it, so the first launch logged nothing.
+    mkdirSync(dirname(bootLogPath), { recursive: true });
     return openSync(bootLogPath, "a");
   } catch {
     // never let logging break a launch
