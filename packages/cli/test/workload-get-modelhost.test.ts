@@ -1,3 +1,5 @@
+import type { NodeClient } from "@llamactl/remote";
+
 import { workloadSchema, workloadStore } from "@llamactl/remote";
 import {
   MANAGED_BY_LABEL,
@@ -8,7 +10,11 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runGet } from "../src/commands/workload.js";
+import {
+  __resetWorkloadTestSeams,
+  __setWorkloadTestSeams,
+  runGet,
+} from "../src/commands/workload.js";
 import { mkdirSync, mkdtempSync, rmSync } from "../src/safe-fs.js";
 
 let tmp = "";
@@ -25,6 +31,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __resetWorkloadTestSeams();
   process.env = { ...originalEnv };
   rmSync(tmp, { recursive: true, force: true });
 });
@@ -59,6 +66,7 @@ function writeHost(options: {
   name: string;
   host: string;
   port: number;
+  node?: string;
   extraArgs?: string[];
   allowExternalBind?: boolean;
   labels?: Record<string, string>;
@@ -71,7 +79,7 @@ function writeHost(options: {
       metadata: { name: options.name, ...(options.labels ? { labels: options.labels } : {}) },
       spec: {
         engine: "omlx",
-        node: "local",
+        node: options.node ?? "local",
         binary: join(tmp, "omlx"),
         endpoint: { host: options.host, port: options.port },
         hostedModels: [{ rel: "mlx-community/Qwen3-8B-MLX-4bit" }],
@@ -85,6 +93,11 @@ function writeHost(options: {
 interface GetRow {
   kind: string;
   name: string;
+  node: string;
+  phase: string;
+  endpoint: string | null;
+  statePid: number | null;
+  listenerPid: number | null;
   exposedBind: string | null;
   allowExternalBind: boolean;
   managedBy: string | null;
@@ -92,6 +105,28 @@ interface GetRow {
 
 function parseRows(stdout: string): GetRow[] {
   return JSON.parse(stdout) as GetRow[];
+}
+
+type StatusReply = {
+  state: "Running" | "Stopped";
+  pid?: number | null;
+  identityUnknown?: boolean;
+};
+
+function stubStatus(reply: StatusReply | Error): { node: string; input: unknown }[] {
+  const calls: { node: string; input: unknown }[] = [];
+  __setWorkloadTestSeams({
+    getNodeClientByName: (node: string) =>
+      ({
+        modelHostStatus: {
+          query: (input: unknown) => {
+            calls.push({ node, input });
+            return reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply);
+          },
+        },
+      }) as unknown as NodeClient,
+  });
+  return calls;
 }
 
 function writeGatewayRun(name: string, labels: Record<string, string>): void {
@@ -257,4 +292,88 @@ test("help: GET_USAGE describes managedBy", async () => {
   expect(code).toBe(0);
   expect(stdout).toContain("managedBy");
   expect(stdout).toContain("'note:'");
+  expect(stdout).toContain("modelHostStatus");
+});
+
+test("json: remote ModelHost reads Running and pid from the node client", async () => {
+  writeHost({ name: "gufo-remote", host: "127.0.0.1", port: 8110, node: "z13" });
+  const calls = stubStatus({ state: "Running", pid: 3085 });
+
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads", "--json"]));
+
+  expect(code).toBe(0);
+  const row = parseRows(stdout).find((r) => r.name === "gufo-remote");
+  expect(row?.node).toBe("z13");
+  expect(row?.phase).toBe("Running");
+  expect(row?.statePid).toBe(3085);
+  expect(row?.listenerPid).toBeNull();
+  expect(row?.endpoint).toBe("http://127.0.0.1:8110");
+  expect(calls).toEqual([{ node: "z13", input: { workload: "gufo-remote" } }]);
+});
+
+test("json: remote ModelHost reads Stopped from the node client", async () => {
+  writeHost({ name: "mac-stopped", host: "127.0.0.1", port: 8111, node: "mac-mini" });
+  const calls = stubStatus({ state: "Stopped", pid: null });
+
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads", "--json"]));
+
+  expect(code).toBe(0);
+  const row = parseRows(stdout).find((r) => r.name === "mac-stopped");
+  expect(row?.phase).toBe("Stopped");
+  expect(row?.statePid).toBeNull();
+  expect(calls).toEqual([{ node: "mac-mini", input: { workload: "mac-stopped" } }]);
+});
+
+test("json: remote ModelHost with an unproven pid reads unknown", async () => {
+  writeHost({ name: "mac-unsure", host: "127.0.0.1", port: 8112, node: "mac-mini" });
+  const calls = stubStatus({ state: "Stopped", identityUnknown: true });
+
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads", "--json"]));
+
+  expect(code).toBe(0);
+  const row = parseRows(stdout).find((r) => r.name === "mac-unsure");
+  expect(row?.phase).toBe("unknown");
+  expect(row?.statePid).toBeNull();
+  expect(calls).toHaveLength(1);
+});
+
+test("json: remote ModelHost whose node fails reads Unreachable", async () => {
+  writeHost({ name: "z13-down", host: "127.0.0.1", port: 8113, node: "z13" });
+  const calls = stubStatus(new Error("connect ECONNREFUSED"));
+
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads", "--json"]));
+
+  expect(code).toBe(0);
+  const row = parseRows(stdout).find((r) => r.name === "z13-down");
+  expect(row?.phase).toBe("Unreachable");
+  expect(row?.statePid).toBeNull();
+  expect(row?.listenerPid).toBeNull();
+  expect(row?.endpoint).toBe("http://127.0.0.1:8113");
+  expect(calls).toHaveLength(1);
+});
+
+test("json: a local ModelHost never asks the node client", async () => {
+  writeHost({ name: "seat-l", host: "127.0.0.1", port: 8114 });
+  const calls = stubStatus({ state: "Running", pid: 1 });
+
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads", "--json"]));
+
+  expect(code).toBe(0);
+  const row = parseRows(stdout).find((r) => r.name === "seat-l");
+  expect(row?.phase).toBe("unknown");
+  expect(row?.endpoint).toBeNull();
+  expect(row?.statePid).toBeNull();
+  expect(calls).toEqual([]);
+});
+
+test("text: a remote Running ModelHost shows Running in the table", async () => {
+  writeHost({ name: "gufo-remote", host: "127.0.0.1", port: 8110, node: "z13" });
+  stubStatus({ state: "Running", pid: 3085 });
+
+  const { result: code, stdout } = await withCapturedIo(() => runGet(["workloads"]));
+
+  expect(code).toBe(0);
+  expect(stdout.split("\n").find((l) => l.startsWith("gufo-remote"))).toMatch(
+    /^gufo-remote +z13 +modelhost +Running +mlx-community\/Qwen3-8B-MLX-4bit$/,
+  );
 });
