@@ -210,6 +210,7 @@ describe("buildSystemdUnit", () => {
         "ExecStart=/home/tester/.local/bin/llamactl-agent agent serve --dir=/home/tester/agent",
         "Restart=always",
         "KillMode=process",
+        "OOMScoreAdjust=100",
         "RestartSec=10",
         'Environment="PATH=/usr/bin"',
         'Environment="DEV_STORAGE=/srv/ai"',
@@ -241,6 +242,7 @@ describe("buildSystemdUnit", () => {
     expect(unit).toContain("StandardOutput=append:/var/log/llamactl-agent/stdout.log");
     expect(unit).toContain("StandardError=append:/var/log/llamactl-agent/stderr.log");
     expect(unit).toContain("WantedBy=multi-user.target");
+    expect(unit).not.toContain("OOMScoreAdjust");
   });
 
   test("ExecStart args escape backslash, quote, percent and dollar; quote when needed", () => {
@@ -568,6 +570,7 @@ describe("runAgentInstallSystemd --dry-run", () => {
       );
       expect(out).toContain("Restart=always");
       expect(out).toContain("KillMode=process");
+      expect(out).toContain("KillMode=process\nOOMScoreAdjust=100\nRestartSec=10\n");
       expect(out).toContain("WantedBy=default.target");
       expect(out).toContain(`# unit path: ${join(tmp, ".config", "systemd", "user", UNIT_NAME)}`);
       expect(out).toContain("# systemctl --user daemon-reload");
@@ -641,6 +644,7 @@ describe("runAgentInstallSystemd --dry-run", () => {
       expect(out).toContain("WantedBy=multi-user.target");
       expect(out).toContain("KillMode=process");
       expect(out).toContain(`WorkingDirectory=${dirArg}`);
+      expect(out).not.toContain("OOMScoreAdjust");
       expect(out).toContain(`# unit path: /etc/systemd/system/${UNIT_NAME}`);
       expect(out).toContain("# systemctl daemon-reload");
       expect(out).toContain(`# systemctl enable ${UNIT_NAME}`);
