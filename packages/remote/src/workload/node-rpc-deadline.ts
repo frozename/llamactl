@@ -119,7 +119,7 @@ function wrapProcedure<T extends object>(
 function withAbortSignal(options: unknown, signal: AbortSignal): Record<string, unknown> {
   const base =
     typeof options === "object" && options !== null ? (options as Record<string, unknown>) : {};
-  const callerSignal = base.signal;
+  const callerSignal = base["signal"];
   return {
     ...base,
     signal: callerSignal instanceof AbortSignal ? AbortSignal.any([signal, callerSignal]) : signal,
