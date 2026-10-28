@@ -82,6 +82,16 @@ const NODE_AGENT: AgentServiceStatus = {
   active: true,
   pid: 4242,
 };
+const SYSTEMD_SERVICE_KEYS = ["active", "linger", "loaded", "manager", "name", "pid"];
+const SYSTEMD_AGENT: AgentServiceStatus = {
+  manager: "systemd",
+  name: "llamactl-agent.service",
+  loaded: true,
+  active: true,
+  pid: 777,
+  linger: false,
+};
+const LINGER_ARGV = ["loginctl", "show-user", "501", "--property=Linger", "--value"];
 
 async function statusWithService(describeService?: DescribeServiceFn): Promise<AgentStatusReport> {
   await seedInit();
@@ -131,6 +141,25 @@ function fakeLaunchctl(
 
 function serviceDeps(platform: NodeJS.Platform, exec: ServiceProbeDeps["exec"]): ServiceProbeDeps {
   return { platform, exec, readFile: () => null, uid: 501, env: {} };
+}
+
+function fakeSystemd(
+  linger: { code: number; stdout: string } | "throw",
+  calls: string[][],
+): ServiceProbeDeps["exec"] {
+  return (argv) => {
+    calls.push([...argv]);
+    if (argv[0] === "loginctl") {
+      return linger === "throw"
+        ? Promise.reject(new Error("loginctl not found"))
+        : Promise.resolve({ code: linger.code, stdout: linger.stdout, stderr: "" });
+    }
+    const stdout =
+      argv[2] === "show"
+        ? "Id=llamactl-agent.service\nLoadState=loaded\nActiveState=active\nMainPID=777\n"
+        : "";
+    return Promise.resolve({ code: 0, stdout, stderr: "" });
+  };
 }
 
 function modelHost(
@@ -201,7 +230,11 @@ describe("agent status", () => {
     expect(rep.running).toBe(false);
     expect(rep.listenerPid).toBeNull();
     expect(Object.keys(rep)).toContain("service");
-    if (process.platform === "linux" || process.platform === "darwin") {
+    if (process.platform === "linux") {
+      expect(rep.service).not.toBeNull();
+      expect(Object.keys(rep.service ?? {}).sort()).toEqual(SYSTEMD_SERVICE_KEYS);
+      expect(rep.service?.linger).not.toBeUndefined();
+    } else if (process.platform === "darwin") {
       expect(rep.service).not.toBeNull();
       expect(Object.keys(rep.service ?? {}).sort()).toEqual(SERVICE_KEYS);
     }
@@ -485,6 +518,7 @@ describe("agent status service manager", () => {
     expect(text).toContain("\nservice launchd com.llamactl.node-agent (loaded, active) pid=4242\n");
     expect(text).toContain("(https://127.0.0.1:59996/healthz)\nservice launchd");
     expect(JSON.stringify(report)).not.toMatch(/"(?:env|argv)":/);
+    expect(text).not.toContain("linger=");
   });
 
   test("a describer that returns extra fields is cut to the five whitelisted keys", async () => {
@@ -537,6 +571,40 @@ describe("agent status service manager", () => {
     const report = await statusWithService();
     expect(report.service).toBeNull();
     expect(formatAgentStatus(report)).not.toContain("\nservice ");
+  });
+
+  test("systemd linger renders on the service line and in --json", async () => {
+    const report = await statusWithService(() => Promise.resolve(SYSTEMD_AGENT));
+    expect(report.service?.linger).toBe(false);
+    expect((JSON.parse(JSON.stringify(report)) as AgentStatusReport).service?.linger).toBe(false);
+    expect(formatAgentStatus(report)).toContain(
+      "\nservice systemd llamactl-agent.service (loaded, active) pid=777 linger=no\n",
+    );
+    expect(formatAgentStatus({ ...report, service: { ...SYSTEMD_AGENT, linger: true } })).toContain(
+      "\nservice systemd llamactl-agent.service (loaded, active) pid=777 linger=yes\n",
+    );
+    expect(formatAgentStatus({ ...report, service: { ...SYSTEMD_AGENT, linger: null } })).toContain(
+      "\nservice systemd llamactl-agent.service (loaded, active) pid=777 linger=unknown\n",
+    );
+    expect(
+      formatAgentStatus({
+        ...report,
+        service: { ...SYSTEMD_AGENT, loaded: false, active: false, pid: null },
+      }),
+    ).toContain("\nservice systemd llamactl-agent.service (not loaded) linger=no\n");
+  });
+
+  test("a systemd describer that returns extra fields is cut to the six named keys", async () => {
+    const leaky = {
+      ...SYSTEMD_AGENT,
+      env: { LLAMACTL_TUNNEL_BEARER: LEAK_MARKER },
+      argv: ["/opt/bun", LEAK_MARKER],
+    };
+    const report = await statusWithService(() => Promise.resolve(leaky));
+    expect(Object.keys(report.service ?? {}).sort()).toEqual(SYSTEMD_SERVICE_KEYS);
+    expect(report.service?.linger).toBe(false);
+    expect(JSON.stringify(report)).not.toContain(LEAK_MARKER);
+    expect(formatAgentStatus(report)).not.toContain(LEAK_MARKER);
   });
 });
 
@@ -609,12 +677,55 @@ describe("describeAgentService", () => {
       loaded: true,
       active: true,
       pid: 777,
+      linger: null,
     });
     expect(JSON.stringify(s)).not.toContain(LEAK_MARKER);
     expect(calls.map((c) => c.slice(0, 4))).toEqual([
       ["systemctl", "--user", "show", "llamactl-agent.service"],
       ["systemctl", "--user", "cat", "llamactl-agent.service"],
+      ["loginctl", "show-user", "501", "--property=Linger"],
     ]);
+  });
+
+  test("systemd reports linger from loginctl show-user for the uid", async () => {
+    const calls: string[][] = [];
+    const yes = await describeAgentService(
+      serviceDeps("linux", fakeSystemd({ code: 0, stdout: "yes\n" }, calls)),
+    );
+    expect(yes?.linger).toBe(true);
+    expect(Object.keys(yes ?? {}).sort()).toEqual(SYSTEMD_SERVICE_KEYS);
+    expect(calls.at(-1)).toEqual(LINGER_ARGV);
+    const no = await describeAgentService(
+      serviceDeps("linux", fakeSystemd({ code: 0, stdout: "no\n" }, [])),
+    );
+    expect(no).toEqual(SYSTEMD_AGENT);
+  });
+
+  test("a failing, throwing or unrecognised loginctl gives linger null", async () => {
+    const answers: ({ code: number; stdout: string } | "throw")[] = [
+      { code: 1, stdout: "" },
+      { code: 1, stdout: "yes\n" },
+      "throw",
+      { code: 0, stdout: "" },
+      { code: 0, stdout: "Linger=yes\n" },
+    ];
+    const results = await Promise.all(
+      answers.map(
+        async (a) => await describeAgentService(serviceDeps("linux", fakeSystemd(a, []))),
+      ),
+    );
+    for (const s of results) {
+      expect(s?.linger).toBeNull();
+      expect(s?.loaded).toBe(true);
+    }
+  });
+
+  test("launchd never runs loginctl and has no linger key", async () => {
+    const calls: string[][] = [];
+    const s = await describeAgentService(serviceDeps("darwin", fakeLaunchctl({}, calls)));
+    expect(calls.some((c) => c[0] === "loginctl")).toBe(false);
+    expect("linger" in (s ?? {})).toBe(false);
+    expect(Object.keys(s ?? {}).sort()).toEqual(SERVICE_KEYS);
   });
 
   test("an unsupported platform returns null and runs nothing", async () => {
