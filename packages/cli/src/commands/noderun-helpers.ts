@@ -1,6 +1,6 @@
-import type { NodeClient } from "@llamactl/remote";
+import type { NodeClient, noderunSchema } from "@llamactl/remote";
 
-import { infraSpec } from "@llamactl/remote";
+import { infraSpec, noderunStore } from "@llamactl/remote";
 
 export type InfraPlatformKind = infraSpec.InfraPlatformKind;
 
@@ -70,4 +70,19 @@ export function makeSpecArtifactResolver(opts: {
       sha256: resolved.artifact.sha256,
     };
   };
+}
+
+/**
+ * #239: the explicit NodeRun budget for a node, keyed by NodeRun
+ * metadata.name like the controller reconciler. Returns undefined when
+ * no NodeRun has that name or it sets no spec.budget, so the caller's
+ * fallback (node facts or controller RAM for a ModelHost, unbounded for
+ * a ModelRun) still applies. The NodeRuns are read on each call, not
+ * when the lookup is built.
+ */
+export function nodeRunBudgetLookup(
+  listNodeRuns: () => noderunSchema.NodeRun[] = () => noderunStore.listNodeRuns(),
+): (nodeName: string) => number | undefined {
+  return (nodeName) =>
+    listNodeRuns().find((nodeRun) => nodeRun.metadata.name === nodeName)?.spec.budget?.memoryGiB;
 }
