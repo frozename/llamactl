@@ -19,7 +19,7 @@ Filters:
   reasoning | multimodal  filter by class
   general
   fits-16g | fits-32g     rows that fit the named memory envelope
-  fits-48g                (forces the matching profile)
+  fits-48g | fits-128g    (forces the matching profile)
   <anything else>         accepted when it matches the class or appears
                           anywhere in the repo id (fallthrough)
 

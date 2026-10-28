@@ -13,6 +13,7 @@ import {
   filterMatches,
   fitScore,
   pickFile,
+  profileForDiscovery,
 } from "../src/discovery.js";
 import { repoTreeCacheFile } from "../src/hf.js";
 import { mkdtempSync, rmSync, writeFileSync } from "../src/safe-fs.js";
@@ -169,6 +170,13 @@ describe("discovery.filterMatches", () => {
     expect(filterMatches("fits-16g", "general", "x", "fair")).toBe(false);
     expect(filterMatches("fits-16g", "general", "x", "poor")).toBe(false);
   });
+  test("fits-128g keeps only excellent / good", () => {
+    expect(filterMatches("fits-128g", "general", "x", "excellent")).toBe(true);
+    expect(filterMatches("fits-128g", "general", "x", "good")).toBe(true);
+    expect(filterMatches("fits-128g", "general", "x", "fair")).toBe(false);
+    expect(filterMatches("fits-128g", "general", "x", "poor")).toBe(false);
+    expect(filterMatches("fits-128g", "general", "x", "unknown")).toBe(false);
+  });
   test("fallback matches on repo substring", () => {
     expect(filterMatches("qwen", "general", "unsloth/qwen-2.5-7b", "fair")).toBe(true);
     expect(filterMatches("qwen", "general", "unsloth/gemma-4", "fair")).toBe(false);
@@ -180,5 +188,27 @@ describe("discovery.filterMatches", () => {
     expect(filterMatches("qwen3", "general", "unsloth/Qwen3.5-9B-GGUF", "good")).toBe(true);
     expect(filterMatches("GEMMA", "general", "unsloth/gemma-4-27B-it-GGUF", "good")).toBe(true);
     expect(filterMatches("qwen3", "general", "unsloth/gemma-4-27B-it-GGUF", "good")).toBe(false);
+  });
+});
+
+describe("discovery.profileForDiscovery", () => {
+  // Pin the env profile so host memory detection never runs: on a >64 GiB
+  // host an empty env would already resolve to large-128g.
+  const env = { DEV_STORAGE: "/tmp/ds", LLAMA_CPP_MACHINE_PROFILE: "mac-mini-16g" };
+
+  test("fits-128g forces large-128g regardless of requested profile and env", () => {
+    expect(profileForDiscovery("fits-128g", "mac-mini-16g", env)).toBe("large-128g");
+    expect(profileForDiscovery("fits-128g", undefined, env)).toBe("large-128g");
+  });
+
+  test("the other fits-* filters keep their profiles", () => {
+    expect(profileForDiscovery("fits-16g", "large-128g", env)).toBe("mac-mini-16g");
+    expect(profileForDiscovery("fits-32g", "large-128g", env)).toBe("balanced");
+    expect(profileForDiscovery("fits-48g", "large-128g", env)).toBe("macbook-pro-48g");
+  });
+
+  test("non-fits filters follow the requested profile, then the env", () => {
+    expect(profileForDiscovery("all", "large-128g", env)).toBe("large-128g");
+    expect(profileForDiscovery("all", undefined, env)).toBe("mac-mini-16g");
   });
 });
