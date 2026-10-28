@@ -31,6 +31,7 @@ export type DiscoveryFilter =
   | "fits-16g"
   | "fits-32g"
   | "fits-48g"
+  | "fits-128g"
   | (string & {});
 
 export type DiscoveryFit = "excellent" | "good" | "fair" | "poor" | "unknown";
@@ -77,6 +78,7 @@ export function profileForDiscovery(
   if (filter === "fits-16g") return "mac-mini-16g";
   if (filter === "fits-32g") return "balanced";
   if (filter === "fits-48g") return "macbook-pro-48g";
+  if (filter === "fits-128g") return "large-128g";
   const resolved = resolveEnv(env);
   if (!requested || requested === "current") {
     return normalizeProfile(resolved.LLAMA_CPP_MACHINE_PROFILE) ?? "macbook-pro-48g";
@@ -382,9 +384,11 @@ export function filterMatches(
     case "multimodal":
     case "general":
       return klass === filter;
+    // fits-128g has no counterpart in shell/llamactl.zsh yet.
     case "fits-16g":
     case "fits-32g":
     case "fits-48g":
+    case "fits-128g":
       return fit === "excellent" || fit === "good";
     default: {
       if (klass === filter) return true;
