@@ -7,6 +7,7 @@
  * pass, once a node has timed out, the remaining calls to it in that
  * pass fail fast via NodeRpcSkippedError (see NodeRpcPassState).
  * A null mutateMs leaves mutations unbounded.
+ * When the deadline fires, the AbortSignal passed to the call as its { signal } option is aborted, so the transport drops the request.
  */
 
 export const DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS = 10_000;
@@ -91,6 +92,9 @@ function wrapProcedure<T extends object>(
       return (...args: unknown[]): Promise<unknown> => {
         const earlier = pass?.timedOut.get(node);
         if (earlier) return Promise.reject(new NodeRpcSkippedError(node, label, earlier));
+        // #221: abort the underlying request (and free its socket) when the deadline fires.
+        const controller = new AbortController();
+        const callArgs: unknown[] = [args[0], withAbortSignal(args[1], controller.signal)];
         let timer: ReturnType<typeof setTimeout> | undefined;
         const deadline = new Promise<never>((_resolve, reject): void => {
           timer = setTimeout((): void => {
@@ -99,13 +103,25 @@ function wrapProcedure<T extends object>(
               pass.timedOut.set(node, err);
             }
             reject(err);
+            controller.abort(err);
           }, timeoutMs);
         });
-        const call = Promise.resolve().then((): unknown => Reflect.apply(value, target, args));
+        const call = Promise.resolve().then((): unknown => Reflect.apply(value, target, callArgs));
         return Promise.race([deadline, call]).finally((): void => {
           clearTimeout(timer);
         });
       };
     },
   });
+}
+
+/** #221: the caller's request options with `signal` replaced by ours, composed with any caller signal. */
+function withAbortSignal(options: unknown, signal: AbortSignal): Record<string, unknown> {
+  const base =
+    typeof options === "object" && options !== null ? (options as Record<string, unknown>) : {};
+  const callerSignal = base.signal;
+  return {
+    ...base,
+    signal: callerSignal instanceof AbortSignal ? AbortSignal.any([signal, callerSignal]) : signal,
+  };
 }
