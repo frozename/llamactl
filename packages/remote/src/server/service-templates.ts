@@ -82,6 +82,9 @@ export function generateLaunchdPlist(opts: ServiceTemplateOptions): string {
  * Linux systemd user unit. Requires `loginctl enable-linger <user>`
  * on headless hosts so the unit survives logout (and runs at boot).
  * Prints that hint alongside the write.
+ *
+ * #196: OOMScoreAdjust=100 is the lowest value an unprivileged user unit
+ * can set under a user manager running at 100 (user units inherit 200).
  */
 export function generateSystemdUnit(opts: ServiceTemplateOptions): string {
   return `[Unit]
@@ -95,6 +98,7 @@ Type=simple
 ExecStart=${opts.binaryPath} agent serve --dir=${opts.agentDir}
 Restart=always
 KillMode=process
+OOMScoreAdjust=100
 RestartSec=3
 Environment=LLAMACTL_AGENT_DIR=${opts.agentDir}
 StandardOutput=append:${opts.logDir}/llamactl-agent.log

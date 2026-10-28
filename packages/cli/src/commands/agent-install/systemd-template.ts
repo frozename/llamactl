@@ -68,6 +68,8 @@ export function buildSystemdUnit(opts: BuildSystemdUnitOptions): string {
   lines.push(`ExecStart=${[opts.execPath, ...opts.args].map(escapeExecArg).join(" ")}`);
   lines.push("Restart=always");
   lines.push("KillMode=process");
+  // #196: 100 is the lowest value a user unit can set under a user manager at 100 (inherited 200).
+  if (opts.scope === "user") lines.push("OOMScoreAdjust=100");
   lines.push("RestartSec=10");
   if (opts.scope === "system" && opts.workingDir !== undefined) {
     lines.push(`WorkingDirectory=${escapePathValue(opts.workingDir)}`);
