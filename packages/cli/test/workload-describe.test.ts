@@ -104,6 +104,98 @@ function seamClient(calls: StatusCalls): void {
   });
 }
 
+function writeModelHostOn(name: string, node: string): void {
+  writeManifest(name, [
+    "apiVersion: llamactl/v1",
+    "kind: ModelHost",
+    "metadata:",
+    `  name: ${name}`,
+    "spec:",
+    `  node: ${node}`,
+    "  engine: omlx",
+    "  binary: /opt/omlx/bin/omlx",
+    "  endpoint:",
+    "    host: 127.0.0.1",
+    "    port: 8094",
+    "  hostedModels:",
+    "    - rel: mlx-community/Qwen3-8B-MLX-4bit",
+  ]);
+}
+
+function writeModelRunOn(name: string, node: string): void {
+  writeManifest(name, [
+    "apiVersion: llamactl/v1",
+    "kind: ModelRun",
+    "metadata:",
+    `  name: ${name}`,
+    "spec:",
+    `  node: ${node}`,
+    "  target:",
+    "    kind: rel",
+    "    value: m.gguf",
+  ]);
+}
+
+interface HungHostReply {
+  state: "Running";
+  pid: number;
+}
+
+interface HungServerReply {
+  state: "up";
+  rel: string;
+  pid: number;
+}
+
+// #221: every status query stays pending until release(), like a node that suspended mid-call.
+// release() only lets the test finish cleanly. With the deadline, describe has already returned by then.
+function stubHungClient(): { release: () => void } {
+  let open = (): void => undefined;
+  const hung = new Promise<void>((resolve): void => {
+    open = (): void => {
+      resolve();
+    };
+  });
+  __setWorkloadTestSeams({
+    getNodeClientByName: (): NodeClient =>
+      ({
+        modelHostStatus: {
+          query: (): Promise<HungHostReply> =>
+            hung.then((): HungHostReply => ({ state: "Running", pid: 4242 })),
+        },
+        serverStatus: {
+          query: (): Promise<HungServerReply> =>
+            hung.then((): HungServerReply => ({ state: "up", rel: "m.gguf", pid: 99 })),
+        },
+      }) as unknown as NodeClient,
+    nodeQueryTimeoutMs: 1,
+  });
+  return {
+    release: (): void => {
+      open();
+    },
+  };
+}
+
+// Resolves "settled" when `work` settles first, or "stalled" after `limitMs`. The bound only
+// turns a hang into an assertion failure; with the 1 ms deadline the work settles far sooner.
+async function settledWithin(
+  work: Promise<unknown>,
+  limitMs: number,
+): Promise<"settled" | "stalled"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stall = new Promise<"stalled">((resolve): void => {
+    timer = setTimeout((): void => {
+      resolve("stalled");
+    }, limitMs);
+  });
+  try {
+    return await Promise.race([work.then((): "settled" => "settled"), stall]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 test("describe workload prints ModelHost fields and modelHostStatus", async () => {
   writeModelHost();
   const calls: StatusCalls = { modelHost: [], server: [] };
@@ -199,4 +291,43 @@ test("describe workload still uses serverStatus for a ModelRun", async () => {
   expect(calls).toEqual({ modelHost: [], server: ["gemma-qa"] });
   expect(stdout).toContain("Target:     rel:m.gguf");
   expect(stdout).toContain('"state": "up"');
+});
+
+test("describe workload --json: a ModelHost whose node never answers reports the deadline error (#221)", async () => {
+  writeModelHostOn("z13-host", "z13");
+  const stub = stubHungClient();
+
+  const pending = withCapturedIo(() => runDescribe(["workload", "z13-host", "--json"]));
+  const outcome = await settledWithin(pending, 2_000);
+  stub.release();
+  const { result, stdout } = await pending;
+
+  expect(outcome).toBe("settled");
+  expect(result).toBe(0);
+  const parsed = parseJsonRecord(stdout);
+  expect(parsed["manifest"]).toMatchObject({ kind: "ModelHost", metadata: { name: "z13-host" } });
+  expect(parsed["liveStatus"]).toEqual({ error: "node 'z13' did not answer within 1 ms" });
+});
+
+test("describe workload --json: a ModelRun whose node never answers reports the deadline error (#221)", async () => {
+  writeModelRunOn("z13-run", "z13");
+  const stub = stubHungClient();
+
+  const pending = withCapturedIo(() => runDescribe(["workload", "z13-run", "--json"]));
+  const outcome = await settledWithin(pending, 2_000);
+  stub.release();
+  const { result, stdout } = await pending;
+
+  expect(outcome).toBe("settled");
+  expect(result).toBe(0);
+  const parsed = parseJsonRecord(stdout);
+  expect(parsed["manifest"]).toMatchObject({ kind: "ModelRun", metadata: { name: "z13-run" } });
+  expect(parsed["liveStatus"]).toEqual({ error: "node 'z13' did not answer within 1 ms" });
+});
+
+test("help: DESCRIBE_USAGE documents the 10 s node query deadline (#221)", async () => {
+  const { result, stdout } = await withCapturedIo(() => runDescribe(["workload", "x", "--help"]));
+
+  expect(result).toBe(0);
+  expect(stdout).toContain("10 s deadline");
 });
