@@ -3,6 +3,8 @@ import type { NodeRun } from "./noderun-schema.js";
 import {
   DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
   type NodeRpcPassState,
+  NodeRpcSkippedError,
+  NodeRpcTimeoutError,
   type NodeRpcTimeouts,
   withNodeRpcDeadline,
 } from "./node-rpc-deadline.js";
@@ -35,6 +37,10 @@ export interface NodeRunReconcileReport {
   actions: number;
   errors: number;
   error?: string;
+  /** #221: set only when the error is a node RPC deadline timeout or a
+   *  per-pass skip after one (NodeRpcTimeoutError / NodeRpcSkippedError).
+   *  The error message itself is unchanged. */
+  reason?: "NodeUnreachable";
 }
 
 export interface NodeRunReconcileResult {
@@ -70,6 +76,16 @@ function nodeRunRpcTimeouts(opts: NodeRunReconcileOptions): NodeRpcTimeouts {
     queryMs: opts.rpcTimeouts?.queryMs ?? DEFAULT_NODE_RPC_QUERY_TIMEOUT_MS,
     mutateMs: null,
   };
+}
+
+/** #221: a node RPC deadline timeout, or a per-pass skip after one (as in reconciler.ts). */
+function isNodeUnreachableError(err: unknown): boolean {
+  return err instanceof NodeRpcTimeoutError || err instanceof NodeRpcSkippedError;
+}
+
+/** The report field for an error caught while reconciling one NodeRun. */
+function nodeUnreachableField(err: unknown): Pick<NodeRunReconcileReport, "reason"> {
+  return isNodeUnreachableError(err) ? { reason: "NodeUnreachable" } : {};
 }
 
 export async function reconcileNodeRunsOnce(
@@ -118,6 +134,7 @@ export async function reconcileNodeRunsOnce(
         actions: 0,
         errors: 1,
         error: message,
+        ...nodeUnreachableField(err),
       };
       reports.push(report);
       opts.onReport?.({ ...report, manifestName: name });
