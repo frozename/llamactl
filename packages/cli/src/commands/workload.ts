@@ -87,6 +87,10 @@ Print a workload manifest plus its live status from the target node,
 side by side (serverStatus for a ModelRun, modelHostStatus for a
 ModelHost).
 
+The live status query has a 10 s deadline: when the node does not
+answer within 10 s, LiveStatus (liveStatus in --json) shows the error
+instead of the command waiting on the node.
+
 Usage: llamactl describe node <name> [--json]
 
 Show the node budget rollup for declared workloads on that node.
@@ -111,7 +115,7 @@ export interface NodeBudgetView {
 
 interface WorkloadTestSeams {
   getNodeClientByName?: typeof getNodeClientByName;
-  /** #221: deadline in ms for each node status query in `get workloads` (default GET_NODE_QUERY_TIMEOUT_MS). */
+  /** #221: deadline in ms for each node status query in `get workloads` and `describe workload` (default GET_NODE_QUERY_TIMEOUT_MS). */
   nodeQueryTimeoutMs?: number;
 }
 
@@ -134,7 +138,7 @@ function getWorkloadNodeClient(name: string): NodeClient {
 const GET_NODE_QUERY_TIMEOUT_MS = 10_000;
 
 // #221: race one node status query against a deadline, so a node that never answers
-// (suspended laptop, Wi-Fi drop) cannot stall `get workloads`. On timeout this rejects and
+// (suspended laptop, Wi-Fi drop) cannot stall `get workloads` or `describe workload`. On timeout this rejects and
 // the caller's catch maps it to Unreachable. The timer is cleared on every path, so it
 // cannot keep the process alive. Shaped like queryServerStatusWithTimeout in packages/remote/src/router.ts.
 async function withNodeQueryDeadline<T>(node: string, query: () => Promise<T>): Promise<T> {
@@ -896,7 +900,9 @@ async function runDescribeModelHost(manifest: ModelHostManifest, json: boolean):
   let runtime: ModelHostRuntimeStatus | undefined;
   try {
     const client = getWorkloadNodeClient(manifest.spec.node);
-    const status = await client.modelHostStatus.query({ workload: manifest.metadata.name });
+    const status = await withNodeQueryDeadline(manifest.spec.node, () =>
+      client.modelHostStatus.query({ workload: manifest.metadata.name }),
+    );
     liveStatus = status;
     runtime = status.runtime;
   } catch (err) {
@@ -939,7 +945,9 @@ async function runDescribeWorkload(name: string, json: boolean): Promise<number>
   let liveStatus: unknown = null;
   try {
     const client = getWorkloadNodeClient(manifest.spec.node);
-    liveStatus = await client.serverStatus.query({ workload: manifest.metadata.name });
+    liveStatus = await withNodeQueryDeadline(manifest.spec.node, () =>
+      client.serverStatus.query({ workload: manifest.metadata.name }),
+    );
   } catch (err) {
     liveStatus = { error: (err as Error).message };
   }
