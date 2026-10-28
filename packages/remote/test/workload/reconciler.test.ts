@@ -706,6 +706,137 @@ describe("reconcileOnce", () => {
     });
   });
 
+  describe("restartPolicy Never ModelHosts (#332)", () => {
+    function hostOn(
+      node: string,
+      restartPolicy: ModelHostManifest["spec"]["restartPolicy"],
+    ): ModelHostManifest {
+      const base = makeHostManifest();
+      return { ...base, spec: { ...base.spec, node, restartPolicy } };
+    }
+
+    function countingClient(state: string, starts: { count: number }): WorkloadClient {
+      return {
+        ...makeClient(),
+        modelHostStatus: { query: () => Promise.resolve({ state }) },
+        modelHostStart: {
+          subscribe: (_input, callbacks): { unsubscribe: () => undefined } => {
+            starts.count += 1;
+            queueMicrotask(() => {
+              callbacks.onData({
+                type: "done",
+                result: { ok: true, pid: 4321, state: "Running" },
+              });
+              callbacks.onComplete();
+            });
+            return { unsubscribe: (): undefined => undefined };
+          },
+        },
+      };
+    }
+
+    async function inRuntimeDir(
+      prefix: string,
+      body: (dir: string) => Promise<void>,
+    ): Promise<void> {
+      const dir = mkdtempSync(join(tmpdir(), prefix));
+      const previousRuntimeDir = process.env["LOCAL_AI_RUNTIME_DIR"];
+      try {
+        process.env["LOCAL_AI_RUNTIME_DIR"] = dir;
+        await body(dir);
+      } finally {
+        if (previousRuntimeDir === undefined) delete process.env["LOCAL_AI_RUNTIME_DIR"];
+        else process.env["LOCAL_AI_RUNTIME_DIR"] = previousRuntimeDir;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+
+    test("does not restart an enabled local Never host whose engine died", async () => {
+      await inRuntimeDir("llamactl-reconciler-never-local-", async (dir) => {
+        const manifest = hostOn("local", "Never");
+        saveModelHost(manifest, dir);
+        // Launch record of the killed engine: an Always host would restart with foundDead.
+        seedRunningSidecar(dir, manifest);
+        const starts = { count: 0 };
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: () => countingClient("Stopped", starts),
+        });
+        expect(starts.count).toBe(0);
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "local", action: "unchanged" },
+        ]);
+      });
+    });
+
+    test("does not restart an enabled remote Never host that is stopped", async () => {
+      await inRuntimeDir("llamactl-reconciler-never-remote-", async (dir) => {
+        saveModelHost(hostOn("gpu1", "Never"), dir);
+        const starts = { count: 0 };
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: () => countingClient("Stopped", starts),
+        });
+        expect(starts.count).toBe(0);
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "gpu1", action: "unchanged" },
+        ]);
+      });
+    });
+
+    test("still starts a local Never host that has no launch record", async () => {
+      await inRuntimeDir("llamactl-reconciler-never-fresh-", async (dir) => {
+        // No launch record: never started here, as after an `apply -f` hand-off.
+        saveModelHost(hostOn("local", "Never"), dir);
+        const starts = { count: 0 };
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: () => countingClient("Stopped", starts),
+        });
+        expect(starts.count).toBe(1);
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "local", action: "started" },
+        ]);
+      });
+    });
+
+    test("still starts a stopped remote Always host", async () => {
+      await inRuntimeDir("llamactl-reconciler-always-remote-", async (dir) => {
+        saveModelHost(hostOn("gpu1", "Always"), dir);
+        const starts = { count: 0 };
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: () => countingClient("Stopped", starts),
+        });
+        expect(starts.count).toBe(1);
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "gpu1", action: "started" },
+        ]);
+      });
+    });
+
+    test("still restarts a Running remote Never host whose spec hash does not match", async () => {
+      await inRuntimeDir("llamactl-reconciler-never-running-", async (dir) => {
+        saveModelHost(hostOn("gpu1", "Never"), dir);
+        const starts = { count: 0 };
+        // No specHash in the status: observed differs from desired, so this is drift.
+        const result = await reconcileOnce({
+          workloadsDir: dir,
+          getClient: () => countingClient("Running", starts),
+        });
+        expect(starts.count).toBe(1);
+        expect(result.errors).toBe(0);
+        expect(result.reports).toEqual([
+          { kind: "ModelHost", name: "host-a", node: "gpu1", action: "restarted" },
+        ]);
+      });
+    });
+  });
+
   describe("externally managed ModelHosts", () => {
     function withManagedBy(manifest: ModelHostManifest): ModelHostManifest {
       return {
