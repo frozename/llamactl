@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -117,6 +117,19 @@ async function collect(iter: AsyncIterable<UnifiedStreamEvent>): Promise<Unified
   const events: UnifiedStreamEvent[] = [];
   for await (const e of iter) events.push(e);
   return events;
+}
+
+// #340: pass the adapter's stdout reads through and record when it stops reading (a `break`
+// in its drain calls return()), so a test can hold the child until the drain has decided.
+async function* watchDrainStop(
+  lines: AsyncIterable<string>,
+  drain: { stopped: boolean },
+): AsyncGenerator<string, void, void> {
+  try {
+    for await (const line of lines) yield line;
+  } finally {
+    drain.stopped = true;
+  }
 }
 
 function normalizeEntry(entry: unknown): Record<string, unknown> {
@@ -456,24 +469,69 @@ describe("streamResponse — real subprocess", () => {
   });
 
   test("a binding-timer abort mid-run then a trapped clean exit reports 'truncated', NO done", async () => {
+    // #340: every ordering is explicit. The trap is installed first and the pid file is written
+    // only after the 200 lines, so the injected binding timer is fired by hand once the trap is
+    // live and at least one chunk was read. The trap then holds the child until releaseFile
+    // exists, which the test creates only after the drain stopped reading, so the child's exit
+    // cannot race the drain's truncation check. No background job: a group SIGTERM that lands
+    // before a background child's exec could leave it alive until the 5 s SIGKILL.
     const pidFile = join(tmp, "pid-stream-truncated");
+    const releaseFile = join(tmp, "release-stream-truncated");
     const entries: unknown[] = [];
     const script = [
-      `trap 'kill $! 2>/dev/null; echo trapped-line; sleep 0.3; exit 0' TERM`,
-      `echo $$ > ${pidFile}`,
+      `trap 'echo trapped-line; j=0; while [ ! -e ${releaseFile} ] && [ $j -lt 500 ]; do sleep 0.01; j=$((j+1)); done; exit 0' TERM`,
       `i=0; while [ $i -lt 200 ]; do echo "line-$i"; i=$((i+1)); done`,
-      `sleep 30 & wait`,
+      `echo $$ > ${pidFile}`,
+      `k=0; while [ $k -lt 600 ]; do sleep 0.05; k=$((k+1)); done`,
     ].join("; ");
+    const bindingTimer: { fire: (() => void) | undefined; scheduledMs: number[] } = {
+      fire: undefined,
+      scheduledMs: [],
+    };
+    const drain: { stopped: boolean } = { stopped: false };
     const provider = createCliSubprocessProvider({
       agentName: "mac-mini",
-      binding: streamBinding(script, 80),
-      spawnStream: (argv, o) => librarySpawnStream(argv, { ...o, killGraceMs: 5_000 }),
+      binding: streamBinding(script),
+      scheduleBindingTimeout: (fire: () => void, ms: number): (() => void) => {
+        bindingTimer.scheduledMs.push(ms);
+        bindingTimer.fire = fire;
+        return (): void => {
+          bindingTimer.fire = undefined;
+        };
+      },
+      spawnStream: async (argv, o): ReturnType<SpawnStreamFn> => {
+        const inner = await librarySpawnStream(argv, { ...o, killGraceMs: 5_000 });
+        return { ...inner, stdout: watchDrainStop(inner.stdout, drain) };
+      },
       journalWrite: async (e) => {
         await Promise.resolve();
         entries.push(e);
       },
     });
-    const events = await collect(provider.streamResponse!(minimalReq));
+    const caller = new AbortController();
+    const events: UnifiedStreamEvent[] = [];
+    let thrown: unknown;
+    const consume = (async (): Promise<void> => {
+      try {
+        for await (const e of provider.streamResponse!(minimalReq, caller.signal)) {
+          events.push(e);
+        }
+      } catch (err) {
+        thrown = err;
+      }
+    })();
+    try {
+      await waitFor(() => events.length >= 1 && existsSync(pidFile));
+      expect(bindingTimer.scheduledMs).toEqual([60_000]);
+      bindingTimer.fire?.();
+      await waitFor(() => drain.stopped || events.length > 200);
+    } finally {
+      // Release the trap; after a failed wait also cancel the run, so no child outlives the test.
+      writeFileSync(releaseFile, "");
+      if (!drain.stopped) caller.abort();
+      await consume;
+    }
+    expect(thrown).toBeUndefined();
     const chunks = events.filter(
       (e): e is Extract<UnifiedStreamEvent, { type: "chunk" }> => e.type === "chunk",
     );

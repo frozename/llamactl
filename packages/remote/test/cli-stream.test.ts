@@ -592,3 +592,82 @@ describe("streamResponse — spawn failure", () => {
     expect(events.some((e) => e.type === "done")).toBe(false);
   });
 });
+
+describe("streamResponse - injected binding timer (#340)", () => {
+  test("scheduleBindingTimeout: firing the injected binding timer mid-run cuts the drain, then a clean exit reports 'truncated'", async () => {
+    const entries: unknown[] = [];
+    const timer: { cancelled: boolean; fire: (() => void) | undefined; scheduledMs: number[] } = {
+      cancelled: false,
+      fire: undefined,
+      scheduledMs: [],
+    };
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: claudeBinding({ timeoutMs: 60_000 }),
+      scheduleBindingTimeout: (fire: () => void, ms: number): (() => void) => {
+        timer.scheduledMs.push(ms);
+        timer.fire = fire;
+        return (): void => {
+          timer.cancelled = true;
+        };
+      },
+      spawnStream: async (_argv, opts): Promise<SpawnStreamResult> => {
+        await Promise.resolve();
+        let resolveExited: (v: { exitCode: number; aborted: boolean }) => void = () => {
+          /* replaced below */
+        };
+        const exitedPromise = new Promise<{ exitCode: number; aborted: boolean }>((r) => {
+          resolveExited = r;
+        });
+        // Registered at spawn time, so an abort fired while stdout is suspended is not missed.
+        const abortSeen = new Promise<void>((r) => {
+          opts.signal.addEventListener(
+            "abort",
+            () => {
+              r();
+            },
+            { once: true },
+          );
+        });
+        const stdout = (async function* (): AsyncIterable<string> {
+          try {
+            yield "first";
+            await abortSeen;
+            yield "post-abort";
+            await new Promise<void>(() => {
+              /* still running: the exit arrives only once the consumer abandons stdout */
+            });
+          } finally {
+            resolveExited({ exitCode: 0, aborted: true });
+          }
+        })();
+        return { stdout, stderrPromise: Promise.resolve(""), exitedPromise };
+      },
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    const events: UnifiedStreamEvent[] = [];
+    for await (const e of provider.streamResponse!(minimalReq)) {
+      events.push(e);
+      if (events.length === 1) {
+        expect(timer.scheduledMs).toEqual([60_000]);
+        timer.fire?.();
+      }
+    }
+    const chunks = events.filter((e) => e.type === "chunk");
+    const errors = events.filter(
+      (e): e is Extract<UnifiedStreamEvent, { type: "error" }> => e.type === "error",
+    );
+    expect(chunks).toHaveLength(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error.code).toBe("truncated");
+    expect(events.some((e) => e.type === "done")).toBe(false);
+    expect(timer.cancelled).toBe(true);
+    const e = entries[0] as Record<string, unknown>;
+    expect(e["ok"]).toBe(false);
+    expect(e["error_code"]).toBe("truncated");
+    expect(e["exit_code"]).toBe(0);
+  });
+});
