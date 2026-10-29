@@ -80,4 +80,16 @@ describe("probeHealthEndpoint", () => {
     });
     expect(urlSeen).toBe("http://[::1]:9999/health");
   });
+
+  it("returns reachable=false when /health is 200 but declared readiness is 503", async () => {
+    const probe = await probeHealthEndpoint("127.0.0.1", 8080, {
+      readiness: { path: "/ready" },
+      fetch: makeFetch((url) =>
+        url.endsWith("/ready")
+          ? new Response("loading", { status: 503 })
+          : new Response("ok", { status: 200 }),
+      ),
+    });
+    expect(probe.reachable).toBe(false);
+  });
 });
