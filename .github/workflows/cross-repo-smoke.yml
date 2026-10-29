@@ -102,8 +102,63 @@ jobs:
         with:
           bun-version: 1.4.3
 
-      - name: Run llamactl tier
+      # bun reads bunfig.toml from the directory it runs in, so a root-level
+      # `bun test` skips the per-package storage-sandbox preload (packages/cli
+      # and packages/remote bunfig.toml). Run each package from its own
+      # directory, as check.yml does (#334).
+      - name: Run llamactl tier (packages/core)
         working-directory: llamactl
         env:
           LLAMACTL_SKIP_MDNS_TESTS: "1"
+        run: bun run --cwd packages/core test
+
+      - name: Run llamactl tier (packages/cli)
+        working-directory: llamactl
+        env:
+          LLAMACTL_SKIP_MDNS_TESTS: "1"
+        run: bun run --cwd packages/cli test
+
+      - name: Run llamactl tier (packages/app)
+        working-directory: llamactl/packages/app
+        env:
+          LLAMACTL_SKIP_MDNS_TESTS: "1"
         run: bun test
+
+      - name: Run llamactl tier (packages/remote)
+        working-directory: llamactl
+        env:
+          LLAMACTL_SKIP_MDNS_TESTS: "1"
+        run: bun run --cwd packages/remote test
+
+      - name: Run llamactl tier (packages/eval)
+        working-directory: llamactl
+        env:
+          LLAMACTL_SKIP_MDNS_TESTS: "1"
+        run: bun run --cwd packages/eval test
+
+      - name: Run llamactl tier (packages/agents)
+        working-directory: llamactl
+        env:
+          LLAMACTL_SKIP_MDNS_TESTS: "1"
+        run: bun run --cwd packages/agents test
+
+      - name: Run llamactl tier (packages/fleet-supervisor)
+        working-directory: llamactl
+        env:
+          LLAMACTL_SKIP_MDNS_TESTS: "1"
+        run: bun run --cwd packages/fleet-supervisor test
+
+      - name: Run llamactl tier (packages/mcp)
+        working-directory: llamactl
+        env:
+          LLAMACTL_SKIP_MDNS_TESTS: "1"
+        run: bun run --cwd packages/mcp test
+
+      # The tests outside those packages, which the old root-level run also
+      # covered. The ./ prefix makes bun treat each argument as a path, not a
+      # substring filter (a bare `tools` also matches packages/mcp/test/fleet-tools.test.ts).
+      - name: Run llamactl tier (policy, scripts, tests, tools)
+        working-directory: llamactl
+        env:
+          LLAMACTL_SKIP_MDNS_TESTS: "1"
+        run: bun test ./packages/policy ./scripts ./tests ./tools
