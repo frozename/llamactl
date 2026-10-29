@@ -120,7 +120,7 @@ export interface NodeBudgetView {
 
 interface WorkloadTestSeams {
   getNodeClientByName?: typeof getNodeClientByName;
-  /** #221: deadline in ms for each node query in `get workloads`, `describe workload`, `describe node` and `describe noderun` (default GET_NODE_QUERY_TIMEOUT_MS). */
+  /** #221: deadline in ms for each node query in `get workloads`, `describe workload`, `describe node`, `describe noderun` and the ModelRun status query in `delete` (default GET_NODE_QUERY_TIMEOUT_MS). */
   nodeQueryTimeoutMs?: number;
 }
 
@@ -144,9 +144,10 @@ const GET_NODE_QUERY_TIMEOUT_MS = 10_000;
 
 // #221: race one node query against a deadline, so a node that never answers
 // (suspended laptop, Wi-Fi drop) cannot stall `get workloads`, `describe workload`,
-// `describe node` or `describe noderun`. On timeout this rejects and the caller's catch
-// maps it to Unreachable or an error. The timer is cleared on every path, so it
-// cannot keep the process alive. Shaped like queryServerStatusWithTimeout in packages/remote/src/router.ts.
+// `describe node`, `describe noderun` or the ModelRun status query in `delete`. On timeout
+// this rejects and the caller's catch maps it to Unreachable, an error or a delete warning.
+// The timer is cleared on every path, so it cannot keep the process alive. Shaped like
+// queryServerStatusWithTimeout in packages/remote/src/router.ts.
 async function withNodeQueryDeadline<T>(node: string, query: () => Promise<T>): Promise<T> {
   const timeoutMs = workloadTestSeams.nodeQueryTimeoutMs ?? GET_NODE_QUERY_TIMEOUT_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1091,7 +1092,9 @@ async function deleteModelHost(
 async function stopModelRunServer(manifest: workloadSchema.ModelRun): Promise<boolean> {
   try {
     const client = getWorkloadNodeClient(manifest.spec.node);
-    const status = await client.serverStatus.query({ workload: manifest.metadata.name });
+    const status = await withNodeQueryDeadline(manifest.spec.node, () =>
+      client.serverStatus.query({ workload: manifest.metadata.name }),
+    );
     // Only stop the server if the running rel matches this workload's
     // target. If something else is running there (perhaps another
     // workload was applied on top), leave it alone.
