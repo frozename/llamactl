@@ -341,3 +341,55 @@ describe("adapter journal file integration", () => {
     expect(parsed.ok).toBe(true);
   });
 });
+
+describe("createCliSubprocessProvider - injected binding timer (#340)", () => {
+  test("createResponse arms scheduleBindingTimeout with timeoutMs; firing it aborts the spawn as 'timeout'", async () => {
+    const entries: unknown[] = [];
+    const timer: { cancelled: boolean; fire: (() => void) | undefined; scheduledMs: number[] } = {
+      cancelled: false,
+      fire: undefined,
+      scheduledMs: [],
+    };
+    const provider = createCliSubprocessProvider({
+      agentName: "mac-mini",
+      binding: makeBinding({ timeoutMs: 60_000 }),
+      scheduleBindingTimeout: (fire: () => void, ms: number): (() => void) => {
+        timer.scheduledMs.push(ms);
+        timer.fire = fire;
+        return (): void => {
+          timer.cancelled = true;
+        };
+      },
+      spawn: (_argv, o) =>
+        new Promise<SpawnResult>((res) => {
+          o.signal.addEventListener(
+            "abort",
+            () => {
+              res({ stdout: "", stderr: "", exitCode: -1, aborted: true });
+            },
+            { once: true },
+          );
+          if (timer.fire === undefined) {
+            res({ stdout: "unscheduled", stderr: "", exitCode: 0, aborted: false });
+            return;
+          }
+          timer.fire();
+        }),
+      journalWrite: async (e) => {
+        await Promise.resolve();
+        entries.push(e);
+      },
+    });
+    let thrown: unknown;
+    try {
+      await provider.createResponse(minimalReq);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(timer.scheduledMs).toEqual([60_000]);
+    expect(timer.cancelled).toBe(true);
+    expect((thrown as Error & { code?: string }).code).toBe("timeout");
+    expect(entries).toHaveLength(1);
+    expect((entries[0] as Record<string, unknown>)["error_code"]).toBe("timeout");
+  });
+});

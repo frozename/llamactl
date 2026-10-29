@@ -51,6 +51,12 @@ export interface CliProviderOptions {
    *  this to feed a hand-crafted line sequence without spawning a
    *  real process. */
   spawnStream?: SpawnStreamFn;
+  /** Injection seam for tests: arms the binding timeout and returns
+   *  its cancel function. Defaults to `setTimeout`/`clearTimeout`. A
+   *  test passes a scheduler it fires by hand, so the binding abort
+   *  lands at a point the test chooses instead of racing a real child
+   *  on the wall clock (#340). */
+  scheduleBindingTimeout?: ScheduleTimeoutFn;
   /** Injection seam for tests — override the journal writer so
    *  assertions don't require a tmpdir roundtrip. */
   journalWrite?: (entry: CliJournalEntry) => Promise<void>;
@@ -119,6 +125,10 @@ export interface SpawnStreamResult {
   stderrPromise: Promise<string>;
   exitedPromise: Promise<{ exitCode: number; aborted: boolean }>;
 }
+
+/** Arms a one-shot timer that calls `fire` after `ms`; the returned
+ *  function cancels it. */
+type ScheduleTimeoutFn = (fire: () => void, ms: number) => () => void;
 
 interface BunChildProcess {
   stdout: ReadableStream<Uint8Array>;
@@ -334,6 +344,14 @@ function throwForAbortOrExit(
   }
 }
 
+/** Default binding-timer scheduler: a plain wall-clock `setTimeout`. */
+function scheduleWithSetTimeout(fire: () => void, ms: number): () => void {
+  const handle = setTimeout(fire, ms);
+  return (): void => {
+    clearTimeout(handle);
+  };
+}
+
 /**
  * Local AbortController: the binding timeout, the caller's signal,
  * and an optional absolute deadline all flip it; `source()` reports
@@ -343,6 +361,7 @@ function createLinkedAbort(opts: {
   timeoutMs: number;
   callerSignal?: AbortSignal;
   deadline?: number;
+  scheduleBindingTimeout?: ScheduleTimeoutFn;
 }): {
   ctrl: AbortController;
   source: () => LinkedAbortSource | undefined;
@@ -354,7 +373,8 @@ function createLinkedAbort(opts: {
     fired ??= s;
     ctrl.abort();
   };
-  const bindingTimer = setTimeout(() => {
+  const schedule = opts.scheduleBindingTimeout ?? scheduleWithSetTimeout;
+  const cancelBindingTimer = schedule(() => {
     record("binding");
   }, opts.timeoutMs);
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
@@ -376,7 +396,7 @@ function createLinkedAbort(opts: {
     ctrl,
     source: () => fired,
     cleanup: (): void => {
-      clearTimeout(bindingTimer);
+      cancelBindingTimer();
       if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
       opts.callerSignal?.removeEventListener("abort", onCallerAbort);
     },
@@ -436,6 +456,9 @@ async function createCliResponse(
   const { ctrl, source, cleanup } = createLinkedAbort({
     timeoutMs: opts.binding.timeoutMs,
     ...(callerSignal !== undefined ? { callerSignal } : {}),
+    ...(opts.scheduleBindingTimeout !== undefined
+      ? { scheduleBindingTimeout: opts.scheduleBindingTimeout }
+      : {}),
     ...(context?.deadline !== undefined ? { deadline: context.deadline } : {}),
   });
   const startedAt = Date.now();
@@ -684,6 +707,9 @@ async function* streamCliResponse(
   const { ctrl, source, cleanup } = createLinkedAbort({
     timeoutMs: opts.binding.timeoutMs,
     ...(callerSignal !== undefined ? { callerSignal } : {}),
+    ...(opts.scheduleBindingTimeout !== undefined
+      ? { scheduleBindingTimeout: opts.scheduleBindingTimeout }
+      : {}),
   });
   const startedAt = Date.now();
   const chunkId = `cli-${randomUUID()}`;
