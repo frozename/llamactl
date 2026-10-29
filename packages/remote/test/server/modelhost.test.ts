@@ -1444,6 +1444,39 @@ describe("server/modelhost", () => {
     }
   });
 
+  test("#357 an omlx host running as omlx-server is Running and stoppable", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-omlx-server-"));
+    const runtimeDir = join(tmp, "runtime");
+    const key = { name: "mlx-host-server" };
+    // A running oMLX server sets its own process title, so ps prints
+    // `omlx-server` plus padding instead of the `omlx` launcher name.
+    const identity = {
+      processStartMs: (): number => 0,
+      processCommand: (): string => "omlx-server                ",
+    };
+    try {
+      seedImpostorSidecar(runtimeDir, process.pid, false);
+      expect(statusModelHost({ key, runtimeDir, identity })).toEqual({
+        state: "Running",
+        pid: process.pid,
+      });
+      const tornDown: number[] = [];
+      const stopped = await stopModelHost({
+        key,
+        runtimeDir,
+        identity,
+        teardown: (teardownPid) => {
+          tornDown.push(teardownPid);
+          return Promise.resolve();
+        },
+      });
+      expect(stopped).toEqual({ ok: true, pid: process.pid });
+      expect(tornDown).toEqual([process.pid]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   test("stopModelHost reports ok:false and preserves state while identity is unknown", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "llamactl-modelhost-unkstop-"));
     const runtimeDir = join(tmp, "runtime");
