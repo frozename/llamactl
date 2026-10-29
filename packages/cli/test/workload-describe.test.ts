@@ -136,6 +136,20 @@ function writeModelRunOn(name: string, node: string): void {
   ]);
 }
 
+function writeNodeRunOn(name: string, node: string): void {
+  writeManifest(name, [
+    "apiVersion: llamactl/v1",
+    "kind: NodeRun",
+    "metadata:",
+    `  name: ${name}`,
+    "spec:",
+    `  node: ${node}`,
+    "  infra:",
+    "    - pkg: llama-cpp",
+    "      version: b4500",
+  ]);
+}
+
 interface HungHostReply {
   state: "Running";
   pid: number;
@@ -145,6 +159,12 @@ interface HungServerReply {
   state: "up";
   rel: string;
   pid: number;
+}
+
+interface HungBudgetReply {
+  budget: number;
+  reserved: number;
+  workloads: string[];
 }
 
 // #221: every status query stays pending until release(), like a node that suspended mid-call.
@@ -166,6 +186,13 @@ function stubHungClient(): { release: () => void } {
         serverStatus: {
           query: (): Promise<HungServerReply> =>
             hung.then((): HungServerReply => ({ state: "up", rel: "m.gguf", pid: 99 })),
+        },
+        nodeBudget: {
+          query: (): Promise<HungBudgetReply> =>
+            hung.then((): HungBudgetReply => ({ budget: 16, reserved: 0, workloads: [] })),
+        },
+        infraList: {
+          query: (): Promise<string[]> => hung.then((): string[] => []),
         },
       }) as unknown as NodeClient,
     nodeQueryTimeoutMs: 1,
@@ -330,4 +357,45 @@ test("help: DESCRIBE_USAGE documents the 10 s node query deadline (#221)", async
 
   expect(result).toBe(0);
   expect(stdout).toContain("10 s deadline");
+});
+
+test("describe noderun --json: a node that never answers reports the deadline error in liveInfra (#221)", async () => {
+  writeNodeRunOn("z13-infra", "z13");
+  const stub = stubHungClient();
+
+  const pending = withCapturedIo(() => runDescribe(["noderun", "z13-infra", "--json"]));
+  const outcome = await settledWithin(pending, 2_000);
+  stub.release();
+  const { result, stdout } = await pending;
+
+  expect(outcome).toBe("settled");
+  expect(result).toBe(0);
+  const parsed = parseJsonRecord(stdout);
+  expect(parsed["manifest"]).toMatchObject({
+    kind: "NodeRun",
+    metadata: { name: "z13-infra" },
+    spec: { node: "z13" },
+  });
+  expect(parsed["liveInfra"]).toEqual({ error: "node 'z13' did not answer within 1 ms" });
+});
+
+test("describe node: a node that never answers prints the deadline error and exits 1 (#221)", async () => {
+  const stub = stubHungClient();
+
+  const pending = withCapturedIo(() => runDescribe(["node", "z13"]));
+  const outcome = await settledWithin(pending, 2_000);
+  stub.release();
+  const { result, stdout, stderr } = await pending;
+
+  expect(outcome).toBe("settled");
+  expect(result).toBe(1);
+  expect(stdout).toBe("");
+  expect(stderr).toBe("describe: node 'z13' did not answer within 1 ms\n");
+});
+
+test("help: DESCRIBE_USAGE documents the describe node deadline (#221)", async () => {
+  const { result, stdout } = await withCapturedIo(() => runDescribe(["node", "x", "--help"]));
+
+  expect(result).toBe(0);
+  expect(stdout).toContain("describe node prints the error and exits 1");
 });

@@ -97,6 +97,8 @@ instead of the command waiting on the node.
 Usage: llamactl describe node <name> [--json]
 
 Show the node budget rollup for declared workloads on that node.
+The budget query has a 10 s deadline: when the node does not answer
+within 10 s, describe node prints the error and exits 1.
 `;
 
 const DELETE_USAGE = `Usage: llamactl delete workload <name> [--keep-running]
@@ -118,7 +120,7 @@ export interface NodeBudgetView {
 
 interface WorkloadTestSeams {
   getNodeClientByName?: typeof getNodeClientByName;
-  /** #221: deadline in ms for each node status query in `get workloads` and `describe workload` (default GET_NODE_QUERY_TIMEOUT_MS). */
+  /** #221: deadline in ms for each node query in `get workloads`, `describe workload`, `describe node` and `describe noderun` (default GET_NODE_QUERY_TIMEOUT_MS). */
   nodeQueryTimeoutMs?: number;
 }
 
@@ -140,9 +142,10 @@ function getWorkloadNodeClient(name: string): NodeClient {
 // packages/remote/src/workload/node-rpc-deadline.ts, which @llamactl/remote does not export.
 const GET_NODE_QUERY_TIMEOUT_MS = 10_000;
 
-// #221: race one node status query against a deadline, so a node that never answers
-// (suspended laptop, Wi-Fi drop) cannot stall `get workloads` or `describe workload`. On timeout this rejects and
-// the caller's catch maps it to Unreachable. The timer is cleared on every path, so it
+// #221: race one node query against a deadline, so a node that never answers
+// (suspended laptop, Wi-Fi drop) cannot stall `get workloads`, `describe workload`,
+// `describe node` or `describe noderun`. On timeout this rejects and the caller's catch
+// maps it to Unreachable or an error. The timer is cleared on every path, so it
 // cannot keep the process alive. Shaped like queryServerStatusWithTimeout in packages/remote/src/router.ts.
 async function withNodeQueryDeadline<T>(node: string, query: () => Promise<T>): Promise<T> {
   const timeoutMs = workloadTestSeams.nodeQueryTimeoutMs ?? GET_NODE_QUERY_TIMEOUT_MS;
@@ -998,8 +1001,8 @@ export async function runDescribe(args: string[]): Promise<number> {
 
 async function runDescribeNode(name: string, json: boolean): Promise<number> {
   try {
-    const client = getNodeClientByName(name);
-    const budget = await client.nodeBudget.query({ node: name });
+    const client = getWorkloadNodeClient(name);
+    const budget = await withNodeQueryDeadline(name, () => client.nodeBudget.query({ node: name }));
     if (json) {
       process.stdout.write(`${JSON.stringify(budget, null, 2)}\n`);
       return 0;
@@ -1225,8 +1228,8 @@ async function runDescribeNodeRun(name: string, json: boolean): Promise<number> 
   }
   let liveInfra: unknown = null;
   try {
-    const client = getNodeClientByName(manifest.spec.node);
-    liveInfra = await client.infraList.query();
+    const client = getWorkloadNodeClient(manifest.spec.node);
+    liveInfra = await withNodeQueryDeadline(manifest.spec.node, () => client.infraList.query());
   } catch (err) {
     liveInfra = { error: (err as Error).message };
   }
