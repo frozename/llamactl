@@ -266,10 +266,30 @@ describe("drainNdjson", () => {
     ]);
   });
 
-  test("a trailing error line without a newline is swallowed", async () => {
-    // Documents current behaviour: collectTrailingLine ignores anything that throws.
-    const res = new Response('{"status":"a"}\n{"error":"late failure"}', { status: 200 });
+  test("a trailing error line without a newline rejects with the caller's code and context", async () => {
+    // #360: the final line is split across chunks and has no newline after it.
+    const res = chunkedResponse(textChunks('{"status":"a"}\n{"err', 'or":"late failure"}'));
+    // Settle to the rejection reason or a marker, so an unfixed resolve fails on an assertion.
+    const outcome = await drainNdjson(res, "create-failed", "build").then(
+      (): string => "resolved",
+      (reason: unknown): unknown => reason,
+    );
+    const err = asRuntimeError(outcome);
+    expect(err.code).toBe("create-failed");
+    expect(err.message).toBe("build: late failure");
+  });
+
+  test("trailing malformed JSON without a newline is still ignored", async () => {
+    const res = new Response('{"status":"a"}\n{"status":"b', { status: 200 });
     expect(await drainNdjson(res, "image-pull-failed", "pull x")).toEqual([{ status: "a" }]);
+  });
+
+  test("a trailing line whose error field is not a string is kept", async () => {
+    const res = new Response('{"status":"a"}\n{"error":{"code":1}}', { status: 200 });
+    expect(await drainNdjson(res, "image-pull-failed", "pull x")).toEqual([
+      { status: "a" },
+      { error: { code: 1 } },
+    ]);
   });
 
   test("a non-2xx response rejects through failWith with the given code", async () => {

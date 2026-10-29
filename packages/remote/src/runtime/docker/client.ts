@@ -212,9 +212,11 @@ function drainCompleteLines(
 }
 
 /**
- * Decode whatever is left in the buffer after EOF. Mirrors the
- * historical behavior: anything that throws here — malformed JSON or
- * an `{ error }` line — is ignored, since trailing junk is common.
+ * Decode whatever is left in the buffer after EOF (a final line with
+ * no trailing newline). Malformed JSON is ignored, since trailing junk
+ * is common. A line carrying `{ error: string }` short-circuits with a
+ * `RuntimeError`, the same as a newline-terminated one in
+ * `drainCompleteLines`.
  */
 function collectTrailingLine(
   buf: string,
@@ -224,13 +226,10 @@ function collectTrailingLine(
 ): void {
   const trailing = buf.trim();
   if (trailing.length === 0) return;
-  try {
-    const parsed = JSON.parse(trailing) as Record<string, unknown>;
-    if (typeof parsed["error"] === "string") {
-      throw new RuntimeError(errorCode, `${context}: ${parsed["error"]}`);
-    }
-    lines.push(parsed);
-  } catch {
-    // ignore — trailing junk is common
+  const parsed = parseNdjsonLine(trailing);
+  if (parsed === null) return;
+  if (typeof parsed["error"] === "string") {
+    throw new RuntimeError(errorCode, `${context}: ${parsed["error"]}`);
   }
+  lines.push(parsed);
 }
