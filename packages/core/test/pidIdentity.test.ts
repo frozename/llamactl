@@ -209,6 +209,52 @@ describe("command-line corroboration", () => {
     ).toBe("alive");
   });
 
+  test("#357 any basename listed in binaries corroborates argv0", () => {
+    const binaries = ["omlx", "omlx-server"];
+    for (const cmdline of ["omlx-server                ", "/opt/omlx/bin/omlx serve --port 8094"]) {
+      expect(
+        verifyRecordedPid(4242, record, {
+          ...liveDeps,
+          processCommand: () => cmdline,
+          expectCommand: { binaries },
+        }),
+      ).toBe("alive");
+    }
+    for (const cmdline of [
+      "python3 /opt/omlx/bin/omlx serve",
+      "omlx-server-old",
+      "/bin/sleep 60",
+    ]) {
+      expect(
+        verifyRecordedPid(4242, record, {
+          ...liveDeps,
+          processCommand: () => cmdline,
+          expectCommand: { binaries },
+        }),
+      ).toBe("unknown");
+    }
+  });
+
+  test("#357 binary and binaries are accepted together", () => {
+    const expectCommand = { binary: "llama-server", binaries: ["llama-server-alt"] };
+    for (const cmdline of ["llama-server --port 8080", "/opt/bin/llama-server-alt --port 8080"]) {
+      expect(
+        verifyRecordedPid(4242, record, {
+          ...liveDeps,
+          processCommand: () => cmdline,
+          expectCommand,
+        }),
+      ).toBe("alive");
+    }
+    expect(
+      verifyRecordedPid(4242, record, {
+        ...liveDeps,
+        processCommand: () => "/bin/sleep 60",
+        expectCommand,
+      }),
+    ).toBe("unknown");
+  });
+
   test("args do not substring-match inside a longer token", () => {
     // "a.gguf" must not match the token "xa.gguf" — containment is checked at
     // token boundaries (exact token or path-suffix), not raw substring.

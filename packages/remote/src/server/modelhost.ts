@@ -137,17 +137,19 @@ function toRuntimeEnv(env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
 }
 
 // Command-line corroboration for a recorded ModelHost pid: the process must
-// still present the engine binary's argv0 basename (`omlx` for oMLX's shim,
-// `llama-server` for llamacpp) — a fresh-recorded impostor fails this even
-// when the start-time check cannot see the recycling.
-const ENGINE_BINARY_BASENAME: Record<EngineName, string> = {
-  llamacpp: "llama-server",
-  omlx: "omlx",
-  strata: "strata-server",
+// still present one of the engine's argv0 basenames (`llama-server` for
+// llamacpp, `strata-server` for strata; for oMLX both the `omlx` launcher
+// shim and `omlx-server`, the process title the running server sets for
+// itself, #357). A fresh-recorded impostor fails this even when the
+// start-time check cannot see the recycling.
+const ENGINE_BINARY_BASENAMES: Record<EngineName, readonly string[]> = {
+  llamacpp: ["llama-server"],
+  omlx: ["omlx", "omlx-server"],
+  strata: ["strata-server"],
 };
 
 function hostIdentityDeps(engine: EngineName, deps?: PidIdentityDeps): PidIdentityDeps {
-  return { ...deps, expectCommand: { binary: ENGINE_BINARY_BASENAME[engine] } };
+  return { ...deps, expectCommand: { binaries: ENGINE_BINARY_BASENAMES[engine] } };
 }
 
 const CHILD_ENV_ALLOWLIST = [

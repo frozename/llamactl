@@ -23,7 +23,11 @@ const PS_TIMEOUT_MS = 500;
 /**
  * What the process holding a recorded pid is expected to look like. `binary`
  * compares against argv0's basename (an absolute shebang path and a bare
- * `exec -a` name both reduce to the same basename). `path` also accepts the
+ * `exec -a` name both reduce to the same basename). `binaries` lists further
+ * accepted basenames, for an engine whose running process title differs from
+ * its launcher name (#357: oMLX runs as `omlx-server`); argv0 must match
+ * `binary` or any entry. With neither set, the basename is not checked.
+ * `path` also accepts the
  * full argv0 at a whitespace or end boundary, including paths with spaces.
  * Each entry of `args` must appear as a whole token or as the tail of a path
  * token, so "a.gguf" never
@@ -31,6 +35,7 @@ const PS_TIMEOUT_MS = 500;
  */
 export interface CommandExpectation {
   binary?: string;
+  binaries?: readonly string[];
   path?: string;
   args?: readonly string[];
 }
@@ -174,11 +179,18 @@ function classifyProbeError(err: unknown): PidVerdict {
   return "unknown";
 }
 
+// #357: every argv0 basename an expectation accepts: `binary` plus `binaries`.
+function expectedBasenames(expect: CommandExpectation): readonly string[] {
+  const extra = expect.binaries ?? [];
+  return expect.binary === undefined ? extra : [expect.binary, ...extra];
+}
+
 function commandMatches(cmdline: string, expect: CommandExpectation): boolean {
   const tokens = cmdline.trim().split(/\s+/);
   const matchesPath =
     expect.path !== undefined && (cmdline === expect.path || cmdline.startsWith(`${expect.path} `));
-  if (!matchesPath && expect.binary !== undefined && basename(tokens[0] ?? "") !== expect.binary) {
+  const names = expectedBasenames(expect);
+  if (!matchesPath && names.length > 0 && !names.includes(basename(tokens[0] ?? ""))) {
     return false;
   }
   for (const arg of expect.args ?? []) {
