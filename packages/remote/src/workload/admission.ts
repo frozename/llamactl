@@ -1,5 +1,10 @@
 import type { ResolvedEnv } from "@llamactl/core";
 
+import {
+  type AdmissionReservation,
+  admitAgainstFiniteBudget,
+  capacityBudgetGiB,
+} from "@llamactl/core/residency/admission";
 import { totalmem } from "node:os";
 import { join } from "node:path";
 
@@ -12,10 +17,13 @@ const MODEL_HOST_MEMORY_HEURISTIC_MULTIPLIER = 2;
 
 export interface AdmissionInput {
   nodeName: string;
-  nodeBudgetGiB: number;
+  /** null means the budget could not be verified — never Infinity. */
+  nodeBudgetGiB: number | null;
   livingManifests: ModelRun[];
   incoming: ModelRun;
   forceAdmit: boolean;
+  /** Alias-aware node equality; defaults to name equality. */
+  sameNode?: (otherNode: string) => boolean;
 }
 
 export interface ReservationBreakdownItem {
@@ -24,9 +32,16 @@ export interface ReservationBreakdownItem {
 }
 
 export type AdmissionResult =
-  | { ok: true; reservedAfter: number; budget: number }
+  | { ok: true; reservedAfter: number; budget: number | null }
   | {
       ok: false;
+      kind: "unknown-budget";
+      reservedAfter: number;
+      reason: string;
+    }
+  | {
+      ok: false;
+      kind: "over-budget";
       reservedAfter: number;
       budget: number;
       reason: string;
@@ -36,10 +51,11 @@ export type AdmissionResult =
 export function reservedForNodeBreakdown(
   manifests: ModelRun[],
   nodeName: string,
+  sameNode: (otherNode: string) => boolean = (other) => other === nodeName,
 ): ReservationBreakdownItem[] {
   const items: ReservationBreakdownItem[] = [];
   for (const m of manifests) {
-    if (m.spec.node !== nodeName) continue;
+    if (!sameNode(m.spec.node)) continue;
     if (!m.spec.enabled) continue;
     const expectedMemoryGiB = m.spec.resources?.expectedMemoryGiB ?? 0;
     if (expectedMemoryGiB > 0) items.push({ name: m.metadata.name, expectedMemoryGiB });
@@ -60,9 +76,9 @@ export function defaultNodeBudgetGiB(
 ): number {
   if (typeof nodeBudgetFromManifest === "number") return nodeBudgetFromManifest;
   if (typeof nodeMemBytes === "number" && Number.isFinite(nodeMemBytes) && nodeMemBytes > 0) {
-    return (nodeMemBytes / 1024 ** 3) * 0.75;
+    return capacityBudgetGiB(nodeMemBytes);
   }
-  return (totalmem() / 1024 ** 3) * 0.75;
+  return capacityBudgetGiB(totalmem());
 }
 
 function formatAdmissionBreakdown(
@@ -83,30 +99,57 @@ function formatAdmissionBreakdown(
   ].join(". ");
 }
 
+function formatUnknownBudgetReason(
+  nodeName: string,
+  incoming: ReservationBreakdownItem,
+  reservedAfter: number,
+): string {
+  return [
+    `node '${nodeName}' memory budget is unknown; refusing to charge '${incoming.name}' (${incoming.expectedMemoryGiB.toFixed(1)} GiB) against it (declared reservations after this workload: ${reservedAfter.toFixed(1)} GiB)`,
+    `Declare a budget with NodeRun spec.budget.memoryGiB, or make the target node's reported memory reachable (llamactl node test ${nodeName})`,
+    `The llamactl.io/force-admit annotation is the explicit escape hatch`,
+  ].join(". ");
+}
+
 export function computeNodeBudget(input: AdmissionInput): AdmissionResult {
-  const livingItems = reservedForNodeBreakdown(input.livingManifests, input.nodeName);
-  const reservedBefore = livingItems.reduce((sum, item) => sum + item.expectedMemoryGiB, 0);
+  const livingItems = reservedForNodeBreakdown(
+    input.livingManifests,
+    input.nodeName,
+    input.sameNode,
+  );
   const incomingMemory = input.incoming.spec.resources?.expectedMemoryGiB ?? 0;
   const incomingItem = { name: input.incoming.metadata.name, expectedMemoryGiB: incomingMemory };
-  const reservedAfter = reservedBefore + incomingMemory;
-  if (input.forceAdmit) return { ok: true, reservedAfter, budget: input.nodeBudgetGiB };
-  if (reservedAfter > input.nodeBudgetGiB) {
-    const breakdown = [...livingItems, incomingItem].filter((i) => i.expectedMemoryGiB > 0);
+  const decision = admitAgainstFiniteBudget({
+    budgetGiB: input.nodeBudgetGiB,
+    living: livingItems satisfies AdmissionReservation[],
+    incoming: incomingItem,
+    forceAdmit: input.forceAdmit,
+  });
+  if (decision.ok) {
+    return { ok: true, reservedAfter: decision.reservedAfterGiB, budget: decision.budgetGiB };
+  }
+  if (decision.kind === "unknown-budget") {
     return {
       ok: false,
-      reservedAfter,
-      budget: input.nodeBudgetGiB,
-      reason: formatAdmissionBreakdown(
-        input.nodeName,
-        input.nodeBudgetGiB,
-        incomingItem,
-        livingItems,
-        reservedAfter,
-      ),
-      breakdown,
+      kind: "unknown-budget",
+      reservedAfter: decision.reservedAfterGiB,
+      reason: formatUnknownBudgetReason(input.nodeName, incomingItem, decision.reservedAfterGiB),
     };
   }
-  return { ok: true, reservedAfter, budget: input.nodeBudgetGiB };
+  return {
+    ok: false,
+    kind: "over-budget",
+    reservedAfter: decision.reservedAfterGiB,
+    budget: decision.budgetGiB,
+    reason: formatAdmissionBreakdown(
+      input.nodeName,
+      decision.budgetGiB,
+      incomingItem,
+      livingItems,
+      decision.reservedAfterGiB,
+    ),
+    breakdown: decision.contributors,
+  };
 }
 
 export function estimateWorkloadMemoryGiB(

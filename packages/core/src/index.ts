@@ -22,6 +22,7 @@ export * as profile from "./profile.js";
 export * as pull from "./pull.js";
 export * as quant from "./quant.js";
 export * as recommendations from "./recommendations.js";
+export * as residencyAdmission from "./residency/admission.js";
 export * as responsecache from "./responsecache/index.js";
 export * as routingCapabilities from "./routing/capabilities.js";
 export * as routingCatalog from "./routing/catalog.js";

@@ -159,7 +159,8 @@ test("over-budget with disabled ModelHosts only counts the genuinely living cont
   };
   const r = computeNodeBudget(input);
   expect(r.ok).toBe(false);
-  if (!r.ok) {
+  if (!r.ok) expect(r.kind).toBe("over-budget");
+  if (!r.ok && r.kind === "over-budget") {
     expect(r.reservedAfter).toBe(22);
     expect(r.reason).toContain("'mlx-host-local' 12.0 GiB");
     expect(r.reason).toContain("'new-workload' (10.0 GiB)");

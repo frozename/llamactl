@@ -9,6 +9,7 @@ import type { ModelRun } from "./schema.js";
 
 import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "../safe-fs.js";
 import { applyOne, applyOneModelHost, type WorkloadClient } from "./apply.js";
+import { saveModelHost } from "./modelhost-store.js";
 import { saveWorkload } from "./store.js";
 
 type WorkloadState = { up: boolean; rel: string; args: string[] };
@@ -175,10 +176,23 @@ test("disabled manifest stops the server if running and reports Disabled", async
 
 test("parallel apply does not stop other workloads on the node", async () => {
   const state = new Map([["a", { up: true, rel: "a.gguf", args: [] }]]);
-  const result = await applyOne(mkManifest("b", { port: 8090 }), () => makeClient(state));
-  expect(state.has("a")).toBe(true);
-  expect(state.has("b")).toBe(true);
-  expect(result.action).toBe("started");
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-parallel-apply-"));
+  try {
+    const result = await applyOne(
+      mkManifest("b", { port: 8090 }),
+      () => makeClient(state),
+      undefined,
+      undefined,
+      {
+        workloadsDir,
+      },
+    );
+    expect(state.has("a")).toBe(true);
+    expect(state.has("b")).toBe(true);
+    expect(result.action).toBe("started");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
 });
 
 test("running server with port-only endpoint manifest is unchanged", async () => {
@@ -187,21 +201,39 @@ test("running server with port-only endpoint manifest is unchanged", async () =>
   manifest.spec.endpoint = {
     port: 8181,
   };
-  const result = await applyOne(manifest, () => makeClient(state));
-  expect(result.action).toBe("unchanged");
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-port-only-"));
+  try {
+    const result = await applyOne(manifest, () => makeClient(state), undefined, undefined, {
+      workloadsDir,
+    });
+    expect(result.action).toBe("unchanged");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
 });
 
 test("running server with alias target resolved to live rel is unchanged", async () => {
   const state = new Map([["alias", { up: true, rel: "qwen3.6-35b-mtp.gguf", args: [] }]]);
   const manifest = mkManifest("alias");
   manifest.spec.target = { kind: "alias", value: "best" };
-  const result = await applyOne(manifest, () => ({
-    ...makeClient(state),
-    resolveTarget: {
-      query: (): Promise<string | null> => Promise.resolve("qwen3.6-35b-mtp.gguf"),
-    },
-  }));
-  expect(result.action).toBe("unchanged");
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-alias-target-"));
+  try {
+    const result = await applyOne(
+      manifest,
+      () => ({
+        ...makeClient(state),
+        resolveTarget: {
+          query: (): Promise<string | null> => Promise.resolve("qwen3.6-35b-mtp.gguf"),
+        },
+      }),
+      undefined,
+      undefined,
+      { workloadsDir },
+    );
+    expect(result.action).toBe("unchanged");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
 });
 
 test("genuinely changed rel/host/port still triggers restart", async () => {
@@ -212,8 +244,15 @@ test("genuinely changed rel/host/port still triggers restart", async () => {
     host: "localhost",
     port: 8199,
   };
-  const result = await applyOne(manifest, () => makeClient(state));
-  expect(result.action).toBe("restarted");
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-changed-rel-"));
+  try {
+    const result = await applyOne(manifest, () => makeClient(state), undefined, undefined, {
+      workloadsDir,
+    });
+    expect(result.action).toBe("restarted");
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
 });
 
 test("evict annotation stops named workload before starting incoming", async () => {
@@ -320,8 +359,8 @@ test("concurrent applies on the same node serialize through the mutex", async ()
     rpcServerStop: { mutate: () => Promise.resolve({ stopped: true }) },
     rpcServerDoctor: { query: () => Promise.resolve({ ok: true, path: "", llamaCppBin: "" }) },
   });
-  const mfA = mkManifest("a", { port: 8181, node: "same" });
-  const mfB = mkManifest("b", { port: 8090, node: "same" });
+  const mfA = mkManifest("a", { port: 8181 });
+  const mfB = mkManifest("b", { port: 8090 });
   await Promise.all([
     applyOne(mfA, slowClient, undefined, undefined, { listManifests: () => [] }),
     applyOne(mfB, slowClient, undefined, undefined, { listManifests: () => [] }),
@@ -338,6 +377,7 @@ test("ModelHost on a remote node does not write a local sidecar", async () => {
   try {
     const result = await applyOneModelHost(manifest, () => makeModelHostClient(), undefined, {
       env,
+      workloadsDir: join(runtimeDir, "workloads"),
     });
     expect(result.ok).toBe(true);
     expect(readModelHostState({ name: manifest.metadata.name }, resolved)).toBeNull();
@@ -368,6 +408,7 @@ test("ModelHost disable on a remote node sweeps any pre-existing local sidecar (
   try {
     const result = await applyOneModelHost(manifest, () => makeModelHostClient(), undefined, {
       env,
+      workloadsDir: join(runtimeDir, "workloads"),
     });
     expect(result.ok).toBe(true);
     expect(readModelHostState({ name }, resolved)).toBeNull();
@@ -440,4 +481,93 @@ test("ModelHost admission falls back to model-size heuristic when expectedMemory
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test("DF-01: ModelRun admission counts a resident ModelHost before starting", async () => {
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df01-mixed-"));
+  const state: WorkloadStateMap = new Map();
+  try {
+    saveModelHost(
+      mkModelHostManifest("resident-host", { resources: { expectedMemoryGiB: 24 } }),
+      workloadsDir,
+    );
+    const result = await applyOne(
+      mkManifest("incoming-run", { ram: 8 }),
+      () => makeClient(state),
+      undefined,
+      undefined,
+      { workloadsDir, getNodeBudgetGiB: () => 24 },
+    );
+    expect(result.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+    expect(result.action).toBe("pending");
+    expect(result.error).toContain("resident-host");
+    expect(state.has("incoming-run")).toBe(false);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-01: ModelRun admission uses a finite local budget without a supplied resolver", async () => {
+  const workloadsDir = mkdtempSync(join(tmpdir(), "llamactl-df01-finite-"));
+  const state: WorkloadStateMap = new Map();
+  try {
+    const result = await applyOne(
+      mkManifest("oversized-run", { ram: 1000 }),
+      () => makeClient(state),
+      undefined,
+      undefined,
+      { workloadsDir },
+    );
+    expect(result.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+    expect(result.action).toBe("pending");
+    expect(state.has("oversized-run")).toBe(false);
+  } finally {
+    rmSync(workloadsDir, { recursive: true, force: true });
+  }
+});
+
+test("DF-01: ModelRun admission counts living workloads on an alias of the same physical node", async () => {
+  const state: WorkloadStateMap = new Map();
+  const result = await applyOne(
+    mkManifest("b", { port: 8090, ram: 8, node: "mac-mini" }),
+    () => makeClient(state),
+    undefined,
+    undefined,
+    {
+      getNodeBudgetGiB: () => 10,
+      listManifests: () => [mkManifest("a", { ram: 8, node: "mac-mini.local" })],
+      resolveNodeIdentity: (n) => (n === "mac-mini" || n === "mac-mini.local" ? "mac-mini" : null),
+    },
+  );
+  expect(result.action).toBe("pending");
+  expect(result.statusSection.conditions[0]?.reason).toBe("BudgetExceeded");
+});
+
+test("DF-01: an unverifiable remote budget refuses instead of admitting unlimited", async () => {
+  const state: WorkloadStateMap = new Map();
+  const result = await applyOne(
+    mkManifest("b", { port: 8090, ram: 8, node: "mac-mini" }),
+    () => makeClient(state),
+    undefined,
+    undefined,
+    { listManifests: () => [] },
+  );
+  expect(result.action).toBe("pending");
+  expect(result.statusSection.conditions[0]?.reason).toBe("BudgetUnknown");
+  expect(result.error).toContain("budget is unknown");
+});
+
+test("DF-01: a zero-declared workload passes admission even with an unknown budget", async () => {
+  const state: WorkloadStateMap = new Map();
+  const result = await applyOne(
+    mkManifest("b", { port: 8090, ram: 0, node: "mac-mini" }),
+    () => makeClient(state),
+    undefined,
+    undefined,
+    { listManifests: () => [] },
+  );
+  expect(result.action).toBe("started");
+  const reserved = result.statusSection.conditions.find((c) => c.type === "BudgetReserved");
+  expect(reserved?.message).toContain("unknown");
+  expect(reserved?.message).not.toContain("unbounded");
 });

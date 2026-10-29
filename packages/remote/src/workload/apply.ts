@@ -846,7 +846,7 @@ interface ApplyOneOpts {
    * doesn't accidentally relax the check.
    */
   resolveNodeIdentity?: (nodeName: string) => string | null;
-  listManifests?: () => ModelRun[];
+  listManifests?: (dir?: string) => ModelRun[];
   /** May be async so a caller can size a remote node from its reported memory. */
   getNodeBudgetGiB?: (nodeName: string) => number | undefined | Promise<number | undefined>;
 }
@@ -1017,22 +1017,86 @@ interface ConvergeServerContext {
   evictTargets: string[];
 }
 
+/** Map a node name to a stable physical identity when a resolver is
+ *  supplied, so admission counts aliases of the same node consistently
+ *  with the port-collision preflight. Falls back to name equality. */
+function nodeIdentityMatcher(
+  opts: ApplyOneOpts | undefined,
+  nodeName: string,
+): (otherNode: string) => boolean {
+  const resolveIdent = opts?.resolveNodeIdentity;
+  const desiredIdentity = resolveIdent?.(nodeName) ?? null;
+  return (otherNode: string): boolean => {
+    if (otherNode === nodeName) return true;
+    if (!resolveIdent || !desiredIdentity) return false;
+    const otherIdentity = resolveIdent(otherNode);
+    return otherIdentity !== null && otherIdentity === desiredIdentity;
+  };
+}
+
+/**
+ * Resolve the finite admission budget for a ModelRun target (DF-01).
+ * An explicit budget (NodeRun spec.budget.memoryGiB via the caller's
+ * resolver) wins. Otherwise a local target uses local physical capacity
+ * and a remote target uses its verified nodeFacts memory. Returns null
+ * when neither is available — callers must refuse rather than substitute
+ * Infinity or the controller's own RAM for a remote target.
+ */
+async function resolveAdmissionBudgetGiB(
+  nodeName: string,
+  client: WorkloadClient,
+  getNodeBudgetGiB: ApplyOneOpts["getNodeBudgetGiB"],
+  hasDeclaredReservations: boolean,
+): Promise<number | null> {
+  const explicit = await getNodeBudgetGiB?.(nodeName);
+  if (explicit !== undefined) return explicit;
+  if (nodeName === LOCAL_NODE_ID) return defaultNodeBudgetGiB();
+  if (!hasDeclaredReservations) return null;
+  if (!client.nodeFacts) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        resolve(null);
+      }, NODE_FACTS_TIMEOUT_MS);
+    });
+    const facts = await Promise.race([client.nodeFacts.query().catch(() => null), timeout]);
+    const memBytes = facts?.memBytes;
+    if (typeof memBytes === "number" && Number.isFinite(memBytes) && memBytes > 0) {
+      return defaultNodeBudgetGiB(undefined, memBytes);
+    }
+    return null;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function admitServerBudget(
   ctx: ConvergeServerContext,
 ): Promise<
   { ok: true; adm: Extract<AdmissionResult, { ok: true }> } | { ok: false; result: ApplyResult }
 > {
   const { manifest, opts, evictTargets, now } = ctx;
-  const listManifests =
-    opts?.listManifests ?? ((): ModelRun[] => listWorkloads(opts?.workloadsDir));
-  const living = listManifests().filter(
+  const listManifests: (dir?: string) => ModelRun[] =
+    opts?.listManifests ??
+    ((dir?: string): ModelRun[] => listAnyWorkloadsForAdmission(dir ?? defaultWorkloadsDir()));
+  const sameNode = nodeIdentityMatcher(opts, manifest.spec.node);
+  const living = listManifests(opts?.workloadsDir).filter(
     (m) =>
       m.metadata.name !== manifest.metadata.name &&
-      m.spec.node === manifest.spec.node &&
+      sameNode(m.spec.node) &&
       m.spec.enabled &&
       !evictTargets.includes(m.metadata.name),
   );
-  const budget = (await opts?.getNodeBudgetGiB?.(manifest.spec.node)) ?? Number.POSITIVE_INFINITY;
+  const incomingMemory = manifest.spec.resources?.expectedMemoryGiB ?? 0;
+  const hasDeclaredReservations =
+    incomingMemory > 0 || living.some((m) => (m.spec.resources?.expectedMemoryGiB ?? 0) > 0);
+  const budget = await resolveAdmissionBudgetGiB(
+    manifest.spec.node,
+    ctx.client,
+    opts?.getNodeBudgetGiB,
+    hasDeclaredReservations,
+  );
   const forceAdmit = manifest.metadata.annotations["llamactl.io/force-admit"] === "true";
   const adm = computeNodeBudget({
     nodeName: manifest.spec.node,
@@ -1040,6 +1104,7 @@ async function admitServerBudget(
     livingManifests: living,
     incoming: manifest,
     forceAdmit,
+    sameNode,
   });
   if (!adm.ok) {
     return {
@@ -1056,7 +1121,7 @@ async function admitServerBudget(
             {
               type: "Applied",
               status: "False",
-              reason: "BudgetExceeded",
+              reason: adm.kind === "unknown-budget" ? "BudgetUnknown" : "BudgetExceeded",
               message: adm.reason,
               lastTransitionTime: now,
             },
@@ -1251,7 +1316,7 @@ async function convergeServerUnderLock(ctx: ConvergeServerContext): Promise<Appl
         {
           type: "BudgetReserved",
           status: "True",
-          message: `node reserves ${adm.reservedAfter.toFixed(1)} / ${adm.budget === Infinity ? "unbounded" : adm.budget.toFixed(1)} GiB`,
+          message: `node reserves ${adm.reservedAfter.toFixed(1)} / ${adm.budget === null ? "unknown" : adm.budget.toFixed(1)} GiB`,
           lastTransitionTime: now,
         },
       ],
