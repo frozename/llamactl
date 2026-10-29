@@ -273,6 +273,16 @@ function clientForNode(cfg: Config, nodeName: string): WorkloadNodeClient {
 }
 
 /**
+ * #239: the explicit NodeRun budget for a node, keyed by NodeRun metadata.name like the
+ * reconciler and the CLI's nodeRunBudgetLookup. Undefined when no NodeRun has that name or
+ * it sets no spec.budget, so admission keeps its own fallback.
+ */
+function nodeRunBudgetGiB(nodeName: string, workloadsDir: string): number | undefined {
+  const nodeRuns = nodeRunStoreMod.listNodeRuns(workloadsDir);
+  return nodeRuns.find((n) => n.metadata.name === nodeName)?.spec.budget?.memoryGiB;
+}
+
+/**
  * Stop a ModelRun's server + workers before workloadDelete. Returns a refusal
  * message when the coordinator's serverStop reports `stopped: false` — the
  * remote could not prove the recorded pid's identity, and deleting the
@@ -1834,6 +1844,7 @@ export const router = t.router({
         const result = await workloadApplyMod.applyManifest({
           manifest,
           getClient: (nodeName) => clientForNode(cfg, nodeName),
+          getNodeBudgetGiB: (nodeName) => nodeRunBudgetGiB(nodeName, workloadsDir),
         });
         if (!result.ok) {
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: result.error });
