@@ -308,6 +308,23 @@ async function reconcileModelRun(
   return errors;
 }
 
+/**
+ * #332: true when a local host's launch record carries a specHash that differs
+ * from the manifest, i.e. the spec was edited while the engine was down. A
+ * record without a specHash (written before the field existed) proves nothing,
+ * so it returns false. Always false for a remote host: statusModelHost reports
+ * no specHash for a Stopped host.
+ */
+function localSpecChangedWhileDown(
+  spec: ModelHostManifest["spec"],
+  localState: ReturnType<typeof readModelHostState>,
+  desiredHash: string,
+): boolean {
+  if (spec.node !== LOCAL_NODE_ID) return false;
+  const recordedHash = localState?.specHash;
+  return typeof recordedHash === "string" && recordedHash !== desiredHash;
+}
+
 type HostReconcileDecision = "sweep-disabled" | "converged" | "never-stopped" | "apply";
 
 /**
@@ -318,7 +335,12 @@ type HostReconcileDecision = "sweep-disabled" | "converged" | "never-stopped" | 
  *   converged      — Running with a matching specHash; nothing to do.
  *   never-stopped  — enabled, restartPolicy Never, not Running, and remote
  *                    or with a local launch record (#332); report
- *                    unchanged and do not start it.
+ *                    unchanged and do not start it. Exception: a local
+ *                    launch record whose specHash differs from the
+ *                    manifest means the spec changed while the host was
+ *                    down, so that host is applied. A record with no
+ *                    specHash and every remote host stay down (a Stopped
+ *                    remote reports no specHash).
  *   apply          — anything else; run applyOneModelHost.
  *
  * Idempotent reconcile with spec-drift detection. For local
@@ -338,8 +360,16 @@ function classifyHostReconcile(
   if (current.state === "Running" && observedHash === desiredHash) return "converged";
   // #332: restartPolicy Never leaves a down engine down. A local host with no
   // launch record was never started here (an `apply -f` hand-off), so it starts.
+  // A local host whose recorded specHash differs was edited while down, so it
+  // starts too.
   const neverLaunched = spec.node === LOCAL_NODE_ID && localState === null;
-  if (spec.restartPolicy === "Never" && current.state !== "Running" && !neverLaunched) {
+  const editedWhileDown = localSpecChangedWhileDown(spec, localState, desiredHash);
+  if (
+    spec.restartPolicy === "Never" &&
+    current.state !== "Running" &&
+    !neverLaunched &&
+    !editedWhileDown
+  ) {
     return "never-stopped";
   }
   return "apply";
