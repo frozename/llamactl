@@ -141,6 +141,7 @@ describe("advanceOomWatch", () => {
       nextState: state,
       oomKilled: [],
       unattributedKills: 0,
+      ambiguousKills: null,
     });
   });
 
@@ -150,6 +151,7 @@ describe("advanceOomWatch", () => {
       nextState: { last: sample(2), pendingKills: 0 },
       oomKilled: [],
       unattributedKills: 0,
+      ambiguousKills: null,
     });
   });
 
@@ -182,6 +184,7 @@ describe("advanceOomWatch", () => {
       nextState: { last: sample(1), pendingKills: 0 },
       oomKilled: [],
       unattributedKills: 1,
+      ambiguousKills: null,
     });
   });
 
@@ -192,6 +195,7 @@ describe("advanceOomWatch", () => {
       nextState: { last: sample(2), pendingKills: 1 },
       oomKilled: [],
       unattributedKills: 1,
+      ambiguousKills: null,
     });
     expect(oomBaselineFor(second.nextState)).toEqual(sample(1));
     const third = advanceOomWatch(second.nextState, sample(2), []);
@@ -199,6 +203,7 @@ describe("advanceOomWatch", () => {
       nextState: { last: sample(2), pendingKills: 0 },
       oomKilled: [],
       unattributedKills: 1,
+      ambiguousKills: null,
     });
   });
 
@@ -223,6 +228,38 @@ describe("advanceOomWatch", () => {
       nextState: { last: sample(4), pendingKills: 0 },
       oomKilled: ["h"],
       unattributedKills: 0,
+      ambiguousKills: null,
+    });
+  });
+
+  it("does not give one kill to each of several hosts found dead in the same pass (#196)", () => {
+    const r = advanceOomWatch({ last: sample(1), pendingKills: 0 }, sample(2), ["a", "b"]);
+    expect(r).toEqual({
+      nextState: { last: sample(2), pendingKills: 0 },
+      oomKilled: [],
+      unattributedKills: 0,
+      ambiguousKills: { kills: 1, hosts: ["a", "b"] },
+    });
+    expect(oomBaselineFor(r.nextState)).toEqual(sample(2));
+  });
+
+  it("counts held kills before calling several dead hosts ambiguous (#196)", () => {
+    const r = advanceOomWatch({ last: sample(2), pendingKills: 1 }, sample(3), ["a", "b", "c"]);
+    expect(r).toEqual({
+      nextState: { last: sample(3), pendingKills: 0 },
+      oomKilled: [],
+      unattributedKills: 0,
+      ambiguousKills: { kills: 2, hosts: ["a", "b", "c"] },
+    });
+  });
+
+  it("attributes one kill to each dead host when the kills cover them all (#196)", () => {
+    const r = advanceOomWatch({ last: sample(1), pendingKills: 0 }, sample(3), ["a", "b"]);
+    expect(r).toEqual({
+      nextState: { last: sample(3), pendingKills: 0 },
+      oomKilled: ["a", "b"],
+      unattributedKills: 0,
+      ambiguousKills: null,
     });
   });
 
@@ -257,7 +294,7 @@ describe("dead-host lines", () => {
     const lines = deadHostLines(
       [dead],
       ["strata-qwen38-mtp"],
-      { oomKilled: ["strata-qwen38-mtp"], unattributedKills: 0 },
+      { oomKilled: ["strata-qwen38-mtp"], unattributedKills: 0, ambiguousKills: null },
       { cgroup: SERVICE, oomKill: 2 },
       T0,
     );
@@ -273,13 +310,33 @@ describe("dead-host lines", () => {
     const lines = deadHostLines(
       [dead],
       ["strata-qwen38-mtp"],
-      { oomKilled: [], unattributedKills: 1 },
+      { oomKilled: [], unattributedKills: 1, ambiguousKills: null },
       { cgroup: SERVICE, oomKill: 3 },
       T0,
     );
     expect(lines.map((l) => l.text)).toEqual([
       "[2026-10-21T14:07:00.000Z] WARN modelhost/strata-qwen38-mtp on local: engine had exited unexpectedly; restarted",
       `[2026-10-21T14:07:00.000Z] WARN controller cgroup ${SERVICE}: 1 OOM kill(s) (oom_kill 3) not matched to a ModelHost engine`,
+    ]);
+  });
+
+  it("logs kills shared by several dead engines once, without naming one engine (#196)", () => {
+    const other = { ...dead, name: "strata-b" };
+    const lines = deadHostLines(
+      [dead, other],
+      ["strata-qwen38-mtp", "strata-b"],
+      {
+        oomKilled: [],
+        unattributedKills: 0,
+        ambiguousKills: { kills: 1, hosts: ["strata-qwen38-mtp", "strata-b"] },
+      },
+      { cgroup: SERVICE, oomKill: 2 },
+      T0,
+    );
+    expect(lines.map((l) => l.text)).toEqual([
+      "[2026-10-21T14:07:00.000Z] WARN modelhost/strata-qwen38-mtp on local: engine had exited unexpectedly; restarted",
+      "[2026-10-21T14:07:00.000Z] WARN modelhost/strata-b on local: engine had exited unexpectedly; restarted",
+      `[2026-10-21T14:07:00.000Z] WARN controller cgroup ${SERVICE}: 1 OOM kill(s) (oom_kill 2) among 2 engines found dead (strata-qwen38-mtp, strata-b); not attributed to one engine`,
     ]);
   });
 });
@@ -420,6 +477,40 @@ describe("OOM baseline across a controller restart", () => {
     expect(written).toEqual([sample(2)]);
     expect(lines.map((l) => l.text)).toEqual([
       `[2026-10-21T14:07:00.000Z] WARN controller cgroup ${SERVICE}: 1 OOM kill(s) (oom_kill 3) not matched to a ModelHost engine`,
+    ]);
+  });
+
+  it("observeOomKills records no kill on any engine when one kill meets two dead engines (#196)", () => {
+    const written: CgroupOomSample[] = [];
+    const recorded: string[] = [];
+    const lines: ControllerLogLine[] = [];
+    const deps: OomObserveDeps = {
+      readSample: () => sample(2),
+      writeBaseline: (_file, s) => {
+        written.push(s);
+      },
+      recordKill: (name) => {
+        recorded.push(name);
+      },
+      writeLines: (out) => {
+        lines.push(...out);
+      },
+    };
+    const dead = { ...healthy, action: "started" as const, foundDead: true };
+    const next = observeOomKills(
+      "/unused-workloads-dir",
+      { errors: new Map(), oom: { last: sample(1), pendingKills: 0 } },
+      [dead, { ...dead, name: "strata-b" }],
+      T0,
+      deps,
+    );
+    expect(next).toEqual({ last: sample(2), pendingKills: 0 });
+    expect(recorded).toEqual([]);
+    expect(written).toEqual([sample(2)]);
+    expect(lines.map((l) => l.text)).toEqual([
+      "[2026-10-21T14:07:00.000Z] WARN modelhost/strata-qwen38-mtp on local: engine had exited unexpectedly; restarted",
+      "[2026-10-21T14:07:00.000Z] WARN modelhost/strata-b on local: engine had exited unexpectedly; restarted",
+      `[2026-10-21T14:07:00.000Z] WARN controller cgroup ${SERVICE}: 1 OOM kill(s) (oom_kill 2) among 2 engines found dead (strata-qwen38-mtp, strata-b); not attributed to one engine`,
     ]);
   });
 });
