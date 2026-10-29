@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
 import { join } from "node:path";
 
+import type { ServerEvent } from "../src/server.js";
 import type { ResolvedEnv } from "../src/types.js";
 
 import { resolveEnv } from "../src/env.js";
@@ -1023,4 +1024,311 @@ describe("server.abortableSleep", () => {
       clearSpy.mockRestore();
     }
   });
+});
+
+const FAKE_ENGINE_JS = `
+const args = process.argv.slice(2);
+const flag = (name, dflt) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : dflt; };
+const port = Number(flag("--port", "0"));
+const healthStatus = Number(flag("--health-status", "200"));
+const readyStatus = Number(flag("--ready-status", "200"));
+const readySeq = flag("--ready-seq", "");
+const readyBody = flag("--ready-body", '{"status":"ready"}');
+const models = String(flag("--models", "demo.gguf")).split(",");
+const counterPath = flag("--launch-counter", "");
+const firstExits = args.includes("--first-exits");
+let launch = 0;
+if (counterPath !== "") {
+  const fs = require("node:fs");
+  let prev = 0;
+  try { prev = Number(fs.readFileSync(counterPath, "utf8").trim() || "0"); } catch {}
+  launch = prev + 1;
+  fs.writeFileSync(counterPath, String(launch));
+}
+if (firstExits && launch === 1) process.exit(0);
+let readyHits = 0;
+Bun.serve({
+  hostname: "127.0.0.1",
+  port,
+  fetch(req) {
+    const path = new URL(req.url).pathname;
+    if (path === "/health") return new Response("ok", { status: healthStatus });
+    if (path === "/v1/models") return Response.json({ data: models.map((id) => ({ id })) });
+    if (path === "/ready") {
+      readyHits += 1;
+      let status = readyStatus;
+      if (readySeq !== "") {
+        const seq = readySeq.split(",");
+        status = Number(seq[Math.min(readyHits - 1, seq.length - 1)]);
+      }
+      return new Response(readyBody, { status, headers: { "content-type": "application/json" } });
+    }
+    return new Response("not found", { status: 404 });
+  },
+});
+`;
+
+describe("startServer declared serving-readiness (#220)", () => {
+  let temp: ReturnType<typeof makeTempRuntime>;
+  let originalEnv: NodeJS.ProcessEnv;
+  let foreignProcs: Bun.Subprocess[];
+
+  beforeEach(() => {
+    temp = makeTempRuntime();
+    originalEnv = { ...process.env };
+    for (const [k, v] of Object.entries(envForTemp(temp))) {
+      if (v !== undefined) process.env[k] = v;
+    }
+    mkdirSync(temp.runtimeDir, { recursive: true });
+    foreignProcs = [];
+  });
+
+  afterEach(() => {
+    const pid = readServerPid(TEST_KEY, resolveEnv());
+    if (pid !== null) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+    for (const proc of foreignProcs) {
+      try {
+        proc.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+    process.env = originalEnv;
+    temp.cleanup();
+  });
+
+  function freePort(): number {
+    const probe = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("nope", { status: 500 }),
+    });
+    const port = probe.port;
+    void probe.stop(true);
+    if (typeof port !== "number") throw new Error("no ephemeral port assigned");
+    return port;
+  }
+
+  function writeEngine(scenarioFlags: string): string {
+    const engineJs = join(temp.devStorage, "fake-engine.js");
+    writeFileSync(engineJs, FAKE_ENGINE_JS);
+    const binDir = join(temp.devStorage, "fake-bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      join(binDir, "llama-server"),
+      `#!/bin/bash\nexec -a "$0 $*" "${process.execPath}" "${engineJs}" ${scenarioFlags} "$@"\n`,
+      { mode: 0o755 },
+    );
+    process.env["LLAMA_CPP_BIN"] = binDir;
+    process.env["LLAMA_CPP_HOST"] = "127.0.0.1";
+    return join(temp.modelsDir, "Demo", "demo.gguf");
+  }
+
+  function writeModel(modelPath: string): void {
+    mkdirSync(join(temp.modelsDir, "Demo"), { recursive: true });
+    writeFileSync(modelPath, "");
+  }
+
+  async function waitForHealth(endpointUrl: string, timeoutMs = 5000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        const res = await fetch(`${endpointUrl}/health`, { signal: AbortSignal.timeout(250) });
+        if (res.status === 200) return;
+      } catch {
+        // not up yet
+      }
+      if (Date.now() > deadline) throw new Error(`fake engine did not come up at ${endpointUrl}`);
+      await Bun.sleep(50);
+    }
+  }
+
+  function spawnForeignEngine(port: number, scenarioFlags: string): Bun.Subprocess {
+    const engineJs = join(temp.devStorage, "fake-engine.js");
+    writeFileSync(engineJs, FAKE_ENGINE_JS);
+    const proc = Bun.spawn(
+      [
+        process.execPath,
+        engineJs,
+        "--port",
+        String(port),
+        ...scenarioFlags.split(" ").filter(Boolean),
+      ],
+      { stdout: "ignore", stderr: "ignore" },
+    );
+    foreignProcs.push(proc);
+    return proc;
+  }
+
+  test("health 200 with a failing declared /ready never reports ready", async () => {
+    const port = freePort();
+    const modelPath = writeEngine("--ready-status 503");
+    writeModel(modelPath);
+    process.env["LLAMA_CPP_PORT"] = String(port);
+    const events: ServerEvent[] = [];
+
+    const result = await startServer({
+      key: TEST_KEY,
+      target: "Demo/demo.gguf",
+      readiness: { path: "/ready" },
+      timeoutSeconds: 2,
+      onEvent: (e) => {
+        events.push(e);
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("timed out");
+    expect(events.some((e) => e.type === "waiting" && e.httpCode === "200")).toBe(true);
+    expect(events.some((e) => e.type === "ready")).toBe(false);
+    const tracked = readServerPid(TEST_KEY, resolveEnv());
+    expect(tracked).not.toBeNull();
+  }, 20_000);
+
+  test("health 200 with a passing declared /ready reports ready", async () => {
+    const port = freePort();
+    const modelPath = writeEngine("--ready-status 200");
+    writeModel(modelPath);
+    process.env["LLAMA_CPP_PORT"] = String(port);
+    const events: ServerEvent[] = [];
+
+    const result = await startServer({
+      key: TEST_KEY,
+      target: "Demo/demo.gguf",
+      readiness: { path: "/ready" },
+      timeoutSeconds: 3,
+      onEvent: (e) => {
+        events.push(e);
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(events.some((e) => e.type === "ready")).toBe(true);
+  }, 20_000);
+
+  test("expectJson mismatch keeps the start waiting", async () => {
+    const port = freePort();
+    const modelPath = writeEngine('--ready-status 200 --ready-body \'{"status":"loading"}\'');
+    writeModel(modelPath);
+    process.env["LLAMA_CPP_PORT"] = String(port);
+    const events: ServerEvent[] = [];
+
+    const result = await startServer({
+      key: TEST_KEY,
+      target: "Demo/demo.gguf",
+      readiness: { path: "/ready", expectJson: { status: "ready" } },
+      timeoutSeconds: 2,
+      onEvent: (e) => {
+        events.push(e);
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(events.some((e) => e.type === "ready")).toBe(false);
+  }, 20_000);
+
+  test("refuses to adopt a model-matching server whose declared contract fails", async () => {
+    const port = freePort();
+    writeEngine("--ready-status 200");
+    const modelPath = join(temp.modelsDir, "Demo", "demo.gguf");
+    writeModel(modelPath);
+    process.env["LLAMA_CPP_PORT"] = String(port);
+    const foreign = spawnForeignEngine(port, "--models demo.gguf --ready-status 503");
+    await waitForHealth(`http://127.0.0.1:${String(port)}`);
+
+    const result = await startServer({
+      key: TEST_KEY,
+      target: "Demo/demo.gguf",
+      readiness: { path: "/ready" },
+      timeoutSeconds: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("already bound");
+    expect(readServerPid(TEST_KEY, resolveEnv())).toBeNull();
+    let alive = true;
+    try {
+      process.kill(foreign.pid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive).toBe(true);
+  }, 20_000);
+
+  test("adopts a model-matching server whose declared contract passes", async () => {
+    const port = freePort();
+    writeEngine("--ready-status 200");
+    const modelPath = join(temp.modelsDir, "Demo", "demo.gguf");
+    writeModel(modelPath);
+    process.env["LLAMA_CPP_PORT"] = String(port);
+    const foreign = spawnForeignEngine(port, "--models demo.gguf --ready-status 200");
+    await waitForHealth(`http://127.0.0.1:${String(port)}`);
+    const events: ServerEvent[] = [];
+
+    const result = await startServer({
+      key: TEST_KEY,
+      target: "Demo/demo.gguf",
+      readiness: { path: "/ready" },
+      timeoutSeconds: 2,
+      onEvent: (e) => {
+        events.push(e);
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.pid).toBe(foreign.pid);
+    expect(events.some((e) => e.type === "ready")).toBe(true);
+  }, 20_000);
+
+  test("mmproj retry still gates on the declared contract", async () => {
+    const port = freePort();
+    const counter = join(temp.devStorage, "launch-count");
+    const modelPath = writeEngine(`--first-exits --launch-counter "${counter}" --ready-status 503`);
+    writeModel(modelPath);
+    process.env["LLAMA_CPP_PORT"] = String(port);
+    const events: ServerEvent[] = [];
+
+    const result = await startServer({
+      key: TEST_KEY,
+      target: "Demo/demo.gguf",
+      extraArgs: ["--mmproj", modelPath],
+      readiness: { path: "/ready" },
+      timeoutSeconds: 3,
+      onEvent: (e) => {
+        events.push(e);
+      },
+    });
+
+    expect(result.retried).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(events.some((e) => e.type === "retry")).toBe(true);
+    expect(events.some((e) => e.type === "ready")).toBe(false);
+  }, 20_000);
+
+  test("mmproj retry reports ready once the declared contract flips to passing", async () => {
+    const port = freePort();
+    const counter = join(temp.devStorage, "launch-count");
+    const modelPath = writeEngine(
+      `--first-exits --launch-counter "${counter}" --ready-seq 503,503,200`,
+    );
+    writeModel(modelPath);
+    process.env["LLAMA_CPP_PORT"] = String(port);
+
+    const result = await startServer({
+      key: TEST_KEY,
+      target: "Demo/demo.gguf",
+      extraArgs: ["--mmproj", modelPath],
+      readiness: { path: "/ready" },
+      timeoutSeconds: 4,
+    });
+
+    expect(result.retried).toBe(true);
+    expect(result.ok).toBe(true);
+  }, 30_000);
 });
